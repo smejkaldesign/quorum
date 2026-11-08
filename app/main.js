@@ -90,6 +90,8 @@ function startHelper() {
   });
   createInterface({ input: helper.stderr }).on('line', (line) => { log('helper stderr', line); toUI('log', line); });
   helper.on('exit', (code) => { log('helper exited', code); toUI('log', `helper exited (${code})`); });
+  // a missing or unrunnable helper (unbuilt checkout, broken install) must not take the whole app down
+  helper.on('error', (err) => { log('helper failed to start', err.message); toUI('log', `Quorum's audio helper could not start (${err.code ?? err.message}). Meetings are off until it is rebuilt.`); helper = null; });
 }
 
 const words = (s) => s.toLowerCase().replace(/[^a-z0-9' ]/g, ' ').split(/\s+/).filter(Boolean);
