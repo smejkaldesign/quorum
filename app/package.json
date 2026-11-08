@@ -12,24 +12,24 @@
     "package": "vite build && cd ../helper && swift build -c release && cd ../app && electron-builder --mac"
   },
   "devDependencies": {
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.2.1",
-    "electron": "^45.2.3",
-    "electron-builder": "26.17.0",
-    "typescript": "^7.0.2",
-    "vite": "^8.3.6"
-  },
-  "dependencies": {
-    "@supabase/supabase-js": "^2.119.0",
     "@tiptap/core": "3.32.0",
     "@tiptap/extension-table": "3.32.0",
     "@tiptap/markdown": "3.32.0",
     "@tiptap/pm": "3.32.0",
     "@tiptap/react": "3.32.0",
     "@tiptap/starter-kit": "3.32.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.2.1",
+    "electron": "^45.2.3",
+    "electron-builder": "26.17.0",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.119.0"
   },
   "productName": "Quorum",
   "description": "Meetings and your second brain, on your Mac",
@@ -43,7 +43,9 @@
       "main.js",
       "account.js",
       "sync.js",
-      "store/**",
+      "onboarding.js",
+      "decisions.js",
+      "control.js",
       "agent.js",
       "suggest.js",
       "json.js",
@@ -52,11 +54,11 @@
       "linkparse.js",
       "relink.js",
       "preload.cjs",
+      "store/**",
       "guards/**",
       "dist/**",
       "assets/**",
-      "package.json",
-      "!node_modules/**"
+      "package.json"
     ],
     "extraResources": [
       {
@@ -105,6 +107,8 @@
       },
       "iconSize": 96
     },
-    "afterPack": "./after-pack.cjs"
-  }
+    "afterPack": "./after-pack.cjs",
+    "asarUnpack": []
+  },
+  "author": "Smejkal Design"
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import type { Brain, OnboardingStatus } from './quorum';
+import type { Brain, OnboardingChecks, OnboardingStatus } from './quorum';
 import { IconCheck, IconFolder, IconMic, IconPerson, IconShield, ProviderMark } from './icons';
 import mark from '../assets/quorum-mark.png';
 
@@ -9,8 +9,9 @@ const ORDER: Step[] = ['welcome', 'notes', 'claude', 'account', 'permissions', '
 // first run on a fresh install: a short wizard in place of the main window until settings.onboarded is set
 export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Brain | null; onBrain: (b: Brain | null) => void; accountSlot?: ReactNode; onDone: () => void }) {
   const [step, setStep] = useState<Step>('welcome');
-  const [status, setStatus] = useState<OnboardingStatus | null>(null);
-  const refresh = () => window.quorum.onboardingStatus().then(setStatus);
+  const [status, setStatus] = useState<(OnboardingStatus & Partial<OnboardingChecks>) | null>(null);
+  // the fast part first, then permissions and Claude Code, which can take a few seconds
+  const refresh = () => window.quorum.onboardingStatus().then((s) => { setStatus((prev) => ({ ...prev, ...s })); window.quorum.onboardingChecks().then((c) => setStatus((prev) => ({ ...(prev ?? s), ...c }))); });
   useEffect(() => { refresh(); }, [step]);
   const i = ORDER.indexOf(step);
   const next = () => setStep(ORDER[Math.min(i + 1, ORDER.length - 1)]);
@@ -43,9 +44,9 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
             <h1>You're set</h1>
             <ul className="onb-summary">
               <li><IconFolder width={16} height={16} /> {brain ? `Notes in ${brain.root.replace(/^\/Users\/[^/]+/, '~')}` : 'No notes folder yet (connect one in Settings)'}</li>
-              <li><ProviderMark provider="anthropic" /> {status?.claude.loggedIn ? `Claude Code signed in as ${status.claude.email}` : 'Claude Code not signed in yet'}</li>
-              <li><IconMic width={16} height={16} /> {status?.permissions.microphone === 'granted' ? 'Microphone allowed' : 'Microphone: macOS will ask on your first call'}</li>
-              <li><IconShield width={16} height={16} /> {status?.permissions.accessibility === 'granted' ? 'Accessibility allowed' : 'Accessibility: needed to read the meeting chat'}</li>
+              <li><ProviderMark provider="anthropic" /> {status?.claude?.loggedIn ? `Claude Code signed in as ${status.claude.email}` : 'Claude Code not signed in yet'}</li>
+              <li><IconMic width={16} height={16} /> {status?.permissions?.microphone === 'granted' ? 'Microphone allowed' : 'Microphone: macOS will ask on your first call'}</li>
+              <li><IconShield width={16} height={16} /> {status?.permissions?.accessibility === 'granted' ? 'Accessibility allowed' : 'Accessibility: needed to read the meeting chat'}</li>
             </ul>
             <p>Quorum lives in the menu bar. When a Zoom, Google Meet or Teams call starts, it offers to listen.</p>
             <div className="onb-actions"><button className="pill ghost" onClick={back}>Back</button><button className="pill primary" autoFocus onClick={async () => { await window.quorum.onboardingDone(); onDone(); }}>Open Quorum</button></div>
@@ -56,7 +57,7 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
   );
 }
 
-function NotesStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain | null; status: OnboardingStatus | null; onBrain: (b: Brain | null) => void; onBack: () => void; onNext: () => void }) {
+function NotesStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain | null; status: (OnboardingStatus & Partial<OnboardingChecks>) | null; onBrain: (b: Brain | null) => void; onBack: () => void; onNext: () => void }) {
   const [name, setName] = useState('My Agent OS');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -81,7 +82,7 @@ function NotesStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain | 
             <IconFolder width={18} height={18} />
             <div>
               <strong>Create a new folder</strong>
-              <em>{status?.defaultVaultDir.replace(/^\/Users\/[^/]+/, '~') ?? '~/Documents/Quorum'}</em>
+              <em>{status?.defaultVaultDir?.replace(/^\/Users\/[^/]+/, '~') ?? '~/Documents/Quorum'}</em>
               <label className="set-field wide onb-field"><input value={name} aria-label="Name of your Agent OS" placeholder="My Agent OS" onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') create(); }} /></label>
             </div>
             <button className="pill primary" disabled={busy} onClick={create}>{busy ? 'Creating…' : 'Create'}</button>
@@ -99,7 +100,7 @@ function NotesStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain | 
   );
 }
 
-function ClaudeStep({ status, onRefresh, onBack, onNext }: { status: OnboardingStatus | null; onRefresh: () => void; onBack: () => void; onNext: () => void }) {
+function ClaudeStep({ status, onRefresh, onBack, onNext }: { status: (OnboardingStatus & Partial<OnboardingChecks>) | null; onRefresh: () => void; onBack: () => void; onNext: () => void }) {
   const c = status?.claude;
   const ok = !!c?.installed && !!c?.loggedIn;
   return (
@@ -128,7 +129,7 @@ const PERMS: { id: 'microphone' | 'audio' | 'accessibility' | 'calendar'; title:
   { id: 'calendar', title: 'Calendar', why: 'Shows your upcoming meetings on Home', icon: <IconPerson width={18} height={18} /> },
 ];
 
-function PermissionsStep({ status, onRefresh, onBack, onNext }: { status: OnboardingStatus | null; onRefresh: () => void; onBack: () => void; onNext: () => void }) {
+function PermissionsStep({ status, onRefresh, onBack, onNext }: { status: (OnboardingStatus & Partial<OnboardingChecks>) | null; onRefresh: () => void; onBack: () => void; onNext: () => void }) {
   const p = status?.permissions;
   const label = (s?: string) => (s === 'granted' || s === 'authorized' ? 'Allowed' : s === 'denied' || s === 'restricted' ? 'Denied' : 'Not yet');
   return (

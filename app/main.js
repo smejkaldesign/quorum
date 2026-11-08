@@ -13,7 +13,7 @@ import { PROVIDERS as DECISION_PROVIDERS, connectedProvider, decide as decideRaw
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -1677,7 +1677,8 @@ async function control({ cmd, args = {} }) {
     default: throw new Error(`Unknown command ${cmd}`);
   }
 }
-const CONTROL_SOCK = path.join(SESSIONS, '..', 'quorum.sock');
+// unix socket paths are capped at 104 bytes on macOS, so a deep home folder falls back to the temp dir
+const CONTROL_SOCK = (() => { const p = path.join(SESSIONS, '..', 'quorum.sock'); return p.length < 100 ? p : path.join(tmpdir(), `quorum-${process.getuid?.() ?? 'u'}.sock`); })();
 let stopControl = null;
 app.on('will-quit', () => { meeting.capturing = false; writeState(); stopControl?.(); });
 app.whenReady().then(() => {

@@ -132,6 +132,7 @@ contextBridge.exposeInMainWorld('quorum', {
   // end account
   // onboarding (first run): status, create a fresh Agent OS folder, permissions
   onboardingStatus: () => ipcRenderer.invoke('onboarding-status'),
+  onboardingChecks: () => ipcRenderer.invoke('onboarding-checks'),
   onboardingCreateVault: (dir, name) => ipcRenderer.invoke('onboarding-create-vault', dir, name),
   onboardingOpenPermission: (which) => ipcRenderer.invoke('onboarding-open-permission', which),
   onboardingRequestMicrophone: () => ipcRenderer.invoke('onboarding-request-microphone'),

@@ -43,11 +43,12 @@ export function registerOnboarding({ ipcMain, settings, saveSettings, inspectBra
     accessibility: systemPreferences.isTrustedAccessibilityClient(false) ? 'granted' : 'not-determined',
     calendar: await helperAsk('calStatus').then((r) => r?.status ?? 'unknown').catch(() => 'unknown'),
   });
-  ipcMain.handle('onboarding-status', async () => ({
-    firstRun: !settings.onboarded,
-    defaultVaultDir: defaultVaultDir(),
-    permissions: await permissions(),
-    claude: await claudeStatus().catch(() => ({ installed: false })),
+  // status answers at once so the window knows whether to show the wizard; the slow checks come separately
+  ipcMain.handle('onboarding-status', () => ({ firstRun: !settings.onboarded, defaultVaultDir: defaultVaultDir() }));
+  const within = (ms, p, fallback) => Promise.race([p, new Promise((r) => setTimeout(() => r(fallback), ms))]);
+  ipcMain.handle('onboarding-checks', async () => ({
+    permissions: await within(4000, permissions(), { microphone: 'unknown', audio: 'unknown', accessibility: 'unknown', calendar: 'unknown' }),
+    claude: await within(15000, claudeStatus().catch(() => ({ installed: false })), { installed: false, pending: true }),
   }));
   ipcMain.handle('onboarding-create-vault', (_e, dir, name) => {
     const target = String(dir || defaultVaultDir());

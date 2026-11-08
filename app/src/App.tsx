@@ -245,6 +245,8 @@ export function App() {
   }[phase];
 
 
+  // nothing renders until the main process says whether this is a first run, so the wizard never flashes in or out
+  if (firstRun === null) return <div className="panel" />;
   if (firstRun) {
     return <div className="panel"><OnboardingShell brain={brain} onBrain={setBrain} onDone={() => setFirstRun(false)} /></div>;
   }
