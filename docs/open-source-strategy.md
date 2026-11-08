@@ -1,6 +1,6 @@
 # Quorum open-source and cloud strategy
 
-Status: proposal, drafted 2026-11-08 for Eric's decision. Follows the pattern Celune settled in September 2026 (Apache-2.0 core, `ee/` under its own license, bring your own key, one Cloud plan, one public repo) so the studio runs two products on one playbook.
+Status: decided 2026-11-08 (price, tiers); other sections current as of that date. Follows the pattern Celune settled in September 2026 (Apache-2.0 core, `ee/` under its own license, bring your own key, one Cloud plan, one public repo) so the studio runs two products on one playbook.
 
 ## The rule that decides everything
 
@@ -10,7 +10,7 @@ The open-source edition costs Smejkal Design $0 to operate. Every feature in it 
 
 | | Local (open source) | Cloud (paid) | Team (later tier, same code path as Cloud) |
 |---|---|---|---|
-| Price | Free, Apache-2.0 | One plan per seat per month; proposal: match Celune Cloud at $25/seat/mo, $20 annual | Priced later; Cloud gets team features first, the line moves when demand shows |
+| Price | Free, Apache-2.0 | One paid plan for v1: $9 per seat per month | Not a tier in v1; Cloud gets team features first, the line moves when demand shows |
 | Meetings: capture, on-device transcription, Zoom/Meet/Teams detection, STOP/GO chat notice, end-of-call notes | Yes | Yes | Yes |
 | Agent OS: connect an existing notes folder (Obsidian vault, repo with CLAUDE.md), knowledge graph, search, read guard | Yes | Yes | Yes |
 | Model access | User's own Claude Code sign-in; bring your own API key (Anthropic, OpenAI, local Ollama); default is none | Same, plus hosted model access as a later option | Same |
