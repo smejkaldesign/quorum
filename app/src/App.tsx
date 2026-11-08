@@ -258,7 +258,7 @@ export function App() {
   return (
     <div className={`panel ${view === 'main' && tab === 'home' && convoOpen ? 'convo-wide' : ''}`}>
       <header className="bar">
-        <div className="brand static"><img src={mark} alt="" /><span>{window.quorum.isDev ? 'Quorum Dev' : 'Quorum'}</span></div>
+        <div className="brand static"><img src={mark} alt={window.quorum.isDev ? 'Quorum Dev' : 'Quorum'} /></div>
         <nav className="tabs" aria-label="Views">
           {MAIN_TABS.map(([id, Icon, label]) => (
             <button key={id} className={`tab ${view === 'main' && tab === id ? 'on' : ''}`} aria-label={label} data-tip={label}

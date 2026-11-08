@@ -33,7 +33,7 @@ p { margin: 0; }
 .menu-wrap { position: relative; }
 .brand { display: flex; align-items: center; gap: 8px; padding: 4px 8px 4px 4px; margin-left: -4px; border-radius: 10px; }
 .brand:hover { background: rgba(255, 255, 255, 0.06); }
-.brand img { width: 24px; height: 24px; }
+.brand img { width: 34px; height: 34px; }
 .brand span { font: 400 22px/1 "New York", ui-serif, Georgia, serif; letter-spacing: -0.01em; }
 .tabs { display: flex; gap: 2px; padding: 3px; border-radius: 12px; background: rgba(255, 255, 255, 0.04); }
 .tab { width: 36px; height: 30px; display: grid; place-items: center; border-radius: 9px; color: var(--muted); }
@@ -811,7 +811,7 @@ svg.err { color: var(--danger); }
 .muted.small { font-size: 13px; padding: 0 2px; }
 
 /* Additional context refresh: the refresh icon becomes a spinning ring in Quorum's blue, with an X to cancel */
-.brand-spin { width: 15px; height: 15px; flex: none; border-radius: 50%; border: 2px solid rgba(167, 120, 255, 0.22); border-top-color: #a778ff; animation: spin 0.8s linear infinite; }
+.brand-spin { width: 15px; height: 15px; flex: none; border-radius: 50%; border: 2px solid rgba(0, 122, 255, 0.22); border-top-color: var(--brand); animation: spin 0.8s linear infinite; }
 .pill.scanning { cursor: default; padding-right: 6px; }
 .scan-x { display: grid; place-items: center; width: 20px; height: 20px; margin-left: 2px; border-radius: 50%; color: var(--muted); }
 .scan-x:hover { color: var(--text, #fff); background: rgba(255, 255, 255, 0.08); }

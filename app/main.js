@@ -1591,7 +1591,7 @@ ipcMain.handle('ax-status', () => {
 // one Quorum at a time, installed or development copy: two would both watch Zoom and could post the notice twice
 if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
-    dialog.showMessageBoxSync({ type: 'info', message: 'Quorum is already running', detail: 'Another copy of Quorum (the installed app or the development copy) is open. Quit it from its menu bar llama, then open this one again.', buttons: ['OK'] });
+    dialog.showMessageBoxSync({ type: 'info', message: 'Quorum is already running', detail: 'Another copy of Quorum (the installed app or the development copy) is open. Quit it from its menu bar owl, then open this one again.', buttons: ['OK'] });
     app.quit();
   });
 } else app.on('second-instance', () => openMain());
