@@ -5,3 +5,6 @@ helper/.build/
 sessions/
 release/
 app/.dev/
+.env
+supabase/.temp/
+.claude/
