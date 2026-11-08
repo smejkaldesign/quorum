@@ -352,5 +352,5 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
     };
   }, [data, view.showOrphans, view.showUnresolved, onOpen]);
 
-  return <canvas ref={canvas} className="graph-canvas" aria-label="Graph of notes in your second brain" />;
+  return <canvas ref={canvas} className="graph-canvas" aria-label="Graph of notes in your Agent OS" />;
 }

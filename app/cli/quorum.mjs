@@ -219,7 +219,7 @@ Read
   quorum live                       the call being recorded right now
 
 Ask Quorum
-  quorum ask <question>             answers from your second brain, saved to History
+  quorum ask <question>             answers from your Agent OS, saved to History
 
 During a call
   quorum start                      start listening (posts the notice in the Zoom chat)
@@ -227,7 +227,7 @@ During a call
   quorum go                         same as GO: starts listening again
   quorum end                        end the call and write your notes
 
-Notes in your second brain
+Notes in your Agent OS
   quorum new <title> [--folder f]   new note (default folder 00-inbox); text from stdin or after --text
   quorum add <path> <text>          add text to the end of a note
   quorum edit <path>                open a note in your editor and save it back

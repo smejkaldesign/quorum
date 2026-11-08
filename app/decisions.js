@@ -34,7 +34,7 @@ export async function setDecisionsKey(key) {
   } catch (err) {
     return { error: /401|403/.test(err.message) ? "OpenAI didn't accept that key" : "Couldn't reach OpenAI. Check your connection and try again." };
   }
-  const saved = await security(['add-generic-password', '-U', '-s', SERVICE, '-a', ACCOUNT, '-l', 'OpenAI Decisions (Quorum and second brain)', '-w', key]);
+  const saved = await security(['add-generic-password', '-U', '-s', SERVICE, '-a', ACCOUNT, '-l', 'OpenAI Decisions (Quorum and Agent OS)', '-w', key]);
   cached = undefined;
   return saved === null ? { error: "Couldn't save the key to your Keychain" } : { ok: true };
 }

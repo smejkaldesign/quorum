@@ -8,11 +8,11 @@ Local meeting notetaker and second-brain app for the Mac, with an in-app assista
 - The Knowledge view opens, edits, links, searches and graphs an Obsidian-style markdown vault. Files stay plain markdown, so Claude Code keeps working on the same folder.
 - Session data lives in `~/Library/Application Support/Quorum/sessions/`. Settings in `~/Library/Application Support/Quorum/settings.json`.
 
-## Second brain connection
+## Agent OS connection
 
 On first launch Quorum looks for `~/Documents/GitHub/second-brain/MyBrain`. If it finds it, the repo root (the folder with `CLAUDE.md`) becomes the brain root and `MyBrain/` the vault. Any other folder can be chosen in Settings.
 
-What Quorum uses from the brain, found by file name only:
+What Quorum uses from the Agent OS, found by file name only:
 
 | Marker | Path | Used for |
 |---|---|---|

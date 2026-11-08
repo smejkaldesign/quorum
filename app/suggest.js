@@ -1,4 +1,4 @@
-// Quorum's proactive suggestions. v1 is connectorless: it searches Eric's second brain (the vault).
+// Quorum's proactive suggestions. v1 is connectorless: it searches the user's Agent OS (the vault).
 // Connectors (Figma, Glean, Jira) plug in later as more sources behind the same card.
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -126,7 +126,7 @@ export function createSuggester({ runClaude, toUI, log, getTranscript, getSettin
           id,
           kind: s.kind,
           text: s.kind === 'question' ? `Someone asked: “${s.text}” Look for an answer in your notes?` : `Find your notes on ${s.text}?`,
-          caption: `Using your second brain · ${hits.length} ${hits.length === 1 ? 'note' : 'notes'}`,
+          caption: `Using your Agent OS · ${hits.length} ${hits.length === 1 ? 'note' : 'notes'}`,
         });
       }
     } catch (err) {

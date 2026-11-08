@@ -1,6 +1,6 @@
 # Parity gaps: this Mac versus the reference setup
 
-Status on 2026-11-08, after the first port. The reference ran against a different second brain, so some features here find nothing to use. Each item says what is missing, what the app does meanwhile, and what closes it.
+Status on 2026-11-08, after the first port. The reference ran against a different Agent OS, so some features here find nothing to use. Each item says what is missing, what the app does meanwhile, and what closes it.
 
 ## Works now
 

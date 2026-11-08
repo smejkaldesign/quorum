@@ -415,7 +415,7 @@ function runClaude(prompt, system, model = settings.model) {
   });
 }
 
-// second brain connection. POC: the user points Quorum at a folder; Quorum recognizes an agent OS
+// Agent OS connection. POC: the user points Quorum at a folder; Quorum recognizes an agent OS
 // (CLAUDE.md / AGENTS.md), an Obsidian vault, and the search script. Later this becomes a connector.
 function inspectBrain(folder) {
   const has = (...p) => existsSync(path.join(...p));
@@ -914,7 +914,7 @@ function scanBrain(root, vault) {
   const guards = count(path.join(root, '.claude/hooks'), (f) => ['secret-file-guard.py', 'opted-out-guard.py', 'output-secret-tripwire.py'].includes(f));
   if (guards) add('guards', 'Guard hooks', path.join(root, '.claude/hooks'), `${guards} guard${guards === 1 ? '' : 's'} run on every read Quorum makes`);
   add('index', 'Memory index', path.join(vault, 'index.md'), 'index.md');
-  // the brain's own search; its embeddings come from Ollama on this Mac, so a query never leaves it
+  // the Agent OS's own search; its embeddings come from Ollama on this Mac, so a query never leaves it
   const search = [path.join(vault, 'scripts/search-memory.py'), path.join(root, 'scripts/search-memory.py')].find(existsSync);
   if (search) {
     const vectors = existsSync(path.join(vault, 'memory/vectors.sqlite'));
@@ -922,7 +922,7 @@ function scanBrain(root, vault) {
     const graph = [path.join(vault, 'scripts/graph_links.py'), path.join(root, 'scripts/graph_links.py')].find(existsSync);
     if (graph) add('graph', 'Link graph', graph, 'wikilinks');
   }
-  // the brain's own decision-model client; once it's set up there, Quorum's quick checks can use the same connection
+  // the Agent OS's own decision-model client; once it's set up there, Quorum's quick checks can use the same connection
   const decisions = [path.join(vault, 'scripts/openai_decisions.py'), path.join(root, 'scripts/openai_decisions.py')].find(existsSync);
   if (decisions) add('decisions', 'Decision checks', decisions, 'OpenAI decisions');
   return found;
@@ -935,10 +935,10 @@ function agentContext() {
 }
 async function agentExtra(question, root) {
   const ctx = agentContext();
-  if (ctx.search) toUI('agent-step', { text: 'Searching your second brain' });
+  if (ctx.search) toUI('agent-step', { text: 'Searching your Agent OS' });
   return { ...ctx, hints: await searchHints(question, ctx, root) };
 }
-// runs the brain's search before Quorum starts so she opens the likely notes first; a slow or broken search just means no hints
+// runs the Agent OS's search before Quorum starts so she opens the likely notes first; a slow or broken search just means no hints
 function searchHints(question, ctx, root) {
   if (!ctx.search) return Promise.resolve([]);
   return new Promise((resolve) => {
@@ -952,7 +952,7 @@ function searchHints(question, ctx, root) {
   });
 }
 const saveSettings = () => writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
-// Quorum's quick checks run on the workspace's OpenAI connection, but only once Decision checks is included from the brain
+// Quorum's quick checks run on the workspace's OpenAI connection, but only once Decision checks is included from the Agent OS
 const decide = (...args) => (memoryState().items.some((i) => i.kind === 'decisions' && i.include === true) ? decideRaw(...args) : Promise.resolve(null));
 const memoryState = () => settings.memory ?? { items: [], excluded: [] };
 // a refresh only adds what's new, and drops anything Quorum can't use; anything you excluded stays out until you add it back by hand
@@ -1143,7 +1143,7 @@ function chatIndex() {
 
 ipcMain.handle('history', () => ({ meetings: meetingIndex(), chats: chatIndex() }));
 
-// the in-app reader only opens notes inside the connected brain's meetings folder
+// the in-app reader only opens notes inside the connected Agent OS's meetings folder
 const meetingFile = (file) => {
   const root = meetingsDir();
   const abs = path.resolve(String(file));
@@ -1176,7 +1176,7 @@ ipcMain.handle('note-ask', async (_e, file, question, history, files) => {
   const body = suggester.redactLines(readFileSync(abs, 'utf8')).replace(/^---\n[\s\S]*?\n---\n/, '');
   const prompt = [
     `You're helping with one meeting note at ${path.relative(b.root, abs)}. Its current body is between <note> tags.`,
-    'Answer questions about it, using the rest of the second brain when that helps.',
+    'Answer questions about it, using the rest of the Agent OS when that helps.',
     'If the user asks you to change the note, also return the complete updated body inside <updated-note></updated-note>, changing only what they asked for. Never include lines that say [withheld: opted-out customer] in an update.',
     `<note>\n${body}\n</note>`,
     `Question: ${String(question)}`,
@@ -1363,7 +1363,7 @@ ipcMain.handle('open-brain', (_e, what) => {
   shell.openPath(b.root);
 });
 
-// chat works on or off a call: the agent always has the second brain, plus the transcript when there is one
+// chat works on or off a call: the agent always has the Agent OS, plus the transcript when there is one
 // attachments are copied into Quorum's own folder so the agent only ever gets read access to the copies
 const ATTACH = path.join(homedir(), 'Library/Application Support/Quorum/attachments');
 const MAX_ATTACH = 25 * 1024 * 1024;
@@ -1392,7 +1392,7 @@ const stagedOnly = (files) => (Array.isArray(files) ? files.map(String).filter((
 
 ipcMain.handle('ask', async (_e, question, files) => {
   const b = brain();
-  if (!b) throw new Error('Connect your second brain first');
+  if (!b) throw new Error('Connect your Agent OS first');
   const transcript = meeting.transcript.length ? transcriptText() : '';
   const steps = [];
   const attached = stagedOnly(files);
@@ -1517,8 +1517,8 @@ ipcMain.handle('pick-meetings-dir', async () => {
 });
 ipcMain.handle('connect-brain', async () => {
   const r = await dialog.showOpenDialog(win, {
-    title: 'Connect your second brain',
-    message: 'Choose the root folder of your second brain: the folder with your notes, or the one with CLAUDE.md.',
+    title: 'Connect your Agent OS',
+    message: 'Choose the root folder of your Agent OS: the folder with your notes, or the one with CLAUDE.md.',
     defaultPath: settings.brainRoot || homedir(),
     properties: ['openDirectory'],
   });
@@ -1526,7 +1526,7 @@ ipcMain.handle('connect-brain', async () => {
   const b = inspectBrain(r.filePaths[0]);
   Object.assign(settings, { brainRoot: b.root, vaultPath: b.vault });
   writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
-  log('connected second brain', b.root);
+  log('connected Agent OS', b.root);
   suggester.reset();
   openIndex();
   return b;
@@ -1629,7 +1629,7 @@ const CONTROL_WRITES = new Set(['start', 'stop', 'go', 'end', 'ask', 'note-new',
 const CLI_SETTINGS = { model: ['opus', 'sonnet', 'haiku'], autoListen: [true, false], suggestions: [true, false] };
 function cliNote(rel) {
   const b = brain();
-  if (!b) throw new Error('Connect your second brain in Quorum first');
+  if (!b) throw new Error('Connect your Agent OS in Quorum first');
   const clean = String(rel ?? '').replace(new RegExp(`^${path.basename(b.vault)}/`), '');
   const abs = clean && vaultPath(b.vault, clean.endsWith('.md') ? clean : `${clean}.md`);
   if (!abs || !abs.endsWith('.md')) throw new Error(`No note at ${rel}`);
@@ -1662,14 +1662,14 @@ async function control({ cmd, args = {} }) {
       await endMeeting();
       return 'Call ended. Your notes are being written in Quorum.';
     case 'ask': {
-      if (!b) throw new Error('Connect your second brain in Quorum first');
+      if (!b) throw new Error('Connect your Agent OS in Quorum first');
       // a Terminal question is its own chat, so whatever chat is open in the app keeps going untouched
       const kept = { convo, chatHistory };
       convo = null; chatHistory = [];
       try { return await handlers.ask(null, String(args.question ?? '').slice(0, 4000), []); } finally { ({ convo, chatHistory } = kept); }
     }
     case 'note-new': {
-      if (!b) throw new Error('Connect your second brain in Quorum first');
+      if (!b) throw new Error('Connect your Agent OS in Quorum first');
       const rel = createNote(b.vault, String(args.folder || '00-inbox'), String(args.title || 'Untitled'));
       if (args.text) writeAtomic(path.join(b.vault, rel), `# ${path.basename(rel, '.md')}\n\n${String(args.text).replace(/\n*$/, '\n')}`);
       return { rel };

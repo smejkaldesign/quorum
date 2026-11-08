@@ -1,4 +1,4 @@
-// Quorum's local agent: Claude Code running inside the user's second brain with read-only tools.
+// Quorum's local agent: Claude Code running inside the user's Agent OS with read-only tools.
 // Same engine as their terminal agent, so their CLAUDE.md and conventions apply.
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -7,7 +7,7 @@ import path from 'node:path';
 
 const TIMEOUT_MS = 150000;
 
-// only the brain's safety hooks run (secret guards, opted-out filter); memory, reindex and ping hooks don't,
+// only the Agent OS's safety hooks run (secret guards, opted-out filter); memory, reindex and ping hooks don't,
 // so asking Quorum a question never writes to the vault
 function safetySettings(root) {
   const hook = (name) => ({ type: 'command', command: `python3 "${path.join(root, '.claude/hooks', name)}"` });
@@ -30,7 +30,7 @@ function describeStep(tool, input, root) {
 
 export function runAgent({ question, history, transcript, root, model, owner, onStep, redact, files = [], about = '', extra = { index: null, dirs: [], hints: [] } }) {
   const system = [
-    `You are Quorum, ${owner}'s assistant in the Quorum app, working in their second brain at ${root}.`,
+    `You are Quorum, ${owner}'s assistant in the Quorum app, working in their Agent OS at ${root}.`,
     'Use Grep, Glob and Read to find answers in his notes before answering. You can only read; never claim you changed anything.',
     'Answer in 2-5 short sentences, plain and literal. If the notes do not answer it, say so.',
     'End with a line "Sources:" then the relative paths of the notes you relied on, one per line. Omit Sources if you used none.',

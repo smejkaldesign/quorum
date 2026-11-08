@@ -278,7 +278,7 @@ export function App() {
             </button>
           </div>
           <div className="status-wrap">
-            <button className={`icon-btn brain ${view === 'settings' ? 'active' : ''}`} data-tip="Settings" aria-label="Settings and second brain"
+            <button className={`icon-btn brain ${view === 'settings' ? 'active' : ''}`} data-tip="Settings" aria-label="Settings and Agent OS"
               onClick={toggleMenu('brain')} aria-haspopup="menu" aria-expanded={menuOpen === 'brain'}>
               <IconGear width={19} height={19} />
             </button>
@@ -286,7 +286,7 @@ export function App() {
               <div className="menu brain-menu" role="menu">
                 <button role="menuitem" className="brain-item" onClick={() => { setMenuOpen(null); openSettings('memory'); }}>
                   <IconFolder width={18} height={18} className={brain ? 'ok' : 'err'} />
-                  <strong>{brain ? brain.name : 'No second brain'}</strong><em>{brain ? brain.root.replace(/^\/Users\/[^/]+/, '~') : 'Not connected'}</em>
+                  <strong>{brain ? brain.name : 'No Agent OS'}</strong><em>{brain ? brain.root.replace(/^\/Users\/[^/]+/, '~') : 'Not connected'}</em>
                 </button>
                 <button role="menuitem" className="brain-item" disabled>
                   <IconFolderOpen width={18} height={18} /><strong>Team vault</strong><em className="soon">Coming soon</em>
@@ -328,7 +328,7 @@ export function App() {
             )}
             {phase === 'idle' && msgs.length === 0 && (
               <QuorumCard>
-                <p>{brain ? `Ask me anything from ${brain.name}. ` : 'Connect your second brain so I can answer from your notes. '}When a call starts, I post a notice in the Zoom chat and listen on your Mac.</p>
+                <p>{brain ? `Ask me anything from ${brain.name}. ` : 'Connect your Agent OS so I can answer from your notes. '}When a call starts, I post a notice in the Zoom chat and listen on your Mac.</p>
                 <div className="row">
                   <button className="pill primary" onClick={() => window.quorum.start()}>Start listening</button>
                   <span className="hint">{settings.autoListen ? <><span className="live-dot" aria-hidden="true" />Auto-listen is on</> : 'Or turn on auto-listen in Settings'}</span>
@@ -387,7 +387,7 @@ export function App() {
             <div ref={chatEnd} />
           </div>
           <Composer value={draft} onChange={setDraft} onSubmit={(q, f) => send(q, f)} inputRef={composer} disabled={!brain}
-            placeholder={!brain ? 'Connect your second brain to start' : phase === 'listening' ? 'Message Quorum privately…' : `Ask ${brain.name} anything…`} />
+            placeholder={!brain ? 'Connect your Agent OS to start' : phase === 'listening' ? 'Message Quorum privately…' : `Ask ${brain.name} anything…`} />
         </>
       )}
 

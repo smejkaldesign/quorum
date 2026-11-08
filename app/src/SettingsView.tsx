@@ -107,7 +107,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
   );
 }
 
-// the brain, where Quorum saves notes, and meeting notes from other apps; Add takes a folder by hand when there's no connector for that app
+// the Agent OS, where Quorum saves notes, and meeting notes from other apps; Add takes a folder by hand when there's no connector for that app
 function SecondBrain({ brain, onConnect }: { brain: Brain | null; onConnect: () => void }) {
   type Source = Awaited<ReturnType<typeof window.quorum.meetingSources>>[number];
   const [sources, setSources] = useState<Source[]>([]);
@@ -217,7 +217,7 @@ function ProfilePage({ settings, email, name, onSettings, children }: { settings
 
       <h3>Account management</h3>
       <div className="set-card form">
-        <Row icon={<IconStack width={18} height={18} />} title={<>Export your notes <em className="stub">Coming soon</em></>} desc="Your notes are already plain files in your second brain">
+        <Row icon={<IconStack width={18} height={18} />} title={<>Export your notes <em className="stub">Coming soon</em></>} desc="Your notes are already plain files in your Agent OS">
           <button className="pill" disabled>Export</button>
         </Row>
       </div>
@@ -369,14 +369,14 @@ function MemMenu({ it, onAbout, onDelete }: { it: MemoryItem; onAbout: () => voi
 
 const ABOUT: Record<string, string[]> = {
   guards: [
-    'Hooks from your second brain that run on every file Quorum reads. They hide secrets, and anything naming a customer who opted out of AI, before Quorum sees it.',
+    'Hooks from your Agent OS that run on every file Quorum reads. They hide secrets, and anything naming a customer who opted out of AI, before Quorum sees it.',
     "They're always on and can't be deleted here. Your workspace admin will control them.",
   ],
   index: [
-    'The catalog at the top of your second brain. Quorum reads it first to jump to the right folder and note instead of searching everything.',
+    'The catalog at the top of your Agent OS. Quorum reads it first to jump to the right folder and note instead of searching everything.',
   ],
   search: [
-    "Before Quorum answers, Quorum runs your second brain's own search with your question and hands Quorum the best matching notes to read first.",
+    "Before Quorum answers, Quorum runs your Agent OS's own search with your question and hands Quorum the best matching notes to read first.",
     'With embeddings, the matching runs on this Mac, so your question never leaves it.',
   ],
   graph: [
@@ -403,7 +403,7 @@ function AboutCapability({ it, onClose }: { it: MemoryItem; onClose: () => void 
           <dt>Status</dt><dd>{status}</dd>
           <dt>Location</dt><dd>{it.path.replace(/^\/Users\/[^/]+/, '~')}</dd>
         </dl>
-        {it.kind !== 'guards' && <p className="about-note">Deleting it takes it out of Quorum. The files stay in your second brain.</p>}
+        {it.kind !== 'guards' && <p className="about-note">Deleting it takes it out of Quorum. The files stay in your Agent OS.</p>}
         <div className="modal-actions">
           <span />
           <span className="modal-actions-end">
@@ -433,7 +433,7 @@ const KIND_ICON: Record<string, (p: { width?: number; height?: number; filled?: 
   instructions: IconBrain, agents: IconPeople, skills: IconGrid, guards: IconShield, vault: IconStack, meetings: IconFolder, index: IconFork, folder: IconFolder, search: IconSearch, graph: IconGraph, decisions: IconListCheck,
 };
 
-// additional context from the brain: found by a local scan of file names, reviewed one by one
+// additional context from the Agent OS: found by a local scan of file names, reviewed one by one
 function MemoryScan() {
   const [m, setM] = useState<Memory | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -487,7 +487,7 @@ function MemoryScan() {
           <div className="set-card mem-card">{pending.map(row)}</div>
         </>
       )}
-      {!m.items.length && <p className="set-review">Nothing yet. Refresh to scan your second brain, or Add a folder.</p>}
+      {!m.items.length && <p className="set-review">Nothing yet. Refresh to scan your Agent OS, or Add a folder.</p>}
       {about && <AboutCapability it={about} onClose={() => setAbout(null)} />}
     </>
   );
@@ -652,7 +652,7 @@ function useMenu() {
   return [open, setOpen] as const;
 }
 
-// one connection for the whole workspace. No backend yet, so the key sits in this Mac's Keychain; the brain's scripts read it too
+// one connection for the whole workspace. No backend yet, so the key sits in this Mac's Keychain; the Agent OS's scripts read it too
 function WorkspaceDecisions({ connectedBy }: { connectedBy?: string }) {
   const [dk, setDk] = useState<{ connected: boolean } | null>(null);
   const [more, setMore] = useMenu();
