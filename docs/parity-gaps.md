@@ -9,13 +9,16 @@ Status on 2026-11-08, after the first port. The reference ran against a differen
 - Claude Code sign-in is the personal claude.ai account, so agent questions and summaries run without any API key.
 - Search hints and in-call suggestions call `search-memory.py --mode keyword` and parse its `N. [path:lines]` output. The reference script took `--keyword --cite --expand-graph`; this one does not, so the call sites and `parseHits` were rewritten.
 
+## Now native (no longer depend on the connected Agent OS)
+
+- **Read guard.** `app/guards/read-guard.py` ships with the app and runs on every Read, Grep and Glob the agent makes: secret-looking files, notes with `confidential:` in frontmatter, and private folders (the user's `privateDirs` setting, else any folder named personal or private) are denied. Guard hooks found in the connected Agent OS still run in addition.
+- **Decision checks.** `app/decisions.js` is a provider abstraction over System One models: OpenAI decisions and TypeSafe Jev. Connect either in Settings › Workspace › Connections; the key stays in Keychain. Quick checks run whenever a provider is connected.
+
 ## Missing in this vault (optional features, app degrades quietly)
 
 | Feature | Reference file | Here | Effect | Fix |
 |---|---|---|---|---|
-| Read guards on the agent | `.claude/hooks/secret-file-guard.py`, `opted-out-guard.py`, `output-secret-tripwire.py` | Only `secret-guard.py` (a Bash guard, different hook shape) | Agent reads run with no file-level guard; Settings shows no "Guard hooks" item | Write a Read/Grep/Glob PreToolUse guard that denies `.env`, `*.pem`, `02-personal/` and `confidential:` files; add `output-secret-tripwire.py` PostToolUse |
 | Opt-out redaction list | `MyBrain/scripts/embed-bench/excluded.txt` | Absent | No term redaction in transcripts or suggestions | Decide whether a personal exclusion list is needed; if so create the file (one term per line) |
-| Decision checks (fast yes/no) | `scripts/openai_decisions.py` + OpenAI key in Keychain | Absent | STOP detection falls back to the regex only; suggestion gate skipped | Add the script and key in Settings › Workspace, or leave off |
 | Link graph expansion | `scripts/graph_links.py` | Absent | Hints are keyword-only | `search-memory.py --related` is wired in when the graph marker exists; add a `graph_links.py` shim or drop the marker |
 | Semantic search | `MyBrain/memory/vectors.sqlite` | Absent (hybrid mode here uses Voyage through `brain.sqlite`) | Settings labels search as "Keyword search" | Fine as is; relabel later if hybrid is preferred |
 | Meeting notes folder | `MyBrain/08-meetings/` | Created empty, `quorum/` subfolder | Saved notes land in `08-meetings/quorum/`; Granola import target is `08-meetings/granola/` | Run a Granola export into `08-meetings/granola/` when wanted |

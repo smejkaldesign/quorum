@@ -22,7 +22,7 @@ What Quorum uses from the Agent OS, found by file name only:
 | Search | `MyBrain/scripts/search-memory.py` | Hints before the agent runs, suggestion lookups during a call |
 | Meeting notes | `MyBrain/08-meetings/quorum/` | Where saved meetings land (`source: quorum` in frontmatter) |
 
-Optional markers it also recognizes when present: `.claude/hooks/secret-file-guard.py`, `opted-out-guard.py`, `output-secret-tripwire.py` (read guards for the agent), `scripts/openai_decisions.py` plus `scripts/embed-bench/excluded.txt` (opt-out redaction). This vault does not have them yet; see `docs/parity-gaps.md`.
+Built in, with no dependency on the connected Agent OS: a read guard on every file the agent opens (`app/guards/read-guard.py`: secrets, `confidential:` frontmatter, private folders) and decision checks on a System One model (OpenAI decisions or TypeSafe Jev, connected in Settings). Optional markers it also recognizes when present: `.claude/hooks/secret-file-guard.py`, `opted-out-guard.py`, `output-secret-tripwire.py` (extra read guards) and `scripts/embed-bench/excluded.txt` (opt-out redaction). See `docs/parity-gaps.md`.
 
 ## Run
 
