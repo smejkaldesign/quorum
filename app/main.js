@@ -1737,9 +1737,12 @@ app.whenReady().then(() => {
     }, 2000));
   }
   // dev: screenshot only Quorum's own window (never the rest of the screen), QUORUM_SHOT=path:delayMs
+  // several shots per launch: QUORUM_SHOT=a.png:4000,b.png:9000
   if (process.env.QUORUM_SHOT) {
-    const [file, delay] = process.env.QUORUM_SHOT.split(':');
-    setTimeout(() => win.webContents.capturePage().then((img) => writeFileSync(file, img.toPNG())), Number(delay) || 5000);
+    for (const pair of process.env.QUORUM_SHOT.split(',')) {
+      const [file, delay] = pair.split(':');
+      setTimeout(() => win.webContents.capturePage().then((img) => writeFileSync(file, img.toPNG())), Number(delay) || 5000);
+    }
   }
   if (process.env.QUORUM_SELFTEST) {
     win.webContents.once('did-finish-load', () => setTimeout(() => win.webContents.executeJavaScript(`document.querySelector('.start button').click()`), 1500));
