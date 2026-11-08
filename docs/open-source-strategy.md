@@ -32,7 +32,7 @@ The open-source edition costs Smejkal Design $0 to operate. Every feature in it 
 
 ## License and repo layout
 
-- One public repo `smejkaldesign/quorum`, Apache-2.0 at the root. Permissive so a company can run it on every laptop without legal review; the moat is the hosted service, not the client code.
+- One public repo `smejkaldesign/quorum`, Apache-2.0 at the root; copyright holder Smejkal Design (sole proprietorship). CLA enforced with the CLA Assistant GitHub app; SECURITY.md with a contact address. Permissive so a company can run it on every laptop without legal review; the moat is the hosted service, not the client code.
 - `app/ee/` holds Cloud-only client code (account, sync, members, Build my Agent OS, team knowledge UI) under `ee/LICENSE` (source available, use only with a Quorum Cloud subscription). `supabase/` lives under the same terms. This mirrors Celune's boundary and reuses its CLA and license text.
 - CI check: the Local build must not import from `app/ee/`. A `QUORUM_EDITION=local|cloud` build flag selects the entry points; the default is `local`.
 - Secrets scan (gitleaks) and a founder-content guard (no personal paths, emails, customer names) run on every push, as on Celune.
@@ -59,3 +59,7 @@ The open-source edition costs Smejkal Design $0 to operate. Every feature in it 
 
 - docs/parity-gaps.md, docs/backend-plan.md
 - Vault: `MyBrain/04-projects/celune-oss-narrative-draft.md`, `celune-cloud-pricing-simplification.md`, `celune-oss-phase2-one-repo-prd.md`
+
+## Accounts and documents, logged on the tasks that need them
+
+Apple Developer Program (signing task), Stripe activation, Terms and Privacy pages and Stripe Tax (billing task), Google OAuth consent screen and Resend SMTP (Google sign-in task), support mailbox and a trademark search note (quorum.watch task). None of these are started until their task is.
