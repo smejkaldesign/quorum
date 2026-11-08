@@ -1,6 +1,8 @@
 import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import type { Brain, CalendarSettings, Memory, MemoryItem, OptOut, Profile, Settings, Voice, Workspace, Transcription, DecisionProvider, DecisionsStatus } from './quorum';
 import { useSession } from './session';
+import { Row, Toggle, useMenu } from './controls';
+import { AccountCard, MembersPage, useAccount } from './Account';
 import {
   IconBell, IconBrain, IconBuilding, IconCalendar, IconChat, IconFolder, IconGrid, IconKeyboard, IconLock,
   IconChevron, IconCode, IconExternal, IconGlobe, ProviderMark, IconMic, IconMore, IconNotes, IconPeople, IconPerson, IconPlus, IconPower, IconReset, IconSliders, IconStack, IconCheck, IconCopy, IconFolderFill, IconFork, IconShield, IconGraph, IconSearch, IconClose, Wave,
@@ -22,7 +24,7 @@ const ACCOUNT: Nav[] = [
 const WORKSPACE: Nav[] = [
   { id: 'general', label: 'General', icon: IconBuilding },
   { id: 'knowledge', label: 'Knowledge', icon: IconBrain },
-  { id: 'members', label: 'Members', icon: IconPeople, soon: true },
+  { id: 'members', label: 'Members', icon: IconPeople },
 ];
 
 
@@ -95,7 +97,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
               <SecondBrain brain={brain} onConnect={onConnect} />
               {brain && <MemoryScan />}
             </>
-          ) : page === 'members' ? <MembersPage user={user} />
+          ) : page === 'members' ? <MembersPage />
             : page === 'calendar' ? <CalendarPage />
             : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} />
             : page === 'notifications' ? <NotificationsPage />
@@ -161,25 +163,6 @@ function MeetingsRow() {
   );
 }
 
-function Row({ icon, title, desc, children }: { icon: ReactNode; title: ReactNode; desc: ReactNode; children?: ReactNode }) {
-  return (
-    <div className="set-row">
-      <span className="set-icon">{icon}</span>
-      <div className="set-text"><strong>{title}</strong><span>{desc}</span></div>
-      {children && <div className="set-ctrl">{children}</div>}
-    </div>
-  );
-}
-
-function Toggle({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
-  return (
-    <label className={`switch ${disabled ? 'off' : ''}`}>
-      <input type="checkbox" checked={on} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
-      <span className="track"><span className="thumb" /></span>
-    </label>
-  );
-}
-
 // saves a field when you leave it, so typing never fights a round trip
 function Field({ value, placeholder, onSave }: { value: string; placeholder?: string; onSave: (v: string) => void }) {
   const [v, setV] = useState(value);
@@ -237,8 +220,10 @@ function WorkspacePage({ settings, onSettings }: { settings: Settings; onSetting
   const save = async (patch: Partial<Workspace>) => onSettings(await window.quorum.setSettings({ workspace: patch }));
   const [about, setAbout] = useState(w.companyDescription ?? '');
   useEffect(() => setAbout(w.companyDescription ?? ''), [w.companyDescription]);
+  const account = useAccount();
   return (
     <>
+      {account && <AccountCard account={account} />}
       <h3>Company</h3>
       <div className="set-card form">
         <div className="set-line"><strong>Company name</strong><Field value={w.company ?? ''} placeholder="Company" onSave={(v) => save({ company: v })} /></div>
@@ -546,35 +531,6 @@ function KnowledgePage() {
 // the pages below are real layouts with every control disabled until the feature behind them exists
 const noop = () => {};
 
-function MembersPage({ user }: { user: { name: string; email: string; photo: string | null } | null }) {
-  const [invitee, setInvitee] = useState('');
-  const hasInvitee = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(invitee.trim());
-  return (
-    <>
-      <h3>Invite teammates</h3>
-      <div className="set-card form">
-        <div className="set-line">
-          <label className="set-field wide"><input type="email" placeholder="name@company.com" value={invitee} onChange={(e) => setInvitee(e.target.value)} /></label>
-          <div className="set-line-end">
-            <select className="set-select" disabled={!hasInvitee} defaultValue="member" aria-label="Role"><option value="member">Member</option><option value="admin">Admin</option></select>
-            <span data-tip="Coming soon"><button className="pill" disabled>Invite</button></span>
-          </div>
-        </div>
-      </div>
-
-      <h3>1 member</h3>
-      <div className="set-card">
-        <div className="member-row">
-          <span className="member-avatar">{user?.photo ? <img src={user.photo} alt="" /> : (user?.name ?? 'Y')[0]}</span>
-          <div className="set-text"><strong>{user?.name ?? 'You'}<em className="stub">You</em></strong><span>{user?.email || 'Not signed in to Claude'}</span></div>
-          <select className="set-select" disabled defaultValue="owner"><option value="owner">Owner</option></select>
-          <button className="icon-btn" disabled aria-label="Member options"><IconMore width={16} height={16} /></button>
-        </div>
-      </div>
-    </>
-  );
-}
-
 // the source is the Calendar app on this Mac for now; Google Calendar comes later as a second source
 function CalendarPage() {
   const [cal, setCal] = useState<CalendarSettings | null>(null);
@@ -649,18 +605,6 @@ function NotificationsPage() {
       </div>
     </>
   );
-}
-
-// a small ••• or + dropdown that closes on any outside click
-function useMenu() {
-  const [open, setOpen] = useState(false);
-  useEffect(() => {
-    if (!open) return;
-    const close = () => setOpen(false);
-    window.addEventListener('click', close);
-    return () => window.removeEventListener('click', close);
-  }, [open]);
-  return [open, setOpen] as const;
 }
 
 // one connection for the whole workspace: a System One decision model (OpenAI decisions or TypeSafe Jev) for quick yes-or-no checks.

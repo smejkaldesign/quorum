@@ -27,6 +27,21 @@ export type Transcription = { echo?: 'off' | 'filter' | 'aec'; gap?: number; liv
 export type Settings = { autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; suggestions: boolean; access?: 'read' | 'write'; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription };
 export type OnboardingStatus = { firstRun: boolean; defaultVaultDir: string; permissions: { microphone: string; audio: string; accessibility: string; calendar: string }; claude: { installed: boolean; loggedIn?: boolean; email?: string; org?: string; plan?: string; version?: string } };
 export type Brain = { root: string; vault: string; name: string; markers: { agentOS: string | null; obsidian: boolean; search: boolean; safetyHooks: boolean } };
+// hosted edition: who is signed in, which organization they are in, and whether notes sync
+export type Role = 'owner' | 'admin' | 'member';
+export type AccountWorkspace = { id: string; name: string; domain: string | null; domainJoin: boolean; role: Role };
+export type AccountInvite = { inviteId: string; workspaceId: string; workspaceName: string; role: Role; invitedByEmail: string | null; expiresAt: string };
+export type AccountState = {
+  signedIn: boolean; email: string | null; userId: string | null;
+  workspace: AccountWorkspace | null;
+  workspaces: { id: string; name: string; role: Role }[];
+  invites: AccountInvite[];
+  domainMatches: { workspaceId: string; name: string }[];
+  sync: boolean; lastSyncAt: string | null; syncError: string | null;
+};
+export type Result = { ok?: boolean; error?: string };
+export type Member = { userId: string; email: string; name: string | null; role: Role; joinedAt: string };
+export type MemberInvite = { inviteId: string; email: string; role: Role; expiresAt: string };
 export type MeetingRow = { id: string; file: string; kind: 'meeting' | 'note'; source: string; title: string; date: string | null; people: string[]; count: number; visibility: Visibility; rel: string; link: string; app: string };
 export type ChatRow = { id: string; title: string; date: string; turns: number; meetingFile: string | null; meetingTitle: string | null };
 export type Visibility = 'private' | 'public';
@@ -167,6 +182,20 @@ declare global {
       onboardingOpenPermission(which: 'microphone' | 'audio' | 'accessibility' | 'calendar'): Promise<void>;
       onboardingRequestMicrophone(): Promise<boolean>;
       onboardingDone(): Promise<boolean>;
+      accountStatus(): Promise<AccountState>;
+      accountSendCode(email: string): Promise<Result>;
+      accountVerifyCode(email: string, code: string): Promise<Result>;
+      accountSignOut(): Promise<void>;
+      orgCreate(name: string, domain: string | null, domainJoin: boolean): Promise<Result>;
+      orgJoin(target: { inviteId: string } | { workspaceId: string }): Promise<Result>;
+      orgSwitch(workspaceId: string): Promise<Result>;
+      membersList(): Promise<{ members: Member[]; invites: MemberInvite[] } | { error: string }>;
+      memberInvite(email: string, role: Role): Promise<Result>;
+      memberRemove(userId: string): Promise<Result>;
+      inviteRevoke(inviteId: string): Promise<Result>;
+      syncSet(on: boolean): Promise<Result>;
+      syncNow(): Promise<{ pushed?: { notes: number; meetings: number }; error?: string }>;
+      onAccount(cb: (s: AccountState) => void): Unsub;
     };
   }
 }
