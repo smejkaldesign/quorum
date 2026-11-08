@@ -48,6 +48,7 @@
       "linkparse.js",
       "relink.js",
       "preload.cjs",
+      "guards/**",
       "dist/**",
       "assets/**",
       "package.json",

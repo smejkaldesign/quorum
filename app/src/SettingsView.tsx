@@ -1,5 +1,5 @@
 import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import type { Brain, CalendarSettings, Memory, MemoryItem, OptOut, Profile, Settings, Voice, Workspace, Transcription } from './quorum';
+import type { Brain, CalendarSettings, Memory, MemoryItem, OptOut, Profile, Settings, Voice, Workspace, Transcription, DecisionProvider, DecisionsStatus } from './quorum';
 import { useSession } from './session';
 import {
   IconBell, IconBrain, IconBuilding, IconCalendar, IconChat, IconFolder, IconGrid, IconKeyboard, IconLock,
@@ -382,10 +382,6 @@ const ABOUT: Record<string, string[]> = {
   graph: [
     'Search also follows the links between notes one step from each match, so related notes that use different words still turn up.',
   ],
-  decisions: [
-    "Fast yes-or-no checks: spotting STOP said another way during a call, deciding when it's worth looking for an answer, and what's worth keeping.",
-    "They use your workspace's OpenAI connection and only run once this is included. Customers on the blacklist are never sent.",
-  ],
   folder: [
     'Quorum can read the notes in this folder when it answers. The guards still apply to every file.',
   ],
@@ -424,7 +420,6 @@ function why(it: MemoryItem): string {
     case 'index': return `Quorum starts from ${it.detail.split(' · ')[0]} to find notes faster`;
     case 'search': return it.detail === 'local embeddings' ? 'Finds related notes first, with embeddings on this Mac' : 'Finds matching notes before Quorum starts';
     case 'graph': return 'Search also pulls in notes linked to each match';
-    case 'decisions': return "Quick checks use your workspace's OpenAI connection";
     default: return 'Quorum can read this folder when it answers';
   }
 }
@@ -652,42 +647,57 @@ function useMenu() {
   return [open, setOpen] as const;
 }
 
-// one connection for the whole workspace. No backend yet, so the key sits in this Mac's Keychain; the Agent OS's scripts read it too
+// one connection for the whole workspace: a System One decision model (OpenAI decisions or TypeSafe Jev) for quick yes-or-no checks.
+// No backend yet, so the key sits in this Mac's Keychain
 function WorkspaceDecisions({ connectedBy }: { connectedBy?: string }) {
-  const [dk, setDk] = useState<{ connected: boolean } | null>(null);
+  const [dk, setDk] = useState<DecisionsStatus | null>(null);
   const [more, setMore] = useMenu();
-  const [keying, setKeying] = useState(false);
-  useEffect(() => { window.quorum.decisionsStatus().then(setDk); }, []);
-  const on = !!dk?.connected;
+  const [pick, setPick] = useMenu();
+  const [keying, setKeying] = useState<DecisionProvider | null>(null);
+  const refresh = () => window.quorum.decisionsStatus().then(setDk);
+  useEffect(() => { refresh(); }, []);
+  const on = !!dk?.connected && !!dk.provider;
+  const name = on && dk?.provider ? dk.providers[dk.provider].name : 'Decision checks';
+  const ids = (Object.keys(dk?.providers ?? {}) as DecisionProvider[]);
   return (
     <div className="set-card">
-      <Row icon={<ProviderMark provider="openai" />} title="OpenAI decisions"
-        desc={on ? `Quick yes-or-no checks for everyone${connectedBy ? ` · set up by ${connectedBy}` : ''}` : 'Quick yes-or-no checks for everyone in the workspace'}>
+      <Row icon={on && dk?.provider ? <ProviderMark provider={dk.provider} /> : <IconShield width={18} height={18} />} title={name}
+        desc={on ? `Quick yes-or-no checks for everyone${connectedBy ? ` · set up by ${connectedBy}` : ''}` : 'Quick yes-or-no checks during calls: STOP said another way, what is worth a note, when to look for an answer'}>
         {on ? (
           <span className="menu-wrap" onClick={(e) => e.stopPropagation()}>
-            <button className="icon-btn" aria-label="OpenAI options" aria-haspopup="menu" aria-expanded={more} onClick={() => setMore((o) => !o)}><IconMore /></button>
+            <button className="icon-btn" aria-label="Decision checks options" aria-haspopup="menu" aria-expanded={more} onClick={() => setMore((o) => !o)}><IconMore /></button>
             {more && (
               <div className="menu end" role="menu">
-                <button role="menuitem" onClick={() => { setMore(false); setKeying(true); }}><IconReset width={15} height={15} /> Replace key</button>
-                <button role="menuitem" className="danger" onClick={async () => { setMore(false); await window.quorum.decisionsRemove(); setDk({ connected: false }); }}><IconClose width={15} height={15} /> Disconnect</button>
+                <button role="menuitem" onClick={() => { setMore(false); setKeying(dk!.provider); }}><IconReset width={15} height={15} /> Replace key</button>
+                {ids.filter((id) => id !== dk?.provider).map((id) => <button key={id} role="menuitem" onClick={() => { setMore(false); setKeying(id); }}><ProviderMark provider={id} /> Switch to {dk!.providers[id].name}</button>)}
+                <button role="menuitem" className="danger" onClick={async () => { setMore(false); await window.quorum.decisionsRemove(); refresh(); }}><IconClose width={15} height={15} /> Disconnect</button>
               </div>
             )}
           </span>
-        ) : <button className="pill" onClick={() => setKeying(true)}>Connect</button>}
+        ) : (
+          <span className="menu-wrap" onClick={(e) => e.stopPropagation()}>
+            <button className="pill" aria-haspopup="menu" aria-expanded={pick} onClick={() => setPick((o) => !o)}>Connect</button>
+            {pick && (
+              <div className="menu end" role="menu">
+                {ids.map((id) => <button key={id} role="menuitem" onClick={() => { setPick(false); setKeying(id); }}><ProviderMark provider={id} /> {dk!.providers[id].name}</button>)}
+              </div>
+            )}
+          </span>
+        )}
       </Row>
-      {keying && <DecisionsKey onDone={(ok) => { setKeying(false); if (ok) setDk({ connected: true }); }} />}
+      {keying && dk && <DecisionsKey provider={keying} info={dk.providers[keying]} onDone={(ok) => { setKeying(null); if (ok) refresh(); }} />}
     </div>
   );
 }
 
-// the key is checked with one tiny question, then saved to the Keychain where the vault's scripts read it too
-function DecisionsKey({ onDone }: { onDone: (ok: boolean) => void }) {
+// the key is checked with one tiny question, then saved to the Keychain
+function DecisionsKey({ provider, info, onDone }: { provider: DecisionProvider; info: { name: string; placeholder: string; keyHint: string }; onDone: (ok: boolean) => void }) {
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const save = async () => {
     setBusy(true); setError('');
-    const r = await window.quorum.decisionsSet(key);
+    const r = await window.quorum.decisionsSet(provider, key);
     setBusy(false);
     if (r.error) setError(r.error); else onDone(true);
   };
@@ -695,9 +705,9 @@ function DecisionsKey({ onDone }: { onDone: (ok: boolean) => void }) {
     <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onDone(false); }}
       onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onDone(false); } }}>
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="dk-title">
-        <h2 id="dk-title">Connect OpenAI decisions</h2>
-        <p>Paste your OpenAI API key. Quorum keeps it in your Mac's Keychain.</p>
-        <label className="set-field wide"><input type="password" autoFocus aria-label="OpenAI API key" placeholder="sk-..." value={key} onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && key.trim()) save(); }} /></label>
+        <h2 id="dk-title">Connect {info.name}</h2>
+        <p>Paste your {info.keyHint}. Quorum keeps it in your Mac's Keychain.</p>
+        <label className="set-field wide"><input type="password" autoFocus aria-label={info.keyHint} placeholder={info.placeholder} value={key} onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && key.trim()) save(); }} /></label>
         {error && <p className="set-error">{error}</p>}
         <div className="modal-actions">
           <span />

@@ -20,7 +20,9 @@ export type Memory = { items: MemoryItem[]; excluded: string[]; scannedAt?: stri
 export type Profile = { name?: string; title?: string; linkedin?: string; photo?: string };
 export type Voice = { locale?: string; sounds?: boolean; dictionary?: { heard: string; write: string }[] };
 export type OptOut = { name?: string; domain?: string };
-export type Workspace = { company?: string; companyDescription?: string; neverListen?: string[]; optOuts?: OptOut[]; decisions?: { provider: 'openai'; by?: string; at?: string }; stopWord?: string; goWord?: string };
+export type DecisionProvider = 'openai' | 'typesafe';
+export type DecisionsStatus = { connected: boolean; provider: DecisionProvider | null; providers: Record<DecisionProvider, { name: string; placeholder: string; keyHint: string }> };
+export type Workspace = { company?: string; companyDescription?: string; neverListen?: string[]; optOuts?: OptOut[]; decisions?: { provider: DecisionProvider; by?: string; at?: string }; stopWord?: string; goWord?: string };
 export type Transcription = { echo?: 'off' | 'filter' | 'aec'; gap?: number; live?: boolean; capture?: 'meeting' | 'all' };
 export type Settings = { autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; suggestions: boolean; access?: 'read' | 'write'; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription };
 export type Brain = { root: string; vault: string; name: string; markers: { agentOS: string | null; obsidian: boolean; search: boolean; safetyHooks: boolean } };
@@ -133,8 +135,8 @@ declare global {
       meetingProviderSet(id: string, on: boolean): Promise<void>;
       meetingProviderCheck(): Promise<void>;
       axSettingsOpen(): Promise<void>;
-      decisionsStatus(): Promise<{ connected: boolean }>;
-      decisionsSet(key: string): Promise<{ ok?: boolean; error?: string }>;
+      decisionsStatus(): Promise<DecisionsStatus>;
+      decisionsSet(provider: DecisionProvider, key: string): Promise<{ ok?: boolean; error?: string }>;
       decisionsRemove(): Promise<void>;
       mcpStatus(): Promise<{ added: boolean; node: string; cli: string; command: string }>;
       mcpAdd(): Promise<{ added: boolean; error?: string | null }>;

@@ -6,7 +6,7 @@ import { addAlias, retargetLinks, rewriteLinks, writeAtomic } from './relink.js'
 import { createSuggester } from './suggest.js';
 import { extractJson } from './json.js';
 import { startControl } from './control.js';
-import { decide as decideRaw, decisionsKey, removeDecisionsKey, setDecisionsKey } from './decisions.js';
+import { PROVIDERS as DECISION_PROVIDERS, connectedProvider, decide as decideRaw, removeDecisionsKey, setDecisionsKey } from './decisions.js';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -56,6 +56,8 @@ const goRe = () => new RegExp(`^\\s*${reWord(chatWords().go)}\\s*[.!]*\\s*$`, 'i
 
 const SETTINGS_FILE = path.join(SESSIONS, '..', 'settings.json');
 const settings = { autoListen: false, model: 'sonnet', suggestions: true };
+// folders the built-in read guard keeps away from the agent: the user's list, else any folder named personal or private one or two levels down
+const privateDirs = (root) => settings.privateDirs ?? (() => { try { return readdirSync(root, { withFileTypes: true }).flatMap((d) => (d.isDirectory() && /personal|private/i.test(d.name) ? [d.name] : d.isDirectory() && !d.name.startsWith('.') ? readdirSync(path.join(root, d.name), { withFileTypes: true }).filter((c) => c.isDirectory() && /personal|private/i.test(c.name)).map((c) => path.join(d.name, c.name)) : [])); } catch { return []; } })();
 try { if (existsSync(SETTINGS_FILE)) Object.assign(settings, JSON.parse(readFileSync(SETTINGS_FILE, 'utf8'))); } catch {}
 
 if (!settings.brainRoot) {
@@ -905,7 +907,7 @@ ipcMain.handle('set-settings', (_e, next) => {
 });
 // only what Quorum actually uses today, found by file and folder names only; no note is read and no model is involved
 // (meeting notes have their own folder setting above, so they aren't listed here)
-const USABLE = new Set(['guards', 'index', 'folder', 'search', 'graph', 'decisions']);
+const USABLE = new Set(['guards', 'index', 'folder', 'search', 'graph']);
 function scanBrain(root, vault) {
   const found = [];
   const add = (kind, label, abs, detail) => { if (existsSync(abs)) found.push({ id: `${kind}:${abs}`, kind, label, path: abs, detail }); };
@@ -922,9 +924,6 @@ function scanBrain(root, vault) {
     const graph = [path.join(vault, 'scripts/graph_links.py'), path.join(root, 'scripts/graph_links.py')].find(existsSync);
     if (graph) add('graph', 'Link graph', graph, 'wikilinks');
   }
-  // the Agent OS's own decision-model client; once it's set up there, Quorum's quick checks can use the same connection
-  const decisions = [path.join(vault, 'scripts/openai_decisions.py'), path.join(root, 'scripts/openai_decisions.py')].find(existsSync);
-  if (decisions) add('decisions', 'Decision checks', decisions, 'OpenAI decisions');
   return found;
 }
 // what Quorum gets from Additional context: the index to start from, and any folders you added
@@ -952,8 +951,9 @@ function searchHints(question, ctx, root) {
   });
 }
 const saveSettings = () => writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
-// Quorum's quick checks run on the workspace's OpenAI connection, but only once Decision checks is included from the Agent OS
-const decide = (...args) => (memoryState().items.some((i) => i.kind === 'decisions' && i.include === true) ? decideRaw(...args) : Promise.resolve(null));
+// quick checks are native: they run on whichever System One provider the workspace connected, and skip quietly without one
+const decisionProvider = () => connectedProvider(settings.workspace?.decisions?.provider);
+const decide = async (...args) => { const p = await decisionProvider(); return p ? decideRaw(p, ...args) : null; };
 const memoryState = () => settings.memory ?? { items: [], excluded: [] };
 // a refresh only adds what's new, and drops anything Quorum can't use; anything you excluded stays out until you add it back by hand
 let scanRun = 0;
@@ -1182,7 +1182,7 @@ ipcMain.handle('note-ask', async (_e, file, question, history, files) => {
     `Question: ${String(question)}`,
   ].join('\n\n');
   const attached = stagedOnly(files);
-  const r = await runAgent({ question: prompt, transcript: '', root: b.root, extra: await agentExtra(String(question), b.root), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached, history: (history ?? []).slice(-4), onStep: (text) => toUI('agent-step', { text }) }).finally(() => unstage(attached));
+  const r = await runAgent({ privateDirs: privateDirs(b.root), question: prompt, transcript: '', root: b.root, extra: await agentExtra(String(question), b.root), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached, history: (history ?? []).slice(-4), onStep: (text) => toUI('agent-step', { text }) }).finally(() => unstage(attached));
   const m = r.text.match(/<updated-note>\n?([\s\S]*?)\n?<\/updated-note>/);
   const answer = r.text.replace(/<updated-note>[\s\S]*?<\/updated-note>/, '').trim();
   const fm = readFrontmatter(readFileSync(abs, 'utf8').slice(0, 4000));
@@ -1397,6 +1397,7 @@ ipcMain.handle('ask', async (_e, question, files) => {
   const steps = [];
   const attached = stagedOnly(files);
   const r = await runAgent({
+    privateDirs: privateDirs(b.root),
     question, transcript, root: b.root, extra: await agentExtra(String(question), b.root), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached,
     history: chatHistory.slice(-4), onStep: (text) => { steps.push(text); toUI('agent-step', { text }); },
   }).finally(() => unstage(attached));
@@ -1596,14 +1597,15 @@ ipcMain.handle('meeting-provider-set', (_e, id, on) => {
   writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
 });
 ipcMain.handle('meeting-provider-check', () => { helperSend({ cmd: 'axStatus', prompt: true }); });
-ipcMain.handle('decisions-status', async () => ({ connected: !!(await decisionsKey()) }));
-ipcMain.handle('decisions-set', async (_e, key) => {
-  const r = await setDecisionsKey(String(key ?? '').trim());
+ipcMain.handle('decisions-status', async () => { const provider = await decisionProvider(); return { connected: !!provider, provider, providers: Object.fromEntries(Object.entries(DECISION_PROVIDERS).map(([id, p]) => [id, { name: p.name, placeholder: p.placeholder, keyHint: p.keyHint }])) }; });
+ipcMain.handle('decisions-set', async (_e, provider, key) => {
+  if (!DECISION_PROVIDERS[provider]) return { error: 'Unknown provider' };
+  const r = await setDecisionsKey(provider, String(key ?? '').trim());
   // a workspace connection: with no backend yet the key lives in this Mac's Keychain, and the workspace records who set it up
-  if (r.ok) { settings.workspace = { ...settings.workspace, decisions: { provider: 'openai', by: OWNER, at: new Date().toISOString() } }; saveSettings(); toUI('settings', settings); }
+  if (r.ok) { settings.workspace = { ...settings.workspace, decisions: { provider, by: OWNER, at: new Date().toISOString() } }; saveSettings(); toUI('settings', settings); }
   return r;
 });
-ipcMain.handle('decisions-remove', async () => { await removeDecisionsKey(); if (settings.workspace) { delete settings.workspace.decisions; saveSettings(); toUI('settings', settings); } });
+ipcMain.handle('decisions-remove', async () => { for (const id of Object.keys(DECISION_PROVIDERS)) await removeDecisionsKey(id); if (settings.workspace) { delete settings.workspace.decisions; saveSettings(); toUI('settings', settings); } });
 ipcMain.handle('ax-settings-open', () => shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'));
 ipcMain.on('launch-id', (e) => { e.returnValue = LAUNCH_ID; });
 ipcMain.handle('dictate', (_e, on) => helperSend(on ? { cmd: 'dictateStart', locale: settings.voice?.locale || 'en-US' } : { cmd: 'dictateStop' }));

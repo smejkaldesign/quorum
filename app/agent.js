@@ -4,15 +4,19 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const GUARD = path.join(path.dirname(fileURLToPath(import.meta.url)), 'guards', 'read-guard.py');
 
 const TIMEOUT_MS = 150000;
 
-// only the Agent OS's safety hooks run (secret guards, opted-out filter); memory, reindex and ping hooks don't,
-// so asking Quorum a question never writes to the vault
-function safetySettings(root) {
+// Quorum's own read guard always runs; the Agent OS's safety hooks run too when it has them (secret guards, opted-out
+// filter). Memory, reindex and ping hooks don't, so asking Quorum a question never writes to the vault
+function safetySettings(root, privateDirs = []) {
   const hook = (name) => ({ type: 'command', command: `python3 "${path.join(root, '.claude/hooks', name)}"` });
   const has = (name) => existsSync(path.join(root, '.claude/hooks', name));
-  const pre = [];
+  const q = (s) => `"${String(s).replace(/"/g, '\\"')}"`;
+  const pre = [{ matcher: 'Read|Grep|Glob', hooks: [{ type: 'command', command: `python3 ${q(GUARD)} --root ${q(root)} ${privateDirs.map((d) => `--deny ${q(d)}`).join(' ')}`.trim() }] }];
   const post = [];
   if (has('secret-file-guard.py')) pre.push({ matcher: 'Read|Grep|Glob', hooks: [hook('secret-file-guard.py')] });
   if (has('opted-out-guard.py')) pre.push({ matcher: 'Read|Grep|Glob', hooks: [hook('opted-out-guard.py')] });
@@ -28,7 +32,7 @@ function describeStep(tool, input, root) {
   return `Using ${tool}`;
 }
 
-export function runAgent({ question, history, transcript, root, model, owner, onStep, redact, files = [], about = '', extra = { index: null, dirs: [], hints: [] } }) {
+export function runAgent({ question, history, transcript, root, model, owner, onStep, redact, files = [], about = '', privateDirs = [], extra = { index: null, dirs: [], hints: [] } }) {
   const system = [
     `You are Quorum, ${owner}'s assistant in the Quorum app, working in their Agent OS at ${root}.`,
     'Use Grep, Glob and Read to find answers in his notes before answering. You can only read; never claim you changed anything.',
@@ -52,7 +56,7 @@ export function runAgent({ question, history, transcript, root, model, owner, on
     const proc = spawn('claude', [
       '-p', '--output-format', 'stream-json', '--verbose', '--model', model,
       '--tools', 'Read,Grep,Glob', '--allowedTools', 'Read', 'Grep', 'Glob',
-      '--setting-sources', '', '--settings', JSON.stringify(safetySettings(root)),
+      '--setting-sources', '', '--settings', JSON.stringify(safetySettings(root, privateDirs)),
       '--strict-mcp-config', '--no-session-persistence', '--disable-slash-commands',
       '--append-system-prompt', system,
       ...files.flatMap((f) => ['--add-dir', path.dirname(f)]),

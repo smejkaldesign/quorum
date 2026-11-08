@@ -205,8 +205,9 @@ export const IconInfo = (p: SVGProps<SVGSVGElement>) => (
 );
 
 // small monochrome provider marks for the model menu
-export function ProviderMark({ provider }: { provider: 'anthropic' | 'openai' | 'google' }) {
+export function ProviderMark({ provider }: { provider: 'anthropic' | 'openai' | 'google' | 'typesafe' }) {
   if (provider === 'anthropic') return <ClaudeLogo />;
+  if (provider === 'typesafe') return <svg className="model-logo" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v3h-6.5v11h-3V8H4z" fill="currentColor" /></svg>;
   if (provider === 'openai') return <svg className="model-logo" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d={OPENAI_D} fill="currentColor" /></svg>;
   return (
     <svg className="model-logo" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">

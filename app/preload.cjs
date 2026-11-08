@@ -87,7 +87,7 @@ contextBridge.exposeInMainWorld('quorum', {
   meetingProviderCheck: () => ipcRenderer.invoke('meeting-provider-check'),
   axSettingsOpen: () => ipcRenderer.invoke('ax-settings-open'),
   decisionsStatus: () => ipcRenderer.invoke('decisions-status'),
-  decisionsSet: (key) => ipcRenderer.invoke('decisions-set', key),
+  decisionsSet: (provider, key) => ipcRenderer.invoke('decisions-set', provider, key),
   decisionsRemove: () => ipcRenderer.invoke('decisions-remove'),
   mcpStatus: () => ipcRenderer.invoke('mcp-status'),
   mcpAdd: () => ipcRenderer.invoke('mcp-add'),
