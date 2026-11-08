@@ -31,7 +31,7 @@ enum CalendarReader {
             .sorted { $0.startDate < $1.startDate }
             .prefix(200)
             .map { e -> [String: Any] in
-                ["id": e.eventIdentifier ?? UUID().uuidString, "title": e.title ?? "Untitled", "start": iso.string(from: e.startDate), "end": iso.string(from: e.endDate), "calendar": e.calendar.title, "attendees": attendees(e), "item": e.calendarItemIdentifier, "recurring": e.hasRecurrenceRules]
+                ["id": e.eventIdentifier ?? UUID().uuidString, "title": e.title ?? "Untitled", "start": iso.string(from: e.startDate), "end": iso.string(from: e.endDate), "calendar": e.calendar.title, "attendees": attendees(e), "item": e.calendarItemIdentifier, "recurring": e.hasRecurrenceRules, "location": e.location ?? "", "url": e.url?.absoluteString ?? "", "notes": String((e.notes ?? "").prefix(1500))]
             }
         Emit.send(["event": "calResult", "id": id ?? "", "status": "granted", "events": Array(found)])
     }

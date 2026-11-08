@@ -1,10 +1,10 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Brain, CalendarEvent, ChatRow, MeetingRow, NoteDoc } from './quorum';
 import { NoteMenu, NoteReader, VisibilityPill } from './MeetingNote';
 import { pickQuote, quoteLink } from './quotes';
 import { Composer } from './Composer';
 import quorumMark from '../assets/quorum-mark.png';
-import { IconCalendar, IconChat, IconMic, IconExternal, IconNotes, IconPerson, IconSearch, IconNewNote, IconListCheck, IconTarget } from './icons';
+import { IconCalendar, IconChat, IconMic, IconExternal, IconMore, IconNotes, IconPerson, IconSearch, IconNewNote, IconListCheck, IconTarget } from './icons';
 
 type Filter = 'all' | 'meetings' | 'notes' | 'chats';
 type Row = { key: string; kind: 'meeting' | 'note' | 'chat'; title: string; sub: string; date: Date | null; avatar: string; open: () => void; meeting?: MeetingRow; children?: Row[] };
@@ -49,21 +49,31 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat }: { brain: Bra
   const [filter, setFilter] = useState<Filter>('all');
   // upcoming events from the connected calendar; once a meeting happens its note lands under Today instead
   const [upNext, setUpNext] = useState<CalendarEvent[]>([]);
+  // events without a call on a connected platform are kept out of the list unless asked for; hidden counts them
+  const [calView, setCalView] = useState<{ connected: boolean; showAll: boolean; hidden: number }>({ connected: false, showAll: false, hidden: 0 });
+  const [eventMenu, setEventMenu] = useState<string | null>(null);
   const [icons, setIcons] = useState<Record<string, string | null>>({});
   useEffect(() => { window.quorum.sourceIcons().then(setIcons); }, []);
+  const calRetry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // the helper can still be starting on launch, so a miss retries in 10s instead of waiting for the 5 minute refresh
+  const loadCal = useCallback(() => window.quorum.calendar().then((c) => {
+    setUpNext(c.connected ? c.events.filter((e) => new Date(e.end) > new Date()) : []);
+    setCalView({ connected: c.connected, showAll: c.showAll, hidden: c.hidden });
+    clearTimeout(calRetry.current);
+    if (c.status === 'unavailable') calRetry.current = setTimeout(loadCal, 10000);
+  }), []);
   useEffect(() => {
-    let retry: ReturnType<typeof setTimeout> | undefined;
-    // the helper can still be starting on launch, so a miss retries in 10s instead of waiting for the 5 minute refresh
-    const load = () => window.quorum.calendar().then((c) => {
-      setUpNext(c.connected ? c.events.filter((e) => new Date(e.end) > new Date()) : []);
-      clearTimeout(retry);
-      if (c.status === 'unavailable') retry = setTimeout(load, 10000);
-    });
-    load();
-    const t = setInterval(load, 5 * 60000);
-    const off = window.quorum.onSettings(load);
-    return () => { clearInterval(t); clearTimeout(retry); off(); };
-  }, []);
+    loadCal();
+    const t = setInterval(loadCal, 5 * 60000);
+    const off = window.quorum.onSettings(loadCal);
+    return () => { clearInterval(t); clearTimeout(calRetry.current); off(); };
+  }, [loadCal]);
+  useEffect(() => {
+    if (!eventMenu) return;
+    const close = () => setEventMenu(null);
+    window.addEventListener('mousedown', close);
+    return () => window.removeEventListener('mousedown', close);
+  }, [eventMenu]);
   const [picked, setPicked] = useState<string[]>([]);
   const [range, setRange] = useState<DateRange | null>(null);
   const [keyword, setKeyword] = useState('');
@@ -180,23 +190,36 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat }: { brain: Bra
         <KeywordFilter value={keyword} onChange={setKeyword} />
       </div>
 
-      {!filtered && upNext.length > 0 && (
+      {!filtered && calView.connected && (upNext.length > 0 || calView.hidden > 0) && (
         <div className="hist-group up-next">
-          <h4>Up next</h4>
+          <div className="up-head">
+            <h4>Up next</h4>
+            {(calView.hidden > 0 || calView.showAll) && (
+              <label className="up-toggle"><input type="checkbox" checked={calView.showAll} onChange={(ev) => window.quorum.calendarSet({ showAll: ev.target.checked }).then(loadCal)} />Show events without a call{!calView.showAll && calView.hidden > 0 ? ` (${calView.hidden})` : ''}</label>
+            )}
+          </div>
+          {upNext.length === 0 && <p className="up-empty">No calls on a connected platform in the next few days.</p>}
           {upNext.map((e) => {
             const at = new Date(e.start), end = new Date(e.end);
             const t = (d: Date) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?(AM|PM)/i, '');
+            const platform = e.platform ? { zoom: 'Zoom', meet: 'Google Meet', teams: 'Microsoft Teams' }[e.platform] : null;
+            const open = eventMenu === e.id;
             return (
               <div key={e.id} className="hist-item">
-                <div className="hist-row up-row" onClick={() => e.item && window.quorum.calendarOpen(e)}>
+                <div className={`hist-row up-row ${open ? 'menu-open' : ''}`} onClick={() => e.item && window.quorum.calendarOpen(e)}>
                   <span className="avatar-sq cal"><IconCalendar width={20} height={20} /></span>
-                  <span className="hist-text"><strong>{e.title}</strong><span>{dayLabel(at)} · {t(at)} – {t(end)} {end.getHours() < 12 ? 'AM' : 'PM'}</span></span>
+                  <span className="hist-text"><strong>{e.title}</strong><span>{dayLabel(at)} · {t(at)} – {t(end)} {end.getHours() < 12 ? 'AM' : 'PM'}{platform ? ` · ${platform}` : ''}</span></span>
                   <span className="hist-time">{t(at)}<small>{at.getHours() < 12 ? 'AM' : 'PM'}</small></span>
-                  {e.item && (
-                    <span className="hist-hover">
-                      <button className="vis-pill compact" onClick={(ev) => { ev.stopPropagation(); window.quorum.calendarOpen(e); }}>View<IconExternal width={13} height={13} /></button>
-                    </span>
-                  )}
+                  <span className="hist-hover menu-wrap" onMouseDown={(ev) => ev.stopPropagation()}>
+                    <button className="icon-btn up-more" aria-label="More" aria-expanded={open} onClick={(ev) => { ev.stopPropagation(); setEventMenu(open ? null : e.id); }}><IconMore /></button>
+                    {open && (
+                      <div className="menu up-menu" onClick={(ev) => ev.stopPropagation()}>
+                        {e.item && <button onClick={() => { setEventMenu(null); window.quorum.calendarOpen(e); }}>View in Calendar</button>}
+                        {e.join && <button onClick={() => { setEventMenu(null); window.quorum.openExternal(e.join!); }}>Open call link</button>}
+                        <button onClick={() => { setEventMenu(null); window.quorum.calendarSet({ hide: e.id }).then(loadCal); }}>Remove from list</button>
+                      </div>
+                    )}
+                  </span>
                 </div>
               </div>
             );

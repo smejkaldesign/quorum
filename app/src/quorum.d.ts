@@ -13,8 +13,8 @@ export type Notes = { title: string; sections: { heading: string; bullets: { tex
 export type MeetingMeta = { title: string; startedAt?: string; minutes: number; participants: number; model: string };
 
 type Unsub = () => void;
-export type CalendarEvent = { id: string; title: string; start: string; end: string; item?: string; recurring?: boolean };
-export type CalendarSettings = { source: 'mac'; days: number; enabled?: boolean; status?: 'granted' | 'notDetermined' | 'denied' | 'unavailable' };
+export type CalendarEvent = { id: string; title: string; start: string; end: string; item?: string; recurring?: boolean; platform?: 'zoom' | 'meet' | 'teams' | null; join?: string | null };
+export type CalendarSettings = { source: 'mac'; days: number; enabled?: boolean; showAll?: boolean; hidden?: string[]; status?: 'granted' | 'notDetermined' | 'denied' | 'unavailable' };
 export type MemoryItem = { id: string; kind: string; label: string; path: string; detail: string; include: boolean | null; manual?: boolean };
 export type Memory = { items: MemoryItem[]; excluded: string[]; scannedAt?: string; added?: number; removed?: number; cancelled?: boolean };
 export type Profile = { name?: string; title?: string; linkedin?: string; photo?: string };
@@ -145,7 +145,7 @@ declare global {
       pickPhoto(): Promise<Settings>;
       memoryGet(): Promise<Memory>;
       memoryRefresh(): Promise<Memory>;
-      calendar(): Promise<{ connected: boolean; status: string; events: CalendarEvent[]; days: number }>;
+      calendar(): Promise<{ connected: boolean; status: string; events: CalendarEvent[]; days: number; showAll: boolean; hidden: number }>;
       calendarStatus(): Promise<CalendarSettings>;
       sourceIcons(): Promise<Record<string, string | null>>;
       // chat: the STOP/GO notice can be posted in the app's chat (Zoom); running: the app or a browser window for it is open right now
@@ -169,7 +169,7 @@ declare global {
       claudeLogin(): Promise<void>;
       claudeStatus(): Promise<{ installed: boolean; loggedIn: boolean; email: string; org: string; plan: string; method: string; version: string }>;
       calendarConnect(): Promise<CalendarSettings>;
-      calendarSet(next: { days?: number; enabled?: false }): Promise<CalendarSettings>;
+      calendarSet(next: { days?: number; enabled?: false; showAll?: boolean; hide?: string; unhideAll?: boolean }): Promise<CalendarSettings>;
       calendarPrivacy(): Promise<void>;
       calendarOpen(ev: CalendarEvent): Promise<void>;
       memoryRefreshCancel(): Promise<void>;

@@ -1383,14 +1383,32 @@ const noteTitle = store.notes.title;
 
 ipcMain.handle('brain', () => brain());
 // the calendar source is the Calendar app on this Mac for now; Home shows Up next only once access is granted
-const calSettings = () => ({ source: 'mac', days: 3, ...settings.calendar });
+const calSettings = () => ({ source: 'mac', days: 3, showAll: false, hidden: [], ...settings.calendar });
+// which call platform an event points at, from its URL, location or invite text; null for a plain calendar entry
+const CALL_LINKS = [
+  ['zoom', /https?:\/\/[\w.-]*zoom\.(?:us|com)\/(?:j|my|w|s)\/[^\s<>"']+/i],
+  ['meet', /https?:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}\b[^\s<>"']*/i],
+  ['teams', /https?:\/\/(?:teams\.microsoft\.com\/l\/meetup-join|teams\.live\.com\/meet)[^\s<>"']+/i],
+];
+function callLink(e) {
+  const text = `${e.url ?? ''}\n${e.location ?? ''}\n${e.notes ?? ''}`;
+  for (const [platform, re] of CALL_LINKS) { const m = text.match(re); if (m) return { platform, join: m[0] }; }
+  return { platform: null, join: null };
+}
 ipcMain.handle('calendar', async () => {
   const c = calSettings();
-  if (!c.enabled) return { connected: false, status: 'off', events: [], days: c.days };
+  if (!c.enabled) return { connected: false, status: 'off', events: [], days: c.days, showAll: c.showAll, hidden: 0 };
   const r = await calAsk({ cmd: 'calEvents', days: c.days });
-  // titles of meetings with opted-out customers never show
-  const events = (r.events ?? []).filter((e) => !suggester.isExcluded(e.title)).map(({ id, title, start, end, item, recurring }) => ({ id, title, start, end, item, recurring }));
-  return { connected: r.status === 'granted', status: r.status, events, days: c.days };
+  const hiddenIds = new Set(c.hidden);
+  let hidden = 0;
+  // titles of meetings with opted-out customers never show; invite text stays in the main process
+  const events = (r.events ?? []).filter((e) => !suggester.isExcluded(e.title)).flatMap((e) => {
+    const { platform, join } = callLink(e);
+    // an event Quorum can do nothing with (no call, or a call on a platform that is off) only shows when asked for
+    if (hiddenIds.has(e.id) || (!c.showAll && !(platform && providerOn(platform)))) { hidden += 1; return []; }
+    return [{ id: e.id, title: e.title, start: e.start, end: e.end, item: e.item, recurring: e.recurring, platform, join }];
+  });
+  return { connected: r.status === 'granted', status: r.status, events, days: c.days, showAll: c.showAll, hidden };
 });
 ipcMain.handle('calendar-status', async () => ({ ...calSettings(), status: (await calAsk({ cmd: 'calStatus' })).status }));
 ipcMain.handle('calendar-connect', async () => {
@@ -1414,6 +1432,9 @@ ipcMain.handle('calendar-set', (_e, next) => {
   const c = calSettings();
   if ([1, 2, 3, 5, 7, 14].includes(next?.days)) c.days = next.days;
   if (next?.enabled === false) c.enabled = false;
+  if (typeof next?.showAll === 'boolean') c.showAll = next.showAll;
+  if (typeof next?.hide === 'string' && next.hide && !c.hidden.includes(next.hide)) c.hidden = [...c.hidden, next.hide].slice(-500);
+  if (next?.unhideAll) c.hidden = [];
   settings.calendar = c;
   saveSettings();
   toUI('settings', settings);
