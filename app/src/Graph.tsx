@@ -16,7 +16,7 @@ const DEFAULT_NODE = '#8f8f8f';
 // a link to a note that doesn't exist yet: dimmer and smaller, like Obsidian's unresolved nodes
 const GHOST_NODE = '#4d4d52';
 const LINE = 'rgba(255, 255, 255, 0.09)';
-const ACCENT = '#5ea9ff';
+const ACCENT = getComputedStyle(document.documentElement).getPropertyValue('--brand-graph').trim() || '#5ea9ff';
 // where notes last sat, so a refresh after an edit keeps the layout instead of starting over
 const placed = new Map<string, { x: number; y: number }>();
 let lastCam: { k: number; x: number; y: number; moved: boolean } | null = null;

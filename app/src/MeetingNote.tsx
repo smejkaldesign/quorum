@@ -72,10 +72,10 @@ export function PrivateBlocked({ onBack }: { onBack?: () => void }) {
         <rect x="36" y="52" width="56" height="5" rx="2.5" fill="#333338" />
         <rect x="36" y="63" width="40" height="5" rx="2.5" fill="#333338" />
         <rect x="36" y="74" width="50" height="5" rx="2.5" fill="#333338" />
-        <circle cx="112" cy="78" r="30" fill="#0b2a4d" />
-        <rect x="98" y="76" width="28" height="22" rx="5" fill="#007aff" />
-        <path d="M104 76v-6a8 8 0 0 1 16 0v6" fill="none" stroke="#8ec5ff" strokeWidth="4" strokeLinecap="round" />
-        <circle cx="112" cy="86" r="3" fill="#0b2a4d" />
+        <circle cx="112" cy="78" r="30" style={{ fill: 'var(--brand-deep)' }} />
+        <rect x="98" y="76" width="28" height="22" rx="5" style={{ fill: 'var(--brand)' }} />
+        <path d="M104 76v-6a8 8 0 0 1 16 0v6" fill="none" style={{ stroke: 'var(--brand-soft)' }} strokeWidth="4" strokeLinecap="round" />
+        <circle cx="112" cy="86" r="3" style={{ fill: 'var(--brand-deep)' }} />
       </svg>
       <h2>This note is private</h2>
       <p>Only its owner can open it. Ask them to share it with you or make it public.</p>

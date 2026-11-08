@@ -9,6 +9,7 @@ import markProd from '../assets/quorum-mark.png';
 import markDev from '../assets/quorum-mark-dev.png';
 
 const mark = window.quorum.isDev ? markDev : markProd;
+if (window.quorum.isDev) document.documentElement.dataset.dev = '';
 import { HistoryView } from './HistoryView';
 import { KnowledgeView, type KbCommand } from './KnowledgeView';
 import { Composer } from './Composer';
