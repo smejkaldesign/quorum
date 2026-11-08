@@ -97,24 +97,5 @@ enum ZoomChat {
         return inMeeting ? (title, count, names) : nil
     }
 
-    static func dump() -> String {
-        var out = ""
-        for (i, win) in windows().enumerated() {
-            out += "=== window \(i): \(AX.str(win, kAXTitleAttribute) ?? "")\n"
-            var count = 0
-            AX.walk(win) { el, depth in
-                count += 1
-                if count > 6000 { return false }
-                var line = String(repeating: "  ", count: depth) + AX.role(el)
-                if let s = AX.str(el, kAXSubroleAttribute) { line += " [\(s)]" }
-                if let s = AX.str(el, kAXIdentifierAttribute), !s.isEmpty { line += " id=\(s)" }
-                if let s = AX.str(el, kAXTitleAttribute), !s.isEmpty { line += " title=\(s.prefix(80))" }
-                if let s = AX.str(el, kAXDescriptionAttribute), !s.isEmpty { line += " desc=\(s.prefix(80))" }
-                if let s = AX.str(el, kAXValueAttribute), !s.isEmpty { line += " value=\(s.prefix(120).replacingOccurrences(of: "\n", with: "⏎"))" }
-                out += line + "\n"
-                return true
-            }
-        }
-        return out
-    }
+    static func dump() -> String { AX.dumpTree(windows()) }
 }

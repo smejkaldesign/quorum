@@ -893,8 +893,7 @@ function ConnectorsPage() {
   );
 }
 
-// the meeting apps the workspace uses; Zoom works today by reading the app on this Mac, the rest are on the way
-const PROVIDERS_NEXT = ['Google Meet', 'Microsoft Teams'];
+// the meeting apps the workspace uses, read on this Mac. Zoom gets the notice in its chat; Meet and Teams are detected and captured
 function MeetingProviders() {
   type Provider = Awaited<ReturnType<typeof window.quorum.meetingProviders>>[number];
   const [list, setList] = useState<Provider[] | null>(null);
@@ -912,10 +911,14 @@ function MeetingProviders() {
     return () => document.removeEventListener('click', close);
   }, []);
   const ready = (p: Provider) => p.enabled && p.installed && p.access !== false;
+  const where = (p: Provider) => (p.id === 'zoom' ? `the ${p.name} app` : `${p.name} in the ${p.id === 'teams' ? 'Teams app or a' : ''} browser`);
   const desc = (p: Provider) => !p.enabled ? `Removed. Quorum won't notice ${p.name} calls`
     : !p.installed ? `${p.name} isn't installed on this Mac`
     : p.access === false ? `Quorum needs Accessibility access to read ${p.name}`
-    : p.inCall ? 'In a call now' : `Experimental: reads ${p.name} on this Mac and posts Quorum's notice in the chat`;
+    : p.inCall ? 'In a call now'
+    : p.chat ? `Experimental: reads ${where(p)} on this Mac and posts Quorum's notice in the chat`
+    : `Experimental: reads ${where(p)} on this Mac. No chat posting yet, so you start Quorum and tell the call`;
+  const removed = list?.filter((p) => !p.enabled) ?? [];
   return (
     <>
       <div className="set-head">
@@ -924,7 +927,8 @@ function MeetingProviders() {
           <button className="pill small-pill with-icon" aria-haspopup="menu" aria-expanded={adding} onClick={() => setAdding((o) => !o)}><IconPlus width={15} height={15} />Add</button>
           {adding && (
             <div className="menu end" role="menu">
-              {PROVIDERS_NEXT.map((n) => <button key={n} role="menuitem" disabled>{n}<em className="soon">Coming soon</em></button>)}
+              {removed.map((p) => <button key={p.id} role="menuitem" onClick={() => { setAdding(false); toggle(p, true); }}>{p.name}</button>)}
+              {!removed.length && <button role="menuitem" disabled>Zoom, Google Meet and Microsoft Teams are all added</button>}
             </div>
           )}
         </span>
@@ -959,14 +963,14 @@ function MeetingProviders() {
           onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setDetails(null); } }}>
           <div className="modal" role="dialog" aria-modal="true" aria-labelledby="prov-title">
             <h2 id="prov-title">{details.name}</h2>
-            <p>Quorum reads the {details.name} app on this Mac. Nothing goes through {details.name}'s servers or a bot.</p>
+            <p>Quorum reads {where(details)} on this Mac. Nothing goes through {details.name}'s servers or a bot.</p>
             <dl className="about-facts">
-              <dt>Status</dt><dd>{ready(details) ? (details.inCall ? 'Connected, in a call now' : 'Connected') : desc(details)}</dd>
+              <dt>Status</dt><dd>{ready(details) ? (details.inCall ? 'Connected, in a call now' : details.running ? 'Connected, app open' : 'Connected') : desc(details)}</dd>
               <dt>App</dt><dd>{details.version ? `${details.name} ${details.version}` : details.name}</dd>
               <dt>Location</dt><dd>{details.path}</dd>
               <dt>Permission</dt><dd>Accessibility {details.access === false ? 'off' : details.access ? 'on' : 'unknown'}</dd>
-              <dt>Reads</dt><dd>Meeting title, participant names, chat, and the app's audio</dd>
-              <dt>Posts</dt><dd>Quorum's notice when it starts, and replies to STOP and GO</dd>
+              <dt>Reads</dt><dd>{details.chat ? "Meeting title, participant names, chat, and the app's audio" : 'Window title, participant count when the browser exposes it, and the audio it plays'}</dd>
+              <dt>Posts</dt><dd>{details.chat ? "Quorum's notice when it starts, and replies to STOP and GO" : 'Nothing yet. The notice shows on this Mac and the saved note records that none was posted in the call'}</dd>
             </dl>
             <div className="modal-actions">
               <span />

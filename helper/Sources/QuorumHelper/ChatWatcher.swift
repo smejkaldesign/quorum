@@ -37,19 +37,23 @@ final class ChatWatcher {
     private var lastCount = -1
     private var lastNames: [String] = []
     private var meetingTimer: DispatchSourceTimer?
+    private(set) var provider: MeetingProvider?
 
-    // Zoom's meeting window only exists while you're in a meeting
+    // polls every provider; Zoom's meeting window only exists while you're in a meeting, Meet and Teams are read from their windows
     func startMeetingWatch() {
         queue.async {
             let t = DispatchSource.makeTimerSource(queue: self.queue)
             t.schedule(deadline: .now(), repeating: .milliseconds(1500))
             t.setEventHandler { [weak self] in
                 guard let self else { return }
-                let info = ZoomChat.meetingInfo()
+                let hit = Providers.detectAny()
+                let info = hit?.1
                 let active = info != nil
                 if active != self.meetingActive {
                     self.meetingActive = active
-                    Emit.send(["event": "meeting", "active": active, "app": "Zoom"])
+                    let p = hit?.0 ?? self.provider ?? ZoomProvider()
+                    if active { self.provider = p }
+                    Emit.send(["event": "meeting", "active": active, "app": p.name, "provider": p.id, "chat": p.canPostNotice])
                 }
                 if let info, info.title != self.lastTitle || info.participants != self.lastCount || info.names != self.lastNames {
                     self.lastTitle = info.title
@@ -180,6 +184,7 @@ final class ChatWatcher {
 
     private func sendNow(_ text: String, id: String?) {
         let fail = { (why: String) in Emit.send(["event": "chatFailed", "id": id ?? "", "message": why]) }
+        if let p = provider, meetingActive, !p.canPostNotice { return fail("\(p.name) has no chat Quorum can post in") }
         guard let (_, pid) = ZoomChat.app() else { return fail("Zoom isn't running") }
         guard ZoomChat.ensureChatOpen(), let input = chatInput() else { return fail("couldn't open the Zoom chat panel") }
         AXUIElementSetAttributeValue(input, kAXFocusedAttribute as CFString, kCFBooleanTrue)
