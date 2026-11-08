@@ -73,7 +73,7 @@ function noteTitle(abs) {
 export const notes = {
   read: (abs) => readFileSync(abs, 'utf8'),
   write: writeAtomic,
-  list: (dir) => readdirSync(dir).filter((f) => f.endsWith('.md') && f !== 'index.md'),
+  list: (dir) => readdirSync(dir).filter((f) => f.endsWith('.md') && f !== 'index.md' && f !== 'README.md'),
   title: noteTitle,
   readFrontmatter,
   setFrontmatterKey,
