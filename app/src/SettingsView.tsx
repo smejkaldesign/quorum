@@ -77,7 +77,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
             <ProfilePage settings={settings} email={user?.email ?? ''} name={user?.name ?? ''} onSettings={onSettings}>
               <h3>General</h3>
               <div className="set-card">
-                <Row icon={<Wave live={false} />} title="Listen automatically" desc="Starts transcribing when a Zoom meeting begins">
+                <Row icon={<Wave live={false} />} title="Listen automatically" desc="Starts transcribing when a meeting begins in Zoom, Google Meet or Teams">
                   <Toggle on={settings.autoListen} onChange={(v) => set({ autoListen: v })} />
                 </Row>
                 <Row icon={<IconChat width={18} height={18} />} title="Suggest answers from my notes" desc="Offers your notes when someone asks you a question">
@@ -385,6 +385,18 @@ const ABOUT: Record<string, string[]> = {
   folder: [
     'Quorum can read the notes in this folder when it answers. The guards still apply to every file.',
   ],
+  instructions: [
+    'The operating instructions at the root of your Agent OS (CLAUDE.md or AGENTS.md). Quorum found them; a later version will let Quorum follow them when it answers.',
+  ],
+  skills: [
+    'Skills your Agent OS defines. Quorum lists them so you can see what is available; running them from Quorum comes later.',
+  ],
+  agents: [
+    'Agent definitions in your Agent OS. Listed for now; delegating to them from Quorum comes later.',
+  ],
+  mcp: [
+    'MCP servers your Agent OS connects to. Listed for now; Quorum does not start them.',
+  ],
 };
 
 function AboutCapability({ it, onClose }: { it: MemoryItem; onClose: () => void }) {
@@ -420,12 +432,16 @@ function why(it: MemoryItem): string {
     case 'index': return `Quorum starts from ${it.detail.split(' · ')[0]} to find notes faster`;
     case 'search': return it.detail === 'local embeddings' ? 'Finds related notes first, with embeddings on this Mac' : 'Finds matching notes before Quorum starts';
     case 'graph': return 'Search also pulls in notes linked to each match';
+    case 'instructions': return `Found ${it.detail}; following it from Quorum comes later`;
+    case 'skills': return `${it.detail} found; running them from Quorum comes later`;
+    case 'agents': return `${it.detail} found; delegating to them comes later`;
+    case 'mcp': return `${it.detail} found in .mcp.json; Quorum does not start them`;
     default: return 'Quorum can read this folder when it answers';
   }
 }
 
 const KIND_ICON: Record<string, (p: { width?: number; height?: number; filled?: boolean; className?: string }) => ReactNode> = {
-  instructions: IconBrain, agents: IconPeople, skills: IconGrid, guards: IconShield, vault: IconStack, meetings: IconFolder, index: IconFork, folder: IconFolder, search: IconSearch, graph: IconGraph, decisions: IconListCheck,
+  instructions: IconBrain, agents: IconPeople, skills: IconGrid, guards: IconShield, vault: IconStack, meetings: IconFolder, index: IconFork, folder: IconFolder, search: IconSearch, graph: IconGraph, decisions: IconListCheck, mcp: IconCode,
 };
 
 // additional context from the Agent OS: found by a local scan of file names, reviewed one by one
@@ -506,7 +522,7 @@ function KnowledgePage() {
       </div>
 
       <div className="set-head">
-        <h3>Additional context</h3>
+        <h3>Power-ups</h3>
         <span className="set-head-actions">
           <button className="pill small-pill with-icon" disabled><IconPlus width={15} height={15} />Add</button>
           <button className="pill small-pill with-icon" disabled><IconReset width={15} height={15} />Refresh</button>

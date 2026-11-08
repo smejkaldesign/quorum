@@ -912,7 +912,7 @@ ipcMain.handle('set-settings', (_e, next) => {
 });
 // only what Quorum actually uses today, found by file and folder names only; no note is read and no model is involved
 // (meeting notes have their own folder setting above, so they aren't listed here)
-const USABLE = new Set(['guards', 'index', 'folder', 'search', 'graph']);
+const USABLE = new Set(['guards', 'index', 'folder', 'search', 'graph', 'instructions', 'skills', 'agents', 'mcp']);
 function scanBrain(root, vault) {
   const found = [];
   const add = (kind, label, abs, detail) => { if (existsSync(abs)) found.push({ id: `${kind}:${abs}`, kind, label, path: abs, detail }); };
@@ -921,6 +921,15 @@ function scanBrain(root, vault) {
   const guards = count(path.join(root, '.claude/hooks'), (f) => ['secret-file-guard.py', 'opted-out-guard.py', 'output-secret-tripwire.py'].includes(f));
   if (guards) add('guards', 'Guard hooks', path.join(root, '.claude/hooks'), `${guards} guard${guards === 1 ? '' : 's'} run on every read Quorum makes`);
   add('index', 'Memory index', path.join(vault, 'index.md'), 'index.md');
+  // the rest of the Agent OS's power-ups, shown so the user sees what Quorum found; today they inform, they don't run
+  const instructions = ['CLAUDE.md', 'AGENTS.md'].map((f) => path.join(root, f)).find(existsSync);
+  if (instructions) add('instructions', 'Agent instructions', instructions, path.basename(instructions));
+  const dirs = (p) => count(path.join(root, p), (f) => !f.startsWith('.'));
+  const skills = dirs('.claude/skills');
+  if (skills) add('skills', 'Skills', path.join(root, '.claude/skills'), `${skills} skill${skills === 1 ? '' : 's'}`);
+  const agents = dirs('.claude/agents');
+  if (agents) add('agents', 'Agents', path.join(root, '.claude/agents'), `${agents} agent${agents === 1 ? '' : 's'}`);
+  try { const n = Object.keys(JSON.parse(readFileSync(path.join(root, '.mcp.json'), 'utf8')).mcpServers ?? {}).length; if (n) add('mcp', 'MCP servers', path.join(root, '.mcp.json'), `${n} server${n === 1 ? '' : 's'}`); } catch {}
   // the Agent OS's own search; its embeddings come from Ollama on this Mac, so a query never leaves it
   const search = [path.join(vault, 'scripts/search-memory.py'), path.join(root, 'scripts/search-memory.py')].find(existsSync);
   if (search) {
@@ -931,7 +940,7 @@ function scanBrain(root, vault) {
   }
   return found;
 }
-// what Quorum gets from Additional context: the index to start from, and any folders you added
+// what Quorum gets from Power-ups: the index to start from, and any folders you added
 function agentContext() {
   const inc = memoryState().items.filter((i) => i.include === true && existsSync(i.path));
   const search = inc.find((i) => i.kind === 'search')?.path ?? null;
