@@ -41,11 +41,11 @@ Other scripts: `npm run typecheck`, `npm run build`, `npm run package` (release 
 - `app/`: Electron main process (`main.js`: capture lifecycle, STOP and GO handling, Claude calls, vault IPC) and the React window (`src/`). `vault.js`, `vindex.js`, `linkparse.js`, `relink.js` are the vault index, link parser and link-safe rename. `store/` is the storage boundary: `local.js` (files, the default) and `remote.js` (Supabase, used only when `QUORUM_SUPABASE_URL` and `QUORUM_SUPABASE_ANON_KEY` are set and `sync` is on in settings).
 - `supabase/`: local Supabase project (`supabase start`) and `migrations/0001_init.sql`, the hosted schema with row level security.
 - `app/cli/quorum.mjs`: CLI and read-only MCP server (`claude mcp add quorum`) over the app's notes, chats and live transcript.
-- `app/assets/`: icons and the Swift scripts that render them from `llama-glyph.svg`. Placeholder art until the Quorum mark is ready.
+- `app/assets/`: the Quorum owl (`quorum-filled.svg` bare, `quorum-outlined.svg` inside its disc) and the Swift scripts that render the app icon, tray images, avatar mark and DMG background from them.
 - `docs/`: `backend-plan.md` (hosted version), `parity-gaps.md` (status and open items), `plans/google-meet.md` and `plans/microsoft-teams.md`.
 
 Helper debug commands: `QuorumHelper dump-zoom [--open-chat]`, `test-capture <sec>`, `chat-read`, `chat-send <text>`.
 
 ## Theme
 
-Dark shell with one accent, `--brand: #3d7bff` (blue). All accent tints derive from it in `app/src/styles.css`; the graph accent is `#82a9ff` in `Graph.tsx`.
+Dark shell with one accent, `--brand: #007aff`. All accent tints derive from it in `app/src/styles.css`; the graph accent is `#5ea9ff` in `Graph.tsx`.

@@ -1,10 +1,11 @@
 // Renders the DMG window background: a looping arrow from the app to Applications, with two small
 // Quorums walking along it in different strides.
-// usage: swiftc make-dmg-bg.swift -o make-dmg-bg && ./make-dmg-bg <out-dir>
+// usage: swiftc make-dmg-bg.swift -o make-dmg-bg && ./make-dmg-bg quorum-filled.svg <out-dir>
 import AppKit
 
 let W: CGFloat = 540, H: CGFloat = 380
-let llamaFill = NSColor(srgbRed: 0.33, green: 0.05, blue: 0.72, alpha: 1)
+let owlFill = NSColor(srgbRed: 0, green: 0.48, blue: 1, alpha: 1)
+let owl = NSImage(data: try! Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1])))!
 
 // the arrow: four cubic segments with one loop in the middle, sitting above the two icons (AppKit y is up)
 let segs: [[NSPoint]] = [
@@ -24,36 +25,20 @@ func tangent(_ s: [NSPoint], _ t: CGFloat) -> CGFloat {
     return atan2(b.y - a.y, b.x - a.x)
 }
 
-// a side-on llama, feet at the origin, facing right; stride 0 or 1 swaps which legs are forward
-// returns its parts separately: filled one by one, overlaps never cancel out
-func llama(stride: Int) -> [NSBezierPath] {
-    var parts: [NSBezierPath] = []
-    // body, with a little tail tuft at the back
-    parts.append(NSBezierPath(roundedRect: NSRect(x: -18, y: 16, width: 32, height: 15), xRadius: 7.5, yRadius: 7.5))
-    parts.append(NSBezierPath(ovalIn: NSRect(x: -22, y: 23, width: 8, height: 7)))
-    // neck rising from the chest, head with a short snout
-    let neck = NSBezierPath()
-    neck.move(to: NSPoint(x: 6, y: 24)); neck.line(to: NSPoint(x: 9, y: 46)); neck.line(to: NSPoint(x: 17, y: 46)); neck.line(to: NSPoint(x: 15, y: 24)); neck.close()
-    parts.append(neck)
-    parts.append(NSBezierPath(roundedRect: NSRect(x: 8, y: 42, width: 13, height: 9), xRadius: 4.5, yRadius: 4.5))
-    parts.append(NSBezierPath(roundedRect: NSRect(x: 15, y: 42, width: 10, height: 6), xRadius: 3, yRadius: 3))
-    // ears
-    for x in [CGFloat(9.5), 13.5] {
-        let ear = NSBezierPath()
-        ear.move(to: NSPoint(x: x, y: 49)); ear.line(to: NSPoint(x: x + 1, y: 58)); ear.line(to: NSPoint(x: x + 3.4, y: 49)); ear.close()
-        parts.append(ear)
+// the filled owl, tinted: paint the color, keep only the glyph's pixels
+func drawOwl(at p: NSPoint, height: CGFloat, angle: CGFloat) {
+    let w = height * owl.size.width / owl.size.height
+    let layer = NSImage(size: NSSize(width: w, height: height), flipped: false) { r in
+        owlFill.setFill(); r.fill()
+        owl.draw(in: r, from: .zero, operation: .destinationIn, fraction: 1)
+        return true
     }
-    // legs as solid quads from hip to hoof, so they never detach from the body
-    let hips: [CGFloat] = [-13, -7, 5, 10]
-    let feet: [CGFloat] = stride == 0 ? [4, -3, -4, 4] : [-3, 4, 4, -3]
-    for (i, x) in hips.enumerated() {
-        let f = x + feet[i]
-        let leg = NSBezierPath()
-        leg.move(to: NSPoint(x: x - 2, y: 20)); leg.line(to: NSPoint(x: x + 2, y: 20))
-        leg.line(to: NSPoint(x: f + 1.8, y: 0)); leg.line(to: NSPoint(x: f - 1.8, y: 0)); leg.close()
-        parts.append(leg)
-    }
-    return parts
+    NSGraphicsContext.saveGraphicsState()
+    var m = AffineTransform(translationByX: p.x, byY: p.y)
+    m.rotate(byRadians: angle)
+    (m as NSAffineTransform).concat()
+    layer.draw(in: NSRect(x: -w / 2, y: 0, width: w, height: height))
+    NSGraphicsContext.restoreGraphicsState()
 }
 
 func render(scale: CGFloat) -> NSBitmapImageRep {
@@ -62,8 +47,8 @@ func render(scale: CGFloat) -> NSBitmapImageRep {
     rep.size = NSSize(width: W, height: H)
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-    // soft lavender wash so the window feels like Quorum, light enough for Finder's black icon labels
-    NSGradient(starting: NSColor(srgbRed: 0.97, green: 0.96, blue: 1, alpha: 1), ending: NSColor(srgbRed: 0.93, green: 0.91, blue: 0.98, alpha: 1))!
+    // soft blue wash so the window feels like Quorum, light enough for Finder's black icon labels
+    NSGradient(starting: NSColor(srgbRed: 0.96, green: 0.98, blue: 1, alpha: 1), ending: NSColor(srgbRed: 0.9, green: 0.95, blue: 1, alpha: 1))!
         .draw(in: NSRect(x: 0, y: 0, width: W, height: H), angle: -90)
 
     // hand-drawn look: walk the curve, nudge each point off the line by a smooth, seeded wobble, and stroke it
@@ -109,22 +94,16 @@ func render(scale: CGFloat) -> NSBitmapImageRep {
         }
     }
 
-    // two Quorums walking along the curve, feet on the line, tilted with the slope
-    for (seg, t, stride, size) in [(0, 0.38, 0, 0.78), (3, 0.22, 1, 0.72)] as [(Int, CGFloat, Int, CGFloat)] {
+    // two owls perched on the curve, tilted a little with the slope
+    for (seg, t, size) in [(0, 0.38, 34.0), (3, 0.22, 30.0)] as [(Int, CGFloat, CGFloat)] {
         let at = bez(segs[seg], t)
-        // lean only part way into the slope, the way a walker stays mostly upright
-        let ang = tangent(segs[seg], t) * 0.45
-        var m = AffineTransform(scale: size)
-        m.append(AffineTransform(rotationByRadians: ang))
-        m.append(AffineTransform(translationByX: at.x, byY: at.y + 5))
-        llamaFill.setFill()
-        for part in llama(stride: stride) { part.transform(using: m); part.fill() }
+        drawOwl(at: NSPoint(x: at.x, y: at.y + 3), height: size, angle: tangent(segs[seg], t) * 0.35)
     }
     NSGraphicsContext.restoreGraphicsState()
     return rep
 }
 
-let out = URL(fileURLWithPath: CommandLine.arguments[1])
+let out = URL(fileURLWithPath: CommandLine.arguments[2])
 for (scale, name) in [(1.0, "dmg-background.png"), (2.0, "dmg-background@2x.png")] as [(CGFloat, String)] {
     try! render(scale: scale).representation(using: .png, properties: [:])!.write(to: out.appendingPathComponent(name))
 }

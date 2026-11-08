@@ -47,4 +47,4 @@ Status on 2026-11-08, after the first port. The reference ran against a differen
 2. A "Quorum Local Signing" code-signing certificate in Keychain Access before `npm run package`, so macOS keeps permission grants across rebuilds.
 3. Google Meet: detection and the STOP and GO chat notice are verified live (see `docs/plans/google-meet.md`, Status). Replies are read only while the Meet tab is the active tab. Microsoft Teams: wired (detect, capture) but untested, no chat notice yet; plan in `docs/plans/microsoft-teams.md`.
 4. Hosted backend: Supabase project `frlpvwagtcgbnqzykqbq` ("Quorum Prod", us-east-1, free plan) exists and `0001_init` is applied (10 tables, RLS, 40 policies). `QUORUM_SUPABASE_URL` and the publishable key sit in the gitignored `.env`. Writes are denied until Supabase Auth gives the app a session, which is the next backend step (`docs/backend-plan.md`, step 3).
-5. Final Quorum mark to replace `llama-glyph.svg`; the icon scripts regenerate everything from one SVG.
+5. Done 2026-11-08: the Quorum owl (`quorum-filled.svg`, `quorum-outlined.svg`) replaced the llama everywhere; brand is `#007aff`.
