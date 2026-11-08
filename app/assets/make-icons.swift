@@ -48,7 +48,7 @@ func appIcon(_ px: Int) -> NSBitmapImageRep {
         let body = NSRect(x: 0, y: 0, width: s, height: s).insetBy(dx: s * 0.1, dy: s * 0.1)
         let shape = NSBezierPath(roundedRect: body, xRadius: body.width * 0.225, yRadius: body.width * 0.225)
         NSGradient(starting: top, ending: bottom)!.draw(in: shape, angle: -90)
-        let d = body.width * 0.92
+        let d = body.width * 0.8
         let markRect = NSRect(x: body.midX - d / 2, y: body.midY - d / 2, width: d, height: d)
         if dev { tintedMark(markRect, .black) } else { mark.draw(in: markRect, from: .zero, operation: .sourceOver, fraction: 1) }
     }
