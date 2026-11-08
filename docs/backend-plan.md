@@ -57,10 +57,10 @@ Local edition keeps spawning `claude` (Claude Code sign-in). Hosted edition adds
 ## Sequence
 
 1. Storage boundary refactor (local only, no new deps). Verify: app behaves identically, `tsc` and `vite build` pass, a meeting saves and reopens.
-2. Register the Supabase project in the vault registry, create it, apply the schema as migrations in `supabase/migrations/`.
+2. Register the Supabase project in the vault registry, create it, apply the schema as migrations in `supabase/migrations/`. Done 2026-11-08: project `frlpvwagtcgbnqzykqbq`, migration `0001_init` applied and recorded.
 3. `store/remote.js` with push-only sync for `notes` and `meetings`. Verify: a note edited locally appears in the table within 10 s.
 4. Pull sync and conflict snapshots. Verify: edit the same note in two installs.
 5. `ask` edge function and hosted model calls. Verify: a question answered with no `claude` binary on the machine.
 6. Auth, Stripe, web viewer.
 
-Step 1 is safe to start now. Step 2 waits for Eric's confirmation because it creates billable infrastructure.
+Steps 1 and 2 are done. Step 3 starts with Supabase Auth, since row level security denies every write without a user session.
