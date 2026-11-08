@@ -33,7 +33,9 @@ export function createVault(dir, name = 'My Agent OS') {
 
 export const defaultVaultDir = () => path.join(homedir(), 'Documents', 'Quorum');
 
-export function registerOnboarding({ ipcMain, settings, saveSettings, inspectBrain, connect, systemPreferences, shell, helperAsk, claudeStatus, log }) {
+export function registerOnboarding({ ipcMain, settings, saveSettings, inspectBrain, connect, systemPreferences, shell, helperAsk, claudeStatus, log, hadSettings = false }) {
+  // an install that already has settings is not a first run; mark it so the flag stays stable
+  if (hadSettings && !settings.onboarded) { settings.onboarded = 'existing'; saveSettings(); }
   const permissions = async () => ({
     microphone: systemPreferences.getMediaAccessStatus('microphone'),
     // system audio has no Electron query; the helper reports it when capture starts

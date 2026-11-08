@@ -1481,7 +1481,7 @@ ipcMain.handle('pick-meetings-dir', async () => {
 });
 // the first-run wizard shares the connect step with Settings, so both end up in the same state
 const connectBrain = (b) => { Object.assign(settings, { brainRoot: b.root, vaultPath: b.vault }); store.settings.save(); log('connected Agent OS', b.root); suggester.reset(); openIndex(); return b; };
-registerOnboarding({ ipcMain, settings, saveSettings, inspectBrain, connect: connectBrain, systemPreferences, shell, helperAsk: (cmd) => calAsk({ cmd }), claudeStatus: () => handlers['claude-status'](), log });
+registerOnboarding({ ipcMain, settings, saveSettings, inspectBrain, connect: connectBrain, systemPreferences, shell, helperAsk: (cmd) => calAsk({ cmd }), claudeStatus: () => handlers['claude-status'](), log, hadSettings: store.settings.existed });
 ipcMain.handle('connect-brain', async () => {
   const r = await dialog.showOpenDialog(win, {
     title: 'Connect your Agent OS',

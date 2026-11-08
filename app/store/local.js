@@ -16,11 +16,14 @@ const ATTACH = path.join(homedir(), 'Library/Application Support/Quorum/attachme
 const MAX_ATTACH = 25 * 1024 * 1024;
 
 const settingsData = { autoListen: false, model: 'sonnet', suggestions: true };
-try { if (existsSync(SETTINGS_FILE)) Object.assign(settingsData, JSON.parse(readFileSync(SETTINGS_FILE, 'utf8'))); } catch {}
+// whether a settings file was there at launch: an install that already ran skips the first-run wizard
+const hadSettings = existsSync(SETTINGS_FILE);
+try { if (hadSettings) Object.assign(settingsData, JSON.parse(readFileSync(SETTINGS_FILE, 'utf8'))); } catch {}
 const saveSettings = () => writeFileSync(SETTINGS_FILE, JSON.stringify(settingsData, null, 2));
 
 // the one settings object the app mutates in place; save writes it back, set merges then saves
 export const settings = {
+  existed: hadSettings,
   get: () => settingsData,
   save: saveSettings,
   set: (patch) => { Object.assign(settingsData, patch); saveSettings(); return settingsData; },
