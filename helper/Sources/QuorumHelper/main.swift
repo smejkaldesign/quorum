@@ -66,7 +66,8 @@ func handle(_ line: String) async {
         if let text = cmd["text"] as? String, let to = cmd["to"] as? String { ChatWatcher.shared.reply(to: to, text: text, id: cmd["id"] as? String) }
     case "axStatus":
         // only asks macOS to show its Accessibility prompt when the app says so (once, not on every launch)
-        Emit.send(["event": "axStatus", "trusted": AX.trusted(prompt: cmd["prompt"] as? Bool ?? false), "zoomRunning": ZoomChat.app() != nil])
+        let running = Providers.runningMap()
+        Emit.send(["event": "axStatus", "trusted": AX.trusted(prompt: cmd["prompt"] as? Bool ?? false), "zoomRunning": running["zoom"] ?? false, "providers": running])
     case "calStatus":
         Emit.send(["event": "calResult", "id": cmd["id"] as? String ?? "", "status": CalendarReader.status()])
     case "calRequest":
@@ -89,6 +90,18 @@ if args.count > 1 {
         if args.contains("--open-chat") { _ = ZoomChat.ensureChatOpen() }
         print(ZoomChat.dump())
         exit(0)
+    case "dump-ax":
+        // AX tree of every window of the running apps whose bundle id starts with the prefix, e.g. com.google.Chrome
+        if !AX.trusted(prompt: true) { Emit.log("Accessibility not granted to the process running this command"); exit(1) }
+        guard args.count > 2 else { Emit.log("usage: quorum-helper dump-ax <bundle-prefix>"); exit(2) }
+        print(Providers.dump(prefix: args[2]))
+        exit(0)
+    case "detect":
+        // what the meeting watch sees right now, once
+        if !AX.trusted(prompt: true) { Emit.log("Accessibility not granted"); exit(1) }
+        if let (p, info) = Providers.detectAny() { Emit.send(["event": "meeting", "active": true, "app": p.name, "provider": p.id, "title": info.title, "participants": info.participants, "names": info.names]) }
+        else { Emit.send(["event": "meeting", "active": false, "running": Providers.runningMap()]) }
+        exit(0)
     case "test-capture":
         let seconds = args.count > 2 ? Double(args[2]) ?? 10 : 10
         Task {
@@ -108,7 +121,7 @@ if args.count > 1 {
         Thread.sleep(forTimeInterval: 5)
         exit(0)
     default:
-        Emit.log("usage: quorum-helper [dump-zoom | test-capture <sec> | chat-read | chat-send <text>]")
+        Emit.log("usage: quorum-helper [dump-zoom | dump-ax <bundle-prefix> | detect | test-capture <sec> | chat-read | chat-send <text>]")
         exit(2)
     }
 }
