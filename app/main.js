@@ -77,8 +77,8 @@ const log = (...a) => console.log('[quorum]', ...a);
 // windows can be gone mid-quit while the helper or agent is still reporting
 const toUI = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
 const helperSend = (cmd) => helper?.stdin.write(JSON.stringify(cmd) + '\n');
-// a note started outside a call has no Zoom chat to post in
-const chat = (text) => { if (!meeting.solo) helperSend({ cmd: 'chatSend', text }); };
+// a note started outside a call has no chat to post in, and neither do Meet or Teams yet
+const chat = (text) => { if (!meeting.solo && provider().chat) helperSend({ cmd: 'chatSend', text }); };
 
 function startHelper() {
   helper = spawn(HELPER, [], { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -99,7 +99,18 @@ let lastThemPartial = '';
 // meeting transcript tuning, set on the Voice page; defaults are what most calls want
 // on a one-to-one call the other side is one person, so their side gets their name
 const themName = () => (!meeting.solo && meeting.people.size === 1 ? [...meeting.people][0] : null);
-const MEETING_BUNDLES = ['us.zoom', 'com.microsoft.teams'];
+// meeting apps Quorum can notice. Meet and Teams play audio from browser helper processes, so the tap gets prefixes.
+// chat: whether the STOP/GO notice can be posted in the app; without it capture still starts once you confirm, and the note says so
+const BROWSER_BUNDLES = ['com.google.Chrome', 'com.apple.Safari', 'com.apple.WebKit', 'company.thebrowser.Browser', 'com.microsoft.edgemac', 'com.brave.Browser', 'org.mozilla', 'com.vivaldi.Vivaldi', 'com.operasoftware.Opera'];
+const BROWSER_APPS = ['/Applications/Google Chrome.app', '/Applications/Safari.app', '/Applications/Arc.app', '/Applications/Microsoft Edge.app', '/Applications/Brave Browser.app', '/Applications/Firefox.app'];
+const MEET_PWA = path.join(homedir(), 'Applications/Chrome Apps.localized/Google Meet.app');
+const PROVIDERS = {
+  zoom: { name: 'Zoom', bundles: ['us.zoom'], chat: true, apps: ['/Applications/zoom.us.app'], chatName: 'Zoom chat' },
+  meet: { name: 'Google Meet', bundles: BROWSER_BUNDLES, chat: false, apps: [MEET_PWA, ...BROWSER_APPS], chatName: 'Meet chat' },
+  teams: { name: 'Microsoft Teams', bundles: ['com.microsoft.teams', ...BROWSER_BUNDLES], chat: false, apps: ['/Applications/Microsoft Teams.app', ...BROWSER_APPS], chatName: 'Teams chat' },
+};
+let meetingProvider = 'zoom';
+const provider = () => PROVIDERS[meetingProvider] ?? PROVIDERS.zoom;
 const TX_DEFAULTS = { echo: 'filter', gap: 1.5, live: true, capture: 'meeting' };
 const tx = () => ({ ...TX_DEFAULTS, ...settings.transcription });
 const reEsc = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -271,6 +282,7 @@ function replyToNotice(text) {
 }
 
 const axWaiters = [];
+let lastAx = null;
 const pendingCal = new Map();
 // one request to the helper's calendar reader, answered by a calResult with the same id
 function calAsk(cmd) {
@@ -289,7 +301,7 @@ function onHelperEvent(evt) {
     pendingPosts.delete(evt.id);
     if (evt.event === 'chatSent') p.resolve(); else p.reject(new Error(evt.message));
   }
-  if (evt.event === 'axStatus') { axWaiters.splice(0).forEach((w) => w(evt)); }
+  if (evt.event === 'axStatus') { lastAx = evt; axWaiters.splice(0).forEach((w) => w(evt)); }
   if (evt.event === 'level') return toUI('level', evt.v);
   if (evt.event === 'chat') return onChat(evt);
   if (evt.event === 'meeting') return onMeeting(evt);
@@ -297,7 +309,7 @@ function onHelperEvent(evt) {
     if (evt.title) meeting.title = evt.title;
     if (meeting.armed) {
       meeting.participants = Math.max(meeting.participants, evt.participants || 0);
-      // Zoom labels your own tile with your display name; everyone else is a person in the meeting
+      // Zoom labels your own tile with your display name; everyone else is a person in the meeting. Meet and Teams send no names yet
       for (const n of evt.names ?? []) if (n && n !== USER_NAME && !/^you$/i.test(n)) meeting.people.add(n);
     }
     lastInfo = evt;
@@ -358,7 +370,7 @@ function beginSegment() {
   mkdirSync(meeting.dir, { recursive: true });
   meeting.capturing = true;
   // a note hears everything the Mac plays; a call only hears the meeting app, so music and alerts stay out
-  const only = tx().capture === 'meeting' && !meeting.solo ? MEETING_BUNDLES : [];
+  const only = tx().capture === 'meeting' && !meeting.solo ? provider().bundles : [];
   helperSend({ cmd: 'start', sessionDir: meeting.dir, echoCancel: tx().echo === 'aec', locale: settings.voice?.locale || 'en-US', tapBundles: only });
   writeState();
 }
@@ -480,7 +492,7 @@ const suggester = createSuggester({
 async function startListening(by) {
   if (meeting.armed || meeting.starting || callBlocked) return;
   meeting.starting = true;
-  // with no call on, Start listening opens a note: mic and speakers, no Zoom notice, saved like any meeting
+  // with no call on, Start listening opens a note: mic and speakers, no chat notice, saved like any meeting
   const solo = !meetingActive;
   meeting.solo = solo;
   if (!solo) {
@@ -490,16 +502,20 @@ async function startListening(by) {
     showPopup('starting');
   }
   toUI('state', { phase: 'starting' });
-  const notice = solo ? null : MSG.on();
-  const posted = solo || await postWithRetry(notice);
+  // a provider without chat posting (Meet, Teams) still starts on your say-so; the on-screen card is the notice and the note records that
+  const canPost = !solo && provider().chat;
+  const notice = canPost ? MSG.on() : null;
+  const posted = !canPost || await postWithRetry(notice);
   meeting.starting = false;
   if (!posted) {
     log('notice never posted; not recording');
     showPopup('failed');
     toUI('state', { phase: 'idle' });
-    toUI('log', "Couldn't post Quorum's notice in the Zoom chat, so Quorum isn't recording.");
+    toUI('log', `Couldn't post Quorum's notice in the ${provider().chatName}, so Quorum isn't recording.`);
     return;
   }
+  meeting.noticePosted = canPost;
+  if (!solo && !canPost) toUI('log', `${provider().name} has no chat Quorum can post in, so no in-call notice went out. Tell the call that Quorum is transcribing.`);
   suggester.reset();
   ensureLarge();
   meeting.title = solo ? '' : lastInfo.title || '';
@@ -519,8 +535,8 @@ async function startListening(by) {
   if (!solo) showPopup('listening');
 }
 
-// zoom's default topic ("Eric Smejkal's Zoom Meeting") isn't a useful title
-const genericTitle = (t) => !t || /zoom meeting$/i.test(t) || /personal meeting room/i.test(t);
+// zoom's default topic ("Eric Smejkal's Zoom Meeting") isn't a useful title; a Meet call code ("abc-defg-hij") isn't either
+const genericTitle = (t) => !t || /zoom meeting$/i.test(t) || /personal meeting room/i.test(t) || /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/.test(t);
 
 function meetingMeta(title) {
   const mins = meeting.startedAt ? Math.max(1, Math.round(((meeting.endedAt || new Date()) - meeting.startedAt) / 60000)) : 0;
@@ -604,6 +620,7 @@ function noteMarkdown({ notes, followups }) {
     ...[...meeting.people].map((p) => `  - ${p}`),
     `participant_count: ${meeting.participants || 1}`,
     'source: quorum',
+    ...(meeting.solo ? [] : [`platform: ${provider().name}`, `notice: ${meeting.noticePosted ? `posted in the ${provider().chatName}` : `not posted (${provider().name} has no chat Quorum can post in; ${OWNER} started it by hand)`}`]),
     `model: claude-${settings.model}`,
     `transcript: local only (${path.join(meeting.dir || SESSIONS, 'transcript.json')})`,
     '---',
@@ -637,13 +654,15 @@ function noteMarkdown({ notes, followups }) {
 
 const providerOn = (id) => settings.providers?.[id]?.enabled !== false;
 
-function onMeeting({ active, app: source }) {
-  if (active && !providerOn('zoom') && !meeting.armed) return log('meeting detected but Zoom is removed in Settings');
+function onMeeting({ active, app: source, provider: id }) {
+  const pid = id ?? Object.keys(PROVIDERS).find((k) => PROVIDERS[k].name === source) ?? 'zoom';
+  if (active && !providerOn(pid) && !meeting.armed) return log(`meeting detected but ${PROVIDERS[pid]?.name ?? pid} is removed in Settings`);
   log('meeting', active ? 'detected' : 'ended', source);
+  if (active) meetingProvider = pid;
   meetingActive = active;
   updateTray();
   if (active && meeting.armed && meeting.solo) {
-    closeNoteForMeeting().then(() => { if (meetingActive) onMeeting({ active: true, app: source }); });
+    closeNoteForMeeting().then(() => { if (meetingActive) onMeeting({ active: true, app: source, provider: pid }); });
     return;
   }
   if (active && !meeting.armed) {
@@ -712,7 +731,7 @@ function trayImage(state) {
 function updateTray() {
   if (!tray) return;
   const listening = meeting.capturing;
-  const status = listening ? 'Quorum is listening' : callBlocked ? 'Off for this call' : meeting.armed ? 'Stopped, waiting for GO' : meetingActive ? 'Zoom meeting detected' : 'Not listening';
+  const status = listening ? 'Quorum is listening' : callBlocked ? 'Off for this call' : meeting.armed ? 'Stopped, waiting for GO' : meetingActive ? `${provider().name} meeting detected` : 'Not listening';
   const focused = !!win && win.isVisible() && win.isFocused();
   tray.setImage(trayImage(listening ? 'listening' : focused || !app.isPackaged ? 'focused' : 'idle'));
   tray.setToolTip(`Quorum: ${status}`);
@@ -1460,7 +1479,7 @@ ipcMain.handle('meetings-dir', () => {
   return { path: quorum, rel: path.relative(path.dirname(brain()?.vault ?? dir), quorum), notes, chosen: dir === settings.meetingsDir };
 });
 // icons for notes made by other apps come from that app's own install on this Mac, so Quorum ships none of their artwork
-const SOURCE_APPS = { granola: '/Applications/Granola.app', zoom: '/Applications/zoom.us.app', teams: '/Applications/Microsoft Teams.app' };
+const SOURCE_APPS = { granola: '/Applications/Granola.app', zoom: '/Applications/zoom.us.app', teams: '/Applications/Microsoft Teams.app', meet: MEET_PWA };
 const sourceIcons = {};
 ipcMain.handle('source-icons', () => {
   for (const [k, appPath] of Object.entries(SOURCE_APPS)) {
@@ -1581,17 +1600,20 @@ ipcMain.handle('done', () => { meeting.reviewing = false; writeState(); });
 
 // a reload keeps your place; a fresh launch starts clean
 const LAUNCH_ID = String(Date.now());
-// meeting apps Quorum works with. Local and experimental for now: Quorum reads the app on this Mac and posts in its chat. Meet and Teams come next
+// meeting apps Quorum works with. Local and experimental: Quorum reads the app (or the browser running it) on this Mac.
+// Zoom also gets the notice posted in its chat; Meet and Teams detect and capture, with the notice shown on this Mac instead
 ipcMain.handle('meeting-providers', async () => {
-  const ax = await new Promise((resolve) => { axWaiters.push(resolve); helperSend({ cmd: 'axStatus', prompt: false }); setTimeout(() => resolve(null), 3000); });
-  const installed = existsSync(SOURCE_APPS.zoom);
-  let version = null;
-  try { if (installed) version = execFileSync('/usr/bin/defaults', ['read', `${SOURCE_APPS.zoom}/Contents/Info`, 'CFBundleShortVersionString'], { encoding: 'utf8' }).trim(); } catch {}
-  return [{ id: 'zoom', name: 'Zoom', installed, access: ax ? ax.trusted : null, enabled: providerOn('zoom'), version, path: SOURCE_APPS.zoom, inCall: meetingActive }];
+  const ax = (await new Promise((resolve) => { axWaiters.push(resolve); helperSend({ cmd: 'axStatus', prompt: false }); setTimeout(() => resolve(null), 3000); })) ?? lastAx;
+  return Object.entries(PROVIDERS).map(([id, p]) => {
+    const appPath = p.apps.find((a) => existsSync(a)) ?? null;
+    let version = null;
+    try { if (appPath) version = execFileSync('/usr/bin/defaults', ['read', `${appPath}/Contents/Info`, 'CFBundleShortVersionString'], { encoding: 'utf8' }).trim(); } catch {}
+    return { id, name: p.name, installed: !!appPath, access: ax ? ax.trusted : null, enabled: providerOn(id), version, path: appPath ?? p.apps[0], inCall: meetingActive && meetingProvider === id, chat: p.chat, running: ax?.providers?.[id] ?? null };
+  });
 });
 // removing a provider stops Quorum from noticing its calls; the app itself is untouched
 ipcMain.handle('meeting-provider-set', (_e, id, on) => {
-  if (id !== 'zoom' || typeof on !== 'boolean') return;
+  if (!PROVIDERS[id] || typeof on !== 'boolean') return;
   settings.providers = { ...settings.providers, [id]: { enabled: on } };
   writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
 });
@@ -1644,9 +1666,9 @@ async function control({ cmd, args = {} }) {
     case 'start':
       if (callBlocked) throw new Error("Quorum is off for this call. Someone on your never-listen list is in it.");
       if (meeting.capturing) return 'Already listening';
-      if (!meetingActive) throw new Error('No Zoom meeting found. Join a call first.');
+      if (!meetingActive) throw new Error('No Zoom, Google Meet or Microsoft Teams meeting found. Join a call first.');
       await startListening(OWNER);
-      return meeting.armed ? 'Listening. Quorum posted the notice in the Zoom chat.' : 'Quorum could not post the notice in the Zoom chat, so it is not listening.';
+      return meeting.armed ? (meeting.noticePosted ? `Listening. Quorum posted the notice in the ${provider().chatName}.` : `Listening. ${provider().name} has no chat Quorum can post in, so no notice went out.`) : `Quorum could not post the notice in the ${provider().chatName}, so it is not listening.`;
     case 'stop':
       if (!meeting.capturing) throw new Error("Quorum isn't listening");
       stopAndDelete(OWNER);
