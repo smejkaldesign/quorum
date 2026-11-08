@@ -68,9 +68,17 @@ final class ChatWatcher {
     }
 
     private func poll() {
-        // the open panel is how Quorum sees STOP, so reopen it if someone closes it
-        if chatInput() == nil, ZoomChat.meetingWindow() != nil { ZoomChat.ensureChatOpen(timeout: 1) }
-        let messages = readMessages()
+        let messages: [ChatMessage]
+        if provider?.id == "meet" {
+            // only readable while the Meet tab is the window's active tab; a background tab reads as no new messages
+            guard let (win, _) = MeetChat.callWindow(raise: false) else { return }
+            MeetChat.ensureOpen(in: win, timeout: 1)
+            messages = MeetChat.readMessages(in: win)
+        } else {
+            // the open panel is how Quorum sees STOP, so reopen it if someone closes it
+            if chatInput() == nil, ZoomChat.meetingWindow() != nil { ZoomChat.ensureChatOpen(timeout: 1) }
+            messages = readMessages()
+        }
         for m in messages where !seen.contains(m.key) {
             seen.insert(m.key)
             // anything already in the chat when watching starts is history, not a command
@@ -145,6 +153,8 @@ final class ChatWatcher {
     // answers inside the thread of an earlier message: find its cell, press its Reply button, type into the box that opens
     private func replyNow(to original: String, text: String, id: String?) {
         let fail = { (why: String) in Emit.send(["event": "chatFailed", "id": id ?? "", "message": why]) }
+        // Meet has no threads, so a reply is a plain message
+        if provider?.id == "meet" { return sendNow(text, id: id) }
         guard let (app, pid) = ZoomChat.app() else { return fail("Zoom isn't running") }
         guard ZoomChat.ensureChatOpen(), let table = chatTable() else { return fail("couldn't open the Zoom chat panel") }
         var target: AXUIElement?
@@ -185,6 +195,10 @@ final class ChatWatcher {
     private func sendNow(_ text: String, id: String?) {
         let fail = { (why: String) in Emit.send(["event": "chatFailed", "id": id ?? "", "message": why]) }
         if let p = provider, meetingActive, !p.canPostNotice { return fail("\(p.name) has no chat Quorum can post in") }
+        if provider?.id == "meet" {
+            if let why = MeetChat.send(text) { return fail(why) }
+            return Emit.send(["event": "chatSent", "id": id ?? "", "text": text])
+        }
         guard let (_, pid) = ZoomChat.app() else { return fail("Zoom isn't running") }
         guard ZoomChat.ensureChatOpen(), let input = chatInput() else { return fail("couldn't open the Zoom chat panel") }
         AXUIElementSetAttributeValue(input, kAXFocusedAttribute as CFString, kCFBooleanTrue)

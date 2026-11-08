@@ -143,10 +143,26 @@ struct MeetProvider: MeetingProvider {
     let id = "meet"
     let name = "Google Meet"
     var bundlePrefixes: [String] { Providers.browserPrefixes }
+    var canPostNotice: Bool { true }
+    static func isMeetTitle(_ t: String) -> Bool { title.firstMatch(in: t, range: NSRange(t.startIndex..., in: t)) != nil }
+    // a live call is a Meet-titled window whose active tab shows the Leave call button
+    func isCall(window w: AXUIElement) -> Bool {
+        guard Self.isMeetTitle(AX.str(w, kAXTitleAttribute) ?? "") else { return false }
+        return Providers.findButton(in: w, where: { $0.localizedCaseInsensitiveContains("leave call") }, limit: 6000) != nil
+    }
     static let title = try! NSRegularExpression(pattern: #"^Meet\s[–-]\s(.+?)(\s[-—]\s(Google Chrome|Brave|Microsoft.?Edge|Mozilla Firefox|Vivaldi|Opera).*)?$"#)
     static let code = try! NSRegularExpression(pattern: #"\b[a-z]{3}-[a-z]{4}-[a-z]{3}\b"#)
 
-    func running() -> Bool { !matchingWindows().isEmpty }
+    // a Meet tab in the background still counts as running; only the active tab of a window is exposed, so tab buttons are checked too
+    func running() -> Bool {
+        if !matchingWindows().isEmpty { return true }
+        for app in Providers.runningApps(prefixes: Providers.browserPrefixes) {
+            let (el, wins) = Providers.windows(of: app)
+            Providers.enableWebAX(el)
+            if wins.contains(where: { MeetChat.meetTabButton(in: $0) != nil }) { return true }
+        }
+        return false
+    }
 
     func matchingWindows() -> [(AXUIElement, String)] {
         var out: [(AXUIElement, String)] = []
@@ -165,9 +181,8 @@ struct MeetProvider: MeetingProvider {
 
     func detect() -> MeetingInfo? {
         for (win, rest) in matchingWindows() {
-            let leave = Providers.findButton(in: win) { $0.localizedCaseInsensitiveContains("leave call") }
-            let lobby = Providers.findButton(in: win) { $0.localizedCaseInsensitiveContains("join now") || $0.localizedCaseInsensitiveContains("ask to join") }
-            if leave == nil, lobby != nil { continue }
+            // only a page with a Leave call button is a live call; the lobby, the "You left the meeting" page and the home screen all share the Meet title
+            guard isCall(window: win) else { continue }
             // the title only carries the call code; the meeting name is shown in the page and read when exposed
             let people = Providers.findButton(in: win) { $0.localizedCaseInsensitiveContains("people") || $0.localizedCaseInsensitiveContains("show everyone") }
             let count = people.map(Providers.countNear) ?? 0

@@ -37,6 +37,6 @@ Status on 2026-11-08, after the first port. The reference ran against a differen
 
 1. System permissions on first real use: Microphone, Screen and System Audio Recording, Calendar, Accessibility for Terminal (dev) and later for Quorum.app.
 2. A "Quorum Local Signing" code-signing certificate in Keychain Access before `npm run package`, so macOS keeps permission grants across rebuilds.
-3. Google Meet and Microsoft Teams are wired as providers (detect, capture, title and people best effort) but untested against a live call; the STOP and GO chat notice exists only for Zoom, the others show the on-screen notice and record `notice: not posted` in the note. Plans: `docs/plans/google-meet.md`, `docs/plans/microsoft-teams.md`.
+3. Google Meet: detection and the STOP and GO chat notice are verified live (see `docs/plans/google-meet.md`, Status). Replies are read only while the Meet tab is the active tab. Microsoft Teams: wired (detect, capture) but untested, no chat notice yet; plan in `docs/plans/microsoft-teams.md`.
 4. Hosted backend: the schema and local Supabase stack are in `supabase/` and `app/store/remote.js` pushes notes and meetings when `QUORUM_SUPABASE_URL` and `QUORUM_SUPABASE_ANON_KEY` are set and `sync` is on. The cloud project does not exist yet; the stored PATs are project-scoped, so Eric creates it in the dashboard (org Smejkal Design, free plan) and issues a PAT.
 5. Final Quorum mark to replace `llama-glyph.svg`; the icon scripts regenerate everything from one SVG.

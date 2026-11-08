@@ -111,6 +111,18 @@ if args.count > 1 {
             exit(0)
         }
         dispatchMain()
+    case "meet-chat":
+        // reads the Meet chat, posts the text when given, reads again; raises the Meet tab if it is in the background
+        if !AX.trusted(prompt: true) { Emit.log("Accessibility not granted"); exit(1) }
+        guard let (win, _) = MeetChat.callWindow(raise: true) else { Emit.log("no Google Meet call found"); exit(1) }
+        MeetChat.ensureOpen(in: win)
+        for m in MeetChat.readMessages(in: win) { Emit.send(["event": "chat", "sender": m.sender, "text": m.text, "key": m.key]) }
+        let text = args.dropFirst(2).joined(separator: " ")
+        if !text.isEmpty {
+            if let why = MeetChat.send(text) { Emit.send(["event": "chatFailed", "message": why]) } else { Emit.send(["event": "chatSent", "text": text]) }
+            for m in MeetChat.readMessages(in: win) { Emit.send(["event": "chat", "sender": m.sender, "text": m.text, "key": m.key]) }
+        }
+        exit(0)
     case "chat-read":
         if !AX.trusted(prompt: true) { Emit.log("Accessibility not granted"); exit(1) }
         for m in ChatWatcher.shared.readMessages() { Emit.send(["event": "chat", "sender": m.sender, "text": m.text, "key": m.key]) }
@@ -121,7 +133,7 @@ if args.count > 1 {
         Thread.sleep(forTimeInterval: 5)
         exit(0)
     default:
-        Emit.log("usage: quorum-helper [dump-zoom | dump-ax <bundle-prefix> | detect | test-capture <sec> | chat-read | chat-send <text>]")
+        Emit.log("usage: quorum-helper [dump-zoom | dump-ax <bundle-prefix> | detect | meet-chat [text] | test-capture <sec> | chat-read | chat-send <text>]")
         exit(2)
     }
 }

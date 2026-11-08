@@ -64,3 +64,11 @@ Fallback in place: when the active provider cannot post, `startListening` in `ma
 
 - [[quorum]]
 - [[microsoft-teams]]
+
+## Status 2026-11-08 (live test in Eric's own empty meeting)
+
+- **Detection verified.** A live call is a window whose active tab has the Meet title and a "Leave call" button. The lobby, the "You left the meeting" page and the Meet home page share the title and are correctly ignored. Several tabs can carry the title at once (a call left earlier keeps it); the helper tries each when it needs to raise one.
+- **Chat notice verified (P2 done, best effort).** `MeetChat.swift` opens the side panel ("Chat with everyone"), sets the "Send a message" composer, presses the "Send a message" button and confirms the bubble. Reading works too: bubbles are `AXStaticText` under a time stamp group inside the "Side panel" landmark. Live run: two existing messages read back, the notice posted and read back as sent by "You".
+- **Known limits.** A browser exposes only the active tab of each window, so STOP and GO replies are read only while the Meet tab is in front (where the user is during a call); posting raises the tab itself. Other people's sender lines are parsed as the text that shares a parent with the time stamp; that shape is unverified until a second participant writes in the chat. Teams chat is still unimplemented.
+- **Audio.** In-browser Meet is tapped through the browser's helper processes, so other tabs playing audio are heard too.
+

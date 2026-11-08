@@ -106,7 +106,7 @@ const BROWSER_APPS = ['/Applications/Google Chrome.app', '/Applications/Safari.a
 const MEET_PWA = path.join(homedir(), 'Applications/Chrome Apps.localized/Google Meet.app');
 const PROVIDERS = {
   zoom: { name: 'Zoom', bundles: ['us.zoom'], chat: true, apps: ['/Applications/zoom.us.app'], chatName: 'Zoom chat' },
-  meet: { name: 'Google Meet', bundles: BROWSER_BUNDLES, chat: false, apps: [MEET_PWA, ...BROWSER_APPS], chatName: 'Meet chat' },
+  meet: { name: 'Google Meet', bundles: BROWSER_BUNDLES, chat: true, apps: [MEET_PWA, ...BROWSER_APPS], chatName: 'Meet chat' },
   teams: { name: 'Microsoft Teams', bundles: ['com.microsoft.teams', ...BROWSER_BUNDLES], chat: false, apps: ['/Applications/Microsoft Teams.app', ...BROWSER_APPS], chatName: 'Teams chat' },
 };
 let meetingProvider = 'zoom';
