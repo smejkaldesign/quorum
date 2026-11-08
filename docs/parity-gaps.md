@@ -9,6 +9,14 @@ Status on 2026-11-08, after the first port. The reference ran against a differen
 - Claude Code sign-in is the personal claude.ai account, so agent questions and summaries run without any API key.
 - Search hints and in-call suggestions call `search-memory.py --mode keyword` and parse its `N. [path:lines]` output. The reference script took `--keyword --cite --expand-graph`; this one does not, so the call sites and `parseHits` were rewritten.
 
+## Hosted edition and first run (2026-11-08, evening)
+
+- **Accounts.** Sign-in by 6-digit email code (Supabase Auth, templates set to send `{{ .Token }}`), workspaces with owner/admin/member roles, invites by email, domain join, Members page. Migration `0002_accounts` applied to production. Live test: Eric signed in, workspace "Smejkal Design" (domain smejkal.design) created, members list reads back.
+- **Sync.** Local stays the store; `app/sync.js` pushes notes and meetings when sync is on, skipping hidden paths, private folders, `confidential:` notes and withheld lines. Off by default; nothing has been pushed from the real vault.
+- **First run.** `app/onboarding.js` + `src/Onboarding.tsx`: welcome, notes folder (create `~/Documents/Quorum` with starter files, or connect), Claude Code check, optional account, permissions, done. Verified on the installed `/Applications/Quorum.app` under a throwaway HOME. Existing installs skip the wizard.
+- **Packaging.** `npm run package` works with ad-hoc signing; the asar now ships every main-process module plus `@supabase/supabase-js`. Installed build at `/Applications/Quorum.app`.
+- **Open:** Google sign-in (needs an OAuth client), custom SMTP for auth mail (built-in SMTP allows about 2 per hour), the local signing certificate, Teams chat notice, running power-ups.
+
 ## Now native (no longer depend on the connected Agent OS)
 
 - **Power-ups.** Settings › Memory › Power-ups lists what the scan found in the connected Agent OS: memory index, search, link graph, guard hooks, agent instructions, skills, agents and MCP servers. Index, search, graph and folders feed the agent today; instructions, skills, agents and MCP servers are listed and will become runnable later.
