@@ -1,13 +1,16 @@
-// Renders the DMG window background: one hand-drawn blue line from the app to Applications, ending in an arrow.
+// Renders the DMG window background: one chalk-like blue arc over the app and Applications, ending in an arrow.
 // usage: swiftc make-dmg-bg.swift -o make-dmg-bg && ./make-dmg-bg <out-dir>
 import AppKit
 
 let W: CGFloat = 540, H: CGFloat = 380
-let ink = NSColor(srgbRed: 0, green: 0.48, blue: 1, alpha: 1)
+let ink = NSColor(srgbRed: 0.2, green: 0.56, blue: 1, alpha: 1)
 
-// icons sit at (150,190) and (390,190) in Finder's top-left coordinates, 96pt wide; the line runs between them,
-// bowing upward a little (AppKit y is up)
-let curve: [NSPoint] = [NSPoint(x: 206, y: 198), NSPoint(x: 244, y: 226), NSPoint(x: 298, y: 226), NSPoint(x: 334, y: 200)]
+// small seeded generator so the chalk grain is the same on every render
+struct Rng { var s: UInt64; mutating func next() -> CGFloat { s = s &* 6364136223846793005 &+ 1442695040888963407; return CGFloat((s >> 33) % 10000) / 10000 } }
+
+// icons sit at (150,190) and (390,190) in Finder's top-left coordinates, 96pt wide; the arc rises from above the app
+// icon, peaks between them and comes down toward Applications (AppKit y is up)
+let curve: [NSPoint] = [NSPoint(x: 166, y: 262), NSPoint(x: 200, y: 346), NSPoint(x: 352, y: 336), NSPoint(x: 378, y: 262)]
 
 func bez(_ s: [NSPoint], _ t: CGFloat) -> NSPoint {
     let u = 1 - t
@@ -65,23 +68,36 @@ func render(scale: CGFloat) -> NSBitmapImageRep {
         .draw(in: NSRect(x: 0, y: 0, width: W, height: H), angle: -90)
 
     var pts: [NSPoint] = []
-    for i in 0...72 { pts.append(bez(curve, CGFloat(i) / 72)) }
+    for i in 0...96 { pts.append(bez(curve, CGFloat(i) / 96)) }
 
-    // the line: a solid pass, then a thinner lighter pass with its own wobble, the way a second stroke never
-    // quite follows the first
-    ink.withAlphaComponent(0.9).setFill(); ribbon(pts, seed: 0.0, amp: 2.2, width: 3.8).fill()
-    ink.withAlphaComponent(0.35).setFill(); ribbon(pts, seed: 2.9, amp: 3.0, width: 1.6).fill()
+    // chalk: many faint thin passes, each wandering a little differently, so the edge stays soft and uneven;
+    // then a dusting of specks along the line
+    var rng = Rng(s: 7)
+    func chalk(_ points: [NSPoint], passes: Int, width: CGFloat, amp: CGFloat, alpha: CGFloat) {
+        for k in 0..<passes {
+            let seed = CGFloat(k) * 1.37 + rng.next() * 3
+            ink.withAlphaComponent(alpha).setFill()
+            ribbon(points, seed: seed, amp: amp + rng.next() * 0.8, width: width).fill()
+        }
+        for pt in points {
+            for _ in 0..<2 where rng.next() < 0.45 {
+                let r = 0.35 + rng.next() * 0.6
+                let d = NSPoint(x: pt.x + (rng.next() - 0.5) * width * 2.2, y: pt.y + (rng.next() - 0.5) * width * 2.2)
+                ink.withAlphaComponent(0.08 + rng.next() * 0.22).setFill()
+                NSBezierPath(ovalIn: NSRect(x: d.x - r, y: d.y - r, width: 2 * r, height: 2 * r)).fill()
+            }
+        }
+    }
+    chalk(pts, passes: 7, width: 3.6, amp: 1.4, alpha: 0.16)
 
-    // the arrow head: two strokes that run past the tip and cross, as a quick hand draws it
+    // a short open arrow head, two light strokes meeting at the tip
     let end = curve[3]
     let a = tangent(curve, 1)
-    let arm: CGFloat = 19, spread: CGFloat = 0.58, over: CGFloat = 4
-    let tip = NSPoint(x: end.x + 1.5 * cos(a), y: end.y + 1.5 * sin(a))
-    for (side, seed) in [(a - spread, 4.1), (a + spread, 6.3)] as [(CGFloat, CGFloat)] {
-        let from = NSPoint(x: tip.x - arm * cos(side), y: tip.y - arm * sin(side))
-        let to = NSPoint(x: tip.x + over * cos(side), y: tip.y + over * sin(side))
-        ink.withAlphaComponent(0.9).setFill(); ribbon(straight(from, to), seed: seed, amp: 0.8, width: 3.2).fill()
-        ink.withAlphaComponent(0.35).setFill(); ribbon(straight(from, to), seed: seed + 1.3, amp: 1.2, width: 1.4).fill()
+    let arm: CGFloat = 15, spread: CGFloat = 0.55
+    for side in [a - spread, a + spread] {
+        let from = NSPoint(x: end.x - arm * cos(side), y: end.y - arm * sin(side))
+        let to = NSPoint(x: end.x + 1.5 * cos(side), y: end.y + 1.5 * sin(side))
+        chalk(straight(from, to, steps: 20), passes: 6, width: 3.2, amp: 0.7, alpha: 0.16)
     }
     NSGraphicsContext.restoreGraphicsState()
     return rep
