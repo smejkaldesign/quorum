@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import type { AccountState, Member, MemberInvite, Result, Role } from './quorum';
 import { Row, Toggle, useMenu } from './controls';
 import { IconBuilding, IconMore, IconPower, IconReset, IconTrash } from './icons';
-import { installAccountMock } from './accountMock';
+import { accountApi } from './accountMock';
 
-installAccountMock();
+const api = accountApi();
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CONSUMER = new Set(['gmail.com', 'googlemail.com', 'icloud.com', 'me.com', 'mac.com', 'outlook.com', 'hotmail.com', 'live.com', 'msn.com', 'yahoo.com', 'aol.com', 'proton.me', 'protonmail.com']);
@@ -36,7 +36,7 @@ const count = (n: number, word: string) => `${n} ${n === 1 ? word : `${word}s`}`
 
 export function useAccount() {
   const [a, setA] = useState<AccountState | null>(null);
-  useEffect(() => { window.quorum.accountStatus().then(setA); return window.quorum.onAccount(setA); }, []);
+  useEffect(() => { api.accountStatus().then(setA); return api.onAccount(setA); }, []);
   return a;
 }
 
@@ -56,8 +56,8 @@ function SignIn() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const run = async (fn: () => Promise<Result>, then: () => void) => { setBusy(true); setError(''); const r = await fn(); setBusy(false); if (r.error) setError(r.error); else then(); };
-  const send = () => run(() => window.quorum.accountSendCode(email.trim()), () => setSent(true));
-  const verify = () => run(() => window.quorum.accountVerifyCode(email.trim(), code), () => {});
+  const send = () => run(() => api.accountSendCode(email.trim()), () => setSent(true));
+  const verify = () => run(() => api.accountVerifyCode(email.trim(), code), () => {});
   const ok = EMAIL.test(email.trim());
   return (
     <div className="set-card form acct">
@@ -110,7 +110,7 @@ function SignOutMenu() {
       <button className="icon-btn" aria-label="Account options" aria-haspopup="menu" aria-expanded={open} data-tip="More options" onClick={() => setOpen((o) => !o)}><IconMore /></button>
       {open && (
         <div className="menu end" role="menu">
-          <button role="menuitem" className="danger" onClick={() => { setOpen(false); window.quorum.accountSignOut(); }}><IconPower width={15} height={15} /> Sign out</button>
+          <button role="menuitem" className="danger" onClick={() => { setOpen(false); api.accountSignOut(); }}><IconPower width={15} height={15} /> Sign out</button>
         </div>
       )}
     </span>
@@ -126,7 +126,7 @@ function PickOrg({ account }: { account: AccountState }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
   const run = async (key: string, fn: () => Promise<Result>) => { setBusy(key); setError(''); const r = await fn(); setBusy(null); if (r.error) setError(r.error); };
-  const create = () => { if (name.trim() && !busy) run('create', () => window.quorum.orgCreate(name.trim(), domain, !!domain && join)); };
+  const create = () => { if (name.trim() && !busy) run('create', () => api.orgCreate(name.trim(), domain, !!domain && join)); };
   const none = !account.invites.length && !account.domainMatches.length;
   return (
     <div className="set-card form acct">
@@ -148,13 +148,13 @@ function PickOrg({ account }: { account: AccountState }) {
         {account.invites.map((inv) => (
           <div key={inv.inviteId} className="join-row">
             <span><strong>{inv.workspaceName}</strong><em className="muted"> · {ROLE[inv.role]}{inv.invitedByEmail ? ` · invited by ${inv.invitedByEmail}` : ''} · {until(inv.expiresAt)}</em></span>
-            <button className="pill small-pill" disabled={busy === inv.inviteId} onClick={() => run(inv.inviteId, () => window.quorum.orgJoin({ inviteId: inv.inviteId }))}>{busy === inv.inviteId ? 'Joining…' : 'Join'}</button>
+            <button className="pill small-pill" disabled={busy === inv.inviteId} onClick={() => run(inv.inviteId, () => api.orgJoin({ inviteId: inv.inviteId }))}>{busy === inv.inviteId ? 'Joining…' : 'Join'}</button>
           </div>
         ))}
         {account.domainMatches.map((m) => (
           <div key={m.workspaceId} className="join-row">
             <span><strong>{m.name}</strong><em className="muted"> · Open to @{domain}</em></span>
-            <button className="pill small-pill" disabled={busy === m.workspaceId} onClick={() => run(m.workspaceId, () => window.quorum.orgJoin({ workspaceId: m.workspaceId }))}>{busy === m.workspaceId ? 'Joining…' : 'Join'}</button>
+            <button className="pill small-pill" disabled={busy === m.workspaceId} onClick={() => run(m.workspaceId, () => api.orgJoin({ workspaceId: m.workspaceId }))}>{busy === m.workspaceId ? 'Joining…' : 'Join'}</button>
           </div>
         ))}
         {none && <p className="acct-none">No invitations yet. Ask an admin to invite {email}.</p>}
@@ -174,7 +174,7 @@ function OrgCard({ account }: { account: AccountState }) {
   useEffect(() => { if (!msg) return; const t = setTimeout(() => setMsg(''), 6000); return () => clearTimeout(t); }, [msg]);
   const syncNow = async () => {
     setBusy(true); setErr(''); setMsg('');
-    const r = await window.quorum.syncNow();
+    const r = await api.syncNow();
     setBusy(false);
     if (r.error) setErr(r.error); else if (r.pushed) setMsg(`Pushed ${count(r.pushed.notes, 'note')} and ${count(r.pushed.meetings, 'meeting')}`);
   };
@@ -186,7 +186,7 @@ function OrgCard({ account }: { account: AccountState }) {
     <div className="set-card">
       <Row icon={<IconBuilding width={18} height={18} className="ok" />} title={<>{ws.name}<em className="stub">{ROLE[ws.role]}</em></>} desc={account.email}>
         {account.workspaces.length > 1 && (
-          <select className="set-select" aria-label="Switch organization" value={ws.id} onChange={(e) => window.quorum.orgSwitch(e.target.value)}>
+          <select className="set-select" aria-label="Switch organization" value={ws.id} onChange={(e) => api.orgSwitch(e.target.value)}>
             {account.workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
         )}
@@ -194,7 +194,7 @@ function OrgCard({ account }: { account: AccountState }) {
       </Row>
       <Row icon={<IconReset width={18} height={18} className={!account.sync ? undefined : error ? 'err' : 'ok'} />} title="Sync notes and meetings" desc={desc}>
         {account.sync && <button className="pill small-pill" disabled={busy} onClick={syncNow}>{busy ? 'Syncing…' : 'Sync now'}</button>}
-        <Toggle on={account.sync} onChange={(v) => window.quorum.syncSet(v)} />
+        <Toggle on={account.sync} onChange={(v) => api.syncSet(v)} />
       </Row>
     </div>
   );
@@ -214,10 +214,10 @@ function Members({ account }: { account: AccountState }) {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<Role>('member');
   const [busy, setBusy] = useState(false);
-  const load = () => window.quorum.membersList().then((r) => { if ('error' in r) setError(r.error); else setList(r); });
+  const load = () => api.membersList().then((r) => { if ('error' in r) setError(r.error); else setList(r); });
   useEffect(() => { load(); }, [ws.id]);
   const act = async (fn: () => Promise<Result>) => { setBusy(true); setError(''); const r = await fn(); setBusy(false); if (r.error) setError(r.error); else load(); return !r.error; };
-  const invite = async () => { if (await act(() => window.quorum.memberInvite(email.trim().toLowerCase(), role))) setEmail(''); };
+  const invite = async () => { if (await act(() => api.memberInvite(email.trim().toLowerCase(), role))) setEmail(''); };
   const canManage = ws.role !== 'member';
   const owners = list?.members.filter((m) => m.role === 'owner').length ?? 0;
   const ok = EMAIL.test(email.trim());
@@ -252,7 +252,7 @@ function Members({ account }: { account: AccountState }) {
               <span className="member-avatar">{(m.name || m.email)[0].toUpperCase()}</span>
               <div className="set-text"><strong>{m.name || m.email}{me && <em className="stub">You</em>}</strong><span>{m.name ? `${m.email} · ` : ''}Joined {onDate(m.joinedAt)}</span></div>
               <em className="stub">{ROLE[m.role]}</em>
-              {canManage && <MemberMenu label={m.name || m.email} why={why} onRemove={() => act(() => window.quorum.memberRemove(m.userId))} />}
+              {canManage && <MemberMenu label={m.name || m.email} why={why} onRemove={() => act(() => api.memberRemove(m.userId))} />}
             </div>
           );
         })}
@@ -267,7 +267,7 @@ function Members({ account }: { account: AccountState }) {
                 <span className="member-avatar pending">{inv.email[0].toUpperCase()}</span>
                 <div className="set-text"><strong>{inv.email}</strong><span>{until(inv.expiresAt)}</span></div>
                 <em className="stub">{ROLE[inv.role]}</em>
-                {canManage && <button className="pill small-pill" disabled={busy} onClick={() => act(() => window.quorum.inviteRevoke(inv.inviteId))}>Revoke</button>}
+                {canManage && <button className="pill small-pill" disabled={busy} onClick={() => act(() => api.inviteRevoke(inv.inviteId))}>Revoke</button>}
               </div>
             ))}
           </div>
