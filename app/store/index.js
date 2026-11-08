@@ -1,10 +1,7 @@
-// the one storage interface the app calls (docs/backend-plan.md). Local files unless sync is on in settings and the
-// Supabase env is set; remote.js is only loaded on that path, so the default run never touches it
+// the one storage interface the app calls (docs/backend-plan.md). Local files are always the store; the hosted
+// edition layers pushes on top through sync.js once an account is signed in and sync is on in settings
 import local from './local.js';
 
-const { QUORUM_SUPABASE_URL: url, QUORUM_SUPABASE_ANON_KEY: key } = process.env;
-const remote = url && key && local.settings.get().sync === true;
-const store = remote ? (await import('./remote.js')).createRemote({ url, key }) : local;
-export const backend = remote ? 'remote' : 'local';
+export const backend = 'local';
 
-export default store;
+export default local;

@@ -4,6 +4,7 @@ import { createFolder, createNote, duplicateItem, moveItem, readVaultNote, renam
 import { createVaultIndex } from './vindex.js';
 import { addAlias, retargetLinks, rewriteLinks } from './relink.js';
 import store from './store/index.js';
+import { registerAccount } from './account.js';
 import { createSuggester } from './suggest.js';
 import { extractJson } from './json.js';
 import { startControl } from './control.js';
@@ -1172,6 +1173,7 @@ ipcMain.handle('note-apply', (_e, file, newBody) => {
   if (suggester.isExcluded(raw)) throw new Error('This note has withheld lines, so edit it in the vault directly');
   const fm = raw.match(/^---\n[\s\S]*?\n---\n/)?.[0] ?? '';
   store.notes.write(abs, `${fm}${String(newBody).replace(/\n*$/, '\n')}`);
+  account.sync.pushNote(abs);
   return true;
 });
 
@@ -1220,6 +1222,8 @@ function openIndex() {
   vindex.start();
 }
 ipcMain.handle('vault-tree', () => (brain() ? vaultTree(brain().vault, excludedPath) : []));
+// hosted edition: sign-in, workspaces, members and push sync (account.js, sync.js); the IPC handlers are registered inside
+const account = registerAccount({ ipcMain, settings, saveSettings, toUI, log, brain, meetingIndex, isExcluded: excludedPath, isExcludedText: suggester.isExcluded });
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);
 ipcMain.handle('vault-search', (_e, q, limit) => vindex?.search(String(q), Math.min(Number(limit) || 30, 1000)) ?? []);
 ipcMain.handle('vault-link-health', () => vindex?.linkHealth() ?? []);
@@ -1512,6 +1516,7 @@ function saveNotes(payload) {
   const file = path.join(dir, `${date}-${slug(notes.title)}-${String(meeting.id).slice(-8).toLowerCase()}.md`);
   store.meetings.saveNote(file, noteMarkdown({ notes, followups: payload.followups }));
   log('saved note', file);
+  account.sync.pushMeetingNote(file);
   // the call's chat now hangs off the saved note
   for (const c of allChats()) if (c.meetingId === meeting.id) writeChat({ ...c, meetingFile: file, meetingTitle: notes.title });
   return { file, rel: path.relative(path.dirname(suggester.vault()), file), ...noteLink(file) };
