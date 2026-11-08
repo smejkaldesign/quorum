@@ -1224,7 +1224,10 @@ function openIndex() {
 }
 ipcMain.handle('vault-tree', () => (brain() ? vaultTree(brain().vault, excludedPath) : []));
 // hosted edition: sign-in, workspaces, members and push sync (account.js, sync.js); the IPC handlers are registered inside
-const account = registerAccount({ ipcMain, settings, saveSettings, toUI, log, brain, meetingIndex, isExcluded: excludedPath, isExcludedText: suggester.isExcluded });
+// sync never pushes private folders, notes marked confidential, or anything the opt-out list withholds
+const isPrivatePath = (rel) => { const b = brain(); if (!b) return false; const abs = path.resolve(b.vault, rel); return privateDirs(b.root).some((d) => { const dir = path.join(b.root, d); return abs === dir || abs.startsWith(dir + path.sep); }); };
+const isConfidentialText = (text) => /^---\r?\n(?:[^\n]*\r?\n)*?confidential\s*:/i.test(String(text).slice(0, 2000));
+const account = registerAccount({ ipcMain, settings, saveSettings, toUI, log, brain, meetingIndex, isExcluded: (rel) => excludedPath(rel) || isPrivatePath(rel), isExcludedText: (t) => suggester.isExcluded(t) || isConfidentialText(t) });
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);
 ipcMain.handle('vault-search', (_e, q, limit) => vindex?.search(String(q), Math.min(Number(limit) || 30, 1000)) ?? []);
 ipcMain.handle('vault-link-health', () => vindex?.linkHealth() ?? []);
