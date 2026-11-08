@@ -114,4 +114,20 @@ contextBridge.exposeInMainWorld('quorum', {
   memoryExclude: (id) => ipcRenderer.invoke('memory-exclude', id),
   memoryOpen: (id) => ipcRenderer.invoke('memory-open', id),
   removePhoto: () => ipcRenderer.invoke('remove-photo'),
+  // account (hosted edition): sign-in by email code, workspaces, members, sync. Handlers live in account.js
+  accountStatus: () => ipcRenderer.invoke('account-status'),
+  accountSendCode: (email) => ipcRenderer.invoke('account-send-code', email),
+  accountVerifyCode: (email, code) => ipcRenderer.invoke('account-verify-code', email, code),
+  accountSignOut: () => ipcRenderer.invoke('account-sign-out'),
+  orgCreate: (name, domain, domainJoin) => ipcRenderer.invoke('org-create', name, domain, domainJoin),
+  orgJoin: (how) => ipcRenderer.invoke('org-join', how),
+  orgSwitch: (workspaceId) => ipcRenderer.invoke('org-switch', workspaceId),
+  membersList: () => ipcRenderer.invoke('members-list'),
+  memberInvite: (email, role) => ipcRenderer.invoke('member-invite', email, role),
+  memberRemove: (userId) => ipcRenderer.invoke('member-remove', userId),
+  inviteRevoke: (inviteId) => ipcRenderer.invoke('invite-revoke', inviteId),
+  syncSet: (on) => ipcRenderer.invoke('sync-set', on),
+  syncNow: () => ipcRenderer.invoke('sync-now'),
+  onAccount: on('account'),
+  // end account
 });

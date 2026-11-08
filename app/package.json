@@ -41,6 +41,8 @@
     },
     "files": [
       "main.js",
+      "account.js",
+      "sync.js",
       "store/**",
       "agent.js",
       "suggest.js",
