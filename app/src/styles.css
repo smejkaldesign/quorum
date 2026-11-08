@@ -890,3 +890,30 @@ svg.err { color: var(--danger); }
 .conn-ok { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; font-size: 13px; font-weight: 500; color: var(--go); }
 .conn-ok i { width: 7px; height: 7px; border-radius: 50%; background: var(--go); }
 .set-card.even .set-select { width: 180px; }
+
+/* first-run wizard: one centered card, steps advance in place */
+.onb { flex: 1; display: grid; place-items: center; padding: 24px; overflow: auto; }
+.onb-card { width: min(640px, 100%); background: var(--container-bg); border: 1px solid var(--container-border); border-radius: 24px; padding: 28px 32px 24px; }
+.onb-progress { display: flex; gap: 6px; margin-bottom: 22px; }
+.onb-progress i { flex: 1; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, 0.08); }
+.onb-progress i.on { background: var(--brand); }
+.onb-step h1 { margin: 0 0 10px; font: 400 30px/1.15 "New York", ui-serif, Georgia, serif; letter-spacing: -0.01em; }
+.onb-step > p { color: var(--muted); font-size: 15px; margin-bottom: 18px; }
+.onb-mark { width: 56px; height: 56px; margin-bottom: 14px; }
+.onb-choice { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid var(--line-2); border-radius: 16px; background: var(--container-tile); margin-bottom: 10px; }
+.onb-choice.on { border-color: rgba(127, 219, 131, 0.35); }
+.onb-choice > svg { flex: none; color: var(--muted); }
+.onb-choice > svg.ok { color: var(--go); }
+.onb-choice > div { flex: 1; min-width: 0; }
+.onb-choice strong { display: block; font-weight: 500; font-size: 15px; }
+.onb-choice em { display: block; font-style: normal; color: var(--muted); font-size: 13px; margin-top: 2px; }
+.onb-choice .onb-field { margin-top: 10px; }
+.onb-state { font-size: 12px; font-weight: 500; color: var(--muted); margin-left: 8px; }
+.onb-state.ok { color: var(--go); }
+.onb-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 20px; }
+.onb-actions-end { display: inline-flex; gap: 10px; }
+.onb-slot { margin: 6px 0 4px; }
+.onb-muted { color: var(--muted); font-size: 14px; }
+.onb-summary { list-style: none; padding: 0; margin: 0 0 16px; display: grid; gap: 10px; }
+.onb-summary li { display: flex; align-items: center; gap: 10px; font-size: 15px; }
+.onb-summary svg { color: var(--muted); flex: none; }

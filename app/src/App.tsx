@@ -3,6 +3,7 @@ import type { Brain, HelperEvent, MeetingMeta, Notes, Settings, Source } from '.
 import { Markdown } from './Markdown';
 import { useSession } from './session';
 import { EndView } from './EndView';
+import { Onboarding } from './Onboarding';
 import markProd from '../assets/quorum-mark.png';
 import markDev from '../assets/quorum-mark-dev.png';
 
@@ -82,6 +83,9 @@ export function App() {
   }, [setView, setTab]);
   const [menuOpen, setMenuOpen] = useState<null | 'status' | 'model' | 'brain'>(null);
   const [brain, setBrain] = useState<Brain | null>(null);
+  // a fresh install shows the wizard until onboarding-done; null until the main process answers
+  const [firstRun, setFirstRun] = useState<boolean | null>(null);
+  useEffect(() => { window.quorum.onboardingStatus().then((s) => setFirstRun(s.firstRun)).catch(() => setFirstRun(false)); }, []);
   const [settingsPage, setSettingsPage] = useState<{ page: 'preferences' | 'memory'; n: number } | null>(null);
   const openSettings = (page: 'preferences' | 'memory') => { setSettingsPage({ page, n: Date.now() }); setView('settings'); };
   const composer = useRef<HTMLTextAreaElement>(null);
@@ -239,6 +243,10 @@ export function App() {
     blocked: { label: 'Off for this call', icon: <Wave live={false} /> },
   }[phase];
 
+
+  if (firstRun) {
+    return <div className="panel"><Onboarding brain={brain} onBrain={setBrain} onDone={() => setFirstRun(false)} /></div>;
+  }
 
   if (phase === 'review') {
     return <EndView notes={notes} meta={meta} summarizing={summarizing} transcript={lines.map((l) => ({ channel: l.channel, who: who(l.channel), text: l.text }))} onClose={() => { setPhase('idle'); resetMeeting(); setTab('home'); }} />;

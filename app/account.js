@@ -90,8 +90,8 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
       ]);
       for (const r of [members, invites, domains]) if (r.error) throw r.error;
       state.workspaces = (members.data ?? []).filter((m) => m.workspace && !m.workspace.deleted_at).map((m) => row(m.workspace, m.role)).sort((a, b) => a.name.localeCompare(b.name));
-      state.invites = (invites.data ?? []).map((i) => ({ id: i.invite_id, workspaceId: i.workspace_id, workspaceName: i.workspace_name, role: i.role, invitedBy: i.invited_by_email ?? null, expiresAt: i.expires_at }));
-      state.domainMatches = (domains.data ?? []).map((d) => ({ id: d.workspace_id, name: d.name }));
+      state.invites = (invites.data ?? []).map((i) => ({ id: i.invite_id, inviteId: i.invite_id, workspaceId: i.workspace_id, workspaceName: i.workspace_name, role: i.role, invitedBy: i.invited_by_email ?? null, invitedByEmail: i.invited_by_email ?? null, expiresAt: i.expires_at }));
+      state.domainMatches = (domains.data ?? []).map((d) => ({ id: d.workspace_id, workspaceId: d.workspace_id, name: d.name }));
       chooseWorkspace(settings.workspaceId);
       state.syncError = null;
     } catch (err) {
@@ -116,7 +116,7 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
     if (invites.error) return fail(invites.error);
     return {
       members: (members.data ?? []).map((m) => ({ userId: m.user_id, email: m.email ?? null, name: m.name ?? null, role: m.role, joinedAt: m.joined_at })),
-      invites: (invites.data ?? []).map((i) => ({ id: i.id, email: i.email, role: i.role, expiresAt: i.expires_at, invitedBy: i.user_id })),
+      invites: (invites.data ?? []).map((i) => ({ id: i.id, inviteId: i.id, email: i.email, role: i.role, expiresAt: i.expires_at, invitedBy: i.user_id })),
     };
   }
 

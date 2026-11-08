@@ -25,6 +25,7 @@ export type DecisionsStatus = { connected: boolean; provider: DecisionProvider |
 export type Workspace = { company?: string; companyDescription?: string; neverListen?: string[]; optOuts?: OptOut[]; decisions?: { provider: DecisionProvider; by?: string; at?: string }; stopWord?: string; goWord?: string };
 export type Transcription = { echo?: 'off' | 'filter' | 'aec'; gap?: number; live?: boolean; capture?: 'meeting' | 'all' };
 export type Settings = { autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; suggestions: boolean; access?: 'read' | 'write'; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription };
+export type OnboardingStatus = { firstRun: boolean; defaultVaultDir: string; permissions: { microphone: string; audio: string; accessibility: string; calendar: string }; claude: { installed: boolean; loggedIn?: boolean; email?: string; org?: string; plan?: string; version?: string } };
 export type Brain = { root: string; vault: string; name: string; markers: { agentOS: string | null; obsidian: boolean; search: boolean; safetyHooks: boolean } };
 export type MeetingRow = { id: string; file: string; kind: 'meeting' | 'note'; source: string; title: string; date: string | null; people: string[]; count: number; visibility: Visibility; rel: string; link: string; app: string };
 export type ChatRow = { id: string; title: string; date: string; turns: number; meetingFile: string | null; meetingTitle: string | null };
@@ -161,6 +162,11 @@ declare global {
       memoryExclude(id: string): Promise<Memory>;
       memoryOpen(id: string): Promise<void>;
       removePhoto(): Promise<Settings>;
+      onboardingStatus(): Promise<OnboardingStatus>;
+      onboardingCreateVault(dir: string | null, name: string): Promise<Brain>;
+      onboardingOpenPermission(which: 'microphone' | 'audio' | 'accessibility' | 'calendar'): Promise<void>;
+      onboardingRequestMicrophone(): Promise<boolean>;
+      onboardingDone(): Promise<boolean>;
     };
   }
 }
