@@ -358,7 +358,7 @@ html.popup-root, html.popup-root body { background: transparent; }
 .filter:hover { color: var(--text); }
 .filter.on { color: var(--text); background: rgba(255, 255, 255, 0.05); }
 .hist-group { margin-bottom: 24px; }
-.hist-group h4 { margin: 0 0 6px; color: var(--muted); font-size: 14px; font-weight: 500; }
+.hist-group h4 { margin: 0 0 6px; color: var(--muted); font-size: 18px; font-weight: 500; }
 .hist-row { display: flex; align-items: center; gap: 14px; width: 100%; padding: 7px 0; text-align: left; border-radius: 12px; }
 .hist-row:hover { background: rgba(255, 255, 255, 0.03); }
 .avatar-sq { position: relative; width: 44px; height: 44px; flex: none; display: grid; place-items: center; border-radius: 8px; color: #fbe9d8; font: 400 22px/1 "New York", ui-serif, Georgia, serif; }
