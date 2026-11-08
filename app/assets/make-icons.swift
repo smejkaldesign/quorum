@@ -1,7 +1,7 @@
 // Renders the Quorum app icon (blue gradient tile, white outlined owl mark) and the avatar mark (the same mark filled
 // with the gradient, for dark backgrounds).
 // usage: swiftc make-icons.swift -o make-icons && ./make-icons quorum-outlined.svg <out-dir> [dev]
-// with `dev`, writes only icon-dev.png and quorum-mark-dev.png: the same art on green, so the dev copy never looks like the real app
+// with `dev`, writes only icon-dev.png and quorum-mark-dev.png: the same art on dev green (#3FE35D), so the dev copy never looks like the real app
 import AppKit
 
 let args = CommandLine.arguments
@@ -9,8 +9,8 @@ let mark = NSImage(data: try! Data(contentsOf: URL(fileURLWithPath: args[1])))!
 let outDir = URL(fileURLWithPath: args[2])
 let dev = args.count > 3 && args[3] == "dev"
 // brand #007AFF: lighter above, deeper below
-let top = dev ? NSColor(srgbRed: 0.3, green: 0.82, blue: 0.45, alpha: 1) : NSColor(srgbRed: 0.2, green: 0.6, blue: 1, alpha: 1)
-let bottom = dev ? NSColor(srgbRed: 0.07, green: 0.52, blue: 0.24, alpha: 1) : NSColor(srgbRed: 0, green: 0.4, blue: 0.85, alpha: 1)
+let top = dev ? NSColor(srgbRed: 0.42, green: 0.93, blue: 0.52, alpha: 1) : NSColor(srgbRed: 0.2, green: 0.6, blue: 1, alpha: 1)
+let bottom = dev ? NSColor(srgbRed: 0.16, green: 0.74, blue: 0.29, alpha: 1) : NSColor(srgbRed: 0, green: 0.4, blue: 0.85, alpha: 1)
 
 func bitmap(_ px: Int, _ draw: (CGFloat) -> Void) -> NSBitmapImageRep {
     let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
