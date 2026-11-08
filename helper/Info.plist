@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>local.quorum.helper</string>
+    <key>CFBundleName</key>
+    <string>Quorum Helper</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Quorum transcribes your side of the meeting on this Mac.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Quorum transcribes the other side of the meeting on this Mac.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Quorum transcribes meetings on-device.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Quorum shows your upcoming meetings on Home.</string>
+</dict>
+</plist>

@@ -1,0 +1,105 @@
+{
+  "name": "quorum",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "build": "vite build",
+    "start": "vite build && node dev-app.cjs",
+    "dev": "osascript -e 'if application id \"design.smejkal.quorum\" is running then quit app id \"design.smejkal.quorum\"' && sleep 1 && npm start",
+    "typecheck": "tsc --noEmit",
+    "package": "vite build && cd ../helper && swift build -c release && cd ../app && electron-builder --mac"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.2.1",
+    "electron": "^45.2.3",
+    "electron-builder": "26.17.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6"
+  },
+  "dependencies": {
+    "@tiptap/core": "3.32.0",
+    "@tiptap/extension-table": "3.32.0",
+    "@tiptap/markdown": "3.32.0",
+    "@tiptap/pm": "3.32.0",
+    "@tiptap/react": "3.32.0",
+    "@tiptap/starter-kit": "3.32.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "productName": "Quorum",
+  "description": "Meetings and your second brain, on your Mac",
+  "build": {
+    "appId": "design.smejkal.quorum",
+    "productName": "Quorum",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "agent.js",
+      "suggest.js",
+      "json.js",
+      "vault.js",
+      "vindex.js",
+      "linkparse.js",
+      "relink.js",
+      "preload.cjs",
+      "dist/**",
+      "assets/**",
+      "package.json",
+      "!node_modules/**"
+    ],
+    "extraResources": [
+      {
+        "from": "../helper/.build/release/QuorumHelper",
+        "to": "QuorumHelper"
+      },
+      {
+        "from": "cli/quorum.mjs",
+        "to": "cli/quorum.mjs"
+      }
+    ],
+    "mac": {
+      "target": [
+        "dir",
+        "dmg"
+      ],
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.productivity",
+      "identity": null,
+      "hardenedRuntime": false,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Quorum transcribes your side of a meeting on this Mac.",
+        "NSAudioCaptureUsageDescription": "Quorum transcribes the other people in a meeting on this Mac.",
+        "NSSpeechRecognitionUsageDescription": "Quorum turns meeting audio into text on this Mac.",
+        "NSCalendarsFullAccessUsageDescription": "Quorum shows your upcoming meetings on Home."
+      }
+    },
+    "dmg": {
+      "title": "Quorum",
+      "contents": [
+        {
+          "x": 150,
+          "y": 190
+        },
+        {
+          "x": 390,
+          "y": 190,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
+      "background": "assets/dmg-background.png",
+      "window": {
+        "width": 540,
+        "height": 380
+      },
+      "iconSize": 96
+    },
+    "afterPack": "./after-pack.cjs"
+  }
+}
