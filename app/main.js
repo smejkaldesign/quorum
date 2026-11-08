@@ -2,15 +2,15 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, scre
 import { runAgent } from './agent.js';
 import { createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTree } from './vault.js';
 import { createVaultIndex } from './vindex.js';
-import { addAlias, retargetLinks, rewriteLinks, writeAtomic } from './relink.js';
+import { addAlias, retargetLinks, rewriteLinks } from './relink.js';
+import store from './store/index.js';
 import { createSuggester } from './suggest.js';
 import { extractJson } from './json.js';
 import { startControl } from './control.js';
 import { PROVIDERS as DECISION_PROVIDERS, connectedProvider, decide as decideRaw, removeDecisionsKey, setDecisionsKey } from './decisions.js';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,7 +26,7 @@ if (app.isPackaged) {
     if (shellPath) process.env.PATH = shellPath;
   } catch {}
 }
-const SESSIONS = path.join(homedir(), 'Library/Application Support/Quorum/sessions');
+const SESSIONS = store.meetings.root;
 const OWNER = process.env.QUORUM_OWNER || 'Eric';
 // every IPC handler is also kept here, so a Terminal command runs the same code as the button in the app
 const handlers = {};
@@ -54,11 +54,9 @@ const reWord = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const stopRe = () => new RegExp(`^\\s*(please\\s+)?${reWord(chatWords().stop)}\\b`, 'i');
 const goRe = () => new RegExp(`^\\s*${reWord(chatWords().go)}\\s*[.!]*\\s*$`, 'i');
 
-const SETTINGS_FILE = path.join(SESSIONS, '..', 'settings.json');
-const settings = { autoListen: false, model: 'sonnet', suggestions: true };
+const settings = store.settings.get();
 // folders the built-in read guard keeps away from the agent: the user's list, else any folder named personal or private one or two levels down
 const privateDirs = (root) => settings.privateDirs ?? (() => { try { return readdirSync(root, { withFileTypes: true }).flatMap((d) => (d.isDirectory() && /personal|private/i.test(d.name) ? [d.name] : d.isDirectory() && !d.name.startsWith('.') ? readdirSync(path.join(root, d.name), { withFileTypes: true }).filter((c) => c.isDirectory() && /personal|private/i.test(c.name)).map((c) => path.join(d.name, c.name)) : [])); } catch { return []; } })();
-try { if (existsSync(SETTINGS_FILE)) Object.assign(settings, JSON.parse(readFileSync(SETTINGS_FILE, 'utf8'))); } catch {}
 
 if (!settings.brainRoot) {
   const guess = path.join(homedir(), 'Documents/GitHub/second-brain/MyBrain');
@@ -233,7 +231,7 @@ async function blockCall(reason = 'person') {
     meeting.transcript = all ? [] : meeting.transcript.filter((t) => (t.at ?? Infinity) < cutoff);
     // the open segment's audio runs past the join, so it goes; earlier segments ended before it
     const dir = meeting.dir;
-    if (dir && wasCapturing) setTimeout(() => { try { for (const f of readdirSync(dir)) if (f.endsWith('.caf')) rmSync(path.join(dir, f), { force: true }); } catch {} }, 1500);
+    if (dir && wasCapturing) setTimeout(() => store.meetings.deleteAudio(dir), 1500);
   }
   writeState();
   hidePopup();
@@ -269,7 +267,7 @@ function discardCall() {
   meeting.armed = false;
   meeting.transcript = [];
   const id = meeting.id;
-  setTimeout(() => { rmSync(path.join(SESSIONS, id), { recursive: true, force: true }); deleteCallChats(id); }, 1500);
+  setTimeout(() => { store.meetings.deleteSession(id); deleteCallChats(id); }, 1500);
   meeting.dirs = [];
   writeState();
 }
@@ -352,24 +350,20 @@ async function softStop(text, by, threshold) {
 }
 
 // what the quorum CLI and MCP read to see a live call; STOP and the end of a call clear the transcript out of it
-const STATE_FILE = path.join(SESSIONS, '..', 'state.json');
 let stateTimer = null;
 function writeState() {
   clearTimeout(stateTimer);
   stateTimer = null;
   const live = meeting.capturing;
-  try {
-    writeFileSync(STATE_FILE, JSON.stringify(live
-      ? { recording: true, title: meeting.title || null, startedAt: meeting.startedAt?.toISOString() ?? null, transcript: meeting.transcript.slice(-400).map((t) => ({ who: t.channel === 'me' ? 'me' : 'others', text: t.text })) }
-      : { recording: false, stopped: meeting.armed, reviewing: !!meeting.reviewing }));
-  } catch {}
+  store.state.write(live
+    ? { recording: true, title: meeting.title || null, startedAt: meeting.startedAt?.toISOString() ?? null, transcript: meeting.transcript.slice(-400).map((t) => ({ who: t.channel === 'me' ? 'me' : 'others', text: t.text })) }
+    : { recording: false, stopped: meeting.armed, reviewing: !!meeting.reviewing });
 }
 const writeStateSoon = () => { stateTimer ??= setTimeout(writeState, 3000); };
 
 function beginSegment() {
-  meeting.dir = path.join(SESSIONS, meeting.id, `segment-${Date.now()}`);
+  meeting.dir = store.meetings.beginSegment(meeting.id);
   meeting.dirs.push(meeting.dir);
-  mkdirSync(meeting.dir, { recursive: true });
   meeting.capturing = true;
   // a note hears everything the Mac plays; a call only hears the meeting app, so music and alerts stay out
   const only = tx().capture === 'meeting' && !meeting.solo ? provider().bundles : [];
@@ -392,7 +386,7 @@ function stopAndDelete(by) {
   const done = meeting.dirs;
   meeting.dirs = [];
   setTimeout(() => {
-    for (const d of done) rmSync(d, { recursive: true, force: true });
+    store.meetings.deleteSegments(done);
     deleteCallChats(id);
   }, 1500);
 }
@@ -459,15 +453,7 @@ function brain() {
 }
 
 // the folder your meeting notes live in: your pick, else the vault's existing meetings folder; Quorum saves into it directly, and `source:` in each note says which app made it
-function meetingsDir() {
-  if (settings.meetingsDir && existsSync(settings.meetingsDir)) return settings.meetingsDir;
-  const b = brain();
-  if (!b) return null;
-  try {
-    const d = readdirSync(b.vault).find((n) => /meetings?$/i.test(n.replace(/^\d+[-_ ]*/, '')) && statSync(path.join(b.vault, n)).isDirectory());
-    return d ? path.join(b.vault, d) : null;
-  } catch { return null; }
-}
+const meetingsDir = () => store.meetings.dir(brain()?.vault);
 
 // Quorum is the vault app now: "Show in <vault>" reveals the file in Finder, and links point back into Quorum
 function noteLink(abs) {
@@ -565,7 +551,7 @@ async function endMeeting() {
     return meeting.notes;
   }
   toUI('state', { phase: 'summarizing', meta: meetingMeta(fallbackTitle) });
-  writeFileSync(path.join(meeting.dir, 'transcript.json'), JSON.stringify(meeting.transcript, null, 2));
+  store.meetings.writeTranscript(meeting.dir, meeting.transcript);
   let notes;
   try {
     const raw = await runClaude(
@@ -714,7 +700,7 @@ function openMain() {
 
 function setAutoListen(on) {
   settings.autoListen = on;
-  writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+  store.settings.save();
   toUI('settings', settings);
   updateTray();
   if (on && meetingActive && !meeting.armed) startListening('auto-listen');
@@ -865,15 +851,15 @@ ipcMain.handle('get-settings', () => settings);
 ipcMain.handle('set-settings', (_e, next) => {
   if (['opus', 'sonnet', 'haiku'].includes(next.model)) {
     settings.model = next.model;
-    writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+    store.settings.save();
   }
   if (next.access === 'read' || next.access === 'write') {
     settings.access = next.access;
-    writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+    store.settings.save();
   }
   if (typeof next.suggestions === 'boolean') {
     settings.suggestions = next.suggestions;
-    writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+    store.settings.save();
   }
   if (typeof next.autoListen === 'boolean' && next.autoListen !== settings.autoListen) setAutoListen(next.autoListen);
   if (next.transcription && typeof next.transcription === 'object') {
@@ -883,14 +869,14 @@ ipcMain.handle('set-settings', (_e, next) => {
     if (typeof t.live === 'boolean') c.live = t.live;
     if (['meeting', 'all'].includes(t.capture)) c.capture = t.capture;
     settings.transcription = { ...settings.transcription, ...c };
-    writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+    store.settings.save();
   }
   if (next.profile && typeof next.profile === 'object') {
     const limits = { name: 80, title: 80, linkedin: 100 };
     const clean = {};
     for (const [k, max] of Object.entries(limits)) if (typeof next.profile[k] === 'string') clean[k] = next.profile[k].slice(0, max);
     settings.profile = { ...settings.profile, ...clean };
-    writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+    store.settings.save();
   }
   if (next.voice && typeof next.voice === 'object') {
     const v = {};
@@ -898,7 +884,7 @@ ipcMain.handle('set-settings', (_e, next) => {
     if (typeof next.voice.sounds === 'boolean') v.sounds = next.voice.sounds;
     if (Array.isArray(next.voice.dictionary)) v.dictionary = next.voice.dictionary.filter((d) => d && typeof d.heard === 'string' && typeof d.write === 'string' && d.heard.trim()).slice(0, 200).map((d) => ({ heard: d.heard.trim().slice(0, 60), write: d.write.trim().slice(0, 60) }));
     settings.voice = { ...settings.voice, ...v };
-    writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+    store.settings.save();
   }
   // workspace settings apply to everyone in it; with one user and no backend they live here for now
   if (next.workspace && typeof next.workspace === 'object') {
@@ -918,7 +904,7 @@ ipcMain.handle('set-settings', (_e, next) => {
       clean.neverListen = undefined;
     }
     settings.workspace = { ...settings.workspace, ...clean };
-    writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+    store.settings.save();
     // a name added mid-call takes effect right away
     if (clean.optOuts && meetingActive) refreshGuard().then(() => { if (namedHere()) blockCall('name'); else if (shouldBlock(lastInfo.names)) blockCall(); });
   }
@@ -969,7 +955,7 @@ function searchHints(question, ctx, root) {
     });
   });
 }
-const saveSettings = () => writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+const saveSettings = store.settings.save;
 // quick checks are native: they run on whichever System One provider the workspace connected, and skip quietly without one
 const decisionProvider = () => connectedProvider(settings.workspace?.decisions?.provider);
 const decide = async (...args) => { const p = await decisionProvider(); return p ? decideRaw(p, ...args) : null; };
@@ -1040,23 +1026,22 @@ ipcMain.handle('pick-photo', async () => {
   const side = Math.min(width, height);
   const img = full.crop({ x: Math.floor((width - side) / 2), y: Math.floor((height - side) / 2), width: side, height: side }).resize({ width: 256, height: 256, quality: 'best' });
   settings.profile = { ...settings.profile, photo: img.toDataURL() };
-  writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+  store.settings.save();
   return settings;
 });
 ipcMain.handle('remove-photo', () => {
   settings.profile = { ...settings.profile, photo: undefined };
-  writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+  store.settings.save();
   return settings;
 });
 
-const CHATS = path.join(SESSIONS, '..', 'chats');
 let chatHistory = [];
 let convo = null;
 
 // every conversation is kept locally so it shows up in History. A chat during a call or about a meeting note
 // belongs to that meeting (meetingId while live, meetingFile once its notes are saved) and nests under it
-const writeChat = (c) => { mkdirSync(CHATS, { recursive: true }); writeFileSync(path.join(CHATS, `${c.id}.json`), JSON.stringify(c, null, 2)); };
-const allChats = () => (existsSync(CHATS) ? readdirSync(CHATS).filter((f) => f.endsWith('.json')).map((f) => { try { return JSON.parse(readFileSync(path.join(CHATS, f), 'utf8')); } catch { return null; } }).filter(Boolean) : []);
+const writeChat = store.chats.write;
+const allChats = store.chats.list;
 
 function addTurn(c, question, answer, sources, steps) {
   const now = new Date().toISOString();
@@ -1079,49 +1064,18 @@ function saveChat(question, answer, sources, steps) {
 
 // STOP deletes the call, so the chat that happened during it goes too
 function deleteCallChats(id) {
-  for (const c of allChats()) if (c.meetingId === id) rmSync(path.join(CHATS, `${c.id}.json`), { force: true });
+  for (const c of allChats()) if (c.meetingId === id) store.chats.remove(c.id);
   if (callConvo?.meetingId === id) callConvo = null;
 }
 
-// minimal frontmatter reader for the meeting notes (title, date, participants list)
-function readFrontmatter(text) {
-  const m = text.match(/^---\n([\s\S]*?)\n---/);
-  const fm = { participants: [] };
-  if (!m) return fm;
-  let inList = false;
-  for (const line of m[1].split('\n')) {
-    const kv = line.match(/^(\w+):\s*(.*)$/);
-    if (kv) {
-      inList = kv[1] === 'participants' && !kv[2];
-      if (!inList) fm[kv[1]] = kv[2].replace(/^"(.*)"$/, '$1');
-    } else if (inList && /^\s+-\s+/.test(line)) {
-      fm.participants.push(line.replace(/^\s+-\s+/, ''));
-    }
-  }
-  return fm;
-}
+const { readFrontmatter, setFrontmatterKey } = store.notes;
 
 const personName = (p) => p.replace(/\s*<[^>]*>/, '').replace(/\s*\((creator|recorder)\)/, '').trim();
 const isSelf = (p) => /\((creator|recorder)\)/.test(p) || personName(p) === USER_NAME;
 
-// other apps' meeting notes: subfolders of the meetings folder, plus folders added by hand when there's no connector
-const KNOWN_APPS = { granola: 'Granola' };
 // Quorum's own notes sit in a quorum subfolder, next to the folders other apps fill (granola/ and so on)
-const quorumNotesDir = () => { const root = meetingsDir(); return root ? path.join(root, 'quorum') : null; };
-function meetingSources() {
-  const root = meetingsDir();
-  const hidden = new Set(settings.meetingHidden ?? []);
-  let subs = [];
-  try { subs = root ? readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith('.') && d.name !== 'quorum').map((d) => path.join(root, d.name)) : []; } catch {}
-  const manual = (settings.meetingSources ?? []).filter((p) => existsSync(p) && !subs.includes(p) && p !== root);
-  return [...subs.map((p) => ({ path: p, manual: false })), ...manual.map((p) => ({ path: p, manual: true }))]
-    .filter((s) => !hidden.has(s.path))
-    .map((s) => {
-      const base = path.basename(s.path);
-      const key = base.toLowerCase().replace(/^\d+[-_ ]*/, '');
-      return { ...s, id: s.path, key, name: KNOWN_APPS[key] ?? base.replace(/^\d+[-_ ]*/, '').replace(/[-_]+/g, ' ').replace(/^./, (c) => c.toUpperCase()) };
-    });
-}
+const quorumNotesDir = () => store.meetings.notesDir(brain()?.vault);
+const meetingSources = () => store.meetings.sources(brain()?.vault);
 function meetingIndex() {
   const root = meetingsDir();
   if (!root) return [];
@@ -1131,11 +1085,10 @@ function meetingIndex() {
   for (const { path: dir, key: folder } of dirs) {
     if (!existsSync(dir)) continue;
     const app = noteLink(path.join(dir, 'index.md')).app;
-    for (const f of readdirSync(dir)) {
-      if (!f.endsWith('.md') || f === 'index.md') continue;
+    for (const f of store.notes.list(dir)) {
       const file = path.join(dir, f);
       try {
-        const fm = readFrontmatter(readFileSync(file, 'utf8').slice(0, 4000));
+        const fm = readFrontmatter(store.notes.read(file).slice(0, 4000));
         if (suggester.isExcluded(`${fm.title} ${fm.participants.join(' ')}`)) continue;
         // a backfilled copy of a meeting Quorum already has shows once
         const key = fm.granola_id || fm.quorum_id;
@@ -1170,20 +1123,10 @@ const meetingFile = (file) => {
   return roots.some((r) => abs.startsWith(r + path.sep)) && abs.endsWith('.md') && existsSync(abs) ? abs : null;
 };
 
-// set one frontmatter key in place; everything else in the file stays byte-for-byte
-function setFrontmatterKey(text, key, value) {
-  const line = `${key}: ${value}`;
-  const m = text.match(/^---\n([\s\S]*?)\n---/);
-  if (!m) return `---\n${line}\n---\n${text}`;
-  const re = new RegExp(`^${key}:.*$`, 'm');
-  const fm = re.test(m[1]) ? m[1].replace(re, line) : `${m[1]}\n${line}`;
-  return `---\n${fm}\n---${text.slice(m[0].length)}`;
-}
-
 ipcMain.handle('note-visibility', (_e, file, value) => {
   const abs = meetingFile(file);
   if (!abs || !['private', 'public'].includes(value)) return null;
-  writeAtomic(abs, setFrontmatterKey(readFileSync(abs, 'utf8'), 'visibility', value));
+  store.notes.write(abs, setFrontmatterKey(store.notes.read(abs), 'visibility', value));
   return value;
 });
 
@@ -1192,7 +1135,7 @@ ipcMain.handle('note-ask', async (_e, file, question, history, files) => {
   const abs = meetingFile(file);
   const b = brain();
   if (!abs || !b) throw new Error('Note not found');
-  const body = suggester.redactLines(readFileSync(abs, 'utf8')).replace(/^---\n[\s\S]*?\n---\n/, '');
+  const body = suggester.redactLines(store.notes.read(abs)).replace(/^---\n[\s\S]*?\n---\n/, '');
   const prompt = [
     `You're helping with one meeting note at ${path.relative(b.root, abs)}. Its current body is between <note> tags.`,
     'Answer questions about it, using the rest of the Agent OS when that helps.',
@@ -1204,7 +1147,7 @@ ipcMain.handle('note-ask', async (_e, file, question, history, files) => {
   const r = await runAgent({ privateDirs: privateDirs(b.root), question: prompt, transcript: '', root: b.root, extra: await agentExtra(String(question), b.root), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached, history: (history ?? []).slice(-4), onStep: (text) => toUI('agent-step', { text }) }).finally(() => unstage(attached));
   const m = r.text.match(/<updated-note>\n?([\s\S]*?)\n?<\/updated-note>/);
   const answer = r.text.replace(/<updated-note>[\s\S]*?<\/updated-note>/, '').trim();
-  const fm = readFrontmatter(readFileSync(abs, 'utf8').slice(0, 4000));
+  const fm = readFrontmatter(store.notes.read(abs).slice(0, 4000));
   const existing = allChats().find((c) => c.meetingFile === abs && !c.meetingId);
   addTurn(existing ?? newConvo(String(question), { meetingFile: abs, meetingTitle: fm.title || path.basename(abs, '.md') }), String(question), answer || 'Proposed an edit to the note.', [], []);
   return { text: r.text.replace(/<updated-note>[\s\S]*?<\/updated-note>/, '').trim() || (m ? 'Here is the updated note. Review it and apply it if it looks right.' : ''), proposal: m ? m[1] : null };
@@ -1214,10 +1157,10 @@ ipcMain.handle('note-ask', async (_e, file, question, history, files) => {
 ipcMain.handle('note-apply', (_e, file, newBody) => {
   const abs = meetingFile(file);
   if (!abs) throw new Error('Note not found');
-  const raw = readFileSync(abs, 'utf8');
+  const raw = store.notes.read(abs);
   if (suggester.isExcluded(raw)) throw new Error('This note has withheld lines, so edit it in the vault directly');
   const fm = raw.match(/^---\n[\s\S]*?\n---\n/)?.[0] ?? '';
-  writeAtomic(abs, `${fm}${String(newBody).replace(/\n*$/, '\n')}`);
+  store.notes.write(abs, `${fm}${String(newBody).replace(/\n*$/, '\n')}`);
   return true;
 });
 
@@ -1225,7 +1168,7 @@ ipcMain.handle('read-note', (_e, file) => {
   const b = brain();
   const abs = meetingFile(file);
   if (!abs) return null;
-  const original = readFileSync(abs, 'utf8');
+  const original = store.notes.read(abs);
   const text = suggester.redactLines(original);
   const fm = readFrontmatter(text);
   // the reader shows the notes, not the Granola wrapper: drop the repeated title, an empty Private notes, and the Summary heading
@@ -1242,9 +1185,9 @@ ipcMain.handle('read-note', (_e, file) => {
 
 ipcMain.handle('new-chat', () => { convo = null; chatHistory = []; });
 ipcMain.handle('load-chat', (_e, id) => {
-  const file = path.join(CHATS, `${String(id).replace(/[^\w-]/g, '')}.json`);
-  if (!existsSync(file)) return null;
-  convo = JSON.parse(readFileSync(file, 'utf8'));
+  const c = store.chats.read(id);
+  if (!c) return null;
+  convo = c;
   chatHistory = convo.turns.map((t) => ({ q: t.q, a: t.a }));
   return convo;
 });
@@ -1384,20 +1327,12 @@ ipcMain.handle('open-brain', (_e, what) => {
 
 // chat works on or off a call: the agent always has the Agent OS, plus the transcript when there is one
 // attachments are copied into Quorum's own folder so the agent only ever gets read access to the copies
-const ATTACH = path.join(homedir(), 'Library/Application Support/Quorum/attachments');
-const MAX_ATTACH = 25 * 1024 * 1024;
 ipcMain.handle('pick-files', async () => {
   const r = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'] });
   return r.canceled ? [] : r.filePaths.map((p) => ({ path: p, name: path.basename(p) }));
 });
 ipcMain.handle('stage-file', async (_e, src) => {
-  const from = String(src);
-  if (statSync(from).size > MAX_ATTACH) throw new Error('Files over 25 MB can\'t be attached');
-  const dir = path.join(ATTACH, randomUUID());
-  mkdirSync(dir, { recursive: true });
-  const to = path.join(dir, path.basename(from));
-  // an APFS clone shares the original's storage, so attaching takes no extra disk space; Node can't clone on macOS, cp -c can
-  try { execFileSync('/bin/cp', ['-c', from, to]); } catch { copyFileSync(from, to); }
+  const to = store.attachments.stage(String(src));
   let thumb = null;
   if (/\.(png|jpe?g|gif|webp|heic|tiff?|bmp)$/i.test(to)) {
     try { thumb = (await nativeImage.createThumbnailFromPath(to, { width: 64, height: 64 })).toDataURL(); } catch {}
@@ -1405,9 +1340,8 @@ ipcMain.handle('stage-file', async (_e, src) => {
   return { staged: to, thumb };
 });
 // a copy only lives until Quorum has answered; anything left from a closed composer goes at the next launch
-const unstage = (files) => { for (const f of files) rmSync(path.dirname(f), { recursive: true, force: true }); };
+const { unstage, stagedOnly } = store.attachments;
 ipcMain.handle('unstage-file', (_e, f) => unstage(stagedOnly([f])));
-const stagedOnly = (files) => (Array.isArray(files) ? files.map(String).filter((f) => path.dirname(path.dirname(f)) === ATTACH && existsSync(f)) : []);
 
 ipcMain.handle('ask', async (_e, question, files) => {
   const b = brain();
@@ -1426,13 +1360,7 @@ ipcMain.handle('ask', async (_e, question, files) => {
   return { text: r.text, sources, steps };
 });
 
-function noteTitle(abs) {
-  try {
-    const m = readFileSync(abs, 'utf8').match(/^#\s+(.+)$/m);
-    if (m) return m[1].trim();
-  } catch {}
-  return path.basename(abs, '.md');
-}
+const noteTitle = store.notes.title;
 
 ipcMain.handle('brain', () => brain());
 // the calendar source is the Calendar app on this Mac for now; Home shows Up next only once access is granted
@@ -1497,7 +1425,7 @@ ipcMain.handle('source-icons', () => {
   }
   return sourceIcons;
 });
-const countNotes = (dir) => { try { return readdirSync(dir).filter((f) => f.endsWith('.md') && f !== 'index.md').length; } catch { return 0; } };
+const countNotes = (dir) => { try { return store.notes.list(dir).length; } catch { return 0; } };
 ipcMain.handle('meeting-sources', () => {
   const base = path.dirname(brain()?.vault ?? meetingsDir() ?? homedir());
   return meetingSources().map((s) => ({ id: s.id, key: s.key, name: s.name, manual: s.manual, rel: path.relative(base, s.path).startsWith('..') ? s.path.replace(homedir(), '~') : path.relative(base, s.path), notes: countNotes(s.path) }));
@@ -1545,7 +1473,7 @@ ipcMain.handle('connect-brain', async () => {
   if (r.canceled || !r.filePaths[0]) return brain();
   const b = inspectBrain(r.filePaths[0]);
   Object.assign(settings, { brainRoot: b.root, vaultPath: b.vault });
-  writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+  store.settings.save();
   log('connected Agent OS', b.root);
   suggester.reset();
   openIndex();
@@ -1569,10 +1497,9 @@ ipcMain.handle('save-notes', (_e, payload) => saveNotes(payload));
 function saveNotes(payload) {
   const notes = { ...meeting.notes, ...payload.notes };
   const dir = quorumNotesDir() ?? path.join(suggester.vault(), '08-meetings', 'quorum');
-  mkdirSync(dir, { recursive: true });
   const date = localIso(meeting.startedAt || new Date()).slice(0, 10);
   const file = path.join(dir, `${date}-${slug(notes.title)}-${String(meeting.id).slice(-8).toLowerCase()}.md`);
-  writeFileSync(file, noteMarkdown({ notes, followups: payload.followups }));
+  store.meetings.saveNote(file, noteMarkdown({ notes, followups: payload.followups }));
   log('saved note', file);
   // the call's chat now hangs off the saved note
   for (const c of allChats()) if (c.meetingId === meeting.id) writeChat({ ...c, meetingFile: file, meetingTitle: notes.title });
@@ -1616,7 +1543,7 @@ ipcMain.handle('meeting-providers', async () => {
 ipcMain.handle('meeting-provider-set', (_e, id, on) => {
   if (!PROVIDERS[id] || typeof on !== 'boolean') return;
   settings.providers = { ...settings.providers, [id]: { enabled: on } };
-  writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+  store.settings.save();
 });
 ipcMain.handle('meeting-provider-check', () => { helperSend({ cmd: 'axStatus', prompt: true }); });
 ipcMain.handle('decisions-status', async () => { const provider = await decisionProvider(); return { connected: !!provider, provider, providers: Object.fromEntries(Object.entries(DECISION_PROVIDERS).map(([id, p]) => [id, { name: p.name, placeholder: p.placeholder, keyHint: p.keyHint }])) }; });
@@ -1634,7 +1561,7 @@ ipcMain.handle('dictate', (_e, on) => helperSend(on ? { cmd: 'dictateStart', loc
 // macOS's Accessibility prompt shows once per install, not on every launch or reload; after that, Settings shows the state
 ipcMain.handle('ax-status', () => {
   const firstAsk = !settings.axPrompted;
-  if (firstAsk) { settings.axPrompted = true; writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2)); }
+  if (firstAsk) { settings.axPrompted = true; store.settings.save(); }
   helperSend({ cmd: 'axStatus', prompt: firstAsk });
 });
 
@@ -1695,22 +1622,22 @@ async function control({ cmd, args = {} }) {
     case 'note-new': {
       if (!b) throw new Error('Connect your Agent OS in Quorum first');
       const rel = createNote(b.vault, String(args.folder || '00-inbox'), String(args.title || 'Untitled'));
-      if (args.text) writeAtomic(path.join(b.vault, rel), `# ${path.basename(rel, '.md')}\n\n${String(args.text).replace(/\n*$/, '\n')}`);
+      if (args.text) store.notes.write(path.join(b.vault, rel), `# ${path.basename(rel, '.md')}\n\n${String(args.text).replace(/\n*$/, '\n')}`);
       return { rel };
     }
     case 'note-append': {
       const abs = cliNote(args.rel);
-      const text = readFileSync(abs, 'utf8');
-      writeAtomic(abs, `${text.replace(/\n*$/, '\n')}\n${String(args.text ?? '').replace(/\n*$/, '\n')}`);
+      const text = store.notes.read(abs);
+      store.notes.write(abs, `${text.replace(/\n*$/, '\n')}\n${String(args.text ?? '').replace(/\n*$/, '\n')}`);
       return { rel: path.relative(b.vault, abs) };
     }
     case 'note-edit': {
       const abs = cliNote(args.rel);
-      const text = readFileSync(abs, 'utf8');
+      const text = store.notes.read(abs);
       // you only ever see a withheld line as a placeholder, so writing the note back would destroy it
       if (suggester.redactLines(text) !== text) throw new Error('This note has withheld lines, so it can only be edited in the vault directly');
       const fm = text.match(/^---\n[\s\S]*?\n---\n/)?.[0] ?? '';
-      writeAtomic(abs, `${fm}${String(args.text ?? '').replace(/^---\n[\s\S]*?\n---\n/, '').replace(/\n*$/, '\n')}`);
+      store.notes.write(abs, `${fm}${String(args.text ?? '').replace(/^---\n[\s\S]*?\n---\n/, '').replace(/\n*$/, '\n')}`);
       return { rel: path.relative(b.vault, abs) };
     }
     case 'settings-get': return { model: settings.model, autoListen: !!settings.autoListen, suggestions: settings.suggestions !== false, access: settings.access ?? 'write' };
@@ -1732,8 +1659,8 @@ let stopControl = null;
 app.on('will-quit', () => { meeting.capturing = false; writeState(); stopControl?.(); });
 app.whenReady().then(() => {
   if (!app.hasSingleInstanceLock()) return;
-  rmSync(ATTACH, { recursive: true, force: true });
-  mkdirSync(SESSIONS, { recursive: true });
+  store.attachments.clear();
+  store.meetings.ensureRoot();
   writeState();
   stopControl = startControl(CONTROL_SOCK, control, log);
   openIndex();
