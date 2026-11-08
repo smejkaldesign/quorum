@@ -481,7 +481,7 @@ function MemoryScan() {
   return (
     <>
       <div className="set-head">
-        <h3>Memory capabilities</h3>
+        <h3>Power-ups</h3>
         <span className="set-head-actions">
           {scanning
             ? <button className="icon-btn scan-btn scanning" aria-label="Cancel refresh" data-tip="Cancel refresh" onClick={() => window.quorum.memoryRefreshCancel()}>
@@ -494,7 +494,7 @@ function MemoryScan() {
       {included.length > 0 && <div className="set-card mem-card">{included.map(row)}</div>}
       {pending.length > 0 && (
         <>
-          <h3>Identified capabilities</h3>
+          <h3>Found in your Agent OS</h3>
           <div className="set-card mem-card">{pending.map(row)}</div>
         </>
       )}

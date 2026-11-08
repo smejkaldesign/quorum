@@ -3,7 +3,7 @@
 Local meeting notetaker and second-brain app for the Mac, with an in-app assistant also called Quorum. Local proof of concept today; the hosted version comes next (see `docs/backend-plan.md`).
 
 - Records your mic and the Mac's system audio as two separate tracks, transcribed on-device (Apple SpeechAnalyzer). Audio never leaves the Mac.
-- Quorum posts a notice in the Zoom chat when it starts. Anyone can reply `STOP` to turn it off and delete the call, or `GO` to turn it back on.
+- Meeting providers: Zoom, Google Meet (in the browser) and Microsoft Teams. On Zoom, Quorum posts a notice in the chat when it starts and anyone can reply `STOP` to turn it off and delete the call, or `GO` to turn it back on. Meet and Teams show the notice on screen for now (plans in `docs/plans/`).
 - Questions to Quorum and the end-of-meeting summary run through the signed-in Claude Code on this Mac (your claude.ai login), never a raw API key.
 - The Knowledge view opens, edits, links, searches and graphs an Obsidian-style markdown vault. Files stay plain markdown, so Claude Code keeps working on the same folder.
 - Session data lives in `~/Library/Application Support/Quorum/sessions/`. Settings in `~/Library/Application Support/Quorum/settings.json`.
@@ -38,10 +38,11 @@ Other scripts: `npm run typecheck`, `npm run build`, `npm run package` (release 
 ## Layout
 
 - `helper/`: Swift CLI (`QuorumHelper`). Audio capture (Core Audio process tap and mic), on-device transcription, Zoom chat via Accessibility, calendar read. Talks JSON lines over stdin and stdout.
-- `app/`: Electron main process (`main.js`: capture lifecycle, STOP and GO handling, Claude calls, vault IPC) and the React window (`src/`). `vault.js`, `vindex.js`, `linkparse.js`, `relink.js` are the vault index, link parser and link-safe rename.
+- `app/`: Electron main process (`main.js`: capture lifecycle, STOP and GO handling, Claude calls, vault IPC) and the React window (`src/`). `vault.js`, `vindex.js`, `linkparse.js`, `relink.js` are the vault index, link parser and link-safe rename. `store/` is the storage boundary: `local.js` (files, the default) and `remote.js` (Supabase, used only when `QUORUM_SUPABASE_URL` and `QUORUM_SUPABASE_ANON_KEY` are set and `sync` is on in settings).
+- `supabase/`: local Supabase project (`supabase start`) and `migrations/0001_init.sql`, the hosted schema with row level security.
 - `app/cli/quorum.mjs`: CLI and read-only MCP server (`claude mcp add quorum`) over the app's notes, chats and live transcript.
 - `app/assets/`: icons and the Swift scripts that render them from `llama-glyph.svg`. Placeholder art until the Quorum mark is ready.
-- `docs/`: `backend-plan.md` (hosted version), `parity-gaps.md` (what this Mac still lacks versus the reference setup).
+- `docs/`: `backend-plan.md` (hosted version), `parity-gaps.md` (status and open items), `plans/google-meet.md` and `plans/microsoft-teams.md`.
 
 Helper debug commands: `QuorumHelper dump-zoom [--open-chat]`, `test-capture <sec>`, `chat-read`, `chat-send <text>`.
 

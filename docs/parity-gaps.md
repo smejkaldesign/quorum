@@ -11,6 +11,8 @@ Status on 2026-11-08, after the first port. The reference ran against a differen
 
 ## Now native (no longer depend on the connected Agent OS)
 
+- **Power-ups.** Settings › Memory › Power-ups lists what the scan found in the connected Agent OS: memory index, search, link graph, guard hooks, agent instructions, skills, agents and MCP servers. Index, search, graph and folders feed the agent today; instructions, skills, agents and MCP servers are listed and will become runnable later.
+
 - **Read guard.** `app/guards/read-guard.py` ships with the app and runs on every Read, Grep and Glob the agent makes: secret-looking files, notes with `confidential:` in frontmatter, and private folders (the user's `privateDirs` setting, else any folder named personal or private) are denied. Guard hooks found in the connected Agent OS still run in addition.
 - **Decision checks.** `app/decisions.js` is a provider abstraction over System One models: OpenAI decisions and TypeSafe Jev. Connect either in Settings › Workspace › Connections; the key stays in Keychain. Quick checks run whenever a provider is connected.
 
@@ -35,6 +37,6 @@ Status on 2026-11-08, after the first port. The reference ran against a differen
 
 1. System permissions on first real use: Microphone, Screen and System Audio Recording, Calendar, Accessibility for Terminal (dev) and later for Quorum.app.
 2. A "Quorum Local Signing" code-signing certificate in Keychain Access before `npm run package`, so macOS keeps permission grants across rebuilds.
-3. Zoom is the only chat integration (STOP and GO). Google Meet and Teams capture audio fine but have no chat notice. Say which platforms matter.
-4. Hosted backend choice (see `backend-plan.md`): a new Supabase project under Smejkal Design is the default; confirm before anything is created.
+3. Google Meet and Microsoft Teams are wired as providers (detect, capture, title and people best effort) but untested against a live call; the STOP and GO chat notice exists only for Zoom, the others show the on-screen notice and record `notice: not posted` in the note. Plans: `docs/plans/google-meet.md`, `docs/plans/microsoft-teams.md`.
+4. Hosted backend: the schema and local Supabase stack are in `supabase/` and `app/store/remote.js` pushes notes and meetings when `QUORUM_SUPABASE_URL` and `QUORUM_SUPABASE_ANON_KEY` are set and `sync` is on. The cloud project does not exist yet; the stored PATs are project-scoped, so Eric creates it in the dashboard (org Smejkal Design, free plan) and issues a PAT.
 5. Final Quorum mark to replace `llama-glyph.svg`; the icon scripts regenerate everything from one SVG.
