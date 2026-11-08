@@ -890,3 +890,26 @@ svg.err { color: var(--danger); }
 .conn-ok { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; font-size: 13px; font-weight: 500; color: var(--go); }
 .conn-ok i { width: 7px; height: 7px; border-radius: 50%; background: var(--go); }
 .set-card.even .set-select { width: 180px; }
+
+/* account, organization and members */
+.acct-copy { margin: 14px 0 4px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.acct .set-error { margin: 0 0 14px; }
+.code-field { display: flex; gap: 8px; }
+.code-field input { width: 42px; height: 46px; text-align: center; border-radius: 10px; border: 1px solid var(--line-2); background: rgba(255, 255, 255, 0.03); color: var(--text); font: 500 20px/1 ui-monospace, "SF Mono", Menlo, monospace; outline: none; transition: border-color 0.12s ease; }
+.code-field input:focus { border-color: var(--brand); }
+.set-card.form .set-line.acct-alt { min-height: 0; padding: 0 0 14px; }
+.acct-alt .link-btn { margin-left: 0; color: var(--muted); }
+.acct-alt .link-btn:hover { color: var(--text); }
+.org-form { display: flex; align-items: center; gap: 12px; }
+.org-domain { color: var(--muted); font-size: 14px; white-space: nowrap; }
+.org-join { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; }
+.join-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; font-size: 15px; }
+.join-row + .join-row { border-top: 1px dashed var(--line); }
+.join-row strong { font-weight: 500; }
+.join-row em.muted { font-style: normal; }
+.acct-none { margin: 0; color: var(--muted); font-size: 14px; }
+.acct-err { font-style: normal; color: var(--danger); }
+.acct-ok { font-style: normal; color: var(--go); }
+.member-row:not(:last-child) { border-bottom: 1px solid var(--container-border); }
+.member-row .stub { flex: none; }
+.member-avatar.pending { background: var(--container-tile); color: var(--muted); }
