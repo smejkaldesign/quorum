@@ -4,6 +4,7 @@ import { Markdown } from './Markdown';
 import { useSession } from './session';
 import { EndView } from './EndView';
 import { Onboarding } from './Onboarding';
+import { AccountCard, useAccount } from './Account';
 import markProd from '../assets/quorum-mark.png';
 import markDev from '../assets/quorum-mark-dev.png';
 
@@ -245,7 +246,7 @@ export function App() {
 
 
   if (firstRun) {
-    return <div className="panel"><Onboarding brain={brain} onBrain={setBrain} onDone={() => setFirstRun(false)} /></div>;
+    return <div className="panel"><OnboardingShell brain={brain} onBrain={setBrain} onDone={() => setFirstRun(false)} /></div>;
   }
 
   if (phase === 'review') {
@@ -456,4 +457,10 @@ function QuorumCard({ children }: { children: ReactNode }) {
 function joinText(a: string, b: string) {
   const t = b.trim();
   return /^[,.;:!?]/.test(t) ? `${a}${t}` : `${a} ${t}`;
+}
+
+// the wizard's account step is the same card as Settings › Workspace, so sign-in state is shared
+function OnboardingShell({ brain, onBrain, onDone }: { brain: Brain | null; onBrain: (b: Brain | null) => void; onDone: () => void }) {
+  const account = useAccount();
+  return <Onboarding brain={brain} onBrain={onBrain} onDone={onDone} accountSlot={account ? <AccountCard account={account} /> : undefined} />;
 }
