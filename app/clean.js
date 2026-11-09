@@ -14,6 +14,8 @@ const ORDINAL = {
   twentieth: 20, thirtieth: 30,
 };
 const NUMBER_WORDS = new Set([...Object.keys(SMALL), 'hundred', 'thousand', 'point']);
+// doubled words that are grammar, not stammer: "I know that that is true", "she had had enough"
+const DOUBLES = new Set(['that', 'had', 'is', 'do', 'can', 'will', 'was']);
 const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
 const YEAR_LEAD = new Set(['in', 'by', 'for', 'since', 'until', 'of']);
 // "you may first want to" is not a date; May needs a preposition in front
@@ -37,7 +39,7 @@ export function dropDisfluencies(text) {
   let s = text.replace(FILLER, '');
   s = s.replace(/,\s*(?:you know|i mean)\s*,/gi, ',').replace(/(^|[.!?;:]\s*)(?:you know|i mean),\s*/gi, '$1');
   s = s.replace(/(^|\s)like,\s*/gi, (m, lead, off) => (LIKE_LEAD.test(s.slice(0, off)) ? m : lead));
-  s = s.replace(/\b([\w']+)(?:\s+\1\b)+/gi, (m, w) => (NUMBER_WORDS.has(w.toLowerCase()) ? m : w));
+  s = s.replace(/\b([\w']+)(?:\s+\1\b)+/gi, (m, w) => (NUMBER_WORDS.has(w.toLowerCase()) || DOUBLES.has(w.toLowerCase()) ? m : w));
   s = s.replace(/\b((?:[\w']+\s+){0,2})([\w']+)[-–—]\s+\1(\2[\w']*)\b/gi, '$1$3');
   return collapse(s);
 }

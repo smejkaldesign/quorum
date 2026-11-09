@@ -114,4 +114,10 @@ describe('cleanTurn', () => {
   it('keeps a lone filler turn', () => {
     expect(cleanTurn('mm-hmm')).toBe('Mm-hmm');
   });
+
+  it('keeps doubled words that are grammar', () => {
+    expect(cleanTurn('I know that that is true', {})).toBe('I know that that is true');
+    expect(cleanTurn('she had had enough', {})).toBe('She had had enough');
+    expect(cleanTurn('the the plan', {})).toBe('The plan');
+  });
 });
