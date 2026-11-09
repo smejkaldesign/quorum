@@ -1,4 +1,4 @@
--- Quorum hosted edition, accounts (step 3 of docs/backend-plan.md): workspace domains, invites, profiles and the RPCs
+-- Quorum hosted edition, accounts (step 3 of docs/self-hosting.md): workspace domains, invites, profiles and the RPCs
 -- the app's account layer calls. The RPCs run as security definer so table policies stay simple; each one checks
 -- the caller itself. Member and invite ids are ULIDs made here, so they match the client's ids everywhere else.
 
