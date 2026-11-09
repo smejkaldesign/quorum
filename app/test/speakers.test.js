@@ -35,7 +35,7 @@ describe('participant list', () => {
   });
 
   it('merges detected participants and invitees, keeps an org, drops the owner and "You"', () => {
-    const list = participantList({ people: ['Sam Lee (Acme)', 'You', 'Ana Ruiz'], invitees: [{ name: 'Sam Lee', email: 'sam@acme.com' }, { name: 'Jo Park', email: 'jo@gmail.com' }, { name: 'Ana Ruiz', email: 'eric@smejkal.design' }], owner: 'Ana Ruiz', orgOf });
+    const list = participantList({ people: ['Sam Lee (Acme)', 'You', 'Ana Ruiz'], invitees: [{ name: 'Sam Lee', email: 'sam@acme.com' }, { name: 'Jo Park', email: 'jo@gmail.com' }, { name: 'Ana Ruiz', email: 'ana@example.com' }], owner: 'Ana Ruiz', orgOf });
     expect(list).toEqual([{ name: 'Sam Lee', org: 'Acme' }, { name: 'Jo Park', org: null }]);
   });
 
