@@ -560,13 +560,41 @@ const speakersPayload = () => ({ turns: speakerView(meeting.transcript), partici
 const notesContext = () => ({ platform: provider().name, solo: !!meeting.solo, title: meeting.title || '' });
 let summaryTimer = null;
 let summaryBusy = false;
+// the running summary and the final notes on the relay (Cloud edition, POST /v1/notes) when the workspace or the user
+// chose Quorum's models; the turns are redacted here, so the relay sees what the model sees. Any failure falls back to
+// the local path, which is what runs when the plan is not managed
+async function runNotesModel(kind, { turns, state, label, outline = '', onDelta }) {
+  if (EDITION === 'cloud' && account.client?.()) {
+    try {
+      const mod = await loadEE('relay.js');
+      const plan = await mod.managedModelPlan({ client: account.client(), state: account.state(), settings });
+      if (plan.managed) {
+        const { data: { session } = {} } = await account.client().auth.getSession();
+        if (session?.access_token) {
+          const redacted = turns.map((t) => ({ ...t, text: suggester.redactLines(t.text) }));
+          const text = await mod.relayNotes({
+            url: mod.relayUrl({ source: account.envStatus?.().config }), token: session.access_token, kind, turns: redacted, state, label, context: notesContext(), outline,
+            workspaceId: account.state().workspace.id, meetingId: meeting.id, owner: OWNER, about: aboutMe(), onDelta,
+          });
+          log(kind, `on the relay (${plan.reason})`);
+          return text;
+        }
+      }
+    } catch (err) { log(kind, 'relay failed, running here:', err.message.split('\n')[0]); }
+  }
+  const prompt = kind === 'summary'
+    ? summaryPrompt({ state, turns, label, context: notesContext(), redact: suggester.redactLines })
+    : notesPrompt({ state, turns, label, context: notesContext(), outline, redact: suggester.redactLines });
+  return runClaude(prompt, notesSystem({ owner: OWNER, about: aboutMe() }), kind === 'summary' ? 'haiku' : settings.model, { role: kind, onDelta });
+}
+
 async function runSummary() {
   if (!meeting.armed || summaryBusy || !summaryDue({ turns: meeting.transcript, state: meeting.summary, lastAt: meeting.summaryAt, now: Date.now() })) return;
   summaryBusy = true;
   meeting.summaryAt = Date.now();
   const turns = meeting.transcript;
   try {
-    const raw = await runClaude(summaryPrompt({ state: meeting.summary, turns: newTurns(turns, meeting.summary), label: speakerLabel(), context: notesContext(), redact: suggester.redactLines }), notesSystem({ owner: OWNER, about: aboutMe() }), 'haiku', { role: 'summary' });
+    const raw = await runNotesModel('summary', { turns: newTurns(turns, meeting.summary), state: meeting.summary, label: speakerLabel() });
     if (meeting.armed) meeting.summary = mergeState(meeting.summary, extractJson(raw), turns);
   } catch (err) {
     log('running summary failed, keeping the last state:', err.message.split('\n')[0]);
@@ -719,11 +747,7 @@ async function endMeeting() {
   const label = speakerLabel();
   let notes;
   try {
-    const raw = await runClaude(
-      notesPrompt({ state: meeting.summary, turns, label, context: notesContext(), outline: meeting.privateNotes, redact: suggester.redactLines }),
-      notesSystem({ owner: OWNER, about: aboutMe() }),
-      settings.model, { role: 'notes', onDelta: (text) => toUI('notes-delta', { text, partial: partialNotes(text, turns, fallbackTitle) }) },
-    );
+    const raw = await runNotesModel('notes', { turns, state: meeting.summary, label, outline: meeting.privateNotes, onDelta: (text) => toUI('notes-delta', { text, partial: partialNotes(text, turns, fallbackTitle) }) });
     notes = finalNotes(extractJson(raw), turns, fallbackTitle);
     if (!genericTitle(meeting.title)) notes.title = meeting.title;
   } catch (err) {

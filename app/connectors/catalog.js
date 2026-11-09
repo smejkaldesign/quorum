@@ -43,6 +43,8 @@ export const KEY_PROVIDERS = CATALOG.filter((p) => needsKey(p.id));
 export const KEY_PROVIDER_IDS = KEY_PROVIDERS.map((p) => p.id);
 
 export const rolesFor = (id) => BY_ID[id]?.roles ?? [];
+// managed transcription hours each Cloud seat includes per month (docs/open-source-strategy.md)
+export const INCLUDED_HOURS = 20;
 export const canServe = (id, role) => rolesFor(id).includes(role);
 export const providersFor = (role) => PROVIDER_IDS.filter((id) => canServe(id, role));
 export const validRoles = (id, roles) => roles.filter((r) => canServe(id, r));

@@ -31,3 +31,6 @@ export function cleanProviders(next: unknown, cur?: Providers): Providers;
 export function providerFor(role: ConnectorRole | null | undefined, providers: Providers | null | undefined, source: ModelSource | undefined): ConnectorId | null;
 export function cleanConnectors(next: unknown, cur?: ProviderConnectors): ProviderConnectors;
 export function modelName(id: string | null, alias: string, local?: string, connectors?: ProviderConnectors): string | null;
+
+// managed transcription hours each Cloud seat includes per month
+export const INCLUDED_HOURS: number;

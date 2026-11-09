@@ -40,7 +40,7 @@ export type DecisionProvider = 'openai' | 'typesafe';
 export type EnvStatus = { env: 'development' | 'production'; config: 'shell' | 'production' | 'development' | 'local' | 'none'; host: string | null; useProduction: boolean; configured: boolean };
 export type DecisionsStatus = { connected: boolean; provider: DecisionProvider | null; providers: Record<DecisionProvider, { name: string; placeholder: string; keyHint: string }> };
 export type Workspace = { company?: string; companyDescription?: string; neverListen?: string[]; optOuts?: OptOut[]; decisions?: { provider: DecisionProvider; by?: string; at?: string }; stopWord?: string; goWord?: string };
-export type Transcription = { echo?: 'auto' | 'off' | 'filter' | 'aec'; gap?: number; live?: boolean; capture?: 'meeting' | 'all'; clean?: boolean };
+export type Transcription = { echo?: 'auto' | 'off' | 'filter' | 'aec'; gap?: number; live?: boolean; capture?: 'meeting' | 'all'; clean?: boolean; engine?: 'local' | 'managed' };
 // where the model runs: none until chosen; claude-code is the only source with tools, so the only one that reads the Agent OS
 export type ModelSource = 'none' | 'claude-code' | 'anthropic-api' | 'local';
 export type ClaudeStatus = { installed: boolean; loggedIn: boolean; email: string; org: string; plan: string; method: string; version: string };
@@ -82,7 +82,7 @@ export type ConnectorDraft = { provider: ConnectorProvider; label: string; baseU
 // organization voice typing: which connector handles each managed step (absent means Quorum managed), and the hours used
 // this calendar month per seat. managedHours is the part on Quorum's keys, the part that counts against the allowance
 export type VoiceStep = 'speech' | 'summary' | 'notes';
-export type WorkspaceVoice = Partial<Record<VoiceStep, string | null>>;
+export type WorkspaceVoice = Partial<Record<VoiceStep, string | null>> & { required?: boolean };
 export type SeatUsage = { userId: string; email: string | null; name: string | null; hours: number; managedHours: number };
 export type WorkspaceUsage = { period: string; hours: number; managedHours: number; seats: SeatUsage[] };
 export type Member ={ userId: string; email: string; name: string | null; role: Role; joinedAt: string };

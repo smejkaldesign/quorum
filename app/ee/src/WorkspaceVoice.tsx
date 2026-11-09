@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { AccountState, Member, VoiceStep, WorkspaceConnector, WorkspaceUsage, WorkspaceVoice } from '../../src/quorum';
-import { Row } from '../../src/controls';
-import { IconBuilding, IconMic, IconNotes, IconStack, ProviderMark } from '../../src/icons';
+import { Row, Toggle } from '../../src/controls';
+import { IconBuilding, IconLock, IconMic, IconNotes, IconStack, ProviderMark } from '../../src/icons';
 import { AccountCard, EE_MARKER, useAccount } from './Account';
 import { accountApi, connectorsApi, voiceApi } from './accountMock';
 import { PROVIDERS, serving } from './connectorRoles';
@@ -47,12 +47,12 @@ function Voice({ account: acct }: { account: AccountState }) {
     api.workspaceVoiceGet().then((r) => { if (live && r.voice) setVoice(r.voice); });
     return () => { live = false; };
   }, [ws.id]);
-  const choose = async (role: VoiceStep, id: string) => {
-    const next = { ...voice, [role]: id || null };
+  const save = async (next: WorkspaceVoice) => {
     setVoice(next); setError('');
     const r = await api.workspaceVoiceSet(next);
     if (r.error) setError(r.error); else if (r.voice) setVoice(r.voice);
   };
+  const choose = (role: VoiceStep, id: string) => save({ ...voice, [role]: id || null });
   // every member is a seat; a seat with no usage rows this period shows zeros
   const seats = members.map((m) => ({ ...m, use: usage?.seats.find((s) => s.userId === m.userId) }));
   const period = new Date(usage?.period ?? Date.now()).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
@@ -71,6 +71,11 @@ function Voice({ account: acct }: { account: AccountState }) {
         ))}
       </div>
       <p className="set-note">Each ${SEAT_PRICE} seat includes {INCLUDED_HOURS} hours a month. More comes in {PACK.hours}-hour packs at ${PACK.price}.</p>
+      <div className="set-card">
+        <Row icon={<IconLock width={18} height={18} />} title="Require managed transcription" desc={voice.required ? 'Every call in this workspace runs through the managed pipeline; members cannot switch to on-device.' : 'Off: each member chooses between on-device and Quorum managed in their own Settings.'}>
+          <Toggle on={voice.required === true} disabled={!canManage} onChange={(v) => save({ ...voice, required: v })} />
+        </Row>
+      </div>
 
       <h3>Usage this period</h3>
       <div className="set-card">

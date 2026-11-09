@@ -33,6 +33,70 @@ export async function managedPlan({ client, state, settings }) {
   return speechPlan({ signedIn: true, workspace: state.workspace, voice, engine: settings?.transcription?.engine ?? 'local' });
 }
 
+// whether the running summary and the final notes go through POST /v1/notes: the speech plan's answer, or the user's
+// "Use Quorum's models" choice (settings.managedModels) once they are signed in to a workspace
+export function modelPlan({ signedIn = false, workspace = null, voice = {}, engine = 'local', managedModels = false } = {}) {
+  const speech = speechPlan({ signedIn, workspace, voice, engine });
+  if (speech.managed) return speech;
+  if (signedIn && workspace && managedModels === true) return { managed: true, reason: "Quorum's models" };
+  return speech;
+}
+export async function managedModelPlan({ client, state, settings }) {
+  if (!client || !state?.signedIn || !state.workspace) return modelPlan({});
+  let voice = {};
+  try {
+    const { data } = await client.from('workspace_settings').select('voice').eq('workspace_id', state.workspace.id).maybeSingle();
+    if (data?.voice && typeof data.voice === 'object') voice = data.voice;
+  } catch {}
+  return modelPlan({ signedIn: true, workspace: state.workspace, voice, engine: settings?.transcription?.engine ?? 'local', managedModels: settings?.managedModels === true });
+}
+
+// the relay's HTTP origin from its websocket url
+export const httpUrl = (url) => String(url).replace(/^ws(s?):\/\//, 'http$1://').replace(/\/+$/, '');
+
+// reads one server-sent-events body: data lines carry JSON with delta, done or error
+export async function readSse(body, onEvent) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf('\n\n')) >= 0) {
+      const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+      for (const line of chunk.split('\n')) {
+        if (!line.startsWith('data:')) continue;
+        let obj; try { obj = JSON.parse(line.slice(5).trim()); } catch { continue; }
+        onEvent(obj);
+      }
+    }
+  }
+}
+
+// POST /v1/notes: the running summary or the final notes on the relay's keys (or the organization's connector). turns
+// are redacted before they are passed in. Resolves with the full text; rejects with the relay's plain sentence
+export async function relayNotes({ url, token, kind, turns, state, label, context, outline = '', workspaceId, meetingId = null, owner, about = '', onDelta = () => {}, fetchImpl = globalThis.fetch, signal } = {}) {
+  const res = await fetchImpl(`${httpUrl(url)}/v1/notes`, {
+    method: 'POST', signal,
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ kind, turns, state, label, context, outline, workspaceId, meetingId, owner, about }),
+  });
+  if (!res.ok) {
+    let message = 'The notes could not be generated.';
+    try { message = (await res.json()).error || message; } catch {}
+    throw new Error(message);
+  }
+  let text = '', failure = null;
+  await readSse(res.body, (e) => {
+    if (typeof e.delta === 'string') { text += e.delta; onDelta(text); }
+    if (e.error) failure = new Error(e.error);
+  });
+  if (failure) throw failure;
+  return text;
+}
+
 // one relay session. send(channel, pcm) frames the audio as [channel index][PCM16LE]; events arrive on onEvent exactly as
 // the helper would emit them. ready resolves with the relay's ready message or rejects with the refusal.
 export function openRelay({ url, token, meta, onEvent = () => {}, onError = () => {}, onClose = () => {}, WebSocketImpl = globalThis.WebSocket, timeoutMs = 15000 }) {

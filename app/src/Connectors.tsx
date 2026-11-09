@@ -4,6 +4,8 @@ import { Row, useMenu } from './controls';
 import { BY_ID, CATALOG, MODEL_ROLES, ROLES, ROLE_LABEL, canServe, modelName, needsBaseUrl, needsKey, rolesFor, type ConnectorManifest } from '../connectors/catalog';
 import { MODELS } from './Composer';
 import { IconChat, IconCheck, IconCode, IconExternal, IconGrid, IconMic, IconMore, IconNotes, IconPerson, IconPlus, IconReset, IconTrash, ProviderMark, Wave } from './icons';
+import { isCloud } from './edition';
+import { INCLUDED_HOURS } from '../connectors/catalog';
 
 // the provider's mark: the logos icons.tsx has, the first letter for the rest
 export function Mark({ id }: { id: ConnectorId }) {
@@ -64,6 +66,20 @@ export function PersonalConnectors() {
   const [note, setNote] = useState<{ id: ConnectorId; ok: boolean; text: string } | null>(null);
   const refresh = () => Promise.all([window.quorum.modelSourceStatus(), window.quorum.getSettings()]).then(([s, g]) => { setSt(s); setSettings(g); });
   useEffect(() => { refresh(); }, []);
+  // Cloud, signed in to a workspace: speech can run on Quorum's engine; the seat's hours left this period ride along
+  const [managed, setManaged] = useState<{ on: boolean; hoursLeft: number | null }>({ on: false, hoursLeft: null });
+  useEffect(() => {
+    if (!isCloud) return;
+    let live = true;
+    window.quorum.accountStatus().then(async (a) => {
+      if (!live || !a.signedIn || !a.workspace) return;
+      let hoursLeft: number | null = null;
+      try { const u = await window.quorum.workspaceUsage(); const mine = u.usage?.seats.find((s) => s.userId === a.userId); hoursLeft = Math.max(0, Math.round((INCLUDED_HOURS - (mine?.managedHours ?? 0)) * 10) / 10); } catch {}
+      if (live) setManaged({ on: true, hoursLeft });
+    }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  const engine = settings?.transcription?.engine === 'managed' ? 'managed' : 'local';
   const rows = st ? connectedIds(st) : [];
   // the zero state: nothing beyond Apple can run a model step
   const zero = !!st && !rows.some((id) => MODEL_ROLES.some((r) => canServe(id, r)));
@@ -76,7 +92,13 @@ export function PersonalConnectors() {
     const r = await window.quorum.connectorKeyTest(id);
     setNote({ id, ok: !r.error, text: r.error ?? `${BY_ID[id].name} answered.` });
   };
-  const setRole = async (role: ConnectorRole, id: string) => { await window.quorum.setSettings({ providers: { [role]: (id || null) as ConnectorId } }); refresh(); };
+  const setRole = async (role: ConnectorRole, id: string) => {
+    if (role === 'speech') {
+      if (id === 'managed') { await window.quorum.setSettings({ transcription: { engine: 'managed' } }); refresh(); return; }
+      await window.quorum.setSettings({ transcription: { engine: 'local' }, providers: { speech: (id || null) as ConnectorId } }); refresh(); return;
+    }
+    await window.quorum.setSettings({ providers: { [role]: (id || null) as ConnectorId } }); refresh();
+  };
   const options = (role: ConnectorRole) => CATALOG.filter((p) => canServe(p.id, role) && (rows.includes(p.id) || effective(role) === p.id));
   const speech = effective('speech');
   return (
@@ -106,14 +128,16 @@ export function PersonalConnectors() {
           <div className="set-card even">
             {ROLES.map((r) => (
               <Row key={r.id} icon={ROLE_ICON[r.id]()} title={ROLE_LABEL[r.id]} desc={ROLE_DESC[r.id]}>
-                <select className="set-select" aria-label={ROLE_LABEL[r.id]} value={effective(r.id)} onChange={(e) => setRole(r.id, e.target.value)}>
+                <select className="set-select" aria-label={ROLE_LABEL[r.id]} value={r.id === 'speech' && engine === 'managed' ? 'managed' : effective(r.id)} onChange={(e) => setRole(r.id, e.target.value)}>
                   {r.id !== 'speech' && <option value="">{r.id === 'voice' ? 'Off' : 'Not set'}</option>}
+                  {r.id === 'speech' && managed.on && <option value="managed">Quorum managed{managed.hoursLeft != null ? ` · ${managed.hoursLeft} h left this period` : ''}</option>}
                   {options(r.id).map((p) => <option key={p.id} value={p.id}>{p.name}{p.id === 'apple' ? ' on this Mac' : rows.includes(p.id) ? '' : ' (not connected)'}</option>)}
                 </select>
               </Row>
             ))}
           </div>
-          {speech !== 'apple' && <p className="set-note">Cloud speech engines arrive with the speech provider interface. Until then Apple transcribes every meeting on this Mac.</p>}
+          {engine === 'managed' ? <p className="set-note">Calls stream to Quorum's speech engine and the running summary and final notes run on Quorum's models. Each seat includes {INCLUDED_HOURS} hours a month.</p>
+            : speech !== 'apple' && <p className="set-note">Cloud speech engines arrive with the speech provider interface. Until then Apple transcribes every meeting on this Mac.</p>}
         </>
       )}
       {sheet?.kind === 'add' && <ProviderSheet id={sheet.id} st={st} settings={settings} onPick={(id) => setSheet({ kind: 'add', id })} onRefresh={refresh} onDone={(changed) => { setSheet(null); if (changed) refresh(); }} />}

@@ -101,6 +101,8 @@ export function cleanVoice(voice) {
   const out = {};
   if (!voice || typeof voice !== 'object') return out;
   for (const k of STEPS) { const v = String(voice[k] ?? '').trim(); if (v) out[k] = v; }
+  // required: every member's calls run managed, whatever their own Settings say
+  if (voice.required === true) out.required = true;
   return out;
 }
 
