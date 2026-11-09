@@ -60,28 +60,29 @@
     </section>
 
     <section class="section dotted" id="how" aria-labelledby="how-title">
-      <div class="wrap section-head">
-        <h2 id="how-title">How it works</h2>
-      </div>
-      <div class="grid cards">
-        <article class="card">
-          <span class="step">1</span>
-          <h3>Capture</h3>
-          <p>Quorum detects Zoom, Google Meet and Teams calls and records them on your Mac. Transcription runs on the device.</p>
-        </article>
-        <article class="card">
-          <span class="step">2</span>
-          <h3>Write</h3>
-          <p>When a call ends, Quorum writes the notes as plain markdown into your Agent OS folder, next to the files you already keep.</p>
-        </article>
-        <article class="card">
-          <span class="step">3</span>
-          <h3>Ask</h3>
-          <p>Ask questions about any meeting through Claude Code or your own API key. Anthropic, OpenAI and local models through Ollama are supported.</p>
-        </article>
-      </div>
-      <div class="wrap">
-        <p class="note">Nothing leaves the Mac unless you turn sync on.</p>
+      <div class="wrap how-grid">
+        <div class="how-copy">
+          <h2 id="how-title">How it works</h2>
+          <ol class="steps">
+            <li>
+              <span class="step">1</span>
+              <h3>Capture</h3>
+              <p>Quorum detects Zoom, Google Meet and Teams calls and records them on your Mac. Transcription runs on the device.</p>
+            </li>
+            <li>
+              <span class="step">2</span>
+              <h3>Write</h3>
+              <p>When a call ends, Quorum writes the notes as plain markdown into your Agent OS folder, next to the files you already keep.</p>
+            </li>
+            <li>
+              <span class="step">3</span>
+              <h3>Ask</h3>
+              <p>Ask questions about any meeting through Claude Code or your own API key. Anthropic, OpenAI and local models through Ollama are supported.</p>
+            </li>
+          </ol>
+          <p class="note">Nothing leaves the Mac unless you turn sync on.</p>
+        </div>
+        <div class="graph" data-graph aria-hidden="true"></div>
       </div>
     </section>
 
@@ -169,5 +170,6 @@
   <script src="script.js?v=202611090337"></script>
   <script src="grainient.js?v=202611090337"></script>
   <script src="tree.js?v=202611090337"></script>
+  <script src="graph.js?v=202611090337"></script>
 </body>
 </html>
