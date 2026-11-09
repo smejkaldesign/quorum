@@ -9,7 +9,8 @@ final class Session {
     private let meter = LevelMeter()
     private(set) var running = false
 
-    func start(dir: URL?, echoCancel: Bool, locale id: String = "en-US", tapBundles: [String] = [], terms: [String] = []) async throws {
+    // streamPcm: skip SpeechAnalyzer and emit 16 kHz PCM per channel instead; the app forwards it to the relay
+    func start(dir: URL?, echoCancel: Bool, locale id: String = "en-US", tapBundles: [String] = [], terms: [String] = [], streamPcm: Bool = false) async throws {
         guard !running else { return }
         Emit.status("requesting microphone permission")
         guard await AVAudioApplication.requestRecordPermission() else {
@@ -17,9 +18,15 @@ final class Session {
         }
         if let dir { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) }
         let locale = Locale(identifier: id)
-        Emit.status("starting on-device transcribers")
-        try await me.start(locale: locale, audioURL: dir?.appendingPathComponent("me.caf"), terms: terms)
-        try await them.start(locale: locale, audioURL: dir?.appendingPathComponent("them.caf"), terms: terms)
+        if streamPcm {
+            Emit.status("streaming audio to managed transcription")
+            try me.startStreaming(audioURL: dir?.appendingPathComponent("me.caf"))
+            try them.startStreaming(audioURL: dir?.appendingPathComponent("them.caf"))
+        } else {
+            Emit.status("starting on-device transcribers")
+            try await me.start(locale: locale, audioURL: dir?.appendingPathComponent("me.caf"), terms: terms)
+            try await them.start(locale: locale, audioURL: dir?.appendingPathComponent("them.caf"), terms: terms)
+        }
         let me = self.me, them = self.them, meter = self.meter
         try mic.start(echoCancel: echoCancel) { me.feed($0); meter.feed($0) }
         Emit.status("mic on, starting system audio tap")
@@ -71,7 +78,7 @@ func handle(_ line: String) async {
     switch name {
     case "start":
         let dir = (cmd["sessionDir"] as? String).map { URL(fileURLWithPath: $0) }
-        do { try await session.start(dir: dir, echoCancel: cmd["echoCancel"] as? Bool ?? false, locale: cmd["locale"] as? String ?? "en-US", tapBundles: cmd["tapBundles"] as? [String] ?? [], terms: cmd["terms"] as? [String] ?? []) }
+        do { try await session.start(dir: dir, echoCancel: cmd["echoCancel"] as? Bool ?? false, locale: cmd["locale"] as? String ?? "en-US", tapBundles: cmd["tapBundles"] as? [String] ?? [], terms: cmd["terms"] as? [String] ?? [], streamPcm: cmd["streamPcm"] as? Bool ?? false) }
         catch { Emit.error("start: \(error.localizedDescription)") }
     case "stop":
         await session.stop()

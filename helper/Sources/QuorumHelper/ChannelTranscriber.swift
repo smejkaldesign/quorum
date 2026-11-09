@@ -11,10 +11,24 @@ final class ChannelTranscriber {
     private var format: AVAudioFormat?
     private var converter: AVAudioConverter?
     private var file: AVAudioFile?
+    private var streaming = false
     private let queue = DispatchQueue(label: "quorum.transcriber")
 
     init(channel: String) {
         self.channel = channel
+    }
+
+    // managed transcription: no analyzer; the same conversion step downmixes to 16 kHz mono Int16 and the app gets
+    // every buffer as a base64 pcm event to forward to the relay. The audio file is kept the same way as the local path.
+    func startStreaming(audioURL: URL?) throws {
+        guard let fmt = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true) else {
+            throw NSError(domain: "quorum", code: 1, userInfo: [NSLocalizedDescriptionKey: "no 16 kHz PCM format"])
+        }
+        format = fmt
+        if let audioURL {
+            file = try AVAudioFile(forWriting: audioURL, settings: fmt.settings, commonFormat: fmt.commonFormat, interleaved: fmt.isInterleaved)
+        }
+        streaming = true
     }
 
     func start(locale: Locale, audioURL: URL?, terms: [String] = []) async throws {
@@ -76,7 +90,7 @@ final class ChannelTranscriber {
     }
 
     private func convertAndYield(_ buffer: AVAudioPCMBuffer) {
-        guard let fmt = format, let continuation else { return }
+        guard let fmt = format, streaming || continuation != nil else { return }
         if converter == nil || converter!.inputFormat != buffer.format {
             converter = AVAudioConverter(from: buffer.format, to: fmt)
         }
@@ -98,11 +112,18 @@ final class ChannelTranscriber {
         if let err { Emit.error("\(channel) convert: \(err.localizedDescription)"); return }
         guard out.frameLength > 0 else { return }
         try? file?.write(from: out)
-        continuation.yield(AnalyzerInput(buffer: out))
+        if streaming {
+            guard let samples = out.int16ChannelData else { return }
+            let data = Data(bytes: samples[0], count: Int(out.frameLength) * 2)
+            Emit.send(["event": "pcm", "channel": channel, "data": data.base64EncodedString()])
+            return
+        }
+        continuation?.yield(AnalyzerInput(buffer: out))
     }
 
     func stop() async {
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in queue.async { c.resume() } }
+        streaming = false
         continuation?.finish()
         continuation = nil
         try? await analyzer?.finalizeAndFinishThroughEndOfInput()

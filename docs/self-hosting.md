@@ -10,7 +10,7 @@ Create a project in the Supabase dashboard or with the CLI. Note the project URL
 
 ## 2. Apply the migrations
 
-Apply every file in `supabase/migrations/` in file-name order. With the CLI, from the repo root:
+Apply every file in `supabase/migrations/` in file-name order (`0007_relay.sql` is only needed with the relay below). With the CLI, from the repo root:
 
 ```sh
 supabase link --project-ref <your-project-ref>
@@ -85,6 +85,39 @@ Production never falls back to the local stack. Without `.env` it runs with host
 Notes and meetings push to your project when sync is on in Settings. Audio never leaves the Mac. Hidden paths, private folders, notes with `confidential:` in their frontmatter and withheld transcript lines are skipped. Sync is off by default.
 
 **Pull.** With sync on, the app also pulls what other devices wrote. While signed in with a workspace chosen, the app holds a Supabase Realtime channel on the workspace's `notes` and `meetings` rows and pulls within a second of each change; Settings shows "Live" while the channel is subscribed and "Polling" when it is not. Realtime streams only tables in the `supabase_realtime` publication, which migration `0005_realtime.sql` adds them to; without it the channel subscribes but no events arrive. The app also pulls at sign-in, when you switch workspace, when the window comes to the front and every three minutes in between, so a dropped socket costs at most one poll interval. In the other direction the app watches the vault folder and pushes a markdown file 1.5 seconds after it stops changing; files the pull itself wrote are skipped because their hash already matches `sync-ids.json`. Rows changed since the last pull (`sync-pull.json`, next to `sync-ids.json`) are written to the vault at the path each row stores, never inside a private folder. A file you edited that also changed remotely keeps the remote text and your text lands next to it as `<name> (conflict <date>).md`; a note removed remotely is renamed `<name> (removed).md`. Pulls never delete a file. A pulled note with `confidential:` frontmatter is written but this device will not push it again.
+
+## Running the transcription relay
+
+The Local edition never needs this. The relay (`relay/`) is the Cloud edition's managed transcription: the app streams 16 kHz audio to it over one websocket, it forwards each channel to a speech engine (AssemblyAI Universal-Streaming by default, Deepgram Nova-3 as the alternative) and returns the same transcript events the on-device engine emits. It also runs the running summary and the final notes on a managed model key (`POST /v1/notes`, streamed as server-sent events). Audio is forwarded and dropped; the relay stores none of it and logs durations and engine names only.
+
+**Migration.** Apply `supabase/migrations/0007_relay.sql` with the others. It adds `workspaces.hour_packs`, `workspace_usage_events.engine`, the service-role RPC `relay_connector_secret` that reads a workspace connector's key from Vault, and a `required` flag in `workspace_settings.voice`.
+
+**Run it.**
+
+```sh
+cd relay && npm ci
+cp .env.example .env     # fill in the values below
+node server.js           # health at http://127.0.0.1:8787/healthz
+```
+
+| Variable | What it is |
+|---|---|
+| `SUPABASE_URL`, `SUPABASE_ANON_KEY` | your project; the anon key checks the app's session token (`auth.getUser`) |
+| `SUPABASE_SERVICE_ROLE_KEY` | membership, settings and allowance reads, usage writes, the connector secret RPC |
+| `ASSEMBLYAI_API_KEY`, `DEEPGRAM_API_KEY` | at least the one `RELAY_ENGINE` names (`assemblyai` or `deepgram`) |
+| `ANTHROPIC_API_KEY` | the summary and notes steps on your key; leave empty to serve speech only |
+| `RELAY_OPENAI_MODEL` | model for an OpenAI or OpenAI-compatible connector an admin pointed summary or notes at (default `gpt-4o-mini`) |
+| `PORT` | default 8787 |
+
+On Railway, create a service from the repo with the config file `relay/railway.json` (build `cd relay && npm ci --omit=dev`, start `node relay/server.js`, health check `/healthz`) and set the same variables. The relay imports `app/notes.js` for the prompts, so the service builds from the repo root.
+
+**Point the app at it.** The Cloud app uses `wss://relay.quorum.watch` in production and `ws://127.0.0.1:8787` when it runs against the local Supabase stack. `QUORUM_RELAY_URL` in the shell or `.env` overrides both.
+
+**How a call is routed.** The relay checks the token, the caller's membership, then `workspace_settings.voice`. With `speech` set to an organization connector, the audio goes to that provider on the organization's key and the hours do not count. Otherwise it runs on the relay's own key and the workspace pool applies: 20 hours a seat plus 20 for each `hour_packs`, per calendar month, pooled across the workspace, less this month's `managed_hours` from the `workspace_usage` view. An empty pool refuses the session with `allowance` and the app continues on the on-device engine; a session that reaches the pool or the 4 hour per-connection cap closes with `cap` and the app starts a fresh local segment. 20 seconds without a frame closes the socket. One `workspace_usage_events` row is written per session (recorded seconds, engine, connector) and per notes call (seconds 0, the model as engine).
+
+**In the app.** The on-device engine is the default. A call goes through the relay when the workspace sets `voice.required`, when `voice.speech` names a connector, or when `settings.transcription.engine` is `managed` (set it with `quorum settings-set` until Settings has the switch).
+
+**Protocol.** Connect to `/v1/transcribe`, send one JSON hello `{ token, workspaceId, meetingId, channels: ['me','them'], sampleRate: 16000, terms: [...], locale }` (the token may come as an `Authorization: Bearer` header instead), wait for `{event:'ready', engine, counted, remainingSeconds}`, then send binary frames of one channel-index byte followed by PCM16LE. Events come back as `{event:'transcript', channel, text, isFinal, start, end}`; `{event:'stop'}` ends the session cleanly. `relay/scripts/stream-wav.mjs` streams a WAV file through a running relay and prints the finals.
 
 ## Related
 
