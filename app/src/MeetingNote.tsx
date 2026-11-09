@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { NoteDoc, Visibility } from './quorum';
 import { Markdown } from './Markdown';
 import { Composer } from './Composer';
@@ -97,6 +97,8 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack }: {
   const busy = turns.some((t) => t.pending);
 
   useEffect(() => window.quorum.onAgentStep(({ text }) => setStep(text)), []);
+  // the reader reuses the list's scroll box, so a note opens at its top rather than wherever the list was
+  useLayoutEffect(() => { scroller.current?.scrollTo({ top: 0 }); }, [note.file]);
   useEffect(() => { if (turns.length) scroller.current?.querySelector('.note-dock')?.scrollIntoView({ block: 'end', behavior: 'smooth' }); }, [turns]);
 
   const reload = async () => { const n = await window.quorum.readNote(note.file); if (n) setNote(n); };
