@@ -4,7 +4,7 @@ import { PersonalConnectors } from './Connectors';
 import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
-import { AccountArea, EDITION, MembersArea, WorkspaceConnectorsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
+import { AccountArea, EDITION, MembersArea, PlatformArea, WorkspaceConnectorsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { canAdmin, modeOf, resolvePage, workspacePages, type Page } from './settingsNav';
 import { EnvSwitch } from './EnvSwitch';
 import {
@@ -31,6 +31,7 @@ const WORKSPACE: Nav[] = [
   { id: 'members', label: 'Members', icon: IconPeople },
   { id: 'org-connectors', label: 'Connectors', icon: IconGrid },
   { id: 'org-voice', label: 'Voice typing', icon: IconKeyboard },
+  { id: 'platform', label: 'Platform', icon: IconShield },
 ];
 
 // the chip on every row whose control is disabled on purpose: the feature is planned and the row shows what it will do
@@ -47,8 +48,9 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
   const [account, setAccount] = useState<AccountState | null>(null);
   useEffect(() => { let live = true; window.quorum.accountStatus().then((a) => { if (live) setAccount(a); }).catch(() => {}); return () => { live = false; }; }, [settings.profile]);
   useEffect(() => { if (!window.quorum.onAccount) return; return window.quorum.onAccount(setAccount); }, []);
-  const admin = canAdmin(EDITION, account?.workspace?.role);
-  const page = resolvePage(saved, admin);
+  const owner = account?.platformOwner === true;
+  const admin = canAdmin(EDITION, account?.workspace?.role, owner);
+  const page = resolvePage(saved, admin, owner);
   const mode = modeOf(page);
   const quorumEmail = account?.signedIn ? account.email : null;
   const email = quorumEmail || user?.email || '';
@@ -62,7 +64,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
   const set = async (patch: Partial<Settings>) => onSettings(await window.quorum.setSettings(patch));
   // a cloud build without hosted account config has no members to list, so the page leaves the nav
   const hosted = useHostedAccounts();
-  const listed = workspacePages(EDITION, hosted);
+  const listed = workspacePages(EDITION, hosted, owner);
   const workspaceNav = WORKSPACE.filter((n) => (listed as string[]).includes(n.id));
   const all = [...ACCOUNT, ...WORKSPACE];
   const current = all.find((n) => n.id === page)!;
@@ -104,6 +106,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
           {page === 'preferences' && <p className="set-lede">Quorum works best knowing a little about you. Quorum uses this when it writes your meeting notes and answers questions.</p>}
           {page === 'knowledge' && <p className="set-lede">Company knowledge for your whole workspace, chosen by admins.</p>}
           {page === 'general' && <p className="set-lede">Settings for everyone in your workspace. Quorum gives this context to every meeting summary and answer, so it's the same for each person.</p>}
+          {page === 'platform' && <p className="set-lede">Every workspace on this Quorum. Plans are set by hand here until the admin web app exists.</p>}
           {page === 'preferences' ? (
             <ProfilePage settings={settings} email={email} emailLabel={emailLabel} name={user?.name ?? ''} onSettings={onSettings}>
               <h3>General</h3>
@@ -129,6 +132,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
           ) : page === 'members' ? <MembersArea />
             : page === 'org-connectors' ? <WorkspaceConnectorsArea local={<OrgConnectorsLocal onGo={go} />} />
             : page === 'org-voice' ? <WorkspaceVoiceArea local={<OrgVoiceLocal onGo={go} />} />
+            : page === 'platform' ? <PlatformArea />
             : page === 'calendar' ? <CalendarPage />
             : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} />
             : page === 'notifications' ? <NotificationsPage />

@@ -80,6 +80,22 @@ Production never falls back to the local stack. Without `.env` it runs with host
 
 **The developer switch.** Settings shows a "Use production data" toggle in development copies only. On, the development copy loads `.env` instead of its own config, keeps a separate session file (`auth-production.json`) and sync id map (`sync-ids-production.json`), and shows "Connected to production" in red while it is on. The setting is `devUseProduction` in the development copy's `settings.json`.
 
+## Platform owner
+
+Migration `0008_platform_owner.sql` adds a role outside any workspace for whoever runs the deployment: the platform owner. In the app it shows a Platform page behind Settings, Admin, with every workspace, its members, usage this period and a form that sets the plan, seats included and notes by hand; each change writes a row to `platform_audit`. The owner reads nothing from the tables directly; everything goes through the `platform_*` RPCs, which refuse any other account.
+
+Nothing in the migrations grants the role. `supabase/seed/platform-owner.sql` grants it to one email, which must have signed in once already:
+
+```sh
+# local stack
+cd app && EMAIL=owner@example.com npm run db:seed-owner
+
+# a hosted project: the connection string from Project Settings, Database
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v email="'owner@example.com'" -f supabase/seed/platform-owner.sql
+```
+
+The script prints the row it holds for that email, or nothing when the account does not exist yet. Revoke with `delete from public.platform_owners where user_id = '<id>'`.
+
 ## What sync stores
 
 Notes and meetings push to your project when sync is on in Settings. Audio never leaves the Mac. Hidden paths, private folders, notes with `confidential:` in their frontmatter and withheld transcript lines are skipped. Sync is off by default.

@@ -105,7 +105,9 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
   const makeClient = (c) => (c.url && c.key ? createClient(c.url, c.key, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storage: fileStorage(perConfig(c, 'auth', 'json')) } }) : null);
   let client = makeClient(cloud);
   // live is whether the Realtime channel is subscribed (sync.js live()); the UI shows "Live" or "Polling" from it
-  const state = { configured: !!client, signedIn: false, email: null, userId: null, workspace: null, workspaces: [], invites: [], domainMatches: [], sync: settings.sync === true, lastSyncAt: null, lastPullAt: null, syncError: null, live: false };
+  // platformOwner is the platform_owners role (migration 0008), asked once per signed-in user and kept for the session
+  const state = { configured: !!client, signedIn: false, email: null, userId: null, platformOwner: false, workspace: null, workspaces: [], invites: [], domainMatches: [], sync: settings.sync === true, lastSyncAt: null, lastPullAt: null, syncError: null, live: false };
+  let ownerOf = null;
   const listeners = new Set();
   const snapshot = () => JSON.parse(JSON.stringify(state));
   // every state change also lets sync.js bring its channel and watcher in line with the sign-in, switch and workspace
@@ -143,7 +145,7 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
   const envStatus = () => ({ env: cloud.env, config: cloud.source, host: cloud.url ? new URL(cloud.url).host : null, useProduction: cloud.useProduction, configured: !!client });
 
   const row = (w, role) => ({ id: w.id, name: w.name, domain: w.domain ?? null, domainJoin: w.domain_join !== false, role });
-  const signedOut = () => { Object.assign(state, { signedIn: false, email: null, userId: null, workspace: null, workspaces: [], invites: [], domainMatches: [] }); };
+  const signedOut = () => { ownerOf = null; Object.assign(state, { signedIn: false, email: null, userId: null, platformOwner: false, workspace: null, workspaces: [], invites: [], domainMatches: [] }); };
   const chooseWorkspace = (id) => {
     state.workspace = state.workspaces.find((w) => w.id === id) ?? state.workspaces[0] ?? null;
     if (settings.workspaceId !== (state.workspace?.id ?? null)) { settings.workspaceId = state.workspace?.id ?? null; saveSettings?.(); }
@@ -156,12 +158,15 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
       const { data: { session } } = await client.auth.getSession();
       if (!session) { signedOut(); emit(); return snapshot(); }
       state.signedIn = true; state.email = session.user.email ?? null; state.userId = session.user.id;
-      const [members, invites, domains] = await Promise.all([
+      const [members, invites, domains, owner] = await Promise.all([
         client.from('members').select('role, workspace:workspaces(id, name, domain, domain_join, deleted_at)').is('deleted_at', null),
         client.rpc('pending_invites'),
         client.rpc('domain_workspaces'),
+        ownerOf === session.user.id ? null : client.rpc('is_platform_owner'),
       ]);
       for (const r of [members, invites, domains]) if (r.error) throw r.error;
+      // a project without migration 0008 has no is_platform_owner; that is an ordinary account, never a failed refresh
+      if (owner) { state.platformOwner = owner.data === true; ownerOf = session.user.id; if (owner.error) log('account owner', owner.error.message); }
       state.workspaces = (members.data ?? []).filter((m) => m.workspace && !m.workspace.deleted_at).map((m) => row(m.workspace, m.role)).sort((a, b) => a.name.localeCompare(b.name));
       state.invites = (invites.data ?? []).map((i) => ({ id: i.invite_id, inviteId: i.invite_id, workspaceId: i.workspace_id, workspaceName: i.workspace_name, role: i.role, invitedBy: i.invited_by_email ?? null, invitedByEmail: i.invited_by_email ?? null, expiresAt: i.expires_at }));
       state.domainMatches = (domains.data ?? []).map((d) => ({ id: d.workspace_id, workspaceId: d.workspace_id, name: d.name }));
