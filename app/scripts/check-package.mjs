@@ -6,9 +6,10 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const appDir = process.argv[2] ?? 'release/mac-arm64/Quorum.app';
-const asar = path.join(appDir, 'Contents/Resources/app.asar');
+const asar = path.resolve(appDir, 'Contents/Resources/app.asar');
 const listed = new Set(execFileSync('npx', ['asar', 'list', asar], { encoding: 'utf8' }).split('\n').map((l) => l.trim().replace(/^\//, '')).filter(Boolean));
-const read = (rel) => execFileSync('npx', ['asar', 'extract-file', asar, rel], { cwd: process.env.TMPDIR || '/tmp', encoding: 'utf8' }) && readFileSync(path.join(process.env.TMPDIR || '/tmp', path.basename(rel)), 'utf8');
+const tmp = process.env.TMPDIR || '/tmp';
+const read = (rel) => { execFileSync('npx', ['asar', 'extract-file', asar, rel], { cwd: tmp, encoding: 'utf8' }); return readFileSync(path.join(tmp, path.basename(rel)), 'utf8'); };
 
 const seen = new Set();
 const missing = [];
