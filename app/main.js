@@ -447,8 +447,10 @@ async function startRelay(segmentId) {
   if (!plan.managed) return null;
   const { data: { session } = {} } = await account.client().auth.getSession();
   if (!session?.access_token) return null;
+  const urls = mod.relayUrls({ source: account.envStatus?.().config });
+  for (const url of urls) {
   const r = mod.openRelay({
-    url: mod.relayUrl({ source: account.envStatus?.().config }), token: session.access_token,
+    url, token: session.access_token,
     meta: { workspaceId: account.state().workspace.id, meetingId: meeting.id, channels: ['me', 'them'], sampleRate: 16000, terms: meeting.terms, locale: settings.voice?.locale || 'en-US' },
     onEvent: onHelperEvent,
     onClose: ({ error }) => {
@@ -464,10 +466,13 @@ async function startRelay(segmentId) {
     log('speech', `managed (${ready.engine}, ${plan.reason})`, ready.counted ? `${Math.round(ready.remainingSeconds / 60)} min left` : 'organization connector');
     return r;
   } catch (err) {
+    if (mod.unreachable(err) && url !== urls[urls.length - 1]) { log('speech', `${url} unreachable (${err.message}); trying the next address`); continue; }
     log('speech', 'relay refused, on-device:', err.message);
     toUI('log', `Managed transcription is unavailable (${err.message}); transcribing on this Mac.`);
     return null;
   }
+  }
+  return null;
 }
 
 // the user's own cloud speech engine (Settings › Connectors, speech step): AssemblyAI or Deepgram on their key, through
@@ -603,11 +608,18 @@ async function runNotesModel(kind, { turns, state, label, outline = '', onDelta 
         const { data: { session } = {} } = await account.client().auth.getSession();
         if (session?.access_token) {
           const redacted = turns.map((t) => ({ ...t, text: suggester.redactLines(t.text) }));
-          const text = await mod.relayNotes({
-            url: mod.relayUrl({ source: account.envStatus?.().config }), token: session.access_token, kind, turns: redacted, state, label, context: notesContext(), outline,
-            workspaceId: account.state().workspace.id, meetingId: meeting.id, owner: OWNER, about: aboutMe(), onDelta,
-            signal: AbortSignal.timeout(kind === 'summary' ? 120000 : 180000),
-          });
+          const urls = mod.relayUrls({ source: account.envStatus?.().config });
+          let text = null;
+          for (const url of urls) {
+            try {
+              text = await mod.relayNotes({
+                url, token: session.access_token, kind, turns: redacted, state, label, context: notesContext(), outline,
+                workspaceId: account.state().workspace.id, meetingId: meeting.id, owner: OWNER, about: aboutMe(), onDelta,
+                signal: AbortSignal.timeout(kind === 'summary' ? 120000 : 180000),
+              });
+              break;
+            } catch (err) { if (mod.unreachable(err) && url !== urls[urls.length - 1]) { log(kind, `${url} unreachable; trying the next address`); continue; } throw err; }
+          }
           log(kind, `on the relay (${plan.reason})`);
           return text;
         }

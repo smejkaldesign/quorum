@@ -2,7 +2,7 @@
 // from the app through the relay (relay/billing.js). The app never holds a Stripe key; the relay signs every call with
 // the user's own session token, and Stripe's pages open in the browser.
 import { plain } from './account.js';
-import { httpUrl, relayUrl } from './relay.js';
+import { httpUrl, relayUrls, unreachable } from './relay.js';
 
 export const shapeBilling = (r = {}) => ({
   plan: r.plan ?? 'free', seats: Number(r.seats) || 0, seatsIncluded: Number(r.seats_included) || 0, hourPacks: Number(r.hour_packs) || 0, members: Number(r.members) || 0,
@@ -24,9 +24,16 @@ export function createBilling({ account, log = () => {}, openExternal = async ()
   const relayPost = async (path, body) => {
     const { data: { session } = {} } = await account.client().auth.getSession();
     if (!session?.access_token) throw new Error('You are signed out. Sign in again.');
-    const res = await fetchImpl(`${httpUrl(relayUrl({ source: account.envStatus?.().config }))}${path}`, {
-      method: 'POST', headers: { authorization: `Bearer ${session.access_token}`, 'content-type': 'application/json' }, body: JSON.stringify({ workspaceId: account.state().workspace.id, ...body }),
-    });
+    const urls = relayUrls({ source: account.envStatus?.().config });
+    let res = null;
+    for (const url of urls) {
+      try {
+        res = await fetchImpl(`${httpUrl(url)}${path}`, {
+          method: 'POST', headers: { authorization: `Bearer ${session.access_token}`, 'content-type': 'application/json' }, body: JSON.stringify({ workspaceId: account.state().workspace.id, ...body }),
+        });
+        break;
+      } catch (err) { if (unreachable(err) && url !== urls[urls.length - 1]) continue; throw err; }
+    }
     const json = await res.json().catch(() => ({}));
     // the relay answers with sentences meant for people; plain() passes those through under a P0 code
     if (!res.ok) { const e = new Error(json.error || 'Billing is unavailable right now.'); e.code = 'P0001'; throw e; }

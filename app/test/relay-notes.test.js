@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { httpUrl, modelPlan, readSse, relayNotes, speechPlan } from '../ee/relay.js';
+import { DEFAULT_RELAY, FALLBACK_RELAY, httpUrl, modelPlan, readSse, relayNotes, relayUrls, speechPlan, unreachable } from '../ee/relay.js';
 import { cleanVoice } from '../ee/connectors.js';
 
 const ws = { id: 'ws1' };
@@ -45,5 +45,18 @@ describe('the relay notes call', () => {
     await expect(relayNotes({ url: 'wss://r', token: 't', kind: 'notes', turns: [], workspaceId: 'w', fetchImpl: refused })).rejects.toThrow('used its managed hours');
     const midway = async () => sse([{ delta: 'a' }, { error: 'The notes could not be generated.' }]);
     await expect(relayNotes({ url: 'wss://r', token: 't', kind: 'notes', turns: [], workspaceId: 'w', fetchImpl: midway })).rejects.toThrow('could not be generated');
+  });
+});
+
+describe('relay addresses', () => {
+  it('tries the custom domain then the Railway address in production, one address otherwise', () => {
+    expect(relayUrls({ env: {}, source: 'production' })).toEqual([DEFAULT_RELAY, FALLBACK_RELAY]);
+    expect(relayUrls({ env: {}, source: 'local' })).toEqual(['ws://127.0.0.1:8787']);
+    expect(relayUrls({ env: { QUORUM_RELAY_URL: 'wss://x.example/' } })).toEqual(['wss://x.example']);
+  });
+  it('tells a connection failure from a refusal', () => {
+    expect(unreachable(new Error('the relay could not be reached'))).toBe(true);
+    expect(unreachable(Object.assign(new TypeError('fetch failed'), { cause: new Error('certificate has expired') }))).toBe(true);
+    expect(unreachable(new Error('This workspace has used its managed hours for the month.'))).toBe(false);
   });
 });
