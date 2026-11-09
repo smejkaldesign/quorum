@@ -8,6 +8,7 @@
   --mark: rgba(255, 255, 255, 0.28);
   --dot: rgba(255, 255, 255, 0.035);
   --text: #ececee;
+  --text-soft: rgba(236, 236, 238, 0.78);
   --muted: #8e8e93;
   --brand: #007aff;
   --brand-rgb: 0, 122, 255;
@@ -24,7 +25,9 @@
   --frame-max: 1536px;
   --inset: 0px;
   --gutter: 16px;
-  --section-y: 80px;
+  --section-y: 120px;
+  --header-h: 58px;
+  --footer-h: 200px;
   --radius: 14px;
 }
 
@@ -56,6 +59,8 @@ ul { margin: 0; padding: 0; list-style: none; }
 
 /* Frame and container */
 .frame {
+  position: relative;
+  isolation: isolate;
   width: min(100% - 2 * var(--inset), var(--frame-max));
   margin: 0 auto;
   border-left: 1px dashed transparent;
@@ -88,19 +93,25 @@ ul { margin: 0; padding: 0; list-style: none; }
 .eyebrow::before { content: "["; color: var(--mark); }
 .eyebrow::after { content: "]"; color: var(--mark); }
 
-/* Header */
+/* Header: sits inside the frame so the hero gradient runs under it.
+   Transparent at the top of the page; the tint and hairline fade in over
+   the first 160px of scroll. Without scroll timelines the animation finishes
+   at once, which leaves the tinted state. */
 .site-header {
   position: sticky; top: 0; z-index: 5;
-  background: rgba(26, 26, 27, 0.86);
+  background: rgba(26, 26, 27, 0);
   -webkit-backdrop-filter: saturate(140%) blur(14px);
   backdrop-filter: saturate(140%) blur(14px);
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid transparent;
+  animation: header-tint linear both;
+  animation-timeline: scroll();
+  animation-range: 0 160px;
+}
+@keyframes header-tint {
+  to { background: rgba(26, 26, 27, 0.86); border-bottom-color: var(--line); }
 }
 .header-row {
-  width: min(100% - 2 * var(--inset), var(--frame-max));
-  margin: 0 auto;
-  padding: 0 var(--gutter);
-  height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  height: var(--header-h); display: flex; align-items: center; justify-content: space-between; gap: 16px;
 }
 .brand { display: inline-flex; align-items: center; gap: 10px; }
 .brand img { display: block; width: 22px; height: 26px; }
@@ -127,8 +138,90 @@ ul { margin: 0; padding: 0; list-style: none; }
 }
 .dotted > * { position: relative; }
 
+/* Gradient wash, ported from Benefind's Grainient hero: a shader that drifts
+   three colors through noise-warped space and adds film grain. Here it is a
+   vertical ramp, two blurred blobs that drift on transforms, and an SVG noise
+   tile, all in Quorum blues. The element's box is the frame's content box, so
+   the paint stays between the rails; overflow and clip-path hold the blobs in. */
+.glow {
+  position: absolute; left: 0; right: 0; top: 0; bottom: 0;
+  z-index: -1;
+  overflow: hidden;
+  clip-path: inset(0);
+  pointer-events: none;
+  opacity: 0.6;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.12 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E") 0 0 / 180px 180px repeat,
+    linear-gradient(180deg, #0b2a4d 0%, #0b2a4d 16%, #0066d9 58%, #3399ff 84%, #8ec5ff 100%);
+}
+.glow::before, .glow::after {
+  content: "";
+  position: absolute; inset: -30%;
+  filter: blur(48px);
+  will-change: transform;
+}
+.glow::before {
+  background:
+    radial-gradient(closest-side at 28% 58%, rgba(51, 153, 255, 0.9), transparent),
+    radial-gradient(closest-side at 74% 70%, rgba(0, 102, 217, 0.85), transparent);
+  animation: drift-a 28s ease-in-out infinite alternate;
+}
+.glow::after {
+  background:
+    radial-gradient(closest-side at 62% 44%, rgba(142, 197, 255, 0.55), transparent),
+    radial-gradient(closest-side at 18% 82%, rgba(0, 122, 255, 0.7), transparent);
+  animation: drift-b 36s ease-in-out infinite alternate;
+}
+@keyframes drift-a {
+  from { transform: translate3d(-6%, -4%, 0) rotate(0deg) scale(1); }
+  to   { transform: translate3d(7%, 5%, 0) rotate(14deg) scale(1.12); }
+}
+@keyframes drift-b {
+  from { transform: translate3d(6%, 4%, 0) rotate(0deg) scale(1.1); }
+  to   { transform: translate3d(-7%, -6%, 0) rotate(-12deg) scale(1); }
+}
+/* The hero wash starts behind the header, which sits above it in the frame. */
+.hero .glow { top: calc(-1 * var(--header-h) - 1px); }
+/* The bottom wash starts at the last section and runs through the footer,
+   flipped so the light end is at the top and the dark end at the bottom. */
+#existing .glow { bottom: calc(-1 * var(--footer-h)); transform: scaleY(-1); }
+
+/* Enterprise wash: black and dark grey with a slow starfield. Each layer is
+   a tiled set of single-pixel radial dots; the two layers drift at different
+   speeds. The tile edges repeat, so drifting on background-position is seamless. */
+.glow-dark {
+  opacity: 1;
+  background: linear-gradient(180deg, #0d0d0e 0%, #141415 55%, #0a0a0b 100%);
+}
+.glow-dark::before, .glow-dark::after {
+  inset: 0;
+  filter: none;
+  will-change: background-position;
+}
+.glow-dark::before {
+  background:
+    radial-gradient(1px 1px at 12px 18px, rgba(255, 255, 255, 0.5), transparent 100%),
+    radial-gradient(1px 1px at 86px 54px, rgba(255, 255, 255, 0.35), transparent 100%),
+    radial-gradient(1.5px 1.5px at 150px 120px, rgba(255, 255, 255, 0.45), transparent 100%),
+    radial-gradient(1px 1px at 40px 170px, rgba(255, 255, 255, 0.3), transparent 100%),
+    radial-gradient(1px 1px at 190px 30px, rgba(255, 255, 255, 0.4), transparent 100%);
+  background-size: 220px 220px;
+  animation: stars-a 90s linear infinite;
+}
+.glow-dark::after {
+  background:
+    radial-gradient(1px 1px at 60px 100px, rgba(255, 255, 255, 0.25), transparent 100%),
+    radial-gradient(1px 1px at 130px 20px, rgba(255, 255, 255, 0.2), transparent 100%),
+    radial-gradient(1px 1px at 20px 70px, rgba(255, 255, 255, 0.18), transparent 100%),
+    radial-gradient(1.5px 1.5px at 110px 150px, rgba(255, 255, 255, 0.22), transparent 100%);
+  background-size: 160px 160px;
+  animation: stars-b 140s linear infinite;
+}
+@keyframes stars-a { to { background-position: 220px -220px; } }
+@keyframes stars-b { to { background-position: -160px -160px; } }
+
 /* Hero */
-.hero { padding: 96px 0 80px; text-align: center; }
+.hero { padding: 144px 0 120px; text-align: center; }
 .hero h1 {
   font: 400 clamp(38px, 7.2vw, 72px)/1.04 var(--serif);
   letter-spacing: -0.018em;
@@ -141,7 +234,7 @@ ul { margin: 0; padding: 0; list-style: none; }
   margin: 24px auto 0;
   font-size: 19px;
   line-height: 1.5;
-  color: var(--muted);
+  color: var(--text-soft);
   text-wrap: pretty;
 }
 .actions { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-top: 36px; }
@@ -149,12 +242,12 @@ ul { margin: 0; padding: 0; list-style: none; }
   margin-top: 22px;
   font: 400 12px/1.5 var(--mono);
   letter-spacing: 0.02em;
-  color: var(--muted);
+  color: var(--text-soft);
 }
 
 /* Buttons */
 .btn {
-  display: inline-flex; align-items: center; justify-content: center;
+  display: inline-flex; align-items: center; justify-content: center; gap: 9px;
   height: 46px; padding: 0 20px; border-radius: 11px;
   font-size: 16px; font-weight: 500; line-height: 1;
   border: 1px solid transparent;
@@ -162,12 +255,11 @@ ul { margin: 0; padding: 0; list-style: none; }
   cursor: pointer;
   font-family: inherit;
 }
+.btn svg { width: 16px; height: 16px; flex: none; display: block; }
 .btn-primary { background: var(--brand); color: #fff; }
 .btn-primary:hover { background: var(--brand-grad-a); color: #fff; }
 .btn-secondary { background: transparent; color: var(--text); border-color: var(--line-strong); }
-.btn-secondary:hover { border-color: var(--brand-soft); color: var(--text); }
-.btn-ghost { background: transparent; color: var(--muted); }
-.btn-ghost:hover { color: var(--text); }
+.btn-secondary:hover { border-color: rgba(255, 255, 255, 0.36); color: var(--text); }
 .btn:disabled { opacity: 0.45; cursor: default; }
 
 /* Sections: a dashed hairline on top, crosshair marks where it meets the rails */
@@ -195,7 +287,7 @@ ul { margin: 0; padding: 0; list-style: none; }
 .section-head { margin-bottom: 40px; }
 .section p + p { margin-top: 14px; }
 #existing h2, #existing p { max-width: 680px; }
-#existing p { margin-top: 18px; color: var(--muted); font-size: 18px; line-height: 1.55; text-wrap: pretty; }
+#existing p { margin-top: 18px; color: var(--text-soft); font-size: 18px; line-height: 1.55; text-wrap: pretty; }
 
 /* Cell grids: cells share one hairline, the grid runs rail to rail */
 .grid {
@@ -276,8 +368,10 @@ ul { margin: 0; padding: 0; list-style: none; }
 
 .enterprise {
   grid-column: 1 / -1;
+  position: relative;
+  isolation: isolate;
   background: var(--panel);
-  padding: 24px var(--gutter);
+  padding: 36px var(--gutter);
   display: flex; flex-direction: column; gap: 10px;
   color: var(--muted);
 }
@@ -290,7 +384,9 @@ ul { margin: 0; padding: 0; list-style: none; }
 .site-footer {
   position: relative;
   border-top: 1px dashed var(--rule);
-  padding: 28px 0 40px; color: var(--muted); font-size: 14px;
+  min-height: var(--footer-h);
+  display: flex; flex-direction: column; justify-content: center;
+  padding: 42px 0 60px; color: var(--text-soft); font-size: 14px;
 }
 .site-footer::before, .site-footer::after {
   content: "+";
@@ -306,7 +402,7 @@ ul { margin: 0; padding: 0; list-style: none; }
 .footer-row { display: flex; flex-direction: column; gap: 14px; }
 .footer-links { display: flex; flex-wrap: wrap; gap: 8px 20px; }
 .footer-links a:hover { color: var(--text); }
-.copyright { font: 400 12px/1.5 var(--mono); letter-spacing: 0.02em; color: var(--muted); }
+.copyright { font: 400 12px/1.5 var(--mono); letter-spacing: 0.02em; color: var(--text-soft); }
 
 /* Placeholder pages */
 .page { padding: 96px 0 120px; }
@@ -316,16 +412,17 @@ ul { margin: 0; padding: 0; list-style: none; }
 
 /* Larger screens */
 @media (min-width: 600px) {
+  :root { --footer-h: 150px; }
   .footer-row { flex-direction: row; align-items: center; justify-content: space-between; }
   .enterprise { flex-direction: row; align-items: center; justify-content: space-between; }
 }
 
 @media (min-width: 720px) {
-  :root { --inset: 24px; --gutter: 32px; --section-y: 112px; }
+  :root { --inset: 24px; --gutter: 32px; --section-y: 168px; }
   .frame { border-left-color: var(--rule); border-right-color: var(--rule); }
   .section::before, .section::after,
   .site-footer::before, .site-footer::after { display: block; }
-  .hero { padding: 128px 0 104px; }
+  .hero { padding: 192px 0 156px; }
   .cards { grid-template-columns: repeat(3, 1fr); }
   .plans { grid-template-columns: 1fr 1fr; }
 }
@@ -343,4 +440,5 @@ ul { margin: 0; padding: 0; list-style: none; }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   .btn { transition: none; }
+  .glow::before, .glow::after { animation: none; }
 }
