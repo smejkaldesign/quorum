@@ -27,8 +27,9 @@
     </div>
   </header>
 
+  <div class="frame">
   <main id="main">
-    <section class="hero">
+    <section class="hero dotted">
       <div class="wrap">
         <h1>Every meeting ends as a note in your own Agent&nbsp;OS, on your Mac.</h1>
         <p class="lede">Quorum records Zoom, Google Meet and Teams calls, transcribes them on the device, and writes plain markdown into the folder Claude Code already reads.</p>
@@ -40,74 +41,77 @@
       </div>
     </section>
 
-    <section class="section" id="how" aria-labelledby="how-title">
-      <div class="wrap">
+    <section class="section dotted" id="how" aria-labelledby="how-title">
+      <div class="wrap section-head">
+        <p class="eyebrow" aria-hidden="true">01</p>
         <h2 id="how-title">How it works</h2>
-        <div class="cards">
-          <article class="card">
-            <span class="step">1</span>
-            <h3>Capture</h3>
-            <p>Quorum detects Zoom, Google Meet and Teams calls and records them on your Mac. Transcription runs on the device.</p>
-          </article>
-          <article class="card">
-            <span class="step">2</span>
-            <h3>Write</h3>
-            <p>When a call ends, Quorum writes the notes as plain markdown into your Agent OS folder, next to the files you already keep.</p>
-          </article>
-          <article class="card">
-            <span class="step">3</span>
-            <h3>Ask</h3>
-            <p>Ask questions about any meeting through Claude Code or your own API key. Anthropic, OpenAI and local models through Ollama are supported.</p>
-          </article>
-        </div>
+      </div>
+      <div class="grid cards">
+        <article class="card">
+          <span class="step">1</span>
+          <h3>Capture</h3>
+          <p>Quorum detects Zoom, Google Meet and Teams calls and records them on your Mac. Transcription runs on the device.</p>
+        </article>
+        <article class="card">
+          <span class="step">2</span>
+          <h3>Write</h3>
+          <p>When a call ends, Quorum writes the notes as plain markdown into your Agent OS folder, next to the files you already keep.</p>
+        </article>
+        <article class="card">
+          <span class="step">3</span>
+          <h3>Ask</h3>
+          <p>Ask questions about any meeting through Claude Code or your own API key. Anthropic, OpenAI and local models through Ollama are supported.</p>
+        </article>
+      </div>
+      <div class="wrap">
         <p class="note">Nothing leaves the Mac unless you turn sync on.</p>
       </div>
     </section>
 
     <section class="section" id="pricing" aria-labelledby="pricing-title">
-      <div class="wrap">
+      <div class="wrap section-head">
+        <p class="eyebrow" aria-hidden="true">02</p>
         <h2 id="pricing-title">Editions and pricing</h2>
         <p class="section-lede">The same app in both editions. The difference is where things run.</p>
+      </div>
+      <div class="grid plans">
+        <article class="plan">
+          <header class="plan-head">
+            <h3>Open source</h3>
+            <p class="price"><span class="amount">Free</span></p>
+            <p class="plan-sub">Apache-2.0. Full app. Runs on your Mac.</p>
+          </header>
+          <ul class="features">
+            <li>Capture and on-device transcription for Zoom, Google Meet and Teams</li>
+            <li>Notes as plain markdown in your Agent OS folder</li>
+            <li>Claude Code sign-in, your own API key, or a local model</li>
+            <li>Granola import, command line and local MCP server</li>
+            <li>Updates from GitHub Releases</li>
+          </ul>
+          <a class="btn btn-secondary" href="https://github.com/smejkaldesign/quorum/releases/latest">Download for Mac</a>
+        </article>
 
-        <div class="plans">
-          <article class="plan">
-            <header class="plan-head">
-              <h3>Open source</h3>
-              <p class="price"><span class="amount">Free</span></p>
-              <p class="plan-sub">Apache-2.0. Full app. Runs on your Mac.</p>
-            </header>
-            <ul class="features">
-              <li>Capture and on-device transcription for Zoom, Google Meet and Teams</li>
-              <li>Notes as plain markdown in your Agent OS folder</li>
-              <li>Claude Code sign-in, your own API key, or a local model</li>
-              <li>Granola import, command line and local MCP server</li>
-              <li>Updates from GitHub Releases</li>
-            </ul>
-            <a class="btn btn-secondary" href="https://github.com/smejkaldesign/quorum/releases/latest">Download for Mac</a>
-          </article>
-
-          <article class="plan plan-cloud">
-            <header class="plan-head">
-              <div class="plan-title-row">
-                <h3>Cloud</h3>
-                <span class="pill">Coming soon</span>
-              </div>
-              <p class="price"><span class="amount">$5</span><span class="per"> per seat per month</span></p>
-              <p class="plan-sub">Everything in Open source, hosted by Smejkal Design.</p>
-            </header>
-            <ul class="features">
-              <li>Starter Agent OS, built and maintained for you</li>
-              <li>Sync across Macs and the web</li>
-              <li>Team knowledge with members and invites</li>
-            </ul>
-            <form class="capture" aria-describedby="capture-note">
-              <label class="visually-hidden" for="capture-email">Email address</label>
-              <input id="capture-email" type="email" placeholder="you@example.com" autocomplete="email" disabled>
-              <button type="submit" class="btn btn-primary" disabled>Notify me</button>
-            </form>
-            <p class="plan-note" id="capture-note">Sign-ups open with the first Cloud release.</p>
-          </article>
-        </div>
+        <article class="plan plan-cloud">
+          <header class="plan-head">
+            <div class="plan-title-row">
+              <h3>Cloud</h3>
+              <span class="pill">Coming soon</span>
+            </div>
+            <p class="price"><span class="amount">$5</span><span class="per"> per seat per month</span></p>
+            <p class="plan-sub">Everything in Open source, hosted by Smejkal Design.</p>
+          </header>
+          <ul class="features">
+            <li>Starter Agent OS, built and maintained for you</li>
+            <li>Sync across Macs and the web</li>
+            <li>Team knowledge with members and invites</li>
+          </ul>
+          <form class="capture" aria-describedby="capture-note">
+            <label class="visually-hidden" for="capture-email">Email address</label>
+            <input id="capture-email" type="email" placeholder="you@example.com" autocomplete="email" disabled>
+            <button type="submit" class="btn btn-primary" disabled>Notify me</button>
+          </form>
+          <p class="plan-note" id="capture-note">Sign-ups open with the first Cloud release.</p>
+        </article>
 
         <aside class="enterprise">
           <div>
@@ -121,6 +125,7 @@
 
     <section class="section section-tight" id="existing" aria-labelledby="existing-title">
       <div class="wrap">
+        <p class="eyebrow" aria-hidden="true">03</p>
         <h2 id="existing-title">Already have an Agent OS?</h2>
         <p>If you keep an Obsidian vault or a repo with a CLAUDE.md, Quorum connects to the folder you have and writes meeting notes there. Cloud adds team sharing and access from every device.</p>
       </div>
@@ -139,6 +144,7 @@
       <p class="copyright">&copy; <span id="year">2026</span> Smejkal Design</p>
     </div>
   </footer>
+  </div>
 
   <script src="script.js"></script>
 </body>
