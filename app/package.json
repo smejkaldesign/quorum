@@ -1,7 +1,7 @@
 {
   "name": "quorum",
   "license": "Apache-2.0",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "main": "main.js",
   "scripts": {
@@ -59,28 +59,21 @@
       "output": "release"
     },
     "files": [
-      "main.js",
-      "edition.js",
+      "*.js",
+      "*.cjs",
+      "!dev-app.cjs",
+      "!after-pack.cjs",
+      "!vite.config.*",
+      "!vitest.config.*",
       "ee/**",
-      "connectors/**",
-      "onboarding.js",
-      "decisions.js",
-      "control.js",
-      "agent.js",
-      "suggest.js",
-      "json.js",
-      "vault.js",
-      "vindex.js",
-      "clusters.js",
-      "linkparse.js",
-      "relink.js",
-      "preload.cjs",
       "store/**",
+      "connectors/**",
       "guards/**",
+      "cli/**",
       "dist/**",
       "assets/**",
-      "package.json",
-      "build/**"
+      "build/**",
+      "package.json"
     ],
     "extraResources": [
       {
