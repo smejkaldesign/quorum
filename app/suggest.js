@@ -5,6 +5,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { extractJson } from './json.js';
+import { toText } from './transcript.js';
 
 const DETECT_EVERY_MS = 20000;
 
@@ -43,7 +44,7 @@ export function createSuggester({ runClaude, toUI, log, getTranscript, getSettin
   const redactLines = (text) => text.split('\n').map((l) => (isExcluded(l) ? '[withheld: opted-out customer]' : l)).join('\n');
 
   function transcriptForModel(lastN) {
-    return redactLines(getTranscript().slice(-lastN).map((t) => `${t.channel === 'me' ? owner : 'Others'}: ${t.text}`).join('\n'));
+    return redactLines(toText(getTranscript().slice(-lastN), { me: owner, them: 'Others' }));
   }
 
   function searchVault(query) {

@@ -4,7 +4,7 @@ declare global {
 }
 
 export type HelperEvent =
-  | { event: 'transcript'; channel: 'me' | 'them' | 'dictation'; text: string; isFinal: boolean; start: number; end: number; who?: string | null }
+  | { event: 'transcript'; channel: 'me' | 'them' | 'dictation'; text: string; isFinal: boolean; start: number; end: number; who?: string | null; id?: number; replace?: boolean; at?: number }
   | { event: 'status'; message: string }
   | { event: 'error'; message: string }
   | { event: 'stopped' }

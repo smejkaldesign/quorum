@@ -7,6 +7,7 @@ import store from './store/index.js';
 import { DATA_DIR, EDITION, ENV, loadEE } from './edition.js';
 import { registerOnboarding } from './onboarding.js';
 import { createSuggester } from './suggest.js';
+import { addFinal, toJSON, toText } from './transcript.js';
 import { extractJson } from './json.js';
 import { buildTerms, orgOf, topNames } from './terms.js';
 import { startControl } from './control.js';
@@ -158,13 +159,18 @@ function isEcho(evt) {
   return mine.filter((w) => theirs.has(w)).length / mine.length >= (mine.length < 4 ? 1 : 0.7);
 }
 
+// a final joins the transcript as part of a speaker turn; the UI gets the whole turn, replace: true when it grew
 function keep(evt) {
   if (meeting.capturing && mentionsOptOut(evt.text)) return blockCall('name');
   if (meeting.capturing && evt.channel !== 'me') softStop(evt.text, 'someone on the call', 0.85);
   else if (meeting.capturing) softStop(evt.text, OWNER, 0.85);
-  if (meeting.capturing) { meeting.transcript.push({ channel: evt.channel, text: evt.text, start: evt.start, at: Date.now() }); writeStateSoon(); }
-  toUI('helper-event', evt);
-  if (meeting.capturing) suggester.detect();
+  if (!meeting.capturing) return toUI('helper-event', evt);
+  const { turns, changed, replace } = addFinal(meeting.transcript, { channel: evt.channel, text: evt.text, start: evt.start, end: evt.end, at: Date.now() }, tx().gap);
+  if (!changed) return;
+  meeting.transcript = turns;
+  writeStateSoon();
+  toUI('helper-event', { ...evt, ...changed, replace });
+  suggester.detect();
 }
 
 const pendingPosts = new Map();
@@ -455,7 +461,7 @@ function resume(by) {
 
 // every transcript that leaves for a model goes through the opted-out filter
 function transcriptText() {
-  return suggester.redactLines(meeting.transcript.map((t) => `${t.channel === 'me' ? OWNER : themName() ?? 'Others'}: ${t.text}`).join('\n'));
+  return suggester.redactLines(toText(meeting.transcript, { me: OWNER, them: themName() ?? 'Others' }));
 }
 
 // prompt in, text out, on whichever model source is chosen; Agent OS questions go through runModel with tools
@@ -593,7 +599,7 @@ async function endMeeting() {
     return meeting.notes;
   }
   toUI('state', { phase: 'summarizing', meta: meetingMeta(fallbackTitle) });
-  store.meetings.writeTranscript(meeting.dir, meeting.transcript);
+  store.meetings.writeTranscript(meeting.dir, toJSON(meeting.transcript));
   let notes;
   try {
     const raw = await runClaude(

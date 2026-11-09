@@ -16,8 +16,8 @@ import { Composer } from './Composer';
 import { SettingsView } from './SettingsView';
 import { IconFolderOpen, IconPerson, IconGear, IconHome, IconGraph, IconSearch, IconFolder, IconDoc, IconExternal, IconArrowUp, IconBack, IconChat, IconChevron, IconNotes, IconStop, IconPause, IconPlay, Wave } from './icons';
 
-// one speaker turn: results from the same side keep joining it until the other side talks or there's a pause
-type Line = { channel: 'me' | 'them'; text: string; end: number };
+// one speaker turn as main.js built it; a turn that grows arrives again with the same id and replace: true
+type Line = { id: number; channel: 'me' | 'them'; text: string; start: number };
 type Phase = 'idle' | 'starting' | 'listening' | 'paused' | 'review' | 'blocked';
 type Tab = 'home' | 'knowledge' | 'chat' | 'notes';
 const inCall = (p: string) => p === 'listening' || p === 'paused' || p === 'starting';
@@ -106,8 +106,6 @@ export function App() {
   const [summarizing, setSummarizing] = useState(false);
   const [meta, setMeta] = useState<MeetingMeta | null>(null);
   const [settings, setSettings] = useState<Settings>({ autoListen: false, model: 'sonnet', suggestions: true });
-  const gapRef = useRef(1.5);
-  gapRef.current = settings.transcription?.gap ?? 1.5;
   const [themName, setThemName] = useState<string | null>(null);
   useEffect(() => { window.quorum.user().then((u) => setMe({ name: u?.name ?? '', photo: u?.photo ?? null })); }, [settings.profile]);
   const [unread, setUnread] = useState(false);
@@ -136,11 +134,11 @@ export function App() {
           const text = typeof e.text === 'string' ? e.text : '';
           if (e.channel === 'them' && 'who' in e) setThemName(e.who ?? null);
           if (e.isFinal) {
-            const ch = e.channel as 'me' | 'them';
+            const turn: Line = { id: e.id ?? 0, channel: e.channel as 'me' | 'them', text: text.trim(), start: e.start };
             setLines((l) => {
-              const last = l[l.length - 1];
-              if (last && last.channel === ch && e.start - last.end < gapRef.current) return [...l.slice(0, -1), { ...last, text: joinText(last.text, text), end: e.end }];
-              return [...l, { channel: ch, text: text.trim(), end: e.end }];
+              if (e.replace && l.some((x) => x.id === turn.id)) return l.map((x) => (x.id === turn.id ? turn : x));
+              const i = l.findIndex((x) => x.start > turn.start);
+              return i < 0 ? [...l, turn] : [...l.slice(0, i), turn, ...l.slice(i)];
             });
             setPartial((p) => ({ ...p, [e.channel]: '' }));
           } else setPartial((p) => ({ ...p, [e.channel]: text }));
@@ -435,7 +433,7 @@ export function App() {
           <section className="card transcript">
               {lines.map((l, i) => {
                 const tail = liveWords && i === lines.length - 1 ? partial[l.channel] : '';
-                return <p key={i} className={l.channel}><span>{who(l.channel)}</span><div>{l.text}{tail && <em className="partial"> {tail}</em>}</div></p>;
+                return <p key={l.id} className={l.channel}><span>{who(l.channel)}</span><div>{l.text}{tail && <em className="partial"> {tail}</em>}</div></p>;
               })}
               {liveWords && (['me', 'them'] as const).map((c) => (partial[c] && lines[lines.length - 1]?.channel !== c ? <p key={`p-${c}`} className={c}><span>{who(c)}</span><div><em className="partial">{partial[c]}</em></div></p> : null))}
               {!lines.length && !partial.me && !partial.them && (
@@ -481,12 +479,6 @@ function QuorumCard({ children }: { children: ReactNode }) {
       <div className="card">{children}</div>
     </div>
   );
-}
-
-// Apple finishes text in phrases, so a piece can start with its own comma or lowercase continuation
-function joinText(a: string, b: string) {
-  const t = b.trim();
-  return /^[,.;:!?]/.test(t) ? `${a}${t}` : `${a} ${t}`;
 }
 
 // the wizard's account step is the same card as Settings › Workspace, so sign-in state is shared; the local edition
