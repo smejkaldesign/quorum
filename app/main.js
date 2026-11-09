@@ -1013,6 +1013,12 @@ ipcMain.handle('set-settings', (_e, next) => {
     settings.model = next.model;
     store.settings.save();
   }
+  // the wizard's "Use Quorum's models" choice: runs on the relay once the Cloud account is signed in
+  if (typeof next.managedModels === 'boolean') {
+    settings.managedModels = next.managedModels;
+    store.settings.save();
+    toUI('settings', settings);
+  }
   if (SOURCES.includes(next.modelSource) && next.modelSource !== settings.modelSource) {
     settings.modelSource = next.modelSource;
     if (settings.providers) settings.providers = providersFromSource(next.modelSource, settings.providers);
@@ -1677,7 +1683,9 @@ ipcMain.handle('meetings-dir', () => {
   if (!dir) return null;
   const notes = meetingIndex().filter((m) => m.source === 'quorum').length;
   const quorum = quorumNotesDir();
-  return { path: quorum, rel: path.relative(path.dirname(brain()?.vault ?? dir), quorum), notes, chosen: dir === settings.meetingsDir };
+  // what other apps left in the meetings folder, counted by subfolder, so the wizard can say what it found
+  const sources = meetingSources().filter((s) => existsSync(s.path)).map((s) => ({ key: s.key, name: s.key.charAt(0).toUpperCase() + s.key.slice(1), count: store.notes.list(s.path).length })).filter((s) => s.count > 0);
+  return { path: quorum, rel: path.relative(path.dirname(brain()?.vault ?? dir), quorum), root: path.relative(brain()?.root ?? path.dirname(dir), dir) || path.basename(dir), notes, chosen: dir === settings.meetingsDir, sources };
 });
 // icons for notes made by other apps come from that app's own install on this Mac, so Quorum ships none of their artwork
 const SOURCE_APPS = { granola: '/Applications/Granola.app', zoom: '/Applications/zoom.us.app', teams: '/Applications/Microsoft Teams.app', meet: MEET_PWA };

@@ -2,6 +2,17 @@ import { useState } from 'react';
 import type { ModelSource } from './quorum';
 
 // shared by Settings › AI and the onboarding model step
+export type KeyProvider = 'anthropic' | 'openai' | 'google';
+export const KEY_PROVIDERS: KeyProvider[] = ['anthropic', 'openai', 'google'];
+export const KEY_NAMES: Record<KeyProvider, string> = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google' };
+// which provider a pasted key belongs to, from its prefix; null when the user has to say
+export function detectProvider(key: string): KeyProvider | null {
+  const k = key.trim();
+  if (/^sk-ant-/.test(k)) return 'anthropic';
+  if (/^sk-/.test(k)) return 'openai';
+  if (/^AIza/.test(k)) return 'google';
+  return null;
+}
 export const SOURCE_NAMES: Record<ModelSource, string> = { none: 'None', 'claude-code': 'Claude Code on this Mac', 'anthropic-api': 'Your own API key', local: 'Local model' };
 
 // the key is checked with one tiny request, then saved to the Keychain; it never comes back to this window

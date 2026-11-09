@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { AccountState, Brain, ModelSource, OnboardingChecks, OnboardingStatus } from './quorum';
-import { IconCalendar, IconCheck, IconCode, IconFolder, IconFolderOpen, IconLock, IconMic, IconPerson, IconShield, ProviderMark } from './icons';
-import { ModelKey, SOURCE_NAMES } from './modelSource';
+import { IconCalendar, IconCheck, IconFolder, IconFolderOpen, IconLock, IconMic, IconPerson, IconQuorum, IconShield, ProviderMark } from './icons';
+import { isCloud } from './edition';
+import { detectProvider, KEY_NAMES, KEY_PROVIDERS, SOURCE_NAMES, type KeyProvider } from './modelSource';
 import mark from '../assets/quorum-mark.png';
 
 type Step = 'welcome' | 'agentos' | 'you' | 'model' | 'account' | 'permissions' | 'done';
@@ -14,6 +15,8 @@ const home = (p: string) => p.replace(/^\/Users\/[^/]+/, '~');
 export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Brain | null; onBrain: (b: Brain | null) => void; accountSlot?: ReactNode; onDone: () => void }) {
   const [step, setStep] = useState<Step>('welcome');
   const [status, setStatus] = useState<Status>(null);
+  // Use Quorum's models was picked: the account step is then required, since the relay needs a signed-in Cloud account
+  const [managed, setManaged] = useState(false);
   // the fast part first, then permissions and Claude Code, which can take a few seconds; resolves when both are in
   const refresh = () => window.quorum.onboardingStatus().then(async (s) => {
     setStatus((prev) => ({ ...prev, ...s }));
@@ -38,15 +41,15 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
         )}
         {step === 'agentos' && <AgentOsStep brain={brain} status={status} onBrain={onBrain} onBack={back} onNext={next} />}
         {step === 'you' && <NameStep onBack={back} onNext={next} />}
-        {step === 'model' && <ModelStep status={status} onRefresh={refresh} onBack={back} onNext={next} />}
-        {step === 'account' && <AccountStep slot={accountSlot} onBack={back} onNext={next} />}
+        {step === 'model' && <ModelStep status={status} onRefresh={refresh} onBack={back} onNext={next} onManaged={setManaged} />}
+        {step === 'account' && <AccountStep slot={accountSlot} required={managed} onBack={back} onNext={next} />}
         {step === 'permissions' && <PermissionsStep status={status} onRefresh={refresh} onBack={back} onNext={next} />}
         {step === 'done' && (
           <section className="onb-step">
             <h1>You're set</h1>
             <ul className="onb-summary">
               <li><IconFolder width={16} height={16} /> {brain ? `Agent OS at ${home(brain.root)}` : 'No Agent OS yet (connect one in Settings)'}</li>
-              <li><ProviderMark provider="anthropic" /> {status?.model?.source && status.model.source !== 'none' ? `Model: ${SOURCE_NAMES[status.model.source]}` : 'No model source yet (choose one in Settings › Connectors)'}</li>
+              <li><ProviderMark provider="anthropic" /> {managed ? "Model: Quorum's models (after you sign in)" : status?.model?.source && status.model.source !== 'none' ? `Model: ${SOURCE_NAMES[status.model.source]}` : 'No model source yet (choose one in Settings › Connectors)'}</li>
               <li><IconMic width={16} height={16} /> {status?.permissions?.microphone === 'granted' ? 'Microphone allowed' : 'Microphone: macOS will ask on your first call'}</li>
               <li><IconShield width={16} height={16} /> {status?.permissions?.accessibility === 'granted' ? 'Accessibility allowed' : 'Accessibility: needed to read the meeting chat'}</li>
             </ul>
@@ -84,6 +87,11 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain 
     setBusy(false);
   };
   const connect = async () => { const b = await window.quorum.connectBrain(); if (b) { onBrain(b); setMode(null); } };
+  // meeting notes inside the connected folder: found by scanning it (badge), or a folder the user points at
+  const [notes, setNotes] = useState<Awaited<ReturnType<typeof window.quorum.meetingsDir>> | undefined>(undefined);
+  useEffect(() => { if (!brain) { setNotes(undefined); return; } let live = true; window.quorum.meetingsDir().then((r) => { if (live) setNotes(r); }).catch(() => { if (live) setNotes(null); }); return () => { live = false; }; }, [brain?.root]);
+  const pickNotes = async () => { if (await window.quorum.pickMeetingsDir()) setNotes(await window.quorum.meetingsDir()); };
+  const foundText = notes ? [...notes.sources.map((x) => `${x.count} ${x.name} ${x.count === 1 ? 'note' : 'notes'}`), ...(notes.notes ? [`${notes.notes} Quorum ${notes.notes === 1 ? 'note' : 'notes'}`] : [])].join(' · ') || 'Quorum saves new meeting notes here' : '';
   return (
     <section className="onb-step">
       <h1>Connect your Agent OS</h1>
@@ -116,6 +124,24 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain 
         </div>
       )}
       {error && <p className="set-error">{error}</p>}
+      {brain && notes !== undefined && (
+        <>
+          <div className="onb-or"><span>Meeting notes</span></div>
+          {notes ? (
+            <div className="onb-choice on">
+              <IconCheck width={18} height={18} className="ok" />
+              <div><strong>{notes.root}{!notes.chosen && <span className="onb-badge">Found in {brain.name}</span>}</strong><em>{foundText}</em></div>
+              <button className="pill" onClick={pickNotes}>Change…</button>
+            </div>
+          ) : (
+            <div className="onb-choice">
+              <IconFolder width={18} height={18} />
+              <div><strong>Connect your existing meeting notes <span className="onb-opt">optional</span></strong><em>Granola exports or another app's notes; Quorum reads them and saves its own beside them</em></div>
+              <button className="pill" onClick={pickNotes}>Choose…</button>
+            </div>
+          )}
+        </>
+      )}
       <Actions onBack={onBack} onNext={onNext} ready={!!brain} />
     </section>
   );
@@ -149,7 +175,7 @@ function NameStep({ onBack, onNext }: { onBack: () => void; onNext: () => void }
 }
 
 // optional: the hosted account. Continue turns on once the account card reports a sign-in; Skip for now otherwise
-function AccountStep({ slot, onBack, onNext }: { slot?: ReactNode; onBack: () => void; onNext: () => void }) {
+function AccountStep({ slot, required, onBack, onNext }: { slot?: ReactNode; required: boolean; onBack: () => void; onNext: () => void }) {
   const [signedIn, setSignedIn] = useState(false);
   useEffect(() => {
     let live = true;
@@ -161,57 +187,94 @@ function AccountStep({ slot, onBack, onNext }: { slot?: ReactNode; onBack: () =>
   return (
     <section className="onb-step">
       <h1>Your account</h1>
-      <p>Optional. Sign in to sync notes and meetings and to share a workspace with your team. You can do this later in Settings.</p>
+      <p>{required ? "Quorum's models run on your Quorum Cloud account, so sign in here. Sync and a shared workspace come with it." : 'Optional. Sign in to sync notes and meetings and to share a workspace with your team. You can do this later in Settings.'}</p>
       <div className="onb-slot">{slot ?? <p className="onb-muted">Sign in from Settings › Workspace once you are in.</p>}</div>
-      <Actions onBack={onBack} onNext={onNext} ready={signedIn} onSkip={onNext} />
+      <Actions onBack={onBack} onNext={onNext} ready={signedIn} onSkip={required ? undefined : onNext} />
     </section>
   );
 }
 
-// where the model runs. Claude Code is preselected when it is installed and signed in; Skip leaves the source at none
-function ModelStep({ status, onRefresh, onBack, onNext }: { status: Status; onRefresh: () => Promise<void>; onBack: () => void; onNext: () => void }) {
+// how Quorum thinks: a sign-in Quorum rides on (Claude Code today), a key from any provider, or Quorum's own models
+// with a Cloud account. One of them must be in place before the wizard moves on
+type Pick = 'login' | 'key' | 'managed';
+function ModelStep({ status, onRefresh, onBack, onNext, onManaged }: { status: Status; onRefresh: () => Promise<void>; onBack: () => void; onNext: () => void; onManaged: (on: boolean) => void }) {
   const c = status?.claude;
   const m = status?.model;
   const claudeOk = !!c?.installed && !!c?.loggedIn;
-  const [pick, setPick] = useState<ModelSource | null>(null);
+  const savedKey = KEY_PROVIDERS.find((id) => m?.keys?.[id]) ?? null;
+  const [pick, setPick] = useState<Pick | null>(null);
   const [keying, setKeying] = useState(false);
-  const [local, setLocal] = useState('');
-  useEffect(() => { if (claudeOk) setPick((p) => p ?? 'claude-code'); }, [claudeOk]);
-  const ready = pick === 'claude-code' ? claudeOk : pick === 'anthropic-api' ? !!m?.key : pick === 'local';
+  const [key, setKey] = useState('');
+  const [forced, setForced] = useState<KeyProvider | null>(null);
+  const [last4, setLast4] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => { setPick((p) => p ?? (savedKey && m?.source !== 'claude-code' ? 'key' : claudeOk ? 'login' : null)); }, [claudeOk, savedKey, m?.source]);
+  const ready = pick === 'login' ? claudeOk : pick === 'key' ? !!savedKey : pick === 'managed' ? isCloud : false;
   const finish = async () => {
-    if (pick && ready) {
-      if (pick === 'local' && local.trim()) await window.quorum.localModelSet(local);
-      await window.quorum.modelSourceSet(pick);
-    }
+    if (!ready) return;
+    if (pick === 'login') await window.quorum.modelSourceSet('claude-code');
+    if (pick === 'key' && savedKey) await window.quorum.setSettings({ providers: { summary: savedKey, notes: savedKey, agent: savedKey } });
+    await window.quorum.setSettings({ managedModels: pick === 'managed' });
+    onManaged(pick === 'managed');
     onNext();
   };
-  const choice = (s: ModelSource, icon: ReactNode, body: ReactNode, action: ReactNode) => (
-    <div role="radio" aria-checked={pick === s} tabIndex={0} className={`onb-choice pick ${pick === s ? 'on' : ''}`} onClick={() => setPick(s)}
-      onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setPick(s); } }}>
-      {icon}<div>{body}</div>{action}
+  const detected = detectProvider(key);
+  const provider = detected ?? forced;
+  const saveKey = async () => {
+    if (!provider || !key.trim()) return;
+    setBusy(true); setError('');
+    const r = await window.quorum.connectorKeySet(provider, key.trim());
+    setBusy(false);
+    if (r.error) { setError(r.error); return; }
+    setLast4(key.trim().slice(-4)); setKey(''); setForced(null); setKeying(false);
+    await onRefresh();
+    setPick('key');
+  };
+  const removeKey = async () => { if (savedKey) { await window.quorum.connectorKeyRemove(savedKey); setLast4(''); await onRefresh(); if (pick === 'key') setPick(null); } };
+  const disconnect = async () => { await window.quorum.modelSourceSet('none'); await onRefresh(); setPick(null); };
+  const row = (id: Pick, selectable: boolean, icon: ReactNode, body: ReactNode, action: ReactNode, below?: ReactNode) => (
+    <div className={`onb-choice ${selectable ? 'pick' : ''} ${pick === id ? 'on' : ''} ${below ? 'stack' : ''}`} role="radio" aria-checked={pick === id} tabIndex={selectable ? 0 : -1}
+      onClick={() => { if (selectable) setPick(id); }} onKeyDown={(e) => { if (selectable && e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setPick(id); } }}>
+      <div className="onb-choice-line">{icon}<div>{body}</div>{action}</div>
+      {below}
     </div>
   );
-  const ollama = !m ? '' : !m.ollama.reachable ? ' · not running' : m.ollama.hasModel ? ' · running' : ` · running, ${m.localModel} not pulled`;
   return (
     <section className="onb-step" role="radiogroup" aria-label="Model source">
       <h1>Where should Quorum's model run?</h1>
-      <p>Every option is your own. Quorum has no key of its own, and only Claude Code can read your notes to answer questions.</p>
-      {choice('claude-code', <ProviderMark provider="anthropic" />,
-        <><strong>Claude Code on this Mac</strong><em>Your own sign-in, reads your Agent OS{!c ? ' · checking…' : !c.installed ? ' · not installed' : !c.loggedIn ? ' · not signed in' : ` · signed in as ${c.email}`}</em></>,
-        claudeOk ? <IconCheck width={18} height={18} className="ok" />
-          : c && c.installed && !c.loggedIn ? <button className="pill primary" onClick={(e) => { e.stopPropagation(); window.quorum.claudeLogin(); }}>Sign in</button>
-          : c ? <button className="pill" onClick={(e) => { e.stopPropagation(); onRefresh(); }}>Check again</button> : null)}
-      {choice('anthropic-api', <IconLock width={18} height={18} />,
-        <><strong>Your own API key</strong><em>Anthropic key stored in Keychain{m ? (m.key ? ' · key saved' : ' · no key yet') : ''}</em></>,
-        m?.key ? <IconCheck width={18} height={18} className="ok" /> : <button className="pill" onClick={(e) => { e.stopPropagation(); setPick('anthropic-api'); setKeying(true); }}>Add key</button>)}
-      {choice('local', <IconCode width={18} height={18} />,
-        <>
-          <strong>Local model</strong><em>Ollama at localhost{ollama}</em>
-          <label className="set-field wide onb-field"><input value={local} aria-label="Ollama model name" placeholder={m?.localModel || 'llama3.1'} onChange={(e) => setLocal(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); finish(); } }} /></label>
-        </>,
-        pick === 'local' ? <IconCheck width={18} height={18} className="ok" /> : null)}
-      {keying && <ModelKey onDone={(ok) => { setKeying(false); if (ok) onRefresh(); }} />}
-      <Actions onBack={onBack} onNext={finish} ready={!!(pick && ready)} onSkip={onNext} />
+      <p>Quorum has no key of its own. Sign in with an AI subscription you already pay for, paste a key from any provider, or use Quorum's models with a Cloud account.</p>
+      {row('login', claudeOk, <IconPerson width={18} height={18} />,
+        <><strong>Log in with…</strong><em>An AI app you already use on this Mac. Quorum rides on its sign-in and plan{claudeOk && c ? ` · ${c.email}${c.plan ? ` · ${c.plan}` : ''}` : ''}</em></>,
+        claudeOk && m?.source === 'claude-code' ? <button className="pill ghost" onClick={(e) => { e.stopPropagation(); disconnect(); }}>Disconnect</button> : claudeOk ? <IconCheck width={18} height={18} className="ok" /> : null,
+        <div className="onb-logins">
+          <button type="button" className={`onb-login ${claudeOk ? 'ok' : ''}`} onClick={(e) => { e.stopPropagation(); if (claudeOk) setPick('login'); else if (c?.installed) window.quorum.claudeLogin(); else window.quorum.openExternal('https://docs.claude.com/en/docs/claude-code/setup'); }}>
+            <ProviderMark provider="anthropic" /><strong>Claude</strong><em>{!c ? 'Checking…' : claudeOk ? 'Connected' : c.installed ? 'Sign in' : 'Install Claude Code'}</em>{claudeOk && <IconCheck width={14} height={14} className="ok onb-login-check" />}
+          </button>
+          <button type="button" className="onb-login" disabled><ProviderMark provider="openai" /><strong>ChatGPT</strong><em>Soon</em></button>
+          <button type="button" className="onb-login" disabled><ProviderMark provider="google" /><strong>Gemini</strong><em>Soon</em></button>
+        </div>)}
+      {row('key', !!savedKey, savedKey ? <ProviderMark provider={savedKey} /> : <IconLock width={18} height={18} />,
+        <><strong>Your own API key</strong><em>{savedKey ? `${KEY_NAMES[savedKey]} · ${last4 ? `••••••••${last4}` : 'saved'} · in your Mac's Keychain` : 'Anthropic, OpenAI or Google. Quorum tells them apart from the key and keeps it in your Keychain'}</em></>,
+        savedKey ? <button className="pill ghost" onClick={(e) => { e.stopPropagation(); removeKey(); }}>Remove</button>
+          : keying ? null : <button className="pill" onClick={(e) => { e.stopPropagation(); setKeying(true); setPick('key'); }}>Add key</button>,
+        !savedKey && keying ? (
+          <div className="onb-form" onClick={(e) => e.stopPropagation()}>
+            <label className="set-field wide onb-field"><span className="onb-label">API key</span><input type="password" autoFocus aria-label="API key" placeholder="sk-ant-…, sk-…, AIza…" value={key} onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveKey(); if (e.key === 'Escape') { setKeying(false); setKey(''); } }} /></label>
+            <div className="onb-row">
+              <span className="onb-label">Provider</span>
+              {detected ? <span className="onb-detected"><ProviderMark provider={detected} />{KEY_NAMES[detected]}</span>
+                : <span className="onb-provs" role="radiogroup" aria-label="Provider">{KEY_PROVIDERS.map((id) => <button type="button" key={id} className={`onb-prov ${forced === id ? 'on' : ''}`} title={KEY_NAMES[id]} aria-label={KEY_NAMES[id]} aria-pressed={forced === id} onClick={() => setForced(id)}><ProviderMark provider={id} /></button>)}</span>}
+              <span className="onb-row-end"><button className="pill" onClick={() => { setKeying(false); setKey(''); setError(''); }}>Cancel</button><button className="pill primary" disabled={!provider || !key.trim() || busy} onClick={saveKey}>{busy ? 'Checking…' : 'Save'}</button></span>
+            </div>
+            {error && <p className="set-error">{error}</p>}
+          </div>
+        ) : undefined)}
+      {row('managed', isCloud, <IconQuorum width={18} height={18} />,
+        <><strong>Use Quorum's models</strong><em>{isCloud ? "Built in highest quality models, nothing to manage. Included with Quorum Cloud; you sign in on the next step" : 'Upgrade to Quorum Cloud for built-in models, sync across Macs, and team knowledge'}</em></>,
+        isCloud ? (pick === 'managed' ? <IconCheck width={18} height={18} className="ok" /> : <button className="pill" onClick={(e) => { e.stopPropagation(); setPick('managed'); }}>Select</button>)
+          : <button className="pill" onClick={(e) => { e.stopPropagation(); window.quorum.openExternal('https://quorum.watch'); }}>Upgrade to Cloud</button>)}
+      <Actions onBack={onBack} onNext={finish} ready={ready} />
     </section>
   );
 }
