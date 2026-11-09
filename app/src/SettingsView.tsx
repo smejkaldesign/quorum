@@ -1,5 +1,5 @@
 import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import type { Brain, CalendarSettings, ClaudeStatus, Memory, MemoryItem, ModelSource, ModelSourceStatus, OptOut, Profile, Settings, Voice, Workspace, Transcription, DecisionProvider, DecisionsStatus } from './quorum';
+import type { Brain, CalendarSettings, ClaudeStatus, Memory, MemoryItem, ModelSource, ModelSourceStatus, OptOut, Profile, Settings, Voice, Workspace, Transcription, DecisionProvider, DecisionsStatus, AccountState } from './quorum';
 import { ModelKey, SOURCE_NAMES } from './modelSource';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
@@ -42,6 +42,12 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
   useEffect(() => { if (open) setPage(open.page); }, [open, setPage]);
   const [user, setUser] = useState<{ name: string; email: string; photo: string | null } | null>(null);
   useEffect(() => { window.quorum.user().then(setUser); }, [settings.profile]);
+  // the Quorum account comes first; without one, the Claude sign-in on this Mac is the only identity there is
+  const [account, setAccount] = useState<AccountState | null>(null);
+  useEffect(() => { let live = true; window.quorum.accountStatus().then((a) => { if (live) setAccount(a); }).catch(() => {}); return () => { live = false; }; }, [settings.profile]);
+  const quorumEmail = account?.signedIn ? account.email : null;
+  const email = quorumEmail || user?.email || '';
+  const emailLabel = quorumEmail ? 'Email' : 'Claude sign-in';
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onBack(); };
     window.addEventListener('keydown', onKey);
@@ -67,7 +73,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
         <div className="set-user">
           <span className="set-avatar">{user?.photo ? <img src={user.photo} alt="" /> : (user?.name ?? 'H')[0]}</span>
           <strong>{user?.name ?? ' '}</strong>
-          <span>{user?.email || 'Not signed in to Claude'}</span>
+          <span>{email || 'Not signed in to Claude'}</span>
         </div>
         <nav className="set-navs">
           {ACCOUNT.map(navItem)}
@@ -84,7 +90,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
           {page === 'knowledge' && <p className="set-lede">Company knowledge for your whole workspace, chosen by admins.</p>}
           {page === 'general' && <p className="set-lede">Settings for everyone in your workspace. Quorum gives this context to every meeting summary and answer, so it's the same for each person.</p>}
           {page === 'preferences' ? (
-            <ProfilePage settings={settings} email={user?.email ?? ''} name={user?.name ?? ''} onSettings={onSettings}>
+            <ProfilePage settings={settings} email={email} emailLabel={emailLabel} name={user?.name ?? ''} onSettings={onSettings}>
               <h3>General</h3>
               <div className="set-card">
                 <Row icon={<Wave live={false} />} title="Listen automatically" desc="Starts transcribing when a meeting begins in Zoom, Google Meet or Teams">
@@ -183,7 +189,7 @@ function Field({ value, placeholder, onSave }: { value: string; placeholder?: st
   );
 }
 
-function ProfilePage({ settings, email, name, onSettings, children }: { settings: Settings; email: string; name: string; onSettings: (s: Settings) => void; children?: ReactNode }) {
+function ProfilePage({ settings, email, emailLabel, name, onSettings, children }: { settings: Settings; email: string; emailLabel: string; name: string; onSettings: (s: Settings) => void; children?: ReactNode }) {
   const p = settings.profile ?? {};
   const save = async (patch: Partial<Profile>) => onSettings(await window.quorum.setSettings({ profile: patch }));
   // one name for both uses: the profile shown in Settings and settings.userName, which names the recorder in every note
@@ -193,7 +199,7 @@ function ProfilePage({ settings, email, name, onSettings, children }: { settings
       <h3>Account</h3>
       <div className="set-card form">
         <div className="set-line">
-          <strong>Email</strong>
+          <strong>{emailLabel}</strong>
           <div className="set-line-end">
             <span className="muted">{email || 'Not signed in to Claude'}</span>
             <button className="photo-btn" aria-label={p.photo ? 'Change photo' : 'Add photo'} data-tip={p.photo ? 'Change photo' : 'Add photo'} onClick={async () => onSettings(await window.quorum.pickPhoto())}>
