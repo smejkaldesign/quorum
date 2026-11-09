@@ -49,6 +49,8 @@ export function registerOnboarding({ ipcMain, settings, saveSettings, inspectBra
   };
   // status answers at once so the window knows whether to show the wizard; the slow checks come separately
   ipcMain.handle('onboarding-status', () => ({ firstRun: !settings.onboarded, defaultVaultDir: defaultVaultDir() }));
+  // the permissions alone, for the wizard's poll after Allow; no Claude Code run and no model probe each time
+  ipcMain.handle('onboarding-permissions', async () => ({ permissions: await permissions() }));
   ipcMain.handle('onboarding-checks', async () => ({
     permissions: await permissions(),
     claude: await within(15000, claudeStatus().catch(() => ({ installed: false })), { installed: false, pending: true }),

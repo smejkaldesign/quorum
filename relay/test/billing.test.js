@@ -47,12 +47,15 @@ describe('stripe helpers', () => {
     assert.equal(verifyStripeSignature(payload, sign(payload, 'other'), 'whsec'), false);
     assert.equal(verifyStripeSignature(payload, sign(payload, 'whsec', 1000), 'whsec'), false);
     assert.equal(verifyStripeSignature(payload, undefined, 'whsec'), false);
+    const t = Math.floor(Date.now() / 1000);
+    assert.equal(verifyStripeSignature(payload, `${sign(payload, 'whsec', t)},v1=${'0'.repeat(64)}`, 'whsec'), true);
+    assert.equal(verifyStripeSignature(payload, `t=${t},v1=${'0'.repeat(64)},${sign(payload, 'whsec', t).split(',')[1]}`, 'whsec'), true);
   });
   it('maps a live subscription to paid with its seats and packs, and an ended one back to free', () => {
     assert.deepEqual(subscriptionPatch(sub(), PRICES), { plan: 'paid', seats: 3, seats_included: 3, hour_packs: 2, billing_status: 'active', current_period_end: '2027-01-15T08:00:00.000Z', stripe_subscription_id: 'sub_1', stripe_customer_id: 'cus_1' });
     assert.equal(subscriptionPatch(sub({ status: 'past_due' }), PRICES).plan, 'paid');
     const ended = subscriptionPatch(sub({ status: 'canceled' }), PRICES);
-    assert.equal(ended.plan, 'free'); assert.equal(ended.seats, 0); assert.equal(ended.hour_packs, 0);
+    assert.equal(ended.plan, 'free'); assert.equal(ended.seats, 1); assert.equal(ended.seats_included, 0); assert.equal(ended.hour_packs, 0);
   });
 });
 
@@ -63,7 +66,7 @@ describe('events to workspace patches', () => {
   });
   it('clears everything on deletion and ignores events it does not act on', () => {
     const d = eventPatch({ type: 'customer.subscription.deleted', data: { object: sub({ status: 'canceled' }) } }, PRICES);
-    assert.equal(d.workspaceId, WS); assert.equal(d.patch.plan, 'free'); assert.equal(d.patch.stripe_subscription_id, null); assert.equal(d.patch.hour_packs, 0);
+    assert.equal(d.workspaceId, WS); assert.equal(d.patch.plan, 'free'); assert.equal(d.patch.seats, 1); assert.equal(d.patch.stripe_subscription_id, null); assert.equal(d.patch.hour_packs, 0);
     assert.equal(eventPatch({ type: 'invoice.paid', data: { object: {} } }, PRICES), null);
   });
 });
@@ -85,6 +88,7 @@ describe('checkout', () => {
     const b = checkoutBody({ workspace: { id: WS, stripe_customer_id: null }, user: { email: 'ana@example.com' }, seats: 4, prices: PRICES, returnUrl: 'https://quorum.watch' });
     assert.equal(b.mode, 'subscription'); assert.equal(b.line_items[0].quantity, 4); assert.equal(b.line_items[0].price, 'price_seat');
     assert.equal(b.subscription_data.metadata.workspace_id, WS); assert.equal(b.customer_email, 'ana@example.com');
+    assert.equal('customer_creation' in b, false);
     assert.equal(checkoutBody({ workspace: { id: WS, stripe_customer_id: 'cus_1' }, user: {}, seats: 1, prices: PRICES, returnUrl: 'x' }).customer, 'cus_1');
   });
   it('lets an admin on the free plan start checkout and returns the Stripe url', async () => {
@@ -124,6 +128,15 @@ describe('the webhook', () => {
     assert.equal(db.updates.length, 1);
     assert.deepEqual(db.updates[0].where, { id: WS });
     assert.equal(db.updates[0].patch.plan, 'paid'); assert.equal(db.updates[0].patch.seats, 3); assert.equal(db.updates[0].patch.hour_packs, 2);
+  });
+  it('leaves a hand-set plan alone and still writes seats and packs', async () => {
+    const db = dbWithUpdate({ ...baseTables(), workspaces: [{ id: WS, plan: 'internal', seats: 1, hour_packs: 0, deleted_at: null }] });
+    const payload = JSON.stringify({ type: 'customer.subscription.deleted', data: { object: sub({ status: 'canceled' }) } });
+    const res = fakeRes();
+    await handleWebhook(fakeReq({ body: payload, headers: { 'stripe-signature': sign(payload, 'whsec_1') } }), res, { clients: { db }, config });
+    await res.finished;
+    assert.equal(res.status, 200);
+    assert.equal('plan' in db.updates[0].patch, false); assert.equal(db.updates[0].patch.seats, 1); assert.equal(db.updates[0].patch.hour_packs, 0);
   });
   it('rejects a bad signature without touching the database', async () => {
     const db = dbWithUpdate(baseTables());

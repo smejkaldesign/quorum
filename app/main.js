@@ -493,6 +493,7 @@ async function startByok(segmentId) {
     log('speech', `${id} on your own key`);
     return r;
   } catch (err) {
+    r.close();
     log('speech', `${id} refused, on-device:`, err.message);
     toUI('log', `${id} is unavailable (${err.message}); transcribing on this Mac.`);
     return null;
@@ -605,6 +606,7 @@ async function runNotesModel(kind, { turns, state, label, outline = '', onDelta 
           const text = await mod.relayNotes({
             url: mod.relayUrl({ source: account.envStatus?.().config }), token: session.access_token, kind, turns: redacted, state, label, context: notesContext(), outline,
             workspaceId: account.state().workspace.id, meetingId: meeting.id, owner: OWNER, about: aboutMe(), onDelta,
+            signal: AbortSignal.timeout(kind === 'summary' ? 120000 : 180000),
           });
           log(kind, `on the relay (${plan.reason})`);
           return text;
@@ -1803,7 +1805,7 @@ ipcMain.handle('pick-meetings-dir', async () => {
 const connectBrain = (b) => { Object.assign(settings, { brainRoot: b.root, vaultPath: b.vault }); store.settings.save(); log('connected Agent OS', b.root); suggester.reset(); openIndex(); return b; };
 registerOnboarding({
   ipcMain, settings, saveSettings, inspectBrain, connect: connectBrain, systemPreferences, shell, helperAsk: (cmd) => calAsk({ cmd }), claudeStatus, modelStatus: () => modelStatus(null), log, hadSettings: store.settings.existed,
-  axTrusted: () => new Promise((resolve) => { axWaiters.push((evt) => resolve(evt.trusted)); helperSend({ cmd: 'axStatus', prompt: false }); setTimeout(() => resolve(lastAx?.trusted ?? null), 2500); }),
+  axTrusted: () => new Promise((resolve) => { const w = (evt) => resolve(evt.trusted); axWaiters.push(w); helperSend({ cmd: 'axStatus', prompt: false }); setTimeout(() => { const i = axWaiters.indexOf(w); if (i >= 0) axWaiters.splice(i, 1); resolve(lastAx?.trusted ?? null); }, 2500); }),
   pickDir: async () => {
     const r = await dialog.showOpenDialog(win, { title: 'Where should your Agent OS live?', properties: ['openDirectory', 'createDirectory'], defaultPath: path.join(homedir(), 'Documents'), buttonLabel: 'Use folder' });
     return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];

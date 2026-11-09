@@ -7,6 +7,8 @@ RUN cd relay && npm ci --omit=dev
 COPY relay/ relay/
 COPY app/*.js app/
 COPY app/speech/ app/speech/
+# the shared engines import ws from their own directory; the relay's install serves them
+RUN ln -s /srv/relay/node_modules /srv/app/node_modules
 WORKDIR /srv/relay
 ENV NODE_ENV=production
 CMD ["node", "server.js"]

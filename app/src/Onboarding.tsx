@@ -23,6 +23,13 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
     const c = await window.quorum.onboardingChecks();
     setStatus((prev) => ({ ...(prev ?? s), ...c }));
   });
+  // permissions alone, cheap enough to poll; one in flight at a time
+  const inflight = useRef(false);
+  const refreshPermissions = async () => {
+    if (inflight.current) return;
+    inflight.current = true;
+    try { const c = await window.quorum.onboardingPermissions(); setStatus((prev) => (prev ? { ...prev, ...c } : prev)); } catch {} finally { inflight.current = false; }
+  };
   useEffect(() => { refresh(); }, [step]);
   const i = ORDER.indexOf(step);
   const next = () => setStep(ORDER[Math.min(i + 1, ORDER.length - 1)]);
@@ -43,7 +50,7 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
         {step === 'you' && <NameStep onBack={back} onNext={next} />}
         {step === 'model' && <ModelStep status={status} onRefresh={refresh} onBack={back} onNext={next} onManaged={setManaged} />}
         {step === 'account' && <AccountStep slot={accountSlot} required={managed} onBack={back} onNext={next} />}
-        {step === 'permissions' && <PermissionsStep status={status} onRefresh={refresh} onBack={back} onNext={next} />}
+        {step === 'permissions' && <PermissionsStep status={status} onRefresh={refresh} onPoll={refreshPermissions} onBack={back} onNext={next} />}
         {step === 'done' && (
           <section className="onb-step">
             <h1>You're set</h1>
@@ -288,7 +295,7 @@ const PERMS: { id: 'microphone' | 'audio' | 'accessibility' | 'calendar'; title:
 ];
 const granted = (s?: string) => s === 'granted' || s === 'authorized';
 
-function PermissionsStep({ status, onRefresh, onBack, onNext }: { status: Status; onRefresh: () => Promise<void>; onBack: () => void; onNext: () => void }) {
+function PermissionsStep({ status, onRefresh, onPoll, onBack, onNext }: { status: Status; onRefresh: () => Promise<void>; onPoll: () => Promise<void>; onBack: () => void; onNext: () => void }) {
   const p = status?.permissions;
   const label = (s?: string) => (granted(s) ? 'Allowed' : s === 'denied' || s === 'restricted' ? 'Denied' : 'Not yet');
   // after Allow for Accessibility the grant happens in System Settings, so the state is re-read every 1.5 s for 90 s
@@ -296,7 +303,7 @@ function PermissionsStep({ status, onRefresh, onBack, onNext }: { status: Status
   const watch = () => {
     if (poll.current) window.clearInterval(poll.current);
     const until = Date.now() + 90000;
-    poll.current = window.setInterval(() => { onRefresh(); if (Date.now() > until && poll.current) { window.clearInterval(poll.current); poll.current = null; } }, 1500);
+    poll.current = window.setInterval(() => { onPoll(); if (Date.now() > until && poll.current) { window.clearInterval(poll.current); poll.current = null; } }, 1500);
   };
   useEffect(() => () => { if (poll.current) window.clearInterval(poll.current); }, []);
   useEffect(() => { if (granted(p?.accessibility) && poll.current) { window.clearInterval(poll.current); poll.current = null; } }, [p?.accessibility]);
@@ -304,7 +311,7 @@ function PermissionsStep({ status, onRefresh, onBack, onNext }: { status: Status
     if (id === 'microphone') await window.quorum.onboardingRequestMicrophone();
     else if (id === 'calendar') await window.quorum.calendarConnect();
     else if (id === 'accessibility') { await window.quorum.onboardingRequestAccessibility(); watch(); }
-    onRefresh();
+    onPoll();
   };
   // the two Quorum cannot work without; calendar stays optional
   const ready = granted(p?.microphone) && granted(p?.accessibility);

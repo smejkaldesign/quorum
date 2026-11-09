@@ -253,6 +253,7 @@ declare global {
       removePhoto(): Promise<Settings>;
       onboardingStatus(): Promise<OnboardingStatus>;
       onboardingChecks(): Promise<OnboardingChecks>;
+      onboardingPermissions(): Promise<Pick<OnboardingChecks, 'permissions'>>;
       onboardingCreateVault(dir: string | null, name: string): Promise<Brain>;
       onboardingOpenPermission(which: 'microphone' | 'audio' | 'accessibility' | 'calendar'): Promise<void>;
       onboardingRequestMicrophone(): Promise<boolean>;

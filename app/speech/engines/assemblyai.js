@@ -34,7 +34,7 @@ export function open({ key, sampleRate, terms, channel, onEvent, onError, onClos
   const ready = new Promise((resolve, reject) => {
     const fail = (err) => reject(err instanceof Error ? err : new Error(String(err)));
     ws.once('error', fail);
-    ws.once('unexpected-response', (_req, res) => fail(new Error(`assemblyai: HTTP ${res.statusCode}`)));
+    ws.once('unexpected-response', (req, res) => { fail(new Error(`assemblyai: HTTP ${res.statusCode}`)); try { req.destroy(); } catch {} });
     ws.on('message', (data) => {
       let msg;
       try { msg = JSON.parse(data.toString()); } catch { return; }

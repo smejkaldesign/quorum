@@ -24,7 +24,8 @@ export function openSpeech({ engine, key, channels = ['me', 'them'], sampleRate 
       onClose: () => { if (!closed) { failures += 1; fail(new Error(`${engine} closed the ${channel} stream`)); } },
     });
   }
-  const ready = Promise.all(Object.values(sessions).map((s) => s.ready)).then(() => ({ engine, counted: false }));
+  // one refused channel closes the others, so no socket stays open on a key that does not work
+  const ready = Promise.all(Object.values(sessions).map((s) => s.ready)).then(() => ({ engine, counted: false }), (err) => { closed = true; for (const s of Object.values(sessions)) { try { s.close(); } catch {} } throw err; });
   ready.catch(() => {});
   return {
     ready,

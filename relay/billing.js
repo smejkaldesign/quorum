@@ -38,7 +38,7 @@ export function checkoutBody({ workspace, user, seats, prices, returnUrl }) {
     metadata: { workspace_id: workspace.id },
   };
   if (workspace.stripe_customer_id) { body.customer = workspace.stripe_customer_id; body.customer_update = { address: 'auto', name: 'auto' }; }
-  else { body.customer_email = user.email ?? undefined; body.customer_creation = 'always'; }
+  else body.customer_email = user.email ?? undefined;
   return body;
 }
 
@@ -119,7 +119,7 @@ export function eventPatch(event, prices) {
   }
   if (/^customer\.subscription\.(created|updated|deleted)$/.test(type)) {
     const patch = subscriptionPatch(obj, prices);
-    if (type === 'customer.subscription.deleted') Object.assign(patch, { plan: 'free', seats: 0, seats_included: 0, hour_packs: 0, stripe_subscription_id: null });
+    if (type === 'customer.subscription.deleted') Object.assign(patch, { plan: 'free', seats: 1, seats_included: 0, hour_packs: 0, stripe_subscription_id: null });
     return { workspaceId: subscriptionWorkspace(obj), subscriptionId: obj.id, patch };
   }
   return null;
@@ -134,6 +134,13 @@ export async function handleWebhook(req, res, { clients, config, log = () => {} 
     let event; try { event = JSON.parse(raw); } catch { throw new RelayError('bad_request', 'The body must be JSON.', 400); }
     const change = eventPatch(event, config.stripe);
     if (!change) { log('webhook_ignored', { type: event?.type }); return json(res, 200, { received: true }); }
+    // a plan the platform owner set by hand (cloud, internal) stays whatever Stripe says
+    if (change.patch.plan) {
+      let sel = clients.db.from('workspaces').select('plan');
+      sel = change.workspaceId ? sel.eq('id', change.workspaceId) : sel.eq('stripe_subscription_id', change.subscriptionId);
+      const { data: cur } = await sel.maybeSingle();
+      if (cur && ['cloud', 'internal'].includes(cur.plan)) delete change.patch.plan;
+    }
     // a subscription without workspace metadata is matched by the id checkout already stored
     let q = clients.db.from('workspaces').update(change.patch);
     q = change.workspaceId ? q.eq('id', change.workspaceId) : q.eq('stripe_subscription_id', change.subscriptionId);

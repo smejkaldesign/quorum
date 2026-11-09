@@ -35,7 +35,7 @@ export function open({ key, sampleRate, terms, locale, channel, onEvent, onError
   const ready = new Promise((resolve, reject) => {
     const fail = (err) => reject(err instanceof Error ? err : new Error(String(err)));
     ws.once('error', fail);
-    ws.once('unexpected-response', (_req, res) => fail(new Error(`deepgram: HTTP ${res.statusCode}`)));
+    ws.once('unexpected-response', (req, res) => { fail(new Error(`deepgram: HTTP ${res.statusCode}`)); try { req.destroy(); } catch {} });
     ws.once('open', () => { ws.off('error', fail); resolve(); });
   });
   ws.on('message', (data) => {

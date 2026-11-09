@@ -24,13 +24,13 @@ export async function stripeFetch(path, { key, method = 'POST', body = null, fet
 
 // Stripe-Signature: t=<unix>,v1=<hmac>; the payload is the raw body. Rejects an old timestamp so a captured event cannot be replayed
 export function verifyStripeSignature(payload, header, secret, { now = Date.now(), toleranceSec = 300 } = {}) {
-  const parts = Object.fromEntries(String(header ?? '').split(',').map((p) => p.split('=')).filter((p) => p.length === 2));
-  const t = Number(parts.t);
-  if (!t || !parts.v1 || !secret) return false;
+  const pairs = String(header ?? '').split(',').map((p) => p.split('=')).filter((p) => p.length === 2);
+  const t = Number(pairs.find(([k]) => k === 't')?.[1]);
+  const sigs = pairs.filter(([k]) => k === 'v1').map(([, v]) => v);
+  if (!t || !sigs.length || !secret) return false;
   if (Math.abs(now / 1000 - t) > toleranceSec) return false;
-  const expected = createHmac('sha256', secret).update(`${t}.${payload}`).digest('hex');
-  const a = Buffer.from(expected), b = Buffer.from(parts.v1);
-  return a.length === b.length && timingSafeEqual(a, b);
+  const expected = Buffer.from(createHmac('sha256', secret).update(`${t}.${payload}`).digest('hex'));
+  return sigs.some((s) => { const b = Buffer.from(s); return b.length === expected.length && timingSafeEqual(expected, b); });
 }
 
 // seats and packs from the subscription's items; the plan from its status. A subscription that ended sends the
@@ -42,7 +42,7 @@ export function subscriptionPatch(sub, { seatPrice, packPrice }) {
   const periodEnd = items[0]?.current_period_end ?? sub?.current_period_end ?? null;
   return {
     plan: live ? 'paid' : 'free',
-    seats: live ? Math.max(1, qty(seatPrice)) : 0,
+    seats: live ? Math.max(1, qty(seatPrice)) : 1,
     seats_included: live ? Math.max(1, qty(seatPrice)) : 0,
     hour_packs: live ? qty(packPrice) : 0,
     billing_status: sub?.status ?? null,

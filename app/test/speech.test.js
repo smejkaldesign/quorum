@@ -32,7 +32,10 @@ describe('the speech provider contract', () => {
     expect(e.sessions.every((x) => x.closed)).toBe(true); expect(s.open).toBe(false);
   });
   it('rejects ready when an engine refuses, and reports one close when a stream drops', async () => {
-    await expect(openSpeech({ engine: 'x', key: 'k', engines: { x: fakeEngine({ fail: true }) } }).ready).rejects.toThrow('engine down');
+    const refusing = fakeEngine({ fail: true });
+    const refused = openSpeech({ engine: 'x', key: 'k', engines: { x: refusing } });
+    await expect(refused.ready).rejects.toThrow('engine down');
+    expect(refusing.sessions.every((x) => x.closed)).toBe(true); expect(refused.open).toBe(false);
     const e = fakeEngine(); const closes = [];
     const s = openSpeech({ engine: 'x', key: 'k', onClose: (c) => closes.push(c), engines: { x: e } });
     await s.ready;
