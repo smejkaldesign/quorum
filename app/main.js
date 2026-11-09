@@ -46,6 +46,8 @@ if (app.isPackaged) {
 }
 const SESSIONS = store.meetings.root;
 const settings = store.settings.get();
+// meeting platforms used to share settings.providers with the AI provider roles; older files move once
+for (const pid of ['zoom', 'meet', 'teams']) if (settings.providers?.[pid] && typeof settings.providers[pid] === 'object') { settings.meetingProviders = { ...settings.meetingProviders, [pid]: settings.providers[pid] }; delete settings.providers[pid]; }
 // which model source this install runs on (models.js). A fresh install starts at none and chooses in onboarding. An
 // install from before the setting existed keeps working: when Claude Code is installed and signed in it becomes
 // claude-code, written once; otherwise the setting stays unset (read as none) so a later launch can still see a sign-in
@@ -786,7 +788,7 @@ function noteMarkdown({ notes, followups }) {
   return suggester.redactLines(lines.join('\n'));
 }
 
-const providerOn = (id) => settings.providers?.[id]?.enabled !== false;
+const providerOn = (id) => settings.meetingProviders?.[id]?.enabled !== false;
 
 function onMeeting({ active, app: source, provider: id }) {
   const pid = id ?? Object.keys(PROVIDERS).find((k) => PROVIDERS[k].name === source) ?? 'zoom';
@@ -1829,7 +1831,7 @@ ipcMain.handle('meeting-providers', async () => {
 // removing a provider stops Quorum from noticing its calls; the app itself is untouched
 ipcMain.handle('meeting-provider-set', (_e, id, on) => {
   if (!PROVIDERS[id] || typeof on !== 'boolean') return;
-  settings.providers = { ...settings.providers, [id]: { enabled: on } };
+  settings.meetingProviders = { ...settings.meetingProviders, [id]: { enabled: on } };
   store.settings.save();
 });
 ipcMain.handle('meeting-provider-check', () => { helperSend({ cmd: 'axStatus', prompt: true }); });
