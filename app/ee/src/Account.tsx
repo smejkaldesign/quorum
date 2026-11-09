@@ -75,7 +75,7 @@ function SignIn() {
       <p className="acct-copy">Sign in to sync notes and meetings and to share a workspace with your team. Everything keeps working on this Mac without it.</p>
       {!sent ? (
         <div className="set-line">
-          <label className="set-field wide"><input type="email" autoComplete="email" aria-label="Email" placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && ok && !busy) send(); }} /></label>
+          <label className="set-field wide"><input type="email" autoComplete="email" aria-label="Email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && ok && !busy) send(); }} /></label>
           <div className="set-line-end"><button className="pill primary" disabled={!ok || busy} onClick={send}>{busy ? 'Sending…' : 'Send code'}</button></div>
         </div>
       ) : (
@@ -242,7 +242,7 @@ function Members({ account }: { account: AccountState }) {
       <h3>Invite teammates</h3>
       <div className="set-card form acct">
         <div className="set-line">
-          <label className="set-field wide"><input type="email" aria-label="Email" placeholder="name@company.com" value={email} disabled={!canManage} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && ok && !busy) invite(); }} /></label>
+          <label className="set-field wide"><input type="email" aria-label="Email" placeholder="name@example.com" value={email} disabled={!canManage} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && ok && !busy) invite(); }} /></label>
           <div className="set-line-end">
             <select className="set-select" aria-label="Role" value={role} disabled={!canManage} onChange={(e) => setRole(e.target.value as Role)}><option value="member">Member</option><option value="admin">Admin</option></select>
             {canManage

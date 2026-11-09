@@ -24,7 +24,7 @@ function makeMock(): AccountApi {
   const set = (patch: Partial<AccountState>) => { state = { ...state, ...patch }; subs.forEach((cb) => cb(state)); };
   const signedIn = (email: string) => set({
     ...blank(), signedIn: true, email, userId: 'u_me',
-    invites: [{ inviteId: 'inv_1', workspaceId: 'ws_acme', workspaceName: 'Acme Health', role: 'member', invitedByEmail: 'dana@acmehealth.com', expiresAt: iso(6 * DAY) }],
+    invites: [{ inviteId: 'inv_1', workspaceId: 'ws_acme', workspaceName: 'Acme Health', role: 'member', invitedByEmail: 'dana@example.com', expiresAt: iso(6 * DAY) }],
     domainMatches: [{ workspaceId: 'ws_open', name: 'Example Studio' }],
   });
   const inOrg = (name: string, domain: string | null, domainJoin: boolean, role: Role) => {
