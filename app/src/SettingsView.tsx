@@ -4,6 +4,7 @@ import { ModelKey, SOURCE_NAMES } from './modelSource';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
 import { AccountArea, MembersArea, isCloud, useHostedAccounts } from './edition';
+import { EnvSwitch } from './EnvSwitch';
 import {
   IconBell, IconBrain, IconBuilding, IconCalendar, IconChat, IconFolder, IconGrid, IconKeyboard, IconLock,
   IconChevron, IconCode, IconExternal, IconGlobe, ProviderMark, IconMic, IconMore, IconNotes, IconPeople, IconPerson, IconPlus, IconPower, IconReset, IconSliders, IconStack, IconCheck, IconCopy, IconFolderFill, IconFork, IconShield, IconGraph, IconSearch, IconClose, Wave,
@@ -233,6 +234,7 @@ function WorkspacePage({ settings, onSettings }: { settings: Settings; onSetting
     <>
       <AccountArea local={<><h3>Account</h3><p className="muted">Local edition. Everything stays on this Mac.</p></>}
         unconfigured={<><h3>Account</h3><p className="muted">Hosted accounts are not set up in this build</p></>} />
+      <EnvSwitch />
       <h3>Company</h3>
       <div className="set-card form">
         <div className="set-line"><strong>Company name</strong><Field value={w.company ?? ''} placeholder="Company" onSave={(v) => save({ company: v })} /></div>
