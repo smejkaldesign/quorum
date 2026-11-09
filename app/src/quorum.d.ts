@@ -91,6 +91,9 @@ export type Member ={ userId: string; email: string; name: string | null; role: 
 export type Plan = 'free' | 'cloud' | 'internal' | 'paid';
 export type PlatformWorkspace = { id: string; name: string; domain: string | null; plan: Plan; seatsIncluded: number; notes: string | null; members: number; createdAt: string; lastActivity: string | null };
 export type PlanDraft = { plan: Plan; seatsIncluded: number; notes: string };
+// an access code the platform owner issued for one email; Cloud sign-up needs one (migration 0009)
+export type AccessCodeStatus = 'open' | 'claimed' | 'redeemed' | 'revoked' | 'expired';
+export type AccessCode = { id: string; email: string; code: string; note: string | null; issuedAt: string; expiresAt: string; claimedAt: string | null; redeemedAt: string | null; revokedAt: string | null; redeemedEmail: string | null; status: AccessCodeStatus };
 export type PlatformUsage = { period: string; hours: number; managedHours: number; calls: number; steps: { role: string; calls: number; hours: number; managedHours: number }[] };
 export type MemberInvite = { inviteId: string; email: string; role: Role; expiresAt: string };
 export type MeetingRow = { id: string; file: string; kind: 'meeting' | 'note'; source: string; title: string; date: string | null; people: string[]; count: number; visibility: Visibility; rel: string; link: string; app: string };
@@ -252,7 +255,7 @@ declare global {
       onboardingPickDir(): Promise<string | null>;
       onboardingDone(): Promise<boolean>;
       accountStatus(): Promise<AccountState>;
-      accountSendCode(email: string): Promise<Result>;
+      accountSendCode(email: string, accessCode?: string): Promise<Result & { needsCode?: boolean; email?: string }>;
       accountVerifyCode(email: string, code: string): Promise<Result>;
       accountSignOut(): Promise<void>;
       orgCreate(name: string, domain: string | null, domainJoin: boolean): Promise<Result>;
@@ -276,6 +279,9 @@ declare global {
       platformMembers(workspaceId: string): Promise<{ members?: Member[]; error?: string }>;
       platformUsage(workspaceId: string): Promise<{ usage?: PlatformUsage; error?: string }>;
       platformSetPlan(workspaceId: string, draft: PlanDraft): Promise<{ plan?: { plan: Plan; seatsIncluded: number; notes: string | null }; error?: string }>;
+      platformAccessCodes(): Promise<Result & { codes?: AccessCode[] }>;
+      platformIssueAccessCode(email: string, note?: string, days?: number): Promise<Result & { code?: AccessCode }>;
+      platformRevokeAccessCode(id: string): Promise<Result>;
       envStatus(): Promise<EnvStatus>;
       envSetProduction(on: boolean): Promise<EnvStatus>;
     };

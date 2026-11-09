@@ -66,18 +66,39 @@ function SignIn() {
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const run = async (fn: () => Promise<Result>, then: () => void) => { setBusy(true); setError(''); const r = await fn(); setBusy(false); if (r.error) setError(r.error); else then(); };
-  const send = () => run(() => api.accountSendCode(email.trim()), () => setSent(true));
+  // a new email needs an access code from the platform owner; the main process says so and the field appears
+  const [needsCode, setNeedsCode] = useState(false);
+  const [access, setAccess] = useState('');
+  const run = async (fn: () => Promise<Result & { needsCode?: boolean }>, then: () => void) => {
+    setBusy(true); setError('');
+    const r = await fn();
+    setBusy(false);
+    if (r.needsCode) { setNeedsCode(true); return; }
+    if (r.error) setError(r.error); else then();
+  };
+  const send = () => run(() => api.accountSendCode(email.trim(), needsCode ? access : undefined), () => setSent(true));
+  const accessOk = !needsCode || access.replace(/[^A-Za-z0-9]/g, '').length === 8;
   const verify = () => run(() => api.accountVerifyCode(email.trim(), code), () => {});
   const ok = EMAIL.test(email.trim());
   return (
     <div className="set-card form acct">
       <p className="acct-copy">Sign in to sync notes and meetings and to share a workspace with your team. Everything keeps working on this Mac without it.</p>
       {!sent ? (
-        <div className="set-line">
-          <label className="set-field wide"><input type="email" autoComplete="email" aria-label="Email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && ok && !busy) send(); }} /></label>
-          <div className="set-line-end"><button className="pill primary" disabled={!ok || busy} onClick={send}>{busy ? 'Sending…' : 'Send code'}</button></div>
-        </div>
+        <>
+          <div className="set-line">
+            <label className="set-field wide"><input type="email" autoComplete="email" aria-label="Email" placeholder="you@example.com" value={email} onChange={(e) => { setEmail(e.target.value); setNeedsCode(false); }} onKeyDown={(e) => { if (e.key === 'Enter' && ok && accessOk && !busy) send(); }} /></label>
+            {!needsCode && <div className="set-line-end"><button className="pill primary" disabled={!ok || busy} onClick={send}>{busy ? 'Sending…' : 'Send code'}</button></div>}
+          </div>
+          {needsCode && (
+            <>
+              <div className="set-line"><div className="set-label"><strong>Access code</strong><span>Quorum Cloud is invite-only right now. Enter the code you were given for {email.trim()}.</span></div></div>
+              <div className="set-line">
+                <label className="set-field wide"><input autoFocus aria-label="Access code" placeholder="XXXX-XXXX" value={access} onChange={(e) => setAccess(e.target.value.toUpperCase())} onKeyDown={(e) => { if (e.key === 'Enter' && ok && accessOk && !busy) send(); }} /></label>
+                <div className="set-line-end"><button className="pill primary" disabled={!ok || !accessOk || busy} onClick={send}>{busy ? 'Sending…' : 'Continue'}</button></div>
+              </div>
+            </>
+          )}
+        </>
       ) : (
         <>
           <div className="set-line"><div className="set-label"><strong>Enter the code</strong><span>Sent to {email.trim()}. Check your inbox.</span></div></div>

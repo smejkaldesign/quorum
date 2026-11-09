@@ -207,9 +207,19 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
 
   const handlers = {
     'account-status': () => (client ? refresh() : snapshot()),
-    'account-send-code': guard(async (email) => {
+    // sign-up is gated (migration 0009): a new email needs an access code from the platform owner before the sign-in
+    // email goes out. The code is claimed here; the trigger on auth.users redeems it when the account is created
+    'account-send-code': guard(async (email, accessCode) => {
       const e = String(email ?? '').trim().toLowerCase();
       if (!EMAIL.test(e)) return { error: 'Enter a full email address.' };
+      const needed = await client.rpc('access_code_needed', { email: e });
+      if (needed.error) log('account access_code_needed', needed.error.message);
+      if (needed.data === true) {
+        const code = String(accessCode ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+        if (!code) return { needsCode: true, email: e };
+        const claim = await client.rpc('access_code_claim', { email: e, code });
+        if (claim.error) return fail(claim.error, 'That access code is not valid for this email.');
+      }
       const { error } = await client.auth.signInWithOtp({ email: e, options: { shouldCreateUser: true } });
       if (error) return fail(error, 'The code could not be sent. Try again in a minute.');
       return { ok: true, email: e };

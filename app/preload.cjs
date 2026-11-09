@@ -132,7 +132,7 @@ contextBridge.exposeInMainWorld('quorum', {
   removePhoto: () => ipcRenderer.invoke('remove-photo'),
   // account (hosted edition): sign-in by email code, workspaces, members, sync. Handlers live in account.js
   accountStatus: () => ipcRenderer.invoke('account-status'),
-  accountSendCode: (email) => ipcRenderer.invoke('account-send-code', email),
+  accountSendCode: (email, accessCode) => ipcRenderer.invoke('account-send-code', email, accessCode),
   accountVerifyCode: (email, code) => ipcRenderer.invoke('account-verify-code', email, code),
   accountSignOut: () => ipcRenderer.invoke('account-sign-out'),
   orgCreate: (name, domain, domainJoin) => ipcRenderer.invoke('org-create', name, domain, domainJoin),
@@ -158,6 +158,9 @@ contextBridge.exposeInMainWorld('quorum', {
   platformMembers: (workspaceId) => ipcRenderer.invoke('platform-members', workspaceId),
   platformUsage: (workspaceId) => ipcRenderer.invoke('platform-usage', workspaceId),
   platformSetPlan: (workspaceId, draft) => ipcRenderer.invoke('platform-set-plan', workspaceId, draft),
+  platformAccessCodes: () => ipcRenderer.invoke('platform-access-codes'),
+  platformIssueAccessCode: (email, note, days) => ipcRenderer.invoke('platform-issue-access-code', email, note, days),
+  platformRevokeAccessCode: (id) => ipcRenderer.invoke('platform-revoke-access-code', id),
   // end account
   // environment (development or production) and which Supabase config the cloud edition is using; never the key
   envStatus: () => ipcRenderer.invoke('env-status'),

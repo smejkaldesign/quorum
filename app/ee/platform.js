@@ -9,6 +9,19 @@ export const shapeWorkspace = (r) => ({
   id: r.id, name: r.name, domain: r.domain ?? null, plan: r.plan, seatsIncluded: Number(r.seats_included) || 0, notes: r.notes ?? null,
   members: Number(r.members) || 0, createdAt: r.created_at, lastActivity: r.last_activity ?? null,
 });
+// an access code row as the Platform page shows it; status is one word the list can filter and color by
+export const formatCode = (code) => `${String(code ?? '').slice(0, 4)}-${String(code ?? '').slice(4, 8)}`;
+export function codeStatus(a, now = Date.now()) {
+  if (a.redeemedAt) return 'redeemed';
+  if (a.revokedAt) return 'revoked';
+  if (new Date(a.expiresAt).getTime() <= now) return 'expired';
+  if (a.claimedAt) return 'claimed';
+  return 'open';
+}
+export const shapeAccessCode = (r) => {
+  const a = { id: r.id, email: r.email, code: r.code, note: r.note ?? null, issuedAt: r.issued_at, expiresAt: r.expires_at, claimedAt: r.claimed_at ?? null, redeemedAt: r.redeemed_at ?? null, revokedAt: r.revoked_at ?? null, redeemedEmail: r.redeemed_email ?? null };
+  return { ...a, status: codeStatus(a) };
+};
 export const shapeMember = (m) => ({ userId: m.user_id, email: m.email ?? null, name: m.name ?? null, role: m.role, joinedAt: m.joined_at });
 
 // one row per step from platform_usage, folded into the period's totals: speech carries hours, summary and notes are model calls
@@ -55,6 +68,31 @@ export function createPlatform({ account, log = () => {} }) {
         if (error) return fail(error);
         return { usage: shapeUsage(data, period) };
       } catch (err) { return fail(err); }
+    },
+    // access codes (migration 0009): the owner issues one per email, sees every code and its state, revokes an open one
+    'platform-access-codes': async () => {
+      const no = ready(); if (no) return no;
+      try {
+        const { data, error } = await account.client().rpc('platform_access_codes');
+        if (error) return fail(error);
+        return { codes: (data ?? []).map(shapeAccessCode) };
+      } catch (err) { return fail(err); }
+    },
+    'platform-issue-access-code': async (email, note, days = 30) => {
+      const no = ready(); if (no) return no;
+      try {
+        const { data, error } = await account.client().rpc('platform_issue_access_code', { email: String(email ?? '').trim().toLowerCase(), note: String(note ?? '').trim() || null, days: Math.min(365, Math.max(1, Math.trunc(Number(days) || 30))) });
+        if (error) return fail(error, 'The code could not be issued.');
+        return { code: shapeAccessCode(data ?? {}) };
+      } catch (err) { return fail(err, 'The code could not be issued.'); }
+    },
+    'platform-revoke-access-code': async (id) => {
+      const no = ready(); if (no) return no;
+      try {
+        const { error } = await account.client().rpc('platform_revoke_access_code', { id: String(id ?? '') });
+        if (error) return fail(error, 'The code could not be revoked.');
+        return { ok: true };
+      } catch (err) { return fail(err, 'The code could not be revoked.'); }
     },
     // the RPC validates the plan and the seat count and raises plain sentences; the renderer checked the same before sending
     'platform-set-plan': async (workspaceId, draft = {}) => {

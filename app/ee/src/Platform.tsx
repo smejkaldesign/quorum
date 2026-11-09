@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import type { Member, Plan, PlatformUsage, PlatformWorkspace, Role } from '../../src/quorum';
+import type { AccessCode, Member, Plan, PlatformUsage, PlatformWorkspace, Role } from '../../src/quorum';
 import { IconChevron } from '../../src/icons';
 import { AccountCard, EE_MARKER, useAccount } from './Account';
 import { platformApi } from './accountMock';
 import { hours } from './WorkspaceVoice';
 import { NOTES_MAX, PLAN_LABEL, PLANS, activityLabel, validatePlanForm } from './plan';
+import { EMAIL, STATUS_LABEL, formatCode } from './accessCodes';
 
 const api = platformApi();
 const ROLE: Record<Role, string> = { owner: 'Owner', admin: 'Admin', member: 'Member' };
@@ -29,6 +30,7 @@ function Platform() {
   const saved = (id: string, plan: Plan, seatsIncluded: number, notes: string | null) => setList((l) => l?.map((w) => (w.id === id ? { ...w, plan, seatsIncluded, notes } : w)) ?? l);
   return (
     <div data-ee={EE_MARKER}>
+      <AccessCodes />
       <h3>{list ? `${list.length} ${list.length === 1 ? 'workspace' : 'workspaces'}` : 'Workspaces'}</h3>
       <div className="set-card plat">
         <div className="plat-row plat-head"><span>Name</span><span>Domain</span><span>Plan</span><span>Members</span><span>Last activity</span><span /></div>
@@ -46,6 +48,68 @@ function Platform() {
       </div>
       <p className="set-note">Plans and seats set here are what the workspace is billed for; the relay's hour pool reads seats and hour packs on the workspace row, which stay as they are.</p>
     </div>
+  );
+}
+
+// Cloud sign-up is invite-only: one code per email, issued here, shown once in full and copied to the person. The list
+// keeps every code with its state; an open code can be revoked
+function AccessCodes() {
+  const [list, setList] = useState<AccessCode[] | null>(null);
+  const [email, setEmail] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  const [issued, setIssued] = useState<AccessCode | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  const [all, setAll] = useState(false);
+  const load = () => api.platformAccessCodes().then((r) => { if (r.error) setError(r.error); else setList(r.codes ?? []); });
+  useEffect(() => { load(); }, []);
+  const issue = async () => {
+    setBusy('issue'); setError('');
+    const r = await api.platformIssueAccessCode(email.trim(), note.trim() || undefined);
+    setBusy(null);
+    if (r.error) { setError(r.error); return; }
+    setIssued(r.code ?? null); setEmail(''); setNote(''); load();
+  };
+  const revoke = async (id: string) => { setBusy(id); setError(''); const r = await api.platformRevokeAccessCode(id); setBusy(null); if (r.error) setError(r.error); else load(); };
+  const copy = async (c: AccessCode) => { try { await navigator.clipboard.writeText(formatCode(c.code)); setCopied(c.id); window.setTimeout(() => setCopied(null), 1200); } catch {} };
+  const ok = EMAIL.test(email.trim());
+  const shown = list ? (all ? list : list.filter((c) => c.status === 'open' || c.status === 'claimed')) : [];
+  const hidden = list ? list.length - shown.length : 0;
+  return (
+    <>
+      <h3>Access codes</h3>
+      <div className="set-card form ac">
+        <p className="acct-copy">Sign-up is invite-only. Issue a code for an email, send it to the person, and they enter it once in the app. A code lasts 30 days and is used once.</p>
+        <div className="set-line ac-issue">
+          <label className="set-field wide"><input type="email" aria-label="Email" placeholder="person@company.com" value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && ok && !busy) issue(); }} /></label>
+          <label className="set-field ac-note"><input aria-label="Note" placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value.slice(0, 80))} onKeyDown={(e) => { if (e.key === 'Enter' && ok && !busy) issue(); }} /></label>
+          <div className="set-line-end"><button className="pill primary" disabled={!ok || !!busy} onClick={issue}>{busy === 'issue' ? 'Issuing…' : 'Issue code'}</button></div>
+        </div>
+        {issued && (
+          <div className="ac-issued" role="status">
+            <span>Code for <strong>{issued.email}</strong></span>
+            <code className="ac-code big">{formatCode(issued.code)}</code>
+            <button className="pill" onClick={() => copy(issued)}>{copied === issued.id ? 'Copied' : 'Copy'}</button>
+          </div>
+        )}
+        {shown.map((c) => (
+          <div key={c.id} className="ac-row">
+            <span className="ac-email" title={c.note ?? undefined}><strong>{c.email}</strong>{c.note && <em>{c.note}</em>}</span>
+            <code className="ac-code">{formatCode(c.code)}</code>
+            <span className={`ac-status ${c.status}`}>{STATUS_LABEL[c.status]}</span>
+            <span className="ac-when">{c.status === 'redeemed' && c.redeemedAt ? `Used ${onDate(c.redeemedAt)}` : c.status === 'revoked' ? '' : `Until ${onDate(c.expiresAt)}`}</span>
+            <span className="ac-actions">
+              {(c.status === 'open' || c.status === 'claimed') && <><button className="link-btn" onClick={() => copy(c)}>{copied === c.id ? 'Copied' : 'Copy'}</button><button className="link-btn danger" disabled={busy === c.id} onClick={() => revoke(c.id)}>Revoke</button></>}
+            </span>
+          </div>
+        ))}
+        {list && !list.length && <p className="set-hint">No codes issued yet.</p>}
+        {list && hidden > 0 && !all && <div className="set-line acct-alt"><button className="link-btn" onClick={() => setAll(true)}>Show {hidden} used, revoked or expired</button></div>}
+        {list && all && list.length > shown.length - hidden && <div className="set-line acct-alt"><button className="link-btn" onClick={() => setAll(false)}>Show open only</button></div>}
+        {error && <p className="set-error">{error}</p>}
+      </div>
+    </>
   );
 }
 

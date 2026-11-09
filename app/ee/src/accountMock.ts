@@ -1,9 +1,9 @@
-import type { AccountState, Member, MemberInvite, PlatformWorkspace, Result, Role, WorkspaceConnector, WorkspaceVoice } from '../../src/quorum';
+import type { AccessCode, AccountState, Member, MemberInvite, PlatformWorkspace, Result, Role, WorkspaceConnector, WorkspaceVoice } from '../../src/quorum';
 
 export type AccountApi = Pick<Window['quorum'], 'accountStatus' | 'accountSendCode' | 'accountVerifyCode' | 'accountSignOut' | 'orgCreate' | 'orgJoin' | 'orgSwitch' | 'membersList' | 'memberInvite' | 'memberRemove' | 'inviteRevoke' | 'syncSet' | 'syncNow' | 'onAccount'>;
 export type ConnectorsApi = Pick<Window['quorum'], 'connectorsList' | 'connectorSet' | 'connectorRemove' | 'connectorTest'>;
 export type VoiceApi = Pick<Window['quorum'], 'workspaceUsage' | 'workspaceVoiceGet' | 'workspaceVoiceSet'>;
-export type PlatformApi = Pick<Window['quorum'], 'platformWorkspaces' | 'platformMembers' | 'platformUsage' | 'platformSetPlan'>;
+export type PlatformApi = Pick<Window['quorum'], 'platformWorkspaces' | 'platformMembers' | 'platformUsage' | 'platformSetPlan' | 'platformAccessCodes' | 'platformIssueAccessCode' | 'platformRevokeAccessCode'>;
 
 // the platform owner's page: two example workspaces, plans kept in memory
 let platformMock: PlatformApi | null = null;
@@ -14,8 +14,15 @@ export function platformApi(): PlatformApi {
     { id: 'ws_1', name: 'Example Co', domain: 'example.com', plan: 'cloud', seatsIncluded: 5, notes: null, members: 3, createdAt: iso(-90 * DAY), lastActivity: iso(-2 * 3600000) },
     { id: 'ws_acme', name: 'Acme Health', domain: null, plan: 'free', seatsIncluded: 0, notes: 'Trial from the launch list', members: 1, createdAt: iso(-10 * DAY), lastActivity: null },
   ];
+  let codes: AccessCode[] = [
+    { id: 'ac_1', email: 'dana@example.com', code: 'K7PQ2MX9', note: 'Launch list', issuedAt: iso(-3 * DAY), expiresAt: iso(27 * DAY), claimedAt: null, redeemedAt: iso(-2 * DAY), revokedAt: null, redeemedEmail: 'dana@example.com', status: 'redeemed' },
+    { id: 'ac_2', email: 'lee@example.com', code: 'W4HN8TBC', note: null, issuedAt: iso(-DAY), expiresAt: iso(29 * DAY), claimedAt: null, redeemedAt: null, revokedAt: null, redeemedEmail: null, status: 'open' },
+  ];
   return (platformMock = {
     platformWorkspaces: async () => ({ workspaces: list }),
+    platformAccessCodes: async () => ({ codes }),
+    platformIssueAccessCode: async (email, note) => { await delay(300); const c: AccessCode = { id: `ac_${Date.now()}`, email: email.toLowerCase(), code: 'ABCD2345', note: note || null, issuedAt: iso(0), expiresAt: iso(30 * DAY), claimedAt: null, redeemedAt: null, revokedAt: null, redeemedEmail: null, status: 'open' }; codes = [c, ...codes.map((x) => (x.email === c.email && x.status === 'open' ? { ...x, revokedAt: iso(0), status: 'revoked' as const } : x))]; return { code: c }; },
+    platformRevokeAccessCode: async (id) => { codes = codes.map((x) => (x.id === id ? { ...x, revokedAt: iso(0), status: 'revoked' as const } : x)); return { ok: true }; },
     platformMembers: async (id) => ({ members: id === 'ws_1'
       ? [{ userId: 'u_me', email: 'you@example.com', name: 'Alex Rivera', role: 'owner', joinedAt: iso(-90 * DAY) }, { userId: 'u_2', email: 'dana@example.com', name: 'Dana Whitfield', role: 'admin', joinedAt: iso(-12 * DAY) }, { userId: 'u_3', email: 'sam@example.com', name: null, role: 'member', joinedAt: iso(-2 * DAY) }]
       : [{ userId: 'u_9', email: 'lee@example.com', name: 'Lee Park', role: 'owner', joinedAt: iso(-10 * DAY) }] }),
@@ -104,7 +111,7 @@ function makeMock(): AccountApi {
   };
   return {
     accountStatus: async () => state,
-    accountSendCode: async (email) => (EMAIL.test(email) ? ok : { error: 'Enter a valid email address' }),
+    accountSendCode: async (email, accessCode) => (!EMAIL.test(email) ? { error: 'Enter a valid email address' } : email.toLowerCase().startsWith('new') && !accessCode ? { needsCode: true, email } : ok),
     accountVerifyCode: async (email, code) => { await delay(400); if (!/^\d{6}$/.test(code)) return { error: 'That code did not match. Check the email and try again.' }; signedIn(email); return ok; },
     accountSignOut: async () => set(blank()),
     orgCreate: async (name, domain, domainJoin) => { await delay(400); inOrg(name, domain, domainJoin, 'owner'); return ok; },

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { canAdmin, resolvePage, workspacePages, WORKSPACE_PAGES } from '../src/settingsNav.ts';
-import { PLANS as MAIN_PLANS, periodStart, shapeMember, shapeUsage, shapeWorkspace } from '../ee/platform.js';
+import { PLANS as MAIN_PLANS, codeStatus, formatCode, periodStart, shapeAccessCode, shapeMember, shapeUsage, shapeWorkspace } from '../ee/platform.js';
+import { STATUS_LABEL, formatCode as uiFormatCode } from '../ee/src/accessCodes.ts';
 import { PLANS, PLAN_LABEL, activityLabel, validatePlanForm } from '../ee/src/plan.ts';
 
 describe('the Platform page in the Admin nav', () => {
@@ -85,5 +86,27 @@ describe('the Set plan form', () => {
     expect(validatePlanForm({ plan: 'cloud', seatsIncluded: '', notes: '' })).toHaveProperty('error');
     expect(validatePlanForm({ plan: 'cloud', seatsIncluded: '20000', notes: '' })).toHaveProperty('error');
     expect(validatePlanForm({ plan: 'cloud', seatsIncluded: '1', notes: 'x'.repeat(501) })).toHaveProperty('error');
+  });
+});
+
+describe('access codes', () => {
+  const base = { id: 'a1', email: 'x@example.com', code: 'K7PQ2MX9', note: null, issued_at: '2026-11-01T00:00:00Z', expires_at: '2026-12-01T00:00:00Z' };
+  const now = new Date('2026-11-09T00:00:00Z').getTime();
+  it('derives one status word per row, used and revoked first, then expiry, then a claim', () => {
+    expect(codeStatus(shapeAccessCode(base), now)).toBe('open');
+    expect(codeStatus(shapeAccessCode({ ...base, claimed_at: '2026-11-08T23:00:00Z' }), now)).toBe('claimed');
+    expect(codeStatus(shapeAccessCode({ ...base, claimed_at: '2026-11-08T23:00:00Z', redeemed_at: '2026-11-08T23:10:00Z' }), now)).toBe('redeemed');
+    expect(codeStatus(shapeAccessCode({ ...base, revoked_at: '2026-11-02T00:00:00Z' }), now)).toBe('revoked');
+    expect(codeStatus(shapeAccessCode({ ...base, expires_at: '2026-11-08T00:00:00Z' }), now)).toBe('expired');
+    expect(codeStatus(shapeAccessCode({ ...base, expires_at: '2026-11-08T00:00:00Z', redeemed_at: '2026-11-07T00:00:00Z' }), now)).toBe('redeemed');
+  });
+  it('shows a code as XXXX-XXXX in both the main process and the page, with a label for every status', () => {
+    expect(formatCode('K7PQ2MX9')).toBe('K7PQ-2MX9');
+    expect(uiFormatCode('K7PQ2MX9')).toBe('K7PQ-2MX9');
+    for (const s of ['open', 'claimed', 'redeemed', 'revoked', 'expired']) expect(STATUS_LABEL[s]).toBeTruthy();
+  });
+  it('keeps the redeemer email and the shaped fields', () => {
+    const a = shapeAccessCode({ ...base, redeemed_at: '2026-11-08T00:00:00Z', redeemed_email: 'x@example.com' });
+    expect(a).toMatchObject({ id: 'a1', email: 'x@example.com', code: 'K7PQ2MX9', redeemedEmail: 'x@example.com', status: 'redeemed' });
   });
 });
