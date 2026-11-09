@@ -3,7 +3,7 @@ import type { Brain, CalendarSettings, ClaudeStatus, Memory, MemoryItem, ModelSo
 import { ModelKey, SOURCE_NAMES } from './modelSource';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
-import { AccountArea, MembersArea, isCloud } from './edition';
+import { AccountArea, MembersArea, isCloud, useHostedAccounts } from './edition';
 import {
   IconBell, IconBrain, IconBuilding, IconCalendar, IconChat, IconFolder, IconGrid, IconKeyboard, IconLock,
   IconChevron, IconCode, IconExternal, IconGlobe, ProviderMark, IconMic, IconMore, IconNotes, IconPeople, IconPerson, IconPlus, IconPower, IconReset, IconSliders, IconStack, IconCheck, IconCopy, IconFolderFill, IconFork, IconShield, IconGraph, IconSearch, IconClose, Wave,
@@ -29,6 +29,8 @@ const WORKSPACE: Nav[] = [
   ...(isCloud ? [{ id: 'members' as const, label: 'Members', icon: IconPeople }] : []),
 ];
 
+// the chip on every row whose control is disabled on purpose: the feature is planned and the row shows what it will do
+const Soon = () => <em className="soon">Soon</em>;
 
 export function SettingsView({ open, brain, settings, onSettings, onConnect, onBack }: {
   open?: { page: Page; n: number } | null; brain: Brain | null; settings: Settings; onSettings: (s: Settings) => void; onConnect: () => void; onBack: () => void;
@@ -46,6 +48,9 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
   }, [onBack]);
 
   const set = async (patch: Partial<Settings>) => onSettings(await window.quorum.setSettings(patch));
+  // a cloud build without hosted account config has no members to list, so the page leaves the nav
+  const hosted = useHostedAccounts();
+  const workspaceNav = hosted ? WORKSPACE : WORKSPACE.filter((n) => n.id !== 'members');
   const all = [...ACCOUNT, ...WORKSPACE];
   const current = all.find((n) => n.id === page)!;
 
@@ -66,14 +71,14 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
         <nav className="set-navs">
           {ACCOUNT.map(navItem)}
           <h4>Workspace</h4>
-          {WORKSPACE.map(navItem)}
+          {workspaceNav.map(navItem)}
         </nav>
         <button className="set-quit" onClick={() => window.quorum.quit()}><IconPower width={18} height={18} /> Quit Quorum</button>
       </aside>
 
       <main className="set-main">
         <div className="set-col">
-          <h1 className="set-title">{current.label}{current.soon && <em className="soon">Coming soon</em>}</h1>
+          <h1 className="set-title">{current.label}{current.soon && <Soon />}</h1>
           {page === 'preferences' && <p className="set-lede">Quorum works best knowing a little about you. Quorum uses this when it writes your meeting notes and answers questions.</p>}
           {page === 'knowledge' && <p className="set-lede">Company knowledge for your whole workspace, chosen by admins.</p>}
           {page === 'general' && <p className="set-lede">Settings for everyone in your workspace. Quorum gives this context to every meeting summary and answer, so it's the same for each person.</p>}
@@ -180,6 +185,8 @@ function Field({ value, placeholder, onSave }: { value: string; placeholder?: st
 function ProfilePage({ settings, email, name, onSettings, children }: { settings: Settings; email: string; name: string; onSettings: (s: Settings) => void; children?: ReactNode }) {
   const p = settings.profile ?? {};
   const save = async (patch: Partial<Profile>) => onSettings(await window.quorum.setSettings({ profile: patch }));
+  // one name for both uses: the profile shown in Settings and settings.userName, which names the recorder in every note
+  const saveName = async (v: string) => onSettings(await window.quorum.setSettings({ userName: v, profile: { name: v } }));
   return (
     <>
       <h3>Account</h3>
@@ -194,7 +201,7 @@ function ProfilePage({ settings, email, name, onSettings, children }: { settings
             {p.photo && <button className="pill small-pill" onClick={async () => onSettings(await window.quorum.removePhoto())}>Remove</button>}
           </div>
         </div>
-        <div className="set-line"><strong>Full name</strong><Field value={p.name || name} onSave={(v) => save({ name: v })} /></div>
+        <div className="set-line"><div className="set-label"><strong>Your name</strong><span>How Quorum names you in notes and transcripts</span></div><Field value={settings.userName || p.name || name} placeholder={name} onSave={saveName} /></div>
         <div className="set-line"><strong>Job title</strong><Field value={p.title ?? ''} onSave={(v) => save({ title: v })} /></div>
         <div className="set-line"><strong>LinkedIn URL</strong><Field value={p.linkedin ? `linkedin.com/in/${p.linkedin}` : ''} placeholder="linkedin.com/in/username" onSave={(v) => save({ linkedin: v.trim().replace(/^.*linkedin\.com\/in\//, '').replace(/[/?#].*$/, '') })} /></div>
       </div>
@@ -202,15 +209,15 @@ function ProfilePage({ settings, email, name, onSettings, children }: { settings
 
       <h3>Account management</h3>
       <div className="set-card form">
-        <Row icon={<IconStack width={18} height={18} />} title={<>Export your notes <em className="stub">Coming soon</em></>} desc="Your notes are already plain files in your Agent OS">
+        <Row icon={<IconStack width={18} height={18} />} title={<>Export your notes<Soon /></>} desc="Will save every note and meeting as one archive. They are already plain files in your Agent OS">
           <button className="pill" disabled>Export</button>
         </Row>
       </div>
 
       <h3>Danger zone</h3>
       <div className="set-card danger">
-        <Row icon={<IconPower width={18} height={18} />} title="Delete my account" desc="Delete your account, notes and all associated data. This can't be undone.">
-          <button className="pill danger-pill" disabled data-tip="Not available while you're the only user">Delete my account</button>
+        <Row icon={<IconPower width={18} height={18} />} title={<>Delete my account<Soon /></>} desc="Will remove a hosted account and everything synced to it. Files on this Mac stay">
+          <button className="pill danger-pill" disabled>Delete my account</button>
         </Row>
       </div>
     </>
@@ -224,7 +231,8 @@ function WorkspacePage({ settings, onSettings }: { settings: Settings; onSetting
   useEffect(() => setAbout(w.companyDescription ?? ''), [w.companyDescription]);
   return (
     <>
-      <AccountArea local={<><h3>Account</h3><p className="muted">Local edition. Everything stays on this Mac.</p></>} />
+      <AccountArea local={<><h3>Account</h3><p className="muted">Local edition. Everything stays on this Mac.</p></>}
+        unconfigured={<><h3>Account</h3><p className="muted">Hosted accounts are not set up in this build</p></>} />
       <h3>Company</h3>
       <div className="set-card form">
         <div className="set-line"><strong>Company name</strong><Field value={w.company ?? ''} placeholder="Company" onSave={(v) => save({ company: v })} /></div>
@@ -497,18 +505,18 @@ function KnowledgePage() {
       <h3>Company knowledge</h3>
       <div className="set-card set-zero">
         <span className="set-zero-icon"><IconBuilding width={22} height={22} /></span>
-        <strong>No company knowledge source</strong>
-        <p>Connect a repo, wiki or knowledge base your team uses.</p>
-        <span data-tip="Coming soon"><button className="pill" disabled>Connect to company knowledge source</button></span>
+        <strong>No company knowledge source<Soon /></strong>
+        <p>Admins will connect a repo, wiki or knowledge base, and Quorum will read it for everyone in the workspace.</p>
+        <button className="pill" disabled>Connect to company knowledge source</button>
       </div>
 
       <h3>Shared with your team</h3>
       <div className="set-card">
-        <Row icon={<IconStack width={18} height={18} />} title={<>Team vault<em className="soon">Coming soon</em></>} desc="Share approved notes with your team's agents" />
+        <Row icon={<IconStack width={18} height={18} />} title={<>Team vault<Soon /></>} desc="Will share the notes you approve with your team's agents" />
       </div>
 
       <div className="set-head">
-        <h3>Power-ups</h3>
+        <h3>Power-ups<Soon /></h3>
         <span className="set-head-actions">
           <button className="pill small-pill with-icon" disabled><IconPlus width={15} height={15} />Add</button>
           <button className="pill small-pill with-icon" disabled><IconReset width={15} height={15} />Refresh</button>
@@ -517,7 +525,7 @@ function KnowledgePage() {
       <div className="set-card set-zero">
         <span className="set-zero-icon"><IconStack width={22} height={22} /></span>
         <strong>Nothing to review yet</strong>
-        <p>Admins review what Quorum finds once a source is connected.</p>
+        <p>Admins will review what Quorum finds once a source is connected.</p>
       </div>
 
       <h3>Who controls it</h3>
@@ -552,7 +560,7 @@ function CalendarPage() {
             : cal.status === 'denied' ? <button className="pill" onClick={() => window.quorum.calendarPrivacy()}>Open System Settings</button>
             : <button className="pill" disabled={busy} onClick={connect}>{busy ? 'Waiting for macOS' : 'Connect'}</button>}
         </Row>
-        <Row icon={<IconGlobe width={18} height={18} />} title={<>Google Calendar<em className="soon">Coming soon</em></>} desc="Connect your Google account directly">
+        <Row icon={<IconGlobe width={18} height={18} />} title={<>Google Calendar<Soon /></>} desc="Will connect a Google account directly so its meetings show on Home">
           <button className="pill" disabled>Connect</button>
         </Row>
       </div>
@@ -568,41 +576,43 @@ function CalendarPage() {
 
       <h3>Meetings</h3>
       <div className="set-card">
-        <Row icon={<IconNotes width={18} height={18} />} title={<>Name notes after the event<em className="soon">Coming soon</em></>} desc="Uses the calendar title instead of the Zoom topic"><Toggle on onChange={noop} disabled /></Row>
-        <Row icon={<IconPeople width={18} height={18} />} title={<>Add attendees to notes<em className="soon">Coming soon</em></>} desc="Lists everyone invited, even if they don't speak"><Toggle on onChange={noop} disabled /></Row>
-        <Row icon={<Wave live={false} />} title={<>Only listen to my meetings<em className="soon">Coming soon</em></>} desc="Skips events you weren't invited to"><Toggle on={false} onChange={noop} disabled /></Row>
+        <Row icon={<IconNotes width={18} height={18} />} title={<>Name notes after the event<Soon /></>} desc="Will use the calendar title instead of the Zoom topic"><Toggle on onChange={noop} disabled /></Row>
+        <Row icon={<IconPeople width={18} height={18} />} title={<>Add attendees to notes<Soon /></>} desc="Will list everyone invited, even if they don't speak"><Toggle on onChange={noop} disabled /></Row>
+        <Row icon={<Wave live={false} />} title={<>Only listen to my meetings<Soon /></>} desc="Will skip events you weren't invited to"><Toggle on={false} onChange={noop} disabled /></Row>
       </div>
     </>
   );
 }
 
+// every row is planned work: the controls are disabled on purpose and each line says what the notification will do
 function NotificationsPage() {
   const channel = (v: string) => (
     <select className="set-select" disabled defaultValue={v}><option value="notification">Notification</option><option value="email">Email</option><option value="off">Off</option></select>
   );
   return (
     <>
+      <p className="mcp-lede">Quorum sends no notifications yet. These rows show what each one will do, and the defaults it will start with.</p>
       <h3>Meeting notifications</h3>
       <div className="set-card">
-        <Row icon={<IconCalendar width={18} height={18} />} title="Scheduled meetings" desc="1 minute before a meeting on your calendar starts"><Toggle on onChange={noop} disabled /></Row>
-        <Row icon={<Wave live={false} />} title="Detected meetings" desc="When Quorum sees a call start"><Toggle on onChange={noop} disabled /></Row>
+        <Row icon={<IconCalendar width={18} height={18} />} title={<>Scheduled meetings<Soon /></>} desc="Will notify you 1 minute before a meeting on your calendar starts"><Toggle on onChange={noop} disabled /></Row>
+        <Row icon={<Wave live={false} />} title={<>Detected meetings<Soon /></>} desc="Will notify you when Quorum sees a call start"><Toggle on onChange={noop} disabled /></Row>
         <div className="set-nested">
-          <strong>Don't notify me when a call starts in these apps</strong>
+          <strong>Don't notify me when a call starts in these apps<Soon /></strong>
           <select className="set-select full" disabled defaultValue=""><option value="">Select apps</option></select>
         </div>
       </div>
 
       <h3>From Quorum</h3>
       <div className="set-card">
-        <Row icon={<IconNotes width={18} height={18} />} title="Notes are ready" desc="Right after a meeting ends">{channel('notification')}</Row>
-        <Row icon={<IconChat width={18} height={18} />} title="Suggested answers" desc="When someone asks you a question in a call">{channel('notification')}</Row>
-        <Row icon={<IconCalendar width={18} height={18} />} title="Follow-ups due" desc="The morning a follow-up is due">{channel('off')}</Row>
+        <Row icon={<IconNotes width={18} height={18} />} title={<>Notes are ready<Soon /></>} desc="Will tell you right after a meeting ends">{channel('notification')}</Row>
+        <Row icon={<IconChat width={18} height={18} />} title={<>Suggested answers<Soon /></>} desc="Will tell you when someone asks you a question in a call">{channel('notification')}</Row>
+        <Row icon={<IconCalendar width={18} height={18} />} title={<>Follow-ups due<Soon /></>} desc="Will remind you the morning a follow-up is due">{channel('off')}</Row>
       </div>
 
       <h3>Sharing notifications</h3>
       <div className="set-card">
-        <Row icon={<IconPeople width={18} height={18} />} title="Note shared with you" desc="When a teammate shares a note">{channel('email')}</Row>
-        <Row icon={<IconStack width={18} height={18} />} title="Company knowledge changes" desc="When an admin includes or removes something">{channel('off')}</Row>
+        <Row icon={<IconPeople width={18} height={18} />} title={<>Note shared with you<Soon /></>} desc="Will tell you when a teammate shares a note">{channel('email')}</Row>
+        <Row icon={<IconStack width={18} height={18} />} title={<>Company knowledge changes<Soon /></>} desc="Will tell you when an admin includes or removes something">{channel('off')}</Row>
       </div>
     </>
   );
@@ -766,25 +776,38 @@ function ClaudeCard() {
             )}
           </span>
         </Row>
-        <McpRows />
+        <McpRows claude={c} />
       </div>
     </>
   );
 }
 
-// Quorum outside the app: the quorum command in Terminal works now; Claude Code waits on the Security check of the Ultra proxy route
-function McpRows() {
+// Quorum outside the app: the quorum MCP server in Claude Code (claude mcp add, read back with claude mcp get) and the
+// quorum command in Terminal. Both run the CLI that ships beside the app; nothing listens on a port
+function McpRows({ claude }: { claude: ClaudeStatus | null }) {
+  const [mcp, setMcp] = useState<Awaited<ReturnType<typeof window.quorum.mcpStatus>> | null>(null);
+  const [mcpBusy, setMcpBusy] = useState(false);
+  const [mcpMsg, setMcpMsg] = useState('');
   const [cli, setCli] = useState<Awaited<ReturnType<typeof window.quorum.cliStatus>> | null>(null);
   const [command, setCommand] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [more, setMore] = useMenu();
   const [access, setAccess] = useState<'read' | 'write'>('write');
+  const loadMcp = () => window.quorum.mcpStatus().then((st) => { setMcp(st); setCommand(st.command ? `alias quorum='${st.command.replace(/"/g, '')}'` : ''); });
   useEffect(() => {
     window.quorum.getSettings().then((st) => setAccess(st.access ?? 'write'));
     window.quorum.cliStatus().then(setCli);
-    window.quorum.mcpStatus().then((st) => setCommand(st.command ? `alias quorum='${st.command.replace(/"/g, '')}'` : ''));
+    loadMcp();
   }, []);
+  const addMcp = async () => { setMcpBusy(true); setMcpMsg(''); const r = await window.quorum.mcpAdd(); if (r.error) setMcpMsg(r.error); await loadMcp(); setMcpBusy(false); };
+  const removeMcp = async () => { setMcpBusy(true); setMcpMsg(''); await window.quorum.mcpRemove(); await loadMcp(); setMcpBusy(false); };
+  const noClaude = !!claude && !claude.installed;
+  const mcpDesc = !mcp ? 'Checking…'
+    : noClaude ? 'Install Claude Code first. Quorum then adds itself as an MCP server'
+    : mcp.added ? 'Added. claude mcp get quorum finds it, so Claude can read your meetings and notes'
+    : !mcp.command ? 'Node.js is needed to run the Quorum MCP server'
+    : 'Adds Quorum as an MCP server in Claude Code, so you can ask Claude about your meetings and notes';
   const addCli = async () => { setBusy(true); setMsg(''); const r = await window.quorum.cliAdd(); if (r.error) setMsg(r.error); setCli(await window.quorum.cliStatus()); setBusy(false); };
   const removeCli = async () => { setBusy(true); await window.quorum.cliRemove(); setCli(await window.quorum.cliStatus()); setBusy(false); };
   const connected = !!cli?.added;
@@ -794,9 +817,12 @@ function McpRows() {
     : 'Open a new Terminal window and type quorum';
   return (
     <>
-        <Row icon={<ProviderMark provider="anthropic" />} title={<>Claude Code MCP<em className="soon">Coming soon</em></>} desc="Ask Claude about your meetings and chats">
-          <span data-tip="Waiting on a Security check" data-tip-pos="left"><button className="pill" disabled>Connect</button></span>
+        <Row icon={<ProviderMark provider="anthropic" />} title="Claude Code MCP" desc={mcpDesc}>
+          {mcp?.added
+            ? <button className="pill" disabled={mcpBusy} onClick={removeMcp}>{mcpBusy ? 'Removing…' : 'Remove'}</button>
+            : <button className="pill" disabled={mcpBusy || !mcp || noClaude || !mcp.command} onClick={addMcp}>{mcpBusy ? 'Adding…' : 'Add'}</button>}
         </Row>
+        {mcpMsg && <p className="set-note mcp-msg">{mcpMsg}</p>}
         <Row icon={<IconCode width={18} height={18} className={!connected ? undefined : cli?.error ? 'err' : 'ok'} />} title="Quorum CLI" desc={state}>
           {connected
             ? <span className="menu-wrap">
@@ -889,7 +915,7 @@ function ConnectorsPage() {
       <h3>API</h3>
       <p className="mcp-lede">Keys for scripts and tools to reach your notes.</p>
       <div className="set-card">
-        <Row icon={<IconCode width={18} height={18} />} title={<>Personal API keys<em className="soon">Coming soon</em></>} desc="Programmatic access to your notes">
+        <Row icon={<IconCode width={18} height={18} />} title={<>Personal API keys<Soon /></>} desc="Will issue keys that let your scripts and tools read and write your notes">
           <button className="icon-btn" disabled aria-label="Manage API keys"><IconChevron className="right" /></button>
         </Row>
       </div>
@@ -988,9 +1014,8 @@ function MeetingProviders() {
 }
 
 const LANGUAGES = [['en-US', 'English (US)'], ['en-GB', 'English (UK)'], ['en-AU', 'English (Australia)'], ['es-ES', 'Spanish (Spain)'], ['es-MX', 'Spanish (Mexico)'], ['fr-FR', 'French'], ['de-DE', 'German'], ['it-IT', 'Italian'], ['pt-BR', 'Portuguese (Brazil)'], ['ja-JP', 'Japanese']];
-const Soon = () => <em className="soon">Coming soon</em>;
 
-// what works today applies to the dictate button in every Quorum composer; the rest waits for system-wide voice typing
+// what works today applies to the dictate button in every Quorum composer; the eight Soon rows are system-wide voice typing
 function VoicePage({ settings, onSettings }: { settings: Settings; onSettings: (s: Settings) => void }) {
   const v = settings.voice ?? {};
   const save = async (patch: Partial<Voice>) => onSettings(await window.quorum.setSettings({ voice: patch }));
@@ -1001,7 +1026,7 @@ function VoicePage({ settings, onSettings }: { settings: Settings; onSettings: (
   return (
     <>
       <div className="set-card">
-        <Row icon={<IconKeyboard width={18} height={18} />} title={<>Voice typing in any app<Soon /></>} desc="Talk instead of type, outside Quorum too"><Toggle on={false} onChange={noop} disabled /></Row>
+        <Row icon={<IconKeyboard width={18} height={18} />} title={<>Voice typing in any app<Soon /></>} desc="Will let you talk instead of type in every app, outside Quorum too"><Toggle on={false} onChange={noop} disabled /></Row>
       </div>
 
       <h3>In Quorum</h3>
@@ -1036,19 +1061,19 @@ function VoicePage({ settings, onSettings }: { settings: Settings; onSettings: (
 
       <h3>Shortcuts</h3>
       <div className="set-card">
-        <Row icon={<IconKeyboard width={18} height={18} />} title={<>Hold to talk<Soon /></>} desc="Hold to start, release to finish"><span className="keycap off">fn</span></Row>
-        <Row icon={<IconKeyboard width={18} height={18} />} title={<>Hands-free<Soon /></>} desc="Press to start, press again to finish"><span className="keycap off">fn</span><span className="muted small">then</span><span className="keycap off">fn</span></Row>
+        <Row icon={<IconKeyboard width={18} height={18} />} title={<>Hold to talk<Soon /></>} desc="Will start dictation while you hold fn and finish when you release it"><span className="keycap off">fn</span></Row>
+        <Row icon={<IconKeyboard width={18} height={18} />} title={<>Hands-free<Soon /></>} desc="Will start on one press of fn and finish on the next"><span className="keycap off">fn</span><span className="muted small">then</span><span className="keycap off">fn</span></Row>
       </div>
 
       <h3>More</h3>
       <div className="set-card">
-        <Row icon={<IconMic width={18} height={18} />} title={<>Microphone<Soon /></>} desc="Uses your Mac's default input for now">
+        <Row icon={<IconMic width={18} height={18} />} title={<>Microphone<Soon /></>} desc="Will let you pick an input. Dictation uses your Mac's default input for now">
           <select className="set-select" disabled defaultValue="default"><option value="default">System default</option></select>
         </Row>
-        <Row icon={<IconSliders width={18} height={18} />} title={<>Styles<Soon /></>} desc="A writing style for each kind of app"><Toggle on={false} onChange={noop} disabled /></Row>
-        <Row icon={<IconStack width={18} height={18} />} title={<>Screen context<Soon /></>} desc="Uses text on screen to spell names right"><Toggle on={false} onChange={noop} disabled /></Row>
-        <Row icon={<IconNotes width={18} height={18} />} title={<>Auto-add words<Soon /></>} desc="Adds words you correct to your dictionary"><Toggle on={false} onChange={noop} disabled /></Row>
-        <Row icon={<Wave live={false} />} title={<>Mute other audio<Soon /></>} desc="Quiets your Mac while you talk"><Toggle on={false} onChange={noop} disabled /></Row>
+        <Row icon={<IconSliders width={18} height={18} />} title={<>Styles<Soon /></>} desc="Will apply a writing style for each kind of app"><Toggle on={false} onChange={noop} disabled /></Row>
+        <Row icon={<IconStack width={18} height={18} />} title={<>Screen context<Soon /></>} desc="Will read text on screen to spell names right"><Toggle on={false} onChange={noop} disabled /></Row>
+        <Row icon={<IconNotes width={18} height={18} />} title={<>Auto-add words<Soon /></>} desc="Will add words you correct to your dictionary"><Toggle on={false} onChange={noop} disabled /></Row>
+        <Row icon={<Wave live={false} />} title={<>Mute other audio<Soon /></>} desc="Will quiet your Mac while you talk"><Toggle on={false} onChange={noop} disabled /></Row>
       </div>
 
       <h3>Data and privacy</h3>

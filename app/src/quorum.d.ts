@@ -33,7 +33,8 @@ export type Transcription = { echo?: 'off' | 'filter' | 'aec'; gap?: number; liv
 export type ModelSource = 'none' | 'claude-code' | 'anthropic-api' | 'local';
 export type ClaudeStatus = { installed: boolean; loggedIn: boolean; email: string; org: string; plan: string; method: string; version: string };
 export type ModelSourceStatus = { source: ModelSource; localModel: string; claude: ClaudeStatus | null; key: boolean; ollama: { reachable: boolean; hasModel: boolean } };
-export type Settings = { autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; suggestions: boolean; access?: 'read' | 'write'; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription };
+// userName is how the main process names the recorder in notes; it falls back to the macOS account's full name, then the login
+export type Settings = { autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription };
 export type OnboardingStatus = { firstRun: boolean; defaultVaultDir: string };
 export type OnboardingChecks = { permissions: { microphone: string; audio: string; accessibility: string; calendar: string }; claude: { installed: boolean; loggedIn?: boolean; email?: string; org?: string; plan?: string; version?: string; pending?: boolean }; model?: ModelSourceStatus | null };
 export type Brain = { root: string; vault: string; name: string; markers: { agentOS: string | null; obsidian: boolean; search: boolean; safetyHooks: boolean } };
@@ -42,6 +43,8 @@ export type Role = 'owner' | 'admin' | 'member';
 export type AccountWorkspace = { id: string; name: string; domain: string | null; domainJoin: boolean; role: Role };
 export type AccountInvite = { inviteId: string; workspaceId: string; workspaceName: string; role: Role; invitedByEmail: string | null; expiresAt: string };
 export type AccountState = {
+  // false when the build has no Supabase URL and anon key, so there is no hosted account to sign in to
+  configured?: boolean;
   signedIn: boolean; email: string | null; userId: string | null;
   workspace: AccountWorkspace | null;
   workspaces: { id: string; name: string; role: Role }[];

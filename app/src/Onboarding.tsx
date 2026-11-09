@@ -4,8 +4,8 @@ import { IconCheck, IconCode, IconFolder, IconLock, IconMic, IconPerson, IconShi
 import { ModelKey, SOURCE_NAMES } from './modelSource';
 import mark from '../assets/quorum-mark.png';
 
-type Step = 'welcome' | 'notes' | 'model' | 'account' | 'permissions' | 'done';
-const ORDER: Step[] = ['welcome', 'notes', 'model', 'account', 'permissions', 'done'];
+type Step = 'welcome' | 'you' | 'notes' | 'model' | 'account' | 'permissions' | 'done';
+const ORDER: Step[] = ['welcome', 'you', 'notes', 'model', 'account', 'permissions', 'done'];
 type Status = (OnboardingStatus & Partial<OnboardingChecks>) | null;
 
 // first run on a fresh install: a short wizard in place of the main window until settings.onboarded is set
@@ -30,6 +30,7 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
             <div className="onb-actions"><span /><button className="pill primary" autoFocus onClick={next}>Get started</button></div>
           </section>
         )}
+        {step === 'you' && <NameStep onBack={back} onNext={next} />}
         {step === 'notes' && <NotesStep brain={brain} status={status} onBrain={onBrain} onBack={back} onNext={next} />}
         {step === 'model' && <ModelStep status={status} onRefresh={refresh} onBack={back} onNext={next} />}
         {step === 'account' && (
@@ -56,6 +57,34 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
         )}
       </div>
     </div>
+  );
+}
+
+// optional: the name Quorum writes as the recorder in every note. Prefilled with the name the main process resolved (a saved
+// settings.userName, else the macOS account's full name, else the login); Continue saves it only when it was changed
+function NameStep({ onBack, onNext }: { onBack: () => void; onNext: () => void }) {
+  const [name, setName] = useState('');
+  const [resolved, setResolved] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { window.quorum.user().then((u) => { setResolved(u.name); setName((v) => v || u.name); }); }, []);
+  const go = async () => {
+    const v = name.trim();
+    if (v && v !== resolved) { setBusy(true); await window.quorum.setSettings({ userName: v, profile: { name: v } }); setBusy(false); }
+    onNext();
+  };
+  return (
+    <section className="onb-step">
+      <h1>What should Quorum call you?</h1>
+      <p>Quorum writes this as your name in meeting notes and transcripts. It comes from your Mac account; change it if you like.</p>
+      <div className="onb-choice on">
+        <IconPerson width={18} height={18} />
+        <div>
+          <strong>Your name</strong>
+          <label className="set-field wide onb-field"><input value={name} aria-label="Your name" placeholder={resolved || 'Your name'} autoFocus onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') go(); }} /></label>
+        </div>
+      </div>
+      <div className="onb-actions"><button className="pill ghost" onClick={onBack}>Back</button><button className="pill primary" disabled={busy} onClick={go}>Continue</button></div>
+    </section>
   );
 }
 

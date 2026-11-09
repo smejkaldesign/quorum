@@ -979,3 +979,6 @@ svg.err { color: var(--danger); }
 .onb-choice.pick:hover { border-color: rgba(255, 255, 255, 0.2); }
 .onb-choice.pick.on { border-color: var(--brand); }
 .model.plain { cursor: default; }
+
+/* the Soon chip on section headings and zero states, so a dead row reads as planned work */
+h3 .soon, .set-zero strong .soon { font-size: 11px; margin-left: 8px; vertical-align: middle; }
