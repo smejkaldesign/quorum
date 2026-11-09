@@ -143,7 +143,7 @@ const PROVIDERS = {
 let meetingProvider = 'zoom';
 const provider = () => PROVIDERS[meetingProvider] ?? PROVIDERS.zoom;
 // meeting transcript tuning, set on the Meetings page; defaults are what most calls want
-const TX_DEFAULTS = { echo: 'auto', gap: 1.5, live: true, capture: 'meeting' };
+const TX_DEFAULTS = { echo: 'auto', gap: 1.5, live: true, capture: 'meeting', clean: true };
 const tx = () => ({ ...TX_DEFAULTS, ...settings.transcription });
 // echo: on speakers the mic hears the far side. auto cancels it in the mic path when the built-in speakers are the
 // output (and treats an unknown route as speakers) and leaves it alone on headphones or an external device; the word
@@ -159,7 +159,7 @@ const fixWords = (text) => (settings.voice?.dictionary ?? []).reduce((t, d) => t
 function keep(evt) {
   if (mentionsOptOut(evt.text)) return blockCall('name');
   softStop(evt.text, evt.channel === 'me' ? OWNER : 'someone on the call', 0.85);
-  const { turns, changed, replace } = addFinal(meeting.transcript, { channel: evt.channel, text: evt.text, start: evt.start, end: evt.end, at: Date.now() }, tx().gap);
+  const { turns, changed, replace } = addFinal(meeting.transcript, { channel: evt.channel, text: evt.text, start: evt.start, end: evt.end, at: Date.now() }, tx().gap, { clean: tx().clean });
   if (!changed) return;
   meeting.transcript = turns;
   writeStateSoon();
@@ -932,6 +932,7 @@ ipcMain.handle('set-settings', (_e, next) => {
     if ([0.8, 1.5, 3].includes(t.gap)) c.gap = t.gap;
     if (typeof t.live === 'boolean') c.live = t.live;
     if (['meeting', 'all'].includes(t.capture)) c.capture = t.capture;
+    if (typeof t.clean === 'boolean') c.clean = t.clean;
     settings.transcription = { ...settings.transcription, ...c };
     store.settings.save();
   }
