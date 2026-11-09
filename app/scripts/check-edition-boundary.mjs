@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 const rootArg = process.argv.indexOf('--root');
 const app = rootArg !== -1 && process.argv[rootArg + 1] ? path.resolve(process.argv[rootArg + 1]) : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MARKER = 'QUORUM_EE_MARKER';
-const SKIP = new Set(['node_modules', 'dist', 'release', 'build', 'assets', '.dev', 'ee', 'scripts']);
+const SKIP = new Set(['node_modules', 'dist', 'release', 'build', 'assets', '.dev', 'ee', 'scripts', 'test', 'lint']);
 const EXT = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx']);
 const DYNAMIC_ALLOWED = new Set(['edition.js', 'src/edition.tsx']);
 const edition = process.env.QUORUM_EDITION === 'cloud' ? 'cloud' : 'local';
