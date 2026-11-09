@@ -137,6 +137,14 @@ contextBridge.exposeInMainWorld('quorum', {
   syncSet: (on) => ipcRenderer.invoke('sync-set', on),
   syncNow: () => ipcRenderer.invoke('sync-now'),
   onAccount: on('account'),
+  // workspace connectors (hosted edition); handlers in ee/connectors.js. The key in a draft goes in and is never read back
+  connectorsList: () => ipcRenderer.invoke('connectors-list'),
+  connectorSet: (draft) => ipcRenderer.invoke('connector-set', draft),
+  connectorRemove: (id) => ipcRenderer.invoke('connector-remove', id),
+  connectorTest: (p) => ipcRenderer.invoke('connector-test', p),
+  workspaceUsage: () => ipcRenderer.invoke('workspace-usage'),
+  workspaceVoiceGet: () => ipcRenderer.invoke('workspace-voice-get'),
+  workspaceVoiceSet: (voice) => ipcRenderer.invoke('workspace-voice-set', voice),
   // end account
   // environment (development or production) and which Supabase config the cloud edition is using; never the key
   envStatus: () => ipcRenderer.invoke('env-status'),

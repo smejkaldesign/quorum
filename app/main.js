@@ -1319,6 +1319,8 @@ const isConfidentialText = (text) => /^---\r?\n(?:[^\n]*\r?\n)*?confidential\s*:
 const account = EDITION === 'cloud'
   ? (await loadEE('account.js')).registerAccount({ ipcMain, settings, saveSettings, toUI, log, brain, meetingIndex, isExcluded: (rel) => excludedPath(rel) || isPrivatePath(rel), isExcludedText: (t) => suggester.isExcluded(t) || isConfidentialText(t) })
   : { sync: { pushNote() {}, pushMeetingNote() {}, pullNow() {}, live() {} } };
+// workspace connectors (Settings › Admin › Connectors) ride on the same account and client
+if (EDITION === 'cloud') (await loadEE('connectors.js')).registerConnectors({ ipcMain, account, log });
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);
 ipcMain.handle('vault-search', (_e, q, limit) => vindex?.search(String(q), Math.min(Number(limit) || 30, 1000)) ?? []);
 ipcMain.handle('vault-link-health', () => vindex?.linkHealth() ?? []);

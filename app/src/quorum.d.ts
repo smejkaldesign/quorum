@@ -64,7 +64,19 @@ export type AccountState = {
   sync: boolean; lastSyncAt: string | null; lastPullAt?: string | null; syncError: string | null;
 };
 export type Result = { ok?: boolean; error?: string };
-export type Member = { userId: string; email: string; name: string | null; role: Role; joinedAt: string };
+// workspace connectors (Settings › Admin › Connectors): a provider key held in Supabase Vault for the whole workspace and
+// the roles it may serve. The key never comes back to the client; a draft carries it once, on the way in
+export type ConnectorProvider = 'assemblyai' | 'deepgram' | 'elevenlabs' | 'openai' | 'anthropic' | 'google' | 'openai_compatible';
+export type ConnectorRole = 'speech' | 'summary' | 'notes' | 'agent' | 'voice';
+export type WorkspaceConnector = { id: string; workspaceId: string; provider: ConnectorProvider; label: string; baseUrl: string | null; roles: ConnectorRole[]; createdBy: string | null; createdAt: string; updatedAt: string };
+export type ConnectorDraft = { provider: ConnectorProvider; label: string; baseUrl: string | null; roles: ConnectorRole[]; secret: string };
+// organization voice typing: which connector handles each managed step (absent means Quorum managed), and the hours used
+// this calendar month per seat. managedHours is the part on Quorum's keys, the part that counts against the allowance
+export type VoiceStep = 'speech' | 'summary' | 'notes';
+export type WorkspaceVoice = Partial<Record<VoiceStep, string | null>>;
+export type SeatUsage = { userId: string; email: string | null; name: string | null; hours: number; managedHours: number };
+export type WorkspaceUsage = { period: string; hours: number; managedHours: number; seats: SeatUsage[] };
+export type Member ={ userId: string; email: string; name: string | null; role: Role; joinedAt: string };
 export type MemberInvite = { inviteId: string; email: string; role: Role; expiresAt: string };
 export type MeetingRow = { id: string; file: string; kind: 'meeting' | 'note'; source: string; title: string; date: string | null; people: string[]; count: number; visibility: Visibility; rel: string; link: string; app: string };
 export type ChatRow = { id: string; title: string; date: string; turns: number; meetingFile: string | null; meetingTitle: string | null };
@@ -229,6 +241,13 @@ declare global {
       syncSet(on: boolean): Promise<Result>;
       syncNow(): Promise<{ pushed?: { notes: number; meetings: number }; pulled?: { notes: number; conflicts: number; removed: number } | null; error?: string }>;
       onAccount(cb: (s: AccountState) => void): Unsub;
+      connectorsList(): Promise<{ connectors?: WorkspaceConnector[]; error?: string }>;
+      connectorSet(draft: ConnectorDraft): Promise<{ connector?: WorkspaceConnector; error?: string }>;
+      connectorRemove(id: string): Promise<Result>;
+      connectorTest(p: { provider: ConnectorProvider; baseUrl: string | null; secret: string }): Promise<Result>;
+      workspaceUsage(): Promise<{ usage?: WorkspaceUsage; error?: string }>;
+      workspaceVoiceGet(): Promise<{ voice?: WorkspaceVoice; error?: string }>;
+      workspaceVoiceSet(voice: WorkspaceVoice): Promise<{ voice?: WorkspaceVoice; error?: string }>;
       envStatus(): Promise<EnvStatus>;
       envSetProduction(on: boolean): Promise<EnvStatus>;
     };

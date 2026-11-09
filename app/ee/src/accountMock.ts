@@ -1,12 +1,48 @@
-import type { AccountState, Member, MemberInvite, Result, Role } from '../../src/quorum';
+import type { AccountState, Member, MemberInvite, Result, Role, WorkspaceConnector, WorkspaceVoice } from '../../src/quorum';
 
 export type AccountApi = Pick<Window['quorum'], 'accountStatus' | 'accountSendCode' | 'accountVerifyCode' | 'accountSignOut' | 'orgCreate' | 'orgJoin' | 'orgSwitch' | 'membersList' | 'memberInvite' | 'memberRemove' | 'inviteRevoke' | 'syncSet' | 'syncNow' | 'onAccount'>;
+export type ConnectorsApi = Pick<Window['quorum'], 'connectorsList' | 'connectorSet' | 'connectorRemove' | 'connectorTest'>;
+export type VoiceApi = Pick<Window['quorum'], 'workspaceUsage' | 'workspaceVoiceGet' | 'workspaceVoiceSet'>;
+
+// organization voice: no usage yet (the relay is not written), overrides kept in memory
+let voiceMock: VoiceApi | null = null;
+export function voiceApi(): VoiceApi {
+  if ((window.quorum as Partial<Window['quorum']>).workspaceVoiceGet) return window.quorum;
+  if (voiceMock) return voiceMock;
+  let voice: WorkspaceVoice = {};
+  return (voiceMock = {
+    workspaceUsage: async () => ({ usage: { period: iso(0), hours: 0, managedHours: 0, seats: [] } }),
+    workspaceVoiceGet: async () => ({ voice }),
+    workspaceVoiceSet: async (v) => { voice = { ...v }; return { voice }; },
+  });
+}
 
 // preload's bridge object cannot be patched, so the UI asks here: the real API when preload exposes accountStatus, a dev stand-in otherwise
 let mock: AccountApi | null = null;
 export function accountApi(): AccountApi {
   if ((window.quorum as Partial<Window['quorum']>).accountStatus) return window.quorum;
   return (mock ??= makeMock());
+}
+
+// the same stand-in for workspace connectors: an in-memory list, every key accepted
+let connectorsMock: ConnectorsApi | null = null;
+export function connectorsApi(): ConnectorsApi {
+  if ((window.quorum as Partial<Window['quorum']>).connectorsList) return window.quorum;
+  if (connectorsMock) return connectorsMock;
+  let list: WorkspaceConnector[] = [];
+  return (connectorsMock = {
+    connectorsList: async () => ({ connectors: list }),
+    connectorSet: async (d) => {
+      await delay(300);
+      const now = iso(0);
+      const at = list.findIndex((c) => c.provider === d.provider && c.label.toLowerCase() === d.label.toLowerCase());
+      const c: WorkspaceConnector = { id: at >= 0 ? list[at].id : `con_${Date.now()}`, workspaceId: 'ws_1', provider: d.provider, label: d.label, baseUrl: d.baseUrl, roles: d.roles, createdBy: 'u_me', createdAt: at >= 0 ? list[at].createdAt : now, updatedAt: now };
+      list = at >= 0 ? list.map((x, i) => (i === at ? c : x)) : [...list, c];
+      return { connector: c };
+    },
+    connectorRemove: async (id) => { list = list.filter((c) => c.id !== id); return ok; },
+    connectorTest: async (p) => { await delay(500); return p.secret.trim().length >= 8 ? ok : { error: 'That key looks too short.' }; },
+  });
 }
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
