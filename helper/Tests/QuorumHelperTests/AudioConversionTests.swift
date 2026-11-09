@@ -5,7 +5,7 @@ import XCTest
 
 final class AudioConversionTests: XCTestCase {
     // a 48 kHz stereo tone through ChannelTranscriber's convert step: the .caf it writes has the analyzer's mono format
-    // and a third of the frames, less the tail the converter holds back when nothing flushes it (under 70 ms measured)
+    // and exactly a third of the frames; stop() drains the tail the sample rate converter holds back (15 to 70 ms)
     func testStereo48kBecomesAnalyzerMono() async throws {
         let transcriber = try await requireSpeech()
         let best = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber])
@@ -39,7 +39,6 @@ final class AudioConversionTests: XCTestCase {
         XCTAssertEqual(file.fileFormat.sampleRate, expected.sampleRate)
         XCTAssertEqual(file.processingFormat.channelCount, 1)
         let wanted = Double(perBuffer) * Double(buffers) * expected.sampleRate / 48000
-        XCTAssertLessThanOrEqual(Double(file.length), wanted)
-        XCTAssertGreaterThanOrEqual(Double(file.length), wanted - expected.sampleRate * 0.1, "more than 100 ms short of \(wanted) frames: \(file.length)")
+        XCTAssertEqual(Double(file.length), wanted, "the converter tail did not reach the file at stop")
     }
 }

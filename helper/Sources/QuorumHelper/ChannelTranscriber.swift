@@ -110,6 +110,24 @@ final class ChannelTranscriber {
             return buffer
         }
         if let err { Emit.error("\(channel) convert: \(err.localizedDescription)"); return }
+        deliver(out)
+    }
+
+    // the sample rate converter holds back a tail of input until it sees end of stream; one last convert call returns it
+    private func drain() {
+        guard let converter, let fmt = format else { return }
+        self.converter = nil
+        guard let out = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: 8192) else { return }
+        var err: NSError?
+        converter.convert(to: out, error: &err) { _, status in
+            status.pointee = .endOfStream
+            return nil
+        }
+        if let err { Emit.error("\(channel) drain: \(err.localizedDescription)"); return }
+        deliver(out)
+    }
+
+    private func deliver(_ out: AVAudioPCMBuffer) {
         guard out.frameLength > 0 else { return }
         try? file?.write(from: out)
         if streaming {
@@ -122,7 +140,9 @@ final class ChannelTranscriber {
     }
 
     func stop() async {
-        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in queue.async { c.resume() } }
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            queue.async { [weak self] in self?.drain(); c.resume() }
+        }
         streaming = false
         continuation?.finish()
         continuation = nil
