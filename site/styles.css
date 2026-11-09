@@ -348,6 +348,7 @@ ul { margin: 0; padding: 0; list-style: none; }
   white-space: nowrap;
 }
 .provider svg { width: 20px; height: 20px; flex: none; display: block; color: var(--text); }
+#models .note { margin-top: 64px; text-align: left; }
 #models .note .pill { margin-right: 8px; vertical-align: 1px; }
 
 /* Pricing */
