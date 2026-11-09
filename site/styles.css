@@ -183,7 +183,8 @@ ul { margin: 0; padding: 0; list-style: none; }
 
 /* Enterprise wash: black and dark grey with a slow starfield. Each layer is
    a tiled set of single-pixel radial dots; the two layers drift at different
-   speeds. The tile edges repeat, so drifting on background-position is seamless. */
+   speeds, down and to the right with the shooting stars. Each drift moves a whole
+   number of tiles (2 across, 1 down), so the loop is seamless. */
 .glow-dark {
   opacity: 1;
   background: linear-gradient(180deg, #0d0d0e 0%, #141415 55%, #0a0a0b 100%);
@@ -201,7 +202,7 @@ ul { margin: 0; padding: 0; list-style: none; }
     radial-gradient(1px 1px at 40px 170px, rgba(255, 255, 255, 0.3), transparent 100%),
     radial-gradient(1px 1px at 190px 30px, rgba(255, 255, 255, 0.4), transparent 100%);
   background-size: 220px 220px;
-  animation: stars-a 60s linear infinite;
+  animation: stars-a 28s linear infinite;
 }
 .glow-dark::after {
   background:
@@ -210,10 +211,10 @@ ul { margin: 0; padding: 0; list-style: none; }
     radial-gradient(1px 1px at 20px 70px, rgba(255, 255, 255, 0.18), transparent 100%),
     radial-gradient(1.5px 1.5px at 110px 150px, rgba(255, 255, 255, 0.22), transparent 100%);
   background-size: 160px 160px;
-  animation: stars-b 95s linear infinite;
+  animation: stars-b 44s linear infinite;
 }
-@keyframes stars-a { to { background-position: 220px -220px; } }
-@keyframes stars-b { to { background-position: -160px -160px; } }
+@keyframes stars-a { to { background-position: 440px 220px; } }
+@keyframes stars-b { to { background-position: 320px 160px; } }
 /* Shooting stars: a short streak, head bright and tail fading, crossing down and to the right.
    Each runs on its own cycle and is visible for under a second of it. */
 .shoot {
