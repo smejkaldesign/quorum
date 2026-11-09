@@ -895,6 +895,7 @@ function MeetingsPage({ settings, onSettings }: { settings: Settings; onSettings
       <p className="mcp-lede">How Quorum turns call audio into text.</p>
       <div className="set-card even">
         <Row icon={<IconKeyboard width={18} height={18} />} title="Show words as they're heard" desc="Unconfirmed words appear dimmed"><Toggle on={t.live ?? true} onChange={(on) => saveTx({ live: on })} /></Row>
+        <Row icon={<Wave live={false} />} title="Transcript refs in saved notes" desc="Each bullet gets a footnote with the transcript turn behind it"><Toggle on={settings.notes?.refs ?? false} onChange={async (on) => onSettings(await window.quorum.setSettings({ notes: { refs: on } }))} /></Row>
         <Row icon={<Wave live={false} />} title="Echo handling" desc={ECHO_DESC[t.echo ?? 'auto']}>
           <select className="set-select" value={t.echo ?? 'auto'} onChange={(e) => saveTx({ echo: e.target.value as Transcription['echo'] })}>
             <option value="auto">Automatic</option><option value="filter">Filter repeats</option><option value="aec">Cancel echo</option><option value="off">Off</option>

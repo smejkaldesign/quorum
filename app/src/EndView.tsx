@@ -1,30 +1,35 @@
 import { useEffect, useRef, useState } from 'react';
-import type { MeetingMeta, Notes } from './quorum';
+import type { MeetingMeta, Notes, NotesDraft } from './quorum';
 import mark from '../assets/quorum-mark.png';
 import { Markdown } from './Markdown';
 import { IconArrowUp, IconCalendar, IconClock, IconFolder, IconLogs, IconNotes, IconPeople } from './icons';
 
 type Followup = { q: string; a: string | null };
 
-// Granola-sized end-of-call note: title, meta pills, sectioned notes, follow-up composer
-export type Turn = { channel: 'me' | 'them'; who: string; text: string };
+// Granola-sized end-of-call note: title, meta pills, sectioned notes, follow-up composer. While the notes stream in,
+// whatever already parses is shown; a bullet with refs points back at the transcript turns it came from
+export type Turn = { id: number; channel: 'me' | 'them'; who: string; text: string };
 
-export function EndView({ notes, meta, summarizing, transcript, onClose }: { notes: Notes | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; onClose: () => void }) {
+export function EndView({ notes, draft, meta, summarizing, transcript, onClose }: { notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; onClose: () => void }) {
   const [showing, setShowing] = useState<'summary' | 'transcript'>('summary');
-  const [kept, setKept] = useState<Record<number, boolean>>({});
+  const [dropped, setDropped] = useState<Record<number, boolean>>({});
   const [followups, setFollowups] = useState<Followup[]>([]);
-  const [draft, setDraft] = useState('');
+  const [draftQ, setDraftQ] = useState('');
   const [saved, setSaved] = useState<{ file: string; rel: string; app: string } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [hot, setHot] = useState<number[]>([]);
   const end = useRef<HTMLDivElement>(null);
+  const streaming = summarizing && !notes;
+  const shown = notes ?? draft?.partial ?? null;
 
-  useEffect(() => { if (notes) setKept(Object.fromEntries(notes.nextSteps.map((_, i) => [i, true]))); }, [notes]);
   useEffect(() => { end.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }); }, [followups]);
+  // a click on a bullet opens the transcript on its first turn
+  useEffect(() => { if (showing === 'transcript' && hot.length) document.getElementById(`turn-${hot[0]}`)?.scrollIntoView({ block: 'center' }); }, [showing, hot]);
 
   async function ask() {
-    const q = draft.trim();
+    const q = draftQ.trim();
     if (!q) return;
-    setDraft('');
+    setDraftQ('');
     setFollowups((f) => [...f, { q, a: null }]);
     let a: string;
     try { a = (await window.quorum.ask(q)).text; } catch (err) { a = `Couldn't answer: ${String(err).replace(/^Error:\s*/, '')}`; }
@@ -36,12 +41,16 @@ export function EndView({ notes, meta, summarizing, transcript, onClose }: { not
     setSaving(true);
     try {
       const r = await window.quorum.saveNotes({
-        notes: { ...notes, nextSteps: notes.nextSteps.filter((_, i) => kept[i]) },
+        notes: { ...notes, actions: notes.actions.filter((_, i) => !dropped[i]) },
         followups: followups.filter((f): f is { q: string; a: string } => !!f.a),
       });
       setSaved(r);
     } finally { setSaving(false); }
   }
+
+  const turnById = new Map(transcript.map((t) => [t.id, t]));
+  const tipFor = (refs: number[]) => { const t = refs.map((id) => turnById.get(id)).find(Boolean); return t ? `${t.who}: ${t.text.length > 180 ? `${t.text.slice(0, 180)}…` : t.text}` : undefined; };
+  const refProps = (refs: number[]) => (refs?.length ? { className: 'ref', 'data-tip': tipFor(refs), 'data-tip-pos': 'top', onMouseEnter: () => setHot(refs), onMouseLeave: () => setHot([]), onClick: () => { if (refs.some((id) => turnById.has(id))) { setHot(refs); setShowing('transcript'); } } } : {});
 
   const started = meta?.startedAt ? new Date(meta.startedAt) : null;
   const when = started ? (started.toDateString() === new Date().toDateString() ? 'Today' : started.toLocaleDateString()) : 'Today';
@@ -62,7 +71,7 @@ export function EndView({ notes, meta, summarizing, transcript, onClose }: { not
         </div>
       </header>
 
-      {summarizing || !notes ? (
+      {!shown && !draft?.text ? (
         <div className="end-loading">
           <span className="spinner big" />
           <p>Summarizing call…</p>
@@ -70,7 +79,7 @@ export function EndView({ notes, meta, summarizing, transcript, onClose }: { not
       ) : (
         <div className="end-scroll">
           <article className="doc">
-            <h1>{notes.title}</h1>
+            <h1>{shown?.title || meta?.title || 'Untitled meeting'}</h1>
             <div className="meta-row">
               <span className="meta-pill"><IconCalendar width={16} height={16} />{when}{started ? ` · ${started.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}</span>
               {meta && meta.minutes > 0 && <span className="meta-pill"><IconClock width={16} height={16} />{meta.minutes} min</span>}
@@ -84,32 +93,46 @@ export function EndView({ notes, meta, summarizing, transcript, onClose }: { not
 
             {showing === 'transcript' ? (
               <section className="transcript end-transcript">
-                {transcript.length ? transcript.map((t, i) => <p key={i} className={t.channel}><span>{t.who}</span><div>{t.text}</div></p>) : <p className="muted">Nothing was transcribed.</p>}
+                {transcript.length ? transcript.map((t, i) => <p key={i} id={`turn-${t.id}`} className={`${t.channel}${hot.includes(t.id) ? ' hot' : ''}`}><span>{t.who}</span><div>{t.text}</div></p>) : <p className="muted">Nothing was transcribed.</p>}
               </section>
-            ) : <>
-            {notes.empty && <p className="muted">Nothing was transcribed in this call.</p>}
-            {notes.sections.map((sec, i) => (
+            ) : !shown ? <p className="raw">{draft?.text}</p> : <>
+            {shown.empty && <p className="muted">Nothing was transcribed in this call.</p>}
+            {shown.summary && <p className="summary">{shown.summary}</p>}
+            {shown.sections.map((sec, i) => (
               <section key={i} className="doc-section">
                 <h2><span className="hash">#</span>{sec.heading}</h2>
                 <ul>
                   {sec.bullets.map((b, j) => (
-                    <li key={j}>{b.text}{b.sub?.length > 0 && <ul>{b.sub.map((s, k) => <li key={k}>{s}</li>)}</ul>}</li>
+                    <li key={j} {...refProps(b.refs)}>{b.text}{b.sub?.length > 0 && <ul>{b.sub.map((s, k) => <li key={k}>{s}</li>)}</ul>}</li>
                   ))}
                 </ul>
               </section>
             ))}
-            {notes.nextSteps.length > 0 && (
+            {shown.decisions.length > 0 && (
               <section className="doc-section">
-                <h2><span className="hash">#</span>Next steps</h2>
-                {notes.nextSteps.map((n, i) => (
-                  <label key={i} className="item">
-                    <input type="checkbox" checked={!!kept[i]} onChange={(e) => setKept((k) => ({ ...k, [i]: e.target.checked }))} />
-                    <span>{n.title}<em> · {n.owner ?? 'no owner'}</em></span>
-                  </label>
-                ))}
-                <p className="hint left">Unchecked items are left out of the saved note.</p>
+                <h2><span className="hash">#</span>Decisions</h2>
+                <ul>{shown.decisions.map((d, i) => <li key={i} {...refProps(d.refs)}>{d.text}{d.status !== 'confirmed' && <em className="status"> · not agreed</em>}</li>)}</ul>
               </section>
             )}
+            {shown.actions.length > 0 && (
+              <section className="doc-section">
+                <h2><span className="hash">#</span>Action items</h2>
+                {shown.actions.map((a, i) => (
+                  <label key={i} className="item" {...refProps(a.refs)}>
+                    <input type="checkbox" checked={!dropped[i]} disabled={!notes} onChange={(e) => setDropped((d) => ({ ...d, [i]: !e.target.checked }))} />
+                    <span>{a.task}<em> · {a.owner ?? 'no owner'}{a.due ? ` · due ${a.due}` : ''}{!a.owner || !a.due ? ' · not agreed' : ''}</em></span>
+                  </label>
+                ))}
+                {notes && <p className="hint left">Unchecked items are left out of the saved note.</p>}
+              </section>
+            )}
+            {shown.questions.length > 0 && (
+              <section className="doc-section">
+                <h2><span className="hash">#</span>Open questions</h2>
+                <ul>{shown.questions.map((q, i) => <li key={i} {...refProps(q.refs)}>{q.text}</li>)}</ul>
+              </section>
+            )}
+            {streaming && <p className="muted writing"><span className="spinner tiny" /> Writing notes…</p>}
             </>}
 
             {followups.length > 0 && (
@@ -133,8 +156,8 @@ export function EndView({ notes, meta, summarizing, transcript, onClose }: { not
 
       <div className="end-composer-wrap">
         <form className="end-composer" onSubmit={(e) => { e.preventDefault(); ask(); }}>
-          <input value={draft} placeholder="Any follow-ups?" disabled={!notes || summarizing} onChange={(e) => setDraft(e.target.value)} />
-          <button type="submit" className="send" aria-label="Ask" disabled={!draft.trim()}><IconArrowUp /></button>
+          <input value={draftQ} placeholder="Any follow-ups?" disabled={!notes || summarizing} onChange={(e) => setDraftQ(e.target.value)} />
+          <button type="submit" className="send" aria-label="Ask" disabled={!draftQ.trim()}><IconArrowUp /></button>
         </form>
         <p className="disclaimer">Quorum uses AI and can make mistakes.</p>
       </div>
