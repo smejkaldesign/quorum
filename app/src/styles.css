@@ -1105,6 +1105,11 @@ h3 .soon, .set-zero strong .soon { font-size: 11px; margin-left: 8px; vertical-a
 
 /* Settings › Admin › Platform: the platform owner's table of workspaces, one drawer open at a time */
 .set-card.plat { padding: 4px 8px; }
+.queue-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+.queue-row:not(:last-child) { border-bottom: 1px solid var(--container-border); }
+.queue-row > svg { flex: none; color: var(--muted); }
+.queue-row .set-text { flex: 1; min-width: 0; }
+.queue-actions { display: inline-flex; gap: 8px; }
 .set-stepper { display: inline-flex; align-items: center; gap: 10px; }
 .set-stepper strong { font-weight: 500; font-size: 14px; min-width: 64px; text-align: center; }
 /* access codes on the Platform page */

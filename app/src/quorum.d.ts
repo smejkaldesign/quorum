@@ -92,6 +92,9 @@ export type Plan = 'free' | 'cloud' | 'internal' | 'paid';
 export type PlatformWorkspace = { id: string; name: string; domain: string | null; plan: Plan; seatsIncluded: number; notes: string | null; members: number; createdAt: string; lastActivity: string | null };
 export type PlanDraft = { plan: Plan; seatsIncluded: number; notes: string };
 // what the workspace pays for (workspace_billing): the plan is the switch, seats and packs set the managed hours
+// the company knowledge review queue (migration 0012): what admins see waiting, and what a member shared
+export type QueueItem = { id: string; noteId: string; path: string; title: string; authorEmail: string | null; authorName: string | null; createdAt: string; updatedAt: string | null };
+export type ContributionMine = { noteId: string; path: string; status: 'pending' | 'included' | 'declined'; reviewedAt: string | null; createdAt: string };
 export type Billing = { plan: Plan; seats: number; seatsIncluded: number; hourPacks: number; members: number; status: string | null; periodEnd: string | null; subscribed: boolean };
 // an access code the platform owner issued for one email; Cloud sign-up needs one (migration 0009)
 export type AccessCodeStatus = 'open' | 'claimed' | 'redeemed' | 'revoked' | 'expired';
@@ -281,6 +284,10 @@ declare global {
       platformMembers(workspaceId: string): Promise<{ members?: Member[]; error?: string }>;
       platformUsage(workspaceId: string): Promise<{ usage?: PlatformUsage; error?: string }>;
       platformSetPlan(workspaceId: string, draft: PlanDraft): Promise<{ plan?: { plan: Plan; seatsIncluded: number; notes: string | null }; error?: string }>;
+      knowledgeStatus(): Promise<Result & { autoInclude?: boolean; mine?: ContributionMine[] }>;
+      knowledgeQueue(): Promise<Result & { queue?: QueueItem[] }>;
+      knowledgeReview(id: string, decision: 'include' | 'decline'): Promise<Result & { status?: string }>;
+      knowledgeAutoIncludeSet(on: boolean): Promise<Result & { autoInclude?: boolean }>;
       billingStatus(): Promise<Result & { billing?: Billing }>;
       billingCheckout(seats?: number): Promise<Result>;
       billingPortal(): Promise<Result>;

@@ -1,8 +1,23 @@
-import type { AccessCode, AccountState, Billing, Member, MemberInvite, PlatformWorkspace, Result, Role, WorkspaceConnector, WorkspaceVoice } from '../../src/quorum';
+import type { AccessCode, AccountState, Billing, ContributionMine, Member, MemberInvite, PlatformWorkspace, Result, Role, WorkspaceConnector, WorkspaceVoice } from '../../src/quorum';
 
 export type AccountApi = Pick<Window['quorum'], 'accountStatus' | 'accountSendCode' | 'accountVerifyCode' | 'accountSignOut' | 'orgCreate' | 'orgJoin' | 'orgSwitch' | 'membersList' | 'memberInvite' | 'memberRemove' | 'inviteRevoke' | 'syncSet' | 'syncNow' | 'onAccount'>;
 export type ConnectorsApi = Pick<Window['quorum'], 'connectorsList' | 'connectorSet' | 'connectorRemove' | 'connectorTest'>;
 export type VoiceApi = Pick<Window['quorum'], 'workspaceUsage' | 'workspaceVoiceGet' | 'workspaceVoiceSet'>;
+export type KnowledgeApi = Pick<Window['quorum'], 'knowledgeStatus' | 'knowledgeQueue' | 'knowledgeReview' | 'knowledgeAutoIncludeSet'>;
+let knowledgeMock: KnowledgeApi | null = null;
+export function knowledgeApi(): KnowledgeApi {
+  if ((window.quorum as Partial<Window['quorum']>).knowledgeQueue) return window.quorum;
+  if (knowledgeMock) return knowledgeMock;
+  let auto = false;
+  let queue = [{ id: 'q1', noteId: 'n1', path: '08-meetings/quorum/2026-11-08 Roadmap review.md', title: 'Roadmap review', authorEmail: 'dana@example.com', authorName: 'Dana Whitfield', createdAt: iso(-DAY), updatedAt: iso(-DAY) }];
+  const mine: ContributionMine[] = [{ noteId: 'n2', path: '05-knowledge/onboarding.md', status: 'included', reviewedAt: iso(-3 * DAY), createdAt: iso(-4 * DAY) }];
+  return (knowledgeMock = {
+    knowledgeStatus: async () => ({ autoInclude: auto, mine }),
+    knowledgeQueue: async () => ({ queue }),
+    knowledgeReview: async (id, decision) => { await delay(200); queue = queue.filter((q) => q.id !== id); return { status: decision === 'include' ? 'included' : 'declined' }; },
+    knowledgeAutoIncludeSet: async (on) => { auto = on; return { autoInclude: on }; },
+  });
+}
 export type BillingApi = Pick<Window['quorum'], 'billingStatus' | 'billingCheckout' | 'billingPortal' | 'billingPacks'>;
 // billing: a subscribed workspace with one pack, kept in memory; Stripe pages are not opened in the mock
 let billingMock: BillingApi | null = null;

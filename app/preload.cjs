@@ -159,6 +159,11 @@ contextBridge.exposeInMainWorld('quorum', {
   platformUsage: (workspaceId) => ipcRenderer.invoke('platform-usage', workspaceId),
   platformSetPlan: (workspaceId, draft) => ipcRenderer.invoke('platform-set-plan', workspaceId, draft),
   // billing (hosted edition; handlers in ee/billing.js): the plan and seats, and Stripe's pages opened in the browser
+  // company knowledge review queue (hosted edition; handlers in ee/knowledge.js)
+  knowledgeStatus: () => ipcRenderer.invoke('knowledge-status'),
+  knowledgeQueue: () => ipcRenderer.invoke('knowledge-queue'),
+  knowledgeReview: (id, decision) => ipcRenderer.invoke('knowledge-review', id, decision),
+  knowledgeAutoIncludeSet: (on) => ipcRenderer.invoke('knowledge-auto-include-set', on),
   billingStatus: () => ipcRenderer.invoke('billing-status'),
   billingCheckout: (seats) => ipcRenderer.invoke('billing-checkout', seats),
   billingPortal: () => ipcRenderer.invoke('billing-portal'),

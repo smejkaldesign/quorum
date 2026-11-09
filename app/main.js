@@ -1459,6 +1459,7 @@ const account = EDITION === 'cloud'
 if (EDITION === 'cloud') (await loadEE('connectors.js')).registerConnectors({ ipcMain, account, log });
 // the platform owner's page (Settings › Admin › Platform): owner-only RPCs on the same client
 if (EDITION === 'cloud') (await loadEE('platform.js')).registerPlatform({ ipcMain, account, log });
+if (EDITION === 'cloud') (await loadEE('knowledge.js')).registerKnowledge({ ipcMain, account, log });
 if (EDITION === 'cloud') (await loadEE('billing.js')).registerBilling({ ipcMain, account, log, openExternal: (u) => shell.openExternal(u) });
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);
 ipcMain.handle('vault-search', (_e, q, limit) => vindex?.search(String(q), Math.min(Number(limit) || 30, 1000)) ?? []);

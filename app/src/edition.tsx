@@ -12,6 +12,7 @@ const CloudConnectors = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../e
 const CloudVoice = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/WorkspaceVoice').then((m) => ({ default: m.WorkspaceVoicePage }))) : null;
 const CloudPlatform = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/Platform').then((m) => ({ default: m.PlatformPage }))) : null;
 const CloudBilling = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/Billing').then((m) => ({ default: m.BillingPage }))) : null;
+const CloudKnowledge = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/Knowledge').then((m) => ({ default: m.KnowledgePage }))) : null;
 
 // whether this build can reach a hosted account at runtime: the cloud edition without QUORUM_SUPABASE_URL and the anon key
 // reports configured: false from account-status. Local is always false; null while the cloud answer is on its way
@@ -56,6 +57,8 @@ function CloudPage({ Page, local }: { Page: ReturnType<typeof lazy> | null; loca
 
 // Settings › Admin › General: the plan, seats and hour packs; the Local edition has nothing to bill
 export const BillingArea = () => <CloudPage Page={CloudBilling} local={null} />;
+// Settings › Knowledge: the review queue and what each member shared; the Local edition shows its own zero state
+export const KnowledgeQueueArea = ({ local }: { local: ReactNode }) => <CloudPage Page={CloudKnowledge} local={local} />;
 // Settings › Admin › Connectors: organization providers an admin manages for everyone
 export const WorkspaceConnectorsArea = ({ local }: { local: ReactNode }) => <CloudPage Page={CloudConnectors} local={local} />;
 // Settings › Admin › Voice typing: the managed pipeline, its usage, and which connector handles each step

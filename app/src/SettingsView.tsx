@@ -4,7 +4,7 @@ import { PersonalConnectors } from './Connectors';
 import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
-import { AccountArea, BillingArea, EDITION, MembersArea, PlatformArea, WorkspaceConnectorsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
+import { AccountArea, BillingArea, EDITION, KnowledgeQueueArea, MembersArea, PlatformArea, WorkspaceConnectorsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { canAdmin, modeOf, resolvePage, workspacePages, type Page } from './settingsNav';
 import { EnvSwitch } from './EnvSwitch';
 import {
@@ -563,23 +563,14 @@ function KnowledgePage() {
         <button className="pill" disabled>Connect to company knowledge source</button>
       </div>
 
-      <h3>Shared with your team</h3>
-      <div className="set-card">
-        <Row icon={<IconStack width={18} height={18} />} title={<>Team vault<Soon /></>} desc="Will share the notes you approve with your team's agents" />
-      </div>
-
-      <div className="set-head">
-        <h3>Power-ups<Soon /></h3>
-        <span className="set-head-actions">
-          <button className="pill small-pill with-icon" disabled><IconPlus width={15} height={15} />Add</button>
-          <button className="pill small-pill with-icon" disabled><IconReset width={15} height={15} />Refresh</button>
-        </span>
-      </div>
-      <div className="set-card set-zero">
-        <span className="set-zero-icon"><IconStack width={22} height={22} /></span>
-        <strong>Nothing to review yet</strong>
-        <p>Admins will review what Quorum finds once a source is connected.</p>
-      </div>
+      <KnowledgeQueueArea local={(
+        <>
+          <h3>Shared with your team</h3>
+          <div className="set-card">
+            <Row icon={<IconStack width={18} height={18} />} title={<>Team vault<Soon /></>} desc="A Quorum Cloud workspace shares the notes you mark public with your team, after an admin includes them" />
+          </div>
+        </>
+      )} />
 
       <h3>Who controls it</h3>
       <div className="set-card">
