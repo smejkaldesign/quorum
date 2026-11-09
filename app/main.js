@@ -54,8 +54,8 @@ function macUserName() {
   } catch {}
   return login;
 }
-const USER_NAME = (settings.userName || '').trim() || macUserName();
-const OWNER = USER_NAME.split(/\s+/)[0];
+let USER_NAME = (settings.userName || '').trim() || macUserName();
+let OWNER = USER_NAME.split(/\s+/)[0];
 // every IPC handler is also kept here, so a Terminal command runs the same code as the button in the app
 const handlers = {};
 const ipcHandle = ipcMain.handle.bind(ipcMain);
@@ -861,6 +861,14 @@ ipcMain.handle('copy', (_e, text) => clipboard.writeText(String(text)));
 ipcMain.handle('quit', () => app.quit());
 ipcMain.handle('get-settings', () => settings);
 ipcMain.handle('set-settings', (_e, next) => {
+  // the name Quorum uses for the recorder line and to tell the user's own voice apart; takes effect at once
+  if (typeof next.userName === 'string') {
+    settings.userName = next.userName.trim().slice(0, 80);
+    USER_NAME = settings.userName || macUserName();
+    OWNER = USER_NAME.split(/\s+/)[0];
+    store.settings.save();
+    toUI('settings', settings);
+  }
   if (['opus', 'sonnet', 'haiku'].includes(next.model)) {
     settings.model = next.model;
     store.settings.save();
