@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import updater from 'electron-updater';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // the packaged app carries its own audio helper; in development it comes straight from the Swift build
@@ -1704,6 +1705,15 @@ let stopControl = null;
 app.on('will-quit', () => { meeting.capturing = false; writeState(); stopControl?.(); });
 app.whenReady().then(() => {
   if (!app.hasSingleInstanceLock()) return;
+  // installed builds check GitHub Releases for a newer signed build on launch and every six hours; a miss is only logged
+  if (app.isPackaged) {
+    const { autoUpdater } = updater;
+    autoUpdater.logger = { info: () => {}, warn: () => {}, error: (e) => log('updater', String(e?.message ?? e)), debug: () => {} };
+    autoUpdater.on('update-downloaded', (info) => log('updater: downloaded', info?.version));
+    const check = () => autoUpdater.checkForUpdatesAndNotify().catch((e) => log('updater', String(e?.message ?? e)));
+    setTimeout(check, 15000);
+    setInterval(check, 6 * 3600 * 1000);
+  }
   store.attachments.clear();
   store.meetings.ensureRoot();
   writeState();

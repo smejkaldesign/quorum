@@ -29,7 +29,8 @@
     "vite": "^8.3.6"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.119.0"
+    "@supabase/supabase-js": "^2.119.0",
+    "electron-updater": "^6.8.11"
   },
   "productName": "Quorum",
   "description": "Meetings and your second brain, on your Mac",
@@ -58,7 +59,8 @@
       "guards/**",
       "dist/**",
       "assets/**",
-      "package.json"
+      "package.json",
+      "build/**"
     ],
     "extraResources": [
       {
@@ -77,8 +79,11 @@
       ],
       "icon": "assets/icon.icns",
       "category": "public.app-category.productivity",
-      "identity": null,
-      "hardenedRuntime": false,
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true,
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Quorum transcribes your side of a meeting on this Mac.",
         "NSAudioCaptureUsageDescription": "Quorum transcribes the other people in a meeting on this Mac.",
@@ -108,6 +113,11 @@
       "iconSize": 96
     },
     "afterPack": "./after-pack.cjs",
+    "publish": {
+      "provider": "github",
+      "owner": "smejkaldesign",
+      "repo": "quorum"
+    },
     "asarUnpack": []
   },
   "author": "Smejkal Design"

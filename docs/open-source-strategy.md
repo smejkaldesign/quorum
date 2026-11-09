@@ -10,7 +10,7 @@ The open-source edition costs Smejkal Design $0 to operate. Every feature in it 
 
 | | Local (open source) | Cloud (paid) | Team (later tier, same code path as Cloud) |
 |---|---|---|---|
-| Price | Free, Apache-2.0 | One paid plan for v1: $9 per seat per month | Not a tier in v1; Cloud gets team features first, the line moves when demand shows |
+| Price | Free, Apache-2.0 | One paid plan for v1: $5 per seat per month | Not a tier in v1; Cloud gets team features first, the line moves when demand shows |
 | Meetings: capture, on-device transcription, Zoom/Meet/Teams detection, STOP/GO chat notice, end-of-call notes | Yes | Yes | Yes |
 | Agent OS: connect an existing notes folder (Obsidian vault, repo with CLAUDE.md), knowledge graph, search, read guard | Yes | Yes | Yes |
 | Model access | User's own Claude Code sign-in; bring your own API key (Anthropic, OpenAI, local Ollama); default is none | Same, plus hosted model access as a later option | Same |
@@ -52,7 +52,7 @@ The open-source edition costs Smejkal Design $0 to operate. Every feature in it 
 ## Decisions (Eric, 2026-11-08)
 
 1. One paid tier for v1. Team tier planned later; members and invites ship inside Cloud, watch seat counts.
-2. Price: $9 per seat per month.
+2. Price: $5 per seat per month (revised from $9 the same day).
 3. Dead Settings rows stay visible as a to-do map until the features ship.
 4. Hosted model access in Cloud: not in the first release. BYOK only; revisit when support load shows people stuck on keys.
 
