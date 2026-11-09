@@ -194,7 +194,7 @@ function OrgCard({ account }: { account: AccountState }) {
     }
   };
   const error = err || account.syncError;
-  const last = account.lastSyncAt ? `Last synced ${ago(account.lastSyncAt)}` : 'Not synced yet';
+  const last = `${account.lastSyncAt ? `Last synced ${ago(account.lastSyncAt)}` : 'Not synced yet'}${account.sync ? (account.live ? ' · Live' : ' · Polling') : ''}`;
   const desc = !account.sync ? 'Off. Notes and meetings stay on this Mac; nothing is pulled from the workspace'
     : <>{error ? <em className="acct-err">{error}</em> : msg ? <em className="acct-ok">{msg}</em> : null}{(error || msg) && ' · '}{last}</>;
   return (

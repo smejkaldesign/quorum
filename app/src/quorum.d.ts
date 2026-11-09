@@ -46,6 +46,7 @@ export type Role = 'owner' | 'admin' | 'member';
 export type AccountWorkspace = { id: string; name: string; domain: string | null; domainJoin: boolean; role: Role };
 export type AccountInvite = { inviteId: string; workspaceId: string; workspaceName: string; role: Role; invitedByEmail: string | null; expiresAt: string };
 export type AccountState = {
+  live?: boolean;
   // false when the build has no Supabase URL and anon key, so there is no hosted account to sign in to
   configured?: boolean;
   signedIn: boolean; email: string | null; userId: string | null;
