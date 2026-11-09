@@ -1028,3 +1028,14 @@ h3 .soon, .set-zero strong .soon { font-size: 11px; margin-left: 8px; vertical-a
 .transcript p .speaker-menu .menu-info span { font-size: 13px; color: var(--muted); }
 .speaker-menu input { width: 100%; box-sizing: border-box; margin: 2px 0; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line-2); background: rgba(255, 255, 255, 0.04); color: var(--text); font: inherit; font-size: 14px; outline: none; }
 .speaker-menu input:focus { border-color: rgba(255, 255, 255, 0.3); }
+
+/* Settings › Connectors: the key form under a provider row */
+.conn-extra { padding-bottom: 16px; }
+.conn-form { display: flex; flex-direction: column; gap: 10px; }
+.conn-form .set-field.wide { max-width: 520px; }
+.conn-form-actions { display: flex; align-items: center; gap: 8px; }
+.conn-links { margin-left: auto; display: inline-flex; gap: 4px; }
+.conn-form .set-ok, .conn-form .set-error { margin: 0; }
+.conn-form .conn-note { margin: 0; }
+.conn-extra > .set-ok { display: inline-flex; align-items: center; gap: 6px; margin: 0; }
+.conn-extra > .set-error { margin: 0; }

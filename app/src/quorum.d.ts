@@ -44,9 +44,14 @@ export type Transcription = { echo?: 'auto' | 'off' | 'filter' | 'aec'; gap?: nu
 // where the model runs: none until chosen; claude-code is the only source with tools, so the only one that reads the Agent OS
 export type ModelSource = 'none' | 'claude-code' | 'anthropic-api' | 'local';
 export type ClaudeStatus = { installed: boolean; loggedIn: boolean; email: string; org: string; plan: string; method: string; version: string };
-export type ModelSourceStatus = { source: ModelSource; localModel: string; claude: ClaudeStatus | null; key: boolean; ollama: { reachable: boolean; hasModel: boolean } };
+// every provider in connectors/catalog.js; ConnectorProvider below is the subset a key connects (the hosted Admin list)
+export type ConnectorId = ConnectorProvider | 'apple' | 'claude-code' | 'ollama';
+// which provider handles each step; a missing role falls back (Apple for speech, the legacy switch for the model roles)
+export type Providers = Partial<Record<ConnectorRole, ConnectorId>>;
+export type ProviderConnectors = Partial<Record<ConnectorId, { baseUrl?: string; model?: string }>>;
+export type ModelSourceStatus = { source: ModelSource; localModel: string; claude: ClaudeStatus | null; key: boolean; keys: Partial<Record<ConnectorId, boolean>>; ollama: { reachable: boolean; hasModel: boolean }; providers: Providers; connectors: ProviderConnectors };
 // userName is how the main process names the recorder in notes; it falls back to the macOS account's full name, then the login
-export type Settings = { autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean } };
+export type Settings = { autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean } };
 export type OnboardingStatus = { firstRun: boolean; defaultVaultDir: string };
 export type OnboardingChecks = { permissions: { microphone: string; audio: string; accessibility: string; calendar: string }; claude: { installed: boolean; loggedIn?: boolean; email?: string; org?: string; plan?: string; version?: string; pending?: boolean }; model?: ModelSourceStatus | null };
 export type Brain = { root: string; vault: string; name: string; markers: { agentOS: string | null; obsidian: boolean; search: boolean; safetyHooks: boolean } };
@@ -217,6 +222,9 @@ declare global {
       localModelSet(name: string): Promise<Settings>;
       modelKeySet(key: string): Promise<{ ok?: boolean; error?: string }>;
       modelKeyRemove(): Promise<void>;
+      connectorKeySet(id: ConnectorId, key: string, baseUrl?: string): Promise<Result>;
+      connectorKeyRemove(id: ConnectorId): Promise<void>;
+      connectorKeyTest(id: ConnectorId, key?: string, baseUrl?: string): Promise<Result>;
       calendarConnect(): Promise<CalendarSettings>;
       calendarSet(next: { days?: number; enabled?: false; showAll?: boolean; hide?: string; unhideAll?: boolean }): Promise<CalendarSettings>;
       calendarPrivacy(): Promise<void>;
