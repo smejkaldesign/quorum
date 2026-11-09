@@ -50,6 +50,10 @@ function localStackStatus() {
 //  2. production, or a development copy with settings.devUseProduction on: the repo root's .env ('production')
 //  3. development: .env.development when present ('development'), else the local stack ('local')
 // Production never falls back to the local stack: without .env it stays unconfigured.
+function packagedCloudConfig() {
+  try { return JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).quorumCloud ?? null; } catch { return null; }
+}
+
 export function resolveCloudConfig(settings = {}) {
   const env = ENV;
   const useProduction = isDevelopment && settings.devUseProduction === true;
@@ -57,7 +61,10 @@ export function resolveCloudConfig(settings = {}) {
   if (process.env.QUORUM_SUPABASE_URL && process.env.QUORUM_SUPABASE_ANON_KEY) return { ...base, source: 'shell', url: process.env.QUORUM_SUPABASE_URL, key: process.env.QUORUM_SUPABASE_ANON_KEY };
   if (!isDevelopment || useProduction) {
     const prod = readEnvFile(path.join(ROOT, '.env'));
-    return { ...base, source: 'production', url: prod.QUORUM_SUPABASE_URL ?? null, key: prod.QUORUM_SUPABASE_ANON_KEY ?? null };
+    if (prod.QUORUM_SUPABASE_URL && prod.QUORUM_SUPABASE_ANON_KEY) return { ...base, source: 'production', url: prod.QUORUM_SUPABASE_URL, key: prod.QUORUM_SUPABASE_ANON_KEY };
+    // the installed build has no repo file; package:cloud writes the values into the packaged package.json (scripts/package-cloud.mjs)
+    const packaged = packagedCloudConfig();
+    return { ...base, source: 'production', url: packaged?.url ?? null, key: packaged?.anonKey ?? null };
   }
   const dev = readEnvFile(path.join(ROOT, '.env.development'));
   if (dev.QUORUM_SUPABASE_URL && dev.QUORUM_SUPABASE_ANON_KEY) return { ...base, source: 'development', url: dev.QUORUM_SUPABASE_URL, key: dev.QUORUM_SUPABASE_ANON_KEY };

@@ -14,7 +14,7 @@
     "check:edition": "node scripts/check-edition-boundary.mjs",
     "db:local": "cd .. && supabase start; supabase status -o env | grep -E '^(API_URL|STUDIO_URL|INBUCKET_URL|MAILPIT_URL)'",
     "package": "vite build && cd ../helper && swift build -c release && cd ../app && electron-builder --mac",
-    "package:cloud": "QUORUM_EDITION=cloud vite build && cd ../helper && swift build -c release && cd ../app && QUORUM_EDITION=cloud electron-builder --mac -c.extraMetadata.quorumEdition=cloud",
+    "package:cloud": "QUORUM_EDITION=cloud vite build && cd ../helper && swift build -c release && cd ../app && node scripts/package-cloud.mjs",
     "lint": "npm ci --prefix lint --no-audit --no-fund --silent && eslint .",
     "test": "vitest run",
     "check:content": "node scripts/check-founder-content.mjs"
