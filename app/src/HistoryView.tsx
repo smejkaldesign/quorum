@@ -195,7 +195,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat }: { brain: Bra
           <div className="up-head">
             <h4>Up next</h4>
             {(calView.hidden > 0 || calView.showAll) && (
-              <label className="up-toggle"><input type="checkbox" checked={calView.showAll} onChange={(ev) => window.quorum.calendarSet({ showAll: ev.target.checked }).then(loadCal)} />Show events without a call{!calView.showAll && calView.hidden > 0 ? ` (${calView.hidden})` : ''}</label>
+              <label className="up-toggle"><input type="checkbox" checked={calView.showAll} onChange={(ev) => window.quorum.calendarSet({ showAll: ev.target.checked }).then(loadCal)} />Show no meeting{!calView.showAll && calView.hidden > 0 ? ` (${calView.hidden})` : ''}</label>
             )}
           </div>
           {upNext.length === 0 && <p className="up-empty">No calls on a connected platform in the next few days.</p>}
