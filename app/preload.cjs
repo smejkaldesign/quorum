@@ -153,6 +153,11 @@ contextBridge.exposeInMainWorld('quorum', {
   workspaceUsage: () => ipcRenderer.invoke('workspace-usage'),
   workspaceVoiceGet: () => ipcRenderer.invoke('workspace-voice-get'),
   workspaceVoiceSet: (voice) => ipcRenderer.invoke('workspace-voice-set', voice),
+  // the platform owner's page (Settings › Admin › Platform); handlers in ee/platform.js, every one refused without the role
+  platformWorkspaces: () => ipcRenderer.invoke('platform-workspaces'),
+  platformMembers: (workspaceId) => ipcRenderer.invoke('platform-members', workspaceId),
+  platformUsage: (workspaceId) => ipcRenderer.invoke('platform-usage', workspaceId),
+  platformSetPlan: (workspaceId, draft) => ipcRenderer.invoke('platform-set-plan', workspaceId, draft),
   // end account
   // environment (development or production) and which Supabase config the cloud edition is using; never the key
   envStatus: () => ipcRenderer.invoke('env-status'),

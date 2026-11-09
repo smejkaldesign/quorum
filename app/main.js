@@ -1427,6 +1427,8 @@ const account = EDITION === 'cloud'
   : { sync: { pushNote() {}, pushMeetingNote() {}, pullNow() {}, live() {} } };
 // workspace connectors (Settings › Admin › Connectors) ride on the same account and client
 if (EDITION === 'cloud') (await loadEE('connectors.js')).registerConnectors({ ipcMain, account, log });
+// the platform owner's page (Settings › Admin › Platform): owner-only RPCs on the same client
+if (EDITION === 'cloud') (await loadEE('platform.js')).registerPlatform({ ipcMain, account, log });
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);
 ipcMain.handle('vault-search', (_e, q, limit) => vindex?.search(String(q), Math.min(Number(limit) || 30, 1000)) ?? []);
 ipcMain.handle('vault-link-health', () => vindex?.linkHealth() ?? []);

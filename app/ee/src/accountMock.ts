@@ -1,8 +1,30 @@
-import type { AccountState, Member, MemberInvite, Result, Role, WorkspaceConnector, WorkspaceVoice } from '../../src/quorum';
+import type { AccountState, Member, MemberInvite, PlatformWorkspace, Result, Role, WorkspaceConnector, WorkspaceVoice } from '../../src/quorum';
 
 export type AccountApi = Pick<Window['quorum'], 'accountStatus' | 'accountSendCode' | 'accountVerifyCode' | 'accountSignOut' | 'orgCreate' | 'orgJoin' | 'orgSwitch' | 'membersList' | 'memberInvite' | 'memberRemove' | 'inviteRevoke' | 'syncSet' | 'syncNow' | 'onAccount'>;
 export type ConnectorsApi = Pick<Window['quorum'], 'connectorsList' | 'connectorSet' | 'connectorRemove' | 'connectorTest'>;
 export type VoiceApi = Pick<Window['quorum'], 'workspaceUsage' | 'workspaceVoiceGet' | 'workspaceVoiceSet'>;
+export type PlatformApi = Pick<Window['quorum'], 'platformWorkspaces' | 'platformMembers' | 'platformUsage' | 'platformSetPlan'>;
+
+// the platform owner's page: two example workspaces, plans kept in memory
+let platformMock: PlatformApi | null = null;
+export function platformApi(): PlatformApi {
+  if ((window.quorum as Partial<Window['quorum']>).platformWorkspaces) return window.quorum;
+  if (platformMock) return platformMock;
+  let list: PlatformWorkspace[] = [
+    { id: 'ws_1', name: 'Example Co', domain: 'example.com', plan: 'cloud', seatsIncluded: 5, notes: null, members: 3, createdAt: iso(-90 * DAY), lastActivity: iso(-2 * 3600000) },
+    { id: 'ws_acme', name: 'Acme Health', domain: null, plan: 'free', seatsIncluded: 0, notes: 'Trial from the launch list', members: 1, createdAt: iso(-10 * DAY), lastActivity: null },
+  ];
+  return (platformMock = {
+    platformWorkspaces: async () => ({ workspaces: list }),
+    platformMembers: async (id) => ({ members: id === 'ws_1'
+      ? [{ userId: 'u_me', email: 'you@example.com', name: 'Alex Rivera', role: 'owner', joinedAt: iso(-90 * DAY) }, { userId: 'u_2', email: 'dana@example.com', name: 'Dana Whitfield', role: 'admin', joinedAt: iso(-12 * DAY) }, { userId: 'u_3', email: 'sam@example.com', name: null, role: 'member', joinedAt: iso(-2 * DAY) }]
+      : [{ userId: 'u_9', email: 'lee@example.com', name: 'Lee Park', role: 'owner', joinedAt: iso(-10 * DAY) }] }),
+    platformUsage: async (id) => ({ usage: id === 'ws_1'
+      ? { period: iso(0), hours: 6.5, managedHours: 4.25, calls: 9, steps: [{ role: 'notes', calls: 4, hours: 0, managedHours: 0 }, { role: 'speech', calls: 7, hours: 6.5, managedHours: 4.25 }, { role: 'summary', calls: 5, hours: 0, managedHours: 0 }] }
+      : { period: iso(0), hours: 0, managedHours: 0, calls: 0, steps: [] } }),
+    platformSetPlan: async (id, d) => { await delay(300); list = list.map((w) => (w.id === id ? { ...w, plan: d.plan, seatsIncluded: d.seatsIncluded, notes: d.notes || null } : w)); return { plan: { ...d, notes: d.notes || null } }; },
+  });
+}
 
 // organization voice: no usage yet (the relay is not written), overrides kept in memory
 let voiceMock: VoiceApi | null = null;
@@ -50,7 +72,7 @@ const DAY = 86400000;
 const iso = (ms: number) => new Date(Date.now() + ms).toISOString();
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const ok: Result = { ok: true };
-const blank = (): AccountState => ({ signedIn: false, email: null, userId: null, workspace: null, workspaces: [], invites: [], domainMatches: [], sync: false, lastSyncAt: null, syncError: null });
+const blank = (): AccountState => ({ signedIn: false, email: null, userId: null, platformOwner: false, workspace: null, workspaces: [], invites: [], domainMatches: [], sync: false, lastSyncAt: null, syncError: null });
 
 function makeMock(): AccountApi {
   let state = blank();
@@ -78,6 +100,7 @@ function makeMock(): AccountApi {
     signedOut: () => set(blank()),
     noWorkspace: (email = 'you@example.com') => signedIn(email),
     workspace: (email = 'you@example.com') => { signedIn(email); inOrg('Example Co', 'example.com', true, 'owner'); },
+    platformOwner: (email = 'you@example.com') => { signedIn(email); inOrg('Example Co', 'example.com', true, 'owner'); set({ platformOwner: true }); },
   };
   return {
     accountStatus: async () => state,
