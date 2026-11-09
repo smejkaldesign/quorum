@@ -4,6 +4,7 @@
 // Each turn keeps what Apple heard as raw and the cleaned reading as text (clean.js); transcript.json holds both.
 // Pure: no Electron, no timers. main.js owns the state and the settings.
 import { cleanTurn } from './clean.js';
+import { speakerOf } from './speakers.js';
 
 const words = (s) => s.toLowerCase().replace(/[^a-z0-9' ]/g, ' ').split(/\s+/).filter(Boolean);
 
@@ -61,8 +62,12 @@ export function isEcho(turns, piece, partial = '') {
   return mine.filter((w) => theirs.has(w)).length / mine.length >= 0.9;
 }
 
-// one line per turn for a prompt; label is {me, them}
-export const toText = (turns, label) => turns.map((t) => `${label[t.channel] ?? t.channel}: ${t.text}`).join('\n');
+// one line per turn for a prompt; label is {me, them}, and a them turn named by the speaker pass uses its name
+export const toText = (turns, label) => turns.map((t) => `${speakerOf(t, label)}: ${t.text}`).join('\n');
 
-// raw is the verbatim record; text is what the notes and the transcript view show
-export const toJSON = (turns) => turns.map(({ channel, text, raw, start, end, at }) => ({ channel, text, raw: raw ?? text, start, end, at }));
+// raw is the verbatim record; text is what the notes and the transcript view show. speaker, confidence and cluster
+// come from the speaker pass or a correction and are present only on them turns that went through either
+export const toJSON = (turns) => turns.map(({ channel, text, raw, start, end, at, speaker, confidence, cluster, corrected }) => ({
+  channel, text, raw: raw ?? text, start, end, at,
+  ...(speaker !== undefined || cluster ? { speaker: speaker ?? null, confidence: confidence ?? 0, cluster: cluster ?? null, ...(corrected ? { corrected: true } : {}) } : {}),
+}));
