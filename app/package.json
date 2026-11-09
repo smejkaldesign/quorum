@@ -65,6 +65,7 @@
       "json.js",
       "vault.js",
       "vindex.js",
+      "clusters.js",
       "linkparse.js",
       "relink.js",
       "preload.cjs",

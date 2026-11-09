@@ -5,6 +5,7 @@ import { readFileSync, statSync, watch } from 'node:fs';
 import path from 'node:path';
 import { createResolver, parseNote } from './linkparse.js';
 import { graphConfig, noteDate, walk } from './vault.js';
+import { clusterColors } from './clusters.js';
 
 const IGNORED = /(^|\/)(\.git|\.obsidian|\.trash|\.claude|node_modules)(\/|$)/;
 
@@ -110,12 +111,14 @@ export function createVaultIndex({ vault, isExcludedPath, isExcludedText, redact
     const links = [...pairs].map((k) => k.split(':').map(Number));
     const deg = new Array(rels.length + ghostNames.length).fill(0);
     for (const [a, b] of links) { deg[a]++; deg[b]++; }
+    // notes that link among themselves share a color, so a vault reads as clusters the moment it connects
+    const auto = clusterColors([...rels, ...ghostNames.map((g) => `?${g}`)], links, (i) => i >= rels.length);
     return {
       nodes: [
         ...rels.map((rel, i) => ({
           id: rel, name: path.basename(rel, '.md'), deg: deg[i], t: files.get(rel).t,
-          // first matching group wins, same as Obsidian
-          color: groups.find((g) => g.match(rel))?.color ?? null,
+          // first matching group wins, same as Obsidian; otherwise the cluster color
+          color: groups.find((g) => g.match(rel))?.color ?? auto[i],
         })),
         ...ghostNames.map((name, j) => ({ id: `?${name}`, name, deg: deg[rels.length + j], t: 0, color: null, ghost: true })),
       ],
