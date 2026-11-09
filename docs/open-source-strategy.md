@@ -31,7 +31,7 @@ The open-source edition is the same app with the same features. It is never a cr
 | Account, sign-in | None | Email code, Google sign-in | Same |
 | Sync notes and meetings to a workspace, web access | No | Yes | Yes |
 | Starter Agent OS: templates, sync and every-device access for a notes folder Quorum creates or already maintains; the runner executes on the user's Mac with the user's model source | No | Yes | Yes |
-| Team knowledge: shared workspace notes, owner/admin/member roles, invites, domain join, visibility public (workspace members) or private, admin review queue with auto-include toggle, Teams with segmented knowledge and a synthesized Team note | No | Yes, included for now; $5 per seat for every member, Teams included | Yes; moves to Team tier when seats and admin controls justify it |
+| Team knowledge: shared workspace notes, owner/admin/member roles, invites, domain join, visibility public (workspace members) or private, admin review queue with auto-include toggle, Teams with segmented knowledge and a synthesized Team note | No | Yes, included for now; $9 per seat for every member, Teams included | Yes; moves to Team tier when seats and admin controls justify it |
 | Auto-update | GitHub Releases feed, free | Same | Same |
 
 ## What leaves the open-source build
@@ -67,7 +67,7 @@ The open-source edition is the same app with the same features. It is never a cr
 3. Dead Settings rows stay visible as a to-do map until the features ship.
 4. Hosted model access in Cloud stays out of the first release. BYOK only; revisit when support load shows people stuck on keys.
 5. Tokens: Cloud bills no tokens in v1 beyond the included managed transcription allowance (decided 2026-11-08, PRD decision 15). The Starter Agent OS runner executes on the user's Mac with the user's model source; no user key is stored server-side. A server-side runner with passthrough billing and a user-set cap ($10 to $20 suggested) is a later option.
-6. Team knowledge: "public" means workspace members only; anyone-with-the-link is deferred. Roles are owner, admin, member. Admins hold a review queue with an auto-include toggle, create Teams with their own knowledge segment and a synthesized Team note (disable per Team), and set Team vault visibility and per-member read or write. Every member is a $5 seat, Teams included. "Maintain my existing vault" is in v1.
+6. Team knowledge: "public" means workspace members only; anyone-with-the-link is deferred. Roles are owner, admin, member. Admins hold a review queue with an auto-include toggle, create Teams with their own knowledge segment and a synthesized Team note (disable per Team), and set Team vault visibility and per-member read or write. Every member is a $9 seat, Teams included. "Maintain my existing vault" is in v1.
 
 ## Environments and administration
 

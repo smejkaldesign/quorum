@@ -45,13 +45,13 @@ The runner uses the app's model source from Settings: Claude Code sign-in on thi
 
 **Key storage (decided).** No user keys are stored server-side in v1. Keys live in the Mac's Keychain and never sync. If a server-side runner is added later, keys are encrypted at rest with per-workspace keys, chosen for security and scale.
 
-**Server-side runner (later option only).** If demand shows for filing while the Mac is closed, a hosted runner can be added. If it runs on a company key, tokens bill straight through monthly at cost with a user-set cap; the suggested range is $10 to $20 per month on top of the $5 seat. At the cap the runner stops until the next month or a higher cap, and Settings says so.
+**Server-side runner (later option only).** If demand shows for filing while the Mac is closed, a hosted runner can be added. If it runs on a company key, tokens bill straight through monthly at cost with a user-set cap; the suggested range is $10 to $20 per month on top of the $9 seat. At the cap the runner stops until the next month or a higher cap, and Settings says so.
 
 Cost boundary: $9 per seat per month covers hosting, storage, sync and team features. Model cost is the user's in every v1 path.
 
 ## Upsell moments and copy constraints
 
-1. **Connect a folder (onboarding).** When the user has nothing to connect, the step shows two equal choices: "Create a free folder on this Mac" first, then "Have Quorum build and maintain one ($5 per seat per month)". A user with a folder sees "Maintain my existing vault" with the same price line.
+1. **Connect a folder (onboarding).** When the user has nothing to connect, the step shows two equal choices: "Create a free folder on this Mac" first, then "Have Quorum build and maintain one ($9 per seat per month)". A user with a folder sees "Maintain my existing vault" with the same price line.
 2. **Settings.** The Memory page with no folder connected, and the Knowledge page, show one row with the same sentences and a Start button; for audience 2 it reads "Keep this folder maintained and reach it from every device".
 
 Copy constraints: plain sentences stating what the service does, what it costs, that the free folder stays available, that model calls use the user's own source, what leaves the Mac (notes, with sync on) and what never does (audio, confidential notes, private folders, keys). No countdowns, discount framing or named competitors. The repository writing rules apply.
