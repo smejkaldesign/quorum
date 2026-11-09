@@ -900,6 +900,7 @@ function MeetingsPage({ settings, onSettings }: { settings: Settings; onSettings
             <option value="auto">Automatic</option><option value="filter">Filter repeats</option><option value="aec">Cancel echo</option><option value="off">Off</option>
           </select>
         </Row>
+        <Row icon={<IconSliders width={18} height={18} />} title="Clean up transcript" desc="Removes fillers and repeats, fixes capitalization and writes numbers as digits. Off keeps every word as spoken."><Toggle on={t.clean ?? true} onChange={(on) => saveTx({ clean: on })} /></Row>
         <Row icon={<IconNotes width={18} height={18} />} title="New paragraph after" desc="How long a pause starts a new turn">
           <select className="set-select" value={t.gap ?? 1.5} onChange={(e) => saveTx({ gap: Number(e.target.value) })}>
             <option value={0.8}>Short pause</option><option value={1.5}>1.5 seconds</option><option value={3}>Long pause</option>
