@@ -13,7 +13,7 @@ import { PROVIDERS as DECISION_PROVIDERS, connectedProvider, decide as decideRaw
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { homedir, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import updater from 'electron-updater';
@@ -21,6 +21,8 @@ import updater from 'electron-updater';
 const here = path.dirname(fileURLToPath(import.meta.url));
 // the packaged app carries its own audio helper; in development it comes straight from the Swift build
 const HELPER = app.isPackaged ? path.join(process.resourcesPath, 'QuorumHelper') : path.resolve(here, '../helper/.build/debug/QuorumHelper');
+// dev and eval hooks (QUORUM_EVAL, QUORUM_SHOT, ...) stay out of release builds entirely
+const devHooks = app.isPackaged ? null : await import('./dev-hooks.js');
 
 // an app opened from Finder gets a bare PATH, so borrow the login shell's to find claude and python3
 if (app.isPackaged) {
@@ -30,14 +32,25 @@ if (app.isPackaged) {
   } catch {}
 }
 const SESSIONS = store.meetings.root;
-const OWNER = process.env.QUORUM_OWNER || 'Eric';
+const settings = store.settings.get();
+// whose Mac this is: the name saved in settings when set, else the account's full name from Directory Services, else the login name
+function macUserName() {
+  const login = userInfo().username;
+  try {
+    const out = execFileSync('dscl', ['.', '-read', `/Users/${login}`, 'RealName'], { encoding: 'utf8', timeout: 2000 });
+    const name = out.replace(/^RealName:/, '').split('\n').map((s) => s.trim()).find(Boolean);
+    if (name) return name;
+  } catch {}
+  return login;
+}
+const USER_NAME = (settings.userName || '').trim() || macUserName();
+const OWNER = USER_NAME.split(/\s+/)[0];
 // every IPC handler is also kept here, so a Terminal command runs the same code as the button in the app
 const handlers = {};
 const ipcHandle = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (name, fn) => { handlers[name] = fn; return ipcHandle(name, fn); };
 // who you are (Profile) and the company everyone shares (Workspace › General), so notes and answers have context
 const aboutMe = () => { const p = settings.profile ?? {}; const w = settings.workspace ?? {}; const who = [p.title, w.company && `at ${w.company}`].filter(Boolean).join(' '); return [who && `${OWNER} is ${who}.`, w.companyDescription && `About the company: ${w.companyDescription}`].filter(Boolean).join(' '); };
-const USER_NAME = process.env.QUORUM_USER_NAME || 'Eric Smejkal';
 const QUORUM = 'Quorum';
 const TAG = `🤖 ${QUORUM} (${OWNER}'s assistant):`;
 const MSG = {
@@ -57,14 +70,8 @@ const reWord = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const stopRe = () => new RegExp(`^\\s*(please\\s+)?${reWord(chatWords().stop)}\\b`, 'i');
 const goRe = () => new RegExp(`^\\s*${reWord(chatWords().go)}\\s*[.!]*\\s*$`, 'i');
 
-const settings = store.settings.get();
 // folders the built-in read guard keeps away from the agent: the user's list, else any folder named personal or private one or two levels down
 const privateDirs = (root) => settings.privateDirs ?? (() => { try { return readdirSync(root, { withFileTypes: true }).flatMap((d) => (d.isDirectory() && /personal|private/i.test(d.name) ? [d.name] : d.isDirectory() && !d.name.startsWith('.') ? readdirSync(path.join(root, d.name), { withFileTypes: true }).filter((c) => c.isDirectory() && /personal|private/i.test(c.name)).map((c) => path.join(d.name, c.name)) : [])); } catch { return []; } })();
-
-if (!settings.brainRoot) {
-  const guess = path.join(homedir(), 'Documents/GitHub/second-brain/MyBrain');
-  if (existsSync(guess)) Object.assign(settings, (({ root, vault }) => ({ brainRoot: root, vaultPath: vault }))(inspectBrain(guess)));
-}
 
 let win;
 let popup;
@@ -473,7 +480,7 @@ function openNote(abs) {
 const suggester = createSuggester({
   runClaude, toUI, log, owner: OWNER, noteLink,
   gate: async (text) => {
-    const a = await decide(text, [{ type: 'predicate', name: 'worth', instructions: `In these lines, did someone ask ${OWNER} a real question his work notes could answer, or name a specific project, document, ticket, feature or tool?` }], 3000);
+    const a = await decide(text, [{ type: 'predicate', name: 'worth', instructions: `In these lines, did someone ask ${OWNER} a real question their work notes could answer, or name a specific project, document, ticket, feature or tool?` }], 3000);
     return a?.worth ? a.worth.probability >= 0.25 : null;
   },
   getTranscript: () => meeting.transcript,
@@ -528,7 +535,7 @@ async function startListening(by) {
   if (!solo) showPopup('listening');
 }
 
-// zoom's default topic ("Eric Smejkal's Zoom Meeting") isn't a useful title; a Meet call code ("abc-defg-hij") isn't either
+// zoom's default topic ("Alex Rivera's Zoom Meeting") isn't a useful title; a Meet call code ("abc-defg-hij") isn't either
 const genericTitle = (t) => !t || /zoom meeting$/i.test(t) || /personal meeting room/i.test(t) || /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/.test(t);
 
 function meetingMeta(title) {
@@ -1755,34 +1762,8 @@ app.whenReady().then(() => {
   // hold helper events until the popup page can receive the startup "meeting detected"
   popup.webContents.once('did-finish-load', startHelper);
   popup.loadFile(path.join(here, 'dist/index.html'), { hash: 'popup' });
-  // dev: run a snippet in the panel after load, e.g. to open a view for a screenshot
-  if (process.env.QUORUM_EVAL) win.webContents.once('did-finish-load', () => setTimeout(() => win.webContents.executeJavaScript(process.env.QUORUM_EVAL), 2500));
-  // dev: run the real end-of-call path on a sample transcript, no Zoom needed
-  // dev: show the off-for-this-call top bar without a real call
-  if (process.env.QUORUM_DEMO_BLOCKED) win.webContents.once('did-finish-load', () => setTimeout(() => toUI('state', { phase: 'blocked' }), 2000));
-  if (process.env.QUORUM_DEMO_END) {
-    win.webContents.once('did-finish-load', () => setTimeout(() => {
-      Object.assign(meeting, {
-        armed: true, capturing: false, id: `demo-${Date.now()}`, title: "Eric Smejkal's Zoom Meeting", participants: 3,
-        startedAt: new Date(Date.now() - 23 * 60000), dir: path.join(SESSIONS, 'demo'),
-        transcript: JSON.parse(readFileSync(process.env.QUORUM_DEMO_END, 'utf8')),
-      });
-      mkdirSync(meeting.dir, { recursive: true });
-      endMeeting();
-    }, 2000));
-  }
-  // dev: screenshot only Quorum's own window (never the rest of the screen), QUORUM_SHOT=path:delayMs
-  // several shots per launch: QUORUM_SHOT=a.png:4000,b.png:9000
-  if (process.env.QUORUM_SHOT) {
-    for (const pair of process.env.QUORUM_SHOT.split(',')) {
-      const [file, delay] = pair.split(':');
-      setTimeout(() => win.webContents.capturePage().then((img) => writeFileSync(file, img.toPNG())), Number(delay) || 5000);
-    }
-  }
-  if (process.env.QUORUM_SELFTEST) {
-    win.webContents.once('did-finish-load', () => setTimeout(() => win.webContents.executeJavaScript(`document.querySelector('.start button').click()`), 1500));
-    setInterval(() => win.webContents.executeJavaScript(`[document.querySelectorAll('.transcript p:not(.empty)').length, document.querySelector('.pill')?.textContent]`).then((r) => log('selftest dom', JSON.stringify(r))), 4000);
-  }
+  // QUORUM_EVAL and friends run only in development; a release build never reads them
+  devHooks?.install({ win, meeting, toUI, log, endMeeting, sessionsDir: SESSIONS, userName: USER_NAME });
 });
 
 app.on('before-quit', () => { quitting = true; helperSend({ cmd: 'quit' }); });

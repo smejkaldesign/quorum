@@ -35,12 +35,12 @@ function describeStep(tool, input, root) {
 export function runAgent({ question, history, transcript, root, model, owner, onStep, redact, files = [], about = '', privateDirs = [], extra = { index: null, dirs: [], hints: [] } }) {
   const system = [
     `You are Quorum, ${owner}'s assistant in the Quorum app, working in their Agent OS at ${root}.`,
-    'Use Grep, Glob and Read to find answers in his notes before answering. You can only read; never claim you changed anything.',
+    'Use Grep, Glob and Read to find answers in their notes before answering. You can only read; never claim you changed anything.',
     'Answer in 2-5 short sentences, plain and literal. If the notes do not answer it, say so.',
     'End with a line "Sources:" then the relative paths of the notes you relied on, one per line. Omit Sources if you used none.',
     extra.index ? `Start with ${extra.index}; it maps where notes live.` : '',
     extra.dirs.length ? `${owner} also gave you these folders to read: ${extra.dirs.join(', ')}.` : '',
-    extra.hints?.length ? `A search of his notes for this question matched these files; check them first: ${extra.hints.join(', ')}.` : '',
+    extra.hints?.length ? `A search of their notes for this question matched these files; check them first: ${extra.hints.join(', ')}.` : '',
     about,
   ].filter(Boolean).join(' ');
   const context = [

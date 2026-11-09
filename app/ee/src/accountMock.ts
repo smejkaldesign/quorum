@@ -25,12 +25,12 @@ function makeMock(): AccountApi {
   const signedIn = (email: string) => set({
     ...blank(), signedIn: true, email, userId: 'u_me',
     invites: [{ inviteId: 'inv_1', workspaceId: 'ws_acme', workspaceName: 'Acme Health', role: 'member', invitedByEmail: 'dana@acmehealth.com', expiresAt: iso(6 * DAY) }],
-    domainMatches: [{ workspaceId: 'ws_open', name: 'Smejkal Studio' }],
+    domainMatches: [{ workspaceId: 'ws_open', name: 'Example Studio' }],
   });
   const inOrg = (name: string, domain: string | null, domainJoin: boolean, role: Role) => {
     const at = domain ?? 'example.com';
     members = [
-      { userId: 'u_me', email: state.email ?? '', name: 'Eric Smejkal', role, joinedAt: iso(-40 * DAY) },
+      { userId: 'u_me', email: state.email ?? '', name: 'Alex Rivera', role, joinedAt: iso(-40 * DAY) },
       { userId: 'u_2', email: `dana@${at}`, name: 'Dana Whitfield', role: 'admin', joinedAt: iso(-12 * DAY) },
       { userId: 'u_3', email: `sam@${at}`, name: null, role: 'member', joinedAt: iso(-2 * DAY) },
     ];
@@ -40,8 +40,8 @@ function makeMock(): AccountApi {
   // jump to a state from the console or QUORUM_EVAL
   (window as unknown as { __accountMock: unknown }).__accountMock = {
     signedOut: () => set(blank()),
-    noWorkspace: (email = 'eric@smejkal.design') => signedIn(email),
-    workspace: (email = 'eric@smejkal.design') => { signedIn(email); inOrg('Smejkal Design', 'smejkal.design', true, 'owner'); },
+    noWorkspace: (email = 'you@example.com') => signedIn(email),
+    workspace: (email = 'you@example.com') => { signedIn(email); inOrg('Example Co', 'example.com', true, 'owner'); },
   };
   return {
     accountStatus: async () => state,
@@ -49,7 +49,7 @@ function makeMock(): AccountApi {
     accountVerifyCode: async (email, code) => { await delay(400); if (!/^\d{6}$/.test(code)) return { error: 'That code did not match. Check the email and try again.' }; signedIn(email); return ok; },
     accountSignOut: async () => set(blank()),
     orgCreate: async (name, domain, domainJoin) => { await delay(400); inOrg(name, domain, domainJoin, 'owner'); return ok; },
-    orgJoin: async (t) => { await delay(400); inOrg('inviteId' in t ? 'Acme Health' : 'Smejkal Studio', null, false, 'member'); return ok; },
+    orgJoin: async (t) => { await delay(400); inOrg('inviteId' in t ? 'Acme Health' : 'Example Studio', null, false, 'member'); return ok; },
     orgSwitch: async (id) => { const w = state.workspaces.find((x) => x.id === id); if (w && state.workspace) set({ workspace: { ...state.workspace, id: w.id, name: w.name, role: w.role } }); return ok; },
     membersList: async () => ({ members, invites }),
     memberInvite: async (email, role) => { if (!EMAIL.test(email)) return { error: 'Enter a valid email address' }; invites = [...invites, { inviteId: `inv_${Date.now()}`, email, role, expiresAt: iso(7 * DAY) }]; return ok; },
