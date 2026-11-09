@@ -93,6 +93,16 @@ New tables and columns implied by this spec, on top of `0001` to `0003`:
 - SSO, audit export, retention policies: candidates for a later Team tier line, read from the workspace `plan` column.
 - Cross-workspace sharing; nested Teams.
 
+## Decisions (2026-11-08)
+
+Approved by Eric. Additions:
+
+1. Team knowledge is connected to, but separate from, local knowledge. When a member pulls a team item into their vault, the note carries a provenance bond in frontmatter (team item id, version, workspace, pulled at) and shows where it came from and whether the team copy has moved on. Sync never overwrites a bonded local note silently; it marks it as behind.
+2. A local edit to a bonded note offers "Push improvement", which becomes a contribution in the admin review queue with a diff against the team version. Later, per-type rules and settings decide which changes go straight through.
+3. Sources are many: a git repository, a folder on the admin's Mac, and tool connectors starting with Headways. Build as many as are possible now, behind one source manifest shape.
+4. A meeting note that names a teammate needs no consent for inclusion.
+5. Conflicts between two writers: the first save lands; later saves go to review as contributions instead of conflict copies.
+
 ## Open questions
 
 1. Does a meeting note that names a teammate need that teammate's consent before inclusion?

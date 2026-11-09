@@ -96,6 +96,14 @@ Each template is `supabase/templates/<name>/template.json` (version, folders, fi
 - A server-side runner, token passthrough and caps (later option).
 - Windows or Linux clients; web editing; Teams (`team-knowledge.md`).
 
+## Decisions (2026-11-08)
+
+Approved by Eric. Three additions to the spec above:
+
+1. The setup shapes the folder around the person. Quorum asks the user's connected AI what it already knows about them and their work, then runs a short, skippable interview (role, what they want to accomplish, the projects and people that matter, how they like notes organized) and generates the structure, index, instructions and guards from the answers. Answers live in the vault's settings file and the interview can be re-run.
+2. The changelog is a sibling file, `.quorum/changelog.md`. `CLAUDE.md` stays an instruction file; agents should not read history as instructions, and a growing log inside it would cost context on every run.
+3. After days with the app closed, the runner processes the backlog in one pass. It batches only when the backlog is large enough to block the UI, with progress shown.
+
 ## Open questions
 
 1. Changelog inside `CLAUDE.md` or in a sibling file?
