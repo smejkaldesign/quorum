@@ -22,4 +22,7 @@ const key = process.env.QUORUM_SUPABASE_ANON_KEY || vars.QUORUM_SUPABASE_ANON_KE
 if (!url || !key) { console.error('package-cloud: QUORUM_SUPABASE_URL and QUORUM_SUPABASE_ANON_KEY are needed (shell or repo .env)'); process.exit(1); }
 const args = ['electron-builder', '--mac', '-c.extraMetadata.quorumEdition=cloud', `-c.extraMetadata.quorumCloud.url=${url}`, `-c.extraMetadata.quorumCloud.anonKey=${key}`, ...process.argv.slice(2)];
 const r = spawnSync('npx', args, { cwd: app, stdio: 'inherit', env: { ...process.env, QUORUM_EDITION: 'cloud' } });
-process.exit(r.status ?? 1);
+if (r.status) process.exit(r.status);
+// a module left out of build.files only fails at launch, so prove every import resolves inside the asar before calling it built
+const check = spawnSync('node', ['scripts/check-package.mjs', 'release/mac-arm64/Quorum.app'], { cwd: app, stdio: 'inherit' });
+process.exit(check.status ?? 1);
