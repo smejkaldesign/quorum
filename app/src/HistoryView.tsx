@@ -119,7 +119,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat }: { brain: Bra
   const rows: Row[] = useMemo(() => {
     const inRange = (d: string | null) => !range || (!!d && new Date(d) >= range.from && new Date(d) < range.to);
     const kw = keyword.toLowerCase();
-    const turns = (c: ChatRow) => `${c.turns} ${c.turns === 1 ? 'question' : 'questions'} · Quorum`;
+    const turns = (c: ChatRow) => `Chat · ${c.turns} ${c.turns === 1 ? 'question' : 'questions'}`;
     const chatRow = (c: ChatRow, nested = false): Row => ({
       key: c.id, kind: 'chat', title: c.title, sub: !nested && c.meetingTitle ? `About ${c.meetingTitle} · ${turns(c)}` : turns(c),
       date: c.date ? new Date(c.date) : null, avatar: 'chat', open: () => onOpenChat(c.id),
