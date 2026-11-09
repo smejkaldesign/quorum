@@ -85,7 +85,7 @@ void main(){
     const u = (n) => gl.getUniformLocation(prog, n);
     const d = el.dataset;
     const f = (name, key, dflt) => gl.uniform1f(u(name), d[key] !== undefined ? +d[key] : dflt);
-    f('uTimeSpeed', 'speed', 0.25);
+    f('uTimeSpeed', 'speed', 0.45);
     f('uColorBalance', 'balance', 0.15);
     f('uWarpStrength', 'warp', 1.0);
     f('uWarpFrequency', 'warpFrequency', 5.0);

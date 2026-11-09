@@ -118,8 +118,10 @@ ul { margin: 0; padding: 0; list-style: none; }
 .brand span { font: 400 22px/1 var(--serif); letter-spacing: -0.01em; color: var(--text); }
 .brand:hover span { color: var(--text); }
 .nav { display: flex; align-items: center; gap: 22px; font-size: 15px; color: var(--muted); }
+.nav a { white-space: nowrap; }
 .nav a:hover { color: var(--text); }
-.nav-cta { color: var(--text); }
+.nav-cta { display: inline-flex; align-items: center; gap: 6px; color: var(--text); }
+.nav-cta svg { width: 14px; height: 14px; flex: none; display: block; }
 .nav-cta:hover { color: var(--brand-soft); }
 
 /* Dot background, shared by the hero and How it works */
@@ -240,9 +242,9 @@ ul { margin: 0; padding: 0; list-style: none; }
   color: var(--text-soft);
   text-wrap: pretty;
 }
-.actions { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-top: 36px; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-top: 48px; }
 .fineprint {
-  margin-top: 22px;
+  margin-top: 48px;
   font: 400 12px/1.5 var(--mono);
   letter-spacing: 0.02em;
   color: var(--text-soft);
@@ -321,10 +323,47 @@ ul { margin: 0; padding: 0; list-style: none; }
 .card p { color: var(--muted); font-size: 16px; line-height: 1.5; }
 .note { margin-top: 40px; text-align: center; color: var(--text); font-size: 16px; }
 
+/* Providers: two rows of logos that scroll in opposite directions */
+.providers { display: flex; flex-direction: column; gap: 28px; }
+.provider-label {
+  padding: 0 var(--gutter);
+  margin-bottom: 12px;
+  font: 400 12px/1 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.marquee {
+  display: flex;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 10%, #000 90%, transparent);
+  mask-image: linear-gradient(to right, transparent, #000 10%, #000 90%, transparent);
+}
+.marquee-track {
+  display: flex; flex: none; gap: 12px;
+  margin: 0; padding: 0 6px; list-style: none;
+  animation: marquee 90s linear infinite;
+}
+.reverse .marquee-track { animation-direction: reverse; }
+.marquee:hover .marquee-track { animation-play-state: paused; }
+@keyframes marquee { to { transform: translateX(-100%); } }
+.provider {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 12px 18px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text-soft);
+  font-size: 15px;
+  white-space: nowrap;
+}
+.provider svg { width: 20px; height: 20px; flex: none; display: block; color: var(--text); }
+#models .note .pill { margin-right: 8px; vertical-align: 1px; }
+
 /* Pricing */
 .plan {
   position: relative;
-  padding: 32px var(--gutter) 36px;
+  padding: 48px var(--gutter) 52px;
   display: flex; flex-direction: column; gap: 22px;
 }
 .plan-cloud { background: var(--card-raised); }
@@ -436,11 +475,15 @@ ul { margin: 0; padding: 0; list-style: none; }
 
 @media (max-width: 420px) {
   .nav { gap: 16px; font-size: 14px; }
+  .nav a:first-child { display: none; }
   .capture { flex-direction: column; }
   .actions .btn { width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .marquee-track { animation: none; flex-wrap: wrap; justify-content: center; flex: 1; }
+  .marquee-track + .marquee-track { display: none; }
+  .marquee { -webkit-mask-image: none; mask-image: none; }
   html { scroll-behavior: auto; }
   .btn { transition: none; }
   .glow::before, .glow::after { animation: none; }
