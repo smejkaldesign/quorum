@@ -1007,3 +1007,11 @@ svg.err { color: var(--danger); }
 
 /* the Soon chip on section headings and zero states, so a dead row reads as planned work */
 h3 .soon, .set-zero strong .soon { font-size: 11px; margin-left: 8px; vertical-align: middle; }
+
+/* your notes: what you type sits in the primary text color, so it reads apart from the generated notes around it */
+.my-notes { width: 100%; box-sizing: border-box; resize: none; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 16px; line-height: 1.55; padding: 0; outline: none; }
+.my-notes::placeholder { color: var(--muted); }
+.my-notes-card { flex: 1; min-height: 0; }
+.my-notes-card .my-notes { flex: 1; min-height: 200px; }
+.doc .my-notes { min-height: 72px; field-sizing: content; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line-2); background: rgba(255, 255, 255, 0.03); }
+.doc .my-notes:focus { border-color: rgba(255, 255, 255, 0.28); }

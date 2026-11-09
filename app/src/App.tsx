@@ -14,16 +14,17 @@ import { HistoryView } from './HistoryView';
 import { KnowledgeView, type KbCommand } from './KnowledgeView';
 import { Composer } from './Composer';
 import { SettingsView } from './SettingsView';
+import { IconPen, PrivateNotes, usePrivateNotes } from './PrivateNotes';
 import { IconFolderOpen, IconPerson, IconGear, IconHome, IconGraph, IconSearch, IconFolder, IconDoc, IconExternal, IconArrowUp, IconBack, IconChat, IconChevron, IconNotes, IconStop, IconPause, IconPlay, Wave } from './icons';
 
 // one speaker turn as main.js built it; a turn that grows arrives again with the same id and replace: true
 type Line = { id: number; channel: 'me' | 'them'; text: string; start: number };
 type Phase = 'idle' | 'starting' | 'listening' | 'paused' | 'review' | 'blocked';
-type Tab = 'home' | 'knowledge' | 'chat' | 'notes';
+type Tab = 'home' | 'knowledge' | 'chat' | 'notes' | 'mine';
 const inCall = (p: string) => p === 'listening' || p === 'paused' || p === 'starting';
-// Home and Knowledge always sit in the middle; on a call, Chat, live Notes and Logs open up beside Listening
+// Home and Knowledge always sit in the middle; on a call, Chat, live Notes and Logs, and Your notes open up beside Listening
 const MAIN_TABS = [['home', IconHome, 'Home'], ['knowledge', IconGraph, 'Knowledge']] as const;
-const CALL_TABS = [['chat', IconChat, 'Chat'], ['notes', IconNotes, 'Live notes']] as const;
+const CALL_TABS = [['chat', IconChat, 'Chat'], ['notes', IconNotes, 'Live notes'], ['mine', IconPen, 'Your notes']] as const;
 type Msg =
   | { kind: 'user'; text: string; files?: string[] }
   | { kind: 'quorum'; text: string; pending?: boolean; steps?: string[]; sources?: Source[] }
@@ -122,9 +123,24 @@ export function App() {
   const anchorScroll = useRef(false);
   const [spacer, setSpacer] = useState(0);
   const notesEnd = useRef<HTMLDivElement>(null);
+  // your notes: typed on a call and in the review, read by the notes prompt as its outline
+  const mine = usePrivateNotes();
+  const mineRef = useRef<HTMLTextAreaElement>(null);
+  // Cmd+Shift+N on a call opens Your notes and puts the cursor in it
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey || !e.shiftKey || e.altKey || e.ctrlKey || e.key.toLowerCase() !== 'n' || !inCall(phaseRef.current)) return;
+      e.preventDefault();
+      setView('main');
+      setTab('mine');
+      setTimeout(() => mineRef.current?.focus(), 50);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [setView, setTab]);
 
   const addLog = (s: string) => setLog((l) => [...l.slice(-200), `${new Date().toLocaleTimeString()}  ${s}`]);
-  const resetMeeting = () => { setLines([]); setPartial({ me: '', them: '' }); setMsgs([]); setNotes(null); setMeta(null); };
+  const resetMeeting = () => { setLines([]); setPartial({ me: '', them: '' }); setMsgs([]); setNotes(null); setMeta(null); mine.reset(); };
 
   useEffect(() => {
     const offs = [
@@ -281,7 +297,8 @@ export function App() {
   }
 
   if (phase === 'review') {
-    return <EndView notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing} transcript={lines.map((l) => ({ id: l.id, channel: l.channel, who: who(l.channel), text: l.text }))} onClose={() => { setPhase('idle'); resetMeeting(); setTab('home'); }} />;
+    return <EndView notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing} transcript={lines.map((l) => ({ id: l.id, channel: l.channel, who: who(l.channel), text: l.text }))}
+      privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={() => { setPhase('idle'); resetMeeting(); setTab('home'); }} />;
   }
 
   return (
@@ -448,6 +465,15 @@ export function App() {
             <summary>Logs{log.length ? ` · ${log.length}` : ''}</summary>
             <div className="logs">{log.length === 0 ? <p className="muted">Nothing yet.</p> : log.map((l, i) => <div key={i}>{l}</div>)}</div>
           </details>
+        </div>
+      )}
+
+      {tab === 'mine' && (
+        <div className="body">
+          <section className="card my-notes-card">
+            <h3>Your notes</h3>
+            <PrivateNotes ref={mineRef} value={mine.text} onChange={mine.change} onBlur={mine.flush} />
+          </section>
         </div>
       )}
       </>}

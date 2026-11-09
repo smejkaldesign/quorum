@@ -111,6 +111,7 @@ declare global {
       resume(): Promise<void>;
       ask(q: string, files?: string[]): Promise<{ text: string; sources: Source[]; steps: string[] }>;
       saveNotes(p: { notes: Notes; followups: { q: string; a: string }[] }): Promise<{ file: string; rel: string; app: string; url: string }>;
+      privateNotesSet(text: string): Promise<void>;
       discard(): Promise<void>;
       done(): Promise<void>;
       axStatus(): Promise<void>;

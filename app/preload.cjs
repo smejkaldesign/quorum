@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('quorum', {
   resume: () => ipcRenderer.invoke('resume'),
   ask: (q, files) => ipcRenderer.invoke('ask', q, files),
   saveNotes: (payload) => ipcRenderer.invoke('save-notes', payload),
+  privateNotesSet: (text) => ipcRenderer.invoke('private-notes-set', text),
   discard: () => ipcRenderer.invoke('discard'),
   done: () => ipcRenderer.invoke('done'),
   axStatus: () => ipcRenderer.invoke('ax-status'),
