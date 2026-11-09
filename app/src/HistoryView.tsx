@@ -409,19 +409,25 @@ function DateFilter({ value, onChange }: { value: DateRange | null; onChange: (r
 // one keyword; it searches titles, people and note text, and shows in the search box as a removable chip
 function KeywordFilter({ value, onChange }: { value: string; onChange: (k: string) => void }) {
   const { open, setOpen, wrap } = usePopover();
-  const [q, setQ] = useState('');
-  const apply = () => { if (q.trim()) { onChange(q.trim()); setQ(''); setOpen(false); } };
+  const [q, setQ] = useState(value);
+  useEffect(() => { setQ(value); }, [value]);
+  // the list follows the field as you type; a short pause keeps the vault search from running on every keystroke
+  useEffect(() => {
+    const k = q.trim();
+    if (k === value) return;
+    const t = setTimeout(() => onChange(k), 150);
+    return () => clearTimeout(t);
+  }, [q]);
   return (
     <div className="menu-wrap" ref={wrap}>
       <FilterPill icon={<IconSearch width={17} height={17} />} name="Keyword" label={value ? `“${value}”` : ''} active={!!value} open={open} onToggle={() => setOpen((o) => !o)} onClear={() => onChange('')} />
       {open && (
         <div className="people-pop kw-pop" role="dialog" aria-label="Filter by keyword">
           <div className="kw-box">
-            {value && <button className="pp-chip" onClick={() => onChange('')} aria-label={`Remove ${value}`}>{value}<span>×</span></button>}
-            <input className="fp-input" value={q} placeholder={value ? 'Replace keyword' : 'Search titles, people and notes'} onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') apply(); if (e.key === 'Escape') setOpen(false); if (e.key === 'Backspace' && !q && value) onChange(''); }} />
+            <input className="fp-input" autoFocus value={q} placeholder="Search titles, people and notes" onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') setOpen(false); if (e.key === 'Escape') { setQ(''); onChange(''); setOpen(false); } }} />
+            {q && <button className="kw-clear" aria-label="Clear" onClick={() => { setQ(''); onChange(''); }}>×</button>}
           </div>
-          <p className="kw-hint">Press Enter to apply</p>
         </div>
       )}
     </div>

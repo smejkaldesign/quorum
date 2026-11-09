@@ -663,7 +663,9 @@ em.stub { font-style: normal; font-size: 12px; font-weight: 500; padding: 1px 9p
 .kw-box .pp-chip { flex: none; }
 .kw-box input { flex: 1; min-width: 0; height: 32px; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 15px; outline: none; }
 .people-pop .kw-box input { border-bottom: 0; padding: 0; height: 32px; }
-.kw-hint { margin: 0; padding: 8px 14px 10px; font-size: 12px; color: var(--muted); }
+.kw-pop .kw-box { border-bottom: 0; }
+.kw-clear { flex: none; width: 24px; height: 24px; border-radius: 50%; color: var(--muted); font-size: 16px; line-height: 1; display: grid; place-items: center; }
+.kw-clear:hover { background: rgba(255, 255, 255, 0.08); color: var(--text); }
 /* a chat about a meeting hangs off it */
 .hist-child { padding: 4px 0 4px 26px; gap: 12px; }
 .hist-child .hist-text strong { font-size: 14px; }
