@@ -33,21 +33,24 @@ export function createVault(dir, name = 'My Agent OS') {
 
 export const defaultVaultDir = () => path.join(homedir(), 'Documents', 'Quorum');
 
-export function registerOnboarding({ ipcMain, settings, saveSettings, inspectBrain, connect, systemPreferences, shell, helperAsk, claudeStatus, modelStatus, log, hadSettings = false }) {
+export function registerOnboarding({ ipcMain, settings, saveSettings, inspectBrain, connect, systemPreferences, shell, helperAsk, axTrusted, pickDir, claudeStatus, modelStatus, log, hadSettings = false }) {
   // an install that already has settings is not a first run; mark it so the flag stays stable
   if (hadSettings && !settings.onboarded) { settings.onboarded = 'existing'; saveSettings(); }
-  const permissions = async () => ({
-    microphone: systemPreferences.getMediaAccessStatus('microphone'),
+  const within = (ms, p, fallback) => Promise.race([p, new Promise((r) => setTimeout(() => r(fallback), ms))]);
+  // each permission answers on its own clock, so one slow check cannot turn the others into "unknown"
+  const permissions = async () => {
+    const [accessibility, calendar] = await Promise.all([
+      // the helper is the process that reads the meeting chat, so its trust is the one that counts; Electron's own answer is the fallback
+      within(3000, axTrusted(), null).then((t) => (t == null ? systemPreferences.isTrustedAccessibilityClient(false) : t) ? 'granted' : 'not-determined'),
+      within(3000, helperAsk('calStatus').then((r) => r?.status ?? 'unknown'), 'unknown').catch(() => 'unknown'),
+    ]);
     // system audio has no Electron query; the helper reports it when capture starts
-    audio: 'unknown',
-    accessibility: systemPreferences.isTrustedAccessibilityClient(false) ? 'granted' : 'not-determined',
-    calendar: await helperAsk('calStatus').then((r) => r?.status ?? 'unknown').catch(() => 'unknown'),
-  });
+    return { microphone: systemPreferences.getMediaAccessStatus('microphone'), audio: 'unknown', accessibility, calendar };
+  };
   // status answers at once so the window knows whether to show the wizard; the slow checks come separately
   ipcMain.handle('onboarding-status', () => ({ firstRun: !settings.onboarded, defaultVaultDir: defaultVaultDir() }));
-  const within = (ms, p, fallback) => Promise.race([p, new Promise((r) => setTimeout(() => r(fallback), ms))]);
   ipcMain.handle('onboarding-checks', async () => ({
-    permissions: await within(4000, permissions(), { microphone: 'unknown', audio: 'unknown', accessibility: 'unknown', calendar: 'unknown' }),
+    permissions: await permissions(),
     claude: await within(15000, claudeStatus().catch(() => ({ installed: false })), { installed: false, pending: true }),
     model: await within(4000, modelStatus().catch(() => null), null),
   }));
@@ -58,6 +61,8 @@ export function registerOnboarding({ ipcMain, settings, saveSettings, inspectBra
     return connect(inspectBrain(target));
   });
   ipcMain.handle('onboarding-open-permission', (_e, which) => { if (PANES[which]) shell.openExternal(PANES[which]); });
+  // where a new Agent OS goes: a folder the user picks or creates in the dialog; null when they cancel
+  ipcMain.handle('onboarding-pick-dir', () => pickDir());
   ipcMain.handle('onboarding-request-microphone', () => systemPreferences.askForMediaAccess('microphone'));
   ipcMain.handle('onboarding-done', () => { settings.onboarded = new Date().toISOString(); saveSettings(); return true; });
 }

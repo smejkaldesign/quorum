@@ -248,6 +248,8 @@ declare global {
       onboardingCreateVault(dir: string | null, name: string): Promise<Brain>;
       onboardingOpenPermission(which: 'microphone' | 'audio' | 'accessibility' | 'calendar'): Promise<void>;
       onboardingRequestMicrophone(): Promise<boolean>;
+      onboardingRequestAccessibility(): Promise<void>;
+      onboardingPickDir(): Promise<string | null>;
       onboardingDone(): Promise<boolean>;
       accountStatus(): Promise<AccountState>;
       accountSendCode(email: string): Promise<Result>;

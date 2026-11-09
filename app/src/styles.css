@@ -970,6 +970,39 @@ svg.err { color: var(--danger); }
 .onb-summary { list-style: none; padding: 0; margin: 0 0 16px; display: grid; gap: 10px; }
 .onb-summary li { display: flex; align-items: center; gap: 10px; font-size: 15px; }
 .onb-summary svg { color: var(--muted); flex: none; }
+/* name step: no tile, just the label row and the field */
+.onb-plain { margin: 4px 0 2px; }
+.onb-plain-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 15px; font-weight: 500; }
+.onb-plain-head svg { color: var(--muted); flex: none; }
+/* Agent OS step: two tiles, and the create form that shows under them once Create new is picked */
+.onb-split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+.onb-tile { display: flex; align-items: center; gap: 14px; padding: 16px; border: 1px solid var(--line-2); border-radius: 16px; background: var(--container-tile); color: var(--text); text-align: left; cursor: pointer; font: inherit; transition: border-color 0.15s ease, background 0.15s ease; }
+.onb-tile:hover { border-color: rgba(255, 255, 255, 0.2); }
+.onb-tile.on { border-color: var(--brand); }
+.onb-tile > svg { flex: none; color: var(--muted); }
+.onb-tile strong { display: block; font-weight: 500; font-size: 15px; }
+.onb-tile em { display: block; font-style: normal; color: var(--muted); font-size: 13px; margin-top: 2px; }
+@keyframes onb-reveal { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.onb-form { display: grid; gap: 12px; padding: 14px 16px; border: 1px solid var(--line-2); border-radius: 16px; background: var(--container-tile); margin-bottom: 10px; animation: onb-reveal 0.2s ease; }
+.onb-form .onb-field { display: block; margin: 0; }
+.onb-label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.onb-row { display: flex; align-items: center; gap: 10px; }
+.onb-row .onb-label { margin: 0; flex: none; }
+.onb-row.end { justify-content: flex-end; }
+.onb-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 13px/1.4 ui-monospace, "SF Mono", Menlo, monospace; color: var(--text); }
+/* permissions: one line per row */
+.onb-choice.line em { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.onb-actions-start { display: inline-flex; align-items: center; gap: 14px; }
+.onb-skip { color: var(--muted); font-size: 14px; }
+.onb-skip:hover { color: var(--text); }
+/* Check again: label, spinner and checkmark stacked in one pill, crossfading between phases */
+.onb-check { position: relative; min-width: 112px; }
+.onb-check > span:not(.sr-only) { transition: opacity 0.18s ease, transform 0.18s ease; }
+.onb-check-busy, .onb-check-done { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; opacity: 0; transform: translateY(-4px); }
+.onb-check-done { color: var(--go); }
+.onb-check.busy .onb-check-label, .onb-check.done .onb-check-label { opacity: 0; transform: translateY(4px); }
+.onb-check.busy .onb-check-busy, .onb-check.done .onb-check-done { opacity: 1; transform: none; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 /* account, organization and members */
 .acct-copy { margin: 14px 0 4px; color: var(--muted); font-size: 14px; line-height: 1.5; }
 .acct .set-error { margin: 0 0 14px; }

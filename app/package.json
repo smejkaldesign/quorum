@@ -1,7 +1,7 @@
 {
   "name": "quorum",
   "license": "Apache-2.0",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "main": "main.js",
   "scripts": {

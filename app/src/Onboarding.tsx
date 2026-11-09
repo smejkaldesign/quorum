@@ -1,19 +1,25 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import type { Brain, ModelSource, OnboardingChecks, OnboardingStatus } from './quorum';
-import { IconCheck, IconCode, IconFolder, IconLock, IconMic, IconPerson, IconShield, ProviderMark } from './icons';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import type { AccountState, Brain, ModelSource, OnboardingChecks, OnboardingStatus } from './quorum';
+import { IconCalendar, IconCheck, IconCode, IconFolder, IconFolderOpen, IconLock, IconMic, IconPerson, IconShield, ProviderMark } from './icons';
 import { ModelKey, SOURCE_NAMES } from './modelSource';
 import mark from '../assets/quorum-mark.png';
 
-type Step = 'welcome' | 'you' | 'notes' | 'model' | 'account' | 'permissions' | 'done';
-const ORDER: Step[] = ['welcome', 'you', 'notes', 'model', 'account', 'permissions', 'done'];
+type Step = 'welcome' | 'agentos' | 'you' | 'model' | 'account' | 'permissions' | 'done';
+const ORDER: Step[] = ['welcome', 'agentos', 'you', 'model', 'account', 'permissions', 'done'];
 type Status = (OnboardingStatus & Partial<OnboardingChecks>) | null;
+const home = (p: string) => p.replace(/^\/Users\/[^/]+/, '~');
 
-// first run on a fresh install: a short wizard in place of the main window until settings.onboarded is set
+// first run on a fresh install: a short wizard in place of the main window until settings.onboarded is set. Every step
+// keeps Continue off until the step is done; the optional steps (model, account) offer a quieter Skip for now instead
 export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Brain | null; onBrain: (b: Brain | null) => void; accountSlot?: ReactNode; onDone: () => void }) {
   const [step, setStep] = useState<Step>('welcome');
-  const [status, setStatus] = useState<(OnboardingStatus & Partial<OnboardingChecks>) | null>(null);
-  // the fast part first, then permissions and Claude Code, which can take a few seconds
-  const refresh = () => window.quorum.onboardingStatus().then((s) => { setStatus((prev) => ({ ...prev, ...s })); window.quorum.onboardingChecks().then((c) => setStatus((prev) => ({ ...(prev ?? s), ...c }))); });
+  const [status, setStatus] = useState<Status>(null);
+  // the fast part first, then permissions and Claude Code, which can take a few seconds; resolves when both are in
+  const refresh = () => window.quorum.onboardingStatus().then(async (s) => {
+    setStatus((prev) => ({ ...prev, ...s }));
+    const c = await window.quorum.onboardingChecks();
+    setStatus((prev) => ({ ...(prev ?? s), ...c }));
+  });
   useEffect(() => { refresh(); }, [step]);
   const i = ORDER.indexOf(step);
   const next = () => setStep(ORDER[Math.min(i + 1, ORDER.length - 1)]);
@@ -30,23 +36,16 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
             <div className="onb-actions"><span /><button className="pill primary" autoFocus onClick={next}>Get started</button></div>
           </section>
         )}
+        {step === 'agentos' && <AgentOsStep brain={brain} status={status} onBrain={onBrain} onBack={back} onNext={next} />}
         {step === 'you' && <NameStep onBack={back} onNext={next} />}
-        {step === 'notes' && <NotesStep brain={brain} status={status} onBrain={onBrain} onBack={back} onNext={next} />}
         {step === 'model' && <ModelStep status={status} onRefresh={refresh} onBack={back} onNext={next} />}
-        {step === 'account' && (
-          <section className="onb-step">
-            <h1>Your account</h1>
-            <p>Optional. Sign in to sync notes and meetings and to share a workspace with your team. You can do this later in Settings.</p>
-            <div className="onb-slot">{accountSlot ?? <p className="onb-muted">Sign in from Settings › Workspace once you are in.</p>}</div>
-            <div className="onb-actions"><button className="pill ghost" onClick={back}>Back</button><button className="pill primary" onClick={next}>Continue</button></div>
-          </section>
-        )}
+        {step === 'account' && <AccountStep slot={accountSlot} onBack={back} onNext={next} />}
         {step === 'permissions' && <PermissionsStep status={status} onRefresh={refresh} onBack={back} onNext={next} />}
         {step === 'done' && (
           <section className="onb-step">
             <h1>You're set</h1>
             <ul className="onb-summary">
-              <li><IconFolder width={16} height={16} /> {brain ? `Notes in ${brain.root.replace(/^\/Users\/[^/]+/, '~')}` : 'No notes folder yet (connect one in Settings)'}</li>
+              <li><IconFolder width={16} height={16} /> {brain ? `Agent OS at ${home(brain.root)}` : 'No Agent OS yet (connect one in Settings)'}</li>
               <li><ProviderMark provider="anthropic" /> {status?.model?.source && status.model.source !== 'none' ? `Model: ${SOURCE_NAMES[status.model.source]}` : 'No model source yet (choose one in Settings › Connectors)'}</li>
               <li><IconMic width={16} height={16} /> {status?.permissions?.microphone === 'granted' ? 'Microphone allowed' : 'Microphone: macOS will ask on your first call'}</li>
               <li><IconShield width={16} height={16} /> {status?.permissions?.accessibility === 'granted' ? 'Accessibility allowed' : 'Accessibility: needed to read the meeting chat'}</li>
@@ -60,79 +59,117 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
   );
 }
 
-// optional: the name Quorum writes as the recorder in every note. Prefilled with the name the main process resolved (a saved
+// Back, Continue (off until `ready`), and for optional steps a Skip for now link; `extra` sits between them (Check again)
+function Actions({ onBack, onNext, ready, onSkip, extra, busy }: { onBack: () => void; onNext: () => void; ready: boolean; onSkip?: () => void; extra?: ReactNode; busy?: boolean }) {
+  return (
+    <div className="onb-actions">
+      <span className="onb-actions-start"><button className="pill ghost" onClick={onBack}>Back</button>{onSkip && !ready && <button className="link-btn onb-skip" onClick={onSkip}>Skip for now</button>}</span>
+      <span className="onb-actions-end">{extra}<button className="pill primary" disabled={!ready || busy} onClick={onNext}>Continue</button></span>
+    </div>
+  );
+}
+
+// the first real step: the folder of markdown notes Quorum and Claude Code work in. Two choices, and the create form
+// shows only once Create new is picked; meeting notes inside an existing folder are found by scanning it afterwards
+function AgentOsStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain | null; status: Status; onBrain: (b: Brain | null) => void; onBack: () => void; onNext: () => void }) {
+  const [mode, setMode] = useState<'create' | null>(null);
+  const [name, setName] = useState('My Agent OS');
+  const [dir, setDir] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const where = dir ?? status?.defaultVaultDir ?? '~/Documents/Quorum';
+  const create = async () => {
+    setBusy(true); setError('');
+    try { onBrain(await window.quorum.onboardingCreateVault(dir, name.trim() || 'My Agent OS')); setMode(null); } catch (e) { setError(String((e as Error).message || e)); }
+    setBusy(false);
+  };
+  const connect = async () => { const b = await window.quorum.connectBrain(); if (b) { onBrain(b); setMode(null); } };
+  return (
+    <section className="onb-step">
+      <h1>Connect your Agent OS</h1>
+      <p>Your Agent OS is a folder of markdown notes that Quorum and your AI read and write. Connect one you already have (an Obsidian vault or a repo with CLAUDE.md) and Quorum finds the meeting notes in it, or start a fresh one.</p>
+      {brain ? (
+        <div className="onb-choice on">
+          <IconCheck width={18} height={18} className="ok" />
+          <div><strong>{brain.name}</strong><em>{home(brain.root)}</em></div>
+          <button className="pill" onClick={connect}>Change</button>
+        </div>
+      ) : (
+        <div className="onb-split">
+          <button type="button" className={`onb-tile ${mode === 'create' ? 'on' : ''}`} onClick={() => setMode('create')}>
+            <IconFolder width={20} height={20} /><span><strong>Create new</strong><em>A starter folder with an index and instructions</em></span>
+          </button>
+          <button type="button" className="onb-tile" onClick={connect}>
+            <IconFolderOpen width={20} height={20} /><span><strong>Connect existing</strong><em>Your notes stay where they are</em></span>
+          </button>
+        </div>
+      )}
+      {!brain && mode === 'create' && (
+        <div className="onb-form">
+          <label className="set-field wide onb-field"><span className="onb-label">Name</span><input value={name} aria-label="Name of your Agent OS" placeholder="My Agent OS" autoFocus onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') create(); }} /></label>
+          <div className="onb-row">
+            <span className="onb-label">Location</span>
+            <code className="onb-path" title={where}>{home(where)}</code>
+            <button className="pill" onClick={async () => { const d = await window.quorum.onboardingPickDir(); if (d) setDir(d); }}>Choose…</button>
+          </div>
+          <div className="onb-row end"><button className="pill primary" disabled={busy} onClick={create}>{busy ? 'Creating…' : 'Create folder'}</button></div>
+        </div>
+      )}
+      {error && <p className="set-error">{error}</p>}
+      <Actions onBack={onBack} onNext={onNext} ready={!!brain} />
+    </section>
+  );
+}
+
+// the name Quorum writes as the recorder in every note. Prefilled with the name the main process resolved (a saved
 // settings.userName, else the macOS account's full name, else the login); Continue saves it only when it was changed
 function NameStep({ onBack, onNext }: { onBack: () => void; onNext: () => void }) {
   const [name, setName] = useState('');
   const [resolved, setResolved] = useState('');
   const [busy, setBusy] = useState(false);
   useEffect(() => { window.quorum.user().then((u) => { setResolved(u.name); setName((v) => v || u.name); }); }, []);
+  const ready = name.trim().length > 0;
   const go = async () => {
     const v = name.trim();
-    if (v && v !== resolved) { setBusy(true); await window.quorum.setSettings({ userName: v, profile: { name: v } }); setBusy(false); }
+    if (!v) return;
+    if (v !== resolved) { setBusy(true); await window.quorum.setSettings({ userName: v, profile: { name: v } }); setBusy(false); }
     onNext();
   };
   return (
     <section className="onb-step">
       <h1>What should Quorum call you?</h1>
       <p>Quorum writes this as your name in meeting notes and transcripts. It comes from your Mac account; change it if you like.</p>
-      <div className="onb-choice on">
-        <IconPerson width={18} height={18} />
-        <div>
-          <strong>Your name</strong>
-          <label className="set-field wide onb-field"><input value={name} aria-label="Your name" placeholder={resolved || 'Your name'} autoFocus onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') go(); }} /></label>
-        </div>
+      <div className="onb-plain">
+        <div className="onb-plain-head"><IconPerson width={18} height={18} /><strong>Your name</strong></div>
+        <label className="set-field wide onb-field"><input value={name} aria-label="Your name" placeholder={resolved || 'Your name'} autoFocus onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && ready) go(); }} /></label>
       </div>
-      <div className="onb-actions"><button className="pill ghost" onClick={onBack}>Back</button><button className="pill primary" disabled={busy} onClick={go}>Continue</button></div>
+      <Actions onBack={onBack} onNext={go} ready={ready} busy={busy} />
     </section>
   );
 }
 
-function NotesStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain | null; status: (OnboardingStatus & Partial<OnboardingChecks>) | null; onBrain: (b: Brain | null) => void; onBack: () => void; onNext: () => void }) {
-  const [name, setName] = useState('My Agent OS');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const create = async () => {
-    setBusy(true); setError('');
-    try { onBrain(await window.quorum.onboardingCreateVault(null, name.trim() || 'My Agent OS')); } catch (e) { setError(String((e as Error).message || e)); }
-    setBusy(false);
-  };
+// optional: the hosted account. Continue turns on once the account card reports a sign-in; Skip for now otherwise
+function AccountStep({ slot, onBack, onNext }: { slot?: ReactNode; onBack: () => void; onNext: () => void }) {
+  const [signedIn, setSignedIn] = useState(false);
+  useEffect(() => {
+    let live = true;
+    const apply = (s: AccountState) => { if (live) setSignedIn(!!s.signedIn); };
+    window.quorum.accountStatus().then(apply).catch(() => {});
+    const off = window.quorum.onAccount(apply);
+    return () => { live = false; off(); };
+  }, []);
   return (
     <section className="onb-step">
-      <h1>Where do your notes live?</h1>
-      <p>Quorum works on a folder of markdown notes, your Agent OS. Create a fresh one, or connect a folder you already have (an Obsidian vault or a repo with CLAUDE.md).</p>
-      {brain ? (
-        <div className="onb-choice on">
-          <IconCheck width={18} height={18} className="ok" />
-          <div><strong>{brain.name}</strong><em>{brain.root.replace(/^\/Users\/[^/]+/, '~')}</em></div>
-          <button className="pill" onClick={async () => onBrain(await window.quorum.connectBrain())}>Change</button>
-        </div>
-      ) : (
-        <>
-          <div className="onb-choice">
-            <IconFolder width={18} height={18} />
-            <div>
-              <strong>Create a new folder</strong>
-              <em>{status?.defaultVaultDir?.replace(/^\/Users\/[^/]+/, '~') ?? '~/Documents/Quorum'}</em>
-              <label className="set-field wide onb-field"><input value={name} aria-label="Name of your Agent OS" placeholder="My Agent OS" onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') create(); }} /></label>
-            </div>
-            <button className="pill primary" disabled={busy} onClick={create}>{busy ? 'Creating…' : 'Create'}</button>
-          </div>
-          <div className="onb-choice">
-            <IconFolder width={18} height={18} />
-            <div><strong>Connect an existing folder</strong><em>Your notes stay where they are</em></div>
-            <button className="pill" onClick={async () => onBrain(await window.quorum.connectBrain())}>Choose…</button>
-          </div>
-        </>
-      )}
-      {error && <p className="set-error">{error}</p>}
-      <div className="onb-actions"><button className="pill ghost" onClick={onBack}>Back</button><button className="pill primary" disabled={!brain} onClick={onNext}>Continue</button></div>
+      <h1>Your account</h1>
+      <p>Optional. Sign in to sync notes and meetings and to share a workspace with your team. You can do this later in Settings.</p>
+      <div className="onb-slot">{slot ?? <p className="onb-muted">Sign in from Settings › Workspace once you are in.</p>}</div>
+      <Actions onBack={onBack} onNext={onNext} ready={signedIn} onSkip={onNext} />
     </section>
   );
 }
 
 // where the model runs. Claude Code is preselected when it is installed and signed in; Skip leaves the source at none
-function ModelStep({ status, onRefresh, onBack, onNext }: { status: Status; onRefresh: () => void; onBack: () => void; onNext: () => void }) {
+function ModelStep({ status, onRefresh, onBack, onNext }: { status: Status; onRefresh: () => Promise<void>; onBack: () => void; onNext: () => void }) {
   const c = status?.claude;
   const m = status?.model;
   const claudeOk = !!c?.installed && !!c?.loggedIn;
@@ -174,40 +211,81 @@ function ModelStep({ status, onRefresh, onBack, onNext }: { status: Status; onRe
         </>,
         pick === 'local' ? <IconCheck width={18} height={18} className="ok" /> : null)}
       {keying && <ModelKey onDone={(ok) => { setKeying(false); if (ok) onRefresh(); }} />}
-      <div className="onb-actions"><button className="pill ghost" onClick={onBack}>Back</button><button className="pill primary" onClick={finish}>{pick && ready ? 'Continue' : 'Skip for now'}</button></div>
+      <Actions onBack={onBack} onNext={finish} ready={!!(pick && ready)} onSkip={onNext} />
     </section>
   );
 }
 
+// one line each: what it is, why, the state, and one Allow button that asks macOS the way Quorum itself would
 const PERMS: { id: 'microphone' | 'audio' | 'accessibility' | 'calendar'; title: string; why: string; icon: ReactNode }[] = [
   { id: 'microphone', title: 'Microphone', why: 'Your side of a call', icon: <IconMic width={18} height={18} /> },
-  { id: 'audio', title: 'System audio', why: 'The other people on the call. macOS asks on your first call', icon: <IconMic width={18} height={18} /> },
-  { id: 'accessibility', title: 'Accessibility', why: 'Reads the meeting chat for STOP and GO and posts the notice', icon: <IconShield width={18} height={18} /> },
-  { id: 'calendar', title: 'Calendar', why: 'Shows your upcoming meetings on Home', icon: <IconPerson width={18} height={18} /> },
+  { id: 'audio', title: 'System audio', why: 'The other people on the call', icon: <IconMic width={18} height={18} /> },
+  { id: 'accessibility', title: 'Accessibility', why: 'Reads the meeting chat for STOP and GO', icon: <IconShield width={18} height={18} /> },
+  { id: 'calendar', title: 'Calendar', why: 'Your upcoming meetings on Home', icon: <IconCalendar width={18} height={18} /> },
 ];
+const granted = (s?: string) => s === 'granted' || s === 'authorized';
 
-function PermissionsStep({ status, onRefresh, onBack, onNext }: { status: (OnboardingStatus & Partial<OnboardingChecks>) | null; onRefresh: () => void; onBack: () => void; onNext: () => void }) {
+function PermissionsStep({ status, onRefresh, onBack, onNext }: { status: Status; onRefresh: () => Promise<void>; onBack: () => void; onNext: () => void }) {
   const p = status?.permissions;
-  const label = (s?: string) => (s === 'granted' || s === 'authorized' ? 'Allowed' : s === 'denied' || s === 'restricted' ? 'Denied' : 'Not yet');
+  const label = (s?: string) => (granted(s) ? 'Allowed' : s === 'denied' || s === 'restricted' ? 'Denied' : 'Not yet');
+  // after Allow for Accessibility the grant happens in System Settings, so the state is re-read every 1.5 s for 90 s
+  const poll = useRef<number | null>(null);
+  const watch = () => {
+    if (poll.current) window.clearInterval(poll.current);
+    const until = Date.now() + 90000;
+    poll.current = window.setInterval(() => { onRefresh(); if (Date.now() > until && poll.current) { window.clearInterval(poll.current); poll.current = null; } }, 1500);
+  };
+  useEffect(() => () => { if (poll.current) window.clearInterval(poll.current); }, []);
+  useEffect(() => { if (granted(p?.accessibility) && poll.current) { window.clearInterval(poll.current); poll.current = null; } }, [p?.accessibility]);
+  const allow = async (id: (typeof PERMS)[number]['id']) => {
+    if (id === 'microphone') await window.quorum.onboardingRequestMicrophone();
+    else if (id === 'calendar') await window.quorum.calendarConnect();
+    else if (id === 'accessibility') { await window.quorum.onboardingRequestAccessibility(); watch(); }
+    onRefresh();
+  };
+  // the two Quorum cannot work without; calendar stays optional
+  const ready = granted(p?.microphone) && granted(p?.accessibility);
   return (
     <section className="onb-step">
       <h1>Permissions</h1>
-      <p>Quorum records and transcribes on this Mac only. Grant what you want now; anything skipped is asked for when it is first needed.</p>
+      <p>Quorum records and transcribes on this Mac only. Microphone and Accessibility are needed to listen and to read the meeting chat; Calendar is optional.</p>
       <div className="onb-perms">
         {PERMS.map((x) => {
           const s = p?.[x.id];
-          const on = s === 'granted' || s === 'authorized';
+          const on = granted(s);
           return (
-            <div key={x.id} className={`onb-choice ${on ? 'on' : ''}`}>
+            <div key={x.id} className={`onb-choice line ${on ? 'on' : ''}`}>
               {x.icon}
               <div><strong>{x.title} <span className={`onb-state ${on ? 'ok' : ''}`}>{x.id === 'audio' && !on ? 'On first call' : label(s)}</span></strong><em>{x.why}</em></div>
-              {on ? <IconCheck width={18} height={18} className="ok" /> : x.id === 'microphone' ? <button className="pill primary" onClick={async () => { await window.quorum.onboardingRequestMicrophone(); onRefresh(); }}>Allow</button>
-                : x.id === 'audio' ? <span /> : <button className="pill" onClick={() => window.quorum.onboardingOpenPermission(x.id)}>Open Settings</button>}
+              {on ? <IconCheck width={18} height={18} className="ok" /> : x.id === 'audio' ? <span /> : <button className="pill primary" onClick={() => allow(x.id)}>Allow</button>}
             </div>
           );
         })}
       </div>
-      <div className="onb-actions"><button className="pill ghost" onClick={onBack}>Back</button><span className="onb-actions-end"><button className="pill" onClick={onRefresh}>Check again</button><button className="pill primary" onClick={onNext}>Continue</button></span></div>
+      <Actions onBack={onBack} onNext={onNext} ready={ready} extra={<CheckAgain onRun={onRefresh} />} />
     </section>
+  );
+}
+
+// Check again: a spinner while the checks run, a checkmark for a moment, then back to the label, each a crossfade
+function CheckAgain({ onRun }: { onRun: () => Promise<void> }) {
+  const [phase, setPhase] = useState<'idle' | 'busy' | 'done'>('idle');
+  const run = async () => {
+    if (phase !== 'idle') return;
+    setPhase('busy');
+    const started = Date.now();
+    try { await onRun(); } catch {}
+    // the spinner shows for at least 500 ms so a fast answer does not flicker
+    await new Promise((r) => setTimeout(r, Math.max(0, 500 - (Date.now() - started))));
+    setPhase('done');
+    setTimeout(() => setPhase('idle'), 1200);
+  };
+  return (
+    <button className={`pill onb-check ${phase}`} onClick={run} aria-busy={phase === 'busy'} aria-live="polite">
+      <span className="onb-check-label">Check again</span>
+      <span className="onb-check-busy" aria-hidden="true"><i className="spinner tiny" /></span>
+      <span className="onb-check-done" aria-hidden="true"><IconCheck width={16} height={16} /></span>
+      <span className="sr-only">{phase === 'busy' ? 'Checking' : phase === 'done' ? 'Checked' : ''}</span>
+    </button>
   );
 }

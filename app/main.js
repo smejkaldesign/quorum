@@ -1737,7 +1737,14 @@ ipcMain.handle('pick-meetings-dir', async () => {
 });
 // the first-run wizard shares the connect step with Settings, so both end up in the same state
 const connectBrain = (b) => { Object.assign(settings, { brainRoot: b.root, vaultPath: b.vault }); store.settings.save(); log('connected Agent OS', b.root); suggester.reset(); openIndex(); return b; };
-registerOnboarding({ ipcMain, settings, saveSettings, inspectBrain, connect: connectBrain, systemPreferences, shell, helperAsk: (cmd) => calAsk({ cmd }), claudeStatus, modelStatus: () => modelStatus(null), log, hadSettings: store.settings.existed });
+registerOnboarding({
+  ipcMain, settings, saveSettings, inspectBrain, connect: connectBrain, systemPreferences, shell, helperAsk: (cmd) => calAsk({ cmd }), claudeStatus, modelStatus: () => modelStatus(null), log, hadSettings: store.settings.existed,
+  axTrusted: () => new Promise((resolve) => { axWaiters.push((evt) => resolve(evt.trusted)); helperSend({ cmd: 'axStatus', prompt: false }); setTimeout(() => resolve(lastAx?.trusted ?? null), 2500); }),
+  pickDir: async () => {
+    const r = await dialog.showOpenDialog(win, { title: 'Where should your Agent OS live?', properties: ['openDirectory', 'createDirectory'], defaultPath: path.join(homedir(), 'Documents'), buttonLabel: 'Use folder' });
+    return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
+  },
+});
 ipcMain.handle('connect-brain', async () => {
   const r = await dialog.showOpenDialog(win, {
     title: 'Connect your Agent OS',
