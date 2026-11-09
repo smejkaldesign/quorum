@@ -369,8 +369,8 @@ html.popup-root, html.popup-root body { background: transparent; }
 .hist-row { display: flex; align-items: center; gap: 14px; width: 100%; padding: 7px 0; text-align: left; border-radius: 12px; }
 .hist-row:hover { background: rgba(255, 255, 255, 0.03); }
 .avatar-sq { position: relative; width: 44px; height: 44px; flex: none; display: grid; place-items: center; border-radius: 8px; color: #fbe9d8; font: 400 22px/1 "New York", ui-serif, Georgia, serif; }
-.avatar-sq.chat { background: #3a2a52; }
-.avatar-sq.chat img { width: 55%; height: 55%; object-fit: contain; }
+.avatar-sq.chat { background: #fff; }
+.avatar-sq.chat img { width: 78%; height: 78%; object-fit: contain; }
 .hist-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .hist-text strong { font-weight: 400; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hist-text span { color: var(--muted); font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
