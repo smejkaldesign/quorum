@@ -9,7 +9,8 @@ import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
 
-const HOME = path.join(homedir(), 'Library/Application Support/Quorum');
+// a development copy of the app keeps its data in Quorum Dev (app/edition.js); QUORUM_ENV=development reads that folder
+const HOME = path.join(homedir(), 'Library/Application Support', process.env.QUORUM_ENV === 'development' ? 'Quorum Dev' : 'Quorum');
 const readJson = (f, fallback) => { try { return JSON.parse(readFileSync(f, 'utf8')); } catch { return fallback; } };
 const settings = () => readJson(path.join(HOME, 'settings.json'), {});
 

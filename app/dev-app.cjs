@@ -20,4 +20,5 @@ if (!existsSync(dest) || !existsSync(stamp) || readFileSync(stamp, 'utf8') !== v
   writeFileSync(stamp, version);
 }
 
-spawn(path.join(dest, 'Contents/MacOS/Electron'), [__dirname], { stdio: 'inherit', env: process.env }).on('exit', (code) => process.exit(code ?? 0));
+// the development copy runs in the development environment (edition.js ENV) unless the shell sets QUORUM_ENV itself
+spawn(path.join(dest, 'Contents/MacOS/Electron'), [__dirname], { stdio: 'inherit', env: { QUORUM_ENV: 'development', ...process.env } }).on('exit', (code) => process.exit(code ?? 0));

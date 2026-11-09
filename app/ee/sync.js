@@ -3,12 +3,14 @@
 // is off or signed out; a failed push is recorded on the account state as syncError.
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import path from 'node:path';
+import { DATA_DIR } from '../edition.js';
 import { createRemote } from './store/remote.js';
 import { walk } from '../vault.js';
 
-const IDS_FILE = path.join(homedir(), 'Library/Application Support/Quorum/sync-ids.json');
+// which remote row each local note or meeting became; a development copy pointed at production keeps a separate map
+// so ids never cross between projects (account.js passes idsFile)
+const DEFAULT_IDS_FILE = path.join(DATA_DIR, 'sync-ids.json');
 const BATCH = 100;
 const B32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
@@ -37,7 +39,8 @@ export function parseFrontmatter(text) {
   return fm;
 }
 
-export function createSync({ account, store, brain = () => null, log = () => {}, meetingIndex = () => [], isExcluded = () => false, isExcludedText = () => false }) {
+export function createSync({ account, store, brain = () => null, log = () => {}, meetingIndex = () => [], isExcluded = () => false, isExcludedText = () => false, idsFile = DEFAULT_IDS_FILE }) {
+  const IDS_FILE = idsFile;
   // path -> { id, hash } per workspace, so a note keeps its id across pushes and unchanged notes are skipped
   let ids = {};
   try { ids = JSON.parse(readFileSync(IDS_FILE, 'utf8')); } catch {}
