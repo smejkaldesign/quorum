@@ -967,3 +967,15 @@ svg.err { color: var(--danger); }
 .member-row:not(:last-child) { border-bottom: 1px solid var(--container-border); }
 .member-row .stub { flex: none; }
 .member-avatar.pending { background: var(--container-tile); color: var(--muted); }
+
+/* the composer before a model source is chosen: one line and a button in the same shell */
+.composer.composer-choose { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 10px 10px 18px; color: var(--muted); font-size: 15px; }
+.composer.composer-choose:focus-within { box-shadow: none; }
+/* model source choices in Settings and onboarding */
+.src-list { margin: 0 0 18px; }
+.src-title { display: flex; align-items: center; margin: 0 0 10px; font-size: 14px; font-weight: 500; }
+.src-actions { display: inline-flex; align-items: center; gap: 6px; }
+.onb-choice.pick { cursor: pointer; }
+.onb-choice.pick:hover { border-color: rgba(255, 255, 255, 0.2); }
+.onb-choice.pick.on { border-color: var(--brand); }
+.model.plain { cursor: default; }

@@ -101,6 +101,12 @@ contextBridge.exposeInMainWorld('quorum', {
   meetingSourceOpen: (id) => ipcRenderer.invoke('meeting-source-open', id),
   claudeLogin: () => ipcRenderer.invoke('claude-login'),
   claudeStatus: () => ipcRenderer.invoke('claude-status'),
+  // model source: the key goes in and is never read back
+  modelSourceStatus: () => ipcRenderer.invoke('model-source-status'),
+  modelSourceSet: (source) => ipcRenderer.invoke('model-source-set', source),
+  localModelSet: (name) => ipcRenderer.invoke('local-model-set', name),
+  modelKeySet: (key) => ipcRenderer.invoke('model-key-set', key),
+  modelKeyRemove: () => ipcRenderer.invoke('model-key-remove'),
   calendar: () => ipcRenderer.invoke('calendar'),
   calendarStatus: () => ipcRenderer.invoke('calendar-status'),
   calendarConnect: () => ipcRenderer.invoke('calendar-connect'),

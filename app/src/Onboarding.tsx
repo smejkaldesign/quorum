@@ -1,10 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import type { Brain, OnboardingChecks, OnboardingStatus } from './quorum';
-import { IconCheck, IconFolder, IconMic, IconPerson, IconShield, ProviderMark } from './icons';
+import type { Brain, ModelSource, OnboardingChecks, OnboardingStatus } from './quorum';
+import { IconCheck, IconCode, IconFolder, IconLock, IconMic, IconPerson, IconShield, ProviderMark } from './icons';
+import { ModelKey, SOURCE_NAMES } from './modelSource';
 import mark from '../assets/quorum-mark.png';
 
-type Step = 'welcome' | 'notes' | 'claude' | 'account' | 'permissions' | 'done';
-const ORDER: Step[] = ['welcome', 'notes', 'claude', 'account', 'permissions', 'done'];
+type Step = 'welcome' | 'notes' | 'model' | 'account' | 'permissions' | 'done';
+const ORDER: Step[] = ['welcome', 'notes', 'model', 'account', 'permissions', 'done'];
+type Status = (OnboardingStatus & Partial<OnboardingChecks>) | null;
 
 // first run on a fresh install: a short wizard in place of the main window until settings.onboarded is set
 export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Brain | null; onBrain: (b: Brain | null) => void; accountSlot?: ReactNode; onDone: () => void }) {
@@ -24,12 +26,12 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
           <section className="onb-step">
             <img className="onb-mark" src={mark} alt="" />
             <h1>Welcome to Quorum</h1>
-            <p>Meetings and your notes, on your Mac. Quorum transcribes calls on this device, keeps notes as plain markdown, and answers questions from them with Claude Code. Nothing leaves this Mac unless you turn sync on.</p>
+            <p>Meetings and your notes, on your Mac. Quorum transcribes calls on this device, keeps notes as plain markdown, and answers questions from them with a model you choose. Nothing leaves this Mac unless you turn sync on.</p>
             <div className="onb-actions"><span /><button className="pill primary" autoFocus onClick={next}>Get started</button></div>
           </section>
         )}
         {step === 'notes' && <NotesStep brain={brain} status={status} onBrain={onBrain} onBack={back} onNext={next} />}
-        {step === 'claude' && <ClaudeStep status={status} onRefresh={refresh} onBack={back} onNext={next} />}
+        {step === 'model' && <ModelStep status={status} onRefresh={refresh} onBack={back} onNext={next} />}
         {step === 'account' && (
           <section className="onb-step">
             <h1>Your account</h1>
@@ -44,7 +46,7 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
             <h1>You're set</h1>
             <ul className="onb-summary">
               <li><IconFolder width={16} height={16} /> {brain ? `Notes in ${brain.root.replace(/^\/Users\/[^/]+/, '~')}` : 'No notes folder yet (connect one in Settings)'}</li>
-              <li><ProviderMark provider="anthropic" /> {status?.claude?.loggedIn ? `Claude Code signed in as ${status.claude.email}` : 'Claude Code not signed in yet'}</li>
+              <li><ProviderMark provider="anthropic" /> {status?.model?.source && status.model.source !== 'none' ? `Model: ${SOURCE_NAMES[status.model.source]}` : 'No model source yet (choose one in Settings › Connectors)'}</li>
               <li><IconMic width={16} height={16} /> {status?.permissions?.microphone === 'granted' ? 'Microphone allowed' : 'Microphone: macOS will ask on your first call'}</li>
               <li><IconShield width={16} height={16} /> {status?.permissions?.accessibility === 'granted' ? 'Accessibility allowed' : 'Accessibility: needed to read the meeting chat'}</li>
             </ul>
@@ -100,24 +102,50 @@ function NotesStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain | 
   );
 }
 
-function ClaudeStep({ status, onRefresh, onBack, onNext }: { status: (OnboardingStatus & Partial<OnboardingChecks>) | null; onRefresh: () => void; onBack: () => void; onNext: () => void }) {
+// where the model runs. Claude Code is preselected when it is installed and signed in; Skip leaves the source at none
+function ModelStep({ status, onRefresh, onBack, onNext }: { status: Status; onRefresh: () => void; onBack: () => void; onNext: () => void }) {
   const c = status?.claude;
-  const ok = !!c?.installed && !!c?.loggedIn;
+  const m = status?.model;
+  const claudeOk = !!c?.installed && !!c?.loggedIn;
+  const [pick, setPick] = useState<ModelSource | null>(null);
+  const [keying, setKeying] = useState(false);
+  const [local, setLocal] = useState('');
+  useEffect(() => { if (claudeOk) setPick((p) => p ?? 'claude-code'); }, [claudeOk]);
+  const ready = pick === 'claude-code' ? claudeOk : pick === 'anthropic-api' ? !!m?.key : pick === 'local';
+  const finish = async () => {
+    if (pick && ready) {
+      if (pick === 'local' && local.trim()) await window.quorum.localModelSet(local);
+      await window.quorum.modelSourceSet(pick);
+    }
+    onNext();
+  };
+  const choice = (s: ModelSource, icon: ReactNode, body: ReactNode, action: ReactNode) => (
+    <div role="radio" aria-checked={pick === s} tabIndex={0} className={`onb-choice pick ${pick === s ? 'on' : ''}`} onClick={() => setPick(s)}
+      onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setPick(s); } }}>
+      {icon}<div>{body}</div>{action}
+    </div>
+  );
+  const ollama = !m ? '' : !m.ollama.reachable ? ' · not running' : m.ollama.hasModel ? ' · running' : ` · running, ${m.localModel} not pulled`;
   return (
-    <section className="onb-step">
-      <h1>Claude Code</h1>
-      <p>Quorum answers questions and writes meeting notes through the Claude Code signed in on this Mac. Your own sign-in, no API key.</p>
-      <div className={`onb-choice ${ok ? 'on' : ''}`}>
-        <ProviderMark provider="anthropic" />
-        <div>
-          <strong>{!c ? 'Checking…' : !c.installed ? 'Claude Code is not installed' : !c.loggedIn ? 'Claude Code is installed, not signed in' : `Signed in as ${c.email}`}</strong>
-          <em>{!c ? '' : !c.installed ? 'Install it from claude.com/claude-code, then check again' : !c.loggedIn ? 'Sign in opens Terminal with the login command' : [c.org, c.plan && `${c.plan} plan`].filter(Boolean).join(' · ')}</em>
-        </div>
-        {c && c.installed && !c.loggedIn && <button className="pill primary" onClick={() => window.quorum.claudeLogin()}>Sign in</button>}
-        {c && !ok && <button className="pill" onClick={onRefresh}>Check again</button>}
-        {ok && <IconCheck width={18} height={18} className="ok" />}
-      </div>
-      <div className="onb-actions"><button className="pill ghost" onClick={onBack}>Back</button><button className="pill primary" onClick={onNext}>{ok ? 'Continue' : 'Skip for now'}</button></div>
+    <section className="onb-step" role="radiogroup" aria-label="Model source">
+      <h1>Where should Quorum's model run?</h1>
+      <p>Every option is your own. Quorum has no key of its own, and only Claude Code can read your notes to answer questions.</p>
+      {choice('claude-code', <ProviderMark provider="anthropic" />,
+        <><strong>Claude Code on this Mac</strong><em>Your own sign-in, reads your Agent OS{!c ? ' · checking…' : !c.installed ? ' · not installed' : !c.loggedIn ? ' · not signed in' : ` · signed in as ${c.email}`}</em></>,
+        claudeOk ? <IconCheck width={18} height={18} className="ok" />
+          : c && c.installed && !c.loggedIn ? <button className="pill primary" onClick={(e) => { e.stopPropagation(); window.quorum.claudeLogin(); }}>Sign in</button>
+          : c ? <button className="pill" onClick={(e) => { e.stopPropagation(); onRefresh(); }}>Check again</button> : null)}
+      {choice('anthropic-api', <IconLock width={18} height={18} />,
+        <><strong>Your own API key</strong><em>Anthropic key stored in Keychain{m ? (m.key ? ' · key saved' : ' · no key yet') : ''}</em></>,
+        m?.key ? <IconCheck width={18} height={18} className="ok" /> : <button className="pill" onClick={(e) => { e.stopPropagation(); setPick('anthropic-api'); setKeying(true); }}>Add key</button>)}
+      {choice('local', <IconCode width={18} height={18} />,
+        <>
+          <strong>Local model</strong><em>Ollama at localhost{ollama}</em>
+          <label className="set-field wide onb-field"><input value={local} aria-label="Ollama model name" placeholder={m?.localModel || 'llama3.1'} onChange={(e) => setLocal(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); finish(); } }} /></label>
+        </>,
+        pick === 'local' ? <IconCheck width={18} height={18} className="ok" /> : null)}
+      {keying && <ModelKey onDone={(ok) => { setKeying(false); if (ok) onRefresh(); }} />}
+      <div className="onb-actions"><button className="pill ghost" onClick={onBack}>Back</button><button className="pill primary" onClick={finish}>{pick && ready ? 'Continue' : 'Skip for now'}</button></div>
     </section>
   );
 }

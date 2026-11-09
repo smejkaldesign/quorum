@@ -1,17 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import type { Settings } from './quorum';
-import { ClaudeLogo, IconArrowUp, IconChevron, IconClose, IconDoc, IconMic, IconPlus, ProviderMark } from './icons';
+import { ClaudeLogo, IconArrowUp, IconChevron, IconClose, IconCode, IconDoc, IconMic, IconPlus, ProviderMark } from './icons';
 
-// what Quorum can run today goes through the signed-in Claude Code, so only Claude is live; the rest are other
-// providers (OpenAI, Google Gemini) shown greyed until Quorum has a real connection to them
-type ModelOption = { id: string; label: string; provider: 'anthropic' | 'openai' | 'google'; note?: string; live: boolean };
+// the Claude picks, used by the Claude Code and API key sources; a local model is named in Settings instead. Other
+// providers come back with the multi-provider task
+type ModelOption = { id: Settings['model']; label: string; note?: string };
 export const MODELS: ModelOption[] = [
-  { id: 'opus', label: 'Opus 5.5', provider: 'anthropic', note: 'Smartest', live: true },
-  { id: 'sonnet', label: 'Sonnet 5.5', provider: 'anthropic', note: 'Balanced', live: true },
-  { id: 'haiku', label: 'Haiku 5.5', provider: 'anthropic', note: 'Fastest', live: true },
-  { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', provider: 'openai', live: false },
-  { id: 'gpt-6-sol', label: 'GPT-6 Sol', provider: 'openai', live: false },
-  { id: 'gemini-4-argon', label: 'Gemini 4 Argon', provider: 'google', live: false },
+  { id: 'opus', label: 'Opus 5.5', note: 'Smartest' },
+  { id: 'sonnet', label: 'Sonnet 5.5', note: 'Balanced' },
+  { id: 'haiku', label: 'Haiku 5.5', note: 'Fastest' },
 ];
 
 // the one composer used on Home, in chat and on note pages
@@ -137,6 +134,17 @@ export function Composer({ value, onChange, onSubmit, placeholder, disabled, bus
     input.current?.focus();
   };
   const model = MODELS.find((m) => m.id === settings?.model) ?? MODELS[1];
+  const source = settings?.modelSource ?? 'none';
+
+  // nothing to type into until a model source is chosen; the button opens Settings › Connectors
+  if (settings && source === 'none') {
+    return (
+      <div className={`composer composer-choose ${className}`}>
+        <span>Choose a model source to start</span>
+        <button type="button" className="pill primary" onClick={() => window.dispatchEvent(new CustomEvent('quorum-open-settings', { detail: 'connectors' }))}>Open Settings</button>
+      </div>
+    );
+  }
 
   return (
     <form ref={form} className={`composer ${tall ? 'tall' : ''} ${files.length ? 'has-files' : ''} ${className}`} onSubmit={(e) => { e.preventDefault(); submit(); }}>
@@ -164,25 +172,30 @@ export function Composer({ value, onChange, onSubmit, placeholder, disabled, bus
           aria-label={dictating ? 'Stop dictation' : 'Dictate'} aria-pressed={dictating} data-tip={dictating ? 'Stop dictation · ⌘⇧D' : 'Dictate · ⌘⇧D'} data-tip-pos="top">
           <IconMic />
         </button>
-        <div className="menu-wrap model-wrap">
-          <button type="button" className="model" onClick={(e) => { e.stopPropagation(); setMenuUp(e.currentTarget.getBoundingClientRect().bottom + 330 > window.innerHeight); setMenu((o) => !o); }} aria-haspopup="menu" aria-expanded={menu}
-            aria-label={`Model: ${model.label}`} data-tip="Choose model" data-tip-pos="top">
-            <ClaudeLogo /><span>{model.label}</span><IconChevron />
-          </button>
-          {menu && (
-            <div className={`menu model-menu ${menuUp ? 'up end' : ''}`} role="menu">
-              <p className="menu-label">Models</p>
-              {MODELS.map((m) => (
-                <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === model.id} aria-disabled={!m.live}
-                  className={`${m.id === model.id ? 'checked' : ''} ${m.live ? '' : 'unavailable'}`}
-                  data-tip={m.live ? undefined : 'Not connected yet'} data-tip-pos="left"
-                  onClick={async (e) => { if (!m.live) { e.stopPropagation(); return; } setMenu(false); setSettings(await window.quorum.setSettings({ model: m.id as Settings['model'] })); }}>
-                  <ProviderMark provider={m.provider} /><span>{m.label}</span>{m.note && <em>{m.note}</em>}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        {source === 'local' ? (
+          // the local model is named in Settings; the picker only shows which one answers
+          <span className="model plain" aria-label={`Model: ${settings?.localModel || 'llama3.1'}`} data-tip="Local model, set in Settings › Connectors" data-tip-pos="top">
+            <IconCode width={16} height={16} /><span>{settings?.localModel || 'llama3.1'}</span>
+          </span>
+        ) : (
+          <div className="menu-wrap model-wrap">
+            <button type="button" className="model" onClick={(e) => { e.stopPropagation(); setMenuUp(e.currentTarget.getBoundingClientRect().bottom + 330 > window.innerHeight); setMenu((o) => !o); }} aria-haspopup="menu" aria-expanded={menu}
+              aria-label={`Model: ${model.label}`} data-tip="Choose model" data-tip-pos="top">
+              <ClaudeLogo /><span>{model.label}</span><IconChevron />
+            </button>
+            {menu && (
+              <div className={`menu model-menu ${menuUp ? 'up end' : ''}`} role="menu">
+                <p className="menu-label">Models</p>
+                {MODELS.map((m) => (
+                  <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === model.id} className={m.id === model.id ? 'checked' : ''}
+                    onClick={async () => { setMenu(false); setSettings(await window.quorum.setSettings({ model: m.id })); }}>
+                    <ProviderMark provider="anthropic" /><span>{m.label}</span>{m.note && <em>{m.note}</em>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <button type="submit" className="send" aria-label="Send" disabled={!value.trim() || disabled || busy || staging}><IconArrowUp /></button>
       </div>
     </form>

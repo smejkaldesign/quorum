@@ -1,5 +1,6 @@
 import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import type { Brain, CalendarSettings, Memory, MemoryItem, OptOut, Profile, Settings, Voice, Workspace, Transcription, DecisionProvider, DecisionsStatus } from './quorum';
+import type { Brain, CalendarSettings, ClaudeStatus, Memory, MemoryItem, ModelSource, ModelSourceStatus, OptOut, Profile, Settings, Voice, Workspace, Transcription, DecisionProvider, DecisionsStatus } from './quorum';
+import { ModelKey, SOURCE_NAMES } from './modelSource';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
 import { AccountArea, MembersArea, isCloud } from './edition';
@@ -681,33 +682,76 @@ function DecisionsKey({ provider, info, onDone }: { provider: DecisionProvider; 
   );
 }
 
+// the three model sources (docs/open-source-strategy.md), one chosen at a time; None is the state until one is picked.
+// Other CLIs and providers come back with the multi-provider task
+function ModelSources({ claude }: { claude: ClaudeStatus | null }) {
+  const [st, setSt] = useState<ModelSourceStatus | null>(null);
+  const [keying, setKeying] = useState(false);
+  const [more, setMore] = useMenu();
+  const refresh = () => window.quorum.modelSourceStatus().then(setSt);
+  useEffect(() => { refresh(); }, []);
+  const source = st?.source ?? 'none';
+  const choose = async (s: ModelSource) => { await window.quorum.modelSourceSet(s); refresh(); };
+  const claudeOk = !!claude?.installed && !!claude?.loggedIn;
+  const pick = (s: ModelSource, ready: boolean) => (source === s ? <IconCheck width={18} height={18} className="ok" /> : <button className="pill" disabled={!ready} onClick={() => choose(s)}>Use</button>);
+  const ollama = !st ? '' : !st.ollama.reachable ? ' · not running' : st.ollama.hasModel ? ' · running' : ` · running, ${st.localModel} not pulled`;
+  return (
+    <div className="src-list">
+      <h4 className="src-title">Model source <span className={`onb-state ${source !== 'none' ? 'ok' : ''}`}>{source === 'none' ? 'None chosen' : SOURCE_NAMES[source]}</span></h4>
+      <div className={`onb-choice ${source === 'claude-code' ? 'on' : ''}`}>
+        <ProviderMark provider="anthropic" />
+        <div><strong>Claude Code on this Mac</strong><em>Your own sign-in, reads your Agent OS{claude && !claudeOk ? (claude.installed ? ' · not signed in' : ' · not installed') : ''}</em></div>
+        {pick('claude-code', claudeOk)}
+      </div>
+      <div className={`onb-choice ${source === 'anthropic-api' ? 'on' : ''}`}>
+        <IconLock width={18} height={18} />
+        <div><strong>Your own API key</strong><em>Anthropic key stored in Keychain{st ? (st.key ? ' · key saved' : ' · no key yet') : ''}</em></div>
+        {st?.key ? (
+          <span className="src-actions">
+            {pick('anthropic-api', true)}
+            <span className="menu-wrap" onClick={(e) => e.stopPropagation()}>
+              <button className="icon-btn" aria-label="API key options" aria-haspopup="menu" aria-expanded={more} onClick={() => setMore((o) => !o)}><IconMore /></button>
+              {more && (
+                <div className="menu end" role="menu">
+                  <button role="menuitem" onClick={() => { setMore(false); setKeying(true); }}><IconReset width={15} height={15} /> Replace key</button>
+                  <button role="menuitem" className="danger" onClick={async () => { setMore(false); await window.quorum.modelKeyRemove(); refresh(); }}><IconClose width={15} height={15} /> Remove key</button>
+                </div>
+              )}
+            </span>
+          </span>
+        ) : <button className="pill" onClick={() => setKeying(true)}>Add key</button>}
+      </div>
+      <div className={`onb-choice ${source === 'local' ? 'on' : ''}`}>
+        <IconCode width={18} height={18} />
+        <div>
+          <strong>Local model</strong>
+          <em>Ollama at localhost{ollama}</em>
+          <label className="set-field wide onb-field"><input key={st?.localModel ?? ''} defaultValue={st?.localModel ?? ''} aria-label="Ollama model name" placeholder="llama3.1"
+            onBlur={async (e) => { await window.quorum.localModelSet(e.target.value); refresh(); }} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} /></label>
+        </div>
+        {pick('local', true)}
+      </div>
+      {keying && <ModelKey onDone={(ok) => { setKeying(false); if (ok) choose('anthropic-api'); else refresh(); }} />}
+    </div>
+  );
+}
+
 // what Quorum runs on. Quorum finds the Claude Code already signed in on this Mac; it never holds a login of its own
 function ClaudeCard() {
-  const [c, setC] = useState<Awaited<ReturnType<typeof window.quorum.claudeStatus>> | null>(null);
+  const [c, setC] = useState<ClaudeStatus | null>(null);
   const [more, setMore] = useMenu();
-  const [adding, setAdding] = useMenu();
   const check = () => { setC(null); window.quorum.claudeStatus().then(setC); };
   useEffect(() => { window.quorum.claudeStatus().then(setC); }, []);
   const plan = c?.plan ? c.plan[0].toUpperCase() + c.plan.slice(1) : '';
   const desc = !c ? 'Checking…'
-    : !c.installed ? 'Install Claude Code to use Quorum'
-    : !c.loggedIn ? 'Signed out. Sign in to use Quorum'
+    : !c.installed ? 'Install Claude Code to use it as the model source'
+    : !c.loggedIn ? 'Signed out. Sign in to use it as the model source'
     : ['AI usage', c.email, c.org, plan && `${plan} plan`].filter(Boolean).join(' · ');
   return (
     <>
-      <div className="set-head">
-        <h3>AI</h3>
-        <span className="set-head-actions menu-wrap" onClick={(e) => e.stopPropagation()}>
-          <button className="pill small-pill with-icon" aria-haspopup="menu" aria-expanded={adding} onClick={() => setAdding((o) => !o)}><IconPlus width={15} height={15} />Add</button>
-          {adding && (
-            <div className="menu end" role="menu">
-              <button role="menuitem" disabled><ProviderMark provider="openai" /> Codex <em className="soon">Coming soon</em></button>
-              <button role="menuitem" disabled><ProviderMark provider="google" /> Gemini CLI <em className="soon">Coming soon</em></button>
-            </div>
-          )}
-        </span>
-      </div>
-      <p className="mcp-lede">The model Quorum uses, and how Claude and Terminal reach Quorum.</p>
+      <div className="set-head"><h3>AI</h3></div>
+      <p className="mcp-lede">Where Quorum's model runs, and how Claude and Terminal reach Quorum. Every source is your own; Quorum has no key of its own.</p>
+      <ModelSources claude={c} />
       <div className="set-card">
         <Row icon={<ProviderMark provider="anthropic" />} title={<>Claude Code{c?.version && <em className="muted ver">v{c.version}</em>}</>} desc={desc}>
           <span className="menu-wrap" onClick={(e) => e.stopPropagation()}>

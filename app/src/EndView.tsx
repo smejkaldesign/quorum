@@ -75,7 +75,7 @@ export function EndView({ notes, meta, summarizing, transcript, onClose }: { not
               <span className="meta-pill"><IconCalendar width={16} height={16} />{when}{started ? ` · ${started.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}</span>
               {meta && meta.minutes > 0 && <span className="meta-pill"><IconClock width={16} height={16} />{meta.minutes} min</span>}
               {meta && meta.participants > 0 && <span className="meta-pill"><IconPeople width={16} height={16} />{meta.participants}</span>}
-              {meta && <span className="meta-pill">Claude {meta.model[0].toUpperCase() + meta.model.slice(1)}</span>}
+              {meta && <span className="meta-pill">{modelName(meta.model)}</span>}
               <div className="view-toggle" role="group" aria-label="Show">
                 <button className={showing === 'summary' ? 'on' : ''} aria-pressed={showing === 'summary'} aria-label="Summary" data-tip="Summary" onClick={() => setShowing('summary')}><IconNotes width={16} height={16} /></button>
                 <button className={showing === 'transcript' ? 'on' : ''} aria-pressed={showing === 'transcript'} aria-label="Transcript" data-tip="Transcript" onClick={() => setShowing('transcript')}><IconLogs width={16} height={16} /></button>
@@ -140,4 +140,11 @@ export function EndView({ notes, meta, summarizing, transcript, onClose }: { not
       </div>
     </div>
   );
+}
+
+// the note's model field, readable: claude-sonnet -> Claude Sonnet, claude-sonnet-5-5 -> Claude Sonnet 5.5, ollama/llama3.1 -> llama3.1
+function modelName(m: string) {
+  if (m.startsWith('ollama/')) return m.slice(7);
+  if (!m.startsWith('claude-')) return m;
+  return `Claude ${m.slice(7).replace(/^\w/, (c) => c.toUpperCase()).replace(/-(\d+)-(\d+)$/, ' $1.$2')}`;
 }

@@ -33,7 +33,7 @@ export function createVault(dir, name = 'My Agent OS') {
 
 export const defaultVaultDir = () => path.join(homedir(), 'Documents', 'Quorum');
 
-export function registerOnboarding({ ipcMain, settings, saveSettings, inspectBrain, connect, systemPreferences, shell, helperAsk, claudeStatus, log, hadSettings = false }) {
+export function registerOnboarding({ ipcMain, settings, saveSettings, inspectBrain, connect, systemPreferences, shell, helperAsk, claudeStatus, modelStatus, log, hadSettings = false }) {
   // an install that already has settings is not a first run; mark it so the flag stays stable
   if (hadSettings && !settings.onboarded) { settings.onboarded = 'existing'; saveSettings(); }
   const permissions = async () => ({
@@ -49,6 +49,7 @@ export function registerOnboarding({ ipcMain, settings, saveSettings, inspectBra
   ipcMain.handle('onboarding-checks', async () => ({
     permissions: await within(4000, permissions(), { microphone: 'unknown', audio: 'unknown', accessibility: 'unknown', calendar: 'unknown' }),
     claude: await within(15000, claudeStatus().catch(() => ({ installed: false })), { installed: false, pending: true }),
+    model: await within(4000, modelStatus().catch(() => null), null),
   }));
   ipcMain.handle('onboarding-create-vault', (_e, dir, name) => {
     const target = String(dir || defaultVaultDir());
