@@ -49,17 +49,24 @@ The open-source edition costs Smejkal Design $0 to operate. Every feature in it 
 - quorum.watch: landing page, download button, pricing table with two columns (Open source, Cloud) and a subdued Enterprise row, same as celune.ai.
 - Supabase Auth site URL moves to quorum.watch.
 
-## Open questions for Eric
+## Decisions (Eric, 2026-11-08)
 
-1. Team as a separate tier now or later. Proposal: later. Ship members and invites inside Cloud, watch seat counts.
-2. Hosted model access in Cloud. Proposal: not in the first release. BYOK only; revisit when support load shows people stuck on keys.
-3. Price. Proposal: match Celune Cloud so the studio has one number to defend.
+1. One paid tier for v1. Team tier planned later; members and invites ship inside Cloud, watch seat counts.
+2. Price: $9 per seat per month.
+3. Dead Settings rows stay visible as a to-do map until the features ship.
+4. Hosted model access in Cloud: not in the first release. BYOK only; revisit when support load shows people stuck on keys.
+
+## Environments and administration
+
+- Development runs against the local Supabase stack (`supabase start`) with the same migrations; production (`quorum`) is for the signed release. A second hosted project costs $10 a month on the Pro organization, so a hosted dev project is optional later, in a free organization. The dev build signs in against its own environment with its own account and session file; nothing is shared with production. Pointing a dev build at production needs an explicit switch in the developer section of Settings and shows a banner while it is on.
+- Super admin: Eric's account carries a `platform_owner` role in production (same pattern as Celune), outside any workspace, with the ability to list workspaces and members, set plans by hand, and read audit rows.
+- Admin app: a small web app at admin.quorum.watch, its own directory and UI, for the platform owner only: workspaces, plans, seats, invites, feature flags, environment banner. Phase 2 of the Cloud work, after sync.
+
+## Accounts and documents, logged on the tasks that need them
+
+Apple Developer Program (signing task), Stripe activation, Terms and Privacy pages and Stripe Tax (billing task), Google OAuth consent screen and Resend SMTP (Google sign-in task), support mailbox and a trademark search note (quorum.watch task). None of these are started until their task is.
 
 ## Related
 
 - docs/parity-gaps.md, docs/backend-plan.md
 - Vault: `MyBrain/04-projects/celune-oss-narrative-draft.md`, `celune-cloud-pricing-simplification.md`, `celune-oss-phase2-one-repo-prd.md`
-
-## Accounts and documents, logged on the tasks that need them
-
-Apple Developer Program (signing task), Stripe activation, Terms and Privacy pages and Stripe Tax (billing task), Google OAuth consent screen and Resend SMTP (Google sign-in task), support mailbox and a trademark search note (quorum.watch task). None of these are started until their task is.
