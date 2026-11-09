@@ -14,13 +14,13 @@ The open-source edition is the same app with the same features. It is never a cr
 2. **Sync and web access.** Notes and meetings across Macs and in a browser.
 3. **Team knowledge.** Shared workspace notes, members with owner, admin and member roles, invites, domain join, visibility rules, an admin review queue for member contributions with an auto-include toggle, and Teams inside a workspace with their own knowledge segment and a synthesized Team note per shared meeting. This is also the pitch to people who already run their own Agent OS: Cloud is what lets them share it with a team and reach it from every device.
 
-**Tokens.** Cloud charges for hosting, ease of use and teams. One exception, decided 2026-11-08: Cloud includes managed transcription, a cloud speech engine plus the running summary and final notes run on the company's keys, 20 recorded hours a month per seat, after which the on-device engine takes over for the rest of the month. Cost basis is $0.22 to $0.53 per recorded hour, so the allowance caps exposure near $4.40 against the $5 seat. Outside that allowance Cloud bills no tokens in v1 and makes no model call on the user's behalf; every model path, Local or Cloud, is the user's Claude Code sign-in, the user's own key in the Mac's Keychain, or a local model. Anthropic and OpenAI offer no third-party OAuth that hands an app a user's key, so "connect your AI account" means one of those three sources. No user key is stored server-side in v1. A server-side runner is a later option; if one ever runs on a company key, tokens bill straight through monthly at cost with a user-set cap (suggested $10 to $20 on top of the $5 seat), and keys are encrypted at rest with per-workspace keys.
+**Tokens.** Cloud charges for hosting, ease of use and teams. One exception, decided 2026-11-08: Cloud includes managed transcription, a cloud speech engine plus the running summary and final notes run on the company's keys, 20 recorded hours a month per seat, after which the on-device engine takes over for the rest of the month. Cost basis is $0.22 to $0.53 per recorded hour, so the 20-hour cap holds exposure near $4.40 against the $9 seat, and members raise the cap in 20-hour packs at $5 each. Outside that allowance Cloud bills no tokens in v1 and makes no model call on the user's behalf; every model path, Local or Cloud, is the user's Claude Code sign-in, the user's own key in the Mac's Keychain, or a local model. Anthropic and OpenAI offer no third-party OAuth that hands an app a user's key, so "connect your AI account" means one of those three sources. No user key is stored server-side in v1. A server-side runner is a later option; if one ever runs on a company key, tokens bill straight through monthly at cost with a user-set cap (suggested $10 to $20 on top of the $5 seat), and keys are encrypted at rest with per-workspace keys.
 
 ## Editions
 
 | | Local (open source) | Cloud (paid) | Team (later tier, same code path as Cloud) |
 |---|---|---|---|
-| Price | Free, Apache-2.0 | One paid plan for v1: $5 per seat per month | Not a tier in v1; Cloud gets team features first, the line moves when demand shows |
+| Price | Free, Apache-2.0 | One paid plan for v1: $9 per seat per month, 20 managed transcription hours included, more in $5 packs of 20 hours | Not a tier in v1; Cloud gets team features first, the line moves when demand shows |
 | Meetings: capture, on-device transcription, Zoom/Meet/Teams detection, STOP/GO chat notice, end-of-call notes | Yes | Yes | Yes |
 | Agent OS: connect an existing notes folder (Obsidian vault, repo with CLAUDE.md), knowledge graph, search, read guard | Yes | Yes | Yes |
 | Model access | User's own Claude Code sign-in; bring your own API key (Anthropic, OpenAI, local Ollama); default is none | Same, plus managed transcription (cloud speech engine and notes on the company's keys, 20 hours a month per seat) | Same |
@@ -63,7 +63,7 @@ The open-source edition is the same app with the same features. It is never a cr
 ## Decisions (2026-11-08)
 
 1. One paid tier for v1. Team tier planned later; members and invites ship inside Cloud, watch seat counts.
-2. Price: $5 per seat per month (revised from $9 the same day).
+2. Price: $9 per seat per month (set to $5 on 2026-11-08, returned to $9 the same evening once managed transcription was included; the 20-hour cap grows in $5 packs).
 3. Dead Settings rows stay visible as a to-do map until the features ship.
 4. Hosted model access in Cloud stays out of the first release. BYOK only; revisit when support load shows people stuck on keys.
 5. Tokens: Cloud bills no tokens in v1 beyond the included managed transcription allowance (decided 2026-11-08, PRD decision 15). The Starter Agent OS runner executes on the user's Mac with the user's model source; no user key is stored server-side. A server-side runner with passthrough billing and a user-set cap ($10 to $20 suggested) is a later option.

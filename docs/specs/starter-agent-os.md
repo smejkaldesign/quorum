@@ -47,7 +47,7 @@ The runner uses the app's model source from Settings: Claude Code sign-in on thi
 
 **Server-side runner (later option only).** If demand shows for filing while the Mac is closed, a hosted runner can be added. If it runs on a company key, tokens bill straight through monthly at cost with a user-set cap; the suggested range is $10 to $20 per month on top of the $5 seat. At the cap the runner stops until the next month or a higher cap, and Settings says so.
 
-Cost boundary: $5 per seat per month covers hosting, storage, sync and team features. Model cost is the user's in every v1 path.
+Cost boundary: $9 per seat per month covers hosting, storage, sync and team features. Model cost is the user's in every v1 path.
 
 ## Upsell moments and copy constraints
 
@@ -106,7 +106,7 @@ Each template is `supabase/templates/<name>/template.json` (version, folders, fi
 - **Pull sync (rank 11).** Templates are stored on the server; without pull nothing reaches the Mac.
 - **Model source (rank 4).** The runner reuses the model-source setting and the Keychain store.
 - **Platform owner role.** Template rollout and version pinning.
-- **Billing.** The $5 seat.
+- **Billing.** The $9 seat.
 
 ## Phased build order
 
