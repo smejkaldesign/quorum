@@ -2,6 +2,8 @@
 // the full turn list, streamed into the review view. Every generated line carries the ids of the turns it came from.
 // Pure: prompts, state merge, trigger rule, partial JSON, markdown. main.js owns the timer, the model call and the settings.
 
+import { speakerOf } from './speakers.js';
+
 export const SUMMARY_MS = 5 * 60 * 1000;
 export const SUMMARY_TURNS = 40;
 export const SUMMARY_MIN = 8;
@@ -16,8 +18,8 @@ export function summaryDue({ turns, state, lastAt, now }) {
   return fresh >= SUMMARY_MIN && (fresh >= SUMMARY_TURNS || now - lastAt >= SUMMARY_MS);
 }
 
-// one line per turn with the id the model cites back: [t12] Ana: we ship Friday
-export const turnLines = (turns, label) => turns.map((t) => `[t${t.id}] ${label[t.channel] ?? t.channel}: ${t.text}`).join('\n');
+// one line per turn with the id the model cites back: [t12] Ana: we ship Friday. A them turn the speaker pass named carries its name
+export const turnLines = (turns, label) => turns.map((t) => `[t${t.id}] ${speakerOf(t, label)}: ${t.text}`).join('\n');
 
 const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 const list = (v, map) => (Array.isArray(v) ? v.map(map).filter(Boolean).slice(0, 80) : null);
@@ -211,7 +213,7 @@ export function notesMarkdown(notes, { refs = false, turns = [], label = {}, pri
   }
   if (cited.size) {
     const byId = new Map(turns.map((t) => [t.id, t]));
-    for (const id of [...cited].sort((a, b) => a - b)) { const t = byId.get(id); if (t) lines.push(`[^t${id}]: ${label[t.channel] ?? t.channel}: ${t.text}`); }
+    for (const id of [...cited].sort((a, b) => a - b)) { const t = byId.get(id); if (t) lines.push(`[^t${id}]: ${speakerOf(t, label)}: ${t.text}`); }
     lines.push('');
   }
   return lines.join('\n');

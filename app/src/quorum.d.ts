@@ -4,7 +4,7 @@ declare global {
 }
 
 export type HelperEvent =
-  | { event: 'transcript'; channel: 'me' | 'them' | 'dictation'; text: string; isFinal: boolean; start: number; end: number; who?: string | null; id?: number; replace?: boolean; at?: number }
+  | { event: 'transcript'; channel: 'me' | 'them' | 'dictation'; text: string; isFinal: boolean; start: number; end: number; who?: string | null; id?: number; replace?: boolean; at?: number; speaker?: string | null; confidence?: number; cluster?: string | null; corrected?: boolean }
   | { event: 'status'; message: string }
   | { event: 'error'; message: string }
   | { event: 'stopped' }
@@ -23,6 +23,8 @@ export type Notes = { title: string; summary: string; sections: { heading: strin
 // the final notes as they stream in: the raw text so far and whatever of it already parses
 export type NotesDraft = { text: string; partial: Notes | null };
 export type MeetingMeta = { title: string; startedAt?: string; minutes: number; participants: number; model: string };
+// the speaker pass or a correction, per them turn, plus the names the correction popover offers
+export type SpeakersEvent = { turns: { id: number; speaker: string | null; confidence: number; cluster: string | null; corrected: boolean }[]; participants: string[] };
 
 type Unsub = () => void;
 export type CalendarEvent = { id: string; title: string; start: string; end: string; item?: string; recurring?: boolean; platform?: 'zoom' | 'meet' | 'teams' | null; join?: string | null };
@@ -108,6 +110,9 @@ declare global {
       unstageFile(path: string): Promise<void>;
       onHelperEvent(cb: (e: HelperEvent) => void): Unsub;
       onState(cb: (s: StateEvent) => void): Unsub;
+      onSpeakers(cb: (s: SpeakersEvent) => void): Unsub;
+      nameSpeakers(): Promise<SpeakersEvent>;
+      setSpeaker(id: number, name: string | null, similar: boolean): Promise<SpeakersEvent>;
       onLog(cb: (line: string) => void): Unsub;
       onPopup(cb: (p: PopupEvent) => void): Unsub;
       onPopupOut(cb: () => void): () => void;

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MeetingMeta, Notes, NotesDraft } from './quorum';
+import { SpeakerName, similarCount, type SpeakerTurn } from './Speaker';
 import mark from '../assets/quorum-mark.png';
 import { Markdown } from './Markdown';
 import { IconArrowUp, IconCalendar, IconClock, IconFolder, IconLogs, IconNotes, IconPeople } from './icons';
@@ -8,9 +9,9 @@ type Followup = { q: string; a: string | null };
 
 // Granola-sized end-of-call note: title, meta pills, sectioned notes, follow-up composer. While the notes stream in,
 // whatever already parses is shown; a bullet with refs points back at the transcript turns it came from
-export type Turn = { id: number; channel: 'me' | 'them'; who: string; text: string };
+export type Turn = SpeakerTurn & { who: string };
 
-export function EndView({ notes, draft, meta, summarizing, transcript, onClose }: { notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; onClose: () => void }) {
+export function EndView({ notes, draft, meta, summarizing, transcript, participants, onSpeaker, onClose }: { notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; participants: string[]; onSpeaker: (id: number, name: string | null, similar: boolean) => Promise<void>; onClose: () => void }) {
   const [showing, setShowing] = useState<'summary' | 'transcript'>('summary');
   const [dropped, setDropped] = useState<Record<number, boolean>>({});
   const [followups, setFollowups] = useState<Followup[]>([]);
@@ -93,7 +94,12 @@ export function EndView({ notes, draft, meta, summarizing, transcript, onClose }
 
             {showing === 'transcript' ? (
               <section className="transcript end-transcript">
-                {transcript.length ? transcript.map((t, i) => <p key={i} id={`turn-${t.id}`} className={`${t.channel}${hot.includes(t.id) ? ' hot' : ''}`}><span>{t.who}</span><div>{t.text}</div></p>) : <p className="muted">Nothing was transcribed.</p>}
+                {transcript.length ? transcript.map((t) => (
+                  <p key={t.id} id={`turn-${t.id}`} className={`${t.channel}${hot.includes(t.id) ? ' hot' : ''}`}>
+                    {t.channel === 'them' ? <SpeakerName turn={t} fallback={t.who} participants={participants} similar={similarCount(transcript, t)} onPick={(name, similar) => onSpeaker(t.id, name, similar)} /> : <span>{t.who}</span>}
+                    <div>{t.text}</div>
+                  </p>
+                )) : <p className="muted">Nothing was transcribed.</p>}
               </section>
             ) : !shown ? <p className="raw">{draft?.text}</p> : <>
             {shown.empty && <p className="muted">Nothing was transcribed in this call.</p>}

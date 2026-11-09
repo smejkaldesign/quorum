@@ -11,6 +11,7 @@ import { addFinal, isEcho, toJSON, toText } from './transcript.js';
 import { extractJson } from './json.js';
 import { emptyState, finalNotes, mergeState, notesFromState, notesMarkdown, notesPrompt, notesSystem, partialNotes, summaryBlock, summaryDue, summaryPrompt, newTurns } from './notes.js';
 import { buildTerms, orgOf, topNames } from './terms.js';
+import { applySpeakers, correctSpeaker, parseSpeakers, participantList, soloSpeakers, speakerView, speakersPrompt, speakersSystem } from './speakers.js';
 import { startControl } from './control.js';
 import { PROVIDERS as DECISION_PROVIDERS, connectedProvider, decide as decideRaw, removeDecisionsKey, setDecisionsKey } from './decisions.js';
 import { execFile, execFileSync, spawn } from 'node:child_process';
@@ -102,7 +103,7 @@ let quitting = false;
 let helper;
 const asset = (name) => path.join(here, 'assets', name);
 // a meeting can have several capture segments (STOP, GO, STOP...); STOP deletes all of them
-const meeting = { armed: false, capturing: false, id: null, dirs: [], dir: null, transcript: [], title: '', participants: 0, people: new Set(), terms: [], startedAt: null, endedAt: null, notes: null, summary: emptyState(), summaryAt: 0, privateNotes: '' };
+const meeting = { armed: false, capturing: false, id: null, dirs: [], dir: null, transcript: [], title: '', participants: 0, people: new Set(), terms: [], startedAt: null, endedAt: null, notes: null, summary: emptyState(), summaryAt: 0, privateNotes: '', invitees: [], saved: null };
 
 const log = (...a) => console.log('[quorum]', ...a);
 // windows can be gone mid-quit while the helper or agent is still reporting
@@ -389,7 +390,7 @@ function writeState() {
   stateTimer = null;
   const live = meeting.capturing;
   store.state.write(live
-    ? { recording: true, title: meeting.title || null, startedAt: meeting.startedAt?.toISOString() ?? null, transcript: meeting.transcript.slice(-400).map((t) => ({ who: t.channel === 'me' ? 'me' : 'others', text: t.text })) }
+    ? { recording: true, title: meeting.title || null, startedAt: meeting.startedAt?.toISOString() ?? null, transcript: meeting.transcript.slice(-400).map((t) => ({ who: t.channel === 'me' ? 'me' : t.speaker ?? 'others', text: t.text })) }
     : { recording: false, stopped: meeting.armed, reviewing: !!meeting.reviewing });
 }
 const writeStateSoon = () => { stateTimer ??= setTimeout(writeState, 3000); };
@@ -406,6 +407,7 @@ async function inviteesNow() {
 // development run also logs a sample
 async function sessionTerms({ calendar = true, participants = [] } = {}) {
   const invited = calendar ? await inviteesNow() : [];
+  meeting.invitees = invited.filter((a) => a?.name).map((a) => ({ name: a.name, email: a.email ?? null }));
   const index = meetingIndex();
   const terms = buildTerms({
     invitees: [...invited.map((a) => a.name), ...invited.map((a) => orgOf(a.email))],
@@ -465,6 +467,37 @@ function transcriptText() {
 function runClaude(prompt, system, model = settings.model, extra = {}) {
   return runModel({ source: modelSource(), prompt, system, model, localModel: settings.localModel, cwd: meeting.dir || SESSIONS, ...extra });
 }
+
+// the others on this call, for the speaker pass and the correction popover: the names the meeting app showed, then the
+// calendar invitees. A solo note has nobody on the far side
+const participantsNow = () => (meeting.solo ? [] : participantList({ people: [...meeting.people], invitees: meeting.invitees, owner: USER_NAME, orgOf }));
+
+// names on the far side: once at the end of a call before the notes, and on demand from the transcript tab. With one
+// other participant every them turn is theirs; with none there is nothing to name; otherwise Haiku reads the
+// transcript with the participant list. A failed pass leaves the turns as they were. Corrections survive a rerun,
+// and a run already in flight is the one the caller waits for
+let speakersRun = null;
+function nameSpeakers() {
+  if (speakersRun) return speakersRun;
+  const participants = participantsNow();
+  if (!participants.length || !meeting.transcript.some((t) => t.channel === 'them')) return Promise.resolve();
+  if (participants.length === 1) { meeting.transcript = soloSpeakers(meeting.transcript, participants[0].name); speakersChanged(); return Promise.resolve(); }
+  const turns = meeting.transcript;
+  speakersRun = runClaude(speakersPrompt({ turns, participants, owner: OWNER, redact: suggester.redactLines }), speakersSystem({ owner: OWNER }), 'haiku')
+    .then((raw) => { meeting.transcript = applySpeakers(meeting.transcript, parseSpeakers(extractJson(raw), turns, participants)); speakersChanged(); })
+    .catch((err) => log('speaker names failed, leaving turns unnamed:', err.message.split('\n')[0]))
+    .finally(() => { speakersRun = null; });
+  return speakersRun;
+}
+
+// after the pass or a correction: the renderer, the CLI state, transcript.json and, once the note is saved, the note
+function speakersChanged() {
+  toUI('speakers', speakersPayload());
+  writeStateSoon();
+  if (meeting.dir && meeting.transcript.length) store.meetings.writeTranscript(meeting.dir, toJSON(meeting.transcript));
+  if (meeting.saved) store.meetings.saveNote(meeting.saved.file, noteMarkdown(meeting.saved.payload));
+}
+const speakersPayload = () => ({ turns: speakerView(meeting.transcript), participants: participantsNow().map((p) => p.name) });
 
 // the running summary: Haiku folds the turns since the last run into the state, on a timer that never blocks capture.
 // A failed run is logged and the last good state stands; the local source uses its configured model whatever we ask for
@@ -581,6 +614,7 @@ async function startListening(by) {
   meeting.summary = emptyState();
   meeting.summaryAt = Date.now();
   meeting.privateNotes = '';
+  meeting.saved = null;
   clearInterval(summaryTimer);
   summaryTimer = setInterval(runSummary, 30000);
   meeting.armed = true;
@@ -621,6 +655,7 @@ async function endMeeting() {
     return meeting.notes;
   }
   toUI('state', { phase: 'summarizing', meta: meetingMeta(fallbackTitle) });
+  await nameSpeakers();
   store.meetings.writeTranscript(meeting.dir, toJSON(meeting.transcript));
   // the final notes stream into the review view; the state first, then every turn with its id. On any failure the
   // running state is the note
@@ -1662,7 +1697,9 @@ function saveNotes(payload) {
   const dir = quorumNotesDir() ?? path.join(suggester.vault(), '08-meetings', 'quorum');
   const date = localIso(meeting.startedAt || new Date()).slice(0, 10);
   const file = path.join(dir, `${date}-${slug(notes.title)}-${String(meeting.id).slice(-8).toLowerCase()}.md`);
-  store.meetings.saveNote(file, noteMarkdown({ notes, followups: payload.followups }));
+  // a speaker correction made after saving rewrites the same file from the turns
+  meeting.saved = { file, payload: { notes, followups: payload.followups } };
+  store.meetings.saveNote(file, noteMarkdown(meeting.saved.payload));
   log('saved note', file);
   account.sync.pushMeetingNote(file);
   // the call's chat now hangs off the saved note
@@ -1682,13 +1719,25 @@ async function closeNoteForMeeting() {
   toUI('log', notes && !notes.empty ? `A meeting started, so your note "${notes.title}" was saved and closed.` : 'A meeting started, so your note was closed.');
 }
 
+// the transcript tab's Name speakers button, and one correction: a name from the list, a typed name (which joins the
+// participants), or Unknown. similar also renames the turns the pass clustered with an unnamed one
+ipcMain.handle('name-speakers', async () => { await nameSpeakers(); return speakersPayload(); });
+ipcMain.handle('set-speaker', (_e, id, name, similar) => {
+  const typed = String(name ?? '').trim();
+  if (typed && typed !== 'Unknown' && !participantsNow().some((p) => p.name.toLowerCase() === typed.toLowerCase())) meeting.people.add(typed);
+  meeting.transcript = correctSpeaker(meeting.transcript, Number(id), typed || null, { similar: !!similar });
+  speakersChanged();
+  return speakersPayload();
+});
+
 ipcMain.handle('discard', () => {
+  meeting.saved = null;
   meeting.notes = null;
   meeting.reviewing = false;
   writeState();
 });
 
-ipcMain.handle('done', () => { meeting.reviewing = false; writeState(); });
+ipcMain.handle('done', () => { meeting.saved = null; meeting.reviewing = false; writeState(); });
 
 // a reload keeps your place; a fresh launch starts clean
 const LAUNCH_ID = String(Date.now());

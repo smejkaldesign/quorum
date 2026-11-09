@@ -1,5 +1,5 @@
 import { Component, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import type { Brain, HelperEvent, MeetingMeta, Notes, NotesDraft, Settings, Source } from './quorum';
+import type { Brain, HelperEvent, MeetingMeta, Notes, NotesDraft, Settings, Source, SpeakersEvent } from './quorum';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
 import { EndView } from './EndView';
@@ -14,10 +14,11 @@ import { HistoryView } from './HistoryView';
 import { KnowledgeView, type KbCommand } from './KnowledgeView';
 import { Composer } from './Composer';
 import { SettingsView } from './SettingsView';
+import { SpeakerName, similarCount, type SpeakerInfo } from './Speaker';
 import { IconFolderOpen, IconPerson, IconGear, IconHome, IconGraph, IconSearch, IconFolder, IconDoc, IconExternal, IconArrowUp, IconBack, IconChat, IconChevron, IconNotes, IconStop, IconPause, IconPlay, Wave } from './icons';
 
 // one speaker turn as main.js built it; a turn that grows arrives again with the same id and replace: true
-type Line = { id: number; channel: 'me' | 'them'; text: string; start: number };
+type Line = { id: number; channel: 'me' | 'them'; text: string; start: number } & Partial<SpeakerInfo>;
 type Phase = 'idle' | 'starting' | 'listening' | 'paused' | 'review' | 'blocked';
 type Tab = 'home' | 'knowledge' | 'chat' | 'notes';
 const inCall = (p: string) => p === 'listening' || p === 'paused' || p === 'starting';
@@ -108,6 +109,8 @@ export function App() {
   const [meta, setMeta] = useState<MeetingMeta | null>(null);
   const [settings, setSettings] = useState<Settings>({ autoListen: false, model: 'sonnet', suggestions: true });
   const [themName, setThemName] = useState<string | null>(null);
+  const [participants, setParticipants] = useState<string[]>([]);
+  const [naming, setNaming] = useState(false);
   useEffect(() => { window.quorum.user().then((u) => setMe({ name: u?.name ?? '', photo: u?.photo ?? null })); }, [settings.profile]);
   const [unread, setUnread] = useState(false);
   const tabRef = useRef<Tab>('chat');
@@ -124,7 +127,15 @@ export function App() {
   const notesEnd = useRef<HTMLDivElement>(null);
 
   const addLog = (s: string) => setLog((l) => [...l.slice(-200), `${new Date().toLocaleTimeString()}  ${s}`]);
-  const resetMeeting = () => { setLines([]); setPartial({ me: '', them: '' }); setMsgs([]); setNotes(null); setMeta(null); };
+  const resetMeeting = () => { setLines([]); setPartial({ me: '', them: '' }); setMsgs([]); setNotes(null); setMeta(null); setParticipants([]); };
+  // the speaker pass or a correction: names merged onto the lines by id, the list the popover offers
+  const applySpeakers = (s: SpeakersEvent) => {
+    setParticipants(s.participants);
+    const by = new Map(s.turns.map((t) => [t.id, t]));
+    setLines((l) => l.map((x) => { const t = by.get(x.id); return t ? { ...x, speaker: t.speaker, confidence: t.confidence, cluster: t.cluster, corrected: t.corrected } : x; }));
+  };
+  const nameSpeakers = async () => { setNaming(true); try { applySpeakers(await window.quorum.nameSpeakers()); } finally { setNaming(false); } };
+  const setSpeaker = async (id: number, name: string | null, similar: boolean) => applySpeakers(await window.quorum.setSpeaker(id, name, similar));
 
   useEffect(() => {
     const offs = [
@@ -135,9 +146,9 @@ export function App() {
           const text = typeof e.text === 'string' ? e.text : '';
           if (e.channel === 'them' && 'who' in e) setThemName(e.who ?? null);
           if (e.isFinal) {
-            const turn: Line = { id: e.id ?? 0, channel: e.channel as 'me' | 'them', text: text.trim(), start: e.start };
+            const turn: Line = { id: e.id ?? 0, channel: e.channel as 'me' | 'them', text: text.trim(), start: e.start, ...(e.speaker !== undefined ? { speaker: e.speaker, confidence: e.confidence ?? 0, cluster: e.cluster ?? null, corrected: !!e.corrected } : {}) };
             setLines((l) => {
-              if (e.replace && l.some((x) => x.id === turn.id)) return l.map((x) => (x.id === turn.id ? turn : x));
+              if (e.replace && l.some((x) => x.id === turn.id)) return l.map((x) => (x.id === turn.id ? { ...x, ...turn } : x));
               const i = l.findIndex((x) => x.start > turn.start);
               return i < 0 ? [...l, turn] : [...l.slice(0, i), turn, ...l.slice(i)];
             });
@@ -148,6 +159,7 @@ export function App() {
         else if (e.event === 'axStatus') addLog(`accessibility ${e.trusted ? 'granted' : 'NOT granted'}, Zoom ${e.zoomRunning ? 'running' : 'not running'}`);
         else if (e.event === 'audioRoute') addLog(`audio out: ${e.name || e.route} (${e.route})`);
       }),
+      window.quorum.onSpeakers(applySpeakers),
       window.quorum.onState((s) => {
         if (s.phase === 'starting') { setPhase('starting'); addLog("posting Quorum's notice in the Zoom chat…"); return; }
         if (s.phase === 'idle') { setPhase('idle'); return; }
@@ -260,7 +272,8 @@ export function App() {
 
 
   const liveWords = settings.transcription?.live ?? true;
-  const who = (c: 'me' | 'them') => (c === 'me' ? 'You' : themName ?? 'Them');
+  const themLabel = themName ?? 'Them';
+  const who = (l: { channel: 'me' | 'them'; speaker?: string | null }) => (l.channel === 'me' ? 'You' : l.speaker ?? themLabel);
 
   const status = {
     idle: { label: 'Not listening', icon: <Wave live={false} /> },
@@ -281,7 +294,7 @@ export function App() {
   }
 
   if (phase === 'review') {
-    return <EndView notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing} transcript={lines.map((l) => ({ id: l.id, channel: l.channel, who: who(l.channel), text: l.text }))} onClose={() => { setPhase('idle'); resetMeeting(); setTab('home'); }} />;
+    return <EndView notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing} transcript={lines.map((l) => ({ ...l, who: who(l) }))} participants={participants} onSpeaker={setSpeaker} onClose={() => { setPhase('idle'); resetMeeting(); setTab('home'); }} />;
   }
 
   return (
@@ -434,11 +447,21 @@ export function App() {
       {tab === 'notes' && (
         <div className="body">
           <section className="card transcript">
+              {lines.some((l) => l.channel === 'them') && (
+                <div className="transcript-head">
+                  <button className="pill ghost small" disabled={naming} data-tip="Quorum names the other speakers from context. One other participant needs no model." onClick={nameSpeakers}>{naming ? <><span className="spinner tiny" /> Naming…</> : 'Name speakers'}</button>
+                </div>
+              )}
               {lines.map((l, i) => {
                 const tail = liveWords && i === lines.length - 1 ? partial[l.channel] : '';
-                return <p key={l.id} className={l.channel}><span>{who(l.channel)}</span><div>{l.text}{tail && <em className="partial"> {tail}</em>}</div></p>;
+                return (
+                  <p key={l.id} className={l.channel}>
+                    {l.channel === 'them' ? <SpeakerName turn={l} fallback={themLabel} participants={participants} similar={similarCount(lines, l)} onPick={(name, similar) => setSpeaker(l.id, name, similar)} /> : <span>{who(l)}</span>}
+                    <div>{l.text}{tail && <em className="partial"> {tail}</em>}</div>
+                  </p>
+                );
               })}
-              {liveWords && (['me', 'them'] as const).map((c) => (partial[c] && lines[lines.length - 1]?.channel !== c ? <p key={`p-${c}`} className={c}><span>{who(c)}</span><div><em className="partial">{partial[c]}</em></div></p> : null))}
+              {liveWords && (['me', 'them'] as const).map((c) => (partial[c] && lines[lines.length - 1]?.channel !== c ? <p key={`p-${c}`} className={c}><span>{who({ channel: c })}</span><div><em className="partial">{partial[c]}</em></div></p> : null))}
               {!lines.length && !partial.me && !partial.them && (
                 <p className="muted">{phase === 'listening' ? 'Waiting for speech…' : 'The live transcript shows up here while Quorum is listening.'}</p>
               )}
