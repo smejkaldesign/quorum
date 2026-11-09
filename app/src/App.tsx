@@ -88,8 +88,14 @@ export function App() {
   // a fresh install shows the wizard until onboarding-done; null until the main process answers
   const [firstRun, setFirstRun] = useState<boolean | null>(null);
   useEffect(() => { window.quorum.onboardingStatus().then((s) => setFirstRun(s.firstRun)).catch(() => setFirstRun(false)); }, []);
-  const [settingsPage, setSettingsPage] = useState<{ page: 'preferences' | 'memory'; n: number } | null>(null);
-  const openSettings = (page: 'preferences' | 'memory') => { setSettingsPage({ page, n: Date.now() }); setView('settings'); };
+  const [settingsPage, setSettingsPage] = useState<{ page: 'preferences' | 'memory' | 'connectors'; n: number } | null>(null);
+  const openSettings = (page: 'preferences' | 'memory' | 'connectors') => { setSettingsPage({ page, n: Date.now() }); setView('settings'); };
+  // the composer sits in three views, so its "Choose a model source" button asks for Settings through a window event
+  useEffect(() => {
+    const open = (e: Event) => openSettings((e as CustomEvent<'connectors'>).detail ?? 'preferences');
+    window.addEventListener('quorum-open-settings', open);
+    return () => window.removeEventListener('quorum-open-settings', open);
+  }, []);
   const composer = useRef<HTMLTextAreaElement>(null);
   const [lines, setLines] = useState<Line[]>([]);
   const [partial, setPartial] = useState<{ me: string; them: string }>({ me: '', them: '' });

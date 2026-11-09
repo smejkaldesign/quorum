@@ -29,9 +29,13 @@ export type DecisionProvider = 'openai' | 'typesafe';
 export type DecisionsStatus = { connected: boolean; provider: DecisionProvider | null; providers: Record<DecisionProvider, { name: string; placeholder: string; keyHint: string }> };
 export type Workspace = { company?: string; companyDescription?: string; neverListen?: string[]; optOuts?: OptOut[]; decisions?: { provider: DecisionProvider; by?: string; at?: string }; stopWord?: string; goWord?: string };
 export type Transcription = { echo?: 'off' | 'filter' | 'aec'; gap?: number; live?: boolean; capture?: 'meeting' | 'all' };
-export type Settings = { autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; suggestions: boolean; access?: 'read' | 'write'; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription };
+// where the model runs: none until chosen; claude-code is the only source with tools, so the only one that reads the Agent OS
+export type ModelSource = 'none' | 'claude-code' | 'anthropic-api' | 'local';
+export type ClaudeStatus = { installed: boolean; loggedIn: boolean; email: string; org: string; plan: string; method: string; version: string };
+export type ModelSourceStatus = { source: ModelSource; localModel: string; claude: ClaudeStatus | null; key: boolean; ollama: { reachable: boolean; hasModel: boolean } };
+export type Settings = { autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; suggestions: boolean; access?: 'read' | 'write'; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription };
 export type OnboardingStatus = { firstRun: boolean; defaultVaultDir: string };
-export type OnboardingChecks = { permissions: { microphone: string; audio: string; accessibility: string; calendar: string }; claude: { installed: boolean; loggedIn?: boolean; email?: string; org?: string; plan?: string; version?: string; pending?: boolean } };
+export type OnboardingChecks = { permissions: { microphone: string; audio: string; accessibility: string; calendar: string }; claude: { installed: boolean; loggedIn?: boolean; email?: string; org?: string; plan?: string; version?: string; pending?: boolean }; model?: ModelSourceStatus | null };
 export type Brain = { root: string; vault: string; name: string; markers: { agentOS: string | null; obsidian: boolean; search: boolean; safetyHooks: boolean } };
 // hosted edition: who is signed in, which organization they are in, and whether notes sync
 export type Role = 'owner' | 'admin' | 'member';
@@ -172,7 +176,12 @@ declare global {
       meetingSourceRemove(id: string): Promise<boolean>;
       meetingSourceOpen(id: string): Promise<void>;
       claudeLogin(): Promise<void>;
-      claudeStatus(): Promise<{ installed: boolean; loggedIn: boolean; email: string; org: string; plan: string; method: string; version: string }>;
+      claudeStatus(): Promise<ClaudeStatus>;
+      modelSourceStatus(): Promise<ModelSourceStatus>;
+      modelSourceSet(source: ModelSource): Promise<Settings>;
+      localModelSet(name: string): Promise<Settings>;
+      modelKeySet(key: string): Promise<{ ok?: boolean; error?: string }>;
+      modelKeyRemove(): Promise<void>;
       calendarConnect(): Promise<CalendarSettings>;
       calendarSet(next: { days?: number; enabled?: false; showAll?: boolean; hide?: string; unhideAll?: boolean }): Promise<CalendarSettings>;
       calendarPrivacy(): Promise<void>;
