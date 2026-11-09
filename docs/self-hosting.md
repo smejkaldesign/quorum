@@ -84,6 +84,8 @@ Production never falls back to the local stack. Without `.env` it runs with host
 
 Notes and meetings push to your project when sync is on in Settings. Audio never leaves the Mac. Hidden paths, private folders, notes with `confidential:` in their frontmatter and withheld transcript lines are skipped. Sync is off by default.
 
+**Pull.** With sync on, the app also pulls what other devices wrote: at sign-in, when you switch workspace, when the window comes to the front and every three minutes in between (polling; realtime is not used). Rows changed since the last pull (`sync-pull.json`, next to `sync-ids.json`) are written to the vault at the path each row stores, never inside a private folder. A file you edited that also changed remotely keeps the remote text and your text lands next to it as `<name> (conflict <date>).md`; a note removed remotely is renamed `<name> (removed).md`. Pulls never delete a file. A pulled note with `confidential:` frontmatter is written but this device will not push it again.
+
 ## Related
 
 - `docs/open-source-strategy.md`: the edition split and what each edition includes

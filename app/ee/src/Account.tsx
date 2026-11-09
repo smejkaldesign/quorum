@@ -187,11 +187,15 @@ function OrgCard({ account }: { account: AccountState }) {
     setBusy(true); setErr(''); setMsg('');
     const r = await api.syncNow();
     setBusy(false);
-    if (r.error) setErr(r.error); else if (r.pushed) setMsg(`Pushed ${count(r.pushed.notes, 'note')} and ${count(r.pushed.meetings, 'meeting')}`);
+    if (r.error) setErr(r.error);
+    else if (r.pushed) {
+      const pulled = r.pulled ? `Pulled ${count(r.pulled.notes, 'note')}${r.pulled.conflicts ? ` (${count(r.pulled.conflicts, 'conflict copy')})` : ''}, p` : 'P';
+      setMsg(`${pulled}ushed ${count(r.pushed.notes, 'note')} and ${count(r.pushed.meetings, 'meeting')}`);
+    }
   };
   const error = err || account.syncError;
   const last = account.lastSyncAt ? `Last synced ${ago(account.lastSyncAt)}` : 'Not synced yet';
-  const desc = !account.sync ? 'Off. Notes and meetings stay on this Mac'
+  const desc = !account.sync ? 'Off. Notes and meetings stay on this Mac; nothing is pulled from the workspace'
     : <>{error ? <em className="acct-err">{error}</em> : msg ? <em className="acct-ok">{msg}</em> : null}{(error || msg) && ' · '}{last}</>;
   return (
     <div className="set-card">

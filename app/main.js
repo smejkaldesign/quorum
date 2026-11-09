@@ -1267,7 +1267,7 @@ const isPrivatePath = (rel) => { const b = brain(); if (!b) return false; const 
 const isConfidentialText = (text) => /^---\r?\n(?:[^\n]*\r?\n)*?confidential\s*:/i.test(String(text).slice(0, 2000));
 const account = EDITION === 'cloud'
   ? (await loadEE('account.js')).registerAccount({ ipcMain, settings, saveSettings, toUI, log, brain, meetingIndex, isExcluded: (rel) => excludedPath(rel) || isPrivatePath(rel), isExcludedText: (t) => suggester.isExcluded(t) || isConfidentialText(t) })
-  : { sync: { pushNote() {}, pushMeetingNote() {} } };
+  : { sync: { pushNote() {}, pushMeetingNote() {}, pullNow() {} } };
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);
 ipcMain.handle('vault-search', (_e, q, limit) => vindex?.search(String(q), Math.min(Number(limit) || 30, 1000)) ?? []);
 ipcMain.handle('vault-link-health', () => vindex?.linkHealth() ?? []);
@@ -1836,3 +1836,6 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => { quitting = true; helperSend({ cmd: 'quit' }); });
 app.on('activate', openMain);
+// coming back to the window pulls what other devices changed; the timer in account.js covers the time in between
+let lastFocusPull = 0;
+app.on('browser-window-focus', () => { if (Date.now() - lastFocusPull < 30000) return; lastFocusPull = Date.now(); account.sync.pullNow(); });

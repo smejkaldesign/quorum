@@ -104,7 +104,7 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
   let cloud = resolveCloudConfig(settings);
   const makeClient = (c) => (c.url && c.key ? createClient(c.url, c.key, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storage: fileStorage(perConfig(c, 'auth', 'json')) } }) : null);
   let client = makeClient(cloud);
-  const state = { configured: !!client, signedIn: false, email: null, userId: null, workspace: null, workspaces: [], invites: [], domainMatches: [], sync: settings.sync === true, lastSyncAt: null, syncError: null };
+  const state = { configured: !!client, signedIn: false, email: null, userId: null, workspace: null, workspaces: [], invites: [], domainMatches: [], sync: settings.sync === true, lastSyncAt: null, lastPullAt: null, syncError: null };
   const listeners = new Set();
   const snapshot = () => JSON.parse(JSON.stringify(state));
   const emit = () => { for (const l of listeners) { try { l(snapshot()); } catch {} } };
@@ -117,12 +117,23 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
     client: () => client,
     state: snapshot,
     onChange: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
-    markSync: ({ lastSyncAt, syncError }) => { if (lastSyncAt !== undefined) state.lastSyncAt = lastSyncAt; if (syncError !== undefined) state.syncError = syncError; emit(); },
+    markSync: ({ lastSyncAt, lastPullAt, syncError }) => { if (lastSyncAt !== undefined) state.lastSyncAt = lastSyncAt; if (lastPullAt !== undefined) state.lastPullAt = lastPullAt; if (syncError !== undefined) state.syncError = syncError; emit(); },
   };
   const makeSync = (c) => createSync({ account, store, brain, log, meetingIndex, isExcluded, isExcludedText, idsFile: perConfig(c, 'sync-ids', 'json') });
   let inner = makeSync(cloud);
-  // main.js keeps one reference to sync; the developer switch below swaps what sits behind it
-  const sync = { pushNote: (...a) => inner.pushNote(...a), pushMeetingNote: (...a) => inner.pushMeetingNote(...a), syncNow: (...a) => inner.syncNow(...a), status: () => inner.status() };
+  // main.js keeps one reference to sync; the developer switch below swaps what sits behind it. A full sync pulls
+  // first so a remote edit lands before the local copy of the same note goes up.
+  const sync = {
+    pushNote: (...a) => inner.pushNote(...a),
+    pushMeetingNote: (...a) => inner.pushMeetingNote(...a),
+    pullNow: () => inner.pullNow(),
+    syncNow: async () => { const pulled = await inner.pullNow(); const pushed = await inner.syncNow(); return pushed.error ? pushed : { ...pushed, pulled: pulled.error ? null : pulled }; },
+    status: () => inner.status(),
+  };
+  // while signed in with sync on, other devices' changes arrive by polling: one pull every few minutes
+  const PULL_EVERY = 3 * 60 * 1000;
+  const pullTimer = setInterval(() => { if (state.sync && state.signedIn && state.workspace) inner.pullNow().catch(() => {}); }, PULL_EVERY);
+  pullTimer.unref?.();
   // what the renderer may know about the connection: environment, which config is active and the project's host. The
   // key stays in the main process.
   const envStatus = () => ({ env: cloud.env, config: cloud.source, host: cloud.url ? new URL(cloud.url).host : null, useProduction: cloud.useProduction, configured: !!client });
@@ -262,7 +273,7 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
       if (!state.sync) return { error: 'Turn sync on first.' };
       if (!state.workspace) return NO_WORKSPACE;
       const r = await sync.syncNow();
-      return r.error ? { error: r.error } : snapshot();
+      return r.error ? { error: r.error } : { ...snapshot(), pushed: { notes: r.pushed, meetings: r.meetings }, pulled: r.pulled ? { notes: r.pulled.written, conflicts: r.pulled.conflicts, removed: r.pulled.removed } : null };
     }),
     'env-status': envStatus,
     // the developer switch (docs/self-hosting.md, Development): a development copy loads the production .env instead of
@@ -294,7 +305,7 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
   }
   connect();
 
-  return { ...account, handlers, refresh, sync, envStatus };
+  return { ...account, handlers, refresh, sync, envStatus, stop: () => clearInterval(pullTimer) };
 }
 
 // wires the account into the main process: one IPC handler per entry, and every change goes to the UI as 'account'

@@ -1,8 +1,11 @@
-// push-only sync for the Cloud edition (setup in docs/self-hosting.md): the vault on disk stays the store, and
-// every note or meeting note that changes is upserted into the workspace's tables. Nothing here throws when sync
-// is off or signed out; a failed push is recorded on the account state as syncError.
+// two-way sync for the Cloud edition (setup in docs/self-hosting.md): the vault on disk stays the store. Every note
+// or meeting note that changes is upserted into the workspace's tables, and pullNow fetches the rows other devices
+// changed since the last pull and writes them into the vault. Nothing here throws when sync is off or signed out; a
+// failed push or pull is recorded on the account state as syncError. Pulls poll (account.js runs one every few
+// minutes); Supabase realtime would need the tables added to a publication and a socket held open in the main
+// process, so polling is the whole mechanism for now.
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR } from '../edition.js';
 import { createRemote } from './store/remote.js';
@@ -12,6 +15,10 @@ import { walk } from '../vault.js';
 // so ids never cross between projects (account.js passes idsFile)
 const DEFAULT_IDS_FILE = path.join(DATA_DIR, 'sync-ids.json');
 const BATCH = 100;
+const PAGE = 1000;
+// the pull watermark per workspace lives next to the id map, named sync-pull.json (sync-pull-production.json for the
+// developer switch), so the two files travel together
+const pullFileFor = (idsFile) => path.join(path.dirname(idsFile), path.basename(idsFile).replace(/^sync-ids/, 'sync-pull'));
 const B32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
 // Crockford base32 ULID: 10 characters of milliseconds, 16 of randomness, sortable by time
@@ -46,8 +53,15 @@ export function createSync({ account, store, brain = () => null, log = () => {},
   try { ids = JSON.parse(readFileSync(IDS_FILE, 'utf8')); } catch {}
   const saveIds = () => { try { mkdirSync(path.dirname(IDS_FILE), { recursive: true }); writeFileSync(IDS_FILE, JSON.stringify(ids)); } catch (err) { log('sync ids', err.message); } };
   const entry = (ws, key) => ((ids[ws] ??= {})[key] ??= { id: ulid(), hash: '' });
+  // workspace -> { lastPullAt }: the newest updated_at seen, so the next pull asks only for rows after it
+  const PULL_FILE = pullFileFor(IDS_FILE);
+  let pulls = {};
+  try { pulls = JSON.parse(readFileSync(PULL_FILE, 'utf8')); } catch {}
+  const savePulls = () => { try { mkdirSync(path.dirname(PULL_FILE), { recursive: true }); writeFileSync(PULL_FILE, JSON.stringify(pulls)); } catch (err) { log('sync pulls', err.message); } };
   let running = null;
+  let pulling = null;
   let last = { pushed: 0, skipped: 0, meetings: 0 };
+  let lastPull = { written: 0, conflicts: 0, removed: 0, skipped: 0 };
 
   // sync runs only with the switch on, a session and a chosen workspace; otherwise every call is a no-op
   const target = () => {
@@ -57,7 +71,7 @@ export function createSync({ account, store, brain = () => null, log = () => {},
     return { remote: createRemote({ client, workspaceId: s.workspace.id, userId: s.userId }), ws: s.workspace.id, vault: brain()?.vault ?? null };
   };
   const relOf = (vault, abs) => { const r = path.relative(vault, abs); return r && !r.startsWith('..') && !path.isAbsolute(r) ? r.split(path.sep).join('/') : null; };
-  const fail = (what, err) => { log('sync', what, err?.message ?? err); account.markSync({ syncError: `Sync could not push ${what}.` }); };
+  const fail = (what, err, verb = 'push') => { log('sync', what, err?.message ?? err); account.markSync({ syncError: `Sync could not ${verb} ${what}.` }); };
 
   // one notes row from a file on disk; null when the note is excluded, withheld or unchanged
   const noteRow = (t, abs, rel, force) => {
@@ -169,7 +183,101 @@ export function createSync({ account, store, brain = () => null, log = () => {},
     return running;
   }
 
-  const status = () => { const s = account.state(); return { on: s.sync, signedIn: s.signedIn, workspaceId: s.workspace?.id ?? null, running: !!running, lastSyncAt: s.lastSyncAt, syncError: s.syncError, last }; };
+  // every row of a table changed since the watermark, walked page by page so one pull sees the whole set
+  async function changed(list, since) {
+    const rows = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const page = await list(since, { limit: PAGE, offset });
+      rows.push(...page);
+      if (page.length < PAGE) return rows;
+    }
+  }
+  // a vault-relative path from a row, or null when it is not a markdown path inside the vault or the filters withhold it
+  const safeRel = (p) => {
+    const rel = String(p ?? '').split('\\').join('/').replace(/^\/+/, '');
+    if (!rel || !rel.endsWith('.md') || rel.split('/').some((s) => s === '' || s === '.' || s === '..')) return null;
+    return isExcluded(rel) ? null : rel;
+  };
+  // a sibling name that does not exist yet: "name (conflict 2026-11-08).md", then "(conflict 2026-11-08 2)" and so on
+  const sibling = (vault, rel, tag) => {
+    const dir = path.posix.dirname(rel), base = path.posix.basename(rel, '.md');
+    for (let n = 1; ; n++) {
+      const name = `${base} (${tag}${n > 1 ? ` ${n}` : ''}).md`;
+      const r = dir === '.' ? name : `${dir}/${name}`;
+      if (!existsSync(path.join(vault, r))) return r;
+    }
+  };
+  const writeRel = (vault, rel, text) => { const abs = path.join(vault, rel); mkdirSync(path.dirname(abs), { recursive: true }); store.notes.write(abs, text); };
 
-  return { pushNote, pushMeetingNote, syncNow, status };
+  // one remote notes row against the file at its path. The file is never deleted: a soft-deleted row renames it to
+  // "(removed)", a row that differs from a locally edited file keeps the remote text at the path and the local text
+  // as a "(conflict <date>)" copy next to it
+  function applyNote(t, row, counts) {
+    const rel = safeRel(row.path);
+    if (!rel) { counts.skipped++; return; }
+    const abs = path.join(t.vault, rel);
+    const bucket = ids[t.ws] ??= {};
+    const e = bucket[rel];
+    // a note that moved or was renamed remotely still has its id under the old path here; the old file stays put
+    for (const [k, v] of Object.entries(bucket)) if (v.id === row.id && k !== rel && !k.includes(':')) delete bucket[k];
+    let local = null;
+    try { local = readFileSync(abs, 'utf8'); } catch {}
+    if (row.deleted_at) {
+      if (local !== null) { const to = sibling(t.vault, rel, 'removed'); renameSync(abs, path.join(t.vault, to)); log('sync', `removed remotely, kept as ${to}`); counts.removed++; }
+      delete bucket[rel];
+      return;
+    }
+    const body = String(row.body ?? '');
+    const remoteHash = row.hash || sha256(body);
+    const localHash = local === null ? null : sha256(local);
+    // the row is what this device last pushed; a local edit since then goes up on the next push
+    if (e && e.hash === remoteHash && localHash !== remoteHash) { e.id = row.id; return; }
+    if (localHash === remoteHash) { bucket[rel] = { id: row.id, hash: remoteHash }; return; }
+    if (local !== null && (!e || e.hash !== localHash)) {
+      const copy = sibling(t.vault, rel, `conflict ${new Date().toISOString().slice(0, 10)}`);
+      writeRel(t.vault, copy, local);
+      log('sync', `conflict on ${rel}: remote kept, local copy at ${copy}`);
+      counts.conflicts++;
+    }
+    writeRel(t.vault, rel, body);
+    bucket[rel] = { id: row.id, hash: remoteHash };
+    counts.written++;
+  }
+
+  // rows other devices changed since the last pull, written into the vault; meetings rows only bind their id to the
+  // note's path so this device's next push updates the same row
+  async function pullNow() {
+    if (pulling) return pulling;
+    pulling = (async () => {
+      const t = target();
+      if (!t) return { error: 'Sync is off or no workspace is chosen.' };
+      if (!t.vault) return { error: 'No vault is connected.' };
+      const counts = { written: 0, conflicts: 0, removed: 0, skipped: 0 };
+      try {
+        const since = pulls[t.ws]?.lastPullAt ?? null;
+        const [notes, meetings] = await Promise.all([changed(t.remote.notes.changedSince, since), changed(t.remote.meetings.changedSince, since)]);
+        for (const row of notes) applyNote(t, row, counts);
+        const byId = new Map(Object.entries(ids[t.ws] ?? {}).filter(([k]) => !k.includes(':')).map(([k, v]) => [v.id, k]));
+        for (const m of meetings) {
+          const rel = m.note_id ? byId.get(m.note_id) : null;
+          if (rel && !m.deleted_at) (ids[t.ws][`meeting:${rel}`] ??= { id: m.id, hash: '' }).id = m.id;
+        }
+        const newest = [...notes, ...meetings].map((r) => r.updated_at).filter(Boolean).sort().at(-1);
+        if (newest) { (pulls[t.ws] ??= {}).lastPullAt = newest; savePulls(); }
+        saveIds();
+        lastPull = counts;
+        if (notes.length || meetings.length) log('sync', `pulled ${notes.length} notes, ${meetings.length} meetings: ${counts.written} written, ${counts.conflicts} conflicts, ${counts.removed} removed, ${counts.skipped} withheld`);
+        account.markSync({ lastPullAt: new Date().toISOString(), syncError: null });
+        return counts;
+      } catch (err) {
+        fail('the vault', err, 'pull');
+        return { error: 'Sync could not pull the vault.' };
+      }
+    })().finally(() => { pulling = null; });
+    return pulling;
+  }
+
+  const status = () => { const s = account.state(); return { on: s.sync, signedIn: s.signedIn, workspaceId: s.workspace?.id ?? null, running: !!running || !!pulling, lastSyncAt: s.lastSyncAt, lastPullAt: s.lastPullAt ?? null, syncError: s.syncError, last, lastPull }; };
+
+  return { pushNote, pushMeetingNote, syncNow, pullNow, status };
 }

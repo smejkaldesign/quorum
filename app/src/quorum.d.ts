@@ -53,7 +53,7 @@ export type AccountState = {
   workspaces: { id: string; name: string; role: Role }[];
   invites: AccountInvite[];
   domainMatches: { workspaceId: string; name: string }[];
-  sync: boolean; lastSyncAt: string | null; syncError: string | null;
+  sync: boolean; lastSyncAt: string | null; lastPullAt?: string | null; syncError: string | null;
 };
 export type Result = { ok?: boolean; error?: string };
 export type Member = { userId: string; email: string; name: string | null; role: Role; joinedAt: string };
@@ -216,7 +216,7 @@ declare global {
       memberRemove(userId: string): Promise<Result>;
       inviteRevoke(inviteId: string): Promise<Result>;
       syncSet(on: boolean): Promise<Result>;
-      syncNow(): Promise<{ pushed?: { notes: number; meetings: number }; error?: string }>;
+      syncNow(): Promise<{ pushed?: { notes: number; meetings: number }; pulled?: { notes: number; conflicts: number; removed: number } | null; error?: string }>;
       onAccount(cb: (s: AccountState) => void): Unsub;
       envStatus(): Promise<EnvStatus>;
       envSetProduction(on: boolean): Promise<EnvStatus>;
