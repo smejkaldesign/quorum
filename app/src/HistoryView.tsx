@@ -209,6 +209,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat }: { brain: Bra
                 <div className={`hist-row up-row ${open ? 'menu-open' : ''}`} onClick={() => e.item && window.quorum.calendarOpen(e)}>
                   <span className="avatar-sq cal"><IconCalendar width={20} height={20} /></span>
                   <span className="hist-text"><strong>{e.title}</strong><span>{dayLabel(at)} · {t(at)} – {t(end)} {end.getHours() < 12 ? 'AM' : 'PM'}{platform ? ` · ${platform}` : ''}</span></span>
+                  {!e.platform && <span className="up-badge">No meeting</span>}
                   <span className="hist-time">{t(at)}<small>{at.getHours() < 12 ? 'AM' : 'PM'}</small></span>
                   <span className="hist-hover menu-wrap" onMouseDown={(ev) => ev.stopPropagation()}>
                     <button className="icon-btn up-more" aria-label="More" aria-expanded={open} onClick={(ev) => { ev.stopPropagation(); setEventMenu(open ? null : e.id); }}><IconMore /></button>

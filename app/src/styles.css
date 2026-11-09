@@ -839,6 +839,7 @@ svg.err { color: var(--danger); }
 .avatar-sq.cal { background: #1e2a42; color: #6ea8ff; }
 .avatar-sq.note { background: #1d3328; color: #7fdb83; }
 .up-row { cursor: default; }
+.up-badge { flex: none; font-size: 11px; font-weight: 600; letter-spacing: 0.01em; padding: 2px 8px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); color: var(--muted); }
 .up-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
 .up-head h4 { margin: 0; }
 .up-toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); cursor: pointer; user-select: none; }
