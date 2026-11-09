@@ -117,7 +117,7 @@ function startHelper() {
   createInterface({ input: helper.stdout }).on('line', (line) => {
     let evt;
     try { evt = JSON.parse(line); } catch { return; }
-    if (evt.event !== 'transcript' && evt.event !== 'calResult') log('helper', line);
+    if (evt.event !== 'transcript' && evt.event !== 'calResult' && evt.event !== 'pcm') log('helper', line);
     onHelperEvent(evt);
   });
   createInterface({ input: helper.stderr }).on('line', (line) => { log('helper stderr', line); toUI('log', line); });
@@ -145,7 +145,7 @@ const PROVIDERS = {
 let meetingProvider = 'zoom';
 const provider = () => PROVIDERS[meetingProvider] ?? PROVIDERS.zoom;
 // meeting transcript tuning, set on the Meetings page; defaults are what most calls want
-const TX_DEFAULTS = { echo: 'auto', gap: 1.5, live: true, capture: 'meeting', clean: true };
+const TX_DEFAULTS = { echo: 'auto', gap: 1.5, live: true, capture: 'meeting', clean: true, engine: 'local' };
 const tx = () => ({ ...TX_DEFAULTS, ...settings.transcription });
 // echo: on speakers the mic hears the far side. auto cancels it in the mic path when the built-in speakers are the
 // output (and treats an unknown route as speakers) and leaves it alone on headphones or an external device; the word
@@ -259,7 +259,7 @@ async function blockCall(reason = 'person') {
   const cutoff = Date.now() - JOIN_BUFFER_MS;
   if (meeting.armed) {
     meeting.capturing = false;
-    helperSend({ cmd: 'stop' });
+    stopCapture();
     helperSend({ cmd: 'chatWatch', on: false });
     meeting.transcript = all ? [] : meeting.transcript.filter((t) => (t.at ?? Infinity) < cutoff);
     // the open segment's audio runs past the join, so it goes; earlier segments ended before it
@@ -335,6 +335,7 @@ function onHelperEvent(evt) {
     if (evt.event === 'chatSent') p.resolve(); else p.reject(new Error(evt.message));
   }
   if (evt.event === 'axStatus') { lastAx = evt; axWaiters.splice(0).forEach((w) => w(evt)); }
+  if (evt.event === 'pcm') return relay?.send(evt.channel, Buffer.from(evt.data, 'base64'));
   if (evt.event === 'audioRoute') { audioRoute = evt; log('audio out:', evt.name || evt.route, `(${evt.route})`); return toUI('helper-event', evt); }
   if (evt.event === 'level') return toUI('level', evt.v);
   if (evt.event === 'chat') return onChat(evt);
@@ -421,13 +422,55 @@ async function sessionTerms({ calendar = true, participants = [] } = {}) {
   return terms;
 }
 
-function beginSegment() {
+// speech engine switch (Cloud edition, ee/relay.js). Managed: the helper streams PCM and the relay returns the same
+// transcript events, which land in onHelperEvent like the helper's own. The on-device engine is the fallback whenever the
+// relay refuses (signed out, hours used up) or drops mid-call; a drop starts a fresh local segment so no audio file is reused.
+let relay = null;
+const stopRelay = () => { const r = relay; relay = null; r?.close(); };
+const stopCapture = () => { stopRelay(); helperSend({ cmd: 'stop' }); };
+async function startRelay(segmentId) {
+  if (EDITION !== 'cloud' || !account.client?.()) return null;
+  const mod = await loadEE('relay.js');
+  const plan = await mod.managedPlan({ client: account.client(), state: account.state(), settings });
+  if (!plan.managed) return null;
+  const { data: { session } = {} } = await account.client().auth.getSession();
+  if (!session?.access_token) return null;
+  const r = mod.openRelay({
+    url: mod.relayUrl({ source: account.envStatus?.().config }), token: session.access_token,
+    meta: { workspaceId: account.state().workspace.id, meetingId: meeting.id, channels: ['me', 'them'], sampleRate: 16000, terms: meeting.terms, locale: settings.voice?.locale || 'en-US' },
+    onEvent: onHelperEvent,
+    onClose: ({ error }) => {
+      if (relay !== r || !meeting.capturing || meeting.dir !== segmentId) return;
+      relay = null;
+      toUI('log', `Managed transcription ${error?.code === 'cap' ? 'hours are used up' : 'dropped'}; continuing on this Mac.`);
+      stopCapture();
+      beginSegment({ local: true });
+    },
+  });
+  try {
+    const ready = await r.ready;
+    log('speech', `managed (${ready.engine}, ${plan.reason})`, ready.counted ? `${Math.round(ready.remainingSeconds / 60)} min left` : 'organization connector');
+    return r;
+  } catch (err) {
+    log('speech', 'relay refused, on-device:', err.message);
+    toUI('log', `Managed transcription is unavailable (${err.message}); transcribing on this Mac.`);
+    return null;
+  }
+}
+
+async function beginSegment({ local = false } = {}) {
   meeting.dir = store.meetings.beginSegment(meeting.id);
   meeting.dirs.push(meeting.dir);
   meeting.capturing = true;
   // a note hears everything the Mac plays; a call only hears the meeting app, so music and alerts stay out
   const only = tx().capture === 'meeting' && !meeting.solo ? provider().bundles : [];
-  helperSend({ cmd: 'start', sessionDir: meeting.dir, echoCancel: aecOn(), locale: settings.voice?.locale || 'en-US', tapBundles: only, terms: meeting.terms });
+  const cmd = { cmd: 'start', sessionDir: meeting.dir, echoCancel: aecOn(), locale: settings.voice?.locale || 'en-US', tapBundles: only, terms: meeting.terms };
+  const dir = meeting.dir;
+  stopRelay();
+  relay = local ? null : await startRelay(dir);
+  // STOP or the end of the call can land while the relay handshake runs
+  if (!meeting.capturing || meeting.dir !== dir) { stopRelay(); return; }
+  helperSend(relay ? { ...cmd, streamPcm: true } : cmd);
   writeState();
 }
 
@@ -436,7 +479,7 @@ function stopAndDelete(by) {
   meeting.capturing = false;
   meeting.transcript = [];
   writeState();
-  helperSend({ cmd: 'stop' });
+  stopCapture();
   chat(MSG.stopped(by));
   toUI('state', { phase: 'paused', by, go: chatWords().go });
   updateTray();
@@ -644,7 +687,7 @@ async function endMeeting() {
   meeting.endedAt = new Date();
   clearInterval(summaryTimer);
   summaryTimer = null;
-  helperSend({ cmd: 'stop' });
+  stopCapture();
   helperSend({ cmd: 'chatWatch', on: false });
   if (wasCapturing) chat(MSG.ended);
   hidePopup();
@@ -990,6 +1033,7 @@ ipcMain.handle('set-settings', (_e, next) => {
     if (typeof t.live === 'boolean') c.live = t.live;
     if (['meeting', 'all'].includes(t.capture)) c.capture = t.capture;
     if (typeof t.clean === 'boolean') c.clean = t.clean;
+    if (['local', 'managed'].includes(t.engine)) c.engine = t.engine;
     settings.transcription = { ...settings.transcription, ...c };
     store.settings.save();
   }
@@ -1689,7 +1733,7 @@ ipcMain.handle('pause', () => {
   if (!meeting.armed || !meeting.capturing) return;
   meeting.capturing = false;
   writeState();
-  helperSend({ cmd: 'stop' });
+  stopCapture();
   toUI('state', { phase: 'paused', soft: true });
   updateTray();
 });
