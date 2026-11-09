@@ -91,8 +91,45 @@ export function createConnectors({ account, log = () => {} }) {
       } catch (err) { return fail(err, 'That connector could not be removed.'); }
     },
     'connector-test': (p) => testConnector(p),
+    // hours this calendar month from the workspace_usage view; empty until the relay writes usage rows
+    'workspace-usage': async () => {
+      const no = ready(); if (no) return no;
+      const since = new Date(); since.setUTCDate(1); since.setUTCHours(0, 0, 0, 0);
+      try {
+        const { data, error } = await account.client().from('workspace_usage').select('user_id, email, name, hours, managed_hours').eq('workspace_id', ws()).gte('period', since.toISOString());
+        if (error) return fail(error);
+        const seats = (data ?? []).map((r) => ({ userId: r.user_id, email: r.email ?? null, name: r.name ?? null, hours: Number(r.hours) || 0, managedHours: Number(r.managed_hours) || 0 }));
+        const sum = (k) => Math.round(seats.reduce((n, s) => n + s[k], 0) * 100) / 100;
+        return { usage: { period: since.toISOString(), hours: sum('hours'), managedHours: sum('managedHours'), seats } };
+      } catch (err) { return fail(err); }
+    },
+    'workspace-voice-get': async () => {
+      const no = ready(); if (no) return no;
+      try {
+        const { data, error } = await account.client().from('workspace_settings').select('voice').eq('workspace_id', ws()).maybeSingle();
+        if (error) return fail(error);
+        return { voice: cleanVoice(data?.voice) };
+      } catch (err) { return fail(err); }
+    },
+    'workspace-voice-set': async (voice) => {
+      const no = ready(); if (no) return no;
+      try {
+        const { data, error } = await account.client().rpc('workspace_voice_set', { workspace_id: ws(), voice: cleanVoice(voice) });
+        if (error) return fail(error, 'The voice settings could not be saved.');
+        return { voice: cleanVoice(data) };
+      } catch (err) { return fail(err, 'The voice settings could not be saved.'); }
+    },
   };
   return { handlers };
+}
+
+// the three managed steps, each a connector id or absent for Quorum managed
+const STEPS = ['speech', 'summary', 'notes'];
+export function cleanVoice(voice) {
+  const out = {};
+  if (!voice || typeof voice !== 'object') return out;
+  for (const k of STEPS) { const v = String(voice[k] ?? '').trim(); if (v) out[k] = v; }
+  return out;
 }
 
 export function registerConnectors({ ipcMain, account, log }) {

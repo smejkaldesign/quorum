@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { canServe, PROVIDER_IDS, providersFor, rolesFor, serving, validRoles } from '../ee/src/connectorRoles.ts';
-import { cleanDraft, testConnector } from '../ee/connectors.js';
+import { cleanDraft, cleanVoice, testConnector } from '../ee/connectors.js';
 
 describe('which providers serve which roles', () => {
   it('matches the product table: speech, model and voice providers', () => {
@@ -42,6 +42,12 @@ describe('the main-process side', () => {
     expect(d).toEqual({ provider: 'openai', label: 'Team key', base_url: null, roles: ['notes'], secret: 'sk-1' });
     expect(cleanDraft({ provider: 'openai_compatible', baseUrl: ' https://llm.example.com/v1 ' }).base_url).toBe('https://llm.example.com/v1');
     expect(cleanDraft({ provider: 'mystery' })).toEqual({ error: 'That provider is not supported.' });
+  });
+
+  it('keeps only the three managed steps in the voice overrides, dropping blanks and nulls', () => {
+    expect(cleanVoice({ speech: 'c1', summary: null, notes: ' ', agent: 'c9' })).toEqual({ speech: 'c1' });
+    expect(cleanVoice(null)).toEqual({});
+    expect(cleanVoice('x')).toEqual({});
   });
 
   it('tests a key with one read-only request and reads the answer, never echoing the key', async () => {

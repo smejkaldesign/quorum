@@ -482,6 +482,7 @@ html.popup-root, html.popup-root body { background: transparent; }
 .conn-sheet .set-line.stacked { flex-direction: column; align-items: stretch; }
 .conn-sheet .modal-actions { justify-content: space-between; }
 .set-ok { margin: 8px 0 0; color: var(--go); font-size: 14px; }
+.voice-cost { font-size: 14px; white-space: nowrap; }
 em.stub { font-style: normal; font-size: 12px; font-weight: 500; padding: 1px 9px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--muted); }
 .set-quit { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 10px 12px; color: var(--danger); font-size: 16px; border-radius: 10px; }
 .set-quit:hover { background: var(--danger-bg); }

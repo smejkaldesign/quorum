@@ -9,6 +9,7 @@ export const isCloud = __QUORUM_EDITION__ === 'cloud';
 const CloudAccount = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/Account').then((m) => ({ default: m.AccountSlot }))) : null;
 const CloudMembers = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/Account').then((m) => ({ default: m.MembersPage }))) : null;
 const CloudConnectors = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/WorkspaceConnectors').then((m) => ({ default: m.WorkspaceConnectorsPage }))) : null;
+const CloudVoice = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/WorkspaceVoice').then((m) => ({ default: m.WorkspaceVoicePage }))) : null;
 
 // whether this build can reach a hosted account at runtime: the cloud edition without QUORUM_SUPABASE_URL and the anon key
 // reports configured: false from account-status. Local is always false; null while the cloud answer is on its way
@@ -53,3 +54,5 @@ function CloudPage({ Page, local }: { Page: ReturnType<typeof lazy> | null; loca
 
 // Settings › Admin › Connectors: organization providers an admin manages for everyone
 export const WorkspaceConnectorsArea = ({ local }: { local: ReactNode }) => <CloudPage Page={CloudConnectors} local={local} />;
+// Settings › Admin › Voice typing: the managed pipeline, its usage, and which connector handles each step
+export const WorkspaceVoiceArea = ({ local }: { local: ReactNode }) => <CloudPage Page={CloudVoice} local={local} />;

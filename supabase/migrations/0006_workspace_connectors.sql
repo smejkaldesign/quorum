@@ -119,3 +119,81 @@ begin
   revoke all on function public.workspace_connector_public(public.workspace_connectors) from public, anon;
   grant execute on function public.workspace_connector_public(public.workspace_connectors) to authenticated, service_role;
 end $$;
+
+-- Managed transcription usage (Settings › Admin › Voice typing). The relay writes one row per step it ran for a seat,
+-- with the service role: how many seconds of audio, which step, and which connector handled it (null means Quorum's
+-- own key, which counts against the 20 hours a month each seat includes). Clients only read. Empty until the relay ships.
+create table public.workspace_usage_events (
+  id public.ulid primary key,
+  workspace_id public.ulid not null references public.workspaces (id) on delete cascade,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  role text not null check (role in ('speech', 'summary', 'notes')),
+  seconds integer not null check (seconds >= 0),
+  connector_id public.ulid references public.workspace_connectors (id) on delete set null,
+  meeting_id public.ulid references public.meetings (id) on delete set null,
+  created_at timestamptz not null default now()
+);
+create index workspace_usage_events_workspace_created on public.workspace_usage_events (workspace_id, created_at);
+alter table public.workspace_usage_events enable row level security;
+create policy workspace_usage_events_select on public.workspace_usage_events for select to authenticated using (public.is_member(workspace_id));
+revoke all on public.workspace_usage_events from anon, authenticated;
+grant select on public.workspace_usage_events to authenticated;
+
+-- hours per seat and calendar month; managed_hours is the part on Quorum's keys, the part that counts against the allowance
+create view public.workspace_usage with (security_invoker = true) as
+  select e.workspace_id, e.user_id, p.email, p.name, date_trunc('month', e.created_at) as period,
+    round(sum(e.seconds) / 3600.0, 2) as hours,
+    round(coalesce(sum(e.seconds) filter (where e.connector_id is null), 0) / 3600.0, 2) as managed_hours
+  from public.workspace_usage_events e
+  left join public.profiles p on p.user_id = e.user_id
+  group by e.workspace_id, e.user_id, p.email, p.name, date_trunc('month', e.created_at);
+grant select on public.workspace_usage to authenticated, service_role;
+
+-- Organization settings. voice holds the overrides for the managed pipeline: {"speech": <connector id>, "summary": ...,
+-- "notes": ...}; a missing or null key means Quorum managed. Members read; owners and admins write through
+-- workspace_voice_set, which checks every id is a connector of this workspace that serves that role.
+create table public.workspace_settings (
+  workspace_id public.ulid primary key references public.workspaces (id) on delete cascade,
+  voice jsonb not null default '{}'::jsonb check (jsonb_typeof(voice) = 'object'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create trigger workspace_settings_updated_at before update on public.workspace_settings for each row execute function public.set_updated_at();
+alter table public.workspace_settings enable row level security;
+create policy workspace_settings_select on public.workspace_settings for select to authenticated using (public.is_member(workspace_id));
+revoke all on public.workspace_settings from anon, authenticated;
+grant select on public.workspace_settings to authenticated;
+
+create or replace function public.workspace_voice_set(workspace_id public.ulid, voice jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare clean jsonb := '{}'::jsonb; r text; cid text;
+begin
+  if not public.is_admin(workspace_voice_set.workspace_id) then raise exception 'Only owners and admins can change organization voice settings'; end if;
+  if jsonb_typeof(coalesce(workspace_voice_set.voice, '{}'::jsonb)) <> 'object' then raise exception 'Voice settings must be an object'; end if;
+  foreach r in array array['speech', 'summary', 'notes'] loop
+    cid := nullif(trim(coalesce(workspace_voice_set.voice ->> r, '')), '');
+    if cid is not null then
+      if not exists (select 1 from public.workspace_connectors c where c.id = cid and c.workspace_id = workspace_voice_set.workspace_id and r = any (c.roles)) then
+        raise exception 'That connector cannot handle %', r;
+      end if;
+      clean := clean || jsonb_build_object(r, cid);
+    end if;
+  end loop;
+  insert into public.workspace_settings (workspace_id, voice) values (workspace_voice_set.workspace_id, clean)
+  on conflict (workspace_id) do update set voice = excluded.voice;
+  return clean;
+end $$;
+revoke all on function public.workspace_voice_set(public.ulid, jsonb) from public, anon;
+grant execute on function public.workspace_voice_set(public.ulid, jsonb) to authenticated, service_role;
+
+-- removing a connector clears any override that pointed at it, so the step falls back to Quorum managed
+create or replace function public.workspace_connector_clear_overrides() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  update public.workspace_settings s set voice = (
+    select coalesce(jsonb_object_agg(k, v), '{}'::jsonb) from jsonb_each(s.voice) as kv(k, v) where v <> to_jsonb(old.id::text))
+  where s.workspace_id = old.workspace_id
+    and (s.voice @> jsonb_build_object('speech', old.id::text) or s.voice @> jsonb_build_object('summary', old.id::text) or s.voice @> jsonb_build_object('notes', old.id::text));
+  return old;
+end $$;
+create trigger workspace_connectors_clear_overrides after delete on public.workspace_connectors for each row execute function public.workspace_connector_clear_overrides();

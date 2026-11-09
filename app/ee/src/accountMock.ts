@@ -1,7 +1,21 @@
-import type { AccountState, Member, MemberInvite, Result, Role, WorkspaceConnector } from '../../src/quorum';
+import type { AccountState, Member, MemberInvite, Result, Role, WorkspaceConnector, WorkspaceVoice } from '../../src/quorum';
 
 export type AccountApi = Pick<Window['quorum'], 'accountStatus' | 'accountSendCode' | 'accountVerifyCode' | 'accountSignOut' | 'orgCreate' | 'orgJoin' | 'orgSwitch' | 'membersList' | 'memberInvite' | 'memberRemove' | 'inviteRevoke' | 'syncSet' | 'syncNow' | 'onAccount'>;
 export type ConnectorsApi = Pick<Window['quorum'], 'connectorsList' | 'connectorSet' | 'connectorRemove' | 'connectorTest'>;
+export type VoiceApi = Pick<Window['quorum'], 'workspaceUsage' | 'workspaceVoiceGet' | 'workspaceVoiceSet'>;
+
+// organization voice: no usage yet (the relay is not written), overrides kept in memory
+let voiceMock: VoiceApi | null = null;
+export function voiceApi(): VoiceApi {
+  if ((window.quorum as Partial<Window['quorum']>).workspaceVoiceGet) return window.quorum;
+  if (voiceMock) return voiceMock;
+  let voice: WorkspaceVoice = {};
+  return (voiceMock = {
+    workspaceUsage: async () => ({ usage: { period: iso(0), hours: 0, managedHours: 0, seats: [] } }),
+    workspaceVoiceGet: async () => ({ voice }),
+    workspaceVoiceSet: async (v) => { voice = { ...v }; return { voice }; },
+  });
+}
 
 // preload's bridge object cannot be patched, so the UI asks here: the real API when preload exposes accountStatus, a dev stand-in otherwise
 let mock: AccountApi | null = null;
