@@ -13,9 +13,13 @@
     "typecheck": "tsc --noEmit",
     "check:edition": "node scripts/check-edition-boundary.mjs",
     "package": "vite build && cd ../helper && swift build -c release && cd ../app && electron-builder --mac",
-    "package:cloud": "QUORUM_EDITION=cloud vite build && cd ../helper && swift build -c release && cd ../app && QUORUM_EDITION=cloud electron-builder --mac -c.extraMetadata.quorumEdition=cloud"
+    "package:cloud": "QUORUM_EDITION=cloud vite build && cd ../helper && swift build -c release && cd ../app && QUORUM_EDITION=cloud electron-builder --mac -c.extraMetadata.quorumEdition=cloud",
+    "lint": "npm ci --prefix lint --no-audit --no-fund --silent && eslint .",
+    "test": "vitest run",
+    "check:content": "node scripts/check-founder-content.mjs"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@tiptap/core": "3.32.0",
     "@tiptap/extension-table": "3.32.0",
     "@tiptap/markdown": "3.32.0",
@@ -27,10 +31,14 @@
     "@vitejs/plugin-react": "^6.2.1",
     "electron": "^45.2.3",
     "electron-builder": "26.17.0",
+    "eslint": "^10.14.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.14.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "typescript": "^7.0.2",
-    "vite": "^8.3.6"
+    "vite": "^8.3.6",
+    "vitest": "^5.1.0"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.119.0",

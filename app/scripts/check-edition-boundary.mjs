@@ -4,12 +4,14 @@
 //     (edition.js for the main process, src/edition.tsx for the renderer). Every other import of ee/ fails.
 //  2. The built renderer in dist/ must not contain the ee marker string in the local edition, and must contain it in
 //     the cloud edition. QUORUM_EDITION decides which edition dist/ is expected to be (default local).
-// Run after `vite build`. Exits 1 with a list of problems, 0 when the boundary holds.
+// Run after `vite build`. Exits 1 with a list of problems, 0 when the boundary holds. Optional: --root <app dir>.
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// --root <dir> points the check at another app tree (the tests use a temp copy); the default is the folder above scripts/
+const rootArg = process.argv.indexOf('--root');
+const app = rootArg !== -1 && process.argv[rootArg + 1] ? path.resolve(process.argv[rootArg + 1]) : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MARKER = 'QUORUM_EE_MARKER';
 const SKIP = new Set(['node_modules', 'dist', 'release', 'build', 'assets', '.dev', 'ee', 'scripts']);
 const EXT = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx']);
