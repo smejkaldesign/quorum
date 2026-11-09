@@ -1,7 +1,7 @@
 {
   "name": "quorum",
   "license": "Apache-2.0",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "type": "module",
   "main": "main.js",
   "scripts": {
@@ -74,6 +74,9 @@
       "assets/**",
       "build/**",
       "package.json"
+    ],
+    "asarUnpack": [
+      "guards/**"
     ],
     "extraResources": [
       {

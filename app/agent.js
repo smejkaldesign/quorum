@@ -6,7 +6,8 @@ import { createInterface } from 'node:readline';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const GUARD = path.join(path.dirname(fileURLToPath(import.meta.url)), 'guards', 'read-guard.py');
+// python3 runs the guard, and only Electron can read inside app.asar, so the packaged copy lives in app.asar.unpacked
+const GUARD = path.join(path.dirname(fileURLToPath(import.meta.url)), 'guards', 'read-guard.py').replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
 
 const TIMEOUT_MS = 150000;
 
