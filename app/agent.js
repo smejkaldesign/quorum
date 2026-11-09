@@ -32,7 +32,7 @@ function describeStep(tool, input, root) {
   return `Using ${tool}`;
 }
 
-export function runAgent({ question, history, transcript, root, model, owner, onStep, redact, files = [], about = '', privateDirs = [], extra = { index: null, dirs: [], hints: [] } }) {
+export function runAgent({ question, history, transcript, root, model, owner, onStep, redact, onDelta = null, files = [], about = '', privateDirs = [], extra = { index: null, dirs: [], hints: [] } }) {
   const system = [
     `You are Quorum, ${owner}'s assistant in the Quorum app, working in their Agent OS at ${root}.`,
     'Use Grep, Glob and Read to find answers in their notes before answering. You can only read; never claim you changed anything.',
@@ -54,7 +54,7 @@ export function runAgent({ question, history, transcript, root, model, owner, on
     const env = { ...process.env };
     delete env.ANTHROPIC_API_KEY;
     const proc = spawn('claude', [
-      '-p', '--output-format', 'stream-json', '--verbose', '--model', model,
+      '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', model,
       '--tools', 'Read,Grep,Glob', '--allowedTools', 'Read', 'Grep', 'Glob',
       '--setting-sources', '', '--settings', JSON.stringify(safetySettings(root, privateDirs)),
       '--strict-mcp-config', '--no-session-persistence', '--disable-slash-commands',
@@ -65,11 +65,34 @@ export function runAgent({ question, history, transcript, root, model, owner, on
     const timer = setTimeout(() => { proc.kill(); reject(new Error('took too long')); }, TIMEOUT_MS);
     let result = null;
     let err = '';
+    // the answer shows while it is written: finished lines go through the redactor, the line in progress shows only while
+    // it has nothing to withhold, text the agent wrote before a tool call is dropped when the tool runs, and the Sources
+    // block at the end is held back (it becomes cards). The final result replaces all of it.
+    let done = '', cur = '', hold = false, tick = null;
+    const show = () => { if (onDelta) onDelta(done + (redact(cur) === cur ? cur : '')); };
+    const onText = (t) => {
+      if (!onDelta || hold) return;
+      cur += t;
+      let i;
+      while ((i = cur.indexOf('\n')) >= 0) {
+        const line = cur.slice(0, i);
+        cur = cur.slice(i + 1);
+        if (/^\s*\**Sources:?\**\s*$/i.test(line)) { hold = true; cur = ''; break; }
+        done += `${redact(line)}\n`;
+      }
+      if (!tick) tick = setTimeout(() => { tick = null; show(); }, 60);
+    };
     createInterface({ input: proc.stdout }).on('line', (line) => {
       let evt;
       try { evt = JSON.parse(line); } catch { return; }
+      if (evt.type === 'stream_event') {
+        const d = evt.event;
+        if (d?.type === 'content_block_delta' && d.delta?.type === 'text_delta') onText(d.delta.text);
+      }
       if (evt.type === 'assistant') {
-        for (const c of evt.message?.content ?? []) if (c.type === 'tool_use') onStep(describeStep(c.name, c.input ?? {}, root));
+        let tools = false;
+        for (const c of evt.message?.content ?? []) if (c.type === 'tool_use') { tools = true; onStep(describeStep(c.name, c.input ?? {}, root)); }
+        if (tools) { done = ''; cur = ''; hold = false; show(); }
       }
       if (evt.type === 'result') result = evt;
     });
@@ -77,6 +100,7 @@ export function runAgent({ question, history, transcript, root, model, owner, on
     proc.on('error', (e) => { clearTimeout(timer); reject(e); });
     proc.on('close', (code) => {
       clearTimeout(timer);
+      clearTimeout(tick);
       if (!result || result.is_error) return reject(new Error(result?.result || err.split('\n')[0] || `claude exited ${code}`));
       resolve(splitSources(redact(String(result.result)), root));
     });

@@ -1,4 +1,4 @@
-import { Component, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Component, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { Brain, HelperEvent, MeetingMeta, Notes, Settings, Source } from './quorum';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
@@ -115,6 +115,13 @@ export function App() {
   tabRef.current = tab;
   const toggleMenu = (m: 'status' | 'model' | 'brain') => (e: React.MouseEvent) => { e.stopPropagation(); setMenuOpen((o) => (o === m ? null : m)); };
   const chatEnd = useRef<HTMLDivElement>(null);
+  // a sent question is pinned to the top of the pane while its answer streams in below it; the spacer under the answer
+  // gives the question room to reach the top and shrinks as the answer grows. Everything else scrolls to the end
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const lastUser = useRef<HTMLDivElement>(null);
+  const anchored = useRef(false);
+  const anchorScroll = useRef(false);
+  const [spacer, setSpacer] = useState(0);
   const notesEnd = useRef<HTMLDivElement>(null);
 
   const addLog = (s: string) => setLog((l) => [...l.slice(-200), `${new Date().toLocaleTimeString()}  ${s}`]);
@@ -163,6 +170,7 @@ export function App() {
       window.quorum.onLog(addLog),
       window.quorum.onSettings(setSettings),
       window.quorum.onAgentStep(({ text }) => setMsgs((m) => m.map((x) => (x.kind === 'quorum' && x.pending ? { ...x, steps: [...(x.steps ?? []), text] } : x)))),
+      window.quorum.onAgentDelta(({ text }) => setMsgs((m) => m.map((x) => (x.kind === 'quorum' && x.pending ? { ...x, text } : x)))),
       window.quorum.onFocusComposer(() => {
         setView('main');
         if (inCall(phaseRef.current)) setTab('chat');
@@ -180,7 +188,13 @@ export function App() {
     return () => offs.forEach((off) => off());
   }, []);
 
-  useEffect(() => { chatEnd.current?.scrollIntoView({ block: 'end' }); }, [msgs]);
+  useLayoutEffect(() => {
+    const body = bodyRef.current, q = lastUser.current;
+    if (!anchored.current || !body || !q) { setSpacer(0); chatEnd.current?.scrollIntoView({ block: 'end' }); return; }
+    const used = (chatEnd.current?.offsetTop ?? 0) - q.offsetTop;
+    setSpacer(Math.max(0, body.clientHeight - used - 24));
+    if (anchorScroll.current) { anchorScroll.current = false; requestAnimationFrame(() => q.scrollIntoView({ block: 'start' })); }
+  }, [msgs]);
   // a call starting moves you to Chat; leaving one lands on History
   phaseRef.current = phase;
   useEffect(() => { setTab(inCall(phase) ? 'chat' : 'home'); }, [inCall(phase)]);
@@ -198,6 +212,8 @@ export function App() {
     const q = text.trim();
     if (!q || !brain) return;
     setDraft('');
+    anchored.current = true;
+    anchorScroll.current = true;
     setMsgs((m) => [...m, { kind: 'user', text: q, files: files.map((f) => f.split('/').pop()!) }, { kind: 'quorum', text: '', pending: true }]);
     let reply: Msg;
     try {
@@ -216,17 +232,20 @@ export function App() {
   async function openChat(id: string) {
     const c = await window.quorum.loadChat(id);
     if (!c) return;
+    anchored.current = false;
     setMsgs(c.turns.flatMap((t): Msg[] => [{ kind: 'user', text: t.q }, { kind: 'quorum', text: t.a, sources: t.sources, steps: t.steps }]));
     setConvoOpen(true);
   }
 
   async function newChat() {
     await window.quorum.newChat();
+    anchored.current = false;
     setMsgs([]);
     setTimeout(() => composer.current?.focus(), 50);
   }
 
   async function acceptSuggestion(id: string) {
+    anchored.current = false;
     setMsgs((m) => [...m.map((x) => (x.kind === 'suggest' && x.id === id ? { ...x, state: 'accepted' as const } : x)), { kind: 'quorum', text: '', pending: true }]);
     let reply: Msg;
     try {
@@ -251,6 +270,8 @@ export function App() {
     blocked: { label: 'Off for this call', icon: <Wave live={false} /> },
   }[phase];
 
+
+  const lastUserIdx = msgs.findLastIndex((x) => x.kind === 'user');
 
   // nothing renders until the main process says whether this is a first run, so the wizard never flashes in or out
   if (firstRun === null) return <div className="panel" />;
@@ -337,7 +358,7 @@ export function App() {
 
       {(tab === 'chat' || (tab === 'home' && convoOpen)) && (
         <>
-          <div className="body">
+          <div className="body" ref={bodyRef}>
             {!inCall(phase) && (
               <div className="row convo-bar">
                 <button className="pill primary small-pill" onClick={() => setConvoOpen(false)}><IconBack width={16} height={16} /> Back</button>
@@ -363,7 +384,7 @@ export function App() {
               </QuorumCard>
             )}
             {msgs.map((m, i) => m.kind === 'user' ? (
-              <div key={i} className="user-row">
+              <div key={i} className="user-row" ref={i === lastUserIdx ? lastUser : undefined}>
                 <div className="user-msg">{m.files?.length ? <div className="user-files">{m.files.map((f) => <span key={f}>{f}</span>)}</div> : null}{m.text}</div>
                 <span className="user-avatar" aria-label="You">{me.photo ? <img src={me.photo} alt="" /> : me.name ? me.name[0].toUpperCase() : <IconPerson width={14} height={14} />}</span>
               </div>
@@ -387,7 +408,7 @@ export function App() {
             ) : (
               <div key={i} className="turn">
                 {(m.pending || (m.steps?.length ?? 0) > 0) && <Steps steps={m.steps ?? []} live={!!m.pending} />}
-                {!m.pending && <QuorumCard>
+                {(!m.pending || m.text) && <QuorumCard>
                 <Markdown text={m.text} root={brain?.root} />
                 {m.sources?.map((src) => (
                   <div key={src.rel} className="source">
@@ -402,7 +423,7 @@ export function App() {
               </QuorumCard>}
               </div>
             ))}
-            <div ref={chatEnd} />
+            <div ref={chatEnd} style={{ flex: 'none', minHeight: spacer }} />
           </div>
           <Composer value={draft} onChange={setDraft} onSubmit={(q, f) => send(q, f)} inputRef={composer} disabled={!brain}
             placeholder={!brain ? 'Connect your Agent OS to start' : phase === 'listening' ? 'Message Quorum privately…' : `Ask ${brain.name} anything…`} />

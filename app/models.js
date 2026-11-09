@@ -4,6 +4,7 @@
 //   local          an Ollama model at localhost; prompt in, text out
 //   none           the fresh-install default: nothing runs and the app says so
 import { execFile, spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import { runAgent } from './agent.js';
 
 export const SOURCES = ['none', 'claude-code', 'anthropic-api', 'local'];
@@ -40,22 +41,52 @@ export async function runModel({ source, tools = false, ...opts }) {
 }
 
 // Claude via the signed-in Claude Code (the user's own claude.ai sign-in), never a raw API key
-function claudeText({ prompt, system, model, cwd }) {
+// with onDelta the reply streams (stream-json with partial messages); onDelta gets the whole text so far each time
+function claudeText({ prompt, system, model, cwd, onDelta = null }) {
   return new Promise((resolve, reject) => {
     const env = { ...process.env };
     delete env.ANTHROPIC_API_KEY;
     const proc = spawn('claude', [
-      '-p', '--output-format', 'text', '--model', model, '--tools', '', '--no-session-persistence',
+      '-p', '--output-format', onDelta ? 'stream-json' : 'text', ...(onDelta ? ['--verbose', '--include-partial-messages'] : []),
+      '--model', model, '--tools', '', '--no-session-persistence',
       '--strict-mcp-config', '--setting-sources', 'user', '--system-prompt', system,
     ], { env, cwd });
     let out = '';
     let err = '';
-    proc.stdout.on('data', (d) => { out += d; });
+    let result = null;
+    let acc = '';
+    if (onDelta) {
+      createInterface({ input: proc.stdout }).on('line', (line) => {
+        let evt;
+        try { evt = JSON.parse(line); } catch { return; }
+        const d = evt.type === 'stream_event' ? evt.event : null;
+        if (d?.type === 'content_block_delta' && d.delta?.type === 'text_delta') { acc += d.delta.text; onDelta(acc); }
+        if (evt.type === 'result') result = evt;
+      });
+    } else proc.stdout.on('data', (d) => { out += d; });
     proc.stderr.on('data', (d) => { err += d; });
     proc.on('error', reject);
-    proc.on('close', (code) => (code === 0 ? resolve(out.trim()) : reject(new Error(err || `claude exited ${code}`))));
+    proc.on('close', (code) => {
+      if (onDelta) return result && !result.is_error ? resolve(String(result.result).trim()) : reject(new Error(result?.result || err.split('\n')[0] || `claude exited ${code}`));
+      return code === 0 ? resolve(out.trim()) : reject(new Error(err || `claude exited ${code}`));
+    });
     proc.stdin.end(prompt);
   });
+}
+
+// reads a streamed HTTP body line by line (server-sent events or newline-delimited JSON)
+async function readLines(body, onLine) {
+  const reader = body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    buf += done ? dec.decode() : dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (line) onLine(line); }
+    if (done) break;
+  }
+  if (buf.trim()) onLine(buf.trim());
 }
 
 // the key stays in the Keychain and in this process; it is never logged, never returned over IPC and never written to settings
@@ -67,19 +98,33 @@ export async function anthropicKey() {
   return keyCache;
 }
 
-async function anthropicText({ prompt, system, model, key, maxTokens = 8192, timeoutMs = 120000 }) {
+async function anthropicText({ prompt, system, model, key, maxTokens = 8192, timeoutMs = 120000, onDelta = null }) {
   const k = key ?? await anthropicKey();
   if (!k) throw new Error('No Anthropic API key saved. Add one in Settings › Connectors.');
   const r = await fetch(ANTHROPIC.url, {
     method: 'POST',
     headers: { 'x-api-key': k, 'anthropic-version': ANTHROPIC.version, 'content-type': 'application/json' },
-    body: JSON.stringify({ model: apiModel(model), max_tokens: maxTokens, system, messages: [{ role: 'user', content: prompt }] }),
+    body: JSON.stringify({ model: apiModel(model), max_tokens: maxTokens, system, stream: !!onDelta, messages: [{ role: 'user', content: prompt }] }),
     signal: AbortSignal.timeout(timeoutMs),
   });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(`Anthropic ${r.status}: ${data.error?.message ?? r.statusText}`);
-  if (data.stop_reason === 'refusal') throw new Error('The model declined this request');
-  return (data.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('').trim();
+  if (!r.ok) { const data = await r.json().catch(() => ({})); throw new Error(`Anthropic ${r.status}: ${data.error?.message ?? r.statusText}`); }
+  if (!onDelta) {
+    const data = await r.json().catch(() => ({}));
+    if (data.stop_reason === 'refusal') throw new Error('The model declined this request');
+    return (data.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('').trim();
+  }
+  let acc = '';
+  let stop = null;
+  await readLines(r.body, (line) => {
+    if (!line.startsWith('data:')) return;
+    let evt;
+    try { evt = JSON.parse(line.slice(5)); } catch { return; }
+    if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta') { acc += evt.delta.text; onDelta(acc); }
+    if (evt.type === 'message_delta') stop = evt.delta?.stop_reason ?? stop;
+    if (evt.type === 'error') throw new Error(`Anthropic: ${evt.error?.message ?? 'stream error'}`);
+  });
+  if (stop === 'refusal') throw new Error('The model declined this request');
+  return acc.trim();
 }
 
 // checks the key with one tiny request before keeping it
@@ -100,20 +145,30 @@ export async function removeAnthropicKey() {
 }
 
 // Ollama's chat endpoint; the picker's Claude aliases mean nothing here, the configured local model always answers
-async function ollamaText({ prompt, system, localModel, timeoutMs = 180000 }) {
+async function ollamaText({ prompt, system, localModel, timeoutMs = 180000, onDelta = null }) {
   let r;
   try {
     r = await fetch(`${OLLAMA.url}/api/chat`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model: localModelName(localModel), stream: false, messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }] }),
+      body: JSON.stringify({ model: localModelName(localModel), stream: !!onDelta, messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }] }),
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
     throw new Error('Ollama is not running at localhost:11434');
   }
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(`Ollama ${r.status}: ${data.error ?? r.statusText}`);
-  return String(data.message?.content ?? '').trim();
+  if (!r.ok) { const data = await r.json().catch(() => ({})); throw new Error(`Ollama ${r.status}: ${data.error ?? r.statusText}`); }
+  if (!onDelta) {
+    const data = await r.json().catch(() => ({}));
+    return String(data.message?.content ?? '').trim();
+  }
+  let acc = '';
+  await readLines(r.body, (line) => {
+    let evt;
+    try { evt = JSON.parse(line); } catch { return; }
+    if (evt.error) throw new Error(`Ollama: ${evt.error}`);
+    if (evt.message?.content) { acc += evt.message.content; onDelta(acc); }
+  });
+  return acc.trim();
 }
 
 // is Ollama up, and does it have the model the user named

@@ -114,6 +114,8 @@ declare global {
       user(): Promise<{ name: string; email: string; photo: string | null }>;
       onSuggestion(cb: (s: Suggestion) => void): Unsub;
       onAgentStep(cb: (s: { text: string }) => void): Unsub;
+      // the answer so far, whole, while it streams in
+      onAgentDelta(cb: (s: { text: string }) => void): Unsub;
       onFocusComposer(cb: () => void): Unsub;
       brain(): Promise<Brain | null>;
       connectBrain(): Promise<Brain | null>;
