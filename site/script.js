@@ -1,4 +1,12 @@
 (function () {
+  // Features not live yet (see the launch switches in each page's head) lose their links.
+  document.querySelectorAll("[data-launch]").forEach(function (el) {
+    if (!document.documentElement.classList.contains("pre-" + el.dataset.launch)) return;
+    el.removeAttribute("href");
+    el.setAttribute("aria-disabled", "true");
+    el.setAttribute("title", "Available at launch");
+  });
+
   var year = document.getElementById("year");
   if (year) year.textContent = String(new Date().getFullYear());
 

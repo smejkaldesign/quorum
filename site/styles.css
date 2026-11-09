@@ -556,6 +556,15 @@ ul { margin: 0; padding: 0; list-style: none; }
 .contact-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
 .enterprise button.btn { font-family: inherit; font-size: 16px; }
 
+/* Launch switches: links for features that are not live yet (index.html head) */
+.pre-download [data-launch="download"], .pre-github [data-launch="github"] { opacity: 0.45; pointer-events: none; cursor: default; }
+.pre-download .btn[data-launch="download"]::after {
+  content: "Soon";
+  padding: 3px 6px; border-radius: 4px;
+  background: rgba(255, 255, 255, 0.18);
+  font: 400 10px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase;
+}
+
 /* Footer */
 .site-footer {
   position: relative;
