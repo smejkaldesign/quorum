@@ -6,6 +6,7 @@ COPY relay/package.json relay/package-lock.json relay/
 RUN cd relay && npm ci --omit=dev
 COPY relay/ relay/
 COPY app/*.js app/
+COPY app/speech/ app/speech/
 WORKDIR /srv/relay
 ENV NODE_ENV=production
 CMD ["node", "server.js"]

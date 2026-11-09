@@ -48,7 +48,8 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.119.0",
-    "electron-updater": "^6.8.11"
+    "electron-updater": "^6.8.11",
+    "ws": "^8.22.2"
   },
   "productName": "Quorum",
   "description": "Meetings and your second brain, on your Mac",
@@ -68,6 +69,7 @@
       "ee/**",
       "store/**",
       "connectors/**",
+      "speech/**",
       "guards/**",
       "cli/**",
       "dist/**",

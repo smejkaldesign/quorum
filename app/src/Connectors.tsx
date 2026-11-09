@@ -6,6 +6,7 @@ import { MODELS } from './Composer';
 import { IconChat, IconCheck, IconCode, IconExternal, IconGrid, IconMic, IconMore, IconNotes, IconPerson, IconPlus, IconReset, IconTrash, ProviderMark, Wave } from './icons';
 import { isCloud } from './edition';
 import { INCLUDED_HOURS } from '../connectors/catalog';
+import { SPEECH_ENGINES } from '../speech/provider';
 
 // the provider's mark: the logos icons.tsx has, the first letter for the rest
 export function Mark({ id }: { id: ConnectorId }) {
@@ -99,7 +100,8 @@ export function PersonalConnectors() {
     }
     await window.quorum.setSettings({ providers: { [role]: (id || null) as ConnectorId } }); refresh();
   };
-  const options = (role: ConnectorRole) => CATALOG.filter((p) => canServe(p.id, role) && (rows.includes(p.id) || effective(role) === p.id));
+  // speech lists only engines with a streaming adapter (speech/provider.js); the others wait for theirs
+  const options = (role: ConnectorRole) => CATALOG.filter((p) => canServe(p.id, role) && (rows.includes(p.id) || effective(role) === p.id) && (role !== 'speech' || p.id === 'apple' || SPEECH_ENGINES.includes(p.id)));
   const speech = effective('speech');
   return (
     <>
@@ -137,7 +139,8 @@ export function PersonalConnectors() {
             ))}
           </div>
           {engine === 'managed' ? <p className="set-note">Calls stream to Quorum's speech engine and the running summary and final notes run on Quorum's models. Each seat includes {INCLUDED_HOURS} hours a month.</p>
-            : speech !== 'apple' && <p className="set-note">Cloud speech engines arrive with the speech provider interface. Until then Apple transcribes every meeting on this Mac.</p>}
+            : speech !== 'apple' ? <p className="set-note">Calls stream to {(speech && BY_ID[speech]?.name) || speech} on your own key, with your vocabulary as key terms. If it refuses or drops, the call continues on this Mac.</p>
+            : <p className="set-note">Apple transcribes on this Mac. A connected AssemblyAI or Deepgram key can take this step; ElevenLabs, OpenAI and Google speech arrive with their adapters.</p>}
         </>
       )}
       {sheet?.kind === 'add' && <ProviderSheet id={sheet.id} st={st} settings={settings} onPick={(id) => setSheet({ kind: 'add', id })} onRefresh={refresh} onDone={(changed) => { setSheet(null); if (changed) refresh(); }} />}

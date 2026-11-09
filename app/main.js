@@ -1,7 +1,8 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, screen, shell, systemPreferences, Tray } from 'electron';
 import { NEEDS_SOURCE, NEEDS_TOOLS, SOURCES, modelLabel, runModel, sourceStatus } from './models.js';
 import { BY_ID, cleanConnectors, cleanProviders, needsKey, providerFor, providersFromSource, sourceFromProviders } from './connectors/catalog.js';
-import { removeConnectorKey, setConnectorKey, testSavedConnector } from './connectors/keys.js';
+import { connectorKey, removeConnectorKey, setConnectorKey, testSavedConnector } from './connectors/keys.js';
+import { openSpeech, SPEECH_ENGINES } from './speech/provider.js';
 import { createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTree } from './vault.js';
 import { createVaultIndex } from './vindex.js';
 import { addAlias, retargetLinks, rewriteLinks } from './relink.js';
@@ -469,6 +470,35 @@ async function startRelay(segmentId) {
   }
 }
 
+// the user's own cloud speech engine (Settings › Connectors, speech step): AssemblyAI or Deepgram on their key, through
+// the same contract as the relay. Any failure falls back to the on-device engine, like a relay drop
+async function startByok(segmentId) {
+  const id = providers().speech;
+  if (!SPEECH_ENGINES.includes(id)) return null;
+  const key = await connectorKey(id).catch(() => null);
+  if (!key) { log('speech', `${id} chosen but no key saved; on-device`); return null; }
+  const r = openSpeech({
+    engine: id, key, channels: ['me', 'them'], sampleRate: 16000, terms: meeting.terms, locale: settings.voice?.locale || 'en-US',
+    onEvent: onHelperEvent,
+    onClose: ({ error }) => {
+      if (relay !== r || !meeting.capturing || meeting.dir !== segmentId) return;
+      relay = null;
+      toUI('log', `${id} dropped (${error?.message ?? 'closed'}); continuing on this Mac.`);
+      stopCapture();
+      beginSegment({ local: true });
+    },
+  });
+  try {
+    await r.ready;
+    log('speech', `${id} on your own key`);
+    return r;
+  } catch (err) {
+    log('speech', `${id} refused, on-device:`, err.message);
+    toUI('log', `${id} is unavailable (${err.message}); transcribing on this Mac.`);
+    return null;
+  }
+}
+
 async function beginSegment({ local = false } = {}) {
   meeting.dir = store.meetings.beginSegment(meeting.id);
   meeting.dirs.push(meeting.dir);
@@ -478,7 +508,7 @@ async function beginSegment({ local = false } = {}) {
   const cmd = { cmd: 'start', sessionDir: meeting.dir, echoCancel: aecOn(), locale: settings.voice?.locale || 'en-US', tapBundles: only, terms: meeting.terms };
   const dir = meeting.dir;
   stopRelay();
-  relay = local ? null : await startRelay(dir);
+  relay = local ? null : (await startRelay(dir)) ?? (await startByok(dir));
   // STOP or the end of the call can land while the relay handshake runs
   if (!meeting.capturing || meeting.dir !== dir) { stopRelay(); return; }
   helperSend(relay ? { ...cmd, streamPcm: true } : cmd);
