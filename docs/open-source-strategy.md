@@ -6,6 +6,14 @@ Status: decided 2026-11-08 (price, tiers); other sections current as of that dat
 
 The open-source edition costs Smejkal Design $0 to operate. Every feature in it runs on the user's Mac with the user's own accounts and keys. Anything that needs a server, a company key, or a company account is Cloud.
 
+The open-source edition is the same app with the same features. It is never a crippled build. The difference is where things run: on your Mac with your keys (Local), or hosted by Smejkal Design (Cloud). Every model path in Local is bring your own key.
+
+## What Cloud sells
+
+1. **Starter Agent OS.** A hosted service that builds and maintains an agentic memory system for someone who has none: a structured notes folder with index, instructions, guards, skills and a search layer, far beyond a default Claude memory, kept current from their meetings and connected to Claude or another AI tool. Needs hosting, so it is paid. The app surfaces it as an upsell at the moment a user with no Agent OS reaches the "connect a folder" step, and again in Settings.
+2. **Sync and web access.** Notes and meetings across Macs and in a browser.
+3. **Team knowledge.** Shared workspace notes, members, invites, domain join, visibility rules. This is also the pitch to people who already run their own second brain: Cloud is what lets them share it with a team and reach it from every device.
+
 ## Editions
 
 | | Local (open source) | Cloud (paid) | Team (later tier, same code path as Cloud) |
