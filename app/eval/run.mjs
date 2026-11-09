@@ -41,19 +41,8 @@ function loadCorpus() {
     }).filter(Boolean);
 }
 
-// HOOK: --clean runs hypothesis turns through app/clean.js when that module exists. It is being added on another
-// branch; until it lands this prints a note and scores the raw turns.
-async function cleaner() {
-  if (!clean) return null;
-  const mod = await import('../clean.js').catch(() => null);
-  if (!mod) { console.log('--clean: app/clean.js is not present, scoring raw turns'); return null; }
-  if (typeof mod.cleanTurns === 'function') return mod.cleanTurns;
-  if (typeof mod.cleanText === 'function') return (turns) => turns.map((t) => ({ ...t, text: mod.cleanText(t.text) }));
-  console.log('--clean: app/clean.js exports neither cleanTurns nor cleanText, scoring raw turns');
-  return null;
-}
-
-const toTurns = (pieces) => pieces.sort((a, b) => a.start - b.start).reduce((turns, p) => addFinal(turns, { ...p, at: 0 }).turns, []);
+// --clean scores the cleaned reading (clean.js, as the app shows it); without it the verbatim text is scored
+const toTurns = (pieces) => pieces.sort((a, b) => a.start - b.start).reduce((turns, p) => addFinal(turns, { ...p, at: 0 }, 1.5, { clean }).turns, []);
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : null; };
 const pct = (x) => `${(x * 100).toFixed(1)}%`;
 
@@ -72,7 +61,7 @@ async function runEngine(name, items, applyClean) {
     try { out = await engine.transcribe(item, { terms, helper: opt('--helper', undefined) }); }
     catch (e) { console.log(`${name} ${item.name}: ${e.message}`); results.push({ item: item.name, error: e.message, refWords: 0, errors: 0, entities: 0, entitiesMissing: 0, cpErrors: 0 }); continue; }
     let turns = toTurns(out.pieces);
-    if (applyClean) turns = applyClean(turns);
+
     const norm = { fillers: Boolean(applyClean) };
     const w = wer(item.reference.turns, turns, norm);
     const e = entityErrorRate(item.reference.entities, turns, norm);
@@ -92,7 +81,7 @@ async function runEngine(name, items, applyClean) {
 
 const items = loadCorpus();
 if (!items.length) { console.error('corpus is empty'); process.exit(2); }
-const applyClean = await cleaner();
+const applyClean = clean;
 const summaries = [];
 for (const name of engines) {
   console.log(`\n== ${name} (${items.length} items${applyClean ? ', clean' : ''}${useTerms ? ', terms on' : ', terms off'})`);
