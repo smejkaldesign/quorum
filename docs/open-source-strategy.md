@@ -14,7 +14,7 @@ The open-source edition is the same app with the same features. It is never a cr
 2. **Sync and web access.** Notes and meetings across Macs and in a browser.
 3. **Team knowledge.** Shared workspace notes, members with owner, admin and member roles, invites, domain join, visibility rules, an admin review queue for member contributions with an auto-include toggle, and Teams inside a workspace with their own knowledge segment and a synthesized Team note per shared meeting. This is also the pitch to people who already run their own Agent OS: Cloud is what lets them share it with a team and reach it from every device.
 
-**Tokens.** Cloud charges for hosting, ease of use and teams. Cloud never bills tokens in v1 and never makes a model call on the user's behalf; every model path, Local or Cloud, is the user's Claude Code sign-in, the user's own key in the Mac's Keychain, or a local model. Anthropic and OpenAI offer no third-party OAuth that hands an app a user's key, so "connect your AI account" means one of those three sources. No user key is stored server-side in v1. A server-side runner is a later option; if one ever runs on a company key, tokens bill straight through monthly at cost with a user-set cap (suggested $10 to $20 on top of the $5 seat), and keys are encrypted at rest with per-workspace keys.
+**Tokens.** Cloud charges for hosting, ease of use and teams. One exception, decided 2026-11-08: Cloud includes managed transcription, a cloud speech engine plus the running summary and final notes run on the company's keys, 20 recorded hours a month per seat, after which the on-device engine takes over for the rest of the month. Cost basis is $0.22 to $0.53 per recorded hour, so the allowance caps exposure near $4.40 against the $5 seat. Outside that allowance Cloud bills no tokens in v1 and makes no model call on the user's behalf; every model path, Local or Cloud, is the user's Claude Code sign-in, the user's own key in the Mac's Keychain, or a local model. Anthropic and OpenAI offer no third-party OAuth that hands an app a user's key, so "connect your AI account" means one of those three sources. No user key is stored server-side in v1. A server-side runner is a later option; if one ever runs on a company key, tokens bill straight through monthly at cost with a user-set cap (suggested $10 to $20 on top of the $5 seat), and keys are encrypted at rest with per-workspace keys.
 
 ## Editions
 
@@ -23,8 +23,8 @@ The open-source edition is the same app with the same features. It is never a cr
 | Price | Free, Apache-2.0 | One paid plan for v1: $5 per seat per month | Not a tier in v1; Cloud gets team features first, the line moves when demand shows |
 | Meetings: capture, on-device transcription, Zoom/Meet/Teams detection, STOP/GO chat notice, end-of-call notes | Yes | Yes | Yes |
 | Agent OS: connect an existing notes folder (Obsidian vault, repo with CLAUDE.md), knowledge graph, search, read guard | Yes | Yes | Yes |
-| Model access | User's own Claude Code sign-in; bring your own API key (Anthropic, OpenAI, local Ollama); default is none | Same; Cloud bills no tokens in v1 | Same |
-| Tokens and model cost | $0 to Smejkal Design in every case | $0 to Smejkal Design in v1; a server-side runner with monthly passthrough billing and a user-set cap is a later option | Same as Cloud |
+| Model access | User's own Claude Code sign-in; bring your own API key (Anthropic, OpenAI, local Ollama); default is none | Same, plus managed transcription (cloud speech engine and notes on the company's keys, 20 hours a month per seat) | Same |
+| Tokens and model cost | $0 to Smejkal Design in every case | Transcription and notes within the 20-hour allowance, about $0.22 to $0.53 per hour; nothing else in v1. Paid hours past the allowance are a later option | Same as Cloud |
 | Decision checks (System One models) | Bring your own key, off by default | Same | Same |
 | Granola and other source-app imports | Yes, local folders | Yes | Yes |
 | Quorum CLI and MCP server (local) | Yes | Yes | Yes |
@@ -66,7 +66,7 @@ The open-source edition is the same app with the same features. It is never a cr
 2. Price: $5 per seat per month (revised from $9 the same day).
 3. Dead Settings rows stay visible as a to-do map until the features ship.
 4. Hosted model access in Cloud stays out of the first release. BYOK only; revisit when support load shows people stuck on keys.
-5. Tokens: Cloud bills no tokens in v1. The Starter Agent OS runner executes on the user's Mac with the user's model source; no user key is stored server-side. A server-side runner with passthrough billing and a user-set cap ($10 to $20 suggested) is a later option.
+5. Tokens: Cloud bills no tokens in v1 beyond the included managed transcription allowance (decided 2026-11-08, PRD decision 15). The Starter Agent OS runner executes on the user's Mac with the user's model source; no user key is stored server-side. A server-side runner with passthrough billing and a user-set cap ($10 to $20 suggested) is a later option.
 6. Team knowledge: "public" means workspace members only; anyone-with-the-link is deferred. Roles are owner, admin, member. Admins hold a review queue with an auto-include toggle, create Teams with their own knowledge segment and a synthesized Team note (disable per Team), and set Team vault visibility and per-member read or write. Every member is a $5 seat, Teams included. "Maintain my existing vault" is in v1.
 
 ## Environments and administration
