@@ -323,16 +323,7 @@ ul { margin: 0; padding: 0; list-style: none; }
 .card p { color: var(--muted); font-size: 16px; line-height: 1.5; }
 .note { margin-top: 40px; text-align: center; color: var(--text); font-size: 16px; }
 
-/* Providers: two rows of logos that scroll in opposite directions */
-.providers { display: flex; flex-direction: column; gap: 28px; }
-.provider-label {
-  padding: 0 var(--gutter);
-  margin-bottom: 12px;
-  font: 400 12px/1 var(--mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
+/* Providers: one row of logos that drifts left; the track is doubled so the loop has no seam */
 .marquee {
   display: flex;
   overflow: hidden;
@@ -344,7 +335,6 @@ ul { margin: 0; padding: 0; list-style: none; }
   margin: 0; padding: 0 6px; list-style: none;
   animation: marquee 90s linear infinite;
 }
-.reverse .marquee-track { animation-direction: reverse; }
 .marquee:hover .marquee-track { animation-play-state: paused; }
 @keyframes marquee { to { transform: translateX(-100%); } }
 .provider {
