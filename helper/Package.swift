@@ -14,6 +14,11 @@ let package = Package(
             linkerSettings: [
                 .unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", plist])
             ]
-        )
+        ),
+        .testTarget(
+            name: "QuorumHelperTests",
+            dependencies: ["QuorumHelper"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
     ]
 )

@@ -1,9 +1,11 @@
 import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import type { Brain, CalendarSettings, ClaudeStatus, Memory, MemoryItem, ModelSource, ModelSourceStatus, OptOut, Profile, Settings, Voice, Workspace, Transcription, DecisionProvider, DecisionsStatus } from './quorum';
-import { ModelKey, SOURCE_NAMES } from './modelSource';
+import type { Brain, CalendarSettings, ClaudeStatus, Memory, MemoryItem, OptOut, Profile, Settings, Voice, Workspace, Transcription, DecisionProvider, DecisionsStatus, AccountState } from './quorum';
+import { PersonalConnectors } from './Connectors';
+import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
-import { AccountArea, MembersArea, isCloud, useHostedAccounts } from './edition';
+import { AccountArea, EDITION, MembersArea, WorkspaceConnectorsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
+import { canAdmin, modeOf, resolvePage, workspacePages, type Page } from './settingsNav';
 import { EnvSwitch } from './EnvSwitch';
 import {
   IconBell, IconBrain, IconBuilding, IconCalendar, IconChat, IconFolder, IconGrid, IconKeyboard, IconLock,
@@ -11,7 +13,6 @@ import {
   IconInfo, IconQuorum, IconUpload, IconListCheck, IconTrash,
 } from './icons';
 
-type Page = 'preferences' | 'memory' | 'calendar' | 'meetings' | 'notifications' | 'connectors' | 'voice' | 'general' | 'knowledge' | 'members';
 type Nav = { id: Page; label: string; icon: (p: { width?: number; height?: number }) => ReactNode; soon?: boolean };
 
 const ACCOUNT: Nav[] = [
@@ -23,11 +24,13 @@ const ACCOUNT: Nav[] = [
   { id: 'connectors', label: 'Connectors', icon: IconGrid },
   { id: 'voice', label: 'Voice typing', icon: IconKeyboard },
 ];
+// the pages behind the Admin button; settingsNav.workspacePages decides which of them a build lists
 const WORKSPACE: Nav[] = [
   { id: 'general', label: 'General', icon: IconBuilding },
   { id: 'knowledge', label: 'Knowledge', icon: IconBrain },
-  // members belong to a hosted workspace, so the local edition has no page for them
-  ...(isCloud ? [{ id: 'members' as const, label: 'Members', icon: IconPeople }] : []),
+  { id: 'members', label: 'Members', icon: IconPeople },
+  { id: 'org-connectors', label: 'Connectors', icon: IconGrid },
+  { id: 'org-voice', label: 'Voice typing', icon: IconKeyboard },
 ];
 
 // the chip on every row whose control is disabled on purpose: the feature is planned and the row shows what it will do
@@ -37,11 +40,19 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
   open?: { page: Page; n: number } | null; brain: Brain | null; settings: Settings; onSettings: (s: Settings) => void; onConnect: () => void; onBack: () => void;
 }) {
   const [saved, setPage] = useSession<Page>('settingsPage', 'preferences');
-  // Profile folded into Preferences; an older session may still remember it
-  const page = (saved as string) === 'profile' ? 'preferences' : saved;
   useEffect(() => { if (open) setPage(open.page); }, [open, setPage]);
   const [user, setUser] = useState<{ name: string; email: string; photo: string | null } | null>(null);
   useEffect(() => { window.quorum.user().then(setUser); }, [settings.profile]);
+  // the Quorum account comes first; without one, the Claude sign-in on this Mac is the only identity there is
+  const [account, setAccount] = useState<AccountState | null>(null);
+  useEffect(() => { let live = true; window.quorum.accountStatus().then((a) => { if (live) setAccount(a); }).catch(() => {}); return () => { live = false; }; }, [settings.profile]);
+  useEffect(() => { if (!window.quorum.onAccount) return; return window.quorum.onAccount(setAccount); }, []);
+  const admin = canAdmin(EDITION, account?.workspace?.role);
+  const page = resolvePage(saved, admin);
+  const mode = modeOf(page);
+  const quorumEmail = account?.signedIn ? account.email : null;
+  const email = quorumEmail || user?.email || '';
+  const emailLabel = quorumEmail ? 'Email' : 'Claude sign-in';
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onBack(); };
     window.addEventListener('keydown', onKey);
@@ -51,7 +62,8 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
   const set = async (patch: Partial<Settings>) => onSettings(await window.quorum.setSettings(patch));
   // a cloud build without hosted account config has no members to list, so the page leaves the nav
   const hosted = useHostedAccounts();
-  const workspaceNav = hosted ? WORKSPACE : WORKSPACE.filter((n) => n.id !== 'members');
+  const listed = workspacePages(EDITION, hosted);
+  const workspaceNav = WORKSPACE.filter((n) => (listed as string[]).includes(n.id));
   const all = [...ACCOUNT, ...WORKSPACE];
   const current = all.find((n) => n.id === page)!;
 
@@ -60,6 +72,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
       <n.icon width={18} height={18} /><span>{n.label}</span>
     </button>
   );
+  const go = (p: Page) => setPage(p);
 
   return (
     <div className="settings-shell">
@@ -67,12 +80,20 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
         <div className="set-user">
           <span className="set-avatar">{user?.photo ? <img src={user.photo} alt="" /> : (user?.name ?? 'H')[0]}</span>
           <strong>{user?.name ?? ' '}</strong>
-          <span>{user?.email || 'Not signed in to Claude'}</span>
+          <span>{email || 'Not signed in to Claude'}</span>
         </div>
         <nav className="set-navs">
-          {ACCOUNT.map(navItem)}
-          <h4>Workspace</h4>
-          {workspaceNav.map(navItem)}
+          {mode === 'account' ? (
+            <>
+              {ACCOUNT.map(navItem)}
+              {admin && <button className="set-nav admin" onClick={() => go('general')}><IconBuilding width={18} height={18} /><span>Admin</span></button>}
+            </>
+          ) : (
+            <>
+              <button className="set-menu-back" onClick={() => go('preferences')}><IconChevron width={16} height={16} />Menu</button>
+              {workspaceNav.map(navItem)}
+            </>
+          )}
         </nav>
         <button className="set-quit" onClick={() => window.quorum.quit()}><IconPower width={18} height={18} /> Quit Quorum</button>
       </aside>
@@ -84,7 +105,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
           {page === 'knowledge' && <p className="set-lede">Company knowledge for your whole workspace, chosen by admins.</p>}
           {page === 'general' && <p className="set-lede">Settings for everyone in your workspace. Quorum gives this context to every meeting summary and answer, so it's the same for each person.</p>}
           {page === 'preferences' ? (
-            <ProfilePage settings={settings} email={user?.email ?? ''} name={user?.name ?? ''} onSettings={onSettings}>
+            <ProfilePage settings={settings} email={email} emailLabel={emailLabel} name={user?.name ?? ''} onSettings={onSettings}>
               <h3>General</h3>
               <div className="set-card">
                 <Row icon={<Wave live={false} />} title="Listen automatically" desc="Starts transcribing when a meeting begins in Zoom, Google Meet or Teams">
@@ -106,6 +127,8 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
               {brain && <MemoryScan />}
             </>
           ) : page === 'members' ? <MembersArea />
+            : page === 'org-connectors' ? <WorkspaceConnectorsArea local={<OrgConnectorsLocal onGo={go} />} />
+            : page === 'org-voice' ? <WorkspaceVoiceArea local={<OrgVoiceLocal onGo={go} />} />
             : page === 'calendar' ? <CalendarPage />
             : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} />
             : page === 'notifications' ? <NotificationsPage />
@@ -113,6 +136,30 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
             : <VoicePage settings={settings} onSettings={onSettings} />}
         </div>
       </main>
+    </div>
+  );
+}
+
+// the Local edition's Workspace › Connectors and Voice typing: organization providers need a hosted workspace, so each
+// page says so and points at the personal page that works on this Mac
+function OrgConnectorsLocal({ onGo }: { onGo: (p: Page) => void }) {
+  return (
+    <div className="set-card set-zero">
+      <span className="set-zero-icon"><IconGrid width={22} height={22} /></span>
+      <strong>Organization connectors are a Cloud feature</strong>
+      <p>In Quorum Cloud an admin adds speech, model and voice providers once, and every seat in the workspace uses them. The Local edition keeps every key on this Mac.</p>
+      <button className="pill" onClick={() => onGo('connectors')}>Open your Connectors</button>
+    </div>
+  );
+}
+
+function OrgVoiceLocal({ onGo }: { onGo: (p: Page) => void }) {
+  return (
+    <div className="set-card set-zero">
+      <span className="set-zero-icon"><IconKeyboard width={22} height={22} /></span>
+      <strong>Organization overrides are a Cloud feature</strong>
+      <p>In Quorum Cloud an admin chooses which provider handles speech to text, the running summary and the final notes for the whole workspace. The Local edition transcribes on this Mac with your own settings.</p>
+      <button className="pill" onClick={() => onGo('voice')}>Open your Voice typing settings</button>
     </div>
   );
 }
@@ -183,7 +230,7 @@ function Field({ value, placeholder, onSave }: { value: string; placeholder?: st
   );
 }
 
-function ProfilePage({ settings, email, name, onSettings, children }: { settings: Settings; email: string; name: string; onSettings: (s: Settings) => void; children?: ReactNode }) {
+function ProfilePage({ settings, email, emailLabel, name, onSettings, children }: { settings: Settings; email: string; emailLabel: string; name: string; onSettings: (s: Settings) => void; children?: ReactNode }) {
   const p = settings.profile ?? {};
   const save = async (patch: Partial<Profile>) => onSettings(await window.quorum.setSettings({ profile: patch }));
   // one name for both uses: the profile shown in Settings and settings.userName, which names the recorder in every note
@@ -193,7 +240,7 @@ function ProfilePage({ settings, email, name, onSettings, children }: { settings
       <h3>Account</h3>
       <div className="set-card form">
         <div className="set-line">
-          <strong>Email</strong>
+          <strong>{emailLabel}</strong>
           <div className="set-line-end">
             <span className="muted">{email || 'Not signed in to Claude'}</span>
             <button className="photo-btn" aria-label={p.photo ? 'Change photo' : 'Add photo'} data-tip={p.photo ? 'Change photo' : 'Add photo'} onClick={async () => onSettings(await window.quorum.pickPhoto())}>
@@ -694,90 +741,16 @@ function DecisionsKey({ provider, info, onDone }: { provider: DecisionProvider; 
   );
 }
 
-// the three model sources (docs/open-source-strategy.md), one chosen at a time; None is the state until one is picked.
-// Other CLIs and providers come back with the multi-provider task
-function ModelSources({ claude }: { claude: ClaudeStatus | null }) {
-  const [st, setSt] = useState<ModelSourceStatus | null>(null);
-  const [keying, setKeying] = useState(false);
-  const [more, setMore] = useMenu();
-  const refresh = () => window.quorum.modelSourceStatus().then(setSt);
-  useEffect(() => { refresh(); }, []);
-  const source = st?.source ?? 'none';
-  const choose = async (s: ModelSource) => { await window.quorum.modelSourceSet(s); refresh(); };
-  const claudeOk = !!claude?.installed && !!claude?.loggedIn;
-  const pick = (s: ModelSource, ready: boolean) => (source === s ? <IconCheck width={18} height={18} className="ok" /> : <button className="pill" disabled={!ready} onClick={() => choose(s)}>Use</button>);
-  const ollama = !st ? '' : !st.ollama.reachable ? ' · not running' : st.ollama.hasModel ? ' · running' : ` · running, ${st.localModel} not pulled`;
-  return (
-    <div className="src-list">
-      <h4 className="src-title">Model source <span className={`onb-state ${source !== 'none' ? 'ok' : ''}`}>{source === 'none' ? 'None chosen' : SOURCE_NAMES[source]}</span></h4>
-      <div className={`onb-choice ${source === 'claude-code' ? 'on' : ''}`}>
-        <ProviderMark provider="anthropic" />
-        <div><strong>Claude Code on this Mac</strong><em>Your own sign-in, reads your Agent OS{claude && !claudeOk ? (claude.installed ? ' · not signed in' : ' · not installed') : ''}</em></div>
-        {pick('claude-code', claudeOk)}
-      </div>
-      <div className={`onb-choice ${source === 'anthropic-api' ? 'on' : ''}`}>
-        <IconLock width={18} height={18} />
-        <div><strong>Your own API key</strong><em>Anthropic key stored in Keychain{st ? (st.key ? ' · key saved' : ' · no key yet') : ''}</em></div>
-        {st?.key ? (
-          <span className="src-actions">
-            {pick('anthropic-api', true)}
-            <span className="menu-wrap" onClick={(e) => e.stopPropagation()}>
-              <button className="icon-btn" aria-label="API key options" aria-haspopup="menu" aria-expanded={more} onClick={() => setMore((o) => !o)}><IconMore /></button>
-              {more && (
-                <div className="menu end" role="menu">
-                  <button role="menuitem" onClick={() => { setMore(false); setKeying(true); }}><IconReset width={15} height={15} /> Replace key</button>
-                  <button role="menuitem" className="danger" onClick={async () => { setMore(false); await window.quorum.modelKeyRemove(); refresh(); }}><IconClose width={15} height={15} /> Remove key</button>
-                </div>
-              )}
-            </span>
-          </span>
-        ) : <button className="pill" onClick={() => setKeying(true)}>Add key</button>}
-      </div>
-      <div className={`onb-choice ${source === 'local' ? 'on' : ''}`}>
-        <IconCode width={18} height={18} />
-        <div>
-          <strong>Local model</strong>
-          <em>Ollama at localhost{ollama}</em>
-          <label className="set-field wide onb-field"><input key={st?.localModel ?? ''} defaultValue={st?.localModel ?? ''} aria-label="Ollama model name" placeholder="llama3.1"
-            onBlur={async (e) => { await window.quorum.localModelSet(e.target.value); refresh(); }} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} /></label>
-        </div>
-        {pick('local', true)}
-      </div>
-      {keying && <ModelKey onDone={(ok) => { setKeying(false); if (ok) choose('anthropic-api'); else refresh(); }} />}
-    </div>
-  );
-}
-
-// what Quorum runs on. Quorum finds the Claude Code already signed in on this Mac; it never holds a login of its own
+// Quorum reached from outside: the MCP server in Claude Code and the quorum command in Terminal. Claude Code as a model
+// provider is a row in PersonalConnectors above
 function ClaudeCard() {
   const [c, setC] = useState<ClaudeStatus | null>(null);
-  const [more, setMore] = useMenu();
-  const check = () => { setC(null); window.quorum.claudeStatus().then(setC); };
   useEffect(() => { window.quorum.claudeStatus().then(setC); }, []);
-  const plan = c?.plan ? c.plan[0].toUpperCase() + c.plan.slice(1) : '';
-  const desc = !c ? 'Checking…'
-    : !c.installed ? 'Install Claude Code to use it as the model source'
-    : !c.loggedIn ? 'Signed out. Sign in to use it as the model source'
-    : ['AI usage', c.email, c.org, plan && `${plan} plan`].filter(Boolean).join(' · ');
   return (
     <>
-      <div className="set-head"><h3>AI</h3></div>
-      <p className="mcp-lede">Where Quorum's model runs, and how Claude and Terminal reach Quorum. Every source is your own; Quorum has no key of its own.</p>
-      <ModelSources claude={c} />
+      <div className="set-head"><h3>Claude Code and Terminal</h3></div>
+      <p className="mcp-lede">How Claude and Terminal reach Quorum.</p>
       <div className="set-card">
-        <Row icon={<ProviderMark provider="anthropic" />} title={<>Claude Code{c?.version && <em className="muted ver">v{c.version}</em>}</>} desc={desc}>
-          <span className="menu-wrap" onClick={(e) => e.stopPropagation()}>
-            <button className="icon-btn" aria-label="More options" aria-haspopup="menu" aria-expanded={more} data-tip="More options" onClick={() => setMore((o) => !o)}><IconMore /></button>
-            {more && (
-              <div className="menu end" role="menu">
-                <button role="menuitem" onClick={() => { setMore(false); check(); }}><IconReset width={15} height={15} /> Check again</button>
-                <button role="menuitem" onClick={() => { setMore(false); window.quorum.claudeLogin(); }}><IconPerson width={15} height={15} /> {c?.loggedIn ? 'Switch account' : 'Sign in'}</button>
-                <div className="menu-sep" />
-                <span data-tip="Quorum needs one AI connection" data-tip-pos="left"><button role="menuitem" className="danger" disabled><IconClose width={15} height={15} /> Disconnect</button></span>
-              </div>
-            )}
-          </span>
-        </Row>
         <McpRows claude={c} />
       </div>
     </>
@@ -871,6 +844,14 @@ function CopyField({ value }: { value: string }) {
 }
 
 // meeting apps Quorum listens to and how it turns their audio into text
+// keeps call audio from showing as you; the description follows the choice
+const ECHO_DESC: Record<NonNullable<Transcription['echo']>, string> = {
+  auto: 'Cancels echo on the built-in speakers, does nothing with headphones',
+  filter: 'Drops your lines that repeat what the call just said',
+  aec: 'Always cancels echo in the microphone',
+  off: 'Call audio can show as you on speakers',
+};
+
 function MeetingsPage({ settings, onSettings }: { settings: Settings; onSettings: (s: Settings) => void }) {
   const t = settings.transcription ?? {};
   const saveTx = async (patch: Transcription) => onSettings(await window.quorum.setSettings({ transcription: patch }));
@@ -879,13 +860,16 @@ function MeetingsPage({ settings, onSettings }: { settings: Settings; onSettings
       <MeetingProviders />
       <h3>Transcribing</h3>
       <p className="mcp-lede">How Quorum turns call audio into text.</p>
+      {settings.providers?.speech && settings.providers.speech !== 'apple' && <p className="set-note">Cloud speech engines arrive with the speech provider interface. {BY_ID[settings.providers.speech]?.name ?? 'That provider'} is saved as your speech provider; until then Apple transcribes every meeting on this Mac.</p>}
       <div className="set-card even">
         <Row icon={<IconKeyboard width={18} height={18} />} title="Show words as they're heard" desc="Unconfirmed words appear dimmed"><Toggle on={t.live ?? true} onChange={(on) => saveTx({ live: on })} /></Row>
-        <Row icon={<Wave live={false} />} title="Echo handling" desc="Keeps call audio from showing as you">
-          <select className="set-select" value={t.echo ?? 'filter'} onChange={(e) => saveTx({ echo: e.target.value as Transcription['echo'] })}>
-            <option value="filter">Filter repeats</option><option value="aec">Cancel echo</option><option value="off">Off</option>
+        <Row icon={<Wave live={false} />} title="Transcript refs in saved notes" desc="Each bullet gets a footnote with the transcript turn behind it"><Toggle on={settings.notes?.refs ?? false} onChange={async (on) => onSettings(await window.quorum.setSettings({ notes: { refs: on } }))} /></Row>
+        <Row icon={<Wave live={false} />} title="Echo handling" desc={ECHO_DESC[t.echo ?? 'auto']}>
+          <select className="set-select" value={t.echo ?? 'auto'} onChange={(e) => saveTx({ echo: e.target.value as Transcription['echo'] })}>
+            <option value="auto">Automatic</option><option value="filter">Filter repeats</option><option value="aec">Cancel echo</option><option value="off">Off</option>
           </select>
         </Row>
+        <Row icon={<IconSliders width={18} height={18} />} title="Clean up transcript" desc="Removes fillers and repeats, fixes capitalization and writes numbers as digits. Off keeps every word as spoken."><Toggle on={t.clean ?? true} onChange={(on) => saveTx({ clean: on })} /></Row>
         <Row icon={<IconNotes width={18} height={18} />} title="New paragraph after" desc="How long a pause starts a new turn">
           <select className="set-select" value={t.gap ?? 1.5} onChange={(e) => saveTx({ gap: Number(e.target.value) })}>
             <option value={0.8}>Short pause</option><option value={1.5}>1.5 seconds</option><option value={3}>Long pause</option>
@@ -905,6 +889,7 @@ function MeetingsPage({ settings, onSettings }: { settings: Settings; onSettings
 function ConnectorsPage() {
   return (
     <>
+      <PersonalConnectors />
       <ClaudeCard />
       <h3>Integrations</h3>
       <p className="mcp-lede">Tools Quorum reads from and sends notes to.</p>

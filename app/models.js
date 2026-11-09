@@ -1,43 +1,51 @@
-// Model access (docs/open-source-strategy.md): every source is the user's own, Quorum holds no key of its own.
-//   claude-code    the Claude Code signed in on this Mac; the only source with tools, so the only one that reads the Agent OS
-//   anthropic-api  the user's Anthropic key from the Keychain, called straight at the Messages API; prompt in, text out
-//   local          an Ollama model at localhost; prompt in, text out
-//   none           the fresh-install default: nothing runs and the app says so
-import { execFile, spawn } from 'node:child_process';
+// Model access (docs/open-source-strategy.md): every provider is the user's own, Quorum holds no key of its own.
+//   claude-code        the Claude Code signed in on this Mac; the only provider with tools, so the only one that reads the Agent OS
+//   anthropic          the user's Anthropic key from the Keychain, called straight at the Messages API; prompt in, text out
+//   openai, google     the user's key, chat completions or Gemini generateContent; prompt in, text out
+//   openai_compatible  any chat-completions server, with the base URL and model name from settings.connectors
+//   ollama             an Ollama model at localhost; prompt in, text out
+// Which provider runs which step comes from settings.providers (connectors/catalog.js); the legacy single switch
+// settings.modelSource (SOURCES) still works and is derived both ways in main.js
+import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { runAgent } from './agent.js';
+import { BY_ID, OLLAMA_URL, modelFor, modelName, providerFor } from './connectors/catalog.js';
+import { connectedKeys, connectorKey } from './connectors/keys.js';
 
 export const SOURCES = ['none', 'claude-code', 'anthropic-api', 'local'];
-export const ANTHROPIC = { service: 'quorum-model-anthropic', account: 'quorum', url: 'https://api.anthropic.com/v1/messages', version: '2023-06-01', verifyModel: 'claude-haiku-5-5' };
-export const OLLAMA = { url: 'http://127.0.0.1:11434', defaultModel: 'llama3.1' };
-export const NEEDS_SOURCE = 'Choose a model source in Settings › Connectors before Quorum can answer';
-export const NEEDS_TOOLS = 'This question needs the Agent OS; switch the model source to Claude Code on this Mac';
+export const ANTHROPIC = { url: `${BY_ID.anthropic.url}/messages`, version: '2023-06-01' };
+export const OLLAMA = { url: OLLAMA_URL, defaultModel: 'llama3.1' };
+export const NEEDS_SOURCE = 'Choose a model provider in Settings › Connectors before Quorum can answer';
+export const NEEDS_TOOLS = 'This question needs the Agent OS; set the agent provider to Claude Code on this Mac';
 
 // the picker's aliases are Claude Code's; the API wants full ids
-const API_MODELS = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-5-5' };
-export const apiModel = (alias) => API_MODELS[alias] ?? API_MODELS.sonnet;
+export const apiModel = (alias) => modelFor('anthropic', alias);
 export const localModelName = (name) => (String(name ?? '').trim() || OLLAMA.defaultModel);
 
-// what the saved note records as the model, per source
-export function modelLabel(source, alias, local) {
-  if (source === 'claude-code') return `claude-${alias}`;
-  if (source === 'anthropic-api') return apiModel(alias);
-  if (source === 'local') return `ollama/${localModelName(local)}`;
-  return 'none';
+// what the saved note records as the model, per provider
+export function modelLabel(id, alias, local, connectors) {
+  if (id === 'claude-code') return `claude-${alias}`;
+  if (id === 'ollama') return `ollama/${localModelName(local)}`;
+  return modelName(id, alias, local, connectors) ?? 'none';
 }
 
-// one entry point for every model call. tools: true is the Agent OS question path (agent.js, Claude Code only); without
-// tools the prompt carries everything and any source answers. async so a wrong source rejects like any other failure
-export async function runModel({ source, tools = false, ...opts }) {
-  if (source === 'none') throw new Error(NEEDS_SOURCE);
+// one entry point for every model call. role picks the provider from settings.providers (summary, notes, agent), with
+// the legacy source as the fallback; tools: true is the Agent OS question path (agent.js, Claude Code only); without
+// tools the prompt carries everything and any provider answers. async so a wrong provider rejects like any other failure
+export async function runModel({ source = 'none', role = null, providers = null, connectors = null, tools = false, ...opts }) {
+  const id = providerFor(role, providers, source);
+  if (!id) throw new Error(NEEDS_SOURCE);
   if (tools) {
-    if (source !== 'claude-code') throw new Error(NEEDS_TOOLS);
+    if (id !== 'claude-code') throw new Error(NEEDS_TOOLS);
     return runAgent(opts);
   }
-  if (source === 'claude-code') return claudeText(opts);
-  if (source === 'anthropic-api') return anthropicText(opts);
-  if (source === 'local') return ollamaText(opts);
-  throw new Error(`unknown model source ${source}`);
+  if (id === 'claude-code') return claudeText(opts);
+  if (id === 'anthropic') return anthropicText(opts);
+  if (id === 'ollama') return ollamaText(opts);
+  if (id === 'openai') return openaiText(opts);
+  if (id === 'google') return googleText(opts);
+  if (id === 'openai_compatible') return openaiText({ ...opts, provider: 'openai_compatible', ...connectors?.openai_compatible });
+  throw new Error(`${BY_ID[id]?.name ?? id} cannot run this step`);
 }
 
 // Claude via the signed-in Claude Code (the user's own claude.ai sign-in), never a raw API key
@@ -89,25 +97,21 @@ async function readLines(body, onLine) {
   if (buf.trim()) onLine(buf.trim());
 }
 
-// the key stays in the Keychain and in this process; it is never logged, never returned over IPC and never written to settings
-const security = (args) => new Promise((resolve) => execFile('/usr/bin/security', args, (err, out) => resolve(err ? null : out.trim())));
-let keyCache; // undefined until looked up, null when there's no key
+const noKey = (id) => new Error(`No ${BY_ID[id].name} API key saved. Add one in Settings › Connectors.`);
+async function failure(r, name) { const data = await r.json().catch(() => ({})); return new Error(`${name} ${r.status}: ${data.error?.message ?? r.statusText}`); }
 
-export async function anthropicKey() {
-  if (keyCache === undefined) keyCache = (await security(['find-generic-password', '-s', ANTHROPIC.service, '-a', ANTHROPIC.account, '-w'])) || null;
-  return keyCache;
-}
+export const anthropicKey = () => connectorKey('anthropic');
 
 async function anthropicText({ prompt, system, model, key, maxTokens = 8192, timeoutMs = 120000, onDelta = null }) {
   const k = key ?? await anthropicKey();
-  if (!k) throw new Error('No Anthropic API key saved. Add one in Settings › Connectors.');
+  if (!k) throw noKey('anthropic');
   const r = await fetch(ANTHROPIC.url, {
     method: 'POST',
     headers: { 'x-api-key': k, 'anthropic-version': ANTHROPIC.version, 'content-type': 'application/json' },
     body: JSON.stringify({ model: apiModel(model), max_tokens: maxTokens, system, stream: !!onDelta, messages: [{ role: 'user', content: prompt }] }),
     signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!r.ok) { const data = await r.json().catch(() => ({})); throw new Error(`Anthropic ${r.status}: ${data.error?.message ?? r.statusText}`); }
+  if (!r.ok) throw await failure(r, 'Anthropic');
   if (!onDelta) {
     const data = await r.json().catch(() => ({}));
     if (data.stop_reason === 'refusal') throw new Error('The model declined this request');
@@ -127,21 +131,76 @@ async function anthropicText({ prompt, system, model, key, maxTokens = 8192, tim
   return acc.trim();
 }
 
-// checks the key with one tiny request before keeping it
-export async function setAnthropicKey(key) {
-  try {
-    await anthropicText({ prompt: 'Reply with the word ok.', system: 'You answer in one word.', model: 'haiku', key, maxTokens: 8, timeoutMs: 15000 });
-  } catch (err) {
-    return { error: /Anthropic 40[13]/.test(err.message) ? "Anthropic didn't accept that key" : /Anthropic \d+/.test(err.message) ? err.message : "Couldn't reach Anthropic. Check your connection and try again." };
-  }
-  const saved = await security(['add-generic-password', '-U', '-s', ANTHROPIC.service, '-a', ANTHROPIC.account, '-l', 'Anthropic API key (Quorum)', '-w', key]);
-  keyCache = undefined;
-  return saved === null ? { error: "Couldn't save the key to your Keychain" } : { ok: true };
+// chat completions, for OpenAI and any server with the same shape. OpenAI maps the picker alias to its own models; a
+// compatible server answers with the model named in settings. The stream is server-sent events ending in [DONE]
+const chatMessages = (system, prompt) => [...(system ? [{ role: 'system', content: system }] : []), { role: 'user', content: prompt }];
+async function openaiText({ prompt, system, model, key, provider = 'openai', baseUrl, maxTokens = 8192, timeoutMs = 120000, onDelta = null }) {
+  const p = BY_ID[provider];
+  const k = key ?? await connectorKey(provider);
+  if (!k) throw noKey(provider);
+  const base = String(provider === 'openai' ? p.url : baseUrl ?? '').trim().replace(/\/+$/, '');
+  if (!base) throw new Error(`No base URL saved for ${p.name}. Add one in Settings › Connectors.`);
+  const name = provider === 'openai' ? modelFor('openai', model) : String(model ?? '').trim();
+  if (!name) throw new Error(`No model name saved for ${p.name}. Add one in Settings › Connectors.`);
+  const limit = provider === 'openai' ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
+  const r = await fetch(`${base}/chat/completions`, {
+    method: 'POST', headers: { authorization: `Bearer ${k}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ model: name, stream: !!onDelta, ...limit, messages: chatMessages(system, prompt) }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!r.ok) throw await failure(r, p.name);
+  if (!onDelta) return openaiReply(await r.json().catch(() => ({})));
+  let acc = '';
+  await readLines(r.body, (line) => { const d = openaiDelta(line, p.name); if (d) { acc += d; onDelta(acc); } });
+  return acc.trim();
 }
 
-export async function removeAnthropicKey() {
-  await security(['delete-generic-password', '-s', ANTHROPIC.service, '-a', ANTHROPIC.account]);
-  keyCache = null;
+export function openaiReply(data) {
+  const c = data.choices?.[0];
+  if (c?.finish_reason === 'content_filter') throw new Error('The model declined this request');
+  return String(c?.message?.content ?? '').trim();
+}
+
+// one SSE line to the text it adds, or null for keep-alives, [DONE] and anything that is not a data line
+export function openaiDelta(line, name = 'OpenAI') {
+  if (!line.startsWith('data:')) return null;
+  const s = line.slice(5).trim();
+  if (!s || s === '[DONE]') return null;
+  let evt;
+  try { evt = JSON.parse(s); } catch { return null; }
+  if (evt.error) throw new Error(`${name}: ${evt.error.message ?? 'stream error'}`);
+  return evt.choices?.[0]?.delta?.content || null;
+}
+
+// Gemini generateContent, streamed as server-sent events with alt=sse; the system prompt rides as systemInstruction
+async function googleText({ prompt, system, model, key, maxTokens = 8192, timeoutMs = 120000, onDelta = null }) {
+  const k = key ?? await connectorKey('google');
+  if (!k) throw noKey('google');
+  const r = await fetch(`${BY_ID.google.url}/models/${modelFor('google', model)}:${onDelta ? 'streamGenerateContent?alt=sse' : 'generateContent'}`, {
+    method: 'POST', headers: { 'x-goog-api-key': k, 'content-type': 'application/json' },
+    body: JSON.stringify({ ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}), contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: maxTokens } }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!r.ok) throw await failure(r, 'Google');
+  if (!onDelta) return googleReply(await r.json().catch(() => ({})));
+  let acc = '';
+  await readLines(r.body, (line) => { const d = googleDelta(line); if (d) { acc += d; onDelta(acc); } });
+  return acc.trim();
+}
+
+const partsText = (c) => (c?.content?.parts ?? []).map((p) => p.text ?? '').join('');
+export function googleReply(data) {
+  const c = data.candidates?.[0];
+  if (data.promptFeedback?.blockReason || c?.finishReason === 'SAFETY') throw new Error('The model declined this request');
+  return partsText(c).trim();
+}
+
+export function googleDelta(line) {
+  if (!line.startsWith('data:')) return null;
+  let evt;
+  try { evt = JSON.parse(line.slice(5)); } catch { return null; }
+  if (evt.error) throw new Error(`Google: ${evt.error.message ?? 'stream error'}`);
+  return partsText(evt.candidates?.[0]) || null;
 }
 
 // Ollama's chat endpoint; the picker's Claude aliases mean nothing here, the configured local model always answers
@@ -184,8 +243,9 @@ export async function ollamaStatus(localModel) {
   }
 }
 
-// which sources this Mac can run right now; claude comes from the caller, which already knows how to ask Claude Code
-export async function sourceStatus({ source, localModel, claude }) {
-  const [key, ollama] = await Promise.all([anthropicKey(), ollamaStatus(localModel)]);
-  return { source, localModel: localModelName(localModel), claude, key: !!key, ollama };
+// what this Mac can run right now: which keys are saved (booleans only), Ollama, and the effective providers table.
+// claude comes from the caller, which already knows how to ask Claude Code
+export async function sourceStatus({ source, localModel, claude, providers = {}, connectors = {} }) {
+  const [keys, ollama] = await Promise.all([connectedKeys(), ollamaStatus(localModel)]);
+  return { source, localModel: localModelName(localModel), claude, key: !!keys.anthropic, keys, ollama, providers, connectors };
 }

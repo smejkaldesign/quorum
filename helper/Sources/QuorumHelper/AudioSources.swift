@@ -3,6 +3,57 @@ import AVFAudio
 import CoreAudio
 import Foundation
 
+// where the Mac's sound goes right now. Echo cancelling on the mic only helps when the built-in speakers can reach it,
+// so the app turns it on for "speakers" and off for "headphones" (the jack) and "external" (USB, Bluetooth, display, AirPlay)
+enum AudioRoute {
+    private static let fourCC = { (s: String) -> UInt32 in s.utf8.reduce(0) { $0 << 8 | UInt32($1) } }
+    private static let headphoneJack = fourCC("hdpn")
+
+    static func current() -> [String: Any] {
+        let system = AudioObjectID(kAudioObjectSystemObject)
+        var device = AudioObjectID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        guard AudioObjectGetPropertyData(system, &addr, 0, nil, &size, &device) == noErr, device != kAudioObjectUnknown else {
+            return ["event": "audioRoute", "route": classify(transport: nil, source: nil), "transport": "", "name": ""]
+        }
+        var transport: UInt32 = 0
+        size = UInt32(MemoryLayout<UInt32>.size)
+        addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyTransportType, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        _ = AudioObjectGetPropertyData(device, &addr, 0, nil, &size, &transport)
+        // the built-in device covers both speakers and the jack; its output data source says which is live
+        var source: UInt32 = 0
+        size = UInt32(MemoryLayout<UInt32>.size)
+        addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDataSource, mScope: kAudioObjectPropertyScopeOutput, mElement: kAudioObjectPropertyElementMain)
+        let hasSource = AudioObjectGetPropertyData(device, &addr, 0, nil, &size, &source) == noErr
+        var name: Unmanaged<CFString>?
+        size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        addr = AudioObjectPropertyAddress(mSelector: kAudioObjectPropertyName, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        _ = AudioObjectGetPropertyData(device, &addr, 0, nil, &size, &name)
+        let route = classify(transport: transport, source: hasSource ? source : nil)
+        return ["event": "audioRoute", "route": route, "transport": tag(transport), "name": name?.takeRetainedValue() as String? ?? ""]
+    }
+
+    // speakers | headphones | external | unknown; nil transport means no default output device, nil source means the device has none
+    static func classify(transport: UInt32?, source: UInt32?) -> String {
+        guard let transport else { return "unknown" }
+        if transport == kAudioDeviceTransportTypeBuiltIn { return source == headphoneJack ? "headphones" : "speakers" }
+        return "external"
+    }
+
+    // the transport type as its four character code, e.g. "bltn", "usb ", "blue"
+    static func tag(_ transport: UInt32) -> String {
+        String(bytes: withUnsafeBytes(of: transport.bigEndian, Array.init), encoding: .ascii) ?? ""
+    }
+
+    // reports once now and again whenever the default output device changes
+    static func watch() {
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &addr, DispatchQueue.main) { _, _ in Emit.send(current()) }
+        Emit.send(current())
+    }
+}
+
 final class MicCapture {
     private let engine = AVAudioEngine()
 

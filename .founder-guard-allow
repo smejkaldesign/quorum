@@ -1,2 +1,5 @@
 # Literals app/scripts/check-founder-content.mjs removes from a line before matching, one per line.
 Smejkal Design
+acme.com
+mail.acme.io
+gmail.com

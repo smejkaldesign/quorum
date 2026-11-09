@@ -19,7 +19,7 @@ Every Quorum user keeps a personal Agent OS on their own Mac. When three people 
 
 **Roles (official).** Owner, admin and member, as in `0002_accounts.sql`. Owner: billing, remove members, delete workspace, plus every admin ability. Admin: invite and revoke, configure workspace settings, create and configure Teams, work the review queue. Member: read the workspace vault, contribute from their own notes and meetings, read and write in their Teams. A workspace keeps at least one owner.
 
-**Billing (decided).** $5 per seat per month for every member of a workspace, Teams included.
+**Billing (decided).** $9 per seat per month for every member of a workspace, Teams included.
 
 **Invites and domain join.** Admins invite by email; an invite lasts 14 days and refreshes when re-sent. With domain join on, anyone with the workspace's email domain joins as a member. Public mail domains (`public_mail_domains`) can never be a workspace domain, and the app says why.
 

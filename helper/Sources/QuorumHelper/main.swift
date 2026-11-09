@@ -9,7 +9,8 @@ final class Session {
     private let meter = LevelMeter()
     private(set) var running = false
 
-    func start(dir: URL?, echoCancel: Bool, locale id: String = "en-US", tapBundles: [String] = []) async throws {
+    // streamPcm: skip SpeechAnalyzer and emit 16 kHz PCM per channel instead; the app forwards it to the relay
+    func start(dir: URL?, echoCancel: Bool, locale id: String = "en-US", tapBundles: [String] = [], terms: [String] = [], streamPcm: Bool = false) async throws {
         guard !running else { return }
         Emit.status("requesting microphone permission")
         guard await AVAudioApplication.requestRecordPermission() else {
@@ -17,9 +18,15 @@ final class Session {
         }
         if let dir { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) }
         let locale = Locale(identifier: id)
-        Emit.status("starting on-device transcribers")
-        try await me.start(locale: locale, audioURL: dir?.appendingPathComponent("me.caf"))
-        try await them.start(locale: locale, audioURL: dir?.appendingPathComponent("them.caf"))
+        if streamPcm {
+            Emit.status("streaming audio to managed transcription")
+            try me.startStreaming(audioURL: dir?.appendingPathComponent("me.caf"))
+            try them.startStreaming(audioURL: dir?.appendingPathComponent("them.caf"))
+        } else {
+            Emit.status("starting on-device transcribers")
+            try await me.start(locale: locale, audioURL: dir?.appendingPathComponent("me.caf"), terms: terms)
+            try await them.start(locale: locale, audioURL: dir?.appendingPathComponent("them.caf"), terms: terms)
+        }
         let me = self.me, them = self.them, meter = self.meter
         try mic.start(echoCancel: echoCancel) { me.feed($0); meter.feed($0) }
         Emit.status("mic on, starting system audio tap")
@@ -37,6 +44,27 @@ final class Session {
         await them.stop()
         Emit.send(["event": "stopped"])
     }
+
+    // offline path for the eval harness: the same transcribers, fed from files instead of the mic and the tap.
+    // Both files start at audio time zero, so a two-channel pair must share one timeline.
+    func transcribeFiles(me meURL: URL, them themURL: URL?, locale id: String = "en-US", terms: [String] = []) async throws {
+        let locale = Locale(identifier: id)
+        try await me.start(locale: locale, audioURL: nil, terms: terms)
+        if themURL != nil { try await them.start(locale: locale, audioURL: nil, terms: terms) }
+        for (transcriber, url) in [(me, meURL), (them, themURL)] {
+            guard let url else { continue }
+            let file = try AVAudioFile(forReading: url)
+            while file.framePosition < file.length {
+                guard let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 16384) else { break }
+                try file.read(into: buf)
+                if buf.frameLength == 0 { break }
+                transcriber.feed(buf)
+            }
+        }
+        await me.stop()
+        if themURL != nil { await them.stop() }
+        Emit.send(["event": "stopped"])
+    }
 }
 
 let session = Session()
@@ -50,14 +78,16 @@ func handle(_ line: String) async {
     switch name {
     case "start":
         let dir = (cmd["sessionDir"] as? String).map { URL(fileURLWithPath: $0) }
-        do { try await session.start(dir: dir, echoCancel: cmd["echoCancel"] as? Bool ?? false, locale: cmd["locale"] as? String ?? "en-US", tapBundles: cmd["tapBundles"] as? [String] ?? []) }
+        do { try await session.start(dir: dir, echoCancel: cmd["echoCancel"] as? Bool ?? false, locale: cmd["locale"] as? String ?? "en-US", tapBundles: cmd["tapBundles"] as? [String] ?? [], terms: cmd["terms"] as? [String] ?? [], streamPcm: cmd["streamPcm"] as? Bool ?? false) }
         catch { Emit.error("start: \(error.localizedDescription)") }
     case "stop":
         await session.stop()
     case "dictateStart":
-        await dictation.start(locale: cmd["locale"] as? String ?? "en-US")
+        await dictation.start(locale: cmd["locale"] as? String ?? "en-US", terms: cmd["terms"] as? [String] ?? [])
     case "dictateStop":
         await dictation.stop()
+    case "audioRoute":
+        Emit.send(AudioRoute.current())
     case "chatWatch":
         ChatWatcher.shared.setEnabled(cmd["on"] as? Bool ?? true)
     case "chatSend":
@@ -103,11 +133,20 @@ if args.count > 1 {
         else { Emit.send(["event": "meeting", "active": false, "running": Providers.runningMap()]) }
         exit(0)
     case "test-capture":
-        let seconds = args.count > 2 ? Double(args[2]) ?? 10 : 10
+        let seconds = CLI.captureSeconds(args)
         Task {
             do { try await session.start(dir: nil, echoCancel: false) } catch { Emit.error(error.localizedDescription); exit(1) }
             try? await Task.sleep(for: .seconds(seconds))
             await session.stop()
+            exit(0)
+        }
+        dispatchMain()
+    case "transcribe-file":
+        // eval harness: finals for one or two channel files, then exit. Extra arguments are vocabulary terms.
+        guard let job = CLI.transcribeJob(args) else { Emit.log("usage: quorum-helper transcribe-file <me.wav> [them.wav] [--terms term ...]"); exit(2) }
+        Task {
+            do { try await session.transcribeFiles(me: job.me, them: job.them, terms: job.terms) }
+            catch { Emit.error(error.localizedDescription); exit(1) }
             exit(0)
         }
         dispatchMain()
@@ -133,7 +172,7 @@ if args.count > 1 {
         Thread.sleep(forTimeInterval: 5)
         exit(0)
     default:
-        Emit.log("usage: quorum-helper [dump-zoom | dump-ax <bundle-prefix> | detect | meet-chat [text] | test-capture <sec> | chat-read | chat-send <text>]")
+        Emit.log("usage: quorum-helper [dump-zoom | dump-ax <bundle-prefix> | detect | meet-chat [text] | test-capture <sec> | transcribe-file <me.wav> [them.wav] | chat-read | chat-send <text>]")
         exit(2)
     }
 }
@@ -147,5 +186,6 @@ Thread.detachNewThread {
     Task { await session.stop(); exit(0) }
 }
 Emit.send(["event": "ready"])
+AudioRoute.watch()
 ChatWatcher.shared.startMeetingWatch()
 dispatchMain()

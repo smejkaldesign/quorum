@@ -4,18 +4,27 @@ declare global {
 }
 
 export type HelperEvent =
-  | { event: 'transcript'; channel: 'me' | 'them' | 'dictation'; text: string; isFinal: boolean; start: number; end: number; who?: string | null }
+  | { event: 'transcript'; channel: 'me' | 'them' | 'dictation'; text: string; isFinal: boolean; start: number; end: number; who?: string | null; id?: number; replace?: boolean; at?: number; speaker?: string | null; confidence?: number; cluster?: string | null; corrected?: boolean }
   | { event: 'status'; message: string }
   | { event: 'error'; message: string }
   | { event: 'stopped' }
   | { event: 'ready' }
   | { event: 'chatSent'; text: string }
   | { event: 'axStatus'; trusted: boolean; zoomRunning: boolean }
+  | { event: 'audioRoute'; route: 'speakers' | 'headphones' | 'external' | 'unknown'; transport: string; name: string }
   | { event: 'dictation'; state: 'on' | 'off' };
 
-export type ActionItem = { title: string; owner: string | null };
-export type Notes = { title: string; sections: { heading: string; bullets: { text: string; sub: string[] }[] }[]; nextSteps: ActionItem[]; empty?: boolean };
+// every generated line carries refs: the ids of the transcript turns it came from
+export type Bullet = { text: string; sub: string[]; refs: number[] };
+export type Decision = { text: string; status: 'confirmed' | 'suggested'; refs: number[] };
+export type ActionItem = { task: string; owner: string | null; due: string | null; refs: number[] };
+export type Question = { text: string; refs: number[] };
+export type Notes = { title: string; summary: string; sections: { heading: string; bullets: Bullet[] }[]; decisions: Decision[]; actions: ActionItem[]; questions: Question[]; empty?: boolean };
+// the final notes as they stream in: the raw text so far and whatever of it already parses
+export type NotesDraft = { text: string; partial: Notes | null };
 export type MeetingMeta = { title: string; startedAt?: string; minutes: number; participants: number; model: string };
+// the speaker pass or a correction, per them turn, plus the names the correction popover offers
+export type SpeakersEvent = { turns: { id: number; speaker: string | null; confidence: number; cluster: string | null; corrected: boolean }[]; participants: string[] };
 
 type Unsub = () => void;
 export type CalendarEvent = { id: string; title: string; start: string; end: string; item?: string; recurring?: boolean; platform?: 'zoom' | 'meet' | 'teams' | null; join?: string | null };
@@ -31,13 +40,18 @@ export type DecisionProvider = 'openai' | 'typesafe';
 export type EnvStatus = { env: 'development' | 'production'; config: 'shell' | 'production' | 'development' | 'local' | 'none'; host: string | null; useProduction: boolean; configured: boolean };
 export type DecisionsStatus = { connected: boolean; provider: DecisionProvider | null; providers: Record<DecisionProvider, { name: string; placeholder: string; keyHint: string }> };
 export type Workspace = { company?: string; companyDescription?: string; neverListen?: string[]; optOuts?: OptOut[]; decisions?: { provider: DecisionProvider; by?: string; at?: string }; stopWord?: string; goWord?: string };
-export type Transcription = { echo?: 'off' | 'filter' | 'aec'; gap?: number; live?: boolean; capture?: 'meeting' | 'all' };
+export type Transcription = { echo?: 'auto' | 'off' | 'filter' | 'aec'; gap?: number; live?: boolean; capture?: 'meeting' | 'all'; clean?: boolean };
 // where the model runs: none until chosen; claude-code is the only source with tools, so the only one that reads the Agent OS
 export type ModelSource = 'none' | 'claude-code' | 'anthropic-api' | 'local';
 export type ClaudeStatus = { installed: boolean; loggedIn: boolean; email: string; org: string; plan: string; method: string; version: string };
-export type ModelSourceStatus = { source: ModelSource; localModel: string; claude: ClaudeStatus | null; key: boolean; ollama: { reachable: boolean; hasModel: boolean } };
+// every provider in connectors/catalog.js; ConnectorProvider below is the subset a key connects (the hosted Admin list)
+export type ConnectorId = ConnectorProvider | 'apple' | 'claude-code' | 'ollama';
+// which provider handles each step; a missing role falls back (Apple for speech, the legacy switch for the model roles)
+export type Providers = Partial<Record<ConnectorRole, ConnectorId>>;
+export type ProviderConnectors = Partial<Record<ConnectorId, { baseUrl?: string; model?: string }>>;
+export type ModelSourceStatus = { source: ModelSource; localModel: string; claude: ClaudeStatus | null; key: boolean; keys: Partial<Record<ConnectorId, boolean>>; ollama: { reachable: boolean; hasModel: boolean }; providers: Providers; connectors: ProviderConnectors };
 // userName is how the main process names the recorder in notes; it falls back to the macOS account's full name, then the login
-export type Settings = { autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription };
+export type Settings = { autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean } };
 export type OnboardingStatus = { firstRun: boolean; defaultVaultDir: string };
 export type OnboardingChecks = { permissions: { microphone: string; audio: string; accessibility: string; calendar: string }; claude: { installed: boolean; loggedIn?: boolean; email?: string; org?: string; plan?: string; version?: string; pending?: boolean }; model?: ModelSourceStatus | null };
 export type Brain = { root: string; vault: string; name: string; markers: { agentOS: string | null; obsidian: boolean; search: boolean; safetyHooks: boolean } };
@@ -57,7 +71,19 @@ export type AccountState = {
   sync: boolean; lastSyncAt: string | null; lastPullAt?: string | null; syncError: string | null;
 };
 export type Result = { ok?: boolean; error?: string };
-export type Member = { userId: string; email: string; name: string | null; role: Role; joinedAt: string };
+// workspace connectors (Settings › Admin › Connectors): a provider key held in Supabase Vault for the whole workspace and
+// the roles it may serve. The key never comes back to the client; a draft carries it once, on the way in
+export type ConnectorProvider = 'assemblyai' | 'deepgram' | 'elevenlabs' | 'openai' | 'anthropic' | 'google' | 'openai_compatible';
+export type ConnectorRole = 'speech' | 'summary' | 'notes' | 'agent' | 'voice';
+export type WorkspaceConnector = { id: string; workspaceId: string; provider: ConnectorProvider; label: string; baseUrl: string | null; roles: ConnectorRole[]; createdBy: string | null; createdAt: string; updatedAt: string };
+export type ConnectorDraft = { provider: ConnectorProvider; label: string; baseUrl: string | null; roles: ConnectorRole[]; secret: string };
+// organization voice typing: which connector handles each managed step (absent means Quorum managed), and the hours used
+// this calendar month per seat. managedHours is the part on Quorum's keys, the part that counts against the allowance
+export type VoiceStep = 'speech' | 'summary' | 'notes';
+export type WorkspaceVoice = Partial<Record<VoiceStep, string | null>>;
+export type SeatUsage = { userId: string; email: string | null; name: string | null; hours: number; managedHours: number };
+export type WorkspaceUsage = { period: string; hours: number; managedHours: number; seats: SeatUsage[] };
+export type Member ={ userId: string; email: string; name: string | null; role: Role; joinedAt: string };
 export type MemberInvite = { inviteId: string; email: string; role: Role; expiresAt: string };
 export type MeetingRow = { id: string; file: string; kind: 'meeting' | 'note'; source: string; title: string; date: string | null; people: string[]; count: number; visibility: Visibility; rel: string; link: string; app: string };
 export type ChatRow = { id: string; title: string; date: string; turns: number; meetingFile: string | null; meetingTitle: string | null };
@@ -92,6 +118,7 @@ declare global {
       resume(): Promise<void>;
       ask(q: string, files?: string[]): Promise<{ text: string; sources: Source[]; steps: string[] }>;
       saveNotes(p: { notes: Notes; followups: { q: string; a: string }[] }): Promise<{ file: string; rel: string; app: string; url: string }>;
+      privateNotesSet(text: string): Promise<void>;
       discard(): Promise<void>;
       done(): Promise<void>;
       axStatus(): Promise<void>;
@@ -101,6 +128,9 @@ declare global {
       unstageFile(path: string): Promise<void>;
       onHelperEvent(cb: (e: HelperEvent) => void): Unsub;
       onState(cb: (s: StateEvent) => void): Unsub;
+      onSpeakers(cb: (s: SpeakersEvent) => void): Unsub;
+      nameSpeakers(): Promise<SpeakersEvent>;
+      setSpeaker(id: number, name: string | null, similar: boolean): Promise<SpeakersEvent>;
       onLog(cb: (line: string) => void): Unsub;
       onPopup(cb: (p: PopupEvent) => void): Unsub;
       onPopupOut(cb: () => void): () => void;
@@ -116,6 +146,7 @@ declare global {
       onAgentStep(cb: (s: { text: string }) => void): Unsub;
       // the answer so far, whole, while it streams in
       onAgentDelta(cb: (s: { text: string }) => void): Unsub;
+      onNotesDelta(cb: (d: NotesDraft) => void): Unsub;
       onFocusComposer(cb: () => void): Unsub;
       brain(): Promise<Brain | null>;
       connectBrain(): Promise<Brain | null>;
@@ -191,6 +222,9 @@ declare global {
       localModelSet(name: string): Promise<Settings>;
       modelKeySet(key: string): Promise<{ ok?: boolean; error?: string }>;
       modelKeyRemove(): Promise<void>;
+      connectorKeySet(id: ConnectorId, key: string, baseUrl?: string): Promise<Result>;
+      connectorKeyRemove(id: ConnectorId): Promise<void>;
+      connectorKeyTest(id: ConnectorId, key?: string, baseUrl?: string): Promise<Result>;
       calendarConnect(): Promise<CalendarSettings>;
       calendarSet(next: { days?: number; enabled?: false; showAll?: boolean; hide?: string; unhideAll?: boolean }): Promise<CalendarSettings>;
       calendarPrivacy(): Promise<void>;
@@ -221,6 +255,13 @@ declare global {
       syncSet(on: boolean): Promise<Result>;
       syncNow(): Promise<{ pushed?: { notes: number; meetings: number }; pulled?: { notes: number; conflicts: number; removed: number } | null; error?: string }>;
       onAccount(cb: (s: AccountState) => void): Unsub;
+      connectorsList(): Promise<{ connectors?: WorkspaceConnector[]; error?: string }>;
+      connectorSet(draft: ConnectorDraft): Promise<{ connector?: WorkspaceConnector; error?: string }>;
+      connectorRemove(id: string): Promise<Result>;
+      connectorTest(p: { provider: ConnectorProvider; baseUrl: string | null; secret: string }): Promise<Result>;
+      workspaceUsage(): Promise<{ usage?: WorkspaceUsage; error?: string }>;
+      workspaceVoiceGet(): Promise<{ voice?: WorkspaceVoice; error?: string }>;
+      workspaceVoiceSet(voice: WorkspaceVoice): Promise<{ voice?: WorkspaceVoice; error?: string }>;
       envStatus(): Promise<EnvStatus>;
       envSetProduction(on: boolean): Promise<EnvStatus>;
     };

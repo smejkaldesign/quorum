@@ -240,6 +240,13 @@ html.popup-root, html.popup-root body { background: transparent; }
 .view-toggle button:hover { color: var(--text); }
 .view-toggle button.on { background: rgba(255, 255, 255, 0.08); color: var(--text); }
 .end-transcript p { margin: 0 0 12px; line-height: 1.55; }
+.end-transcript p.hot div { background: rgba(255, 200, 80, 0.14); border-radius: 6px; box-shadow: 0 0 0 6px rgba(255, 200, 80, 0.14); }
+.doc .summary { margin: 0 0 26px; font-size: 17px; line-height: 1.6; color: #d4d4d8; }
+.doc .raw { white-space: pre-wrap; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.doc .writing { display: flex; align-items: center; gap: 8px; margin: 0 0 26px; }
+.doc-section li.ref { cursor: pointer; }
+.doc-section li.ref:hover { color: #fff; }
+.doc-section em.status { color: var(--muted); font-style: normal; }
 .meta-pill { display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--muted); font-size: 14px; }
 .doc-section { margin-bottom: 26px; }
 .doc-section h2 { position: relative; margin: 0 0 10px; font-size: 18px; font-weight: 600; color: #d8d8dc; }
@@ -468,6 +475,21 @@ html.popup-root, html.popup-root body { background: transparent; }
 .set-nav:hover { background: rgba(255, 255, 255, 0.04); }
 .set-nav.on { background: rgba(255, 255, 255, 0.08); color: var(--text); }
 .set-nav .stub { margin-left: auto; }
+.set-nav.admin { margin-top: 18px; }
+.set-menu-back { display: flex; align-items: center; gap: 6px; height: 34px; margin: 0 0 8px; padding: 0 8px; border-radius: 10px; color: var(--muted); font-size: 14px; text-align: left; }
+.set-menu-back svg { transform: rotate(90deg); }
+.set-menu-back:hover { color: var(--text); background: rgba(255, 255, 255, 0.04); }
+/* Admin › Connectors: role pills on a row, the role checkboxes in the add sheet */
+.conn-roles { display: inline-flex; flex-wrap: wrap; gap: 6px; vertical-align: middle; }
+.conn-roles .stub { font-size: 11px; padding: 0 7px; }
+.conn-roles-pick { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 4px 0; }
+.conn-role { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text); }
+.conn-role input { width: 16px; height: 16px; accent-color: var(--brand); }
+.conn-sheet .set-line { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0; }
+.conn-sheet .set-line.stacked { flex-direction: column; align-items: stretch; }
+.conn-sheet .modal-actions { justify-content: space-between; }
+.set-ok { margin: 8px 0 0; color: var(--go); font-size: 14px; }
+.voice-cost { font-size: 14px; white-space: nowrap; }
 em.stub { font-style: normal; font-size: 12px; font-weight: 500; padding: 1px 9px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--muted); }
 .set-quit { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 10px 12px; color: var(--danger); font-size: 16px; border-radius: 10px; }
 .set-quit:hover { background: var(--danger-bg); }
@@ -985,3 +1007,40 @@ svg.err { color: var(--danger); }
 
 /* the Soon chip on section headings and zero states, so a dead row reads as planned work */
 h3 .soon, .set-zero strong .soon { font-size: 11px; margin-left: 8px; vertical-align: middle; }
+
+/* your notes: what you type sits in the primary text color, so it reads apart from the generated notes around it */
+.my-notes { width: 100%; box-sizing: border-box; resize: none; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 16px; line-height: 1.55; padding: 0; outline: none; }
+.my-notes::placeholder { color: var(--muted); }
+.my-notes-card { flex: 1; min-height: 0; }
+.my-notes-card .my-notes { flex: 1; min-height: 200px; }
+.doc .my-notes { min-height: 72px; field-sizing: content; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line-2); background: rgba(255, 255, 255, 0.03); }
+.doc .my-notes:focus { border-color: rgba(255, 255, 255, 0.28); }
+/* speaker names on them turns: a button in the name column, dotted when it is Quorum's guess, with a fixed popover */
+.transcript-head { display: flex; justify-content: flex-end; margin-bottom: -4px; }
+.pill.small { height: 28px; padding: 0 12px; font-size: 13px; }
+.transcript p .speaker { display: inline-block; }
+.transcript p .speaker-name { padding: 0; font-size: 12px; font-weight: 600; color: inherit; text-align: left; border-radius: 4px; line-height: inherit; }
+.transcript p .speaker-name:hover, .transcript p .speaker-name.open { text-decoration: underline; text-underline-offset: 3px; }
+.transcript p .speaker-name.guess { text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.menu.speaker-menu { position: fixed; left: 0; right: auto; top: 0; min-width: 180px; max-width: 260px; z-index: 1001; }
+.transcript p .speaker-menu button { font-size: 14px; font-weight: 500; color: var(--text); text-decoration: none; }
+.transcript p .speaker-menu button:hover { background: rgba(255, 255, 255, 0.08); text-decoration: none; }
+.transcript p .speaker-menu .menu-info span { font-size: 13px; color: var(--muted); }
+.speaker-menu input { width: 100%; box-sizing: border-box; margin: 2px 0; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line-2); background: rgba(255, 255, 255, 0.04); color: var(--text); font: inherit; font-size: 14px; outline: none; }
+.speaker-menu input:focus { border-color: rgba(255, 255, 255, 0.3); }
+
+/* Settings › Connectors: the note under a provider row, and the add flow's provider picker */
+.conn-extra { padding-bottom: 16px; }
+.conn-extra > .set-ok { display: inline-flex; align-items: center; gap: 6px; margin: 0; }
+.conn-extra > .set-error { margin: 0; }
+.conn-pick { display: flex; flex-direction: column; max-height: 52vh; overflow-y: auto; margin: 0 -4px; padding: 0 4px; }
+.conn-pick-item { width: 100%; text-align: left; font: inherit; color: inherit; }
+.conn-pick-item .conn-roles { flex: none; }
+.conn-sheet .set-label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.conn-sheet .set-label span { color: var(--muted); font-size: 13px; }
+.conn-sheet .conn-note { margin: 6px 0 0; }
+.conn-sheet .modal-actions > span:first-child { display: inline-flex; align-items: center; gap: 8px; }
+.conn-group { margin: 10px 0 6px; font-size: 13px; color: var(--muted); }
+.conn-sheet .conn-roles-pick { flex-direction: column; gap: 10px; }
+.conn-roles-pick .conn-role { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.conn-roles-pick .conn-role .muted { font-size: 13px; }

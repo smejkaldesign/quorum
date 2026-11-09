@@ -17,7 +17,11 @@
     "package:cloud": "QUORUM_EDITION=cloud vite build && cd ../helper && swift build -c release && cd ../app && node scripts/package-cloud.mjs",
     "lint": "npm ci --prefix lint --no-audit --no-fund --silent && eslint .",
     "test": "vitest run",
-    "check:content": "node scripts/check-founder-content.mjs"
+    "test:helper": "swift test --package-path ../helper",
+    "check:content": "node scripts/check-founder-content.mjs",
+    "eval": "node eval/run.mjs",
+    "eval:synthetic": "node eval/make-synthetic.mjs",
+    "eval:ci": "node eval/make-synthetic.mjs && node eval/run.mjs --engines apple --fail-over 0.25"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -57,6 +61,7 @@
       "main.js",
       "edition.js",
       "ee/**",
+      "connectors/**",
       "onboarding.js",
       "decisions.js",
       "control.js",
@@ -65,6 +70,7 @@
       "json.js",
       "vault.js",
       "vindex.js",
+      "clusters.js",
       "linkparse.js",
       "relink.js",
       "preload.cjs",

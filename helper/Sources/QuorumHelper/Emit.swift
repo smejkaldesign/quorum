@@ -3,12 +3,14 @@ import Foundation
 // stdout is the protocol channel: one JSON object per line
 enum Emit {
     private static let lock = NSLock()
+    // the app reads stdout; tests point this at a pipe
+    static var output = FileHandle.standardOutput
 
     static func send(_ obj: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.withoutEscapingSlashes]) else { return }
         lock.lock()
-        FileHandle.standardOutput.write(data)
-        FileHandle.standardOutput.write("\n".data(using: .utf8)!)
+        output.write(data)
+        output.write("\n".data(using: .utf8)!)
         lock.unlock()
     }
 
