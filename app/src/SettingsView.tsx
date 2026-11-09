@@ -3,7 +3,8 @@ import type { Brain, CalendarSettings, ClaudeStatus, Memory, MemoryItem, ModelSo
 import { ModelKey, SOURCE_NAMES } from './modelSource';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
-import { AccountArea, MembersArea, isCloud, useHostedAccounts } from './edition';
+import { AccountArea, EDITION, MembersArea, useHostedAccounts } from './edition';
+import { canAdmin, modeOf, resolvePage, workspacePages, type Page } from './settingsNav';
 import { EnvSwitch } from './EnvSwitch';
 import {
   IconBell, IconBrain, IconBuilding, IconCalendar, IconChat, IconFolder, IconGrid, IconKeyboard, IconLock,
@@ -11,7 +12,6 @@ import {
   IconInfo, IconQuorum, IconUpload, IconListCheck, IconTrash,
 } from './icons';
 
-type Page = 'preferences' | 'memory' | 'calendar' | 'meetings' | 'notifications' | 'connectors' | 'voice' | 'general' | 'knowledge' | 'members';
 type Nav = { id: Page; label: string; icon: (p: { width?: number; height?: number }) => ReactNode; soon?: boolean };
 
 const ACCOUNT: Nav[] = [
@@ -23,11 +23,13 @@ const ACCOUNT: Nav[] = [
   { id: 'connectors', label: 'Connectors', icon: IconGrid },
   { id: 'voice', label: 'Voice typing', icon: IconKeyboard },
 ];
+// the pages behind the Admin button; settingsNav.workspacePages decides which of them a build lists
 const WORKSPACE: Nav[] = [
   { id: 'general', label: 'General', icon: IconBuilding },
   { id: 'knowledge', label: 'Knowledge', icon: IconBrain },
-  // members belong to a hosted workspace, so the local edition has no page for them
-  ...(isCloud ? [{ id: 'members' as const, label: 'Members', icon: IconPeople }] : []),
+  { id: 'members', label: 'Members', icon: IconPeople },
+  { id: 'org-connectors', label: 'Connectors', icon: IconGrid },
+  { id: 'org-voice', label: 'Voice typing', icon: IconKeyboard },
 ];
 
 // the chip on every row whose control is disabled on purpose: the feature is planned and the row shows what it will do
@@ -37,14 +39,16 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
   open?: { page: Page; n: number } | null; brain: Brain | null; settings: Settings; onSettings: (s: Settings) => void; onConnect: () => void; onBack: () => void;
 }) {
   const [saved, setPage] = useSession<Page>('settingsPage', 'preferences');
-  // Profile folded into Preferences; an older session may still remember it
-  const page = (saved as string) === 'profile' ? 'preferences' : saved;
   useEffect(() => { if (open) setPage(open.page); }, [open, setPage]);
   const [user, setUser] = useState<{ name: string; email: string; photo: string | null } | null>(null);
   useEffect(() => { window.quorum.user().then(setUser); }, [settings.profile]);
   // the Quorum account comes first; without one, the Claude sign-in on this Mac is the only identity there is
   const [account, setAccount] = useState<AccountState | null>(null);
   useEffect(() => { let live = true; window.quorum.accountStatus().then((a) => { if (live) setAccount(a); }).catch(() => {}); return () => { live = false; }; }, [settings.profile]);
+  useEffect(() => { if (!window.quorum.onAccount) return; return window.quorum.onAccount(setAccount); }, []);
+  const admin = canAdmin(EDITION, account?.workspace?.role);
+  const page = resolvePage(saved, admin);
+  const mode = modeOf(page);
   const quorumEmail = account?.signedIn ? account.email : null;
   const email = quorumEmail || user?.email || '';
   const emailLabel = quorumEmail ? 'Email' : 'Claude sign-in';
@@ -57,7 +61,8 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
   const set = async (patch: Partial<Settings>) => onSettings(await window.quorum.setSettings(patch));
   // a cloud build without hosted account config has no members to list, so the page leaves the nav
   const hosted = useHostedAccounts();
-  const workspaceNav = hosted ? WORKSPACE : WORKSPACE.filter((n) => n.id !== 'members');
+  const listed = workspacePages(EDITION, hosted);
+  const workspaceNav = WORKSPACE.filter((n) => (listed as string[]).includes(n.id));
   const all = [...ACCOUNT, ...WORKSPACE];
   const current = all.find((n) => n.id === page)!;
 
@@ -66,6 +71,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
       <n.icon width={18} height={18} /><span>{n.label}</span>
     </button>
   );
+  const go = (p: Page) => setPage(p);
 
   return (
     <div className="settings-shell">
@@ -76,9 +82,17 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
           <span>{email || 'Not signed in to Claude'}</span>
         </div>
         <nav className="set-navs">
-          {ACCOUNT.map(navItem)}
-          <h4>Workspace</h4>
-          {workspaceNav.map(navItem)}
+          {mode === 'account' ? (
+            <>
+              {ACCOUNT.map(navItem)}
+              {admin && <button className="set-nav admin" onClick={() => go('general')}><IconBuilding width={18} height={18} /><span>Admin</span></button>}
+            </>
+          ) : (
+            <>
+              <button className="set-menu-back" onClick={() => go('preferences')}><IconChevron width={16} height={16} />Menu</button>
+              {workspaceNav.map(navItem)}
+            </>
+          )}
         </nav>
         <button className="set-quit" onClick={() => window.quorum.quit()}><IconPower width={18} height={18} /> Quit Quorum</button>
       </aside>
@@ -112,6 +126,8 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
               {brain && <MemoryScan />}
             </>
           ) : page === 'members' ? <MembersArea />
+            : page === 'org-connectors' ? <OrgConnectorsLocal onGo={go} />
+            : page === 'org-voice' ? <OrgVoiceLocal onGo={go} />
             : page === 'calendar' ? <CalendarPage />
             : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} />
             : page === 'notifications' ? <NotificationsPage />
@@ -119,6 +135,30 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
             : <VoicePage settings={settings} onSettings={onSettings} />}
         </div>
       </main>
+    </div>
+  );
+}
+
+// the Local edition's Workspace › Connectors and Voice typing: organization providers need a hosted workspace, so each
+// page says so and points at the personal page that works on this Mac
+function OrgConnectorsLocal({ onGo }: { onGo: (p: Page) => void }) {
+  return (
+    <div className="set-card set-zero">
+      <span className="set-zero-icon"><IconGrid width={22} height={22} /></span>
+      <strong>Organization connectors are a Cloud feature</strong>
+      <p>In Quorum Cloud an admin adds speech, model and voice providers once, and every seat in the workspace uses them. The Local edition keeps every key on this Mac.</p>
+      <button className="pill" onClick={() => onGo('connectors')}>Open your Connectors</button>
+    </div>
+  );
+}
+
+function OrgVoiceLocal({ onGo }: { onGo: (p: Page) => void }) {
+  return (
+    <div className="set-card set-zero">
+      <span className="set-zero-icon"><IconKeyboard width={22} height={22} /></span>
+      <strong>Organization overrides are a Cloud feature</strong>
+      <p>In Quorum Cloud an admin chooses which provider handles speech to text, the running summary and the final notes for the whole workspace. The Local edition transcribes on this Mac with your own settings.</p>
+      <button className="pill" onClick={() => onGo('voice')}>Open your Voice typing settings</button>
     </div>
   );
 }

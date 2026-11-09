@@ -468,6 +468,10 @@ html.popup-root, html.popup-root body { background: transparent; }
 .set-nav:hover { background: rgba(255, 255, 255, 0.04); }
 .set-nav.on { background: rgba(255, 255, 255, 0.08); color: var(--text); }
 .set-nav .stub { margin-left: auto; }
+.set-nav.admin { margin-top: 18px; }
+.set-menu-back { display: flex; align-items: center; gap: 6px; height: 34px; margin: 0 0 8px; padding: 0 8px; border-radius: 10px; color: var(--muted); font-size: 14px; text-align: left; }
+.set-menu-back svg { transform: rotate(90deg); }
+.set-menu-back:hover { color: var(--text); background: rgba(255, 255, 255, 0.04); }
 em.stub { font-style: normal; font-size: 12px; font-weight: 500; padding: 1px 9px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--muted); }
 .set-quit { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 10px 12px; color: var(--danger); font-size: 16px; border-radius: 10px; }
 .set-quit:hover { background: var(--danger-bg); }
