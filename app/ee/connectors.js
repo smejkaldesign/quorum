@@ -1,48 +1,20 @@
 // workspace connectors (Settings › Admin › Connectors), hosted edition: the list, add or replace through the
 // workspace_connector_set RPC, remove, and one read-only request to the provider that proves a key before anything is
 // saved. A key crosses IPC once, goes into the RPC or the test request, and is never logged or kept here.
-import { ANTHROPIC } from '../models.js';
+import { KEY_PROVIDER_IDS, ROLE_IDS } from '../connectors/catalog.js';
+import { testConnector } from '../connectors/keys.js';
 import { plain } from './account.js';
 
-const NAMES = { assemblyai: 'AssemblyAI', deepgram: 'Deepgram', elevenlabs: 'ElevenLabs', openai: 'OpenAI', anthropic: 'Anthropic', google: 'Google', openai_compatible: 'The provider' };
-const ROLES = new Set(['speech', 'summary', 'notes', 'agent', 'voice']);
+// the provider list and the read-only test request come from the shared catalog (connectors/catalog.js, keys.js)
+export { testConnector };
+const ROLES = new Set(ROLE_IDS);
 const COLUMNS = 'id, workspace_id, provider, label, base_url, roles, created_by, created_at, updated_at';
 const row = (r) => ({ id: r.id, workspaceId: r.workspace_id, provider: r.provider, label: r.label, baseUrl: r.base_url ?? null, roles: r.roles ?? [], createdBy: r.created_by ?? null, createdAt: r.created_at, updatedAt: r.updated_at });
-
-// the cheapest request each provider answers only with a valid key; Anthropic takes the same headers models.js sends
-const TESTS = {
-  anthropic: (key) => ({ url: new URL('/v1/models?limit=1', ANTHROPIC.url).href, headers: { 'x-api-key': key, 'anthropic-version': ANTHROPIC.version } }),
-  openai: (key) => ({ url: 'https://api.openai.com/v1/models', headers: { authorization: `Bearer ${key}` } }),
-  openai_compatible: (key, base) => ({ url: `${base.replace(/\/+$/, '')}/models`, headers: { authorization: `Bearer ${key}` } }),
-  google: (key) => ({ url: `https://generativelanguage.googleapis.com/v1beta/models?pageSize=1&key=${encodeURIComponent(key)}`, headers: {} }),
-  deepgram: (key) => ({ url: 'https://api.deepgram.com/v1/projects', headers: { authorization: `Token ${key}` } }),
-  assemblyai: (key) => ({ url: 'https://api.assemblyai.com/v2/transcript?limit=1', headers: { authorization: key } }),
-  elevenlabs: (key) => ({ url: 'https://api.elevenlabs.io/v1/user', headers: { 'xi-api-key': key } }),
-};
-
-export async function testConnector({ provider, baseUrl, secret } = {}, fetchImpl = fetch) {
-  const make = TESTS[provider];
-  if (!make) return { error: 'That provider is not supported.' };
-  const key = String(secret ?? '').trim();
-  if (!key) return { error: 'Paste the provider key first.' };
-  const base = String(baseUrl ?? '').trim();
-  if (provider === 'openai_compatible' && !/^https?:\/\/\S+$/.test(base)) return { error: 'Enter the base URL, starting with https://.' };
-  let r;
-  try {
-    const req = make(key, base);
-    r = await fetchImpl(req.url, { headers: req.headers, signal: AbortSignal.timeout(15000) });
-  } catch {
-    return { error: `Quorum could not reach ${NAMES[provider]}. Check your connection${provider === 'openai_compatible' ? ' and the base URL' : ''}.` };
-  }
-  if (r.status === 401 || r.status === 403) return { error: `${NAMES[provider]} did not accept that key.` };
-  if (!r.ok) return { error: `${NAMES[provider]} answered ${r.status}. Try again in a minute.` };
-  return { ok: true };
-}
 
 // what the RPC takes, cleaned: a provider it knows, trimmed label and URL, roles from the fixed set, the key as pasted
 export function cleanDraft(draft = {}) {
   const provider = String(draft.provider ?? '');
-  if (!(provider in TESTS)) return { error: 'That provider is not supported.' };
+  if (!KEY_PROVIDER_IDS.includes(provider)) return { error: 'That provider is not supported.' };
   const roles = [...new Set((Array.isArray(draft.roles) ? draft.roles : []).map(String).filter((r) => ROLES.has(r)))];
   return {
     provider,

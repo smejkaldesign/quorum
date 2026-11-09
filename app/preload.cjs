@@ -113,6 +113,10 @@ contextBridge.exposeInMainWorld('quorum', {
   localModelSet: (name) => ipcRenderer.invoke('local-model-set', name),
   modelKeySet: (key) => ipcRenderer.invoke('model-key-set', key),
   modelKeyRemove: () => ipcRenderer.invoke('model-key-remove'),
+  // connectors (Settings › Connectors): a key goes in once and comes back only as a boolean in the status
+  connectorKeySet: (id, key, baseUrl) => ipcRenderer.invoke('connector-key-set', id, key, baseUrl),
+  connectorKeyRemove: (id) => ipcRenderer.invoke('connector-key-remove', id),
+  connectorKeyTest: (id, key, baseUrl) => ipcRenderer.invoke('connector-key-test', id, key, baseUrl),
   calendar: () => ipcRenderer.invoke('calendar'),
   calendarStatus: () => ipcRenderer.invoke('calendar-status'),
   calendarConnect: () => ipcRenderer.invoke('calendar-connect'),

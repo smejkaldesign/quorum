@@ -1,6 +1,7 @@
 import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import type { Brain, CalendarSettings, ClaudeStatus, Memory, MemoryItem, ModelSource, ModelSourceStatus, OptOut, Profile, Settings, Voice, Workspace, Transcription, DecisionProvider, DecisionsStatus, AccountState } from './quorum';
-import { ModelKey, SOURCE_NAMES } from './modelSource';
+import type { Brain, CalendarSettings, ClaudeStatus, Memory, MemoryItem, OptOut, Profile, Settings, Voice, Workspace, Transcription, DecisionProvider, DecisionsStatus, AccountState } from './quorum';
+import { PersonalConnectors } from './Connectors';
+import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
 import { AccountArea, EDITION, MembersArea, WorkspaceConnectorsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
@@ -740,60 +741,6 @@ function DecisionsKey({ provider, info, onDone }: { provider: DecisionProvider; 
   );
 }
 
-// the three model sources (docs/open-source-strategy.md), one chosen at a time; None is the state until one is picked.
-// Other CLIs and providers come back with the multi-provider task
-function ModelSources({ claude }: { claude: ClaudeStatus | null }) {
-  const [st, setSt] = useState<ModelSourceStatus | null>(null);
-  const [keying, setKeying] = useState(false);
-  const [more, setMore] = useMenu();
-  const refresh = () => window.quorum.modelSourceStatus().then(setSt);
-  useEffect(() => { refresh(); }, []);
-  const source = st?.source ?? 'none';
-  const choose = async (s: ModelSource) => { await window.quorum.modelSourceSet(s); refresh(); };
-  const claudeOk = !!claude?.installed && !!claude?.loggedIn;
-  const pick = (s: ModelSource, ready: boolean) => (source === s ? <IconCheck width={18} height={18} className="ok" /> : <button className="pill" disabled={!ready} onClick={() => choose(s)}>Use</button>);
-  const ollama = !st ? '' : !st.ollama.reachable ? ' · not running' : st.ollama.hasModel ? ' · running' : ` · running, ${st.localModel} not pulled`;
-  return (
-    <div className="src-list">
-      <h4 className="src-title">Model source <span className={`onb-state ${source !== 'none' ? 'ok' : ''}`}>{source === 'none' ? 'None chosen' : SOURCE_NAMES[source]}</span></h4>
-      <div className={`onb-choice ${source === 'claude-code' ? 'on' : ''}`}>
-        <ProviderMark provider="anthropic" />
-        <div><strong>Claude Code on this Mac</strong><em>Your own sign-in, reads your Agent OS{claude && !claudeOk ? (claude.installed ? ' · not signed in' : ' · not installed') : ''}</em></div>
-        {pick('claude-code', claudeOk)}
-      </div>
-      <div className={`onb-choice ${source === 'anthropic-api' ? 'on' : ''}`}>
-        <IconLock width={18} height={18} />
-        <div><strong>Your own API key</strong><em>Anthropic key stored in Keychain{st ? (st.key ? ' · key saved' : ' · no key yet') : ''}</em></div>
-        {st?.key ? (
-          <span className="src-actions">
-            {pick('anthropic-api', true)}
-            <span className="menu-wrap" onClick={(e) => e.stopPropagation()}>
-              <button className="icon-btn" aria-label="API key options" aria-haspopup="menu" aria-expanded={more} onClick={() => setMore((o) => !o)}><IconMore /></button>
-              {more && (
-                <div className="menu end" role="menu">
-                  <button role="menuitem" onClick={() => { setMore(false); setKeying(true); }}><IconReset width={15} height={15} /> Replace key</button>
-                  <button role="menuitem" className="danger" onClick={async () => { setMore(false); await window.quorum.modelKeyRemove(); refresh(); }}><IconClose width={15} height={15} /> Remove key</button>
-                </div>
-              )}
-            </span>
-          </span>
-        ) : <button className="pill" onClick={() => setKeying(true)}>Add key</button>}
-      </div>
-      <div className={`onb-choice ${source === 'local' ? 'on' : ''}`}>
-        <IconCode width={18} height={18} />
-        <div>
-          <strong>Local model</strong>
-          <em>Ollama at localhost{ollama}</em>
-          <label className="set-field wide onb-field"><input key={st?.localModel ?? ''} defaultValue={st?.localModel ?? ''} aria-label="Ollama model name" placeholder="llama3.1"
-            onBlur={async (e) => { await window.quorum.localModelSet(e.target.value); refresh(); }} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} /></label>
-        </div>
-        {pick('local', true)}
-      </div>
-      {keying && <ModelKey onDone={(ok) => { setKeying(false); if (ok) choose('anthropic-api'); else refresh(); }} />}
-    </div>
-  );
-}
-
 // what Quorum runs on. Quorum finds the Claude Code already signed in on this Mac; it never holds a login of its own
 function ClaudeCard() {
   const [c, setC] = useState<ClaudeStatus | null>(null);
@@ -807,9 +754,8 @@ function ClaudeCard() {
     : ['AI usage', c.email, c.org, plan && `${plan} plan`].filter(Boolean).join(' · ');
   return (
     <>
-      <div className="set-head"><h3>AI</h3></div>
-      <p className="mcp-lede">Where Quorum's model runs, and how Claude and Terminal reach Quorum. Every source is your own; Quorum has no key of its own.</p>
-      <ModelSources claude={c} />
+      <div className="set-head"><h3>Claude Code</h3></div>
+      <p className="mcp-lede">How Claude and Terminal reach Quorum.</p>
       <div className="set-card">
         <Row icon={<ProviderMark provider="anthropic" />} title={<>Claude Code{c?.version && <em className="muted ver">v{c.version}</em>}</>} desc={desc}>
           <span className="menu-wrap" onClick={(e) => e.stopPropagation()}>
@@ -933,6 +879,7 @@ function MeetingsPage({ settings, onSettings }: { settings: Settings; onSettings
       <MeetingProviders />
       <h3>Transcribing</h3>
       <p className="mcp-lede">How Quorum turns call audio into text.</p>
+      {settings.providers?.speech && settings.providers.speech !== 'apple' && <p className="set-note">Cloud speech engines arrive with the speech provider interface. {BY_ID[settings.providers.speech]?.name ?? 'That provider'} is saved as your speech provider; until then Apple transcribes every meeting on this Mac.</p>}
       <div className="set-card even">
         <Row icon={<IconKeyboard width={18} height={18} />} title="Show words as they're heard" desc="Unconfirmed words appear dimmed"><Toggle on={t.live ?? true} onChange={(on) => saveTx({ live: on })} /></Row>
         <Row icon={<Wave live={false} />} title="Transcript refs in saved notes" desc="Each bullet gets a footnote with the transcript turn behind it"><Toggle on={settings.notes?.refs ?? false} onChange={async (on) => onSettings(await window.quorum.setSettings({ notes: { refs: on } }))} /></Row>
@@ -961,6 +908,7 @@ function MeetingsPage({ settings, onSettings }: { settings: Settings; onSettings
 function ConnectorsPage() {
   return (
     <>
+      <PersonalConnectors />
       <ClaudeCard />
       <h3>Integrations</h3>
       <p className="mcp-lede">Tools Quorum reads from and sends notes to.</p>

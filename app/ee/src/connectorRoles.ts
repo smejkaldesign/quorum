@@ -1,26 +1,14 @@
 import type { ConnectorProvider, ConnectorRole, WorkspaceConnector } from '../../src/quorum';
+import { KEY_PROVIDERS, ROLES as CATALOG_ROLES, ROLE_LABEL as CATALOG_ROLE_LABEL } from '../../connectors/catalog';
 
-// which provider can serve which role, the same table as connector_roles() in supabase/migrations/0006. Speech:
-// assemblyai, deepgram, elevenlabs, openai, google. Models (summary, notes, agent): anthropic, openai, google,
-// openai_compatible. Voice: elevenlabs, openai.
-export const ROLES: { id: ConnectorRole; label: string }[] = [
-  { id: 'speech', label: 'Speech to text' },
-  { id: 'summary', label: 'Running summary' },
-  { id: 'notes', label: 'Final notes' },
-  { id: 'agent', label: 'Agent' },
-  { id: 'voice', label: 'Voice' },
-];
-export const ROLE_LABEL: Record<ConnectorRole, string> = Object.fromEntries(ROLES.map((r) => [r.id, r.label])) as Record<ConnectorRole, string>;
+// which provider can serve which role, from the shared catalog (connectors/catalog.js), the same table as
+// connector_roles() in supabase/migrations/0006. The workspace list is the catalog's key providers: Speech: assemblyai,
+// deepgram, elevenlabs, openai, google. Models (summary, notes, agent): anthropic, openai, google, openai_compatible.
+// Voice: elevenlabs, openai.
+export const ROLES = CATALOG_ROLES;
+export const ROLE_LABEL = CATALOG_ROLE_LABEL;
 
-export const PROVIDERS: Record<ConnectorProvider, { name: string; roles: ConnectorRole[]; keyHint: string; placeholder: string; baseUrl?: boolean }> = {
-  assemblyai: { name: 'AssemblyAI', roles: ['speech'], keyHint: 'AssemblyAI API key', placeholder: 'Your AssemblyAI key' },
-  deepgram: { name: 'Deepgram', roles: ['speech'], keyHint: 'Deepgram API key', placeholder: 'Your Deepgram key' },
-  elevenlabs: { name: 'ElevenLabs', roles: ['speech', 'voice'], keyHint: 'ElevenLabs API key', placeholder: 'Your ElevenLabs key' },
-  openai: { name: 'OpenAI', roles: ['speech', 'summary', 'notes', 'agent', 'voice'], keyHint: 'OpenAI API key', placeholder: 'sk-...' },
-  anthropic: { name: 'Anthropic', roles: ['summary', 'notes', 'agent'], keyHint: 'Anthropic API key', placeholder: 'sk-ant-...' },
-  google: { name: 'Google', roles: ['speech', 'summary', 'notes', 'agent'], keyHint: 'Google AI API key', placeholder: 'AIza...' },
-  openai_compatible: { name: 'OpenAI-compatible', roles: ['summary', 'notes', 'agent'], keyHint: 'API key', placeholder: 'Your key', baseUrl: true },
-};
+export const PROVIDERS = Object.fromEntries(KEY_PROVIDERS.map((p) => [p.id, { name: p.name, roles: p.roles, keyHint: p.keyHint, placeholder: p.placeholder, baseUrl: p.auth === 'key+url' }])) as Record<ConnectorProvider, { name: string; roles: ConnectorRole[]; keyHint: string; placeholder: string; baseUrl?: boolean }>;
 export const PROVIDER_IDS = Object.keys(PROVIDERS) as ConnectorProvider[];
 
 export const rolesFor = (provider: ConnectorProvider): ConnectorRole[] => PROVIDERS[provider]?.roles ?? [];

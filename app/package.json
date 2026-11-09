@@ -60,6 +60,7 @@
       "main.js",
       "edition.js",
       "ee/**",
+      "connectors/**",
       "onboarding.js",
       "decisions.js",
       "control.js",
