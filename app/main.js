@@ -1258,6 +1258,8 @@ function openIndex() {
     onChange: (rels) => toUI('vault-changed', rels), log: (...a) => log('index', ...a),
   });
   vindex.start();
+  // the hosted edition's sync watches the same vault for files to push; the vault changed, so it moves with it
+  account.sync.live();
 }
 ipcMain.handle('vault-tree', () => (brain() ? vaultTree(brain().vault, excludedPath) : []));
 // hosted edition: sign-in, workspaces, members and push sync live in ee/ (account.js, sync.js) and load only when EDITION is
@@ -1267,7 +1269,7 @@ const isPrivatePath = (rel) => { const b = brain(); if (!b) return false; const 
 const isConfidentialText = (text) => /^---\r?\n(?:[^\n]*\r?\n)*?confidential\s*:/i.test(String(text).slice(0, 2000));
 const account = EDITION === 'cloud'
   ? (await loadEE('account.js')).registerAccount({ ipcMain, settings, saveSettings, toUI, log, brain, meetingIndex, isExcluded: (rel) => excludedPath(rel) || isPrivatePath(rel), isExcludedText: (t) => suggester.isExcluded(t) || isConfidentialText(t) })
-  : { sync: { pushNote() {}, pushMeetingNote() {}, pullNow() {} } };
+  : { sync: { pushNote() {}, pushMeetingNote() {}, pullNow() {}, live() {} } };
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);
 ipcMain.handle('vault-search', (_e, q, limit) => vindex?.search(String(q), Math.min(Number(limit) || 30, 1000)) ?? []);
 ipcMain.handle('vault-link-health', () => vindex?.linkHealth() ?? []);
@@ -1836,6 +1838,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => { quitting = true; helperSend({ cmd: 'quit' }); });
 app.on('activate', openMain);
-// coming back to the window pulls what other devices changed; the timer in account.js covers the time in between
+// coming back to the window pulls what other devices changed; the Realtime channel in sync.js delivers them as they
+// happen, and this and the timer in account.js cover the time a dropped socket takes to rejoin
 let lastFocusPull = 0;
 app.on('browser-window-focus', () => { if (Date.now() - lastFocusPull < 30000) return; lastFocusPull = Date.now(); account.sync.pullNow(); });

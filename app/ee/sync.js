@@ -1,11 +1,13 @@
 // two-way sync for the Cloud edition (setup in docs/self-hosting.md): the vault on disk stays the store. Every note
 // or meeting note that changes is upserted into the workspace's tables, and pullNow fetches the rows other devices
 // changed since the last pull and writes them into the vault. Nothing here throws when sync is off or signed out; a
-// failed push or pull is recorded on the account state as syncError. Pulls poll (account.js runs one every few
-// minutes); Supabase realtime would need the tables added to a publication and a socket held open in the main
-// process, so polling is the whole mechanism for now.
+// failed push or pull is recorded on the account state as syncError. Changes travel both ways within seconds while
+// live() is on: a Realtime channel on the workspace's notes and meetings rows runs pullNow, and a watcher on the vault
+// pushes each markdown file that changes. The pull timer in account.js (every three minutes) and the window-focus
+// pull stay as the fallback for a dropped socket. Realtime needs migration 0005, which adds both tables to the
+// supabase_realtime publication.
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, watch, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR } from '../edition.js';
 import { createRemote } from './store/remote.js';
@@ -16,6 +18,11 @@ import { walk } from '../vault.js';
 const DEFAULT_IDS_FILE = path.join(DATA_DIR, 'sync-ids.json');
 const BATCH = 100;
 const PAGE = 1000;
+// a burst of Realtime events becomes one pull; a file being written becomes one push once it has settled
+const PULL_DEBOUNCE = 1000;
+const PUSH_DEBOUNCE = 1500;
+// what the watcher pushes: markdown outside dot folders and node_modules, the same shape walk() in vault.js lists
+const watchable = (rel) => rel.endsWith('.md') && !rel.split('/').some((seg) => seg.startsWith('.') || seg === 'node_modules');
 // the pull watermark per workspace lives next to the id map, named sync-pull.json (sync-pull-production.json for the
 // developer switch), so the two files travel together
 const pullFileFor = (idsFile) => path.join(path.dirname(idsFile), path.basename(idsFile).replace(/^sync-ids/, 'sync-pull'));
@@ -93,12 +100,14 @@ export function createSync({ account, store, brain = () => null, log = () => {},
   };
   const commit = (t, rows) => { for (const r of rows) entry(t.ws, r.rel).hash = r.hash; saveIds(); };
 
-  async function pushNote(abs) {
+  // one file up as a notes row. A save pushes with force; the watcher pushes without it, so a file whose hash already
+  // sits in sync-ids.json (the pull just wrote it, or this device's save already pushed it) is skipped
+  async function pushFile(abs, force) {
     const t = target();
     if (!t || !t.vault) return false;
     const rel = relOf(t.vault, abs);
     if (!rel || !rel.endsWith('.md')) return false;
-    const row = noteRow(t, abs, rel, true);
+    const row = noteRow(t, abs, rel, force);
     if (!row) return false;
     try {
       await t.remote.notes.push(row);
@@ -107,6 +116,7 @@ export function createSync({ account, store, brain = () => null, log = () => {},
       return true;
     } catch (err) { fail('a note', err); return false; }
   }
+  const pushNote = (abs) => pushFile(abs, true);
 
   // a saved meeting note is a note and a meetings row; segments go only for public meetings, read from the session folder
   async function pushMeetingNote(file) {
@@ -277,7 +287,65 @@ export function createSync({ account, store, brain = () => null, log = () => {},
     return pulling;
   }
 
-  const status = () => { const s = account.state(); return { on: s.sync, signedIn: s.signedIn, workspaceId: s.workspace?.id ?? null, running: !!running || !!pulling, lastSyncAt: s.lastSyncAt, lastPullAt: s.lastPullAt ?? null, syncError: s.syncError, last, lastPull }; };
+  // Realtime: one channel per workspace with a postgres_changes listener on notes and on meetings, filtered to the
+  // workspace. Every event schedules the same pullNow, so the conflict logic above stays the one path for remote
+  // changes. supabase-js rejoins the channel itself after a dropped socket; each SUBSCRIBED, the first and every rejoin,
+  // pulls what arrived in between.
+  let chan = null;
+  let pullTimer = null;
+  let isLive = false;
+  const setLive = (v) => { if (isLive === v) return; isLive = v; account.markSync({ live: v }); };
+  const schedulePull = () => { clearTimeout(pullTimer); pullTimer = setTimeout(() => { pullTimer = null; pullNow().catch(() => {}); }, PULL_DEBOUNCE); };
+  const closeChannel = () => { if (!chan) return; try { chan.client.removeChannel(chan.channel); } catch {} chan = null; setLive(false); };
+  const openChannel = (client, ws) => {
+    if (chan && chan.client === client && chan.ws === ws) return;
+    closeChannel();
+    const channel = client.channel(`sync:${ws}`);
+    for (const table of ['notes', 'meetings']) channel.on('postgres_changes', { event: '*', schema: 'public', table, filter: `workspace_id=eq.${ws}` }, schedulePull);
+    chan = { client, ws, channel };
+    channel.subscribe((state, err) => {
+      if (chan?.channel !== channel) return;
+      if (state === 'SUBSCRIBED') { setLive(true); schedulePull(); return; }
+      setLive(false);
+      if (err) log('sync', 'realtime', err?.message ?? err);
+    });
+  };
 
-  return { pushNote, pushMeetingNote, syncNow, pullNow, status };
+  // the vault watcher: one timer per changed file, pushed without force once it has been quiet for PUSH_DEBOUNCE.
+  // The sync's own writes (pull, conflict copies) land here too and stop at the hash check in pushFile.
+  let watcher = null;
+  const stopWatch = () => { if (!watcher) return; try { watcher.handle.close(); } catch {} for (const t of watcher.timers.values()) clearTimeout(t); watcher = null; };
+  const startWatch = (vault) => {
+    if (watcher && watcher.vault === vault) return;
+    stopWatch();
+    const timers = new Map();
+    let handle;
+    try {
+      handle = watch(vault, { recursive: true }, (_ev, name) => {
+        const rel = name ? String(name).split(path.sep).join('/') : null;
+        if (!rel || !watchable(rel) || isExcluded(rel)) return;
+        clearTimeout(timers.get(rel));
+        timers.set(rel, setTimeout(() => { timers.delete(rel); if (existsSync(path.join(vault, rel))) pushFile(path.join(vault, rel), false).catch(() => {}); }, PUSH_DEBOUNCE));
+      });
+    } catch (err) { log('sync', 'vault watch failed', err?.message ?? err); return; }
+    handle.on('error', (err) => log('sync', 'vault watch', err?.message ?? err));
+    watcher = { vault, handle, timers };
+  };
+
+  // brings the channel and the watcher in line with the current state: both run only while target() is set and a
+  // vault is connected, and both move with a workspace switch or a vault change. account.js calls this on every state
+  // change, main.js when the vault connects. Returns whether the channel is subscribed.
+  function live() {
+    const t = target();
+    const client = account.client();
+    if (!t || !t.vault) { closeChannel(); stopWatch(); return isLive; }
+    if (typeof client.channel === 'function') openChannel(client, t.ws);
+    startWatch(t.vault);
+    return isLive;
+  }
+  const stop = () => { closeChannel(); stopWatch(); clearTimeout(pullTimer); pullTimer = null; };
+
+  const status = () => { const s = account.state(); return { on: s.sync, signedIn: s.signedIn, workspaceId: s.workspace?.id ?? null, running: !!running || !!pulling, live: isLive, lastSyncAt: s.lastSyncAt, lastPullAt: s.lastPullAt ?? null, syncError: s.syncError, last, lastPull }; };
+
+  return { pushNote, pushMeetingNote, syncNow, pullNow, live, stop, status };
 }

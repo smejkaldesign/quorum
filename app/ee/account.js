@@ -104,10 +104,12 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
   let cloud = resolveCloudConfig(settings);
   const makeClient = (c) => (c.url && c.key ? createClient(c.url, c.key, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storage: fileStorage(perConfig(c, 'auth', 'json')) } }) : null);
   let client = makeClient(cloud);
-  const state = { configured: !!client, signedIn: false, email: null, userId: null, workspace: null, workspaces: [], invites: [], domainMatches: [], sync: settings.sync === true, lastSyncAt: null, lastPullAt: null, syncError: null };
+  // live is whether the Realtime channel is subscribed (sync.js live()); the UI shows "Live" or "Polling" from it
+  const state = { configured: !!client, signedIn: false, email: null, userId: null, workspace: null, workspaces: [], invites: [], domainMatches: [], sync: settings.sync === true, lastSyncAt: null, lastPullAt: null, syncError: null, live: false };
   const listeners = new Set();
   const snapshot = () => JSON.parse(JSON.stringify(state));
-  const emit = () => { for (const l of listeners) { try { l(snapshot()); } catch {} } };
+  // every state change also lets sync.js bring its channel and watcher in line with the sign-in, switch and workspace
+  const emit = () => { for (const l of listeners) { try { l(snapshot()); } catch {} } inner?.live(); };
   const fail = (err, fallback) => { log('account', err?.message ?? err); return { error: plain(err, fallback) }; };
   const NOT_CONFIGURED = { error: 'Hosted accounts are not set up in this build.' };
   const SIGNED_OUT = { error: 'Sign in first.' };
@@ -117,7 +119,7 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
     client: () => client,
     state: snapshot,
     onChange: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
-    markSync: ({ lastSyncAt, lastPullAt, syncError }) => { if (lastSyncAt !== undefined) state.lastSyncAt = lastSyncAt; if (lastPullAt !== undefined) state.lastPullAt = lastPullAt; if (syncError !== undefined) state.syncError = syncError; emit(); },
+    markSync: ({ lastSyncAt, lastPullAt, syncError, live }) => { if (lastSyncAt !== undefined) state.lastSyncAt = lastSyncAt; if (lastPullAt !== undefined) state.lastPullAt = lastPullAt; if (syncError !== undefined) state.syncError = syncError; if (live !== undefined) state.live = live; emit(); },
   };
   const makeSync = (c) => createSync({ account, store, brain, log, meetingIndex, isExcluded, isExcludedText, idsFile: perConfig(c, 'sync-ids', 'json') });
   let inner = makeSync(cloud);
@@ -128,9 +130,11 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
     pushMeetingNote: (...a) => inner.pushMeetingNote(...a),
     pullNow: () => inner.pullNow(),
     syncNow: async () => { const pulled = await inner.pullNow(); const pushed = await inner.syncNow(); return pushed.error ? pushed : { ...pushed, pulled: pulled.error ? null : pulled }; },
+    live: () => inner.live(),
     status: () => inner.status(),
   };
-  // while signed in with sync on, other devices' changes arrive by polling: one pull every few minutes
+  // while signed in with sync on, other devices' changes arrive over the Realtime channel (sync.js live()); this timer
+  // is the fallback for the time a dropped socket takes to rejoin
   const PULL_EVERY = 3 * 60 * 1000;
   const pullTimer = setInterval(() => { if (state.sync && state.signedIn && state.workspace) inner.pullNow().catch(() => {}); }, PULL_EVERY);
   pullTimer.unref?.();
@@ -298,6 +302,7 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
     authWatch = null;
     cloud = resolveCloudConfig(settings);
     client = makeClient(cloud);
+    inner?.stop();
     inner = makeSync(cloud);
     state.configured = !!client;
     signedOut();
@@ -305,7 +310,7 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
   }
   connect();
 
-  return { ...account, handlers, refresh, sync, envStatus, stop: () => clearInterval(pullTimer) };
+  return { ...account, handlers, refresh, sync, envStatus, stop: () => { clearInterval(pullTimer); inner.stop(); } };
 }
 
 // wires the account into the main process: one IPC handler per entry, and every change goes to the UI as 'account'
