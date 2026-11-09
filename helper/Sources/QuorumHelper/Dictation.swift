@@ -7,11 +7,11 @@ final class Dictation {
     private let transcriber = ChannelTranscriber(channel: "dictation")
     private var running = false
 
-    func start(locale: String = "en-US") async {
+    func start(locale: String = "en-US", terms: [String] = []) async {
         guard !running else { return }
         guard await AVAudioApplication.requestRecordPermission() else { Emit.error("dictation: microphone permission denied"); return }
         do {
-            try await transcriber.start(locale: Locale(identifier: locale), audioURL: nil)
+            try await transcriber.start(locale: Locale(identifier: locale), audioURL: nil, terms: terms)
             let t = transcriber
             try mic.start(echoCancel: false) { t.feed($0) }
             running = true

@@ -8,6 +8,7 @@ import { DATA_DIR, EDITION, ENV, loadEE } from './edition.js';
 import { registerOnboarding } from './onboarding.js';
 import { createSuggester } from './suggest.js';
 import { extractJson } from './json.js';
+import { buildTerms, orgOf, topNames } from './terms.js';
 import { startControl } from './control.js';
 import { PROVIDERS as DECISION_PROVIDERS, connectedProvider, decide as decideRaw, removeDecisionsKey, setDecisionsKey } from './decisions.js';
 import { execFile, execFileSync, spawn } from 'node:child_process';
@@ -99,7 +100,7 @@ let quitting = false;
 let helper;
 const asset = (name) => path.join(here, 'assets', name);
 // a meeting can have several capture segments (STOP, GO, STOP...); STOP deletes all of them
-const meeting = { armed: false, capturing: false, id: null, dirs: [], dir: null, transcript: [], title: '', participants: 0, people: new Set(), startedAt: null, endedAt: null, notes: null };
+const meeting = { armed: false, capturing: false, id: null, dirs: [], dir: null, transcript: [], title: '', participants: 0, people: new Set(), terms: [], startedAt: null, endedAt: null, notes: null };
 
 const log = (...a) => console.log('[quorum]', ...a);
 // windows can be gone mid-quit while the helper or agent is still reporting
@@ -391,13 +392,36 @@ function writeState() {
 }
 const writeStateSoon = () => { stateTimer ??= setTimeout(writeState, 3000); };
 
+// who the calendar says is on this call: the attendees of an invite that is on now or starts within ten minutes
+async function inviteesNow() {
+  const r = await calAsk({ cmd: 'calEvents', days: 1 });
+  const now = Date.now();
+  return (r.events ?? []).filter((e) => new Date(e.start) - now <= 10 * 60000 && new Date(e.end) >= now).flatMap((e) => e.attendees ?? []);
+}
+
+// the vocabulary one capture hands the recognizer: this call's people first, then the dictionary, the company, you, and
+// the people and companies that come up most in the saved meetings. Only the count is logged; QUORUM_LOG_TERMS=1 on a
+// development run also logs a sample
+async function sessionTerms({ calendar = true, participants = [] } = {}) {
+  const invited = calendar ? await inviteesNow() : [];
+  const index = meetingIndex();
+  const terms = buildTerms({
+    invitees: [...invited.map((a) => a.name), ...invited.map((a) => orgOf(a.email))],
+    participants, dictionary: settings.voice?.dictionary, company: settings.workspace?.company, owner: USER_NAME,
+    vaultPeople: topNames(index.map((m) => m.people)), vaultOrgs: topNames(index.map((m) => m.orgs), 50),
+  });
+  log(`vocabulary: ${terms.length} terms`);
+  if (!app.isPackaged && process.env.QUORUM_LOG_TERMS === '1') log('vocabulary sample:', terms.slice(0, 20).join(', '));
+  return terms;
+}
+
 function beginSegment() {
   meeting.dir = store.meetings.beginSegment(meeting.id);
   meeting.dirs.push(meeting.dir);
   meeting.capturing = true;
   // a note hears everything the Mac plays; a call only hears the meeting app, so music and alerts stay out
   const only = tx().capture === 'meeting' && !meeting.solo ? provider().bundles : [];
-  helperSend({ cmd: 'start', sessionDir: meeting.dir, echoCancel: tx().echo === 'aec', locale: settings.voice?.locale || 'en-US', tapBundles: only });
+  helperSend({ cmd: 'start', sessionDir: meeting.dir, echoCancel: tx().echo === 'aec', locale: settings.voice?.locale || 'en-US', tapBundles: only, terms: meeting.terms });
   writeState();
 }
 
@@ -510,6 +534,7 @@ async function startListening(by) {
   const canPost = !solo && provider().chat;
   const notice = canPost ? MSG.on() : null;
   const posted = !canPost || await postWithRetry(notice);
+  const terms = posted ? await sessionTerms({ participants: solo ? [] : lastInfo.names ?? [] }) : [];
   meeting.starting = false;
   if (!posted) {
     log('notice never posted; not recording');
@@ -529,6 +554,7 @@ async function startListening(by) {
   meeting.notes = null;
   meeting.id = new Date().toISOString().replace(/[:.]/g, '-');
   meeting.notice = notice;
+  meeting.terms = terms;
   meeting.dirs = [];
   meeting.transcript = [];
   meeting.armed = true;
@@ -1142,6 +1168,7 @@ function meetingIndex() {
         out.push({
           id: f, file, kind: fm.type === 'note' ? 'note' : 'meeting', source: fm.source || folder, title: fm.title || f.replace(/\.md$/, ''), date: fm.date || null,
           people: fm.participants.filter((p) => !isSelf(p)).map(personName),
+          orgs: fm.participants.map(orgOf).filter(Boolean),
           count: Number(fm.participant_count) || fm.participants.length,
           visibility: fm.visibility === 'public' ? 'public' : 'private',
           app, rel: path.relative(brain()?.vault ?? root, file), link: `quorum://note/${encodeURIComponent(fm.granola_id || path.relative(brain()?.vault ?? root, file))}`,
@@ -1677,7 +1704,7 @@ ipcMain.handle('model-key-set', (_e, key) => { const k = String(key ?? '').trim(
 ipcMain.handle('model-key-remove', async () => { await removeAnthropicKey(); if (modelSource() === 'anthropic-api') handlers['set-settings'](null, { modelSource: 'none' }); });
 ipcMain.handle('ax-settings-open', () => shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'));
 ipcMain.on('launch-id', (e) => { e.returnValue = LAUNCH_ID; });
-ipcMain.handle('dictate', (_e, on) => helperSend(on ? { cmd: 'dictateStart', locale: settings.voice?.locale || 'en-US' } : { cmd: 'dictateStop' }));
+ipcMain.handle('dictate', async (_e, on) => helperSend(on ? { cmd: 'dictateStart', locale: settings.voice?.locale || 'en-US', terms: await sessionTerms({ calendar: false }) } : { cmd: 'dictateStop' }));
 // macOS's Accessibility prompt shows once per install, not on every launch or reload; after that, Settings shows the state
 ipcMain.handle('ax-status', () => {
   const firstAsk = !settings.axPrompted;

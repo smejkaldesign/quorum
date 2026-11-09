@@ -17,7 +17,7 @@ final class ChannelTranscriber {
         self.channel = channel
     }
 
-    func start(locale: Locale, audioURL: URL?) async throws {
+    func start(locale: Locale, audioURL: URL?, terms: [String] = []) async throws {
         let transcriber = SpeechTranscriber(
             locale: locale,
             transcriptionOptions: [],
@@ -40,6 +40,12 @@ final class ChannelTranscriber {
         continuation = cont
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         self.analyzer = analyzer
+        // names and terms from the app, so the model spells them as written; capture goes ahead without them if this fails
+        if !terms.isEmpty {
+            let context = AnalysisContext()
+            context.contextualStrings = [.general: terms]
+            do { try await analyzer.setContext(context) } catch { Emit.log("\(channel) vocabulary not applied: \(error.localizedDescription)") }
+        }
         try await analyzer.start(inputSequence: stream)
 
         let channel = self.channel

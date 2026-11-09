@@ -9,7 +9,7 @@ final class Session {
     private let meter = LevelMeter()
     private(set) var running = false
 
-    func start(dir: URL?, echoCancel: Bool, locale id: String = "en-US", tapBundles: [String] = []) async throws {
+    func start(dir: URL?, echoCancel: Bool, locale id: String = "en-US", tapBundles: [String] = [], terms: [String] = []) async throws {
         guard !running else { return }
         Emit.status("requesting microphone permission")
         guard await AVAudioApplication.requestRecordPermission() else {
@@ -18,8 +18,8 @@ final class Session {
         if let dir { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) }
         let locale = Locale(identifier: id)
         Emit.status("starting on-device transcribers")
-        try await me.start(locale: locale, audioURL: dir?.appendingPathComponent("me.caf"))
-        try await them.start(locale: locale, audioURL: dir?.appendingPathComponent("them.caf"))
+        try await me.start(locale: locale, audioURL: dir?.appendingPathComponent("me.caf"), terms: terms)
+        try await them.start(locale: locale, audioURL: dir?.appendingPathComponent("them.caf"), terms: terms)
         let me = self.me, them = self.them, meter = self.meter
         try mic.start(echoCancel: echoCancel) { me.feed($0); meter.feed($0) }
         Emit.status("mic on, starting system audio tap")
@@ -50,12 +50,12 @@ func handle(_ line: String) async {
     switch name {
     case "start":
         let dir = (cmd["sessionDir"] as? String).map { URL(fileURLWithPath: $0) }
-        do { try await session.start(dir: dir, echoCancel: cmd["echoCancel"] as? Bool ?? false, locale: cmd["locale"] as? String ?? "en-US", tapBundles: cmd["tapBundles"] as? [String] ?? []) }
+        do { try await session.start(dir: dir, echoCancel: cmd["echoCancel"] as? Bool ?? false, locale: cmd["locale"] as? String ?? "en-US", tapBundles: cmd["tapBundles"] as? [String] ?? [], terms: cmd["terms"] as? [String] ?? []) }
         catch { Emit.error("start: \(error.localizedDescription)") }
     case "stop":
         await session.stop()
     case "dictateStart":
-        await dictation.start(locale: cmd["locale"] as? String ?? "en-US")
+        await dictation.start(locale: cmd["locale"] as? String ?? "en-US", terms: cmd["terms"] as? [String] ?? [])
     case "dictateStop":
         await dictation.stop()
     case "chatWatch":
