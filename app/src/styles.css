@@ -1040,3 +1040,7 @@ h3 .soon, .set-zero strong .soon { font-size: 11px; margin-left: 8px; vertical-a
 .conn-sheet .set-label span { color: var(--muted); font-size: 13px; }
 .conn-sheet .conn-note { margin: 6px 0 0; }
 .conn-sheet .modal-actions > span:first-child { display: inline-flex; align-items: center; gap: 8px; }
+.conn-group { margin: 10px 0 6px; font-size: 13px; color: var(--muted); }
+.conn-sheet .conn-roles-pick { flex-direction: column; gap: 10px; }
+.conn-roles-pick .conn-role { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.conn-roles-pick .conn-role .muted { font-size: 13px; }
