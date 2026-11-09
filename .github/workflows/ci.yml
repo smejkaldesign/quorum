@@ -23,6 +23,17 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
         working-directory: app
+      # Lint is advisory while the warning and error count comes down; remove continue-on-error once it reaches zero.
+      - name: Lint
+        run: npm run lint
+        working-directory: app
+        continue-on-error: true
+      - name: Test
+        run: npm test
+        working-directory: app
+      - name: Founder content guard
+        run: npm run check:content
+        working-directory: app
       - name: Build local edition and check the ee boundary
         run: npm run build && npm run check:edition
         working-directory: app
@@ -31,3 +42,15 @@ jobs:
         working-directory: app
         env:
           QUORUM_EDITION: cloud
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Needed only when the repository belongs to an organization account; a personal account runs without it.
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
