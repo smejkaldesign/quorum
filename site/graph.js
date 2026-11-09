@@ -1,200 +1,295 @@
-// Decorative knowledge graph for "How it works": a cursor picks a note, the
-// page opens, a link in it leads to the next note, and it returns to the graph.
-// Runs only while on screen; under reduced motion it renders once, still.
+// Decorative knowledge graph for "How it works": about 1,200 notes in folder
+// clusters around an index note. A camera zooms between the whole graph and
+// single clusters while a cursor hovers notes to show how they cluster.
+// Runs only while on screen; under reduced motion it draws one still frame.
 (function () {
   var root = document.querySelector("[data-graph]");
   if (!root) return;
 
-  var W = 760, H = 520;
-  var NODES = [
-    { id: "pricing", label: "Pricing sync", x: 288, y: 190, g: "m" },
-    { id: "review", label: "Design review", x: 475, y: 300, g: "m" },
-    { id: "customer", label: "Customer call", x: 212, y: 330, g: "m" },
-    { id: "weekly", label: "Weekly planning", x: 450, y: 140, g: "m" },
-    { id: "principles", label: "pricing-principles", x: 112, y: 230, g: "k" },
-    { id: "decisions", label: "decision-log", x: 362, y: 250, g: "k" },
-    { id: "interviews", label: "interview-notes", x: 100, y: 420, g: "k" },
-    { id: "launch", label: "quorum-launch", x: 575, y: 210, g: "p" },
-    { id: "roadmap", label: "roadmap", x: 625, y: 370, g: "p" },
-    { id: "refresh", label: "website-refresh", x: 412, y: 410, g: "p" },
-    { id: "team", label: "team", x: 588, y: 90, g: "o" },
-    { id: "customers", label: "customers", x: 275, y: 460, g: "o" },
-    { id: "claude", label: "CLAUDE.md", x: 188, y: 110, g: "o" },
-  ];
-  var EDGES = [
-    ["pricing", "principles"], ["pricing", "decisions"], ["pricing", "weekly"], ["pricing", "customer"],
-    ["review", "decisions"], ["review", "launch"], ["review", "refresh"], ["review", "roadmap"],
-    ["customer", "interviews"], ["customer", "customers"], ["customer", "principles"],
-    ["weekly", "launch"], ["weekly", "team"], ["decisions", "launch"], ["decisions", "principles"],
-    ["launch", "roadmap"], ["refresh", "launch"], ["interviews", "customers"], ["team", "review"],
-    ["claude", "pricing"], ["claude", "weekly"], ["claude", "principles"],
-  ];
-  var PAGES = {
-    pricing: {
-      meta: "meetings · Nov 8 · 32 min", title: "Pricing sync",
-      body: "<h5>Decisions</h5><ul><li>One paid plan at $5 per seat</li><li>Open source stays free and complete</li></ul><h5>Action items</h5><ul><li>Draft the pricing page copy</li></ul>",
-      links: ["principles", "decisions"],
-    },
-    principles: {
-      meta: "knowledge · updated Nov 8", title: "pricing-principles",
-      body: "<h5>Principles</h5><ul><li>Charge for hosting, never for features</li><li>No token billing in v1</li><li>One plan until teams ask for more</li></ul>",
-      links: ["pricing", "customer"],
-    },
-    review: {
-      meta: "meetings · Nov 7 · 45 min", title: "Design review",
-      body: "<h5>Decisions</h5><ul><li>Hero leads with meeting notes for agents</li><li>Ship the providers row before launch</li></ul><h5>Open questions</h5><ul><li>Which screenshots go on the site</li></ul>",
-      links: ["launch", "refresh"],
-    },
-    launch: {
-      meta: "projects · updated Nov 7", title: "quorum-launch",
-      body: "<h5>Milestones</h5><ul><li>Signed and notarized build</li><li>Site live at quorum.watch</li><li>Cloud sign-ups open</li></ul>",
-      links: ["review", "roadmap"],
-    },
-  };
-  var LABEL = {};
-  NODES.forEach(function (n) { LABEL[n.id] = n.label; });
+  // seeded random, so the graph is the same on every visit
+  var seed = 7;
+  function rand() {
+    seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
+    var t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  function gauss() { return (rand() + rand() + rand() - 1.5) / 1.5; }
+  function pick(list) { return list[Math.floor(rand() * list.length)]; }
 
-  var NS = "http://www.w3.org/2000/svg";
-  var svg = document.createElementNS(NS, "svg");
-  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
-  svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
-  var gEdges = document.createElementNS(NS, "g");
-  var gNodes = document.createElementNS(NS, "g");
-  svg.appendChild(gEdges);
-  svg.appendChild(gNodes);
+  var TOPICS = ["Weekly planning", "Customer call", "Design review", "Pricing sync", "Roadmap review", "1:1", "Retro", "Hiring panel", "Standup", "Launch prep", "Onboarding", "Partner intro", "Budget review", "Interview", "Demo"];
+  var NAMES = ["Ava", "Ben", "Chloe", "Dev", "Elena", "Felix", "Grace", "Hugo", "Iris", "Jon", "Kai", "Lena", "Mateo", "Nina", "Omar", "Priya", "Quinn", "Rosa", "Sam", "Tara"];
+  var WORDS = ["pricing", "onboarding", "search", "sync", "billing", "privacy", "agents", "memory", "launch", "hiring", "roadmap", "research", "design", "support", "security", "analytics", "mobile", "teams"];
+  function day(i) { var d = 1 + (i % 28); return "2026-" + String(10 + (i % 2)).padStart(2, "0") + "-" + String(d).padStart(2, "0"); }
 
-  var degree = {};
-  EDGES.forEach(function (e) { degree[e[0]] = (degree[e[0]] || 0) + 1; degree[e[1]] = (degree[e[1]] || 0) + 1; });
-  var byId = {};
-  NODES.forEach(function (n, i) {
-    n.phase = i * 1.7;
-    var g = document.createElementNS(NS, "g");
-    g.setAttribute("class", "g-node g-" + n.g);
-    var c = document.createElementNS(NS, "circle");
-    c.setAttribute("r", 4 + Math.sqrt(degree[n.id] || 1) * 2);
-    var t = document.createElementNS(NS, "text");
-    t.setAttribute("x", 12 + (degree[n.id] || 1));
-    t.setAttribute("y", 4);
-    t.textContent = n.label;
-    g.appendChild(c);
-    g.appendChild(t);
-    gNodes.appendChild(g);
-    n.el = g;
-    n.dot = c;
-    byId[n.id] = n;
-  });
-  var lines = EDGES.map(function (e) {
-    var l = document.createElementNS(NS, "line");
-    l.setAttribute("class", "g-edge");
-    gEdges.appendChild(l);
-    return { a: byId[e[0]], b: byId[e[1]], el: l };
+  var CLUSTERS = [
+    { name: "meetings", color: "#b794f6", angle: -95, dist: 330, count: 240, spread: 105, label: function (i) { return day(i) + " " + pick(TOPICS); } },
+    { name: "research", color: "#a78bfa", angle: -12, dist: 300, count: 140, spread: 80, label: function () { return pick(WORDS) + "-" + pick(["notes", "findings", "survey", "benchmarks", "interviews"]); } },
+    { name: "people", color: "#f6ad55", angle: 180, dist: 390, count: 90, spread: 45, label: function () { return pick(NAMES) + " " + pick(["(design)", "(eng)", "(sales)", "(ops)", "(advisor)"]); } },
+    { name: "customers", color: "#f687b3", angle: 145, dist: 330, count: 40, spread: 28, label: function () { return pick(["Northwind", "Acme", "Globex", "Initech", "Umbrella", "Hooli", "Stark", "Wayne"]) + " account"; } },
+    { name: "projects", color: "#63b3ed", angle: 168, dist: 230, count: 50, spread: 40, label: function () { return pick(WORDS) + "-" + pick(["v2", "launch", "refresh", "pilot", "migration"]); } },
+    { name: "decisions", color: "#4fd1c5", angle: 2, dist: 450, count: 34, spread: 20, label: function (i) { return "decision-" + String(100 + i); } },
+    { name: "design", color: "#f6e05e", angle: 22, dist: 430, count: 24, spread: 14, label: function () { return pick(WORDS) + " spec"; } },
+    { name: "hiring", color: "#f6e05e", angle: 122, dist: 410, count: 30, spread: 22, label: function () { return pick(["Designer", "Engineer", "PM", "Recruiter"]) + " loop " + Math.floor(rand() * 9 + 1); } },
+    { name: "inbox", color: "#9ae6b4", angle: -152, dist: 370, count: 18, spread: 14, label: function () { return "idea: " + pick(WORDS); } },
+    { name: "ideas", color: "#9ae6b4", angle: -42, dist: 385, count: 14, spread: 10, label: function () { return "idea: " + pick(WORDS); } },
+    { name: "tasks", color: "#c6f68d", angle: 70, dist: 300, count: 60, spread: 70, label: function () { return "todo " + pick(WORDS); } },
+    { name: "notes", color: "#f687b3", angle: 92, dist: 445, count: 18, spread: 13, label: function () { return pick(WORDS) + " notes"; } },
+  ];
+
+  var nodes = [];
+  var edges = [];
+  function add(n) { n.id = nodes.length; n.deg = 0; n.links = []; nodes.push(n); return n; }
+  function link(a, b) { if (a === b) return; edges.push([a, b]); a.deg++; b.deg++; a.links.push(b); b.links.push(a); }
+
+  var hub = add({ x: 0, y: 0, color: "#a3c8ff", label: "CLAUDE.md", cluster: "index" });
+
+  // daily notes packed around the index
+  var daily = [];
+  for (var i = 0; i < 300; i++) {
+    var a = rand() * Math.PI * 2, r = 46 + Math.sqrt(rand()) * 62;
+    var d = add({ x: Math.cos(a) * r, y: Math.sin(a) * r, color: "#8e8e93", label: "Daily " + day(i), cluster: "daily notes" });
+    daily.push(d);
+    link(d, hub);
+  }
+
+  CLUSTERS.forEach(function (c) {
+    var rad = c.angle * Math.PI / 180;
+    c.x = Math.cos(rad) * c.dist; c.y = Math.sin(rad) * c.dist;
+    c.members = [];
+    for (var i = 0; i < c.count; i++) {
+      var n = add({ x: c.x + gauss() * c.spread, y: c.y + gauss() * c.spread, color: c.color, label: c.label(i), cluster: c.name });
+      c.members.push(n);
+    }
+    // a few local hubs gather most of the cluster's links
+    var heads = c.members.slice(0, Math.max(2, Math.round(c.count / 40)));
+    c.members.forEach(function (n) {
+      var best = null, bd = Infinity;
+      for (var k = 0; k < 6; k++) {
+        var m = pick(c.members), dd = (m.x - n.x) * (m.x - n.x) + (m.y - n.y) * (m.y - n.y);
+        if (m !== n && dd < bd) { bd = dd; best = m; }
+      }
+      if (best) link(n, best);
+      if (rand() < 0.5) link(n, pick(heads));
+      if (rand() < 0.07) link(n, hub);
+    });
   });
 
-  function place(t) {
-    NODES.forEach(function (n) {
-      n.cx = n.x + Math.sin(t / 1600 + n.phase) * 3;
-      n.cy = n.y + Math.cos(t / 1900 + n.phase) * 3;
-      n.el.setAttribute("transform", "translate(" + n.cx + " " + n.cy + ")");
-    });
-    lines.forEach(function (l) {
-      l.el.setAttribute("x1", l.a.cx); l.el.setAttribute("y1", l.a.cy);
-      l.el.setAttribute("x2", l.b.cx); l.el.setAttribute("y2", l.b.cy);
-    });
+  // a mixed band between the index and the clusters
+  for (var j = 0; j < 180; j++) {
+    var c = pick(CLUSTERS), ang = rand() * Math.PI * 2, rr = 140 + rand() * 200;
+    var n = add({ x: Math.cos(ang) * rr, y: Math.sin(ang) * rr, color: c.color, label: c.label(j), cluster: c.name });
+    c.members.push(n);
+    link(n, pick(c.members));
+    if (rand() < 0.2) link(n, hub);
+  }
+  // a few cross-cluster links
+  for (var k = 0; k < 120; k++) link(pick(pick(CLUSTERS).members), pick(pick(CLUSTERS).members));
+
+  // unlinked notes in a faint outer ring
+  var orphans = [];
+  for (var o = 0; o < 260; o++) {
+    var oa = rand() * Math.PI * 2, or = 560 + rand() * 90;
+    orphans.push(add({ x: Math.cos(oa) * or, y: Math.sin(oa) * or * 0.92, color: "#8e8e93", label: pick(WORDS) + " draft", cluster: "unlinked", orphan: true }));
   }
 
-  function focus(id) {
-    svg.classList.toggle("focused", !!id);
-    NODES.forEach(function (n) { n.el.classList.remove("on", "near"); });
-    lines.forEach(function (l) {
-      var hit = id && (l.a.id === id || l.b.id === id);
-      l.el.classList.toggle("on", !!hit);
-      if (hit) { l.a.el.classList.add("near"); l.b.el.classList.add("near"); }
+  var byRadius;
+  var counts = {};
+  nodes.forEach(function (n) {
+    counts[n.cluster] = (counts[n.cluster] || 0) + 1;
+    n.r = n === hub ? 24 : n.orphan ? 1.1 : n.cluster === "daily notes" ? 1.5 : Math.min(9, 1.8 + Math.sqrt(n.deg) * 0.75);
+  });
+  byRadius = nodes.slice().sort(function (a, b) { return b.r - a.r; });
+
+  // canvas and overlays
+  var canvas = document.createElement("canvas");
+  var ctx = canvas.getContext("2d");
+  var tip = document.createElement("div");
+  tip.className = "g-tip";
+  root.appendChild(canvas);
+  root.appendChild(tip);
+
+  var W = 0, H = 0, dpr = 1, fit = 1;
+  function size() {
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    W = root.clientWidth; H = root.clientHeight;
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    canvas.style.width = W + "px"; canvas.style.height = H + "px";
+    fit = Math.min(W / 1260, H / 1140);
+  }
+  size();
+
+  var cam = { x: 0, y: 0, s: fit };
+  var hover = null;
+  function toScreen(n) { return { x: (n.x - cam.x) * cam.s + W / 2, y: (n.y - cam.y) * cam.s + H / 2 }; }
+
+  function draw() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    var z = cam.s / fit;
+    var focus = hover ? hover.cluster : null;
+
+    ctx.setTransform(cam.s * dpr, 0, 0, cam.s * dpr, (W / 2 - cam.x * cam.s) * dpr, (H / 2 - cam.y * cam.s) * dpr);
+    ctx.lineWidth = 0.6 / cam.s;
+    ctx.strokeStyle = "rgba(255,255,255," + (focus ? 0.025 : Math.min(0.09, 0.05 + z * 0.006)) + ")";
+    ctx.beginPath();
+    edges.forEach(function (e) { ctx.moveTo(e[0].x, e[0].y); ctx.lineTo(e[1].x, e[1].y); });
+    ctx.stroke();
+    if (hover) {
+      ctx.strokeStyle = hover.color;
+      ctx.globalAlpha = 0.75;
+      ctx.lineWidth = 1.2 / cam.s;
+      ctx.beginPath();
+      hover.links.forEach(function (m) { ctx.moveTo(hover.x, hover.y); ctx.lineTo(m.x, m.y); });
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    nodes.forEach(function (n) {
+      var dim = focus && n.cluster !== focus && n !== hover && hover.links.indexOf(n) === -1;
+      ctx.globalAlpha = n.orphan ? (dim ? 0.12 : 0.4) : dim ? 0.18 : 0.95;
+      ctx.fillStyle = n.color;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, Math.max(n.r / Math.sqrt(z), 0.9 / cam.s), 0, Math.PI * 2);
+      ctx.fill();
     });
-    if (id) byId[id].el.classList.add("on");
+    ctx.globalAlpha = 1;
+    if (hover) {
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2 / cam.s;
+      ctx.beginPath();
+      ctx.arc(hover.x, hover.y, hover.r / Math.sqrt(z) + 3 / cam.s, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // labels fade in as the camera zooms; each is placed only where it overlaps no other
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    var la = Math.max(0, Math.min(1, (z - 1.8) / 1.2));
+    if (la > 0) {
+      ctx.font = "11px -apple-system, BlinkMacSystemFont, Inter, system-ui, sans-serif";
+      ctx.textBaseline = "middle";
+      var placed = [];
+      var order = hover ? [hover].concat(byRadius) : byRadius;
+      for (var i = 0; i < order.length && placed.length < 45; i++) {
+        var n = order[i];
+        if (n.orphan || n.cluster === "daily notes" || (i > 0 && n === hover)) continue;
+        var p = toScreen(n), rs = n.r * fit * Math.sqrt(z);
+        if (p.x < 0 || p.x > W - 40 || p.y < 12 || p.y > H - 12 || rs < 2.4) continue;
+        var box = { x: p.x + rs + 4, y: p.y - 8, w: ctx.measureText(n.label).width + 6, h: 16 };
+        if (placed.some(function (q) { return box.x < q.x + q.w && q.x < box.x + box.w && box.y < q.y + q.h && q.y < box.y + box.h; })) continue;
+        placed.push(box);
+        var dim = focus && n.cluster !== focus && n !== hover;
+        ctx.fillStyle = "rgba(236,236,238," + (la * (dim ? 0.25 : 0.8)) + ")";
+        ctx.fillText(n.label, box.x + 2, p.y);
+      }
+    }
+
+    if (hover) {
+      var hp = toScreen(hover);
+      tip.style.transform = "translate(" + Math.round(Math.min(W - 230, hp.x + 16)) + "px," + Math.round(hp.y - 54) + "px)";
+    }
   }
 
-  var page = document.createElement("div");
-  page.className = "g-page";
-  root.appendChild(svg);
-  root.appendChild(page);
-
-  function showPage(id) {
-    var p = PAGES[id];
-    page.innerHTML =
-      '<span class="g-back">← Graph</span>' +
-      '<p class="g-meta">' + p.meta + "</p>" +
-      "<h4>" + p.title + "</h4>" +
-      '<div class="g-body">' + p.body + "</div>" +
-      '<p class="g-linked">Linked notes</p>' +
-      '<div class="g-links">' + p.links.map(function (l) { return '<span class="g-link" data-to="' + l + '">' + LABEL[l] + "</span>"; }).join("") + "</div>";
-    page.classList.add("show");
+  function showTip(n) {
+    var what = n === hub ? "Index note · links to " + n.deg + " notes" : n.orphan ? "Unlinked · no connections yet" : n.cluster + " cluster · " + counts[n.cluster] + " notes · " + n.deg + " links";
+    tip.innerHTML = "<strong>" + n.label + "</strong><span>" + what + "</span>";
+    tip.classList.add("show");
   }
-  function hidePage() { page.classList.remove("show"); }
 
   if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    place(0);
-    focus("pricing");
+    draw();
+    new ResizeObserver(function () { size(); cam.s = fit; draw(); }).observe(root);
     return;
   }
 
   var cursor = document.createElement("div");
   cursor.className = "t-cursor";
   cursor.innerHTML = '<svg viewBox="0 0 16 16"><path d="M2 1.5l11 6.2-4.6 1.1 2.6 5-1.9.9-2.6-5L3 12.5z" fill="#fff" stroke="#0b1530" stroke-width="1" stroke-linejoin="round"/></svg>';
+  cursor.style.transition = "none";
   root.appendChild(cursor);
+  var cur = { x: W * 0.7, y: H * 0.7 }, aim = null;
 
-  var visible = false;
-  var waiters = [];
-  var raf = 0;
-  function frame(t) { place(t); raf = visible ? requestAnimationFrame(frame) : 0; }
+  var visible = false, waiters = [], tween = null;
+  function frame(t) {
+    if (tween) {
+      var k = Math.min(1, (t - tween.t0) / tween.ms), e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+      cam.x = tween.a.x + (tween.b.x - tween.a.x) * e;
+      cam.y = tween.a.y + (tween.b.y - tween.a.y) * e;
+      cam.s = tween.a.s * Math.pow(tween.b.s / tween.a.s, e);
+      if (k === 1) { var done = tween.done; tween = null; done(); }
+    }
+    if (aim) {
+      var p = toScreen(aim);
+      cur.x += (p.x - cur.x) * 0.14; cur.y += (p.y - cur.y) * 0.14;
+    }
+    cursor.style.transform = "translate(" + cur.x + "px," + cur.y + "px)";
+    draw();
+    if (visible) requestAnimationFrame(frame);
+  }
   new IntersectionObserver(function (entries) {
+    var was = visible;
     visible = entries[0].isIntersecting;
-    if (visible) {
-      if (!raf) raf = requestAnimationFrame(frame);
+    if (visible && !was) {
+      requestAnimationFrame(frame);
       waiters.forEach(function (w) { w(); });
       waiters = [];
     }
   }).observe(root);
-  place(0);
+  new ResizeObserver(size).observe(root);
 
   function sleep(ms) {
     return new Promise(function (done) { setTimeout(done, ms); }).then(function () {
       return visible ? null : new Promise(function (done) { waiters.push(done); });
     });
   }
-  function moveToEl(el) {
-    var r = el.getBoundingClientRect();
-    var f = root.getBoundingClientRect();
-    cursor.style.transform = "translate(" + (r.left - f.left + r.width / 2) + "px," + (r.top - f.top + r.height / 2) + "px)";
-    return sleep(700);
+  function fly(x, y, zoom, ms) {
+    return new Promise(function (done) {
+      tween = { a: { x: cam.x, y: cam.y, s: cam.s }, b: { x: x, y: y, s: fit * zoom }, ms: ms, t0: performance.now(), done: done };
+    });
   }
-  function node(id) { return moveToEl(byId[id].dot); }
-  function link(id) { return moveToEl(page.querySelector('[data-to="' + id + '"]')); }
-  function back() { return moveToEl(page.querySelector(".g-back")); }
-  function click() {
-    cursor.classList.add("press");
-    return sleep(140).then(function () { cursor.classList.remove("press"); return sleep(120); });
+  function point(n) {
+    aim = n;
+    return sleep(900).then(function () { hover = n; showTip(n); });
   }
+  function leave() { hover = null; tip.classList.remove("show"); return sleep(350); }
+  function cluster(name) { return CLUSTERS.filter(function (c) { return c.name === name; })[0]; }
+  function biggest(c) { return c.members.slice().sort(function (a, b) { return b.deg - a.deg; })[0]; }
 
-  // one visit: pick a node, read its page, follow a link, read, go back
-  function visit(start, next) {
-    return node(start)
-      .then(click)
-      .then(function () { focus(start); return sleep(800); })
-      .then(function () { showPage(start); return sleep(1800); })
-      .then(function () { return link(next); })
-      .then(click)
-      .then(function () { focus(next); showPage(next); return sleep(1800); })
-      .then(back)
-      .then(click)
-      .then(function () { hidePage(); return sleep(1300); });
-  }
+  var meetings = cluster("meetings"), people = cluster("people"), decisions = cluster("decisions");
+  var mHead = biggest(meetings);
+  var mNear = mHead.links.filter(function (n) { return n.cluster === "meetings"; })[0] || meetings.members[5];
 
   function loop() {
-    return sleep(800)
-      .then(function () { return visit("pricing", "principles"); })
-      .then(function () { return visit("review", "launch"); })
-      .then(function () { focus(null); return sleep(1200); })
+    return sleep(1400)
+      .then(function () { return point(biggest(cluster("research"))); })
+      .then(function () { return sleep(1800); })
+      .then(leave)
+      .then(function () { return point(hub); })
+      .then(function () { return sleep(1500); })
+      .then(leave)
+      .then(function () { return fly(meetings.x, meetings.y, 2.6, 2200); })
+      .then(function () { return point(mHead); })
+      .then(function () { return sleep(1900); })
+      .then(leave)
+      .then(function () { return fly(mNear.x, mNear.y, 4.5, 1800); })
+      .then(function () { return point(mNear); })
+      .then(function () { return sleep(1900); })
+      .then(leave)
+      .then(function () { return fly(people.x, people.y, 3.2, 2200); })
+      .then(function () { return point(biggest(people)); })
+      .then(function () { return sleep(1900); })
+      .then(leave)
+      .then(function () { return fly(decisions.x, decisions.y, 4.2, 2200); })
+      .then(function () { return point(biggest(decisions)); })
+      .then(function () { return sleep(1900); })
+      .then(leave)
+      .then(function () { return fly(0, 0, 1, 2400); })
+      .then(function () { return point(orphans[17]); })
+      .then(function () { return sleep(1700); })
+      .then(leave)
       .then(loop);
   }
+  cam.s = fit;
+  draw();
   loop();
 })();
