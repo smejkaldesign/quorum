@@ -2,17 +2,18 @@
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { homedir } from 'node:os';
 import path from 'node:path';
 import { writeAtomic } from '../relink.js';
+import { DATA_DIR } from '../edition.js';
 
-const SESSIONS = path.join(homedir(), 'Library/Application Support/Quorum/sessions');
+// DATA_DIR is ~/Library/Application Support/Quorum, or Quorum Dev for a development copy (edition.js)
+const SESSIONS = path.join(DATA_DIR, 'sessions');
 const SETTINGS_FILE = path.join(SESSIONS, '..', 'settings.json');
 // what the quorum CLI and MCP read to see a live call; STOP and the end of a call clear the transcript out of it
 const STATE_FILE = path.join(SESSIONS, '..', 'state.json');
 const CHATS = path.join(SESSIONS, '..', 'chats');
 // attachments are copied into Quorum's own folder so the agent only ever gets read access to the copies
-const ATTACH = path.join(homedir(), 'Library/Application Support/Quorum/attachments');
+const ATTACH = path.join(DATA_DIR, 'attachments');
 const MAX_ATTACH = 25 * 1024 * 1024;
 
 const settingsData = { autoListen: false, model: 'sonnet', suggestions: true };

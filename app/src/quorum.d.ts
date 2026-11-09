@@ -26,6 +26,9 @@ export type Profile = { name?: string; title?: string; linkedin?: string; photo?
 export type Voice = { locale?: string; sounds?: boolean; dictionary?: { heard: string; write: string }[] };
 export type OptOut = { name?: string; domain?: string };
 export type DecisionProvider = 'openai' | 'typesafe';
+// which environment the main process runs and which Supabase config is active: shell variables, the production .env,
+// .env.development, the local stack, or none (local edition). host is the project URL's host; the key never crosses IPC
+export type EnvStatus = { env: 'development' | 'production'; config: 'shell' | 'production' | 'development' | 'local' | 'none'; host: string | null; useProduction: boolean; configured: boolean };
 export type DecisionsStatus = { connected: boolean; provider: DecisionProvider | null; providers: Record<DecisionProvider, { name: string; placeholder: string; keyHint: string }> };
 export type Workspace = { company?: string; companyDescription?: string; neverListen?: string[]; optOuts?: OptOut[]; decisions?: { provider: DecisionProvider; by?: string; at?: string }; stopWord?: string; goWord?: string };
 export type Transcription = { echo?: 'off' | 'filter' | 'aec'; gap?: number; live?: boolean; capture?: 'meeting' | 'all' };
@@ -212,6 +215,8 @@ declare global {
       syncSet(on: boolean): Promise<Result>;
       syncNow(): Promise<{ pushed?: { notes: number; meetings: number }; error?: string }>;
       onAccount(cb: (s: AccountState) => void): Unsub;
+      envStatus(): Promise<EnvStatus>;
+      envSetProduction(on: boolean): Promise<EnvStatus>;
     };
   }
 }

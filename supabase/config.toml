@@ -248,6 +248,13 @@ otp_expiry = 3600
 # subject = "You have been invited"
 # content_path = "./supabase/templates/invite.html"
 
+# The app signs in with a 6-digit code (account.js verifyOtp), so the local stack sends the token instead of a link. The
+# hosted project needs the same template by hand (docs/self-hosting.md, step 3). Read the mail at the Mailpit URL that
+# `supabase status` prints.
+[auth.email.template.magic_link]
+subject = "Your Quorum sign-in code"
+content_path = "./supabase/templates/magic_link.html"
+
 # Uncomment to customize notification email template
 # [auth.email.notification.password_changed]
 # enabled = true

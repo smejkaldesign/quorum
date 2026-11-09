@@ -4,7 +4,7 @@ import { createFolder, createNote, duplicateItem, moveItem, readVaultNote, renam
 import { createVaultIndex } from './vindex.js';
 import { addAlias, retargetLinks, rewriteLinks } from './relink.js';
 import store from './store/index.js';
-import { EDITION, loadEE } from './edition.js';
+import { DATA_DIR, EDITION, ENV, loadEE } from './edition.js';
 import { registerOnboarding } from './onboarding.js';
 import { createSuggester } from './suggest.js';
 import { extractJson } from './json.js';
@@ -19,6 +19,13 @@ import { fileURLToPath } from 'node:url';
 import updater from 'electron-updater';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+// one Quorum at a time, installed or development copy: two would both watch Zoom and could post the notice twice. The
+// lock lives in Electron's default userData folder, which both copies share, so it is taken before userData moves to
+// the environment's own folder (edition.js DATA_DIR: Quorum, or Quorum Dev for a development copy). Everything that
+// reads userData, sessions or the control socket runs after this point.
+const singleInstance = app.requestSingleInstanceLock();
+app.setPath('userData', DATA_DIR);
+app.setPath('sessionData', DATA_DIR);
 // the packaged app carries its own audio helper; in development it comes straight from the Swift build
 const HELPER = app.isPackaged ? path.join(process.resourcesPath, 'QuorumHelper') : path.resolve(here, '../helper/.build/debug/QuorumHelper');
 // dev and eval hooks (QUORUM_EVAL, QUORUM_SHOT, ...) stay out of release builds entirely
@@ -1667,8 +1674,7 @@ ipcMain.handle('ax-status', () => {
   helperSend({ cmd: 'axStatus', prompt: firstAsk });
 });
 
-// one Quorum at a time, installed or development copy: two would both watch Zoom and could post the notice twice
-if (!app.requestSingleInstanceLock()) {
+if (!singleInstance) {
   app.whenReady().then(() => {
     dialog.showMessageBoxSync({ type: 'info', message: 'Quorum is already running', detail: 'Another copy of Quorum (the installed app or the development copy) is open. Quit it from its menu bar owl, then open this one again.', buttons: ['OK'] });
     app.quit();
@@ -1676,6 +1682,13 @@ if (!app.requestSingleInstanceLock()) {
 } else app.on('second-instance', () => openMain());
 
 ipcMain.on('is-dev', (e) => { e.returnValue = !app.isPackaged; });
+// which environment this copy runs; the cloud edition's account.js answers these with the active Supabase config, the
+// local edition has no cloud config to report
+if (!account.handlers?.['env-status']) {
+  const status = () => ({ env: ENV, config: 'none', host: null, useProduction: false, configured: false });
+  ipcMain.handle('env-status', status);
+  ipcMain.handle('env-set-production', status);
+}
 
 // what the quorum command can ask the running app to do; read only turns off everything that changes something
 const CONTROL_WRITES = new Set(['start', 'stop', 'go', 'end', 'ask', 'note-new', 'note-append', 'note-edit', 'settings-set']);

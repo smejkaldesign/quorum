@@ -136,6 +136,9 @@ contextBridge.exposeInMainWorld('quorum', {
   syncNow: () => ipcRenderer.invoke('sync-now'),
   onAccount: on('account'),
   // end account
+  // environment (development or production) and which Supabase config the cloud edition is using; never the key
+  envStatus: () => ipcRenderer.invoke('env-status'),
+  envSetProduction: (on) => ipcRenderer.invoke('env-set-production', on),
   // onboarding (first run): status, create a fresh Agent OS folder, permissions
   onboardingStatus: () => ipcRenderer.invoke('onboarding-status'),
   onboardingChecks: () => ipcRenderer.invoke('onboarding-checks'),

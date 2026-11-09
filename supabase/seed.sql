@@ -1,0 +1,2 @@
+-- Seed for the local stack (supabase start, supabase db reset). The app creates workspaces and members through its own
+-- sign-in flow, so nothing is inserted here. Add rows below when a development fixture is needed.

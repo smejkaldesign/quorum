@@ -1,32 +1,77 @@
 // the hosted edition's account: Supabase Auth with a 6-digit email code, the chosen workspace, invites and the sync
 // switch. Pure Node, no electron import, so a script can drive the same handlers the IPC does.
 import { createClient } from '@supabase/supabase-js';
+import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import store from '../store/index.js';
+import { DATA_DIR, ENV, isDevelopment } from '../edition.js';
 import { createSync } from './sync.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const DIR = path.join(homedir(), 'Library/Application Support/Quorum');
-const AUTH_FILE = path.join(DIR, 'auth.json');
+const ROOT = path.resolve(here, '../..');
+// The local Supabase stack (supabase start) listens here and ships one anon key that is the same for every local
+// stack; the CLI prints it on start. resolveCloudConfig reads the live values from `supabase status` when the CLI is
+// on PATH and falls back to these, so a development copy signs in to the local stack with no .env.development at all.
+const LOCAL_STACK = { url: 'http://127.0.0.1:54321', key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0' };
 
-// npm start has no .env loader, so the repo root's .env fills the two Supabase values when the shell did not
-export function loadEnv(file = path.resolve(here, '../../.env')) {
+// reads KEY=value lines from a dotenv-style file into a plain object; missing file gives {}
+export function readEnvFile(file) {
+  const out = {};
   let text;
-  try { text = readFileSync(file, 'utf8'); } catch { return; }
+  try { text = readFileSync(file, 'utf8'); } catch { return out; }
   for (const line of text.split('\n')) {
     const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
     if (!m || line.trim().startsWith('#')) continue;
-    if (!(m[1] in process.env)) process.env[m[1]] = m[2].replace(/^(['"])(.*)\1$/, '$2');
+    out[m[1]] = m[2].replace(/^(['"])(.*)\1$/, '$2');
   }
+  return out;
 }
 
+// npm start has no .env loader, so the repo root's .env fills the two Supabase values when the shell did not
+export function loadEnv(file = path.join(ROOT, '.env')) {
+  for (const [k, v] of Object.entries(readEnvFile(file))) if (!(k in process.env)) process.env[k] = v;
+}
+
+// the local stack's live URL and anon key from the CLI, when it is installed and the stack is up; null otherwise
+function localStackStatus() {
+  try {
+    const out = execFileSync('supabase', ['status', '-o', 'env'], { cwd: ROOT, encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'] });
+    const vars = {};
+    for (const line of out.split('\n')) { const m = line.match(/^([A-Z_]+)="?([^"]*)"?$/); if (m) vars[m[1]] = m[2]; }
+    const url = vars.API_URL, key = vars.ANON_KEY || vars.PUBLISHABLE_KEY;
+    return url && key ? { url, key } : null;
+  } catch { return null; }
+}
+
+// Which Supabase project this process talks to (docs/self-hosting.md, Development). In order:
+//  1. QUORUM_SUPABASE_URL and QUORUM_SUPABASE_ANON_KEY already in the shell environment ('shell')
+//  2. production, or a development copy with settings.devUseProduction on: the repo root's .env ('production')
+//  3. development: .env.development when present ('development'), else the local stack ('local')
+// Production never falls back to the local stack: without .env it stays unconfigured.
+export function resolveCloudConfig(settings = {}) {
+  const env = ENV;
+  const useProduction = isDevelopment && settings.devUseProduction === true;
+  const base = { env, useProduction, url: null, key: null };
+  if (process.env.QUORUM_SUPABASE_URL && process.env.QUORUM_SUPABASE_ANON_KEY) return { ...base, source: 'shell', url: process.env.QUORUM_SUPABASE_URL, key: process.env.QUORUM_SUPABASE_ANON_KEY };
+  if (!isDevelopment || useProduction) {
+    const prod = readEnvFile(path.join(ROOT, '.env'));
+    return { ...base, source: 'production', url: prod.QUORUM_SUPABASE_URL ?? null, key: prod.QUORUM_SUPABASE_ANON_KEY ?? null };
+  }
+  const dev = readEnvFile(path.join(ROOT, '.env.development'));
+  if (dev.QUORUM_SUPABASE_URL && dev.QUORUM_SUPABASE_ANON_KEY) return { ...base, source: 'development', url: dev.QUORUM_SUPABASE_URL, key: dev.QUORUM_SUPABASE_ANON_KEY };
+  return { ...base, source: 'local', ...(localStackStatus() ?? LOCAL_STACK) };
+}
+
+// the session and the sync id map live next to settings.json; a development copy pointed at production keeps both
+// apart from its local-stack files, so switching back and forth never mixes sessions or ids between projects
+const perConfig = (cloud, name, ext) => path.join(DATA_DIR, `${name}${cloud.useProduction ? '-production' : ''}.${ext}`);
+
 // the session lives in one file only this user can read; supabase-js reads and writes it through this adapter
-function fileStorage() {
-  const read = () => { try { return JSON.parse(readFileSync(AUTH_FILE, 'utf8')); } catch { return {}; } };
-  const write = (data) => { mkdirSync(DIR, { recursive: true }); writeFileSync(AUTH_FILE, JSON.stringify(data), { mode: 0o600 }); try { chmodSync(AUTH_FILE, 0o600); } catch {} };
+function fileStorage(file) {
+  const read = () => { try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return {}; } };
+  const write = (data) => { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, JSON.stringify(data), { mode: 0o600 }); try { chmodSync(file, 0o600); } catch {} };
   return {
     getItem: (k) => read()[k] ?? null,
     setItem: (k, v) => write({ ...read(), [k]: v }),
@@ -49,9 +94,9 @@ export function plain(err, fallback = 'Something went wrong. Try again.') {
 }
 
 export function createAccount({ settings, saveSettings, log = () => {}, brain = () => null, meetingIndex = () => [], isExcluded, isExcludedText } = {}) {
-  if (!process.env.QUORUM_SUPABASE_URL || !process.env.QUORUM_SUPABASE_ANON_KEY) loadEnv();
-  const { QUORUM_SUPABASE_URL: url, QUORUM_SUPABASE_ANON_KEY: key } = process.env;
-  const client = url && key ? createClient(url, key, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storage: fileStorage() } }) : null;
+  let cloud = resolveCloudConfig(settings);
+  const makeClient = (c) => (c.url && c.key ? createClient(c.url, c.key, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storage: fileStorage(perConfig(c, 'auth', 'json')) } }) : null);
+  let client = makeClient(cloud);
   const state = { configured: !!client, signedIn: false, email: null, userId: null, workspace: null, workspaces: [], invites: [], domainMatches: [], sync: settings.sync === true, lastSyncAt: null, syncError: null };
   const listeners = new Set();
   const snapshot = () => JSON.parse(JSON.stringify(state));
@@ -67,7 +112,13 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
     onChange: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
     markSync: ({ lastSyncAt, syncError }) => { if (lastSyncAt !== undefined) state.lastSyncAt = lastSyncAt; if (syncError !== undefined) state.syncError = syncError; emit(); },
   };
-  const sync = createSync({ account, store, brain, log, meetingIndex, isExcluded, isExcludedText });
+  const makeSync = (c) => createSync({ account, store, brain, log, meetingIndex, isExcluded, isExcludedText, idsFile: perConfig(c, 'sync-ids', 'json') });
+  let inner = makeSync(cloud);
+  // main.js keeps one reference to sync; the developer switch below swaps what sits behind it
+  const sync = { pushNote: (...a) => inner.pushNote(...a), pushMeetingNote: (...a) => inner.pushMeetingNote(...a), syncNow: (...a) => inner.syncNow(...a), status: () => inner.status() };
+  // what the renderer may know about the connection: environment, which config is active and the project's host. The
+  // key stays in the main process.
+  const envStatus = () => ({ env: cloud.env, config: cloud.source, host: cloud.url ? new URL(cloud.url).host : null, useProduction: cloud.useProduction, configured: !!client });
 
   const row = (w, role) => ({ id: w.id, name: w.name, domain: w.domain ?? null, domainJoin: w.domain_join !== false, role });
   const signedOut = () => { Object.assign(state, { signedIn: false, email: null, userId: null, workspace: null, workspaces: [], invites: [], domainMatches: [] }); };
@@ -206,12 +257,37 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
       const r = await sync.syncNow();
       return r.error ? { error: r.error } : snapshot();
     }),
+    'env-status': envStatus,
+    // the developer switch (docs/self-hosting.md, Development): a development copy loads the production .env instead of
+    // its own config. The setting is written, the client is rebuilt against the other project with its own session
+    // file, and the account state is re-read. Production builds ignore the call.
+    'env-set-production': async (on) => {
+      if (!isDevelopment) return envStatus();
+      const next = on === true;
+      if ((settings.devUseProduction === true) !== next) { settings.devUseProduction = next; saveSettings?.(); }
+      connect();
+      await refresh();
+      log('env', `${cloud.env}, config ${cloud.source}`, cloud.url ? new URL(cloud.url).host : 'unconfigured');
+      return envStatus();
+    },
   };
 
-  // a token refresh or sign-out from another path still reaches the UI; supabase-js asks that this callback stays quick
-  client?.auth.onAuthStateChange((event) => { if (event === 'SIGNED_OUT' || event === 'SIGNED_IN') setTimeout(() => refresh().catch(() => {}), 0); });
+  // builds the client and sync for the current config and watches its auth events. A token refresh or sign-out from
+  // another path still reaches the UI; supabase-js asks that the callback stays quick.
+  let authWatch = null;
+  function connect() {
+    authWatch?.unsubscribe();
+    authWatch = null;
+    cloud = resolveCloudConfig(settings);
+    client = makeClient(cloud);
+    inner = makeSync(cloud);
+    state.configured = !!client;
+    signedOut();
+    authWatch = client?.auth.onAuthStateChange((event) => { if (event === 'SIGNED_OUT' || event === 'SIGNED_IN') setTimeout(() => refresh().catch(() => {}), 0); }).data.subscription ?? null;
+  }
+  connect();
 
-  return { ...account, handlers, refresh, sync };
+  return { ...account, handlers, refresh, sync, envStatus };
 }
 
 // wires the account into the main process: one IPC handler per entry, and every change goes to the UI as 'account'
@@ -219,6 +295,8 @@ export function registerAccount({ ipcMain, settings, saveSettings, toUI = () => 
   const acct = createAccount({ settings, saveSettings, log, brain, meetingIndex, isExcluded, isExcludedText });
   acct.onChange((s) => toUI('account', s));
   for (const [name, fn] of Object.entries(acct.handlers)) ipcMain.handle(name, (_e, ...a) => fn(...a));
+  const e = acct.envStatus();
+  log('env', `${e.env}, config ${e.config}`, e.host ?? 'unconfigured');
   acct.refresh().then((s) => { if (s.signedIn) log('account', s.email, s.workspace ? `workspace ${s.workspace.name}` : 'no workspace', s.sync ? 'sync on' : 'sync off'); if (s.sync && s.workspace) acct.sync.syncNow().catch(() => {}); }).catch((err) => log('account', err?.message ?? err));
   return acct;
 }

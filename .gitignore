@@ -6,6 +6,7 @@ sessions/
 release/
 app/.dev/
 .env
+.env.development
 supabase/.temp/
 .claude/
 .claude/worktrees/
