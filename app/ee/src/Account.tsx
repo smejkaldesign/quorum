@@ -1,10 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
-import type { AccountState, Member, MemberInvite, Result, Role } from './quorum';
-import { Row, Toggle, useMenu } from './controls';
-import { IconBuilding, IconMore, IconPower, IconReset, IconTrash } from './icons';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import type { AccountState, Member, MemberInvite, Result, Role } from '../../src/quorum';
+import { Row, Toggle, useMenu } from '../../src/controls';
+import { IconBuilding, IconMore, IconPower, IconReset, IconTrash } from '../../src/icons';
 import { accountApi } from './accountMock';
 
 const api = accountApi();
+
+// scripts/check-edition-boundary.mjs greps the built renderer for this string: it must be absent from the local
+// bundle and present in the cloud bundle. The attribute below keeps the string in the output.
+export const EE_MARKER = 'QUORUM_EE_MARKER';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CONSUMER = new Set(['gmail.com', 'googlemail.com', 'icloud.com', 'me.com', 'mac.com', 'outlook.com', 'hotmail.com', 'live.com', 'msn.com', 'yahoo.com', 'aol.com', 'proton.me', 'protonmail.com']);
@@ -42,11 +46,18 @@ export function useAccount() {
 
 export function AccountCard({ account }: { account: AccountState }) {
   return (
-    <>
+    <div data-ee={EE_MARKER}>
       <h3>Account</h3>
       {!account.signedIn ? <SignIn /> : !account.workspace ? <PickOrg account={account} /> : <OrgCard account={account} />}
-    </>
+    </div>
   );
+}
+
+// the card plus the state it needs, for the places (Settings, onboarding) that mount the account UI from src/edition.tsx;
+// shows `fallback` while status loads or when the build has no hosted account configured
+export function AccountSlot({ fallback = null }: { fallback?: ReactNode }) {
+  const account = useAccount();
+  return account ? <AccountCard account={account} /> : <>{fallback}</>;
 }
 
 function SignIn() {

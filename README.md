@@ -49,3 +49,9 @@ Helper debug commands: `QuorumHelper dump-zoom [--open-chat]`, `test-capture <se
 ## Theme
 
 Dark shell with one accent, `--brand: #007aff`. All accent tints derive from it in `app/src/styles.css`; the graph accent is `#5ea9ff` in `Graph.tsx`.
+
+## Editions and license
+
+Quorum ships in two editions from one repo (`docs/open-source-strategy.md`). The Local edition is the default build: no account, no server, everything stays on the Mac. The Cloud edition adds sign-in, workspace sync and members; its client code lives in `app/ee/` and loads only when `QUORUM_EDITION=cloud` is set (`npm run build:cloud`, `npm run package:cloud`). `npm run check:edition` fails the build if anything outside `app/ee/` imports it or if the local renderer bundle contains it.
+
+Everything outside `app/ee/` is Apache-2.0 (`LICENSE`, `NOTICE`). `app/ee/` is source available under the Quorum Enterprise License (`app/ee/LICENSE`): use it with a Quorum Cloud subscription.

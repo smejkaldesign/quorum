@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Build helper
+        run: swift build
+        working-directory: helper
+      - name: Install
+        run: npm ci
+        working-directory: app
+      - name: Typecheck
+        run: npm run typecheck
+        working-directory: app
+      - name: Build local edition and check the ee boundary
+        run: npm run build && npm run check:edition
+        working-directory: app
+      - name: Build cloud edition and check the ee boundary
+        run: npm run build:cloud && npm run check:edition
+        working-directory: app
+        env:
+          QUORUM_EDITION: cloud

@@ -4,7 +4,7 @@ import { Markdown } from './Markdown';
 import { useSession } from './session';
 import { EndView } from './EndView';
 import { Onboarding } from './Onboarding';
-import { AccountCard, useAccount } from './Account';
+import { AccountArea } from './edition';
 import markProd from '../assets/quorum-mark.png';
 import markDev from '../assets/quorum-mark-dev.png';
 
@@ -462,8 +462,9 @@ function joinText(a: string, b: string) {
   return /^[,.;:!?]/.test(t) ? `${a}${t}` : `${a} ${t}`;
 }
 
-// the wizard's account step is the same card as Settings › Workspace, so sign-in state is shared
+// the wizard's account step is the same card as Settings › Workspace, so sign-in state is shared; the local edition
+// has no account and says so in the same slot
 function OnboardingShell({ brain, onBrain, onDone }: { brain: Brain | null; onBrain: (b: Brain | null) => void; onDone: () => void }) {
-  const account = useAccount();
-  return <Onboarding brain={brain} onBrain={onBrain} onDone={onDone} accountSlot={account ? <AccountCard account={account} /> : undefined} />;
+  const slot = <AccountArea fallback={<p className="onb-muted">Sign in from Settings › Workspace once you are in.</p>} local={<p className="onb-muted">Local edition. Everything stays on this Mac.</p>} />;
+  return <Onboarding brain={brain} onBrain={onBrain} onDone={onDone} accountSlot={slot} />;
 }

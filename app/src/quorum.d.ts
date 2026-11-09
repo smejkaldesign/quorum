@@ -1,3 +1,8 @@
+// set by Vite's define from QUORUM_EDITION at build time (vite.config.ts); 'local' unless the cloud build asked otherwise
+declare global {
+  const __QUORUM_EDITION__: 'local' | 'cloud';
+}
+
 export type HelperEvent =
   | { event: 'transcript'; channel: 'me' | 'them' | 'dictation'; text: string; isFinal: boolean; start: number; end: number; who?: string | null }
   | { event: 'status'; message: string }

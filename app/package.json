@@ -1,15 +1,19 @@
 {
   "name": "quorum",
-  "private": true,
+  "license": "Apache-2.0",
   "version": "0.0.1",
   "type": "module",
   "main": "main.js",
   "scripts": {
     "build": "vite build",
+    "build:cloud": "QUORUM_EDITION=cloud vite build",
     "start": "vite build && node dev-app.cjs",
+    "start:cloud": "QUORUM_EDITION=cloud vite build && QUORUM_EDITION=cloud node dev-app.cjs",
     "dev": "osascript -e 'if application id \"design.smejkal.quorum\" is running then quit app id \"design.smejkal.quorum\"' && sleep 1 && npm start",
     "typecheck": "tsc --noEmit",
-    "package": "vite build && cd ../helper && swift build -c release && cd ../app && electron-builder --mac"
+    "check:edition": "node scripts/check-edition-boundary.mjs",
+    "package": "vite build && cd ../helper && swift build -c release && cd ../app && electron-builder --mac",
+    "package:cloud": "QUORUM_EDITION=cloud vite build && cd ../helper && swift build -c release && cd ../app && QUORUM_EDITION=cloud electron-builder --mac -c.extraMetadata.quorumEdition=cloud"
   },
   "devDependencies": {
     "@tiptap/core": "3.32.0",
@@ -42,8 +46,8 @@
     },
     "files": [
       "main.js",
-      "account.js",
-      "sync.js",
+      "edition.js",
+      "ee/**",
       "onboarding.js",
       "decisions.js",
       "control.js",

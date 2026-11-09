@@ -1,4 +1,4 @@
-import type { AccountState, Member, MemberInvite, Result, Role } from './quorum';
+import type { AccountState, Member, MemberInvite, Result, Role } from '../../src/quorum';
 
 export type AccountApi = Pick<Window['quorum'], 'accountStatus' | 'accountSendCode' | 'accountVerifyCode' | 'accountSignOut' | 'orgCreate' | 'orgJoin' | 'orgSwitch' | 'membersList' | 'memberInvite' | 'memberRemove' | 'inviteRevoke' | 'syncSet' | 'syncNow' | 'onAccount'>;
 

@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { createRemote } from './store/remote.js';
-import { walk } from './vault.js';
+import { walk } from '../vault.js';
 
 const IDS_FILE = path.join(homedir(), 'Library/Application Support/Quorum/sync-ids.json');
 const BATCH = 100;

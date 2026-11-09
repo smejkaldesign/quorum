@@ -2,7 +2,7 @@ import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type Rea
 import type { Brain, CalendarSettings, Memory, MemoryItem, OptOut, Profile, Settings, Voice, Workspace, Transcription, DecisionProvider, DecisionsStatus } from './quorum';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
-import { AccountCard, MembersPage, useAccount } from './Account';
+import { AccountArea, MembersArea, isCloud } from './edition';
 import {
   IconBell, IconBrain, IconBuilding, IconCalendar, IconChat, IconFolder, IconGrid, IconKeyboard, IconLock,
   IconChevron, IconCode, IconExternal, IconGlobe, ProviderMark, IconMic, IconMore, IconNotes, IconPeople, IconPerson, IconPlus, IconPower, IconReset, IconSliders, IconStack, IconCheck, IconCopy, IconFolderFill, IconFork, IconShield, IconGraph, IconSearch, IconClose, Wave,
@@ -24,7 +24,8 @@ const ACCOUNT: Nav[] = [
 const WORKSPACE: Nav[] = [
   { id: 'general', label: 'General', icon: IconBuilding },
   { id: 'knowledge', label: 'Knowledge', icon: IconBrain },
-  { id: 'members', label: 'Members', icon: IconPeople },
+  // members belong to a hosted workspace, so the local edition has no page for them
+  ...(isCloud ? [{ id: 'members' as const, label: 'Members', icon: IconPeople }] : []),
 ];
 
 
@@ -97,7 +98,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
               <SecondBrain brain={brain} onConnect={onConnect} />
               {brain && <MemoryScan />}
             </>
-          ) : page === 'members' ? <MembersPage />
+          ) : page === 'members' ? <MembersArea />
             : page === 'calendar' ? <CalendarPage />
             : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} />
             : page === 'notifications' ? <NotificationsPage />
@@ -220,10 +221,9 @@ function WorkspacePage({ settings, onSettings }: { settings: Settings; onSetting
   const save = async (patch: Partial<Workspace>) => onSettings(await window.quorum.setSettings({ workspace: patch }));
   const [about, setAbout] = useState(w.companyDescription ?? '');
   useEffect(() => setAbout(w.companyDescription ?? ''), [w.companyDescription]);
-  const account = useAccount();
   return (
     <>
-      {account && <AccountCard account={account} />}
+      <AccountArea local={<><h3>Account</h3><p className="muted">Local edition. Everything stays on this Mac.</p></>} />
       <h3>Company</h3>
       <div className="set-card form">
         <div className="set-line"><strong>Company name</strong><Field value={w.company ?? ''} placeholder="Company" onSave={(v) => save({ company: v })} /></div>

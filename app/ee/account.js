@@ -5,7 +5,7 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import store from './store/index.js';
+import store from '../store/index.js';
 import { createSync } from './sync.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -13,7 +13,7 @@ const DIR = path.join(homedir(), 'Library/Application Support/Quorum');
 const AUTH_FILE = path.join(DIR, 'auth.json');
 
 // npm start has no .env loader, so the repo root's .env fills the two Supabase values when the shell did not
-export function loadEnv(file = path.resolve(here, '../.env')) {
+export function loadEnv(file = path.resolve(here, '../../.env')) {
   let text;
   try { text = readFileSync(file, 'utf8'); } catch { return; }
   for (const line of text.split('\n')) {
