@@ -1,6 +1,6 @@
 # Quorum open-source and cloud strategy
 
-Status: decided 2026-11-08 (price, tiers); other sections current as of that date. Follows the pattern Celune settled in September 2026 (Apache-2.0 core, `ee/` under its own license, bring your own key, one Cloud plan, one public repo) so the studio runs two products on one playbook.
+Status: decided 2026-11-08 (price, tiers); other sections current as of that date. The pattern: Apache-2.0 core, `ee/` under its own license, bring your own key, one Cloud plan, one public repo.
 
 ## The rule that decides everything
 
@@ -33,17 +33,17 @@ The open-source edition is the same app with the same features. It is never a cr
 
 ## What leaves the open-source build
 
-1. Company Supabase URL and anon key. The source build has no cloud config. The signed DMG that Smejkal Design distributes carries the Cloud config, so a user who downloads from quorum.watch can sign in; a user who builds from source gets the Local edition unless they point it at a server with `QUORUM_CLOUD_URL` and `QUORUM_CLOUD_ANON_KEY`.
+1. Company Supabase URL and anon key. The source build has no cloud config. The signed DMG that Smejkal Design distributes carries the Cloud config, so a user who downloads from quorum.watch can sign in; a user who builds from source gets the Local edition unless they point it at a server with `QUORUM_SUPABASE_URL` and `QUORUM_SUPABASE_ANON_KEY`.
 2. Any company model key or hosted model call. Model access defaults to none. Settings shows three choices: Claude Code on this Mac, your own API key (Keychain), or a local model. Nothing works until the user picks one, and the app says so plainly.
-3. Any URL on smejkal.design or headways.ai. Placeholder links point at quorum.watch or at nothing.
+3. Any URL on a company site other than quorum.watch. Placeholder links point at quorum.watch or at nothing.
 4. Analytics, crash reporting, update checks that hit a company server. Updates come from GitHub Releases.
 
 ## License and repo layout
 
-- One public repo `smejkaldesign/quorum`, Apache-2.0 at the root; copyright holder Smejkal Design (sole proprietorship). CLA enforced with the CLA Assistant GitHub app; SECURITY.md with a contact address. Permissive so a company can run it on every laptop without legal review; the moat is the hosted service, not the client code.
-- `app/ee/` holds Cloud-only client code (account, sync, members, Build my Agent OS, team knowledge UI) under `ee/LICENSE` (source available, use only with a Quorum Cloud subscription). `supabase/` lives under the same terms. This mirrors Celune's boundary and reuses its CLA and license text.
+- One public repo `smejkaldesign/quorum`, Apache-2.0 at the root; copyright holder Smejkal Design (sole proprietorship). CLA enforced with the CLA Assistant GitHub app; SECURITY.md with a contact address. Permissive so a company can run it on every laptop without legal review. The hosted service is what is sold.
+- `app/ee/` holds Cloud-only client code (account, sync, members, Build my Agent OS, team knowledge UI) under `ee/LICENSE` (source available, use only with a Quorum Cloud subscription). `supabase/` lives under the same terms.
 - CI check: the Local build must not import from `app/ee/`. A `QUORUM_EDITION=local|cloud` build flag selects the entry points; the default is `local`.
-- Secrets scan (gitleaks) and a founder-content guard (no personal paths, emails, customer names) run on every push, as on Celune.
+- Secrets scan (gitleaks) and a founder-content guard (no personal paths, emails, customer names) run on every push.
 
 ## Why this split
 
@@ -54,10 +54,10 @@ The open-source edition is the same app with the same features. It is never a cr
 ## Distribution
 
 - Signed and notarized DMG on GitHub Releases, auto-update through the Releases feed.
-- quorum.watch: landing page, download button, pricing table with two columns (Open source, Cloud) and a subdued Enterprise row, same as celune.ai.
+- quorum.watch: landing page, download button, pricing table with two columns (Open source, Cloud) and a subdued Enterprise row.
 - Supabase Auth site URL moves to quorum.watch.
 
-## Decisions (Eric, 2026-11-08)
+## Decisions (2026-11-08)
 
 1. One paid tier for v1. Team tier planned later; members and invites ship inside Cloud, watch seat counts.
 2. Price: $5 per seat per month (revised from $9 the same day).
@@ -67,14 +67,13 @@ The open-source edition is the same app with the same features. It is never a cr
 ## Environments and administration
 
 - Development runs against the local Supabase stack (`supabase start`) with the same migrations; production (`quorum`) is for the signed release. A second hosted project costs $10 a month on the Pro organization, so a hosted dev project is optional later, in a free organization. The dev build signs in against its own environment with its own account and session file; nothing is shared with production. Pointing a dev build at production needs an explicit switch in the developer section of Settings and shows a banner while it is on.
-- Super admin: Eric's account carries a `platform_owner` role in production (same pattern as Celune), outside any workspace, with the ability to list workspaces and members, set plans by hand, and read audit rows.
+- Super admin: the platform owner account carries a `platform_owner` role in production, outside any workspace, with the ability to list workspaces and members, set plans by hand, and read audit rows.
 - Admin app: a small web app at admin.quorum.watch, its own directory and UI, for the platform owner only: workspaces, plans, seats, invites, feature flags, environment banner. Phase 2 of the Cloud work, after sync.
 
 ## Accounts and documents, logged on the tasks that need them
 
-Apple Developer Program (signing task), Stripe activation, Terms and Privacy pages and Stripe Tax (billing task), Google OAuth consent screen and Resend SMTP (Google sign-in task), support mailbox and a trademark search note (quorum.watch task). None of these are started until their task is.
+Apple Developer Program (signing task), payment processor activation, Terms and Privacy pages and sales tax (billing task), Google OAuth consent screen and custom SMTP (Google sign-in task), support mailbox and a trademark search note (quorum.watch task). None of these are started until their task is.
 
 ## Related
 
-- docs/parity-gaps.md, docs/backend-plan.md
-- Vault: `MyBrain/04-projects/celune-oss-narrative-draft.md`, `celune-cloud-pricing-simplification.md`, `celune-oss-phase2-one-repo-prd.md`
+- docs/parity-gaps.md, docs/self-hosting.md
