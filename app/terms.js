@@ -1,8 +1,8 @@
 // the recognizer's vocabulary for one capture: names and terms the on-device model would otherwise spell by ear.
 // Sources arrive in priority order (the people on this call first, the vault's regulars last) so the cap keeps the
-// most relevant ones. Apple keeps a context list short; the cap is the ceiling, not a target
-export const TERM_CAP = 300;
-export const VAULT_PEOPLE = 150;
+// most relevant ones. Apple recommends at most 100 contextual phrases, so the cap sits there
+export const TERM_CAP = 100;
+export const VAULT_PEOPLE = 60;
 const MAX_WORDS = 4;
 
 // words a transcriber already knows, which turn up in display names and dictionary entries ("Guest", "Phone", "iPhone 12")
