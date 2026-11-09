@@ -741,35 +741,16 @@ function DecisionsKey({ provider, info, onDone }: { provider: DecisionProvider; 
   );
 }
 
-// what Quorum runs on. Quorum finds the Claude Code already signed in on this Mac; it never holds a login of its own
+// Quorum reached from outside: the MCP server in Claude Code and the quorum command in Terminal. Claude Code as a model
+// provider is a row in PersonalConnectors above
 function ClaudeCard() {
   const [c, setC] = useState<ClaudeStatus | null>(null);
-  const [more, setMore] = useMenu();
-  const check = () => { setC(null); window.quorum.claudeStatus().then(setC); };
   useEffect(() => { window.quorum.claudeStatus().then(setC); }, []);
-  const plan = c?.plan ? c.plan[0].toUpperCase() + c.plan.slice(1) : '';
-  const desc = !c ? 'Checking…'
-    : !c.installed ? 'Install Claude Code to use it as the model source'
-    : !c.loggedIn ? 'Signed out. Sign in to use it as the model source'
-    : ['AI usage', c.email, c.org, plan && `${plan} plan`].filter(Boolean).join(' · ');
   return (
     <>
-      <div className="set-head"><h3>Claude Code</h3></div>
+      <div className="set-head"><h3>Claude Code and Terminal</h3></div>
       <p className="mcp-lede">How Claude and Terminal reach Quorum.</p>
       <div className="set-card">
-        <Row icon={<ProviderMark provider="anthropic" />} title={<>Claude Code{c?.version && <em className="muted ver">v{c.version}</em>}</>} desc={desc}>
-          <span className="menu-wrap" onClick={(e) => e.stopPropagation()}>
-            <button className="icon-btn" aria-label="More options" aria-haspopup="menu" aria-expanded={more} data-tip="More options" onClick={() => setMore((o) => !o)}><IconMore /></button>
-            {more && (
-              <div className="menu end" role="menu">
-                <button role="menuitem" onClick={() => { setMore(false); check(); }}><IconReset width={15} height={15} /> Check again</button>
-                <button role="menuitem" onClick={() => { setMore(false); window.quorum.claudeLogin(); }}><IconPerson width={15} height={15} /> {c?.loggedIn ? 'Switch account' : 'Sign in'}</button>
-                <div className="menu-sep" />
-                <span data-tip="Quorum needs one AI connection" data-tip-pos="left"><button role="menuitem" className="danger" disabled><IconClose width={15} height={15} /> Disconnect</button></span>
-              </div>
-            )}
-          </span>
-        </Row>
         <McpRows claude={c} />
       </div>
     </>

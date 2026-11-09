@@ -57,6 +57,7 @@ describe('the connector catalog', () => {
     expect(modelFor('openai', 'mystery')).toBe('gpt-5');
     expect(modelFor('ollama', 'haiku')).toBeNull();
     expect(modelLabel('openai_compatible', 'sonnet', 'llama3.1', { openai_compatible: { model: 'qwen3' } })).toBe('qwen3');
+    expect(modelLabel('openai_compatible', 'sonnet', 'llama3.1', {})).toBe('OpenAI-compatible');
     expect(modelLabel('ollama', 'sonnet', 'qwen2.5:7b')).toBe('ollama/qwen2.5:7b');
     expect(modelLabel('claude-code', 'opus')).toBe('claude-opus');
     expect(modelLabel(null, 'opus')).toBe('none');
@@ -101,11 +102,13 @@ describe('settings.providers and the legacy switch', () => {
     expect(providerFor('voice', {}, 'claude-code')).toBeNull();
   });
 
-  it('keeps a base URL and model only for the compatible provider, and only when well formed', () => {
+  it('keeps a base URL and model only for the compatible provider, and only when well formed; other entries mark an added provider', () => {
     expect(cleanConnectors({ openai_compatible: { baseUrl: ' https://llm.example.com/v1 ', model: 'qwen3:8b' } })).toEqual({ openai_compatible: { baseUrl: 'https://llm.example.com/v1', model: 'qwen3:8b' } });
     expect(cleanConnectors({ openai_compatible: { baseUrl: 'ftp://x' } }, { openai_compatible: { baseUrl: 'https://a' } })).toEqual({ openai_compatible: { baseUrl: 'https://a' } });
     expect(cleanConnectors({ openai_compatible: { model: '' } }, { openai_compatible: { baseUrl: 'https://a', model: 'm' } })).toEqual({ openai_compatible: { baseUrl: 'https://a' } });
-    expect(cleanConnectors({ openai: { baseUrl: 'https://a' }, openai_compatible: null }, { openai_compatible: { baseUrl: 'https://a' } })).toEqual({});
+    expect(cleanConnectors({ openai: { baseUrl: 'https://a' }, openai_compatible: null }, { openai_compatible: { baseUrl: 'https://a' } })).toEqual({ openai: {} });
+    expect(cleanConnectors({ 'claude-code': {}, ollama: {}, mystery: {} })).toEqual({ 'claude-code': {}, ollama: {} });
+    expect(cleanConnectors({ ollama: null }, { ollama: {}, 'claude-code': {} })).toEqual({ 'claude-code': {} });
   });
 });
 

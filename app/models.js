@@ -9,7 +9,7 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { runAgent } from './agent.js';
-import { BY_ID, OLLAMA_URL, modelFor, providerFor } from './connectors/catalog.js';
+import { BY_ID, OLLAMA_URL, modelFor, modelName, providerFor } from './connectors/catalog.js';
 import { connectedKeys, connectorKey } from './connectors/keys.js';
 
 export const SOURCES = ['none', 'claude-code', 'anthropic-api', 'local'];
@@ -26,8 +26,7 @@ export const localModelName = (name) => (String(name ?? '').trim() || OLLAMA.def
 export function modelLabel(id, alias, local, connectors) {
   if (id === 'claude-code') return `claude-${alias}`;
   if (id === 'ollama') return `ollama/${localModelName(local)}`;
-  if (id === 'openai_compatible') return String(connectors?.openai_compatible?.model || 'openai-compatible');
-  return modelFor(id, alias) ?? 'none';
+  return modelName(id, alias, local, connectors) ?? 'none';
 }
 
 // one entry point for every model call. role picks the provider from settings.providers (summary, notes, agent), with

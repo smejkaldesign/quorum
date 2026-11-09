@@ -95,19 +95,29 @@ export function providerFor(role, providers, source) {
   return r === 'speech' ? 'apple' : null;
 }
 
-// settings.connectors = { openai_compatible: { baseUrl, model } }: what a key+url provider needs beside its key
+// settings.connectors = { <id>: { baseUrl?, model? } }: an entry marks a provider the user added (Claude Code, Ollama
+// have nothing else to keep); a key+url provider also keeps its base URL and model name. null removes the entry
 export function cleanConnectors(next, cur = {}) {
   const out = { ...cur };
   if (!next || typeof next !== 'object') return out;
   for (const id of PROVIDER_IDS) {
-    if (!(id in next) || !needsBaseUrl(id)) continue;
+    if (!(id in next)) continue;
     const v = next[id];
     if (v === null) { delete out[id]; continue; }
     if (!v || typeof v !== 'object') continue;
     const entry = { ...out[id] };
-    if (typeof v.baseUrl === 'string') { const u = v.baseUrl.trim(); if (/^https?:\/\/\S+$/.test(u)) entry.baseUrl = u; else if (!u) delete entry.baseUrl; }
-    if (typeof v.model === 'string') { const m = v.model.trim(); if (/^[\w.\-/:]{1,120}$/.test(m)) entry.model = m; else if (!m) delete entry.model; }
+    if (needsBaseUrl(id)) {
+      if (typeof v.baseUrl === 'string') { const u = v.baseUrl.trim(); if (/^https?:\/\/\S+$/.test(u)) entry.baseUrl = u; else if (!u) delete entry.baseUrl; }
+      if (typeof v.model === 'string') { const m = v.model.trim(); if (/^[\w.\-/:]{1,120}$/.test(m)) entry.model = m; else if (!m) delete entry.model; }
+    }
     out[id] = entry;
   }
   return out;
+}
+
+// the model name a provider answers with, for labels: the alias table, the local name, or the compatible server's name
+export function modelName(id, alias, local, connectors) {
+  if (id === 'ollama') return String(local ?? '').trim() || 'llama3.1';
+  if (id === 'openai_compatible') return String(connectors?.openai_compatible?.model || '').trim() || 'OpenAI-compatible';
+  return modelFor(id, alias);
 }
