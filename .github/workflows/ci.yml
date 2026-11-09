@@ -17,6 +17,9 @@ jobs:
       - name: Build helper
         run: swift build
         working-directory: helper
+      - name: Test helper
+        run: swift test
+        working-directory: helper
       - name: Install
         run: npm ci
         working-directory: app

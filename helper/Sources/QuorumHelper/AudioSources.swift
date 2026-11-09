@@ -15,7 +15,7 @@ enum AudioRoute {
         var size = UInt32(MemoryLayout<AudioObjectID>.size)
         var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
         guard AudioObjectGetPropertyData(system, &addr, 0, nil, &size, &device) == noErr, device != kAudioObjectUnknown else {
-            return ["event": "audioRoute", "route": "unknown", "transport": "", "name": ""]
+            return ["event": "audioRoute", "route": classify(transport: nil, source: nil), "transport": "", "name": ""]
         }
         var transport: UInt32 = 0
         size = UInt32(MemoryLayout<UInt32>.size)
@@ -30,11 +30,20 @@ enum AudioRoute {
         size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
         addr = AudioObjectPropertyAddress(mSelector: kAudioObjectPropertyName, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
         _ = AudioObjectGetPropertyData(device, &addr, 0, nil, &size, &name)
-        let route: String
-        if transport == kAudioDeviceTransportTypeBuiltIn { route = hasSource && source == headphoneJack ? "headphones" : "speakers" }
-        else { route = "external" }
-        let tag = String(bytes: withUnsafeBytes(of: transport.bigEndian, Array.init), encoding: .ascii) ?? ""
-        return ["event": "audioRoute", "route": route, "transport": tag, "name": name?.takeRetainedValue() as String? ?? ""]
+        let route = classify(transport: transport, source: hasSource ? source : nil)
+        return ["event": "audioRoute", "route": route, "transport": tag(transport), "name": name?.takeRetainedValue() as String? ?? ""]
+    }
+
+    // speakers | headphones | external | unknown; nil transport means no default output device, nil source means the device has none
+    static func classify(transport: UInt32?, source: UInt32?) -> String {
+        guard let transport else { return "unknown" }
+        if transport == kAudioDeviceTransportTypeBuiltIn { return source == headphoneJack ? "headphones" : "speakers" }
+        return "external"
+    }
+
+    // the transport type as its four character code, e.g. "bltn", "usb ", "blue"
+    static func tag(_ transport: UInt32) -> String {
+        String(bytes: withUnsafeBytes(of: transport.bigEndian, Array.init), encoding: .ascii) ?? ""
     }
 
     // reports once now and again whenever the default output device changes

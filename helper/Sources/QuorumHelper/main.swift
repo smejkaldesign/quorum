@@ -126,7 +126,7 @@ if args.count > 1 {
         else { Emit.send(["event": "meeting", "active": false, "running": Providers.runningMap()]) }
         exit(0)
     case "test-capture":
-        let seconds = args.count > 2 ? Double(args[2]) ?? 10 : 10
+        let seconds = CLI.captureSeconds(args)
         Task {
             do { try await session.start(dir: nil, echoCancel: false) } catch { Emit.error(error.localizedDescription); exit(1) }
             try? await Task.sleep(for: .seconds(seconds))
@@ -136,12 +136,9 @@ if args.count > 1 {
         dispatchMain()
     case "transcribe-file":
         // eval harness: finals for one or two channel files, then exit. Extra arguments are vocabulary terms.
-        guard args.count > 2 else { Emit.log("usage: quorum-helper transcribe-file <me.wav> [them.wav] [--terms term ...]"); exit(2) }
-        let paths = args.dropFirst(2).prefix { $0 != "--terms" }
-        let terms = Array(args.drop { $0 != "--terms" }.dropFirst())
-        let them = paths.count > 1 ? URL(fileURLWithPath: paths[paths.startIndex + 1]) : nil
+        guard let job = CLI.transcribeJob(args) else { Emit.log("usage: quorum-helper transcribe-file <me.wav> [them.wav] [--terms term ...]"); exit(2) }
         Task {
-            do { try await session.transcribeFiles(me: URL(fileURLWithPath: paths[paths.startIndex]), them: them, terms: terms) }
+            do { try await session.transcribeFiles(me: job.me, them: job.them, terms: job.terms) }
             catch { Emit.error(error.localizedDescription); exit(1) }
             exit(0)
         }
