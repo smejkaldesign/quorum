@@ -480,14 +480,13 @@ ul { margin: 0; padding: 0; list-style: none; }
   position: relative;
   isolation: isolate;
   background: var(--panel);
-  padding: 36px var(--gutter);
-  display: flex; flex-direction: column; gap: 10px;
+  padding: 72px var(--gutter);
+  display: flex; flex-direction: column; gap: 28px;
   color: var(--muted);
 }
-.enterprise h3 { font: 400 20px/1.2 var(--serif); color: var(--text); }
-.enterprise p { font-size: 15px; margin-top: 2px; }
-.enterprise a { font-family: var(--mono); font-size: 14px; color: var(--brand-soft); }
-.enterprise a:hover { color: var(--brand-tint); }
+.enterprise h3 { font: 400 28px/1.2 var(--serif); letter-spacing: -0.01em; color: var(--text); }
+.enterprise p { font-size: 16px; line-height: 1.55; margin-top: 10px; max-width: 560px; color: var(--muted); }
+.enterprise .btn { flex: none; align-self: flex-start; font-family: var(--mono); font-size: 14px; }
 
 /* Footer */
 .site-footer {
@@ -524,6 +523,7 @@ ul { margin: 0; padding: 0; list-style: none; }
   :root { --footer-h: 150px; }
   .footer-row { flex-direction: row; align-items: center; justify-content: space-between; }
   .enterprise { flex-direction: row; align-items: center; justify-content: space-between; }
+  .enterprise .btn { align-self: center; }
 }
 
 @media (min-width: 720px) {
