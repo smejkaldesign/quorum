@@ -3,8 +3,7 @@ import type { Brain, CalendarEvent, ChatRow, MeetingRow, NoteDoc } from './quoru
 import { NoteMenu, NoteReader, VisibilityPill } from './MeetingNote';
 import { pickQuote, quoteLink } from './quotes';
 import { Composer } from './Composer';
-import quorumMark from '../assets/quorum-mark.png';
-import { IconCalendar, IconChat, IconMic, IconExternal, IconMore, IconNotes, IconPerson, IconSearch, IconNewNote, IconListCheck, IconTarget } from './icons';
+import { IconCalendar, IconChat, IconExternal, IconListCheck, IconMic, IconMore, IconNewNote, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
 
 type Filter = 'all' | 'meetings' | 'notes' | 'chats';
 type Row = { key: string; kind: 'meeting' | 'note' | 'chat'; title: string; sub: string; date: Date | null; avatar: string; open: () => void; meeting?: MeetingRow; children?: Row[] };
@@ -237,7 +236,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat }: { brain: Bra
             <div key={r.key} className="hist-item">
             <div className="hist-row" role="button" tabIndex={0} onClick={r.open} onKeyDown={(e) => { if (e.key === 'Enter') r.open(); }}>
               {r.avatar === 'chat'
-                ? <span className="avatar-sq chat"><img src={quorumMark} alt="" /></span>
+                ? <span className="avatar-sq chat"><IconQuorum /></span>
                 : r.avatar === 'note' ? <span className="avatar-sq note"><IconMic width={20} height={20} /></span>
                 : <span className="avatar-sq" style={{ background: colorFor(r.sub + r.title) }}>{r.avatar}
                     {r.meeting && r.meeting.source !== 'quorum' && (
@@ -258,7 +257,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat }: { brain: Bra
             {r.children?.map((c) => (
               <div key={c.key} className="hist-row hist-child" role="button" tabIndex={0} onClick={c.open} onKeyDown={(e) => { if (e.key === 'Enter') c.open(); }}>
                 <span className="hist-branch" aria-hidden="true" />
-                <span className="avatar-sq chat tiny"><img src={quorumMark} alt="" /></span>
+                <span className="avatar-sq chat tiny"><IconQuorum /></span>
                 <span className="hist-text"><strong>{c.title}</strong><span>{c.sub}</span></span>
               </div>
             ))}
