@@ -1,0 +1,18 @@
+{
+  "metadata": { "type": "Metadata", "transaction_key": "deprecated", "request_id": "6a2b", "sha256": "x", "created": "2026-11-08T16:00:00Z", "duration": 0, "channels": 1 },
+  "interim": { "type": "Results", "channel_index": [0, 1], "duration": 1.06, "start": 3.2, "is_final": false, "speech_final": false, "channel": { "alternatives": [ { "transcript": "the budget is forty", "confidence": 0.91, "words": [
+    { "word": "the", "start": 3.26, "end": 3.4, "confidence": 0.99, "punctuated_word": "the" },
+    { "word": "budget", "start": 3.4, "end": 3.8, "confidence": 0.98, "punctuated_word": "budget" },
+    { "word": "is", "start": 3.82, "end": 3.9, "confidence": 0.99, "punctuated_word": "is" },
+    { "word": "forty", "start": 3.92, "end": 4.2, "confidence": 0.7, "punctuated_word": "forty" }
+  ] } ] } },
+  "final": { "type": "Results", "channel_index": [0, 1], "duration": 1.98, "start": 3.2, "is_final": true, "speech_final": true, "channel": { "alternatives": [ { "transcript": "The budget is $40,000.", "confidence": 0.97, "words": [
+    { "word": "the", "start": 3.26, "end": 3.4, "confidence": 0.99, "punctuated_word": "The" },
+    { "word": "budget", "start": 3.4, "end": 3.8, "confidence": 0.98, "punctuated_word": "budget" },
+    { "word": "is", "start": 3.82, "end": 3.9, "confidence": 0.99, "punctuated_word": "is" },
+    { "word": "$40,000", "start": 3.92, "end": 5.1, "confidence": 0.96, "punctuated_word": "$40,000." }
+  ] } ] } },
+  "silence": { "type": "Results", "channel_index": [0, 1], "duration": 1.0, "start": 5.2, "is_final": true, "speech_final": false, "channel": { "alternatives": [ { "transcript": "", "confidence": 0, "words": [] } ] } },
+  "utteranceEnd": { "type": "UtteranceEnd", "channel": [0, 1], "last_word_end": 5.1 },
+  "error": { "type": "Error", "description": "Invalid credentials", "message": "Invalid credentials", "variant": "" }
+}
