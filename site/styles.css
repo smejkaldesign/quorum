@@ -349,8 +349,10 @@ ul { margin: 0; padding: 0; list-style: none; }
 /* How it works: steps on the left, the knowledge graph demo on the right (graph.js) */
 .how-grid { display: grid; gap: 48px; align-items: center; }
 .steps { margin: 40px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 36px; }
-.steps h3 { font: 400 24px/1.2 var(--serif); letter-spacing: -0.01em; margin-top: 4px; }
-.steps p { margin-top: 10px; color: var(--muted); font-size: 16px; line-height: 1.5; max-width: 460px; }
+.steps li { display: grid; grid-template-columns: 24px minmax(0, 1fr); column-gap: 14px; align-items: center; }
+.step-icon { width: 22px; height: 22px; color: var(--brand-soft); }
+.steps h3 { font: 400 24px/1.2 var(--serif); letter-spacing: -0.01em; }
+.steps p { grid-column: 2; margin-top: 10px; color: var(--muted); font-size: 16px; line-height: 1.5; max-width: 460px; }
 #how .note { text-align: left; margin-top: 44px; }
 .graph {
   position: relative;
@@ -396,15 +398,6 @@ ul { margin: 0; padding: 0; list-style: none; }
 .g-linked { margin-top: 16px; font: 600 12px/1.3 var(--sans); letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
 .g-links { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; }
 .g-link { padding: 4px 9px; border-radius: 6px; background: rgba(142, 197, 255, 0.14); color: var(--brand-soft); font-size: 13px; }
-.step {
-  display: inline-flex; align-items: center; gap: 6px;
-  font: 400 12px/1 var(--mono);
-  letter-spacing: 0.08em;
-  color: var(--brand-soft);
-  margin-bottom: 8px;
-}
-.step::before { content: "["; color: var(--mark); }
-.step::after { content: "]"; color: var(--mark); }
 .note { margin-top: 40px; text-align: center; color: var(--text); font-size: 16px; }
 
 /* Providers: one row of logos that drifts left; the track is doubled so the loop has no seam */
