@@ -3,10 +3,12 @@
 // IPC except as the boolean "set". The Anthropic key saved by earlier builds under quorum-model-anthropic still reads
 import { execFile } from 'node:child_process';
 import { BY_ID, KEY_PROVIDER_IDS, needsBaseUrl, needsKey } from './catalog.js';
+import { isDevelopment } from '../edition.js';
 
+// a development copy keeps its own Keychain items, so a key added while testing never shows up in the installed app
 const ACCOUNT = 'quorum';
-const service = (id) => `quorum-connector-${id}`;
-const LEGACY = { anthropic: 'quorum-model-anthropic' };
+const service = (id) => `${isDevelopment ? 'quorum-dev' : 'quorum'}-connector-${id}`;
+const LEGACY = isDevelopment ? {} : { anthropic: 'quorum-model-anthropic' };
 const security = (args) => new Promise((resolve) => execFile('/usr/bin/security', args, (err, out) => resolve(err ? null : out.trim())));
 const read = (svc) => security(['find-generic-password', '-s', svc, '-a', ACCOUNT, '-w']);
 const cache = {}; // per provider: undefined until looked up, null when there's no key

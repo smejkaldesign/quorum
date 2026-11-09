@@ -1,6 +1,7 @@
 // System One decision models: typed yes/no answers in a few hundred ms, from whichever provider the workspace connected.
 // The key sits in the macOS Keychain under the provider's own service name; every caller falls back to what it did
 // before when there's no key or the call fails
+import { isDevelopment } from './edition.js';
 import { execFile } from 'node:child_process';
 
 export const PROVIDERS = {
@@ -8,6 +9,7 @@ export const PROVIDERS = {
   typesafe: { name: 'TypeSafe Jev', service: 'typesafe-systemone', url: 'https://api.typesafe.ai/v1/systemone', model: 'jev-latest', placeholder: 'ts-...', keyHint: 'TypeSafe API key' },
 };
 const ACCOUNT = 'quorum';
+const svc = (p) => (isDevelopment ? `quorum-dev-${p.service}` : p.service);
 const cached = {}; // per provider: undefined until looked up, null when there's no key
 
 const security = (args) => new Promise((resolve) => execFile('/usr/bin/security', args, (err, out) => resolve(err ? null : out.trim())));
@@ -15,7 +17,7 @@ const known = (provider) => { if (!PROVIDERS[provider]) throw new Error(`unknown
 
 export async function decisionsKey(provider) {
   const p = known(provider);
-  if (cached[provider] === undefined) cached[provider] = (await security(['find-generic-password', '-s', p.service, '-a', ACCOUNT, '-w'])) || null;
+  if (cached[provider] === undefined) cached[provider] = (await security(['find-generic-password', '-s', svc(p), '-a', ACCOUNT, '-w'])) || null;
   return cached[provider];
 }
 
@@ -48,13 +50,13 @@ export async function setDecisionsKey(provider, key) {
   } catch (err) {
     return { error: /401|403/.test(err.message) ? `${p.name} didn't accept that key` : `Couldn't reach ${p.name}. Check your connection and try again.` };
   }
-  const saved = await security(['add-generic-password', '-U', '-s', p.service, '-a', ACCOUNT, '-l', `${p.name} (Quorum)`, '-w', key]);
+  const saved = await security(['add-generic-password', '-U', '-s', svc(p), '-a', ACCOUNT, '-l', `${p.name} (Quorum)`, '-w', key]);
   cached[provider] = undefined;
   return saved === null ? { error: "Couldn't save the key to your Keychain" } : { ok: true };
 }
 
 export async function removeDecisionsKey(provider) {
   const p = known(provider);
-  await security(['delete-generic-password', '-s', p.service, '-a', ACCOUNT]);
+  await security(['delete-generic-password', '-s', svc(p), '-a', ACCOUNT]);
   cached[provider] = null;
 }
