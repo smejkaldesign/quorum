@@ -82,16 +82,6 @@ ul { margin: 0; padding: 0; list-style: none; }
 }
 
 /* Mono labels */
-.eyebrow {
-  display: inline-flex; align-items: center; gap: 6px;
-  font: 400 12px/1 var(--mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin-bottom: 18px;
-}
-.eyebrow::before { content: "["; color: var(--mark); }
-.eyebrow::after { content: "]"; color: var(--mark); }
 
 /* Header: sits inside the frame so the hero gradient runs under it.
    Transparent at the top of the page; the tint and hairline fade in over
@@ -348,7 +338,6 @@ ul { margin: 0; padding: 0; list-style: none; }
   white-space: nowrap;
 }
 .provider svg { width: 20px; height: 20px; flex: none; display: block; color: var(--text); }
-#models { padding: calc(var(--section-y) / 2) 0; }
 #models .note { margin-top: 64px; text-align: left; }
 #models .note .pill { margin-right: 8px; vertical-align: 1px; }
 
