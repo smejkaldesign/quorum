@@ -145,6 +145,7 @@ export function App() {
         } else if (e.event === 'status' || e.event === 'error') addLog(`${e.event}: ${e.message}`);
         else if (e.event === 'chatSent') addLog(`posted in Zoom chat: ${e.text.slice(0, 60)}…`);
         else if (e.event === 'axStatus') addLog(`accessibility ${e.trusted ? 'granted' : 'NOT granted'}, Zoom ${e.zoomRunning ? 'running' : 'not running'}`);
+        else if (e.event === 'audioRoute') addLog(`audio out: ${e.name || e.route} (${e.route})`);
       }),
       window.quorum.onState((s) => {
         if (s.phase === 'starting') { setPhase('starting'); addLog("posting Quorum's notice in the Zoom chat…"); return; }

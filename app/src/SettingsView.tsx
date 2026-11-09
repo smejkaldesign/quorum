@@ -877,6 +877,14 @@ function CopyField({ value }: { value: string }) {
 }
 
 // meeting apps Quorum listens to and how it turns their audio into text
+// keeps call audio from showing as you; the description follows the choice
+const ECHO_DESC: Record<NonNullable<Transcription['echo']>, string> = {
+  auto: 'Cancels echo on the built-in speakers, does nothing with headphones',
+  filter: 'Drops your lines that repeat what the call just said',
+  aec: 'Always cancels echo in the microphone',
+  off: 'Call audio can show as you on speakers',
+};
+
 function MeetingsPage({ settings, onSettings }: { settings: Settings; onSettings: (s: Settings) => void }) {
   const t = settings.transcription ?? {};
   const saveTx = async (patch: Transcription) => onSettings(await window.quorum.setSettings({ transcription: patch }));
@@ -887,9 +895,9 @@ function MeetingsPage({ settings, onSettings }: { settings: Settings; onSettings
       <p className="mcp-lede">How Quorum turns call audio into text.</p>
       <div className="set-card even">
         <Row icon={<IconKeyboard width={18} height={18} />} title="Show words as they're heard" desc="Unconfirmed words appear dimmed"><Toggle on={t.live ?? true} onChange={(on) => saveTx({ live: on })} /></Row>
-        <Row icon={<Wave live={false} />} title="Echo handling" desc="Keeps call audio from showing as you">
-          <select className="set-select" value={t.echo ?? 'filter'} onChange={(e) => saveTx({ echo: e.target.value as Transcription['echo'] })}>
-            <option value="filter">Filter repeats</option><option value="aec">Cancel echo</option><option value="off">Off</option>
+        <Row icon={<Wave live={false} />} title="Echo handling" desc={ECHO_DESC[t.echo ?? 'auto']}>
+          <select className="set-select" value={t.echo ?? 'auto'} onChange={(e) => saveTx({ echo: e.target.value as Transcription['echo'] })}>
+            <option value="auto">Automatic</option><option value="filter">Filter repeats</option><option value="aec">Cancel echo</option><option value="off">Off</option>
           </select>
         </Row>
         <Row icon={<IconNotes width={18} height={18} />} title="New paragraph after" desc="How long a pause starts a new turn">

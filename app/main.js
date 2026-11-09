@@ -7,7 +7,7 @@ import store from './store/index.js';
 import { DATA_DIR, EDITION, ENV, loadEE } from './edition.js';
 import { registerOnboarding } from './onboarding.js';
 import { createSuggester } from './suggest.js';
-import { addFinal, toJSON, toText } from './transcript.js';
+import { addFinal, isEcho, toJSON, toText } from './transcript.js';
 import { extractJson } from './json.js';
 import { buildTerms, orgOf, topNames } from './terms.js';
 import { startControl } from './control.js';
@@ -124,11 +124,10 @@ function startHelper() {
   helper.on('error', (err) => { log('helper failed to start', err.message); toUI('log', `Quorum's audio helper could not start (${err.code ?? err.message}). Meetings are off until it is rebuilt.`); helper = null; });
 }
 
-const words = (s) => s.toLowerCase().replace(/[^a-z0-9' ]/g, ' ').split(/\s+/).filter(Boolean);
 let lastThemPartial = '';
+// where the Mac's sound goes, reported by the helper at launch and on every output device change
+let audioRoute = null;
 
-// on speakers the mic hears the far side; a "me" line that mostly repeats a recent "them" line is echo
-// meeting transcript tuning, set on the Voice page; defaults are what most calls want
 // on a one-to-one call the other side is one person, so their side gets their name
 const themName = () => (!meeting.solo && meeting.people.size === 1 ? [...meeting.people][0] : null);
 // meeting apps Quorum can notice. Meet and Teams play audio from browser helper processes, so the tap gets prefixes.
@@ -143,28 +142,23 @@ const PROVIDERS = {
 };
 let meetingProvider = 'zoom';
 const provider = () => PROVIDERS[meetingProvider] ?? PROVIDERS.zoom;
-const TX_DEFAULTS = { echo: 'filter', gap: 1.5, live: true, capture: 'meeting' };
+// meeting transcript tuning, set on the Meetings page; defaults are what most calls want
+const TX_DEFAULTS = { echo: 'auto', gap: 1.5, live: true, capture: 'meeting' };
 const tx = () => ({ ...TX_DEFAULTS, ...settings.transcription });
+// echo: on speakers the mic hears the far side. auto cancels it in the mic path when the built-in speakers are the
+// output (and treats an unknown route as speakers) and leaves it alone on headphones or an external device; the word
+// filter backs that up on speakers and is the whole answer when echo is set to filter
+const onSpeakers = () => (audioRoute?.route ?? 'speakers') === 'speakers';
+const aecOn = () => tx().echo === 'aec' || (tx().echo === 'auto' && onSpeakers());
+const echoFilterOn = () => tx().echo === 'filter' || (tx().echo === 'auto' && onSpeakers());
 const reEsc = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // your dictionary fixes names in meeting transcripts too, not just dictation
 const fixWords = (text) => (settings.voice?.dictionary ?? []).reduce((t, d) => t.replace(new RegExp(`\\b${reEsc(d.heard)}\\b`, 'gi'), d.write), text);
 
-function isEcho(evt) {
-  if (tx().echo === 'off') return false;
-  const mine = words(evt.text);
-  if (mine.length < 2) return false;
-  const theirs = new Set(meeting.transcript.filter((t) => t.channel === 'them' && Math.abs(t.start - evt.start) < 15).flatMap((t) => words(t.text)));
-  words(lastThemPartial).forEach((w) => theirs.add(w));
-  // short lines have to match completely, longer ones mostly
-  return mine.filter((w) => theirs.has(w)).length / mine.length >= (mine.length < 4 ? 1 : 0.7);
-}
-
 // a final joins the transcript as part of a speaker turn; the UI gets the whole turn, replace: true when it grew
 function keep(evt) {
-  if (meeting.capturing && mentionsOptOut(evt.text)) return blockCall('name');
-  if (meeting.capturing && evt.channel !== 'me') softStop(evt.text, 'someone on the call', 0.85);
-  else if (meeting.capturing) softStop(evt.text, OWNER, 0.85);
-  if (!meeting.capturing) return toUI('helper-event', evt);
+  if (mentionsOptOut(evt.text)) return blockCall('name');
+  softStop(evt.text, evt.channel === 'me' ? OWNER : 'someone on the call', 0.85);
   const { turns, changed, replace } = addFinal(meeting.transcript, { channel: evt.channel, text: evt.text, start: evt.start, end: evt.end, at: Date.now() }, tx().gap);
   if (!changed) return;
   meeting.transcript = turns;
@@ -339,6 +333,7 @@ function onHelperEvent(evt) {
     if (evt.event === 'chatSent') p.resolve(); else p.reject(new Error(evt.message));
   }
   if (evt.event === 'axStatus') { lastAx = evt; axWaiters.splice(0).forEach((w) => w(evt)); }
+  if (evt.event === 'audioRoute') { audioRoute = evt; log('audio out:', evt.name || evt.route, `(${evt.route})`); return toUI('helper-event', evt); }
   if (evt.event === 'level') return toUI('level', evt.v);
   if (evt.event === 'chat') return onChat(evt);
   if (evt.event === 'meeting') return onMeeting(evt);
@@ -359,9 +354,9 @@ function onHelperEvent(evt) {
   evt = { ...evt, text: fixWords(evt.text), ...(evt.channel === 'them' ? { who: themName() } : {}) };
   if (evt.channel === 'them') lastThemPartial = evt.text;
   if (!evt.isFinal) return toUI('helper-event', evt);
-  if (evt.channel === 'them') return keep(evt);
-  // wait a beat so the matching "them" final can land first
-  setTimeout(() => (isEcho(evt) ? toUI('helper-event', { ...evt, isFinal: false, text: '' }) : keep(evt)), 1500);
+  // a dropped echo clears the dimmed partial with an empty non-final
+  if (evt.channel === 'me' && echoFilterOn() && isEcho(meeting.transcript, evt, lastThemPartial)) return toUI('helper-event', { ...evt, isFinal: false, text: '' });
+  keep(evt);
 }
 
 // only STOP and GO are read from the chat, and they never go through a model
@@ -427,7 +422,7 @@ function beginSegment() {
   meeting.capturing = true;
   // a note hears everything the Mac plays; a call only hears the meeting app, so music and alerts stay out
   const only = tx().capture === 'meeting' && !meeting.solo ? provider().bundles : [];
-  helperSend({ cmd: 'start', sessionDir: meeting.dir, echoCancel: tx().echo === 'aec', locale: settings.voice?.locale || 'en-US', tapBundles: only, terms: meeting.terms });
+  helperSend({ cmd: 'start', sessionDir: meeting.dir, echoCancel: aecOn(), locale: settings.voice?.locale || 'en-US', tapBundles: only, terms: meeting.terms });
   writeState();
 }
 
@@ -933,7 +928,7 @@ ipcMain.handle('set-settings', (_e, next) => {
   if (typeof next.autoListen === 'boolean' && next.autoListen !== settings.autoListen) setAutoListen(next.autoListen);
   if (next.transcription && typeof next.transcription === 'object') {
     const t = next.transcription, c = {};
-    if (['off', 'filter', 'aec'].includes(t.echo)) c.echo = t.echo;
+    if (['auto', 'off', 'filter', 'aec'].includes(t.echo)) c.echo = t.echo;
     if ([0.8, 1.5, 3].includes(t.gap)) c.gap = t.gap;
     if (typeof t.live === 'boolean') c.live = t.live;
     if (['meeting', 'all'].includes(t.capture)) c.capture = t.capture;

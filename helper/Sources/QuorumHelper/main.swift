@@ -58,6 +58,8 @@ func handle(_ line: String) async {
         await dictation.start(locale: cmd["locale"] as? String ?? "en-US", terms: cmd["terms"] as? [String] ?? [])
     case "dictateStop":
         await dictation.stop()
+    case "audioRoute":
+        Emit.send(AudioRoute.current())
     case "chatWatch":
         ChatWatcher.shared.setEnabled(cmd["on"] as? Bool ?? true)
     case "chatSend":
@@ -147,5 +149,6 @@ Thread.detachNewThread {
     Task { await session.stop(); exit(0) }
 }
 Emit.send(["event": "ready"])
+AudioRoute.watch()
 ChatWatcher.shared.startMeetingWatch()
 dispatchMain()

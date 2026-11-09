@@ -11,6 +11,7 @@ export type HelperEvent =
   | { event: 'ready' }
   | { event: 'chatSent'; text: string }
   | { event: 'axStatus'; trusted: boolean; zoomRunning: boolean }
+  | { event: 'audioRoute'; route: 'speakers' | 'headphones' | 'external' | 'unknown'; transport: string; name: string }
   | { event: 'dictation'; state: 'on' | 'off' };
 
 export type ActionItem = { title: string; owner: string | null };
@@ -31,7 +32,7 @@ export type DecisionProvider = 'openai' | 'typesafe';
 export type EnvStatus = { env: 'development' | 'production'; config: 'shell' | 'production' | 'development' | 'local' | 'none'; host: string | null; useProduction: boolean; configured: boolean };
 export type DecisionsStatus = { connected: boolean; provider: DecisionProvider | null; providers: Record<DecisionProvider, { name: string; placeholder: string; keyHint: string }> };
 export type Workspace = { company?: string; companyDescription?: string; neverListen?: string[]; optOuts?: OptOut[]; decisions?: { provider: DecisionProvider; by?: string; at?: string }; stopWord?: string; goWord?: string };
-export type Transcription = { echo?: 'off' | 'filter' | 'aec'; gap?: number; live?: boolean; capture?: 'meeting' | 'all' };
+export type Transcription = { echo?: 'auto' | 'off' | 'filter' | 'aec'; gap?: number; live?: boolean; capture?: 'meeting' | 'all' };
 // where the model runs: none until chosen; claude-code is the only source with tools, so the only one that reads the Agent OS
 export type ModelSource = 'none' | 'claude-code' | 'anthropic-api' | 'local';
 export type ClaudeStatus = { installed: boolean; loggedIn: boolean; email: string; org: string; plan: string; method: string; version: string };
