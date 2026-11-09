@@ -357,8 +357,8 @@ html.popup-root, html.popup-root body { background: transparent; }
 .filter { display: inline-flex; align-items: center; gap: 9px; height: 40px; padding: 0 18px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--muted); font-size: 16px; }
 .filter:hover { color: var(--text); }
 .filter.on { color: var(--text); background: rgba(255, 255, 255, 0.05); }
-.hist-group { margin-bottom: 24px; }
-.hist-group h4 { margin: 0 0 6px; color: var(--muted); font-size: 18px; font-weight: 500; }
+.hist-group { margin-bottom: 32px; }
+.hist-group h4 { margin: 0 0 8px; color: var(--muted); font-size: 18px; font-weight: 500; }
 .hist-row { display: flex; align-items: center; gap: 14px; width: 100%; padding: 7px 0; text-align: left; border-radius: 12px; }
 .hist-row:hover { background: rgba(255, 255, 255, 0.03); }
 .avatar-sq { position: relative; width: 44px; height: 44px; flex: none; display: grid; place-items: center; border-radius: 8px; color: #fbe9d8; font: 400 22px/1 "New York", ui-serif, Georgia, serif; }
@@ -839,7 +839,7 @@ svg.err { color: var(--danger); }
 .avatar-sq.cal { background: #1e2a42; color: #6ea8ff; }
 .avatar-sq.note { background: #1d3328; color: #7fdb83; }
 .up-row { cursor: default; }
-.up-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.up-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
 .up-head h4 { margin: 0; }
 .up-toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); cursor: pointer; user-select: none; }
 .up-toggle input { margin: 0; accent-color: var(--brand); }
