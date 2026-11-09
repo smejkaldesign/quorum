@@ -3,7 +3,7 @@ import type { Brain, CalendarSettings, ClaudeStatus, Memory, MemoryItem, ModelSo
 import { ModelKey, SOURCE_NAMES } from './modelSource';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
-import { AccountArea, EDITION, MembersArea, useHostedAccounts } from './edition';
+import { AccountArea, EDITION, MembersArea, WorkspaceConnectorsArea, useHostedAccounts } from './edition';
 import { canAdmin, modeOf, resolvePage, workspacePages, type Page } from './settingsNav';
 import { EnvSwitch } from './EnvSwitch';
 import {
@@ -126,7 +126,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
               {brain && <MemoryScan />}
             </>
           ) : page === 'members' ? <MembersArea />
-            : page === 'org-connectors' ? <OrgConnectorsLocal onGo={go} />
+            : page === 'org-connectors' ? <WorkspaceConnectorsArea local={<OrgConnectorsLocal onGo={go} />} />
             : page === 'org-voice' ? <OrgVoiceLocal onGo={go} />
             : page === 'calendar' ? <CalendarPage />
             : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} />

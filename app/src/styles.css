@@ -472,6 +472,16 @@ html.popup-root, html.popup-root body { background: transparent; }
 .set-menu-back { display: flex; align-items: center; gap: 6px; height: 34px; margin: 0 0 8px; padding: 0 8px; border-radius: 10px; color: var(--muted); font-size: 14px; text-align: left; }
 .set-menu-back svg { transform: rotate(90deg); }
 .set-menu-back:hover { color: var(--text); background: rgba(255, 255, 255, 0.04); }
+/* Admin › Connectors: role pills on a row, the role checkboxes in the add sheet */
+.conn-roles { display: inline-flex; flex-wrap: wrap; gap: 6px; vertical-align: middle; }
+.conn-roles .stub { font-size: 11px; padding: 0 7px; }
+.conn-roles-pick { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 4px 0; }
+.conn-role { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text); }
+.conn-role input { width: 16px; height: 16px; accent-color: var(--brand); }
+.conn-sheet .set-line { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0; }
+.conn-sheet .set-line.stacked { flex-direction: column; align-items: stretch; }
+.conn-sheet .modal-actions { justify-content: space-between; }
+.set-ok { margin: 8px 0 0; color: var(--go); font-size: 14px; }
 em.stub { font-style: normal; font-size: 12px; font-weight: 500; padding: 1px 9px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--muted); }
 .set-quit { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 10px 12px; color: var(--danger); font-size: 16px; border-radius: 10px; }
 .set-quit:hover { background: var(--danger-bg); }

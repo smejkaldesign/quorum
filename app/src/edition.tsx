@@ -8,6 +8,7 @@ export const isCloud = __QUORUM_EDITION__ === 'cloud';
 
 const CloudAccount = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/Account').then((m) => ({ default: m.AccountSlot }))) : null;
 const CloudMembers = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/Account').then((m) => ({ default: m.MembersPage }))) : null;
+const CloudConnectors = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/WorkspaceConnectors').then((m) => ({ default: m.WorkspaceConnectorsPage }))) : null;
 
 // whether this build can reach a hosted account at runtime: the cloud edition without QUORUM_SUPABASE_URL and the anon key
 // reports configured: false from account-status. Local is always false; null while the cloud answer is on its way
@@ -40,3 +41,15 @@ export function MembersArea() {
   if (!CloudMembers || !hosted) return null;
   return <Suspense fallback={null}><CloudMembers /></Suspense>;
 }
+
+// a Workspace page that exists only with a hosted workspace: the ee page in Cloud, `local` in the Local edition
+function CloudPage({ Page, local }: { Page: ReturnType<typeof lazy> | null; local: ReactNode }) {
+  const hosted = useHostedAccounts();
+  if (!Page) return <>{local}</>;
+  if (hosted === null) return null;
+  if (!hosted) return NOT_SET_UP;
+  return <Suspense fallback={null}><Page /></Suspense>;
+}
+
+// Settings › Admin › Connectors: organization providers an admin manages for everyone
+export const WorkspaceConnectorsArea = ({ local }: { local: ReactNode }) => <CloudPage Page={CloudConnectors} local={local} />;
