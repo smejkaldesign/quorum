@@ -3,6 +3,7 @@ import type { MeetingMeta, Notes, NotesDraft } from './quorum';
 import mark from '../assets/quorum-mark.png';
 import { Markdown } from './Markdown';
 import { IconArrowUp, IconCalendar, IconClock, IconFolder, IconLogs, IconNotes, IconPeople } from './icons';
+import { PrivateNotes } from './PrivateNotes';
 
 type Followup = { q: string; a: string | null };
 
@@ -10,7 +11,8 @@ type Followup = { q: string; a: string | null };
 // whatever already parses is shown; a bullet with refs points back at the transcript turns it came from
 export type Turn = { id: number; channel: 'me' | 'them'; who: string; text: string };
 
-export function EndView({ notes, draft, meta, summarizing, transcript, onClose }: { notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; onClose: () => void }) {
+// privateNotes is what you typed on the call; edits here reach the main process the same way, and flush runs before Save
+export function EndView({ notes, draft, meta, summarizing, transcript, privateNotes, onPrivateNotes, flushPrivateNotes, onClose }: { notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; privateNotes: string; onPrivateNotes: (v: string) => void; flushPrivateNotes: () => void; onClose: () => void }) {
   const [showing, setShowing] = useState<'summary' | 'transcript'>('summary');
   const [dropped, setDropped] = useState<Record<number, boolean>>({});
   const [followups, setFollowups] = useState<Followup[]>([]);
@@ -38,6 +40,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, onClose }
 
   async function save() {
     if (!notes) return;
+    flushPrivateNotes();
     setSaving(true);
     try {
       const r = await window.quorum.saveNotes({
@@ -90,6 +93,13 @@ export function EndView({ notes, draft, meta, summarizing, transcript, onClose }
                 <button className={showing === 'transcript' ? 'on' : ''} aria-pressed={showing === 'transcript'} aria-label="Transcript" data-tip="Transcript" onClick={() => setShowing('transcript')}><IconLogs width={16} height={16} /></button>
               </div>
             </div>
+
+            {showing === 'summary' && (
+              <section className="doc-section">
+                <h2><span className="hash">#</span>Your notes</h2>
+                <PrivateNotes value={privateNotes} onChange={onPrivateNotes} onBlur={flushPrivateNotes} />
+              </section>
+            )}
 
             {showing === 'transcript' ? (
               <section className="transcript end-transcript">

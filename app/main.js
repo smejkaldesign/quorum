@@ -388,9 +388,11 @@ function writeState() {
   clearTimeout(stateTimer);
   stateTimer = null;
   const live = meeting.capturing;
+  // what you typed rides along while the call or its review is open, so a crash keeps it; the CLI never reads it
+  const mine = live || meeting.reviewing ? { privateNotes: meeting.privateNotes } : {};
   store.state.write(live
-    ? { recording: true, title: meeting.title || null, startedAt: meeting.startedAt?.toISOString() ?? null, transcript: meeting.transcript.slice(-400).map((t) => ({ who: t.channel === 'me' ? 'me' : 'others', text: t.text })) }
-    : { recording: false, stopped: meeting.armed, reviewing: !!meeting.reviewing });
+    ? { recording: true, title: meeting.title || null, startedAt: meeting.startedAt?.toISOString() ?? null, transcript: meeting.transcript.slice(-400).map((t) => ({ who: t.channel === 'me' ? 'me' : 'others', text: t.text })), ...mine }
+    : { recording: false, stopped: meeting.armed, reviewing: !!meeting.reviewing, ...mine });
 }
 const writeStateSoon = () => { stateTimer ??= setTimeout(writeState, 3000); };
 
@@ -1656,6 +1658,8 @@ ipcMain.handle('pause', () => {
 });
 ipcMain.handle('resume', () => { if (meeting.armed && !meeting.capturing && !callBlocked) resume(OWNER); });
 
+// your notes from the call and its review: the outline the notes prompt fills, kept verbatim in the saved note
+ipcMain.handle('private-notes-set', (_e, text) => { meeting.privateNotes = String(text ?? ''); writeState(); });
 ipcMain.handle('save-notes', (_e, payload) => saveNotes(payload));
 function saveNotes(payload) {
   const notes = { ...meeting.notes, ...payload.notes };
