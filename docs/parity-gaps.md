@@ -1,50 +1,32 @@
-# Parity gaps: this Mac versus the reference setup
+# Known gaps
 
-Status on 2026-11-08, after the first port. The reference ran against a different Agent OS, so some features here find nothing to use. Each item says what is missing, what the app does meanwhile, and what closes it.
+Product gaps as of 2026-11-08. Each item says what is missing, what the app does meanwhile, and what closes it.
 
-## Works now
+## Meetings
 
-- Build chain: `swift build`, `npm install`, `tsc --noEmit`, `vite build` all pass. Dev app launches as "Quorum Dev", indexes the vault (1,625 notes in about 400 ms), helper reports ready and Accessibility trusted.
-- Brain detection: finds `~/Documents/GitHub/second-brain` (CLAUDE.md) and `MyBrain/` (.obsidian, index.md, search-memory.py).
-- Claude Code sign-in is the personal claude.ai account, so agent questions and summaries run without any API key.
-- Search hints and in-call suggestions call `search-memory.py --mode keyword` and parse its `N. [path:lines]` output. The reference script took `--keyword --cite --expand-graph`; this one does not, so the call sites and `parseHits` were rewritten.
+- **Microsoft Teams.** Detection and capture are wired and untested. There is no chat notice yet. Plan in `docs/plans/microsoft-teams.md`.
+- **Google Meet replies.** STOP and GO replies are read only while the Meet tab is the active tab. Plan in `docs/plans/google-meet.md`.
 
-## Hosted edition and first run (2026-11-08, evening)
+## Agent OS
 
-- **Accounts.** Sign-in by 6-digit email code (Supabase Auth, templates set to send `{{ .Token }}`), workspaces with owner/admin/member roles, invites by email, domain join, Members page. Migration `0002_accounts` applied to production. Live test: Eric signed in, workspace "Smejkal Design" (domain smejkal.design) created, members list reads back.
-- **Sync.** Local stays the store; `app/sync.js` pushes notes and meetings when sync is on, skipping hidden paths, private folders, `confidential:` notes and withheld lines. Off by default; nothing has been pushed from the real vault.
-- **First run.** `app/onboarding.js` + `src/Onboarding.tsx`: welcome, notes folder (create `~/Documents/Quorum` with starter files, or connect), Claude Code check, optional account, permissions, done. Verified on the installed `/Applications/Quorum.app` under a throwaway HOME. Existing installs skip the wizard.
-- **Packaging.** `npm run package` works with ad-hoc signing; the asar now ships every main-process module plus `@supabase/supabase-js`. Installed build at `/Applications/Quorum.app`.
-- **Open:** Google sign-in (needs an OAuth client), custom SMTP for auth mail (built-in SMTP allows about 2 per hour), the local signing certificate, Teams chat notice, running power-ups.
+- **Power-ups.** Settings, Memory, Power-ups lists what the scan found in the connected Agent OS: memory index, search, link graph, guard hooks, agent instructions, skills, agents and MCP servers. Index, search, graph and folders feed the agent today. Instructions, skills, agents and MCP servers are listed and will become runnable later.
+- **Optional markers.** The features below turn on only when the connected folder has the file. Without it the app degrades quietly.
 
-## Now native (no longer depend on the connected Agent OS)
+| Feature | Marker | Without it | Fix |
+|---|---|---|---|
+| Opt-out redaction list | `scripts/embed-bench/excluded.txt` | No term redaction in transcripts or suggestions | Create the file, one term per line |
+| Link graph expansion | `scripts/graph_links.py` | Hints are keyword-only | Add the script, or leave the marker out |
+| Semantic search | a vector index next to the search script | Settings labels search as "Keyword search" | Fine as is |
 
-- **Power-ups.** Settings › Memory › Power-ups lists what the scan found in the connected Agent OS: memory index, search, link graph, guard hooks, agent instructions, skills, agents and MCP servers. Index, search, graph and folders feed the agent today; instructions, skills, agents and MCP servers are listed and will become runnable later.
+- **Meeting notes folder.** Saved notes land in `08-meetings/quorum/` under the vault. Imports from other note takers target a sibling folder, for example `08-meetings/granola/`.
 
-- **Read guard.** `app/guards/read-guard.py` ships with the app and runs on every Read, Grep and Glob the agent makes: secret-looking files, notes with `confidential:` in frontmatter, and private folders (the user's `privateDirs` setting, else any folder named personal or private) are denied. Guard hooks found in the connected Agent OS still run in addition.
-- **Decision checks.** `app/decisions.js` is a provider abstraction over System One models: OpenAI decisions and TypeSafe Jev. Connect either in Settings › Workspace › Connections; the key stays in Keychain. Quick checks run whenever a provider is connected.
+## Cloud edition
 
-## Missing in this vault (optional features, app degrades quietly)
+- **Google sign-in.** Needs an OAuth client. Email code sign-in works today.
+- **Auth mail.** The built-in Supabase sender allows about 2 emails per hour. Real use needs a custom SMTP provider (see `docs/self-hosting.md`).
+- **Sync.** Push-only. Notes and meetings upload when sync is on; pull sync and conflict snapshots are open.
+- **Hosted model access.** Absent. Model calls use the user's Claude Code sign-in or the user's own API key in both editions.
 
-| Feature | Reference file | Here | Effect | Fix |
-|---|---|---|---|---|
-| Opt-out redaction list | `MyBrain/scripts/embed-bench/excluded.txt` | Absent | No term redaction in transcripts or suggestions | Decide whether a personal exclusion list is needed; if so create the file (one term per line) |
-| Link graph expansion | `scripts/graph_links.py` | Absent | Hints are keyword-only | `search-memory.py --related` is wired in when the graph marker exists; add a `graph_links.py` shim or drop the marker |
-| Semantic search | `MyBrain/memory/vectors.sqlite` | Absent (hybrid mode here uses Voyage through `brain.sqlite`) | Settings labels search as "Keyword search" | Fine as is; relabel later if hybrid is preferred |
-| Meeting notes folder | `MyBrain/08-meetings/` | Created empty, `quorum/` subfolder | Saved notes land in `08-meetings/quorum/`; Granola import target is `08-meetings/granola/` | Run a Granola export into `08-meetings/granola/` when wanted |
+## Settings
 
-## Changed from the reference on purpose
-
-- Names: Herd → Quorum (app), Ilma → Quorum (assistant), `HerdHelper` → `QuorumHelper`, `herd://` → `quorum://`, env vars `HERD_*` → `QUORUM_*`, Keychain account `vanta` → `quorum`, bundle id `com.vanta.herd` → `design.smejkal.quorum`.
-- Theme: brand purple `#8c3dff` → blue `#3d7bff`, with every derived tint remapped. App icon regenerated in blue from the same llama glyph (placeholder art).
-- Removed: `docs/plans/` from the reference (employer-internal content). Replaced by `backend-plan.md` and the vault project page `04-projects/quorum.md`.
-- Removed: `package-lock.json` download URLs that pointed at a corporate npm proxy; rewritten to registry.npmjs.org.
-- Fresh git history. The reference history belonged to another org.
-
-## Needs Eric
-
-1. System permissions on first real use: Microphone, Screen and System Audio Recording, Calendar, Accessibility for Terminal (dev) and later for Quorum.app.
-2. A "Quorum Local Signing" code-signing certificate in Keychain Access before `npm run package`, so macOS keeps permission grants across rebuilds.
-3. Google Meet: detection and the STOP and GO chat notice are verified live (see `docs/plans/google-meet.md`, Status). Replies are read only while the Meet tab is the active tab. Microsoft Teams: wired (detect, capture) but untested, no chat notice yet; plan in `docs/plans/microsoft-teams.md`.
-4. Hosted backend: Supabase project `frlpvwagtcgbnqzykqbq` ("Quorum Prod", us-east-1, free plan) exists and `0001_init` is applied (10 tables, RLS, 40 policies). `QUORUM_SUPABASE_URL` and the publishable key sit in the gitignored `.env`. Writes are denied until Supabase Auth gives the app a session, which is the next backend step (`docs/backend-plan.md`, step 3).
-5. Done 2026-11-08: the Quorum owl (`quorum-filled.svg`, `quorum-outlined.svg`) replaced the llama everywhere; brand is `#007aff`.
+- Rows for features that have not shipped stay visible as a to-do map until the features ship.

@@ -1,4 +1,4 @@
-// push-only sync for the hosted edition (step 3 of docs/backend-plan.md): the vault on disk stays the store, and
+// push-only sync for the Cloud edition (setup in docs/self-hosting.md): the vault on disk stays the store, and
 // every note or meeting note that changes is upserted into the workspace's tables. Nothing here throws when sync
 // is off or signed out; a failed push is recorded on the account state as syncError.
 import { createHash, randomBytes } from 'node:crypto';

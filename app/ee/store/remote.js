@@ -1,5 +1,5 @@
 // the hosted edition's store: the same interface as local.js over Supabase, scoped to one workspace and written as
-// the signed-in user. Step 3 of docs/backend-plan.md; today only notes and meetings push (upsert), the rest is to come.
+// the signed-in user. Setup in docs/self-hosting.md; today only notes and meetings push (upsert), the rest is to come.
 // The client comes from account.js, which holds the session; this module never signs in on its own.
 import path from 'node:path';
 
