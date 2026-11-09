@@ -158,6 +158,11 @@ contextBridge.exposeInMainWorld('quorum', {
   platformMembers: (workspaceId) => ipcRenderer.invoke('platform-members', workspaceId),
   platformUsage: (workspaceId) => ipcRenderer.invoke('platform-usage', workspaceId),
   platformSetPlan: (workspaceId, draft) => ipcRenderer.invoke('platform-set-plan', workspaceId, draft),
+  // billing (hosted edition; handlers in ee/billing.js): the plan and seats, and Stripe's pages opened in the browser
+  billingStatus: () => ipcRenderer.invoke('billing-status'),
+  billingCheckout: (seats) => ipcRenderer.invoke('billing-checkout', seats),
+  billingPortal: () => ipcRenderer.invoke('billing-portal'),
+  billingPacks: (packs) => ipcRenderer.invoke('billing-packs', packs),
   platformAccessCodes: () => ipcRenderer.invoke('platform-access-codes'),
   platformIssueAccessCode: (email, note, days) => ipcRenderer.invoke('platform-issue-access-code', email, note, days),
   platformRevokeAccessCode: (id) => ipcRenderer.invoke('platform-revoke-access-code', id),

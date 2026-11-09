@@ -281,7 +281,14 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
       if (error) return fail(error, 'That invite could not be revoked.');
       return membersList();
     }),
-    'sync-set': (on) => {
+    // the paywall on the app side: sync turns on only for a workspace with Cloud service (paid, cloud or internal)
+    'sync-set': async (on) => {
+      if (on === true && client && state.signedIn && state.workspace) {
+        try {
+          const { data } = await client.rpc('workspace_billing', { workspace_id: state.workspace.id });
+          if (data && !['paid', 'cloud', 'internal'].includes(data.plan)) return { ...snapshot(), error: 'Sync starts with a Quorum Cloud subscription. An owner or admin can start it in Settings › Admin.' };
+        } catch (err) { log('sync plan check', err?.message ?? err); }
+      }
       state.sync = on === true;
       if (settings.sync !== state.sync) { settings.sync = state.sync; saveSettings?.(); }
       emit();

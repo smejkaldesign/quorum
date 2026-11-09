@@ -8,6 +8,7 @@ import { ENGINES } from './lib/engines/index.js';
 import { log } from './lib/log.js';
 import { handleConnection } from './lib/session.js';
 import { handleNotes } from './summary.js';
+import { handleCheckout, handlePacks, handlePortal, handleWebhook } from './billing.js';
 
 checkConfig();
 const clients = makeClients();
@@ -15,8 +16,12 @@ const deps = { clients, config, engines: ENGINES, log };
 
 const server = createServer((req, res) => {
   const { pathname } = new URL(req.url, 'http://relay');
-  if (pathname === '/healthz') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok: true, engine: config.engine, notes: !!config.keys.anthropic })); }
+  if (pathname === '/healthz') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok: true, engine: config.engine, notes: !!config.keys.anthropic, billing: !!(config.stripe.key && config.stripe.seatPrice) })); }
   if (pathname === '/v1/notes') return handleNotes(req, res, deps);
+  if (pathname === '/v1/billing/checkout') return handleCheckout(req, res, deps);
+  if (pathname === '/v1/billing/portal') return handlePortal(req, res, deps);
+  if (pathname === '/v1/billing/packs') return handlePacks(req, res, deps);
+  if (pathname === '/v1/billing/webhook') return handleWebhook(req, res, deps);
   res.writeHead(404, { 'content-type': 'application/json' });
   res.end(JSON.stringify({ error: 'not found' }));
 });

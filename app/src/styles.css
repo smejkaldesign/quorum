@@ -1105,6 +1105,8 @@ h3 .soon, .set-zero strong .soon { font-size: 11px; margin-left: 8px; vertical-a
 
 /* Settings › Admin › Platform: the platform owner's table of workspaces, one drawer open at a time */
 .set-card.plat { padding: 4px 8px; }
+.set-stepper { display: inline-flex; align-items: center; gap: 10px; }
+.set-stepper strong { font-weight: 500; font-size: 14px; min-width: 64px; text-align: center; }
 /* access codes on the Platform page */
 .ac-issue .ac-note { flex: 0 0 180px; }
 .ac-issued { display: flex; align-items: center; gap: 14px; margin: 0 0 12px; padding: 12px 14px; border-radius: 12px; background: rgba(127, 219, 131, 0.1); font-size: 14px; }

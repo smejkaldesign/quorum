@@ -13,6 +13,8 @@ export const config = {
   maxSessionSeconds: Number(env('RELAY_MAX_SESSION_SECONDS', 4 * 3600)),
   idleMs: Number(env('RELAY_IDLE_MS', 20000)),
   helloMs: 10000,
+  // billing (billing.js): the Stripe secret, the webhook signing secret, the seat and pack price ids, where Checkout returns to
+  stripe: { key: env('STRIPE_SECRET_KEY'), webhookSecret: env('STRIPE_WEBHOOK_SECRET'), seatPrice: env('STRIPE_SEAT_PRICE'), packPrice: env('STRIPE_PACK_PRICE'), returnUrl: env('BILLING_RETURN_URL', 'https://quorum.watch').replace(/\/+$/, '') },
 };
 
 export const HOURS_PER_SEAT = 20;

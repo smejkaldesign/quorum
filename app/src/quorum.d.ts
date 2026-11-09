@@ -91,6 +91,8 @@ export type Member ={ userId: string; email: string; name: string | null; role: 
 export type Plan = 'free' | 'cloud' | 'internal' | 'paid';
 export type PlatformWorkspace = { id: string; name: string; domain: string | null; plan: Plan; seatsIncluded: number; notes: string | null; members: number; createdAt: string; lastActivity: string | null };
 export type PlanDraft = { plan: Plan; seatsIncluded: number; notes: string };
+// what the workspace pays for (workspace_billing): the plan is the switch, seats and packs set the managed hours
+export type Billing = { plan: Plan; seats: number; seatsIncluded: number; hourPacks: number; members: number; status: string | null; periodEnd: string | null; subscribed: boolean };
 // an access code the platform owner issued for one email; Cloud sign-up needs one (migration 0009)
 export type AccessCodeStatus = 'open' | 'claimed' | 'redeemed' | 'revoked' | 'expired';
 export type AccessCode = { id: string; email: string; code: string; note: string | null; issuedAt: string; expiresAt: string; claimedAt: string | null; redeemedAt: string | null; revokedAt: string | null; redeemedEmail: string | null; status: AccessCodeStatus };
@@ -279,6 +281,10 @@ declare global {
       platformMembers(workspaceId: string): Promise<{ members?: Member[]; error?: string }>;
       platformUsage(workspaceId: string): Promise<{ usage?: PlatformUsage; error?: string }>;
       platformSetPlan(workspaceId: string, draft: PlanDraft): Promise<{ plan?: { plan: Plan; seatsIncluded: number; notes: string | null }; error?: string }>;
+      billingStatus(): Promise<Result & { billing?: Billing }>;
+      billingCheckout(seats?: number): Promise<Result>;
+      billingPortal(): Promise<Result>;
+      billingPacks(packs: number): Promise<Result & { packs?: number; remainingSeconds?: number }>;
       platformAccessCodes(): Promise<Result & { codes?: AccessCode[] }>;
       platformIssueAccessCode(email: string, note?: string, days?: number): Promise<Result & { code?: AccessCode }>;
       platformRevokeAccessCode(id: string): Promise<Result>;

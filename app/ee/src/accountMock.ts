@@ -1,8 +1,22 @@
-import type { AccessCode, AccountState, Member, MemberInvite, PlatformWorkspace, Result, Role, WorkspaceConnector, WorkspaceVoice } from '../../src/quorum';
+import type { AccessCode, AccountState, Billing, Member, MemberInvite, PlatformWorkspace, Result, Role, WorkspaceConnector, WorkspaceVoice } from '../../src/quorum';
 
 export type AccountApi = Pick<Window['quorum'], 'accountStatus' | 'accountSendCode' | 'accountVerifyCode' | 'accountSignOut' | 'orgCreate' | 'orgJoin' | 'orgSwitch' | 'membersList' | 'memberInvite' | 'memberRemove' | 'inviteRevoke' | 'syncSet' | 'syncNow' | 'onAccount'>;
 export type ConnectorsApi = Pick<Window['quorum'], 'connectorsList' | 'connectorSet' | 'connectorRemove' | 'connectorTest'>;
 export type VoiceApi = Pick<Window['quorum'], 'workspaceUsage' | 'workspaceVoiceGet' | 'workspaceVoiceSet'>;
+export type BillingApi = Pick<Window['quorum'], 'billingStatus' | 'billingCheckout' | 'billingPortal' | 'billingPacks'>;
+// billing: a subscribed workspace with one pack, kept in memory; Stripe pages are not opened in the mock
+let billingMock: BillingApi | null = null;
+export function billingApi(): BillingApi {
+  if ((window.quorum as Partial<Window['quorum']>).billingStatus) return window.quorum;
+  if (billingMock) return billingMock;
+  let b: Billing = { plan: 'paid', seats: 3, seatsIncluded: 3, hourPacks: 1, members: 3, status: 'active', periodEnd: iso(21 * DAY), subscribed: true };
+  return (billingMock = {
+    billingStatus: async () => ({ billing: b }),
+    billingCheckout: async () => { await delay(300); b = { ...b, plan: 'paid', subscribed: true, status: 'active' }; return ok; },
+    billingPortal: async () => { await delay(300); return ok; },
+    billingPacks: async (packs) => { await delay(300); b = { ...b, hourPacks: packs }; return { packs, remainingSeconds: (b.seats + packs) * 20 * 3600 }; },
+  });
+}
 export type PlatformApi = Pick<Window['quorum'], 'platformWorkspaces' | 'platformMembers' | 'platformUsage' | 'platformSetPlan' | 'platformAccessCodes' | 'platformIssueAccessCode' | 'platformRevokeAccessCode'>;
 
 // the platform owner's page: two example workspaces, plans kept in memory

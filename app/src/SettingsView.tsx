@@ -4,7 +4,7 @@ import { PersonalConnectors } from './Connectors';
 import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
-import { AccountArea, EDITION, MembersArea, PlatformArea, WorkspaceConnectorsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
+import { AccountArea, BillingArea, EDITION, MembersArea, PlatformArea, WorkspaceConnectorsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { canAdmin, modeOf, resolvePage, workspacePages, type Page } from './settingsNav';
 import { EnvSwitch } from './EnvSwitch';
 import {
@@ -123,7 +123,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
           ) : page === 'knowledge' ? (
             <KnowledgePage />
           ) : page === 'general' ? (
-            <WorkspacePage settings={settings} onSettings={onSettings} />
+            <><WorkspacePage settings={settings} onSettings={onSettings} /><BillingArea /></>
           ) : page === 'memory' ? (
             <>
               <SecondBrain brain={brain} onConnect={onConnect} />
