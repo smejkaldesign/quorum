@@ -516,6 +516,46 @@ ul { margin: 0; padding: 0; list-style: none; }
 .enterprise p { font-size: 16px; line-height: 1.55; margin-top: 10px; max-width: 560px; color: var(--muted); }
 .enterprise .btn { flex: none; align-self: flex-start; font-family: var(--mono); font-size: 14px; }
 
+/* Contact modal: a native dialog, posted to a form-to-email service (script.js) */
+.contact {
+  width: min(480px, calc(100vw - 32px));
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  background: var(--card-raised);
+  color: var(--text);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+}
+.contact::backdrop { background: rgba(5, 8, 16, 0.7); backdrop-filter: blur(4px); }
+.contact-form { display: flex; flex-direction: column; padding: 28px; }
+.contact-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.contact-head h2 { font: 400 26px/1.2 var(--serif); letter-spacing: -0.01em; }
+.contact-close {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; padding: 0;
+  border: 0; border-radius: 8px; background: transparent;
+  color: var(--muted); cursor: pointer;
+}
+.contact-close:hover { background: rgba(255, 255, 255, 0.08); color: var(--text); }
+.contact-close svg { width: 16px; height: 16px; }
+.contact-sub { margin-top: 6px; color: var(--muted); font-size: 15px; }
+.contact-form label { margin-top: 18px; font-size: 14px; color: var(--text-soft); }
+.contact-form input:not(.visually-hidden), .contact-form textarea {
+  margin-top: 6px; width: 100%;
+  padding: 12px 14px;
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--line-strong); border-radius: 11px;
+  font: 400 16px/1.4 var(--sans);
+}
+.contact-form textarea { resize: vertical; min-height: 120px; }
+.contact-form input:focus, .contact-form textarea:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px rgba(var(--brand-rgb), 0.25); }
+.contact-form [aria-invalid="true"] { border-color: #ff6b6b; }
+.contact-status { margin-top: 14px; min-height: 1.4em; font-size: 14px; color: var(--muted); }
+.contact-status.error { color: #ff8a8a; }
+.contact-status.ok { color: var(--brand-soft); }
+.contact-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
+.enterprise button.btn { font-family: inherit; font-size: 16px; }
+
 /* Footer */
 .site-footer {
   position: relative;

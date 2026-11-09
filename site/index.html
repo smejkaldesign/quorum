@@ -32,7 +32,7 @@
     <section class="hero dotted">
       <div class="glow" aria-hidden="true"></div>
       <div class="wrap">
-        <h1>Your knowledge, connected to the work you&nbsp;do.</h1>
+        <h1>Connect you and your team&rsquo;s knowledge to the work you&nbsp;do.</h1>
         <p class="lede">Quorum transcribes meetings, voice recordings and notes, picks out what matters and keeps your memory current on its own, so you, your team and your AI agents get the right context&nbsp;fast.</p>
         <div class="actions">
           <a class="btn btn-primary" href="https://github.com/smejkaldesign/quorum/releases/latest">Download for Mac<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg></a>
@@ -132,10 +132,10 @@
         <aside class="enterprise">
           <div class="glow glow-dark" aria-hidden="true"><span class="shoot"></span><span class="shoot"></span><span class="shoot"></span></div>
           <div>
-            <h3>Custom plans</h3>
+            <h3>Questions about your options?</h3>
             <p>Running Quorum across a larger team, or need custom terms, a security review or help connecting the Agent OS you already keep? Tell us what you need and we will put together a plan that&nbsp;fits.</p>
           </div>
-          <a class="btn btn-secondary" href="mailto:sales@quorum.watch">sales@quorum.watch</a>
+          <button type="button" class="btn btn-secondary" data-contact-open>Contact us</button>
         </aside>
       </div>
     </section>
@@ -151,6 +151,30 @@
       </div>
     </section>
   </main>
+
+  <dialog class="contact" id="contact" aria-labelledby="contact-title">
+    <form class="contact-form" novalidate>
+      <div class="contact-head">
+        <h2 id="contact-title">Ask us a question</h2>
+        <button type="button" class="contact-close" data-contact-close aria-label="Close">
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <p class="contact-sub">Tell us what you need and we will reply by email.</p>
+      <label for="contact-name">Name</label>
+      <input id="contact-name" name="name" type="text" autocomplete="name" required>
+      <label for="contact-email">Email</label>
+      <input id="contact-email" name="email" type="email" autocomplete="email" required>
+      <label for="contact-message">Question</label>
+      <textarea id="contact-message" name="message" rows="5" required></textarea>
+      <input class="visually-hidden" name="_honey" tabindex="-1" autocomplete="off" aria-hidden="true">
+      <p class="contact-status" role="status" aria-live="polite"></p>
+      <div class="contact-actions">
+        <button type="button" class="btn btn-secondary" data-contact-close>Cancel</button>
+        <button type="submit" class="btn btn-primary">Send</button>
+      </div>
+    </form>
+  </dialog>
 
   <footer class="site-footer">
     <div class="wrap footer-row">
