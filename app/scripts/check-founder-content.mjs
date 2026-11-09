@@ -15,7 +15,7 @@ const root = rootArg !== -1 && process.argv[rootArg + 1]
 
 // licenses name the copyright holder by design; the guard and its allowlist hold the literals they look for; the
 // lockfiles are generated and carry upstream maintainers' contact lines
-const EXEMPT = new Set(['LICENSE', 'NOTICE', 'app/ee/LICENSE', 'app/scripts/check-founder-content.mjs', '.founder-guard-allow', 'app/package-lock.json', 'app/lint/package-lock.json']);
+const EXEMPT = new Set(['LICENSE', 'NOTICE', 'app/ee/LICENSE', 'relay/LICENSE', 'app/scripts/check-founder-content.mjs', '.founder-guard-allow', 'app/package-lock.json', 'app/lint/package-lock.json']);
 const BINARY_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.icns', '.ico', '.pdf', '.woff', '.woff2', '.ttf', '.otf', '.zip', '.dmg', '.mp3', '.wav']);
 
 // the domain starts with a letter so a retina filename such as image@2x.png does not read as an address
