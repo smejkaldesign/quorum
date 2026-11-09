@@ -1,0 +1,50 @@
+Quorum Enterprise License
+
+Copyright (c) 2026 Smejkal Design (Eric Smejkal)
+
+This license applies to every file under the app/ee/ directory of this repository
+("Enterprise Software"). The Apache License, Version 2.0, in the repository's
+root LICENSE file does not apply to the Enterprise Software.
+
+1. Production use. You may use the Enterprise Software in production only
+   while you hold a current, paid Quorum Cloud subscription or another
+   commercial agreement with Smejkal Design that covers it (a "Subscription"),
+   and only within the scope and quantities that Subscription allows.
+
+2. Development and testing. Without a Subscription, you may copy, run, and
+   modify the Enterprise Software for development and testing, including
+   evaluating it, building and testing integrations, and contributing changes
+   back to Smejkal Design. You may not use it to serve production traffic or
+   real end users.
+
+3. Modifications. You may modify the Enterprise Software. Smejkal Design and
+   its licensors own all rights in the Enterprise Software and in any
+   modifications you make to it, and you hereby assign those rights to
+   Smejkal Design, except where a separate written agreement with Smejkal
+   Design says otherwise.
+
+4. Restrictions. You may not:
+   a. sell, sublicense, or redistribute the Enterprise Software, or offer it
+      as a hosted service to third parties, except as a Subscription allows;
+   b. remove, change, or bypass any license check, plan limit, or other
+      feature of the Enterprise Software that restricts use to Subscription
+      holders; or
+   c. remove or change this license or any copyright notice.
+
+5. Third-party components. Third-party components used by the Enterprise
+   Software are licensed under their own terms.
+
+6. No warranty. THE ENTERPRISE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY
+   OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+7. Limitation of liability. IN NO EVENT WILL SMEJKAL DESIGN OR ITS LICENSORS
+   BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN CONTRACT,
+   TORT, OR OTHERWISE, ARISING FROM OR IN CONNECTION WITH THE ENTERPRISE
+   SOFTWARE OR ITS USE, EXCEPT AS A SUBSCRIPTION AGREEMENT PROVIDES OTHERWISE.
+
+8. Termination. This license ends automatically if you breach it. When a
+   Subscription ends, your right to use the Enterprise Software in production
+   ends with it; the development and testing rights in section 2 continue.
+
+For a Subscription, see https://quorum.watch.

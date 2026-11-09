@@ -44,7 +44,7 @@ The open-source edition is the same app with the same features. It is never a cr
 ## License and repo layout
 
 - One public repo `smejkaldesign/quorum`, Apache-2.0 at the root; copyright holder Smejkal Design (sole proprietorship). CLA enforced with the CLA Assistant GitHub app; SECURITY.md with a contact address. Permissive so a company can run it on every laptop without legal review. The hosted service is what is sold.
-- `app/ee/` holds Cloud-only client code (account, sync, members, Starter Agent OS, team knowledge UI) under `ee/LICENSE` (source available, use only with a Quorum Cloud subscription). `supabase/` lives under the same terms.
+- `app/ee/` holds Cloud-only client code (account, sync, members, Starter Agent OS, team knowledge UI, workspace connectors, the relay client) under `ee/LICENSE` (source available, use only with a Quorum Cloud subscription). `supabase/` and `relay/` (the managed transcription and notes service) live under the same terms. Managed transcription, organization connectors and the Admin Voice typing page exist only in the Cloud build and only for a signed-in workspace member; the open-source edition runs Apple on-device speech and the user's own provider keys.
 - CI check: the Local build must not import from `app/ee/`. A `QUORUM_EDITION=local|cloud` build flag selects the entry points; the default is `local`.
 - Secrets scan (gitleaks) and a founder-content guard (no personal paths, emails, customer names) run on every push.
 
