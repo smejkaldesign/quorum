@@ -133,8 +133,7 @@
       "provider": "github",
       "owner": "smejkaldesign",
       "repo": "quorum"
-    },
-    "asarUnpack": []
+    }
   },
   "author": "Smejkal Design"
 }
