@@ -4,7 +4,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync,
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { writeAtomic } from '../relink.js';
-import { DATA_DIR } from '../edition.js';
+import { DATA_DIR, isDevelopment } from '../edition.js';
 
 // DATA_DIR is ~/Library/Application Support/Quorum, or Quorum Dev for a development copy (edition.js)
 const SESSIONS = path.join(DATA_DIR, 'sessions');
@@ -92,7 +92,8 @@ function meetingsDir(vault) {
   } catch { return null; }
 }
 // Quorum's own notes sit in a quorum subfolder, next to the folders other apps fill (granola/ and so on)
-const quorumNotesDir = (vault) => { const root = meetingsDir(vault); return root ? path.join(root, 'quorum') : null; };
+// a development copy writes its meeting notes beside the real ones, in their own folder, so test calls never mix in
+const quorumNotesDir = (vault) => { const root = meetingsDir(vault); return root ? path.join(root, isDevelopment ? 'quorum-dev' : 'quorum') : null; };
 function meetingSources(vault) {
   const root = meetingsDir(vault);
   const hidden = new Set(settingsData.meetingHidden ?? []);

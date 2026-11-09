@@ -6,7 +6,7 @@ import { createFolder, createNote, duplicateItem, moveItem, readVaultNote, renam
 import { createVaultIndex } from './vindex.js';
 import { addAlias, retargetLinks, rewriteLinks } from './relink.js';
 import store from './store/index.js';
-import { DATA_DIR, EDITION, ENV, loadEE } from './edition.js';
+import { DATA_DIR, EDITION, ENV, loadEE, isDevelopment } from './edition.js';
 import { registerOnboarding } from './onboarding.js';
 import { createSuggester } from './suggest.js';
 import { addFinal, isEcho, toJSON, toText } from './transcript.js';
@@ -25,13 +25,14 @@ import { fileURLToPath } from 'node:url';
 import updater from 'electron-updater';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-// one Quorum at a time, installed or development copy: two would both watch Zoom and could post the notice twice. The
-// lock lives in Electron's default userData folder, which both copies share, so it is taken before userData moves to
-// the environment's own folder (edition.js DATA_DIR: Quorum, or Quorum Dev for a development copy). Everything that
-// reads userData, sessions or the control socket runs after this point.
-const singleInstance = app.requestSingleInstanceLock();
+// one copy per environment: the lock lives in the environment's own data folder (edition.js DATA_DIR: Quorum, or
+// Quorum Dev for a development copy), so the installed app and a development copy run side by side. Only one of them
+// should watch a call, so a development copy leaves auto-listen off while the installed app is running (see below).
 app.setPath('userData', DATA_DIR);
 app.setPath('sessionData', DATA_DIR);
+const singleInstance = app.requestSingleInstanceLock();
+const installedCopyRunning = () => { try { return execFileSync('/usr/bin/pgrep', ['-f', '/Applications/Quorum.app/Contents/MacOS/Quorum'], { encoding: 'utf8' }).trim().length > 0; } catch { return false; } };
+const autoListenAllowed = () => { if (isDevelopment && installedCopyRunning()) { log('auto-listen left to the installed Quorum, which is running'); return false; } return true; };
 // the packaged app carries its own audio helper; in development it comes straight from the Swift build
 const HELPER = app.isPackaged ? path.join(process.resourcesPath, 'QuorumHelper') : path.resolve(here, '../helper/.build/debug/QuorumHelper');
 // dev and eval hooks (QUORUM_EVAL, QUORUM_SHOT, ...) stay out of release builds entirely
@@ -802,7 +803,7 @@ function onMeeting({ active, app: source, provider: id }) {
     return;
   }
   if (active && !meeting.armed) {
-    if (settings.autoListen) startListening('auto-listen');
+    if (settings.autoListen && autoListenAllowed()) startListening('auto-listen');
     else refreshGuard().then(() => (namedHere() ? blockCall('name') : shouldBlock(lastInfo.names) ? blockCall() : showPopup('detected')));
   }
   if (!active) {
@@ -851,7 +852,7 @@ function setAutoListen(on) {
   store.settings.save();
   toUI('settings', settings);
   updateTray();
-  if (on && meetingActive && !meeting.armed) startListening('auto-listen');
+  if (on && meetingActive && !meeting.armed && autoListenAllowed()) startListening('auto-listen');
 }
 
 // idle follows the menu bar's tint; focused gets the highlight pill; listening stays green like Zoom's
