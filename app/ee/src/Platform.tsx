@@ -82,7 +82,7 @@ function AccessCodes() {
       <div className="set-card form ac">
         <p className="acct-copy">Sign-up is invite-only. Issue a code for an email, send it to the person, and they enter it once in the app. A code lasts 30 days and is used once.</p>
         <div className="set-line ac-issue">
-          <label className="set-field wide"><input type="email" aria-label="Email" placeholder="person@company.com" value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && ok && !busy) issue(); }} /></label>
+          <label className="set-field wide"><input type="email" aria-label="Email" placeholder="name@example.com" value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && ok && !busy) issue(); }} /></label>
           <label className="set-field ac-note"><input aria-label="Note" placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value.slice(0, 80))} onKeyDown={(e) => { if (e.key === 'Enter' && ok && !busy) issue(); }} /></label>
           <div className="set-line-end"><button className="pill primary" disabled={!ok || !!busy} onClick={issue}>{busy === 'issue' ? 'Issuing…' : 'Issue code'}</button></div>
         </div>
