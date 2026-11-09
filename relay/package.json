@@ -1,0 +1,19 @@
+{
+  "name": "quorum-relay",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Quorum Cloud transcription relay: streams meeting audio to a speech engine and runs the notes prompts on managed keys",
+  "main": "server.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.119.0",
+    "ws": "^8.18.0"
+  }
+}
