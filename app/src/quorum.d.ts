@@ -14,8 +14,14 @@ export type HelperEvent =
   | { event: 'audioRoute'; route: 'speakers' | 'headphones' | 'external' | 'unknown'; transport: string; name: string }
   | { event: 'dictation'; state: 'on' | 'off' };
 
-export type ActionItem = { title: string; owner: string | null };
-export type Notes = { title: string; sections: { heading: string; bullets: { text: string; sub: string[] }[] }[]; nextSteps: ActionItem[]; empty?: boolean };
+// every generated line carries refs: the ids of the transcript turns it came from
+export type Bullet = { text: string; sub: string[]; refs: number[] };
+export type Decision = { text: string; status: 'confirmed' | 'suggested'; refs: number[] };
+export type ActionItem = { task: string; owner: string | null; due: string | null; refs: number[] };
+export type Question = { text: string; refs: number[] };
+export type Notes = { title: string; summary: string; sections: { heading: string; bullets: Bullet[] }[]; decisions: Decision[]; actions: ActionItem[]; questions: Question[]; empty?: boolean };
+// the final notes as they stream in: the raw text so far and whatever of it already parses
+export type NotesDraft = { text: string; partial: Notes | null };
 export type MeetingMeta = { title: string; startedAt?: string; minutes: number; participants: number; model: string };
 
 type Unsub = () => void;
@@ -38,7 +44,7 @@ export type ModelSource = 'none' | 'claude-code' | 'anthropic-api' | 'local';
 export type ClaudeStatus = { installed: boolean; loggedIn: boolean; email: string; org: string; plan: string; method: string; version: string };
 export type ModelSourceStatus = { source: ModelSource; localModel: string; claude: ClaudeStatus | null; key: boolean; ollama: { reachable: boolean; hasModel: boolean } };
 // userName is how the main process names the recorder in notes; it falls back to the macOS account's full name, then the login
-export type Settings = { autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription };
+export type Settings = { autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean } };
 export type OnboardingStatus = { firstRun: boolean; defaultVaultDir: string };
 export type OnboardingChecks = { permissions: { microphone: string; audio: string; accessibility: string; calendar: string }; claude: { installed: boolean; loggedIn?: boolean; email?: string; org?: string; plan?: string; version?: string; pending?: boolean }; model?: ModelSourceStatus | null };
 export type Brain = { root: string; vault: string; name: string; markers: { agentOS: string | null; obsidian: boolean; search: boolean; safetyHooks: boolean } };
@@ -117,6 +123,7 @@ declare global {
       onAgentStep(cb: (s: { text: string }) => void): Unsub;
       // the answer so far, whole, while it streams in
       onAgentDelta(cb: (s: { text: string }) => void): Unsub;
+      onNotesDelta(cb: (d: NotesDraft) => void): Unsub;
       onFocusComposer(cb: () => void): Unsub;
       brain(): Promise<Brain | null>;
       connectBrain(): Promise<Brain | null>;

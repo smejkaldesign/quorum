@@ -1,5 +1,5 @@
 import { Component, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import type { Brain, HelperEvent, MeetingMeta, Notes, Settings, Source } from './quorum';
+import type { Brain, HelperEvent, MeetingMeta, Notes, NotesDraft, Settings, Source } from './quorum';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
 import { EndView } from './EndView';
@@ -104,6 +104,7 @@ export function App() {
   const [log, setLog] = useState<string[]>([]);
   const [notes, setNotes] = useState<Notes | null>(null);
   const [summarizing, setSummarizing] = useState(false);
+  const [notesDraft, setNotesDraft] = useState<NotesDraft | null>(null);
   const [meta, setMeta] = useState<MeetingMeta | null>(null);
   const [settings, setSettings] = useState<Settings>({ autoListen: false, model: 'sonnet', suggestions: true });
   const [themName, setThemName] = useState<string | null>(null);
@@ -150,8 +151,8 @@ export function App() {
       window.quorum.onState((s) => {
         if (s.phase === 'starting') { setPhase('starting'); addLog("posting Quorum's notice in the Zoom chat…"); return; }
         if (s.phase === 'idle') { setPhase('idle'); return; }
-        if (s.phase === 'summarizing') { setPhase('review'); setSummarizing(true); setNotes(null); setMeta(s.meta ?? null); return; }
-        if (s.phase === 'review') { setPhase('review'); setSummarizing(false); setNotes(s.notes); setMeta(s.meta ?? null); return; }
+        if (s.phase === 'summarizing') { setPhase('review'); setSummarizing(true); setNotes(null); setNotesDraft(null); setMeta(s.meta ?? null); return; }
+        if (s.phase === 'review') { setPhase('review'); setSummarizing(false); setNotes(s.notes); setNotesDraft(null); setMeta(s.meta ?? null); return; }
         setHeld('soft' in s && !!s.soft);
         if (s.phase === 'paused' && 'soft' in s && s.soft) {
           setPartial({ me: '', them: '' });
@@ -170,6 +171,7 @@ export function App() {
       window.quorum.onSettings(setSettings),
       window.quorum.onAgentStep(({ text }) => setMsgs((m) => m.map((x) => (x.kind === 'quorum' && x.pending ? { ...x, steps: [...(x.steps ?? []), text] } : x)))),
       window.quorum.onAgentDelta(({ text }) => setMsgs((m) => m.map((x) => (x.kind === 'quorum' && x.pending ? { ...x, text } : x)))),
+      window.quorum.onNotesDelta(setNotesDraft),
       window.quorum.onFocusComposer(() => {
         setView('main');
         if (inCall(phaseRef.current)) setTab('chat');
@@ -279,7 +281,7 @@ export function App() {
   }
 
   if (phase === 'review') {
-    return <EndView notes={notes} meta={meta} summarizing={summarizing} transcript={lines.map((l) => ({ channel: l.channel, who: who(l.channel), text: l.text }))} onClose={() => { setPhase('idle'); resetMeeting(); setTab('home'); }} />;
+    return <EndView notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing} transcript={lines.map((l) => ({ id: l.id, channel: l.channel, who: who(l.channel), text: l.text }))} onClose={() => { setPhase('idle'); resetMeeting(); setTab('home'); }} />;
   }
 
   return (

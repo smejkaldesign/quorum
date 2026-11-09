@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('quorum', {
   onSuggestion: on('suggestion'),
   onAgentStep: on('agent-step'),
   onAgentDelta: on('agent-delta'),
+  onNotesDelta: on('notes-delta'),
   onFocusComposer: on('focus-composer'),
   brain: () => ipcRenderer.invoke('brain'),
   connectBrain: () => ipcRenderer.invoke('connect-brain'),

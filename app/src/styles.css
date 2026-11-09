@@ -240,6 +240,13 @@ html.popup-root, html.popup-root body { background: transparent; }
 .view-toggle button:hover { color: var(--text); }
 .view-toggle button.on { background: rgba(255, 255, 255, 0.08); color: var(--text); }
 .end-transcript p { margin: 0 0 12px; line-height: 1.55; }
+.end-transcript p.hot div { background: rgba(255, 200, 80, 0.14); border-radius: 6px; box-shadow: 0 0 0 6px rgba(255, 200, 80, 0.14); }
+.doc .summary { margin: 0 0 26px; font-size: 17px; line-height: 1.6; color: #d4d4d8; }
+.doc .raw { white-space: pre-wrap; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.doc .writing { display: flex; align-items: center; gap: 8px; margin: 0 0 26px; }
+.doc-section li.ref { cursor: pointer; }
+.doc-section li.ref:hover { color: #fff; }
+.doc-section em.status { color: var(--muted); font-style: normal; }
 .meta-pill { display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--muted); font-size: 14px; }
 .doc-section { margin-bottom: 26px; }
 .doc-section h2 { position: relative; margin: 0 0 10px; font-size: 18px; font-weight: 600; color: #d8d8dc; }
