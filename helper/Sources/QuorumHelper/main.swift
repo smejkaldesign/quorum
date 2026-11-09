@@ -37,6 +37,27 @@ final class Session {
         await them.stop()
         Emit.send(["event": "stopped"])
     }
+
+    // offline path for the eval harness: the same transcribers, fed from files instead of the mic and the tap.
+    // Both files start at audio time zero, so a two-channel pair must share one timeline.
+    func transcribeFiles(me meURL: URL, them themURL: URL?, locale id: String = "en-US", terms: [String] = []) async throws {
+        let locale = Locale(identifier: id)
+        try await me.start(locale: locale, audioURL: nil, terms: terms)
+        if themURL != nil { try await them.start(locale: locale, audioURL: nil, terms: terms) }
+        for (transcriber, url) in [(me, meURL), (them, themURL)] {
+            guard let url else { continue }
+            let file = try AVAudioFile(forReading: url)
+            while file.framePosition < file.length {
+                guard let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 16384) else { break }
+                try file.read(into: buf)
+                if buf.frameLength == 0 { break }
+                transcriber.feed(buf)
+            }
+        }
+        await me.stop()
+        if themURL != nil { await them.stop() }
+        Emit.send(["event": "stopped"])
+    }
 }
 
 let session = Session()
@@ -113,6 +134,18 @@ if args.count > 1 {
             exit(0)
         }
         dispatchMain()
+    case "transcribe-file":
+        // eval harness: finals for one or two channel files, then exit. Extra arguments are vocabulary terms.
+        guard args.count > 2 else { Emit.log("usage: quorum-helper transcribe-file <me.wav> [them.wav] [--terms term ...]"); exit(2) }
+        let paths = args.dropFirst(2).prefix { $0 != "--terms" }
+        let terms = Array(args.drop { $0 != "--terms" }.dropFirst())
+        let them = paths.count > 1 ? URL(fileURLWithPath: paths[paths.startIndex + 1]) : nil
+        Task {
+            do { try await session.transcribeFiles(me: URL(fileURLWithPath: paths[paths.startIndex]), them: them, terms: terms) }
+            catch { Emit.error(error.localizedDescription); exit(1) }
+            exit(0)
+        }
+        dispatchMain()
     case "meet-chat":
         // reads the Meet chat, posts the text when given, reads again; raises the Meet tab if it is in the background
         if !AX.trusted(prompt: true) { Emit.log("Accessibility not granted"); exit(1) }
@@ -135,7 +168,7 @@ if args.count > 1 {
         Thread.sleep(forTimeInterval: 5)
         exit(0)
     default:
-        Emit.log("usage: quorum-helper [dump-zoom | dump-ax <bundle-prefix> | detect | meet-chat [text] | test-capture <sec> | chat-read | chat-send <text>]")
+        Emit.log("usage: quorum-helper [dump-zoom | dump-ax <bundle-prefix> | detect | meet-chat [text] | test-capture <sec> | transcribe-file <me.wav> [them.wav] | chat-read | chat-send <text>]")
         exit(2)
     }
 }

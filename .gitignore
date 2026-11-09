@@ -10,3 +10,5 @@ app/.dev/
 supabase/.temp/
 .claude/
 .claude/worktrees/
+app/eval/corpus/*/
+app/eval/results/
