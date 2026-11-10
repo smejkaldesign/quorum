@@ -1,0 +1,21 @@
+{
+  "oauth_information": {
+    "usage": "USER_OPERATION",
+    "development_redirect_uri": "https://relay-production-e257.up.railway.app/v1/connect/zoom/callback",
+    "production_redirect_uri": "https://relay.quorum.watch/v1/connect/zoom/callback",
+    "oauth_allow_list": [
+      "https://relay-production-e257.up.railway.app/v1/connect/zoom/callback",
+      "https://relay.quorum.watch/v1/connect/zoom/callback"
+    ],
+    "strict_mode": true,
+    "subdomain_strict_mode": false,
+    "scopes": [
+      { "scope": "user:read:user", "optional": false },
+      { "scope": "meeting:read:meeting", "optional": false },
+      { "scope": "cloud_recording:read:recording", "optional": false }
+    ],
+    "scope_description": "Quorum reads the signed-in user's own meetings and cloud recordings so it can write meeting notes into that user's notes folder. Nothing is written back to Zoom.",
+    "enable_private_pkce_client": true,
+    "enable_public_pkce_client": true
+  }
+}
