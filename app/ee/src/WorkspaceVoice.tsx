@@ -17,7 +17,7 @@ export const PIPELINE: { role: VoiceStep; title: string; what: string; provider:
   { role: 'notes', title: 'Final notes', what: 'Writes the meeting notes when the call ends.', provider: 'Claude Sonnet', cost: 'about $0.06', icon: IconNotes },
 ];
 export const INCLUDED_HOURS = 20;
-export const SEAT_PRICE = 9;
+export const SEAT_PRICE = 8;
 export const PACK = { hours: 20, price: 5 };
 
 export const hours = (h: number) => (h >= 10 ? Math.round(h).toString() : (Math.round(h * 10) / 10).toString());
