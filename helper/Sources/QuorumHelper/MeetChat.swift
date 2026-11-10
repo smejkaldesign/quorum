@@ -54,24 +54,25 @@ enum MeetChat {
         return found
     }
 
-    // the composer: labelled "Send a message" for years, and since late 2026 after the history setting ("History is on"); the
-    // call page has no other text area, so any text area that is not the browser's address bar is taken when the label is unknown
+    // the chat composer: labelled "Send a message" for years, and since late 2026 after the chat history setting ("History is
+    // on" or "History is off"). The side panel slot also hosts an "Ask Gemini" text area, which must never be taken for it
+    static func isComposer(_ el: AXUIElement, role: String) -> Bool {
+        guard role == kAXTextAreaRole || role == kAXTextFieldRole else { return false }
+        let text = label(el)
+        return text.localizedCaseInsensitiveContains("send a message") || text.localizedCaseInsensitiveContains("history is")
+    }
+
     static func input(in win: AXUIElement) -> AXUIElement? {
         var found: AXUIElement?
-        var fallback: AXUIElement?
         var n = 0
         AX.walk(win, maxDepth: 60) { el, _ in
             if found != nil { return false }
             n += 1
-            if n > 6000 { return false }
-            let role = AX.role(el)
-            guard role == kAXTextAreaRole || role == kAXTextFieldRole else { return true }
-            let text = label(el)
-            if text.localizedCaseInsensitiveContains("send a message") { found = el; return false }
-            if role == kAXTextAreaRole, fallback == nil, !text.localizedCaseInsensitiveContains("address") { fallback = el }
+            if n > 8000 { return false }
+            if isComposer(el, role: AX.role(el)) { found = el; return false }
             return true
         }
-        return found ?? fallback
+        return found
     }
 
     // the chat panel sits about forty levels down, deeper than the call controls
@@ -99,21 +100,38 @@ enum MeetChat {
         return false
     }
 
+    // true when a static text in the window carries the message; the bubbles sit as deep as the composer, about forty levels
+    static func appears(_ text: String, in win: AXUIElement) -> Bool {
+        var hit = false
+        var n = 0
+        let head = String(text.prefix(40))
+        AX.walk(win, maxDepth: 60) { el, _ in
+            if hit { return false }
+            n += 1
+            if n > 12000 { return false }
+            guard AX.role(el) == kAXStaticTextRole, let v = AX.str(el, kAXValueAttribute)?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty else { return true }
+            if v == text || text.hasSuffix(v) || v.hasPrefix(head) { hit = true; return false }
+            return true
+        }
+        return hit
+    }
+
     // static texts between the panel heading and the composer, in page order. A group is [sender] time text...; the sender
-    // line shares a parent with the time stamp, own messages have no sender line
+    // line shares a parent with the time stamp, own messages have no sender line. The heading has read "In-call messages"
+    // and "Messages"; any heading naming messages starts the scan
     static func readMessages(in win: AXUIElement) -> [ChatMessage] {
         var items: [(text: String, parent: AXUIElement?)] = []
         var started = false
         var done = false
         var n = 0
-        AX.walk(win, maxDepth: 40) { el, _ in
+        AX.walk(win, maxDepth: 60) { el, _ in
             if done { return false }
             n += 1
-            if n > 8000 { return false }
+            if n > 12000 { return false }
             let role = AX.role(el)
-            if role == "AXHeading", (AX.str(el, kAXTitleAttribute) ?? AX.str(el, kAXValueAttribute) ?? "") == "In-call messages" { started = true; return true }
+            if role == "AXHeading", (AX.str(el, kAXTitleAttribute) ?? AX.str(el, kAXValueAttribute) ?? "").localizedCaseInsensitiveContains("message") { started = true; return true }
             guard started else { return true }
-            if role == kAXTextAreaRole || role == kAXTextFieldRole, label(el).localizedCaseInsensitiveContains("send a message") { done = true; return false }
+            if isComposer(el, role: role) { done = true; return false }
             if role == kAXStaticTextRole, let v = AX.str(el, kAXValueAttribute)?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty, !noise.contains(v), !v.hasPrefix("Messages will not be saved") {
                 items.append((v, AX.attr(el, kAXParentAttribute).map { $0 as! AXUIElement }))
             }
@@ -148,6 +166,8 @@ enum MeetChat {
     static func send(_ text: String) -> String? {
         guard let (win, pid) = callWindow(raise: true) else { return "no Google Meet call in front" }
         guard ensureOpen(in: win), let field = input(in: win) else { return "couldn't open the Meet chat panel" }
+        // a retry after a send whose bubble was missed must not post the notice a second time
+        if appears(text, in: win) { return nil }
         AXUIElementSetAttributeValue(field, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         let status = AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, text as CFString)
         if status != .success { return "couldn't set text (AXError \(status.rawValue))" }
@@ -159,11 +179,15 @@ enum MeetChat {
             let src = CGEventSource(stateID: .hidSystemState)
             for down in [true, false] { CGEvent(keyboardEventSource: src, virtualKey: 0x24, keyDown: down)?.postToPid(pid) }
         }
-        let deadline = Date().addingTimeInterval(3)
+        // the bubble is the proof; an emptied composer is Meet's own sign that it took the message, accepted when the
+        // bubble cannot be read
+        let deadline = Date().addingTimeInterval(4)
+        var emptied = false
         while Date() < deadline {
-            if readMessages(in: win).contains(where: { $0.text == text || text.hasSuffix($0.text) }) { return nil }
-            Thread.sleep(forTimeInterval: 0.2)
+            if appears(text, in: win) { return nil }
+            if let cur = input(in: win), (AX.str(cur, kAXValueAttribute) ?? "").isEmpty { emptied = true }
+            Thread.sleep(forTimeInterval: 0.25)
         }
-        return "message didn't appear in the Meet chat"
+        return emptied ? nil : "message didn't appear in the Meet chat"
     }
 }
