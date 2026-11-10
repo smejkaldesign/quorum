@@ -161,14 +161,15 @@ html,body{height:100%;margin:0}body{background:#0b0b0c;color:#f2f2f3;font:16px/1
 .shade{position:absolute;inset:0;z-index:-1;background:linear-gradient(180deg,rgba(6,14,30,.72),rgba(6,14,30,0) 45%);pointer-events:none}
 @keyframes a{from{transform:translate3d(-6%,-4%,0) rotate(0) scale(1)}to{transform:translate3d(7%,5%,0) rotate(14deg) scale(1.12)}}
 @keyframes b{from{transform:translate3d(6%,4%,0) rotate(0) scale(1.1)}to{transform:translate3d(-7%,-6%,0) rotate(-12deg) scale(1)}}
-header{height:58px;display:flex;align-items:center;gap:10px;padding:0 32px}.owl{width:22px;height:26px;display:block}header span{font:400 22px/1 "New York",ui-serif,Georgia,serif;letter-spacing:-.01em}
+header{height:58px;display:flex;align-items:center;padding:0 32px}header a{display:inline-flex;align-items:center;gap:10px;color:inherit;text-decoration:none}.owl{width:22px;height:26px;display:block}header span{font:400 22px/1 "New York",ui-serif,Georgia,serif;letter-spacing:-.01em}
+.btn{display:inline-flex;align-items:center;gap:8px;margin-top:28px;padding:0 18px;height:40px;border-radius:999px;background:#fff;color:#0b2a4d;font:500 14px/1 -apple-system,BlinkMacSystemFont,"SF Pro Text",Helvetica,Arial,sans-serif;text-decoration:none}.btn:hover{background:#e9f1ff}
 main{flex:1;display:grid;place-items:center;padding:24px 32px 96px;text-align:center}.card{max-width:520px}
 .icon{width:64px;height:64px;border-radius:50%;margin:0 auto 24px;display:grid;place-items:center;background:${failed ? 'rgba(255,255,255,.14)' : '#fff'};color:${failed ? '#fff' : '#0b2a4d'};font-size:30px;line-height:1;border:1px solid rgba(255,255,255,.25)}
 h1{font:400 44px/1.1 "New York",ui-serif,Georgia,serif;margin:0 0 14px;letter-spacing:-.015em}p{margin:0;font-size:17px;color:rgba(242,242,243,.9)}
 @media (prefers-reduced-motion: reduce){.glow::before,.glow::after{animation:none}}
 </style></head>
-<body><div class="frame"><div class="glow"></div><div class="shade"></div><header>${OWL}<span>Quorum</span></header>
-<main><div class="card"><div class="icon">${failed ? '!' : q.pending ? '…' : '✓'}</div><h1>${title}</h1><p>${body}</p></div></main></div></body></html>`;
+<body><div class="frame"><div class="glow"></div><div class="shade"></div><header><a href="https://quorum.watch" aria-label="Quorum home">${OWL}<span>Quorum</span></a></header>
+<main><div class="card"><div class="icon">${failed ? '!' : q.pending ? '…' : '✓'}</div><h1>${title}</h1><p>${body}</p><a class="btn" href="https://quorum.watch">Go to Quorum.watch</a></div></main></div></body></html>`;
 };
 
 // the whole flow: metadata, client (reused when one is saved), browser, loopback, token exchange
