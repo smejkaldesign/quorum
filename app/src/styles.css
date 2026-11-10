@@ -1298,3 +1298,5 @@ button.plat-row:hover, button.plat-row.on { background: rgba(255, 255, 255, 0.04
 .crumb-actions .conn-actions { gap: 6px; }
 .crumb-actions .icon-btn { width: 36px; height: 36px; border: 1px solid var(--line-2); border-radius: 999px; transition: border-color 120ms ease; }
 .crumb-actions .icon-btn:hover { border-color: #fff; }
+
+.meta-pill.meta-source img { width: 18px; height: 18px; border-radius: 5px; }

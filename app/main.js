@@ -1461,6 +1461,7 @@ ipcMain.handle('read-note', (_e, file) => {
   return {
     file: abs, rel: path.relative(b.vault, abs), title: fm.title, date: fm.date, people: fm.participants.filter((p) => !isSelf(p)).map(personName), body,
     visibility: fm.visibility === 'public' ? 'public' : 'private', withheld: text !== original, link: `quorum://note/${encodeURIComponent(fm.granola_id || path.relative(b.vault, abs))}`, ...noteLink(abs),
+    source: fm.source && fm.source !== 'quorum' ? String(fm.source) : null,
   };
 });
 
