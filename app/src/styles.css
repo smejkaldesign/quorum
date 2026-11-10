@@ -1241,3 +1241,5 @@ button.plat-row:hover, button.plat-row.on { background: rgba(255, 255, 255, 0.04
 .lib-tile-head .soon { margin: 0; }
 .lib-on { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #34c759; }
 .lib-empty { grid-column: 1 / -1; color: var(--muted); font-size: 13px; padding: 24px 0; text-align: center; }
+
+.soon.grey { background: rgba(255, 255, 255, 0.08); color: var(--muted); }

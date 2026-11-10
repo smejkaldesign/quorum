@@ -156,7 +156,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange }: { connector: Li
   const [, tick] = useState(0);
   useEffect(() => { if (!running) return; const t = setInterval(() => tick((n) => n + 1), 1000); return () => clearInterval(t); }, [running]);
   const cat = CATEGORIES.find((c) => c.id === x.category);
-  const status = soon ? 'Coming soon' : on ? 'Connected' : x.id === 'apple-calendar' && live.cal?.status === 'denied' ? 'Access is off in System Settings' : 'Not connected';
+  const status = soon ? 'Soon' : on ? 'Connected' : x.id === 'apple-calendar' && live.cal?.status === 'denied' ? 'Access is off in System Settings' : 'Not connected';
   const rows: [string, ReactNode][] = [
     ['Status', <span className={on ? 'conn-ok' : undefined}>{on && <i />}{status}</span>],
     ['Category', cat?.name ?? x.category],
@@ -181,7 +181,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange }: { connector: Li
       <div className="conn-detail-head">
         <Logo icon={icon} size={44} />
         <div className="conn-detail-title">
-          <h3>{x.name}{soon && <em className="soon">Coming soon</em>}{on && <span className="conn-ok"><i />Connected</span>}</h3>
+          <h3>{x.name}{soon && <em className="soon grey">Soon</em>}{on && <span className="conn-ok"><i />Connected</span>}</h3>
           <p>{x.description}</p>
         </div>
         <div className="conn-detail-actions">
@@ -277,7 +277,7 @@ function Library({ icons, live, onChange, onOpen, onClose }: { icons: Record<str
     <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }} onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}>
       <div className="modal lib-modal" role="dialog" aria-modal="true" aria-labelledby="lib-title">
         <div className="lib-head">
-          <div><h2 id="lib-title">Add a connector</h2><p>Everything Quorum connects to. Tools marked Coming soon are on the way. Click a tool for details.</p></div>
+          <div><h2 id="lib-title">Add a connector</h2><p>Everything Quorum connects to. Tools marked Soon are on the way. Click a tool for details.</p></div>
           <button className="icon-btn" aria-label="Close" onClick={onClose}><IconClose width={16} height={16} /></button>
         </div>
         <div className="lib-body">
@@ -294,7 +294,7 @@ function Library({ icons, live, onChange, onOpen, onClose }: { icons: Record<str
                 const soon = x.status === 'soon';
                 return (
                   <div key={x.id} className={`lib-tile${soon ? ' is-soon' : ''}${on ? ' is-on' : ''}`} role="button" tabIndex={0} onClick={() => onOpen(x.id)} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(x.id); }}>
-                    <div className="lib-tile-head"><span className="lib-tile-lead"><Logo icon={icons[x.id] ?? null} size={32} /><Features connector={x} /></span>{soon && <em className="soon">Coming soon</em>}{on && <span className="lib-on"><IconCheck width={13} height={13} />Connected</span>}</div>
+                    <div className="lib-tile-head"><span className="lib-tile-lead"><Logo icon={icons[x.id] ?? null} size={32} /><Features connector={x} /></span>{soon && <em className="soon grey">Soon</em>}{on && <span className="lib-on"><IconCheck width={13} height={13} />Connected</span>}</div>
                     <strong>{x.name}</strong>
                     <span>{x.description}</span>
                     {!soon && !on && <button className="pill small-pill primary" disabled={busy !== null} onClick={(e) => { e.stopPropagation(); connect(x); }}>{connectLabel(x, busy === x.id, false)}</button>}
