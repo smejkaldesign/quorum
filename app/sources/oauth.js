@@ -151,8 +151,10 @@ const NOISE = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'
 export const loopbackPage = (q) => {
   const esc = (s) => String(s ?? '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
   const failed = q.error || q.failed;
-  const title = q.pending ? 'Almost there' : failed ? 'That did not work' : `Connected${q.name ? ` to ${esc(q.name)}` : ''}`;
-  const body = q.pending ? 'Go back to Quorum to see the result.' : failed ? esc(q.failed || q.error_description || q.error) : 'You can close this tab and go back to Quorum. Your meetings are on their way.';
+  const reason = failed ? String(q.failed || q.error_description || q.error).trim() : '';
+  const cut = reason.indexOf('. ');
+  const title = q.pending ? 'Almost there' : failed ? esc(cut > 0 ? reason.slice(0, cut) : reason.replace(/\.$/, '')) : `Connected${q.name ? ` to ${esc(q.name)}` : ''}`;
+  const body = q.pending ? 'Go back to Quorum to see the result.' : failed ? esc(cut > 0 ? reason.slice(cut + 2) : 'Go back to Quorum to try again.') : 'You can close this tab and go back to Quorum. Your meetings are on their way.';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Quorum</title>
 <style>
 html,body{height:100%;margin:0}body{background:#0b0b0c;color:#f2f2f3;font:16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",Helvetica,Arial,sans-serif}

@@ -169,7 +169,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
   const status = soon ? 'Soon' : on ? 'Connected' : x.id === 'apple-calendar' && live.cal?.status === 'denied' ? 'Access is off in System Settings' : 'Not connected';
   // one message for the page: the latest action's error wins, else the last failed import
   const alert = error || (src?.job?.status === 'failed' ? src.job.error : null) || null;
-  const accountProblem = !!alert && /account for this sign-in|different account/i.test(alert);
+  const accountProblem = !!alert && /No \w+ account for|account for this sign-in|different account|Use the account your/i.test(alert);
   const rows: [string, ReactNode][] = [
     ['Status', <span className={on ? 'conn-ok' : undefined}>{on && <i />}{status}</span>],
     ['Category', cat?.name ?? x.category],
@@ -203,7 +203,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
           {on && <Actions connector={x} live={live} busy={busy} act={act} />}
         </div>
       </div>
-      {alert && <div className="conn-alert" role="alert"><strong>{accountProblem ? 'Sign in with a different account' : 'Something went wrong'}</strong><span>{alert}</span></div>}
+      {alert && <div className="conn-alert" role="alert"><strong>{accountProblem ? 'Sign in with a different account' : alert.split('. ')[0].replace(/\.$/, '')}</strong><span>{alert}</span></div>}
       <h4>Connectivity</h4>
       <div className="set-card conn-jobcard">
         {accountProblem && !on && x.kind === 'mcp-source'
