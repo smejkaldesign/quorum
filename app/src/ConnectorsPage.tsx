@@ -245,10 +245,13 @@ function DifferentAccount({ connector: x, busy, act }: { connector: LibraryConne
 function JobLine({ job, oneLine }: { job: SourceJob; oneLine?: boolean }) {
   if (job.status === 'failed' && oneLine) return <p className="set-error one-line" title={job.error ?? ''}>{job.error}</p>;
   if (job.status === 'running') {
-    const pct = job.total ? Math.round((job.done / job.total) * 100) : null;
+    const pct = job.total ? Math.min(100, Math.round((job.done / job.total) * 100)) : null;
+    // time left from the import rate so far; the listing phase is too short and too bursty to estimate
+    const left = job.phase === 'import' && job.phaseStartedAt && job.done > 0 && job.total ? Math.round(((Date.now() - job.phaseStartedAt) / job.done) * (job.total - job.done) / 1000) : null;
+    const leftText = left === null ? null : left < 10 ? 'almost done' : left < 90 ? `about ${Math.max(10, Math.round(left / 10) * 10)} seconds left` : `about ${Math.round(left / 60)} min left`;
     return (
       <div className="src-progress" aria-live="polite">
-        <div className="src-progress-text"><span>{job.message ?? job.label}{job.total ? ` · ${job.done} of ${job.total}` : ''}</span><span>{elapsed(job.startedAt)}</span></div>
+        <div className="src-progress-text"><span>{job.message ?? job.label}{pct !== null ? ` · ${pct}%` : ''}{leftText ? ` · ${leftText}` : ''}</span><span>{elapsed(job.startedAt)}</span></div>
         <div className="src-bar"><div className={`src-bar-fill${pct === null ? ' indeterminate' : ''}`} style={pct === null ? undefined : { width: `${pct}%` }} /></div>
         {!oneLine && <p className="src-note">You can leave this page. It updates when the import finishes.</p>}
       </div>

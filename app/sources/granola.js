@@ -24,7 +24,7 @@ export function parseMeetingList(text) {
     if (!a.id) continue;
     meetings.push({ id: a.id, title: a.title ?? '', meetingAt: a.meeting_at ?? null, url: a.url ?? null, participants: parseParticipants(inner(m[2], 'known_participants')) });
   }
-  return { meetings, hasMore: p.has_more === 'true' && !!p.next_cursor, cursor: p.next_cursor ?? null };
+  return { meetings, hasMore: p.has_more === 'true' && !!p.next_cursor, cursor: p.next_cursor ?? null, totalCount: p.total_count ? Number(p.total_count) : null };
 }
 
 export function parseMeetingDetails(text) {
@@ -88,6 +88,7 @@ export const fileNameFor = (m) => `${String(m.meetingAt ?? '').slice(0, 10) || '
 export async function sync({ mcp, existing, since = '2015-01-01', write, progress = () => {}, batch = 10 }) {
   const listed = [];
   let cursor = null;
+  let totalCount = null;
   do {
     const args = { from_date: since, limit: 100, max_participants: 50 };
     if (cursor) args.cursor = cursor;
@@ -99,15 +100,16 @@ export async function sync({ mcp, existing, since = '2015-01-01', write, progres
     }
     const page = parseMeetingList(r.text);
     listed.push(...page.meetings);
+    totalCount ??= page.totalCount;
     cursor = page.hasMore ? page.cursor : null;
-    progress({ message: `Found ${listed.length} meetings`, total: null });
+    progress({ phase: 'list', message: totalCount ? `Found ${listed.length} of ${totalCount} meetings` : `Found ${listed.length} meetings`, done: listed.length, total: totalCount });
   } while (cursor);
   // a page boundary can repeat a meeting; one entry per id
   const unique = [...new Map(listed.map((m) => [m.id, m])).values()];
   const todo = unique.filter((m) => !existing.has(m.id));
   const failed = [];
   let done = 0, imported = 0;
-  progress({ total: todo.length, done: 0, message: todo.length ? `Importing ${todo.length} of ${unique.length} meetings` : 'Nothing new' });
+  progress({ phase: 'import', phaseStartedAt: Date.now(), total: todo.length, done: 0, message: todo.length ? `Importing ${todo.length} new of ${unique.length} meetings` : 'Nothing new' });
   for (let i = 0; i < todo.length; i += batch) {
     const ids = todo.slice(i, i + batch).map((m) => m.id);
     let details = [];
