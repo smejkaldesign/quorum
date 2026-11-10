@@ -115,8 +115,8 @@ p { margin: 0; }
 .row.wrap { flex-wrap: wrap; }
 .row.end { justify-content: flex-end; }
 .hint { color: var(--muted); font-size: 13px; margin-left: auto; }
-.pill { height: 36px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--muted); font-size: 14px; font-weight: 500; }
-.pill:hover { color: var(--text); border-color: rgba(255, 255, 255, 0.25); }
+.pill { height: 36px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--text); font-size: 14px; font-weight: 500; transition: border-color 120ms ease; }
+.pill:hover { color: var(--text); border-color: #fff; }
 .pill.primary { background: #f2f2f2; border-color: #f2f2f2; color: #111; }
 .pill.primary:hover { background: #fff; }
 
@@ -1193,16 +1193,22 @@ button.plat-row:hover, button.plat-row.on { background: rgba(255, 255, 255, 0.04
 .conn-detail .conn-back:hover { color: var(--text); }
 .conn-detail-head { display: flex; align-items: flex-start; gap: 16px; }
 .conn-detail-title { flex: 1; min-width: 0; }
-.conn-detail-title h3 { margin: 2px 0 4px; font-size: 20px; display: flex; align-items: center; gap: 8px; }
-.conn-detail-title p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.conn-detail-title h3 { margin: 0 0 6px; min-height: 44px; font-size: 20px; color: var(--text); display: flex; align-items: center; gap: 8px; }
+.conn-detail-title p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.55; max-width: 60ch; }
 .conn-detail-actions { display: flex; align-items: center; gap: 8px; flex: none; }
-.conn-jobcard { margin-top: 14px; padding: 12px 18px; }
+.conn-jobcard { margin-top: 14px; padding: 16px 18px; }
+.conn-jobcard .src-status { margin: 0; }
+.conn-jobcard .src-progress { margin-top: 0; }
+.conn-jobcard .conn-alt { margin: 0; }
 .conn-table { padding: 6px 18px; }
 .conn-kv { display: grid; grid-template-columns: 200px 1fr; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--line-2); font-size: 14px; }
 .conn-kv:last-child { border-bottom: 0; }
 .conn-kv > span:first-child { color: var(--muted); }
 .conn-kv code { font: 12px/1.5 var(--mono); word-break: break-all; }
-.conn-kv .link-btn.plain { margin: 0; display: inline-flex; align-items: center; gap: 4px; }
+.conn-kv > span:last-child { text-align: left; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.conn-kv .link-btn.plain { margin: 0; padding: 0; display: inline-flex; align-items: center; gap: 4px; text-align: left; color: var(--text); word-break: break-all; }
+.conn-kv .link-btn.plain:hover { text-decoration: underline; text-underline-offset: 3px; }
+.conn-kv .conn-ok { margin-left: 0; }
 .conn-features { padding: 10px 18px; }
 .conn-features ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
 .conn-features li { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; line-height: 1.45; }
@@ -1268,3 +1274,37 @@ button.plat-row:hover, button.plat-row.on { background: rgba(255, 255, 255, 0.04
 .skel-logo { width: 28px; height: 28px; border-radius: 8px; }
 .skel-title { width: 140px; height: 14px; }
 .skel-meta { width: 180px; height: 12px; margin-left: auto; }
+
+.conn-jobcard.on { border-color: rgba(52, 199, 89, 0.45); background: linear-gradient(180deg, rgba(52, 199, 89, 0.16) 0%, rgba(52, 199, 89, 0.06) 55%, rgba(10, 30, 16, 0.9) 100%); }
+.conn-jobcard .conn-badge { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 10px; font-size: 13px; font-weight: 600; color: #34c759; }
+
+.conn-tabs { display: flex; gap: 4px; margin: 20px 0 8px; border-bottom: 1px solid var(--line-2); }
+.conn-tabs button { padding: 8px 12px; margin-bottom: -1px; font-size: 13px; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; letter-spacing: 0.02em; }
+.conn-tabs button:hover { color: var(--text); }
+.conn-tabs button.on { color: var(--text); border-bottom-color: var(--text); }
+.conn-check { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; cursor: pointer; }
+.conn-check input { margin-top: 3px; width: 16px; height: 16px; accent-color: #007aff; }
+.conn-check > span { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--muted); line-height: 1.45; }
+.conn-check strong { color: var(--text); font-weight: 500; font-size: 14px; }
+.mem-title + .conn-ok { margin-left: 10px; }
+
+/* Settings title as breadcrumbs: same h1 box, plain inline text; the parent is subdued and brightens on hover */
+.set-col h1.crumbs .crumb { color: var(--muted); cursor: pointer; transition: color 160ms ease; outline: none; }
+.set-col h1.crumbs .crumb:hover, .set-col h1.crumbs .crumb:focus-visible { color: var(--text); }
+.set-col h1.crumbs .crumb-sep { color: var(--muted); opacity: 0.55; white-space: pre; }
+
+.set-col h1.crumbs { position: relative; }
+.crumb-actions { position: absolute; right: 0; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 6px; font: 500 14px/1 -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: 0; }
+.crumb-actions .conn-actions { gap: 6px; }
+.crumb-actions .icon-btn { width: 36px; height: 36px; border: 1px solid var(--line-2); border-radius: 999px; transition: border-color 120ms ease; }
+.crumb-actions .icon-btn:hover { border-color: #fff; }
+
+.meta-pill.meta-source img { width: 18px; height: 18px; border-radius: 5px; }
+
+/* a meeting app's two capabilities inside the Connectivity card */
+.conn-caps { display: grid; gap: 10px; }
+.conn-cap { padding: 12px 14px; border: 1px solid var(--line-2); border-radius: 10px; background: rgba(255, 255, 255, 0.02); }
+.conn-cap.on { border-color: rgba(52, 199, 89, 0.35); background: rgba(52, 199, 89, 0.06); }
+.conn-cap-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; }
+.conn-cap-head .conn-ok { margin-left: 0; }
+.conn-cap p { margin: 4px 0 0; font-size: 13px; color: var(--muted); line-height: 1.45; }

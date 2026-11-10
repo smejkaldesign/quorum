@@ -10,7 +10,8 @@ describe('connector library', () => {
     for (const x of CONNECTORS) {
       expect(cats.has(x.category), x.id).toBe(true);
       expect(['available', 'soon']).toContain(x.status);
-      expect(['mcp-source', 'macos', 'quorum-mcp', 'oauth']).toContain(x.kind);
+      expect(['mcp-source', 'macos', 'quorum-mcp', 'oauth', 'meeting-app']).toContain(x.kind);
+      if (x.kind === 'meeting-app') expect(['zoom', 'meet', 'teams'], x.id).toContain(x.app);
       expect(x.domain).toMatch(/^[a-z0-9.-]+\.[a-z]+$/);
       expect(x.description.length).toBeGreaterThan(10);
     }

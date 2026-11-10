@@ -1461,6 +1461,7 @@ ipcMain.handle('read-note', (_e, file) => {
   return {
     file: abs, rel: path.relative(b.vault, abs), title: fm.title, date: fm.date, people: fm.participants.filter((p) => !isSelf(p)).map(personName), body,
     visibility: fm.visibility === 'public' ? 'public' : 'private', withheld: text !== original, link: `quorum://note/${encodeURIComponent(fm.granola_id || path.relative(b.vault, abs))}`, ...noteLink(abs),
+    source: fm.source && fm.source !== 'quorum' ? String(fm.source) : null,
   };
 });
 
@@ -1515,7 +1516,7 @@ if (EDITION === 'cloud') (await loadEE('billing.js')).registerBilling({ ipcMain,
 function openFreshSignIn(url, name) {
   const win = new BrowserWindow({ width: 520, height: 720, title: `Sign in to ${name}`, autoHideMenuBar: true, webPreferences: { partition: `fresh-${Date.now()}`, sandbox: true, contextIsolation: true, nodeIntegration: false } });
   win.webContents.setUserAgent(session.defaultSession.getUserAgent().replace(/ ?Quorum[^ ]*/g, '').replace(/ ?Electron\/[^ ]+/, ''));
-  const done = (_e, target) => { if (String(target).startsWith('http://127.0.0.1:')) setTimeout(() => { if (!win.isDestroyed()) win.close(); }, 1200); };
+  const done = (_e, target) => { if (String(target).startsWith('http://127.0.0.1:') && !win.isDestroyed()) win.close(); };
   win.webContents.on('did-navigate', done);
   win.webContents.on('will-redirect', done);
   win.loadURL(url);

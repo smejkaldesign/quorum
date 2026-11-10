@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { CONNECTOR_BY_ID } from '../connectors/library';
 import type { NoteDoc, Visibility } from './quorum';
 import { Markdown } from './Markdown';
 import { Composer } from './Composer';
@@ -84,6 +85,14 @@ export function PrivateBlocked({ onBack }: { onBack?: () => void }) {
   );
 }
 
+// the app that imported this note, with its logo: the connector library knows the name, the main process the icon
+function SourcePill({ source }: { source: string }) {
+  const [icon, setIcon] = useState<string | null>(null);
+  useEffect(() => { window.quorum.libraryIcons().then((m) => setIcon(m[source] ?? null)); }, [source]);
+  const name = CONNECTOR_BY_ID[source]?.name ?? source.replace(/^./, (c) => c.toUpperCase());
+  return <span className="meta-pill meta-source" title={`Imported from ${name}`}>{icon && <img src={icon} alt="" />}{name}</span>;
+}
+
 export function NoteReader({ note: initial, dayLabel, peopleLine, onBack }: {
   note: NoteDoc; dayLabel: (d: Date | null) => string; peopleLine: (p: string[], n: number) => string; onBack: () => void;
 }) {
@@ -141,6 +150,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack }: {
         <div className="meta-row">
           {date && <span className="meta-pill">{dayLabel(date)} · {date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>}
           {note.people.length > 0 && <span className="meta-pill">{peopleLine(note.people, note.people.length)}</span>}
+          {note.source && <SourcePill source={note.source} />}
         </div>
         {note.body.trim() ? <Markdown text={note.body} headings /> : <p className="muted">No summary yet. Ask Quorum below to write one from the transcript.</p>}
       </article>

@@ -34,9 +34,9 @@ export const CONNECTORS = [
   c('google-calendar', 'Google Calendar', 'calendar', 'calendar.google.com', 'See your upcoming meetings, get a reminder before each one, and give every note the right context.'),
   c('outlook', 'Outlook', 'calendar', 'outlook.com', 'See your upcoming meetings, get a reminder before each one, and give every note the right context.'),
   // meeting apps
-  c('zoom', 'Zoom', 'meetings', 'zoom.us', 'Cloud recordings and transcripts from your Zoom meetings.', 'soon', 'oauth', { app: 'zoom' }),
-  c('google-meet', 'Google Meet', 'meetings', 'meet.google.com', 'Recordings and transcripts from your Google Meet calls.', 'soon', 'oauth', { app: 'meet' }),
-  c('teams', 'Microsoft Teams', 'meetings', 'teams.microsoft.com', 'Transcripts from your Teams meetings, where your organization allows it.', 'soon', 'oauth', { app: 'teams' }),
+  c('zoom', 'Zoom', 'meetings', 'zoom.us', 'Quorum listens to your Zoom calls on this Mac and writes the note live. Cloud recordings come next.', 'available', 'meeting-app', { app: 'zoom' }),
+  c('google-meet', 'Google Meet', 'meetings', 'meet.google.com', 'Quorum listens to your Meet calls in the browser on this Mac and writes the note live. Cloud recordings come next.', 'available', 'meeting-app', { app: 'meet' }),
+  c('teams', 'Microsoft Teams', 'meetings', 'teams.microsoft.com', 'Quorum listens to your Teams calls on this Mac and writes the note live. Cloud transcripts come next.', 'available', 'meeting-app', { app: 'teams' }),
   // communication
   c('slack', 'Slack', 'communication', 'slack.com', 'Share meeting notes to any Slack channel, or post them from a folder on their own.'),
   c('gmail', 'Gmail', 'communication', 'gmail.com', 'Follow-up emails drafted after your meetings, ready to review and send.'),
@@ -84,7 +84,7 @@ export const CONNECTORS = [
 const BY_CATEGORY = {
   'meeting-notes': (n) => [`Imports ${n} notes and summaries into your meeting notes folder, tagged source: ${n.toLowerCase()}`, `Keeps importing new ${n} meetings while Quorum runs`, `Uses ${n}'s own recording and AI; Quorum is the knowledge store`, `Lets ${n} keep running as its own system while Quorum stays in sync`],
   calendar: (n) => [`Shows upcoming meetings from ${n} on Home`, 'Gives each note the meeting title and the people in it', 'Reminds you before each meeting'],
-  meetings: (n) => [`Imports cloud recordings and transcripts from ${n} as meeting notes`, `Picks up a recording as soon as ${n} finishes processing it`, 'Covers calls Quorum did not listen to live'],
+  meetings: (n) => [`Listens to ${n} calls on this Mac and writes the meeting note live`, 'Transcribes on this Mac, or with the transcription you chose', `Soon: imports cloud recordings and transcripts from ${n}, covering calls Quorum did not hear`],
   communication: (n) => [`Shares a meeting note to ${n}`],
   crm: (n) => [`Sends meeting notes to the matching people, companies and deals in ${n}`, `Logs the meeting on the ${n} record`],
   tasks: (n) => [`Turns action items into ${n} tasks`, 'Links each task back to the meeting note'],
@@ -92,6 +92,7 @@ const BY_CATEGORY = {
   ai: (n) => [`Lets ${n} search your meeting notes and answer from them`, `Pulls action items and decisions into ${n}`],
 };
 const OVERRIDES = {
+  zoom: () => ['Listens to Zoom calls on this Mac and writes the meeting note live', 'Posts Quorum\'s notice in the Zoom chat when it starts listening', 'Transcribes on this Mac, or with the transcription you chose', 'Soon: imports Zoom cloud recordings and transcripts, covering calls Quorum did not hear'],
   'apple-calendar': () => ['Shows upcoming meetings from the Calendar app on Home', 'Gives each note the meeting title and the people in it', 'Reads on this Mac; nothing leaves it'],
   slack: () => ['Shares a meeting note to any Slack channel', 'Posts notes from a folder on their own'],
   gmail: () => ['Drafts a follow-up email after each meeting, ready to review and send'],
@@ -105,6 +106,24 @@ const OVERRIDES = {
   trello: () => ['Turns action items into Trello cards', 'Links each card back to the meeting note'],
   notion: () => ['Sends meeting notes to a Notion database you can sort, filter and build on', 'Keeps the Notion page in step with the note'],
 };
+// two or three lines for the top of a connector's page: what it is, what Quorum does with it, where things land
+const ABOUT = {
+  granola: 'Granola records and summarizes your meetings on its own. Quorum reads those notes over Granola\'s MCP server and writes each meeting into your notes folder, checking for new ones every 30 minutes. Granola stays your recorder; Quorum is where the knowledge lives.',
+  'apple-calendar': 'The Calendar app already holds every calendar on this Mac. Allow access and Quorum shows upcoming meetings on Home and gives every note its title and people. Nothing leaves this Mac.',
+  'claude-code': 'Claude Code reads your notes through the quorum MCP server that ships with the app. Ask about meetings, write specs and bug reports from what was said, and pull action items into your work. Everything stays on this Mac.',
+};
+const ABOUT_BY_CATEGORY = {
+  'meeting-notes': (n) => `${n} records and summarizes your meetings. Quorum reads those notes and writes each meeting into your notes folder, tagged with its source. ${n} stays your recorder; Quorum is where the knowledge lives.`,
+  calendar: (n) => `${n} holds your schedule. Once connected, Quorum shows upcoming meetings on Home, reminds you before each one, and gives every note the meeting title and the people in it.`,
+  meetings: (n) => `Quorum listens to your ${n} calls on this Mac: it notices when a call starts, transcribes, and writes the note as the meeting happens. Nothing is installed in ${n} and no account is needed. Importing ${n}'s cloud recordings comes next, so calls Quorum did not hear are covered too.`,
+  communication: (n) => `${n} is where your team talks. Once connected, Quorum can share a meeting note there in one step and draft follow-ups from what was said.`,
+  crm: (n) => `${n} holds your customers and deals. Once connected, Quorum sends meeting notes to the matching people, companies and deals and logs the meeting on the record.`,
+  tasks: (n) => `${n} tracks your work. Once connected, Quorum turns action items from meetings into ${n} tasks and links each one back to the note it came from.`,
+  docs: (n) => `${n} stores your documents. Once connected, Quorum saves meeting notes there so a copy lives where your team already looks.`,
+  ai: (n) => `${n} is an AI tool you already use. Once connected, it can search your meeting notes, answer from them, and pull out action items and decisions.`,
+};
+export const aboutOf = (x) => ABOUT[x.id] ?? (ABOUT_BY_CATEGORY[x.category] ?? (() => x.description))(x.name);
+
 export const featuresOf = (x) => (OVERRIDES[x.id] ?? BY_CATEGORY[x.category] ?? (() => []))(x.name);
 
 export const CONNECTOR_BY_ID = Object.fromEntries(CONNECTORS.map((x) => [x.id, x]));

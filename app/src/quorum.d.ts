@@ -77,7 +77,7 @@ export type Result = { ok?: boolean; error?: string };
 // Settings › Sources (sources/catalog.js, sources/jobs.js)
 export type SourceMethod = 'connect' | 'folder';
 export type SourceJob = { id: string; label: string; status: 'running' | 'done' | 'failed'; phase?: 'list' | 'import'; phaseStartedAt?: number; done: number; total: number | null; message: string | null; error: string | null; failed: { id: string; title: string; error: string }[]; result: { listed: number; imported: number; skipped: number } | null; startedAt: number; finishedAt: number | null };
-export type MeetingSourceInfo = { id: string; name: string; kind: 'mcp'; url: string; folder: string; description: string; methods: SourceMethod[]; recommended: SourceMethod; why: string; method: SourceMethod; connected: boolean; freshNext?: boolean; lastSyncAt: string | null; imported: number; folderPath: string | null; notes: number; job: SourceJob | null };
+export type MeetingSourceInfo = { id: string; name: string; kind: 'mcp'; url: string; folder: string; description: string; methods: SourceMethod[]; recommended: SourceMethod; why: string; method: SourceMethod; connected: boolean; syncNotes: boolean; freshNext?: boolean; account?: string | null; lastSyncAt: string | null; imported: number; folderPath: string | null; notes: number; job: SourceJob | null };
 // workspace connectors (Settings › Admin › Connectors): a provider key held in Supabase Vault for the whole workspace and
 // the roles it may serve. The key never comes back to the client; a draft carries it once, on the way in
 export type ConnectorProvider = 'assemblyai' | 'deepgram' | 'elevenlabs' | 'openai' | 'anthropic' | 'google' | 'openai_compatible';
@@ -109,7 +109,7 @@ export type MemberInvite = { inviteId: string; email: string; role: Role; expire
 export type MeetingRow = { id: string; file: string; kind: 'meeting' | 'note'; source: string; title: string; date: string | null; people: string[]; count: number; visibility: Visibility; rel: string; link: string; app: string };
 export type ChatRow = { id: string; title: string; date: string; turns: number; meetingFile: string | null; meetingTitle: string | null };
 export type Visibility = 'private' | 'public';
-export type NoteDoc = { file: string; rel: string; title: string; date?: string; people: string[]; body: string; app: string; url: string; visibility: Visibility; withheld: boolean; link: string };
+export type NoteDoc = { file: string; rel: string; title: string; date?: string; people: string[]; body: string; app: string; url: string; source?: string | null; visibility: Visibility; withheld: boolean; link: string };
 export type SavedChat = { id: string; title: string; turns: { q: string; a: string; sources?: Source[]; steps?: string[] }[] };
 export type MissingLink = { target: string; sources: string[]; count: number; candidates: { rel: string; title: string; name: string | null; exact: boolean }[] };
 export type Relocated = { rel: string; files: number; links: number };
@@ -245,6 +245,7 @@ declare global {
       sourceDisconnect(id: string): Promise<Result>;
       sourceSync(id: string): Promise<Result>;
       sourceSetMethod(id: string, method: SourceMethod): Promise<Result>;
+      sourceSetOption(id: string, patch: { syncNotes?: boolean }): Promise<Result>;
       onSourceJob(cb: (job: SourceJob) => void): Unsub;
       claudeLogin(): Promise<void>;
       claudeStatus(): Promise<ClaudeStatus>;

@@ -12,6 +12,8 @@ export const CLIENT_NAME = 'Quorum';
 
 const json = async (r) => { const t = await r.text(); try { return JSON.parse(t); } catch { return null; } };
 const b64url = (buf) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+// the email claim of an id_token, when the server issued one; never verified here, only shown to the person
+export const emailOf = (idToken) => { try { return JSON.parse(Buffer.from(String(idToken).split('.')[1], 'base64url').toString()).email ?? null; } catch { return null; } };
 
 export function pkce() {
   const verifier = b64url(randomBytes(32));
@@ -48,8 +50,9 @@ export async function discover(resourceUrl, { fetchImpl = fetch, wwwAuthenticate
   }
   if (!as) throw new Error('The service did not publish its sign-in endpoints.');
   if (!as.code_challenge_methods_supported?.includes('S256') && as.code_challenge_methods_supported) throw new Error('The service does not support PKCE.');
-  const scopes = resource?.scopes_supported ?? [];
-  if (as.scopes_supported?.includes('offline_access') && !scopes.includes('offline_access')) scopes.push('offline_access');
+  const scopes = [...(resource?.scopes_supported ?? [])];
+  // a refresh token when offered, and the signed-in email when offered, so a refusal can name the account it refused
+  for (const extra of ['offline_access', 'openid', 'email']) if (as.scopes_supported?.includes(extra) && !scopes.includes(extra)) scopes.push(extra);
   return {
     resource: resource?.resource ?? resourceUrl,
     issuer: as.issuer ?? issuer,
@@ -105,7 +108,7 @@ const tokenRequest = async (meta, client, params, fetchImpl) => {
   const r = await fetchImpl(meta.tokenEndpoint, { method: 'POST', headers, body, signal: AbortSignal.timeout(20000) });
   const data = await json(r);
   if (!r.ok || !data?.access_token) { const e = new Error(data?.error_description || data?.error || `Token request failed (${r.status}).`); e.code = data?.error ?? null; throw e; }
-  return { accessToken: data.access_token, refreshToken: data.refresh_token ?? null, tokenType: data.token_type ?? 'Bearer', expiresAt: data.expires_in ? Date.now() + Number(data.expires_in) * 1000 : null, scope: data.scope ?? null };
+  return { accessToken: data.access_token, refreshToken: data.refresh_token ?? null, tokenType: data.token_type ?? 'Bearer', expiresAt: data.expires_in ? Date.now() + Number(data.expires_in) * 1000 : null, scope: data.scope ?? null, email: emailOf(data.id_token) };
 };
 
 export const exchange = (meta, client, { code, verifier, redirectUri }, fetchImpl = fetch) =>
@@ -148,8 +151,10 @@ const NOISE = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'
 export const loopbackPage = (q) => {
   const esc = (s) => String(s ?? '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
   const failed = q.error || q.failed;
-  const title = q.pending ? 'Almost there' : failed ? 'That did not work' : `Connected${q.name ? ` to ${esc(q.name)}` : ''}`;
-  const body = q.pending ? 'Go back to Quorum to see the result.' : failed ? esc(q.failed || q.error_description || q.error) : 'You can close this tab and go back to Quorum. Your meetings are on their way.';
+  const reason = failed ? String(q.failed || q.error_description || q.error).trim() : '';
+  const cut = reason.indexOf('. ');
+  const title = q.pending ? 'Almost there' : failed ? esc(cut > 0 ? reason.slice(0, cut) : reason.replace(/\.$/, '')) : `Connected${q.name ? ` to ${esc(q.name)}` : ''}`;
+  const body = q.pending ? 'Go back to Quorum to see the result.' : failed ? esc(cut > 0 ? reason.slice(cut + 2) : 'Go back to Quorum to try again.') : 'You can close this tab and go back to Quorum. Your meetings are on their way.';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Quorum</title>
 <style>
 html,body{height:100%;margin:0}body{background:#0b0b0c;color:#f2f2f3;font:16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",Helvetica,Arial,sans-serif}
@@ -194,7 +199,7 @@ export async function connect({ resourceUrl, open, clients, fetchImpl = fetch, r
     if (err.code === 'invalid_client') { await clients.set(meta.issuer, null); fail('The service forgot this app. Click Connect again.'); }
     fail(err.message);
   }
-  if (verify) { try { await verify(tokens); } catch (err) { fail(err.message, 'wrong-account'); } }
+  if (verify) { try { await verify(tokens); } catch (err) { fail(tokens.email ? err.message.replace(/for this sign-in/, `for ${tokens.email}`) : err.message, 'wrong-account'); } }
   tell({});
   return { meta, client, tokens };
 }

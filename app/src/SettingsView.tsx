@@ -109,12 +109,12 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
       <main className="set-main">
         <div className="set-col">
           {page === 'connectors' && connectorDetail && CONNECTOR_BY_ID[connectorDetail]
-            ? <h1 className="set-title crumbs"><button className="crumb" onClick={() => setConnectorDetail(null)}>Connectors</button><span className="crumb-sep" aria-hidden="true"> / </span><span>{CONNECTOR_BY_ID[connectorDetail].name}</span></h1>
+            ? <h1 className="set-title crumbs"><span className="crumb" role="link" tabIndex={0} onClick={() => setConnectorDetail(null)} onKeyDown={(e) => { if (e.key === 'Enter') setConnectorDetail(null); }}>Connectors</span><span className="crumb-sep" aria-hidden="true"> / </span><span>{CONNECTOR_BY_ID[connectorDetail].name}</span><span className="crumb-actions" id="conn-title-actions" /></h1>
             : <h1 className="set-title">{current.label}{current.soon && <Soon />}</h1>}
           {page === 'preferences' && <p className="set-lede">Quorum works best knowing a little about you. Quorum uses this when it writes your meeting notes and answers questions.</p>}
           {page === 'knowledge' && <p className="set-lede">Company knowledge for your whole workspace, chosen by admins.</p>}
           {page === 'general' && <p className="set-lede">Settings for everyone in your workspace. Quorum gives this context to every meeting summary and answer, so it's the same for each person.</p>}
-          {page === 'connectors' && <p className="set-lede">The tools Quorum is connected to. Meeting notes, calendars and AI tools, each tagged with where things came from.</p>}
+          {page === 'connectors' && !connectorDetail && <p className="set-lede">The tools Quorum is connected to. Meeting notes, calendars and AI tools, each tagged with where things came from.</p>}
           {page === 'developers' && <p className="set-lede">Model providers, Claude Code and Terminal access, and API keys for your own scripts.</p>}
           {page === 'platform' && <p className="set-lede">Every workspace on this Quorum. Plans are set by hand here until the admin web app exists.</p>}
           {page === 'preferences' ? (
@@ -136,7 +136,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
             <><WorkspacePage settings={settings} onSettings={onSettings} /><BillingArea /></>
           ) : page === 'memory' ? (
             <>
-              <SecondBrain brain={brain} onConnect={onConnect} />
+              <SecondBrain brain={brain} onConnect={onConnect} onViewConnector={(id) => { setPage('connectors'); setConnectorDetail(id); }} />
               {brain && <MemoryScan />}
             </>
           ) : page === 'members' ? <MembersArea />
@@ -144,7 +144,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
             : page === 'org-voice' ? <WorkspaceVoiceArea local={<OrgVoiceLocal onGo={go} />} />
             : page === 'platform' ? <PlatformArea />
             : page === 'calendar' ? <CalendarPage />
-            : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} />
+            : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} onConnector={(id) => { setPage('connectors'); setConnectorDetail(id); }} />
             : page === 'developers' ? <DevelopersPage />
             : page === 'notifications' ? <NotificationsPage />
             : page === 'connectors' ? <ConnectorsPage detail={connectorDetail} onDetail={setConnectorDetail} />
@@ -180,11 +180,13 @@ function OrgVoiceLocal({ onGo }: { onGo: (p: Page) => void }) {
 }
 
 // the Agent OS, where Quorum saves notes, and meeting notes from other apps; Add takes a folder by hand when there's no connector for that app
-function SecondBrain({ brain, onConnect }: { brain: Brain | null; onConnect: () => void }) {
+function SecondBrain({ brain, onConnect, onViewConnector }: { brain: Brain | null; onConnect: () => void; onViewConnector: (id: string) => void }) {
   type Source = Awaited<ReturnType<typeof window.quorum.meetingSources>>[number];
   const [sources, setSources] = useState<Source[]>([]);
   const [icons, setIcons] = useState<Record<string, string | null>>({});
-  const load = () => window.quorum.meetingSources().then(setSources);
+  // folders that a connector feeds show the connection and offer its controls instead of the plain remove
+  const [connected, setConnected] = useState<Record<string, { connected: boolean; syncNotes: boolean }>>({});
+  const load = () => { window.quorum.meetingSources().then(setSources); window.quorum.sourcesList().then((l) => setConnected(Object.fromEntries(l.map((s) => [s.id, { connected: s.connected, syncNotes: s.syncNotes }])))); };
   useEffect(() => { if (brain) load(); window.quorum.sourceIcons().then(setIcons); }, [brain]);
   return (
     <>
@@ -201,14 +203,33 @@ function SecondBrain({ brain, onConnect }: { brain: Brain | null; onConnect: () 
         {brain && <MeetingsRow />}
         {brain && sources.map((src) => (
           <Row key={src.id} icon={icons[src.key] ? <img className="set-app-icon" src={icons[src.key]!} alt="" /> : <IconFolder width={18} height={18} />}
-            title={<button className="mem-title" onClick={() => window.quorum.meetingSourceOpen(src.id)}>{src.name} meeting notes<IconExternal width={14} height={14} /></button>}
+            title={<><button className="mem-title" onClick={() => window.quorum.meetingSourceOpen(src.id)}>{src.name} meeting notes<IconExternal width={14} height={14} /></button>{connected[src.key]?.connected && <span className="conn-ok"><i />{connected[src.key].syncNotes ? 'Connected' : 'Connected · sync off'}</span>}</>}
             desc={`${src.rel} · ${src.notes} ${src.notes === 1 ? 'note' : 'notes'}`}>
-            <button className="icon-btn mem-no" aria-label={`Remove ${src.name} meeting notes from Quorum`} data-tip="Remove from Quorum. Notes stay in the folder." data-tip-pos="left"
-              onClick={async () => { if (await window.quorum.meetingSourceRemove(src.id)) load(); }}><IconClose width={15} height={15} /></button>
+            <SourceRowMenu name={src.name} connector={connected[src.key] ? { id: src.key, ...connected[src.key] } : null}
+              onView={() => onViewConnector(src.key)}
+              onToggleSync={async (on) => { await window.quorum.sourceSetOption(src.key, { syncNotes: on }); load(); }}
+              onRemove={async () => { if (await window.quorum.meetingSourceRemove(src.id)) load(); }} />
           </Row>
         ))}
       </div>
     </>
+  );
+}
+
+// the menu on a meeting-notes folder: the connector's controls when one feeds it, else just remove
+function SourceRowMenu({ name, connector, onView, onToggleSync, onRemove }: { name: string; connector: { id: string; connected: boolean; syncNotes: boolean } | null; onView: () => void; onToggleSync: (on: boolean) => void; onRemove: () => void }) {
+  const [open, setOpen] = useMenu();
+  return (
+    <span className="menu-wrap" onClick={(e) => e.stopPropagation()}>
+      <button className="icon-btn" aria-label={`${name} meeting notes options`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}><IconMore width={16} height={16} /></button>
+      {open && (
+        <div className="menu" role="menu">
+          {connector && <button role="menuitem" onClick={() => { setOpen(false); onView(); }}><IconGrid width={15} height={15} /> View connection</button>}
+          {connector?.connected && <button role="menuitem" onClick={() => { setOpen(false); onToggleSync(!connector.syncNotes); }}><IconReset width={15} height={15} /> {connector.syncNotes ? 'Pause sync into Quorum' : 'Resume sync into Quorum'}</button>}
+          <button role="menuitem" className="danger" onClick={() => { setOpen(false); onRemove(); }}><IconClose width={15} height={15} /> Remove from Quorum</button>
+        </div>
+      )}
+    </span>
   );
 }
 
@@ -858,12 +879,12 @@ const ECHO_DESC: Record<NonNullable<Transcription['echo']>, string> = {
   off: 'Call audio can show as you on speakers',
 };
 
-function MeetingsPage({ settings, onSettings }: { settings: Settings; onSettings: (s: Settings) => void }) {
+function MeetingsPage({ settings, onSettings, onConnector }: { settings: Settings; onSettings: (s: Settings) => void; onConnector: (id: string) => void }) {
   const t = settings.transcription ?? {};
   const saveTx = async (patch: Transcription) => onSettings(await window.quorum.setSettings({ transcription: patch }));
   return (
     <>
-      <MeetingProviders />
+      <MeetingProviders onConnector={onConnector} />
       <h3>Transcribing</h3>
       <p className="mcp-lede">How Quorum turns call audio into text.</p>
       {settings.providers?.speech && settings.providers.speech !== 'apple' && <p className="set-note">Cloud speech engines arrive with the speech provider interface. {BY_ID[settings.providers.speech]?.name ?? 'That provider'} is saved as your speech provider; until then Apple transcribes every meeting on this Mac.</p>}
@@ -909,7 +930,8 @@ function DevelopersPage() {
 }
 
 // the meeting apps the workspace uses, read on this Mac. Zoom gets the notice in its chat; Meet and Teams are detected and captured
-function MeetingProviders() {
+const CONNECTOR_FOR_APP: Record<string, string> = { zoom: 'zoom', meet: 'google-meet', teams: 'teams' };
+function MeetingProviders({ onConnector }: { onConnector: (id: string) => void }) {
   type Provider = Awaited<ReturnType<typeof window.quorum.meetingProviders>>[number];
   const [list, setList] = useState<Provider[] | null>(null);
   const [icons, setIcons] = useState<Record<string, string | null>>({});
@@ -948,12 +970,12 @@ function MeetingProviders() {
           )}
         </span>
       </div>
-      <p className="mcp-lede">The meeting apps Quorum listens to, read on this Mac. Cloud recordings and transcripts come through Connectors.</p>
+      <p className="mcp-lede">The meeting apps Quorum listens to, read on this Mac. Each one is a connector; open it for details and settings.</p>
       <div className="set-card">
         {list?.map((p) => (
           <Row key={p.id}
             icon={icons[p.id] ? <img className="set-app-icon" src={icons[p.id]!} alt="" /> : <IconChat width={18} height={18} />}
-            title={<>{p.name}{ready(p) && <span className="conn-ok"><i />Listening on this Mac</span>}</>} desc={desc(p)}>
+            title={<><button className="mem-title" onClick={() => onConnector(CONNECTOR_FOR_APP[p.id] ?? p.id)}>{p.name}<IconChevron className="right" width={14} height={14} /></button>{ready(p) && <span className="conn-ok"><i />Listening on this Mac</span>}</>} desc={desc(p)}>
             {!p.enabled && <button className="pill" onClick={() => toggle(p, true)}>Add</button>}
             {p.enabled && p.installed && p.access === false && <button className="pill" onClick={() => window.quorum.axSettingsOpen()}>Open System Settings</button>}
             {p.enabled && (
@@ -961,6 +983,7 @@ function MeetingProviders() {
                 <button className="icon-btn" aria-label={`${p.name} options`} aria-haspopup="menu" aria-expanded={menu === p.id} data-tip="More options" onClick={() => setMenu((m) => (m === p.id ? null : p.id))}><IconMore /></button>
                 {menu === p.id && (
                   <div className="menu end" role="menu">
+                    <button role="menuitem" onClick={() => { setMenu(null); onConnector(CONNECTOR_FOR_APP[p.id] ?? p.id); }}><IconGrid width={15} height={15} /> View connector</button>
                     <button role="menuitem" onClick={() => { setMenu(null); setDetails(p); }}><IconInfo width={15} height={15} /> View details</button>
                     <button role="menuitem" onClick={() => { setMenu(null); window.quorum.meetingProviderCheck().then(() => setTimeout(reload, 1500)); }}><IconReset width={15} height={15} /> Check again</button>
                     <button role="menuitem" onClick={() => { setMenu(null); window.quorum.axSettingsOpen(); }}><IconLock width={15} height={15} /> Accessibility settings</button>

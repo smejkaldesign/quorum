@@ -27,7 +27,7 @@ describe('oauth discovery', () => {
   it('finds the authorization server and asks for a refresh token when offered', async () => {
     const meta = await discover('https://mcp.example.com/mcp', { fetchImpl: fake() });
     expect(meta.tokenEndpoint).toBe(AS.token_endpoint);
-    expect(meta.scopes).toEqual(['mcp', 'offline_access']);
+    expect(meta.scopes).toEqual(['mcp', 'offline_access', 'openid']);
   });
   it('registers as a public native client', async () => {
     const log = [];
