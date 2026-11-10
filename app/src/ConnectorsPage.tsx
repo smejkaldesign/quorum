@@ -198,7 +198,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
           <p>{x.description}</p>
         </div>
         <div className="conn-detail-actions">
-          {!soon && !on && <ConnectButton connector={x} live={live} busy={busy} act={act} />}
+          {!soon && !on && !(accountProblem && x.kind === 'mcp-source') && <ConnectButton connector={x} live={live} busy={busy} act={act} />}
           {on && <Actions connector={x} live={live} busy={busy} act={act} />}
         </div>
       </div>
@@ -247,7 +247,7 @@ function DifferentAccount({ connector: x, busy, act }: { connector: LibraryConne
   const start = () => { setLink(null); act(async () => { await window.quorum.sourceDisconnect(x.source!); return startConnect(x, true); }).then(() => setLink(null)); };
   return (
     <div className="conn-alt">
-      <button className="pill" disabled={busy} onClick={start}>{busy ? 'Waiting for the sign-in…' : 'Connect with a different account'}</button>
+      <button className="pill primary" disabled={busy} onClick={start}>{busy ? 'Waiting for the sign-in…' : 'Connect with a different account'}</button>
       {link && (
         <div className="conn-alt-link">
           <p>{link.opened ? `A sign-in window opened with a clean session. Pick the account ${x.name} knows there. If it did not appear, open this link in a private browser window instead.` : `Open this link in a private browser window and sign in with the account ${x.name} knows.`}</p>
