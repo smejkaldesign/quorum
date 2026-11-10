@@ -1274,3 +1274,6 @@ button.plat-row:hover, button.plat-row.on { background: rgba(255, 255, 255, 0.04
 .skel-logo { width: 28px; height: 28px; border-radius: 8px; }
 .skel-title { width: 140px; height: 14px; }
 .skel-meta { width: 180px; height: 12px; margin-left: auto; }
+
+.conn-jobcard.on { border-color: rgba(52, 199, 89, 0.45); background: linear-gradient(180deg, rgba(52, 199, 89, 0.12), rgba(52, 199, 89, 0.05)); }
+.conn-jobcard .conn-badge { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 10px; font-size: 13px; font-weight: 600; color: #34c759; }

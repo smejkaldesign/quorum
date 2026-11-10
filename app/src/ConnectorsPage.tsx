@@ -171,7 +171,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
   const alert = error || (src?.job?.status === 'failed' ? src.job.error : null) || null;
   const accountProblem = !!alert && /No \w+ account for|account for this sign-in|different account|Use the account your/i.test(alert);
   const rows: [string, ReactNode][] = [
-    ['Status', <span className={on ? 'conn-ok' : undefined}>{on && <i />}{status}</span>],
+    ...(on ? [] : [['Status', status] as [string, ReactNode]]),
     ['Category', cat?.name ?? x.category],
     ['Connection', connectionType(x)],
   ];
@@ -195,7 +195,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
       <div className="conn-detail-head">
         <Logo icon={icon} size={44} />
         <div className="conn-detail-title">
-          <h3>{x.name}{soon && <em className="soon grey">Soon</em>}{on && <span className="conn-ok"><i />Connected</span>}</h3>
+          <h3>{x.name}{soon && <em className="soon grey">Soon</em>}</h3>
           <p>{x.description}</p>
         </div>
         <div className="conn-detail-actions">
@@ -205,7 +205,8 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
       </div>
       {alert && <div className="conn-alert" role="alert"><strong>{accountProblem ? 'Sign in with a different account' : alert.split('. ')[0].replace(/\.$/, '')}</strong><span>{alert}</span></div>}
       <h4>Connectivity</h4>
-      <div className="set-card conn-jobcard">
+      <div className={`set-card conn-jobcard${on ? ' on' : ''}`}>
+        {on && <span className="conn-ok conn-badge"><i />Connected</span>}
         {accountProblem && !on && x.kind === 'mcp-source'
           ? <DifferentAccount connector={x} busy={busy} act={act} />
           : src?.job && src.job.status !== 'failed'
