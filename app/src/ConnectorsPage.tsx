@@ -191,7 +191,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange }: { connector: Li
       </div>
       {error && <p className="set-error">{error}</p>}
       <h4>Activity</h4>
-      <div className="set-card conn-jobcard">{src?.job ? <JobLine job={src.job} /> : <p className="src-status">{on ? (src ? `Last sync ${ago(src.lastSyncAt)}. Next automatic sync within 30 minutes while Quorum runs.` : 'Connected on this Mac.') : soon ? 'Not available yet.' : 'Not connected yet.'}</p>}</div>
+      <div className="set-card conn-jobcard">{src?.job && src.job.status === 'failed' && /Granola account|different account|Reconnect/i.test(src.job.error ?? '') && <DifferentAccount connector={x} busy={busy} act={act} />}{src?.job ? <JobLine job={src.job} /> : <p className="src-status">{on ? (src ? `Last sync ${ago(src.lastSyncAt)}. Next automatic sync within 30 minutes while Quorum runs.` : 'Connected on this Mac.') : soon ? 'Not available yet.' : 'Not connected yet.'}</p>}</div>
       <h4>Details</h4>
       <div className="set-card conn-table">
         {rows.map(([k, v]) => <div key={k} className="conn-kv"><span>{k}</span><span>{v}</span></div>)}
@@ -205,8 +205,8 @@ function ConnectorDetail({ connector: x, icon, live, onChange }: { connector: Li
 }
 
 // starts the connection for whatever kind this is; the Library tiles and the detail header share it
-const startConnect = async (x: LibraryConnector): Promise<{ ok?: boolean; error?: string }> => {
-  if (x.kind === 'mcp-source' && x.source) return window.quorum.sourceConnect(x.source);
+const startConnect = async (x: LibraryConnector, fresh = false): Promise<{ ok?: boolean; error?: string }> => {
+  if (x.kind === 'mcp-source' && x.source) return window.quorum.sourceConnect(x.source, fresh ? { fresh: true } : undefined);
   if (x.id === 'apple-calendar') { const c = await window.quorum.calendarConnect(); return c.status === 'granted' ? { ok: true } : c.status === 'denied' ? { error: 'Calendar access is off for Quorum in System Settings.' } : { error: 'macOS did not grant calendar access.' }; }
   if (x.id === 'claude-code') { const a = await window.quorum.mcpAdd(); return a.added ? { ok: true } : { error: a.error ?? 'Claude Code did not accept the server.' }; }
   return { error: 'Not available yet.' };
@@ -217,6 +217,28 @@ const connectLabel = (x: LibraryConnector, busy: boolean, full: boolean) =>
 function ConnectButton({ connector: x, live, busy, act }: { connector: LibraryConnector; live: Live; busy: boolean; act: Act }) {
   if (x.id === 'apple-calendar' && live.cal?.status === 'denied') return <button className="pill" onClick={() => window.quorum.calendarPrivacy()}>Open System Settings</button>;
   return <button className="pill primary" disabled={busy} onClick={() => act(() => startConnect(x))}>{connectLabel(x, busy, true)}</button>;
+}
+
+// the wrong account got connected: a sign-in in a private window, so the browser's session cannot answer for you
+function DifferentAccount({ connector: x, busy, act }: { connector: LibraryConnector; busy: boolean; act: Act }) {
+  const [link, setLink] = useState<{ url: string; opened: 'chrome-incognito' | null } | null>(null);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => window.quorum.onSourceAuthLink((e) => { if (e.id === x.source) setLink({ url: e.url, opened: e.opened }); }), [x.source]);
+  const start = () => { setLink(null); act(async () => { const r = await window.quorum.sourceDisconnect(x.source!); if (r.error) return r; return startConnect(x, true); }).then(() => setLink(null)); };
+  return (
+    <div className="conn-alt">
+      <button className="pill" disabled={busy} onClick={start}>{busy ? 'Waiting for the sign-in…' : 'Connect with a different account'}</button>
+      {link && (
+        <div className="conn-alt-link">
+          <p>{link.opened ? 'A private Chrome window opened with the sign-in. Pick the account Granola knows there.' : 'Open this link in a private window and sign in with the account Granola knows.'}</p>
+          <div className="conn-alt-row">
+            <code>{link.url.slice(0, 64)}…</code>
+            <button className="pill small-pill" onClick={() => { navigator.clipboard.writeText(link.url); setCopied(true); setTimeout(() => setCopied(false), 1500); }}>{copied ? 'Copied' : 'Copy link'}</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function JobLine({ job, oneLine }: { job: SourceJob; oneLine?: boolean }) {

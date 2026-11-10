@@ -1243,3 +1243,9 @@ button.plat-row:hover, button.plat-row.on { background: rgba(255, 255, 255, 0.04
 .lib-empty { grid-column: 1 / -1; color: var(--muted); font-size: 13px; padding: 24px 0; text-align: center; }
 
 .soon.grey { background: rgba(255, 255, 255, 0.08); color: var(--muted); }
+
+.conn-alt { margin-bottom: 10px; }
+.conn-alt-link { margin-top: 10px; font-size: 13px; color: var(--muted); }
+.conn-alt-link p { margin: 0 0 8px; }
+.conn-alt-row { display: flex; align-items: center; gap: 10px; }
+.conn-alt-row code { font: 12px/1.4 var(--mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }

@@ -108,7 +108,8 @@ contextBridge.exposeInMainWorld('quorum', {
   meetingSourceOpen: (id) => ipcRenderer.invoke('meeting-source-open', id),
   // meeting sources (Settings › Sources); handlers in sources/index.js. Tokens stay in the Keychain and never cross here
   sourcesList: () => ipcRenderer.invoke('sources-list'),
-  sourceConnect: (id) => ipcRenderer.invoke('source-connect', id),
+  sourceConnect: (id, opts) => ipcRenderer.invoke('source-connect', id, opts),
+  onSourceAuthLink: on('source-auth-link'),
   sourceDisconnect: (id) => ipcRenderer.invoke('source-disconnect', id),
   sourceSync: (id) => ipcRenderer.invoke('source-sync', id),
   sourceSetMethod: (id, method) => ipcRenderer.invoke('source-set-method', id, method),

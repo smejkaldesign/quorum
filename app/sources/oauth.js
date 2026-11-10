@@ -113,8 +113,11 @@ export const exchange = (meta, client, { code, verifier, redirectUri }, fetchImp
 export const refresh = (meta, client, refreshToken, fetchImpl = fetch) =>
   tokenRequest(meta, client, { grant_type: 'refresh_token', refresh_token: refreshToken }, fetchImpl).then((t) => ({ ...t, refreshToken: t.refreshToken ?? refreshToken }));
 
-// one browser visit on the loopback: resolves with the query (code, state or error), answers the tab with a short page
+// one browser visit on the loopback: resolves with the query (code, state or error), answers the tab with a short page.
+// Starting a new wait cancels one still pending, so a second Connect never fails on the busy port
+let pending = null;
 export function awaitLoopback({ port = LOOPBACK_PORT, path = '/callback', timeoutMs = 5 * 60 * 1000, page = loopbackPage } = {}) {
+  pending?.();
   return new Promise((resolve, reject) => {
     let done = false;
     const server = http.createServer((req, res) => {
@@ -125,7 +128,9 @@ export function awaitLoopback({ port = LOOPBACK_PORT, path = '/callback', timeou
       res.end(page(q));
       finish(() => resolve(q));
     });
-    const finish = (fn) => { if (done) return; done = true; clearTimeout(timer); server.close(); fn(); };
+    const finish = (fn) => { if (done) return; done = true; clearTimeout(timer); server.close(); if (pending === cancel) pending = null; fn(); };
+    const cancel = () => finish(() => reject(new Error('Replaced by a newer sign-in.')));
+    pending = cancel;
     const timer = setTimeout(() => finish(() => reject(new Error('The sign-in did not finish within five minutes.'))), timeoutMs);
     timer.unref?.();
     server.on('error', (err) => finish(() => reject(err.code === 'EADDRINUSE' ? new Error('Another sign-in is already waiting. Finish it or try again in a minute.') : err)));

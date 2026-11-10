@@ -1,6 +1,7 @@
 // Meeting sources wired to the app: the Sources page's IPC, Keychain-backed tokens, one MCP client per connected
 // source, background import jobs with progress, and a timer that keeps connected sources in sync while Quorum runs.
 // Edition-agnostic: a Local user connects Granola on their own account exactly like a Cloud user.
+import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { BY_ID, SOURCES, publicManifest } from './catalog.js';
@@ -105,11 +106,20 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
     'sources-list': () => list(),
     'source-set-method': (id, method) => { const src = BY_ID[id]; if (!src || !src.methods.includes(method)) return { error: 'Unknown method.' }; stateOf(id).method = method; saveSettings(); return { ok: true }; },
     // the browser flow; when it lands the first import starts on its own and the card shows progress
-    'source-connect': async (id) => {
+    // fresh: the default browser's session would be reused (that is how a wrong account gets connected twice), so the
+    // sign-in opens in a private Chrome window when Chrome is installed, and the link goes to the UI to copy either way
+    'source-connect': async (id, opts = {}) => {
       const src = BY_ID[id];
       if (!src || src.kind !== 'mcp') return { error: 'Unknown source.' };
+      const open = opts.fresh
+        ? async (url) => {
+          const chrome = ['/Applications/Google Chrome.app', `${process.env.HOME}/Applications/Google Chrome.app`].find((p) => existsSync(p));
+          const opened = chrome ? await new Promise((r) => execFile('/usr/bin/open', ['-na', 'Google Chrome', '--args', '--incognito', url], (err) => r(!err))) : false;
+          toUI('source-auth-link', { id, url, opened: opened ? 'chrome-incognito' : null });
+        }
+        : openExternal;
       try {
-        const { meta, tokens } = await oauthConnect({ resourceUrl: src.url, open: openExternal, clients: store.clients });
+        const { meta, tokens } = await oauthConnect({ resourceUrl: src.url, open, clients: store.clients });
         metaCache[src.url] = meta;
         await store.tokens.set(id, tokens);
         const s = stateOf(id); s.connected = true; s.method = 'connect'; s.connectedAt = new Date().toISOString(); saveSettings();
