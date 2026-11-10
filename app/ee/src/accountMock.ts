@@ -1,6 +1,6 @@
 import type { AccessCode, AccountState, Billing, ContributionMine, Member, MemberInvite, PlatformWorkspace, Result, Role, WorkspaceConnector, WorkspaceVoice } from '../../src/quorum';
 
-export type AccountApi = Pick<Window['quorum'], 'accountStatus' | 'accountSendCode' | 'accountVerifyCode' | 'accountSignOut' | 'orgCreate' | 'orgJoin' | 'orgSwitch' | 'membersList' | 'memberInvite' | 'memberRemove' | 'inviteRevoke' | 'syncSet' | 'syncNow' | 'onAccount'>;
+export type AccountApi = Pick<Window['quorum'], 'accountStatus' | 'accountSendCode' | 'accountVerifyCode' | 'accountSignOut' | 'accountGoogle' | 'onAccountOAuth' | 'orgCreate' | 'orgJoin' | 'orgSwitch' | 'membersList' | 'memberInvite' | 'memberRemove' | 'inviteRevoke' | 'syncSet' | 'syncNow' | 'onAccount'>;
 export type ConnectorsApi = Pick<Window['quorum'], 'connectorsList' | 'connectorSet' | 'connectorRemove' | 'connectorTest'>;
 export type VoiceApi = Pick<Window['quorum'], 'workspaceUsage' | 'workspaceVoiceGet' | 'workspaceVoiceSet'>;
 export type KnowledgeApi = Pick<Window['quorum'], 'knowledgeStatus' | 'knowledgeQueue' | 'knowledgeReview' | 'knowledgeAutoIncludeSet'>;
@@ -115,6 +115,7 @@ function makeMock(): AccountApi {
   let members: Member[] = [];
   let invites: MemberInvite[] = [];
   const subs = new Set<(s: AccountState) => void>();
+  const oauthSubs = new Set<(r: Result) => void>();
   const set = (patch: Partial<AccountState>) => { state = { ...state, ...patch }; subs.forEach((cb) => cb(state)); };
   const signedIn = (email: string) => set({
     ...blank(), signedIn: true, email, userId: 'u_me',
@@ -143,6 +144,8 @@ function makeMock(): AccountApi {
     accountSendCode: async (email, accessCode) => (!EMAIL.test(email) ? { error: 'Enter a valid email address' } : email.toLowerCase().startsWith('new') && !accessCode ? { needsCode: true, email } : ok),
     accountVerifyCode: async (email, code) => { await delay(400); if (!/^\d{6}$/.test(code)) return { error: 'That code did not match. Check the email and try again.' }; signedIn(email); return ok; },
     accountSignOut: async () => set(blank()),
+    accountGoogle: async () => { await delay(300); setTimeout(() => { signedIn('you@gmail.com'); oauthSubs.forEach((cb) => cb(ok)); }, 1200); return ok; },
+    onAccountOAuth: (cb) => { oauthSubs.add(cb); return () => { oauthSubs.delete(cb); }; },
     orgCreate: async (name, domain, domainJoin) => { await delay(400); inOrg(name, domain, domainJoin, 'owner'); return ok; },
     orgJoin: async (t) => { await delay(400); inOrg('inviteId' in t ? 'Acme Health' : 'Example Studio', null, false, 'member'); return ok; },
     orgSwitch: async (id) => { const w = state.workspaces.find((x) => x.id === id); if (w && state.workspace) set({ workspace: { ...state.workspace, id: w.id, name: w.name, role: w.role } }); return ok; },

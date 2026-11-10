@@ -1497,8 +1497,11 @@ ipcMain.handle('vault-tree', () => (brain() ? vaultTree(brain().vault, excludedP
 const isPrivatePath = (rel) => { const b = brain(); if (!b) return false; const abs = path.resolve(b.vault, rel); return privateDirs(b.root).some((d) => { const dir = path.join(b.root, d); return abs === dir || abs.startsWith(dir + path.sep); }); };
 const isConfidentialText = (text) => /^---\r?\n(?:[^\n]*\r?\n)*?confidential\s*:/i.test(String(text).slice(0, 2000));
 const account = EDITION === 'cloud'
-  ? (await loadEE('account.js')).registerAccount({ ipcMain, settings, saveSettings, toUI, log, brain, meetingIndex, isExcluded: (rel) => excludedPath(rel) || isPrivatePath(rel), isExcludedText: (t) => suggester.isExcluded(t) || isConfidentialText(t) })
+  ? (await loadEE('account.js')).registerAccount({ ipcMain, settings, saveSettings, toUI, log, brain, meetingIndex, isExcluded: (rel) => excludedPath(rel) || isPrivatePath(rel), isExcludedText: (t) => suggester.isExcluded(t) || isConfidentialText(t), openExternal: (u) => shell.openExternal(u), oauthRedirect: () => (app.isPackaged ? 'quorum://auth/callback' : 'http://127.0.0.1:47831/auth/callback') })
   : { sync: { pushNote() {}, pushMeetingNote() {}, pullNow() {}, live() {} } };
+// the installed app owns the quorum:// scheme (package.json build.protocols); Google sign-in comes back on it
+if (app.isPackaged) app.setAsDefaultProtocolClient('quorum');
+app.on('open-url', (e, url) => { e.preventDefault(); if (/^quorum:\/\/auth\//.test(url)) account.finishOAuth?.(url); });
 // workspace connectors (Settings › Admin › Connectors) ride on the same account and client
 if (EDITION === 'cloud') (await loadEE('connectors.js')).registerConnectors({ ipcMain, account, log });
 // the platform owner's page (Settings › Admin › Platform): owner-only RPCs on the same client

@@ -1,6 +1,7 @@
 // the hosted edition's account: Supabase Auth with a 6-digit email code, the chosen workspace, invites and the sync
 // switch. Pure Node, no electron import, so a script can drive the same handlers the IPC does.
 import { createClient } from '@supabase/supabase-js';
+import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -100,9 +101,26 @@ export function plain(err, fallback = 'Something went wrong. Try again.') {
   return fallback;
 }
 
-export function createAccount({ settings, saveSettings, log = () => {}, brain = () => null, meetingIndex = () => [], isExcluded, isExcludedText } = {}) {
+// The browser lands here after Google: quorum://auth/callback?code=… from the installed app, or the loopback URL a
+// development copy listens on. Supabase reports a refused sign-up in the same place as error_description.
+export const OAUTH_LOOPBACK = 'http://127.0.0.1:47831/auth/callback';
+export function parseOAuthReturn(url) {
+  let u;
+  try { u = new URL(String(url)); } catch { return null; }
+  if (!`${u.host}${u.pathname}`.endsWith('auth/callback')) return null;
+  const q = u.searchParams;
+  const desc = q.get('error_description') || q.get('error');
+  if (desc) {
+    if (/database error saving new user/i.test(desc)) return { error: 'That Google account has no Quorum account yet. Quorum Cloud is invite-only: sign in with your email and access code first, then Google works for that address.' };
+    return { error: /^[\w\s'.,-]+$/.test(desc) ? desc.replace(/\+/g, ' ') : 'Google sign-in did not complete. Try again.' };
+  }
+  const code = q.get('code');
+  return code ? { code } : { error: 'Google sign-in did not complete. Try again.' };
+}
+
+export function createAccount({ settings, saveSettings, log = () => {}, brain = () => null, meetingIndex = () => [], isExcluded, isExcludedText, openExternal = null, oauthRedirect = () => null } = {}) {
   let cloud = resolveCloudConfig(settings);
-  const makeClient = (c) => (c.url && c.key ? createClient(c.url, c.key, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storage: fileStorage(perConfig(c, 'auth', 'json')) } }) : null);
+  const makeClient = (c) => (c.url && c.key ? createClient(c.url, c.key, { auth: { flowType: 'pkce', persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storage: fileStorage(perConfig(c, 'auth', 'json')) } }) : null);
   let client = makeClient(cloud);
   // live is whether the Realtime channel is subscribed (sync.js live()); the UI shows "Live" or "Polling" from it
   // platformOwner is the platform_owners role (migration 0008), asked once per signed-in user and kept for the session
@@ -203,6 +221,36 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
     try { return await fn(...a); } catch (err) { return fail(err); }
   };
   const signedInGuard = (fn) => guard(async (...a) => (state.signedIn ? fn(...a) : SIGNED_OUT));
+  const oauthListeners = new Set();
+  account.onOAuth = (fn) => { oauthListeners.add(fn); return () => oauthListeners.delete(fn); };
+  const oauthDone = (r) => { for (const l of oauthListeners) { try { l(r); } catch {} } return r; };
+  // the deep link or loopback visit that ends a Google sign-in; returns what the UI should show
+  account.finishOAuth = async (url) => {
+    const r = parseOAuthReturn(url);
+    if (!r) return null;
+    if (r.error) return oauthDone({ error: r.error });
+    if (!client) return oauthDone(NOT_CONFIGURED);
+    const { error } = await client.auth.exchangeCodeForSession(r.code);
+    if (error) { log('account oauth', error.message); return oauthDone({ error: plain(error, 'Google sign-in did not complete. Try again.') }); }
+    await refresh();
+    kickSync();
+    return oauthDone({ ok: true });
+  };
+  let loopback = null;
+  const listenLoopback = () => {
+    if (loopback) return;
+    const port = Number(new URL(OAUTH_LOOPBACK).port);
+    const close = () => { loopback?.close(); loopback = null; };
+    loopback = http.createServer(async (req, res) => {
+      const r = await account.finishOAuth(`http://127.0.0.1:${port}${req.url}`);
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(`<!doctype html><title>Quorum</title><body style="font: 16px -apple-system, sans-serif; padding: 40px; color: #111"><p>${r?.error ? r.error : 'Signed in. You can close this tab and go back to Quorum.'}</p>`);
+      if (r) close();
+    });
+    loopback.on('error', (err) => { log('account oauth loopback', err.message); close(); });
+    loopback.listen(port, '127.0.0.1');
+    setTimeout(close, 5 * 60 * 1000).unref();
+  };
   const kickSync = () => { if (state.sync && state.workspace) sync.syncNow().catch(() => {}); };
 
   const handlers = {
@@ -233,6 +281,17 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
       const s = await refresh();
       kickSync();
       return s;
+    }),
+    // Google through the system browser (PKCE). The installed app gets the code back on quorum://auth/callback; a
+    // development copy cannot register that scheme, so it listens on the loopback URL for one visit instead
+    'account-google': guard(async () => {
+      const redirectTo = oauthRedirect();
+      if (!redirectTo || !openExternal) return { error: 'Google sign-in is not available in this build.' };
+      const { data, error } = await client.auth.signInWithOAuth({ provider: 'google', options: { redirectTo, skipBrowserRedirect: true, queryParams: { prompt: 'select_account' } } });
+      if (error || !data?.url) return fail(error, 'Google sign-in could not start.');
+      if (redirectTo === OAUTH_LOOPBACK) listenLoopback();
+      await openExternal(data.url);
+      return { ok: true };
     }),
     'account-sign-out': guard(async () => {
       try { await client.auth.signOut({ scope: 'local' }); } catch (err) { log('account sign-out', err?.message ?? err); }
@@ -336,9 +395,10 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
 }
 
 // wires the account into the main process: one IPC handler per entry, and every change goes to the UI as 'account'
-export function registerAccount({ ipcMain, settings, saveSettings, toUI = () => {}, log = () => {}, brain, meetingIndex, isExcluded, isExcludedText }) {
-  const acct = createAccount({ settings, saveSettings, log, brain, meetingIndex, isExcluded, isExcludedText });
+export function registerAccount({ ipcMain, settings, saveSettings, toUI = () => {}, log = () => {}, brain, meetingIndex, isExcluded, isExcludedText, openExternal, oauthRedirect }) {
+  const acct = createAccount({ settings, saveSettings, log, brain, meetingIndex, isExcluded, isExcludedText, openExternal, oauthRedirect });
   acct.onChange((s) => toUI('account', s));
+  acct.onOAuth((r) => toUI('account-oauth', r));
   for (const [name, fn] of Object.entries(acct.handlers)) ipcMain.handle(name, (_e, ...a) => fn(...a));
   const e = acct.envStatus();
   log('env', `${e.env}, config ${e.config}`, e.host ?? 'unconfigured');

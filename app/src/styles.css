@@ -1030,6 +1030,10 @@ svg.err { color: var(--danger); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 /* account, organization and members */
 .acct-copy { margin: 14px 0 4px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.acct-google { gap: 10px; }
+.acct-google .pill svg { width: 16px; height: 16px; }
+.acct-or { display: flex; align-items: center; gap: 12px; margin: 4px 0; color: var(--muted); font-size: 12px; }
+.acct-or::before, .acct-or::after { content: ''; flex: 1; height: 1px; background: var(--line-2); }
 .acct .set-error { margin: 0 0 14px; }
 .code-field { display: flex; gap: 8px; }
 .code-field input { width: 42px; height: 46px; text-align: center; border-radius: 10px; border: 1px solid var(--line-2); background: rgba(255, 255, 255, 0.03); color: var(--text); font: 500 20px/1 ui-monospace, "SF Mono", Menlo, monospace; outline: none; transition: border-color 0.12s ease; }

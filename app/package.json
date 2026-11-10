@@ -1,7 +1,7 @@
 {
   "name": "quorum",
   "license": "Apache-2.0",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "type": "module",
   "main": "main.js",
   "scripts": {
@@ -56,6 +56,7 @@
   "build": {
     "appId": "design.smejkal.quorum",
     "productName": "Quorum",
+    "protocols": [{ "name": "Quorum", "schemes": ["quorum"] }],
     "directories": {
       "output": "release"
     },

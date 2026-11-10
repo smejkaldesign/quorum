@@ -264,6 +264,8 @@ declare global {
       accountSendCode(email: string, accessCode?: string): Promise<Result & { needsCode?: boolean; email?: string }>;
       accountVerifyCode(email: string, code: string): Promise<Result>;
       accountSignOut(): Promise<void>;
+      accountGoogle(): Promise<Result>;
+      onAccountOAuth(cb: (r: Result) => void): Unsub;
       orgCreate(name: string, domain: string | null, domainJoin: boolean): Promise<Result>;
       orgJoin(target: { inviteId: string } | { workspaceId: string }): Promise<Result>;
       orgSwitch(workspaceId: string): Promise<Result>;

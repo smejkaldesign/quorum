@@ -135,6 +135,8 @@ contextBridge.exposeInMainWorld('quorum', {
   accountSendCode: (email, accessCode) => ipcRenderer.invoke('account-send-code', email, accessCode),
   accountVerifyCode: (email, code) => ipcRenderer.invoke('account-verify-code', email, code),
   accountSignOut: () => ipcRenderer.invoke('account-sign-out'),
+  accountGoogle: () => ipcRenderer.invoke('account-google'),
+  onAccountOAuth: on('account-oauth'),
   orgCreate: (name, domain, domainJoin) => ipcRenderer.invoke('org-create', name, domain, domainJoin),
   orgJoin: (how) => ipcRenderer.invoke('org-join', how),
   orgSwitch: (workspaceId) => ipcRenderer.invoke('org-switch', workspaceId),

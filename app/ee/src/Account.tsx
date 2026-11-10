@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { AccountState, Member, MemberInvite, Result, Role } from '../../src/quorum';
 import { Row, Toggle, useMenu } from '../../src/controls';
-import { IconBuilding, IconMore, IconPower, IconReset, IconTrash } from '../../src/icons';
+import { IconBuilding, IconMore, IconPower, IconReset, IconTrash, ProviderMark } from '../../src/icons';
 import { accountApi } from './accountMock';
 
 const api = accountApi();
@@ -69,6 +69,15 @@ function SignIn() {
   // a new email needs an access code from the platform owner; the main process says so and the field appears
   const [needsCode, setNeedsCode] = useState(false);
   const [access, setAccess] = useState('');
+  // Google runs in the system browser; the main process reports the outcome when the browser comes back
+  const [waiting, setWaiting] = useState(false);
+  useEffect(() => api.onAccountOAuth((r) => { setWaiting(false); if (r.error) setError(r.error); }), []);
+  const google = async () => {
+    setBusy(true); setError('');
+    const r = await api.accountGoogle();
+    setBusy(false);
+    if (r.error) setError(r.error); else setWaiting(true);
+  };
   const run = async (fn: () => Promise<Result & { needsCode?: boolean }>, then: () => void) => {
     setBusy(true); setError('');
     const r = await fn();
@@ -85,6 +94,11 @@ function SignIn() {
       <p className="acct-copy">Sign in to sync notes and meetings and to share a workspace with your team. Everything keeps working on this Mac without it.</p>
       {!sent ? (
         <>
+          <div className="set-line acct-google">
+            <button type="button" className="pill with-icon" disabled={busy || waiting} onClick={google}><ProviderMark provider="google" />{waiting ? 'Waiting for Google…' : 'Continue with Google'}</button>
+            {waiting && <button type="button" className="link-btn" onClick={() => setWaiting(false)}>Cancel</button>}
+          </div>
+          <div className="acct-or"><span>or use your email</span></div>
           <div className="set-line">
             <label className="set-field wide"><input type="email" autoComplete="email" aria-label="Email" placeholder="you@example.com" value={email} onChange={(e) => { setEmail(e.target.value); setNeedsCode(false); }} onKeyDown={(e) => { if (e.key === 'Enter' && ok && accessOk && !busy) send(); }} /></label>
             {!needsCode && <div className="set-line-end"><button className="pill primary" disabled={!ok || busy} onClick={send}>{busy ? 'Sending…' : 'Send code'}</button></div>}
