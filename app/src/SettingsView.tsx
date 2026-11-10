@@ -25,7 +25,7 @@ const ACCOUNT: Nav[] = [
   { id: 'connectors', label: 'Connectors', icon: IconGrid },
   { id: 'notifications', label: 'Notifications', icon: IconBell, soon: true },
   { id: 'voice', label: 'Voice typing', icon: IconKeyboard },
-  { id: 'developers', label: 'Developers', icon: IconCode },
+  { id: 'developers', label: 'AI settings', icon: IconCode },
 ];
 // the pages behind the Admin button; settingsNav.workspacePages decides which of them a build lists
 const WORKSPACE: Nav[] = [
