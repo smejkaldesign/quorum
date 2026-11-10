@@ -23,13 +23,13 @@ type Nav = { id: Page; label: string; icon: (p: { width?: number; height?: numbe
 const ACCOUNT: Nav[] = [
   { id: 'preferences', label: 'Preferences', icon: IconSliders },
   { id: 'memory', label: 'Memory', icon: IconBrain },
-  { id: 'guardrails', label: 'Guardrails', icon: IconShield },
   { id: 'calendar', label: 'Calendar', icon: IconCalendar },
   { id: 'meetings', label: 'Meetings', icon: IconMic },
   { id: 'connectors', label: 'Connectors', icon: IconGrid },
   { id: 'notifications', label: 'Notifications', icon: IconBell, soon: true },
   { id: 'voice', label: 'Voice typing', icon: IconKeyboard },
   { id: 'developers', label: 'AI settings', icon: IconCode },
+  { id: 'guardrails', label: 'Guardrails', icon: IconShield },
 ];
 // the pages behind the Admin button; settingsNav.workspacePages decides which of them a build lists
 const WORKSPACE: Nav[] = [
