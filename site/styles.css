@@ -366,6 +366,19 @@ ul { margin: 0; padding: 0; list-style: none; }
 
 /* Agent OS tree: a decorative folder that opens, selects and scrolls on its own (tree.js) */
 .existing-grid { display: grid; gap: 48px; align-items: center; }
+/* Meeting apps: heading left and lede right on wide screens, then a dotted panel with three white tiles */
+.apps-head { display: grid; gap: 16px; margin-bottom: 40px; }
+.apps-head .section-lede { margin-top: 0; }
+.apps-panel { border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); padding: clamp(56px, 10vw, 140px) var(--gutter); overflow: hidden; }
+.apps-panel::before { -webkit-mask-image: none; mask-image: none; }
+.apps-tiles { display: flex; justify-content: center; gap: clamp(20px, 6vw, 96px); }
+.app-tile { display: grid; place-items: center; width: clamp(96px, 14vw, 160px); aspect-ratio: 1; border-radius: 22%; background: #fff; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35); }
+.app-tile svg { width: 46%; height: 46%; display: block; }
+@media (min-width: 720px) {
+  .apps-head { grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; }
+  .apps-head .section-lede { max-width: 480px; justify-self: end; }
+}
+
 .tree {
   position: relative;
   height: 360px;
