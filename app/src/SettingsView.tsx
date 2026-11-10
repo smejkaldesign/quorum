@@ -1,6 +1,7 @@
 import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import type { Brain, CalendarSettings, ClaudeStatus, Memory, MemoryItem, OptOut, Profile, Settings, Voice, Workspace, Transcription, DecisionProvider, DecisionsStatus, AccountState } from './quorum';
 import { PersonalConnectors } from './Connectors';
+import { SourcesPage } from './Sources';
 import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
@@ -20,6 +21,7 @@ const ACCOUNT: Nav[] = [
   { id: 'memory', label: 'Memory', icon: IconBrain },
   { id: 'calendar', label: 'Calendar', icon: IconCalendar },
   { id: 'meetings', label: 'Meetings', icon: IconMic },
+  { id: 'sources', label: 'Sources', icon: IconStack },
   { id: 'notifications', label: 'Notifications', icon: IconBell, soon: true },
   { id: 'connectors', label: 'Connectors', icon: IconGrid },
   { id: 'voice', label: 'Voice typing', icon: IconKeyboard },
@@ -106,6 +108,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
           {page === 'preferences' && <p className="set-lede">Quorum works best knowing a little about you. Quorum uses this when it writes your meeting notes and answers questions.</p>}
           {page === 'knowledge' && <p className="set-lede">Company knowledge for your whole workspace, chosen by admins.</p>}
           {page === 'general' && <p className="set-lede">Settings for everyone in your workspace. Quorum gives this context to every meeting summary and answer, so it's the same for each person.</p>}
+          {page === 'sources' && <p className="set-lede">Tools that already record your meetings. Connect one and its notes land in your meeting notes folder, tagged with where they came from.</p>}
           {page === 'platform' && <p className="set-lede">Every workspace on this Quorum. Plans are set by hand here until the admin web app exists.</p>}
           {page === 'preferences' ? (
             <ProfilePage settings={settings} email={email} emailLabel={emailLabel} name={user?.name ?? ''} onSettings={onSettings}>
@@ -135,6 +138,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
             : page === 'platform' ? <PlatformArea />
             : page === 'calendar' ? <CalendarPage />
             : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} />
+            : page === 'sources' ? <SourcesPage />
             : page === 'notifications' ? <NotificationsPage />
             : page === 'connectors' ? <ConnectorsPage />
             : <VoicePage settings={settings} onSettings={onSettings} />}

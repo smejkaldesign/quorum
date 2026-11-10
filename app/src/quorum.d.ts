@@ -73,6 +73,11 @@ export type AccountState = {
   sync: boolean; lastSyncAt: string | null; lastPullAt?: string | null; syncError: string | null;
 };
 export type Result = { ok?: boolean; error?: string };
+
+// Settings › Sources (sources/catalog.js, sources/jobs.js)
+export type SourceMethod = 'connect' | 'folder';
+export type SourceJob = { id: string; label: string; status: 'running' | 'done' | 'failed'; done: number; total: number | null; message: string | null; error: string | null; failed: { id: string; title: string; error: string }[]; result: { listed: number; imported: number; skipped: number } | null; startedAt: number; finishedAt: number | null };
+export type MeetingSourceInfo = { id: string; name: string; kind: 'mcp'; url: string; folder: string; description: string; methods: SourceMethod[]; recommended: SourceMethod; why: string; method: SourceMethod; connected: boolean; lastSyncAt: string | null; imported: number; folderPath: string | null; notes: number; job: SourceJob | null };
 // workspace connectors (Settings › Admin › Connectors): a provider key held in Supabase Vault for the whole workspace and
 // the roles it may serve. The key never comes back to the client; a draft carries it once, on the way in
 export type ConnectorProvider = 'assemblyai' | 'deepgram' | 'elevenlabs' | 'openai' | 'anthropic' | 'google' | 'openai_compatible';
@@ -231,6 +236,12 @@ declare global {
       meetingSourceAdd(): Promise<boolean>;
       meetingSourceRemove(id: string): Promise<boolean>;
       meetingSourceOpen(id: string): Promise<void>;
+      sourcesList(): Promise<MeetingSourceInfo[]>;
+      sourceConnect(id: string): Promise<Result>;
+      sourceDisconnect(id: string): Promise<Result>;
+      sourceSync(id: string): Promise<Result>;
+      sourceSetMethod(id: string, method: SourceMethod): Promise<Result>;
+      onSourceJob(cb: (job: SourceJob) => void): Unsub;
       claudeLogin(): Promise<void>;
       claudeStatus(): Promise<ClaudeStatus>;
       modelSourceStatus(): Promise<ModelSourceStatus>;

@@ -7,6 +7,7 @@ import { createFolder, createNote, duplicateItem, moveItem, readVaultNote, renam
 import { createVaultIndex } from './vindex.js';
 import { addAlias, retargetLinks, rewriteLinks } from './relink.js';
 import store from './store/index.js';
+import { registerSources } from './sources/index.js';
 import { DATA_DIR, EDITION, ENV, loadEE, isDevelopment } from './edition.js';
 import { registerOnboarding } from './onboarding.js';
 import { createSuggester } from './suggest.js';
@@ -1508,6 +1509,8 @@ if (EDITION === 'cloud') (await loadEE('connectors.js')).registerConnectors({ ip
 if (EDITION === 'cloud') (await loadEE('platform.js')).registerPlatform({ ipcMain, account, log });
 if (EDITION === 'cloud') (await loadEE('knowledge.js')).registerKnowledge({ ipcMain, account, log });
 if (EDITION === 'cloud') (await loadEE('billing.js')).registerBilling({ ipcMain, account, log, openExternal: (u) => shell.openExternal(u) });
+// meeting sources (Settings › Sources): Granola and the like, connected per user in either edition
+registerSources({ ipcMain, settings, saveSettings, toUI, log, meetingsDir, openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file), version: app.getVersion() });
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);
 ipcMain.handle('vault-search', (_e, q, limit) => vindex?.search(String(q), Math.min(Number(limit) || 30, 1000)) ?? []);
 ipcMain.handle('vault-link-health', () => vindex?.linkHealth() ?? []);

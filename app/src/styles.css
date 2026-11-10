@@ -1150,3 +1150,27 @@ button.plat-row:hover, button.plat-row.on { background: rgba(255, 255, 255, 0.04
 .plat-field .set-field { width: 100%; }
 .plat-form .set-line-end { margin-top: 12px; }
 @media (max-width: 900px) { .plat-drawer { grid-template-columns: 1fr; } }
+
+/* Settings › Sources */
+.src-card { padding-bottom: 14px; }
+.src-head { align-items: flex-start; }
+.src-id { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+.src-id .set-app-icon { width: 28px; height: 28px; border-radius: 7px; margin-top: 2px; }
+.src-methods { display: grid; gap: 8px; margin: 12px 0 4px; }
+.src-method { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 10px; cursor: pointer; }
+.src-method.on { border-color: rgba(255, 255, 255, 0.3); background: rgba(255, 255, 255, 0.03); }
+.src-method input { margin-top: 3px; }
+.src-method-body { display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--muted); line-height: 1.45; }
+.src-method-body strong { color: var(--text); font-weight: 600; display: flex; gap: 8px; align-items: center; }
+.src-rec { font-style: normal; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: #007aff; color: #fff; }
+.src-status { margin: 10px 0 0; font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.src-status.done svg { color: #34c759; }
+.src-note { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+.src-progress { margin-top: 12px; }
+.src-progress-text { display: flex; justify-content: space-between; font-size: 13px; color: var(--text); margin-bottom: 6px; }
+.src-bar { height: 4px; border-radius: 999px; background: var(--line-2); overflow: hidden; }
+.src-bar-fill { height: 100%; background: #007aff; border-radius: 999px; transition: width 300ms ease; }
+.src-bar-fill.indeterminate { width: 30%; animation: src-slide 1.2s ease-in-out infinite; }
+@keyframes src-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(400%); } }
+.src-failed { margin-top: 6px; width: 100%; font-size: 12px; }
+.src-failed ul { margin: 6px 0 0 16px; padding: 0; }
