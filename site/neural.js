@@ -29,6 +29,20 @@
     ax: rand(0.04, 0.1), ay: rand(0.04, 0.1), az: rand(0.05, 0.12),
   }));
 
+  // the cursor pulls nearby nodes toward itself; each node carries its own eased offset so the pull is soft
+  const PULL_RADIUS = 220;   // px from the cursor where the pull starts
+  const PULL = 0.42;         // fraction of the remaining distance a node closes at full strength
+  const EASE = 0.06;         // per-frame easing toward the target offset
+  const cursor = { x: -1e6, y: -1e6, on: false };
+  const offs = Array.from({ length: COUNT }, () => ({ x: 0, y: 0 }));
+  addEventListener('pointermove', (e) => {
+    const rect = hero.getBoundingClientRect();
+    cursor.x = e.clientX - rect.left; cursor.y = e.clientY - rect.top;
+    cursor.on = cursor.x >= 0 && cursor.y >= 0 && cursor.x <= rect.width && cursor.y <= rect.height;
+  }, { passive: true });
+  addEventListener('pointerleave', () => { cursor.on = false; });
+  document.addEventListener('pointerout', (e) => { if (!e.relatedTarget) cursor.on = false; });
+
   let w = 0, h = 0, dpr = 1;
   function resize() {
     const rect = hero.getBoundingClientRect();
@@ -57,7 +71,19 @@
       const x1 = x0 * cy + z0 * sy, z1 = -x0 * sy + z0 * cy;
       const y1 = y0 * cx - z1 * sx, z2 = y0 * sx + z1 * cx;
       const s = DEPTH / (DEPTH + z2);
-      pts[i] = { x: w / 2 + x1 * half * s, y: h / 2 + y1 * half * 0.9 * s, s, r: n.r * s };
+      const px = w / 2 + x1 * half * s, py = h / 2 + y1 * half * 0.9 * s;
+      // target offset: toward the cursor, strongest at the cursor, gone at the radius edge (smoothstep falloff)
+      let tx = 0, ty = 0;
+      if (cursor.on) {
+        const dx = cursor.x - px, dy = cursor.y - py, d = Math.hypot(dx, dy);
+        if (d < PULL_RADIUS && d > 0.001) {
+          const u = 1 - d / PULL_RADIUS, k = u * u * (3 - 2 * u) * PULL;
+          tx = dx * k; ty = dy * k;
+        }
+      }
+      const o = offs[i];
+      o.x += (tx - o.x) * EASE; o.y += (ty - o.y) * EASE;
+      pts[i] = { x: px + o.x, y: py + o.y, s, r: n.r * s };
     }
     ctx.lineWidth = 1;
     for (let i = 0; i < COUNT; i++) {
