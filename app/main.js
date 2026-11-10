@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, screen, shell, systemPreferences, Tray } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, screen, session, shell, systemPreferences, Tray } from 'electron';
 import { NEEDS_SOURCE, NEEDS_TOOLS, SOURCES, modelLabel, runModel, sourceStatus } from './models.js';
 import { BY_ID, cleanConnectors, cleanProviders, needsKey, providerFor, providersFromSource, sourceFromProviders } from './connectors/catalog.js';
 import { connectorKey, removeConnectorKey, setConnectorKey, testSavedConnector } from './connectors/keys.js';
@@ -1510,7 +1510,18 @@ if (EDITION === 'cloud') (await loadEE('platform.js')).registerPlatform({ ipcMai
 if (EDITION === 'cloud') (await loadEE('knowledge.js')).registerKnowledge({ ipcMain, account, log });
 if (EDITION === 'cloud') (await loadEE('billing.js')).registerBilling({ ipcMain, account, log, openExternal: (u) => shell.openExternal(u) });
 // meeting sources (Settings › Sources): Granola and the like, connected per user in either edition
-registerSources({ ipcMain, settings, saveSettings, toUI, log, meetingsDir, openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file), version: app.getVersion() });
+// a sign-in window with a session nothing else has touched: the browser's cookies cannot answer for the person, so
+// they pick the account themselves. The window closes once the loopback callback has been reached
+function openFreshSignIn(url, name) {
+  const win = new BrowserWindow({ width: 520, height: 720, title: `Sign in to ${name}`, autoHideMenuBar: true, webPreferences: { partition: `fresh-${Date.now()}`, sandbox: true, contextIsolation: true, nodeIntegration: false } });
+  win.webContents.setUserAgent(session.defaultSession.getUserAgent().replace(/ ?Quorum[^ ]*/g, '').replace(/ ?Electron\/[^ ]+/, ''));
+  const done = (_e, target) => { if (String(target).startsWith('http://127.0.0.1:')) setTimeout(() => { if (!win.isDestroyed()) win.close(); }, 1200); };
+  win.webContents.on('did-navigate', done);
+  win.webContents.on('will-redirect', done);
+  win.loadURL(url);
+  return Promise.resolve();
+}
+registerSources({ ipcMain, settings, saveSettings, toUI, log, meetingsDir, openExternal: (u) => shell.openExternal(u), openFresh: openFreshSignIn, afterWrite: (file) => account.sync.pushMeetingNote(file), version: app.getVersion() });
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);
 ipcMain.handle('vault-search', (_e, q, limit) => vindex?.search(String(q), Math.min(Number(limit) || 30, 1000)) ?? []);
 ipcMain.handle('vault-link-health', () => vindex?.linkHealth() ?? []);

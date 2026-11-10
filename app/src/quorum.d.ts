@@ -239,7 +239,7 @@ declare global {
       sourcesList(): Promise<MeetingSourceInfo[]>;
       libraryIcons(): Promise<Record<string, string | null>>;
       sourceConnect(id: string, opts?: { fresh?: boolean }): Promise<Result>;
-      onSourceAuthLink(cb: (e: { id: string; url: string; opened: 'chrome-incognito' | null }) => void): Unsub;
+      onSourceAuthLink(cb: (e: { id: string; url: string; opened: 'window' | null }) => void): Unsub;
       sourceDisconnect(id: string): Promise<Result>;
       sourceSync(id: string): Promise<Result>;
       sourceSetMethod(id: string, method: SourceMethod): Promise<Result>;

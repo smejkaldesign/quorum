@@ -1,7 +1,6 @@
 // Meeting sources wired to the app: the Sources page's IPC, Keychain-backed tokens, one MCP client per connected
 // source, background import jobs with progress, and a timer that keeps connected sources in sync while Quorum runs.
 // Edition-agnostic: a Local user connects Granola on their own account exactly like a Cloud user.
-import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { BY_ID, SOURCES, publicManifest } from './catalog.js';
@@ -35,7 +34,7 @@ export function scanExisting(root) {
   return ids;
 }
 
-export function createSources({ settings, saveSettings, toUI = () => {}, log = () => {}, meetingsDir, openExternal, afterWrite = () => {}, store = createTokenStore(), version = '0' }) {
+export function createSources({ settings, saveSettings, toUI = () => {}, log = () => {}, meetingsDir, openExternal, openFresh = null, afterWrite = () => {}, store = createTokenStore(), version = '0' }) {
   const conf = () => (settings.sources ??= {});
   const stateOf = (id) => (conf()[id] ??= { method: BY_ID[id]?.recommended ?? 'connect', connected: false, lastSyncAt: null, imported: 0 });
   const jobs = createJobs({ emit: (job) => toUI('source-job', job) });
@@ -107,16 +106,12 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
     'source-set-method': (id, method) => { const src = BY_ID[id]; if (!src || !src.methods.includes(method)) return { error: 'Unknown method.' }; stateOf(id).method = method; saveSettings(); return { ok: true }; },
     // the browser flow; when it lands the first import starts on its own and the card shows progress
     // fresh: the default browser's session would be reused (that is how a wrong account gets connected twice), so the
-    // sign-in opens in a private Chrome window when Chrome is installed, and the link goes to the UI to copy either way
+    // sign-in opens in a window Quorum owns with a throwaway session (main.js openFresh); the link also goes to the UI
     'source-connect': async (id, opts = {}) => {
       const src = BY_ID[id];
       if (!src || src.kind !== 'mcp') return { error: 'Unknown source.' };
-      const open = opts.fresh
-        ? async (url) => {
-          const chrome = ['/Applications/Google Chrome.app', `${process.env.HOME}/Applications/Google Chrome.app`].find((p) => existsSync(p));
-          const opened = chrome ? await new Promise((r) => execFile('/usr/bin/open', ['-na', 'Google Chrome', '--args', '--incognito', url], (err) => r(!err))) : false;
-          toUI('source-auth-link', { id, url, opened: opened ? 'chrome-incognito' : null });
-        }
+      const open = opts.fresh && openFresh
+        ? async (url) => { toUI('source-auth-link', { id, url, opened: 'window' }); await openFresh(url, src.name); }
         : openExternal;
       try {
         const { meta, tokens } = await oauthConnect({ resourceUrl: src.url, open, clients: store.clients });

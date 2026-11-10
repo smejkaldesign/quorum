@@ -221,7 +221,7 @@ function ConnectButton({ connector: x, live, busy, act }: { connector: LibraryCo
 
 // the wrong account got connected: a sign-in in a private window, so the browser's session cannot answer for you
 function DifferentAccount({ connector: x, busy, act }: { connector: LibraryConnector; busy: boolean; act: Act }) {
-  const [link, setLink] = useState<{ url: string; opened: 'chrome-incognito' | null } | null>(null);
+  const [link, setLink] = useState<{ url: string; opened: 'window' | null } | null>(null);
   const [copied, setCopied] = useState(false);
   useEffect(() => window.quorum.onSourceAuthLink((e) => { if (e.id === x.source) setLink({ url: e.url, opened: e.opened }); }), [x.source]);
   const start = () => { setLink(null); act(async () => { const r = await window.quorum.sourceDisconnect(x.source!); if (r.error) return r; return startConnect(x, true); }).then(() => setLink(null)); };
@@ -230,7 +230,7 @@ function DifferentAccount({ connector: x, busy, act }: { connector: LibraryConne
       <button className="pill" disabled={busy} onClick={start}>{busy ? 'Waiting for the sign-in…' : 'Connect with a different account'}</button>
       {link && (
         <div className="conn-alt-link">
-          <p>{link.opened ? 'A private Chrome window opened with the sign-in. Pick the account Granola knows there.' : 'Open this link in a private window and sign in with the account Granola knows.'}</p>
+          <p>{link.opened ? `A sign-in window opened with a clean session. Pick the account ${x.name} knows there. If it did not appear, open this link in a private browser window instead.` : `Open this link in a private browser window and sign in with the account ${x.name} knows.`}</p>
           <div className="conn-alt-row">
             <code>{link.url.slice(0, 64)}…</code>
             <button className="pill small-pill" onClick={() => { navigator.clipboard.writeText(link.url); setCopied(true); setTimeout(() => setCopied(false), 1500); }}>{copied ? 'Copied' : 'Copy link'}</button>
