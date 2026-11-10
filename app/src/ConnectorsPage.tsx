@@ -36,9 +36,12 @@ export function ConnectorsPage({ detail, onDetail }: { detail: string | null; on
   const [live, setLive] = useState<Live>({ sources: [], cal: null, mcp: null });
   const [icons, setIcons] = useState<Record<string, string | null>>({});
   const [library, setLibrary] = useState(false);
+  // the first answer from the main process takes a moment (the Claude Code check shells out); until then a skeleton, never the zero state
+  const [loaded, setLoaded] = useState(false);
   const load = async () => {
     const [sources, cal, mcp] = await Promise.all([window.quorum.sourcesList(), window.quorum.calendarStatus(), window.quorum.mcpStatus()]);
     setLive({ sources, cal, mcp });
+    setLoaded(true);
   };
   useEffect(() => {
     load();
@@ -60,7 +63,12 @@ export function ConnectorsPage({ detail, onDetail }: { detail: string | null; on
         <h3>Your connectors</h3>
         <span className="set-head-actions"><button className="pill primary with-icon" onClick={() => setLibrary(true)}><IconPlus width={15} height={15} />Add connector</button></span>
       </div>
-      {groups.length === 0 ? (
+      {!loaded ? (
+        <div className="conn-group" aria-busy="true" aria-label="Loading connectors">
+          <h4 className="skel skel-h" />
+          <div className="set-card conn-card">{[0, 1].map((i) => <div key={i} className="conn-line skel-row"><span className="skel skel-logo" /><span className="skel skel-title" /><span className="skel skel-meta" /></div>)}</div>
+        </div>
+      ) : groups.length === 0 ? (
         <div className="set-card set-zero">
           <span className="set-zero-icon"><IconGrid width={22} height={22} /></span>
           <strong>No connectors yet</strong>
