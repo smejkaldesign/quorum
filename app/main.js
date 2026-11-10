@@ -120,7 +120,7 @@ let tray;
 let trayMenu;
 let quitting = false;
 // guardrails: one rule set for what the agent may read and say (app/guardrails.js); brain() is defined below and read lazily
-const guardrails = createGuardrails({ settings, saveSettings: () => store.settings.save(), brain: () => brain(), privateDirs, denialLog: path.join(DATA_DIR, 'guard-denials.jsonl'), log });
+const guardrails = createGuardrails({ settings, saveSettings: () => store.settings.save(), brain: () => brain(), privateDirs, denialLog: path.join(DATA_DIR, 'guard-denials.jsonl'), log: (...a) => log(...a) });
 let helper;
 const asset = (name) => path.join(here, 'assets', name);
 // a meeting can have several capture segments (STOP, GO, STOP...); STOP deletes all of them
