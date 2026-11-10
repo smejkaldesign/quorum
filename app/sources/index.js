@@ -111,11 +111,16 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
       const src = BY_ID[id];
       if (!src || src.kind !== 'mcp') return { error: 'Unknown source.' };
       const open = opts.fresh && openFresh
-        ? async (url) => { toUI('source-auth-link', { id, url, opened: 'window' }); await openFresh(url, src.name); }
-        : openExternal;
+        ? async (url) => { log('sources', id, 'sign-in in a fresh window'); toUI('source-auth-link', { id, url, opened: 'window' }); await openFresh(url, src.name); }
+        : async (url) => { log('sources', id, 'sign-in in the default browser'); await openExternal(url); };
       try {
         const { meta, tokens } = await oauthConnect({ resourceUrl: src.url, open, clients: store.clients });
         metaCache[src.url] = meta;
+        // the sign-in worked; now the account behind it has to be one the service knows, or nothing is kept
+        if (ADAPTERS[src.adapter].verify) {
+          try { await ADAPTERS[src.adapter].verify(createMcp({ url: src.url, token: async () => tokens.accessToken, clientInfo: { name: 'Quorum', version } })); }
+          catch (err) { log('sources', id, 'sign-in refused:', err.message); return { error: err.message, wrongAccount: true }; }
+        }
         await store.tokens.set(id, tokens);
         const s = stateOf(id); s.connected = true; s.method = 'connect'; s.connectedAt = new Date().toISOString(); saveSettings();
         delete clients[id];

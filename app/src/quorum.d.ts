@@ -238,7 +238,7 @@ declare global {
       meetingSourceOpen(id: string): Promise<void>;
       sourcesList(): Promise<MeetingSourceInfo[]>;
       libraryIcons(): Promise<Record<string, string | null>>;
-      sourceConnect(id: string, opts?: { fresh?: boolean }): Promise<Result>;
+      sourceConnect(id: string, opts?: { fresh?: boolean }): Promise<Result & { wrongAccount?: boolean }>;
       onSourceAuthLink(cb: (e: { id: string; url: string; opened: 'window' | null }) => void): Unsub;
       sourceDisconnect(id: string): Promise<Result>;
       sourceSync(id: string): Promise<Result>;

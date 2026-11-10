@@ -190,6 +190,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange }: { connector: Li
         </div>
       </div>
       {error && <p className="set-error">{error}</p>}
+      {!on && x.kind === 'mcp-source' && /account/i.test(error) && <DifferentAccount connector={x} busy={busy} act={act} />}
       <h4>Activity</h4>
       <div className="set-card conn-jobcard">{src?.job && src.job.status === 'failed' && /Granola account|different account|Reconnect/i.test(src.job.error ?? '') && <DifferentAccount connector={x} busy={busy} act={act} />}{src?.job ? <JobLine job={src.job} /> : <p className="src-status">{on ? (src ? `Last sync ${ago(src.lastSyncAt)}. Next automatic sync within 30 minutes while Quorum runs.` : 'Connected on this Mac.') : soon ? 'Not available yet.' : 'Not connected yet.'}</p>}</div>
       <h4>Details</h4>
@@ -224,7 +225,7 @@ function DifferentAccount({ connector: x, busy, act }: { connector: LibraryConne
   const [link, setLink] = useState<{ url: string; opened: 'window' | null } | null>(null);
   const [copied, setCopied] = useState(false);
   useEffect(() => window.quorum.onSourceAuthLink((e) => { if (e.id === x.source) setLink({ url: e.url, opened: e.opened }); }), [x.source]);
-  const start = () => { setLink(null); act(async () => { const r = await window.quorum.sourceDisconnect(x.source!); if (r.error) return r; return startConnect(x, true); }).then(() => setLink(null)); };
+  const start = () => { setLink(null); act(async () => { await window.quorum.sourceDisconnect(x.source!); return startConnect(x, true); }).then(() => setLink(null)); };
   return (
     <div className="conn-alt">
       <button className="pill" disabled={busy} onClick={start}>{busy ? 'Waiting for the sign-in…' : 'Connect with a different account'}</button>

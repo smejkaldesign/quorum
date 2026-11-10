@@ -44,6 +44,15 @@ export function parseMeetingDetails(text) {
   return out;
 }
 
+// right after sign-in: does this identity have a Granola account? A plain error when it does not
+export async function verify(mcp) {
+  try { await mcp.call('get_account_info', {}); return { ok: true }; }
+  catch (err) {
+    if (/not created a Granola account|mcp-signup/i.test(err.message)) throw new Error('No Granola account for this sign-in. Use the account your Granola app is signed in with.');
+    throw err;
+  }
+}
+
 const yamlStr = (s) => JSON.stringify(String(s));
 export const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'meeting';
 
