@@ -366,6 +366,8 @@ ul { margin: 0; padding: 0; list-style: none; }
 
 /* Agent OS tree: a decorative folder that opens, selects and scrolls on its own (tree.js) */
 .existing-grid { display: grid; gap: 48px; align-items: center; }
+/* the Custom plans block runs to the bottom of Pricing; the rule that opens the next section sits right under it */
+#pricing { padding-bottom: 0; }
 /* Meeting apps: heading left and lede right on wide screens, then a dotted panel with three white tiles */
 .apps-head { display: grid; gap: 16px; margin-bottom: 40px; }
 .apps-head .section-lede { margin-top: 0; }
