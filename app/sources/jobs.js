@@ -2,6 +2,7 @@
 // progress while the user is elsewhere, and the finished state (counts, failures) stays until the next run.
 export function createJobs({ emit = () => {}, now = () => Date.now() } = {}) {
   const jobs = {};
+  const promises = {};
   const publish = (job) => { emit({ ...job, failed: [...job.failed] }); };
   const snapshot = (id) => (jobs[id] ? { ...jobs[id], failed: [...jobs[id].failed] } : null);
   return {
@@ -10,16 +11,16 @@ export function createJobs({ emit = () => {}, now = () => Date.now() } = {}) {
     running: (id) => jobs[id]?.status === 'running',
     // fn gets progress(patch) and runs to completion; its return value becomes job.result
     run: (id, label, fn) => {
-      if (jobs[id]?.status === 'running') return jobs[id].promise;
+      if (jobs[id]?.status === 'running') return promises[id];
       const job = { id, label, status: 'running', done: 0, total: null, message: null, error: null, failed: [], result: null, startedAt: now(), finishedAt: null };
       jobs[id] = job;
       publish(job);
       const progress = (patch) => { Object.assign(job, patch); publish(job); };
-      job.promise = Promise.resolve()
+      promises[id] = Promise.resolve()
         .then(() => fn(progress))
         .then((result) => { job.status = 'done'; job.result = result ?? null; job.finishedAt = now(); publish(job); return result; })
         .catch((err) => { job.status = 'failed'; job.error = err?.message ?? String(err); job.finishedAt = now(); publish(job); throw err; });
-      return job.promise;
+      return promises[id];
     },
   };
 }
