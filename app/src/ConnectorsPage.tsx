@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { CalendarSettings, MeetingSourceInfo, SourceJob } from './quorum';
 import { CATEGORIES, CONNECTORS, CONNECTOR_BY_ID, featuresOf, type LibraryConnector } from '../connectors/library';
 import { useMenu } from './controls';
-import { IconCheck, IconChevron, IconClose, IconExternal, IconGrid, IconMore, IconPlus } from './icons';
+import { IconCheck, IconChevron, IconClose, IconExternal, IconGrid, IconMore, IconPlus, IconReset } from './icons';
 
 // Settings › Connectors: the tools Quorum is connected to, grouped by what they do; a detail page per connector with
 // its metadata, the features it enables and its actions; and the library behind Add connector, where every tool
@@ -31,11 +31,11 @@ const ago = (iso: string | null) => {
 const elapsed = (from: number) => { const s = Math.max(0, Math.round((Date.now() - from) / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 const plural = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`;
 
-export function ConnectorsPage() {
+// detail is which connector's page is open; SettingsView owns it so the page title can turn into breadcrumbs
+export function ConnectorsPage({ detail, onDetail }: { detail: string | null; onDetail: (id: string | null) => void }) {
   const [live, setLive] = useState<Live>({ sources: [], cal: null, mcp: null });
   const [icons, setIcons] = useState<Record<string, string | null>>({});
   const [library, setLibrary] = useState(false);
-  const [detail, setDetail] = useState<string | null>(null);
   const load = async () => {
     const [sources, cal, mcp] = await Promise.all([window.quorum.sourcesList(), window.quorum.calendarStatus(), window.quorum.mcpStatus()]);
     setLive({ sources, cal, mcp });
@@ -49,8 +49,8 @@ export function ConnectorsPage() {
     // a finished job changes counts and the last-sync time, which only the full list carries
     if (live.sources.some((s) => s.job && s.job.status !== 'running' && s.job.finishedAt && Date.now() - s.job.finishedAt < 2000)) { const t = setTimeout(load, 500); return () => clearTimeout(t); }
   }, [live.sources]);
-  const openDetail = (id: string) => { setLibrary(false); setDetail(id); };
-  if (detail && CONNECTOR_BY_ID[detail]) return <ConnectorDetail connector={CONNECTOR_BY_ID[detail]} icon={icons[detail] ?? null} live={live} onChange={load} onBack={() => setDetail(null)} />;
+  const openDetail = (id: string) => { setLibrary(false); onDetail(id); };
+  if (detail && CONNECTOR_BY_ID[detail]) return <ConnectorDetail connector={CONNECTOR_BY_ID[detail]} icon={icons[detail] ?? null} live={live} onChange={load} />;
   const connected = CONNECTORS.filter((x) => isConnected(x, live));
   const groups = CATEGORIES.map((cat) => ({ cat, items: connected.filter((x) => x.category === cat.id) })).filter((g) => g.items.length);
   return (
@@ -106,7 +106,9 @@ function Actions({ connector: x, live, busy, act, compact }: { connector: Librar
   const running = src?.job?.status === 'running';
   return (
     <span className="conn-actions" onClick={(e) => e.stopPropagation()}>
-      {x.kind === 'mcp-source' && src && <button className={`pill${compact ? ' small-pill' : ''}`} disabled={busy || running} onClick={() => act(() => window.quorum.sourceSync(src.id))}>{running ? 'Syncing…' : 'Sync now'}</button>}
+      {x.kind === 'mcp-source' && src && (compact
+        ? <button className={`icon-btn${running ? ' conn-spin' : ''}`} aria-label="Sync now" data-tip={running ? 'Syncing' : 'Sync now'} data-tip-pos="left" disabled={busy || running} onClick={() => act(() => window.quorum.sourceSync(src.id))}><IconReset width={16} height={16} /></button>
+        : <button className="pill" disabled={busy || running} onClick={() => act(() => window.quorum.sourceSync(src.id))}>{running ? 'Syncing…' : 'Sync now'}</button>)}
       <span className="menu-wrap">
         <button className="icon-btn" aria-label={`${x.name} options`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o: boolean) => !o)}><IconMore width={16} height={16} /></button>
         {open && (
@@ -138,14 +140,14 @@ function ConnectedRow({ connector: x, icon, live, onChange, onOpen }: { connecto
         <Actions connector={x} live={live} busy={busy} act={act} compact />
         <IconChevron className="right conn-chev" width={14} height={14} />
       </div>
-      {src?.job && <div className="conn-sub"><JobLine job={src.job} /></div>}
-      {error && <p className="set-error conn-sub">{error}</p>}
+      {src?.job && <div className="conn-sub"><JobLine job={src.job} oneLine /></div>}
+      {error && <p className="set-error conn-sub one-line" title={error}>{error}</p>}
     </div>
   );
 }
 
 // the detail page: header with the connect or sync controls, the details table, the features list
-function ConnectorDetail({ connector: x, icon, live, onChange, onBack }: { connector: LibraryConnector; icon: string | null; live: Live; onChange: () => Promise<void>; onBack: () => void }) {
+function ConnectorDetail({ connector: x, icon, live, onChange }: { connector: LibraryConnector; icon: string | null; live: Live; onChange: () => Promise<void> }) {
   const [busy, error, act] = useAct(onChange);
   const src = sourceFor(x, live);
   const on = isConnected(x, live);
@@ -176,11 +178,10 @@ function ConnectorDetail({ connector: x, icon, live, onChange, onBack }: { conne
   rows.push(['Website', <button className="link-btn plain" onClick={() => window.quorum.openExternal(`https://${x.domain}`)}>{x.domain}<IconExternal width={13} height={13} /></button>]);
   return (
     <div className="conn-detail">
-      <button className="link-btn plain conn-back" onClick={onBack}><IconChevron className="left" width={14} height={14} />Connectors</button>
       <div className="conn-detail-head">
         <Logo icon={icon} size={44} />
         <div className="conn-detail-title">
-          <h3>{x.name}{soon && <em className="soon">Coming soon</em>}</h3>
+          <h3>{x.name}{soon && <em className="soon">Coming soon</em>}{on && <span className="conn-ok"><i />Connected</span>}</h3>
           <p>{x.description}</p>
         </div>
         <div className="conn-detail-actions">
@@ -189,7 +190,8 @@ function ConnectorDetail({ connector: x, icon, live, onChange, onBack }: { conne
         </div>
       </div>
       {error && <p className="set-error">{error}</p>}
-      {src?.job && <div className="set-card conn-jobcard"><JobLine job={src.job} /></div>}
+      <h4>Activity</h4>
+      <div className="set-card conn-jobcard">{src?.job ? <JobLine job={src.job} /> : <p className="src-status">{on ? (src ? `Last sync ${ago(src.lastSyncAt)}. Next automatic sync within 30 minutes while Quorum runs.` : 'Connected on this Mac.') : soon ? 'Not available yet.' : 'Not connected yet.'}</p>}</div>
       <h4>Details</h4>
       <div className="set-card conn-table">
         {rows.map(([k, v]) => <div key={k} className="conn-kv"><span>{k}</span><span>{v}</span></div>)}
@@ -217,14 +219,15 @@ function ConnectButton({ connector: x, live, busy, act }: { connector: LibraryCo
   return <button className="pill primary" disabled={busy} onClick={() => act(() => startConnect(x))}>{connectLabel(x, busy, true)}</button>;
 }
 
-function JobLine({ job }: { job: SourceJob }) {
+function JobLine({ job, oneLine }: { job: SourceJob; oneLine?: boolean }) {
+  if (job.status === 'failed' && oneLine) return <p className="set-error one-line" title={job.error ?? ''}>{job.error}</p>;
   if (job.status === 'running') {
     const pct = job.total ? Math.round((job.done / job.total) * 100) : null;
     return (
       <div className="src-progress" aria-live="polite">
         <div className="src-progress-text"><span>{job.message ?? job.label}{job.total ? ` · ${job.done} of ${job.total}` : ''}</span><span>{elapsed(job.startedAt)}</span></div>
         <div className="src-bar"><div className={`src-bar-fill${pct === null ? ' indeterminate' : ''}`} style={pct === null ? undefined : { width: `${pct}%` }} /></div>
-        <p className="src-note">You can leave this page. It updates when the import finishes.</p>
+        {!oneLine && <p className="src-note">You can leave this page. It updates when the import finishes.</p>}
       </div>
     );
   }

@@ -2,6 +2,7 @@ import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type Rea
 import type { Brain, CalendarSettings, ClaudeStatus, Memory, MemoryItem, OptOut, Profile, Settings, Voice, Workspace, Transcription, DecisionProvider, DecisionsStatus, AccountState } from './quorum';
 import { PersonalConnectors } from './Connectors';
 import { ConnectorsPage } from './ConnectorsPage';
+import { CONNECTOR_BY_ID } from '../connectors/library';
 import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
@@ -43,6 +44,9 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
   open?: { page: Page; n: number } | null; brain: Brain | null; settings: Settings; onSettings: (s: Settings) => void; onConnect: () => void; onBack: () => void;
 }) {
   const [saved, setPage] = useSession<Page>('settingsPage', 'preferences');
+  // an open connector detail page; cleared when the page changes
+  const [connectorDetail, setConnectorDetail] = useState<string | null>(null);
+  useEffect(() => { setConnectorDetail(null); }, [saved]);
   useEffect(() => { if (open) setPage(open.page); }, [open, setPage]);
   const [user, setUser] = useState<{ name: string; email: string; photo: string | null } | null>(null);
   useEffect(() => { window.quorum.user().then(setUser); }, [settings.profile]);
@@ -104,11 +108,13 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
 
       <main className="set-main">
         <div className="set-col">
-          <h1 className="set-title">{current.label}{current.soon && <Soon />}</h1>
+          {page === 'connectors' && connectorDetail && CONNECTOR_BY_ID[connectorDetail]
+            ? <h1 className="set-title crumbs"><button className="crumb" onClick={() => setConnectorDetail(null)}>Connectors</button><IconChevron className="right" width={18} height={18} /><span>{CONNECTOR_BY_ID[connectorDetail].name}</span></h1>
+            : <h1 className="set-title">{current.label}{current.soon && <Soon />}</h1>}
           {page === 'preferences' && <p className="set-lede">Quorum works best knowing a little about you. Quorum uses this when it writes your meeting notes and answers questions.</p>}
           {page === 'knowledge' && <p className="set-lede">Company knowledge for your whole workspace, chosen by admins.</p>}
           {page === 'general' && <p className="set-lede">Settings for everyone in your workspace. Quorum gives this context to every meeting summary and answer, so it's the same for each person.</p>}
-          {page === 'connectors' && <p className="set-lede">The tools Quorum is connected to. Meeting notes, calendars and AI tools, each tagged with where things came from.</p>}
+          {page === 'connectors' && !connectorDetail && <p className="set-lede">The tools Quorum is connected to. Meeting notes, calendars and AI tools, each tagged with where things came from.</p>}
           {page === 'developers' && <p className="set-lede">Model providers, Claude Code and Terminal access, and API keys for your own scripts.</p>}
           {page === 'platform' && <p className="set-lede">Every workspace on this Quorum. Plans are set by hand here until the admin web app exists.</p>}
           {page === 'preferences' ? (
@@ -141,7 +147,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
             : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} />
             : page === 'developers' ? <DevelopersPage />
             : page === 'notifications' ? <NotificationsPage />
-            : page === 'connectors' ? <ConnectorsPage />
+            : page === 'connectors' ? <ConnectorsPage detail={connectorDetail} onDetail={setConnectorDetail} />
             : <VoicePage settings={settings} onSettings={onSettings} />}
         </div>
       </main>

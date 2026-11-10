@@ -85,7 +85,7 @@ export async function sync({ mcp, existing, since = '2015-01-01', write, progres
     let r;
     try { r = await mcp.call('search_meetings', args); }
     catch (err) {
-      if (/not created a Granola account|mcp-signup/i.test(err.message)) throw new Error('That sign-in has no Granola account. Disconnect, then connect again with the email you use in Granola.');
+      if (/not created a Granola account|mcp-signup/i.test(err.message)) throw new Error('No Granola account for this sign-in. Reconnect with your Granola email.');
       throw err;
     }
     const page = parseMeetingList(r.text);
