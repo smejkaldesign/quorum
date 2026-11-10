@@ -32,7 +32,6 @@ export function checkoutBody({ workspace, user, seats, prices, returnUrl }) {
     success_url: `${returnUrl}/billing/done?workspace=${encodeURIComponent(workspace.id)}`,
     cancel_url: `${returnUrl}/billing/cancelled`,
     allow_promotion_codes: true,
-    automatic_tax: { enabled: true },
     line_items: [{ price: prices.seatPrice, quantity: Math.max(1, seats), adjustable_quantity: { enabled: true, minimum: 1, maximum: 500 } }],
     subscription_data: { metadata: { workspace_id: workspace.id } },
     metadata: { workspace_id: workspace.id },
