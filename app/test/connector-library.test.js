@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CATEGORIES, CONNECTORS, CONNECTOR_BY_ID, byCategory } from '../connectors/library.js';
+import { CATEGORIES, CONNECTORS, CONNECTOR_BY_ID, byCategory, featuresOf } from '../connectors/library.js';
 import { SOURCES } from '../sources/catalog.js';
 
 describe('connector library', () => {
@@ -14,6 +14,10 @@ describe('connector library', () => {
       expect(x.domain).toMatch(/^[a-z0-9.-]+\.[a-z]+$/);
       expect(x.description.length).toBeGreaterThan(10);
     }
+  });
+  it('every connector enables at least one named feature', () => {
+    for (const x of CONNECTORS) { const f = featuresOf(x); expect(f.length, x.id).toBeGreaterThan(0); for (const line of f) expect(line).not.toMatch(/undefined|\$\{/); }
+    expect(featuresOf(CONNECTOR_BY_ID.granola).join(' ')).toMatch(/knowledge store/);
   });
   it('every category lists at least one connector', () => {
     for (const cat of CATEGORIES) expect(byCategory(cat.id).length, cat.id).toBeGreaterThan(0);

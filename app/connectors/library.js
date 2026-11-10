@@ -79,5 +79,33 @@ export const CONNECTORS = [
   c('zapier', 'Zapier', 'ai', 'zapier.com', 'Send your meeting notes to thousands of apps with Zapier automations.'),
 ];
 
+// What connecting a tool enables, as plain statements. Most tools in a category enable the same things; the overrides
+// name what is specific. Shown behind the "Enables N features" badge on every tile and row.
+const BY_CATEGORY = {
+  'meeting-notes': (n) => [`Imports ${n} notes and summaries into your meeting notes folder, tagged source: ${n.toLowerCase()}`, `Keeps importing new ${n} meetings while Quorum runs`, `Uses ${n}'s own recording and AI; Quorum is the knowledge store`, `Lets ${n} keep running as its own system while Quorum stays in sync`],
+  calendar: (n) => [`Shows upcoming meetings from ${n} on Home`, 'Gives each note the meeting title and the people in it', 'Reminds you before each meeting'],
+  meetings: (n) => [`Imports cloud recordings and transcripts from ${n} as meeting notes`, `Picks up a recording as soon as ${n} finishes processing it`, 'Covers calls Quorum did not listen to live'],
+  communication: (n) => [`Shares a meeting note to ${n}`],
+  crm: (n) => [`Sends meeting notes to the matching people, companies and deals in ${n}`, `Logs the meeting on the ${n} record`],
+  tasks: (n) => [`Turns action items into ${n} tasks`, 'Links each task back to the meeting note'],
+  docs: (n) => [`Saves meeting notes to ${n}`, 'Keeps a copy where your documents already live'],
+  ai: (n) => [`Lets ${n} search your meeting notes and answer from them`, `Pulls action items and decisions into ${n}`],
+};
+const OVERRIDES = {
+  'apple-calendar': () => ['Shows upcoming meetings from the Calendar app on Home', 'Gives each note the meeting title and the people in it', 'Reads on this Mac; nothing leaves it'],
+  slack: () => ['Shares a meeting note to any Slack channel', 'Posts notes from a folder on their own'],
+  gmail: () => ['Drafts a follow-up email after each meeting, ready to review and send'],
+  'claude-code': () => ['Lets Claude Code search your notes and meetings through the quorum MCP server', 'Writes specs, PRs and bug reports from what was said', 'Runs on this Mac; no server in between'],
+  codex: () => ['Lets Codex search your notes and meetings through the quorum MCP server', 'Writes specs, PRs and bug reports from what was said'],
+  cursor: () => ['Lets Cursor search your notes and meetings through the quorum MCP server', 'Writes specs and issues from what was said'],
+  zapier: () => ['Sends a meeting note to thousands of apps through a Zap', 'Starts an automation when a note is saved'],
+  github: () => ['Turns action items into GitHub issues', 'Links each issue back to the meeting note'],
+  jira: () => ['Turns action items into Jira issues', 'Links each issue back to the meeting note'],
+  linear: () => ['Turns action items into Linear issues', 'Links each issue back to the meeting note'],
+  trello: () => ['Turns action items into Trello cards', 'Links each card back to the meeting note'],
+  notion: () => ['Sends meeting notes to a Notion database you can sort, filter and build on', 'Keeps the Notion page in step with the note'],
+};
+export const featuresOf = (x) => (OVERRIDES[x.id] ?? BY_CATEGORY[x.category] ?? (() => []))(x.name);
+
 export const CONNECTOR_BY_ID = Object.fromEntries(CONNECTORS.map((x) => [x.id, x]));
 export const byCategory = (categoryId) => CONNECTORS.filter((x) => x.category === categoryId);

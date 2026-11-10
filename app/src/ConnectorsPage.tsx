@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { CalendarSettings, MeetingSourceInfo, SourceJob } from './quorum';
-import { CATEGORIES, CONNECTORS, type LibraryConnector } from '../connectors/library';
+import { CATEGORIES, CONNECTORS, featuresOf, type LibraryConnector } from '../connectors/library';
 import { useMenu } from './controls';
 import { IconCheck, IconClose, IconExternal, IconGrid, IconMore, IconPlus } from './icons';
 
@@ -71,6 +71,23 @@ const ago = (iso: string | null) => {
 };
 const elapsed = (from: number) => { const s = Math.max(0, Math.round((Date.now() - from) / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 
+// "Enables N features": click for the list of what the connector does for you
+function Features({ connector: x }: { connector: LibraryConnector }) {
+  const [open, setOpen] = useMenu();
+  const list = featuresOf(x);
+  if (!list.length) return null;
+  return (
+    <span className="menu-wrap lib-feat" onClick={(e) => e.stopPropagation()}>
+      <button type="button" className="lib-feat-btn" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o: boolean) => !o)}>Enables {list.length} {list.length === 1 ? 'feature' : 'features'}</button>
+      {open && (
+        <div className="lib-pop" role="dialog" aria-label={`What ${x.name} enables`}>
+          <ul>{list.map((f) => <li key={f}>{f}</li>)}</ul>
+        </div>
+      )}
+    </span>
+  );
+}
+
 function Logo({ icon, size = 28 }: { icon: string | null; size?: number }) {
   return icon ? <img className="conn-logo" src={icon} alt="" style={{ width: size, height: size }} /> : <span className="conn-logo blank" style={{ width: size, height: size }}><IconGrid width={14} height={14} /></span>;
 }
@@ -90,7 +107,7 @@ function ConnectedRow({ connector: x, icon, live, onChange }: { connector: Libra
   return (
     <div className="conn-row">
       <div className="set-line conn-line">
-        <div className="conn-id"><Logo icon={icon} /><div className="set-label"><strong>{x.name}</strong>{desc && <span>{desc}</span>}</div></div>
+        <div className="conn-id"><Logo icon={icon} /><div className="set-label"><strong>{x.name}<Features connector={x} /></strong>{desc && <span>{desc}</span>}</div></div>
         <div className="set-line-end">
           {x.kind === 'mcp-source' && src && <button className="pill small-pill" disabled={busy || running} onClick={() => act(() => window.quorum.sourceSync(src.id))}>{running ? 'Syncing…' : 'Sync now'}</button>}
           <span className="menu-wrap" onClick={(e) => e.stopPropagation()}>
@@ -173,8 +190,8 @@ function Library({ icons, live, onChange, onClose }: { icons: Record<string, str
                 const on = isConnected(x, live);
                 const soon = x.status === 'soon';
                 return (
-                  <div key={x.id} className={`lib-tile${soon ? ' soon' : ''}${on ? ' on' : ''}`}>
-                    <div className="lib-tile-head"><Logo icon={icons[x.id] ?? null} size={32} />{soon && <em className="soon">Coming soon</em>}{on && <span className="lib-on"><IconCheck width={13} height={13} />Connected</span>}</div>
+                  <div key={x.id} className={`lib-tile${soon ? ' is-soon' : ''}${on ? ' is-on' : ''}`}>
+                    <div className="lib-tile-head"><span className="lib-tile-lead"><Logo icon={icons[x.id] ?? null} size={32} /><Features connector={x} /></span>{soon && <em className="soon">Coming soon</em>}{on && <span className="lib-on"><IconCheck width={13} height={13} />Connected</span>}</div>
                     <strong>{x.name}</strong>
                     <span>{x.description}</span>
                     {!soon && !on && (
