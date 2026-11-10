@@ -157,6 +157,9 @@ function ConnectorDetail({ connector: x, icon, live, onChange }: { connector: Li
   useEffect(() => { if (!running) return; const t = setInterval(() => tick((n) => n + 1), 1000); return () => clearInterval(t); }, [running]);
   const cat = CATEGORIES.find((c) => c.id === x.category);
   const status = soon ? 'Soon' : on ? 'Connected' : x.id === 'apple-calendar' && live.cal?.status === 'denied' ? 'Access is off in System Settings' : 'Not connected';
+  // one message for the page: the latest action's error wins, else the last failed import
+  const alert = error || (src?.job?.status === 'failed' ? src.job.error : null) || null;
+  const accountProblem = !!alert && /account for this sign-in|different account/i.test(alert);
   const rows: [string, ReactNode][] = [
     ['Status', <span className={on ? 'conn-ok' : undefined}>{on && <i />}{status}</span>],
     ['Category', cat?.name ?? x.category],
@@ -189,10 +192,15 @@ function ConnectorDetail({ connector: x, icon, live, onChange }: { connector: Li
           {on && <Actions connector={x} live={live} busy={busy} act={act} />}
         </div>
       </div>
-      {error && <p className="set-error">{error}</p>}
-      {!on && x.kind === 'mcp-source' && /account/i.test(error) && <DifferentAccount connector={x} busy={busy} act={act} />}
-      <h4>Activity</h4>
-      <div className="set-card conn-jobcard">{src?.job && src.job.status === 'failed' && /Granola account|different account|Reconnect/i.test(src.job.error ?? '') && <DifferentAccount connector={x} busy={busy} act={act} />}{src?.job ? <JobLine job={src.job} /> : <p className="src-status">{on ? (src ? `Last sync ${ago(src.lastSyncAt)}. Next automatic sync within 30 minutes while Quorum runs.` : 'Connected on this Mac.') : soon ? 'Not available yet.' : 'Not connected yet.'}</p>}</div>
+      {alert && <div className="conn-alert" role="alert"><strong>{accountProblem ? 'Sign in with a different account' : 'Something went wrong'}</strong><span>{alert}</span></div>}
+      <h4>Connectivity</h4>
+      <div className="set-card conn-jobcard">
+        {accountProblem && !on && x.kind === 'mcp-source'
+          ? <DifferentAccount connector={x} busy={busy} act={act} />
+          : src?.job && src.job.status !== 'failed'
+            ? <JobLine job={src.job} />
+            : <p className="src-status">{on ? (src ? `Last sync ${ago(src.lastSyncAt)}. Next automatic sync within 30 minutes while Quorum runs.` : 'Connected on this Mac.') : soon ? 'Not available yet.' : 'Not connected yet.'}</p>}
+      </div>
       <h4>Details</h4>
       <div className="set-card conn-table">
         {rows.map(([k, v]) => <div key={k} className="conn-kv"><span>{k}</span><span>{v}</span></div>)}

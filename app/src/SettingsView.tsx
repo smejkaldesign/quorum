@@ -109,7 +109,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
       <main className="set-main">
         <div className="set-col">
           {page === 'connectors' && connectorDetail && CONNECTOR_BY_ID[connectorDetail]
-            ? <h1 className="set-title crumbs"><button className="crumb" onClick={() => setConnectorDetail(null)}>Connectors</button><span className="crumb-sep" aria-hidden="true">/</span><span>{CONNECTOR_BY_ID[connectorDetail].name}</span></h1>
+            ? <h1 className="set-title crumbs"><button className="crumb" onClick={() => setConnectorDetail(null)}>Connectors</button><span className="crumb-sep" aria-hidden="true"> / </span><span>{CONNECTOR_BY_ID[connectorDetail].name}</span></h1>
             : <h1 className="set-title">{current.label}{current.soon && <Soon />}</h1>}
           {page === 'preferences' && <p className="set-lede">Quorum works best knowing a little about you. Quorum uses this when it writes your meeting notes and answers questions.</p>}
           {page === 'knowledge' && <p className="set-lede">Company knowledge for your whole workspace, chosen by admins.</p>}
