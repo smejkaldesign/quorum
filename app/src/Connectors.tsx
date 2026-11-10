@@ -106,9 +106,10 @@ export function PersonalConnectors() {
   return (
     <>
       <div className="set-head">
-        <h3>AI providers</h3>
+        <h3>Model selections</h3>
         {st && !zero && <span className="set-head-actions"><button className="pill small-pill with-icon" onClick={() => setSheet({ kind: 'add', id: null })}><IconPlus width={15} height={15} />Add</button></span>}
       </div>
+      <p className="mcp-lede">The AI accounts and keys Quorum can run on: your Claude Code sign-in, your own provider keys, or a local model. Below, pick which one handles each step.</p>
       {!st ? null : zero ? (
         <div className="set-card set-zero">
           <span className="set-zero-icon"><IconGrid width={22} height={22} /></span>
@@ -119,7 +120,7 @@ export function PersonalConnectors() {
       ) : (
         <>
           <div className="set-card">
-            {rows.map((id) => (
+            {rows.filter((id) => id !== 'apple').map((id) => (
               <ProviderRow key={id} p={BY_ID[id]} st={st} settings={settings} defaults={defaults(id)} note={note?.id === id ? note : null}
                 onDefault={() => setSheet({ kind: 'default', id })} onTest={() => test(id)} onEdit={() => { setNote(null); setSheet({ kind: 'add', id }); }} onRemove={() => remove(id)} />
             ))}
