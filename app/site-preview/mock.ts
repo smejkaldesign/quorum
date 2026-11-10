@@ -128,7 +128,7 @@ const vault = sampleVault();
 const sample: Partial<Bridge> = {
   launchId: 'site-preview',
   isDev: false,
-  sitePreview: { quoteMs: 3000 },
+  sitePreview: { quoteMs: 9000 },
   onboardingStatus: async () => ({ firstRun: false, defaultVaultDir: VAULT }),
   brain: async () => ({ root: VAULT, vault: VAULT, name: 'Acme Notes', markers: { agentOS: null, obsidian: true, search: true, safetyHooks: true } }),
   user: async () => ({ name: 'Maya Chen', email: 'maya@example.com', photo: null }),

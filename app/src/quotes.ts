@@ -35,15 +35,34 @@ function drawQuote() {
 let current: Quote | null = null;
 export function pickQuote() { return (current ??= drawQuote()); }
 
-// Home's quote. The app keeps the one picked at page load; the preview on quorum.watch (site-preview/) sets an
-// interval on the bridge and steps through the list
+// Home's quote. The app keeps the one picked at page load. The preview on quorum.watch (site-preview/) sets a hold
+// time on the bridge; there the quote types in, holds, erases, and the next one types in.
+const TYPE_MS = 72, ERASE_MS = 34, GAP_MS = 700;
 export function useQuote() {
-  const everyMs = window.quorum.sitePreview?.quoteMs ?? 0;
+  const holdMs = window.quorum.sitePreview?.quoteMs ?? 0;
   const [quote, setQuote] = useState(pickQuote);
+  const [shown, setShown] = useState(() => (holdMs ? '' : pickQuote().text));
+  const [typing, setTyping] = useState(false);
   useEffect(() => {
-    if (!everyMs) return;
-    const t = setInterval(() => setQuote((q) => QUOTES[(QUOTES.indexOf(q) + 1) % QUOTES.length]), everyMs);
-    return () => clearInterval(t);
-  }, [everyMs]);
-  return quote;
+    if (!holdMs) return;
+    let timer = 0, cancelled = false;
+    const wait = (ms: number) => new Promise<void>((r) => { timer = window.setTimeout(r, ms); });
+    (async () => {
+      let q = pickQuote();
+      while (!cancelled) {
+        setTyping(true);
+        for (let i = 1; i <= q.text.length && !cancelled; i++) { setShown(q.text.slice(0, i)); await wait(TYPE_MS + Math.random() * 40); }
+        setTyping(false);
+        await wait(holdMs);
+        setTyping(true);
+        for (let i = q.text.length - 1; i >= 0 && !cancelled; i--) { setShown(q.text.slice(0, i)); await wait(ERASE_MS); }
+        await wait(GAP_MS);
+        if (cancelled) break;
+        q = QUOTES[(QUOTES.indexOf(q) + 1) % QUOTES.length];
+        setQuote(q);
+      }
+    })();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [holdMs]);
+  return { quote, shown: holdMs ? shown : quote.text, typing };
 }

@@ -86,7 +86,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat }: { brain: Bra
   }, [keyword]);
   const [note, setNote] = useState<NoteDoc | null>(null);
   const [draft, setDraft] = useState('');
-  const quote = useQuote();
+  const { quote, shown, typing } = useQuote();
   // the quote stays on one line: in a window narrower than the default, the heading eases down to fit
   const heroTitle = useRef<HTMLHeadingElement>(null);
   useLayoutEffect(() => {
@@ -102,7 +102,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat }: { brain: Bra
     const ro = new ResizeObserver(() => requestAnimationFrame(fit));
     if (h.parentElement) ro.observe(h.parentElement);
     return () => ro.disconnect();
-  }, [quote]);
+  }, [shown]);
 
   useEffect(() => { window.quorum.history().then(setData); }, [brain]);
 
@@ -162,8 +162,8 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat }: { brain: Bra
   return (
     <div className="history">
       <section className="hist-hero" key={quote.text}>
-        <h1 ref={heroTitle}>
-          {quote.text}
+        <h1 ref={heroTitle} className={typing ? 'typing' : undefined}>
+          {shown || '\u00a0'}
         </h1>
         <button className="hist-quote" onClick={() => window.quorum.openExternal(quoteLink(quote))} data-tip={quote.url.includes('wikiquote') ? 'See it on Wikiquote' : 'See it on Wikipedia'}
           aria-label={`${quote.who}, ${quote.source}. Opens the source`}>
