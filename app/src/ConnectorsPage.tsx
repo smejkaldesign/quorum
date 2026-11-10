@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { CalendarSettings, MeetingSourceInfo, SourceJob } from './quorum';
 import { CATEGORIES, CONNECTORS, CONNECTOR_BY_ID, featuresOf, type LibraryConnector } from '../connectors/library';
 import { useMenu } from './controls';
@@ -49,8 +49,9 @@ export function ConnectorsPage({ detail, onDetail }: { detail: string | null; on
     // a finished job changes counts and the last-sync time, which only the full list carries
     if (live.sources.some((s) => s.job && s.job.status !== 'running' && s.job.finishedAt && Date.now() - s.job.finishedAt < 2000)) { const t = setTimeout(load, 500); return () => clearTimeout(t); }
   }, [live.sources]);
+  const lastRefused = useRef<{ id: string; error: string } | null>(null);
   const openDetail = (id: string) => { setLibrary(false); onDetail(id); };
-  if (detail && CONNECTOR_BY_ID[detail]) return <ConnectorDetail connector={CONNECTOR_BY_ID[detail]} icon={icons[detail] ?? null} live={live} onChange={load} />;
+  if (detail && CONNECTOR_BY_ID[detail]) return <ConnectorDetail connector={CONNECTOR_BY_ID[detail]} icon={icons[detail] ?? null} live={live} onChange={load} initialError={lastRefused.current?.id === detail ? lastRefused.current.error : ''} />;
   const connected = CONNECTORS.filter((x) => isConnected(x, live));
   const groups = CATEGORIES.map((cat) => ({ cat, items: connected.filter((x) => x.category === cat.id) })).filter((g) => g.items.length);
   return (
@@ -74,7 +75,7 @@ export function ConnectorsPage({ detail, onDetail }: { detail: string | null; on
           </div>
         </div>
       ))}
-      {library && <Library icons={icons} live={live} onChange={load} onOpen={openDetail} onClose={() => setLibrary(false)} />}
+      {library && <Library icons={icons} live={live} onChange={load} onOpen={openDetail} onClose={() => setLibrary(false)} lastRefused={lastRefused} />}
     </>
   );
 }
@@ -147,8 +148,9 @@ function ConnectedRow({ connector: x, icon, live, onChange, onOpen }: { connecto
 }
 
 // the detail page: header with the connect or sync controls, the details table, the features list
-function ConnectorDetail({ connector: x, icon, live, onChange }: { connector: LibraryConnector; icon: string | null; live: Live; onChange: () => Promise<void> }) {
-  const [busy, error, act] = useAct(onChange);
+function ConnectorDetail({ connector: x, icon, live, onChange, initialError = '' }: { connector: LibraryConnector; icon: string | null; live: Live; onChange: () => Promise<void>; initialError?: string }) {
+  const [busy, actError, act] = useAct(onChange);
+  const error = actError || initialError;
   const src = sourceFor(x, live);
   const on = isConnected(x, live);
   const soon = x.status === 'soon';
@@ -214,7 +216,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange }: { connector: Li
 }
 
 // starts the connection for whatever kind this is; the Library tiles and the detail header share it
-const startConnect = async (x: LibraryConnector, fresh = false): Promise<{ ok?: boolean; error?: string }> => {
+const startConnect = async (x: LibraryConnector, fresh = false): Promise<{ ok?: boolean; error?: string; wrongAccount?: boolean }> => {
   if (x.kind === 'mcp-source' && x.source) return window.quorum.sourceConnect(x.source, fresh ? { fresh: true } : undefined);
   if (x.id === 'apple-calendar') { const c = await window.quorum.calendarConnect(); return c.status === 'granted' ? { ok: true } : c.status === 'denied' ? { error: 'Calendar access is off for Quorum in System Settings.' } : { error: 'macOS did not grant calendar access.' }; }
   if (x.id === 'claude-code') { const a = await window.quorum.mcpAdd(); return a.added ? { ok: true } : { error: a.error ?? 'Claude Code did not accept the server.' }; }
@@ -288,7 +290,7 @@ function Features({ connector: x }: { connector: LibraryConnector }) {
 }
 
 // the library sheet: categories down the left, a search box, and a tile per connector; a tile opens the detail page
-function Library({ icons, live, onChange, onOpen, onClose }: { icons: Record<string, string | null>; live: Live; onChange: () => Promise<void>; onOpen: (id: string) => void; onClose: () => void }) {
+function Library({ icons, live, onChange, onOpen, onClose, lastRefused }: { icons: Record<string, string | null>; live: Live; onChange: () => Promise<void>; onOpen: (id: string) => void; onClose: () => void; lastRefused: React.MutableRefObject<{ id: string; error: string } | null> }) {
   const [cat, setCat] = useState<string>('all');
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
@@ -303,7 +305,7 @@ function Library({ icons, live, onChange, onOpen, onClose }: { icons: Record<str
     setBusy(x.id); setError((e) => ({ ...e, [x.id]: '' }));
     const r = await startConnect(x);
     setBusy(null);
-    if (r.error) { setError((e) => ({ ...e, [x.id]: r.error! })); return; }
+    if (r.error) { setError((e) => ({ ...e, [x.id]: r.error! })); if (r.wrongAccount) { lastRefused.current = { id: x.id, error: r.error! }; onOpen(x.id); } return; }
     await onChange();
   };
   const counts = useMemo(() => Object.fromEntries(CATEGORIES.map((c) => [c.id, CONNECTORS.filter((x) => x.category === c.id).length])), []);
@@ -331,8 +333,11 @@ function Library({ icons, live, onChange, onOpen, onClose }: { icons: Record<str
                     <div className="lib-tile-head"><span className="lib-tile-lead"><Logo icon={icons[x.id] ?? null} size={32} /><Features connector={x} /></span>{soon && <em className="soon grey">Soon</em>}{on && <span className="lib-on"><IconCheck width={13} height={13} />Connected</span>}</div>
                     <strong>{x.name}</strong>
                     <span>{x.description}</span>
-                    {!soon && !on && <button className="pill small-pill primary" disabled={busy !== null} onClick={(e) => { e.stopPropagation(); connect(x); }}>{connectLabel(x, busy === x.id, false)}</button>}
-                    {error[x.id] && <p className="set-error">{error[x.id]}</p>}
+                    <div className="lib-tile-foot">
+                      {!soon && !on && <button className="pill small-pill primary" disabled={busy !== null} onClick={(e) => { e.stopPropagation(); connect(x); }}>{connectLabel(x, busy === x.id, false)}</button>}
+                      <span className="lib-details">Details<IconChevron className="right" width={12} height={12} /></span>
+                    </div>
+                    {error[x.id] && <p className="set-error one-line" title={error[x.id]}>{error[x.id]}</p>}
                   </div>
                 );
               })}
