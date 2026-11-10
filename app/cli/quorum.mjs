@@ -37,8 +37,12 @@ function meetingsDir() {
 
 // same list and matching as the app: a line naming an opted-out customer never leaves this process
 function excludedTerms() {
-  const v = vault();
-  try { return readFileSync(path.join(v, 'scripts/embed-bench/excluded.txt'), 'utf8').split('\n').map((l) => l.trim().toLowerCase()).filter((l) => l && !l.startsWith('#')); } catch { return []; }
+  // the guardrails snapshot the app saves (app/guardrails.js); before the first review, the vault's own list
+  const compiled = settings().guardrails?.compiled;
+  const files = compiled ? compiled.termFiles ?? [] : [path.join(vault() ?? '', 'scripts/embed-bench/excluded.txt')];
+  const fromFiles = files.flatMap((f) => { try { return readFileSync(f, 'utf8').split('\n').map((l) => l.trim().toLowerCase()).filter((l) => l && !l.startsWith('#')); } catch { return []; } });
+  const optOuts = compiled?.optOutsOn === false ? [] : (settings().workspace?.optOuts ?? []).map((o) => String(o?.name ?? '').trim().toLowerCase()).filter((n) => n.length >= 3);
+  return [...(compiled?.terms ?? []), ...fromFiles, ...optOuts];
 }
 const terms = excludedTerms();
 const isExcluded = (t) => terms.some((x) => String(t).toLowerCase().includes(x));

@@ -68,7 +68,7 @@ Most notetakers end at the summary. Quorum treats the summary as the start: the 
   <tr>
     <td valign="top"><strong>Connectors</strong><br>Import from Granola today, with Zoom cloud recordings in Quorum Cloud. The calendar app feeds Home. Claude Code gets a <code>quorum</code> MCP server in one click.</td>
     <td valign="top"><strong>Who read it</strong><br>Every note shows how many people and which agents have read it, counted by the read guard and the MCP server.</td>
-    <td valign="top"><strong>Read guard</strong><br>A Claude Code hook ships with the app. It denies the agent secret-looking files, private folders and notes marked <code>confidential:</code>.</td>
+    <td valign="top"><strong>Guardrails</strong><br>One list of what the agent may not read or say: built-in rules, guards found in your folder that you choose to include, your own rules, and your workspace's. Every rule only denies.</td>
   </tr>
 </table>
 
@@ -134,7 +134,7 @@ Quorum looks for a few markers by file name and turns features on when it finds 
 
 Three things make the folder safe to hand to an agent:
 
-- **The read guard.** A Claude Code `PreToolUse` hook, shipped with the app, denies reads of secret-looking files, private folders and any note with `confidential:` in its frontmatter.
+- **Guardrails.** A Claude Code `PreToolUse` hook, shipped with the app, denies reads of secret-looking files, private folders and any note with `confidential:` in its frontmatter. Settings, Guardrails lists these built-in rules, offers the guard hooks and opt-out lists found in your folder for you to include, takes your own rules, and shows every denial. In Cloud, workspace admins add rules that reach every member.
 - **Views.** Each note counts the people who opened it in Quorum and the agents that read it through the guard or the MCP server, with the token estimate.
 - **Sync is off by default.** In the Local edition nothing leaves the Mac. In Cloud, hidden paths, private folders and confidential notes are skipped even when sync is on.
 

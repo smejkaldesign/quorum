@@ -2,13 +2,14 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, 
 import type { Brain, CalendarSettings, ClaudeStatus, Memory, MemoryItem, OptOut, Profile, Settings, Voice, Workspace, Transcription, DecisionProvider, DecisionsStatus, AccountState, UpdateState } from './quorum';
 import { PersonalConnectors } from './Connectors';
 import { ConnectorsPage } from './ConnectorsPage';
+import { GuardrailsPage } from './Guardrails';
 import { CONNECTORS, CONNECTOR_BY_ID } from '../connectors/library';
 import { ConnectHint } from './ConnectHint';
 import { openConnectors, type ConnectorsTarget } from './connectorsNav';
 import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
-import { AccountArea, BillingArea, EDITION, KnowledgeQueueArea, MembersArea, PlatformArea, WorkspaceConnectorsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
+import { AccountArea, BillingArea, EDITION, KnowledgeQueueArea, MembersArea, PlatformArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { canAdmin, modeOf, resolvePage, workspacePages, type Page } from './settingsNav';
 import { EnvSwitch } from './EnvSwitch';
 import {
@@ -22,6 +23,7 @@ type Nav = { id: Page; label: string; icon: (p: { width?: number; height?: numbe
 const ACCOUNT: Nav[] = [
   { id: 'preferences', label: 'Preferences', icon: IconSliders },
   { id: 'memory', label: 'Memory', icon: IconBrain },
+  { id: 'guardrails', label: 'Guardrails', icon: IconShield },
   { id: 'calendar', label: 'Calendar', icon: IconCalendar },
   { id: 'meetings', label: 'Meetings', icon: IconMic },
   { id: 'connectors', label: 'Connectors', icon: IconGrid },
@@ -36,7 +38,8 @@ const WORKSPACE: Nav[] = [
   { id: 'members', label: 'Members', icon: IconPeople },
   { id: 'org-connectors', label: 'Connectors', icon: IconGrid },
   { id: 'org-voice', label: 'Voice typing', icon: IconKeyboard },
-  { id: 'platform', label: 'Platform', icon: IconShield },
+  { id: 'org-guardrails', label: 'Guardrails', icon: IconShield },
+  { id: 'platform', label: 'Platform', icon: IconBuilding },
 ];
 
 // the chip on every row whose control is disabled on purpose: the feature is planned and the row shows what it will do
@@ -155,6 +158,8 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
           ) : page === 'members' ? <MembersArea />
             : page === 'org-connectors' ? <WorkspaceConnectorsArea local={<OrgConnectorsLocal onGo={go} />} />
             : page === 'org-voice' ? <WorkspaceVoiceArea local={<OrgVoiceLocal onGo={go} />} />
+            : page === 'org-guardrails' ? <WorkspaceGuardrailsArea local={<p className="set-lede">Workspace guardrails come with Quorum Cloud: rules an admin sets once that every member's Quorum applies and cannot turn off. Your own rules live under Settings, Guardrails.</p>} />
+            : page === 'guardrails' ? <GuardrailsPage />
             : page === 'platform' ? <PlatformArea />
             : page === 'calendar' ? <CalendarPage onConnector={goConnector} />
             : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} onConnector={goConnector} />
@@ -452,11 +457,13 @@ function MemMenu({ it, onAbout, onDelete }: { it: MemoryItem; onAbout: () => voi
       <button className="icon-btn" aria-label={`${it.label} options`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}><IconMore /></button>
       {open && (
         <div className="menu end" role="menu">
-          <button role="menuitem" onClick={() => { setOpen(false); window.quorum.memoryOpen(it.id); }}><IconExternal width={15} height={15} /> View</button>
+          {locked
+            ? <button role="menuitem" onClick={() => { setOpen(false); window.dispatchEvent(new CustomEvent('quorum-open-settings', { detail: 'guardrails' })); }}><IconShield width={15} height={15} /> Open Guardrails</button>
+            : <button role="menuitem" onClick={() => { setOpen(false); window.quorum.memoryOpen(it.id); }}><IconExternal width={15} height={15} /> View</button>}
           <button role="menuitem" onClick={() => { setOpen(false); onAbout(); }}><IconInfo width={15} height={15} /> About</button>
           <div className="menu-sep" />
           {locked
-            ? <span data-tip="Disabled until org controls" data-tip-pos="left"><button role="menuitem" className="danger" disabled><IconTrash width={15} height={15} /> Delete</button></span>
+            ? <span data-tip="Rules are managed on the Guardrails page" data-tip-pos="left"><button role="menuitem" className="danger" disabled><IconTrash width={15} height={15} /> Delete</button></span>
             : <button role="menuitem" className="danger" onClick={() => { setOpen(false); onDelete(); }}><IconTrash width={15} height={15} /> Delete</button>}
         </div>
       )}
@@ -466,8 +473,8 @@ function MemMenu({ it, onAbout, onDelete }: { it: MemoryItem; onAbout: () => voi
 
 const ABOUT: Record<string, string[]> = {
   guards: [
-    'Hooks from your Agent OS that run on every file Quorum reads. They hide secrets, and anything naming a customer who opted out of AI, before Quorum sees it.',
-    "They're always on and can't be deleted here. Your workspace admin will control them.",
+    'The rules behind what Quorum\'s agent may read from your Agent OS and say about it: built-in rules, guards found in your Agent OS that you included, your own rules, and your workspace\'s rules.',
+    'Review and change them on the Guardrails page. Every rule only ever denies, so the rules add up.',
   ],
   index: [
     'The catalog at the top of your Agent OS. Quorum reads it first to jump to the right folder and note instead of searching everything.',
@@ -497,7 +504,7 @@ const ABOUT: Record<string, string[]> = {
 };
 
 function AboutCapability({ it, onClose }: { it: MemoryItem; onClose: () => void }) {
-  const status = it.kind === 'guards' ? 'Always on' : it.include ? 'Included' : 'Not included yet';
+  const status = it.kind === 'guards' ? it.detail : it.include ? 'Included' : 'Not included yet';
   return (
     <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
       onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}>
@@ -525,7 +532,7 @@ function AboutCapability({ it, onClose }: { it: MemoryItem; onClose: () => void 
 function why(it: MemoryItem): string {
   const n = it.detail.match(/\d+/)?.[0] ?? '';
   switch (it.kind) {
-    case 'guards': return `Always on · ${n} guards keep opted-out data and secrets out`;
+    case 'guards': return `${it.detail} · review and add rules on the Guardrails page`;
     case 'index': return `Quorum starts from ${it.detail.split(' · ')[0]} to find notes faster`;
     case 'search': return it.detail === 'local embeddings' ? 'Finds related notes first, with embeddings on this Mac' : 'Finds matching notes before Quorum starts';
     case 'graph': return 'Search also pulls in notes linked to each match';
@@ -564,7 +571,7 @@ function MemoryScan() {
     const icon = it.kind === 'folder' && on ? <IconFolderFill width={18} height={18} className="ok" /> : <Icon width={18} height={18} {...(it.kind === 'guards' || it.kind === 'index' ? { filled: on } : {})} className={on ? 'ok' : undefined} />;
     return (
       <Row key={it.id} icon={icon} desc={why(it)}
-        title={<button className="mem-title" onClick={() => window.quorum.memoryOpen(it.id)}>{it.label}<IconExternal width={14} height={14} /></button>}>
+        title={<button className="mem-title" onClick={() => (it.kind === 'guards' ? window.dispatchEvent(new CustomEvent('quorum-open-settings', { detail: 'guardrails' })) : window.quorum.memoryOpen(it.id))}>{it.label}{it.kind === 'guards' ? <IconChevron className="right" width={14} height={14} /> : <IconExternal width={14} height={14} />}</button>}>
         <span className={`mem-actions ${undecided ? '' : 'decided'}`}>
           {undecided && <span className="new-badge">New</span>}
           <button className="icon-btn mem-yes" aria-label={`Include ${it.label}`} data-tip="Include" tabIndex={undecided ? 0 : -1} aria-hidden={!undecided} onClick={async () => setM(await window.quorum.memoryInclude(it.id))}><IconCheck width={17} height={17} /></button>

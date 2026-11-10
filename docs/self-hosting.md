@@ -116,7 +116,7 @@ The client id defaults to the one Quorum's own builds use, which is a public ide
 
 The Local edition never needs this. The relay (`relay/`) is the Cloud edition's managed transcription: the app streams 16 kHz audio to it over one websocket, it forwards each channel to a speech engine (AssemblyAI Universal-Streaming by default, Deepgram Nova-3 as the alternative) and returns the same transcript events the on-device engine emits. It also runs the running summary and the final notes on a managed model key (`POST /v1/notes`, streamed as server-sent events). Audio is forwarded and dropped; the relay stores none of it and logs durations and engine names only.
 
-**Migration.** Apply `supabase/migrations/0007_relay.sql` with the others. It adds `workspaces.hour_packs`, `workspace_usage_events.engine`, the service-role RPC `relay_connector_secret` that reads a workspace connector's key from Vault, and a `required` flag in `workspace_settings.voice`. Billing needs `0011_billing.sql` and the Zoom connection routes need `0014_connect.sql` (`connect_accounts`, `connect_events`).
+**Migration.** Apply `supabase/migrations/0007_relay.sql` with the others. It adds `workspaces.hour_packs`, `workspace_usage_events.engine`, the service-role RPC `relay_connector_secret` that reads a workspace connector's key from Vault, and a `required` flag in `workspace_settings.voice`. Billing needs `0011_billing.sql`, the Zoom connection routes need `0014_connect.sql` (`connect_accounts`, `connect_events`), and workspace guardrails (Settings, Admin, Guardrails) need `0015_guardrails.sql`.
 
 **Run it.**
 

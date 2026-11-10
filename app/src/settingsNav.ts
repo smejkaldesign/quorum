@@ -3,12 +3,12 @@ import type { Role } from './quorum';
 // Settings has two navs in one sidebar: the account pages, and behind the Admin button the workspace pages. Which nav
 // shows follows from the current page, so the one remembered page (useSession) also remembers the nav.
 export type NavMode = 'account' | 'admin';
-export type AccountPage = 'preferences' | 'memory' | 'calendar' | 'meetings' | 'connectors' | 'notifications' | 'voice' | 'developers';
-export type WorkspacePage = 'general' | 'knowledge' | 'members' | 'org-connectors' | 'org-voice' | 'platform';
+export type AccountPage = 'preferences' | 'memory' | 'guardrails' | 'calendar' | 'meetings' | 'connectors' | 'notifications' | 'voice' | 'developers';
+export type WorkspacePage = 'general' | 'knowledge' | 'members' | 'org-connectors' | 'org-voice' | 'org-guardrails' | 'platform';
 export type Page = AccountPage | WorkspacePage;
 
-export const ACCOUNT_PAGES: readonly AccountPage[] = ['preferences', 'memory', 'calendar', 'meetings', 'connectors', 'notifications', 'voice', 'developers'];
-export const WORKSPACE_PAGES: readonly WorkspacePage[] = ['general', 'knowledge', 'members', 'org-connectors', 'org-voice', 'platform'];
+export const ACCOUNT_PAGES: readonly AccountPage[] = ['preferences', 'memory', 'guardrails', 'calendar', 'meetings', 'connectors', 'notifications', 'voice', 'developers'];
+export const WORKSPACE_PAGES: readonly WorkspacePage[] = ['general', 'knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails', 'platform'];
 
 // who sees the Admin button: everyone in the Local edition; in Cloud, owners and admins, anyone without a workspace
 // yet, since the General page holds the sign-in card, and the platform owner whatever their workspace role. A member

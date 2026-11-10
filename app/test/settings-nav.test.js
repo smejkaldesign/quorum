@@ -22,10 +22,10 @@ describe('which nav shows', () => {
   });
 
   it('lists Members only in a Cloud build that reached a hosted account', () => {
-    expect(workspacePages('local', false)).toEqual(['general', 'knowledge', 'org-connectors', 'org-voice']);
-    expect(workspacePages('cloud', null)).toEqual(['general', 'knowledge', 'org-connectors', 'org-voice']);
-    expect(workspacePages('cloud', false)).toEqual(['general', 'knowledge', 'org-connectors', 'org-voice']);
-    expect(workspacePages('cloud', true)).toEqual(['general', 'knowledge', 'members', 'org-connectors', 'org-voice']);
+    expect(workspacePages('local', false)).toEqual(['general', 'knowledge', 'org-connectors', 'org-voice', 'org-guardrails']);
+    expect(workspacePages('cloud', null)).toEqual(['general', 'knowledge', 'org-connectors', 'org-voice', 'org-guardrails']);
+    expect(workspacePages('cloud', false)).toEqual(['general', 'knowledge', 'org-connectors', 'org-voice', 'org-guardrails']);
+    expect(workspacePages('cloud', true)).toEqual(['general', 'knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails']);
   });
 });
 

@@ -10,6 +10,7 @@ const CloudAccount = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/s
 const CloudMembers = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/Account').then((m) => ({ default: m.MembersPage }))) : null;
 const CloudConnectors = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/WorkspaceConnectors').then((m) => ({ default: m.WorkspaceConnectorsPage }))) : null;
 const CloudVoice = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/WorkspaceVoice').then((m) => ({ default: m.WorkspaceVoicePage }))) : null;
+const CloudGuardrails = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/WorkspaceGuardrails').then((m) => ({ default: m.WorkspaceGuardrailsPage }))) : null;
 const CloudPlatform = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/Platform').then((m) => ({ default: m.PlatformPage }))) : null;
 const CloudBilling = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/Billing').then((m) => ({ default: m.BillingPage }))) : null;
 const CloudKnowledge = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/Knowledge').then((m) => ({ default: m.KnowledgePage }))) : null;
@@ -63,5 +64,6 @@ export const KnowledgeQueueArea = ({ local }: { local: ReactNode }) => <CloudPag
 export const WorkspaceConnectorsArea = ({ local }: { local: ReactNode }) => <CloudPage Page={CloudConnectors} local={local} />;
 // Settings › Admin › Voice typing: the managed pipeline, its usage, and which connector handles each step
 export const WorkspaceVoiceArea = ({ local }: { local: ReactNode }) => <CloudPage Page={CloudVoice} local={local} />;
+export const WorkspaceGuardrailsArea = ({ local }: { local: ReactNode }) => <CloudPage Page={CloudGuardrails} local={local} />;
 // Settings › Admin › Platform: the platform owner's view of every workspace; the Local edition has no such page
 export const PlatformArea = () => <CloudPage Page={CloudPlatform} local={null} />;

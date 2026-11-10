@@ -5,10 +5,14 @@ Denies reads of secret-looking files, of folders the user marked private, and of
 frontmatter carries a `confidential:` key. Ships with the app, so every Agent OS gets it even
 when the connected repo has no guard hooks of its own.
 
-usage: read-guard.py --root <agent os root> [--deny <relative dir>]... [--log <views.jsonl>]
+usage: read-guard.py --root <agent os root> [--deny <relative dir>]... [--frontmatter-key <key>]...
+       [--secret-pattern <regex>] [--no-secrets] [--log <views.jsonl>] [--log-denied <denials.jsonl>]
 
+The flags are the compiled guardrails (app/guardrails.js): folders to deny, frontmatter keys that mark a note
+off limits (default: confidential), the secret file-name pattern (default below, --no-secrets turns it off).
 With --log, every allowed Read of a markdown note is appended to that file as one JSON line, which is how
-Quorum counts agent views of a note.
+Quorum counts agent views of a note. With --log-denied, every denial is appended the same way for the
+Guardrails page.
 """
 
 import json
@@ -21,13 +25,23 @@ SECRET_NAMES = re.compile(r"(^|/)(\.env(\..*)?|.*\.(pem|key|p12|pfx|keystore)|id
 ALWAYS_DENY_DIRS = (".git", "node_modules")
 
 
-def deny(reason):
+DENIED_LOG = None
+
+
+def deny(reason, tool="", target=""):
+    if DENIED_LOG:
+        try:
+            with open(DENIED_LOG, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "tool": tool, "path": target, "reason": reason}) + "\n")
+        except OSError:
+            pass
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}))
     sys.exit(0)
 
 
 def args():
-    root, deny_dirs, log = None, [], None
+    global DENIED_LOG
+    root, deny_dirs, log, keys, secret, no_secrets = None, [], None, [], None, False
     it = iter(sys.argv[1:])
     for a in it:
         if a == "--root":
@@ -36,7 +50,15 @@ def args():
             deny_dirs.append(next(it, ""))
         elif a == "--log":
             log = next(it, None)
-    return root or os.getcwd(), [d.strip("/") for d in deny_dirs if d.strip("/")], log
+        elif a == "--log-denied":
+            DENIED_LOG = next(it, None)
+        elif a == "--frontmatter-key":
+            keys.append((next(it, "") or "").strip().lower())
+        elif a == "--secret-pattern":
+            secret = next(it, None)
+        elif a == "--no-secrets":
+            no_secrets = True
+    return root or os.getcwd(), [d.strip("/") for d in deny_dirs if d.strip("/")], log, [k for k in keys if k] or ["confidential"], secret, no_secrets
 
 
 def log_read(log, abs_path):
@@ -64,17 +86,21 @@ def in_dir(rel, d):
     return rel == d or rel.startswith(d + os.sep) or ("/" + d + "/") in ("/" + rel + "/")
 
 
-def frontmatter_confidential(abs_path):
+def frontmatter_key(abs_path, keys):
+    """The first of `keys` present in the note's frontmatter, or None."""
     try:
         with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
             head = f.read(2048)
     except OSError:
-        return False
+        return None
     if not head.startswith("---"):
-        return False
+        return None
     end = head.find("\n---", 3)
     block = head[3:end if end > 0 else len(head)]
-    return re.search(r"^\s*confidential\s*:", block, re.M | re.I) is not None
+    for k in keys:
+        if re.search(r"^\s*" + re.escape(k) + r"\s*:", block, re.M | re.I):
+            return k
+    return None
 
 
 def main():
@@ -85,7 +111,8 @@ def main():
     tool = data.get("tool_name")
     if tool not in ("Read", "Grep", "Glob"):
         sys.exit(0)
-    root, deny_dirs, log = args()
+    root, deny_dirs, log, keys, secret, no_secrets = args()
+    secret_re = None if no_secrets and not secret else (re.compile(secret, re.I) if secret else SECRET_NAMES)
     inp = data.get("tool_input", {}) or {}
     target = inp.get("file_path") or inp.get("path") or ""
     rel = rel_to(root, target)
@@ -95,20 +122,21 @@ def main():
         rel = "."
     for d in ALWAYS_DENY_DIRS + tuple(deny_dirs):
         if in_dir(rel, d):
-            deny(f"Quorum read guard: {d}/ is private to this Agent OS.")
-    if SECRET_NAMES.search(rel):
-        deny("Quorum read guard: that file looks like a secret or credential.")
+            deny(f"Quorum read guard: {d}/ is private to this Agent OS.", tool, rel)
+    if secret_re is not None and secret_re.search(rel):
+        deny("Quorum read guard: that file looks like a secret or credential.", tool, rel)
     if tool == "Read":
         abs_path = target if os.path.isabs(target) else os.path.join(root, target)
-        if frontmatter_confidential(abs_path):
-            deny("Quorum read guard: this note is marked confidential in its frontmatter.")
+        hit = frontmatter_key(abs_path, keys)
+        if hit:
+            deny(f"Quorum read guard: this note is marked {hit} in its frontmatter.", tool, rel)
         log_read(log, abs_path)
     # a Grep or Glob rooted above a private folder would still match files inside it, so the pattern must not name one
     if tool in ("Grep", "Glob"):
         pat = str(inp.get("pattern") or "") + " " + str(inp.get("glob") or "")
         for d in deny_dirs:
             if d.lower() in pat.lower():
-                deny(f"Quorum read guard: {d}/ is private to this Agent OS.")
+                deny(f"Quorum read guard: {d}/ is private to this Agent OS.", tool, rel)
     sys.exit(0)
 
 

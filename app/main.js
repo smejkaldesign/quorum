@@ -29,6 +29,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import updater from 'electron-updater';
 import { createUpdater, feedFor } from './updater.js';
+import { createGuardrails } from './guardrails.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // one copy per environment: the lock lives in the environment's own data folder (edition.js DATA_DIR: Quorum, or
@@ -110,6 +111,7 @@ const stopRe = () => new RegExp(`^\\s*(please\\s+)?${reWord(chatWords().stop)}\\
 const goRe = () => new RegExp(`^\\s*${reWord(chatWords().go)}\\s*[.!]*\\s*$`, 'i');
 
 // folders the built-in read guard keeps away from the agent: the user's list, else any folder named personal or private one or two levels down
+// the folders named personal or private, the default value of the built-in Private folders rule; a saved list wins
 const privateDirs = (root) => settings.privateDirs ?? (() => { try { return readdirSync(root, { withFileTypes: true }).flatMap((d) => (d.isDirectory() && /personal|private/i.test(d.name) ? [d.name] : d.isDirectory() && !d.name.startsWith('.') ? readdirSync(path.join(root, d.name), { withFileTypes: true }).filter((c) => c.isDirectory() && /personal|private/i.test(c.name)).map((c) => path.join(d.name, c.name)) : [])); } catch { return []; } })();
 
 let win;
@@ -117,6 +119,8 @@ let popup;
 let tray;
 let trayMenu;
 let quitting = false;
+// guardrails: one rule set for what the agent may read and say (app/guardrails.js); brain() is defined below and read lazily
+const guardrails = createGuardrails({ settings, saveSettings: () => store.settings.save(), brain: () => brain(), privateDirs, denialLog: path.join(DATA_DIR, 'guard-denials.jsonl'), log });
 let helper;
 const asset = (name) => path.join(here, 'assets', name);
 // a meeting can have several capture segments (STOP, GO, STOP...); STOP deletes all of them
@@ -1186,9 +1190,8 @@ function scanBrain(root, vault) {
   const found = [];
   const add = (kind, label, abs, detail) => { if (existsSync(abs)) found.push({ id: `${kind}:${abs}`, kind, label, path: abs, detail }); };
   const count = (dir, test) => { try { return readdirSync(dir).filter(test).length; } catch { return 0; } };
-  // only the guards agent.js actually runs on Quorum's reads
-  const guards = count(path.join(root, '.claude/hooks'), (f) => ['secret-file-guard.py', 'opted-out-guard.py', 'output-secret-tripwire.py'].includes(f));
-  if (guards) add('guards', 'Guard hooks', path.join(root, '.claude/hooks'), `${guards} guard${guards === 1 ? '' : 's'} run on every read Quorum makes`);
+  // the guardrails row: Quorum's rules plus what this Agent OS offers, reviewed on the Guardrails page
+  { const rules = guardrails.rules(); const on = rules.filter((r) => r.enabled).length; const review = rules.filter((r) => r.source === 'agent-os' && !r.decision).length; found.push({ id: 'guards:quorum', kind: 'guards', label: 'Guardrails', path: existsSync(path.join(root, '.claude/hooks')) ? path.join(root, '.claude/hooks') : root, detail: `${on} rule${on === 1 ? '' : 's'} on${review ? ` · ${review} to review` : ''}` }); }
   add('index', 'Memory index', path.join(vault, 'index.md'), 'index.md');
   // the rest of the Agent OS's power-ups, shown so the user sees what Quorum found; today they inform, they don't run
   const instructions = ['CLAUDE.md', 'AGENTS.md'].map((f) => path.join(root, f)).find(existsSync);
@@ -1426,7 +1429,7 @@ ipcMain.handle('note-ask', async (_e, file, question, history, files) => {
   const source = modelSource();
   // the note body is in the prompt, so a provider without tools can still answer about it and propose edits; only Claude Code can read the rest of the Agent OS or attachments
   const r = roleProvider('agent') === 'claude-code'
-    ? await runModel({ source, providers: providers(), role: 'agent', tools: true, privateDirs: privateDirs(b.root), question: prompt, transcript: '', root: b.root, extra: await agentExtra(String(question), b.root), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached, history: (history ?? []).slice(-4), onStep: (text) => toUI('agent-step', { text }) }).finally(() => unstage(attached))
+    ? await runModel({ source, providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question: prompt, transcript: '', root: b.root, extra: await agentExtra(String(question), b.root), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached, history: (history ?? []).slice(-4), onStep: (text) => toUI('agent-step', { text }) }).finally(() => unstage(attached))
     : await noteAskWithoutTools(prompt, history, attached);
   const m = r.text.match(/<updated-note>\n?([\s\S]*?)\n?<\/updated-note>/);
   const answer = r.text.replace(/<updated-note>[\s\S]*?<\/updated-note>/, '').trim();
@@ -1500,7 +1503,7 @@ ipcMain.handle('vault-tree', () => (brain() ? vaultTree(brain().vault, excludedP
 // hosted edition: sign-in, workspaces, members and push sync live in ee/ (account.js, sync.js) and load only when EDITION is
 // 'cloud'. The local edition gets a stub whose pushes do nothing, so the call sites below stay the same in both editions.
 // sync never pushes private folders, notes marked confidential, or anything the opt-out list withholds
-const isPrivatePath = (rel) => { const b = brain(); if (!b) return false; const abs = path.resolve(b.vault, rel); return privateDirs(b.root).some((d) => { const dir = path.join(b.root, d); return abs === dir || abs.startsWith(dir + path.sep); }); };
+const isPrivatePath = (rel) => { const b = brain(); if (!b) return false; const abs = path.resolve(b.vault, rel); return guardrails.compiled().denyDirs.some((d) => { const dir = path.join(b.root, d); return abs === dir || abs.startsWith(dir + path.sep); }); };
 const isConfidentialText = (text) => /^---\r?\n(?:[^\n]*\r?\n)*?confidential\s*:/i.test(String(text).slice(0, 2000));
 const account = EDITION === 'cloud'
   ? (await loadEE('account.js')).registerAccount({ ipcMain, settings, saveSettings, toUI, log, brain, meetingIndex, isExcluded: (rel) => excludedPath(rel) || isPrivatePath(rel), isExcludedText: (t) => suggester.isExcluded(t) || isConfidentialText(t), openExternal: (u) => shell.openExternal(u), oauthRedirect: () => (app.isPackaged ? 'quorum://auth/callback' : 'http://127.0.0.1:47831/auth/callback') })
@@ -1509,7 +1512,7 @@ const account = EDITION === 'cloud'
 if (app.isPackaged) app.setAsDefaultProtocolClient('quorum');
 app.on('open-url', (e, url) => { e.preventDefault(); if (/^quorum:\/\/auth\//.test(url)) account.finishOAuth?.(url); });
 // workspace connectors (Settings › Admin › Connectors) ride on the same account and client
-if (EDITION === 'cloud') (await loadEE('connectors.js')).registerConnectors({ ipcMain, account, log });
+if (EDITION === 'cloud') { const conn = (await loadEE('connectors.js')).registerConnectors({ ipcMain, account, log }); guardrails.setRemote(async () => { const r = await conn.handlers['workspace-guardrails-get'](); return r?.rules ?? null; }); }
 // the platform owner's page (Settings › Admin › Platform): owner-only RPCs on the same client
 if (EDITION === 'cloud') (await loadEE('platform.js')).registerPlatform({ ipcMain, account, log });
 if (EDITION === 'cloud') (await loadEE('knowledge.js')).registerKnowledge({ ipcMain, account, log });
@@ -1702,7 +1705,7 @@ ipcMain.handle('ask', async (_e, question, files) => {
     return { text, sources: [], steps: [] };
   }
   const r = await runModel({
-    source, providers: providers(), role: 'agent', tools: true, privateDirs: privateDirs(b.root),
+    source, providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(),
     question, transcript, root: b.root, extra: await agentExtra(String(question), b.root), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached,
     history: chatHistory.slice(-4), onStep: (text) => { steps.push(text); toUI('agent-step', { text }); }, onDelta: (text) => toUI('agent-delta', { text }),
   }).finally(() => unstage(attached));
@@ -1744,6 +1747,11 @@ function callLink(e) {
 // in-app updates: the state the window renders, a check on request, and the install once a version is ready
 let updates = null;
 const packagedMeta = (() => { try { return JSON.parse(readFileSync(path.join(here, 'package.json'), 'utf8')); } catch { return {}; } })();
+ipcMain.handle('guardrails-get', () => guardrails.get());
+ipcMain.handle('guardrails-set', (_e, id, patch) => guardrails.set(String(id ?? ''), patch ?? {}));
+ipcMain.handle('guardrails-add', (_e, rule) => guardrails.add(rule ?? {}));
+ipcMain.handle('guardrails-remove', (_e, id) => guardrails.remove(String(id ?? '')));
+ipcMain.handle('guardrails-test', (_e, rel) => guardrails.test(String(rel ?? '')));
 ipcMain.handle('update-status', () => updates?.state() ?? { status: 'off', current: app.getVersion(), version: null, percent: 0, notes: null, checkedAt: null, error: null });
 ipcMain.handle('update-check', async () => (updates ? updates.check() : { status: 'off' }));
 ipcMain.handle('update-install', () => !!updates?.install());

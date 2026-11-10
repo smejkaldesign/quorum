@@ -83,6 +83,23 @@ export function createConnectors({ account, log = () => {} }) {
         return { voice: cleanVoice(data?.voice) };
       } catch (err) { return fail(err); }
     },
+    // workspace guardrails (migration 0015): rules every member's app merges with its own and cannot turn off
+    'workspace-guardrails-get': async () => {
+      const no = ready(); if (no) return no;
+      try {
+        const { data, error } = await account.client().from('workspace_settings').select('guardrails').eq('workspace_id', ws()).maybeSingle();
+        if (error) return fail(error);
+        return { rules: cleanGuardrails(data?.guardrails) };
+      } catch (err) { return fail(err); }
+    },
+    'workspace-guardrails-set': async (rules) => {
+      const no = ready(); if (no) return no;
+      try {
+        const { data, error } = await account.client().rpc('workspace_guardrails_set', { workspace_id: ws(), rules: cleanGuardrails(rules) });
+        if (error) return fail(error, 'The guardrails could not be saved.');
+        return { rules: cleanGuardrails(data) };
+      } catch (err) { return fail(err, 'The guardrails could not be saved.'); }
+    },
     'workspace-voice-set': async (voice) => {
       const no = ready(); if (no) return no;
       try {
@@ -93,6 +110,13 @@ export function createConnectors({ account, log = () => {} }) {
     },
   };
   return { handlers };
+}
+
+// a workspace rule list as the app understands it: kind, value, label, enabled; anything else is dropped
+export function cleanGuardrails(rules) {
+  if (!Array.isArray(rules)) return [];
+  return rules.filter((r) => r && typeof r === 'object' && ['path', 'frontmatter', 'secret', 'term'].includes(r.kind) && String(r.value ?? '').trim())
+    .map((r) => ({ id: String(r.id ?? ''), kind: r.kind, value: String(r.value).trim().slice(0, 500), label: String(r.label ?? '').slice(0, 120) || String(r.value).trim().slice(0, 60), enabled: r.enabled !== false, source: 'workspace', locked: true })).slice(0, 200);
 }
 
 // the three managed steps, each a connector id or absent for Quorum managed

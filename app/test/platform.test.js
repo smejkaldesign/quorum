@@ -7,8 +7,8 @@ import { PLANS, PLAN_LABEL, activityLabel, validatePlanForm } from '../ee/src/pl
 describe('the Platform page in the Admin nav', () => {
   it('is listed last, only in a hosted Cloud build and only for the platform owner', () => {
     expect(WORKSPACE_PAGES[WORKSPACE_PAGES.length - 1]).toBe('platform');
-    expect(workspacePages('cloud', true, true)).toEqual(['general', 'knowledge', 'members', 'org-connectors', 'org-voice', 'platform']);
-    expect(workspacePages('cloud', true, false)).toEqual(['general', 'knowledge', 'members', 'org-connectors', 'org-voice']);
+    expect(workspacePages('cloud', true, true)).toEqual(['general', 'knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails', 'platform']);
+    expect(workspacePages('cloud', true, false)).toEqual(['general', 'knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails']);
     expect(workspacePages('cloud', true)).not.toContain('platform');
     expect(workspacePages('cloud', false, true)).not.toContain('platform');
     expect(workspacePages('cloud', null, true)).not.toContain('platform');

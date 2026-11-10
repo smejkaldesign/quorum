@@ -12,17 +12,26 @@ const GUARD = path.join(path.dirname(fileURLToPath(import.meta.url)), 'guards', 
 
 const TIMEOUT_MS = 150000;
 
-// Quorum's own read guard always runs; the Agent OS's safety hooks run too when it has them (secret guards, opted-out
-// filter). Memory, reindex and ping hooks don't, so asking Quorum a question never writes to the vault
-function safetySettings(root, privateDirs = []) {
-  const hook = (name) => ({ type: 'command', command: `python3 "${path.join(root, '.claude/hooks', name)}"` });
-  const has = (name) => existsSync(path.join(root, '.claude/hooks', name));
+// Quorum's own read guard always runs, with the compiled guardrails as its flags (app/guardrails.js: deny folders,
+// frontmatter keys, the secret pattern); the Agent OS's own guard hooks run too, but only the ones the person included
+// on the Guardrails page. Memory, reindex and ping hooks never do, so asking Quorum a question never writes to the vault
+export function safetySettings(root, guards = {}) {
   const q = (s) => `"${String(s).replace(/"/g, '\\"')}"`;
-  const pre = [{ matcher: 'Read|Grep|Glob', hooks: [{ type: 'command', command: `python3 ${q(GUARD)} --root ${q(root)} --log ${q(path.join(DATA_DIR, 'views.jsonl'))} ${privateDirs.map((d) => `--deny ${q(d)}`).join(' ')}`.trim() }] }];
+  const runner = (file) => (/\.(sh|zsh)$/.test(file) ? 'zsh' : /\.(mjs|js)$/.test(file) ? 'node' : 'python3');
+  const flags = [
+    `--root ${q(root)}`, `--log ${q(path.join(DATA_DIR, 'views.jsonl'))}`, `--log-denied ${q(path.join(DATA_DIR, 'guard-denials.jsonl'))}`,
+    ...(guards.denyDirs ?? []).map((d) => `--deny ${q(d)}`),
+    ...(guards.frontmatterKeys ?? []).map((k) => `--frontmatter-key ${q(k)}`),
+    ...(guards.secretPattern ? [`--secret-pattern ${q(guards.secretPattern)}`] : []),
+    ...(guards.secretsOff ? ['--no-secrets'] : []),
+  ];
+  const pre = [{ matcher: 'Read|Grep|Glob', hooks: [{ type: 'command', command: `python3 ${q(GUARD)} ${flags.join(' ')}` }] }];
   const post = [];
-  if (has('secret-file-guard.py')) pre.push({ matcher: 'Read|Grep|Glob', hooks: [hook('secret-file-guard.py')] });
-  if (has('opted-out-guard.py')) pre.push({ matcher: 'Read|Grep|Glob', hooks: [hook('opted-out-guard.py')] });
-  if (has('output-secret-tripwire.py')) post.push({ matcher: 'Read|Grep', hooks: [hook('output-secret-tripwire.py')] });
+  for (const h of guards.hooks ?? []) {
+    if (!h?.path || !existsSync(h.path)) continue;
+    const hook = { type: 'command', command: `${runner(h.path)} ${q(h.path)}` };
+    if (h.stage === 'post') post.push({ matcher: 'Read|Grep', hooks: [hook] }); else pre.push({ matcher: 'Read|Grep|Glob', hooks: [hook] });
+  }
   return { hooks: { PreToolUse: pre, PostToolUse: post } };
 }
 
@@ -34,7 +43,7 @@ function describeStep(tool, input, root) {
   return `Using ${tool}`;
 }
 
-export function runAgent({ question, history, transcript, root, model, owner, onStep, redact, onDelta = null, files = [], about = '', privateDirs = [], extra = { index: null, dirs: [], hints: [] } }) {
+export function runAgent({ question, history, transcript, root, model, owner, onStep, redact, onDelta = null, files = [], about = '', guards = null, privateDirs = [], extra = { index: null, dirs: [], hints: [] } }) {
   const system = [
     `You are Quorum, ${owner}'s assistant in the Quorum app, working in their Agent OS at ${root}.`,
     'Use Grep, Glob and Read to find answers in their notes before answering. You can only read; never claim you changed anything.',
@@ -58,7 +67,7 @@ export function runAgent({ question, history, transcript, root, model, owner, on
     const proc = spawn('claude', [
       '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', model,
       '--tools', 'Read,Grep,Glob', '--allowedTools', 'Read', 'Grep', 'Glob',
-      '--setting-sources', '', '--settings', JSON.stringify(safetySettings(root, privateDirs)),
+      '--setting-sources', '', '--settings', JSON.stringify(safetySettings(root, guards ?? { denyDirs: privateDirs })),
       '--strict-mcp-config', '--no-session-persistence', '--disable-slash-commands',
       '--append-system-prompt', system,
       ...files.flatMap((f) => ['--add-dir', path.dirname(f)]),

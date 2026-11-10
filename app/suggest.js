@@ -28,18 +28,19 @@ export function createSuggester({ runClaude, toUI, log, getTranscript, getSettin
     const now = Date.now();
     if (excluded && now - checkedAt < 2000) return excluded;
     checkedAt = now;
-    const file = path.join(vault(), 'scripts/embed-bench/excluded.txt');
+    // the guardrails snapshot names the term lists the person included; before the first review, the vault's own list
+    const compiled = getSettings().guardrails?.compiled;
+    const files = compiled ? compiled.termFiles ?? [] : [path.join(vault(), 'scripts/embed-bench/excluded.txt')];
     let mtime = 0;
-    try { mtime = statSync(file).mtimeMs; } catch {}
-    if (excluded && mtime === listMtime) return excluded;
-    listMtime = mtime;
-    excluded = mtime
-      ? readFileSync(file, 'utf8').split('\n').map((l) => l.trim().toLowerCase()).filter((l) => l && !l.startsWith('#'))
-      : [];
+    for (const file of files) { try { mtime += statSync(file).mtimeMs; } catch {} }
+    const key = `${mtime}|${files.join('|')}|${(compiled?.terms ?? []).join('|')}`;
+    if (excluded && key === listMtime) return excluded;
+    listMtime = key;
+    excluded = [...(compiled?.terms ?? []), ...files.flatMap((file) => { try { return readFileSync(file, 'utf8').split('\n').map((l) => l.trim().toLowerCase()).filter((l) => l && !l.startsWith('#')); } catch { return []; } })];
     return excluded;
   }
-  // the vault's list plus the customer names on Quorum's blacklist
-  const allTerms = () => [...excludedTerms(), ...(getSettings().workspace?.optOuts ?? []).map((o) => String(o.name ?? '').trim().toLowerCase()).filter((n) => n.length >= 3)];
+  // the included term lists and rules plus the customer names on Quorum's opt-out list (the built-in rule, unless off)
+  const allTerms = () => [...excludedTerms(), ...(getSettings().guardrails?.compiled?.optOutsOn === false ? [] : (getSettings().workspace?.optOuts ?? []).map((o) => String(o.name ?? '').trim().toLowerCase()).filter((n) => n.length >= 3))];
   const isExcluded = (text) => allTerms().some((t) => text.toLowerCase().includes(t));
   const redactLines = (text) => text.split('\n').map((l) => (isExcluded(l) ? '[withheld: opted-out customer]' : l)).join('\n');
 

@@ -103,6 +103,9 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain 
   const [granola, setGranola] = useState<MeetingSourceInfo | null>(null);
   const loadGranola = () => window.quorum.sourcesList().then((l) => setGranola(l.find((s) => s.id === 'granola') ?? null)).catch(() => setGranola(null));
   useEffect(() => { if (brain) loadGranola(); }, [brain?.root]);
+  // guardrails found in the folder: the count, for one line here; the review itself is on Settings, Guardrails
+  const [guardCount, setGuardCount] = useState(0);
+  useEffect(() => { if (!brain) { setGuardCount(0); return; } window.quorum.guardrailsGet().then((g) => setGuardCount(g?.summary?.toReview ?? 0)).catch(() => {}); }, [brain?.root]);
   const [connecting, setConnecting] = useState(false);
   const connectGranola = async () => {
     setConnecting(true); setError('');
@@ -118,7 +121,7 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain 
       {brain ? (
         <div className="onb-choice on">
           <IconCheck width={18} height={18} className="ok" />
-          <div><strong>{brain.name}</strong><em>{home(brain.root)}</em></div>
+          <div><strong>{brain.name}</strong><em>{home(brain.root)}{guardCount ? ` · ${guardCount} ${guardCount === 1 ? 'guardrail' : 'guardrails'} found, review them in Settings, Guardrails` : ''}</em></div>
           <button className="pill" onClick={connect}>Change</button>
         </div>
       ) : (

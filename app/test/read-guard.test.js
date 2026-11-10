@@ -1,7 +1,7 @@
 // Runs guards/read-guard.py the way Claude Code does: a PreToolUse payload on stdin, a deny decision on stdout or
 // nothing at all. Files live in a temp root so every path check runs against the real filesystem.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +19,7 @@ function run(payload) {
 }
 const read = (file_path) => run({ tool_name: 'Read', tool_input: { file_path } });
 const readLogged = (file_path, log) => spawnSync('python3', ['-I', GUARD, '--root', root, '--log', log], { input: JSON.stringify({ tool_name: 'Read', tool_input: { file_path } }), encoding: 'utf8' });
+const runWith = (flags, payload) => { const r = spawnSync('python3', ['-I', GUARD, '--root', root, ...flags], { input: JSON.stringify(payload), encoding: 'utf8' }); expect(r.status).toBe(0); return r.stdout.trim() ? JSON.parse(r.stdout).hookSpecificOutput : null; };
 
 beforeAll(() => {
   root = mkdtempSync(path.join(tmpdir(), 'quorum-guard-'));
@@ -88,5 +89,23 @@ describe('read guard', () => {
     expect(lines[0].file.endsWith('notes/plain.md')).toBe(true);
     expect(lines[0].bytes).toBeGreaterThan(0);
     expect(existsSync(log)).toBe(true);
+  });
+});
+
+describe('read guard with compiled guardrails', () => {
+  it('denies the frontmatter keys it is given, and only those', () => {
+    writeFileSync(path.join(root, 'notes/hold.md'), '---\ntitle: Hold\nlegal_hold: true\n---\n');
+    expect(runWith(['--frontmatter-key', 'legal_hold'], { tool_name: 'Read', tool_input: { file_path: path.join(root, 'notes/hold.md') } })).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: expect.stringContaining('legal_hold') });
+    // confidential is no longer among the keys when the caller names others, so the plan note passes
+    expect(runWith(['--frontmatter-key', 'legal_hold'], { tool_name: 'Read', tool_input: { file_path: path.join(root, 'notes/plan.md') } })).toBeNull();
+    expect(runWith([], { tool_name: 'Read', tool_input: { file_path: path.join(root, 'notes/plan.md') } })).toMatchObject({ permissionDecision: 'deny' });
+  });
+  it('turns the secret pattern off or extends it, and logs every denial', () => {
+    const denied = path.join(root, 'denied.jsonl');
+    expect(runWith(['--no-secrets'], { tool_name: 'Read', tool_input: { file_path: path.join(root, '.env') } })).toBeNull();
+    writeFileSync(path.join(root, 'notes/brain.sqlite'), '');
+    expect(runWith(['--secret-pattern', String.raw`\.sqlite$`, '--log-denied', denied], { tool_name: 'Read', tool_input: { file_path: path.join(root, 'notes/brain.sqlite') } })).toMatchObject({ permissionDecision: 'deny' });
+    const lines = readFileSync(denied, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    expect(lines.at(-1)).toMatchObject({ tool: 'Read', path: 'notes/brain.sqlite', reason: expect.stringContaining('secret') });
   });
 });

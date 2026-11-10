@@ -3,7 +3,7 @@
 // when one is named. Surfaces outside Settings (Home, onboarding) and pages inside it use this instead of threading
 // callbacks through every component between them and SettingsView.
 export type ConnectorsTarget = { connector?: string; library?: string | true };
-export type SettingsPageId = 'preferences' | 'memory' | 'connectors';
+export type SettingsPageId = 'preferences' | 'memory' | 'connectors' | 'guardrails';
 export type OpenSettingsDetail = SettingsPageId | ({ page: SettingsPageId } & ConnectorsTarget);
 
 export function openConnectors(target: ConnectorsTarget = {}) {

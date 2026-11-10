@@ -193,6 +193,22 @@ const sample: Partial<Bridge> = {
   meetingProviderCheck: async () => {},
   mcpStatus: async () => ({ added: true, node: '/Applications/Quorum.app/Contents/MacOS/Quorum', cli: '/Applications/Quorum.app/Contents/Resources/cli/quorum.mjs', command: '"/Applications/Quorum.app/Contents/MacOS/Quorum" "/Applications/Quorum.app/Contents/Resources/cli/quorum.mjs" mcp' }),
   calendarStatus: async () => ({ source: 'mac', days: 7, enabled: true, status: 'granted', google: null }),
+  guardrailsGet: async () => ({
+    rules: [
+      { id: 'built-in:secrets', kind: 'secret', label: 'Secret-looking files', what: 'Files named like keys, tokens, .env files and credentials are never read.', value: '', source: 'built-in', enabled: true, locked: false },
+      { id: 'built-in:private-folders', kind: 'path', label: 'Private folders', what: 'Folders named personal or private, plus .git and node_modules, are never read or searched.', value: 'personal|private', source: 'built-in', enabled: true, locked: false },
+      { id: 'built-in:confidential', kind: 'frontmatter', label: 'Notes marked confidential', what: 'A note with confidential: in its frontmatter is never read, synced or shared.', value: 'confidential', source: 'built-in', enabled: true, locked: false },
+      { id: 'built-in:opt-outs', kind: 'term', label: 'Opted-out people and companies', what: 'Lines naming anyone on your opt-out list are withheld from transcripts, answers and the MCP server.', value: '', source: 'built-in', enabled: true, locked: false },
+      { id: 'agent-os:hook:opted-out-guard.py', kind: 'hook', label: 'opted-out-guard.py', path: `${VAULT}/.claude/hooks/opted-out-guard.py`, value: '', what: 'Denies reads of notes naming a customer who opted out of AI.', stage: 'pre', mixed: false, wired: true, source: 'agent-os', enabled: false, locked: false, decision: null },
+      { id: 'agent-os:terms:scripts/embed-bench/excluded.txt', kind: 'term', label: 'Opt-out term list', path: `${VAULT}/scripts/embed-bench/excluded.txt`, value: `@${VAULT}/scripts/embed-bench/excluded.txt`, what: '14 names withheld wherever they appear in transcripts, answers and the MCP server.', source: 'agent-os', enabled: true, locked: false, decision: 'included' },
+      { id: 'personal:1', kind: 'path', label: 'Board materials', value: 'Board', source: 'personal', enabled: true, locked: false },
+      { id: 'ws:1', kind: 'frontmatter', label: 'Legal hold', value: 'legal_hold', source: 'workspace', enabled: true, locked: true },
+    ],
+    skipped: [{ name: 'vault-reindex.sh', reason: 'does something else (memory, sessions, formatting or notifications), not a guard' }, { name: 'session-end.sh', reason: 'no sign that it guards reads or output' }],
+    denials: [{ t: at(0, 8, 41).toISOString(), tool: 'Read', path: `${VAULT}/Board/2026-q4-pack.md`, reason: 'Quorum read guard: Board/ is private to this Agent OS.' }, { t: at(-1, 15, 12).toISOString(), tool: 'Grep', path: `${VAULT}/People/compensation.md`, reason: 'Quorum read guard: this note is marked confidential in its frontmatter.' }],
+    summary: { on: 7, toReview: 1, denyDirs: 3, terms: 14 },
+  }),
+  guardrailsTest: async (rel: string) => ({ blocked: /board|personal/i.test(rel) ? `${rel.split('/')[0]}/ is private` : null }),
   // #update in the preview URL shows the Update button, for screenshots of that state
   updateStatus: async () => ({ status: location.hash.includes('update') ? 'ready' : 'idle', current: '0.2.7', version: location.hash.includes('update') ? '0.2.8' : null, percent: 0, notes: null, checkedAt: Date.now() - 600000, error: null }),
   vaultTree: async () => vault.tree,

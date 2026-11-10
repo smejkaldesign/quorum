@@ -1358,3 +1358,26 @@ button.meta-pill { font: inherit; cursor: pointer; }
 /* the Update button, left of Listen, only while a downloaded version waits */
 .bar .right .update-pill { height: 30px; padding: 0 12px 0 10px; display: inline-flex; align-items: center; gap: 6px; border-radius: 9px; font-size: 13px; font-weight: 500; color: #0a0a0b; background: var(--go); border: 0; }
 .bar .right .update-pill:hover { filter: brightness(1.08); }
+
+/* Guardrails page: the test field, the denial log, the add sheet's kind row */
+.guard-actions { display: flex; align-items: center; gap: 6px; }
+.guard-test { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+.guard-test input { width: 100%; box-sizing: border-box; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line-2); background: rgba(255,255,255,0.03); color: var(--text); font-size: 14px; }
+.guard-test p { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.guard-denials { padding: 6px 16px; }
+.guard-denial { display: grid; grid-template-columns: 120px 1fr auto; gap: 12px; align-items: baseline; padding: 8px 0; font-size: 13px; }
+.guard-denial + .guard-denial { border-top: 1px solid var(--line-2); }
+.guard-when { color: var(--muted); white-space: nowrap; }
+.guard-path { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.guard-why { color: var(--muted); white-space: nowrap; }
+.guard-skipped { margin: -6px 0 16px; font-size: 13px; color: var(--muted); }
+.guard-skipped ul { margin: 8px 0 0; padding-left: 18px; }
+.guard-skipped li { margin: 4px 0; }
+.guard-skipped code { color: var(--text); font-size: 12px; }
+.guard-kinds { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.guard-add { padding: 12px 16px; }
+.guard-add-row { display: flex; gap: 8px; align-items: center; }
+.guard-add-row input { flex: 1; min-width: 0; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line-2); background: rgba(255,255,255,0.03); color: var(--text); font-size: 14px; }
+.stub.warn { color: #f0b35a; border-color: rgba(240, 179, 90, 0.4); }
+.set-zero.small { padding: 18px; }
+.set-zero.small p { margin: 0; }
