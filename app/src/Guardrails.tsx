@@ -70,7 +70,12 @@ export function GuardrailsPage() {
           <div className="set-card">{decided.map(ruleRow)}</div>
         </>
       )}
-      {fromOs.length === 0 && <p className="mcp-lede guard-note">Your Agent OS has no read guards of its own to offer; the built-in rules above cover its private folders and confidential notes. Its other hooks (memory, sessions, formatting) are not guardrails and are left alone.</p>}
+      {fromOs.length === 0 && (
+        <>
+          <h3>From your Agent OS</h3>
+          <p className="mcp-lede guard-note">No read guards to offer. The built-in rules cover its private folders and confidential notes.</p>
+        </>
+      )}
 
       <div className="set-head">
         <h3>Your rules</h3>

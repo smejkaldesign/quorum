@@ -499,7 +499,7 @@ em.stub { font-style: normal; font-size: 12px; font-weight: 500; padding: 1px 9p
 .set-main { flex: 1; overflow-y: auto; -webkit-app-region: no-drag; }
 .set-col { max-width: 760px; margin: 0 auto; padding: 36px 40px 60px; }
 .set-col h1 { font: 400 40px/1.1 "New York", ui-serif, Georgia, serif; margin: 0 0 28px; }
-.set-col h3 { margin: 30px 0 12px; padding-left: 0; color: var(--muted); font-size: 16px; font-weight: 500; }
+.set-col h3 { margin: 30px 0 12px; padding-left: 0; color: var(--text); font-size: 16px; font-weight: 500; }
 .set-card { border: 1px solid var(--line-2); border-radius: 20px; background: #242426; padding: 4px 22px; }
 .set-row { display: flex; align-items: center; gap: 18px; padding: 18px 0; border-bottom: 1px solid var(--line); }
 .set-row:last-child { border-bottom: 0; }
@@ -888,6 +888,7 @@ svg.err { color: var(--danger); }
 .conn-state.err { color: var(--danger); }
 .conn-state.err::before { background: var(--danger); }
 .mcp-lede { margin: -4px 0 12px; color: var(--muted); font-size: 14px; }
+.guard-note { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ver { font-style: normal; font-size: 13px; margin-left: 8px; }
 .set-note { margin: 10px 4px 28px; font-size: 13px; color: var(--muted); }
 
