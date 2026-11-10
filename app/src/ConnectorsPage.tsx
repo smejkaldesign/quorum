@@ -178,6 +178,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
   if (x.kind === 'mcp-source' && src) {
     rows.push(
       ['Method', src.method === 'connect' ? 'Connected account' : 'Folder of notes'],
+      ...(src.account ? [['Account', src.account] as [string, ReactNode]] : []),
       ['Notes in Quorum', String(src.notes)],
       ['Imported by this connection', String(src.imported)],
       ['Last sync', src.lastSyncAt ? `${ago(src.lastSyncAt)} (${new Date(src.lastSyncAt).toLocaleString()})` : 'never'],

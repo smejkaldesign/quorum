@@ -98,7 +98,7 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
   const list = () => SOURCES.map((src) => {
     const s = stateOf(src.id);
     const dir = folderFor(src.id);
-    return { ...publicManifest(src), method: s.method, connected: !!s.connected, freshNext: !!s.freshNext, lastSyncAt: s.lastSyncAt, imported: s.imported ?? 0, folderPath: dir, notes: dir ? countNotes(dir) : 0, job: jobs.snapshot(src.id) };
+    return { ...publicManifest(src), method: s.method, connected: !!s.connected, freshNext: !!s.freshNext, account: s.account ?? null, lastSyncAt: s.lastSyncAt, imported: s.imported ?? 0, folderPath: dir, notes: dir ? countNotes(dir) : 0, job: jobs.snapshot(src.id) };
   });
 
   const fail = (err, fallback) => { log('sources', err?.message ?? err); return { error: err?.message && !/[{};]|ECONN|ENOTFOUND|fetch failed/i.test(err.message) ? err.message : fallback }; };
@@ -122,7 +122,7 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
         const { meta, tokens } = await oauthConnect({ resourceUrl: src.url, open, clients: store.clients, verify, name: src.name });
         metaCache[src.url] = meta;
         await store.tokens.set(id, tokens);
-        s.connected = true; s.method = 'connect'; s.connectedAt = new Date().toISOString(); s.freshNext = false; saveSettings();
+        s.connected = true; s.method = 'connect'; s.connectedAt = new Date().toISOString(); s.freshNext = false; s.account = tokens.email ?? null; saveSettings();
         delete clients[id];
         runSync(id, 'Importing').catch(() => {});
         return { ok: true };
