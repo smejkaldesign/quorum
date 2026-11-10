@@ -12,7 +12,7 @@ export const CATEGORIES = [
   { id: 'calendar', name: 'Calendar', blurb: 'Upcoming meetings on Home, a reminder before each one, and the right title and people on every note.' },
   { id: 'meetings', name: 'Meeting apps', blurb: 'Cloud recordings and transcripts from the apps your calls run in.' },
   { id: 'communication', name: 'Communication', blurb: 'Share notes where your team talks and draft follow-ups where you write.' },
-  { id: 'crm', name: 'CRM and customer success', blurb: 'Send meeting notes to the matching people, companies and deals.' },
+  { id: 'crm', name: 'Customers', blurb: 'Send meeting notes to the matching people, companies and deals.' },
   { id: 'tasks', name: 'Project management', blurb: 'Turn action items into tasks and issues.' },
   { id: 'docs', name: 'Docs and storage', blurb: 'Save notes where your documents live.' },
   { id: 'ai', name: 'AI and automation', blurb: 'Give your AI tools your meeting notes, and send notes anywhere with automations.' },

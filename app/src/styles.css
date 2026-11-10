@@ -1176,28 +1176,53 @@ button.plat-row:hover, button.plat-row.on { background: rgba(255, 255, 255, 0.04
 .src-failed ul { margin: 6px 0 0 16px; padding: 0; }
 
 /* Settings › Connectors and the library sheet */
-.conn-group h4 { margin: 18px 0 8px; font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.conn-group h4, .conn-detail h4 { margin: 18px 0 8px; font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.conn-card { padding: 4px 8px; }
 .conn-row + .conn-row { border-top: 1px solid var(--line-2); }
-.conn-row { padding: 2px 0; }
-.conn-line { align-items: center; }
-.conn-id { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.conn-line { display: flex; align-items: center; gap: 12px; min-height: 60px; padding: 8px 10px; border-radius: 12px; cursor: pointer; }
+.conn-line:hover, .conn-line:focus-visible { background: rgba(255, 255, 255, 0.05); outline: none; }
+.conn-title { font-weight: 500; font-size: 15px; color: var(--text); }
+.conn-meta { margin-left: auto; color: var(--muted); font-size: 13px; white-space: nowrap; }
+.conn-meta + .conn-actions { margin-left: 0; }
+.conn-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.conn-chev { color: var(--muted); flex: none; }
+.conn-sub { padding: 0 10px 10px; }
 .conn-logo { border-radius: 8px; object-fit: cover; flex: none; }
 .conn-logo.blank { display: grid; place-items: center; background: #2f2f32; color: #bdbdc2; }
-.lib-modal { width: min(920px, calc(100vw - 32px)); padding: 0; overflow: hidden; }
-.lib-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 22px 24px 14px; border-bottom: 1px solid var(--line-2); }
+.conn-detail .conn-back { display: inline-flex; align-items: center; gap: 2px; margin: 0 0 14px -4px; color: var(--muted); text-decoration: none; font-size: 13px; }
+.conn-detail .conn-back:hover { color: var(--text); }
+.conn-detail-head { display: flex; align-items: flex-start; gap: 16px; }
+.conn-detail-title { flex: 1; min-width: 0; }
+.conn-detail-title h3 { margin: 2px 0 4px; font-size: 20px; display: flex; align-items: center; gap: 8px; }
+.conn-detail-title p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.conn-detail-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.conn-jobcard { margin-top: 14px; padding: 12px 18px; }
+.conn-table { padding: 6px 18px; }
+.conn-kv { display: grid; grid-template-columns: 200px 1fr; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--line-2); font-size: 14px; }
+.conn-kv:last-child { border-bottom: 0; }
+.conn-kv > span:first-child { color: var(--muted); }
+.conn-kv code { font: 12px/1.5 var(--mono); word-break: break-all; }
+.conn-kv .link-btn.plain { margin: 0; display: inline-flex; align-items: center; gap: 4px; }
+.conn-features { padding: 10px 18px; }
+.conn-features ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.conn-features li { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; line-height: 1.45; }
+.conn-features li svg { color: #34c759; flex: none; margin-top: 3px; }
+.link-btn.plain { text-decoration: none; }
+.lib-modal { width: min(920px, calc(100vw - 32px)); padding: 0; overflow: hidden; display: flex; flex-direction: column; max-height: calc(100vh - 12vh - 24px); }
+.lib-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 22px 24px 14px; border-bottom: 1px solid var(--line-2); flex: none; }
 .lib-head h2 { margin: 0 0 4px; font-size: 18px; }
 .lib-head p { margin: 0; color: var(--muted); font-size: 13px; }
-.lib-body { display: grid; grid-template-columns: 200px 1fr; min-height: 420px; max-height: min(70vh, 640px); position: relative; }
-.lib-body::after { content: ''; position: absolute; left: 200px; right: 0; bottom: 0; height: 44px; pointer-events: none; background: linear-gradient(to bottom, rgba(24, 24, 26, 0), #18181a); border-radius: 0 0 16px 0; }
-.lib-nav { display: flex; flex-direction: column; gap: 2px; padding: 12px; border-right: 1px solid var(--line-2); overflow: auto; min-height: 0; }
+.lib-body { display: flex; flex: 1; min-height: 420px; height: min(72vh, 680px); position: relative; }
+.lib-body::after { content: ''; position: absolute; left: 200px; right: 0; bottom: 0; height: 10%; pointer-events: none; background: linear-gradient(to bottom, rgba(24, 24, 26, 0), #18181a); border-radius: 0 0 16px 0; }
+.lib-nav { display: flex; flex-direction: column; gap: 2px; padding: 12px; border-right: 1px solid var(--line-2); overflow: auto; min-height: 0; width: 200px; flex: none; }
 .lib-nav button { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; text-align: left; font-size: 13px; color: var(--muted); }
 .lib-nav button:hover { color: var(--text); background: rgba(255, 255, 255, 0.04); }
 .lib-nav button.on { color: var(--text); background: rgba(255, 255, 255, 0.08); }
 .lib-nav em { font-style: normal; font-size: 11px; color: var(--muted); }
-.lib-main { padding: 14px 20px 44px; overflow: auto; min-height: 0; background: #18181a; }
-.lib-search { width: 100%; height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line-2); background: rgba(255, 255, 255, 0.04); color: var(--text); font-size: 14px; }
-.lib-blurb { margin: 12px 2px 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
-.lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; margin-top: 14px; }
+.lib-main { padding: 14px 20px 44px; overflow: auto; min-height: 0; min-width: 0; flex: 1; background: #18181a; }
+.lib-search { width: 100%; height: 32px; margin: 0 0 8px; padding: 0 10px; border-radius: 9px; border: 1px solid var(--line-2); background: rgba(255, 255, 255, 0.04); color: var(--text); font-size: 13px; }
+.lib-blurb { margin: 2px 2px 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; margin-top: 10px; }
 .lib-tile { display: flex; flex-direction: column; gap: 6px; padding: 14px; border: 1px solid var(--line-2); border-radius: 12px; min-height: 150px; }
 .lib-tile strong { font-size: 14px; font-weight: 600; }
 .lib-tile > span { color: var(--muted); font-size: 12.5px; line-height: 1.45; flex: 1; }
