@@ -754,8 +754,8 @@ function ClaudeCard() {
   useEffect(() => { window.quorum.claudeStatus().then(setC); }, []);
   return (
     <>
-      <div className="set-head"><h3>Claude Code and Terminal</h3></div>
-      <p className="mcp-lede">How Claude and Terminal reach Quorum.</p>
+      <div className="set-head"><h3>Connect to AI tools</h3></div>
+      <p className="mcp-lede">Give Claude Code and Terminal access to your notes and meetings through the quorum MCP server and command.</p>
       <div className="set-card">
         <McpRows claude={c} />
       </div>
@@ -895,8 +895,8 @@ function MeetingsPage({ settings, onSettings }: { settings: Settings; onSettings
 function DevelopersPage() {
   return (
     <>
-      <PersonalConnectors />
       <ClaudeCard />
+      <PersonalConnectors />
       <h3>API</h3>
       <p className="mcp-lede">Keys for scripts and tools to reach your notes.</p>
       <div className="set-card">
