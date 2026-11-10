@@ -12,3 +12,4 @@ supabase/.temp/
 .claude/worktrees/
 app/eval/corpus/*/
 app/eval/results/
+site/app-preview/

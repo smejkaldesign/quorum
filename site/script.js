@@ -7,6 +7,15 @@
     el.setAttribute("title", "Available at launch");
   });
 
+  // The app preview is laid out at the app's default window width and scaled to the frame it sits in.
+  var shot = document.querySelector("[data-app-preview]");
+  if (shot) {
+    var fit = function () { shot.style.setProperty("--s", String(shot.clientWidth / 1040)); };
+    fit();
+    if (window.ResizeObserver) new ResizeObserver(fit).observe(shot);
+    else window.addEventListener("resize", fit);
+  }
+
   var year = document.getElementById("year");
   if (year) year.textContent = String(new Date().getFullYear());
 

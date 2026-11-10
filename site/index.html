@@ -52,6 +52,16 @@
       </div>
     </section>
 
+    <!-- The app itself, not a picture of it: app/site-preview builds the desktop renderer with sample data into
+         app-preview/ (npm run preview), so this frame changes whenever the app does. -->
+    <section class="section app-shot" aria-label="The Quorum app">
+      <div class="wrap">
+        <div class="app-window" data-app-preview>
+          <iframe src="/app-preview" title="Quorum's Home and Knowledge views, shown with sample data" tabindex="-1"></iframe>
+        </div>
+      </div>
+    </section>
+
     <section class="section" id="models" aria-labelledby="models-title">
       <div class="wrap section-head">
         <h2 id="models-title">Bring the AI you already&nbsp;use.</h2>

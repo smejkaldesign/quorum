@@ -9,5 +9,5 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["src", "ee/src"]
+  "include": ["src", "ee/src", "site-preview"]
 }

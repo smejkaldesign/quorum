@@ -302,6 +302,31 @@ ul { margin: 0; padding: 0; list-style: none; }
 }
 .section::before { left: -5px; }
 .section::after { right: -5px; }
+
+/* The app preview: the desktop renderer in a frame, laid out at the app's default window (1040 by 820) and scaled to
+   the space it has (script.js sets --s). The window rises 80px into the hero, and the section after it drops its
+   rule so the window and the next heading read as one block. */
+.app-shot { padding: 0; z-index: 1; }
+.app-shot + .section { border-top: 0; }
+.app-shot + .section::before, .app-shot + .section::after { content: none; }
+.app-window {
+  --s: 1;
+  width: min(100%, 1040px);
+  aspect-ratio: 1040 / 820;
+  margin: -80px auto 0;
+  border-radius: calc(26px * var(--s));
+  background: var(--panel);
+  box-shadow: 0 40px 120px rgba(0, 0, 0, 0.5), 0 10px 30px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+.app-window iframe {
+  display: block;
+  width: 1040px; height: 820px;
+  border: 0;
+  transform: scale(var(--s));
+  transform-origin: 0 0;
+}
+
 .section h2 {
   font: 400 clamp(30px, 4.2vw, 40px)/1.15 var(--serif);
   letter-spacing: -0.012em;

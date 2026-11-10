@@ -1,11 +1,12 @@
 {
   "name": "quorum-site",
   "private": true,
-  "description": "quorum.watch static landing page. Railway: set the service root directory to site/ and run npm start. No build step.",
+  "description": "quorum.watch static landing page. Railway: set the service root directory to site/ and run npm start. The one built part is app-preview/, the app shown on the home page: npm run preview builds it from ../app/site-preview, and npm run deploy runs that first.",
   "scripts": {
     "start": "serve -l tcp://0.0.0.0:${PORT:-3000} --no-clipboard .",
     "stamp": "node -e \"const fs=require('fs');const v=new Date().toISOString().replace(/\\\\D/g,'').slice(0,12);for(const f of fs.readdirSync('.').filter(f=>f.endsWith('.html')))fs.writeFileSync(f,fs.readFileSync(f,'utf8').replace(/\\\\?v=\\\\d+/g,'?v='+v));console.log('stamped',v)\"",
-    "deploy": "npm run -s stamp && railway up --service site --detach"
+    "preview": "npm --prefix ../app run build:site-preview",
+    "deploy": "npm run -s preview && npm run -s stamp && railway up --service site --detach --no-gitignore"
   },
   "dependencies": {
     "serve": "14.2.4"

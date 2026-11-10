@@ -157,6 +157,8 @@ declare global {
       onPopupOut(cb: () => void): () => void;
       launchId: string;
       isDev: boolean;
+      // set only by the app preview on quorum.watch (site-preview/mock.ts): Home changes its quote on this interval
+      sitePreview?: { quoteMs: number };
       popupMenu(): Promise<void>;
       onSettings(cb: (s: Settings) => void): Unsub;
       onLevel(cb: (v: number) => void): Unsub;

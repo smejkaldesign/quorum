@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Brain, CalendarEvent, ChatRow, MeetingRow, NoteDoc } from './quorum';
 import { NoteMenu, NoteReader, VisibilityPill } from './MeetingNote';
-import { pickQuote, quoteLink } from './quotes';
+import { quoteLink, useQuote } from './quotes';
 import { Composer } from './Composer';
 import { IconCalendar, IconChat, IconExternal, IconListCheck, IconMic, IconMore, IconNewNote, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
 
@@ -86,7 +86,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat }: { brain: Bra
   }, [keyword]);
   const [note, setNote] = useState<NoteDoc | null>(null);
   const [draft, setDraft] = useState('');
-  const [quote] = useState(pickQuote);
+  const quote = useQuote();
   // the quote stays on one line: in a window narrower than the default, the heading eases down to fit
   const heroTitle = useRef<HTMLHeadingElement>(null);
   useLayoutEffect(() => {
@@ -161,7 +161,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat }: { brain: Bra
 
   return (
     <div className="history">
-      <section className="hist-hero">
+      <section className="hist-hero" key={quote.text}>
         <h1 ref={heroTitle}>
           {quote.text}
         </h1>

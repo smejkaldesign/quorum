@@ -45,6 +45,10 @@ jobs:
         working-directory: app
         env:
           QUORUM_EDITION: cloud
+      # the home page on quorum.watch shows this build; a renderer change that breaks it fails here, not on the site
+      - name: Build the site's app preview
+        run: npm run build:site-preview
+        working-directory: app
 
   gitleaks:
     runs-on: ubuntu-latest

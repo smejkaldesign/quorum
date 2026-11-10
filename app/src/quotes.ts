@@ -3,6 +3,7 @@
 // Wikipedia) page it links to: sourced sections only, wording exact, and `find` occurs exactly once on that page
 // so the link can scroll to it. Each also fits Home's 60px heading on one line at the default window: five words or
 // fewer, 29 characters or fewer, and under 780px measured in the app. The harvest and checks live outside the repo.
+import { useEffect, useState } from 'react';
 import data from './quotes-data.json';
 
 export type Quote = { text: string; find: string | null; who: string; source: string; url: string };
@@ -33,3 +34,16 @@ function drawQuote() {
 // one quote per page load, so going back to Home keeps it; a reload or relaunch draws the next one
 let current: Quote | null = null;
 export function pickQuote() { return (current ??= drawQuote()); }
+
+// Home's quote. The app keeps the one picked at page load; the preview on quorum.watch (site-preview/) sets an
+// interval on the bridge and steps through the list
+export function useQuote() {
+  const everyMs = window.quorum.sitePreview?.quoteMs ?? 0;
+  const [quote, setQuote] = useState(pickQuote);
+  useEffect(() => {
+    if (!everyMs) return;
+    const t = setInterval(() => setQuote((q) => QUOTES[(QUOTES.indexOf(q) + 1) % QUOTES.length]), everyMs);
+    return () => clearInterval(t);
+  }, [everyMs]);
+  return quote;
+}
