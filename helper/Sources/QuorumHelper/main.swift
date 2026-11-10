@@ -177,6 +177,10 @@ if args.count > 1 {
     }
 }
 
+// ready and the first audio route go out before any command is read, so a quit that arrives at once (tests, a
+// fast caller) cannot end the process ahead of them
+Emit.send(["event": "ready"])
+AudioRoute.watch()
 Thread.detachNewThread {
     while let line = readLine() {
         let semaphore = DispatchSemaphore(value: 0)
@@ -185,7 +189,5 @@ Thread.detachNewThread {
     }
     Task { await session.stop(); exit(0) }
 }
-Emit.send(["event": "ready"])
-AudioRoute.watch()
 ChatWatcher.shared.startMeetingWatch()
 dispatchMain()
