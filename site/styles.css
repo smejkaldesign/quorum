@@ -200,7 +200,7 @@ ul { margin: 0; padding: 0; list-style: none; }
    number of tiles (2 across, 1 down), so the loop is seamless. */
 .glow-dark {
   opacity: 1;
-  background: linear-gradient(180deg, #0d0d0e 0%, #141415 55%, #0a0a0b 100%);
+  background: linear-gradient(180deg, #0d0d0e 0%, #0b0b0c 55%, #0a0a0b 100%);
 }
 .glow-dark::before, .glow-dark::after {
   inset: 0;
@@ -545,7 +545,7 @@ ul { margin: 0; padding: 0; list-style: none; }
   display: flex; flex-direction: column; gap: 28px;
   color: var(--muted);
 }
-.enterprise h3 { font: 400 28px/1.2 var(--serif); letter-spacing: -0.01em; color: var(--text); }
+.enterprise h3 { font: 400 clamp(30px, 4.2vw, 40px)/1.15 var(--serif); letter-spacing: -0.012em; color: var(--text); }
 .enterprise p { font-size: 16px; line-height: 1.55; margin-top: 10px; max-width: 560px; color: var(--muted); }
 .enterprise .btn { flex: none; align-self: flex-start; font-family: var(--mono); font-size: 14px; }
 
