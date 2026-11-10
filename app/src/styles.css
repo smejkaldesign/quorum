@@ -115,8 +115,8 @@ p { margin: 0; }
 .row.wrap { flex-wrap: wrap; }
 .row.end { justify-content: flex-end; }
 .hint { color: var(--muted); font-size: 13px; margin-left: auto; }
-.pill { height: 36px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--muted); font-size: 14px; font-weight: 500; }
-.pill:hover { color: var(--text); border-color: rgba(255, 255, 255, 0.25); }
+.pill { height: 36px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--text); font-size: 14px; font-weight: 500; transition: border-color 120ms ease; }
+.pill:hover { color: var(--text); border-color: #fff; }
 .pill.primary { background: #f2f2f2; border-color: #f2f2f2; color: #111; }
 .pill.primary:hover { background: #fff; }
 
@@ -1196,13 +1196,19 @@ button.plat-row:hover, button.plat-row.on { background: rgba(255, 255, 255, 0.04
 .conn-detail-title h3 { margin: 2px 0 4px; font-size: 20px; display: flex; align-items: center; gap: 8px; }
 .conn-detail-title p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
 .conn-detail-actions { display: flex; align-items: center; gap: 8px; flex: none; }
-.conn-jobcard { margin-top: 14px; padding: 12px 18px; }
+.conn-jobcard { margin-top: 14px; padding: 16px 18px; }
+.conn-jobcard .src-status { margin: 0; }
+.conn-jobcard .src-progress { margin-top: 0; }
+.conn-jobcard .conn-alt { margin: 0; }
 .conn-table { padding: 6px 18px; }
 .conn-kv { display: grid; grid-template-columns: 200px 1fr; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--line-2); font-size: 14px; }
 .conn-kv:last-child { border-bottom: 0; }
 .conn-kv > span:first-child { color: var(--muted); }
 .conn-kv code { font: 12px/1.5 var(--mono); word-break: break-all; }
-.conn-kv .link-btn.plain { margin: 0; display: inline-flex; align-items: center; gap: 4px; }
+.conn-kv > span:last-child { text-align: left; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.conn-kv .link-btn.plain { margin: 0; padding: 0; display: inline-flex; align-items: center; gap: 4px; text-align: left; color: var(--text); word-break: break-all; }
+.conn-kv .link-btn.plain:hover { text-decoration: underline; text-underline-offset: 3px; }
+.conn-kv .conn-ok { margin-left: 0; }
 .conn-features { padding: 10px 18px; }
 .conn-features ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
 .conn-features li { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; line-height: 1.45; }
