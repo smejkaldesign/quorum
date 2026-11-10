@@ -1216,6 +1216,7 @@ button.plat-row:hover, button.plat-row.on { background: rgba(255, 255, 255, 0.04
 .conn-kv .link-btn.plain { margin: 0; padding: 0; display: inline-flex; align-items: center; gap: 4px; text-align: left; color: var(--text); word-break: break-all; }
 .conn-kv .link-btn.plain:hover { text-decoration: underline; text-underline-offset: 3px; }
 .conn-kv .conn-ok { margin-left: 0; }
+.set-ctrl .conn-ok { margin-left: 0; margin-right: 4px; }
 .conn-features { padding: 10px 18px; }
 .conn-features ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
 .conn-features li { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; line-height: 1.45; }

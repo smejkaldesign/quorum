@@ -63,7 +63,7 @@ export type ModelSourceStatus = { source: ModelSource; localModel: string; claud
 export type Settings = { meetingProviders?: Record<string, { enabled: boolean }>; autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean }; managedModels?: boolean };
 export type OnboardingStatus = { firstRun: boolean; defaultVaultDir: string };
 export type OnboardingChecks = { permissions: { microphone: string; audio: string; accessibility: string; calendar: string }; claude: { installed: boolean; loggedIn?: boolean; email?: string; org?: string; plan?: string; version?: string; pending?: boolean }; model?: ModelSourceStatus | null };
-export type Brain = { root: string; vault: string; name: string; markers: { agentOS: string | null; obsidian: boolean; search: boolean; safetyHooks: boolean } };
+export type Brain = { root: string; vault: string; name: string; made?: 'quorum' | null; markers: { agentOS: string | null; obsidian: boolean; search: boolean; safetyHooks: boolean } };
 // hosted edition: who is signed in, which organization they are in, and whether notes sync
 export type Role = 'owner' | 'admin' | 'member';
 export type AccountWorkspace = { id: string; name: string; domain: string | null; domainJoin: boolean; role: Role };
@@ -191,6 +191,8 @@ declare global {
       brain(): Promise<Brain | null>;
       connectBrain(): Promise<Brain | null>;
       revealBrain(): Promise<void>;
+      disconnectBrain(): Promise<null>;
+      clearMeetingsDir(): Promise<true>;
       openBrain(what: 'finder' | 'obsidian' | 'meetings'): Promise<void>;
       meetingsDir(): Promise<{ path: string; rel: string; root: string; notes: number; chosen: boolean; sources: { key: string; name: string; count: number }[] } | null>;
       pickMeetingsDir(): Promise<true | null>;

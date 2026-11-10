@@ -45,8 +45,8 @@ const WORKSPACE: Nav[] = [
 // the chip on every row whose control is disabled on purpose: the feature is planned and the row shows what it will do
 const Soon = () => <em className="soon">Soon</em>;
 
-export function SettingsView({ open, brain, settings, onSettings, onConnect, onBack }: {
-  open?: ({ page: Page; n: number } & ConnectorsTarget) | null; brain: Brain | null; settings: Settings; onSettings: (s: Settings) => void; onConnect: () => void; onBack: () => void;
+export function SettingsView({ open, brain, settings, onSettings, onConnect, onDisconnect, onBack }: {
+  open?: ({ page: Page; n: number } & ConnectorsTarget) | null; brain: Brain | null; settings: Settings; onSettings: (s: Settings) => void; onConnect: () => void; onDisconnect: () => void; onBack: () => void;
 }) {
   const [saved, setPage] = useSession<Page>('settingsPage', 'preferences');
   // an open connector detail page; cleared when the page changes
@@ -152,7 +152,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
             <><WorkspacePage settings={settings} onSettings={onSettings} /><BillingArea /></>
           ) : page === 'memory' ? (
             <>
-              <SecondBrain brain={brain} onConnect={onConnect} onViewConnector={goConnector} />
+              <SecondBrain brain={brain} onConnect={onConnect} onDisconnect={onDisconnect} onViewConnector={goConnector} />
               {brain && <MemoryScan />}
             </>
           ) : page === 'members' ? <MembersArea />
@@ -198,44 +198,99 @@ function OrgVoiceLocal({ onGo }: { onGo: (p: Page) => void }) {
 }
 
 // the Agent OS, where Quorum saves notes, and meeting notes from other apps; Add takes a folder by hand when there's no connector for that app
-function SecondBrain({ brain, onConnect, onViewConnector }: { brain: Brain | null; onConnect: () => void; onViewConnector: (id: string) => void }) {
+function SecondBrain({ brain, onConnect, onDisconnect, onViewConnector }: { brain: Brain | null; onConnect: () => void; onDisconnect: () => void; onViewConnector: (id: string) => void }) {
   type Source = Awaited<ReturnType<typeof window.quorum.meetingSources>>[number];
   const [sources, setSources] = useState<Source[]>([]);
   const [icons, setIcons] = useState<Record<string, string | null>>({});
   // folders that a connector feeds show the connection and offer its controls instead of the plain remove
   const [connected, setConnected] = useState<Record<string, { connected: boolean; syncNotes: boolean }>>({});
+  const [adding, setAdding] = useMenu();
+  const [confirm, setConfirm] = useState(false);
   const load = () => { window.quorum.meetingSources().then(setSources); window.quorum.sourcesList().then((l) => setConnected(Object.fromEntries(l.map((s) => [s.id, { connected: s.connected, syncNotes: s.syncNotes }])))); };
-  useEffect(() => { if (brain) load(); window.quorum.sourceIcons().then(setIcons); }, [brain]);
+  useEffect(() => { load(); window.quorum.sourceIcons().then(setIcons); }, [brain]);
+  const anyConnected = Object.values(connected).some((c) => c.connected);
+  // notetakers Quorum can connect today that are not connected yet; each opens its connector page, where Connect lives
+  const addable = CONNECTORS.filter((x) => x.category === 'meeting-notes' && x.status === 'available' && !connected[x.id]?.connected);
+  const home = (p: string) => p.replace(/^\/Users\/[^/]+/, '~');
   return (
     <>
       <div className="set-head">
         <h3>Context</h3>
-        {brain && <span className="set-head-actions"><button className="pill small-pill with-icon" onClick={async () => { if (await window.quorum.meetingSourceAdd()) load(); }}><IconPlus width={15} height={15} />Add</button></span>}
+        <span className="set-head-actions menu-wrap" onClick={(e) => e.stopPropagation()}>
+          <button className="pill small-pill with-icon" aria-haspopup="menu" aria-expanded={adding} onClick={() => setAdding((o) => !o)}><IconPlus width={15} height={15} />Add</button>
+          {adding && (
+            <div className="menu end" role="menu">
+              <button role="menuitem" onClick={async () => { setAdding(false); if (await window.quorum.meetingSourceAdd()) load(); }}><IconFolder width={15} height={15} /> Select from folder</button>
+              {addable.map((x) => <button key={x.id} role="menuitem" onClick={() => { setAdding(false); onViewConnector(x.id); }}><IconGrid width={15} height={15} /> Add {x.name}</button>)}
+              <button role="menuitem" onClick={() => { setAdding(false); openConnectors({ library: 'meeting-notes' }); }}><IconSearch width={15} height={15} /> Browse connectors</button>
+            </div>
+          )}
+        </span>
       </div>
       <div className="set-card">
-        <Row icon={brain ? <IconFolderFill width={18} height={18} className="ok" /> : <IconFolder width={18} height={18} className="err" />}
-          title={brain ? <button className="mem-title" onClick={() => window.quorum.openBrain('finder')}>{brain.name}<IconExternal width={14} height={14} /></button> : 'Not connected'}
-          desc={brain ? `${brain.root.replace(/^\/Users\/[^/]+/, '~')}` : 'Pick the root folder of your notes'}>
-          <button className="pill" onClick={onConnect}>{brain ? 'Change' : 'Connect'}</button>
+        <Row icon={<IconBrain width={18} height={18} className={brain ? 'ok' : undefined} />}
+          title={brain ? <button className="mem-title" onClick={() => window.quorum.openBrain('finder')}>QuorumBrain<IconExternal width={14} height={14} /></button> : 'QuorumBrain'}
+          desc={brain ? `${brain.made === 'quorum' ? 'Built by Quorum' : brain.name} · ${home(brain.root)}` : 'Optional. An Agent OS folder of notes Quorum can answer from. Meeting notes work without one.'}>
+          {brain
+            ? <RowMenu label="QuorumBrain options" items={[{ label: 'Change folder', icon: <IconFolder width={15} height={15} />, onPick: onConnect }, { label: 'Disconnect', icon: <IconClose width={15} height={15} />, danger: true, onPick: () => setConfirm(true) }]} />
+            : <button className="pill" onClick={onConnect}>Connect</button>}
         </Row>
-        {brain && <MeetingsRow />}
-        {brain && sources.map((src) => (
+        <MeetingsRow />
+        {sources.map((src) => (
           <Row key={src.id} icon={icons[src.key] ? <img className="set-app-icon" src={icons[src.key]!} alt="" /> : <IconFolder width={18} height={18} />}
-            title={<><button className="mem-title" onClick={() => window.quorum.meetingSourceOpen(src.id)}>{src.name} meeting notes<IconExternal width={14} height={14} /></button>{connected[src.key]?.connected && <span className="conn-ok"><i />{connected[src.key].syncNotes ? 'Connected' : 'Connected · sync off'}</span>}</>}
+            title={<button className="mem-title" onClick={() => window.quorum.meetingSourceOpen(src.id)}>{src.name} meeting notes<IconExternal width={14} height={14} /></button>}
             desc={`${src.rel} · ${src.notes} ${src.notes === 1 ? 'note' : 'notes'}`}>
+            {connected[src.key]?.connected && <span className="conn-ok"><i />{connected[src.key].syncNotes ? 'Connected' : 'Connected · sync off'}</span>}
             <SourceRowMenu name={src.name} connector={connected[src.key] ? { id: src.key, ...connected[src.key] } : null}
               onView={() => onViewConnector(src.key)}
               onToggleSync={async (on) => { await window.quorum.sourceSetOption(src.key, { syncNotes: on }); load(); }}
               onRemove={async () => { if (await window.quorum.meetingSourceRemove(src.id)) load(); }} />
           </Row>
         ))}
-        {brain && (
-          <ConnectHint connector="granola" title={Object.values(connected).some((c) => c.connected) ? 'Connect another notetaker' : 'Meeting notes from another app'} desc="Granola today, more notetakers soon. Their notes land in this folder with the source on each note.">
+        {!anyConnected && (
+          <ConnectHint connector="granola" title="Meeting notes from another app" desc="Granola today, more notetakers soon. Their notes land in this folder with the source on each note.">
             <button className="pill small-pill" onClick={() => openConnectors({ library: 'meeting-notes' })}>Browse connectors</button>
           </ConnectHint>
         )}
       </div>
+      {confirm && (
+        <ConfirmModal title="Disconnect QuorumBrain?" action="Disconnect"
+          body="Quorum stops reading this folder. Answers, memory power-ups and guardrails that came from it stop working, and a meetings folder found inside it has to be chosen again. Nothing is deleted, but this cannot be undone: connecting a folder again means a new import."
+          onDone={(ok) => { setConfirm(false); if (ok) onDisconnect(); }} />
+      )}
     </>
+  );
+}
+
+type MenuItem = { label: string; icon: ReactNode; danger?: boolean; onPick: () => void };
+// the ••• on a Context row
+function RowMenu({ label, items }: { label: string; items: MenuItem[] }) {
+  const [open, setOpen] = useMenu();
+  return (
+    <span className="menu-wrap" onClick={(e) => e.stopPropagation()}>
+      <button className="icon-btn" aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}><IconMore width={16} height={16} /></button>
+      {open && <div className="menu" role="menu">{items.map((it) => <button key={it.label} role="menuitem" className={it.danger ? 'danger' : undefined} onClick={() => { setOpen(false); it.onPick(); }}>{it.icon} {it.label}</button>)}</div>}
+    </span>
+  );
+}
+
+// a yes-or-no sheet for the steps that cannot be undone from Quorum
+function ConfirmModal({ title, body, action, onDone }: { title: string; body: string; action: string; onDone: (ok: boolean) => void }) {
+  return (
+    <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onDone(false); }}
+      onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onDone(false); } }}>
+      <div className="modal" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title">
+        <h2 id="confirm-title">{title}</h2>
+        <p>{body}</p>
+        <div className="modal-actions">
+          <span />
+          <span className="modal-actions-end">
+            <button className="pill" autoFocus onClick={() => onDone(false)}>Cancel</button>
+            <button className="pill danger-pill" onClick={() => onDone(true)}>{action}</button>
+          </span>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -256,9 +311,11 @@ function SourceRowMenu({ name, connector, onView, onToggleSync, onRemove }: { na
   );
 }
 
-// where meeting notes live; past meetings you bring in land here too, so it's the same folder Quorum lists in History
+// where meeting notes live; past meetings you bring in land here too, so it's the same folder Quorum lists in History.
+// Disconnect is offered only for a folder you chose: one found inside the Agent OS goes away with it
 function MeetingsRow() {
   const [dir, setDir] = useState<Awaited<ReturnType<typeof window.quorum.meetingsDir>> | undefined>();
+  const [confirm, setConfirm] = useState(false);
   const load = () => window.quorum.meetingsDir().then(setDir);
   useEffect(() => { load(); }, []);
   const pick = async () => { if (await window.quorum.pickMeetingsDir()) load(); };
@@ -268,12 +325,21 @@ function MeetingsRow() {
       <button className="pill" onClick={pick}>Choose folder</button>
     </Row>
   );
+  const items: MenuItem[] = [{ label: 'Change folder', icon: <IconFolder width={15} height={15} />, onPick: pick }];
+  if (dir.chosen) items.push({ label: 'Disconnect', icon: <IconClose width={15} height={15} />, danger: true, onPick: () => setConfirm(true) });
   return (
-    <Row icon={<IconQuorum width={18} height={18} className="ok" />}
-      title={<button className="mem-title" onClick={() => window.quorum.openBrain('meetings')}>Quorum meeting notes<IconExternal width={14} height={14} /></button>}
-      desc={`${dir.rel} · ${dir.notes} ${dir.notes === 1 ? 'note' : 'notes'}`}>
-      <button className="pill" onClick={pick}>Change</button>
-    </Row>
+    <>
+      <Row icon={<IconQuorum width={18} height={18} className="ok" />}
+        title={<button className="mem-title" onClick={() => window.quorum.openBrain('meetings')}>Quorum meeting notes<IconExternal width={14} height={14} /></button>}
+        desc={`${dir.rel} · ${dir.notes} ${dir.notes === 1 ? 'note' : 'notes'}`}>
+        <RowMenu label="Quorum meeting notes options" items={items} />
+      </Row>
+      {confirm && (
+        <ConfirmModal title="Disconnect this meetings folder?" action="Disconnect"
+          body="Quorum stops saving to and listing notes from this folder. The notes stay where they are, but History empties until you choose a folder, and bringing these notes back means a new import. This cannot be undone from Quorum."
+          onDone={async (ok) => { setConfirm(false); if (ok) { await window.quorum.clearMeetingsDir(); load(); } }} />
+      )}
+    </>
   );
 }
 

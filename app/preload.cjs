@@ -48,6 +48,8 @@ contextBridge.exposeInMainWorld('quorum', {
   brain: () => ipcRenderer.invoke('brain'),
   connectBrain: () => ipcRenderer.invoke('connect-brain'),
   revealBrain: () => ipcRenderer.invoke('reveal-brain'),
+  disconnectBrain: () => ipcRenderer.invoke('disconnect-brain'),
+  clearMeetingsDir: () => ipcRenderer.invoke('clear-meetings-dir'),
   openBrain: (what) => ipcRenderer.invoke('open-brain', what),
   meetingsDir: () => ipcRenderer.invoke('meetings-dir'),
   pickMeetingsDir: () => ipcRenderer.invoke('pick-meetings-dir'),

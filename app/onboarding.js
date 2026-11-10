@@ -60,7 +60,10 @@ export function registerOnboarding({ ipcMain, settings, saveSettings, inspectBra
     const target = String(dir || defaultVaultDir());
     createVault(target, String(name || 'My Agent OS'));
     log('created Agent OS', target);
-    return connect(inspectBrain(target));
+    const b = connect(inspectBrain(target));
+    settings.brainMade = 'quorum';
+    saveSettings();
+    return { ...b, made: 'quorum' };
   });
   ipcMain.handle('onboarding-open-permission', (_e, which) => { if (PANES[which]) shell.openExternal(PANES[which]); });
   // where a new Agent OS goes: a folder the user picks or creates in the dialog; null when they cancel

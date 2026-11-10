@@ -680,7 +680,7 @@ function inspectBrain(folder) {
 }
 
 function brain() {
-  return settings.brainRoot && existsSync(settings.brainRoot) ? inspectBrain(settings.vaultPath || settings.brainRoot) : null;
+  return settings.brainRoot && existsSync(settings.brainRoot) ? { ...inspectBrain(settings.vaultPath || settings.brainRoot), made: settings.brainMade ?? null } : null;
 }
 
 // the folder your meeting notes live in: your pick, else the vault's existing meetings folder; Quorum saves into it directly, and `source:` in each note says which app made it
@@ -1896,7 +1896,7 @@ ipcMain.handle('pick-meetings-dir', async () => {
   return true;
 });
 // the first-run wizard shares the connect step with Settings, so both end up in the same state
-const connectBrain = (b) => { Object.assign(settings, { brainRoot: b.root, vaultPath: b.vault }); store.settings.save(); log('connected Agent OS', b.root); suggester.reset(); openIndex(); return b; };
+const connectBrain = (b) => { Object.assign(settings, { brainRoot: b.root, vaultPath: b.vault, brainMade: null }); store.settings.save(); log('connected Agent OS', b.root); suggester.reset(); openIndex(); return b; };
 registerOnboarding({
   ipcMain, settings, saveSettings, inspectBrain, connect: connectBrain, systemPreferences, shell, helperAsk: (cmd) => calAsk({ cmd }), claudeStatus, modelStatus: () => modelStatus(null), log, hadSettings: store.settings.existed,
   axTrusted: () => new Promise((resolve) => { const w = (evt) => resolve(evt.trusted); axWaiters.push(w); helperSend({ cmd: 'axStatus', prompt: false }); setTimeout(() => { const i = axWaiters.indexOf(w); if (i >= 0) axWaiters.splice(i, 1); resolve(lastAx?.trusted ?? null); }, 2500); }),
@@ -1914,7 +1914,7 @@ ipcMain.handle('connect-brain', async () => {
   });
   if (r.canceled || !r.filePaths[0]) return brain();
   const b = inspectBrain(r.filePaths[0]);
-  Object.assign(settings, { brainRoot: b.root, vaultPath: b.vault });
+  Object.assign(settings, { brainRoot: b.root, vaultPath: b.vault, brainMade: null });
   store.settings.save();
   log('connected Agent OS', b.root);
   suggester.reset();
@@ -1922,6 +1922,9 @@ ipcMain.handle('connect-brain', async () => {
   return b;
 });
 ipcMain.handle('reveal-brain', () => { if (settings.brainRoot) shell.openPath(settings.brainRoot); });
+// forgetting the Agent OS leaves every file where it is; Quorum stops reading it, and a meetings folder found inside it is no longer found
+ipcMain.handle('disconnect-brain', () => { Object.assign(settings, { brainRoot: null, vaultPath: null, brainMade: null }); store.settings.save(); log('disconnected Agent OS'); suggester.reset(); openIndex(); return null; });
+ipcMain.handle('clear-meetings-dir', () => { settings.meetingsDir = null; saveSettings(); return true; });
 
 ipcMain.handle('end', () => endMeeting());
 // pause keeps everything so far; nothing new is recorded until resume
