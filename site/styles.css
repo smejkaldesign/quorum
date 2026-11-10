@@ -257,7 +257,10 @@ ul { margin: 0; padding: 0; list-style: none; }
 }
 
 /* Hero */
-.hero { padding: 144px 0 120px; text-align: center; }
+/* The copy sits centered between the top of the page and the top of the app frame: the header (--header-h) is above
+   the hero and the frame overlaps the hero's bottom by --shot-overlap, so the paddings are the same clear space
+   with those two taken out. */
+.hero { --hero-space: 121px; --shot-overlap: 80px; padding: calc(var(--hero-space) - var(--header-h)) 0 calc(var(--hero-space) + var(--shot-overlap)); text-align: center; }
 .hero h1 {
   font: 400 clamp(38px, 7.2vw, 72px)/1.04 var(--serif);
   letter-spacing: -0.018em;
@@ -337,7 +340,7 @@ ul { margin: 0; padding: 0; list-style: none; }
   --s: 1;
   width: min(100%, 1040px);
   aspect-ratio: 1040 / 820;
-  margin: -80px auto 0;
+  margin: -80px auto 0; /* matches .hero --shot-overlap */
   border-radius: calc(26px * var(--s));
   background: var(--panel);
   box-shadow: 0 40px 120px rgba(0, 0, 0, 0.5), 0 10px 30px rgba(0, 0, 0, 0.3);
@@ -638,7 +641,7 @@ ul { margin: 0; padding: 0; list-style: none; }
   .frame { border-left-color: var(--rule); border-right-color: var(--rule); }
   .section::before, .section::after,
   .site-footer::before, .site-footer::after { display: block; }
-  .hero { padding: 192px 0 156px; }
+  .hero { --hero-space: 163px; }
   .plans { grid-template-columns: 1fr 1fr; }
 }
 

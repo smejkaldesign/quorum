@@ -351,7 +351,7 @@ html.popup-root, html.popup-root body { background: transparent; }
 .body.wide { padding: 0; }
 .history { max-width: 860px; width: 100%; margin: 0 auto; padding: 24px 40px 48px; }
 .hist-hero { text-align: center; margin: 18px 0 56px; }
-.hist-hero h1 { font: 400 48px/1.08 "New York", ui-serif, Georgia, serif; margin: 0 0 12px; letter-spacing: -0.015em; }
+.hist-hero h1 { font: 400 40px/1.1 "New York", ui-serif, Georgia, serif; margin: 0 0 12px; letter-spacing: -0.015em; }
 .hist-hero p { color: var(--muted); font-size: 17px; margin: 0; }
 .hist-lock { display: inline-flex; align-items: center; gap: 8px; margin-top: 14px !important; font-size: 16px !important; }
 .hist-ask { margin: 0; }
