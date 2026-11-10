@@ -90,7 +90,7 @@ export function authorizeUrl(meta, { clientId, redirectUri, challenge, state, sc
   u.searchParams.set('state', state);
   u.searchParams.set('resource', meta.resource);
   if (scopes?.length) u.searchParams.set('scope', scopes.join(' '));
-  if (prompt) u.searchParams.set('prompt', prompt);
+  if (prompt) { u.searchParams.set('prompt', prompt); u.searchParams.set('max_age', '0'); }
   return u.toString();
 }
 
