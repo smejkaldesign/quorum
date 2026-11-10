@@ -9,9 +9,9 @@
 
   const MOUNTS = [
     { sel: '.hero', count: 44, reach: 0.34, speed: 0.000045, depth: 1.9, radius: [1.1, 2.4], box: [1.25, 0.85, 0.7], extend: 0, center: 0.5 },
-    // far closer in: a few big nodes and long lines, centered on the frame's bottom edge so the visible part sits under
-    // the window, running 320px past it into the gap below
-    { sel: '.app-shot', count: 12, reach: 0.7, speed: 0.000028, depth: 2.4, radius: [3, 5.6], box: [1.3, 0.5, 0.6], extend: 320, center: 0.76 },
+    // far closer in: a few big nodes and long lines, centered a little above the frame's bottom edge and wider than
+    // the frame, so it shows beside the window and below it, running 320px past it into the gap
+    { sel: '.app-shot', count: 12, reach: 0.7, speed: 0.000028, depth: 2.4, radius: [3, 5.6], box: [1.55, 0.6, 0.6], extend: 320, center: 0.6 },
   ];
 
   const PULL_RADIUS = 220;   // px from the cursor where the pull starts
@@ -44,6 +44,7 @@
     const cursor = { x: -1e6, y: -1e6, on: false };
     // the held node: its index, where the pointer is, and the pointer's recent velocity for the throw
     const drag = { i: -1, x: 0, y: 0, vx: 0, vy: 0, lastT: 0 };
+    let hover = -1; // the node under the pointer, drawn in the graph blue; the cursor itself stays as it is
 
     const local = (e) => { const r = host.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top, w: r.width, h: r.height + cfg.extend }; };
     const hit = (x, y) => {
@@ -65,11 +66,9 @@
         drag.vx = drag.vx * 0.5 + ((l.x - drag.x) / dt) * 0.5;
         drag.vy = drag.vy * 0.5 + ((l.y - drag.y) / dt) * 0.5;
         drag.x = l.x; drag.y = l.y; drag.lastT = e.timeStamp;
-      } else if (cursor.on && !e.target.closest('a, button, input, textarea, iframe, select')) {
-        host.style.cursor = hit(l.x, l.y) >= 0 ? 'grab' : '';
-      } else host.style.cursor = '';
+      } else hover = cursor.on && !e.target.closest('a, button, input, textarea, iframe, select') ? hit(l.x, l.y) : -1;
     }, { passive: true });
-    document.addEventListener('pointerout', (e) => { if (!e.relatedTarget) cursor.on = false; });
+    document.addEventListener('pointerout', (e) => { if (!e.relatedTarget) { cursor.on = false; hover = -1; } });
     host.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || e.target.closest('a, button, input, textarea, iframe, select')) return;
       const l = local(e);
@@ -77,7 +76,6 @@
       if (i < 0) return;
       e.preventDefault();
       drag.i = i; drag.x = l.x; drag.y = l.y; drag.vx = 0; drag.vy = 0; drag.lastT = e.timeStamp;
-      host.style.cursor = 'grabbing';
       try { host.setPointerCapture(e.pointerId); } catch {}
       start();
     });
@@ -88,7 +86,6 @@
       const sp = Math.hypot(drag.vx, drag.vy), k = sp > THROW_MAX ? THROW_MAX / sp : 1;
       o.vx = drag.vx * k; o.vy = drag.vy * k;
       drag.i = -1;
-      host.style.cursor = '';
       try { if (e && e.pointerId != null) host.releasePointerCapture(e.pointerId); } catch {}
     };
     host.addEventListener('pointerup', release);
@@ -160,9 +157,17 @@
       }
       for (let i = 0; i < COUNT; i++) {
         const p = pts[i];
-        const held = i === drag.i;
-        ctx.fillStyle = 'rgba(207, 230, 255, ' + Math.min(1, (held ? 0.6 : 0.35) + p.s * 0.45).toFixed(3) + ')';
-        ctx.beginPath(); ctx.arc(p.x, p.y, held ? p.r * 1.35 : p.r, 0, Math.PI * 2); ctx.fill();
+        const held = i === drag.i, lit = held || i === hover;
+        if (lit) {
+          // the graph blue from the app (--brand-graph), with a soft halo, for the node under the pointer or in hand
+          ctx.fillStyle = 'rgba(94, 169, 255, 0.22)';
+          ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 3.2, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = 'rgb(94, 169, 255)';
+          ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 1.35, 0, Math.PI * 2); ctx.fill();
+          continue;
+        }
+        ctx.fillStyle = 'rgba(207, 230, 255, ' + Math.min(1, 0.35 + p.s * 0.45).toFixed(3) + ')';
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
       }
     }
 

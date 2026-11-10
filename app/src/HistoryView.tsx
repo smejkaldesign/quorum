@@ -95,7 +95,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat }: { brain: Bra
     const fit = () => {
       h.style.fontSize = '';
       const room = h.clientWidth, need = h.scrollWidth;
-      if (need > room) h.style.fontSize = `${Math.max(36, Math.floor(60 * room / need))}px`;
+      if (need > room) h.style.fontSize = `${Math.max(32, Math.floor(48 * room / need))}px`;
     };
     fit();
     // watch the section, not the heading: resizing the heading inside its own observer loops

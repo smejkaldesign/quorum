@@ -1,7 +1,7 @@
 // The Home title: a real quote, five words or fewer, on knowledge, thinking, writing, learning, conversation and
 // community, always positive. Bundled with the app, nothing fetched. Each was checked against the Wikiquote (or
 // Wikipedia) page it links to: sourced sections only, wording exact, and `find` occurs exactly once on that page
-// so the link can scroll to it. Each also fits Home's 60px heading on one line at the default window: five words or
+// so the link can scroll to it. Each also fits Home's 48px heading on one line at the default window: five words or
 // fewer, 29 characters or fewer, and under 780px measured in the app. The harvest and checks live outside the repo.
 import { useEffect, useState } from 'react';
 import data from './quotes-data.json';

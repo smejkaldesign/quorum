@@ -328,8 +328,8 @@ ul { margin: 0; padding: 0; list-style: none; }
   z-index: 0;
   pointer-events: none;
   opacity: 0.55;
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 52%, transparent 84%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 52%, transparent 84%);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 64%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 64%, transparent 100%);
 }
 .app-shot + .section { border-top: 0; padding-top: calc(var(--section-y) + 160px); }
 .app-shot + .section::before, .app-shot + .section::after { content: none; }
