@@ -1253,3 +1253,9 @@ button.plat-row:hover, button.plat-row.on { background: rgba(255, 255, 255, 0.04
 .conn-alt-link p { margin: 0 0 8px; }
 .conn-alt-row { display: flex; align-items: center; gap: 10px; }
 .conn-alt-row code { font: 12px/1.4 var(--mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+
+.conn-alert { display: flex; flex-direction: column; gap: 3px; margin: 22px 0 6px; padding: 14px 16px; border-radius: 12px; border: 1px solid rgba(255, 69, 58, 0.35); background: rgba(255, 69, 58, 0.08); font-size: 13px; line-height: 1.45; }
+.conn-alert strong { color: #ff6961; font-weight: 600; }
+.conn-alert span { color: var(--text); }
+.conn-jobcard .conn-alt { margin: 6px 0; }
+.conn-detail .conn-detail-head + h4 { margin-top: 26px; }

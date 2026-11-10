@@ -124,9 +124,11 @@ export function awaitLoopback({ port = LOOPBACK_PORT, path = '/callback', timeou
       const u = new URL(req.url, `http://127.0.0.1:${port}`);
       if (u.pathname !== path) { res.writeHead(404); res.end(); return; }
       const q = Object.fromEntries(u.searchParams.entries());
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      res.end(page(q));
-      finish(() => resolve(q));
+      // the tab waits for the outcome (token exchange, account check); after 45 s it gets a neutral page
+      let answered = false;
+      const answer = (html) => { if (answered) return; answered = true; clearTimeout(fallback); res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(html); };
+      const fallback = setTimeout(() => answer(page({ ...q, pending: true })), 45000);
+      finish(() => resolve({ ...q, finish: (r) => answer(page({ ...q, ...r })) }));
     });
     const finish = (fn) => { if (done) return; done = true; clearTimeout(timer); server.close(); if (pending === cancel) pending = null; fn(); };
     const cancel = () => finish(() => reject(new Error('Replaced by a newer sign-in.')));
@@ -138,11 +140,22 @@ export function awaitLoopback({ port = LOOPBACK_PORT, path = '/callback', timeou
   });
 }
 
-export const loopbackPage = (q) => `<!doctype html><title>Quorum</title><body style="font: 16px -apple-system, sans-serif; padding: 40px; color: #111"><p>${
-  q.error ? `Sign-in did not finish: ${String(q.error_description || q.error).replace(/[<>&]/g, '')}.` : 'Connected. You can close this tab and go back to Quorum.'}</p>`;
+// the page the browser shows when the flow is over: Quorum blue, one line of outcome, one line of what to do
+export const loopbackPage = (q) => {
+  const esc = (s) => String(s ?? '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+  const failed = q.error || q.failed;
+  const title = q.pending ? 'Almost there' : failed ? 'That did not work' : `Connected${q.name ? ` to ${esc(q.name)}` : ''}`;
+  const body = q.pending ? 'Go back to Quorum to see the result.' : failed ? esc(q.failed || q.error_description || q.error) : 'You can close this tab and go back to Quorum. Your meetings are on their way.';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Quorum</title>
+<style>html,body{height:100%;margin:0}body{display:grid;place-items:center;background:#007aff;color:#fff;font:16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",Helvetica,Arial,sans-serif;text-align:center;padding:24px}
+.card{max-width:440px}.mark{font:600 13px/1 -apple-system,sans-serif;letter-spacing:.18em;text-transform:uppercase;opacity:.8;margin-bottom:28px}
+.icon{width:64px;height:64px;border-radius:50%;margin:0 auto 22px;display:grid;place-items:center;background:${failed ? 'rgba(255,255,255,.18)' : '#fff'};color:${failed ? '#fff' : '#007aff'};font-size:30px;line-height:1}
+h1{font:400 34px/1.15 "New York",ui-serif,Georgia,serif;margin:0 0 12px;letter-spacing:-.01em}p{margin:0;opacity:.92}</style></head>
+<body><div class="card"><div class="mark">Quorum</div><div class="icon">${failed ? '!' : q.pending ? '…' : '✓'}</div><h1>${title}</h1><p>${body}</p></div></body></html>`;
+};
 
 // the whole flow: metadata, client (reused when one is saved), browser, loopback, token exchange
-export async function connect({ resourceUrl, open, clients, fetchImpl = fetch, redirectUri = LOOPBACK_REDIRECT, loopback = awaitLoopback }) {
+export async function connect({ resourceUrl, open, clients, fetchImpl = fetch, redirectUri = LOOPBACK_REDIRECT, loopback = awaitLoopback, verify = null, name = null }) {
   const meta = await discover(resourceUrl, { fetchImpl });
   let client = await clients.get(meta.issuer);
   if (!client || client.redirectUri !== redirectUri) { client = await register(meta, { redirectUri, fetchImpl }); await clients.set(meta.issuer, client); }
@@ -151,15 +164,19 @@ export async function connect({ resourceUrl, open, clients, fetchImpl = fetch, r
   const waiting = loopback();
   await open(authorizeUrl(meta, { clientId: client.clientId, redirectUri, challenge, state }));
   const q = await waiting;
-  if (q.error) throw new Error(q.error_description || q.error);
-  if (q.state !== state) throw new Error('The sign-in answer did not match the request.');
-  if (!q.code) throw new Error('The sign-in did not return a code.');
+  const tell = (r) => { try { q.finish?.({ name, ...r }); } catch {} };
+  const fail = (message, code) => { tell({ failed: message }); const e = new Error(message); if (code) e.code = code; throw e; };
+  if (q.error) fail(q.error_description || q.error);
+  if (q.state !== state) fail('The sign-in answer did not match the request.');
+  if (!q.code) fail('The sign-in did not return a code.');
   let tokens;
   try { tokens = await exchange(meta, client, { code: q.code, verifier, redirectUri }, fetchImpl); }
   catch (err) {
     // a stale registration (server forgot the client) is the one failure worth one retry with a fresh client
-    if (err.code === 'invalid_client') { await clients.set(meta.issuer, null); throw new Error('The service forgot this app. Click Connect again.'); }
-    throw err;
+    if (err.code === 'invalid_client') { await clients.set(meta.issuer, null); fail('The service forgot this app. Click Connect again.'); }
+    fail(err.message);
   }
+  if (verify) { try { await verify(tokens); } catch (err) { fail(err.message, 'wrong-account'); } }
+  tell({});
   return { meta, client, tokens };
 }

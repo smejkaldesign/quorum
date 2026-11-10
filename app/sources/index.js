@@ -116,19 +116,16 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
         ? async (url) => { log('sources', id, 'sign-in in a fresh window'); toUI('source-auth-link', { id, url, opened: 'window' }); await openFresh(url, src.name); }
         : async (url) => { log('sources', id, 'sign-in in the default browser'); await openExternal(url); };
       try {
-        const { meta, tokens } = await oauthConnect({ resourceUrl: src.url, open, clients: store.clients });
+        // the sign-in has to be an account the service knows, or nothing is kept; the browser tab learns the outcome too
+        const verify = ADAPTERS[src.adapter].verify ? (tokens) => ADAPTERS[src.adapter].verify(createMcp({ url: src.url, token: async () => tokens.accessToken, clientInfo: { name: 'Quorum', version } })) : null;
+        const { meta, tokens } = await oauthConnect({ resourceUrl: src.url, open, clients: store.clients, verify, name: src.name });
         metaCache[src.url] = meta;
-        // the sign-in worked; now the account behind it has to be one the service knows, or nothing is kept
-        if (ADAPTERS[src.adapter].verify) {
-          try { await ADAPTERS[src.adapter].verify(createMcp({ url: src.url, token: async () => tokens.accessToken, clientInfo: { name: 'Quorum', version } })); }
-          catch (err) { log('sources', id, 'sign-in refused:', err.message); return { error: err.message, wrongAccount: true }; }
-        }
         await store.tokens.set(id, tokens);
         const s = stateOf(id); s.connected = true; s.method = 'connect'; s.connectedAt = new Date().toISOString(); saveSettings();
         delete clients[id];
         runSync(id, 'Importing').catch(() => {});
         return { ok: true };
-      } catch (err) { return fail(err, `Quorum could not connect to ${src.name}. Check your connection and try again.`); }
+      } catch (err) { if (err.code === 'wrong-account') { log('sources', id, 'sign-in refused:', err.message); return { error: err.message, wrongAccount: true }; } return fail(err, `Quorum could not connect to ${src.name}. Check your connection and try again.`); }
     },
     'source-disconnect': async (id) => {
       if (!BY_ID[id]) return { error: 'Unknown source.' };
