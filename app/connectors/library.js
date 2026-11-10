@@ -105,6 +105,24 @@ const OVERRIDES = {
   trello: () => ['Turns action items into Trello cards', 'Links each card back to the meeting note'],
   notion: () => ['Sends meeting notes to a Notion database you can sort, filter and build on', 'Keeps the Notion page in step with the note'],
 };
+// two or three lines for the top of a connector's page: what it is, what Quorum does with it, where things land
+const ABOUT = {
+  granola: 'Granola records and summarizes your meetings on its own. Connect it and Quorum reads those notes over Granola\'s MCP server, writes each meeting into your meeting notes folder tagged source: granola, and keeps checking for new meetings every 30 minutes while it runs. Granola stays your recorder and its AI stays in charge of the summaries; Quorum is where that knowledge lives alongside everything else.',
+  'apple-calendar': 'The Calendar app already holds every calendar on this Mac. Allow access and Quorum shows your upcoming meetings on Home, reminds you before each one, and gives every note the meeting title and the people in it. Nothing leaves this Mac for this connector.',
+  'claude-code': 'Claude Code runs in your terminal and can read your notes through the quorum MCP server that ships with the app. Add it and you can ask about meetings, write specs and bug reports from what was said, and pull action items into your work, all on this Mac.',
+};
+const ABOUT_BY_CATEGORY = {
+  'meeting-notes': (n) => `${n} records and summarizes your meetings. Once connected, Quorum reads those notes, writes each meeting into your meeting notes folder tagged with its source, and keeps importing new ones while it runs. ${n} stays your recorder; Quorum is where the knowledge lives next to everything else you know.`,
+  calendar: (n) => `${n} holds your schedule. Once connected, Quorum shows upcoming meetings on Home, reminds you before each one, and gives every note the meeting title and the people in it.`,
+  meetings: (n) => `${n} records your calls in the cloud. Once connected, Quorum picks up each recording and transcript when ${n} finishes processing it and turns it into a meeting note, including calls Quorum did not listen to live.`,
+  communication: (n) => `${n} is where your team talks. Once connected, Quorum can share a meeting note there in one step and draft follow-ups from what was said.`,
+  crm: (n) => `${n} holds your customers and deals. Once connected, Quorum sends meeting notes to the matching people, companies and deals and logs the meeting on the record.`,
+  tasks: (n) => `${n} tracks your work. Once connected, Quorum turns action items from meetings into ${n} tasks and links each one back to the note it came from.`,
+  docs: (n) => `${n} stores your documents. Once connected, Quorum saves meeting notes there so a copy lives where your team already looks.`,
+  ai: (n) => `${n} is an AI tool you already use. Once connected, it can search your meeting notes, answer from them, and pull out action items and decisions.`,
+};
+export const aboutOf = (x) => ABOUT[x.id] ?? (ABOUT_BY_CATEGORY[x.category] ?? (() => x.description))(x.name);
+
 export const featuresOf = (x) => (OVERRIDES[x.id] ?? BY_CATEGORY[x.category] ?? (() => []))(x.name);
 
 export const CONNECTOR_BY_ID = Object.fromEntries(CONNECTORS.map((x) => [x.id, x]));

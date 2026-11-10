@@ -36,7 +36,7 @@ export function scanExisting(root) {
 
 export function createSources({ settings, saveSettings, toUI = () => {}, log = () => {}, meetingsDir, openExternal, openFresh = null, afterWrite = () => {}, store = createTokenStore(), version = '0' }) {
   const conf = () => (settings.sources ??= {});
-  const stateOf = (id) => (conf()[id] ??= { method: BY_ID[id]?.recommended ?? 'connect', connected: false, lastSyncAt: null, imported: 0 });
+  const stateOf = (id) => (conf()[id] ??= { method: BY_ID[id]?.recommended ?? 'connect', connected: false, syncNotes: true, lastSyncAt: null, imported: 0 });
   const jobs = createJobs({ emit: (job) => toUI('source-job', job) });
   const clients = {};
   const metaCache = {};
@@ -98,13 +98,15 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
   const list = () => SOURCES.map((src) => {
     const s = stateOf(src.id);
     const dir = folderFor(src.id);
-    return { ...publicManifest(src), method: s.method, connected: !!s.connected, freshNext: !!s.freshNext, account: s.account ?? null, lastSyncAt: s.lastSyncAt, imported: s.imported ?? 0, folderPath: dir, notes: dir ? countNotes(dir) : 0, job: jobs.snapshot(src.id) };
+    return { ...publicManifest(src), method: s.method, connected: !!s.connected, syncNotes: s.syncNotes !== false, freshNext: !!s.freshNext, account: s.account ?? null, lastSyncAt: s.lastSyncAt, imported: s.imported ?? 0, folderPath: dir, notes: dir ? countNotes(dir) : 0, job: jobs.snapshot(src.id) };
   });
 
   const fail = (err, fallback) => { log('sources', err?.message ?? err); return { error: err?.message && !/[{};]|ECONN|ENOTFOUND|fetch failed/i.test(err.message) ? err.message : fallback }; };
 
   const handlers = {
     'sources-list': () => list(),
+    // Settings tab: sync on or off; off keeps the connection and the folder but imports nothing until it is on again
+    'source-set-option': (id, patch = {}) => { if (!BY_ID[id]) return { error: 'Unknown source.' }; const s = stateOf(id); if (typeof patch.syncNotes === 'boolean') s.syncNotes = patch.syncNotes; saveSettings(); return { ok: true }; },
     'source-set-method': (id, method) => { const src = BY_ID[id]; if (!src || !src.methods.includes(method)) return { error: 'Unknown method.' }; stateOf(id).method = method; saveSettings(); return { ok: true }; },
     // the browser flow; when it lands the first import starts on its own and the card shows progress
     // fresh: the default browser's session would be reused (that is how a wrong account gets connected twice), so the
@@ -138,6 +140,7 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
     'source-sync': async (id) => {
       if (!BY_ID[id]) return { error: 'Unknown source.' };
       if (!stateOf(id).connected) return { error: 'Connect first.' };
+      if (stateOf(id).syncNotes === false) return { error: 'Sync is off for this connector. Turn it on under Settings.' };
       runSync(id, 'Syncing').catch(() => {});
       return { ok: true };
     },
@@ -145,7 +148,7 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
   };
 
   // connected sources sync on a timer; a run that fails is logged and tried again next time
-  const tick = () => { for (const src of SOURCES) if (stateOf(src.id).connected && !jobs.running(src.id)) runSync(src.id, 'Syncing').catch(() => {}); };
+  const tick = () => { for (const src of SOURCES) if (stateOf(src.id).connected && stateOf(src.id).syncNotes !== false && !jobs.running(src.id)) runSync(src.id, 'Syncing').catch(() => {}); };
   const timer = setInterval(tick, SYNC_EVERY); timer.unref?.();
   setTimeout(tick, 20000).unref?.();
 

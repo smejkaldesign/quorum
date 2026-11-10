@@ -1191,10 +1191,10 @@ button.plat-row:hover, button.plat-row.on { background: rgba(255, 255, 255, 0.04
 .conn-logo.blank { display: grid; place-items: center; background: #2f2f32; color: #bdbdc2; }
 .conn-detail .conn-back { display: inline-flex; align-items: center; gap: 2px; margin: 0 0 14px -4px; color: var(--muted); text-decoration: none; font-size: 13px; }
 .conn-detail .conn-back:hover { color: var(--text); }
-.conn-detail-head { display: flex; align-items: flex-start; gap: 16px; }
+.conn-detail-head { display: flex; align-items: center; gap: 16px; }
 .conn-detail-title { flex: 1; min-width: 0; }
-.conn-detail-title h3 { margin: 2px 0 4px; font-size: 20px; display: flex; align-items: center; gap: 8px; }
-.conn-detail-title p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.conn-detail-title h3 { margin: 0 0 6px; font-size: 20px; color: var(--text); display: flex; align-items: center; gap: 8px; }
+.conn-detail-title p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.55; max-width: 60ch; }
 .conn-detail-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .conn-jobcard { margin-top: 14px; padding: 16px 18px; }
 .conn-jobcard .src-status { margin: 0; }
@@ -1277,3 +1277,18 @@ button.plat-row:hover, button.plat-row.on { background: rgba(255, 255, 255, 0.04
 
 .conn-jobcard.on { border-color: rgba(52, 199, 89, 0.45); background: linear-gradient(180deg, rgba(52, 199, 89, 0.16) 0%, rgba(52, 199, 89, 0.06) 55%, rgba(10, 30, 16, 0.9) 100%); }
 .conn-jobcard .conn-badge { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 10px; font-size: 13px; font-weight: 600; color: #34c759; }
+
+.conn-tabs { display: flex; gap: 4px; margin: 20px 0 8px; border-bottom: 1px solid var(--line-2); }
+.conn-tabs button { padding: 8px 12px; margin-bottom: -1px; font-size: 13px; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; letter-spacing: 0.02em; }
+.conn-tabs button:hover { color: var(--text); }
+.conn-tabs button.on { color: var(--text); border-bottom-color: var(--text); }
+.conn-check { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; cursor: pointer; }
+.conn-check input { margin-top: 3px; width: 16px; height: 16px; accent-color: #007aff; }
+.conn-check > span { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--muted); line-height: 1.45; }
+.conn-check strong { color: var(--text); font-weight: 500; font-size: 14px; }
+.mem-title + .conn-ok { margin-left: 10px; }
+
+/* Settings title as breadcrumbs: same h1 box, plain inline text; the parent is subdued and brightens on hover */
+.set-col h1.crumbs .crumb { color: var(--muted); cursor: pointer; transition: color 160ms ease; outline: none; }
+.set-col h1.crumbs .crumb:hover, .set-col h1.crumbs .crumb:focus-visible { color: var(--text); }
+.set-col h1.crumbs .crumb-sep { color: var(--muted); opacity: 0.55; white-space: pre; }

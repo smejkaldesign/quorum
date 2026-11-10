@@ -113,6 +113,7 @@ contextBridge.exposeInMainWorld('quorum', {
   sourceDisconnect: (id) => ipcRenderer.invoke('source-disconnect', id),
   sourceSync: (id) => ipcRenderer.invoke('source-sync', id),
   sourceSetMethod: (id, method) => ipcRenderer.invoke('source-set-method', id, method),
+  sourceSetOption: (id, patch) => ipcRenderer.invoke('source-set-option', id, patch),
   onSourceJob: on('source-job'),
   claudeLogin: () => ipcRenderer.invoke('claude-login'),
   claudeStatus: () => ipcRenderer.invoke('claude-status'),

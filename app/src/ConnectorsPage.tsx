@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { CalendarSettings, MeetingSourceInfo, SourceJob } from './quorum';
-import { CATEGORIES, CONNECTORS, CONNECTOR_BY_ID, featuresOf, type LibraryConnector } from '../connectors/library';
+import { CATEGORIES, CONNECTORS, CONNECTOR_BY_ID, aboutOf, featuresOf, type LibraryConnector } from '../connectors/library';
 import { useMenu } from './controls';
 import { IconCheck, IconChevron, IconClose, IconExternal, IconGrid, IconMore, IconPlus, IconReset } from './icons';
 
@@ -159,6 +159,7 @@ function ConnectedRow({ connector: x, icon, live, onChange, onOpen }: { connecto
 function ConnectorDetail({ connector: x, icon, live, onChange, initialError = '' }: { connector: LibraryConnector; icon: string | null; live: Live; onChange: () => Promise<void>; initialError?: string }) {
   const [busy, actError, act] = useAct(onChange);
   const error = actError || initialError;
+  const [tab, setTab] = useState<'details' | 'settings'>('details');
   const src = sourceFor(x, live);
   const on = isConnected(x, live);
   const soon = x.status === 'soon';
@@ -196,7 +197,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
         <Logo icon={icon} size={44} />
         <div className="conn-detail-title">
           <h3>{x.name}{soon && <em className="soon grey">Soon</em>}</h3>
-          <p>{x.description}</p>
+          <p>{aboutOf(x)}</p>
         </div>
         <div className="conn-detail-actions">
           {!soon && !on && !(accountProblem && x.kind === 'mcp-source') && <ConnectButton connector={x} live={live} busy={busy} act={act} />}
@@ -206,17 +207,33 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
       {alert && <div className="conn-alert" role="alert"><strong>{accountProblem ? 'Sign in with a different account' : alert.split('. ')[0].replace(/\.$/, '')}</strong><span>{alert}</span></div>}
       <h4>Connectivity</h4>
       <div className={`set-card conn-jobcard${on ? ' on' : ''}`}>
-        {on && <span className="conn-ok conn-badge"><i />Connected</span>}
+        {on && <span className="conn-ok conn-badge"><i />Connected{src && !src.syncNotes ? ' · sync off' : ''}</span>}
         {accountProblem && !on && x.kind === 'mcp-source'
           ? <DifferentAccount connector={x} busy={busy} act={act} />
           : src?.job && src.job.status !== 'failed'
             ? <JobLine job={src.job} />
             : <p className="src-status">{on ? (src ? `Last sync ${ago(src.lastSyncAt)}. Next automatic sync within 30 minutes while Quorum runs.` : 'Connected on this Mac.') : soon ? 'Not available yet.' : 'Not connected yet.'}</p>}
       </div>
-      <h4>Details</h4>
-      <div className="set-card conn-table">
-        {rows.map(([k, v]) => <div key={k} className="conn-kv"><span>{k}</span><span>{v}</span></div>)}
-      </div>
+      {on ? (
+        <div className="conn-tabs" role="tablist">
+          <button role="tab" aria-selected={tab === 'details'} className={tab === 'details' ? 'on' : ''} onClick={() => setTab('details')}>Details</button>
+          <button role="tab" aria-selected={tab === 'settings'} className={tab === 'settings' ? 'on' : ''} onClick={() => setTab('settings')}>Settings</button>
+        </div>
+      ) : <h4>Details</h4>}
+      {tab === 'settings' && on ? (
+        <div className="set-card conn-table">
+          {x.kind === 'mcp-source' && src ? (
+            <label className="conn-check">
+              <input type="checkbox" checked={src.syncNotes} onChange={(e) => act(() => window.quorum.sourceSetOption(src.id, { syncNotes: e.target.checked }))} />
+              <span><strong>Sync meeting notes folder into Quorum</strong><span>New {x.name} meetings are written into your meeting notes folder every 30 minutes while Quorum runs. Off keeps the connection and the folder; nothing new is imported until it is on again.</span></span>
+            </label>
+          ) : <p className="src-status">No settings for this connector yet.</p>}
+        </div>
+      ) : (
+        <div className="set-card conn-table">
+          {rows.map(([k, v]) => <div key={k} className="conn-kv"><span>{k}</span><span>{v}</span></div>)}
+        </div>
+      )}
       <h4>Enables</h4>
       <div className="set-card conn-features">
         <ul>{featuresOf(x).map((f) => <li key={f}><IconCheck width={14} height={14} />{f}</li>)}</ul>

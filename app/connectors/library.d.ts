@@ -7,3 +7,4 @@ export const CONNECTORS: readonly LibraryConnector[];
 export const CONNECTOR_BY_ID: Record<string, LibraryConnector>;
 export function byCategory(categoryId: string): LibraryConnector[];
 export function featuresOf(connector: LibraryConnector): string[];
+export function aboutOf(connector: LibraryConnector): string;
