@@ -78,12 +78,14 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
 
   const runSync = (id, label = 'Importing') => jobs.run(id, label, async (progress) => {
     const src = BY_ID[id];
+    const s0 = stateOf(id);
+    const dropIfUnknown = async (err) => { if (/No Granola account|no .* account for this sign-in/i.test(err?.message ?? '')) { await store.tokens.set(id, null); s0.connected = false; saveSettings(); delete clients[id]; } throw err; };
     const dir = folderFor(id);
     if (!dir) throw new Error('Pick a meeting notes folder in Settings › Memory first.');
     const s = stateOf(id);
     const existing = scanExisting(meetingsDir());
     progress({ message: 'Checking Granola', total: null });
-    const result = await ADAPTERS[src.adapter].sync({ mcp: mcpFor(id), existing, since: s.since ?? undefined, write: writeNote(dir), progress });
+    const result = await ADAPTERS[src.adapter].sync({ mcp: mcpFor(id), existing, since: s.since ?? undefined, write: writeNote(dir), progress }).catch(dropIfUnknown);
     s.lastSyncAt = new Date().toISOString();
     s.imported = (s.imported ?? 0) + result.imported;
     saveSettings();
