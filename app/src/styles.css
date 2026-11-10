@@ -1383,3 +1383,18 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .stub.warn { color: #f0b35a; border-color: rgba(240, 179, 90, 0.4); }
 .set-zero.small { padding: 18px; }
 .set-zero.small p { margin: 0; }
+
+/* the setup interview: template tiles, five short fields, the folder-name choice */
+.setup-form { display: flex; flex-direction: column; gap: 10px; }
+.setup-note { margin: 0; color: var(--muted); font-size: 13px; }
+.setup-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.setup-tile { padding: 12px 14px; }
+.setup-tile span { display: flex; flex-direction: column; gap: 2px; }
+.setup-tile em { font-style: normal; color: var(--muted); font-size: 12px; line-height: 1.35; }
+.setup-organize { flex-wrap: wrap; }
+.setup-example { color: var(--muted); font-size: 12px; }
+.setup-privacy { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.seg { display: inline-flex; padding: 2px; border: 1px solid var(--line-2); border-radius: 999px; background: rgba(255, 255, 255, 0.03); }
+.seg button { padding: 5px 12px; border: 0; border-radius: 999px; background: transparent; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; }
+.seg button.on { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+.setup-modal { width: min(600px, calc(100vw - 32px)); }

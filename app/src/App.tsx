@@ -378,7 +378,7 @@ export function App() {
 
       {view === 'settings' ? (
         <div className="body wide flush">
-          <SettingsView open={settingsPage} brain={brain} settings={settings} onSettings={setSettings} onConnect={async () => setBrain(await window.quorum.connectBrain())} onDisconnect={async () => setBrain(await window.quorum.disconnectBrain())} onBack={() => setView('main')} />
+          <SettingsView open={settingsPage} brain={brain} settings={settings} onSettings={setSettings} onConnect={async () => setBrain(await window.quorum.connectBrain())} onDisconnect={async () => setBrain(await window.quorum.disconnectBrain())} onBrain={setBrain} onBack={() => setView('main')} />
         </div>
       ) : <>
       {tab === 'home' && !convoOpen && (

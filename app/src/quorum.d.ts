@@ -63,6 +63,10 @@ export type ModelSourceStatus = { source: ModelSource; localModel: string; claud
 export type Settings = { meetingProviders?: Record<string, { enabled: boolean }>; autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean }; managedModels?: boolean };
 export type OnboardingStatus = { firstRun: boolean; defaultVaultDir: string };
 export type OnboardingChecks = { permissions: { microphone: string; audio: string; accessibility: string; calendar: string }; claude: { installed: boolean; loggedIn?: boolean; email?: string; org?: string; plan?: string; version?: string; pending?: boolean }; model?: ModelSourceStatus | null };
+// the setup interview: a template plus a few answers that shape a Quorum-built Agent OS (starter.js)
+export type SetupTemplate = 'personal' | 'founder' | 'team-lead';
+export type SetupAnswers = { template: SetupTemplate; role: string; goals: string; projects: string[]; people: string[]; organize: 'areas' | 'plain' };
+export type SetupRecord = { version: number; name: string; answers: SetupAnswers; createdAt: string; updatedAt?: string };
 export type Brain = { root: string; vault: string; name: string; made?: 'quorum' | null; markers: { agentOS: string | null; obsidian: boolean; search: boolean; safetyHooks: boolean } };
 // hosted edition: who is signed in, which organization they are in, and whether notes sync
 export type Role = 'owner' | 'admin' | 'member';
@@ -308,7 +312,10 @@ declare global {
       onboardingStatus(): Promise<OnboardingStatus>;
       onboardingChecks(): Promise<OnboardingChecks>;
       onboardingPermissions(): Promise<Pick<OnboardingChecks, 'permissions'>>;
-      onboardingCreateVault(dir: string | null, name: string): Promise<Brain>;
+      onboardingCreateVault(dir: string | null, name: string, answers?: SetupAnswers | null): Promise<Brain>;
+      onboardingSetupSuggest(): Promise<{ available: boolean; suggestion?: SetupAnswers | null }>;
+      setupRead(): Promise<SetupRecord | null>;
+      setupRerun(answers: SetupAnswers): Promise<Brain & { written: string[] }>;
       onboardingOpenPermission(which: 'microphone' | 'audio' | 'accessibility' | 'calendar'): Promise<void>;
       onboardingRequestMicrophone(): Promise<boolean>;
       onboardingRequestAccessibility(): Promise<void>;

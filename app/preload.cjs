@@ -213,7 +213,10 @@ contextBridge.exposeInMainWorld('quorum', {
   onboardingStatus: () => ipcRenderer.invoke('onboarding-status'),
   onboardingChecks: () => ipcRenderer.invoke('onboarding-checks'),
   onboardingPermissions: () => ipcRenderer.invoke('onboarding-permissions'),
-  onboardingCreateVault: (dir, name) => ipcRenderer.invoke('onboarding-create-vault', dir, name),
+  onboardingCreateVault: (dir, name, answers = null) => ipcRenderer.invoke('onboarding-create-vault', dir, name, answers),
+  onboardingSetupSuggest: () => ipcRenderer.invoke('onboarding-setup-suggest'),
+  setupRead: () => ipcRenderer.invoke('setup-read'),
+  setupRerun: (answers) => ipcRenderer.invoke('setup-rerun', answers),
   onboardingOpenPermission: (which) => ipcRenderer.invoke('onboarding-open-permission', which),
   onboardingRequestMicrophone: () => ipcRenderer.invoke('onboarding-request-microphone'),
   // the helper asks macOS for Accessibility with the system prompt, which opens System Settings with Quorum listed

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { SetupForm, answersFrom, draftFrom, type SetupDraft } from './SetupForm';
 import type { Brain, CalendarSettings, ClaudeStatus, Memory, MemoryItem, OptOut, Profile, Settings, Voice, Workspace, Transcription, DecisionProvider, DecisionsStatus, AccountState, UpdateState } from './quorum';
 import { PersonalConnectors } from './Connectors';
 import { ConnectorsPage } from './ConnectorsPage';
@@ -45,8 +46,8 @@ const WORKSPACE: Nav[] = [
 // the chip on every row whose control is disabled on purpose: the feature is planned and the row shows what it will do
 const Soon = () => <em className="soon">Soon</em>;
 
-export function SettingsView({ open, brain, settings, onSettings, onConnect, onDisconnect, onBack }: {
-  open?: ({ page: Page; n: number } & ConnectorsTarget) | null; brain: Brain | null; settings: Settings; onSettings: (s: Settings) => void; onConnect: () => void; onDisconnect: () => void; onBack: () => void;
+export function SettingsView({ open, brain, settings, onSettings, onConnect, onDisconnect, onBrain, onBack }: {
+  open?: ({ page: Page; n: number } & ConnectorsTarget) | null; brain: Brain | null; settings: Settings; onSettings: (s: Settings) => void; onConnect: () => void; onDisconnect: () => void; onBrain?: (b: Brain) => void; onBack: () => void;
 }) {
   const [saved, setPage] = useSession<Page>('settingsPage', 'preferences');
   // an open connector detail page; cleared when the page changes
@@ -152,7 +153,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
             <><WorkspacePage settings={settings} onSettings={onSettings} /><BillingArea /></>
           ) : page === 'memory' ? (
             <>
-              <SecondBrain brain={brain} onConnect={onConnect} onDisconnect={onDisconnect} onViewConnector={goConnector} />
+              <SecondBrain brain={brain} onConnect={onConnect} onDisconnect={onDisconnect} onBrain={onBrain} onViewConnector={goConnector} />
               {brain && <MemoryScan />}
             </>
           ) : page === 'members' ? <MembersArea />
@@ -198,7 +199,16 @@ function OrgVoiceLocal({ onGo }: { onGo: (p: Page) => void }) {
 }
 
 // the Agent OS, where Quorum saves notes, and meeting notes from other apps; Add takes a folder by hand when there's no connector for that app
-function SecondBrain({ brain, onConnect, onDisconnect, onViewConnector }: { brain: Brain | null; onConnect: () => void; onDisconnect: () => void; onViewConnector: (id: string) => void }) {
+function SecondBrain({ brain, onConnect, onDisconnect, onBrain, onViewConnector }: { brain: Brain | null; onConnect: () => void; onDisconnect: () => void; onBrain?: (b: Brain) => void; onViewConnector: (id: string) => void }) {
+  // the setup interview again, on a folder Quorum built: prefilled with the saved answers
+  const [setup, setSetup] = useState<SetupDraft | null>(null);
+  const [applying, setApplying] = useState(false);
+  const openSetup = async () => setSetup(draftFrom((await window.quorum.setupRead().catch(() => null))?.answers));
+  const applySetup = async () => {
+    if (!setup) return;
+    setApplying(true);
+    try { const b = await window.quorum.setupRerun(answersFrom(setup)); onBrain?.(b); setSetup(null); } finally { setApplying(false); }
+  };
   type Source = Awaited<ReturnType<typeof window.quorum.meetingSources>>[number];
   const [sources, setSources] = useState<Source[]>([]);
   const [icons, setIcons] = useState<Record<string, string | null>>({});
@@ -232,7 +242,7 @@ function SecondBrain({ brain, onConnect, onDisconnect, onViewConnector }: { brai
           title={brain ? <button className="mem-title" onClick={() => window.quorum.openBrain('finder')}>QuorumBrain<IconExternal width={14} height={14} /></button> : 'QuorumBrain'}
           desc={brain ? `${brain.made === 'quorum' ? 'Built by Quorum' : brain.name} · ${home(brain.root)}` : 'Optional. An Agent OS folder of notes Quorum can answer from. Meeting notes work without one.'}>
           {brain
-            ? <RowMenu label="QuorumBrain options" items={[{ label: 'Change folder', icon: <IconFolder width={15} height={15} />, onPick: onConnect }, { label: 'Disconnect', icon: <IconClose width={15} height={15} />, danger: true, onPick: () => setConfirm(true) }]} />
+            ? <RowMenu label="QuorumBrain options" items={[...(brain.made === 'quorum' ? [{ label: 'Set up again', icon: <IconBrain width={15} height={15} />, onPick: openSetup }] : []), { label: 'Change folder', icon: <IconFolder width={15} height={15} />, onPick: onConnect }, { label: 'Disconnect', icon: <IconClose width={15} height={15} />, danger: true, onPick: () => setConfirm(true) }]} />
             : <button className="pill" onClick={onConnect}>Connect</button>}
         </Row>
         <MeetingsRow />
@@ -253,6 +263,16 @@ function SecondBrain({ brain, onConnect, onDisconnect, onViewConnector }: { brai
           </ConnectHint>
         )}
       </div>
+      {setup && (
+        <div className="palette-scrim" onClick={() => setSetup(null)}>
+          <div className="modal setup-modal" role="dialog" aria-label="Set up QuorumBrain again" onClick={(e) => e.stopPropagation()}>
+            <h2>Set up QuorumBrain again</h2>
+            <p>New folders and notes are added; nothing you wrote is changed. The generated section of CLAUDE.md is replaced.</p>
+            <SetupForm draft={setup} onChange={setSetup} />
+            <div className="modal-actions"><button className="link-btn" onClick={() => setSetup(null)}>Cancel</button><button className="pill primary" disabled={applying} onClick={applySetup}>{applying ? 'Applying…' : 'Apply'}</button></div>
+          </div>
+        </div>
+      )}
       {confirm && (
         <ConfirmModal title="Disconnect QuorumBrain?" action="Disconnect"
           body="Quorum stops reading this folder. Answers, memory power-ups and guardrails that came from it stop working, and a meetings folder found inside it has to be chosen again. Nothing is deleted, but this cannot be undone: connecting a folder again means a new import."

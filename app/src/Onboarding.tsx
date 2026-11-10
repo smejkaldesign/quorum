@@ -4,6 +4,7 @@ import { ConnectHint } from './ConnectHint';
 import { IconCalendar, IconCheck, IconFolder, IconFolderOpen, IconLock, IconMic, IconPerson, IconQuorum, IconShield, ProviderMark } from './icons';
 import { isCloud } from './edition';
 import { detectProvider, KEY_NAMES, KEY_PROVIDERS, SOURCE_NAMES, type KeyProvider } from './modelSource';
+import { SetupForm, answersFrom, draftFrom, draftIsEmpty, emptyDraft, type SetupDraft } from './SetupForm';
 import mark from '../assets/quorum-mark.png';
 
 type Step = 'welcome' | 'agentos' | 'you' | 'model' | 'account' | 'permissions' | 'done';
@@ -89,9 +90,22 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const where = dir ?? status?.defaultVaultDir ?? '~/Documents/Quorum';
-  const create = async () => {
+  // the interview: prefilled once from what the person's own AI already knows (no model source, no prefill), skippable
+  const [draft, setDraft] = useState<SetupDraft>(emptyDraft());
+  const [suggest, setSuggest] = useState<'idle' | 'asking' | 'filled' | 'none'>('idle');
+  useEffect(() => {
+    if (mode !== 'create' || suggest !== 'idle') return;
+    let live = true;
+    setSuggest('asking');
+    window.quorum.onboardingSetupSuggest().then((r) => {
+      if (!live) return;
+      if (r.suggestion) { setDraft((d) => (draftIsEmpty(d) ? draftFrom(r.suggestion) : d)); setSuggest('filled'); } else setSuggest('none');
+    }).catch(() => { if (live) setSuggest('none'); });
+    return () => { live = false; };
+  }, [mode]);
+  const create = async (shaped: boolean) => {
     setBusy(true); setError('');
-    try { onBrain(await window.quorum.onboardingCreateVault(dir, name.trim() || 'My Agent OS')); setMode(null); } catch (e) { setError(String((e as Error).message || e)); }
+    try { onBrain(await window.quorum.onboardingCreateVault(dir, name.trim() || 'My Agent OS', shaped ? answersFrom(draft) : null)); setMode(null); } catch (e) { setError(String((e as Error).message || e)); }
     setBusy(false);
   };
   const connect = async () => { const b = await window.quorum.connectBrain(); if (b) { onBrain(b); setMode(null); } };
@@ -136,13 +150,15 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain 
       )}
       {!brain && mode === 'create' && (
         <div className="onb-form">
-          <label className="set-field wide onb-field"><span className="onb-label">Name</span><input value={name} aria-label="Name of your Agent OS" placeholder="My Agent OS" autoFocus onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') create(); }} /></label>
+          <label className="set-field wide onb-field"><span className="onb-label">Name</span><input value={name} aria-label="Name of your Agent OS" placeholder="My Agent OS" autoFocus onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') create(true); }} /></label>
           <div className="onb-row">
             <span className="onb-label">Location</span>
             <code className="onb-path" title={where}>{home(where)}</code>
             <button className="pill" onClick={async () => { const d = await window.quorum.onboardingPickDir(); if (d) setDir(d); }}>Choose…</button>
           </div>
-          <div className="onb-row end"><button className="pill primary" disabled={busy} onClick={create}>{busy ? 'Creating…' : 'Create folder'}</button></div>
+          <div className="onb-or"><span>Shape it around you</span></div>
+          <SetupForm draft={draft} onChange={setDraft} note={suggest === 'asking' ? 'Asking your AI what it already knows about you…' : suggest === 'filled' ? 'Prefilled from what your AI already knows about you. Edit anything.' : null} />
+          <div className="onb-row end"><button className="link-btn onb-skip" disabled={busy} onClick={() => create(false)}>Skip the questions</button><button className="pill primary" disabled={busy} onClick={() => create(true)}>{busy ? 'Creating…' : 'Create folder'}</button></div>
         </div>
       )}
       {error && <p className="set-error">{error}</p>}

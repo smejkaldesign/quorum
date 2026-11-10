@@ -3,6 +3,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { SUGGEST_SYSTEM, parseSuggestion, plan, readSetup, rerunSetup, suggestPrompt, writeStarter } from './starter.js';
 
 const PANES = {
   microphone: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone',
@@ -33,7 +34,7 @@ export function createVault(dir, name = 'My Agent OS') {
 
 export const defaultVaultDir = () => path.join(homedir(), 'Documents', 'Quorum');
 
-export function registerOnboarding({ ipcMain, settings, saveSettings, inspectBrain, connect, systemPreferences, shell, helperAsk, axTrusted, pickDir, claudeStatus, modelStatus, log, hadSettings = false }) {
+export function registerOnboarding({ ipcMain, settings, saveSettings, inspectBrain, connect, systemPreferences, shell, helperAsk, axTrusted, pickDir, claudeStatus, modelStatus, log, hadSettings = false, runText = null, hasModel = () => false, owner = () => '', about = () => '' }) {
   // an install that already has settings is not a first run; mark it so the flag stays stable
   if (hadSettings && !settings.onboarded) { settings.onboarded = 'existing'; saveSettings(); }
   const within = (ms, p, fallback) => Promise.race([p, new Promise((r) => setTimeout(() => r(fallback), ms))]);
@@ -56,14 +57,44 @@ export function registerOnboarding({ ipcMain, settings, saveSettings, inspectBra
     claude: await within(15000, claudeStatus().catch(() => ({ installed: false })), { installed: false, pending: true }),
     model: await within(4000, modelStatus().catch(() => null), null),
   }));
-  ipcMain.handle('onboarding-create-vault', (_e, dir, name) => {
+  // with interview answers the folder is shaped around the person (starter.js); without them it is the plain starter
+  ipcMain.handle('onboarding-create-vault', (_e, dir, name, answers = null) => {
     const target = String(dir || defaultVaultDir());
-    createVault(target, String(name || 'My Agent OS'));
-    log('created Agent OS', target);
+    const title = String(name || 'My Agent OS');
+    if (answers && typeof answers === 'object') {
+      const p = plan({ name: title, answers });
+      writeStarter(target, p);
+      log('created Agent OS', target, 'template', p.answers.template);
+    } else {
+      createVault(target, title);
+      log('created Agent OS', target);
+    }
     const b = connect(inspectBrain(target));
     settings.brainMade = 'quorum';
     saveSettings();
     return { ...b, made: 'quorum' };
+  });
+  // prefill for the interview from the person's own model source; nothing when none is chosen, and a slow or odd
+  // answer is just no prefill
+  ipcMain.handle('onboarding-setup-suggest', async () => {
+    if (!runText || !hasModel()) return { available: false };
+    try {
+      const out = await within(40000, runText(suggestPrompt({ owner: owner(), about: about() }), SUGGEST_SYSTEM), null);
+      return { available: true, suggestion: out == null ? null : parseSuggestion(out) };
+    } catch (e) {
+      log('setup suggestion failed', e?.message || e);
+      return { available: true, suggestion: null };
+    }
+  });
+  // the saved answers of a Quorum-built folder, and the interview again on the connected folder
+  ipcMain.handle('setup-read', () => (settings.brainRoot ? readSetup(settings.brainRoot) : null));
+  ipcMain.handle('setup-rerun', (_e, answers) => {
+    if (!settings.brainRoot || !existsSync(settings.brainRoot)) throw new Error('No Agent OS folder is connected');
+    const prev = readSetup(settings.brainRoot);
+    const name = prev?.name || inspectBrain(settings.brainRoot).name || 'My Agent OS';
+    const r = rerunSetup(settings.brainRoot, { name, answers: answers ?? {} });
+    log('setup re-run', settings.brainRoot, r.written.length, 'new files');
+    return { ...inspectBrain(settings.vaultPath || settings.brainRoot), made: settings.brainMade ?? null, written: r.written };
   });
   ipcMain.handle('onboarding-open-permission', (_e, which) => { if (PANES[which]) shell.openExternal(PANES[which]); });
   // where a new Agent OS goes: a folder the user picks or creates in the dialog; null when they cancel

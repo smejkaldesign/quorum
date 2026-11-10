@@ -1900,6 +1900,7 @@ ipcMain.handle('pick-meetings-dir', async () => {
 const connectBrain = (b) => { Object.assign(settings, { brainRoot: b.root, vaultPath: b.vault, brainMade: null }); store.settings.save(); log('connected Agent OS', b.root); suggester.reset(); openIndex(); return b; };
 registerOnboarding({
   ipcMain, settings, saveSettings, inspectBrain, connect: connectBrain, systemPreferences, shell, helperAsk: (cmd) => calAsk({ cmd }), claudeStatus, modelStatus: () => modelStatus(null), log, hadSettings: store.settings.existed,
+  runText: (prompt, system) => runClaude(prompt, system, 'haiku'), hasModel: () => modelSource() !== 'none', owner: () => OWNER, about: aboutMe,
   axTrusted: () => new Promise((resolve) => { const w = (evt) => resolve(evt.trusted); axWaiters.push(w); helperSend({ cmd: 'axStatus', prompt: false }); setTimeout(() => { const i = axWaiters.indexOf(w); if (i >= 0) axWaiters.splice(i, 1); resolve(lastAx?.trusted ?? null); }, 2500); }),
   pickDir: async () => {
     const r = await dialog.showOpenDialog(win, { title: 'Where should your Agent OS live?', properties: ['openDirectory', 'createDirectory'], defaultPath: path.join(homedir(), 'Documents'), buttonLabel: 'Use folder' });
