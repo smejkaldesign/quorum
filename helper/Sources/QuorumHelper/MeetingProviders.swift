@@ -60,10 +60,10 @@ enum Providers {
     }
 
     // first button under the window whose label matches; capped so a big web page can't stall the poll
-    static func findButton(in win: AXUIElement, where match: (String) -> Bool, limit: Int = 3000) -> AXUIElement? {
+    static func findButton(in win: AXUIElement, where match: (String) -> Bool, limit: Int = 3000, maxDepth: Int = 30) -> AXUIElement? {
         var found: AXUIElement?
         var count = 0
-        AX.walk(win, maxDepth: 30) { el, _ in
+        AX.walk(win, maxDepth: maxDepth) { el, _ in
             if found != nil { return false }
             count += 1
             if count > limit { return false }

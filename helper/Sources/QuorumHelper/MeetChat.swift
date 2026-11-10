@@ -60,7 +60,7 @@ enum MeetChat {
         var found: AXUIElement?
         var fallback: AXUIElement?
         var n = 0
-        AX.walk(win, maxDepth: 40) { el, _ in
+        AX.walk(win, maxDepth: 60) { el, _ in
             if found != nil { return false }
             n += 1
             if n > 6000 { return false }
@@ -74,8 +74,15 @@ enum MeetChat {
         return found ?? fallback
     }
 
+    // the chat panel sits about forty levels down, deeper than the call controls
     static func sendButton(in win: AXUIElement) -> AXUIElement? {
-        Providers.findButton(in: win, where: { $0.localizedCaseInsensitiveContains("send a message") || $0.localizedCaseInsensitiveContains("send message") }, limit: 6000)
+        Providers.findButton(in: win, where: { $0.localizedCaseInsensitiveContains("send a message") || $0.localizedCaseInsensitiveContains("send message") }, limit: 6000, maxDepth: 60)
+    }
+
+    static func enabled(_ el: AXUIElement) -> Bool {
+        var v: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(el, kAXEnabledAttribute as CFString, &v) == .success else { return true }
+        return (v as? Bool) ?? true
     }
 
     // the chat button toggles the side panel, so it is pressed only when the composer is missing
@@ -136,16 +143,22 @@ enum MeetChat {
         return out
     }
 
-    // raise the tab, open the panel, set the composer's value, press Send, then confirm the bubble appeared
+    // raise the tab, open the panel, set the composer's value, press Send, then confirm the bubble appeared. Send stays
+    // disabled until Meet notices typed input, which a value set over AX does not always count as, so Return is the fallback
     static func send(_ text: String) -> String? {
-        guard let (win, _) = callWindow(raise: true) else { return "no Google Meet call in front" }
+        guard let (win, pid) = callWindow(raise: true) else { return "no Google Meet call in front" }
         guard ensureOpen(in: win), let field = input(in: win) else { return "couldn't open the Meet chat panel" }
         AXUIElementSetAttributeValue(field, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         let status = AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, text as CFString)
         if status != .success { return "couldn't set text (AXError \(status.rawValue))" }
-        Thread.sleep(forTimeInterval: 0.2)
-        guard let button = sendButton(in: win) else { return "no Send button in the Meet chat" }
-        AXUIElementPerformAction(button, kAXPressAction as CFString)
+        Thread.sleep(forTimeInterval: 0.3)
+        if let button = sendButton(in: win), enabled(button) {
+            AXUIElementPerformAction(button, kAXPressAction as CFString)
+        } else {
+            AXUIElementSetAttributeValue(field, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+            let src = CGEventSource(stateID: .hidSystemState)
+            for down in [true, false] { CGEvent(keyboardEventSource: src, virtualKey: 0x24, keyDown: down)?.postToPid(pid) }
+        }
         let deadline = Date().addingTimeInterval(3)
         while Date() < deadline {
             if readMessages(in: win).contains(where: { $0.text == text || text.hasSuffix($0.text) }) { return nil }
