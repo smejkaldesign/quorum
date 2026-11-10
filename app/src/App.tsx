@@ -88,6 +88,7 @@ export function App() {
   }, [setView, setTab]);
   const [menuOpen, setMenuOpen] = useState<null | 'status' | 'model' | 'brain'>(null);
   const [brain, setBrain] = useState<Brain | null>(null);
+  const [startingChat, setStartingChat] = useState<string | null>(null);
   // a fresh install shows the wizard until onboarding-done; null until the main process answers
   const [firstRun, setFirstRun] = useState<boolean | null>(null);
   useEffect(() => { window.quorum.onboardingStatus().then((s) => setFirstRun(s.firstRun)).catch(() => setFirstRun(false)); }, []);
@@ -175,13 +176,13 @@ export function App() {
             setPartial((p) => ({ ...p, [e.channel]: '' }));
           } else setPartial((p) => ({ ...p, [e.channel]: text }));
         } else if (e.event === 'status' || e.event === 'error') addLog(`${e.event}: ${e.message}`);
-        else if (e.event === 'chatSent') addLog(`posted in Zoom chat: ${e.text.slice(0, 60)}…`);
-        else if (e.event === 'axStatus') addLog(`accessibility ${e.trusted ? 'granted' : 'NOT granted'}, Zoom ${e.zoomRunning ? 'running' : 'not running'}`);
+        else if (e.event === 'chatSent') addLog(`posted in the call chat: ${e.text.slice(0, 60)}…`);
+        else if (e.event === 'axStatus') addLog(`accessibility ${e.trusted ? 'granted' : 'NOT granted'}, meeting app ${e.zoomRunning ? 'running' : 'not running'}`);
         else if (e.event === 'audioRoute') addLog(`audio out: ${e.name || e.route} (${e.route})`);
       }),
       window.quorum.onSpeakers(applySpeakers),
       window.quorum.onState((s) => {
-        if (s.phase === 'starting') { setPhase('starting'); addLog("posting Quorum's notice in the Zoom chat…"); return; }
+        if (s.phase === 'starting') { setPhase('starting'); setStartingChat(s.chatName ?? null); addLog(s.chatName ? `posting Quorum's notice in the ${s.chatName}…` : 'starting…'); return; }
         if (s.phase === 'idle') { setPhase('idle'); return; }
         if (s.phase === 'summarizing') { setPhase('review'); setSummarizing(true); setNotes(null); setNotesDraft(null); setMeta(s.meta ?? null); return; }
         if (s.phase === 'review') { setPhase('review'); setSummarizing(false); setNotes(s.notes); setNotesDraft(null); setMeta(s.meta ?? null); return; }
@@ -403,14 +404,14 @@ export function App() {
             )}
             {phase === 'idle' && msgs.length === 0 && (
               <QuorumCard>
-                <p>{brain ? `Ask me anything from ${brain.name}. ` : 'Connect your Agent OS so I can answer from your notes. '}When a call starts, I post a notice in the Zoom chat and listen on your Mac.</p>
+                <p>{brain ? `Ask me anything from ${brain.name}. ` : 'Connect your Agent OS so I can answer from your notes. '}When a call starts, I post a notice in the call's chat and listen on your Mac.</p>
                 <div className="row">
                   <button className="pill primary" onClick={() => window.quorum.start()}>Start listening</button>
                   <span className="hint">{settings.autoListen ? <><span className="live-dot" aria-hidden="true" />Auto-listen is on</> : 'Or turn on auto-listen in Settings'}</span>
                 </div>
               </QuorumCard>
             )}
-            {phase === 'starting' && <QuorumCard><p className="muted">Posting my notice in the Zoom chat…</p></QuorumCard>}
+            {phase === 'starting' && <QuorumCard><p className="muted">{startingChat ? `Posting my notice in the ${startingChat}…` : 'Starting…'}</p></QuorumCard>}
             {phase === 'listening' && msgs.length === 0 && (
               <QuorumCard>
                 <p>I'm listening. Ask me anything about this meeting; only you see this chat.</p>

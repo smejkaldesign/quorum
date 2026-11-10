@@ -8,7 +8,7 @@ import Foundation
 // "Send a message", bubbles are plain text under a time stamp, and other people's messages carry a sender line above the time
 enum MeetChat {
     static let timeRe = try! NSRegularExpression(pattern: #"^\d{1,2}:\d{2}\s?(AM|PM)?$"#, options: .caseInsensitive)
-    static let noise: Set<String> = ["Hover over a message to pin it", "Pin message", "keep", "send", "chat", "close", "arrow_back", "In-call messages", "Let participants send messages", "Continuous chat is turned off", "on", "Back", "Close"]
+    static let noise: Set<String> = ["Hover over a message to pin it", "Pin message", "keep", "send", "chat", "close", "arrow_back", "In-call messages", "Let participants send messages", "Continuous chat is turned off", "History is on", "History is off", "on", "Back", "Close"]
 
     static func isTime(_ s: String) -> Bool { timeRe.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)) != nil }
 
@@ -54,18 +54,24 @@ enum MeetChat {
         return found
     }
 
+    // the composer: labelled "Send a message" for years, and since late 2026 after the history setting ("History is on"); the
+    // call page has no other text area, so any text area that is not the browser's address bar is taken when the label is unknown
     static func input(in win: AXUIElement) -> AXUIElement? {
         var found: AXUIElement?
+        var fallback: AXUIElement?
         var n = 0
         AX.walk(win, maxDepth: 40) { el, _ in
             if found != nil { return false }
             n += 1
             if n > 6000 { return false }
             let role = AX.role(el)
-            if role == kAXTextAreaRole || role == kAXTextFieldRole, label(el).localizedCaseInsensitiveContains("send a message") { found = el; return false }
+            guard role == kAXTextAreaRole || role == kAXTextFieldRole else { return true }
+            let text = label(el)
+            if text.localizedCaseInsensitiveContains("send a message") { found = el; return false }
+            if role == kAXTextAreaRole, fallback == nil, !text.localizedCaseInsensitiveContains("address") { fallback = el }
             return true
         }
-        return found
+        return found ?? fallback
     }
 
     static func sendButton(in win: AXUIElement) -> AXUIElement? {

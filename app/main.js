@@ -205,7 +205,7 @@ function postConfirmed(text) {
   });
 }
 
-async function postWithRetry(text, tries = 12) {
+async function postWithRetry(text, tries = 5) {
   for (let i = 0; i < tries; i++) {
     try { await postConfirmed(text); return true; } catch (err) { log(`post attempt ${i + 1} failed: ${err.message}`); }
     if (!meetingActive) return false;
@@ -720,7 +720,7 @@ async function startListening(by) {
     if (shouldBlock(lastInfo.names)) { meeting.starting = false; return blockCall(); }
     showPopup('starting');
   }
-  toUI('state', { phase: 'starting' });
+  toUI('state', { phase: 'starting', chatName: !solo && provider().chat ? provider().chatName : null });
   // a provider without chat posting (Meet, Teams) still starts on your say-so; the on-screen card is the notice and the note records that
   const canPost = !solo && provider().chat;
   const notice = canPost ? MSG.on() : null;
@@ -903,7 +903,8 @@ function showPopup(mode) {
   clearTimeout(popupHideTimer);
   const { workArea: wa } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   popup.setBounds({ x: wa.x + wa.width - POPUP_W, y: wa.y + 4, width: POPUP_W, height: 84 });
-  popup.webContents.send('popup', { mode, durationMs: POPUP_MS[mode] ?? 0, autoListen: settings.autoListen });
+  const p = provider();
+  popup.webContents.send('popup', { mode, durationMs: POPUP_MS[mode] ?? 0, autoListen: settings.autoListen, provider: p.name, chatName: p.chatName, chat: p.chat });
   popup.showInactive();
 }
 

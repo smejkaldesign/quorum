@@ -3,11 +3,15 @@ import type { PopupEvent, PopupMode } from './quorum';
 import appIcon from '../assets/icon-64.png';
 import { IconChevron, IconClose } from './icons';
 
-const COPY: Record<PopupMode, { title: string; sub: string; cta?: string }> = {
-  detected: { title: 'Meeting detected', sub: 'Zoom', cta: 'Listen' },
-  starting: { title: 'Starting Quorum', sub: 'Posting the notice in the Zoom chat…' },
-  listening: { title: 'Quorum is listening', sub: 'Posted in the Zoom chat · STOP ends it', cta: 'Open' },
-  failed: { title: "Quorum isn't recording", sub: "Couldn't post the notice in the Zoom chat", cta: 'Try again' },
+// the lines name the call's app and chat; a provider without a chat Quorum can post in gets the on-Mac wording
+const copyFor = (p: PopupEvent): { title: string; sub: string; cta?: string } => {
+  const chat = p.chatName ?? 'Zoom chat';
+  switch (p.mode) {
+    case 'detected': return { title: 'Meeting detected', sub: p.provider ?? 'Zoom', cta: 'Listen' };
+    case 'starting': return { title: 'Starting Quorum', sub: p.chat === false ? 'Listening on this Mac…' : `Posting the notice in the ${chat}…` };
+    case 'listening': return { title: 'Quorum is listening', sub: p.chat === false ? 'No chat notice · Stop ends it' : `Posted in the ${chat} · STOP ends it`, cta: 'Open' };
+    case 'failed': return { title: "Quorum isn't recording", sub: `Couldn't post the notice in the ${chat}`, cta: 'Try again' };
+  }
 };
 
 export function Popup() {
@@ -45,7 +49,7 @@ export function Popup() {
     return () => clearInterval(t);
   }, [run, hover, p.durationMs]);
 
-  const copy = COPY[p.mode];
+  const copy = copyFor(p);
   const act = () => (p.mode === 'listening' ? window.quorum.popupOpen() : window.quorum.popupListen());
   return (
     <div className={`popup-shell ${shown ? 'in' : ''}`} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>

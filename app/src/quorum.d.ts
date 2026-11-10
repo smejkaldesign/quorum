@@ -138,12 +138,12 @@ export type TreeSort = 'name-asc' | 'name-desc' | 'mtime-desc' | 'mtime-asc' | '
 export type Suggestion = { id: string; kind: 'question' | 'topic'; text: string; caption: string };
 export type Source = { n: number; title: string; rel: string; abs: string; app: string; url: string };
 export type PopupMode = 'detected' | 'starting' | 'listening' | 'failed';
-export type PopupEvent = { mode: PopupMode; durationMs: number; autoListen: boolean };
+export type PopupEvent = { mode: PopupMode; durationMs: number; autoListen: boolean; provider?: string; chatName?: string; chat?: boolean };
 export type StateEvent =
   | { phase: 'listening' | 'paused'; by?: string; go?: string; soft?: boolean }
   | { phase: 'blocked' }
   | { phase: 'summarizing'; meta?: MeetingMeta }
-  | { phase: 'starting' }
+  | { phase: 'starting'; chatName?: string | null }
   | { phase: 'idle' }
   | { phase: 'review'; notes: Notes; meta?: MeetingMeta };
 
