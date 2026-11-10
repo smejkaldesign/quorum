@@ -8,6 +8,7 @@ export const usdPerHour = 0.46;
 export function url({ sampleRate, terms, locale }) {
   const u = new URL('wss://api.deepgram.com/v1/listen');
   u.searchParams.set('model', 'nova-3');
+  u.searchParams.set('mip_opt_out', 'true');
   u.searchParams.set('encoding', 'linear16');
   u.searchParams.set('sample_rate', String(sampleRate));
   u.searchParams.set('channels', '1');
