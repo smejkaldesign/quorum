@@ -541,7 +541,7 @@ ul { margin: 0; padding: 0; list-style: none; }
   position: relative;
   isolation: isolate;
   background: var(--panel);
-  padding: 72px var(--gutter);
+  padding: 152px var(--gutter);
   display: flex; flex-direction: column; gap: 28px;
   color: var(--muted);
 }
