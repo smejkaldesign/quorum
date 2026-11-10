@@ -1,5 +1,5 @@
 export type ConnectorStatus = 'available' | 'soon';
-export type ConnectorKind = 'mcp-source' | 'macos' | 'quorum-mcp' | 'oauth';
+export type ConnectorKind = 'mcp-source' | 'macos' | 'quorum-mcp' | 'oauth' | 'meeting-app';
 export type ConnectorCategory = { id: string; name: string; blurb: string };
 export type LibraryConnector = { id: string; name: string; category: string; domain: string; description: string; status: ConnectorStatus; kind: ConnectorKind; source?: string; app?: string };
 export const CATEGORIES: readonly ConnectorCategory[];

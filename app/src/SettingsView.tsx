@@ -144,7 +144,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
             : page === 'org-voice' ? <WorkspaceVoiceArea local={<OrgVoiceLocal onGo={go} />} />
             : page === 'platform' ? <PlatformArea />
             : page === 'calendar' ? <CalendarPage />
-            : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} />
+            : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} onConnector={(id) => { setPage('connectors'); setConnectorDetail(id); }} />
             : page === 'developers' ? <DevelopersPage />
             : page === 'notifications' ? <NotificationsPage />
             : page === 'connectors' ? <ConnectorsPage detail={connectorDetail} onDetail={setConnectorDetail} />
@@ -879,12 +879,12 @@ const ECHO_DESC: Record<NonNullable<Transcription['echo']>, string> = {
   off: 'Call audio can show as you on speakers',
 };
 
-function MeetingsPage({ settings, onSettings }: { settings: Settings; onSettings: (s: Settings) => void }) {
+function MeetingsPage({ settings, onSettings, onConnector }: { settings: Settings; onSettings: (s: Settings) => void; onConnector: (id: string) => void }) {
   const t = settings.transcription ?? {};
   const saveTx = async (patch: Transcription) => onSettings(await window.quorum.setSettings({ transcription: patch }));
   return (
     <>
-      <MeetingProviders />
+      <MeetingProviders onConnector={onConnector} />
       <h3>Transcribing</h3>
       <p className="mcp-lede">How Quorum turns call audio into text.</p>
       {settings.providers?.speech && settings.providers.speech !== 'apple' && <p className="set-note">Cloud speech engines arrive with the speech provider interface. {BY_ID[settings.providers.speech]?.name ?? 'That provider'} is saved as your speech provider; until then Apple transcribes every meeting on this Mac.</p>}
@@ -930,7 +930,8 @@ function DevelopersPage() {
 }
 
 // the meeting apps the workspace uses, read on this Mac. Zoom gets the notice in its chat; Meet and Teams are detected and captured
-function MeetingProviders() {
+const CONNECTOR_FOR_APP: Record<string, string> = { zoom: 'zoom', meet: 'google-meet', teams: 'teams' };
+function MeetingProviders({ onConnector }: { onConnector: (id: string) => void }) {
   type Provider = Awaited<ReturnType<typeof window.quorum.meetingProviders>>[number];
   const [list, setList] = useState<Provider[] | null>(null);
   const [icons, setIcons] = useState<Record<string, string | null>>({});
@@ -969,12 +970,12 @@ function MeetingProviders() {
           )}
         </span>
       </div>
-      <p className="mcp-lede">The meeting apps Quorum listens to, read on this Mac. Cloud recordings and transcripts come through Connectors.</p>
+      <p className="mcp-lede">The meeting apps Quorum listens to, read on this Mac. Each one is a connector; open it for details and settings.</p>
       <div className="set-card">
         {list?.map((p) => (
           <Row key={p.id}
             icon={icons[p.id] ? <img className="set-app-icon" src={icons[p.id]!} alt="" /> : <IconChat width={18} height={18} />}
-            title={<>{p.name}{ready(p) && <span className="conn-ok"><i />Listening on this Mac</span>}</>} desc={desc(p)}>
+            title={<><button className="mem-title" onClick={() => onConnector(CONNECTOR_FOR_APP[p.id] ?? p.id)}>{p.name}<IconChevron className="right" width={14} height={14} /></button>{ready(p) && <span className="conn-ok"><i />Listening on this Mac</span>}</>} desc={desc(p)}>
             {!p.enabled && <button className="pill" onClick={() => toggle(p, true)}>Add</button>}
             {p.enabled && p.installed && p.access === false && <button className="pill" onClick={() => window.quorum.axSettingsOpen()}>Open System Settings</button>}
             {p.enabled && (
@@ -982,6 +983,7 @@ function MeetingProviders() {
                 <button className="icon-btn" aria-label={`${p.name} options`} aria-haspopup="menu" aria-expanded={menu === p.id} data-tip="More options" onClick={() => setMenu((m) => (m === p.id ? null : p.id))}><IconMore /></button>
                 {menu === p.id && (
                   <div className="menu end" role="menu">
+                    <button role="menuitem" onClick={() => { setMenu(null); onConnector(CONNECTOR_FOR_APP[p.id] ?? p.id); }}><IconGrid width={15} height={15} /> View connector</button>
                     <button role="menuitem" onClick={() => { setMenu(null); setDetails(p); }}><IconInfo width={15} height={15} /> View details</button>
                     <button role="menuitem" onClick={() => { setMenu(null); window.quorum.meetingProviderCheck().then(() => setTimeout(reload, 1500)); }}><IconReset width={15} height={15} /> Check again</button>
                     <button role="menuitem" onClick={() => { setMenu(null); window.quorum.axSettingsOpen(); }}><IconLock width={15} height={15} /> Accessibility settings</button>
