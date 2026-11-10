@@ -6,7 +6,7 @@ const attrs = (tag) => { const o = {}; for (const m of tag.matchAll(ATTR)) o[m[1
 const inner = (block, tag) => { const m = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`).exec(block); return m ? m[1] : null; };
 const selfClosed = (block, tag) => new RegExp(`<${tag}\\b[^>]*/>`).test(block);
 
-// "Eric Smejkal (note creator) from Headways (eric@headways.ai), Dana Lee from Acme (dana@acme.com)"
+// "Alex Rivera (note creator) from Acme (alex@example.com), Dana Lee from Globex (dana@example.com)"
 export function parseParticipants(text) {
   return decode(text ?? '').replace(/\s+/g, ' ').trim().split(/,\s+(?=[A-Z][^,]*?(?: from | \(|$))/).map((p) => p.trim()).filter(Boolean).map((p) => {
     const recorder = /\(note creator\)/.test(p);
