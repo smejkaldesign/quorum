@@ -60,7 +60,7 @@ export function GuardrailsPage() {
       {pending.length > 0 && (
         <>
           <h3>Found in your Agent OS</h3>
-          <p className="mcp-lede">Guards your Agent OS already has. Include one and it runs on every read Quorum makes. Only guards that change what an agent may read or say are offered here{st.skipped.length ? `; ${st.skipped.length} other ${st.skipped.length === 1 ? 'hook does' : 'hooks do'} something else and ${st.skipped.length === 1 ? 'is' : 'are'} not` : ''}.</p>
+          <p className="mcp-lede">Guards your Agent OS already has. Include one and it runs on every read Quorum makes. Only guards that change what an agent may read or say are offered here.</p>
           <div className="set-card">{pending.map(ruleRow)}</div>
         </>
       )}
@@ -70,7 +70,7 @@ export function GuardrailsPage() {
           <div className="set-card">{decided.map(ruleRow)}</div>
         </>
       )}
-      {st.skipped.length > 0 && <Skipped items={st.skipped} />}
+      {fromOs.length === 0 && <p className="mcp-lede guard-note">Your Agent OS has no read guards of its own to offer; the built-in rules above cover its private folders and confidential notes. Its other hooks (memory, sessions, formatting) are not guardrails and are left alone.</p>}
 
       <div className="set-head">
         <h3>Your rules</h3>
@@ -107,16 +107,6 @@ function RuleMenu({ onRemove }: { onRemove: () => void }) {
       <button className="icon-btn" aria-label="Rule options" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}><IconMore /></button>
       {open && <div className="menu end" role="menu"><button role="menuitem" className="danger" onClick={() => { setOpen(false); onRemove(); }}><IconTrash width={15} height={15} /> Remove</button></div>}
     </span>
-  );
-}
-
-function Skipped({ items }: { items: { name: string; reason: string }[] }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="guard-skipped">
-      <button className="link-btn plain" onClick={() => setOpen((o) => !o)}>{open ? 'Hide' : 'Show'} the {items.length} {items.length === 1 ? 'hook' : 'hooks'} not offered</button>
-      {open && <ul>{items.map((s) => <li key={s.name}><code>{s.name}</code> <span>{s.reason}</span></li>)}</ul>}
-    </div>
   );
 }
 
