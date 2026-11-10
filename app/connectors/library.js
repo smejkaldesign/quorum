@@ -107,14 +107,14 @@ const OVERRIDES = {
 };
 // two or three lines for the top of a connector's page: what it is, what Quorum does with it, where things land
 const ABOUT = {
-  granola: 'Granola records and summarizes your meetings on its own. Connect it and Quorum reads those notes over Granola\'s MCP server, writes each meeting into your meeting notes folder tagged source: granola, and keeps checking for new meetings every 30 minutes while it runs. Granola stays your recorder and its AI stays in charge of the summaries; Quorum is where that knowledge lives alongside everything else.',
-  'apple-calendar': 'The Calendar app already holds every calendar on this Mac. Allow access and Quorum shows your upcoming meetings on Home, reminds you before each one, and gives every note the meeting title and the people in it. Nothing leaves this Mac for this connector.',
-  'claude-code': 'Claude Code runs in your terminal and can read your notes through the quorum MCP server that ships with the app. Add it and you can ask about meetings, write specs and bug reports from what was said, and pull action items into your work, all on this Mac.',
+  granola: 'Granola records and summarizes your meetings on its own. Quorum reads those notes over Granola\'s MCP server and writes each meeting into your notes folder, checking for new ones every 30 minutes. Granola stays your recorder; Quorum is where the knowledge lives.',
+  'apple-calendar': 'The Calendar app already holds every calendar on this Mac. Allow access and Quorum shows upcoming meetings on Home and gives every note its title and people. Nothing leaves this Mac.',
+  'claude-code': 'Claude Code reads your notes through the quorum MCP server that ships with the app. Ask about meetings, write specs and bug reports from what was said, and pull action items into your work. Everything stays on this Mac.',
 };
 const ABOUT_BY_CATEGORY = {
-  'meeting-notes': (n) => `${n} records and summarizes your meetings. Once connected, Quorum reads those notes, writes each meeting into your meeting notes folder tagged with its source, and keeps importing new ones while it runs. ${n} stays your recorder; Quorum is where the knowledge lives next to everything else you know.`,
+  'meeting-notes': (n) => `${n} records and summarizes your meetings. Quorum reads those notes and writes each meeting into your notes folder, tagged with its source. ${n} stays your recorder; Quorum is where the knowledge lives.`,
   calendar: (n) => `${n} holds your schedule. Once connected, Quorum shows upcoming meetings on Home, reminds you before each one, and gives every note the meeting title and the people in it.`,
-  meetings: (n) => `${n} records your calls in the cloud. Once connected, Quorum picks up each recording and transcript when ${n} finishes processing it and turns it into a meeting note, including calls Quorum did not listen to live.`,
+  meetings: (n) => `${n} records your calls in the cloud. Quorum picks up each recording and transcript once ${n} has processed it and turns it into a meeting note. That covers calls Quorum did not listen to live.`,
   communication: (n) => `${n} is where your team talks. Once connected, Quorum can share a meeting note there in one step and draft follow-ups from what was said.`,
   crm: (n) => `${n} holds your customers and deals. Once connected, Quorum sends meeting notes to the matching people, companies and deals and logs the meeting on the record.`,
   tasks: (n) => `${n} tracks your work. Once connected, Quorum turns action items from meetings into ${n} tasks and links each one back to the note it came from.`,

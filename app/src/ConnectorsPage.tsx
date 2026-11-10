@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import type { CalendarSettings, MeetingSourceInfo, SourceJob } from './quorum';
 import { CATEGORIES, CONNECTORS, CONNECTOR_BY_ID, aboutOf, featuresOf, type LibraryConnector } from '../connectors/library';
 import { useMenu } from './controls';
@@ -199,11 +200,11 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
           <h3>{x.name}{soon && <em className="soon grey">Soon</em>}</h3>
           <p>{aboutOf(x)}</p>
         </div>
-        <div className="conn-detail-actions">
-          {!soon && !on && !(accountProblem && x.kind === 'mcp-source') && <ConnectButton connector={x} live={live} busy={busy} act={act} />}
-          {on && <Actions connector={x} live={live} busy={busy} act={act} />}
-        </div>
       </div>
+      <TitleActions>
+        {!soon && !on && !(accountProblem && x.kind === 'mcp-source') && <ConnectButton connector={x} live={live} busy={busy} act={act} />}
+        {on && <Actions connector={x} live={live} busy={busy} act={act} compact />}
+      </TitleActions>
       {alert && <div className="conn-alert" role="alert"><strong>{accountProblem ? 'Sign in with a different account' : alert.split('. ')[0].replace(/\.$/, '')}</strong><span>{alert}</span></div>}
       <h4>Connectivity</h4>
       <div className={`set-card conn-jobcard${on ? ' on' : ''}`}>
@@ -251,6 +252,13 @@ const startConnect = async (x: LibraryConnector, fresh = false): Promise<{ ok?: 
 };
 const connectLabel = (x: LibraryConnector, busy: boolean, full: boolean) =>
   busy ? (x.kind === 'mcp-source' ? 'Finish in your browser…' : x.kind === 'macos' ? 'Waiting for macOS…' : 'Adding…') : x.kind === 'macos' ? 'Allow' : x.kind === 'quorum-mcp' ? 'Add' : full ? `Connect ${x.name}` : 'Connect';
+
+// the connector's controls live on the title row, next to the breadcrumbs, which SettingsView renders
+function TitleActions({ children }: { children: ReactNode }) {
+  const [slot, setSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => { setSlot(document.getElementById('conn-title-actions')); }, []);
+  return slot ? createPortal(children, slot) : null;
+}
 
 function ConnectButton({ connector: x, live, busy, act }: { connector: LibraryConnector; live: Live; busy: boolean; act: Act }) {
   if (x.id === 'apple-calendar' && live.cal?.status === 'denied') return <button className="pill" onClick={() => window.quorum.calendarPrivacy()}>Open System Settings</button>;
