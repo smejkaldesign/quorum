@@ -1,0 +1,15 @@
+node_modules/
+dist/
+helper/.build/
+.DS_Store
+sessions/
+release/
+app/.dev/
+.env
+.env.development
+supabase/.temp/
+.claude/
+.claude/worktrees/
+app/eval/corpus/*/
+app/eval/results/
+site/app-preview/

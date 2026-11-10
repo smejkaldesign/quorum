@@ -1,0 +1,12 @@
+# gitleaks configuration for this repository. CI runs gitleaks over the full history (.github/workflows/ci.yml) and a
+# contributor can run `gitleaks git .` before pushing. The default rules apply; the allowlist below names the one
+# value that is public by design.
+title = "Quorum"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "The local Supabase stack (supabase start) ships one anon key that is the same for every local stack and is printed by the CLI on start; its payload names the issuer supabase-demo. app/ee/account.js holds it so a development copy can sign in to the local stack with no .env.development."
+regexTarget = "match"
+regexes = ['''eyJpc3MiOiJzdXBhYmFzZS1kZW1vIi''']

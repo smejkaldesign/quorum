@@ -1,0 +1,13 @@
+/* Rules that apply only to the app preview on quorum.watch, on top of src/styles.css. */
+
+/* The view switch, Home's filters and the graph respond. Everything else would need a main process behind it. */
+.panel { pointer-events: none; user-select: none; }
+.bar .tabs, .hist-filters > .filter, .graph-canvas, .kb-crumb { pointer-events: auto; }
+
+/* nothing inside the frame scrolls, so the wheel always moves the page around it */
+.body, .kb-tree { overflow: hidden; }
+
+/* mock.ts changes the quote on an interval; each one fades in */
+.hist-hero { animation: preview-quote 0.5s ease; }
+@keyframes preview-quote { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .hist-hero { animation: none; } }

@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Build helper
+        run: swift build
+        working-directory: helper
+      - name: Test helper
+        run: swift test
+        working-directory: helper
+      - name: Install
+        run: npm ci
+        working-directory: app
+      - name: Typecheck
+        run: npm run typecheck
+        working-directory: app
+      - name: Lint
+        run: npm run lint
+        working-directory: app
+      - name: Test
+        run: npm test
+        working-directory: app
+      - name: Founder content guard
+        run: npm run check:content
+        working-directory: app
+      - name: Build local edition and check the ee boundary
+        run: npm run build && npm run check:edition
+        working-directory: app
+      - name: Build cloud edition and check the ee boundary
+        run: npm run build:cloud && npm run check:edition
+        working-directory: app
+        env:
+          QUORUM_EDITION: cloud
+      # the home page on quorum.watch shows this build; a renderer change that breaks it fails here, not on the site
+      - name: Build the site's app preview
+        run: npm run build:site-preview
+        working-directory: app
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    # pull_request runs list the PR's commits through the API, which the default token cannot do without this
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Needed only when the repository belongs to an organization account; a personal account runs without it.
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}

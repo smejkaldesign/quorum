@@ -1,0 +1,548 @@
+[
+ {
+  "text": "Knowledge is power.",
+  "find": null,
+  "who": "Francis Bacon",
+  "source": "Meditationes Sacrae, 1597",
+  "url": "https://en.wikiquote.org/wiki/Knowledge"
+ },
+ {
+  "text": "Know thyself.",
+  "find": null,
+  "who": "Thales",
+  "source": "as quoted by Diogenes Laërtius, Lives of Eminent Philosophers, I, 40",
+  "url": "https://en.wikiquote.org/wiki/Thales"
+ },
+ {
+  "text": "I think, therefore I am.",
+  "find": "je pense, donc je suis",
+  "who": "René Descartes",
+  "source": "Discourse on the Method, 1637",
+  "url": "https://en.wikiquote.org/wiki/Ren%C3%A9_Descartes"
+ },
+ {
+  "text": "Dare to be wise.",
+  "find": "sapere aude",
+  "who": "Horace",
+  "source": "Epistles, I. 2. 40",
+  "url": "https://en.wikiquote.org/wiki/Wisdom"
+ },
+ {
+  "text": "Simplify, simplify.",
+  "find": "simplify, simplify",
+  "who": "Henry David Thoreau",
+  "source": "Walden, 1854",
+  "url": "https://en.wikiquote.org/wiki/Walden"
+ },
+ {
+  "text": "Make haste slowly.",
+  "find": "festina lente",
+  "who": "Augustus",
+  "source": "as told by Suetonius",
+  "url": "https://en.wikiquote.org/wiki/Augustus"
+ },
+ {
+  "text": "The medium is the message.",
+  "find": null,
+  "who": "Marshall McLuhan",
+  "source": "Understanding Media, 1964",
+  "url": "https://en.wikiquote.org/wiki/Marshall_McLuhan"
+ },
+ {
+  "text": "Information wants to be free.",
+  "find": null,
+  "who": "Stewart Brand",
+  "source": "Whole Earth Review, May 1985",
+  "url": "https://en.wikiquote.org/wiki/Stewart_Brand"
+ },
+ {
+  "text": "Stay hungry. Stay foolish.",
+  "find": "stay hungry",
+  "who": "Whole Earth Catalog",
+  "source": "final issue, 1974",
+  "url": "https://en.wikipedia.org/wiki/Whole_Earth_Catalog"
+ },
+ {
+  "text": "I contain multitudes.",
+  "find": "i contain multitudes",
+  "who": "Walt Whitman",
+  "source": "Song of Myself, Leaves of Grass, 1855",
+  "url": "https://en.wikiquote.org/wiki/Leaves_of_Grass"
+ },
+ {
+  "text": "Eureka!",
+  "find": null,
+  "who": "Archimedes",
+  "source": "as told by Vitruvius",
+  "url": "https://en.wikiquote.org/wiki/Archimedes"
+ },
+ {
+  "text": "Fortune favours the brave.",
+  "find": "fortune favours the brave",
+  "who": "Terence",
+  "source": "Phormio",
+  "url": "https://en.wikiquote.org/wiki/Terence"
+ },
+ {
+  "text": "Curiouser and curiouser!",
+  "find": "curiouser and curiouser",
+  "who": "Lewis Carroll",
+  "source": "Alice's Adventures in Wonderland, 1865",
+  "url": "https://en.wikiquote.org/wiki/Alice%27s_Adventures_in_Wonderland"
+ },
+ {
+  "text": "Books are for use.",
+  "find": "books are for use",
+  "who": "S. R. Ranganathan",
+  "source": "Five Laws of Library Science, 1928",
+  "url": "https://en.wikiquote.org/wiki/Books"
+ },
+ {
+  "text": "Dare to be naïve.",
+  "find": "dare to be naïve",
+  "who": "Buckminster Fuller",
+  "source": "Synergetics, 1975",
+  "url": "https://en.wikiquote.org/wiki/Buckminster_Fuller"
+ },
+ {
+  "text": "Art is Power.",
+  "find": "art is power",
+  "who": "Henry Wadsworth Longfellow",
+  "source": "Hyperion, 1839",
+  "url": "https://en.wikiquote.org/wiki/Art"
+ },
+ {
+  "text": "Design is redesign.",
+  "find": "design is redesign",
+  "who": "Jan Michl",
+  "source": "On Seeing Design as Redesign, 2002",
+  "url": "https://en.wikiquote.org/wiki/Design"
+ },
+ {
+  "text": "Which was to be proved.",
+  "find": "which was to be proved",
+  "who": "Euclid",
+  "source": "Elements, Book I, Proposition 4",
+  "url": "https://en.wikiquote.org/wiki/Euclid"
+ },
+ {
+  "text": "Experience teaches.",
+  "find": "experientia docet",
+  "who": "Tacitus",
+  "source": "Annals, Book V",
+  "url": "https://en.wikiquote.org/wiki/Experience"
+ },
+ {
+  "text": "Friends are born, not made.",
+  "find": "friends are born, not made",
+  "who": "Henry Adams",
+  "source": "The Education of Henry Adams, 1907",
+  "url": "https://en.wikiquote.org/wiki/Friendship"
+ },
+ {
+  "text": "In my mind's eye, Horatio.",
+  "find": "in my mind's eye, horatio",
+  "who": "William Shakespeare",
+  "source": "Hamlet, Act I, scene 2",
+  "url": "https://en.wikiquote.org/wiki/Hamlet"
+ },
+ {
+  "text": "More matter with less art.",
+  "find": "more matter with less art",
+  "who": "William Shakespeare",
+  "source": "Hamlet, Act II, scene 2",
+  "url": "https://en.wikiquote.org/wiki/Hamlet"
+ },
+ {
+  "text": "Build castles in the air.",
+  "find": "build castles in the air",
+  "who": "Robert Burton",
+  "source": "The Anatomy of Melancholy, 1621",
+  "url": "https://en.wikiquote.org/wiki/Imagination"
+ },
+ {
+  "text": "A penny for your thoughts.",
+  "find": "a penny for your thoughts",
+  "who": "Jonathan Swift",
+  "source": "Polite Conversation, 1738",
+  "url": "https://en.wikiquote.org/wiki/Jonathan_Swift"
+ },
+ {
+  "text": "Life itself is a quotation.",
+  "find": "life itself is a quotation",
+  "who": "Jorge Luis Borges",
+  "source": "as quoted in Jean Baudrillard, Cool Memories, 1987",
+  "url": "https://en.wikiquote.org/wiki/Jorge_Luis_Borges"
+ },
+ {
+  "text": "Language is its own music.",
+  "find": "language is its own music",
+  "who": "Naomi Shihab Nye",
+  "source": "interview with Al Jadid, 1996",
+  "url": "https://en.wikiquote.org/wiki/Language"
+ },
+ {
+  "text": "Verbing weirds language.",
+  "find": "verbing weirds language",
+  "who": "Bill Watterson",
+  "source": "Calvin and Hobbes, Homicidal Psycho Jungle Cat, 1994",
+  "url": "https://en.wikiquote.org/wiki/Language"
+ },
+ {
+  "text": "Syllables govern the world.",
+  "find": "syllables govern the world",
+  "who": "John Selden",
+  "source": "Table Talk, 1689",
+  "url": "https://en.wikiquote.org/wiki/Language"
+ },
+ {
+  "text": "A scholar knows no ennui.",
+  "find": "a scholar knows no ennui",
+  "who": "Jean Paul",
+  "source": "Hesperus",
+  "url": "https://en.wikiquote.org/wiki/Learning"
+ },
+ {
+  "text": "Men learn while they teach.",
+  "find": "men learn while they teach",
+  "who": "Seneca the Younger",
+  "source": "Letters to Lucilius, VII",
+  "url": "https://en.wikiquote.org/wiki/Learning"
+ },
+ {
+  "text": "Wearing his wisdom lightly.",
+  "find": "wearing his wisdom lightly",
+  "who": "Alfred Tennyson",
+  "source": "A Dedication",
+  "url": "https://en.wikiquote.org/wiki/Learning"
+ },
+ {
+  "text": "My mind's my kingdom.",
+  "find": "my mind's my kingdom",
+  "who": "Francis Quarles",
+  "source": "School of the Heart",
+  "url": "https://en.wikiquote.org/wiki/Mind"
+ },
+ {
+  "text": "Mind moves matter.",
+  "find": null,
+  "who": "Virgil",
+  "source": "Aeneid, Book VI, line 727",
+  "url": "https://en.wikiquote.org/wiki/Virgil"
+ },
+ {
+  "text": "Words are deeds.",
+  "find": "words are deeds",
+  "who": "Ludwig Wittgenstein",
+  "source": "Culture and Value, 1980",
+  "url": "https://en.wikiquote.org/wiki/Ludwig_Wittgenstein"
+ },
+ {
+  "text": "I don't explain—I explore.",
+  "find": "i don't explain—i explore",
+  "who": "Marshall McLuhan",
+  "source": "Hot & Cool, 1967",
+  "url": "https://en.wikiquote.org/wiki/Marshall_McLuhan"
+ },
+ {
+  "text": "What do I know?",
+  "find": "what do i know",
+  "who": "Michel de Montaigne",
+  "source": "Essays, Book II, Ch. 12",
+  "url": "https://en.wikiquote.org/wiki/Michel_de_Montaigne"
+ },
+ {
+  "text": "Another roof, another proof.",
+  "find": null,
+  "who": "Paul Erdős",
+  "source": "his motto, as quoted in A Tribute to Paul Erdős, 1990",
+  "url": "https://en.wikiquote.org/wiki/Paul_Erd%C5%91s"
+ },
+ {
+  "text": "My brain is open!",
+  "find": null,
+  "who": "Paul Erdős",
+  "source": "his greeting, as quoted in My Brain Is Open, 1998",
+  "url": "https://en.wikiquote.org/wiki/Paul_Erd%C5%91s"
+ },
+ {
+  "text": "This one's from the Book!",
+  "find": null,
+  "who": "Paul Erdős",
+  "source": "as quoted in Philosophy of Mathematics, 2008",
+  "url": "https://en.wikiquote.org/wiki/Paul_Erd%C5%91s"
+ },
+ {
+  "text": "Language is fossil poetry.",
+  "find": "language is fossil poetry",
+  "who": "Ralph Waldo Emerson",
+  "source": "The Poet, 1844",
+  "url": "https://en.wikiquote.org/wiki/Poetry"
+ },
+ {
+  "text": "Poetry: play on words.",
+  "find": "poetry: play on words",
+  "who": "Yahia Lababidi",
+  "source": "Signposts to Elsewhere, 2008",
+  "url": "https://en.wikiquote.org/wiki/Poetry"
+ },
+ {
+  "text": "Life is our dictionary.",
+  "find": "life is our dictionary",
+  "who": "Ralph Waldo Emerson",
+  "source": "The American Scholar, 1837",
+  "url": "https://en.wikiquote.org/wiki/Ralph_Waldo_Emerson"
+ },
+ {
+  "text": "When we read, we interpret.",
+  "find": "when we read, we interpret",
+  "who": "Philip Nel",
+  "source": "The Annotated Cat in the Hat, 2007",
+  "url": "https://en.wikiquote.org/wiki/Reading"
+ },
+ {
+  "text": "Reading maketh a full man.",
+  "find": null,
+  "who": "Francis Bacon",
+  "source": "Of Studies",
+  "url": "https://en.wikiquote.org/wiki/Reading"
+ },
+ {
+  "text": "He that runs may read.",
+  "find": null,
+  "who": "Alfred Tennyson",
+  "source": "The Flower",
+  "url": "https://en.wikiquote.org/wiki/Reading"
+ },
+ {
+  "text": "Reason conquers all.",
+  "find": "reason conquers all",
+  "who": "Marcus Manilius",
+  "source": "Astronomica, IV",
+  "url": "https://en.wikiquote.org/wiki/Reason"
+ },
+ {
+  "text": "Every why hath a wherefore.",
+  "find": "every why hath a wherefore",
+  "who": "William Shakespeare",
+  "source": "The Comedy of Errors, Act II, scene 2",
+  "url": "https://en.wikiquote.org/wiki/Reason"
+ },
+ {
+  "text": "Truth is within ourselves.",
+  "find": null,
+  "who": "Robert Browning",
+  "source": "Paracelsus, 1835",
+  "url": "https://en.wikiquote.org/wiki/Robert_Browning"
+ },
+ {
+  "text": "Science is our century’s art.",
+  "find": "science is our century’s art",
+  "who": "Horace Freeland Judson",
+  "source": "The Art of Discovery",
+  "url": "https://en.wikiquote.org/wiki/Science"
+ },
+ {
+  "text": "Science is magic that works.",
+  "find": "science is magic that works",
+  "who": "Kurt Vonnegut",
+  "source": "Cat's Cradle, 1963",
+  "url": "https://en.wikiquote.org/wiki/Science"
+ },
+ {
+  "text": "Man is a reasoning animal.",
+  "find": "man is a reasoning animal",
+  "who": "Seneca the Younger",
+  "source": "Letters to Lucilius",
+  "url": "https://en.wikiquote.org/wiki/Seneca_the_Younger"
+ },
+ {
+  "text": "A tale in everything.",
+  "find": "a tale in everything",
+  "who": "William Wordsworth",
+  "source": "Simon Lee",
+  "url": "https://en.wikiquote.org/wiki/Storytelling"
+ },
+ {
+  "text": "And thereby hangs a tale.",
+  "find": "and thereby hangs a tale",
+  "who": "William Shakespeare",
+  "source": "The Taming of the Shrew, Act IV, scene 1",
+  "url": "https://en.wikiquote.org/wiki/Storytelling"
+ },
+ {
+  "text": "But that's another story.",
+  "find": "but that's another story",
+  "who": "Rudyard Kipling",
+  "source": "Soldiers Three",
+  "url": "https://en.wikiquote.org/wiki/Storytelling"
+ },
+ {
+  "text": "Thought is free.",
+  "find": "thought is free",
+  "who": "William Shakespeare",
+  "source": "Twelfth Night, Act I, scene 3",
+  "url": "https://en.wikiquote.org/wiki/Thought"
+ },
+ {
+  "text": "Time discovers truth.",
+  "find": "veritatem dies aperit",
+  "who": "Seneca the Younger",
+  "source": "De Ira, II",
+  "url": "https://en.wikiquote.org/wiki/Truth"
+ },
+ {
+  "text": "We live for books.",
+  "find": "we live for books",
+  "who": "Umberto Eco",
+  "source": "The Name of the Rose, 1980",
+  "url": "https://en.wikiquote.org/wiki/Umberto_Eco"
+ },
+ {
+  "text": "Be united—united—united.",
+  "find": "be united—united—united",
+  "who": "Friedrich Schiller",
+  "source": "Wilhelm Tell",
+  "url": "https://en.wikiquote.org/wiki/Unity"
+ },
+ {
+  "text": "Think we must.",
+  "find": "think we must",
+  "who": "Virginia Woolf",
+  "source": "Three Guineas, 1938",
+  "url": "https://en.wikiquote.org/wiki/Virginia_Woolf"
+ },
+ {
+  "text": "Let us cultivate our garden.",
+  "find": "let us cultivate our garden",
+  "who": "Voltaire",
+  "source": "Candide, 1759",
+  "url": "https://en.wikiquote.org/wiki/Voltaire"
+ },
+ {
+  "text": "One thought fills immensity.",
+  "find": "one thought fills immensity",
+  "who": "William Blake",
+  "source": "The Marriage of Heaven and Hell, 1790–1793",
+  "url": "https://en.wikiquote.org/wiki/William_Blake"
+ },
+ {
+  "text": "Winged words.",
+  "find": "winged words",
+  "who": "Homer",
+  "source": "Iliad, Book I",
+  "url": "https://en.wikiquote.org/wiki/Homer"
+ },
+ {
+  "text": "Wonderful to tell.",
+  "find": "wonderful to tell",
+  "who": "Virgil",
+  "source": "Aeneid, Book I, line 439",
+  "url": "https://en.wikiquote.org/wiki/Virgil"
+ },
+ {
+  "text": "I wait with listening ears.",
+  "find": "i wait with listening ears",
+  "who": "Virgil",
+  "source": "Aeneid, Book II, line 303",
+  "url": "https://en.wikiquote.org/wiki/Virgil"
+ },
+ {
+  "text": "Leave no stone unturned.",
+  "find": "leave no stone unturned",
+  "who": "Euripides",
+  "source": "Heraclidae",
+  "url": "https://en.wikiquote.org/wiki/Euripides"
+ },
+ {
+  "text": "Friends are ourselves.",
+  "find": "friends are ourselves",
+  "who": "John Donne",
+  "source": "To Ben Jonson, 1603",
+  "url": "https://en.wikiquote.org/wiki/John_Donne"
+ },
+ {
+  "text": "Think before thou speakest.",
+  "find": "think before thou speakest",
+  "who": "Miguel de Cervantes",
+  "source": "Don Quixote, Ch. 3",
+  "url": "https://en.wikiquote.org/wiki/Miguel_de_Cervantes"
+ },
+ {
+  "text": "Friends share all things.",
+  "find": "friends share all things",
+  "who": "Pythagoras",
+  "source": "as quoted by Diogenes Laërtius, Lives of Eminent Philosophers",
+  "url": "https://en.wikiquote.org/wiki/Pythagoras"
+ },
+ {
+  "text": "I cannot live without books.",
+  "find": "i cannot live without books",
+  "who": "Thomas Jefferson",
+  "source": "letter to John Adams, 1815",
+  "url": "https://en.wikiquote.org/wiki/Thomas_Jefferson"
+ },
+ {
+  "text": "Profundity must smile.",
+  "find": "profundity must smile",
+  "who": "Thomas Mann",
+  "source": "The Beloved Returns, 1939",
+  "url": "https://en.wikiquote.org/wiki/Thomas_Mann"
+ },
+ {
+  "text": "Thoughts are things.",
+  "find": "thoughts are things",
+  "who": "Bruce Lee",
+  "source": "Jeet Kune Do, 1997",
+  "url": "https://en.wikiquote.org/wiki/Bruce_Lee"
+ },
+ {
+  "text": "Make it new!",
+  "find": null,
+  "who": "Ezra Pound",
+  "source": "Make It New, 1935",
+  "url": "https://en.wikiquote.org/wiki/Ezra_Pound"
+ },
+ {
+  "text": "Union gives strength.",
+  "find": "union gives strength",
+  "who": "Aesop",
+  "source": "The Bundle of Sticks",
+  "url": "https://en.wikiquote.org/wiki/Aesop"
+ },
+ {
+  "text": "All reflection is art.",
+  "find": "all reflection is art",
+  "who": "Joseph Joubert",
+  "source": "The Notebooks of Joseph Joubert, 1883",
+  "url": "https://en.wikiquote.org/wiki/Joseph_Joubert"
+ },
+ {
+  "text": "Dedicate one’s life to truth.",
+  "find": "dedicate one’s life to truth",
+  "who": "Juvenal",
+  "source": "Satire IV, line 91",
+  "url": "https://en.wikiquote.org/wiki/Juvenal"
+ },
+ {
+  "text": "We are all steering.",
+  "find": "we are all steering",
+  "who": "Kevin Kelly",
+  "source": "Out of Control, 1995",
+  "url": "https://en.wikiquote.org/wiki/Kevin_Kelly_(editor)"
+ },
+ {
+  "text": "Man is an imagining being.",
+  "find": "man is an imagining being",
+  "who": "Gaston Bachelard",
+  "source": "The Poetics of Reverie, 1960",
+  "url": "https://en.wikiquote.org/wiki/Gaston_Bachelard"
+ },
+ {
+  "text": "All real life is meeting.",
+  "find": "all real life is meeting",
+  "who": "Martin Buber",
+  "source": "I and Thou, 1923",
+  "url": "https://en.wikiquote.org/wiki/Martin_Buber"
+ }
+]

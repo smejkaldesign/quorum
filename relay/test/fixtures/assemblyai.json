@@ -1,0 +1,23 @@
+{
+  "begin": { "type": "Begin", "id": "3207b601-2054-48df-ba77-8784dfcf9fb8", "expires_at": 1772570132 },
+  "partial": { "type": "Turn", "turn_order": 0, "turn_is_formatted": false, "end_of_turn": false, "transcript": "we ship on friday", "end_of_turn_confidence": 0.12, "words": [
+    { "text": "we", "start": 1200, "end": 1360, "confidence": 0.98, "word_is_final": true },
+    { "text": "ship", "start": 1400, "end": 1700, "confidence": 0.97, "word_is_final": true },
+    { "text": "on", "start": 1720, "end": 1800, "confidence": 0.99, "word_is_final": true },
+    { "text": "friday", "start": 1840, "end": 2300, "confidence": 0.95, "word_is_final": false }
+  ] },
+  "endUnformatted": { "type": "Turn", "turn_order": 0, "turn_is_formatted": false, "end_of_turn": true, "transcript": "we ship on friday", "end_of_turn_confidence": 0.93, "words": [
+    { "text": "we", "start": 1200, "end": 1360, "confidence": 0.98, "word_is_final": true },
+    { "text": "ship", "start": 1400, "end": 1700, "confidence": 0.97, "word_is_final": true },
+    { "text": "on", "start": 1720, "end": 1800, "confidence": 0.99, "word_is_final": true },
+    { "text": "friday", "start": 1840, "end": 2300, "confidence": 0.95, "word_is_final": true }
+  ] },
+  "endFormatted": { "type": "Turn", "turn_order": 0, "turn_is_formatted": true, "end_of_turn": true, "transcript": "We ship on Friday.", "end_of_turn_confidence": 0.93, "words": [
+    { "text": "We", "start": 1200, "end": 1360, "confidence": 0.98, "word_is_final": true },
+    { "text": "ship", "start": 1400, "end": 1700, "confidence": 0.97, "word_is_final": true },
+    { "text": "on", "start": 1720, "end": 1800, "confidence": 0.99, "word_is_final": true },
+    { "text": "Friday.", "start": 1840, "end": 2300, "confidence": 0.95, "word_is_final": true }
+  ] },
+  "empty": { "type": "Turn", "turn_order": 1, "turn_is_formatted": true, "end_of_turn": true, "transcript": "", "end_of_turn_confidence": 1, "words": [] },
+  "termination": { "type": "Termination", "audio_duration_seconds": 26, "session_duration_seconds": 28 }
+}

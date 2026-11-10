@@ -1,0 +1,49 @@
+name: Site
+
+# quorum.watch shows the desktop renderer on its home page (app/site-preview). A push to main that changes the renderer
+# or the site rebuilds that preview and deploys the site, so the page shows the app as it is on main.
+# Needs the repository secret RAILWAY_TOKEN (a Railway project token for the production environment). Without it the
+# job still builds the preview and skips the deploy.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/src/**'
+      - 'app/site-preview/**'
+      - 'app/assets/**'
+      - 'app/connectors/**'
+      - 'site/**'
+      - '.github/workflows/site.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: site-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Install
+        run: npm ci
+        working-directory: app
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      - name: Build the app preview
+        run: npm run build:site-preview
+        working-directory: app
+      - name: Deploy the site
+        if: env.RAILWAY_TOKEN != ''
+        run: npm run -s stamp && npx --yes @railway/cli@4.31.0 up --service site --ci --no-gitignore
+        working-directory: site
+      - name: Deploy skipped
+        if: env.RAILWAY_TOKEN == ''
+        run: echo "::notice::RAILWAY_TOKEN is not set, so the site was not deployed. Run npm run deploy in site/ to publish."
