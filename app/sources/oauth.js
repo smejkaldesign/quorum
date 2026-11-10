@@ -78,7 +78,9 @@ export async function register(meta, { redirectUri = LOOPBACK_REDIRECT, clientNa
   return { clientId: data.client_id, clientSecret: data.client_secret ?? null, redirectUri, authMethod: body.token_endpoint_auth_method };
 }
 
-export function authorizeUrl(meta, { clientId, redirectUri, challenge, state, scopes = meta.scopes }) {
+// prompt=select_account asks the sign-in page to offer an account chooser instead of reusing the browser's session;
+// servers that do not know the parameter ignore it
+export function authorizeUrl(meta, { clientId, redirectUri, challenge, state, scopes = meta.scopes, prompt = 'select_account' }) {
   const u = new URL(meta.authorizationEndpoint);
   u.searchParams.set('response_type', 'code');
   u.searchParams.set('client_id', clientId);
@@ -88,6 +90,7 @@ export function authorizeUrl(meta, { clientId, redirectUri, challenge, state, sc
   u.searchParams.set('state', state);
   u.searchParams.set('resource', meta.resource);
   if (scopes?.length) u.searchParams.set('scope', scopes.join(' '));
+  if (prompt) u.searchParams.set('prompt', prompt);
   return u.toString();
 }
 
