@@ -30,7 +30,7 @@ export const CONNECTORS = [
   c('fathom', 'Fathom', 'meeting-notes', 'fathom.video', 'Notes and transcripts from Fathom meetings.'),
   c('tldv', 'tl;dv', 'meeting-notes', 'tldv.io', 'Notes and transcripts from tl;dv meetings.'),
   // calendar
-  c('apple-calendar', 'Calendar on this Mac', 'calendar', 'apple.com', 'Reads the calendars you already have in the Calendar app. Upcoming meetings show on Home.', 'available', 'macos'),
+  c('apple-calendar', 'Calendar app', 'calendar', 'apple.com', 'Reads the calendars you already have in the Calendar app. Upcoming meetings show on Home.', 'available', 'macos'),
   c('google-calendar', 'Google Calendar', 'calendar', 'calendar.google.com', 'See your upcoming meetings, get a reminder before each one, and give every note the right context.'),
   c('outlook', 'Outlook', 'calendar', 'outlook.com', 'See your upcoming meetings, get a reminder before each one, and give every note the right context.'),
   // meeting apps
