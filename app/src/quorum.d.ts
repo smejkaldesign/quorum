@@ -77,7 +77,7 @@ export type Result = { ok?: boolean; error?: string };
 // Settings › Sources (sources/catalog.js, sources/jobs.js)
 export type SourceMethod = 'connect' | 'folder';
 export type SourceJob = { id: string; label: string; status: 'running' | 'done' | 'failed'; phase?: 'list' | 'import'; phaseStartedAt?: number; done: number; total: number | null; message: string | null; error: string | null; failed: { id: string; title: string; error: string }[]; result: { listed: number; imported: number; skipped: number } | null; startedAt: number; finishedAt: number | null };
-export type MeetingSourceInfo = { id: string; name: string; kind: 'mcp'; url: string; folder: string; description: string; methods: SourceMethod[]; recommended: SourceMethod; why: string; method: SourceMethod; connected: boolean; lastSyncAt: string | null; imported: number; folderPath: string | null; notes: number; job: SourceJob | null };
+export type MeetingSourceInfo = { id: string; name: string; kind: 'mcp'; url: string; folder: string; description: string; methods: SourceMethod[]; recommended: SourceMethod; why: string; method: SourceMethod; connected: boolean; freshNext?: boolean; lastSyncAt: string | null; imported: number; folderPath: string | null; notes: number; job: SourceJob | null };
 // workspace connectors (Settings › Admin › Connectors): a provider key held in Supabase Vault for the whole workspace and
 // the roles it may serve. The key never comes back to the client; a draft carries it once, on the way in
 export type ConnectorProvider = 'assemblyai' | 'deepgram' | 'elevenlabs' | 'openai' | 'anthropic' | 'google' | 'openai_compatible';

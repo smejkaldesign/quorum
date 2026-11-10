@@ -3,6 +3,7 @@
 // indicator (RFC 8707). The browser comes back to a loopback URL this process listens on for one visit. Pure Node, no
 // electron import, so the same code runs under vitest against a fake server.
 import { createHash, randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import http from 'node:http';
 
 export const LOOPBACK_PORT = 47832;
@@ -140,18 +141,34 @@ export function awaitLoopback({ port = LOOPBACK_PORT, path = '/callback', timeou
   });
 }
 
-// the page the browser shows when the flow is over: Quorum blue, one line of outcome, one line of what to do
+// the page the browser shows when the flow is over: the site's hero (black frame with dashed rails, drifting blue
+// glow with grain, owl wordmark), one line of outcome, one line of what to do
+const OWL = (() => { try { return readFileSync(new URL('../assets/quorum-owl.svg', import.meta.url), 'utf8').replace(/<\?xml[^>]*>/, '').replace('<svg ', '<svg class="owl" aria-hidden="true" '); } catch { return ''; } })();
+const NOISE = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.12 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E") 0 0 / 180px 180px repeat`;
 export const loopbackPage = (q) => {
   const esc = (s) => String(s ?? '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
   const failed = q.error || q.failed;
   const title = q.pending ? 'Almost there' : failed ? 'That did not work' : `Connected${q.name ? ` to ${esc(q.name)}` : ''}`;
   const body = q.pending ? 'Go back to Quorum to see the result.' : failed ? esc(q.failed || q.error_description || q.error) : 'You can close this tab and go back to Quorum. Your meetings are on their way.';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Quorum</title>
-<style>html,body{height:100%;margin:0}body{display:grid;place-items:center;background:#007aff;color:#fff;font:16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",Helvetica,Arial,sans-serif;text-align:center;padding:24px}
-.card{max-width:440px}.mark{font:600 13px/1 -apple-system,sans-serif;letter-spacing:.18em;text-transform:uppercase;opacity:.8;margin-bottom:28px}
-.icon{width:64px;height:64px;border-radius:50%;margin:0 auto 22px;display:grid;place-items:center;background:${failed ? 'rgba(255,255,255,.18)' : '#fff'};color:${failed ? '#fff' : '#007aff'};font-size:30px;line-height:1}
-h1{font:400 34px/1.15 "New York",ui-serif,Georgia,serif;margin:0 0 12px;letter-spacing:-.01em}p{margin:0;opacity:.92}</style></head>
-<body><div class="card"><div class="mark">Quorum</div><div class="icon">${failed ? '!' : q.pending ? '…' : '✓'}</div><h1>${title}</h1><p>${body}</p></div></body></html>`;
+<style>
+html,body{height:100%;margin:0}body{background:#0b0b0c;color:#f2f2f3;font:16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",Helvetica,Arial,sans-serif}
+.frame{position:relative;isolation:isolate;min-height:100vh;width:min(100%,1536px);margin:0 auto;border-left:1px dashed rgba(255,255,255,.16);border-right:1px dashed rgba(255,255,255,.16);display:flex;flex-direction:column;overflow:hidden}
+.glow{position:absolute;inset:0;z-index:-1;overflow:hidden;clip-path:inset(0);pointer-events:none;opacity:.75;background:${NOISE},linear-gradient(180deg,#0b2a4d 0%,#0b2a4d 16%,#0066d9 58%,#3399ff 84%,#8ec5ff 100%)}
+.glow::before,.glow::after{content:"";position:absolute;inset:-30%;filter:blur(48px);will-change:transform}
+.glow::before{background:radial-gradient(closest-side at 28% 58%,rgba(51,153,255,.9),transparent),radial-gradient(closest-side at 74% 70%,rgba(0,102,217,.85),transparent);animation:a 28s ease-in-out infinite alternate}
+.glow::after{background:radial-gradient(closest-side at 62% 44%,rgba(142,197,255,.55),transparent),radial-gradient(closest-side at 18% 82%,rgba(0,122,255,.7),transparent);animation:b 36s ease-in-out infinite alternate}
+.shade{position:absolute;inset:0;z-index:-1;background:linear-gradient(180deg,rgba(6,14,30,.72),rgba(6,14,30,0) 45%);pointer-events:none}
+@keyframes a{from{transform:translate3d(-6%,-4%,0) rotate(0) scale(1)}to{transform:translate3d(7%,5%,0) rotate(14deg) scale(1.12)}}
+@keyframes b{from{transform:translate3d(6%,4%,0) rotate(0) scale(1.1)}to{transform:translate3d(-7%,-6%,0) rotate(-12deg) scale(1)}}
+header{height:58px;display:flex;align-items:center;gap:10px;padding:0 32px}.owl{width:22px;height:26px;display:block}header span{font:400 22px/1 "New York",ui-serif,Georgia,serif;letter-spacing:-.01em}
+main{flex:1;display:grid;place-items:center;padding:24px 32px 96px;text-align:center}.card{max-width:520px}
+.icon{width:64px;height:64px;border-radius:50%;margin:0 auto 24px;display:grid;place-items:center;background:${failed ? 'rgba(255,255,255,.14)' : '#fff'};color:${failed ? '#fff' : '#0b2a4d'};font-size:30px;line-height:1;border:1px solid rgba(255,255,255,.25)}
+h1{font:400 44px/1.1 "New York",ui-serif,Georgia,serif;margin:0 0 14px;letter-spacing:-.015em}p{margin:0;font-size:17px;color:rgba(242,242,243,.9)}
+@media (prefers-reduced-motion: reduce){.glow::before,.glow::after{animation:none}}
+</style></head>
+<body><div class="frame"><div class="glow"></div><div class="shade"></div><header>${OWL}<span>Quorum</span></header>
+<main><div class="card"><div class="icon">${failed ? '!' : q.pending ? '…' : '✓'}</div><h1>${title}</h1><p>${body}</p></div></main></div></body></html>`;
 };
 
 // the whole flow: metadata, client (reused when one is saved), browser, loopback, token exchange

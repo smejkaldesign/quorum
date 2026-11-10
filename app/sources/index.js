@@ -98,7 +98,7 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
   const list = () => SOURCES.map((src) => {
     const s = stateOf(src.id);
     const dir = folderFor(src.id);
-    return { ...publicManifest(src), method: s.method, connected: !!s.connected, lastSyncAt: s.lastSyncAt, imported: s.imported ?? 0, folderPath: dir, notes: dir ? countNotes(dir) : 0, job: jobs.snapshot(src.id) };
+    return { ...publicManifest(src), method: s.method, connected: !!s.connected, freshNext: !!s.freshNext, lastSyncAt: s.lastSyncAt, imported: s.imported ?? 0, folderPath: dir, notes: dir ? countNotes(dir) : 0, job: jobs.snapshot(src.id) };
   });
 
   const fail = (err, fallback) => { log('sources', err?.message ?? err); return { error: err?.message && !/[{};]|ECONN|ENOTFOUND|fetch failed/i.test(err.message) ? err.message : fallback }; };
@@ -112,7 +112,8 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
     'source-connect': async (id, opts = {}) => {
       const src = BY_ID[id];
       if (!src || src.kind !== 'mcp') return { error: 'Unknown source.' };
-      const open = opts.fresh && openFresh
+      const s = stateOf(id);
+      const open = (opts.fresh || s.freshNext) && openFresh
         ? async (url) => { log('sources', id, 'sign-in in a fresh window'); toUI('source-auth-link', { id, url, opened: 'window' }); await openFresh(url, src.name); }
         : async (url) => { log('sources', id, 'sign-in in the default browser'); await openExternal(url); };
       try {
@@ -121,11 +122,11 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
         const { meta, tokens } = await oauthConnect({ resourceUrl: src.url, open, clients: store.clients, verify, name: src.name });
         metaCache[src.url] = meta;
         await store.tokens.set(id, tokens);
-        const s = stateOf(id); s.connected = true; s.method = 'connect'; s.connectedAt = new Date().toISOString(); saveSettings();
+        s.connected = true; s.method = 'connect'; s.connectedAt = new Date().toISOString(); s.freshNext = false; saveSettings();
         delete clients[id];
         runSync(id, 'Importing').catch(() => {});
         return { ok: true };
-      } catch (err) { if (err.code === 'wrong-account') { log('sources', id, 'sign-in refused:', err.message); return { error: err.message, wrongAccount: true }; } return fail(err, `Quorum could not connect to ${src.name}. Check your connection and try again.`); }
+      } catch (err) { if (err.code === 'wrong-account') { s.freshNext = true; saveSettings(); log('sources', id, 'sign-in refused:', err.message); return { error: err.message, wrongAccount: true }; } return fail(err, `Quorum could not connect to ${src.name}. Check your connection and try again.`); }
     },
     'source-disconnect': async (id) => {
       if (!BY_ID[id]) return { error: 'Unknown source.' };

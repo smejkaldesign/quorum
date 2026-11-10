@@ -227,7 +227,8 @@ const connectLabel = (x: LibraryConnector, busy: boolean, full: boolean) =>
 
 function ConnectButton({ connector: x, live, busy, act }: { connector: LibraryConnector; live: Live; busy: boolean; act: Act }) {
   if (x.id === 'apple-calendar' && live.cal?.status === 'denied') return <button className="pill" onClick={() => window.quorum.calendarPrivacy()}>Open System Settings</button>;
-  return <button className="pill primary" disabled={busy} onClick={() => act(() => startConnect(x))}>{connectLabel(x, busy, true)}</button>;
+  const fresh = x.kind === 'mcp-source' && !!sourceFor(x, live)?.freshNext;
+  return <button className="pill primary" disabled={busy} onClick={() => act(() => startConnect(x, fresh))}>{busy ? connectLabel(x, true, true) : fresh ? 'Connect with a different account' : connectLabel(x, false, true)}</button>;
 }
 
 // the wrong account got connected: a sign-in in a private window, so the browser's session cannot answer for you
