@@ -1,6 +1,6 @@
 # Starter Agent OS
 
-Status: decisions folded in 2026-11-08, ready for build planning. Project: Quorum: Open-Source Local Edition + Cloud Foundation, rank 12.
+Status: decisions folded in 2026-11-08; the setup interview (decision 1) shipped 2026-11-10 in `app/starter.js`, see Build status below. Project: Quorum: Open-Source Local Edition + Cloud Foundation, rank 12.
 
 ## Problem
 
@@ -123,3 +123,8 @@ Approved by Eric. Three additions to the spec above:
 3. **Filing from meetings.** Links, daily lines, learned facts with changelog.
 4. **Existing vault hardening.** Fixture vaults from Obsidian and repo layouts; conflict handling for hand edits.
 5. **Later option, unscheduled.** Server-side runner with per-workspace encrypted keys, passthrough billing and caps.
+
+## Build status (2026-11-10)
+
+- **Setup interview, shipped.** `app/starter.js`: three templates (Personal, Founder, Team lead), the answers (role, what they are working toward, projects, people, numbered or plain folder names), a note per project and person, index lines for each, and a CLAUDE.md whose generated part sits between `<!-- quorum:setup -->` markers. Answers live in `.quorum/setup.json`. Prefill comes from the person's own model source (`onboarding-setup-suggest`, JSON-only prompt, 40 s cap); with no source there is no prefill. Onboarding offers it under Create new with a Skip the questions link; Settings, Memory offers Create a new one under Connect and Set up again on a Quorum-built folder (new folders and notes only, the marked section replaced, hand edits kept). Tests: `app/test/starter.test.js`.
+- **Not yet.** The runner (index and instruction maintenance after each note, filing from meetings, the search layer), guard hooks installed into `.claude/`, the "Maintain my existing vault" path, Cloud template storage and pull. These stay phases 1 to 4 above.

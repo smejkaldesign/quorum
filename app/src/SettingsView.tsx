@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { SetupForm, answersFrom, draftFrom, type SetupDraft } from './SetupForm';
+import { SetupForm, answersFrom, draftFrom, draftIsEmpty, emptyDraft, type SetupDraft } from './SetupForm';
 import type { Brain, CalendarSettings, ClaudeStatus, Memory, MemoryItem, OptOut, Profile, Settings, Voice, Workspace, Transcription, DecisionProvider, DecisionsStatus, AccountState, UpdateState } from './quorum';
 import { PersonalConnectors } from './Connectors';
 import { ConnectorsPage } from './ConnectorsPage';
@@ -203,12 +203,27 @@ function SecondBrain({ brain, onConnect, onDisconnect, onBrain, onViewConnector 
   // the setup interview again, on a folder Quorum built: prefilled with the saved answers
   const [setup, setSetup] = useState<SetupDraft | null>(null);
   const [applying, setApplying] = useState(false);
-  const openSetup = async () => setSetup(draftFrom((await window.quorum.setupRead().catch(() => null))?.answers));
+  const openSetup = async () => { setCreating(false); setSetup(draftFrom((await window.quorum.setupRead().catch(() => null))?.answers)); };
+  // the same form creates a folder for someone who skipped it in onboarding: name, location, the interview
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('My Agent OS');
+  const [newDir, setNewDir] = useState<string | null>(null);
+  const [defaultDir, setDefaultDir] = useState('~/Documents/Quorum');
+  const [setupError, setSetupError] = useState('');
+  const openCreate = async () => {
+    setCreating(true); setSetupError(''); setSetup(emptyDraft());
+    window.quorum.onboardingStatus().then((st) => setDefaultDir(st.defaultVaultDir)).catch(() => {});
+    window.quorum.onboardingSetupSuggest().then((r) => { if (r.suggestion) setSetup((d) => (d && draftIsEmpty(d) ? draftFrom(r.suggestion) : d)); }).catch(() => {});
+  };
   const applySetup = async () => {
     if (!setup) return;
-    setApplying(true);
-    try { const b = await window.quorum.setupRerun(answersFrom(setup)); onBrain?.(b); setSetup(null); } finally { setApplying(false); }
+    setApplying(true); setSetupError('');
+    try {
+      const b = creating ? await window.quorum.onboardingCreateVault(newDir, newName.trim() || 'My Agent OS', answersFrom(setup)) : await window.quorum.setupRerun(answersFrom(setup));
+      onBrain?.(b); setSetup(null);
+    } catch (e) { setSetupError(String((e as Error).message || e)); } finally { setApplying(false); }
   };
+  const [connecting, setConnecting] = useMenu();
   type Source = Awaited<ReturnType<typeof window.quorum.meetingSources>>[number];
   const [sources, setSources] = useState<Source[]>([]);
   const [icons, setIcons] = useState<Record<string, string | null>>({});
@@ -243,7 +258,17 @@ function SecondBrain({ brain, onConnect, onDisconnect, onBrain, onViewConnector 
           desc={brain ? `${brain.made === 'quorum' ? 'Built by Quorum' : brain.name} · ${home(brain.root)}` : 'Optional. An Agent OS folder of notes Quorum can answer from. Meeting notes work without one.'}>
           {brain
             ? <RowMenu label="QuorumBrain options" items={[...(brain.made === 'quorum' ? [{ label: 'Set up again', icon: <IconBrain width={15} height={15} />, onPick: openSetup }] : []), { label: 'Change folder', icon: <IconFolder width={15} height={15} />, onPick: onConnect }, { label: 'Disconnect', icon: <IconClose width={15} height={15} />, danger: true, onPick: () => setConfirm(true) }]} />
-            : <button className="pill" onClick={onConnect}>Connect</button>}
+            : (
+              <span className="menu-wrap">
+                <button className="pill" aria-haspopup="menu" aria-expanded={connecting} onClick={() => setConnecting((v) => !v)}>Connect</button>
+                {connecting && (
+                  <div className="menu end" role="menu">
+                    <button role="menuitem" onClick={() => { setConnecting(false); onConnect(); }}><IconFolder width={15} height={15} /> Connect an existing folder</button>
+                    <button role="menuitem" onClick={() => { setConnecting(false); openCreate(); }}><IconBrain width={15} height={15} /> Create a new one</button>
+                  </div>
+                )}
+              </span>
+            )}
         </Row>
         <MeetingsRow />
         {sources.map((src) => (
@@ -266,10 +291,17 @@ function SecondBrain({ brain, onConnect, onDisconnect, onBrain, onViewConnector 
       {setup && (
         <div className="palette-scrim" onClick={() => setSetup(null)}>
           <div className="modal setup-modal" role="dialog" aria-label="Set up QuorumBrain again" onClick={(e) => e.stopPropagation()}>
-            <h2>Set up QuorumBrain again</h2>
-            <p>New folders and notes are added; nothing you wrote is changed. The generated section of CLAUDE.md is replaced.</p>
+            <h2>{creating ? 'Create your QuorumBrain' : 'Set up QuorumBrain again'}</h2>
+            <p>{creating ? 'A folder of markdown notes Quorum and your AI read and write, shaped around you. Every answer is optional.' : 'New folders and notes are added; nothing you wrote is changed. The generated section of CLAUDE.md is replaced.'}</p>
+            {creating && (
+              <div className="setup-form setup-where">
+                <label className="set-field wide onb-field"><span className="onb-label">Name</span><input value={newName} aria-label="Name of your Agent OS" onChange={(e) => setNewName(e.target.value)} /></label>
+                <div className="onb-row"><span className="onb-label">Location</span><code className="onb-path">{home(newDir ?? defaultDir)}</code><button className="pill small-pill" onClick={async () => { const d = await window.quorum.onboardingPickDir(); if (d) setNewDir(d); }}>Choose…</button></div>
+              </div>
+            )}
             <SetupForm draft={setup} onChange={setSetup} />
-            <div className="modal-actions"><button className="link-btn" onClick={() => setSetup(null)}>Cancel</button><button className="pill primary" disabled={applying} onClick={applySetup}>{applying ? 'Applying…' : 'Apply'}</button></div>
+            {setupError && <p className="set-error">{setupError}</p>}
+            <div className="modal-actions"><button className="link-btn" onClick={() => setSetup(null)}>Cancel</button><button className="pill primary" disabled={applying} onClick={applySetup}>{applying ? (creating ? 'Creating…' : 'Applying…') : creating ? 'Create folder' : 'Apply'}</button></div>
           </div>
         </div>
       )}
