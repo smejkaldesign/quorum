@@ -72,3 +72,12 @@ Fallback in place: when the active provider cannot post, `startListening` in `ma
 - **Known limits.** A browser exposes only the active tab of each window, so STOP and GO replies are read only while the Meet tab is in front (where the user is during a call); posting raises the tab itself. Other people's sender lines are parsed as the text that shares a parent with the time stamp; that shape is unverified until a second participant writes in the chat. Teams chat is still unimplemented.
 - **Audio.** In-browser Meet is tapped through the browser's helper processes, so other tabs playing audio are heard too.
 
+
+## Status 2026-11-10 (live test, Meet with the Gemini side panel)
+
+- **Meet changed two labels.** The composer reads "History is on" or "History is off" (after the chat history setting) instead of "Send a message", and the Send button is enabled only after Meet registers typed input. `MeetChat.input` accepts either label and `send` presses Return in the browser when Send stays disabled after the `AXValue` set.
+- **The Gemini panel is a trap.** Meet opens with an "Ask Gemini" side panel whose box is also an `AXTextArea`. A composer match loose enough to take "any text area" posts the notice to Gemini, which answers "Understood". The composer match is now the two chat labels only, and the chat panel is opened whenever that composer is absent.
+- **Depths.** The chat panel sits about forty levels down (composer and Send at depth 40 in a plain call, 23 with Gemini open). All chat walks go to depth 60.
+- **Retries never double-post.** `send` checks for the bubble before posting; an emptied composer counts as sent when the bubble cannot be read.
+- **Measured.** Post plus bubble confirmation: 0.75 s. Read-back lists the notice as sent by "You".
+- **Participant count read 0** in a one-person call (`meetingInfo` event). P1 still open.
