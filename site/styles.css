@@ -113,7 +113,7 @@ ul { margin: 0; padding: 0; list-style: none; }
 /* Download is the one filled control in the header: white on the blue wash, black text */
 .nav-cta { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 14px; border-radius: 999px; background: #fff; color: #111; font-weight: 500; }
 .nav-cta svg { width: 14px; height: 14px; flex: none; display: block; }
-.nav-cta:hover { color: #000; background: var(--brand-tint); }
+.nav-cta:hover { color: #fff; background: var(--brand); }
 .nav-cta[aria-disabled="true"] { opacity: 0.6; }
 
 /* Dot background, shared by the hero and How it works */
