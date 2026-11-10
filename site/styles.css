@@ -587,6 +587,14 @@ ul { margin: 0; padding: 0; list-style: none; }
 .contact-status.error { color: #ff8a8a; }
 .contact-status.ok { color: var(--brand-soft); }
 .contact-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
+/* /contact: the same form as the modal, laid out as a card under the page heading */
+.contact-page { margin-top: 40px; border: 1px solid var(--line); border-radius: 18px; background: var(--card); max-width: 620px; }
+.contact-page .contact-form { padding: 32px; }
+.contact-page .contact-form label:first-of-type { margin-top: 0; }
+.contact-page .contact-actions { justify-content: flex-start; margin-top: 16px; }
+.contact-alt { margin-top: 28px !important; font-size: 16px !important; }
+.contact-alt a { color: var(--brand-soft); }
+.contact-alt a:hover { color: var(--brand-tint); }
 .enterprise button.btn { font-family: inherit; font-size: 16px; }
 
 /* Launch switches: links for features that are not live yet (index.html head) */

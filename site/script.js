@@ -19,32 +19,16 @@
   var year = document.getElementById("year");
   if (year) year.textContent = String(new Date().getFullYear());
 
-  // Contact modal. FormSubmit emails each post to the address in the URL; the
-  // first post sends that inbox a one-time activation link.
+  // Contact form, in the modal on the home page and on /contact. FormSubmit emails each post to the address in
+  // the URL; the first post sends that inbox a one-time activation link.
   var CONTACT_ENDPOINT = "https://formsubmit.co/ajax/eric@smejkal.design";
-  var dialog = document.getElementById("contact");
-  if (dialog && dialog.showModal) {
-    var form = dialog.querySelector("form");
-    var status = dialog.querySelector(".contact-status");
+  function wireContact(form) {
+    var status = form.querySelector(".contact-status");
     var send = form.querySelector('[type="submit"]');
     var setStatus = function (text, kind) {
       status.textContent = text;
       status.className = "contact-status" + (kind ? " " + kind : "");
     };
-    document.querySelectorAll("[data-contact-open]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        setStatus("");
-        dialog.showModal();
-        form.elements.name.focus();
-      });
-    });
-    dialog.querySelectorAll("[data-contact-close]").forEach(function (btn) {
-      btn.addEventListener("click", function () { dialog.close(); });
-    });
-    // a click on the backdrop lands on the dialog itself
-    dialog.addEventListener("click", function (event) {
-      if (event.target === dialog) dialog.close();
-    });
     form.addEventListener("submit", function (event) {
       event.preventDefault();
       var fields = [form.elements.name, form.elements.email, form.elements.message];
@@ -84,7 +68,29 @@
           send.textContent = "Send";
         });
     });
+    return setStatus;
   }
+  var dialog = document.getElementById("contact");
+  if (dialog && dialog.showModal) {
+    var form = dialog.querySelector("form");
+    var setDialogStatus = wireContact(form);
+    document.querySelectorAll("[data-contact-open]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        setDialogStatus("");
+        dialog.showModal();
+        form.elements.name.focus();
+      });
+    });
+    dialog.querySelectorAll("[data-contact-close]").forEach(function (btn) {
+      btn.addEventListener("click", function () { dialog.close(); });
+    });
+    // a click on the backdrop lands on the dialog itself
+    dialog.addEventListener("click", function (event) {
+      if (event.target === dialog) dialog.close();
+    });
+  }
+  var pageForm = document.querySelector("form.contact-form[data-contact-page]");
+  if (pageForm) wireContact(pageForm);
 
   var capture = document.querySelector("form.capture");
   if (capture) {
