@@ -177,6 +177,17 @@ ul { margin: 0; padding: 0; list-style: none; }
 }
 /* The hero wash starts behind the header, which sits above it in the frame. */
 .hero .glow { top: calc(-1 * var(--header-h) - 1px); }
+/* Connector graphic behind the hero text (neural.js): a sparse 3D network drawn at low alpha, above the wash
+   and below the copy, fading out at the top and bottom edges like the dot grid. */
+.hero .neural {
+  position: absolute; inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.42;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 82%, transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 82%, transparent);
+}
+.hero .wrap { z-index: 1; }
 /* The bottom wash starts at the last section and runs through the footer,
    flipped so the light end is at the top and the dark end at the bottom. */
 #existing .glow { bottom: calc(-1 * var(--footer-h)); transform: scaleY(-1); }
