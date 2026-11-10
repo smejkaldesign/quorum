@@ -88,6 +88,7 @@ contextBridge.exposeInMainWorld('quorum', {
   pickPhoto: () => ipcRenderer.invoke('pick-photo'),
   memoryGet: () => ipcRenderer.invoke('memory-get'),
   sourceIcons: () => ipcRenderer.invoke('source-icons'),
+  libraryIcons: () => ipcRenderer.invoke('library-icons'),
   meetingProviders: () => ipcRenderer.invoke('meeting-providers'),
   meetingProviderSet: (id, on) => ipcRenderer.invoke('meeting-provider-set', id, on),
   meetingProviderCheck: () => ipcRenderer.invoke('meeting-provider-check'),

@@ -1766,7 +1766,7 @@ ipcMain.handle('meetings-dir', () => {
 // icons for notes made by other apps come from that app's own install on this Mac, so Quorum ships none of their artwork
 const SOURCE_APPS = { granola: '/Applications/Granola.app', zoom: '/Applications/zoom.us.app', teams: '/Applications/Microsoft Teams.app', meet: MEET_PWA };
 const sourceIcons = {};
-ipcMain.handle('source-icons', () => {
+const loadSourceIcons = () => {
   for (const [k, appPath] of Object.entries(SOURCE_APPS)) {
     if (sourceIcons[k] !== undefined) continue;
     sourceIcons[k] = null;
@@ -1780,6 +1780,29 @@ ipcMain.handle('source-icons', () => {
     } catch {}
   }
   return sourceIcons;
+};
+ipcMain.handle('source-icons', loadSourceIcons);
+// logos for the connector library: the installed app's icon when there is one, else the site's favicon, fetched once
+// and kept under the data folder so the sheet opens offline after the first time
+const LIBRARY_ICON_DIR = path.join(DATA_DIR, 'icons');
+ipcMain.handle('library-icons', async () => {
+  const { CONNECTORS } = await import('./connectors/library.js');
+  const apps = loadSourceIcons();
+  const out = {};
+  mkdirSync(LIBRARY_ICON_DIR, { recursive: true });
+  await Promise.all(CONNECTORS.map(async (c) => {
+    if (c.app && apps?.[c.app]) { out[c.id] = apps[c.app]; return; }
+    const file = path.join(LIBRARY_ICON_DIR, `${c.id}.png`);
+    try {
+      if (!existsSync(file)) {
+        const r = await fetch(`https://www.google.com/s2/favicons?domain=${encodeURIComponent(c.domain)}&sz=128`, { signal: AbortSignal.timeout(8000) });
+        if (!r.ok) throw new Error(String(r.status));
+        writeFileSync(file, Buffer.from(await r.arrayBuffer()));
+      }
+      out[c.id] = `data:image/png;base64,${readFileSync(file).toString('base64')}`;
+    } catch { out[c.id] = null; }
+  }));
+  return out;
 });
 const countNotes = (dir) => { try { return store.notes.list(dir).length; } catch { return 0; } };
 ipcMain.handle('meeting-sources', () => {

@@ -1,7 +1,7 @@
 import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import type { Brain, CalendarSettings, ClaudeStatus, Memory, MemoryItem, OptOut, Profile, Settings, Voice, Workspace, Transcription, DecisionProvider, DecisionsStatus, AccountState } from './quorum';
 import { PersonalConnectors } from './Connectors';
-import { SourcesPage } from './Sources';
+import { ConnectorsPage } from './ConnectorsPage';
 import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
@@ -21,10 +21,10 @@ const ACCOUNT: Nav[] = [
   { id: 'memory', label: 'Memory', icon: IconBrain },
   { id: 'calendar', label: 'Calendar', icon: IconCalendar },
   { id: 'meetings', label: 'Meetings', icon: IconMic },
-  { id: 'sources', label: 'Sources', icon: IconStack },
-  { id: 'notifications', label: 'Notifications', icon: IconBell, soon: true },
   { id: 'connectors', label: 'Connectors', icon: IconGrid },
+  { id: 'notifications', label: 'Notifications', icon: IconBell, soon: true },
   { id: 'voice', label: 'Voice typing', icon: IconKeyboard },
+  { id: 'developers', label: 'Developers', icon: IconCode },
 ];
 // the pages behind the Admin button; settingsNav.workspacePages decides which of them a build lists
 const WORKSPACE: Nav[] = [
@@ -108,7 +108,8 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
           {page === 'preferences' && <p className="set-lede">Quorum works best knowing a little about you. Quorum uses this when it writes your meeting notes and answers questions.</p>}
           {page === 'knowledge' && <p className="set-lede">Company knowledge for your whole workspace, chosen by admins.</p>}
           {page === 'general' && <p className="set-lede">Settings for everyone in your workspace. Quorum gives this context to every meeting summary and answer, so it's the same for each person.</p>}
-          {page === 'sources' && <p className="set-lede">Tools that already record your meetings. Connect one and its notes land in your meeting notes folder, tagged with where they came from.</p>}
+          {page === 'connectors' && <p className="set-lede">The tools Quorum is connected to. Meeting notes, calendars and AI tools, each tagged with where things came from.</p>}
+          {page === 'developers' && <p className="set-lede">Model providers, Claude Code and Terminal access, and API keys for your own scripts.</p>}
           {page === 'platform' && <p className="set-lede">Every workspace on this Quorum. Plans are set by hand here until the admin web app exists.</p>}
           {page === 'preferences' ? (
             <ProfilePage settings={settings} email={email} emailLabel={emailLabel} name={user?.name ?? ''} onSettings={onSettings}>
@@ -138,7 +139,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
             : page === 'platform' ? <PlatformArea />
             : page === 'calendar' ? <CalendarPage />
             : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} />
-            : page === 'sources' ? <SourcesPage />
+            : page === 'developers' ? <DevelopersPage />
             : page === 'notifications' ? <NotificationsPage />
             : page === 'connectors' ? <ConnectorsPage />
             : <VoicePage settings={settings} onSettings={onSettings} />}
@@ -885,19 +886,11 @@ function MeetingsPage({ settings, onSettings }: { settings: Settings; onSettings
   );
 }
 
-function ConnectorsPage() {
+function DevelopersPage() {
   return (
     <>
       <PersonalConnectors />
       <ClaudeCard />
-      <h3>Integrations</h3>
-      <p className="mcp-lede">Tools Quorum reads from and sends notes to.</p>
-      <div className="set-card set-zero">
-        <span className="set-zero-icon"><IconGrid width={22} height={22} /></span>
-        <strong>No integrations yet</strong>
-        <p>Tools Quorum can read from and send notes to will show here.</p>
-      </div>
-
       <h3>API</h3>
       <p className="mcp-lede">Keys for scripts and tools to reach your notes.</p>
       <div className="set-card">
@@ -949,13 +942,13 @@ function MeetingProviders() {
           )}
         </span>
       </div>
-      <p className="mcp-lede">The meeting apps Quorum listens to, read on this Mac.</p>
+      <p className="mcp-lede">The meeting apps Quorum listens to, read on this Mac. Cloud recordings and transcripts come through Connectors.</p>
       <div className="set-card">
         {list?.map((p) => (
           <Row key={p.id}
             icon={icons[p.id] ? <img className="set-app-icon" src={icons[p.id]!} alt="" /> : <IconChat width={18} height={18} />}
-            title={<>{p.name}{ready(p) && <span className="conn-ok"><i />Connected</span>}</>} desc={desc(p)}>
-            {!p.enabled && <button className="pill" onClick={() => toggle(p, true)}>Connect</button>}
+            title={<>{p.name}{ready(p) && <span className="conn-ok"><i />Listening on this Mac</span>}</>} desc={desc(p)}>
+            {!p.enabled && <button className="pill" onClick={() => toggle(p, true)}>Add</button>}
             {p.enabled && p.installed && p.access === false && <button className="pill" onClick={() => window.quorum.axSettingsOpen()}>Open System Settings</button>}
             {p.enabled && (
               <span className="menu-wrap" onClick={(e) => e.stopPropagation()}>

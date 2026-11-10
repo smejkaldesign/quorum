@@ -237,6 +237,7 @@ declare global {
       meetingSourceRemove(id: string): Promise<boolean>;
       meetingSourceOpen(id: string): Promise<void>;
       sourcesList(): Promise<MeetingSourceInfo[]>;
+      libraryIcons(): Promise<Record<string, string | null>>;
       sourceConnect(id: string): Promise<Result>;
       sourceDisconnect(id: string): Promise<Result>;
       sourceSync(id: string): Promise<Result>;
