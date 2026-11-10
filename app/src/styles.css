@@ -423,6 +423,8 @@ html.popup-root, html.popup-root body { background: transparent; }
 .kb-crumb:hover { color: var(--text); }
 .kb-focus { color: var(--text); text-decoration: underline; text-decoration-color: rgba(255, 255, 255, 0.3); text-underline-offset: 3px; }
 .kb-focus:hover { text-decoration-color: currentColor; }
+.kb-expand { width: 26px; height: 26px; border-radius: 7px; margin-left: 2px; }
+.kb-expand:hover { color: var(--text); background: rgba(255, 255, 255, 0.08); }
 .kb-sep { color: var(--muted); opacity: 0.6; }
 .graph-canvas { flex: 1; width: 100%; min-height: 0; display: block; cursor: grab; }
 .graph-canvas:active { cursor: grabbing; }

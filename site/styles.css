@@ -107,12 +107,14 @@ ul { margin: 0; padding: 0; list-style: none; }
 .brand img { display: block; width: 22px; height: 26px; }
 .brand span { font: 400 22px/1 var(--serif); letter-spacing: -0.01em; color: var(--text); }
 .brand:hover span { color: var(--text); }
-.nav { display: flex; align-items: center; gap: 22px; font-size: 15px; color: var(--muted); }
+.nav { display: flex; align-items: center; gap: 22px; font-size: 15px; color: rgba(255, 255, 255, 0.9); }
 .nav a { white-space: nowrap; }
-.nav a:hover { color: var(--text); }
-.nav-cta { display: inline-flex; align-items: center; gap: 6px; color: var(--text); }
+.nav a:hover { color: #fff; }
+/* Download is the one filled control in the header: white on the blue wash, black text */
+.nav-cta { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 14px; border-radius: 999px; background: #fff; color: #111; font-weight: 500; }
 .nav-cta svg { width: 14px; height: 14px; flex: none; display: block; }
-.nav-cta:hover { color: var(--brand-soft); }
+.nav-cta:hover { color: #000; background: var(--brand-tint); }
+.nav-cta[aria-disabled="true"] { opacity: 0.6; }
 
 /* Dot background, shared by the hero and How it works */
 .dotted {
@@ -318,7 +320,18 @@ ul { margin: 0; padding: 0; list-style: none; }
    the space it has (script.js sets --s). The window rises 80px into the hero, and the section after it drops its
    rule so the window and the next heading read as one block. */
 .app-shot { padding: 0; z-index: 1; }
-.app-shot + .section { border-top: 0; }
+.app-shot .app-window { position: relative; z-index: 1; }
+/* a second connector graphic (neural.js) sits behind the frame, far closer in than the hero's, and runs on past the
+   frame's bottom edge into the gap below, fading to nothing before the next section's heading */
+.app-shot .neural {
+  position: absolute; left: 0; top: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.55;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 64%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 64%, transparent 100%);
+}
+.app-shot + .section { border-top: 0; padding-top: calc(var(--section-y) + 80px); }
 .app-shot + .section::before, .app-shot + .section::after { content: none; }
 .app-window {
   --s: 1;

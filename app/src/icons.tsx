@@ -195,6 +195,10 @@ export const IconMore = (p: SVGProps<SVGSVGElement>) => (
 export const IconTrash = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3" /></svg>
 );
+// arrows out to two corners: leave a focused node for the whole graph
+export const IconExpand = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7" /></svg>
+);
 export const IconSidebar = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M15 4v16" /></svg>
 );

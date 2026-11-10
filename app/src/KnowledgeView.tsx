@@ -5,7 +5,7 @@ import { NotePanel, Palette, type PaletteItem, type PaletteMode } from './NoteTo
 import { LinkHealth, leftAsIs } from './LinkHealth';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
-import { IconChevron, IconClose, IconCollapse, IconFolder, IconGraph, IconNewFolder, IconNewNote, IconHistory, IconLink, IconMore, IconReset, IconSearch, IconSidebar, IconSliders, IconSort } from './icons';
+import { IconChevron, IconClose, IconCollapse, IconExpand, IconFolder, IconGraph, IconNewFolder, IconNewNote, IconHistory, IconLink, IconMore, IconReset, IconSearch, IconSidebar, IconSliders, IconSort } from './icons';
 
 type Creating = { kind: 'note' | 'folder'; parent: string } | null;
 type Preview = { rel: string; title: string; body: string; abs: string; app: string } | null;
@@ -306,6 +306,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
                   <button className="kb-crumb" onClick={() => setFocus(null)}>Graph</button>
                   <span className="kb-sep">/</span>
                   <button className="kb-focus" onClick={() => focus && openNote(focus)}>{focusName}</button>
+                  <button className="icon-btn kb-expand" data-tip="Back to the full graph" aria-label="Back to the full graph" onClick={() => setFocus(null)}><IconExpand width={15} height={15} /></button>
                 </span>
               ) : (
                 <span className="kb-title"><IconGraph width={16} height={16} /> Graph</span>
