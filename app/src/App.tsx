@@ -1,5 +1,5 @@
 import { Component, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import type { Brain, HelperEvent, MeetingMeta, Notes, NotesDraft, Settings, Source, SpeakersEvent } from './quorum';
+import type { Brain, HelperEvent, MeetingMeta, Notes, NotesDraft, Settings, Source, SpeakersEvent, UpdateState } from './quorum';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
 import { EndView } from './EndView';
@@ -17,7 +17,7 @@ import { SettingsView } from './SettingsView';
 import type { ConnectorsTarget, OpenSettingsDetail, SettingsPageId } from './connectorsNav';
 import { IconPen, PrivateNotes, usePrivateNotes } from './PrivateNotes';
 import { SpeakerName, similarCount, type SpeakerInfo } from './Speaker';
-import { IconFolderOpen, IconPerson, IconGear, IconHome, IconGraph, IconSearch, IconFolder, IconDoc, IconBack, IconChat, IconChevron, IconNotes, IconStop, IconPause, IconPlay, Wave } from './icons';
+import { IconFolderOpen, IconPerson, IconGear, IconHome, IconGraph, IconSearch, IconFolder, IconDoc, IconBack, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, Wave } from './icons';
 
 // one speaker turn as main.js built it; a turn that grows arrives again with the same id and replace: true
 type Line = { id: number; channel: 'me' | 'them'; text: string; start: number } & Partial<SpeakerInfo>;
@@ -110,6 +110,9 @@ export function App() {
   const [notesDraft, setNotesDraft] = useState<NotesDraft | null>(null);
   const [meta, setMeta] = useState<MeetingMeta | null>(null);
   const [settings, setSettings] = useState<Settings>({ autoListen: false, model: 'sonnet', suggestions: true });
+  // a downloaded update shows as one button left of Listen; everything else about updates lives in Preferences
+  const [update, setUpdate] = useState<UpdateState | null>(null);
+  useEffect(() => { window.quorum.updateStatus().then((s) => setUpdate(s ?? null)).catch(() => {}); return window.quorum.onUpdate(setUpdate); }, []);
   const [themName, setThemName] = useState<string | null>(null);
   const [participants, setParticipants] = useState<string[]>([]);
   const [naming, setNaming] = useState(false);
@@ -339,6 +342,7 @@ export function App() {
           </nav>
           )}
           <div className="status-wrap">
+            {update?.status === 'ready' && <button className="pill update-pill" data-tip={`Install Quorum ${update.version} and restart`} onClick={() => window.quorum.updateInstall()}><IconDownload width={14} height={14} />Update</button>}
             {phase === 'listening' && <button className="icon-btn call-btn" aria-label="Pause" data-tip="Pause" onClick={() => window.quorum.pause()}><IconPause /></button>}
             {phase === 'paused' && <button className="icon-btn call-btn" aria-label="Resume" data-tip="Resume" onClick={() => window.quorum.resume()}><IconPlay /></button>}
             {(phase === 'listening' || phase === 'paused') && <button className="icon-btn call-btn" aria-label="Stop and summarize" data-tip="Stop and summarize" onClick={() => window.quorum.end()}><IconStop /></button>}

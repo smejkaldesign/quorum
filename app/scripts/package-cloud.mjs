@@ -20,7 +20,9 @@ if (existsSync(envFile)) {
 const url = process.env.QUORUM_SUPABASE_URL || vars.QUORUM_SUPABASE_URL;
 const key = process.env.QUORUM_SUPABASE_ANON_KEY || vars.QUORUM_SUPABASE_ANON_KEY;
 if (!url || !key) { console.error('package-cloud: QUORUM_SUPABASE_URL and QUORUM_SUPABASE_ANON_KEY are needed (shell or repo .env)'); process.exit(1); }
-const args = ['electron-builder', '--mac', '-c.extraMetadata.quorumEdition=cloud', `-c.extraMetadata.quorumCloud.url=${url}`, `-c.extraMetadata.quorumCloud.anonKey=${key}`, ...process.argv.slice(2)];
+// the Cloud build updates from a generic feed on quorum.watch (updater.js), not from GitHub Releases, which carry the Local build
+const updates = (process.env.QUORUM_CLOUD_UPDATES_URL || vars.QUORUM_CLOUD_UPDATES_URL || 'https://quorum.watch/updates/cloud').replace(/\/+$/, '');
+const args = ['electron-builder', '--mac', '-c.extraMetadata.quorumEdition=cloud', `-c.extraMetadata.quorumCloud.url=${url}`, `-c.extraMetadata.quorumCloud.anonKey=${key}`, `-c.extraMetadata.quorumCloud.updates=${updates}`, '-c.publish.provider=generic', `-c.publish.url=${updates}`, ...process.argv.slice(2)];
 const r = spawnSync('npx', args, { cwd: app, stdio: 'inherit', env: { ...process.env, QUORUM_EDITION: 'cloud' } });
 if (r.status) process.exit(r.status);
 // a module left out of build.files only fails at launch, so prove every import resolves inside the asar before calling it built

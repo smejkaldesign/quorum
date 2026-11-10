@@ -28,6 +28,7 @@ import { homedir, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import updater from 'electron-updater';
+import { createUpdater, feedFor } from './updater.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // one copy per environment: the lock lives in the environment's own data folder (edition.js DATA_DIR: Quorum, or
@@ -952,6 +953,7 @@ function updateTray() {
       ? { label: 'Stop listening and summarize', click: () => { openMain(); endMeeting(); } }
       : { label: 'Start listening', enabled: !meeting.starting, click: () => startListening() },
     { label: 'Listen automatically', type: 'checkbox', checked: settings.autoListen, click: (item) => setAutoListen(item.checked) },
+    ...(updates?.state().status === 'ready' ? [{ type: 'separator' }, { label: `Update to Quorum ${updates.state().version}`, click: () => updates.install() }] : []),
     { type: 'separator' },
     { label: 'Quit Quorum', click: () => app.quit() },
   ]);
@@ -1739,6 +1741,12 @@ function callLink(e) {
   for (const [platform, re] of CALL_LINKS) { const m = text.match(re); if (m) return { platform, join: m[0] }; }
   return { platform: null, join: null };
 }
+// in-app updates: the state the window renders, a check on request, and the install once a version is ready
+let updates = null;
+const packagedMeta = (() => { try { return JSON.parse(readFileSync(path.join(here, 'package.json'), 'utf8')); } catch { return {}; } })();
+ipcMain.handle('update-status', () => updates?.state() ?? { status: 'off', current: app.getVersion(), version: null, percent: 0, notes: null, checkedAt: null, error: null });
+ipcMain.handle('update-check', async () => (updates ? updates.check() : { status: 'off' }));
+ipcMain.handle('update-install', () => !!updates?.install());
 ipcMain.handle('calendar', async () => {
   const c = calSettings();
   const { mac, google, events: all } = await calendarEvents(c.days);
@@ -2129,16 +2137,11 @@ let stopControl = null;
 app.on('will-quit', () => { meeting.capturing = false; writeState(); stopControl?.(); });
 app.whenReady().then(() => {
   if (!app.hasSingleInstanceLock()) return;
-  // installed Local builds check GitHub Releases for a newer signed build on launch and every six hours; a miss is only
-  // logged. The Cloud edition ships from quorum.watch and has no update feed yet (docs/parity-gaps.md), so it skips this.
-  if (app.isPackaged && EDITION === 'local') {
-    const { autoUpdater } = updater;
-    autoUpdater.logger = { info: () => {}, warn: () => {}, error: (e) => log('updater', String(e?.message ?? e)), debug: () => {} };
-    autoUpdater.on('update-downloaded', (info) => log('updater: downloaded', info?.version));
-    const check = () => autoUpdater.checkForUpdatesAndNotify().catch((e) => log('updater', String(e?.message ?? e)));
-    setTimeout(check, 15000);
-    setInterval(check, 6 * 3600 * 1000);
-  }
+  // installed builds check their feed on launch, every six hours and when the window comes back after an hour; the
+  // window shows an Update button once a version is downloaded (updater.js). A development copy has nothing to update
+  updater.autoUpdater.logger = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
+  updates = createUpdater({ autoUpdater: updater.autoUpdater, feed: feedFor({ edition: EDITION, packaged: packagedMeta }), current: app.getVersion(), enabled: app.isPackaged, emit: (s) => { toUI('update', s); updateTray(); }, log });
+  updates.start();
   store.attachments.clear();
   store.meetings.ensureRoot();
   writeState();
@@ -2161,6 +2164,7 @@ app.whenReady().then(() => {
   // closing the window keeps Quorum in the menu bar; Quit lives in the tray menu
   win.on('close', (e) => { if (!quitting) { e.preventDefault(); win.hide(); } });
   for (const ev of ['focus', 'blur', 'show', 'hide']) win.on(ev, () => updateTray());
+  win.on('focus', () => updates?.onFocus());
   win.webContents.on('console-message', (e) => log('renderer', e.level, e.message));
   win.webContents.on('render-process-gone', (_e, d) => log('renderer gone', JSON.stringify(d)));
   win.webContents.on('preload-error', (_e, p, err) => log('preload error', p, err));

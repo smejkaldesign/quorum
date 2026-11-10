@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import type { Brain, CalendarSettings, ClaudeStatus, Memory, MemoryItem, OptOut, Profile, Settings, Voice, Workspace, Transcription, DecisionProvider, DecisionsStatus, AccountState } from './quorum';
+import type { Brain, CalendarSettings, ClaudeStatus, Memory, MemoryItem, OptOut, Profile, Settings, Voice, Workspace, Transcription, DecisionProvider, DecisionsStatus, AccountState, UpdateState } from './quorum';
 import { PersonalConnectors } from './Connectors';
 import { ConnectorsPage } from './ConnectorsPage';
 import { CONNECTORS, CONNECTOR_BY_ID } from '../connectors/library';
@@ -141,6 +141,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onB
                 </Row>
                 <Row icon={<IconLock width={18} height={18} />} title="Data" desc="Transcribed on this Mac, answered by Claude Enterprise" />
               </div>
+              <AboutCard />
             </ProfilePage>
           ) : page === 'knowledge' ? (
             <KnowledgePage />
@@ -677,6 +678,31 @@ function CalendarPage({ onConnector }: { onConnector: (id: string) => void }) {
         <Row icon={<IconNotes width={18} height={18} />} title={<>Name notes after the event<Soon /></>} desc="Will use the calendar title instead of the Zoom topic"><Toggle on onChange={noop} disabled /></Row>
         <Row icon={<IconPeople width={18} height={18} />} title={<>Add attendees to notes<Soon /></>} desc="Will list everyone invited, even if they don't speak"><Toggle on onChange={noop} disabled /></Row>
         <Row icon={<Wave live={false} />} title={<>Only listen to my meetings<Soon /></>} desc="Will skip events you weren't invited to"><Toggle on={false} onChange={noop} disabled /></Row>
+      </div>
+    </>
+  );
+}
+
+// the version this is, whether a newer one is ready, and a check on request; a failure shows here, never as a popup
+function AboutCard() {
+  const [u, setU] = useState<UpdateState | null>(null);
+  useEffect(() => { window.quorum.updateStatus().then((s) => setU(s ?? null)).catch(() => {}); return window.quorum.onUpdate(setU); }, []);
+  if (!u) return null;
+  const when = u.checkedAt ? new Date(u.checkedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : null;
+  const desc = u.status === 'off' ? (u.current ? 'A development copy; updates come with the installed app' : 'No update feed for this build')
+    : u.status === 'checking' ? 'Checking for updates…'
+    : u.status === 'downloading' ? `Downloading ${u.version ?? 'the update'}${u.percent ? ` · ${u.percent}%` : ''}`
+    : u.status === 'ready' ? `Quorum ${u.version} is downloaded and installs when you choose Update`
+    : u.status === 'failed' ? `Could not check for updates${u.error ? `: ${u.error}` : ''}`
+    : `Up to date${when ? ` · checked at ${when}` : ''}`;
+  return (
+    <>
+      <h3>About</h3>
+      <div className="set-card">
+        <Row icon={<IconQuorum width={18} height={18} />} title={`Quorum ${u.current}`} desc={desc}>
+          {u.status === 'ready' ? <button className="pill primary" onClick={() => window.quorum.updateInstall()}>Update and restart</button>
+            : u.status !== 'off' && <button className="pill" disabled={u.status === 'checking' || u.status === 'downloading'} onClick={() => window.quorum.updateCheck()}>Check for updates</button>}
+        </Row>
       </div>
     </>
   );

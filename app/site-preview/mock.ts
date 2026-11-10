@@ -193,6 +193,8 @@ const sample: Partial<Bridge> = {
   meetingProviderCheck: async () => {},
   mcpStatus: async () => ({ added: true, node: '/Applications/Quorum.app/Contents/MacOS/Quorum', cli: '/Applications/Quorum.app/Contents/Resources/cli/quorum.mjs', command: '"/Applications/Quorum.app/Contents/MacOS/Quorum" "/Applications/Quorum.app/Contents/Resources/cli/quorum.mjs" mcp' }),
   calendarStatus: async () => ({ source: 'mac', days: 7, enabled: true, status: 'granted', google: null }),
+  // #update in the preview URL shows the Update button, for screenshots of that state
+  updateStatus: async () => ({ status: location.hash.includes('update') ? 'ready' : 'idle', current: '0.2.7', version: location.hash.includes('update') ? '0.2.8' : null, percent: 0, notes: null, checkedAt: Date.now() - 600000, error: null }),
   vaultTree: async () => vault.tree,
   vaultGraph: async () => vault.graph,
   vaultLinkHealth: async () => [],

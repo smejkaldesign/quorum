@@ -25,7 +25,7 @@ Product gaps as of 2026-11-10. Each item says what is missing, what the app does
 
 - **Google sign-in.** Needs an OAuth client. Email code sign-in works today. (Google Calendar is separate and live: `docs/self-hosting.md`, Google Calendar connector.)
 - **Auth mail when self-hosting.** The built-in Supabase sender allows about 2 emails per hour; a self-hosted project needs a custom SMTP provider (see `docs/self-hosting.md`). The hosted service has one.
-- **Updates.** The Cloud edition ships from quorum.watch and has no update feed; it does not check for updates. The Local edition updates from GitHub Releases. The plan is an electron-updater `generic` feed on quorum.watch (`docs/release-checklist.md`).
+- **Updates.** Both editions check a static feed (Local: GitHub Releases; Cloud: `quorum.watch/updates/cloud`, published at release time per `docs/release-checklist.md`) and show an Update button once a version is downloaded. A Cloud build packaged without `QUORUM_CLOUD_UPDATES_URL` still gets the default feed URL; the feed only exists once a release has been published there.
 - **Hosted model access.** Beyond managed transcription, absent. Model calls use the user's Claude Code sign-in or the user's own API key in both editions.
 
 ## Runners

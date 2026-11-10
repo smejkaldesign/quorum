@@ -104,9 +104,8 @@ The Release workflow builds, signs, notarizes and attaches `Quorum-0.2.7-arm64.d
 1. `main` is green in CI and the clean-clone checks in step 1 pass.
 2. Bump `app/package.json` version, commit, tag `v<version>`, push the tag.
 3. Wait for the Release workflow, test the DMG from the draft on a clean Mac, publish the draft.
-4. The Cloud edition: `npm run package:cloud` on a Mac with the Developer ID identity and the App Store Connect key in the shell (`APPLE_API_KEY` as the .p8 path, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`), then `zsh scripts/notarize-dmg.sh`. Upload the DMG to the quorum.watch download location. The Cloud build does not auto-update until it has its own feed (`docs/parity-gaps.md`).
+4. The Cloud edition: `npm run package:cloud` on a Mac with the Developer ID identity and the App Store Connect key in the shell (`APPLE_API_KEY` as the .p8 path, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`), then `zsh scripts/notarize-dmg.sh`. Then publish the update feed the installed Cloud apps read: copy `app/release/latest-mac.yml`, `Quorum-<version>-arm64-mac.zip` and its `.blockmap` into `site/updates/cloud/` and run `npm run deploy` in `site/`. The DMG goes to the quorum.watch download location. Installed Cloud apps check `https://quorum.watch/updates/cloud/latest-mac.yml` on launch and every six hours and show an Update button once the zip is downloaded.
 
 ## Open items
 
-- A separate update feed for the Cloud edition (electron-updater `generic` provider on quorum.watch), so Cloud installs update without pulling the Local build from GitHub Releases.
 - `GITLEAKS_LICENSE` is only needed if the repository moves to an organization account.

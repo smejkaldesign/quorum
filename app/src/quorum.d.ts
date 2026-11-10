@@ -29,6 +29,8 @@ export type SpeakersEvent = { turns: { id: number; speaker: string | null; confi
 type Unsub = () => void;
 export type CalendarEvent = { id: string; title: string; start: string; end: string; item?: string | null; link?: string | null; recurring?: boolean; platform?: 'zoom' | 'meet' | 'teams' | null; join?: string | null };
 // the Google Calendar connector: configured means the app has a Google client to sign in with
+// in-app updates (app/updater.js): off means this build has no feed (a development copy, or a Cloud build without one)
+export type UpdateState = { status: 'off' | 'idle' | 'checking' | 'downloading' | 'ready' | 'failed'; current: string; version: string | null; percent: number; notes: string | null; checkedAt: number | null; error: string | null };
 export type GoogleCalendarStatus = { configured: boolean; connected: boolean; account: string | null; calendars: number; lastSyncAt: string | null; error: string | null };
 export type CalendarSettings = { source: 'mac'; days: number; enabled?: boolean; showAll?: boolean; hidden?: string[]; status?: 'granted' | 'notDetermined' | 'denied' | 'unavailable' | 'off'; google?: GoogleCalendarStatus | null };
 export type MemoryItem = { id: string; kind: string; label: string; path: string; detail: string; include: boolean | null; manual?: boolean };
@@ -279,6 +281,10 @@ declare global {
       calendarPrivacy(): Promise<void>;
       calendarOpen(ev: CalendarEvent): Promise<void>;
       gcalConnect(): Promise<GoogleCalendarStatus>;
+      updateStatus(): Promise<UpdateState>;
+      updateCheck(): Promise<UpdateState>;
+      updateInstall(): Promise<boolean>;
+      onUpdate(cb: (s: UpdateState) => void): Unsub;
       gcalDisconnect(): Promise<GoogleCalendarStatus>;
       memoryRefreshCancel(): Promise<void>;
       memoryAdd(): Promise<Memory>;

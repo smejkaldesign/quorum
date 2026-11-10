@@ -59,7 +59,8 @@ p { margin: 0; }
 .tab.on { background: var(--card-2); color: var(--text); }
 .call-tabs { margin-right: 6px; overflow: hidden; animation: tabs-open 0.28s ease both; }
 @keyframes tabs-open { from { max-width: 0; opacity: 0; padding-left: 0; padding-right: 0; } to { max-width: 140px; opacity: 1; } }
-.status-wrap:has(.call-btn) { display: flex; align-items: center; gap: 2px; }
+.status-wrap:has(.call-btn), .status-wrap:has(.update-pill) { display: flex; align-items: center; gap: 2px; flex-wrap: nowrap; }
+.status-wrap .update-pill { margin-right: 6px; }
 .bar .right .call-btn, .call-tabs .tab { color: var(--go); }
 .bar .right .call-btn:hover, .call-tabs .tab:hover { background: rgba(127, 219, 131, 0.1); }
 .call-tabs .tab.on { background: rgba(127, 219, 131, 0.14); color: var(--go); }
@@ -1353,3 +1354,7 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .agent-tradeoffs li + li { margin-top: 4px; }
 .agent-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .agent-schedule { display: flex; align-items: center; gap: 8px; margin-left: auto; color: var(--muted); font-size: 13px; }
+
+/* the Update button, left of Listen, only while a downloaded version waits */
+.bar .right .update-pill { height: 30px; padding: 0 12px 0 10px; display: inline-flex; align-items: center; gap: 6px; border-radius: 9px; font-size: 13px; font-weight: 500; color: #0a0a0b; background: var(--go); border: 0; }
+.bar .right .update-pill:hover { filter: brightness(1.08); }

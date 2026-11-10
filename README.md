@@ -92,7 +92,7 @@ The rule behind the split: the open-source edition is the same app with the same
 
 ## Quickstart
 
-**Download.** Get the DMG from the [latest release](https://github.com/smejkaldesign/quorum/releases/latest), drag Quorum to Applications and open it. On first launch Quorum asks for Microphone, Screen and System Audio Recording, Accessibility and Calendar access, then creates `~/Documents/Quorum` or connects a folder you already have.
+**Download.** Get the DMG from the [latest release](https://github.com/smejkaldesign/quorum/releases/latest), drag Quorum to Applications and open it. Quorum checks for updates on its own and shows an Update button when a new version is ready. On first launch Quorum asks for Microphone, Screen and System Audio Recording, Accessibility and Calendar access, then creates `~/Documents/Quorum` or connects a folder you already have.
 
 **Build from source.** You need macOS 26 on Apple silicon, Node 22 or newer, Python 3, the Xcode command line tools, and Claude Code installed and signed in.
 

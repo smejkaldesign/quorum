@@ -13,3 +13,6 @@ supabase/.temp/
 app/eval/corpus/*/
 app/eval/results/
 site/app-preview/
+# the Cloud update feed is copied here at release time and deployed with the site, never committed
+site/updates/cloud/*
+!site/updates/cloud/.gitkeep
