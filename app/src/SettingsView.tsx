@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { SetupForm, answersFrom, draftFrom, draftIsEmpty, emptyDraft, type SetupDraft } from './SetupForm';
-import type { AccountState, Brain, CalendarSettings, ClaudeStatus, DecisionProvider, DecisionsStatus, KeeperStatus, Memory, MemoryItem, OptOut, Profile, Settings, TeamVault, Transcription, UpdateState, Voice, Workspace } from './quorum';
+import type { AccountState, Brain, CalendarSettings, ClaudeStatus, DecisionProvider, DecisionsStatus, KeeperStatus, Memory, MemoryItem, OptOut, Profile, ScreenContextStatus, Settings, TeamVault, Transcription, UpdateState, Voice, Workspace } from './quorum';
 import { PersonalConnectors } from './Connectors';
 import { ConnectorsPage } from './ConnectorsPage';
 import { GuardrailsPage } from './Guardrails';
@@ -143,6 +143,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
                 <Row icon={<IconChat width={18} height={18} />} title="Suggest answers from my notes" desc="Offers your notes when someone asks you a question">
                   <Toggle on={settings.suggestions !== false} onChange={(v) => set({ suggestions: v })} />
                 </Row>
+                <ScreenContextRow />
                 <Row icon={<IconLock width={18} height={18} />} title="Data" desc="Transcribed on this Mac, answered by Claude Enterprise" />
               </div>
               <AboutCard />
@@ -852,6 +853,23 @@ function TeamVaultRow() {
   );
 }
 
+// what is on screen as spelling hints, for calls and dictation: one screenshot of the front window at each start, read on
+// this Mac. Needs the Screen Recording permission, asked for once when the toggle goes on
+function ScreenContextRow() {
+  const [s, setS] = useState<ScreenContextStatus | null>(null);
+  useEffect(() => { window.quorum.screenContextStatus().then(setS).catch(() => setS(null)); }, []);
+  if (!s) return null;
+  const desc = !s.on ? 'Names and product words on your screen, read on this Mac, spelled right in transcripts and dictation'
+    : s.granted === false ? 'On, but macOS has not allowed Screen Recording for Quorum yet'
+    : 'On. The front window is read once at each start; nothing is stored or sent';
+  return (
+    <Row icon={<IconStack width={18} height={18} className={s.on && s.granted !== false ? 'ok' : undefined} />} title="Use what's on screen for spelling" desc={desc}>
+      {s.on && s.granted === false && <button className="pill small-pill" onClick={() => window.quorum.screenContextPrivacy()}>Open System Settings</button>}
+      <Toggle on={s.on} onChange={async (on) => setS(await window.quorum.screenContextSet(on))} />
+    </Row>
+  );
+}
+
 // the pages below are real layouts with every control disabled until the feature behind them exists
 const noop = () => {};
 
@@ -1359,7 +1377,6 @@ function VoicePage({ settings, onSettings }: { settings: Settings; onSettings: (
           <select className="set-select" disabled defaultValue="default"><option value="default">System default</option></select>
         </Row>
         <Row icon={<IconSliders width={18} height={18} />} title={<>Styles<Soon /></>} desc="Will apply a writing style for each kind of app"><Toggle on={false} onChange={noop} disabled /></Row>
-        <Row icon={<IconStack width={18} height={18} />} title={<>Screen context<Soon /></>} desc="Will read text on screen to spell names right"><Toggle on={false} onChange={noop} disabled /></Row>
         <Row icon={<IconNotes width={18} height={18} />} title={<>Auto-add words<Soon /></>} desc="Will add words you correct to your dictionary"><Toggle on={false} onChange={noop} disabled /></Row>
         <Row icon={<Wave live={false} />} title={<>Mute other audio<Soon /></>} desc="Will quiet your Mac while you talk"><Toggle on={false} onChange={noop} disabled /></Row>
       </div>

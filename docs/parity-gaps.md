@@ -44,4 +44,6 @@ Product gaps as of 2026-11-10. Each item says what is missing, what the app does
 
 ## Settings
 
+- **Screen context** (Preferences, "Use what's on screen for spelling"). One screenshot of the front window at each capture or dictation start, read on the Mac with Vision; capitalized words, product words and acronyms join the recognizer's spelling hints (`helper/Sources/QuorumHelper/ScreenContext.swift`). Needs the Screen Recording permission, asked once when the toggle goes on. Read once per start: a slide shown later in the call is not picked up until the next start.
+
 - Rows for features that have not shipped stay visible as a to-do map until the features ship.

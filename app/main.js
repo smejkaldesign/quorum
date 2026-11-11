@@ -361,7 +361,7 @@ function calAsk(cmd) {
 }
 
 function onHelperEvent(evt) {
-  if (evt.event === 'calResult' && pendingCal.has(evt.id)) { pendingCal.get(evt.id)(evt); pendingCal.delete(evt.id); return; }
+  if ((evt.event === 'calResult' || evt.event === 'screenTerms' || evt.event === 'screenAccess') && pendingCal.has(evt.id)) { pendingCal.get(evt.id)(evt); pendingCal.delete(evt.id); return; }
   if ((evt.event === 'chatSent' || evt.event === 'chatFailed') && pendingPosts.has(evt.id)) {
     const p = pendingPosts.get(evt.id);
     pendingPosts.delete(evt.id);
@@ -450,6 +450,14 @@ async function sessionTerms({ calendar = true, participants = [] } = {}) {
     participants, dictionary: settings.voice?.dictionary, company: settings.workspace?.company, owner: USER_NAME,
     vaultPeople: topNames(index.map((m) => m.people)), vaultOrgs: topNames(index.map((m) => m.orgs), 50),
   });
+  // screen context: the words on the front window (the meeting app's during a call) join the list, on this Mac only
+  if (settings.screenContext) {
+    const r = await calAsk({ cmd: 'screenTerms', bundles: calendar ? provider().bundles ?? [] : [] });
+    const seen = new Set(terms.map((t) => t.toLowerCase()));
+    const fresh = (Array.isArray(r.terms) ? r.terms : []).filter((t) => !seen.has(String(t).toLowerCase()));
+    if (fresh.length) terms.push(...fresh);
+    log(`screen context: ${fresh.length} terms${r.granted === false ? ' (Screen Recording not allowed)' : ''}`);
+  }
   log(`vocabulary: ${terms.length} terms`);
   if (!app.isPackaged && process.env.QUORUM_LOG_TERMS === '1') log('vocabulary sample:', terms.slice(0, 20).join(', '));
   return terms;
@@ -1136,6 +1144,10 @@ ipcMain.handle('set-settings', (_e, next) => {
   }
   if (next.access === 'read' || next.access === 'write') {
     settings.access = next.access;
+    store.settings.save();
+  }
+  if (typeof next.screenContext === 'boolean') {
+    settings.screenContext = next.screenContext;
     store.settings.save();
   }
   if (typeof next.suggestions === 'boolean') {
@@ -2029,6 +2041,16 @@ ipcMain.handle('meeting-provider-set', (_e, id, on) => {
   settings.meetingProviders = { ...settings.meetingProviders, [id]: { enabled: on } };
   store.settings.save();
 });
+// screen context: the setting plus whether macOS lets the helper take the screenshot; turning it on asks once
+const SCREEN_PANE = 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture';
+ipcMain.handle('screen-context-status', async () => ({ on: !!settings.screenContext, granted: (await calAsk({ cmd: 'screenAccess', prompt: false })).granted ?? null }));
+ipcMain.handle('screen-context-set', async (_e, on) => {
+  settings.screenContext = on === true;
+  store.settings.save();
+  const granted = settings.screenContext ? (await calAsk({ cmd: 'screenAccess', prompt: true })).granted ?? null : (await calAsk({ cmd: 'screenAccess', prompt: false })).granted ?? null;
+  return { on: settings.screenContext, granted };
+});
+ipcMain.handle('screen-context-privacy', () => shell.openExternal(SCREEN_PANE));
 ipcMain.handle('meeting-provider-check', () => { helperSend({ cmd: 'axStatus', prompt: true }); });
 ipcMain.handle('decisions-status', async () => { const provider = await decisionProvider(); return { connected: !!provider, provider, providers: Object.fromEntries(Object.entries(DECISION_PROVIDERS).map(([id, p]) => [id, { name: p.name, placeholder: p.placeholder, keyHint: p.keyHint }])) }; });
 ipcMain.handle('decisions-set', async (_e, provider, key) => {

@@ -60,7 +60,7 @@ export type ProviderConnectors = Partial<Record<ConnectorId, { baseUrl?: string;
 export type RunnerStatus = { installed: boolean; version: string | null };
 export type ModelSourceStatus = { source: ModelSource; localModel: string; claude: ClaudeStatus | null; key: boolean; keys: Partial<Record<ConnectorId, boolean>>; ollama: { reachable: boolean; hasModel: boolean }; runners?: Partial<Record<'codex' | 'antigravity', RunnerStatus>>; providers: Providers; connectors: ProviderConnectors };
 // userName is how the main process names the recorder in notes; it falls back to the macOS account's full name, then the login
-export type Settings = { meetingProviders?: Record<string, { enabled: boolean }>; autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean }; managedModels?: boolean };
+export type Settings = { meetingProviders?: Record<string, { enabled: boolean }>; autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean }; managedModels?: boolean; screenContext?: boolean };
 export type OnboardingStatus = { firstRun: boolean; defaultVaultDir: string };
 export type OnboardingChecks = { permissions: { microphone: string; audio: string; accessibility: string; calendar: string }; claude: { installed: boolean; loggedIn?: boolean; email?: string; org?: string; plan?: string; version?: string; pending?: boolean }; model?: ModelSourceStatus | null };
 // the setup interview: a template plus a few answers that shape a Quorum-built Agent OS (starter.js)
@@ -71,6 +71,8 @@ export type SetupInput = Omit<SetupAnswers, 'projects' | 'people'> & { projects:
 // the keeper: what maintains a Quorum-built folder after each note (keeper.js)
 export type KeeperRun = { filed: number; skipped: number; changed: number; reason: string; at: string; error: string | null; off?: boolean };
 export type KeeperStatus = { on: boolean; facts: boolean; running: boolean; lastRunAt: string | null; filed: number; last: KeeperRun | null; folders: Partial<Record<'people' | 'projects' | 'daily' | 'meetings', string>>; model: boolean };
+// screen context: on-screen text as spelling hints; granted is the Screen Recording permission, null when unknown
+export type ScreenContextStatus = { on: boolean; granted: boolean | null };
 export type SetupRecord = { version: number; name: string; answers: SetupAnswers; createdAt: string; updatedAt?: string };
 // the workspace vault: where teammates' shared notes land on this Mac, with their provenance bonds
 export type TeamVault = { root: string; notes: number; behind: number; last: { written: number; behind: number; removed: number; skipped: number } };
@@ -328,6 +330,9 @@ declare global {
       setupRead(): Promise<SetupRecord | null>;
       setupRerun(answers: SetupInput): Promise<Brain & { written: string[] }>;
       keeperStatus(): Promise<KeeperStatus>;
+      screenContextStatus(): Promise<ScreenContextStatus>;
+      screenContextSet(on: boolean): Promise<ScreenContextStatus>;
+      screenContextPrivacy(): Promise<void>;
       keeperSet(patch: { on?: boolean; facts?: boolean }): Promise<KeeperStatus>;
       keeperRun(): Promise<KeeperRun>;
       onKeeper?(cb: (r: KeeperRun) => void): Unsub;

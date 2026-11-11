@@ -94,6 +94,13 @@ func handle(_ line: String) async {
         if let text = cmd["text"] as? String { ChatWatcher.shared.send(text, id: cmd["id"] as? String) }
     case "chatReply":
         if let text = cmd["text"] as? String, let to = cmd["to"] as? String { ChatWatcher.shared.reply(to: to, text: text, id: cmd["id"] as? String) }
+    case "screenAccess":
+        // the Screen Recording permission: a check, or the system prompt when the app asks for it
+        Emit.send(["event": "screenAccess", "id": cmd["id"] as? String ?? "", "granted": ScreenContext.access(prompt: cmd["prompt"] as? Bool ?? false)])
+    case "screenTerms":
+        // what is on screen right now, as spelling hints; the meeting app's window first when one is named
+        let terms = await ScreenContext.terms(bundlePrefixes: cmd["bundles"] as? [String] ?? [])
+        Emit.send(["event": "screenTerms", "id": cmd["id"] as? String ?? "", "terms": terms, "granted": ScreenContext.access(prompt: false)])
     case "axStatus":
         // only asks macOS to show its Accessibility prompt when the app says so (once, not on every launch)
         let running = Providers.runningMap()
