@@ -140,9 +140,6 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
             <ProfilePage settings={settings} email={showEmail ? email : ''} emailLabel={emailLabel} name={user?.name ?? ''} onSettings={onSettings}>
               <h3>General</h3>
               <div className="set-card">
-                <Row icon={<Wave live={false} />} title="Listen automatically" desc="Starts transcribing when a meeting begins in Zoom, Google Meet or Teams">
-                  <Toggle on={settings.autoListen} onChange={(v) => set({ autoListen: v })} />
-                </Row>
                 <Row icon={<IconChat width={18} height={18} />} title="Suggest answers from my notes" desc="Offers your notes when someone asks you a question">
                   <Toggle on={settings.suggestions !== false} onChange={(v) => set({ suggestions: v })} />
                 </Row>
@@ -1126,6 +1123,12 @@ function MeetingsPage({ settings, onSettings, onConnector }: { settings: Setting
   const saveTx = async (patch: Transcription) => onSettings(await window.quorum.setSettings({ transcription: patch }));
   return (
     <>
+      <h3>Listening</h3>
+      <div className="set-card">
+        <Row icon={<Wave live={false} />} title="Listen automatically" desc="Starts transcribing when a meeting begins in Zoom, Google Meet or Teams">
+          <Toggle on={settings.autoListen} onChange={async (v) => onSettings(await window.quorum.setSettings({ autoListen: v }))} />
+        </Row>
+      </div>
       <MeetingProviders onConnector={onConnector} />
       <div className="set-card">
         <ConnectHint connector="zoom" title="Cloud recordings" desc="Zoom's cloud recordings and transcripts import through the Zoom connector in Quorum Cloud. Google Meet and Teams recordings are next.">
