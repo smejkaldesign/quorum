@@ -39,8 +39,6 @@ jobs:
     env:
       APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-      CSC_LINK: ${{ secrets.CSC_LINK }}
-      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
       GOOGLE_CLIENT_ID: ${{ secrets.QUORUM_GOOGLE_CLIENT_ID }}
       GOOGLE_CLIENT_SECRET: ${{ secrets.QUORUM_GOOGLE_CLIENT_SECRET }}
       QUORUM_SUPABASE_URL: ${{ vars.QUORUM_SUPABASE_URL }}
@@ -88,10 +86,21 @@ jobs:
         run: |
           printf '%s' "$APPLE_API_KEY_CONTENTS" > "$RUNNER_TEMP/AuthKey_$APPLE_API_KEY_ID.p8"
           echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey_$APPLE_API_KEY_ID.p8" >> "$GITHUB_ENV"
-      - name: Signing status
+      # electron-builder treats an empty CSC_LINK as a certificate path (it resolves to the project folder and fails with
+      # "not a file"), so the two variables exist only when the secrets do
+      - name: Signing certificate
         if: env.SKIP != '1'
+        env:
+          CSC_LINK_SECRET: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD_SECRET: ${{ secrets.CSC_KEY_PASSWORD }}
         run: |
-          if [ -n "$CSC_LINK" ]; then echo "::notice::Developer ID certificate present; the app will be signed and notarized."; else echo "::warning::CSC_LINK is not set; the app is signed ad hoc and not notarized. Set CSC_LINK and CSC_KEY_PASSWORD for a release build."; fi
+          if [ -n "$CSC_LINK_SECRET" ]; then
+            echo "CSC_LINK=$CSC_LINK_SECRET" >> "$GITHUB_ENV"
+            echo "CSC_KEY_PASSWORD=$CSC_KEY_PASSWORD_SECRET" >> "$GITHUB_ENV"
+            echo "::notice::Developer ID certificate present; the app will be signed and notarized."
+          else
+            echo "::warning::CSC_LINK is not set; the app is signed ad hoc and not notarized. Set CSC_LINK and CSC_KEY_PASSWORD for a release build."
+          fi
 
       # the installed app cannot read a .env, so the Google client rides in its package.json the way the Cloud build's Supabase values do
       - name: Add the Google Calendar client
