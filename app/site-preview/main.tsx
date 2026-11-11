@@ -12,4 +12,6 @@ import { installTooltips } from '../src/tooltips';
 for (const type of ['wheel', 'keydown'] as const) window.addEventListener(type, (e) => e.stopImmediatePropagation(), true);
 
 installTooltips();
-createRoot(document.getElementById('root')!).render(<ErrorBoundary><App /></ErrorBoundary>);
+// ?crash=1 shows the crash page itself (a thrown render), for a look at it outside the desktop app
+const Crash = () => { throw new Error(new URLSearchParams(location.search).get('crash') === 'stale' ? 'Failed to fetch dynamically imported module: file:///…/dist/assets/Account-Bakdb2me.js' : 'Cannot read properties of undefined (reading map)'); };
+createRoot(document.getElementById('root')!).render(<ErrorBoundary>{new URLSearchParams(location.search).has('crash') ? <Crash /> : <App />}</ErrorBoundary>);

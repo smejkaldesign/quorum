@@ -39,13 +39,50 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: E
   componentDidCatch(error: Error) { console.error('render crash:', error.message, error.stack); }
   render() {
     if (!this.state.error) return this.props.children;
-    return (
-      <div className="panel"><div className="body">
-        <div className="card">Something broke: {this.state.error.message}</div>
-        <button className="pill primary" onClick={() => this.setState({ error: null })}>Reload view</button>
-      </div></div>
-    );
+    return <CrashPage error={this.state.error} onReload={() => this.setState({ error: null })} />;
   }
+}
+
+// a view that failed while drawing, as a page: what happened in plain words, what is safe, what to do. The one case
+// the app can name is its own files changing underneath an open window (an update, or a rebuild in development)
+const STALE_BUNDLE = /dynamically imported module|Loading chunk|Importing a module script failed/i;
+function CrashPage({ error, onReload }: { error: Error; onReload: () => void }) {
+  const stale = STALE_BUNDLE.test(error.message);
+  return (
+    <div className="panel"><div className="crash" role="alert">
+      <CrashArt />
+      <h1>{stale ? 'Quorum updated underneath this view' : "Quorum couldn't draw this view"}</h1>
+      <p>{stale
+        ? "The app's files changed while this window was open, so a part of the view could not load. Reloading picks up the new version."
+        : 'A part of the app failed while it was drawing. Reloading usually puts it back. If it happens again, quit and reopen Quorum.'}</p>
+      <p>Your notes, transcripts and settings are not affected. Nothing was lost.</p>
+      <button className="pill primary crash-reload" onClick={onReload}>Reload view</button>
+      <details className="crash-detail">
+        <summary>Technical detail</summary>
+        <code>{error.message}</code>
+      </details>
+    </div></div>
+  );
+}
+
+// three note cards, the front one slipped off its stack
+function CrashArt() {
+  return (
+    <svg className="crash-art" width="120" height="96" viewBox="0 0 120 96" fill="none" aria-hidden="true">
+      <rect x="30" y="10" width="60" height="72" rx="8" fill="#2a2a2d" stroke="#3a3a3e" />
+      <rect x="24" y="16" width="60" height="72" rx="8" fill="#303034" stroke="#444449" />
+      <g transform="rotate(-9 50 60)">
+        <rect x="20" y="24" width="60" height="72" rx="8" fill="#39393e" stroke="#55555b" />
+        <rect x="30" y="38" width="30" height="4" rx="2" fill="#8a8a92" />
+        <rect x="30" y="48" width="40" height="4" rx="2" fill="#5e5e66" />
+        <rect x="30" y="58" width="36" height="4" rx="2" fill="#5e5e66" />
+        <rect x="30" y="68" width="22" height="4" rx="2" fill="#5e5e66" />
+      </g>
+      <circle cx="96" cy="22" r="11" fill="#1f1f22" stroke="#7fdb83" />
+      <path d="M96 16v7" stroke="#7fdb83" strokeWidth="2" strokeLinecap="round" />
+      <circle cx="96" cy="27.5" r="1.3" fill="#7fdb83" />
+    </svg>
+  );
 }
 
 const SUGGESTIONS = ['Summarize so far', 'What did I commit to?', 'Any open questions?'];

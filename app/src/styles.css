@@ -1403,3 +1403,16 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .setup-modal { max-height: calc(88vh - 16px); overflow-y: auto; }
 .set-card.form .set-label { flex: 1; min-width: 0; }
 .set-label span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* the crash page: centered, roomy, one action */
+.crash { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 48px 32px; gap: 0; }
+.crash-art { margin-bottom: 28px; }
+.crash h1 { margin: 0 0 14px; font-size: 24px; font-weight: 600; letter-spacing: -0.01em; }
+.crash p { margin: 0 0 10px; max-width: 460px; color: var(--muted); font-size: 15px; line-height: 1.5; }
+.crash-reload { margin-top: 26px; height: 40px; padding: 0 22px; }
+.crash-detail { margin-top: 34px; max-width: 560px; color: var(--muted); font-size: 13px; }
+.crash-detail summary { cursor: pointer; list-style: none; }
+.crash-detail summary::-webkit-details-marker { display: none; }
+.crash-detail summary::after { content: " ›"; display: inline-block; transform: rotate(90deg); margin-left: 4px; }
+.crash-detail[open] summary::after { transform: rotate(-90deg); }
+.crash-detail code { display: block; margin-top: 10px; padding: 12px 14px; border-radius: 10px; background: rgba(255, 255, 255, 0.04); border: 1px solid var(--line-2); text-align: left; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
