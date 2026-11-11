@@ -665,6 +665,9 @@ function AboutCapability({ it, onClose }: { it: MemoryItem; onClose: () => void 
   );
 }
 
+// kinds the scan reports but Quorum cannot act on yet; they never enter the review list
+const INERT_KINDS = new Set(['instructions', 'skills', 'agents', 'mcp']);
+
 // why each kind is worth including, folded together with what the scan found
 function why(it: MemoryItem): string {
   const n = it.detail.match(/\d+/)?.[0] ?? '';
@@ -692,8 +695,12 @@ function MemoryScan() {
   const [about, setAbout] = useState<MemoryItem | null>(null);
   useEffect(() => { window.quorum.memoryGet().then(setM); }, []);
   if (!m) return null;
-  const included = m.items.filter((i) => i.include === true || i.kind === 'guards');
-  const pending = m.items.filter((i) => i.include === null && i.kind !== 'guards');
+  // only what changes an answer is up for review: the index, search, the link graph, folders, guards. Instructions,
+  // skills, agents and MCP servers are detected but unused today, so they are mentioned in one line and never offered
+  const acts = (i: MemoryItem) => !INERT_KINDS.has(i.kind);
+  const included = m.items.filter((i) => acts(i) && (i.include === true || i.kind === 'guards'));
+  const pending = m.items.filter((i) => acts(i) && i.include === null && i.kind !== 'guards');
+  const seen = m.items.filter((i) => !acts(i)).map((i) => (i.kind === 'instructions' ? i.detail || i.label : i.detail || i.label));
   const refresh = async () => {
     setScanning(true);
     const r = await window.quorum.memoryRefresh();
@@ -733,6 +740,7 @@ function MemoryScan() {
         </span>
       </div>
       {included.length > 0 && <div className="set-card mem-card">{included.map(row)}</div>}
+      {seen.length > 0 && <p className="mem-seen">Also here, not used by Quorum yet: {seen.join(', ')}.</p>}
       {pending.length > 0 && (
         <>
           <h3>Found in your Agent OS</h3>

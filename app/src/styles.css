@@ -1456,3 +1456,4 @@ button.meta-pill { font: inherit; cursor: pointer; }
 @keyframes caret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 .set-field { position: relative; }
 .field-saved { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); font-size: 12px; color: var(--go); pointer-events: none; animation: sofar-breathe 1.4s ease-in-out 1; }
+.mem-seen { margin: 2px 4px 14px; color: var(--muted); font-size: 13px; line-height: 1.45; }
