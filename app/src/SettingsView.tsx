@@ -667,6 +667,16 @@ function AboutCapability({ it, onClose }: { it: MemoryItem; onClose: () => void 
 
 // kinds the scan reports but Quorum cannot act on yet; they never enter the review list
 const INERT_KINDS = new Set(['instructions', 'skills', 'agents', 'mcp']);
+// what each roadmap kind will do once it works, next to what was found
+function soonWhy(it: MemoryItem): string {
+  switch (it.kind) {
+    case 'instructions': return `Found ${it.detail}. Quorum will follow it when it answers`;
+    case 'skills': return `${it.detail} found. Quorum will run them on request`;
+    case 'agents': return `${it.detail} found. Quorum will hand work to them`;
+    case 'mcp': return `${it.detail} found in .mcp.json. Quorum will reach them when it answers`;
+    default: return it.detail;
+  }
+}
 
 // why each kind is worth including, folded together with what the scan found
 function why(it: MemoryItem): string {
@@ -700,7 +710,7 @@ function MemoryScan() {
   const acts = (i: MemoryItem) => !INERT_KINDS.has(i.kind);
   const included = m.items.filter((i) => acts(i) && (i.include === true || i.kind === 'guards'));
   const pending = m.items.filter((i) => acts(i) && i.include === null && i.kind !== 'guards');
-  const seen = m.items.filter((i) => !acts(i)).map((i) => (i.kind === 'instructions' ? i.detail || i.label : i.detail || i.label));
+  const soon = m.items.filter((i) => !acts(i));
   const refresh = async () => {
     setScanning(true);
     const r = await window.quorum.memoryRefresh();
@@ -740,11 +750,23 @@ function MemoryScan() {
         </span>
       </div>
       {included.length > 0 && <div className="set-card mem-card">{included.map(row)}</div>}
-      {seen.length > 0 && <p className="mem-seen">Also here, not used by Quorum yet: {seen.join(', ')}.</p>}
+
       {pending.length > 0 && (
         <>
           <h3>Found in your Agent OS</h3>
           <div className="set-card mem-card">{pending.map(row)}</div>
+        </>
+      )}
+      {soon.length > 0 && (
+        <>
+          <h3>On the roadmap</h3>
+          <div className="set-card mem-card">
+            {soon.map((it) => { const Icon = KIND_ICON[it.kind] ?? IconFolder; return (
+              <Row key={it.id} icon={<Icon width={18} height={18} />} title={<>{it.label}<em className="soon grey">Soon</em></>} desc={soonWhy(it)}>
+                <button className="icon-btn" aria-label={`About ${it.label}`} data-tip="About" onClick={() => setAbout(it)}><IconInfo width={16} height={16} /></button>
+              </Row>
+            ); })}
+          </div>
         </>
       )}
       {!m.items.length && <p className="set-review">Nothing yet. Refresh to scan your Agent OS, or Add a folder.</p>}
