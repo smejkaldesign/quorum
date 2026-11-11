@@ -30,7 +30,8 @@ concurrency:
 
 jobs:
   mac:
-    runs-on: macos-15
+    # the helper uses the macOS 26 Speech framework (SpeechAnalyzer), which the macOS 15 image's SDK does not have
+    runs-on: macos-26
     strategy:
       fail-fast: false
       matrix:
