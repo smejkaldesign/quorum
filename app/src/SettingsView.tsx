@@ -1061,9 +1061,9 @@ function CopyField({ value }: { value: string }) {
 // meeting apps Quorum listens to and how it turns their audio into text
 // keeps call audio from showing as you; the description follows the choice
 const ECHO_DESC: Record<NonNullable<Transcription['echo']>, string> = {
-  auto: 'Cancels echo on the built-in speakers, does nothing with headphones',
+  auto: 'On the built-in speakers, drops your lines that repeat what the call just said; nothing with headphones',
   filter: 'Drops your lines that repeat what the call just said',
-  aec: 'Always cancels echo in the microphone',
+  aec: "Apple's voice processing in the microphone. Can take the mic away from the call app on this Mac",
   off: 'Call audio can show as you on speakers',
 };
 

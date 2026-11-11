@@ -168,11 +168,12 @@ const provider = () => PROVIDERS[meetingProvider] ?? PROVIDERS.zoom;
 // meeting transcript tuning, set on the Meetings page; defaults are what most calls want
 const TX_DEFAULTS = { echo: 'auto', gap: 1.5, live: true, capture: 'meeting', clean: true, engine: 'local' };
 const tx = () => ({ ...TX_DEFAULTS, ...settings.transcription });
-// echo: on speakers the mic hears the far side. auto cancels it in the mic path when the built-in speakers are the
-// output (and treats an unknown route as speakers) and leaves it alone on headphones or an external device; the word
-// filter backs that up on speakers and is the whole answer when echo is set to filter
+// echo: on speakers the mic hears the far side. auto runs the word filter on speakers (an unknown route counts as
+// speakers) and leaves the mic alone on headphones or an external device. Apple's voice processing (aec) is an explicit
+// choice: it reconfigures the built-in microphone for the whole Mac while a call app holds it, and a 2026-11-10 Meet
+// call lost its microphone for the duration, in Meet and in Quorum, with it on
 const onSpeakers = () => (audioRoute?.route ?? 'speakers') === 'speakers';
-const aecOn = () => tx().echo === 'aec' || (tx().echo === 'auto' && onSpeakers());
+const aecOn = () => tx().echo === 'aec';
 const echoFilterOn = () => tx().echo === 'filter' || (tx().echo === 'auto' && onSpeakers());
 const reEsc = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // your dictionary fixes names in meeting transcripts too, not just dictation

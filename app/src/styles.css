@@ -1401,3 +1401,5 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .setup-where { margin-bottom: 12px; }
 .setup-where .onb-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
 .setup-modal { max-height: calc(88vh - 16px); overflow-y: auto; }
+.set-card.form .set-label { flex: 1; min-width: 0; }
+.set-label span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
