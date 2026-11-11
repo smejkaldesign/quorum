@@ -1,6 +1,7 @@
 // In-app updates for both editions. electron-updater reads a static feed, so no account is involved: the Local
-// edition reads GitHub Releases (latest-mac.yml from the release workflow) and the Cloud edition reads the generic
-// feed quorum.watch serves (quorumCloud.updates in the packaged package.json, written by scripts/package-cloud.mjs).
+// edition reads GitHub Releases (latest-mac.yml from the release workflow) and the Cloud edition reads a generic feed
+// on the "cloud" channel (cloud-mac.yml at quorumCloud.updates in the packaged package.json, written by
+// scripts/package-cloud.mjs; by default the same GitHub release, where the workflow puts both editions).
 // The state here is what the window shows: an Update button once a version is downloaded, and the About row in
 // Preferences. Pure apart from the autoUpdater passed in, so the tests drive it with a fake.
 export const CHECK_EVERY_MS = 6 * 3600 * 1000;
@@ -9,7 +10,7 @@ export const FOCUS_CHECK_AFTER_MS = 3600 * 1000;
 
 // where this build looks for updates; null means the build has no feed and the updater stays off
 export function feedFor({ edition, packaged }) {
-  if (edition === 'cloud') return packaged?.quorumCloud?.updates ? { provider: 'generic', url: String(packaged.quorumCloud.updates).replace(/\/+$/, '') } : null;
+  if (edition === 'cloud') return packaged?.quorumCloud?.updates ? { provider: 'generic', url: String(packaged.quorumCloud.updates).replace(/\/+$/, ''), channel: 'cloud' } : null;
   return { provider: 'github', owner: 'smejkaldesign', repo: 'quorum' };
 }
 
@@ -19,7 +20,7 @@ export function createUpdater({ autoUpdater, feed, current, enabled = true, emit
   const notesOf = (info) => (typeof info?.releaseNotes === 'string' ? info.releaseNotes : Array.isArray(info?.releaseNotes) ? info.releaseNotes.map((n) => n?.note ?? '').join('\n') : null);
 
   if (state.status !== 'off') {
-    if (feed.provider === 'generic') autoUpdater.setFeedURL?.({ provider: 'generic', url: feed.url });
+    if (feed.provider === 'generic') autoUpdater.setFeedURL?.({ provider: 'generic', url: feed.url, ...(feed.channel ? { channel: feed.channel } : {}) });
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.on('checking-for-update', () => set({ status: state.status === 'ready' ? 'ready' : 'checking', error: null }));

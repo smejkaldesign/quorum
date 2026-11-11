@@ -1,8 +1,10 @@
 name: Release
 
-# A tag v<version> builds the Local edition, signs and notarizes it, and attaches the DMG, the zip the in-app updater
-# downloads, and latest-mac.yml to a draft GitHub release for that tag. Publishing the draft is a manual step, so the
-# notes can be read first; electron-updater ignores drafts.
+# A tag v<version> builds both editions, signs and notarizes them, and attaches everything to one draft GitHub
+# release for that tag: the Local edition's DMG, zip and latest-mac.yml, and the Cloud edition's DMG, zip and
+# cloud-mac.yml. Publishing the draft is a manual step, so the notes can be read first; electron-updater ignores drafts.
+# Installed Local apps read latest-mac.yml from GitHub Releases; installed Cloud apps read cloud-mac.yml from
+# releases/latest/download (scripts/package-cloud.mjs), so one published release updates both.
 #
 # Repository secrets (docs/release-checklist.md has the gh commands):
 #   CSC_LINK, CSC_KEY_PASSWORD            Developer ID Application certificate as a base64 .p12 and its password.
@@ -11,9 +13,9 @@ name: Release
 #   APPLE_API_ISSUER                      electron-builder notarizes the app with them and notarize-dmg.sh notarizes the image.
 #   QUORUM_GOOGLE_CLIENT_ID,              Optional. The Google Calendar connector's Desktop OAuth client (docs/self-hosting.md).
 #   QUORUM_GOOGLE_CLIENT_SECRET           Written into the packaged package.json as quorumGoogle; without them the connector asks for a client.
-#
-# The Cloud edition is packaged with `npm run package:cloud` and distributed from quorum.watch; it is not part of this
-# workflow because it needs its own update feed first (docs/parity-gaps.md).
+# Repository variables (not secret; the anon key is the publishable one every installed Cloud app carries):
+#   QUORUM_SUPABASE_URL,                  The hosted Supabase project the Cloud edition signs in to. Without them the
+#   QUORUM_SUPABASE_ANON_KEY              Cloud job is skipped and the release carries the Local edition only.
 on:
   push:
     tags: ['v*']
@@ -29,6 +31,10 @@ concurrency:
 jobs:
   mac:
     runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        edition: [local, cloud]
     env:
       APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -36,79 +42,114 @@ jobs:
       CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
       GOOGLE_CLIENT_ID: ${{ secrets.QUORUM_GOOGLE_CLIENT_ID }}
       GOOGLE_CLIENT_SECRET: ${{ secrets.QUORUM_GOOGLE_CLIENT_SECRET }}
+      QUORUM_SUPABASE_URL: ${{ vars.QUORUM_SUPABASE_URL }}
+      QUORUM_SUPABASE_ANON_KEY: ${{ vars.QUORUM_SUPABASE_ANON_KEY }}
     steps:
+      - name: Cloud edition needs its Supabase project
+        if: matrix.edition == 'cloud' && (env.QUORUM_SUPABASE_URL == '' || env.QUORUM_SUPABASE_ANON_KEY == '')
+        run: |
+          echo "::warning::QUORUM_SUPABASE_URL and QUORUM_SUPABASE_ANON_KEY are not set as repository variables; the Cloud edition is not built."
+          echo "SKIP=1" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
+        if: env.SKIP != '1'
       - uses: actions/setup-node@v4
+        if: env.SKIP != '1'
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: app/package-lock.json
 
       - name: The tag names the version in app/package.json
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.SKIP != '1' && startsWith(github.ref, 'refs/tags/v')
         run: |
           tag="${GITHUB_REF_NAME#v}"
           version="$(node -p "require('./app/package.json').version")"
           [ "$tag" = "$version" ] || { echo "tag v$tag does not match app/package.json version $version"; exit 1; }
 
       - name: Build helper
+        if: env.SKIP != '1'
         run: swift build -c release
         working-directory: helper
       - name: Install
+        if: env.SKIP != '1'
         run: npm ci
         working-directory: app
       - name: Typecheck, test, founder content guard
+        if: env.SKIP != '1'
         run: npm run typecheck && npm test && npm run check:content
         working-directory: app
 
       # electron-builder reads APPLE_API_KEY as a path to the .p8; the secret holds the file's contents
       - name: Write the App Store Connect key
-        if: env.APPLE_API_KEY_ID != ''
+        if: env.SKIP != '1' && env.APPLE_API_KEY_ID != ''
         env:
           APPLE_API_KEY_CONTENTS: ${{ secrets.APPLE_API_KEY }}
         run: |
           printf '%s' "$APPLE_API_KEY_CONTENTS" > "$RUNNER_TEMP/AuthKey_$APPLE_API_KEY_ID.p8"
           echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey_$APPLE_API_KEY_ID.p8" >> "$GITHUB_ENV"
       - name: Signing status
+        if: env.SKIP != '1'
         run: |
           if [ -n "$CSC_LINK" ]; then echo "::notice::Developer ID certificate present; the app will be signed and notarized."; else echo "::warning::CSC_LINK is not set; the app is signed ad hoc and not notarized. Set CSC_LINK and CSC_KEY_PASSWORD for a release build."; fi
 
       # the installed app cannot read a .env, so the Google client rides in its package.json the way the Cloud build's Supabase values do
       - name: Add the Google Calendar client
-        if: env.GOOGLE_CLIENT_SECRET != ''
+        if: env.SKIP != '1' && env.GOOGLE_CLIENT_SECRET != ''
         run: node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.quorumGoogle={clientId:process.env.GOOGLE_CLIENT_ID||undefined,clientSecret:process.env.GOOGLE_CLIENT_SECRET};fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');console.log('quorumGoogle set')"
         working-directory: app
       - name: Package the Local edition
+        if: env.SKIP != '1' && matrix.edition == 'local'
         run: npm run package
         working-directory: app
         env:
           QUORUM_EDITION: local
           # with no certificate electron-builder must not go looking for one in the runner's keychain
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
+      - name: Package the Cloud edition
+        if: env.SKIP != '1' && matrix.edition == 'cloud'
+        run: npm run package:cloud
+        working-directory: app
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
 
       - name: Notarize and staple the DMG
-        if: env.CSC_LINK != '' && env.APPLE_API_KEY_ID != ''
+        if: env.SKIP != '1' && env.CSC_LINK != '' && env.APPLE_API_KEY_ID != ''
         run: zsh scripts/notarize-dmg.sh
         working-directory: app
 
       - name: Collect artifacts
+        if: env.SKIP != '1'
         run: |
           mkdir -p out
-          cp release/*.dmg release/*.zip release/*.blockmap release/latest-mac.yml out/ 2>/dev/null || true
+          cp release/*.dmg release/*.zip release/*.blockmap release/*-mac.yml out/ 2>/dev/null || true
           ls -la out
-          shasum -a 256 out/*.dmg out/*.zip > out/SHA256SUMS.txt
-          cat out/SHA256SUMS.txt
         working-directory: app
       - uses: actions/upload-artifact@v4
+        if: env.SKIP != '1'
         with:
-          name: quorum-mac
+          name: quorum-mac-${{ matrix.edition }}
           path: app/out/*
           if-no-files-found: error
 
+  # one draft for both editions, written after both jobs finish so the assets never race each other onto the tag
+  draft:
+    needs: mac
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: quorum-mac-*
+          merge-multiple: true
+          path: out
+      - name: Checksums
+        run: |
+          cd out && ls -la
+          shasum -a 256 *.dmg *.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
       - name: Draft the GitHub release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           draft: true
           generate_release_notes: true
-          files: app/out/*
+          files: out/*

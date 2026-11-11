@@ -85,6 +85,15 @@ rm ~/Downloads/developer-id.p12
 
 Check with `gh secret list --repo smejkaldesign/quorum`. Without `CSC_LINK` and `CSC_KEY_PASSWORD` the workflow still runs, signs the app ad hoc, skips notarization and says so in the job summary; the draft release it produces is a dry run and must not be published.
 
+The Cloud edition also needs two repository **variables**, which are not secret (the anon key is the publishable one every installed Cloud app carries):
+
+```sh
+gh variable set QUORUM_SUPABASE_URL --repo smejkaldesign/quorum --body "https://<project-ref>.supabase.co"
+grep '^QUORUM_SUPABASE_ANON_KEY=' .env | cut -d= -f2- | gh variable set QUORUM_SUPABASE_ANON_KEY --repo smejkaldesign/quorum
+```
+
+Without them the Cloud job of the workflow is skipped and the release carries the Local edition only.
+
 ### 6. First tag
 
 ```sh
@@ -92,19 +101,19 @@ cd app && npm version 0.2.7 --no-git-tag-version   # only if the version needs t
 git commit -am "Release 0.2.7" && git tag v0.2.7 && git push origin main v0.2.7
 ```
 
-The Release workflow builds, signs, notarizes and attaches `Quorum-0.2.7-arm64.dmg`, `Quorum-0.2.7-arm64-mac.zip`, the blockmaps, `latest-mac.yml` and `SHA256SUMS.txt` to a draft release. Download the DMG from the draft, open it on a Mac that has never run Quorum, and confirm Gatekeeper reports "Notarized Developer ID" (`spctl -a -vv -t open --context context:primary-signature Quorum-0.2.7-arm64.dmg`). Then publish the draft (**owner**). Installed Local builds check this feed on launch and every six hours.
+The Release workflow builds both editions in parallel, signs and notarizes them, and attaches everything to one draft release: the Local edition as `Quorum-0.2.7-arm64.dmg`, `Quorum-0.2.7-arm64-mac.zip` and `latest-mac.yml`; the Cloud edition as `Quorum-Cloud-arm64.dmg`, `Quorum-Cloud-arm64.zip` and `cloud-mac.yml` (no version in the Cloud names, so `releases/latest/download/Quorum-Cloud-arm64.dmg` is a stable link); the blockmaps and `SHA256SUMS.txt`. Download each DMG from the draft, open it on a Mac that has never run Quorum, and confirm Gatekeeper reports "Notarized Developer ID" (`spctl -a -vv -t open --context context:primary-signature Quorum-0.2.7-arm64.dmg`). Then publish the draft (**owner**). Installed Local builds read `latest-mac.yml` and installed Cloud builds read `cloud-mac.yml` from the latest published release, on launch and every six hours.
 
 ### 7. Announce
 
 - `README.md` download link points at the latest release.
-- quorum.watch download button points at the DMG asset of the published release.
+- quorum.watch download button: flip `ready.download` to `true` in `site/index.html` and deploy the site. The button links to `releases/latest`; for the Cloud DMG itself the stable link is `https://github.com/smejkaldesign/quorum/releases/latest/download/Quorum-Cloud-arm64.dmg`.
 
 ## Every later release
 
 1. `main` is green in CI and the clean-clone checks in step 1 pass.
 2. Bump `app/package.json` version, commit, tag `v<version>`, push the tag.
-3. Wait for the Release workflow, test the DMG from the draft on a clean Mac, publish the draft.
-4. The Cloud edition: `npm run package:cloud` on a Mac with the Developer ID identity and the App Store Connect key in the shell (`APPLE_API_KEY` as the .p8 path, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`), then `zsh scripts/notarize-dmg.sh`. Then publish the update feed the installed Cloud apps read: copy `app/release/latest-mac.yml`, `Quorum-<version>-arm64-mac.zip` and its `.blockmap` into `site/updates/cloud/` and run `npm run deploy` in `site/`. The DMG goes to the quorum.watch download location. Installed Cloud apps check `https://quorum.watch/updates/cloud/latest-mac.yml` on launch and every six hours and show an Update button once the zip is downloaded.
+3. Wait for the Release workflow, test both DMGs from the draft on a clean Mac, publish the draft. Installed apps of both editions pick the release up from there.
+4. Off the workflow, for a build on one Mac: `npm run package:cloud` with the Developer ID identity in Keychain and the App Store Connect key in the shell (`APPLE_API_KEY` as the .p8 path, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`), then `zsh scripts/notarize-dmg.sh`. `QUORUM_CLOUD_UPDATES_URL` points such a build at another feed host; the feed is the `cloud-mac.yml`, zip and blockmap the build writes to `app/release/`.
 
 ## Open items
 

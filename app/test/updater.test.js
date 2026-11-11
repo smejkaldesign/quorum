@@ -5,9 +5,9 @@ import { CHECK_EVERY_MS, FIRST_CHECK_MS, createUpdater, feedFor } from '../updat
 const fakeAuto = () => { const e = new EventEmitter(); e.calls = []; e.setFeedURL = (f) => e.calls.push(['feed', f]); e.checkForUpdates = async () => { e.calls.push(['check']); }; e.quitAndInstall = () => e.calls.push(['install']); return e; };
 
 describe('feedFor', () => {
-  it('sends the Local edition to GitHub Releases and the Cloud edition to the feed its package names', () => {
+  it('sends the Local edition to GitHub Releases and the Cloud edition to the cloud channel of the feed its package names', () => {
     expect(feedFor({ edition: 'local', packaged: {} })).toEqual({ provider: 'github', owner: 'smejkaldesign', repo: 'quorum' });
-    expect(feedFor({ edition: 'cloud', packaged: { quorumCloud: { updates: 'https://quorum.watch/updates/cloud/' } } })).toEqual({ provider: 'generic', url: 'https://quorum.watch/updates/cloud' });
+    expect(feedFor({ edition: 'cloud', packaged: { quorumCloud: { updates: 'https://github.com/smejkaldesign/quorum/releases/latest/download/' } } })).toEqual({ provider: 'generic', url: 'https://github.com/smejkaldesign/quorum/releases/latest/download', channel: 'cloud' });
     expect(feedFor({ edition: 'cloud', packaged: { quorumCloud: {} } })).toBeNull();
   });
 });
@@ -24,8 +24,8 @@ describe('createUpdater', () => {
   it('walks idle, checking, downloading, ready, and installs only when ready', async () => {
     const auto = fakeAuto();
     const seen = [];
-    const u = createUpdater({ autoUpdater: auto, feed: { provider: 'generic', url: 'https://quorum.watch/updates/cloud' }, current: '0.2.7', emit: (s) => seen.push(s.status), now: () => 1000 });
-    expect(auto.calls[0]).toEqual(['feed', { provider: 'generic', url: 'https://quorum.watch/updates/cloud' }]);
+    const u = createUpdater({ autoUpdater: auto, feed: { provider: 'generic', url: 'https://quorum.watch/updates/cloud', channel: 'cloud' }, current: '0.2.7', emit: (s) => seen.push(s.status), now: () => 1000 });
+    expect(auto.calls[0]).toEqual(['feed', { provider: 'generic', url: 'https://quorum.watch/updates/cloud', channel: 'cloud' }]);
     expect(u.state()).toMatchObject({ status: 'idle', current: '0.2.7' });
     expect(u.install()).toBe(false);
     await u.check();
