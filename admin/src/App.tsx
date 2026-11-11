@@ -3,6 +3,7 @@ import type { Session } from '@supabase/supabase-js';
 import { type OwnerStatus, auth, configured, host } from './api';
 import { passkey } from './passkey';
 import { token } from './session';
+import { Button, Card, Centered, IconBuilding, IconHistory, IconHome, IconKey, IconPeople, type NavItem, Shell, ToastProvider } from './ui';
 import { SignIn } from './pages/SignIn';
 import { Passkey } from './pages/Passkey';
 import { Overview } from './pages/Overview';
@@ -12,14 +13,14 @@ import { Users } from './pages/Users';
 import { Audit } from './pages/Audit';
 
 // one page at a time, named in the hash so a reload keeps the place
-const PAGES = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'access', label: 'Access' },
-  { id: 'workspaces', label: 'Workspaces' },
-  { id: 'users', label: 'Users' },
-  { id: 'audit', label: 'Audit' },
-] as const;
-type PageId = (typeof PAGES)[number]['id'];
+const PAGES: NavItem[] = [
+  { id: 'overview', label: 'Overview', icon: IconHome },
+  { id: 'access', label: 'Access', icon: IconKey },
+  { id: 'workspaces', label: 'Workspaces', icon: IconBuilding },
+  { id: 'users', label: 'Users', icon: IconPeople },
+  { id: 'audit', label: 'Audit', icon: IconHistory },
+];
+type PageId = 'overview' | 'access' | 'workspaces' | 'users' | 'audit';
 const pageFromHash = (): PageId => { const h = location.hash.replace(/^#\/?/, ''); return (PAGES.some((p) => p.id === h) ? h : 'overview') as PageId; };
 
 // sign-in is two steps: the email code gives the session, the passkey opens the owner's functions. The owner status
@@ -39,35 +40,24 @@ export function App() {
   useEffect(() => { const on = () => setPage(pageFromHash()); window.addEventListener('hashchange', on); return () => window.removeEventListener('hashchange', on); }, []);
   const signOut = async () => { await passkey.logout().catch(() => {}); await auth.signOut(); };
 
-  if (!configured) return <Shell><p className="muted">This build has no Supabase project. Set QUORUM_SUPABASE_URL and QUORUM_SUPABASE_ANON_KEY and build again.</p></Shell>;
-  if (session === undefined) return <Shell />;
-  if (!session) return <Shell><SignIn /></Shell>;
+  if (!configured) return <Centered><Card form><p className="muted">This build has no Supabase project. Set QUORUM_SUPABASE_URL and QUORUM_SUPABASE_ANON_KEY and build again.</p></Card></Centered>;
+  if (session === undefined) return <Centered />;
+  if (!session) return <Centered><SignIn /></Centered>;
   const email = session.user.email ?? null;
-  if (status === null) return <Shell email={email} onSignOut={signOut}><p className="muted">Checking the owner role…</p></Shell>;
-  if (status === 'error') return <Shell email={email} onSignOut={signOut}><div className="card"><p>The project did not answer. It may be missing migration 0017.</p><p><button className="pill" onClick={refresh}>Try again</button></p></div></Shell>;
-  if (!status.owner) return <Shell email={email} onSignOut={signOut}><div className="card"><p>This account is not the platform owner of {host}.</p><p className="muted">The role is granted with supabase/seed/platform-owner.sql. Sign in with the owner account instead.</p><p><button className="pill" onClick={signOut}>Sign out</button></p></div></Shell>;
-  if (status.passkeys === 0 || !status.session || !token.get()) return <Shell email={email} onSignOut={signOut}><Passkey registered={status.passkeys} onDone={refresh} /></Shell>;
+  if (status === null) return <Centered><p className="muted">Checking the owner role…</p></Centered>;
+  if (status === 'error') return <Centered><Card form><h1>No answer</h1><p className="muted lede">The project did not answer. It may be missing migration 0017.</p><div className="actions"><Button variant="primary" onClick={refresh}>Try again</Button><Button variant="link" onClick={signOut}>Sign out</Button></div></Card></Centered>;
+  if (!status.owner) return <Centered><Card form><h1>Owner only</h1><p className="muted lede">This account is not the platform owner of {host}. The role is granted with supabase/seed/platform-owner.sql. Sign in with the owner account instead.</p><div className="actions"><Button variant="primary" onClick={signOut}>Sign out</Button></div></Card></Centered>;
+  if (status.passkeys === 0 || !status.session || !token.get()) return <Centered><Passkey registered={status.passkeys} onDone={refresh} /></Centered>;
 
   return (
-    <Shell email={email} onSignOut={signOut} nav={<nav className="nav" aria-label="Pages">{PAGES.map((p) => <a key={p.id} href={`#/${p.id}`} className={page === p.id ? 'on' : ''} aria-current={page === p.id ? 'page' : undefined}>{p.label}</a>)}</nav>}>
-      {page === 'overview' && <Overview />}
-      {page === 'access' && <Access />}
-      {page === 'workspaces' && <Workspaces />}
-      {page === 'users' && <Users />}
-      {page === 'audit' && <Audit />}
-    </Shell>
-  );
-}
-
-function Shell({ children, email, nav, onSignOut }: { children?: React.ReactNode; email?: string | null; nav?: React.ReactNode; onSignOut?: () => void }) {
-  return (
-    <div className="shell">
-      <header className="top">
-        <div className="brand"><img src="/favicon.svg" alt="" width="22" height="22" /><span>Quorum Admin</span>{host && <em className="host">{host}</em>}</div>
-        {nav}
-        <div className="me">{email && <><span className="muted">{email}</span><button className="link" onClick={onSignOut ?? (() => auth.signOut())}>Sign out</button></>}</div>
-      </header>
-      <main className="main">{children}</main>
-    </div>
+    <ToastProvider>
+      <Shell items={PAGES} current={page} email={email} onSignOut={signOut}>
+        {page === 'overview' && <Overview />}
+        {page === 'access' && <Access />}
+        {page === 'workspaces' && <Workspaces />}
+        {page === 'users' && <Users />}
+        {page === 'audit' && <Audit />}
+      </Shell>
+    </ToastProvider>
   );
 }
