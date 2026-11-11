@@ -258,10 +258,10 @@ function SecondBrain({ brain, onConnect, onDisconnect, onBrain, onViewConnector 
       </div>
       <div className="set-card">
         <Row icon={<IconBrain width={18} height={18} className={brain ? 'ok' : undefined} />}
-          title={brain ? <button className="mem-title" onClick={() => window.quorum.openBrain('finder')}>QuorumBrain<IconExternal width={14} height={14} /></button> : 'QuorumBrain'}
-          desc={brain ? `${brain.made === 'quorum' ? 'Built by Quorum' : brain.name} · ${home(brain.root)}` : 'Optional. An Agent OS folder of notes Quorum can answer from. Meeting notes work without one.'}>
+          title={brain ? <button className="mem-title" onClick={() => window.quorum.openBrain('finder')}>{brain.made === 'quorum' ? 'QuorumBrain' : brain.name}<IconExternal width={14} height={14} /></button> : 'QuorumBrain'}
+          desc={brain ? (brain.made === 'quorum' ? `Built by Quorum · ${home(brain.vault || brain.root)}` : home(brain.vault || brain.root)) : 'Optional. An Agent OS folder of notes Quorum can answer from. Meeting notes work without one.'}>
           {brain
-            ? <RowMenu label="QuorumBrain options" items={[...(brain.made === 'quorum' ? [{ label: 'Set up again', icon: <IconBrain width={15} height={15} />, onPick: openSetup }] : []), { label: 'Change folder', icon: <IconFolder width={15} height={15} />, onPick: onConnect }, { label: 'Disconnect', icon: <IconClose width={15} height={15} />, danger: true, onPick: () => setConfirm(true) }]} />
+            ? <RowMenu label={`${brain.made === 'quorum' ? 'QuorumBrain' : brain.name} options`} items={[...(brain.made === 'quorum' ? [{ label: 'Set up again', icon: <IconBrain width={15} height={15} />, onPick: openSetup }] : []), { label: 'Change folder', icon: <IconFolder width={15} height={15} />, onPick: onConnect }, { label: 'Disconnect', icon: <IconClose width={15} height={15} />, danger: true, onPick: () => setConfirm(true) }]} />
             : (
               <span className="menu-wrap">
                 <button className="pill" aria-haspopup="menu" aria-expanded={connecting} onClick={() => setConnecting((v) => !v)}>Connect</button>
@@ -310,7 +310,7 @@ function SecondBrain({ brain, onConnect, onDisconnect, onBrain, onViewConnector 
         </div>
       )}
       {confirm && (
-        <ConfirmModal title="Disconnect QuorumBrain?" action="Disconnect"
+        <ConfirmModal title={`Disconnect ${brain?.made === 'quorum' ? 'QuorumBrain' : brain?.name ?? 'this folder'}?`} action="Disconnect"
           body="Quorum stops reading this folder. Answers, memory power-ups and guardrails that came from it stop working, and a meetings folder found inside it has to be chosen again. Nothing is deleted, but this cannot be undone: connecting a folder again means a new import."
           onDone={(ok) => { setConfirm(false); if (ok) onDisconnect(); }} />
       )}
