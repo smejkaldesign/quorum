@@ -1454,3 +1454,5 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .w90 { width: 90%; } .w80 { width: 80%; } .w75 { width: 75%; } .w60 { width: 60%; } .w55 { width: 55%; }
 .doc .typing::after { content: ""; display: inline-block; width: 2px; height: 1em; margin-left: 3px; vertical-align: -0.15em; background: var(--text); animation: caret 1s steps(2, start) infinite; }
 @keyframes caret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+.set-field { position: relative; }
+.field-saved { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); font-size: 12px; color: var(--go); pointer-events: none; animation: sofar-breathe 1.4s ease-in-out 1; }

@@ -76,7 +76,10 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   const mode = modeOf(page);
   const quorumEmail = account?.signedIn ? account.email : null;
   const email = quorumEmail || user?.email || '';
-  const emailLabel = quorumEmail ? 'Email' : 'Claude sign-in';
+  // in the hosted edition the identity is the Quorum account; until there is one the row holds only the photo, and the
+  // sign-in card lower on the page says what signing in adds. The local edition's only identity is the Claude Code sign-in
+  const emailLabel = quorumEmail ? 'Email' : EDITION === 'cloud' ? 'Photo' : 'Signed in with Claude Code';
+  const showEmail = !!quorumEmail || EDITION !== 'cloud';
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onBack(); };
     window.addEventListener('keydown', onKey);
@@ -134,7 +137,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
           {page === 'developers' && <p className="set-lede">Model providers, Claude Code and Terminal access, and API keys for your own scripts.</p>}
           {page === 'platform' && <p className="set-lede">Every workspace on this Quorum. Plans are set by hand here until the admin web app exists.</p>}
           {page === 'preferences' ? (
-            <ProfilePage settings={settings} email={email} emailLabel={emailLabel} name={user?.name ?? ''} onSettings={onSettings}>
+            <ProfilePage settings={settings} email={showEmail ? email : ''} emailLabel={emailLabel} name={user?.name ?? ''} onSettings={onSettings}>
               <h3>General</h3>
               <div className="set-card">
                 <Row icon={<Wave live={false} />} title="Listen automatically" desc="Starts transcribing when a meeting begins in Zoom, Google Meet or Teams">
@@ -397,13 +400,31 @@ function MeetingsRow() {
 }
 
 // saves a field when you leave it, so typing never fights a round trip
+// a text field that saves itself: shortly after typing stops, on blur, on Enter, and when the page changes under it,
+// so nothing typed is lost to a click elsewhere. A short Saved mark confirms each write
 function Field({ value, placeholder, onSave }: { value: string; placeholder?: string; onSave: (v: string) => void }) {
   const [v, setV] = useState(value);
-  useEffect(() => setV(value), [value]);
+  const [saved, setSaved] = useState(false);
+  const latest = useRef(value);
+  const written = useRef(value.trim());
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => { setV(value); latest.current = value; written.current = value.trim(); }, [value]);
+  const commit = () => {
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    const t = latest.current.trim();
+    if (t === written.current) return;
+    written.current = t;
+    onSave(t);
+    if (mounted.current) { setSaved(true); setTimeout(() => { if (mounted.current) setSaved(false); }, 1400); }
+  };
+  const change = (val: string) => { setV(val); latest.current = val; if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(commit, 700); };
+  useEffect(() => () => { mounted.current = false; if (timer.current) commit(); }, []);
   return (
     <label className="set-field">
-      <input value={v} placeholder={placeholder} onChange={(e) => setV(e.target.value)} onBlur={() => { if (v !== value) onSave(v.trim()); }}
+      <input value={v} placeholder={placeholder} onChange={(e) => change(e.target.value)} onBlur={commit}
         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
+      {saved && <span className="field-saved" aria-live="polite">Saved</span>}
     </label>
   );
 }
@@ -420,7 +441,7 @@ function ProfilePage({ settings, email, emailLabel, name, onSettings, children }
         <div className="set-line">
           <strong>{emailLabel}</strong>
           <div className="set-line-end">
-            <span className="muted">{email || 'Not signed in to Claude'}</span>
+            {(email || emailLabel !== 'Photo') && <span className="muted">{email || 'Not signed in to Claude'}</span>}
             <button className="photo-btn" aria-label={p.photo ? 'Change photo' : 'Add photo'} data-tip={p.photo ? 'Change photo' : 'Add photo'} onClick={async () => onSettings(await window.quorum.pickPhoto())}>
               {p.photo ? <img src={p.photo} alt="" /> : <IconPerson width={18} height={18} />}
             </button>
