@@ -56,6 +56,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # the relay imports the speech engines and the notes prompts from app/, so the app's modules have to be there
+      - name: App modules for the relay
+        run: npm ci
+        working-directory: app
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
       - name: Relay
         run: npm ci && npm test
         working-directory: relay

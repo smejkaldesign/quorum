@@ -21,7 +21,7 @@ const envFile = (name: string): Record<string, string> => {
   }
   return out;
 };
-// the local stack's anon key is the same on every machine and printed by the CLI; read it when the CLI is here
+// the local stack's URL and anon key come from the CLI (`supabase status`), so no key sits in this file
 const localStack = () => {
   try {
     const out = execSync('supabase status -o env', { cwd: path.join(here, '..'), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 8000 });
@@ -29,7 +29,7 @@ const localStack = () => {
     const url = out.match(/^API_URL="?([^"\n]+)"?/m)?.[1];
     if (key && url) return { url, key };
   } catch {}
-  return { url: 'http://127.0.0.1:54321', key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0' };
+  return { url: '', key: '' };
 };
 
 export default defineConfig(({ mode }) => {
