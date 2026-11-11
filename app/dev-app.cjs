@@ -26,7 +26,13 @@ const bin = path.join(dest, 'Contents/MacOS/Electron');
 try {
   const mine = String(process.pid);
   const pids = execFileSync('pgrep', ['-f', bin], { encoding: 'utf8' }).split('\n').map((x) => x.trim()).filter((x) => x && x !== mine);
-  if (pids.length) { console.log(`quitting ${pids.length} earlier dev app${pids.length === 1 ? '' : 's'}`); for (const pid of pids) { try { process.kill(Number(pid), 'SIGTERM'); } catch {} } }
+  if (pids.length) {
+    console.log(`quitting ${pids.length} earlier dev app${pids.length === 1 ? '' : 's'}`);
+    for (const pid of pids) { try { process.kill(Number(pid), 'SIGTERM'); } catch {} }
+    // an instance that ignores the polite signal (seen on 2026-11-10) gets the hard one after a moment
+    execFileSync('sleep', ['1.5']);
+    for (const pid of pids) { try { process.kill(Number(pid), 0); process.kill(Number(pid), 'SIGKILL'); } catch {} }
+  }
 } catch {}
 
 // the development copy runs in the development environment (edition.js ENV) unless the shell sets QUORUM_ENV itself.
