@@ -16,7 +16,7 @@ import { Composer } from './Composer';
 import { SettingsView } from './SettingsView';
 import type { ConnectorsTarget, OpenSettingsDetail, SettingsPageId } from './connectorsNav';
 import { IconPen, PrivateNotes, usePrivateNotes } from './PrivateNotes';
-import { SpeakerName, similarCount, type SpeakerInfo } from './Speaker';
+import { Avatar, SpeakerName, similarCount, type SpeakerInfo } from './Speaker';
 import { IconFolderOpen, IconPerson, IconGear, IconHome, IconGraph, IconSearch, IconFolder, IconDoc, IconBack, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, Wave } from './icons';
 
 // one speaker turn as main.js built it; a turn that grows arrives again with the same id and replace: true
@@ -355,7 +355,7 @@ export function App() {
   }
 
   if (phase === 'review') {
-    return <EndView notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing} transcript={lines.map((l) => ({ ...l, who: who(l) }))} participants={participants} onSpeaker={setSpeaker}
+    return <EndView notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing} transcript={lines.map((l) => ({ ...l, who: who(l) }))} participants={participants} onSpeaker={setSpeaker} me={me}
       privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={() => { setPhase('idle'); resetMeeting(); setTab('home'); }} />;
   }
 
@@ -454,7 +454,7 @@ export function App() {
             {phase === 'starting' && <QuorumCard><p className="muted">{startingChat ? `Posting my notice in the ${startingChat}…` : 'Starting…'}</p></QuorumCard>}
             {phase === 'listening' && msgs.length === 0 && (
               <QuorumCard>
-                <SoFar s={soFar} lines={lines} partial={partial} who={who} />
+                <SoFar s={soFar} lines={lines} partial={partial} who={who} me={me} />
                 <p className="muted">Ask me anything about this meeting; only you see this chat.</p>
                 <div className="row wrap">
                   {SUGGESTIONS.map((s) => <button key={s} className="pill" onClick={() => send(s)}>{s}</button>)}
@@ -511,7 +511,7 @@ export function App() {
       {tab === 'notes' && (
         <div className="body">
           <section className="card transcript">
-              {inCall(phase) && <SoFar s={soFar} lines={lines} partial={partial} who={who} ticker={false} />}
+              {inCall(phase) && <SoFar s={soFar} lines={lines} partial={partial} who={who} me={me} ticker={false} />}
               {lines.some((l) => l.channel === 'them') && (
                 <div className="transcript-head">
                   <button className="pill ghost small" disabled={naming} data-tip="Quorum names the other speakers from context. One other participant needs no model." onClick={nameSpeakers}>{naming ? <><span className="spinner tiny" /> Naming…</> : 'Name speakers'}</button>
@@ -521,12 +521,12 @@ export function App() {
                 const tail = liveWords && i === lines.length - 1 ? partial[l.channel] : '';
                 return (
                   <p key={l.id} className={l.channel}>
-                    {l.channel === 'them' ? <SpeakerName turn={l} fallback={themLabel} participants={participants} similar={similarCount(lines, l)} onPick={(name, similar) => setSpeaker(l.id, name, similar)} /> : <span>{who(l)}</span>}
+                    <span className="spk"><Avatar name={l.channel === 'me' ? me.name || 'You' : who(l)} photo={l.channel === 'me' ? me.photo : null} />{l.channel === 'them' ? <SpeakerName turn={l} fallback={themLabel} participants={participants} similar={similarCount(lines, l)} onPick={(name, similar) => setSpeaker(l.id, name, similar)} /> : <span>{who(l)}</span>}</span>
                     <div>{l.text}{tail && <em className="partial"> {tail}</em>}</div>
                   </p>
                 );
               })}
-              {liveWords && (['me', 'them'] as const).map((c) => (partial[c] && lines[lines.length - 1]?.channel !== c ? <p key={`p-${c}`} className={c}><span>{who({ channel: c })}</span><div><em className="partial">{partial[c]}</em></div></p> : null))}
+              {liveWords && (['me', 'them'] as const).map((c) => (partial[c] && lines[lines.length - 1]?.channel !== c ? <p key={`p-${c}`} className={c}><span className="spk"><Avatar name={c === 'me' ? me.name || 'You' : who({ channel: c })} photo={c === 'me' ? me.photo : null} /><span>{who({ channel: c })}</span></span><div><em className="partial">{partial[c]}</em></div></p> : null))}
               {!lines.length && !partial.me && !partial.them && (
                 <p className="muted">{phase === 'listening' ? 'Waiting for speech…' : 'The live transcript shows up here while Quorum is listening.'}</p>
               )}
@@ -545,7 +545,7 @@ export function App() {
             <h3>Your notes</h3>
             <PrivateNotes ref={mineRef} value={mine.text} onChange={mine.change} onBlur={mine.flush} />
           </section>
-          {inCall(phase) && <SoFar s={soFar} lines={lines} partial={partial} who={who} compact />}
+          {inCall(phase) && <SoFar s={soFar} lines={lines} partial={partial} who={who} me={me} compact />}
         </div>
       )}
       </>}
@@ -575,7 +575,7 @@ function Steps({ steps, live }: { steps: string[]; live: boolean }) {
 
 // the call so far: the summary, decisions, actions and open questions the running pass has gathered, with the
 // latest words underneath so the view moves between passes. Compact drops the lists and the ticker
-function SoFar({ s, lines, partial, who, compact = false, ticker = true }: { s: SummaryEvent | null; lines: Line[]; partial: { me: string; them: string }; who: (l: { channel: 'me' | 'them'; speaker?: string | null }) => string; compact?: boolean; ticker?: boolean }) {
+function SoFar({ s, lines, partial, who, me, compact = false, ticker = true }: { s: SummaryEvent | null; lines: Line[]; partial: { me: string; them: string }; who: (l: { channel: 'me' | 'them'; speaker?: string | null }) => string; me: { name: string; photo: string | null }; compact?: boolean; ticker?: boolean }) {
   const st = s?.state;
   const has = !!st && !!(st.summary || st.decisions.length || st.actions.length || st.questions.length);
   const last = lines[lines.length - 1];
@@ -592,7 +592,9 @@ function SoFar({ s, lines, partial, who, compact = false, ticker = true }: { s: 
       {has && !compact && st.decisions.length > 0 && <div className="sofar-group"><h4>Decisions</h4><ul>{st.decisions.map((d, i) => <li key={i}>{d.text}{d.status === 'suggested' && <em> · suggested</em>}</li>)}</ul></div>}
       {has && st.actions.length > 0 && <div className="sofar-group"><h4>Actions</h4><ul>{st.actions.map((a, i) => <li key={i}>{a.task}{a.owner && <em> · {a.owner}</em>}</li>)}</ul></div>}
       {has && !compact && st.questions.length > 0 && <div className="sofar-group"><h4>Open</h4><ul>{st.questions.map((q, i) => <li key={i}>{q.text}</li>)}</ul></div>}
-      {ticker && !compact && (last || tail) && <p className="sofar-ticker"><span>{last ? who(last) : who({ channel: partial.them ? 'them' : 'me' })}</span>{last?.text}{tail && <em className="partial"> {tail}</em>}</p>}
+      {ticker && !compact && (last || tail) && (() => { const l = last ?? { channel: partial.them ? 'them' as const : 'me' as const }; const name = who(l); return (
+        <p className="sofar-ticker"><span className="spk"><Avatar name={l.channel === 'me' ? me.name || 'You' : name} photo={l.channel === 'me' ? me.photo : null} /><span>{name}</span></span><span className="ticker-text">{last?.text}{tail && <em className="partial"> {tail}</em>}</span></p>
+      ); })()}
     </div>
   );
 }

@@ -76,3 +76,15 @@ export function SpeakerName({ turn, fallback, participants, similar, onPick }: {
 
 // how many them turns the pass grouped with this one, for the Apply to similar turns offer
 export const similarCount = (turns: SpeakerTurn[], t: SpeakerTurn) => (t.cluster ? turns.filter((x) => x.channel === 'them' && x.id !== t.id && x.cluster === t.cluster && !x.corrected).length : 0);
+
+// who said it, at a glance: the person's own photo, or initials on a color that stays the same for a name. Meeting apps
+// give Quorum names, never photos, so everyone but the recorder gets initials
+export function Avatar({ name, photo = null, size = 20 }: { name: string; photo?: string | null; size?: number }) {
+  const style = { width: size, height: size, fontSize: Math.round(size * 0.46) };
+  if (photo) return <span className="avatar-sm" style={style}><img src={photo} alt="" /></span>;
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  const initials = (words.length > 1 ? words[0][0] + words[words.length - 1][0] : (words[0] ?? '?').slice(0, 1)).toUpperCase();
+  let h = 0;
+  for (const ch of name.toLowerCase()) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return <span className="avatar-sm" style={{ ...style, background: `hsl(${h} 42% 40%)` }} aria-hidden="true">{initials}</span>;
+}

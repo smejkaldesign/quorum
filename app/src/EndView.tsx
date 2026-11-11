@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MeetingMeta, Notes, NotesDraft } from './quorum';
-import { SpeakerName, similarCount, type SpeakerTurn } from './Speaker';
+import { Avatar, SpeakerName, similarCount, type SpeakerTurn } from './Speaker';
 import mark from '../assets/quorum-mark.png';
 import { Markdown } from './Markdown';
 import { IconArrowUp, IconCalendar, IconClock, IconFolder, IconLogs, IconNotes, IconPeople } from './icons';
@@ -13,7 +13,7 @@ type Followup = { q: string; a: string | null };
 export type Turn = SpeakerTurn & { who: string };
 
 // privateNotes is what you typed on the call; edits here reach the main process the same way, and flush runs before Save
-export function EndView({ notes, draft, meta, summarizing, transcript, participants, onSpeaker, privateNotes, onPrivateNotes, flushPrivateNotes, onClose }: { notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; participants: string[]; onSpeaker: (id: number, name: string | null, similar: boolean) => Promise<void>; privateNotes: string; onPrivateNotes: (v: string) => void; flushPrivateNotes: () => void; onClose: () => void }) {
+export function EndView({ notes, draft, meta, summarizing, transcript, participants, onSpeaker, privateNotes, onPrivateNotes, flushPrivateNotes, onClose, me }: { me?: { name: string; photo: string | null }; notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; participants: string[]; onSpeaker: (id: number, name: string | null, similar: boolean) => Promise<void>; privateNotes: string; onPrivateNotes: (v: string) => void; flushPrivateNotes: () => void; onClose: () => void }) {
   const [showing, setShowing] = useState<'summary' | 'transcript'>('summary');
   const [dropped, setDropped] = useState<Record<number, boolean>>({});
   const [followups, setFollowups] = useState<Followup[]>([]);
@@ -24,6 +24,9 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
   const end = useRef<HTMLDivElement>(null);
   const streaming = summarizing && !notes;
   const shown = notes ?? draft?.partial ?? null;
+  // while the notes stream, the page is the real layout with placeholders where text has not arrived yet
+  const view: Notes = shown ?? { title: '', summary: '', sections: [], decisions: [], actions: [], questions: [] };
+  const lastSec = view.sections.length - 1;
 
   useEffect(() => { end.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }); }, [followups]);
   // a click on a bullet opens the transcript on its first turn
@@ -75,15 +78,10 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
         </div>
       </header>
 
-      {!shown && !draft?.text ? (
-        <div className="end-loading">
-          <span className="spinner big" />
-          <p>Summarizing call…</p>
-        </div>
-      ) : (
+      {(
         <div className="end-scroll">
-          <article className="doc">
-            <h1>{shown?.title || meta?.title || 'Untitled meeting'}</h1>
+          <article className={`doc${streaming ? ' streaming' : ''}`}>
+            <h1>{shown?.title || meta?.title || (streaming ? <span className="sk sk-title" aria-label="Writing the title" /> : 'Untitled meeting')}</h1>
             <div className="meta-row">
               <span className="meta-pill"><IconCalendar width={16} height={16} />{when}{started ? ` · ${started.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}</span>
               {meta && meta.minutes > 0 && <span className="meta-pill"><IconClock width={16} height={16} />{meta.minutes} min</span>}
@@ -106,34 +104,41 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
               <section className="transcript end-transcript">
                 {transcript.length ? transcript.map((t) => (
                   <p key={t.id} id={`turn-${t.id}`} className={`${t.channel}${hot.includes(t.id) ? ' hot' : ''}`}>
-                    {t.channel === 'them' ? <SpeakerName turn={t} fallback={t.who} participants={participants} similar={similarCount(transcript, t)} onPick={(name, similar) => onSpeaker(t.id, name, similar)} /> : <span>{t.who}</span>}
+                    <span className="spk"><Avatar name={t.channel === 'me' ? me?.name || 'You' : t.speaker ?? t.who} photo={t.channel === 'me' ? me?.photo ?? null : null} />{t.channel === 'them' ? <SpeakerName turn={t} fallback={t.who} participants={participants} similar={similarCount(transcript, t)} onPick={(name, similar) => onSpeaker(t.id, name, similar)} /> : <span>{t.who}</span>}</span>
                     <div>{t.text}</div>
                   </p>
                 )) : <p className="muted">Nothing was transcribed.</p>}
               </section>
-            ) : !shown ? <p className="raw">{draft?.text}</p> : <>
-            {shown.empty && <p className="muted">Nothing was transcribed in this call.</p>}
-            {shown.summary && <p className="summary">{shown.summary}</p>}
-            {shown.sections.map((sec, i) => (
+            ) : <>
+            {view.empty && <p className="muted">Nothing was transcribed in this call.</p>}
+            {view.summary ? <p className={`summary${streaming && !view.sections.length ? ' typing' : ''}`}>{view.summary}</p>
+              : streaming && <div className="sk-block" aria-label="Writing the summary"><span className="sk sk-line w90" /><span className="sk sk-line w75" /><span className="sk sk-line w60" /></div>}
+            {view.sections.map((sec, i) => (
               <section key={i} className="doc-section">
                 <h2><span className="hash">#</span>{sec.heading}</h2>
                 <ul>
                   {sec.bullets.map((b, j) => (
-                    <li key={j} {...refProps(b.refs)}>{b.text}{b.sub?.length > 0 && <ul>{b.sub.map((s, k) => <li key={k}>{s}</li>)}</ul>}</li>
+                    <li key={j} className={streaming && i === lastSec && j === sec.bullets.length - 1 ? 'typing' : undefined} {...refProps(b.refs)}>{b.text}{b.sub?.length > 0 && <ul>{b.sub.map((s, k) => <li key={k}>{s}</li>)}</ul>}</li>
                   ))}
                 </ul>
               </section>
             ))}
-            {shown.decisions.length > 0 && (
-              <section className="doc-section">
-                <h2><span className="hash">#</span>Decisions</h2>
-                <ul>{shown.decisions.map((d, i) => <li key={i} {...refProps(d.refs)}>{d.text}{d.status !== 'confirmed' && <em className="status"> · not agreed</em>}</li>)}</ul>
+            {streaming && (
+              <section className="doc-section sk-section" aria-label="More on the way">
+                <h2><span className="hash">#</span><span className="sk sk-head" /></h2>
+                <ul><li><span className="sk sk-line w80" /></li><li><span className="sk sk-line w55" /></li></ul>
               </section>
             )}
-            {shown.actions.length > 0 && (
+            {view.decisions.length > 0 && (
+              <section className="doc-section">
+                <h2><span className="hash">#</span>Decisions</h2>
+                <ul>{view.decisions.map((d, i) => <li key={i} {...refProps(d.refs)}>{d.text}{d.status !== 'confirmed' && <em className="status"> · not agreed</em>}</li>)}</ul>
+              </section>
+            )}
+            {view.actions.length > 0 && (
               <section className="doc-section">
                 <h2><span className="hash">#</span>Action items</h2>
-                {shown.actions.map((a, i) => (
+                {view.actions.map((a, i) => (
                   <label key={i} className="item" {...refProps(a.refs)}>
                     <input type="checkbox" checked={!dropped[i]} disabled={!notes} onChange={(e) => setDropped((d) => ({ ...d, [i]: !e.target.checked }))} />
                     <span>{a.task}<em> · {a.owner ?? 'no owner'}{a.due ? ` · due ${a.due}` : ''}{!a.owner || !a.due ? ' · not agreed' : ''}</em></span>
@@ -142,10 +147,10 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
                 {notes && <p className="hint left">Unchecked items are left out of the saved note.</p>}
               </section>
             )}
-            {shown.questions.length > 0 && (
+            {view.questions.length > 0 && (
               <section className="doc-section">
                 <h2><span className="hash">#</span>Open questions</h2>
-                <ul>{shown.questions.map((q, i) => <li key={i} {...refProps(q.refs)}>{q.text}</li>)}</ul>
+                <ul>{view.questions.map((q, i) => <li key={i} {...refProps(q.refs)}>{q.text}</li>)}</ul>
               </section>
             )}
             {streaming && <p className="muted writing"><span className="spinner tiny" /> Writing notes…</p>}
