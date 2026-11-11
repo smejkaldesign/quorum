@@ -66,7 +66,11 @@ export type OnboardingChecks = { permissions: { microphone: string; audio: strin
 // the setup interview: a template plus a few answers that shape a Quorum-built Agent OS (starter.js)
 export type SetupTemplate = 'personal' | 'founder' | 'team-lead';
 export type SetupAnswers = { template: SetupTemplate; role: string; goals: string; projects: string[]; people: string[]; organize: 'areas' | 'plain' };
+// what the form sends: the lists as typed, parsed in the main process
+export type SetupInput = Omit<SetupAnswers, 'projects' | 'people'> & { projects: string | string[]; people: string | string[] };
 export type SetupRecord = { version: number; name: string; answers: SetupAnswers; createdAt: string; updatedAt?: string };
+// the workspace vault: where teammates' shared notes land on this Mac, with their provenance bonds
+export type TeamVault = { root: string; notes: number; behind: number; last: { written: number; behind: number; removed: number; skipped: number } };
 export type Brain = { root: string; vault: string; name: string; made?: 'quorum' | null; markers: { agentOS: string | null; obsidian: boolean; search: boolean; safetyHooks: boolean } };
 // hosted edition: who is signed in, which organization they are in, and whether notes sync
 export type Role = 'owner' | 'admin' | 'member';
@@ -312,10 +316,10 @@ declare global {
       onboardingStatus(): Promise<OnboardingStatus>;
       onboardingChecks(): Promise<OnboardingChecks>;
       onboardingPermissions(): Promise<Pick<OnboardingChecks, 'permissions'>>;
-      onboardingCreateVault(dir: string | null, name: string, answers?: SetupAnswers | null): Promise<Brain>;
+      onboardingCreateVault(dir: string | null, name: string, answers?: SetupInput | null): Promise<Brain>;
       onboardingSetupSuggest(): Promise<{ available: boolean; suggestion?: SetupAnswers | null }>;
       setupRead(): Promise<SetupRecord | null>;
-      setupRerun(answers: SetupAnswers): Promise<Brain & { written: string[] }>;
+      setupRerun(answers: SetupInput): Promise<Brain & { written: string[] }>;
       onboardingOpenPermission(which: 'microphone' | 'audio' | 'accessibility' | 'calendar'): Promise<void>;
       onboardingRequestMicrophone(): Promise<boolean>;
       onboardingRequestAccessibility(): Promise<void>;
@@ -348,7 +352,8 @@ declare global {
       platformMembers(workspaceId: string): Promise<{ members?: Member[]; error?: string }>;
       platformUsage(workspaceId: string): Promise<{ usage?: PlatformUsage; error?: string }>;
       platformSetPlan(workspaceId: string, draft: PlanDraft): Promise<{ plan?: { plan: Plan; seatsIncluded: number; notes: string | null }; error?: string }>;
-      knowledgeStatus(): Promise<Result & { autoInclude?: boolean; mine?: ContributionMine[] }>;
+      knowledgeStatus(): Promise<Result & { autoInclude?: boolean; mine?: ContributionMine[]; team?: TeamVault | null }>;
+      knowledgeTeamOpen(): Promise<Result>;
       knowledgeQueue(): Promise<Result & { queue?: QueueItem[] }>;
       knowledgeReview(id: string, decision: 'include' | 'decline'): Promise<Result & { status?: string }>;
       knowledgeAutoIncludeSet(on: boolean): Promise<Result & { autoInclude?: boolean }>;

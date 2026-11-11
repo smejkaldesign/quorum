@@ -124,3 +124,8 @@ Approved by Eric. Additions:
 5. **Domain join and invites in the Knowledge page.**
 6. **Company knowledge source.** One source type, read-only, under `sources/`.
 7. **Team tier instruments.** Seat counts and admin-control usage reported to the platform owner.
+
+## Build status (2026-11-10)
+
+- **Workspace vault, shipped (phase 2, pull side).** A pull now sorts rows by author: your own notes go to your vault as before; a teammate's note (public, included, admitted by the read policy in `0012`/`0013`) lands in the workspace vault, `~/Documents/Quorum Team/<workspace>/`, outside the personal vault so the watcher never pushes it back. Each copy carries a provenance bond in frontmatter: `team_item`, `team_version`, `team_workspace`, `team_pulled_at`. A newer team version replaces an untouched copy; an edited copy stays, gains `team_behind: true`, and the fresh text waits under `.updates/<path>` for the diff. A note that stops being shared (private again, declined, author removed) is moved to `<name> (removed).md` on the next pull, as is a remote delete. Settings, Knowledge shows the folder, its count and how many are behind, with Open. Code: `app/ee/sync.js` (`applyShared`, `reconcileShared`, `withBond`), `app/ee/store/remote.js` (`notes.shared`), tests in `app/test/pull.test.js`.
+- **Not yet.** Push improvement from a behind copy (needs a revision row and a migration), the Agent OS switcher and agent reads over the workspace vault, Teams, synthesized Team notes, knowledge sources.

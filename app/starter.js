@@ -69,15 +69,17 @@ export function folderName(key, organize) {
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-// the generated section of CLAUDE.md: layout, who the person is, what they are after, the names that matter, the rules
-export function setupSection(name, answers) {
+// the generated section of CLAUDE.md: layout, who the person is, what they are after, the names that matter, the rules.
+// `areas` lists what the folder holds; a re-run passes the folders already on disk plus the template's, so the layout
+// stays true after a template change
+export function setupSection(answers, areas = TEMPLATES[answers.template].areas) {
   const t = TEMPLATES[answers.template];
   const f = (k) => folderName(k, answers.organize);
   const lines = [MARK_OPEN, `## About ${answers.role ? 'you' : 'this folder'}`, ''];
   if (answers.role) lines.push(`- Role: ${answers.role}`);
   if (answers.goals) lines.push(`- Working toward: ${answers.goals}`);
   lines.push(`- Template: ${t.name}. Set up on ${today()}; run the setup again from Settings, Memory to change this section.`, '', '## Layout', '');
-  for (const k of t.areas) lines.push(`- \`${f(k)}/\` ${AREA[k].desc}${k === 'meetings' ? ' Quorum writes `source: quorum` in the frontmatter.' : ''}`);
+  for (const k of Object.keys(AREA).filter((k) => areas.includes(k))) lines.push(`- \`${f(k)}/\` ${AREA[k].desc}${k === 'meetings' ? ' Quorum writes `source: quorum` in the frontmatter.' : ''}`);
   lines.push('- `index.md` the catalog: one line per note. Add a line for every new note.');
   if (answers.projects.length) {
     lines.push('', '## Projects', '');
@@ -109,14 +111,14 @@ export function plan({ name = 'My Agent OS', answers: raw }) {
   for (const p of answers.projects) add(`${f('projects')}/${slug(p)}.md`, `---\ntype: project\nstatus: active\n---\n# ${p}\n\n## Goal\n\n## Status\n\n## Decisions\n\n## Related\n\n`, `- [[${slug(p)}]] - project: ${p}`);
   for (const p of answers.people) add(`${f('people')}/${slug(p)}.md`, `---\ntype: person\n---\n# ${p}\n\n## Who\n\n## Working together\n\n## Meetings\n\n`, `- [[${slug(p)}]] - person: ${p}`);
   add('index.md', `# Index\n\nOne line per note. Quorum starts here when it looks for an answer.\n\n${index.join('\n')}\n`);
-  add('CLAUDE.md', `# ${name}\n\nThis folder is an Agent OS managed with Quorum. Notes are plain markdown with [[wikilinks]] and YAML frontmatter.\n\n${setupSection(name, answers)}\n`);
+  add('CLAUDE.md', `# ${name}\n\nThis folder is an Agent OS managed with Quorum. Notes are plain markdown with [[wikilinks]] and YAML frontmatter.\n\n${setupSection(answers)}\n`);
   add('.obsidian/app.json', '{}\n');
   add(SETUP_FILE, JSON.stringify({ version: SETUP_VERSION, name, answers, createdAt: new Date().toISOString() }, null, 2) + '\n');
-  return { answers, files, dirs: [`${f('meetings')}/quorum`], meetings: `${f('meetings')}/quorum` };
+  return { answers, files, meetings: `${f('meetings')}/quorum` };
 }
 
 export function writeStarter(dir, p) {
-  for (const d of p.dirs) mkdirSync(path.join(dir, d), { recursive: true });
+  mkdirSync(path.join(dir, p.meetings), { recursive: true });
   const written = [];
   for (const [rel, body] of Object.entries(p.files)) {
     const file = path.join(dir, rel);
@@ -126,43 +128,59 @@ export function writeStarter(dir, p) {
   return written;
 }
 
-// replace the generated section, or append it when the file has none; everything outside the markers is kept as is
+// replace the generated section, or append it when the file has none; everything outside the markers is kept as is.
+// A damaged pair (one marker missing, or out of order) is cleared of its stray marker lines before the append, so a
+// later run never has two blocks to choose between
 export function applySection(existing, section) {
   const a = existing.indexOf(MARK_OPEN);
   const b = existing.indexOf(MARK_CLOSE);
   if (a >= 0 && b > a) return existing.slice(0, a) + section + existing.slice(b + MARK_CLOSE.length);
-  return existing.replace(/\s*$/, '') + '\n\n' + section + '\n';
+  const clean = existing.split('\n').filter((l) => l.trim() !== MARK_OPEN && l.trim() !== MARK_CLOSE).join('\n');
+  return clean.replace(/\s*$/, '') + '\n\n' + section + '\n';
 }
 
+// the saved answers, normalized, so a hand-edited or older file still gives the app a valid shape
 export function readSetup(dir) {
-  try { return JSON.parse(readFileSync(path.join(dir, SETUP_FILE), 'utf8')); } catch { return null; }
+  try {
+    const j = JSON.parse(readFileSync(path.join(dir, SETUP_FILE), 'utf8'));
+    return j && typeof j === 'object' ? { ...j, answers: normalizeAnswers(j.answers ?? {}) } : null;
+  } catch { return null; }
+}
+
+// which areas have a folder on disk already, under either naming
+export function areasOnDisk(dir, organize) {
+  return Object.keys(AREA).filter((k) => existsSync(path.join(dir, folderName(k, organize))));
 }
 
 // the interview again on a folder that exists: new folders and notes are added, nothing that exists is rewritten,
-// the generated CLAUDE.md section is replaced, missing index lines are appended, and the answers file is updated
+// the generated CLAUDE.md section is replaced, missing index lines are appended, and the answers file is updated.
+// The folder naming is the one the folder was built with; a new template only adds areas, and the layout lists
+// every area present on disk
 export function rerunSetup(dir, { name, answers }) {
-  const p = plan({ name, answers });
+  const prev = readSetup(dir);
+  const organize = prev?.answers?.organize ?? normalizeAnswers(answers).organize;
+  const p = plan({ name, answers: { ...answers, organize } });
   delete p.files['index.md'];
   delete p.files['CLAUDE.md'];
   delete p.files[SETUP_FILE];
   const written = writeStarter(dir, p);
+  const areas = [...new Set([...areasOnDisk(dir, organize), ...TEMPLATES[p.answers.template].areas])];
   const claude = path.join(dir, 'CLAUDE.md');
-  writeFileSync(claude, applySection(existsSync(claude) ? readFileSync(claude, 'utf8') : `# ${name}\n`, setupSection(name, p.answers)));
+  writeFileSync(claude, applySection(existsSync(claude) ? readFileSync(claude, 'utf8') : `# ${name}\n`, setupSection(p.answers, areas)));
   const indexFile = path.join(dir, 'index.md');
   let index = existsSync(indexFile) ? readFileSync(indexFile, 'utf8') : '# Index\n\n';
   const wanted = [...p.answers.projects.map((x) => `- [[${slug(x)}]] - project: ${x}`), ...p.answers.people.map((x) => `- [[${slug(x)}]] - person: ${x}`)];
-  const missing = wanted.filter((l) => !index.includes(`[[${l.slice(4, l.indexOf(']]'))}]]`));
+  const missing = wanted.filter((l) => !index.includes(l));
   if (missing.length) index = index.replace(/\s*$/, '') + '\n' + missing.join('\n') + '\n';
   writeFileSync(indexFile, index);
   const setupFile = path.join(dir, SETUP_FILE);
   mkdirSync(path.dirname(setupFile), { recursive: true });
-  const prev = readSetup(dir);
   writeFileSync(setupFile, JSON.stringify({ version: SETUP_VERSION, name, answers: p.answers, createdAt: prev?.createdAt ?? new Date().toISOString(), updatedAt: new Date().toISOString() }, null, 2) + '\n');
   return { written, answers: p.answers };
 }
 
 // what the person's own AI already knows about them, as prefill for the interview. The prompt asks for JSON only and
-// allows empty fields; the model source is the user's own, and nothing about the answer leaves the Mac
+// allows empty fields. It goes to the chosen model source with the person's name and profile line, once per app run
 export const SUGGEST_SYSTEM = 'You help set up a personal notes folder. Answer with one JSON object and nothing else.';
 export const suggestPrompt = ({ owner = '', about = '' } = {}) => [
   `From what you already know about ${owner || 'the person you work with on this Mac'} (your memory, instructions and prior context${about ? `; also: ${about}` : ''}), fill this JSON. Leave a field empty when you do not know; never invent names.`,

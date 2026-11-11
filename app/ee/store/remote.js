@@ -76,7 +76,10 @@ export function createRemote({ client, workspaceId, userId } = {}) {
     readFrontmatter: localNotes.readFrontmatter,
     setFrontmatterKey: localNotes.setFrontmatterKey,
     byId: async (id) => first(await run(client.from('notes').select('*').eq('workspace_id', workspaceId).eq('id', id).limit(1), 'notes read')),
-    changedSince: changedSince('notes', 'id, path, frontmatter, body, hash, mtime, updated_at, deleted_at'),
+    changedSince: changedSince('notes', 'id, user_id, path, frontmatter, body, hash, mtime, updated_at, deleted_at'),
+    // the live notes other members share with this one (the read policy admits only public, included notes), ids and
+    // versions only, so a pull can drop the local copy of anything no longer shared
+    shared: ({ limit = PAGE, offset = 0 } = {}) => run(client.from('notes').select('id, hash').eq('workspace_id', workspaceId).neq('user_id', userId).is('deleted_at', null).order('id', { ascending: true }).range(offset, offset + limit - 1), 'notes shared'),
     remove: (id) => softDelete('notes', [id]),
     push: (note) => upsert('notes', [noteRow(note)]),
     pushMany: (notes) => upsert('notes', notes.map(noteRow)),

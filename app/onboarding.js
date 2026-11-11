@@ -76,15 +76,20 @@ export function registerOnboarding({ ipcMain, settings, saveSettings, inspectBra
   });
   // prefill for the interview from the person's own model source; nothing when none is chosen, and a slow or odd
   // answer is just no prefill
-  ipcMain.handle('onboarding-setup-suggest', async () => {
+  // one model call per app run: concurrent askers share it and later askers get the same answer
+  let suggesting = null;
+  ipcMain.handle('onboarding-setup-suggest', () => {
     if (!runText || !hasModel()) return { available: false };
-    try {
-      const out = await within(40000, runText(suggestPrompt({ owner: owner(), about: about() }), SUGGEST_SYSTEM), null);
-      return { available: true, suggestion: out == null ? null : parseSuggestion(out) };
-    } catch (e) {
-      log('setup suggestion failed', e?.message || e);
-      return { available: true, suggestion: null };
-    }
+    suggesting ??= (async () => {
+      try {
+        const out = await within(40000, runText(suggestPrompt({ owner: owner(), about: about() }), SUGGEST_SYSTEM), null);
+        return { available: true, suggestion: out == null ? null : parseSuggestion(out) };
+      } catch (e) {
+        log('setup suggestion failed', e?.message || e);
+        return { available: true, suggestion: null };
+      }
+    })();
+    return suggesting;
   });
   // the saved answers of a Quorum-built folder, and the interview again on the connected folder
   ipcMain.handle('setup-read', () => (settings.brainRoot ? readSetup(settings.brainRoot) : null));

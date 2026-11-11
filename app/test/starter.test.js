@@ -62,6 +62,31 @@ describe('writing and re-running', () => {
     expect(readSetup(dir).answers.role).toBe('Founder');
     expect(existsSync(path.join(dir, '08-meetings', 'quorum'))).toBe(true);
   });
+  it('a re-run keeps the folder naming, lists every area on disk, and survives a damaged marker pair', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'starter-'));
+    writeStarter(dir, plan({ name: 'Studio', answers }));
+    const claude = path.join(dir, 'CLAUDE.md');
+    writeFileSync(claude, readFileSync(claude, 'utf8').replace(MARK_CLOSE, '') + '\n## Mine\n\nkeep this\n');
+    rerunSetup(dir, { name: 'Studio', answers: { ...answers, template: 'personal', organize: 'plain', projects: ['Quorum'], people: ['Quorum'] } });
+    expect(existsSync(path.join(dir, 'people'))).toBe(false);
+    expect(existsSync(path.join(dir, '02-people', 'quorum.md'))).toBe(true);
+    const text = readFileSync(claude, 'utf8');
+    expect(text.split(MARK_OPEN).length).toBe(2);
+    expect(text.split(MARK_CLOSE).length).toBe(2);
+    expect(text).toContain('keep this');
+    expect(text).toContain('`04-company/`');
+    expect(text).toContain('`decisions/`');
+    const index = readFileSync(path.join(dir, 'index.md'), 'utf8');
+    expect(index).toContain('[[quorum]] - project: Quorum');
+    expect(index).toContain('[[quorum]] - person: Quorum');
+    expect(readSetup(dir).answers.organize).toBe('areas');
+  });
+  it('readSetup normalizes a hand-edited answers file', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'starter-'));
+    writeStarter(dir, plan({ name: 'Studio', answers }));
+    writeFileSync(path.join(dir, '.quorum', 'setup.json'), JSON.stringify({ version: 1, name: 'Studio', answers: { template: 'founder', projects: 'A, B' } }));
+    expect(readSetup(dir).answers).toMatchObject({ template: 'founder', projects: ['A', 'B'], people: [], organize: 'areas' });
+  });
   it('appends the section to a CLAUDE.md that has none', () => {
     const out = applySection('# Mine\n\nrules\n', `${MARK_OPEN}\nX\n${MARK_CLOSE}`);
     expect(out.startsWith('# Mine\n\nrules\n\n' + MARK_OPEN)).toBe(true);

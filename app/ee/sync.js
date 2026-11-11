@@ -8,6 +8,7 @@
 // supabase_realtime publication.
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, watch, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { DATA_DIR } from '../edition.js';
 import { createRemote } from './store/remote.js';
@@ -39,6 +40,22 @@ export function ulid(time = Date.now()) {
 
 const sha256 = (text) => createHash('sha256').update(text).digest('hex');
 
+// a teammate's shared note lands in the workspace vault with a provenance bond in its frontmatter: which team item it
+// is, which version, from which workspace, and when it was pulled. The keys are added to the note's own block, or a
+// block is opened for a note that has none
+export const BOND_KEYS = ['team_item', 'team_version', 'team_workspace', 'team_pulled_at', 'team_behind'];
+export function withBond(body, bond) {
+  const lines = Object.entries(bond).filter(([, v]) => v !== undefined && v !== null && v !== false).map(([k, v]) => `${k}: ${v}`);
+  const m = body.match(/^---\n([\s\S]*?)\n---(\n|$)/);
+  if (!m) return `---\n${lines.join('\n')}\n---\n${body}`;
+  const kept = m[1].split('\n').filter((l) => !BOND_KEYS.some((k) => l.startsWith(`${k}:`)));
+  return `---\n${[...kept, ...lines].join('\n')}\n---${m[2]}${body.slice(m[0].length)}`;
+}
+export const bondOf = (text) => { const fm = parseFrontmatter(text); return fm.team_item ? { item: fm.team_item, version: fm.team_version ?? '', behind: fm.team_behind === 'true' } : null; };
+// the folder for a workspace's shared notes: outside the personal vault, so the watcher never pushes it back
+const safeName = (s) => String(s ?? '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Workspace';
+export const defaultTeamRoot = (ws) => path.join(homedir(), 'Documents', 'Quorum Team', safeName(ws?.name || ws?.id));
+
 // the frontmatter block as plain key: value pairs, with "- item" lists; enough for what notes carry
 export function parseFrontmatter(text) {
   const m = text.match(/^---\n([\s\S]*?)\n---/);
@@ -53,7 +70,7 @@ export function parseFrontmatter(text) {
   return fm;
 }
 
-export function createSync({ account, store, brain = () => null, log = () => {}, meetingIndex = () => [], isExcluded = () => false, isExcludedText = () => false, idsFile = DEFAULT_IDS_FILE }) {
+export function createSync({ account, store, brain = () => null, log = () => {}, meetingIndex = () => [], isExcluded = () => false, isExcludedText = () => false, idsFile = DEFAULT_IDS_FILE, teamRoot = defaultTeamRoot }) {
   const IDS_FILE = idsFile;
   // path -> { id, hash } per workspace, so a note keeps its id across pushes and unchanged notes are skipped
   let ids = {};
@@ -69,13 +86,14 @@ export function createSync({ account, store, brain = () => null, log = () => {},
   let pulling = null;
   let last = { pushed: 0, skipped: 0, meetings: 0 };
   let lastPull = { written: 0, conflicts: 0, removed: 0, skipped: 0 };
+  let lastShared = { written: 0, behind: 0, removed: 0, skipped: 0 };
 
   // sync runs only with the switch on, a session and a chosen workspace; otherwise every call is a no-op
   const target = () => {
     const s = account.state();
     const client = account.client();
     if (!s.sync || !s.signedIn || !s.workspace || !client) return null;
-    return { remote: createRemote({ client, workspaceId: s.workspace.id, userId: s.userId }), ws: s.workspace.id, vault: brain()?.vault ?? null };
+    return { remote: createRemote({ client, workspaceId: s.workspace.id, userId: s.userId }), ws: s.workspace.id, me: s.userId ?? null, vault: brain()?.vault ?? null, team: teamRoot(s.workspace) };
   };
   const relOf = (vault, abs) => { const r = path.relative(vault, abs); return r && !r.startsWith('..') && !path.isAbsolute(r) ? r.split(path.sep).join('/') : null; };
   const fail = (what, err, verb = 'push') => { log('sync', what, err?.message ?? err); account.markSync({ syncError: `Sync could not ${verb} ${what}.` }); };
@@ -254,6 +272,57 @@ export function createSync({ account, store, brain = () => null, log = () => {},
     counts.written++;
   }
 
+  // a teammate's note (public, included, readable under the workspace policy) goes to the workspace vault, never the
+  // personal one. The first pull writes it with its bond; a newer version replaces an untouched copy, and marks an
+  // edited copy as behind, keeping the fresh text under .updates/ for the diff. A soft-deleted row renames the copy
+  function applyShared(t, row, counts) {
+    const rel = safeRel(row.path);
+    if (!rel) { counts.skipped++; return; }
+    const bucket = ids[t.ws] ??= {};
+    const key = `team:${rel}`;
+    const e = bucket[key];
+    const abs = path.join(t.team, rel);
+    let local = null;
+    try { local = readFileSync(abs, 'utf8'); } catch {}
+    if (row.deleted_at) {
+      if (local !== null) { const to = sibling(t.team, rel, 'removed'); renameSync(abs, path.join(t.team, to)); counts.removed++; }
+      delete bucket[key];
+      return;
+    }
+    const body = String(row.body ?? '');
+    const version = row.hash || sha256(body);
+    if (e && e.hash === version && local !== null) return;
+    const bond = { team_item: row.id, team_version: version, team_workspace: t.ws, team_pulled_at: new Date().toISOString() };
+    if (local !== null && e && sha256(local) !== e.written) {
+      // the person changed their copy: it stays, flagged, and the team's text waits beside it
+      writeRel(t.team, rel, withBond(local, { ...bond, team_behind: true }));
+      writeRel(t.team, `.updates/${rel}`, body);
+      bucket[key] = { id: row.id, hash: version, written: sha256(readFileSync(abs, 'utf8')), behind: true };
+      counts.behind++;
+      return;
+    }
+    const text = withBond(body, bond);
+    writeRel(t.team, rel, text);
+    bucket[key] = { id: row.id, hash: version, written: sha256(text) };
+    counts.written++;
+  }
+
+  // a note that stopped being shared (made private, declined, its author removed) no longer comes back from the read
+  // policy, so the live shared ids decide which local copies stay
+  async function reconcileShared(t, counts) {
+    const bucket = ids[t.ws] ?? {};
+    const keys = Object.keys(bucket).filter((k) => k.startsWith('team:'));
+    if (!keys.length || !t.remote.notes.shared) return;
+    const live = new Set((await changed((_s, o) => t.remote.notes.shared(o), null)).map((r) => r.id));
+    for (const k of keys) {
+      if (live.has(bucket[k].id)) continue;
+      const rel = k.slice(5);
+      const abs = path.join(t.team, rel);
+      if (existsSync(abs)) { const to = sibling(t.team, rel, 'removed'); renameSync(abs, path.join(t.team, to)); counts.removed++; }
+      delete bucket[k];
+    }
+  }
+
   // rows other devices changed since the last pull, written into the vault; meetings rows only bind their id to the
   // note's path so this device's next push updates the same row
   async function pullNow() {
@@ -266,7 +335,11 @@ export function createSync({ account, store, brain = () => null, log = () => {},
       try {
         const since = pulls[t.ws]?.lastPullAt ?? null;
         const [notes, meetings] = await Promise.all([changed(t.remote.notes.changedSince, since), changed(t.remote.meetings.changedSince, since)]);
-        for (const row of notes) applyNote(t, row, counts);
+        const shared = { written: 0, behind: 0, removed: 0, skipped: 0 };
+        for (const row of notes) (row.user_id && t.me && row.user_id !== t.me ? applyShared(t, row, shared) : applyNote(t, row, counts));
+        await reconcileShared(t, shared);
+        if (shared.written || shared.behind || shared.removed) log('sync', `workspace vault: ${shared.written} written, ${shared.behind} behind, ${shared.removed} removed`);
+        lastShared = shared;
         const byId = new Map(Object.entries(ids[t.ws] ?? {}).filter(([k]) => !k.includes(':')).map(([k, v]) => [v.id, k]));
         for (const m of meetings) {
           const rel = m.note_id ? byId.get(m.note_id) : null;
@@ -345,7 +418,14 @@ export function createSync({ account, store, brain = () => null, log = () => {},
   }
   const stop = () => { closeChannel(); stopWatch(); clearTimeout(pullTimer); pullTimer = null; };
 
-  const status = () => { const s = account.state(); return { on: s.sync, signedIn: s.signedIn, workspaceId: s.workspace?.id ?? null, running: !!running || !!pulling, live: isLive, lastSyncAt: s.lastSyncAt, lastPullAt: s.lastPullAt ?? null, syncError: s.syncError, last, lastPull }; };
+  // the workspace vault as the app shows it: where it is, how many shared notes it holds, how many are behind
+  const team = () => {
+    const s = account.state();
+    if (!s.workspace) return null;
+    const entries = Object.entries(ids[s.workspace.id] ?? {}).filter(([k]) => k.startsWith('team:'));
+    return { root: teamRoot(s.workspace), notes: entries.length, behind: entries.filter(([, v]) => v.behind).length, last: lastShared };
+  };
+  const status = () => { const s = account.state(); return { on: s.sync, signedIn: s.signedIn, workspaceId: s.workspace?.id ?? null, running: !!running || !!pulling, live: isLive, lastSyncAt: s.lastSyncAt, lastPullAt: s.lastPullAt ?? null, syncError: s.syncError, last, lastPull, team: team() }; };
 
-  return { pushNote, pushMeetingNote, syncNow, pullNow, live, stop, status };
+  return { pushNote, pushMeetingNote, syncNow, pullNow, live, stop, status, team };
 }

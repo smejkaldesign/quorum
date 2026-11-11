@@ -11,7 +11,7 @@ describe('the review queue in the app', () => {
     const client = { rpc: async (name, args) => { calls.push([name, args]); return { data: name === 'review_contribution' ? { status: 'included' } : [], error: null }; }, from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { auto_include: true }, error: null }) }) }) }) };
     const member = createKnowledge({ account: { client: () => client, state: () => ({ signedIn: true, workspace: { id: 'w', role: 'member' } }) } });
     expect(await member.handlers['knowledge-queue']()).toEqual({ error: 'Only owners and admins can review contributions.' });
-    expect(await member.handlers['knowledge-status']()).toEqual({ autoInclude: true, mine: [] });
+    expect(await member.handlers['knowledge-status']()).toEqual({ autoInclude: true, mine: [], team: null });
     const admin = createKnowledge({ account: { client: () => client, state: () => ({ signedIn: true, workspace: { id: 'w', role: 'admin' } }) } });
     expect(await admin.handlers['knowledge-review']('c1', 'include')).toEqual({ status: 'included' });
     expect(calls.at(-1)).toEqual(['review_contribution', { id: 'c1', decision: 'include' }]);

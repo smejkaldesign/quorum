@@ -25,6 +25,8 @@ Product gaps as of 2026-11-10. Each item says what is missing, what the app does
 
 ## Cloud edition
 
+- **Workspace vault.** Teammates' included notes pull into `~/Documents/Quorum Team/<workspace>/` with provenance bonds (`docs/specs/team-knowledge.md`, Build status). The agent does not read that folder yet, and an edited copy marked behind has no Push improvement yet.
+
 - **Google sign-in.** Needs an OAuth client. Email code sign-in works today. (Google Calendar is separate and live: `docs/self-hosting.md`, Google Calendar connector.)
 - **Auth mail when self-hosting.** The built-in Supabase sender allows about 2 emails per hour; a self-hosted project needs a custom SMTP provider (see `docs/self-hosting.md`). The hosted service has one.
 - **Updates.** Both editions check a static feed (Local: GitHub Releases; Cloud: `quorum.watch/updates/cloud`, published at release time per `docs/release-checklist.md`) and show an Update button once a version is downloaded. A Cloud build packaged without `QUORUM_CLOUD_UPDATES_URL` still gets the default feed URL; the feed only exists once a release has been published there.

@@ -26,7 +26,7 @@ function fakeClient(rows = {}) {
     const call = { table, ops: [], rows: null };
     calls.push(call);
     const b = {};
-    for (const op of ['select', 'eq', 'is', 'gt', 'in', 'like', 'order', 'range', 'limit', 'update']) b[op] = (...a) => { call.ops.push([op, ...a]); return b; };
+    for (const op of ['select', 'eq', 'neq', 'is', 'gt', 'in', 'like', 'order', 'range', 'limit', 'update']) b[op] = (...a) => { call.ops.push([op, ...a]); return b; };
     b.upsert = (data, opts) => { call.ops.push(['upsert', opts]); call.rows = data; return b; };
     b.then = (res, rej) => Promise.resolve({ data: call.ops.some(([o]) => o === 'upsert' || o === 'update') ? null : rows[table] ?? [], error: null }).then(res, rej);
     return b;
@@ -34,7 +34,7 @@ function fakeClient(rows = {}) {
   return { client: { from }, calls };
 }
 
-function harness({ files = {}, rows = {}, isExcluded, isExcludedText } = {}) {
+function harness({ files = {}, rows = {}, isExcluded, isExcludedText, teamRoot } = {}) {
   const vault = mkdtempSync(path.join(tmpdir(), 'quorum-pull-vault-'));
   vaults.push(vault);
   for (const [rel, text] of Object.entries(files)) {
@@ -46,7 +46,7 @@ function harness({ files = {}, rows = {}, isExcluded, isExcludedText } = {}) {
   const state = { sync: true, signedIn: true, workspace: { id: `ws-${path.basename(vault)}` }, userId: 'user-1', lastSyncAt: null, lastPullAt: null, syncError: null };
   const account = { state: () => state, client: () => fake.client, markSync: (patch) => Object.assign(state, patch) };
   const store = { notes: { write: (abs, text) => writeFileSync(abs, text) }, meetings: { root: path.join(vault, '.sessions') } };
-  const sync = createSync({ account, store, brain: () => ({ vault }), log: (...a) => logs.push(a.join(' ')), isExcluded, isExcludedText });
+  const sync = createSync({ account, store, brain: () => ({ vault }), log: (...a) => logs.push(a.join(' ')), isExcluded, isExcludedText, ...(teamRoot ? { teamRoot } : {}) });
   const read = (rel) => readFileSync(path.join(vault, rel), 'utf8');
   const has = (rel) => existsSync(path.join(vault, rel));
   const upserts = (table) => fake.calls.filter((c) => c.table === table && c.rows).flatMap((c) => c.rows);
@@ -216,5 +216,73 @@ describe('remote store', () => {
     expect(fake.calls.find((c) => c.table === 'settings' && c.rows).rows[0]).toMatchObject({ id: id(6), scope: 'user', data: { model: 'opus', suggestions: false } });
     for (const fn of [r.meetings.ensureRoot, r.meetings.beginSegment, r.meetings.deleteSession, r.attachments.clear, r.state.write]) expect(fn).toThrow(/not available in the hosted store/);
     expect(() => r.meetings.root).toThrow(/not available in the hosted store/);
+  });
+});
+
+// a teammate's shared note: the workspace vault, the bond, behind marking, removal once no longer shared
+describe('workspace vault', () => {
+  const TEAM = '---\ntitle: Pricing\nvisibility: public\n---\n# Pricing\n\nTeam text v1.\n';
+  const TEAM2 = TEAM.replace('v1', 'v2');
+  const shared = (over) => noteRow({ id: id(7), user_id: 'user-2', path: 'knowledge/pricing.md', body: TEAM, ...over });
+  const teamHarness = (rows) => {
+    const team = mkdtempSync(path.join(tmpdir(), 'quorum-team-'));
+    vaults.push(team);
+    const h = harness({ rows, teamRoot: () => team });
+    return { ...h, team, tread: (rel) => readFileSync(path.join(team, rel), 'utf8'), thas: (rel) => existsSync(path.join(team, rel)) };
+  };
+  it('writes a teammate note into the workspace vault with a bond and leaves the personal vault alone', async () => {
+    const h = teamHarness({ notes: [shared()] });
+    expect(await h.sync.pullNow()).toEqual({ written: 0, conflicts: 0, removed: 0, skipped: 0 });
+    expect(h.has('knowledge/pricing.md')).toBe(false);
+    const text = h.tread('knowledge/pricing.md');
+    expect(text).toContain('team_item: ' + id(7));
+    expect(text).toContain('team_workspace: ' + h.state.workspace.id);
+    expect(text).toMatch(/team_pulled_at: \d{4}-/);
+    expect(text).toContain('title: Pricing');
+    expect(text.endsWith('Team text v1.\n')).toBe(true);
+    expect(h.sync.team()).toMatchObject({ root: h.team, notes: 1, behind: 0 });
+    // a second pull of the same version changes nothing
+    const before = h.tread('knowledge/pricing.md');
+    await h.sync.pullNow();
+    expect(h.tread('knowledge/pricing.md')).toBe(before);
+  });
+  it('replaces an untouched copy with the newer team version', async () => {
+    const h = teamHarness({ notes: [shared()] });
+    await h.sync.pullNow();
+    h.rows.notes = [shared({ body: TEAM2, updated_at: '2026-11-08T12:00:00.000Z' })];
+    await h.sync.pullNow();
+    expect(h.tread('knowledge/pricing.md')).toContain('Team text v2.');
+    expect(h.sync.team().behind).toBe(0);
+  });
+  it('keeps an edited copy, marks it behind and parks the new text under .updates', async () => {
+    const h = teamHarness({ notes: [shared()] });
+    await h.sync.pullNow();
+    writeFileSync(path.join(h.team, 'knowledge/pricing.md'), h.tread('knowledge/pricing.md') + '\nMy own line.\n');
+    h.rows.notes = [shared({ body: TEAM2, updated_at: '2026-11-08T12:00:00.000Z' })];
+    await h.sync.pullNow();
+    const text = h.tread('knowledge/pricing.md');
+    expect(text).toContain('My own line.');
+    expect(text).toContain('team_behind: true');
+    expect(text).not.toContain('Team text v2.');
+    expect(h.tread('.updates/knowledge/pricing.md')).toBe(TEAM2);
+    expect(h.sync.team().behind).toBe(1);
+  });
+  it('moves the copy aside once the note is no longer shared, and on a remote delete', async () => {
+    const h = teamHarness({ notes: [shared(), shared({ id: id(8), path: 'knowledge/roadmap.md' })] });
+    await h.sync.pullNow();
+    expect(h.sync.team().notes).toBe(2);
+    // the read policy no longer returns pricing; roadmap comes back soft-deleted
+    h.rows.notes = [shared({ id: id(8), path: 'knowledge/roadmap.md', deleted_at: '2026-11-08T12:00:00.000Z', updated_at: '2026-11-08T12:00:00.000Z' })];
+    await h.sync.pullNow();
+    expect(h.thas('knowledge/pricing.md')).toBe(false);
+    expect(h.thas('knowledge/pricing (removed).md')).toBe(true);
+    expect(h.thas('knowledge/roadmap.md')).toBe(false);
+    expect(h.thas('knowledge/roadmap (removed).md')).toBe(true);
+    expect(h.sync.team().notes).toBe(0);
+  });
+  it('a note with no author column still goes to the personal vault', async () => {
+    const h = teamHarness({ notes: [noteRow()] });
+    expect(await h.sync.pullNow()).toEqual({ written: 1, conflicts: 0, removed: 0, skipped: 0 });
+    expect(h.has('notes/hello.md')).toBe(true);
   });
 });

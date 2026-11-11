@@ -1516,7 +1516,7 @@ app.on('open-url', (e, url) => { e.preventDefault(); if (/^quorum:\/\/auth\//.te
 if (EDITION === 'cloud') { const conn = (await loadEE('connectors.js')).registerConnectors({ ipcMain, account, log }); guardrails.setRemote(async () => { const r = await conn.handlers['workspace-guardrails-get'](); return r?.rules ?? null; }); }
 // the platform owner's page (Settings › Admin › Platform): owner-only RPCs on the same client
 if (EDITION === 'cloud') (await loadEE('platform.js')).registerPlatform({ ipcMain, account, log });
-if (EDITION === 'cloud') (await loadEE('knowledge.js')).registerKnowledge({ ipcMain, account, log });
+if (EDITION === 'cloud') (await loadEE('knowledge.js')).registerKnowledge({ ipcMain, account, log, shell });
 if (EDITION === 'cloud') (await loadEE('billing.js')).registerBilling({ ipcMain, account, log, openExternal: (u) => shell.openExternal(u) });
 // meeting sources (Settings › Sources): Granola and the like, connected per user in either edition
 // a sign-in window with a session nothing else has touched: the browser's cookies cannot answer for the person, so
@@ -1900,7 +1900,7 @@ ipcMain.handle('pick-meetings-dir', async () => {
 const connectBrain = (b) => { Object.assign(settings, { brainRoot: b.root, vaultPath: b.vault, brainMade: null }); store.settings.save(); log('connected Agent OS', b.root); suggester.reset(); openIndex(); return b; };
 registerOnboarding({
   ipcMain, settings, saveSettings, inspectBrain, connect: connectBrain, systemPreferences, shell, helperAsk: (cmd) => calAsk({ cmd }), claudeStatus, modelStatus: () => modelStatus(null), log, hadSettings: store.settings.existed,
-  runText: (prompt, system) => runClaude(prompt, system, 'haiku'), hasModel: () => modelSource() !== 'none', owner: () => OWNER, about: aboutMe,
+  runText: (prompt, system) => runClaude(prompt, system, 'haiku', { cwd: homedir() }), hasModel: () => modelSource() !== 'none', owner: () => OWNER, about: aboutMe,
   axTrusted: () => new Promise((resolve) => { const w = (evt) => resolve(evt.trusted); axWaiters.push(w); helperSend({ cmd: 'axStatus', prompt: false }); setTimeout(() => { const i = axWaiters.indexOf(w); if (i >= 0) axWaiters.splice(i, 1); resolve(lastAx?.trusted ?? null); }, 2500); }),
   pickDir: async () => {
     const r = await dialog.showOpenDialog(win, { title: 'Where should your Agent OS live?', properties: ['openDirectory', 'createDirectory'], defaultPath: path.join(homedir(), 'Documents'), buttonLabel: 'Use folder' });

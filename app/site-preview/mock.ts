@@ -177,6 +177,8 @@ const sample: Partial<Bridge> = {
   isDev: false,
   sitePreview: { quoteMs: 9000 },
   onboardingStatus: async () => ({ firstRun: false, defaultVaultDir: VAULT }),
+  knowledgeStatus: async () => ({ autoInclude: false, mine: [], team: { root: VAULT.replace(/[^/]+$/, 'Quorum Team/Acme'), notes: 12, behind: 1, last: { written: 2, behind: 1, removed: 0, skipped: 0 } } }),
+  knowledgeTeamOpen: async () => ({}),
   onboardingSetupSuggest: async () => ({ available: true, suggestion: { template: 'founder' as const, role: 'Product designer', goals: 'Ship the first version', projects: ['Quorum'], people: ['Ada Lovelace'], organize: 'areas' as const } }),
   setupRead: async () => ({ version: 1, name: 'My Agent OS', answers: { template: 'founder' as const, role: 'Product designer', goals: 'Ship the first version', projects: ['Quorum'], people: ['Ada Lovelace'], organize: 'areas' as const }, createdAt: new Date().toISOString() }),
   setupRerun: async () => ({ root: VAULT, vault: VAULT, name: 'Acme Notes', made: 'quorum' as const, written: [], markers: { agentOS: null, obsidian: true, search: true, safetyHooks: true } }),

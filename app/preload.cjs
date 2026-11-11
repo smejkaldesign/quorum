@@ -196,6 +196,7 @@ contextBridge.exposeInMainWorld('quorum', {
   // company knowledge review queue (hosted edition; handlers in ee/knowledge.js)
   knowledgeStatus: () => ipcRenderer.invoke('knowledge-status'),
   knowledgeQueue: () => ipcRenderer.invoke('knowledge-queue'),
+  knowledgeTeamOpen: () => ipcRenderer.invoke('knowledge-team-open'),
   knowledgeReview: (id, decision) => ipcRenderer.invoke('knowledge-review', id, decision),
   knowledgeAutoIncludeSet: (on) => ipcRenderer.invoke('knowledge-auto-include-set', on),
   billingStatus: () => ipcRenderer.invoke('billing-status'),

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { SetupForm, answersFrom, draftFrom, draftIsEmpty, emptyDraft, type SetupDraft } from './SetupForm';
-import type { Brain, CalendarSettings, ClaudeStatus, Memory, MemoryItem, OptOut, Profile, Settings, Voice, Workspace, Transcription, DecisionProvider, DecisionsStatus, AccountState, UpdateState } from './quorum';
+import type { AccountState, Brain, CalendarSettings, ClaudeStatus, DecisionProvider, DecisionsStatus, Memory, MemoryItem, OptOut, Profile, Settings, TeamVault, Transcription, UpdateState, Voice, Workspace } from './quorum';
 import { PersonalConnectors } from './Connectors';
 import { ConnectorsPage } from './ConnectorsPage';
 import { GuardrailsPage } from './Guardrails';
@@ -203,7 +203,7 @@ function SecondBrain({ brain, onConnect, onDisconnect, onBrain, onViewConnector 
   // the setup interview again, on a folder Quorum built: prefilled with the saved answers
   const [setup, setSetup] = useState<SetupDraft | null>(null);
   const [applying, setApplying] = useState(false);
-  const openSetup = async () => { setCreating(false); setSetup(draftFrom((await window.quorum.setupRead().catch(() => null))?.answers)); };
+  const openSetup = async () => { setCreating(false); let rec = null; try { rec = await window.quorum.setupRead(); } catch {} setSetup(draftFrom(rec?.answers)); };
   // the same form creates a folder for someone who skipped it in onboarding: name, location, the interview
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('My Agent OS');
@@ -299,7 +299,7 @@ function SecondBrain({ brain, onConnect, onDisconnect, onBrain, onViewConnector 
                 <div className="onb-row"><span className="onb-label">Location</span><code className="onb-path">{home(newDir ?? defaultDir)}</code><button className="pill small-pill" onClick={async () => { const d = await window.quorum.onboardingPickDir(); if (d) setNewDir(d); }}>Choose…</button></div>
               </div>
             )}
-            <SetupForm draft={setup} onChange={setSetup} />
+            <SetupForm draft={setup} onChange={setSetup} lockOrganize={!creating} />
             {setupError && <p className="set-error">{setupError}</p>}
             <div className="modal-actions"><button className="link-btn" onClick={() => setSetup(null)}>Cancel</button><button className="pill primary" disabled={applying} onClick={applySetup}>{applying ? (creating ? 'Creating…' : 'Applying…') : creating ? 'Create folder' : 'Apply'}</button></div>
           </div>
@@ -742,7 +742,7 @@ function KnowledgePage() {
         <>
           <h3>Shared with your team</h3>
           <div className="set-card">
-            <Row icon={<IconStack width={18} height={18} />} title={<>Team vault<Soon /></>} desc="A Quorum Cloud workspace shares the notes you mark public with your team, after an admin includes them" />
+            <TeamVaultRow />
           </div>
         </>
       )} />
@@ -753,6 +753,21 @@ function KnowledgePage() {
         <Row icon={<IconStack width={18} height={18} />} title="Everyone in the workspace" desc="Applies to every teammate, next to their own memory" />
       </div>
     </>
+  );
+}
+
+// the workspace vault on this Mac: teammates' included notes with their provenance bonds (ee/sync.js applyShared).
+// Without a signed-in workspace the row explains what it will hold
+function TeamVaultRow() {
+  const [team, setTeam] = useState<TeamVault | null | undefined>(undefined);
+  useEffect(() => { Promise.resolve().then(() => window.quorum.knowledgeStatus()).then((r) => setTeam(r.team ?? null)).catch(() => setTeam(null)); }, []);
+  if (!team) return <Row icon={<IconStack width={18} height={18} />} title="Workspace vault" desc="A Quorum Cloud workspace shares the notes teammates mark public with you, after an admin includes them. They land in a second folder, read-only, each with its source." />;
+  const home = (p: string) => p.replace(/^\/Users\/[^/]+/, '~');
+  const parts = [home(team.root), `${team.notes} shared ${team.notes === 1 ? 'note' : 'notes'}`, ...(team.behind ? [`${team.behind} edited here and behind the team copy`] : [])];
+  return (
+    <Row icon={<IconStack width={18} height={18} className={team.notes ? 'ok' : undefined} />} title="Workspace vault" desc={parts.join(' · ')}>
+      <button className="pill" onClick={() => window.quorum.knowledgeTeamOpen()}>Open</button>
+    </Row>
   );
 }
 
