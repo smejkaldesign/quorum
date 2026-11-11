@@ -13,6 +13,7 @@
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
+    "@simplewebauthn/server": "^14.1.0",
     "@supabase/supabase-js": "^2.119.0",
     "ws": "^8.18.0"
   }

@@ -40,8 +40,10 @@ describe('resolving a remembered page', () => {
     expect(resolvePage('org-connectors', false)).toBe('preferences');
   });
 
-  it('maps the retired Profile page and anything unknown to Preferences', () => {
+  it('maps the retired Profile and Platform pages and anything unknown to Preferences', () => {
     expect(resolvePage('profile', true)).toBe('preferences');
+    expect(resolvePage('platform', true)).toBe('preferences');
     expect(resolvePage('nope', true)).toBe('preferences');
+    expect(WORKSPACE_PAGES).not.toContain('platform');
   });
 });

@@ -10,7 +10,7 @@ import { openConnectors, type ConnectorsTarget } from './connectorsNav';
 import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
-import { AccountArea, BillingArea, EDITION, KnowledgeQueueArea, MembersArea, PlatformArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
+import { AccountArea, BillingArea, EDITION, KnowledgeQueueArea, MembersArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { canAdmin, modeOf, resolvePage, workspacePages, type Page } from './settingsNav';
 import { EnvSwitch } from './EnvSwitch';
 import {
@@ -40,7 +40,6 @@ const WORKSPACE: Nav[] = [
   { id: 'org-connectors', label: 'Connectors', icon: IconGrid },
   { id: 'org-voice', label: 'Voice typing', icon: IconKeyboard },
   { id: 'org-guardrails', label: 'Guardrails', icon: IconShield },
-  { id: 'platform', label: 'Platform', icon: IconBuilding },
 ];
 
 // the chip on every row whose control is disabled on purpose: the feature is planned and the row shows what it will do
@@ -70,9 +69,8 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   const [account, setAccount] = useState<AccountState | null>(null);
   useEffect(() => { let live = true; window.quorum.accountStatus().then((a) => { if (live) setAccount(a); }).catch(() => {}); return () => { live = false; }; }, [settings.profile]);
   useEffect(() => { if (!window.quorum.onAccount) return; return window.quorum.onAccount(setAccount); }, []);
-  const owner = account?.platformOwner === true;
-  const admin = canAdmin(EDITION, account?.workspace?.role, owner);
-  const page = resolvePage(saved, admin, owner);
+  const admin = canAdmin(EDITION, account?.workspace?.role);
+  const page = resolvePage(saved, admin);
   const mode = modeOf(page);
   const quorumEmail = account?.signedIn ? account.email : null;
   const email = quorumEmail || user?.email || '';
@@ -89,7 +87,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   const set = async (patch: Partial<Settings>) => onSettings(await window.quorum.setSettings(patch));
   // a cloud build without hosted account config has no members to list, so the page leaves the nav
   const hosted = useHostedAccounts();
-  const listed = workspacePages(EDITION, hosted, owner);
+  const listed = workspacePages(EDITION, hosted);
   const workspaceNav = WORKSPACE.filter((n) => (listed as string[]).includes(n.id));
   const all = [...ACCOUNT, ...WORKSPACE];
   const current = all.find((n) => n.id === page)!;
@@ -135,7 +133,6 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
           {page === 'general' && <p className="set-lede">Settings for everyone in your workspace. Quorum gives this context to every meeting summary and answer, so it's the same for each person.</p>}
           {page === 'connectors' && !connectorDetail && <p className="set-lede">The tools Quorum is connected to. Meeting notes, calendars and AI tools, each tagged with where things came from.</p>}
           {page === 'developers' && <p className="set-lede">Model providers, Claude Code and Terminal access, and API keys for your own scripts.</p>}
-          {page === 'platform' && <p className="set-lede">Every workspace on this Quorum. Plans are set by hand here until the admin web app exists.</p>}
           {page === 'preferences' ? (
             <ProfilePage settings={settings} email={showEmail ? email : ''} emailLabel={emailLabel} name={user?.name ?? ''} onSettings={onSettings}>
               <h3>General</h3>
@@ -163,7 +160,6 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
             : page === 'org-voice' ? <WorkspaceVoiceArea local={<OrgVoiceLocal onGo={go} />} />
             : page === 'org-guardrails' ? <WorkspaceGuardrailsArea local={<p className="set-lede">Workspace guardrails come with Quorum Cloud: rules an admin sets once that every member's Quorum applies and cannot turn off. Your own rules live under Settings, Guardrails.</p>} />
             : page === 'guardrails' ? <GuardrailsPage />
-            : page === 'platform' ? <PlatformArea />
             : page === 'calendar' ? <CalendarPage onConnector={goConnector} />
             : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} onConnector={goConnector} />
             : page === 'developers' ? <DevelopersPage />

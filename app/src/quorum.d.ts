@@ -86,8 +86,6 @@ export type AccountState = {
   // false when the build has no Supabase URL and anon key, so there is no hosted account to sign in to
   configured?: boolean;
   signedIn: boolean; email: string | null; userId: string | null;
-  // the platform owner role (migration 0008): outside any workspace, sees the Platform page behind Admin
-  platformOwner?: boolean;
   workspace: AccountWorkspace | null;
   workspaces: { id: string; name: string; role: Role }[];
   invites: AccountInvite[];
@@ -119,20 +117,13 @@ export type WorkspaceVoice = Partial<Record<VoiceStep, string | null>> & { requi
 export type SeatUsage = { userId: string; email: string | null; name: string | null; hours: number; managedHours: number };
 export type WorkspaceUsage = { period: string; hours: number; managedHours: number; seats: SeatUsage[] };
 export type Member ={ userId: string; email: string; name: string | null; role: Role; joinedAt: string };
-// the platform owner's view (Settings › Admin › Platform): every workspace with its plan and activity, the members of one,
-// and its usage this period by step. PlanDraft is what the Set plan form sends
+// the workspace's plan (migration 0008): free is the default, paid after checkout, cloud and internal set by the
+// platform owner from the admin app
 export type Plan = 'free' | 'cloud' | 'internal' | 'paid';
-export type PlatformWorkspace = { id: string; name: string; domain: string | null; plan: Plan; seatsIncluded: number; notes: string | null; members: number; createdAt: string; lastActivity: string | null };
-export type PlanDraft = { plan: Plan; seatsIncluded: number; notes: string };
-// what the workspace pays for (workspace_billing): the plan is the switch, seats and packs set the managed hours
 // the company knowledge review queue (migration 0012): what admins see waiting, and what a member shared
 export type QueueItem = { id: string; noteId: string; path: string; title: string; authorEmail: string | null; authorName: string | null; createdAt: string; updatedAt: string | null };
 export type ContributionMine = { noteId: string; path: string; status: 'pending' | 'included' | 'declined'; reviewedAt: string | null; createdAt: string };
 export type Billing = { plan: Plan; seats: number; seatsIncluded: number; hourPacks: number; members: number; status: string | null; periodEnd: string | null; subscribed: boolean };
-// an access code the platform owner issued for one email; Cloud sign-up needs one (migration 0009)
-export type AccessCodeStatus = 'open' | 'claimed' | 'redeemed' | 'revoked' | 'expired';
-export type AccessCode = { id: string; email: string; code: string; note: string | null; issuedAt: string; expiresAt: string; claimedAt: string | null; redeemedAt: string | null; revokedAt: string | null; redeemedEmail: string | null; status: AccessCodeStatus };
-export type PlatformUsage = { period: string; hours: number; managedHours: number; calls: number; steps: { role: string; calls: number; hours: number; managedHours: number }[] };
 export type MemberInvite = { inviteId: string; email: string; role: Role; expiresAt: string };
 export type MeetingRow = { id: string; file: string; kind: 'meeting' | 'note'; source: string; title: string; date: string | null; people: string[]; count: number; visibility: Visibility; rel: string; link: string; app: string };
 export type ChatRow = { id: string; title: string; date: string; turns: number; meetingFile: string | null; meetingTitle: string | null };
@@ -364,10 +355,6 @@ declare global {
       workspaceUsage(): Promise<{ usage?: WorkspaceUsage; error?: string }>;
       workspaceVoiceGet(): Promise<{ voice?: WorkspaceVoice; error?: string }>;
       workspaceVoiceSet(voice: WorkspaceVoice): Promise<{ voice?: WorkspaceVoice; error?: string }>;
-      platformWorkspaces(): Promise<{ workspaces?: PlatformWorkspace[]; error?: string }>;
-      platformMembers(workspaceId: string): Promise<{ members?: Member[]; error?: string }>;
-      platformUsage(workspaceId: string): Promise<{ usage?: PlatformUsage; error?: string }>;
-      platformSetPlan(workspaceId: string, draft: PlanDraft): Promise<{ plan?: { plan: Plan; seatsIncluded: number; notes: string | null }; error?: string }>;
       knowledgeStatus(): Promise<Result & { autoInclude?: boolean; mine?: ContributionMine[]; team?: TeamVault | null }>;
       knowledgeTeamOpen(): Promise<Result>;
       knowledgeQueue(): Promise<Result & { queue?: QueueItem[] }>;
@@ -377,9 +364,6 @@ declare global {
       billingCheckout(seats?: number): Promise<Result>;
       billingPortal(): Promise<Result>;
       billingPacks(packs: number): Promise<Result & { packs?: number; remainingSeconds?: number }>;
-      platformAccessCodes(): Promise<Result & { codes?: AccessCode[] }>;
-      platformIssueAccessCode(email: string, note?: string, days?: number): Promise<Result & { code?: AccessCode }>;
-      platformRevokeAccessCode(id: string): Promise<Result>;
       envStatus(): Promise<EnvStatus>;
       envSetProduction(on: boolean): Promise<EnvStatus>;
     };

@@ -17,6 +17,12 @@ export const config = {
   // platform connections (connect.js): the Zoom app's client credentials for the token exchange and its webhook secret token
   connect: { zoom: { clientId: env('ZOOM_CLIENT_ID'), clientSecret: env('ZOOM_CLIENT_SECRET'), webhookSecret: env('ZOOM_WEBHOOK_SECRET') } },
   stripe: { key: env('STRIPE_SECRET_KEY'), webhookSecret: env('STRIPE_WEBHOOK_SECRET'), seatPrice: env('STRIPE_SEAT_PRICE'), packPrice: env('STRIPE_PACK_PRICE'), returnUrl: env('BILLING_RETURN_URL', 'https://quorum.watch').replace(/\/+$/, '') },
+  // beta access (platform.js): the browser origins allowed to call the request intake and the code email, the Resend key
+  // and sender for that email, and the download link it carries
+  corsOrigins: env('CORS_ORIGINS', 'https://quorum.watch,https://www.quorum.watch,https://admin.quorum.watch').split(',').map((s) => s.trim()).filter(Boolean),
+  mail: { resendKey: env('RESEND_API_KEY'), from: env('MAIL_FROM', 'Quorum <noreply@quorum.watch>'), replyTo: env('MAIL_REPLY_TO'), downloadUrl: env('DOWNLOAD_URL', 'https://github.com/smejkaldesign/quorum/releases/latest/download/Quorum-Cloud-arm64.dmg') },
+  // the owner's passkey (passkeys.js): the WebAuthn relying party id, the registrable domain the admin app lives under
+  passkey: { rpId: env('PASSKEY_RP_ID', 'quorum.watch') },
 };
 
 export const HOURS_PER_SEAT = 20;

@@ -550,6 +550,9 @@ ul { margin: 0; padding: 0; list-style: none; }
 .capture input::placeholder { color: var(--muted); }
 .capture input:disabled { opacity: 0.55; }
 .plan-note { color: var(--muted); font-size: 13px; margin-top: -10px; }
+.plan-note.error { color: #ff8a8a; }
+.plan-note.ok { color: var(--brand-soft); }
+.capture input[aria-invalid="true"] { border-color: #ff8a8a; }
 
 .enterprise {
   grid-column: 1 / -1;

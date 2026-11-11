@@ -11,15 +11,22 @@ import { handleConnection } from './lib/session.js';
 import { handleNotes } from './summary.js';
 import { handleCheckout, handlePacks, handlePortal, handleWebhook } from './billing.js';
 import { handleConnect } from './connect.js';
+import { corsHeaders, handleAccessRequest, handleSendCode } from './platform.js';
+import { passkeyRoutes } from './passkeys.js';
 
 checkConfig();
 const clients = makeClients();
 const deps = { clients, config, engines: ENGINES, log };
+const passkeys = passkeyRoutes(deps);
 
 const server = createServer((req, res) => {
   const { pathname } = new URL(req.url, 'http://relay');
-  if (pathname === '/healthz') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok: true, engine: config.engine, notes: !!config.keys.anthropic, billing: !!(config.stripe.key && config.stripe.seatPrice), connect: { zoom: !!(config.connect.zoom.clientId && config.connect.zoom.clientSecret), zoomWebhook: !!config.connect.zoom.webhookSecret } })); }
+  // the admin app reads the health line from the browser, so the listed origins get CORS headers on it
+  if (pathname === '/healthz') { res.writeHead(200, { 'content-type': 'application/json', ...corsHeaders(req.headers.origin, config.corsOrigins) }); return res.end(JSON.stringify({ ok: true, engine: config.engine, notes: !!config.keys.anthropic, billing: !!(config.stripe.key && config.stripe.seatPrice), mail: !!config.mail.resendKey, connect: { zoom: !!(config.connect.zoom.clientId && config.connect.zoom.clientSecret), zoomWebhook: !!config.connect.zoom.webhookSecret } })); }
   if (pathname === '/v1/notes') return handleNotes(req, res, deps);
+  if (pathname === '/v1/access-requests') return handleAccessRequest(req, res, deps);
+  if (pathname === '/v1/platform/send-code') return handleSendCode(req, res, deps);
+  if (passkeys[pathname]) return passkeys[pathname](req, res);
   if (pathname === '/v1/billing/checkout') return handleCheckout(req, res, deps);
   if (pathname === '/v1/billing/portal') return handlePortal(req, res, deps);
   if (pathname === '/v1/billing/packs') return handlePacks(req, res, deps);

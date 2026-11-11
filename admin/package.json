@@ -1,0 +1,29 @@
+{
+  "name": "quorum-admin",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "The platform owner's web app for a hosted Quorum (admin.quorum.watch): beta access requests and the codes they become, workspaces and plans, users and the audit log. A static page that talks to the Supabase project with the owner's own session and to the relay for the code email. Railway: set the service root directory to admin/, npm run build then npm start.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit -p . && vite build",
+    "start": "serve -s dist -l tcp://0.0.0.0:${PORT:-3000} --no-clipboard",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@simplewebauthn/browser": "^14.0.0",
+    "@supabase/supabase-js": "^2.119.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "serve": "14.2.4"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.2.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6",
+    "vitest": "^5.1.0"
+  }
+}

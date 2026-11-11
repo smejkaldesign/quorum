@@ -48,6 +48,24 @@ jobs:
         run: npm run build:site-preview
         working-directory: app
 
+  # the relay and the admin app are plain Node; they build and test on Linux, the same image Railway uses
+  services:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Relay
+        run: npm ci && npm test
+        working-directory: relay
+      - name: Admin app
+        run: npm ci && npm run typecheck && npm test && npm run build
+        working-directory: admin
+        env:
+          QUORUM_SUPABASE_URL: https://example.supabase.co
+          QUORUM_SUPABASE_ANON_KEY: ci-placeholder
+
   gitleaks:
     runs-on: ubuntu-latest
     # pull_request runs list the PR's commits through the API, which the default token cannot do without this

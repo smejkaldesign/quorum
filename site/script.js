@@ -92,10 +92,37 @@
   var pageForm = document.querySelector("form.contact-form[data-contact-page]");
   if (pageForm) wireContact(pageForm);
 
+  // Beta access: the email goes to the relay, which writes the request for the admin app; the code comes back by email
+  var REQUEST_ENDPOINT = "https://relay.quorum.watch/v1/access-requests";
   var capture = document.querySelector("form.capture");
   if (capture) {
+    var note = document.getElementById("capture-note");
+    var email = capture.elements.email;
+    var submit = capture.querySelector('[type="submit"]');
+    var say = function (text, kind) { note.textContent = text; note.className = "plan-note" + (kind ? " " + kind : ""); };
     capture.addEventListener("submit", function (event) {
       event.preventDefault();
+      if (!email.value.trim() || !email.checkValidity()) { email.setAttribute("aria-invalid", "true"); say("Enter a valid email address.", "error"); email.focus(); return; }
+      email.setAttribute("aria-invalid", "false");
+      submit.disabled = true;
+      submit.textContent = "Sending…";
+      fetch(REQUEST_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ email: email.value.trim(), source: "site", website: capture.elements.website ? capture.elements.website.value : "" }),
+      })
+        .then(function (res) { return res.json().then(function (body) { if (!res.ok || !body.ok) throw new Error(body.error || ""); return body; }); })
+        .then(function (body) {
+          capture.reset();
+          say(body.already ? "You are already on the list. Your code arrives by email once it is your turn." : "Thanks. Your access code arrives by email once it is your turn.", "ok");
+        })
+        .catch(function (err) {
+          say(err && err.message ? err.message : "That did not send. Try again in a moment.", "error");
+        })
+        .then(function () {
+          submit.disabled = false;
+          submit.textContent = "Request access";
+        });
     });
   }
 })();

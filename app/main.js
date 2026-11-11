@@ -1545,8 +1545,6 @@ if (app.isPackaged) app.setAsDefaultProtocolClient('quorum');
 app.on('open-url', (e, url) => { e.preventDefault(); if (/^quorum:\/\/auth\//.test(url)) account.finishOAuth?.(url); });
 // workspace connectors (Settings › Admin › Connectors) ride on the same account and client
 if (EDITION === 'cloud') { const conn = (await loadEE('connectors.js')).registerConnectors({ ipcMain, account, log }); guardrails.setRemote(async () => { const r = await conn.handlers['workspace-guardrails-get'](); return r?.rules ?? null; }); }
-// the platform owner's page (Settings › Admin › Platform): owner-only RPCs on the same client
-if (EDITION === 'cloud') (await loadEE('platform.js')).registerPlatform({ ipcMain, account, log });
 if (EDITION === 'cloud') (await loadEE('knowledge.js')).registerKnowledge({ ipcMain, account, log, shell });
 if (EDITION === 'cloud') (await loadEE('billing.js')).registerBilling({ ipcMain, account, log, openExternal: (u) => shell.openExternal(u) });
 // meeting sources (Settings › Sources): Granola and the like, connected per user in either edition

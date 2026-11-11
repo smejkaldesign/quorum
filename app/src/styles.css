@@ -1114,49 +1114,11 @@ h3 .soon, .set-zero strong .soon { font-size: 11px; margin-left: 8px; vertical-a
 .conn-roles-pick .conn-role { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .conn-roles-pick .conn-role .muted { font-size: 13px; }
 
-/* Settings › Admin › Platform: the platform owner's table of workspaces, one drawer open at a time */
-.set-card.plat { padding: 4px 8px; }
+/* the company knowledge review queue (Settings › Admin › Knowledge) */
 .queue-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
 .queue-row:not(:last-child) { border-bottom: 1px solid var(--container-border); }
 .queue-row > svg { flex: none; color: var(--muted); }
 .queue-row .set-text { flex: 1; min-width: 0; }
-.queue-actions { display: inline-flex; gap: 8px; }
-.set-stepper { display: inline-flex; align-items: center; gap: 10px; }
-.set-stepper strong { font-weight: 500; font-size: 14px; min-width: 64px; text-align: center; }
-/* access codes on the Platform page */
-.ac-issue .ac-note { flex: 0 0 180px; }
-.ac-issued { display: flex; align-items: center; gap: 14px; margin: 0 0 12px; padding: 12px 14px; border-radius: 12px; background: rgba(127, 219, 131, 0.1); font-size: 14px; }
-.ac-issued > span { flex: 1; min-width: 0; }
-.ac-code { font: 500 13px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.08em; color: var(--text); }
-.ac-code.big { font-size: 18px; }
-.ac-row { display: grid; grid-template-columns: minmax(160px, 1.6fr) 110px 80px 120px auto; align-items: center; gap: 12px; padding: 10px 2px; font-size: 14px; }
-.ac-row:not(:last-of-type) { border-bottom: 1px solid var(--container-border); }
-.ac-email { min-width: 0; }
-.ac-email strong { display: block; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ac-email em { display: block; font-style: normal; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ac-status { font-size: 12px; font-weight: 500; color: var(--muted); }
-.ac-status.open { color: var(--brand-soft); }
-.ac-status.claimed { color: #e8c170; }
-.ac-status.redeemed { color: var(--go); }
-.ac-when { color: var(--muted); font-size: 13px; white-space: nowrap; }
-.ac-actions { display: inline-flex; gap: 12px; justify-content: flex-end; }
-.ac-actions .link-btn.danger { color: var(--danger); }
-.plat-row { display: grid; grid-template-columns: minmax(140px, 1.6fr) minmax(100px, 1.2fr) 90px 80px 120px 20px; align-items: center; gap: 12px; width: 100%; padding: 12px 14px; border-radius: 12px; text-align: left; font-size: 14px; color: var(--text); }
-.plat-row span { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.plat-row strong { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.plat-row svg { color: var(--muted); transition: transform 0.12s ease; }
-.plat-row svg.open { transform: rotate(180deg); }
-button.plat-row:hover, button.plat-row.on { background: rgba(255, 255, 255, 0.04); }
-.plat-head { padding-top: 10px; padding-bottom: 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
-.plat-item:not(:last-child) { border-bottom: 1px solid var(--container-border); }
-.plat-drawer { display: grid; grid-template-columns: 1.3fr 1fr; gap: 24px; padding: 6px 14px 18px; }
-.plat-drawer h4 { margin: 10px 0 4px; font-size: 13px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-.plat-drawer .member-row { padding: 10px 0; }
-.plat-usage { margin: 4px 0; font-size: 14px; }
-.plat-field { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; font-size: 13px; color: var(--muted); }
-.plat-field .set-field { width: 100%; }
-.plat-form .set-line-end { margin-top: 12px; }
-@media (max-width: 900px) { .plat-drawer { grid-template-columns: 1fr; } }
 
 /* Settings › Sources */
 .src-card { padding-bottom: 14px; }

@@ -80,9 +80,13 @@ Production never falls back to the local stack. Without `.env` it runs with host
 
 **The developer switch.** Settings shows a "Use production data" toggle in development copies only. On, the development copy loads `.env` instead of its own config, keeps a separate session file (`auth-production.json`) and sync id map (`sync-ids-production.json`), and shows "Connected to production" in red while it is on. The setting is `devUseProduction` in the development copy's `settings.json`.
 
-## Platform owner
+## Platform owner and the admin app
 
-Migration `0008_platform_owner.sql` adds a role outside any workspace for whoever runs the deployment: the platform owner. In the app it shows a Platform page behind Settings, Admin, with every workspace, its members, usage this period and a form that sets the plan, seats included and notes by hand; each change writes a row to `platform_audit`. The owner reads nothing from the tables directly; everything goes through the `platform_*` RPCs, which refuse any other account.
+Migration `0008_platform_owner.sql` adds a role outside any workspace for whoever runs the deployment: the platform owner. The owner works in the admin app under `admin/` (hosted at admin.quorum.watch for the Quorum service), never in the desktop app, which carries no operator surface. The admin app shows beta access requests and the access codes they turn into (migrations 0009 and 0016), every workspace with its members, usage this period and a form that sets the plan, seats included and notes by hand, the accounts list, and the audit log; each change writes a row to `platform_audit`. The owner reads nothing from the tables directly; everything goes through the `platform_*` RPCs, which refuse any other account.
+
+Signing in to the admin app takes the email code and then a passkey (migration `0017_platform_passkeys.sql`, relay `passkeys.js`). The first passkey is registered from the admin app itself; from then on the owner-only RPCs answer only while a passkey session is live, which the app proves with the `x-quorum-passkey` request header. An owner who loses every passkey gets back in by deleting the rows in `platform_passkeys` for that account, after which the email code alone works again until a new passkey is registered.
+
+To run the admin app: `cd admin && npm ci && npm run build && npm start`, with `QUORUM_SUPABASE_URL`, `QUORUM_SUPABASE_ANON_KEY` and `RELAY_URL` set at build time (a development build with nothing set uses the local stack and a relay on localhost). On Railway, point a service at the `admin/` directory with those three variables and give it the admin hostname; the relay needs that hostname in `CORS_ORIGINS`, `PASSKEY_RP_ID` set to the registrable domain (`quorum.watch`), and `RESEND_API_KEY` for the code email.
 
 Nothing in the migrations grants the role. `supabase/seed/platform-owner.sql` grants it to one email, which must have signed in once already:
 
@@ -116,7 +120,7 @@ The client id defaults to the one Quorum's own builds use, which is a public ide
 
 The Local edition never needs this. The relay (`relay/`) is the Cloud edition's managed transcription: the app streams 16 kHz audio to it over one websocket, it forwards each channel to a speech engine (AssemblyAI Universal-Streaming by default, Deepgram Nova-3 as the alternative) and returns the same transcript events the on-device engine emits. It also runs the running summary and the final notes on a managed model key (`POST /v1/notes`, streamed as server-sent events). Audio is forwarded and dropped; the relay stores none of it and logs durations and engine names only.
 
-**Migration.** Apply `supabase/migrations/0007_relay.sql` with the others. It adds `workspaces.hour_packs`, `workspace_usage_events.engine`, the service-role RPC `relay_connector_secret` that reads a workspace connector's key from Vault, and a `required` flag in `workspace_settings.voice`. Billing needs `0011_billing.sql`, the Zoom connection routes need `0014_connect.sql` (`connect_accounts`, `connect_events`), and workspace guardrails (Settings, Admin, Guardrails) need `0015_guardrails.sql`.
+**Migration.** Apply `supabase/migrations/0007_relay.sql` with the others. It adds `workspaces.hour_packs`, `workspace_usage_events.engine`, the service-role RPC `relay_connector_secret` that reads a workspace connector's key from Vault, and a `required` flag in `workspace_settings.voice`. Billing needs `0011_billing.sql`, the Zoom connection routes need `0014_connect.sql` (`connect_accounts`, `connect_events`), workspace guardrails (Settings, Admin, Guardrails) need `0015_guardrails.sql`, the beta access intake needs `0016_access_requests.sql`, and the owner's passkey needs `0017_platform_passkeys.sql`.
 
 **Run it.**
 
@@ -139,6 +143,10 @@ node server.js           # health at http://127.0.0.1:8787/healthz
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | billing (`relay/billing.js`): Checkout sessions and the webhook at `/v1/billing/webhook`. Leave empty to run without paid plans |
 | `STRIPE_SEAT_PRICE`, `STRIPE_PACK_PRICE` | the Stripe price ids for a seat and for a 20-hour pack |
 | `BILLING_RETURN_URL` | where Checkout and the billing portal return to (default `https://quorum.watch`) |
+| `CORS_ORIGINS` | the browser pages allowed to call the beta access intake, the code email and the passkey routes (`relay/platform.js`, `relay/passkeys.js`): the site and the admin app (default `https://quorum.watch,https://www.quorum.watch,https://admin.quorum.watch`) |
+| `RESEND_API_KEY`, `MAIL_FROM`, `MAIL_REPLY_TO` | the code email the admin app sends to an approved request, through Resend; leave the key empty and the admin app offers Copy instead. `MAIL_FROM` defaults to `Quorum <noreply@quorum.watch>` |
+| `DOWNLOAD_URL` | the download link in that email (default the latest release's Cloud DMG on GitHub) |
+| `PASSKEY_RP_ID` | the WebAuthn relying party id for the owner's passkey: the registrable domain the admin app lives under (default `quorum.watch`; `localhost` for a local admin build) |
 | `PORT` | default 8787 |
 
 `relay/.env.example` lists the same variables with a one-line note each.

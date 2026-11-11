@@ -25,7 +25,7 @@
     // Launch switches. Off: the feature's links are disabled on the deployed site
     // (script.js). Local always runs everything; add ?prelaunch to preview the deployed state.
     (function () {
-      var ready = { download: false, github: true };
+      var ready = { download: true, github: true };
       var local = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) && !/[?&]prelaunch\b/.test(location.search);
       if (local) return;
       for (var k in ready) if (!ready[k]) document.documentElement.classList.add("pre-" + k);
@@ -142,7 +142,7 @@
           <header class="plan-head">
             <div class="plan-title-row">
               <h3>Cloud</h3>
-              <span class="pill">Coming soon</span>
+              <span class="pill">Beta</span>
             </div>
             <p class="price"><span class="amount">$8</span><span class="per"> /seat per month</span></p>
             <p class="plan-sub">Everything in Open source, hosted by Smejkal Design.</p>
@@ -154,12 +154,13 @@
             <li>Team knowledge with members and invites</li>
             <li>Hosted models and transcription, no API keys to manage</li>
           </ul>
-          <form class="capture" aria-describedby="capture-note">
+          <form class="capture" aria-describedby="capture-note" novalidate>
             <label class="visually-hidden" for="capture-email">Email address</label>
-            <input id="capture-email" type="email" placeholder="you@example.com" autocomplete="email" disabled>
-            <button type="submit" class="btn btn-primary" disabled>Notify me</button>
+            <input id="capture-email" name="email" type="email" placeholder="you@example.com" autocomplete="email" required>
+            <input class="visually-hidden" name="website" type="text" tabindex="-1" autocomplete="off" aria-hidden="true">
+            <button type="submit" class="btn btn-primary">Request access</button>
           </form>
-          <p class="plan-note" id="capture-note">Sign-ups open with the first Cloud release.</p>
+          <p class="plan-note" id="capture-note">Cloud is in beta. Ask for access and your code arrives by email.</p>
         </article>
 
         <aside class="enterprise">

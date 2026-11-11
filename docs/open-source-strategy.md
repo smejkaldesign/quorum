@@ -73,7 +73,8 @@ The open-source edition is the same app with the same features. It is never a cr
 
 - Development runs against the local Supabase stack (`supabase start`) with the same migrations; production (`quorum`) is for the signed release. A second hosted project costs $10 a month on the Pro organization, so a hosted dev project is optional later, in a free organization. The dev build signs in against its own environment with its own account and session file; nothing is shared with production. Pointing a dev build at production needs an explicit switch in the developer section of Settings and shows a banner while it is on.
 - Super admin: the platform owner account carries a `platform_owner` role in production, outside any workspace, with the ability to list workspaces and members, set plans by hand, and read audit rows.
-- Admin app: a small web app at admin.quorum.watch, its own directory and UI, for the platform owner only: workspaces, plans, seats, invites, feature flags, environment banner. Phase 2 of the Cloud work, after sync.
+- Admin app (`admin/`, admin.quorum.watch, built 2026-11-11): the platform owner's web app and the only operator surface; the desktop app carries none. Sign-in is the email code and then a passkey, which the database itself requires before any owner function answers (migration 0017). Pages: overview, access (beta requests and the codes they become, approve or decline, code by email through the relay), workspaces with plans and seats, accounts, audit. Feature flags and support tooling wait for a system behind them.
+- Beta access: quorum.watch takes an email through the relay (`/v1/access-requests`); approving the request in the admin app issues its access code; invite links that skip the code are V2.
 
 ## Accounts and documents, logged on the tasks that need them
 
