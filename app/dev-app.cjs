@@ -20,5 +20,17 @@ if (!existsSync(dest) || !existsSync(stamp) || readFileSync(stamp, 'utf8') !== v
   writeFileSync(stamp, version);
 }
 
-// the development copy runs in the development environment (edition.js ENV) unless the shell sets QUORUM_ENV itself
-spawn(path.join(dest, 'Contents/MacOS/Electron'), [__dirname], { stdio: 'inherit', env: { QUORUM_ENV: 'development', ...process.env } }).on('exit', (code) => process.exit(code ?? 0));
+// one development copy at a time: an earlier instance still running (a wrapper killed without its child, a window left
+// open from the last start) is told to quit before the new one starts, so the Dock never fills with old versions
+const bin = path.join(dest, 'Contents/MacOS/Electron');
+try {
+  const mine = String(process.pid);
+  const pids = execFileSync('pgrep', ['-f', bin], { encoding: 'utf8' }).split('\n').map((x) => x.trim()).filter((x) => x && x !== mine);
+  if (pids.length) { console.log(`quitting ${pids.length} earlier dev app${pids.length === 1 ? '' : 's'}`); for (const pid of pids) { try { process.kill(Number(pid), 'SIGTERM'); } catch {} } }
+} catch {}
+
+// the development copy runs in the development environment (edition.js ENV) unless the shell sets QUORUM_ENV itself.
+// The app dies with this wrapper: a signal here is passed on, so a plain kill of the wrapper takes the window with it
+const child = spawn(bin, [__dirname], { stdio: 'inherit', env: { QUORUM_ENV: 'development', ...process.env } });
+child.on('exit', (code) => process.exit(code ?? 0));
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { try { child.kill('SIGTERM'); } catch {} setTimeout(() => process.exit(0), 1500).unref(); });
