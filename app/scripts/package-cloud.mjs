@@ -39,7 +39,8 @@ const config = {
 };
 const configFile = path.join(mkdtempSync(path.join(tmpdir(), 'quorum-cloud-')), 'electron-builder.json');
 writeFileSync(configFile, JSON.stringify(config));
-const args = ['electron-builder', '--mac', '--config', configFile, ...process.argv.slice(2)];
+// the release workflow drafts the GitHub release itself; electron-builder must not try to publish on its own when it detects CI
+const args = ['electron-builder', '--mac', '--publish', 'never', '--config', configFile, ...process.argv.slice(2)];
 const r = spawnSync('npx', args, { cwd: app, stdio: 'inherit', env: { ...process.env, QUORUM_EDITION: 'cloud' } });
 if (r.status) process.exit(r.status);
 // a module left out of build.files only fails at launch, so prove every import resolves inside the asar before calling it built

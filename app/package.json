@@ -15,7 +15,7 @@
     "check:edition": "node scripts/check-edition-boundary.mjs",
     "db:local": "cd .. && supabase start; supabase status -o env | grep -E '^(API_URL|STUDIO_URL|INBUCKET_URL|MAILPIT_URL)'",
     "db:seed-owner": "test -n \"$EMAIL\" || { echo 'Set EMAIL to the address of an account that has signed in to the local stack'; exit 1; }; docker exec -i supabase_db_quorum psql -U postgres -d postgres -v ON_ERROR_STOP=1 -v email=\"'$EMAIL'\" -f - < ../supabase/seed/platform-owner.sql",
-    "package": "vite build && cd ../helper && swift build -c release && cd ../app && electron-builder --mac && node scripts/check-package.mjs",
+    "package": "vite build && cd ../helper && swift build -c release && cd ../app && electron-builder --mac --publish never && node scripts/check-package.mjs",
     "package:cloud": "QUORUM_EDITION=cloud vite build && cd ../helper && swift build -c release && cd ../app && node scripts/package-cloud.mjs",
     "lint": "npm ci --prefix lint --no-audit --no-fund --silent && eslint .",
     "test": "vitest run",
