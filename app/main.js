@@ -13,6 +13,8 @@ import { createGoogleCalendar, googleClient, mergeEvents, repoRoot } from './sou
 import { createTokenStore } from './sources/tokens.js';
 import { createViews } from './views.js';
 import { registerOnboarding } from './onboarding.js';
+import { createKeeper } from './keeper.js';
+import { wouldBlock } from './guardrails.js';
 import { createSuggester } from './suggest.js';
 import { addFinal, isEcho, toJSON, toText } from './transcript.js';
 import { extractJson } from './json.js';
@@ -121,6 +123,15 @@ let trayMenu;
 let quitting = false;
 // guardrails: one rule set for what the agent may read and say (app/guardrails.js); brain() is defined below and read lazily
 const guardrails = createGuardrails({ settings, saveSettings: () => store.settings.save(), brain: () => brain(), privateDirs, denialLog: path.join(DATA_DIR, 'guard-denials.jsonl'), log: (...a) => log(...a) });
+// the keeper maintains a Quorum-built Agent OS after each note (keeper.js); the person's own model source writes the facts
+const keeper = createKeeper({
+  brain: () => brain(), settings, saveSettings: () => store.settings.save(), guards: () => guardrails.compiled(), wouldBlock,
+  runText: (prompt, system) => runClaude(prompt, system, 'haiku'), hasModel: () => modelSource() !== 'none', owner: () => USER_NAME,
+  log: (...a) => log(...a), onChange: (r) => toUI('keeper', r),
+});
+ipcMain.handle('keeper-status', () => keeper.status());
+ipcMain.handle('keeper-set', (_e, patch) => keeper.set(patch ?? {}));
+ipcMain.handle('keeper-run', () => keeper.run({ reason: 'manual' }));
 let helper;
 const asset = (name) => path.join(here, 'assets', name);
 // a meeting can have several capture segments (STOP, GO, STOP...); STOP deletes all of them
@@ -1498,6 +1509,8 @@ function openIndex() {
     onChange: (rels) => toUI('vault-changed', rels), log: (...a) => log('index', ...a),
   });
   vindex.start();
+  // the keeper files whatever arrived while the app was closed, once the folder is open
+  setTimeout(() => keeper.run({ reason: 'launch' }).catch(() => {}), 4000);
   // the hosted edition's sync watches the same vault for files to push; the vault changed, so it moves with it
   account.sync.live();
 }
@@ -1531,7 +1544,7 @@ function openFreshSignIn(url, name) {
   win.loadURL(url);
   return Promise.resolve();
 }
-registerSources({ ipcMain, settings, saveSettings, toUI, log, meetingsDir, openExternal: (u) => shell.openExternal(u), openFresh: openFreshSignIn, afterWrite: (file) => account.sync.pushMeetingNote(file), version: app.getVersion(), agentRuntime: { runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV } });
+registerSources({ ipcMain, settings, saveSettings, toUI, log, meetingsDir, openExternal: (u) => shell.openExternal(u), openFresh: openFreshSignIn, afterWrite: (file) => { account.sync.pushMeetingNote(file); keeper.schedule('import'); }, version: app.getVersion(), agentRuntime: { runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV } });
 // platform accounts for cloud recordings (Zoom first) go through the relay, so they exist in the hosted edition only
 if (EDITION === 'cloud') (await loadEE('platforms.js')).registerPlatforms({ ipcMain, account, settings, saveSettings, toUI, log, meetingsDir, openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file) });
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);
@@ -1954,6 +1967,7 @@ function saveNotes(payload) {
   store.meetings.saveNote(file, noteMarkdown(meeting.saved.payload));
   log('saved note', file);
   account.sync.pushMeetingNote(file);
+  keeper.schedule('note');
   // the call's chat now hangs off the saved note
   for (const c of allChats()) if (c.meetingId === meeting.id) writeChat({ ...c, meetingFile: file, meetingTitle: notes.title });
   return { file, rel: path.relative(path.dirname(suggester.vault()), file), ...noteLink(file) };

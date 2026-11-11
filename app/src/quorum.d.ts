@@ -68,6 +68,9 @@ export type SetupTemplate = 'personal' | 'founder' | 'team-lead';
 export type SetupAnswers = { template: SetupTemplate; role: string; goals: string; projects: string[]; people: string[]; organize: 'areas' | 'plain' };
 // what the form sends: the lists as typed, parsed in the main process
 export type SetupInput = Omit<SetupAnswers, 'projects' | 'people'> & { projects: string | string[]; people: string | string[] };
+// the keeper: what maintains a Quorum-built folder after each note (keeper.js)
+export type KeeperRun = { filed: number; skipped: number; changed: number; reason: string; at: string; error: string | null; off?: boolean };
+export type KeeperStatus = { on: boolean; facts: boolean; running: boolean; lastRunAt: string | null; filed: number; last: KeeperRun | null; folders: Partial<Record<'people' | 'projects' | 'daily' | 'meetings', string>>; model: boolean };
 export type SetupRecord = { version: number; name: string; answers: SetupAnswers; createdAt: string; updatedAt?: string };
 // the workspace vault: where teammates' shared notes land on this Mac, with their provenance bonds
 export type TeamVault = { root: string; notes: number; behind: number; last: { written: number; behind: number; removed: number; skipped: number } };
@@ -320,6 +323,10 @@ declare global {
       onboardingSetupSuggest(): Promise<{ available: boolean; suggestion?: SetupAnswers | null }>;
       setupRead(): Promise<SetupRecord | null>;
       setupRerun(answers: SetupInput): Promise<Brain & { written: string[] }>;
+      keeperStatus(): Promise<KeeperStatus>;
+      keeperSet(patch: { on?: boolean; facts?: boolean }): Promise<KeeperStatus>;
+      keeperRun(): Promise<KeeperRun>;
+      onKeeper?(cb: (r: KeeperRun) => void): Unsub;
       onboardingOpenPermission(which: 'microphone' | 'audio' | 'accessibility' | 'calendar'): Promise<void>;
       onboardingRequestMicrophone(): Promise<boolean>;
       onboardingRequestAccessibility(): Promise<void>;

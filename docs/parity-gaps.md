@@ -10,7 +10,7 @@ Product gaps as of 2026-11-10. Each item says what is missing, what the app does
 
 ## Agent OS
 
-- **Starter folder maintenance.** The setup interview shapes a new folder (template, role, projects, people) and can be run again from Settings, Memory. Nothing maintains the index or CLAUDE.md afterwards; that runner is the next phase of `docs/specs/starter-agent-os.md`.
+- **Starter folder upkeep.** The keeper files each meeting note into the index, the daily note and the people and project notes it concerns, and writes learned facts with the person's own model source (`docs/specs/starter-agent-os.md`, Build status). Notes the person writes by hand are not indexed by it yet.
 
 - **Power-ups.** Settings, Memory, Power-ups lists what the scan found in the connected Agent OS: memory index, search, link graph, guard hooks, agent instructions, skills, agents and MCP servers. Index, search, graph and folders feed the agent today. Instructions, skills, agents and MCP servers are listed and will become runnable later.
 - **Optional markers.** The features below turn on only when the connected folder has the file. Without it the app degrades quietly.

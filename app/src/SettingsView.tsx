@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { SetupForm, answersFrom, draftFrom, draftIsEmpty, emptyDraft, type SetupDraft } from './SetupForm';
-import type { AccountState, Brain, CalendarSettings, ClaudeStatus, DecisionProvider, DecisionsStatus, Memory, MemoryItem, OptOut, Profile, Settings, TeamVault, Transcription, UpdateState, Voice, Workspace } from './quorum';
+import type { AccountState, Brain, CalendarSettings, ClaudeStatus, DecisionProvider, DecisionsStatus, KeeperStatus, Memory, MemoryItem, OptOut, Profile, Settings, TeamVault, Transcription, UpdateState, Voice, Workspace } from './quorum';
 import { PersonalConnectors } from './Connectors';
 import { ConnectorsPage } from './ConnectorsPage';
 import { GuardrailsPage } from './Guardrails';
@@ -154,6 +154,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
           ) : page === 'memory' ? (
             <>
               <SecondBrain brain={brain} onConnect={onConnect} onDisconnect={onDisconnect} onBrain={onBrain} onViewConnector={goConnector} />
+              {brain && <KeeperCard brain={brain} />}
               {brain && <MemoryScan />}
             </>
           ) : page === 'members' ? <MembersArea />
@@ -751,6 +752,38 @@ function KnowledgePage() {
       <div className="set-card">
         <Row icon={<IconPeople width={18} height={18} />} title="Admins" desc="Only admins can include or remove company knowledge" />
         <Row icon={<IconStack width={18} height={18} />} title="Everyone in the workspace" desc="Applies to every teammate, next to their own memory" />
+      </div>
+    </>
+  );
+}
+
+// upkeep: the keeper (keeper.js) files each new meeting note into the index, the daily note and the people and project
+// notes it concerns, and writes learned facts into CLAUDE.md with the person's own model source. On by default for a
+// folder Quorum built; a folder the person connected themselves turns it on here
+function KeeperCard({ brain }: { brain: Brain }) {
+  const [k, setK] = useState<KeeperStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => window.quorum.keeperStatus().then(setK).catch(() => setK(null));
+  useEffect(() => { load(); return window.quorum.onKeeper?.(() => load()); }, [brain.root]);
+  if (!k) return null;
+  const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : null);
+  const run = async () => { setBusy(true); try { await window.quorum.keeperRun(); } finally { setBusy(false); load(); } };
+  const last = k.last && !k.last.off ? `${k.last.filed} filed${k.last.skipped ? `, ${k.last.skipped} withheld` : ''}${k.last.error ? ` · ${k.last.error}` : ''}` : null;
+  const desc = !k.on ? 'Off. Quorum writes meeting notes here and changes nothing else.'
+    : k.lastRunAt ? `Last run ${when(k.lastRunAt)}${last ? `: ${last}` : ''}` : 'Index, daily note, people and project notes, after each meeting';
+  return (
+    <>
+      <h3>Upkeep</h3>
+      <div className="set-card">
+        <Row icon={<IconReset width={18} height={18} className={k.on ? 'ok' : undefined} />} title="Keep this folder current" desc={desc}>
+          {k.on && <button className="pill small-pill" disabled={busy || k.running} onClick={run}>{busy || k.running ? 'Running…' : 'Run now'}</button>}
+          <Toggle on={k.on} onChange={async (on) => setK(await window.quorum.keeperSet({ on }))} />
+        </Row>
+        {k.on && (
+          <Row icon={<IconBrain width={18} height={18} className={k.facts && k.model ? 'ok' : undefined} />} title="Learned facts" desc={k.model ? 'Up to three facts per meeting into CLAUDE.md, with your model source' : 'Needs a model source in AI settings; index and links work without one'}>
+            <Toggle on={k.facts} onChange={async (on) => setK(await window.quorum.keeperSet({ facts: on }))} />
+          </Row>
+        )}
       </div>
     </>
   );
