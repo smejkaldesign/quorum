@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('quorum', {
   dictate: (on) => ipcRenderer.invoke('dictate', on),
   onHelperEvent: on('helper-event'),
   onState: on('state'),
+  onSummary: on('summary'),
   onSpeakers: on('speakers'),
   nameSpeakers: () => ipcRenderer.invoke('name-speakers'),
   setSpeaker: (id, name, similar) => ipcRenderer.invoke('set-speaker', id, name, similar),

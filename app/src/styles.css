@@ -1416,3 +1416,19 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .crash-detail summary::after { content: " ›"; display: inline-block; transform: rotate(90deg); margin-left: 4px; }
 .crash-detail[open] summary::after { transform: rotate(-90deg); }
 .crash-detail code { display: block; margin-top: 10px; padding: 12px 14px; border-radius: 10px; background: rgba(255, 255, 255, 0.04); border: 1px solid var(--line-2); text-align: left; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+
+/* the call so far: the running summary and the latest words, alive on every call tab */
+.sofar { display: flex; flex-direction: column; gap: 10px; }
+.sofar-head { display: flex; align-items: center; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.live-dot.pulse::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 1px solid var(--go); animation: sofar-pulse 1.8s ease-out infinite; }
+@keyframes sofar-pulse { 0% { transform: scale(0.5); opacity: 0.8; } 100% { transform: scale(1.9); opacity: 0; } }
+.sofar-head .shimmer, .sofar-wait { animation: sofar-breathe 1.6s ease-in-out infinite; text-transform: none; letter-spacing: 0; }
+@keyframes sofar-breathe { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+.sofar-summary { margin: 0; line-height: 1.55; }
+.sofar-group h4 { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.sofar-group ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+.sofar-group li em { color: var(--muted); font-style: normal; }
+.sofar-ticker { margin: 0; padding-top: 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sofar-ticker span { font-weight: 600; margin-right: 6px; color: var(--text); }
+.sofar.compact { padding: 12px 14px; border-radius: 14px; background: var(--card); }
+.transcript .sofar { padding-bottom: 14px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }

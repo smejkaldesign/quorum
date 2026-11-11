@@ -1,5 +1,5 @@
 import { Component, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import type { Brain, HelperEvent, MeetingMeta, Notes, NotesDraft, Settings, Source, SpeakersEvent, UpdateState } from './quorum';
+import type { Brain, HelperEvent, MeetingMeta, Notes, NotesDraft, Settings, Source, SpeakersEvent, SummaryEvent, UpdateState } from './quorum';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
 import { EndView } from './EndView';
@@ -141,6 +141,8 @@ export function App() {
   const [lines, setLines] = useState<Line[]>([]);
   const [partial, setPartial] = useState<{ me: string; them: string }>({ me: '', them: '' });
   const [msgs, setMsgs] = useState<Msg[]>([]);
+  // the running summary during a call, as the main process sends it after each pass
+  const [soFar, setSoFar] = useState<SummaryEvent | null>(null);
   const [draft, setDraft] = useState('');
   const [log, setLog] = useState<string[]>([]);
   const [notes, setNotes] = useState<Notes | null>(null);
@@ -218,6 +220,7 @@ export function App() {
         else if (e.event === 'audioRoute') addLog(`audio out: ${e.name || e.route} (${e.route})`);
       }),
       window.quorum.onSpeakers(applySpeakers),
+      window.quorum.onSummary(setSoFar),
       window.quorum.onState((s) => {
         if (s.phase === 'starting') { setPhase('starting'); setStartingChat(s.chatName ?? null); addLog(s.chatName ? `posting Quorum's notice in the ${s.chatName}…` : 'starting…'); return; }
         if (s.phase === 'idle') { setPhase('idle'); return; }
@@ -451,7 +454,8 @@ export function App() {
             {phase === 'starting' && <QuorumCard><p className="muted">{startingChat ? `Posting my notice in the ${startingChat}…` : 'Starting…'}</p></QuorumCard>}
             {phase === 'listening' && msgs.length === 0 && (
               <QuorumCard>
-                <p>I'm listening. Ask me anything about this meeting; only you see this chat.</p>
+                <SoFar s={soFar} lines={lines} partial={partial} who={who} />
+                <p className="muted">Ask me anything about this meeting; only you see this chat.</p>
                 <div className="row wrap">
                   {SUGGESTIONS.map((s) => <button key={s} className="pill" onClick={() => send(s)}>{s}</button>)}
                 </div>
@@ -507,6 +511,7 @@ export function App() {
       {tab === 'notes' && (
         <div className="body">
           <section className="card transcript">
+              {inCall(phase) && <SoFar s={soFar} lines={lines} partial={partial} who={who} ticker={false} />}
               {lines.some((l) => l.channel === 'them') && (
                 <div className="transcript-head">
                   <button className="pill ghost small" disabled={naming} data-tip="Quorum names the other speakers from context. One other participant needs no model." onClick={nameSpeakers}>{naming ? <><span className="spinner tiny" /> Naming…</> : 'Name speakers'}</button>
@@ -540,6 +545,7 @@ export function App() {
             <h3>Your notes</h3>
             <PrivateNotes ref={mineRef} value={mine.text} onChange={mine.change} onBlur={mine.flush} />
           </section>
+          {inCall(phase) && <SoFar s={soFar} lines={lines} partial={partial} who={who} compact />}
         </div>
       )}
       </>}
@@ -563,6 +569,30 @@ function Steps({ steps, live }: { steps: string[]; live: boolean }) {
           {steps.map((st, i) => <li key={i} className={live && i === steps.length - 1 ? 'active' : ''}>{st}</li>)}
         </ol>
       )}
+    </div>
+  );
+}
+
+// the call so far: the summary, decisions, actions and open questions the running pass has gathered, with the
+// latest words underneath so the view moves between passes. Compact drops the lists and the ticker
+function SoFar({ s, lines, partial, who, compact = false, ticker = true }: { s: SummaryEvent | null; lines: Line[]; partial: { me: string; them: string }; who: (l: { channel: 'me' | 'them'; speaker?: string | null }) => string; compact?: boolean; ticker?: boolean }) {
+  const st = s?.state;
+  const has = !!st && !!(st.summary || st.decisions.length || st.actions.length || st.questions.length);
+  const last = lines[lines.length - 1];
+  const tail = last ? partial[last.channel] : partial.me || partial.them;
+  const ago = s?.at ? Math.max(0, Math.round((Date.now() - s.at) / 60000)) : null;
+  const head = s?.thinking ? <span className="shimmer">Updating the summary…</span>
+    : has ? `So far${ago != null ? ` · updated ${ago === 0 ? 'just now' : `${ago} min ago`}` : ''}`
+    : lines.length ? <span className="sofar-wait">Listening · {lines.length} {lines.length === 1 ? 'turn' : 'turns'} · the summary starts after a few exchanges</span>
+    : <span className="sofar-wait">Listening · waiting for the first words</span>;
+  return (
+    <div className={`sofar ${compact ? 'compact' : ''}`} aria-live="polite">
+      <div className="sofar-head"><span className="live-dot pulse" aria-hidden="true" />{head}</div>
+      {has && st.summary && <p className="sofar-summary">{st.summary}</p>}
+      {has && !compact && st.decisions.length > 0 && <div className="sofar-group"><h4>Decisions</h4><ul>{st.decisions.map((d, i) => <li key={i}>{d.text}{d.status === 'suggested' && <em> · suggested</em>}</li>)}</ul></div>}
+      {has && st.actions.length > 0 && <div className="sofar-group"><h4>Actions</h4><ul>{st.actions.map((a, i) => <li key={i}>{a.task}{a.owner && <em> · {a.owner}</em>}</li>)}</ul></div>}
+      {has && !compact && st.questions.length > 0 && <div className="sofar-group"><h4>Open</h4><ul>{st.questions.map((q, i) => <li key={i}>{q.text}</li>)}</ul></div>}
+      {ticker && !compact && (last || tail) && <p className="sofar-ticker"><span>{last ? who(last) : who({ channel: partial.them ? 'them' : 'me' })}</span>{last?.text}{tail && <em className="partial"> {tail}</em>}</p>}
     </div>
   );
 }

@@ -4,9 +4,11 @@
 
 import { speakerOf } from './speakers.js';
 
-export const SUMMARY_MS = 5 * 60 * 1000;
-export const SUMMARY_TURNS = 40;
-export const SUMMARY_MIN = 8;
+// the running summary: first after a few exchanges, then every dozen turns or every minute while people keep talking,
+// so the window shows the call taking shape instead of waiting for the end
+export const SUMMARY_MS = 60 * 1000;
+export const SUMMARY_TURNS = 12;
+export const SUMMARY_MIN = 3;
 
 export const emptyState = () => ({ summary: '', decisions: [], actions: [], questions: [], coveredUntil: null });
 

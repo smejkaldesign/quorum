@@ -658,12 +658,13 @@ async function runSummary() {
   summaryBusy = true;
   meeting.summaryAt = Date.now();
   const turns = meeting.transcript;
+  toUI('summary', { state: meeting.summary, at: meeting.summaryAt, thinking: true });
   try {
     const raw = await runNotesModel('summary', { turns: newTurns(turns, meeting.summary), state: meeting.summary, label: speakerLabel() });
     if (meeting.armed) meeting.summary = mergeState(meeting.summary, extractJson(raw), turns);
   } catch (err) {
     log('running summary failed, keeping the last state:', err.message.split('\n')[0]);
-  } finally { summaryBusy = false; }
+  } finally { summaryBusy = false; toUI('summary', { state: meeting.summary, at: Date.now(), thinking: false }); }
 }
 
 // Agent OS connection. POC: the user points Quorum at a folder; Quorum recognizes an agent OS
@@ -761,6 +762,7 @@ async function startListening(by) {
   meeting.dirs = [];
   meeting.transcript = [];
   meeting.summary = emptyState();
+  toUI('summary', { state: meeting.summary, at: 0, thinking: false });
   meeting.summaryAt = Date.now();
   meeting.privateNotes = '';
   meeting.saved = null;

@@ -38,14 +38,14 @@ describe('state merge', () => {
 
 describe('trigger rule', () => {
   const t0 = 1_000_000;
-  it('never runs on fewer than 8 new turns, whatever the clock says', () => {
+  it('never runs on fewer than SUMMARY_MIN new turns, whatever the clock says', () => {
     expect(summaryDue({ turns: turns(SUMMARY_MIN - 1), state: emptyState(), lastAt: t0, now: t0 + SUMMARY_MS * 3 })).toBe(false);
     expect(summaryDue({ turns: turns(SUMMARY_MIN), state: emptyState(), lastAt: t0, now: t0 + SUMMARY_MS })).toBe(true);
   });
 
-  it('runs at 5 minutes with enough turns, or at 40 new turns whenever that comes first', () => {
-    expect(summaryDue({ turns: turns(20), state: emptyState(), lastAt: t0, now: t0 + SUMMARY_MS - 1 })).toBe(false);
-    expect(summaryDue({ turns: turns(20), state: emptyState(), lastAt: t0, now: t0 + SUMMARY_MS })).toBe(true);
+  it('runs at SUMMARY_MS with enough turns, or at SUMMARY_TURNS new turns whenever that comes first', () => {
+    expect(summaryDue({ turns: turns(SUMMARY_TURNS - 1), state: emptyState(), lastAt: t0, now: t0 + SUMMARY_MS - 1 })).toBe(false);
+    expect(summaryDue({ turns: turns(SUMMARY_TURNS - 1), state: emptyState(), lastAt: t0, now: t0 + SUMMARY_MS })).toBe(true);
     expect(summaryDue({ turns: turns(SUMMARY_TURNS), state: emptyState(), lastAt: t0, now: t0 + 1000 })).toBe(true);
   });
 
@@ -53,8 +53,8 @@ describe('trigger rule', () => {
     const state = { ...emptyState(), coveredUntil: 50 };
     const all = turns(57);
     expect(newTurns(all, state).map((t) => t.id)).toEqual([51, 52, 53, 54, 55, 56, 57]);
-    expect(summaryDue({ turns: all, state, lastAt: t0, now: t0 + SUMMARY_MS })).toBe(false);
-    expect(summaryDue({ turns: turns(58), state, lastAt: t0, now: t0 + SUMMARY_MS })).toBe(true);
+    expect(summaryDue({ turns: turns(50 + SUMMARY_MIN - 1), state, lastAt: t0, now: t0 + SUMMARY_MS })).toBe(false);
+    expect(summaryDue({ turns: turns(50 + SUMMARY_MIN), state, lastAt: t0, now: t0 + SUMMARY_MS })).toBe(true);
   });
 });
 

@@ -150,6 +150,9 @@ export type Suggestion = { id: string; kind: 'question' | 'topic'; text: string;
 export type Source = { n: number; title: string; rel: string; abs: string; app: string; url: string };
 export type PopupMode = 'detected' | 'starting' | 'listening' | 'failed';
 export type PopupEvent = { mode: PopupMode; durationMs: number; autoListen: boolean; provider?: string; chatName?: string; chat?: boolean };
+// the running summary during a call: what the model has gathered so far, and whether a pass is in flight
+export type SummaryState = { summary: string; decisions: Decision[]; actions: ActionItem[]; questions: Question[]; coveredUntil: number | null };
+export type SummaryEvent = { state: SummaryState; at: number; thinking: boolean };
 export type StateEvent =
   | { phase: 'listening' | 'paused'; by?: string; go?: string; soft?: boolean }
   | { phase: 'blocked' }
@@ -177,6 +180,7 @@ declare global {
       unstageFile(path: string): Promise<void>;
       onHelperEvent(cb: (e: HelperEvent) => void): Unsub;
       onState(cb: (s: StateEvent) => void): Unsub;
+      onSummary(cb: (s: SummaryEvent) => void): Unsub;
       onSpeakers(cb: (s: SpeakersEvent) => void): Unsub;
       nameSpeakers(): Promise<SpeakersEvent>;
       setSpeaker(id: number, name: string | null, similar: boolean): Promise<SpeakersEvent>;
