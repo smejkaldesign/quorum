@@ -96,7 +96,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
 
   const navItem = (n: Nav) => (
     <button key={n.id} className={`set-nav ${page === n.id ? 'on' : ''}`} onClick={() => setPage(n.id)}>
-      <n.icon width={18} height={18} /><span>{n.label}</span>
+      <n.icon width={18} height={18} /><span>{n.label}{n.soon && <em className="soon grey">Soon</em>}</span>
     </button>
   );
   const go = (p: Page) => setPage(p);
@@ -627,16 +627,16 @@ const ABOUT: Record<string, string[]> = {
     'Quorum can read the notes in this folder when it answers. The guards still apply to every file.',
   ],
   instructions: [
-    'The operating instructions at the root of your Agent OS (CLAUDE.md or AGENTS.md). Quorum found them; a later version will let Quorum follow them when it answers.',
+    'The operating instructions at the root of your Agent OS (CLAUDE.md or AGENTS.md). Included, they go into every answer as instructions to follow where they apply.',
   ],
   skills: [
-    'Skills your Agent OS defines. Quorum lists them so you can see what is available; running them from Quorum comes later.',
+    'Skills your Agent OS defines under .claude/skills. Included, Claude Code loads the vault\'s project settings for the run, which brings the skills and the vault\'s own hooks, and Quorum may run a skill when a question calls for it. Quorum still only reads files.',
   ],
   agents: [
-    'Agent definitions in your Agent OS. Listed for now; delegating to them from Quorum comes later.',
+    'Agent definitions under .claude/agents. Included, Quorum may hand a sub-question to one of them during an answer, under the same read-only limits.',
   ],
   mcp: [
-    'MCP servers your Agent OS connects to. Listed for now; Quorum does not start them.',
+    'MCP servers from your Agent OS\'s .mcp.json. Included, Claude Code starts them for the run with your own credentials, and their tools are available to the answer. A server\'s tools can act on the outside world; include only servers you trust Quorum with.',
   ],
 };
 
@@ -666,7 +666,7 @@ function AboutCapability({ it, onClose }: { it: MemoryItem; onClose: () => void 
 }
 
 // kinds the scan reports but Quorum cannot act on yet; they never enter the review list
-const INERT_KINDS = new Set(['instructions', 'skills', 'agents', 'mcp']);
+const INERT_KINDS = new Set<string>([]);
 // what each roadmap kind will do once it works, next to what was found
 function soonWhy(it: MemoryItem): string {
   switch (it.kind) {
@@ -686,10 +686,10 @@ function why(it: MemoryItem): string {
     case 'index': return `Quorum starts from ${it.detail.split(' · ')[0]} to find notes faster`;
     case 'search': return it.detail === 'local embeddings' ? 'Finds related notes first, with embeddings on this Mac' : 'Finds matching notes before Quorum starts';
     case 'graph': return 'Search also pulls in notes linked to each match';
-    case 'instructions': return `Found ${it.detail}; following it from Quorum comes later`;
-    case 'skills': return `${it.detail} found; running them from Quorum comes later`;
-    case 'agents': return `${it.detail} found; delegating to them comes later`;
-    case 'mcp': return `${it.detail} found in .mcp.json; Quorum does not start them`;
+    case 'instructions': return `Quorum follows ${it.detail} when it answers`;
+    case 'skills': return `${it.detail}; Quorum can run one when a question calls for it`;
+    case 'agents': return `${it.detail}; Quorum can hand a sub-question to one`;
+    case 'mcp': return `${it.detail} in .mcp.json; their tools open to Quorum, with your credentials`;
     default: return 'Quorum can read this folder when it answers';
   }
 }

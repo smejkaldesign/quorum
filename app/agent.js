@@ -1,7 +1,7 @@
 // Quorum's local agent: Claude Code running inside the user's Agent OS with read-only tools.
 // Same engine as their terminal agent, so their CLAUDE.md and conventions apply.
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,10 +43,41 @@ function describeStep(tool, input, root) {
   return `Using ${tool}`;
 }
 
+// the command line for one agent run. The base is read-only: Read, Grep and Glob, no settings from the Mac, Quorum's
+// own guard settings. Each power-up the person included in Settings, Memory adds exactly one thing:
+// instructions: the vault's CLAUDE.md goes into the system prompt (Claude Code loads it itself once project settings are on)
+// skills, agents: project settings load from the vault, which is where Claude Code finds .claude/skills and .claude/agents,
+//   and the Skill and Agent tools open up; the vault's own hooks run alongside Quorum's guard
+// mcp: the vault's .mcp.json is the only MCP config, and its servers' tools are allowed by name
+export function agentArgs({ model, system, root, guards = {}, files = [], extra = { dirs: [] }, readFile = (p) => readFileSync(p, 'utf8') }) {
+  const p = extra.powers ?? {};
+  const project = !!(p.skills || p.agents);
+  const tools = ['Read', 'Grep', 'Glob', ...(p.skills ? ['Skill'] : []), ...(p.agents ? ['Agent'] : [])];
+  let servers = [];
+  if (p.mcp) { try { servers = Object.keys(JSON.parse(readFile(p.mcp)).mcpServers ?? {}); } catch { servers = []; } }
+  let prompt = system;
+  if (p.instructions && !project) {
+    try { prompt += `\n\nOperating instructions of this Agent OS, from ${path.basename(p.instructions)}; follow what applies to answering:\n${readFile(p.instructions).slice(0, 16000)}`; } catch {}
+  }
+  return [
+    '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', model,
+    '--tools', tools.join(','), '--allowedTools', ...tools, ...servers.map((s) => `mcp__${s}`),
+    '--setting-sources', project ? 'project' : '', '--settings', JSON.stringify(safetySettings(root, guards)),
+    '--strict-mcp-config', ...(servers.length ? ['--mcp-config', p.mcp] : []), '--no-session-persistence', '--disable-slash-commands',
+    '--append-system-prompt', prompt,
+    ...files.flatMap((f) => ['--add-dir', path.dirname(f)]),
+    ...(extra.dirs ?? []).flatMap((d) => ['--add-dir', d]),
+  ];
+}
+
 export function runAgent({ question, history, transcript, root, model, owner, onStep, redact, onDelta = null, files = [], about = '', guards = null, privateDirs = [], extra = { index: null, dirs: [], hints: [] } }) {
+  const p = extra.powers ?? {};
   const system = [
     `You are Quorum, ${owner}'s assistant in the Quorum app, working in their Agent OS at ${root}.`,
     'Use Grep, Glob and Read to find answers in their notes before answering. You can only read; never claim you changed anything.',
+    p.skills ? 'The skills defined in this Agent OS are available through the Skill tool; use one when the question calls for it.' : '',
+    p.agents ? 'The agents defined in this Agent OS are available through the Agent tool for a sub-question that fits one of them.' : '',
+    p.mcp ? 'Tools from the MCP servers this Agent OS configures are available; reach for them when the notes alone cannot answer, and say which you used.' : '',
     'Answer in 2-5 short sentences, plain and literal. If the notes do not answer it, say so.',
     'End with a line "Sources:" then the relative paths of the notes you relied on, one per line. Omit Sources if you used none.',
     extra.index ? `Start with ${extra.index}; it maps where notes live.` : '',
@@ -64,15 +95,7 @@ export function runAgent({ question, history, transcript, root, model, owner, on
   return new Promise((resolve, reject) => {
     const env = { ...process.env };
     delete env.ANTHROPIC_API_KEY;
-    const proc = spawn('claude', [
-      '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', model,
-      '--tools', 'Read,Grep,Glob', '--allowedTools', 'Read', 'Grep', 'Glob',
-      '--setting-sources', '', '--settings', JSON.stringify(safetySettings(root, guards ?? { denyDirs: privateDirs })),
-      '--strict-mcp-config', '--no-session-persistence', '--disable-slash-commands',
-      '--append-system-prompt', system,
-      ...files.flatMap((f) => ['--add-dir', path.dirname(f)]),
-      ...extra.dirs.flatMap((d) => ['--add-dir', d]),
-    ], { cwd: root, env });
+    const proc = spawn('claude', agentArgs({ model, system, root, guards: guards ?? { denyDirs: privateDirs }, files, extra }), { cwd: root, env });
     const timer = setTimeout(() => { proc.kill(); reject(new Error('took too long')); }, TIMEOUT_MS);
     let result = null;
     let err = '';

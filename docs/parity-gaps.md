@@ -12,7 +12,7 @@ Product gaps as of 2026-11-10. Each item says what is missing, what the app does
 
 - **Starter folder upkeep.** The keeper files each meeting note into the index, the daily note and the people and project notes it concerns, and writes learned facts with the person's own model source (`docs/specs/starter-agent-os.md`, Build status). Notes the person writes by hand are not indexed by it yet.
 
-- **Power-ups.** Settings, Memory, Power-ups lists what the scan found in the connected Agent OS: memory index, search, link graph, guard hooks, agent instructions, skills, agents and MCP servers. Index, search, graph and folders feed the agent today and are the only items the review offers. Instructions, skills, agents and MCP servers sit in an "On the roadmap" card with a grey Soon badge and no decision to make, so accepting something never does nothing.
+- **Power-ups.** Settings, Memory, Power-ups lists what the scan found in the connected Agent OS and every item changes the answer once included: the index, search and the link graph feed the hints; folders are added to the read scope; instructions go into the system prompt; skills and agents load the vault's project settings for the run and open the Skill and Agent tools; MCP servers load from the vault's `.mcp.json` with their tools allowed by name (`app/agent.js`, `agentArgs`). Quorum's own guard hook runs on every variant.
 - **Optional markers.** The features below turn on only when the connected folder has the file. Without it the app degrades quietly.
 
 | Feature | Marker | Without it | Fix |

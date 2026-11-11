@@ -1231,7 +1231,10 @@ function scanBrain(root, vault) {
 function agentContext() {
   const inc = memoryState().items.filter((i) => i.include === true && existsSync(i.path));
   const search = inc.find((i) => i.kind === 'search')?.path ?? null;
-  return { index: inc.find((i) => i.kind === 'index')?.path ?? null, dirs: inc.filter((i) => i.kind === 'folder').map((i) => i.path), search, graph: !!search && inc.some((i) => i.kind === 'graph') };
+  const on = (k) => inc.find((i) => i.kind === k) ?? null;
+  // the four that change how Claude Code itself runs (agent.js agentArgs)
+  const powers = { instructions: on('instructions')?.path ?? null, skills: !!on('skills'), agents: !!on('agents'), mcp: on('mcp')?.path ?? null };
+  return { index: on('index')?.path ?? null, dirs: inc.filter((i) => i.kind === 'folder').map((i) => i.path), search, graph: !!search && inc.some((i) => i.kind === 'graph'), powers };
 }
 async function agentExtra(question, root) {
   const ctx = agentContext();
