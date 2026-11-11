@@ -1,4 +1,4 @@
--- applied-when: select pg_get_expr(polqual, polrelid) like '%note_included%' from pg_policy where polname = 'meetings_select'
+-- applied-when: select pg_get_expr(polqual, polrelid) like '%note_readable%' from pg_policy where polname = 'meetings_select'
 -- The review queue (0012) gates notes; this closes the side doors. A meeting, its transcript segments, its note's links
 -- and attachments are readable by another member only when the meeting's note is public and included, by an admin
 -- while it is pending, and always by their owner.
