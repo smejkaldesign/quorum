@@ -21,7 +21,6 @@ export function Access() {
     <>
       <PageHeader
         title="Access"
-        description="Cloud sign-up is invite-only. A request from quorum.watch lands here; approving it issues a one-time access code for that email, good for the days you pick, which the person enters once in the app."
         actions={<>
           <span className="chips"><Chip on={filter === 'open'} onClick={() => setFilter('open')}>Open</Chip><Chip on={filter === 'all'} onClick={() => setFilter('all')}>All{list ? ` (${list.length})` : ''}</Chip></span>
           <Button variant="primary" onClick={() => setAdding(true)}>Add a person</Button>

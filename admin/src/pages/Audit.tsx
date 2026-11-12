@@ -10,7 +10,7 @@ export function Audit() {
   useEffect(() => { api.audit(200).then((r) => (r.ok ? setList(r.value) : setError(r.error))); }, []);
   return (
     <>
-      <PageHeader title="Audit" description="Every change made from here, newest first. The rows are written by the database functions themselves, so nothing can be changed without a line." />
+      <PageHeader title="Audit" />
       {error && <p className="error">{error}</p>}
       <Card list>
         <Table columns="150px minmax(0, 1fr)" className="stack">
