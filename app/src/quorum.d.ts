@@ -124,7 +124,7 @@ export type Plan = 'free' | 'cloud' | 'internal' | 'paid';
 export type QueueItem = { id: string; noteId: string; path: string; title: string; authorEmail: string | null; authorName: string | null; createdAt: string; updatedAt: string | null };
 // the Knowledge tab: a shared note as it sits in the workspace vault, and one opened for reading
 export type KnowledgeNote = { rel: string; title: string; pulledAt: string | null; behind: boolean; item: string | null };
-export type KnowledgeDoc = { rel: string; title: string; body: string; pulledAt: string | null; behind: boolean };
+export type KnowledgeDoc = { rel: string; title: string; body: string; pulledAt: string | null; behind: boolean; update: string | null };
 export type ContributionMine = { noteId: string; path: string; status: 'pending' | 'included' | 'declined'; reviewedAt: string | null; createdAt: string };
 export type Billing = { plan: Plan; seats: number; seatsIncluded: number; hourPacks: number; members: number; status: string | null; periodEnd: string | null; subscribed: boolean };
 export type MemberInvite = { inviteId: string; email: string; role: Role; expiresAt: string };

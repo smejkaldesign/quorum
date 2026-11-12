@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -30,23 +30,38 @@ describe('the workspace vault behind the Knowledge tab', () => {
   writeFileSync(path.join(root, '05-knowledge', 'onboarding.md'), '---\ntitle: x\nteam_item: t1\nteam_version: v1\nteam_pulled_at: 2026-11-10T00:00:00Z\n---\n# Onboarding guide\n\nStart here.\n');
   writeFileSync(path.join(root, 'roadmap.md'), '---\nteam_item: t2\nteam_version: v2\nteam_pulled_at: 2026-11-11T00:00:00Z\nteam_behind: true\n---\nNo heading here.\n');
   writeFileSync(path.join(root, 'roadmap (removed).md'), 'gone');
-  writeFileSync(path.join(root, '.updates', 'roadmap.md'), 'newer');
+  writeFileSync(path.join(root, '.updates', 'roadmap.md'), '---\nteam_item: t2\n---\n\n# Roadmap\n\nThe team moved the date.\n');
   writeFileSync(path.join(root, 'notes.txt'), 'not a note');
-  afterAll(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(path.join(root, 'crlf.md'), '---\r\nteam_item: t3\r\nteam_pulled_at: 2026-11-09T00:00:00Z\r\n---\r\n\r\n# Windows note\r\n\r\nBody line.\r\n');
+  const outside = mkdtempSync(path.join(tmpdir(), 'quorum-outside-'));
+  writeFileSync(path.join(outside, 'secret.md'), '# Secret');
+  symlinkSync(path.join(outside, 'secret.md'), path.join(root, 'link.md'));
+  afterAll(() => { rmSync(root, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true }); });
 
   it('lists shared notes newest first with a title from the heading or the file name, skipping removed copies and dot folders', () => {
     const notes = listTeamNotes(root);
-    expect(notes.map((n) => n.rel)).toEqual(['roadmap.md', '05-knowledge/onboarding.md']);
+    expect(notes.map((n) => n.rel)).toEqual(['roadmap.md', '05-knowledge/onboarding.md', 'crlf.md', 'link.md']);
     expect(notes[0]).toMatchObject({ title: 'roadmap', behind: true, item: 't2', pulledAt: '2026-11-11T00:00:00Z' });
     expect(notes[1]).toMatchObject({ title: 'Onboarding guide', behind: false, item: 't1' });
     expect(listTeamNotes(null)).toEqual([]);
     expect(listTeamNotes(path.join(root, 'missing'))).toEqual([]);
   });
 
-  it('reads one note with its frontmatter and title line stripped, and refuses paths outside the vault', () => {
-    expect(readTeamNote(root, '05-knowledge/onboarding.md')).toEqual({ rel: '05-knowledge/onboarding.md', title: 'Onboarding guide', body: 'Start here.', pulledAt: '2026-11-10T00:00:00Z', behind: false });
+  it('reads one note with its frontmatter and title line stripped, CRLF and a blank line before the heading included', () => {
+    expect(readTeamNote(root, '05-knowledge/onboarding.md')).toEqual({ rel: '05-knowledge/onboarding.md', title: 'Onboarding guide', body: 'Start here.', pulledAt: '2026-11-10T00:00:00Z', behind: false, update: null });
+    expect(readTeamNote(root, 'crlf.md')).toMatchObject({ title: 'Windows note', body: 'Body line.', pulledAt: '2026-11-09T00:00:00Z' });
+  });
+
+  it('carries the team\'s newer text for a note the person\'s edit holds behind', () => {
+    expect(readTeamNote(root, 'roadmap.md')).toMatchObject({ behind: true, body: 'No heading here.', update: 'The team moved the date.' });
+  });
+
+  it('refuses paths outside the vault, dot folders, removed copies, symlinks out, and files that are not notes', () => {
     expect(readTeamNote(root, '../outside.md')).toBeNull();
     expect(readTeamNote(root, '/etc/passwd')).toBeNull();
+    expect(readTeamNote(root, '.updates/roadmap.md')).toBeNull();
+    expect(readTeamNote(root, 'roadmap (removed).md')).toBeNull();
+    expect(readTeamNote(root, 'link.md')).toBeNull();
     expect(readTeamNote(root, 'notes.txt')).toBeNull();
     expect(readTeamNote(root, 'nope.md')).toBeNull();
   });
@@ -54,7 +69,7 @@ describe('the workspace vault behind the Knowledge tab', () => {
   it('answers the tab handlers from the sync module\'s team root, and without one lists nothing', async () => {
     const account = { client: () => ({}), state: () => ({ signedIn: true, workspace: { id: 'w', role: 'member' } }), sync: { team: () => ({ root }) } };
     const k = createKnowledge({ account });
-    expect((await k.handlers['knowledge-list']()).notes.length).toBe(2);
+    expect((await k.handlers['knowledge-list']()).notes.length).toBe(4);
     expect((await k.handlers['knowledge-read']('roadmap.md')).doc.title).toBe('roadmap');
     expect(await k.handlers['knowledge-read']('../x.md')).toEqual({ error: 'That note is not in the workspace vault.' });
     const none = createKnowledge({ account: { ...account, sync: null } });

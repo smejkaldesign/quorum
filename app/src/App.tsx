@@ -104,7 +104,8 @@ export function App() {
     return () => { live = false; off?.(); };
   }, []);
   const tabs = mainTabs(EDITION, account);
-  // a remembered Knowledge tab closes when the account turns out to have no workspace
+  // a remembered Knowledge tab waits for the account, shows once it allows the tab, and closes when it does not
+  const knowledgeOpen = tab === 'knowledge' && showsKnowledge(EDITION, account);
   useEffect(() => { if (tab === 'knowledge' && account && !showsKnowledge(EDITION, account)) setTab('home'); }, [tab, account, setTab]);
   // off a call, chat lives inside Home as a conversation opened from Ask anything or a saved chat
   const [convoOpen, setConvoOpen] = useState(false);
@@ -447,7 +448,7 @@ export function App() {
         </div>
       )}
 
-      {tab === 'knowledge' && (
+      {knowledgeOpen && (
         <div className="body wide flush">
           <KnowledgeTabArea />
         </div>

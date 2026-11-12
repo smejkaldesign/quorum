@@ -20,7 +20,7 @@ export function knowledgeApi(): KnowledgeApi {
       { rel: '05-knowledge/onboarding.md', title: 'Onboarding', pulledAt: iso(-3 * DAY), behind: false, item: 't1' },
       { rel: '08-meetings/2026-11-08 Roadmap review.md', title: 'Roadmap review', pulledAt: iso(-DAY), behind: true, item: 't2' },
     ] }),
-    knowledgeRead: async (rel) => ({ doc: { rel, title: rel.replace(/^.*\//, '').replace(/\.md$/, ''), body: 'A shared note from a teammate.\n\n- One point\n- Another point', pulledAt: iso(-DAY), behind: false } }),
+    knowledgeRead: async (rel) => ({ doc: { rel, title: rel.replace(/^.*\//, '').replace(/\.md$/, ''), body: 'A shared note from a teammate.\n\n- One point\n- Another point', pulledAt: iso(-DAY), behind: false, update: null } }),
   });
 }
 export type BillingApi = Pick<Window['quorum'], 'billingStatus' | 'billingCheckout' | 'billingPortal' | 'billingPacks'>;

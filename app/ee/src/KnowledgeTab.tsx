@@ -16,17 +16,33 @@ const onDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(u
 // workspace on the free plan sees the plan card instead, the same one Settings › Admin › General shows.
 export function KnowledgeTab() {
   const a = useAccount();
-  const [plan, setPlan] = useState<Billing | null | undefined>(undefined);
+  // the plan decides whether shared notes show; unknown (loading, or the project did not answer) keeps the gate closed,
+  // and a workspace change starts over so one workspace's answer never applies to another
+  const [planFor, setPlanFor] = useState<{ ws: string; plan: Billing | 'error' } | null>(null);
+  const [tries, setTries] = useState(0);
+  const signedIn = a?.signedIn === true, workspaceId = a?.workspace?.id ?? null;
   useEffect(() => {
-    if (!a?.signedIn || !a.workspace) return;
+    if (!signedIn || !workspaceId) return;
     let live = true;
-    billing.billingStatus().then((r) => { if (live) setPlan(r.billing ?? null); });
+    billing.billingStatus().then((r) => { if (live) setPlanFor({ ws: workspaceId, plan: r.billing ?? 'error' }); }).catch(() => { if (live) setPlanFor({ ws: workspaceId, plan: 'error' }); });
     return () => { live = false; };
-  }, [a?.signedIn, a?.workspace?.id]);
+  }, [signedIn, workspaceId, tries]);
+  const plan = planFor && planFor.ws === workspaceId ? planFor.plan : undefined;
   if (!a) return null;
   if (!a.signedIn || !a.workspace) return <div className="tk"><div className="tk-body"><div className="tk-gate" data-ee={EE_MARKER}><AccountCard account={a} /></div></div></div>;
   if (plan === undefined) return <div className="tk" data-ee={EE_MARKER} />;
-  if (plan && !hasService(plan.plan)) {
+  if (plan === 'error') {
+    return (
+      <div className="tk" data-ee={EE_MARKER}>
+        <div className="tk-body"><div className="tk-gate">
+          <h2 className="tk-title">The workspace did not answer</h2>
+          <p className="muted">Quorum could not read the plan for {a.workspace.name}, so shared notes stay closed for now.</p>
+          <p><button className="pill" onClick={() => setTries((n) => n + 1)}>Try again</button></p>
+        </div></div>
+      </div>
+    );
+  }
+  if (!hasService(plan.plan)) {
     return (
       <div className="tk" data-ee={EE_MARKER}>
         <div className="tk-body"><div className="tk-gate">
@@ -46,6 +62,7 @@ function Shared({ workspace, admin }: { workspace: string; admin: boolean }) {
   const [queue, setQueue] = useState<QueueItem[] | null>(null);
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState<KnowledgeDoc | null>(null);
+  const [teamText, setTeamText] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
   const load = () => {
@@ -62,7 +79,14 @@ function Shared({ workspace, admin }: { workspace: string; admin: boolean }) {
   const read = async (rel: string) => {
     setError('');
     const r = await api.knowledgeRead(rel);
-    if (r.error) setError(r.error); else if (r.doc) setOpen(r.doc);
+    if (r.error) setError(r.error); else if (r.doc) { setOpen(r.doc); setTeamText(false); }
+  };
+  // a note link inside a shared note: another shared note opens here; anything else goes to the person's notes app
+  const follow = (target: string) => {
+    const want = target.replace(/\.md$/, '').toLowerCase();
+    const hit = (notes ?? []).find((n) => n.rel.toLowerCase() === `${want}.md` || n.rel.toLowerCase().endsWith(`/${want}.md`) || n.title.toLowerCase() === want);
+    if (hit) read(hit.rel);
+    else if (root) window.quorum.openNote(`${root}/${target.endsWith('.md') ? target : `${target}.md`}`);
   };
   const shown = (notes ?? []).filter((n) => matchesQuery(n, query));
 
@@ -75,8 +99,12 @@ function Shared({ workspace, admin }: { workspace: string; admin: boolean }) {
         </div>
         <div className="tk-body"><article className="tk-doc">
           <h1>{open.title}</h1>
-          <p className="tk-meta">{open.pulledAt ? `Shared ${onDate(open.pulledAt)}` : 'Shared with the workspace'}{open.behind ? ' · your copy has edits; the team has a newer version' : ''}</p>
-          <Markdown text={open.body} headings />
+          <p className="tk-meta">
+            {open.pulledAt ? `Shared ${onDate(open.pulledAt)}` : 'Shared with the workspace'}
+            {open.behind && open.update !== null && <> · your copy has edits · <button className="link-btn" onClick={() => setTeamText((v) => !v)}>{teamText ? 'Show your copy' : "Show the team's version"}</button></>}
+            {open.behind && open.update === null && ' · your copy has edits'}
+          </p>
+          <Markdown text={teamText && open.update !== null ? open.update : open.body} headings root={root ?? undefined} onWiki={follow} />
         </article></div>
       </div>
     );

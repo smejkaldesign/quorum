@@ -1,17 +1,18 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 // Company knowledge (Cloud edition): the admin review queue and auto-include (migration 0012). A note a member marks
 // public becomes a contribution on the server; here admins list, include or decline, and members see their own.
 import { plain } from './account.js';
-import { bondOf, parseFrontmatter } from './sync.js';
+import { bondOf, parseFrontmatter, stripFrontmatter } from './sync.js';
 
 export const shapeQueueItem = (r) => ({ id: r.id, noteId: r.note_id, path: r.path, title: r.title || String(r.path ?? '').replace(/^.*\//, '').replace(/\.md$/, ''), authorEmail: r.author_email ?? null, authorName: r.author_name ?? null, createdAt: r.created_at, updatedAt: r.updated_at ?? null });
 // the workspace vault on disk (ee/sync.js pulls teammates' included notes there): every shared note with its title,
 // when it was pulled and whether the person's own edit holds a newer team version back. Dot folders (.updates) and the
 // "(removed)" copies sync leaves behind stay out
-const stripFm = (text) => text.replace(/^---\n[\s\S]*?\n---\n?/, '');
-const titleOf = (text, rel) => stripFm(text).match(/^#\s+(.+)$/m)?.[1]?.trim() || rel.replace(/^.*\//, '').replace(/\.md$/, '');
+const titleOf = (text, rel) => stripFrontmatter(text).match(/^#\s+(.+)$/m)?.[1]?.trim() || rel.replace(/^.*\//, '').replace(/\.md$/, '');
 const REMOVED = /\((removed|behind)( \d+)?\)\.md$/;
+// a path the tab may list or read: a .md file, no dot folder on the way, none of sync's "(removed)" copies
+const listable = (rel) => rel.endsWith('.md') && !REMOVED.test(rel) && !rel.split('/').some((seg) => seg.startsWith('.'));
 export function listTeamNotes(root) {
   if (!root || !existsSync(root)) return [];
   const out = [];
@@ -32,14 +33,21 @@ export function listTeamNotes(root) {
   return out.sort((a, b) => String(b.pulledAt ?? '').localeCompare(String(a.pulledAt ?? '')) || a.title.localeCompare(b.title));
 }
 // one shared note, by its path inside the vault; anything that resolves outside the root is refused
+// a symlink that points out of the vault is refused too: both sides are compared as real paths. A note the person's
+// own edit holds behind also carries the team's newer text (sync keeps it under .updates/), so the tab can show it
 export function readTeamNote(root, rel) {
-  if (!root || typeof rel !== 'string' || !rel.endsWith('.md')) return null;
+  if (!root || typeof rel !== 'string' || !listable(rel) || !existsSync(root)) return null;
   const abs = path.resolve(root, rel);
-  if (abs !== root && !abs.startsWith(root + path.sep)) return null;
   if (!existsSync(abs)) return null;
-  const text = readFileSync(abs, 'utf8');
+  const real = realpathSync(abs), base = realpathSync(root);
+  if (real !== base && !real.startsWith(base + path.sep)) return null;
+  const text = readFileSync(real, 'utf8');
   const fm = parseFrontmatter(text);
-  return { rel, title: titleOf(text, rel), body: stripFm(text).replace(/^#\s+.+\n?/, '').trim(), pulledAt: fm.team_pulled_at ?? null, behind: bondOf(text)?.behind === true };
+  const body = (t) => stripFrontmatter(t).replace(/^\s*#\s+.+\n?/, '').trim();
+  const behind = bondOf(text)?.behind === true;
+  const updateFile = path.join(base, '.updates', rel);
+  const update = behind && existsSync(updateFile) && realpathSync(updateFile).startsWith(base + path.sep) ? body(readFileSync(updateFile, 'utf8')) : null;
+  return { rel, title: titleOf(text, rel), body: body(text), pulledAt: fm.team_pulled_at ?? null, behind, update };
 }
 export const shapeMine = (r) => ({ noteId: r.note_id, path: r.path, status: r.status, reviewedAt: r.reviewed_at ?? null, createdAt: r.created_at });
 
