@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useFlag } from './flags';
 
 // a them turn's name as the speaker pass or a correction left it; a turn the pass never saw has none of these
 export type SpeakerInfo = { speaker: string | null; confidence: number; cluster: string | null; corrected: boolean };
@@ -8,7 +9,15 @@ export const LOW = 0.6;
 // the name on a them turn is a button; the popover lists the participants, Someone else… (typed) and Unknown. A pick
 // on a turn that had no name renames it alone and then offers to apply the name to the turns the pass grouped with
 // it. Names under LOW confidence are dotted: Quorum's guess. Fixed positioning keeps the popover out of the card's scroll
-export function SpeakerName({ turn, fallback, participants, similar, onPick }: { turn: SpeakerTurn; fallback: string; participants: string[]; similar: number; onPick: (name: string | null, similar: boolean) => Promise<void> | void }) {
+type SpeakerNameProps = { turn: SpeakerTurn; fallback: string; participants: string[]; similar: number; onPick: (name: string | null, similar: boolean) => Promise<void> | void };
+// speaker naming is live assistance (the live-assist flag); with it off the name is plain text
+export function SpeakerName(props: SpeakerNameProps) {
+  const naming = useFlag('live-assist');
+  if (!naming) return <span>{props.turn.speaker ?? props.fallback}</span>;
+  return <SpeakerPicker {...props} />;
+}
+
+function SpeakerPicker({ turn, fallback, participants, similar, onPick }: SpeakerNameProps) {
   const [open, setOpen] = useState(false);
   const [typing, setTyping] = useState(false);
   const [typed, setTyped] = useState('');

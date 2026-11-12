@@ -37,7 +37,7 @@ describe('precedence', () => {
 
   it('starts from the built-in defaults: capture and live assist off, manual listening and screen context on', () => {
     expect(DEFAULTS).toEqual({ 'meeting-capture': false, 'live-assist': false, 'manual-listen': true, 'screen-context': true });
-    expect(REQUIRES).toEqual({ 'screen-context': 'manual-listen' });
+    expect(REQUIRES).toEqual({ 'screen-context': 'manual-listen', 'meeting-capture': 'manual-listen', 'live-assist': 'manual-listen' });
     const { flags } = make();
     expect(flags.get('manual-listen')).toBe(true);
     expect(flags.get('meeting-capture')).toBe(false);
@@ -75,7 +75,7 @@ describe('the relay', () => {
     const r = await flags.refresh();
     expect(r.ok).toBe(true);
     expect(flags.get('meeting-capture')).toBe(true);
-    expect(flags.all()['meeting-capture']).toEqual({ enabled: true, source: 'relay' });
+    expect(flags.all()['meeting-capture']).toEqual({ enabled: true, source: 'relay', requires: 'manual-listen' });
     expect(settings.flags.cache).toEqual({ 'meeting-capture': true, 'live-assist': false, 'manual-listen': true });
     expect(saveSettings).toHaveBeenCalled();
     expect(emitted).toHaveLength(1);
@@ -86,7 +86,7 @@ describe('the relay', () => {
     const r = await flags.refresh();
     expect(r.ok).toBe(false);
     expect(r.error).toBe('Quorum could not reach the server.');
-    expect(flags.all()['meeting-capture']).toEqual({ enabled: true, source: 'cache' });
+    expect(flags.all()['meeting-capture']).toEqual({ enabled: true, source: 'cache', requires: 'manual-listen' });
     expect(flags.all()['manual-listen']).toEqual({ enabled: true, source: 'defaults' });
   });
 
@@ -97,7 +97,7 @@ describe('the relay', () => {
       expect(r.ok).toBe(false);
       expect(settings.flags).toEqual({ cache: { 'meeting-capture': true }, fetchedAt: 5 });
       expect(saveSettings).not.toHaveBeenCalled();
-      expect(flags.all()['meeting-capture']).toEqual({ enabled: true, source: 'cache' });
+      expect(flags.all()['meeting-capture']).toEqual({ enabled: true, source: 'cache', requires: 'manual-listen' });
     }
     const refused = make({ fetchImpl: vi.fn(async () => ({ ok: false, status: 503, json: async () => ({ error: 'later' }) })), settings: { flags: { cache: { 'live-assist': true }, fetchedAt: 5 } } });
     const r = await refused.flags.refresh();
@@ -121,7 +121,7 @@ describe('the relay', () => {
   it('the env override wins over the relay answer', async () => {
     const { flags } = make({ env: { QUORUM_RELAY_URL: 'https://relay.example.com', QUORUM_FLAGS: 'meeting-capture=0' } });
     await flags.refresh();
-    expect(flags.all()['meeting-capture']).toEqual({ enabled: false, source: 'env' });
+    expect(flags.all()['meeting-capture']).toEqual({ enabled: false, source: 'env', requires: 'manual-listen' });
   });
 
   it('the handlers answer the renderer with the state', async () => {
@@ -131,7 +131,7 @@ describe('the relay', () => {
     const after = await flags.handlers['flags-refresh']();
     expect(after.ok).toBe(true);
     expect(after.error).toBeNull();
-    expect(after.flags['meeting-capture']).toEqual({ enabled: true, source: 'relay' });
+    expect(after.flags['meeting-capture']).toEqual({ enabled: true, source: 'relay', requires: 'manual-listen' });
     expect(typeof after.fetchedAt).toBe('number');
   });
 

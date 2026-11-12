@@ -128,3 +128,24 @@ export const featuresOf = (x) => (OVERRIDES[x.id] ?? BY_CATEGORY[x.category] ?? 
 
 export const CONNECTOR_BY_ID = Object.fromEntries(CONNECTORS.map((x) => [x.id, x]));
 export const byCategory = (categoryId) => CONNECTORS.filter((x) => x.category === categoryId);
+
+// With meeting capture off (the meeting-capture feature flag, app/notetaker.js) Quorum does not listen to Zoom, Meet
+// or Teams calls. Their rows then describe what is left: Zoom's cloud recordings through Quorum Cloud, and the cloud
+// imports for Meet and Teams, which are not built yet. The rows above keep the listening copy for when the flag is on.
+const CLOUD_ONLY = {
+  zoom: { description: 'Imports the transcripts of your Zoom cloud recordings into your notes folder, through your own Zoom account (Quorum Cloud).', status: 'available' },
+  'google-meet': { description: 'Will import the transcripts of your Google Meet recordings into your notes folder.', status: 'soon' },
+  teams: { description: 'Will import the transcripts of your Teams meetings into your notes folder.', status: 'soon' },
+};
+const CLOUD_FEATURES = {
+  zoom: () => ['Imports Zoom cloud recordings and transcripts as meeting notes (Quorum Cloud)', 'Uses your own Zoom account; the transcripts download straight to this Mac', 'New recordings arrive when Zoom finishes them'],
+};
+const CLOUD_ABOUT = (n) => `${n} records your meetings in the cloud. Quorum imports those transcripts into your notes folder through your own ${n} account.`;
+
+// the library as this copy shows it: listening copy with meeting capture on, cloud-import copy with it off
+export function connectorsFor({ meetingCapture = false } = {}) {
+  if (meetingCapture) return CONNECTORS;
+  return CONNECTORS.map((x) => (x.kind === 'meeting-app' && CLOUD_ONLY[x.id] ? { ...x, ...CLOUD_ONLY[x.id], listen: false } : x));
+}
+export const aboutFor = (x, { meetingCapture = false } = {}) => (x.kind === 'meeting-app' && !meetingCapture ? CLOUD_ABOUT(x.name) : aboutOf(x));
+export const featuresFor = (x, { meetingCapture = false } = {}) => (x.kind === 'meeting-app' && !meetingCapture ? (CLOUD_FEATURES[x.id] ?? ((n) => [`Soon: imports ${n} recordings and transcripts`]))(x.name) : featuresOf(x));

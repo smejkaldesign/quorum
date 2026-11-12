@@ -39,9 +39,30 @@ final class ChatWatcher {
     private var meetingTimer: DispatchSourceTimer?
     private(set) var provider: MeetingProvider?
 
+    // the app turns the meeting watch on and off (the meeting-capture feature flag); off cancels the poll, and a call
+    // that was showing is reported as ended so the app's state drops it
+    func setMeetingWatch(_ on: Bool) {
+        if on { startMeetingWatch(); return }
+        queue.async {
+            self.meetingTimer?.cancel()
+            self.meetingTimer = nil
+            self.timer?.cancel()
+            self.timer = nil
+            if self.meetingActive {
+                self.meetingActive = false
+                let p = self.provider ?? ZoomProvider()
+                Emit.send(["event": "meeting", "active": false, "app": p.name, "provider": p.id, "chat": p.canPostNotice])
+            }
+            self.lastTitle = ""
+            self.lastCount = -1
+            self.lastNames = []
+        }
+    }
+
     // polls every provider; Zoom's meeting window only exists while you're in a meeting, Meet and Teams are read from their windows
     func startMeetingWatch() {
         queue.async {
+            guard self.meetingTimer == nil else { return }
             let t = DispatchSource.makeTimerSource(queue: self.queue)
             t.schedule(deadline: .now(), repeating: .milliseconds(1500))
             t.setEventHandler { [weak self] in

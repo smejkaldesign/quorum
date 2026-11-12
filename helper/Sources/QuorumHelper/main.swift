@@ -90,6 +90,9 @@ func handle(_ line: String) async {
         Emit.send(AudioRoute.current())
     case "chatWatch":
         ChatWatcher.shared.setEnabled(cmd["on"] as? Bool ?? true)
+    case "meetingWatch":
+        // call detection for Zoom, Meet and Teams; off until the app asks for it
+        ChatWatcher.shared.setMeetingWatch(cmd["on"] as? Bool ?? true)
     case "chatSend":
         if let text = cmd["text"] as? String { ChatWatcher.shared.send(text, id: cmd["id"] as? String) }
     case "chatReply":
@@ -196,5 +199,4 @@ Thread.detachNewThread {
     }
     Task { await session.stop(); exit(0) }
 }
-ChatWatcher.shared.startMeetingWatch()
 dispatchMain()

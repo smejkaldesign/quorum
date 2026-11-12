@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { AgentSchedule, CalendarSettings, MeetingSourceInfo, PlatformInfo, SourceJob } from './quorum';
 import { TRADEOFFS } from '../sources/agent-import';
-import { CATEGORIES, CONNECTORS, CONNECTOR_BY_ID, aboutOf, featuresOf, type LibraryConnector } from '../connectors/library';
+import { CATEGORIES, aboutFor, connectorsFor, featuresFor, type LibraryConnector } from '../connectors/library';
+import { useFlag } from './flags';
 import { useMenu } from './controls';
 import { IconCheck, IconChevron, IconClose, IconExternal, IconGrid, IconMore, IconPlus, IconReset } from './icons';
 
@@ -21,12 +22,20 @@ const providerFor = (x: LibraryConnector, live: Live) => (x.kind === 'meeting-ap
 const listening = (p: Provider | null) => !!p && p.enabled && p.installed && p.access !== false;
 // the platform account behind a meeting app's cloud import; absent in the local edition
 const platformFor = (x: LibraryConnector, live: Live) => (x.kind === 'meeting-app' && x.app ? live.platforms.find((p) => p.id === x.app) ?? null : null);
+// with meeting capture off (the meeting-capture flag) a meeting app offers only its cloud import (connectorsFor)
+const cloudOnly = (x: LibraryConnector) => x.kind === 'meeting-app' && x.listen === false;
+const capture = (x: LibraryConnector) => ({ meetingCapture: x.listen !== false });
+// the library this copy shows, rebuilt when the flag changes
+function useLibrary() {
+  const meetingCapture = useFlag('meeting-capture');
+  return useMemo(() => { const list = connectorsFor({ meetingCapture }); return { list, byId: Object.fromEntries(list.map((x) => [x.id, x])) as Record<string, LibraryConnector> }; }, [meetingCapture]);
+}
 const appWhere = (x: LibraryConnector) => (x.app === 'zoom' ? 'the Zoom app' : x.app === 'teams' ? 'the Teams app or a browser' : 'the browser');
 const googleFor = (x: LibraryConnector, live: Live) => (x.id === 'google-calendar' ? live.cal?.google ?? null : null);
 const isConnected = (x: LibraryConnector, live: Live) =>
-  x.kind === 'mcp-source' ? !!sourceFor(x, live)?.connected : x.kind === 'meeting-app' ? listening(providerFor(x, live)) : x.id === 'apple-calendar' ? !!live.cal?.enabled && live.cal.status === 'granted' : x.id === 'google-calendar' ? !!googleFor(x, live)?.connected : x.id === 'claude-code' ? !!live.mcp?.added : false;
+  x.kind === 'mcp-source' ? !!sourceFor(x, live)?.connected : x.kind === 'meeting-app' ? listening(providerFor(x, live)) || !!platformFor(x, live)?.connected : x.id === 'apple-calendar' ? !!live.cal?.enabled && live.cal.status === 'granted' : x.id === 'google-calendar' ? !!googleFor(x, live)?.connected : x.id === 'claude-code' ? !!live.mcp?.added : false;
 const connectionType = (x: LibraryConnector) =>
-  x.kind === 'mcp-source' ? `${x.name} account, over its MCP server (OAuth)` : x.kind === 'macos' ? 'Permission on this Mac' : x.kind === 'meeting-app' ? `Reads ${appWhere(x)} on this Mac; no account` : x.kind === 'quorum-mcp' ? `The quorum MCP server, registered in ${x.name}` : `${x.name} account (OAuth)`;
+  x.kind === 'mcp-source' ? `${x.name} account, over its MCP server (OAuth)` : x.kind === 'macos' ? 'Permission on this Mac' : cloudOnly(x) ? `${x.name} account, through Quorum Cloud` : x.kind === 'meeting-app' ? `Reads ${appWhere(x)} on this Mac; no account` : x.kind === 'quorum-mcp' ? `The quorum MCP server, registered in ${x.name}` : `${x.name} account (OAuth)`;
 
 const ago = (iso: string | null) => {
   if (!iso) return 'never';
@@ -44,6 +53,7 @@ const plural = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`;
 // detail is which connector's page is open; SettingsView owns it so the page title can turn into breadcrumbs
 export function ConnectorsPage({ detail, onDetail, openLibrary }: { detail: string | null; onDetail: (id: string | null) => void; openLibrary?: { cat: string | true; n: number } | null }) {
   const [live, setLive] = useState<Live>({ sources: [], cal: null, mcp: null, providers: [], platforms: [] });
+  const { list: libraryList, byId } = useLibrary();
   const [icons, setIcons] = useState<Record<string, string | null>>({});
   const [library, setLibrary] = useState(false);
   // the category the sheet opens on; a deep link from another surface names one
@@ -71,8 +81,8 @@ export function ConnectorsPage({ detail, onDetail, openLibrary }: { detail: stri
   }, [live.sources, live.platforms]);
   const lastRefused = useRef<{ id: string; error: string } | null>(null);
   const openDetail = (id: string) => { setLibrary(false); onDetail(id); };
-  if (detail && CONNECTOR_BY_ID[detail]) return <ConnectorDetail connector={CONNECTOR_BY_ID[detail]} icon={icons[detail] ?? null} live={live} onChange={load} initialError={lastRefused.current?.id === detail ? lastRefused.current.error : ''} />;
-  const connected = CONNECTORS.filter((x) => isConnected(x, live));
+  if (detail && byId[detail]) return <ConnectorDetail connector={byId[detail]} icon={icons[detail] ?? null} live={live} onChange={load} initialError={lastRefused.current?.id === detail ? lastRefused.current.error : ''} />;
+  const connected = libraryList.filter((x) => isConnected(x, live));
   const groups = CATEGORIES.map((cat) => ({ cat, items: connected.filter((x) => x.category === cat.id) })).filter((g) => g.items.length);
   return (
     <>
@@ -121,6 +131,8 @@ const metaLine = (x: LibraryConnector, live: Live) => {
   if (x.id === 'claude-code') return 'quorum MCP server added';
   const p = providerFor(x, live);
   if (p) { const plat = platformFor(x, live); return `${p.inCall ? 'In a call now' : 'Listening on this Mac'}${plat?.connected ? ` · ${plural(plat.notes, 'recording')} imported` : ''}`; }
+  const plat = platformFor(x, live);
+  if (plat?.connected) return `${plural(plat.notes, 'recording')} imported`;
   return null;
 };
 
@@ -148,14 +160,14 @@ function Actions({ connector: x, live, busy, act, compact }: { connector: Librar
             {x.id === 'google-calendar' && <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.gcalDisconnect()); }}>Disconnect</button>}
             {x.id === 'claude-code' && <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.mcpRemove()); }}>Remove from Claude Code</button>}
             {x.kind === 'meeting-app' && x.app && <>
-              <button role="menuitem" onClick={() => { setOpen(false); act(async () => { await window.quorum.meetingProviderCheck(); await new Promise((r) => setTimeout(r, 1500)); }); }}><IconReset width={15} height={15} /> Check again</button>
-              <button role="menuitem" onClick={() => { setOpen(false); window.quorum.axSettingsOpen(); }}>Accessibility settings</button>
+              {!cloudOnly(x) && <button role="menuitem" onClick={() => { setOpen(false); act(async () => { await window.quorum.meetingProviderCheck(); await new Promise((r) => setTimeout(r, 1500)); }); }}><IconReset width={15} height={15} /> Check again</button>}
+              {!cloudOnly(x) && <button role="menuitem" onClick={() => { setOpen(false); window.quorum.axSettingsOpen(); }}>Accessibility settings</button>}
               {platformFor(x, live)?.connected && <>
                 <div className="menu-sep" />
                 <button role="menuitem" onClick={() => { setOpen(false); act(() => window.quorum.platformSync(x.app!)); }}><IconReset width={15} height={15} /> Import recordings now</button>
                 <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.platformDisconnect(x.app!)); }}>Disconnect {x.name} account</button>
               </>}
-              <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.meetingProviderSet(x.app!, false)); }}>Stop listening</button>
+              {!cloudOnly(x) && <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.meetingProviderSet(x.app!, false)); }}>Stop listening</button>}
             </>}
           </div>
         )}
@@ -248,7 +260,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
         <Logo icon={icon} size={44} />
         <div className="conn-detail-title">
           <h3>{x.name}{soon && <em className="soon grey">Soon</em>}</h3>
-          <p>{aboutOf(x)}</p>
+          <p>{aboutFor(x, capture(x))}</p>
         </div>
       </div>
       <TitleActions>
@@ -259,7 +271,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
       <h4>Connectivity</h4>
       <div className={`set-card conn-jobcard${on ? ' on' : ''}`}>
         {on && !prov && <span className="conn-ok conn-badge"><i />Connected{src && !src.syncNotes ? ' · sync off' : ''}</span>}
-        {prov
+        {prov || cloudOnly(x)
           ? <Capabilities connector={x} provider={prov} platform={platformFor(x, live)} busy={busy} act={act} />
           : accountProblem && !on && x.kind === 'mcp-source'
           ? <DifferentAccount connector={x} busy={busy} act={act} />
@@ -303,7 +315,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
       {x.kind === 'mcp-source' && src?.agent && src.agent.runners.length > 0 && (!on || src.agent.schedule !== 'off') && <AgentImport source={src} busy={busy} act={act} />}
       <h4>Enables</h4>
       <div className="set-card conn-features">
-        <ul>{featuresOf(x).map((f) => <li key={f}><IconCheck width={14} height={14} />{f}</li>)}</ul>
+        <ul>{featuresFor(x, capture(x)).map((f) => <li key={f}><IconCheck width={14} height={14} />{f}</li>)}</ul>
       </div>
     </div>
   );
@@ -315,6 +327,7 @@ const startConnect = async (x: LibraryConnector, fresh = false): Promise<{ ok?: 
   if (x.id === 'apple-calendar') { const c = await window.quorum.calendarConnect(); return c.status === 'granted' ? { ok: true } : c.status === 'denied' ? { error: 'Calendar access is off for Quorum in System Settings.' } : { error: 'macOS did not grant calendar access.' }; }
   if (x.id === 'claude-code') { const a = await window.quorum.mcpAdd(); return a.added ? { ok: true } : { error: a.error ?? 'Claude Code did not accept the server.' }; }
   if (x.id === 'google-calendar') { const g = await window.quorum.gcalConnect(); return g.connected && !g.error ? { ok: true } : { error: g.error ?? 'Google did not finish the sign-in.' }; }
+  if (cloudOnly(x) && x.app) return window.quorum.platformConnect(x.app).catch(() => ({ error: `${x.name} cloud recordings are part of Quorum Cloud.` }));
   if (x.kind === 'meeting-app' && x.app) {
     await window.quorum.meetingProviderSet(x.app, true);
     await window.quorum.meetingProviderCheck();
@@ -327,7 +340,7 @@ const startConnect = async (x: LibraryConnector, fresh = false): Promise<{ ok?: 
   return { error: 'Not available yet.' };
 };
 const connectLabel = (x: LibraryConnector, busy: boolean, full: boolean) =>
-  busy ? (x.kind === 'mcp-source' || x.kind === 'oauth' ? 'Finish in your browser…' : x.kind === 'macos' ? 'Waiting for macOS…' : x.kind === 'meeting-app' ? 'Checking…' : 'Adding…') : x.kind === 'macos' ? 'Allow' : x.kind === 'quorum-mcp' ? 'Add' : x.kind === 'meeting-app' ? 'Start listening' : full ? `Connect ${x.name}` : 'Connect';
+  busy ? (x.kind === 'mcp-source' || x.kind === 'oauth' ? 'Finish in your browser…' : x.kind === 'macos' ? 'Waiting for macOS…' : cloudOnly(x) ? 'Finish in your browser…' : x.kind === 'meeting-app' ? 'Checking…' : 'Adding…') : x.kind === 'macos' ? 'Allow' : x.kind === 'quorum-mcp' ? 'Add' : cloudOnly(x) ? `Connect ${x.name} account` : x.kind === 'meeting-app' ? 'Start listening' : full ? `Connect ${x.name}` : 'Connect';
 
 // the connector's controls live on the title row, next to the breadcrumbs, which SettingsView renders
 function TitleActions({ children }: { children: ReactNode }) {
@@ -384,9 +397,9 @@ function AgentImport({ source: src, busy, act }: { source: MeetingSourceInfo; bu
 
 // a meeting app has two capabilities: listening on this Mac, which needs no account, and importing its cloud
 // recordings through the user's own account on the platform, which is part of Quorum Cloud
-function Capabilities({ connector: x, provider: p, platform: plat, busy, act }: { connector: LibraryConnector; provider: Provider; platform: PlatformInfo | null; busy: boolean; act: Act }) {
+function Capabilities({ connector: x, provider: p, platform: plat, busy, act }: { connector: LibraryConnector; provider: Provider | null; platform: PlatformInfo | null; busy: boolean; act: Act }) {
   const live = listening(p);
-  const why = !p.enabled ? `Off. Quorum ignores ${x.name} calls until you start listening.`
+  const why = !p ? '' : !p.enabled ? `Off. Quorum ignores ${x.name} calls until you start listening.`
     : !p.installed ? `${x.name} isn't installed on this Mac.`
     : p.access === false ? `Quorum needs Accessibility access to read ${x.name}.`
     : p.inCall ? `In a ${x.name} call now.`
@@ -394,10 +407,10 @@ function Capabilities({ connector: x, provider: p, platform: plat, busy, act }: 
   const running = plat?.job?.status === 'running';
   return (
     <div className="conn-caps">
-      <div className={`conn-cap${live ? ' on' : ''}`}>
+      {p && <div className={`conn-cap${live ? ' on' : ''}`}>
         <div className="conn-cap-head"><strong>Listen on this Mac</strong>{live ? <span className="conn-ok"><i />Connected</span> : <em className="soon grey">{!p.enabled ? 'Off' : 'Needs attention'}</em>}</div>
         <p>{why}</p>
-      </div>
+      </div>}
       <div className={`conn-cap${plat?.connected ? ' on' : ''}`}>
         <div className="conn-cap-head"><strong>Import cloud recordings</strong>{plat?.connected ? <span className="conn-ok"><i />Connected</span> : !plat ? <em className="soon grey">Quorum Cloud</em> : !plat.available ? <em className="soon grey">Soon</em> : null}</div>
         {!plat && <p>Recordings and transcripts {x.name} makes in the cloud, for calls Quorum did not hear. Sign in to Quorum Cloud to connect your {x.name} account.</p>}
@@ -466,7 +479,7 @@ function JobLine({ job, oneLine }: { job: SourceJob; oneLine?: boolean }) {
 // "Enables N features": click for the list of what the connector does for you
 function Features({ connector: x }: { connector: LibraryConnector }) {
   const [open, setOpen] = useMenu();
-  const list = featuresOf(x);
+  const list = featuresFor(x, capture(x));
   if (!list.length) return null;
   return (
     <span className="menu-wrap lib-feat" onClick={(e) => e.stopPropagation()}>
@@ -482,12 +495,13 @@ function Library({ icons, live, onChange, onOpen, onClose, lastRefused, initialC
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<Record<string, string>>({});
+  const { list: libraryList } = useLibrary();
   const items = useMemo(() => {
     const needle = q.trim().toLowerCase();
     // typing searches the whole library, whatever category was open
-    if (needle) return CONNECTORS.filter((x) => x.name.toLowerCase().includes(needle) || x.description.toLowerCase().includes(needle));
-    return CONNECTORS.filter((x) => cat === 'all' || x.category === cat);
-  }, [cat, q]);
+    if (needle) return libraryList.filter((x) => x.name.toLowerCase().includes(needle) || x.description.toLowerCase().includes(needle));
+    return libraryList.filter((x) => cat === 'all' || x.category === cat);
+  }, [cat, q, libraryList]);
   const connect = async (x: LibraryConnector) => {
     setBusy(x.id); setError((e) => ({ ...e, [x.id]: '' }));
     const r = await startConnect(x);
@@ -495,7 +509,7 @@ function Library({ icons, live, onChange, onOpen, onClose, lastRefused, initialC
     if (r.error) { setError((e) => ({ ...e, [x.id]: r.error! })); if (r.wrongAccount) { lastRefused.current = { id: x.id, error: r.error! }; onOpen(x.id); } return; }
     await onChange();
   };
-  const counts = useMemo(() => Object.fromEntries(CATEGORIES.map((c) => [c.id, CONNECTORS.filter((x) => x.category === c.id).length])), []);
+  const counts = useMemo(() => Object.fromEntries(CATEGORIES.map((c) => [c.id, libraryList.filter((x) => x.category === c.id).length])), [libraryList]);
   return (
     <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }} onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}>
       <div className="modal lib-modal" role="dialog" aria-modal="true" aria-labelledby="lib-title">
@@ -506,7 +520,7 @@ function Library({ icons, live, onChange, onOpen, onClose, lastRefused, initialC
         <div className="lib-body">
           <nav className="lib-nav" aria-label="Connector categories">
             <input className="lib-search" type="search" placeholder="Search" aria-label="Search connectors" value={q} onChange={(e) => { setQ(e.target.value); setCat('all'); }} autoFocus />
-            <button className={cat === 'all' ? 'on' : ''} onClick={() => { setCat('all'); setQ(''); }}>All<em>{CONNECTORS.length}</em></button>
+            <button className={cat === 'all' ? 'on' : ''} onClick={() => { setCat('all'); setQ(''); }}>All<em>{libraryList.length}</em></button>
             {CATEGORIES.map((c) => <button key={c.id} className={cat === c.id ? 'on' : ''} onClick={() => { setCat(c.id); setQ(''); }}>{c.name}<em>{counts[c.id]}</em></button>)}
           </nav>
           <div className="lib-main">

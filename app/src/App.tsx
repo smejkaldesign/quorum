@@ -22,6 +22,7 @@ import { Composer } from './Composer';
 import type { ConnectorsTarget, OpenSettingsDetail, SettingsPageId } from './connectorsNav';
 import { IconPen, PrivateNotes, usePrivateNotes } from './PrivateNotes';
 import { Avatar, SpeakerName, similarCounts, type SpeakerInfo } from './Speaker';
+import { useNotetaker } from './flags';
 import { IconFolderOpen, IconPerson, IconGear, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconBack, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, Wave } from './icons';
 
 // one speaker turn as main.js built it; a turn that grows arrives again with the same id and replace: true
@@ -94,7 +95,20 @@ function CrashArt() {
 const SUGGESTIONS = ['Summarize so far', 'What did I commit to?', 'Any open questions?'];
 
 export function App() {
+  // the notetaker flags (flags.ts): the main process refuses on its own; these keep the controls out of sight
+  const nt = useNotetaker();
   const [phase, setPhase] = useState<Phase>('idle');
+  // why a Start did nothing (the main process refused it), shown for a few seconds under the header
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimer = useRef<number | null>(null);
+  const startListening = async () => {
+    const r = await window.quorum.start();
+    if (r?.error) {
+      setNotice(r.error);
+      if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
+      noticeTimer.current = window.setTimeout(() => setNotice(null), 6000);
+    }
+  };
   // paused from the header keeps the call; STOP from the chat deletes it
   const [held, setHeld] = useState(false);
   const [tab, setTab] = useSession<Tab>('tab', 'home', keepTab(EDITION));
@@ -416,10 +430,12 @@ export function App() {
             {phase === 'paused' && <button className="icon-btn call-btn" aria-label="Resume" data-tip="Resume" onClick={() => window.quorum.resume()}><IconPlay /></button>}
             {(phase === 'listening' || phase === 'paused') && <button className="icon-btn call-btn" aria-label="Stop and summarize" data-tip="Stop and summarize" onClick={() => window.quorum.end()}><IconStop /></button>}
             {/* one button from idle to listening, so the label that slid out on hover is the one that turns green */}
-            <button className={`status listen ${phase === 'blocked' ? 'off-call' : phase}`} onClick={phase === 'idle' ? () => window.quorum.start() : undefined}
+            {(nt.manualListen || phase !== 'idle') && (
+            <button className={`status listen ${phase === 'blocked' ? 'off-call' : phase}`} onClick={phase === 'idle' ? startListening : undefined}
               data-tip={phase === 'blocked' ? 'Someone on your never-listen list is in this call' : undefined} aria-label={phase === 'idle' ? 'Listen' : status.label}>
               <span className="listen-hint">{phase === 'idle' ? 'Listen' : status.label}</span>{status.icon}
             </button>
+            )}
           </div>
           <div className="status-wrap">
             <button className={`icon-btn brain ${view === 'settings' ? 'active' : ''}`} data-tip="Settings" aria-label="Settings and Agent OS"
@@ -443,6 +459,7 @@ export function App() {
           </div>
         </div>
       </header>
+      {notice && <p className="set-error start-notice" role="alert">{notice}</p>}
 
       {view === 'settings' ? (
         <div className="body wide flush">
@@ -478,11 +495,13 @@ export function App() {
             )}
             {phase === 'idle' && msgs.length === 0 && (
               <QuorumCard>
-                <p>{brain ? `Ask me anything from ${brain.name}. ` : 'Connect your Agent OS so I can answer from your notes. '}When a call starts, I post a notice in the call's chat and listen on your Mac.</p>
+                <p>{brain ? `Ask me anything from ${brain.name}. ` : 'Connect your Agent OS so I can answer from your notes. '}{nt.meetingCapture ? "When a call starts, I post a notice in the call's chat and listen on your Mac." : nt.manualListen ? 'Start listening to take a note of your own; I write it into your Agent OS.' : ''}</p>
+                {nt.manualListen && (
                 <div className="row">
-                  <button className="pill primary" onClick={() => window.quorum.start()}>Start listening</button>
-                  <span className="hint">{settings.autoListen ? <><span className="live-dot" aria-hidden="true" />Auto-listen is on</> : 'Or turn on auto-listen in Settings'}</span>
+                  <button className="pill primary" onClick={startListening}>Start listening</button>
+                  {nt.meetingCapture && <span className="hint">{settings.autoListen ? <><span className="live-dot" aria-hidden="true" />Auto-listen is on</> : 'Or turn on auto-listen in Settings'}</span>}
                 </div>
+                )}
               </QuorumCard>
             )}
             {phase === 'starting' && <QuorumCard><p className="muted">{startingChat ? `Posting my notice in the ${startingChat}…` : 'Starting…'}</p></QuorumCard>}
@@ -501,7 +520,7 @@ export function App() {
                 <span className="user-avatar" aria-label="You">{me.photo ? <img src={me.photo} alt="" /> : me.name ? me.name[0].toUpperCase() : <IconPerson width={14} height={14} />}</span>
               </div>
             ) : m.kind === 'suggest' ? (
-              m.state === 'dismissed' ? null : (
+              m.state === 'dismissed' || !nt.liveAssist ? null : (
                 <QuorumCard key={i}>
                   <p>{m.text}</p>
                   <div className="row">
@@ -546,7 +565,7 @@ export function App() {
         <div className="body">
           <section className="card transcript">
               {inCall(phase) && <SoFar s={soFar} lines={lines} partial={partial} who={who} me={me} ticker={false} />}
-              {lines.some((l) => l.channel === 'them') && (
+              {nt.liveAssist && lines.some((l) => l.channel === 'them') && (
                 <div className="transcript-head">
                   <button className="pill ghost small" disabled={naming} data-tip="Quorum names the other speakers from context. One other participant needs no model." onClick={nameSpeakers}>{naming ? <><span className="spinner tiny" /> Naming…</> : 'Name speakers'}</button>
                 </div>
