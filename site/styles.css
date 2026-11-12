@@ -706,3 +706,13 @@ ul { margin: 0; padding: 0; list-style: none; }
 .cta-links a { color: var(--text-soft); text-decoration: underline; text-underline-offset: 3px; }
 .cta-links a:hover { color: var(--text); }
 .plan-note a { color: var(--text-soft); text-decoration: underline; text-underline-offset: 3px; }
+
+/* the connectors section: what works today and what is coming, as plain labels */
+.apps-panel.connects { padding: clamp(32px, 5vw, 64px) var(--gutter); }
+.connect-groups { display: grid; gap: 40px; }
+.connect-groups h3 { margin: 0 0 16px; color: var(--muted); font-size: 14px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; }
+.connect-list { display: flex; flex-wrap: wrap; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.connect-list li { padding: 10px 16px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255, 255, 255, 0.04); font-size: 16px; }
+.connect-list li span { margin-left: 8px; color: var(--muted); font-size: 14px; }
+.connect-list.coming li { color: var(--muted); }
+@media (min-width: 760px) { .connect-groups { grid-template-columns: 1fr 1fr; gap: 48px; } }

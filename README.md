@@ -5,7 +5,7 @@
 <h1 align="center">Quorum</h1>
 
 <p align="center">
-  <strong>A meeting notetaker that writes into the knowledge folder your AI agents already read.</strong>
+  <strong>One memory for your notes, your meeting notes and your team&rsquo;s knowledge, kept current for you and your AI agents.</strong>
 </p>
 
 <p align="center">
@@ -29,9 +29,11 @@
 
 ## What it is
 
-Quorum records both sides of a call on your Mac, transcribes it on-device, and writes the notes as plain markdown into your Agent OS: the folder of notes that Claude Code, Cursor and other agents already read. Nothing is locked in an app database. Questions during and after a meeting run through your own Claude Code sign-in, so there is no Quorum model bill. Audio never leaves the machine.
+Quorum combines the knowledge you already have into one memory and keeps it current. It connects to where you work: meeting notes from Granola, Zoom cloud recordings in Quorum Cloud, your calendar, and the folder of notes that Claude Code, Cursor and other agents already read (your Agent OS). Everything is filed as plain markdown in that folder. Nothing is locked in an app database. Questions run through your own Claude Code sign-in, so there is no Quorum model bill.
 
-Most notetakers end at the summary. Quorum treats the summary as the start: the note lands next to your other notes, links to them, shows who and which agents have read it, and the same folder answers questions a week later.
+Quorum also connects your local knowledge to your team's. In Quorum Cloud a team picks a shared folder or git repository as its knowledge base, and you choose which of your notes go into it.
+
+Quorum does not take meeting notes itself. Tools such as Granola already do that, and Quorum imports what they write. Each note lands next to your other notes, links to them, shows who and which agents have read it, and the same folder answers questions a week later.
 
 <table>
   <tr>
@@ -58,17 +60,17 @@ Most notetakers end at the summary. Quorum treats the summary as the start: the 
 
 <table>
   <tr>
-    <td width="33%" valign="top"><strong>Two-track capture</strong><br>Your mic and the Mac's system audio, recorded as separate channels, so "me" and "them" stay apart in the transcript.</td>
-    <td width="33%" valign="top"><strong>On-device transcription</strong><br>Apple's speech engine on the Mac. No audio upload. A managed cloud engine is optional in Quorum Cloud.</td>
+    <td width="33%" valign="top"><strong>Connects to where you work</strong><br>Granola meeting notes, the Calendar app and Google Calendar, your notes folder, and Zoom cloud recordings in Quorum Cloud.</td>
+    <td width="33%" valign="top"><strong>Keeps itself current</strong><br>Imported notes are filed, linked to related notes, and the notes they touch are updated with what changed.</td>
     <td width="33%" valign="top"><strong>Notes you own</strong><br>Markdown with frontmatter, written into your own folder, with the recording's source and participants recorded.</td>
   </tr>
   <tr>
-    <td valign="top"><strong>Works with Zoom, Meet and Teams</strong><br>Detects the call and listens on this Mac. A notice in the meeting chat lets anyone type STOP to pause the notes and GO to resume. No bot joins the call.</td>
-    <td valign="top"><strong>Ask anything</strong><br>During the call or a month later, questions run through Claude Code on your Mac with the whole Agent OS as context.</td>
+    <td valign="top"><strong>Team knowledge</strong><br>In Quorum Cloud, a team connects a shared folder or git repository as its knowledge base. Members read it in the Knowledge tab and propose notes through a review queue.</td>
+    <td valign="top"><strong>Ask anything</strong><br>Today or a month later, questions run through Claude Code on your Mac with the whole Agent OS as context.</td>
     <td valign="top"><strong>Memory</strong><br>The folder tree, wikilinks, backlinks and a link graph of every note, with link health checks and relinking tools.</td>
   </tr>
   <tr>
-    <td valign="top"><strong>Connectors</strong><br>Import from Granola today, with Zoom cloud recordings in Quorum Cloud. The calendar app feeds Home. Claude Code gets a <code>quorum</code> MCP server in one click.</td>
+    <td valign="top"><strong>Listen and dictate</strong><br>For notes of your own, start listening in Quorum or dictate. Transcription runs on the Mac. Claude Code gets a <code>quorum</code> MCP server in one click.</td>
     <td valign="top"><strong>Who read it</strong><br>Every note shows how many people and which agents have read it, counted by the read guard and the MCP server.</td>
     <td valign="top"><strong>Guardrails</strong><br>One list of what the agent may not read or say: built-in rules, guards found in your folder that you choose to include, your own rules, and your workspace's. Every rule only denies.</td>
   </tr>
@@ -81,7 +83,7 @@ One repository, two editions. The Local edition is the default build and costs n
 | | Local (open source) | Cloud |
 |---|---|---|
 | License and price | Apache-2.0, free | One paid plan, per seat |
-| Capture, on-device transcription, Zoom, Google Meet and Microsoft Teams listener, chat notice, end-of-call notes | Yes | Yes |
+| Manual listening and dictation with on-device transcription | Yes | Yes |
 | Agent OS: connect a notes folder, the Memory graph, search, read guard, views | Yes | Yes |
 | Connectors: Granola, the Calendar app, Claude Code MCP | Yes | Yes |
 | Model access | Your Claude Code sign-in, or your own API key in Keychain | Same |
@@ -91,6 +93,19 @@ One repository, two editions. The Local edition is the default build and costs n
 | Team knowledge: the Knowledge tab over a shared folder or repository, shared notes, roles, review queue | No | Yes |
 
 The rule behind the split: the open-source edition is the same app with the same features, running on your Mac with your own accounts and keys. Anything that needs a server, a company key or a company account is Cloud. Full table and reasoning in `docs/open-source-strategy.md`.
+
+### Behind feature flags
+
+Quorum used to detect calls and take its own meeting notes. Those features are switched off and their code remains, so they can come back without a rewrite. Flags are read from the relay at `/v1/flags` (global, set in the admin app) and fall back to these defaults:
+
+| Flag | Default | What it turns on |
+|---|---|---|
+| `meeting-capture` | off | Detecting Zoom, Google Meet and Teams calls, the "meeting detected" prompt, listening automatically, the notice posted in the call chat with STOP and GO, the never-listen list |
+| `live-assist` | off | Suggestions and speaker naming during a session |
+| `manual-listen` | on | Start listening, dictation, the live transcript and the note a session writes, with the running summary |
+| `screen-context` | on | While listening, reading names and product words from the front window to help the transcript and the running summary |
+
+`QUORUM_FLAGS` overrides any of them for a development copy.
 
 ## Quickstart
 
@@ -104,7 +119,7 @@ cd helper && swift build -c release
 cd ../app && npm ci && npm run start
 ```
 
-`npm run start` builds the renderer and launches a development copy named "Quorum Dev" with a green icon. The terminal you launch from needs the same permissions as the app in System Settings, Privacy and Security.
+`npm run start` builds the renderer and launches a development copy named "Quorum Dev" with a green icon. The terminal you launch from needs the same permissions as the app in System Settings, Privacy and Security. To try a flagged feature in the dev copy, set `QUORUM_FLAGS`, for example `QUORUM_FLAGS="meeting-capture=1" npm run start`.
 
 | Command | What it does |
 |---|---|
@@ -125,7 +140,7 @@ Quorum writes into a folder, and the folder is the product. On first launch it c
 ├── 00-inbox/                 quick captures
 ├── 01-daily/                 one note per day
 └── 08-meetings/
-    ├── quorum/               notes Quorum writes after each call (source: quorum)
+    ├── quorum/               notes from a listening session you start (source: quorum)
     │   └── 2026-11-09-roadmap-planning.md
     ├── granola/              imported from Granola (source: granola)
     │   └── transcripts/      full transcripts, when "Also import transcripts" is on
@@ -151,8 +166,8 @@ Connectors bring notes in and let agents out. Each note carries its source in fr
 | Connector | Category | What it does |
 |---|---|---|
 | Granola | Meeting notes | Signs in to your Granola account over MCP and imports every meeting note into `08-meetings/granola/`, with transcripts as an option. Syncs every 30 minutes while Quorum runs. |
-| Zoom, Google Meet, Microsoft Teams | Meeting apps | The live listener on this Mac: detects the call, captures both tracks, and posts the STOP and GO notice in the chat. No account and no platform app needed. Zoom cloud recordings import through Quorum Cloud. |
-| Calendar app | Calendar | Reads the Mac's calendars so Home shows what is up next and which app each call is on. |
+| Zoom | Meeting apps | Cloud recordings and their transcripts, imported through Quorum Cloud into `08-meetings/zoom/`. |
+| Calendar app | Calendar | Reads the Mac's calendars so Home shows what is up next. |
 | Google Calendar | Calendar | Reads the calendars you have selected in Google Calendar with your own Google account (read-only scope, PKCE, tokens in Keychain). A build needs a Google OAuth client; `docs/self-hosting.md` says where it goes. |
 | Claude Code | AI | One click registers the `quorum` MCP server and CLI on Quorum's own Node runtime. Tools: `list_meetings`, `search_meetings`, `get_meeting`, `list_chats`, `get_chat`, `live_transcript`, `quorum_status`. |
 
@@ -165,7 +180,7 @@ Wispr Notetaker, Fireflies and Read AI over MCP; Otter, Fathom and tl;dv by API 
 ```mermaid
 flowchart LR
   subgraph mac["Your Mac"]
-    helper["QuorumHelper (Swift)<br/>two-track capture, on-device transcription,<br/>Zoom chat, calendar"]
+    helper["QuorumHelper (Swift)<br/>listening and dictation, on-device transcription,<br/>calendar"]
     app["Quorum (Electron)<br/>Home, Memory, Knowledge, Connectors"]
     folder[("Agent OS folder<br/>plain markdown")]
     cc["Claude Code<br/>your own sign-in"]
@@ -184,7 +199,7 @@ flowchart LR
   app -. "Cloud edition" .-> relay
 ```
 
-- `helper/`: the Swift CLI. Audio capture, transcription, Accessibility access to the Zoom chat, calendar read. It speaks JSON lines over stdin and stdout.
+- `helper/`: the Swift CLI. Audio capture for listening and dictation, transcription, calendar read, and the meeting watcher kept for the flagged meeting-capture feature. It speaks JSON lines over stdin and stdout.
 - `app/`: the Electron main process (`main.js`), the React window (`src/`), vault index and link tools, the storage boundary (`store/`), the read guard (`guards/`), the CLI and MCP server (`cli/quorum.mjs`), and the connector library (`connectors/`, `sources/`).
 - `app/ee/`: Cloud-only client code (account, sync, members, platform connections). Loaded only when the build sets `QUORUM_EDITION=cloud`; `npm run check:edition` fails the build if anything else imports it.
 - `relay/`: the Cloud edition's server. Managed transcription over a websocket, the Zoom connection routes, Stripe billing.

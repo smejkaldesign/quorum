@@ -45,12 +45,12 @@ function history(): { meetings: MeetingRow[]; chats: ChatRow[] } {
     return { id: slug, file: `${VAULT}/${rel}`, kind, source, title, date: date.toISOString(), people, count: people.length + 1, visibility: 'private', rel, link: '', app: 'Finder' };
   };
   const meetings = [
-    meeting('roadmap-planning', 'Roadmap planning', at(-1, 15), ['Maya Chen', 'Jonas Weber', 'Priya Nair']),
+    meeting('roadmap-planning', 'Roadmap planning', at(-1, 15), ['Maya Chen', 'Jonas Weber', 'Priya Nair'], 'meeting', 'granola'),
     meeting('onboarding-ideas', 'Onboarding ideas', at(-1, 11, 20), [], 'note'),
     meeting('customer-call-northwind', 'Customer call: Northwind renewal', at(-1, 9, 30), ['Sofia Alvarez', 'Daniel Okafor'], 'meeting', 'granola'),
-    meeting('northwind-kickoff', 'Northwind kickoff', at(-2, 13, 30), ['Sofia Alvarez', 'Daniel Okafor']),
-    meeting('design-critique', 'Design critique', at(-2, 10), ['Priya Nair']),
-    meeting('hiring-debrief', 'Hiring debrief', at(-3, 16), ['Jonas Weber', 'Lena Fischer', 'Tomás Rivera', 'Aiko Tanaka']),
+    meeting('northwind-kickoff', 'Northwind kickoff', at(-2, 13, 30), ['Sofia Alvarez', 'Daniel Okafor'], 'meeting', 'zoom'),
+    meeting('design-critique', 'Design critique', at(-2, 10), ['Priya Nair'], 'meeting', 'granola'),
+    meeting('hiring-debrief', 'Hiring debrief', at(-3, 16), ['Jonas Weber', 'Lena Fischer', 'Tomás Rivera', 'Aiko Tanaka'], 'meeting', 'granola'),
   ];
   const chats: ChatRow[] = [
     { id: 'chat-1', title: 'List recent todos', date: new Date(Math.min(Date.now() - HOUR, at(0, 9, 12).getTime())).toISOString(), turns: 1, meetingFile: null, meetingTitle: null },
@@ -156,7 +156,8 @@ function readNote(file: string): NoteDoc | null {
   return { file, rel: m.rel, title: m.title, date: m.date ?? undefined, people: m.people, body: NOTE_BODY, app: 'Obsidian', url: '', source: m.source === 'quorum' ? null : m.source, views: VIEWS, visibility: m.visibility, withheld: false, link: '' };
 }
 
-// the Connectors page: Granola and Zoom connected, the live listener on for Zoom and Meet, Claude Code registered.
+// the Connectors page: Granola and Zoom cloud recordings connected, Claude Code registered. Meeting notes come from
+// those imports; call detection is behind the meeting-capture flag, so every provider row is off.
 // Icons come from each connector's domain the way the app fetches them, so the page looks as it does on a Mac
 const favicon = (domain: string) => `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`;
 const icons = Object.fromEntries(CONNECTORS.map((c) => [c.id, favicon(c.domain)]));
@@ -167,8 +168,8 @@ const sources: MeetingSourceInfo[] = [{
 }];
 const platforms: PlatformInfo[] = [{ id: 'zoom', name: 'Zoom', available: true, connected: true, account: 'maya@example.com', accountName: 'Maya Chen', lastSyncAt: at(0, 8, 30).toISOString(), imported: 12, notes: 12, folderPath: `${VAULT}/Meetings/zoom`, job: null }];
 const providers = [
-  { id: 'zoom', name: 'Zoom', installed: true, access: true, enabled: true, version: '6.4.6', path: '/Applications/zoom.us.app', inCall: false, chat: true, running: true },
-  { id: 'meet', name: 'Google Meet', installed: true, access: true, enabled: true, version: null, path: '/Applications/Google Chrome.app', inCall: false, chat: true, running: true },
+  { id: 'zoom', name: 'Zoom', installed: true, access: true, enabled: false, version: '6.4.6', path: '/Applications/zoom.us.app', inCall: false, chat: false, running: true },
+  { id: 'meet', name: 'Google Meet', installed: true, access: true, enabled: false, version: null, path: '/Applications/Google Chrome.app', inCall: false, chat: false, running: true },
   { id: 'teams', name: 'Microsoft Teams', installed: false, access: null, enabled: false, version: null, path: '', inCall: false, chat: false, running: null },
 ];
 
@@ -192,7 +193,7 @@ const sample: Partial<Bridge> = {
   setupRerun: async () => ({ root: VAULT, vault: VAULT, name: 'Acme Notes', made: 'quorum' as const, written: [], markers: { agentOS: null, obsidian: true, search: true, safetyHooks: true } }),
   brain: async () => ({ root: VAULT, vault: VAULT, name: 'Acme Notes', made: 'quorum' as const, markers: { agentOS: null, obsidian: true, search: true, safetyHooks: true } }),
   user: async () => ({ name: 'Maya Chen', email: 'maya@example.com', photo: null }),
-  getSettings: async () => ({ autoListen: false, model: 'sonnet', modelSource: 'claude-code', suggestions: true }),
+  getSettings: async () => ({ autoListen: false, model: 'sonnet', modelSource: 'claude-code', suggestions: false }),
   calendar: async () => ({ connected: true, status: 'granted', events: calendarEvents(), days: 7, showAll: false, hidden: 3 }),
   history: async () => history(),
   sourceIcons: async () => icons,
