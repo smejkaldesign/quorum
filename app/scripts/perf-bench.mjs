@@ -8,7 +8,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { createVaultIndex } from '../vindex.js';
-import { SECRET_NAMES, createGuardrails, frontmatterKeys } from '../guardrails.js';
+import { createGuardrails } from '../guardrails.js';
+import { createPredicates } from '../guardrails-predicates.js';
 import { listTeamNotes } from '../ee/knowledge.js';
 
 const N = Number(process.argv[2]) || 3000;
@@ -47,9 +48,7 @@ try {
   // the guardrails exactly as main.js wires them, with the three predicates the index calls per file
   const settings = { guardrails: { builtIns: {}, agentOs: {}, rules: [], workspace: [] } };
   const guardrails = createGuardrails({ settings, brain: () => ({ root, vault }), privateDirs: () => ['02-personal'] });
-  const isPrivatePath = (rel) => { const abs = path.resolve(vault, rel); return guardrails.compiled().denyDirs.some((d) => { const dir = path.join(root, d); return abs === dir || abs.startsWith(dir + path.sep); }); };
-  const isSecretPath = (rel) => { const c = guardrails.compiled(); return !c.secretsOff && new RegExp(c.secretPattern ?? SECRET_NAMES, 'i').test(String(rel)); };
-  const isConfidentialText = (text) => { const denied = guardrails.compiled().frontmatterKeys; return denied.length > 0 && frontmatterKeys(String(text).slice(0, 4000)).some((k) => denied.includes(k)); };
+  const { isPrivatePath, isSecretPath, isConfidentialText } = createPredicates({ guardrails, brain: () => ({ root, vault }) });
 
   time('guardrails.compiled() per call', () => guardrails.compiled(), N);
   time('isPrivatePath + isSecretPath per file', () => { for (const r of rels) { isPrivatePath(r); isSecretPath(r); } });
@@ -58,7 +57,14 @@ try {
     vault, isExcludedPath: (rel) => isPrivatePath(rel) || isSecretPath(rel), isDeniedText: isConfidentialText,
     isExcludedText: () => false, redact: (t) => t, onChange: () => {},
   });
-  time('index.start() (full build)', () => index.start());
+  // the build yields between batches; the longest stretch the event loop was held is what a startup IPC call waits
+  let longest = 0, last = performance.now();
+  const probe = setInterval(() => { const now = performance.now(); longest = Math.max(longest, now - last); last = now; }, 1);
+  const t0 = performance.now();
+  await index.start();
+  clearInterval(probe);
+  console.log(`${'index.start() (full build, batched)'.padEnd(44)} ${ms(performance.now() - t0).padStart(12)}`);
+  console.log(`${'  longest stretch without yielding'.padEnd(44)} ${ms(longest).padStart(12)}`);
   console.log(`${'  notes indexed'.padEnd(44)} ${String(index.size()).padStart(12)}`);
   time('index.sync() with nothing changed', () => index.sync(), 5);
   const touched = path.join(vault, rels[17]);

@@ -382,8 +382,9 @@ export function App() {
   }
 
   if (phase === 'review') {
-    return <Suspense fallback={<div className="panel" />}><EndView notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing} transcript={lines.map((l) => ({ ...l, who: who(l) }))} participants={participants} onSpeaker={setSpeaker} me={me}
-      privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={() => { setPhase('idle'); resetMeeting(); setTab('home'); }} /></Suspense>;
+    const close = () => { setPhase('idle'); resetMeeting(); setTab('home'); };
+    return <div className="panel"><LazyView name="your notes" onClose={close}><EndView notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing} transcript={lines.map((l) => ({ ...l, who: who(l) }))} participants={participants} onSpeaker={setSpeaker} me={me}
+      privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={close} /></LazyView></div>;
   }
 
   return (
@@ -633,6 +634,29 @@ function QuorumCard({ children }: { children: ReactNode }) {
       <div className="card">{children}</div>
     </div>
   );
+}
+
+// a view that loads on first use: a short wait line while its code comes in, and if the import fails (the app's files
+// changed underneath the window) a way to try again or close, so the page behind it is never out of reach
+class LazyView extends Component<{ name: string; onClose: () => void; children: ReactNode }, { error: Error | null; attempt: number }> {
+  state = { error: null as Error | null, attempt: 0 };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  componentDidCatch(error: Error) { console.error('lazy view failed:', error.message); }
+  render() {
+    const { error, attempt } = this.state;
+    if (error) {
+      return (
+        <div className="card lazy-fail" role="alert">
+          <p>Quorum could not load {this.props.name}. {STALE_BUNDLE.test(error.message) ? "The app's files changed while this window was open." : 'A part of the app failed to load.'} Your notes and transcript are safe.</p>
+          <div className="row">
+            <button className="pill primary" onClick={() => this.setState({ error: null, attempt: attempt + 1 })}>Try again</button>
+            <button className="pill" onClick={this.props.onClose}>Close</button>
+          </div>
+        </div>
+      );
+    }
+    return <Suspense key={attempt} fallback={<p className="muted lazy-wait">Opening {this.props.name}…</p>}>{this.props.children}</Suspense>;
+  }
 }
 
 // one transcript row; memoized, so partial words landing on the last row leave the rows above untouched

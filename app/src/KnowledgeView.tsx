@@ -100,13 +100,18 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   // a burst of writes (a sync pull, the keeper filing a meeting) reloads the tree and graph once, after it settles
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
+    const touched = new Set<string>();
     const off = window.quorum.onVaultChanged((rels) => {
+      for (const r of rels) touched.add(r);
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => { timer = null; load(); }, 400);
-      const open = previewRel.current;
-      if (open && rels.includes(open)) {
-        window.quorum.vaultNote(open).then((n) => { if (n) setPreview((pv) => (pv?.rel === open ? { rel: open, ...n } : pv)); else setPreview(null); });
-      }
+      timer = setTimeout(() => {
+        timer = null;
+        load();
+        const open = previewRel.current;
+        const openChanged = !!open && touched.has(open);
+        touched.clear();
+        if (openChanged) window.quorum.vaultNote(open).then((n) => { if (n) setPreview((pv) => (pv?.rel === open ? { rel: open, ...n } : pv)); else setPreview(null); });
+      }, 400);
     });
     return () => { off(); if (timer) clearTimeout(timer); };
   }, [load]);

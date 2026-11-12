@@ -15,7 +15,8 @@ import { createViews } from './views.js';
 import { registerOnboarding } from './onboarding.js';
 import { gateOn, registerBeta } from './beta.js';
 import { createKeeper } from './keeper.js';
-import { SECRET_NAMES, frontmatterKeys, wouldBlock } from './guardrails.js';
+import { wouldBlock } from './guardrails.js';
+import { createPredicates } from './guardrails-predicates.js';
 import { createSuggester } from './suggest.js';
 import { addFinal, isEcho, toJSON, toText } from './transcript.js';
 import { extractJson } from './json.js';
@@ -1540,20 +1541,10 @@ ipcMain.handle('vault-tree', () => (brain() ? vaultTree(brain().vault, excludedP
 // hosted edition: sign-in, workspaces, members and push sync live in ee/ (account.js, sync.js) and load only when EDITION is
 // 'cloud'. The local edition gets a stub whose pushes do nothing, so the call sites below stay the same in both editions.
 // sync never pushes private folders, notes marked confidential, or anything the opt-out list withholds
-const isPrivatePath = (rel) => { const b = brain(); if (!b) return false; const abs = path.resolve(b.vault, rel); return guardrails.compiled().denyDirs.some((d) => { const dir = path.join(b.root, d); return abs === dir || abs.startsWith(dir + path.sep); }); };
-// every frontmatter key the guardrails deny (the built-in confidential: plus any the person or the workspace added), so
-// a note the agent may not read is also a note sync never pushes and the index never holds. Only the frontmatter block
-// counts, the same as the read guard: a body line that happens to start with the key is not a mark
-const isConfidentialText = (text) => { const denied = guardrails.compiled().frontmatterKeys; return denied.length > 0 && frontmatterKeys(String(text).slice(0, 4000)).some((k) => denied.includes(k)); };
-// the pattern is compiled once per rule set; the index asks for every note it walks
-let secretRe = { source: null, re: null };
-const isSecretPath = (rel) => {
-  const c = guardrails.compiled();
-  if (c.secretsOff) return false;
-  const source = c.secretPattern ?? SECRET_NAMES;
-  if (secretRe.source !== source) secretRe = { source, re: new RegExp(source, 'i') };
-  return secretRe.re.test(String(rel));
-};
+// (guardrails-predicates.js): a denied folder, a secret-looking name, or a frontmatter key the guardrails deny (the
+// built-in confidential: plus any the person or the workspace added), so a note the agent may not read is also a note
+// sync never pushes and the index never holds
+const { isPrivatePath, isSecretPath, isConfidentialText } = createPredicates({ guardrails, brain: () => brain() });
 const account = EDITION === 'cloud'
   ? (await loadEE('account.js')).registerAccount({ ipcMain, settings, saveSettings, toUI, log, brain, meetingIndex, isExcluded: (rel) => excludedPath(rel) || isPrivatePath(rel), isExcludedText: (t) => suggester.isExcluded(t) || isConfidentialText(t), openExternal: (u) => shell.openExternal(u), oauthRedirect: () => (app.isPackaged ? 'quorum://auth/callback' : 'http://127.0.0.1:47831/auth/callback') })
   : { sync: { pushNote() {}, pushMeetingNote() {}, pullNow() {}, live() {} } };

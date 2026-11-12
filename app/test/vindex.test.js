@@ -15,6 +15,29 @@ const open = (opts = {}) => {
 
 afterEach(() => { if (vault) rmSync(vault, { recursive: true, force: true }); vault = null; });
 
+describe('start', () => {
+  it('reads the vault in batches, yielding between them, and reports every note once', async () => {
+    vault = mkdtempSync(path.join(tmpdir(), 'vindex-'));
+    for (let i = 0; i < 450; i++) write(`n-${i}.md`, `# N${i}\n\n[[n-${(i + 1) % 450}]]\n`);
+    const changes = [];
+    let yields = 0;
+    const index = createVaultIndex({ vault, isExcludedPath: () => false, isExcludedText: () => false, redact: (t) => t, onChange: (rels) => changes.push(rels) });
+    // counts the event loop turns the build lets through: one per batch boundary
+    let probing = true;
+    const probe = () => { if (!probing) return; yields++; setImmediate(probe); };
+    setImmediate(probe);
+    await index.start();
+    probing = false;
+    index.stop();
+    expect(index.size()).toBe(450);
+    expect(changes.length).toBe(1);
+    expect(changes[0].length).toBe(450);
+    expect(index.backlinks('n-0.md').map((b) => b.rel)).toEqual(['n-449.md']);
+    // 450 notes in batches of 200 give the event loop at least two turns
+    expect(yields).toBeGreaterThanOrEqual(2);
+  });
+});
+
 describe('syncPaths', () => {
   it('re-reads only the named file and relinks what points at it', () => {
     vault = mkdtempSync(path.join(tmpdir(), 'vindex-'));
@@ -50,8 +73,11 @@ describe('syncPaths', () => {
     write('topics/t1.md', '# T1\n');
     write('topics/t2.md', '# T2\n');
     expect(index.syncPaths(['topics']).sort()).toEqual(['topics/t1.md', 'topics/t2.md']);
+    // a note edited in the same burst as the folder move is still reported, once
+    write('a.md', '# A edited\n');
     rmSync(path.join(vault, 'topics'), { recursive: true });
-    expect(index.syncPaths(['topics']).sort()).toEqual(['topics/t1.md', 'topics/t2.md']);
+    expect(index.syncPaths(['a.md', 'topics']).sort()).toEqual(['a.md', 'topics/t1.md', 'topics/t2.md']);
     expect(index.rels()).toEqual(['a.md']);
+    expect(index.note('a.md').title).toBe('A edited');
   });
 });

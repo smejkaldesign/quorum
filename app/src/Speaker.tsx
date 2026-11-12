@@ -74,13 +74,12 @@ export function SpeakerName({ turn, fallback, participants, similar, onPick }: {
   );
 }
 
-// how many them turns the pass grouped with this one, for the Apply to similar turns offer
-export const similarCount = (turns: SpeakerTurn[], t: SpeakerTurn) => (t.cluster ? turns.filter((x) => x.channel === 'them' && x.id !== t.id && x.cluster === t.cluster && !x.corrected).length : 0);
-// the same answer for every turn of a transcript from one pass over it, for the live view that draws all the rows
+// how many other uncorrected them turns the pass grouped with each one, for the Apply to similar turns offer; one
+// pass over the transcript answers for every row the view draws
 export function similarCounts(turns: SpeakerTurn[]): (t: SpeakerTurn) => number {
   const byCluster = new Map<string, number>();
   for (const x of turns) if (x.channel === 'them' && x.cluster && !x.corrected) byCluster.set(x.cluster, (byCluster.get(x.cluster) ?? 0) + 1);
-  return (t) => (t.cluster ? (byCluster.get(t.cluster) ?? 0) - (t.channel === 'them' && !t.corrected ? 1 : 0) : 0);
+  return (t) => (t.cluster ? Math.max(0, (byCluster.get(t.cluster) ?? 0) - (t.channel === 'them' && !t.corrected ? 1 : 0)) : 0);
 }
 
 // who said it, at a glance: the person's own photo, or initials on a color that stays the same for a name. Meeting apps

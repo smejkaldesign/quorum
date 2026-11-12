@@ -1519,3 +1519,6 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .tk-main .tk-section, .tk-main .set-card { margin-left: 16px; margin-right: 16px; }
 .tk-graph { flex: 1; min-height: 240px; position: relative; }
 .tk-graph canvas { width: 100%; height: 100%; display: block; }
+/* a view loading on first use (App.tsx LazyView): the wait line and the card shown when its code failed to load */
+.lazy-wait { padding: 40px 0; text-align: center; }
+.lazy-fail { margin: 40px auto; max-width: 520px; }
