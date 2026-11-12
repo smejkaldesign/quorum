@@ -1314,7 +1314,7 @@ function FlagsCard() {
       <div className="set-card">
         {entries.length === 0 && <Row icon={<IconSliders width={18} height={18} />} title="No flags yet" desc="The relay has not answered and this build has no defaults" />}
         {entries.map(([key, v]) => (
-          <Row key={key} icon={<IconSliders width={18} height={18} />} title={<code className="ac-code">{key}</code>} desc={`${v.enabled ? 'On' : 'Off'}, from ${FLAG_SOURCE[v.source] ?? v.source}`}>
+          <Row key={key} icon={<IconSliders width={18} height={18} />} title={<code className="ac-code">{key}</code>} desc={`${v.enabled ? 'On' : 'Off'}, from ${FLAG_SOURCE[v.source] ?? v.source}${v.blockedBy ? `; off because ${v.blockedBy} is off` : v.requires ? `; needs ${v.requires}` : ''}`}>
             <Toggle on={v.enabled} disabled onChange={() => {}} />
           </Row>
         ))}

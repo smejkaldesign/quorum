@@ -12,7 +12,11 @@ export const DEFAULTS = Object.freeze({
   'meeting-capture': false,
   'live-assist': false,
   'manual-listen': true,
+  'screen-context': true,
 });
+// the parent each flag needs, as 0021 seeds it; the relay's answer adds or replaces entries. A flag whose parent is
+// off reads as off, whatever its own switch says
+export const REQUIRES = Object.freeze({ 'screen-context': 'manual-listen' });
 
 // QUORUM_FLAGS="meeting-capture=1,live-assist=0": one assignment per flag; 1, true, on and yes turn it on, 0, false,
 // off and no turn it off; anything else is ignored. A bare key means on.
@@ -40,25 +44,46 @@ export function acceptFlagsBody(body) {
   return Object.fromEntries(entries);
 }
 
-// every known key with its value and where that value came from
-export function resolveFlags({ defaults = DEFAULTS, cache = {}, relay = null, env = {} } = {}) {
-  const out = {};
+// { key: parent } with string values only, a flag never its own parent
+export const cleanRequires = (obj) => Object.fromEntries(Object.entries(obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : {}).filter(([k, v]) => typeof v === 'string' && v && v !== k));
+
+// every known key with its value and where that value came from. `enabled` is the effective value: a flag whose
+// parent (requires) is off reads off and names the parent in `blockedBy`; `own` is its own switch
+export function resolveFlags({ defaults = DEFAULTS, cache = {}, relay = null, env = {}, requires = REQUIRES } = {}) {
+  const own = {};
   const envFlags = parseEnvFlags(env.QUORUM_FLAGS);
   const keys = new Set([...Object.keys(defaults), ...Object.keys(cache), ...Object.keys(relay ?? {}), ...Object.keys(envFlags)]);
   for (const key of keys) {
-    if (key in envFlags) out[key] = { enabled: envFlags[key], source: 'env' };
-    else if (relay && key in relay) out[key] = { enabled: relay[key], source: 'relay' };
-    else if (key in cache) out[key] = { enabled: cache[key], source: 'cache' };
-    else out[key] = { enabled: defaults[key] === true, source: 'defaults' };
+    if (key in envFlags) own[key] = { enabled: envFlags[key], source: 'env' };
+    else if (relay && key in relay) own[key] = { enabled: relay[key], source: 'relay' };
+    else if (key in cache) own[key] = { enabled: cache[key], source: 'cache' };
+    else own[key] = { enabled: defaults[key] === true, source: 'defaults' };
+  }
+  // walk up the parents; a missing parent counts as off, and a loop stops after one pass over the keys
+  const offParent = (key) => {
+    const seen = new Set([key]);
+    for (let p = requires[key]; p; p = requires[p]) {
+      if (seen.has(p)) return null;
+      seen.add(p);
+      if (own[p]?.enabled !== true) return p;
+    }
+    return null;
+  };
+  const out = {};
+  for (const [key, v] of Object.entries(own)) {
+    const blockedBy = v.enabled ? offParent(key) : null;
+    out[key] = blockedBy ? { enabled: false, source: v.source, own: true, blockedBy, requires: requires[key] } : { ...v, ...(requires[key] ? { requires: requires[key] } : {}) };
   }
   return out;
 }
 
 export function createFlags({ settings, saveSettings = () => {}, source = () => 'production', env = process.env, fetchImpl = globalThis.fetch, log = () => {}, now = Date.now, timers = { set: setTimeout, clear: clearTimeout }, emit = () => {}, defaults = DEFAULTS, refreshEvery = REFRESH_EVERY }) {
   let relay = null;
+  let relayRequires = null;
   let lastError = null;
   const cache = () => cleanFlags(settings.flags?.cache);
-  const all = () => resolveFlags({ defaults, cache: cache(), relay, env });
+  const requires = () => ({ ...REQUIRES, ...cleanRequires(relayRequires ?? settings.flags?.requires) });
+  const all = () => resolveFlags({ defaults, cache: cache(), relay, env, requires: requires() });
   const get = (key) => all()[key]?.enabled === true;
   const state = () => ({ flags: all(), fetchedAt: settings.flags?.fetchedAt ?? null, source: (typeof source === 'function' ? source() : source) ?? 'production', error: lastError });
 
@@ -67,11 +92,13 @@ export function createFlags({ settings, saveSettings = () => {}, source = () => 
     try {
       const res = await relayFetch('/v1/flags', { method: 'GET', headers: { accept: 'application/json' } }, { env, source, fetchImpl });
       if (!res.ok) throw new Error(`The relay answered ${res.status}`);
-      const accepted = acceptFlagsBody(await res.json().catch(() => null));
+      const body = await res.json().catch(() => null);
+      const accepted = acceptFlagsBody(body);
       if (!accepted) throw new Error('The relay sent no flags.');
       relay = accepted;
+      relayRequires = cleanRequires(body.requires);
       lastError = null;
-      settings.flags = { cache: accepted, fetchedAt: now() };
+      settings.flags = { cache: accepted, requires: relayRequires, fetchedAt: now() };
       saveSettings();
       emit(state());
       return { ok: true, flags: all() };
@@ -100,7 +127,7 @@ export function createFlags({ settings, saveSettings = () => {}, source = () => 
 }
 
 // one line at startup saying where each flag's value came from; values are not secrets, keys are stable
-export const describeFlags = (flags) => Object.entries(flags).map(([k, v]) => `${k}=${v.enabled ? 'on' : 'off'} (${v.source})`).join(', ');
+export const describeFlags = (flags) => Object.entries(flags).map(([k, v]) => `${k}=${v.enabled ? 'on' : 'off'} (${v.source}${v.blockedBy ? `, needs ${v.blockedBy}` : ''})`).join(', ');
 
 export function registerFlags({ ipcMain, settings, saveSettings, source, log, emit }) {
   const flags = createFlags({ settings, saveSettings, source, log, emit });

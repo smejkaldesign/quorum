@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULTS, REFRESH_EVERY, acceptFlagsBody, cleanFlags, createFlags, describeFlags, parseEnvFlags, resolveFlags } from '../flags.js';
+import { DEFAULTS, REFRESH_EVERY, REQUIRES, acceptFlagsBody, cleanFlags, createFlags, describeFlags, parseEnvFlags, resolveFlags } from '../flags.js';
 
 const okFetch = (flags) => vi.fn(async () => ({ ok: true, json: async () => ({ flags }) }));
 const downFetch = () => vi.fn(async () => { throw new Error('fetch failed'); });
@@ -35,12 +35,37 @@ describe('precedence', () => {
     expect(resolveFlags({ defaults: {}, relay: { 'dark-mode': true } })['dark-mode']).toEqual({ enabled: true, source: 'relay' });
   });
 
-  it('starts from the built-in defaults: capture and live assist off, manual listening on', () => {
-    expect(DEFAULTS).toEqual({ 'meeting-capture': false, 'live-assist': false, 'manual-listen': true });
+  it('starts from the built-in defaults: capture and live assist off, manual listening and screen context on', () => {
+    expect(DEFAULTS).toEqual({ 'meeting-capture': false, 'live-assist': false, 'manual-listen': true, 'screen-context': true });
+    expect(REQUIRES).toEqual({ 'screen-context': 'manual-listen' });
     const { flags } = make();
     expect(flags.get('manual-listen')).toBe(true);
     expect(flags.get('meeting-capture')).toBe(false);
     expect(flags.get('unknown')).toBe(false);
+  });
+});
+
+describe('a flag that needs another', () => {
+  it('reads off while its parent is off, and names the parent', () => {
+    const r = resolveFlags({ env: { QUORUM_FLAGS: 'manual-listen=0' } });
+    expect(r['screen-context']).toEqual({ enabled: false, source: 'defaults', own: true, blockedBy: 'manual-listen', requires: 'manual-listen' });
+    expect(resolveFlags({})['screen-context']).toEqual({ enabled: true, source: 'defaults', requires: 'manual-listen' });
+  });
+
+  it('follows a chain, treats a missing parent as off, and stops on a loop', () => {
+    expect(resolveFlags({ defaults: { a: true, b: true, c: false }, requires: { a: 'b', b: 'c' } }).a.blockedBy).toBe('c');
+    expect(resolveFlags({ defaults: { a: true }, requires: { a: 'gone' } }).a).toMatchObject({ enabled: false, blockedBy: 'gone' });
+    expect(resolveFlags({ defaults: { a: true, b: true }, requires: { a: 'b', b: 'a' } }).a.enabled).toBe(true);
+  });
+
+  it('takes parents from the relay answer and keeps them for the next launch', async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => ({ flags: { 'live-assist': true, 'meeting-capture': false }, requires: { 'live-assist': 'meeting-capture' } }) }));
+    const { flags, settings } = make({ fetchImpl });
+    await flags.refresh();
+    expect(flags.get('live-assist')).toBe(false);
+    expect(settings.flags.requires).toEqual({ 'live-assist': 'meeting-capture' });
+    const next = make({ fetchImpl: downFetch(), settings });
+    expect(next.flags.all()['live-assist']).toMatchObject({ enabled: false, blockedBy: 'meeting-capture' });
   });
 });
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
-import { type Flag, filterFlags, flagKeyFrom, onDate, validateFlagForm } from '../shape';
-import { Badge, Button, Card, Chip, Dialog, Drawer, Empty, Field, Input, PageHeader, SkeletonRows, Switch, Table, TableHead, TableItem, TableRow, Textarea, useToast } from '../ui';
+import { type Flag, blockedBy, filterFlags, flagKeyFrom, onDate, validateFlagForm } from '../shape';
+import { Badge, Button, Card, Chip, Dialog, Drawer, Empty, Field, Input, PageHeader, Select, SkeletonRows, Switch, Table, TableHead, TableItem, TableRow, Textarea, useToast } from '../ui';
 
 // Feature flags: every switch installs read through the relay (GET /v1/flags, a minute behind at most). The row's
 // switch flips it at once; the drawer under a row edits the name, description and tags, which only the owner sees.
@@ -35,7 +35,7 @@ export function Flags() {
           {list === null && !error && <SkeletonRows />}
           {list !== null && error && <p className="error pad">{error}</p>}
           {list !== null && shown.length === 0 && <Empty>{list.length === 0 ? 'No flags yet. Migration 0021 seeds the notetaker flags; New flag adds one.' : 'No flag matches.'}</Empty>}
-          {shown.map((f) => <Row key={f.key} f={f} onChange={put} />)}
+          {shown.map((f) => <Row key={f.key} f={f} list={list ?? []} onChange={put} />)}
         </Table>
       </Card>
       <NewFlag open={creating} onClose={(made) => { setCreating(false); if (made) setList((l) => [made, ...(l ?? [])]); }} />
@@ -43,7 +43,8 @@ export function Flags() {
   );
 }
 
-function Row({ f, onChange }: { f: Flag; onChange: (f: Flag) => void }) {
+function Row({ f, list, onChange }: { f: Flag; list: Flag[]; onChange: (f: Flag) => void }) {
+  const blocked = blockedBy(f, list);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const toast = useToast();
@@ -58,18 +59,19 @@ function Row({ f, onChange }: { f: Flag; onChange: (f: Flag) => void }) {
   return (
     <TableItem open={open}>
       <TableRow>
-        <span className="who"><strong>{f.name}</strong><em><code className="flag-key">{f.key}</code>{f.description ? ` · ${f.description}` : ''}</em></span>
-        <span className="badges">{f.tags.map((t) => <Badge key={t} tone="off">{t}</Badge>)}{f.tags.length === 0 && <span className="muted small">No tags</span>}</span>
+        <span className="who"><strong>{f.name}</strong><em><code className="flag-key">{f.key}</code>{f.requires ? ` · needs ${f.requires}` : ''}{f.description ? ` · ${f.description}` : ''}</em></span>
+        <span className="badges">{blocked && f.enabled && <Badge tone="pending">Off: {blocked} is off</Badge>}{f.tags.map((t) => <Badge key={t} tone="off">{t}</Badge>)}{f.tags.length === 0 && <span className="muted small">No tags</span>}</span>
         <span className="when hide"><Button variant="link" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? 'Close' : 'Edit'}</Button><span className="muted small"> · {onDate(f.updatedAt)}</span></span>
         <Switch checked={f.enabled} disabled={busy} label={`${f.name} on`} onChange={flip} />
       </TableRow>
-      {open && <Drawer><EditFlag f={f} onSaved={(saved) => { onChange(saved); setOpen(false); }} onCancel={() => setOpen(false)} /></Drawer>}
+      {open && <Drawer><EditFlag f={f} list={list} onSaved={(saved) => { onChange(saved); setOpen(false); }} onCancel={() => setOpen(false)} /></Drawer>}
     </TableItem>
   );
 }
 
-function EditFlag({ f, onSaved, onCancel }: { f: Flag; onSaved: (f: Flag) => void; onCancel: () => void }) {
+function EditFlag({ f, list, onSaved, onCancel }: { f: Flag; list: Flag[]; onSaved: (f: Flag) => void; onCancel: () => void }) {
   const [name, setName] = useState(f.name);
+  const [requires, setRequires] = useState(f.requires ?? '');
   const [description, setDescription] = useState(f.description);
   const [tags, setTags] = useState(f.tags.join(', '));
   const [busy, setBusy] = useState(false);
@@ -79,7 +81,8 @@ function EditFlag({ f, onSaved, onCancel }: { f: Flag; onSaved: (f: Flag) => voi
     const v = validateFlagForm({ name, key: f.key, description, tags });
     if ('error' in v) { setError(v.error); return; }
     setBusy(true); setError('');
-    const r = await api.updateFlag(v.draft);
+    let r = await api.updateFlag(v.draft);
+    if (r.ok && (requires || null) !== f.requires) r = await api.setRequires(f.key, requires || null);
     setBusy(false);
     if (!r.ok) { setError(r.error); return; }
     toast.success(`Saved ${r.value.name}.`);
@@ -92,6 +95,7 @@ function EditFlag({ f, onSaved, onCancel }: { f: Flag; onSaved: (f: Flag) => voi
         <Field label="Key" hint="Keys do not change; the app reads this one."><Input value={f.key} readOnly /></Field>
         <Field label="Description"><Textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} /></Field>
         <Field label="Tags" hint="Comma separated, like notetaker, cloud"><Input value={tags} onChange={(e) => setTags(e.target.value)} /></Field>
+        <Field label="Needs" hint="While the parent is off, installs read this flag as off."><Select value={requires} onChange={(e) => setRequires(e.target.value)}><option value="">No parent</option>{list.filter((p) => p.key !== f.key && p.requires !== f.key).map((p) => <option key={p.key} value={p.key}>{p.name} ({p.key})</option>)}</Select></Field>
       </div>
       <div className="actions"><Button variant="primary" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button><Button variant="link" onClick={onCancel}>Cancel</Button></div>
       {error && <p className="error">{error}</p>}

@@ -75,6 +75,7 @@ export const api = {
   setFlag: (key: string, enabled: boolean): Promise<Result<Flag>> => rpc('platform_flag_set', { key, enabled }, (d) => shapeFlag((d ?? {}) as Record<string, unknown>), 'The flag could not be changed.'),
   createFlag: (draft: { key: string; name: string; description: string; tags: string[] }): Promise<Result<Flag>> =>
     rpc('platform_flag_create', { key: draft.key, name: draft.name, description: draft.description, tags: draft.tags }, (d) => shapeFlag((d ?? {}) as Record<string, unknown>), 'The flag could not be created.'),
+  setRequires: (key: string, requires: string | null): Promise<Result<Flag>> => rpc('platform_flag_requires', { key, requires }, (d) => shapeFlag((d ?? {}) as Record<string, unknown>), 'The parent flag could not be saved.'),
   updateFlag: (draft: { key: string; name: string; description: string; tags: string[] }): Promise<Result<Flag>> =>
     rpc('platform_flag_update', { key: draft.key, name: draft.name, description: draft.description, tags: draft.tags }, (d) => shapeFlag((d ?? {}) as Record<string, unknown>), 'The flag could not be saved.'),
   audit: async (limit = 100): Promise<Result<AuditRow[]>> => {

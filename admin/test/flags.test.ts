@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { auditLine, filterFlags, flagKeyFrom, parseTags, shapeFlag, validateFlagForm } from '../src/shape';
+import { auditLine, blockedBy, filterFlags, flagKeyFrom, parseTags, shapeFlag, validateFlagForm } from '../src/shape';
 
 const row = (over: Record<string, unknown> = {}) => ({ id: 'f1', key: 'meeting-capture', name: 'Meeting capture', description: 'Detects calls', enabled: false, tags: ['notetaker'], created_at: '2026-11-12T00:00:00Z', updated_at: '2026-11-12T01:00:00Z', ...over });
 
 describe('a flag row', () => {
   it('shapes the owner RPC row, defaulting what is missing', () => {
-    expect(shapeFlag(row())).toEqual({ id: 'f1', key: 'meeting-capture', name: 'Meeting capture', description: 'Detects calls', enabled: false, tags: ['notetaker'], createdAt: '2026-11-12T00:00:00Z', updatedAt: '2026-11-12T01:00:00Z' });
+    expect(shapeFlag(row())).toEqual({ id: 'f1', key: 'meeting-capture', name: 'Meeting capture', description: 'Detects calls', enabled: false, tags: ['notetaker'], requires: null, createdAt: '2026-11-12T00:00:00Z', updatedAt: '2026-11-12T01:00:00Z' });
     expect(shapeFlag({ id: 'x', key: 'k', created_at: 't' })).toMatchObject({ name: 'k', description: '', enabled: false, tags: [], updatedAt: 't' });
     expect(shapeFlag(row({ enabled: 'true', tags: 'notetaker' }))).toMatchObject({ enabled: false, tags: [] });
   });
@@ -47,6 +47,18 @@ describe('the list', () => {
   });
 });
 
+describe('a flag that needs another', () => {
+  it('is blocked while its parent is off or missing', () => {
+    const parent = shapeFlag(row({ key: 'manual-listen', enabled: false }));
+    const child = shapeFlag(row({ id: 'c', key: 'screen-context', enabled: true, requires: 'manual-listen' }));
+    expect(child.requires).toBe('manual-listen');
+    expect(blockedBy(child, [parent, child])).toBe('manual-listen');
+    expect(blockedBy(child, [{ ...parent, enabled: true }, child])).toBeNull();
+    expect(blockedBy(child, [child])).toBe('manual-listen');
+    expect(blockedBy(parent, [parent])).toBeNull();
+  });
+});
+
 describe('the audit line', () => {
   it('reads the flag actions', () => {
     const base = { id: 'a', actor: null, targetWorkspace: null, createdAt: 't' };
@@ -54,5 +66,6 @@ describe('the audit line', () => {
     expect(auditLine({ ...base, action: 'flag_set', detail: { key: 'live-assist', enabled: false } })).toBe('Turned the live-assist flag off');
     expect(auditLine({ ...base, action: 'flag_create', detail: { key: 'dark-mode' } })).toBe('Created the dark-mode flag');
     expect(auditLine({ ...base, action: 'flag_update', detail: { key: 'dark-mode' } })).toBe('Edited the dark-mode flag');
+    expect(auditLine({ ...base, action: 'flag_requires', detail: { key: 'screen-context', requires: 'manual-listen' } })).toBe('Made the screen-context flag need manual-listen');
   });
 });

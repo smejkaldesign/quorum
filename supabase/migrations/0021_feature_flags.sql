@@ -2,9 +2,9 @@
 -- Feature flags: one table of named switches the platform owner flips from the admin app. Every install, both
 -- editions, reads the public view of it through the relay (GET /v1/flags: key and enabled only) on launch and every
 -- hour, so a feature can be put away or brought back without a release. The rows themselves are owner-only; the
--- public function hides everything but the switch. The three seeded keys hold the notetaker features of 0.3.0 so the
--- code stays while the product leans on connected notetakers: meeting capture and live assistance start off, the
--- manual Start listening session stays on.
+-- public function hides everything but the switch and the parent it needs. The seeded keys hold the notetaker
+-- features of 0.3.0 so the code stays while the product leans on connected notetakers: meeting capture and live
+-- assistance start off; manual listening and screen context (which needs it) stay on.
 create table public.feature_flags (
   id uuid primary key default gen_random_uuid(),
   key text not null unique check (key ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'),
@@ -12,6 +12,8 @@ create table public.feature_flags (
   description text not null default '',
   enabled boolean not null default false,
   tags text[] not null default '{}',
+  -- the key of a parent flag this one needs: while the parent is off, an install reads this one as off too
+  requires text references public.feature_flags (key) on update cascade on delete set null check (requires is null or requires <> key),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -87,16 +89,36 @@ end $$;
 revoke all on function public.platform_flag_update(text, text, text, text[]) from public, anon;
 grant execute on function public.platform_flag_update(text, text, text, text[]) to authenticated, service_role;
 
--- what every install may read: the switch per key, nothing else
-create or replace function public.public_flags() returns table (key text, enabled boolean)
+-- the parent a flag needs, set or cleared by the owner; a flag cannot need itself or one that needs it back
+create or replace function public.platform_flag_requires(key text, requires text) returns public.feature_flags
+language plpgsql security definer set search_path = public as $$
+declare f public.feature_flags; parent text := nullif(trim(coalesce(platform_flag_requires.requires, '')), '');
+begin
+  if not public.is_platform_owner() then raise exception 'Only the platform owner can do that'; end if;
+  if parent is not null and not exists (select 1 from public.feature_flags ff where ff.key = parent) then raise exception 'That parent flag does not exist'; end if;
+  if parent = platform_flag_requires.key then raise exception 'A flag cannot need itself'; end if;
+  if parent is not null and exists (select 1 from public.feature_flags ff where ff.key = parent and ff.requires = platform_flag_requires.key) then raise exception 'That parent already needs this flag'; end if;
+  update public.feature_flags ff set requires = parent, updated_at = now() where ff.key = platform_flag_requires.key returning * into f;
+  if not found then raise exception 'That flag does not exist'; end if;
+  insert into public.platform_audit (actor, action, detail) values (auth.uid(), 'flag_requires', jsonb_build_object('key', f.key, 'requires', f.requires));
+  return f;
+end $$;
+revoke all on function public.platform_flag_requires(text, text) from public, anon;
+grant execute on function public.platform_flag_requires(text, text) to authenticated, service_role;
+
+-- what every install may read: the switch per key and the parent it needs, nothing else
+create or replace function public.public_flags() returns table (key text, enabled boolean, requires text)
 language sql stable security definer set search_path = public as $$
-  select ff.key, ff.enabled from public.feature_flags ff order by ff.key;
+  select ff.key, ff.enabled, ff.requires from public.feature_flags ff order by ff.key;
 $$;
 revoke all on function public.public_flags() from public;
 grant execute on function public.public_flags() to anon, authenticated, service_role;
 
 insert into public.feature_flags (key, name, description, enabled, tags) values
   ('meeting-capture', 'Meeting capture', 'Quorum detects Zoom, Google Meet and Teams calls and offers to listen', false, '{notetaker}'),
-  ('live-assist', 'Live assistance', 'Suggestions, the running summary, screen context and speaker naming during a session', false, '{notetaker}'),
-  ('manual-listen', 'Manual listening', 'Start listening, dictation and the note a session writes', true, '{notetaker}')
+  ('live-assist', 'Live assistance', 'Suggestion cards and speaker naming during a session', false, '{notetaker}'),
+  ('manual-listen', 'Manual listening', 'Start listening, dictation, the live transcript, the running summary and the note a session writes', true, '{notetaker,listening}')
+on conflict (key) do nothing;
+insert into public.feature_flags (key, name, description, enabled, tags, requires) values
+  ('screen-context', 'Screen context', 'Screen vocabulary that feeds the running summary while listening. Needs manual-listen.', true, '{listening}', 'manual-listen')
 on conflict (key) do nothing;

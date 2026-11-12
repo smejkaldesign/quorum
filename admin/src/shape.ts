@@ -20,7 +20,7 @@ export type User = { userId: string; email: string; createdAt: string; lastSignI
 export type Overview = { users: number; workspaces: number; paidWorkspaces: number; members: number; codesOpen: number; requestsPending: number; managedHoursMonth: number; monthStart: string };
 export type AuditRow = { id: string; actor: string | null; action: string; targetWorkspace: string | null; detail: Record<string, unknown>; createdAt: string };
 // a feature flag (migration 0021): one switch every install reads through the relay, plus the owner's own notes on it
-export type Flag = { id: string; key: string; name: string; description: string; enabled: boolean; tags: string[]; createdAt: string; updatedAt: string };
+export type Flag = { id: string; key: string; name: string; description: string; enabled: boolean; tags: string[]; requires: string | null; createdAt: string; updatedAt: string };
 
 export const PLANS: readonly Plan[] = ['free', 'cloud', 'internal', 'paid'];
 export const PLAN_LABEL: Record<Plan, string> = { free: 'Free', cloud: 'Cloud', internal: 'Internal', paid: 'Paid' };
@@ -93,7 +93,7 @@ export const shapeOverview = (o: Record<string, unknown>): Overview => ({
 });
 export const shapeFlag = (f: Record<string, unknown>): Flag => ({
   id: String(f.id), key: String(f.key), name: String(f.name ?? f.key), description: String(f.description ?? ''), enabled: f.enabled === true,
-  tags: Array.isArray(f.tags) ? f.tags.map(String).filter(Boolean) : [], createdAt: String(f.created_at), updatedAt: String(f.updated_at ?? f.created_at),
+  tags: Array.isArray(f.tags) ? f.tags.map(String).filter(Boolean) : [], requires: typeof f.requires === 'string' && f.requires ? f.requires : null, createdAt: String(f.created_at), updatedAt: String(f.updated_at ?? f.created_at),
 });
 // the key a name suggests, in the shape the database accepts: lowercase letters, digits and single hyphens
 export const FLAG_KEY = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
@@ -117,6 +117,8 @@ export function validateFlagForm(input: { name: string; key: string; description
   if (tags.length > TAGS_MAX) return { error: `A flag has at most ${TAGS_MAX} tags.` };
   return { draft: { name, key, description, tags } };
 }
+// a flag whose parent is off reads off on every install, whatever its own switch says
+export const blockedBy = (f: Flag, list: Flag[]): string | null => (f.requires && list.find((p) => p.key === f.requires)?.enabled !== true ? f.requires : null);
 // the list the page shows: a search over name, key and tags, and the Enabled or Disabled filter
 export const filterFlags = (list: Flag[], q: string, status: 'all' | 'enabled' | 'disabled'): Flag[] => {
   const needle = q.trim().toLowerCase();
@@ -161,6 +163,7 @@ export function auditLine(a: AuditRow): string {
     case 'flag_set': return `Turned the ${String(d.key ?? 'flag')} flag ${d.enabled === true ? 'on' : 'off'}`;
     case 'flag_create': return `Created the ${String(d.key ?? 'flag')} flag`;
     case 'flag_update': return `Edited the ${String(d.key ?? 'flag')} flag`;
+    case 'flag_requires': return d.requires ? `Made the ${String(d.key ?? 'flag')} flag need ${String(d.requires)}` : `The ${String(d.key ?? 'flag')} flag no longer needs another`;
     case 'set_plan': {
       const after = (d.after ?? {}) as Record<string, unknown>; const before = (d.before ?? {}) as Record<string, unknown>;
       return `Set the plan to ${PLAN_LABEL[after.plan as Plan] ?? after.plan ?? '?'} with ${num(after.seats_included)} seats included (was ${PLAN_LABEL[before.plan as Plan] ?? before.plan ?? '?'}, ${num(before.seats_included)})`;

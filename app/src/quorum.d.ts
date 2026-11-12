@@ -93,7 +93,8 @@ export type BetaState = { gate: boolean; on: boolean; code: string | null; plan:
 // feature flags (app/flags.js): each key with its value and where the value came from, in order of precedence env,
 // relay, cache (the last relay answer, from an earlier run), defaults (built into the app)
 export type FlagSource = 'env' | 'relay' | 'cache' | 'defaults';
-export type FlagsState = { flags: Record<string, { enabled: boolean; source: FlagSource }>; fetchedAt: number | null; source: string; error?: string | null; ok?: boolean };
+// enabled is the effective value; blockedBy names the parent flag (requires) that is off while the flag's own switch is on
+export type FlagsState = { flags: Record<string, { enabled: boolean; source: FlagSource; requires?: string; blockedBy?: string; own?: boolean }>; fetchedAt: number | null; source: string; error?: string | null; ok?: boolean };
 // the card on file for the workspace's subscription, read through the relay; null when none is stored yet
 export type BillingCard = { brand: string; last4: string; expMonth: number; expYear: number } | null;
 export type AccountInvite = { inviteId: string; workspaceId: string; workspaceName: string; role: Role; invitedByEmail: string | null; expiresAt: string };
