@@ -2,7 +2,7 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-const SKIP = new Set(['node_modules', '.git', '.obsidian', '.trash', '.claude']);
+export const SKIP = new Set(['node_modules', '.git', '.obsidian', '.trash', '.claude']);
 
 export function walk(dir, rel, isExcluded, out) {
   for (const name of readdirSync(dir)) {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MeetingMeta, Notes, NotesDraft } from './quorum';
-import { Avatar, SpeakerName, similarCount, type SpeakerTurn } from './Speaker';
+import { Avatar, SpeakerName, similarCounts, type SpeakerTurn } from './Speaker';
 import mark from '../assets/quorum-mark.png';
 import { Markdown } from './Markdown';
 import { IconArrowUp, IconCalendar, IconClock, IconFolder, IconLogs, IconNotes, IconPeople } from './icons';
@@ -22,6 +22,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
   const [saving, setSaving] = useState(false);
   const [hot, setHot] = useState<number[]>([]);
   const end = useRef<HTMLDivElement>(null);
+  const similar = similarCounts(transcript);
   const streaming = summarizing && !notes;
   const shown = notes ?? draft?.partial ?? null;
   // while the notes stream, the page is the real layout with placeholders where text has not arrived yet
@@ -104,7 +105,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
               <section className="transcript end-transcript">
                 {transcript.length ? transcript.map((t) => (
                   <p key={t.id} id={`turn-${t.id}`} className={`${t.channel}${hot.includes(t.id) ? ' hot' : ''}`}>
-                    <span className="spk"><Avatar name={t.channel === 'me' ? me?.name || 'You' : t.speaker ?? t.who} photo={t.channel === 'me' ? me?.photo ?? null : null} />{t.channel === 'them' ? <SpeakerName turn={t} fallback={t.who} participants={participants} similar={similarCount(transcript, t)} onPick={(name, similar) => onSpeaker(t.id, name, similar)} /> : <span>{t.who}</span>}</span>
+                    <span className="spk"><Avatar name={t.channel === 'me' ? me?.name || 'You' : t.speaker ?? t.who} photo={t.channel === 'me' ? me?.photo ?? null : null} />{t.channel === 'them' ? <SpeakerName turn={t} fallback={t.who} participants={participants} similar={similar(t)} onPick={(name, similar) => onSpeaker(t.id, name, similar)} /> : <span>{t.who}</span>}</span>
                     <div>{t.text}</div>
                   </p>
                 )) : <p className="muted">Nothing was transcribed.</p>}

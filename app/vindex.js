@@ -4,10 +4,12 @@
 import { readFileSync, statSync, watch } from 'node:fs';
 import path from 'node:path';
 import { createResolver, parseNote } from './linkparse.js';
-import { graphConfig, noteDate, walk } from './vault.js';
+import { SKIP, graphConfig, noteDate, walk } from './vault.js';
 import { clusterColors } from './clusters.js';
 
-const IGNORED = /(^|\/)(\.git|\.obsidian|\.trash|\.claude|node_modules)(\/|$)/;
+// the folders walk() skips, as a test on a watcher path (the same list, so the two can never disagree)
+const IGNORED = new RegExp(`(^|/)(${[...SKIP].map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(/|$)`);
+const BATCH = 200;
 
 // isExcludedPath keeps a file out by its path; isDeniedText keeps a note out by what its frontmatter says (a denied
 // key); isExcludedText flags and redacts opted-out lines but keeps the note
@@ -17,8 +19,13 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   let forward = new Map(); // rel -> [{ to, link }]
   let backward = new Map(); // rel -> [{ from, link }]
   let unresolved = new Map(); // rel -> [link]
+  let dirs = new Set(); // every folder rel that holds an indexed note, so a vanished path can be told from a file
   let watcher = null;
   let timer = null;
+  let stopped = false;
+
+  const remember = (rel) => { let i = rel.indexOf('/'); while (i > 0) { dirs.add(rel.slice(0, i)); i = rel.indexOf('/', i + 1); } };
+  const rememberAll = () => { dirs = new Set(); for (const rel of files.keys()) remember(rel); };
 
   // opted-out text never enters the index: lines that name one are replaced before parsing,
   // and the note is flagged so the redaction queue can find it
@@ -69,24 +76,74 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
       if (!f || f.mtime !== st.mtimeMs || f.size !== st.size) { load(rel, st); changed.push(rel); }
     }
     for (const rel of [...files.keys()]) if (!seen.has(rel)) { files.delete(rel); changed.push(rel); }
-    if (changed.length) relink();
+    if (changed.length) { relink(); rememberAll(); }
     return changed;
   }
 
-  function start() {
+  // the paths the watcher named: each file is re-read or dropped on its own, and only a folder appearing or going
+  // falls back to the full walk. A dot folder or an ignored one never costs anything (walk skips them too)
+  const skipped = (rel) => rel.split('/').some((seg) => seg.startsWith('.') || SKIP.has(seg));
+  function syncPaths(rels) {
+    const changed = [];
+    let everything = false;
+    for (const rel of rels) {
+      if (!rel || skipped(rel)) continue;
+      let st = null;
+      try { st = statSync(path.join(vault, rel)); } catch {}
+      if (st?.isDirectory()) { everything = true; break; }
+      if (!st) {
+        if (rel.endsWith('.md')) { if (files.delete(rel)) changed.push(rel); }
+        else if (dirs.has(rel)) { everything = true; break; }
+        continue;
+      }
+      if (!rel.endsWith('.md')) continue;
+      if (isExcludedPath(rel)) { if (files.delete(rel)) changed.push(rel); continue; }
+      const f = files.get(rel);
+      if (!f || f.mtime !== st.mtimeMs || f.size !== st.size) { load(rel, st); changed.push(rel); }
+    }
+    // a folder moved: the walk finds the rest and relinks, so the files read above are reported with it
+    if (everything) return [...new Set([...changed, ...sync()])];
+    if (changed.length) { relink(); rememberAll(); }
+    return changed;
+  }
+
+  // the first read of the vault, in batches that let IPC through between them, so a large vault never holds the
+  // window's first questions. Answers during the build see what is loaded so far; the watcher starts once it is done
+  async function start() {
     const t0 = Date.now();
-    sync();
+    const rels = walk(vault, '', isExcludedPath, []);
+    for (let i = 0; i < rels.length; i += BATCH) {
+      for (const rel of rels.slice(i, i + BATCH)) {
+        let st;
+        try { st = statSync(path.join(vault, rel)); } catch { continue; }
+        load(rel, st);
+      }
+      if (i + BATCH < rels.length) await new Promise((r) => setImmediate(r));
+      if (stopped) return;
+    }
+    relink();
+    rememberAll();
     log(`indexed ${files.size} notes in ${Date.now() - t0}ms`);
+    if (files.size) onChange([...files.keys()]);
     try {
+      const pending = new Set();
+      let everything = false;
       watcher = watch(vault, { recursive: true }, (_ev, name) => {
         if (name && IGNORED.test(String(name))) return;
+        if (name) pending.add(String(name).split(path.sep).join('/')); else everything = true;
         clearTimeout(timer);
-        timer = setTimeout(() => { const changed = sync(); if (changed.length) onChange(changed); }, 250);
+        timer = setTimeout(() => {
+          const rels = [...pending];
+          pending.clear();
+          const changed = everything ? sync() : syncPaths(rels);
+          everything = false;
+          if (changed.length) onChange(changed);
+        }, 250);
       });
     } catch (err) { log('vault watch failed', String(err)); }
   }
 
-  function stop() { watcher?.close(); clearTimeout(timer); }
+  function stop() { stopped = true; watcher?.close(); clearTimeout(timer); }
 
   const titleOf = (rel) => files.get(rel)?.note.title ?? path.basename(rel, '.md');
   const lineOf = (rel, n) => (files.get(rel)?.text.split('\n')[n] ?? '').trim();
@@ -190,7 +247,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   function rebuild() { files.clear(); forward = new Map(); backward = new Map(); unresolved = new Map(); const changed = sync(); if (changed.length) onChange?.(changed); return changed; }
 
   return {
-    start, stop, sync, rebuild, graph, backlinks, outgoing, search, resolve: (target, from) => resolve(target, from),
+    start, stop, sync, syncPaths, rebuild, graph, backlinks, outgoing, search, resolve: (target, from) => resolve(target, from),
     note: (rel) => files.get(rel)?.note ?? null,
     linkHealth,
     aliasesOf,

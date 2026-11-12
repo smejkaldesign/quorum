@@ -97,13 +97,24 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   // Claude (or anything else) edited the vault: refresh the tree and graph in place, and the open note if it changed
   const previewRel = useRef('');
   previewRel.current = preview?.rel ?? '';
-  useEffect(() => window.quorum.onVaultChanged((rels) => {
-    load();
-    const open = previewRel.current;
-    if (open && rels.includes(open)) {
-      window.quorum.vaultNote(open).then((n) => { if (n) setPreview((pv) => (pv?.rel === open ? { rel: open, ...n } : pv)); else setPreview(null); });
-    }
-  }), [load]);
+  // a burst of writes (a sync pull, the keeper filing a meeting) reloads the tree and graph once, after it settles
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const touched = new Set<string>();
+    const off = window.quorum.onVaultChanged((rels) => {
+      for (const r of rels) touched.add(r);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        load();
+        const open = previewRel.current;
+        const openChanged = !!open && touched.has(open);
+        touched.clear();
+        if (openChanged) window.quorum.vaultNote(open).then((n) => { if (n) setPreview((pv) => (pv?.rel === open ? { rel: open, ...n } : pv)); else setPreview(null); });
+      }, 400);
+    });
+    return () => { off(); if (timer) clearTimeout(timer); };
+  }, [load]);
   // reopen the note that was showing before a reload, then keep tracking whichever one is open
   useEffect(() => { if (openRel) openNote(openRel); }, []);
   useEffect(() => { setOpenRel(preview?.rel ?? ''); }, [preview?.rel, setOpenRel]);
