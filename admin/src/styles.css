@@ -116,18 +116,19 @@ a.metric:hover { background: var(--container-tile); }
 .metric-value.hot { color: var(--brand-soft); }
 .metric-sub { color: var(--muted); font-style: normal; font-size: 12px; }
 
-/* buttons: the desktop's .pill, .danger-pill and .link-btn */
-.pill { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--text); font-size: 14px; font-weight: 500; white-space: nowrap; transition: border-color 120ms ease; }
-.pill:hover:not(:disabled) { color: var(--text); border-color: #fff; }
+/* buttons: the desktop's .pill, .danger-pill and .link-btn. Hover never recolors: an outlined pill brings its border
+   to full color, a filled or ghost pill and a link fade to 80% */
+.pill { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--text); font-size: 14px; font-weight: 500; white-space: nowrap; transition: border-color 120ms ease, opacity 120ms ease; }
+.pill:hover:not(:disabled) { border-color: var(--text); }
 .pill.primary { background: #f2f2f2; border-color: #f2f2f2; color: #111; }
-.pill.primary:hover:not(:disabled) { background: #fff; border-color: #fff; color: #111; }
+.pill.primary:hover:not(:disabled) { border-color: #f2f2f2; opacity: 0.8; }
 .pill.ghost { border-color: transparent; }
-.pill.ghost:hover:not(:disabled) { border-color: transparent; background: rgba(255, 255, 255, 0.06); }
-.pill.danger { color: var(--danger); }
-.pill.danger:hover:not(:disabled) { color: var(--danger); border-color: rgba(240, 74, 74, 0.5); background: var(--danger-bg); }
-.link-btn { color: var(--text); text-decoration: underline; text-underline-offset: 3px; font-size: 14px; padding: 0; white-space: nowrap; }
+.pill.ghost:hover:not(:disabled) { border-color: transparent; opacity: 0.8; }
+.pill.danger { color: var(--danger); border-color: rgba(240, 74, 74, 0.4); }
+.pill.danger:hover:not(:disabled) { border-color: var(--danger); }
+.link-btn { color: var(--text); text-decoration: underline; text-underline-offset: 3px; font-size: 14px; padding: 0; white-space: nowrap; transition: opacity 120ms ease; }
 .link-btn.danger { color: var(--danger); }
-.link-btn:hover:not(:disabled) { color: #fff; }
+.link-btn:hover:not(:disabled) { opacity: 0.8; }
 .chip { height: 30px; padding: 0 12px; border-radius: 9px; color: var(--muted); font-size: 14px; }
 .chip:hover { color: var(--text); }
 .chip.on { background: var(--card-2); color: var(--text); }
