@@ -1,6 +1,6 @@
 // Quorum Cloud transcription relay. Health at /healthz, audio in over the websocket at /v1/transcribe, notes at
 // POST /v1/notes, billing under /v1/billing, platform connections (OAuth bounce, token exchange, webhooks) under
-// /v1/connect. Audio is forwarded to the speech engine and never stored; logs carry durations and engine names only.
+// /v1/connect, and the beta gate under /v1/beta. Audio is forwarded to the speech engine and never stored; logs carry durations and engine names only.
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
 import { makeClients } from './lib/auth.js';
@@ -13,6 +13,7 @@ import { handleCheckout, handlePacks, handlePortal, handleWebhook } from './bill
 import { handleConnect } from './connect.js';
 import { corsHeaders, handleAccessRequest, handleSendCode } from './platform.js';
 import { passkeyRoutes } from './passkeys.js';
+import { handleBetaCheck, handleBetaHeartbeat } from './beta.js';
 
 checkConfig();
 const clients = makeClients();
@@ -26,6 +27,8 @@ const server = createServer((req, res) => {
   if (pathname === '/v1/notes') return handleNotes(req, res, deps);
   if (pathname === '/v1/access-requests') return handleAccessRequest(req, res, deps);
   if (pathname === '/v1/platform/send-code') return handleSendCode(req, res, deps);
+  if (pathname === '/v1/beta/check') return handleBetaCheck(req, res, deps);
+  if (pathname === '/v1/beta/heartbeat') return handleBetaHeartbeat(req, res, deps);
   if (passkeys[pathname]) return passkeys[pathname](req, res);
   if (pathname === '/v1/billing/checkout') return handleCheckout(req, res, deps);
   if (pathname === '/v1/billing/portal') return handlePortal(req, res, deps);

@@ -16,6 +16,8 @@
   <a href="https://quorum.watch">Quorum Cloud</a>
 </p>
 
+> **Beta.** Quorum is in a closed beta. Every install, the open-source edition included, asks for an access code on first launch and does nothing until it has one. Request a code at [quorum.watch](https://quorum.watch); it arrives by email once your signup is approved. The open-source edition stays Apache-2.0; the code gate is a setting for the beta period and goes away when the beta does.
+
 <p align="center">
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-2f6feb"></a>
   <a href="https://github.com/smejkaldesign/quorum/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/smejkaldesign/quorum/actions/workflows/ci.yml/badge.svg"></a>

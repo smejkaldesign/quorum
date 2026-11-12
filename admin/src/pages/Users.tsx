@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
-import { type User, activityLabel, onDate } from '../shape';
-import { Badge, Card, Empty, Input, PageHeader, SkeletonRows, Table, TableHead, TableRow } from '../ui';
+import { CODE_PLAN_LABEL, type Install, type User, activityLabel, installActive, onDate } from '../shape';
+import { Badge, Card, Empty, Input, PageHeader, SectionTitle, SkeletonRows, Table, TableHead, TableRow } from '../ui';
 
-// every account on this Quorum, newest first: when it signed up, when it was last seen, how many workspaces it is in
+// every account on this Quorum, newest first: when it signed up, when it was last seen, how many workspaces it is in.
+// Below it, every install that checked in with an access code during the beta, both editions, newest heartbeat first
 export function Users() {
   const [list, setList] = useState<User[] | null>(null);
+  const [installs, setInstalls] = useState<Install[] | null>(null);
   const [error, setError] = useState('');
   const [q, setQ] = useState('');
-  useEffect(() => { api.users().then((r) => (r.ok ? setList(r.value) : setError(r.error))); }, []);
+  useEffect(() => { api.users().then((r) => (r.ok ? setList(r.value) : setError(r.error))); api.installs().then((r) => (r.ok ? setInstalls(r.value) : setError(r.error))); }, []);
+  const shownInstalls = (installs ?? []).filter((i) => !q.trim() || (i.email ?? '').toLowerCase().includes(q.trim().toLowerCase()));
   const shown = (list ?? []).filter((u) => !q.trim() || u.email.toLowerCase().includes(q.trim().toLowerCase()));
   return (
     <>
@@ -27,6 +30,24 @@ export function Users() {
             </TableRow>
           ))}
           {list && !shown.length && <Empty>No accounts match.</Empty>}
+        </Table>
+      </Card>
+      <SectionTitle>{installs ? `${installs.length} ${installs.length === 1 ? 'install' : 'installs'}` : 'Installs'}</SectionTitle>
+      <Card list>
+        <Table columns="minmax(200px, 2fr) 90px 90px 90px 120px 150px">
+          <TableHead><span>Who</span><span>Edition</span><span>Version</span><span>Plan</span><span>First seen</span><span>Last seen</span></TableHead>
+          {installs === null && <SkeletonRows />}
+          {shownInstalls.map((i) => (
+            <TableRow key={i.id}>
+              <span className="who inline"><strong>{i.email ?? 'no email'}</strong>{installActive(i.lastSeen) && <Badge tone="good">Active</Badge>}</span>
+              <span>{i.edition === 'cloud' ? 'Cloud' : 'Open source'}</span>
+              <span className="hide">{i.appVersion ?? '?'}</span>
+              <span><Badge tone={i.plan === 'cloud' ? 'good' : 'off'}>{CODE_PLAN_LABEL[i.plan]}</Badge></span>
+              <span className="hide">{onDate(i.firstSeen)}</span>
+              <span>{activityLabel(i.lastSeen)}</span>
+            </TableRow>
+          ))}
+          {installs && !shownInstalls.length && <Empty>{installs.length ? 'No installs match.' : 'No install has checked in yet.'}</Empty>}
         </Table>
       </Card>
     </>
