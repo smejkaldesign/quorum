@@ -9,13 +9,6 @@ import { IconCheck, IconClose, IconFolder, IconLock, IconMore, IconPlus, IconSea
 // the person's own rules with an Add sheet and a live test. The organization or team rules an admin set, locked.
 // Then the recent denials so the guards are seen working. Every row says what it reaches once it is on.
 const KIND_LABEL: Record<string, string> = { path: 'Folder', frontmatter: 'Frontmatter key', secret: 'File name pattern', term: 'Term', hook: 'Hook from your Agent OS' };
-const REACH: Record<string, string> = {
-  path: 'Reads, search, sync and sharing',
-  frontmatter: 'Reads, search, sync and sharing',
-  secret: 'Reads and search',
-  term: 'Transcripts, answers and the MCP server',
-  hook: 'Reads made through Claude Code; recorded only with other runners',
-};
 const ORIGIN: Record<string, string> = { hook: 'Hook', terms: 'Opt-out list', 'claude-md': 'CLAUDE.md', frontmatter: 'Frontmatter', obsidian: 'Obsidian' };
 const KIND_HINT: Record<string, string> = {
   path: 'A folder, relative to your Agent OS. Nothing in it is read or searched. Several, separated by commas.',
@@ -46,8 +39,8 @@ export function GuardrailsPage() {
     const Icon = KIND_ICON[r.kind] ?? IconShield;
     return (
       <Row key={r.id} icon={<Icon width={18} height={18} className={r.enabled ? 'ok' : undefined} />}
-        title={<>{r.label}{r.source === 'workspace' && <em className="stub">Organization or team</em>}{r.source === 'agent-os' && r.origin && <em className="stub">{ORIGIN[r.origin] ?? r.origin}</em>}{r.mixed && <em className="stub warn">Read it first</em>}</>}
-        desc={<>{r.what ?? `${KIND_LABEL[r.kind]} · ${valueOf(r)}`}<span className="guard-reach">{REACH[r.kind]}</span></>}>
+        title={<>{r.label}{r.source === 'workspace' && <em className="stub">Organization or team</em>}{r.source === 'agent-os' && r.origin && <em className="stub">{ORIGIN[r.origin] ?? r.origin}</em>}{r.stale && <em className="stub warn">No longer found in your Agent OS</em>}{r.mixed && <em className="stub warn">Read it first</em>}</>}
+        desc={<>{r.what ?? `${KIND_LABEL[r.kind]} · ${valueOf(r)}`}{r.stale && ' Still on until you leave it out.'}{r.reach && <span className="guard-reach">{r.reach}</span>}</>}>
         {r.source === 'agent-os' && r.decision === null ? (
           <span className="mem-actions">
             <span className="new-badge">New</span>
@@ -127,7 +120,8 @@ export function GuardrailsPage() {
 const scanNote = (st: GuardrailsState) => {
   const n = st.scanned?.notes ?? 0;
   const when = st.scanned?.at ? new Date(st.scanned.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : null;
-  return `Reviewed its CLAUDE.md, hooks, Obsidian settings and the frontmatter of ${n} ${n === 1 ? 'note' : 'notes'}${when ? ` at ${when}` : ''}.`;
+  const notes = st.scanned?.truncated ? `the first ${n} notes, which is where the review stopped` : `${n} ${n === 1 ? 'note' : 'notes'}`;
+  return `Reviewed its CLAUDE.md, hooks, Obsidian settings and the frontmatter of ${notes}${when ? ` at ${when}` : ''}.`;
 };
 
 function RuleMenu({ onRemove }: { onRemove: () => void }) {

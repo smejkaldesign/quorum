@@ -218,7 +218,7 @@ const sample: Partial<Bridge> = {
       { id: 'personal:1', kind: 'path', label: 'Board materials', value: 'Board', source: 'personal', scope: 'individual', enabled: true, locked: false },
       { id: 'ws:1', kind: 'frontmatter', label: 'Legal hold', value: 'legal_hold', source: 'workspace', scope: 'organization', enabled: true, locked: true },
     ],
-    scanned: { notes: 212, at: Date.now() - 60000 },
+    scanned: { notes: 212, at: Date.now() - 60000, truncated: false },
     skipped: [{ name: 'vault-reindex.sh', reason: 'does something else (memory, sessions, formatting or notifications), not a guard' }, { name: 'session-end.sh', reason: 'no sign that it guards reads or output' }],
     denials: [{ t: at(0, 8, 41).toISOString(), tool: 'Read', path: `${VAULT}/Board/2026-q4-pack.md`, reason: 'Quorum read guard: Board/ is private to this Agent OS.' }, { t: at(-1, 15, 12).toISOString(), tool: 'Grep', path: `${VAULT}/People/compensation.md`, reason: 'Quorum read guard: this note is marked confidential in its frontmatter.' }],
     summary: { on: 7, toReview: 2, denyDirs: 3, terms: 14 },

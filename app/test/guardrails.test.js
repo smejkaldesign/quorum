@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BUILT_IN, classifyHook, claudeMdRules, compile, createGuardrails, discover, discoverConventions, effective, frontmatterKeys, obsidianExcluded, scopeOf, wouldBlock } from '../guardrails.js';
+import { BUILT_IN, ENFORCEMENT, classifyHook, claudeMdRules, compile, createGuardrails, discover, discoverConventions, discoverQuick, effective, frontmatterKeys, frontmatterPairs, obsidianExcluded, scopeOf, wouldBlock } from '../guardrails.js';
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'guardrails-vault');
 
@@ -41,24 +41,29 @@ describe('classifyHook', () => {
 });
 
 describe('discover', () => {
-  it('offers the two relevant hooks, the opt-out list and the one marker key, and names what it skipped and why', () => {
+  it('offers the two relevant hooks, the opt-out list and the one marker key, and names what it skipped and why', async () => {
     const root = vault();
-    const d = discover(root);
-    expect(d.candidates.map((c) => c.id)).toEqual(['agent-os:hook:opted-out-guard.py', 'agent-os:hook:output-secret-tripwire.py', 'agent-os:terms:scripts/embed-bench/excluded.txt', 'agent-os:frontmatter:visibility']);
+    const q = discoverQuick(root);
+    expect(q.candidates.map((c) => c.id)).toEqual(['agent-os:hook:opted-out-guard.py', 'agent-os:hook:output-secret-tripwire.py', 'agent-os:terms:scripts/embed-bench/excluded.txt']);
+    const d = await discover(root);
+    expect(d.candidates.map((c) => c.id)).toEqual([...q.candidates.map((c) => c.id), 'agent-os:frontmatter:visibility']);
     expect(d.candidates[0]).toMatchObject({ kind: 'hook', origin: 'hook', wired: true, stage: 'pre', mixed: false });
     expect(d.candidates[2]).toMatchObject({ kind: 'term', origin: 'terms', what: expect.stringContaining('2 names') });
-    // confidential: is the built-in rule, so plan.md adds nothing; roadmap.md's visibility: is offered
+    // confidential: is the built-in rule, so plan.md adds nothing; roadmap.md's visibility: internal is offered
     expect(d.candidates[3]).toMatchObject({ kind: 'frontmatter', origin: 'frontmatter', value: 'visibility', count: 1, what: expect.stringContaining('1 note carries visibility:') });
-    expect(d.notes).toBe(2);
+    expect(d).toMatchObject({ notes: 2, truncated: false });
     expect(d.skipped.map((s) => s.name).sort()).toEqual(['audit-logger.py', 'secret-guard.py', 'vault-reindex.sh']);
     expect(d.skipped.find((s) => s.name === 'secret-guard.py').reason).toContain('Bash');
   });
 });
 
 describe('the conventions a vault follows', () => {
-  it('reads frontmatter keys from the head of a note only', () => {
+  it('reads frontmatter keys and values from the head of a note only', () => {
     expect(frontmatterKeys('---\ntitle: X\nConfidential: team\nnda: true\n---\n# X\nsecret: later\n')).toEqual(['title', 'confidential', 'nda']);
+    expect(frontmatterPairs('---\nVisibility: "Public"\nshare: true\n---\n')).toEqual([{ key: 'visibility', value: 'public' }, { key: 'share', value: 'true' }]);
     expect(frontmatterKeys('# no frontmatter\nconfidential: x\n')).toEqual([]);
+    // a body line that starts like a key is not a mark
+    expect(frontmatterKeys('---\ntitle: X\n---\naccess: see the portal\n')).toEqual(['title']);
   });
   it('turns the sharing rules in a CLAUDE.md into folders and keys, and ignores the rest', () => {
     const rules = claudeMdRules('- Never surface `MyBrain/05-knowledge/clients/northwind/` in any external output.\n- Never put notes tagged `visibility: internal` into a shared workspace.\n- Never share board material outside the leadership group.\n- Use `grep | cut`, never `source .env`.\n- Keep answers short.\n');
@@ -72,10 +77,10 @@ describe('the conventions a vault follows', () => {
     expect(obsidianExcluded(path.join(FIXTURE, 'MyBrain'))).toEqual(['06-archive', 'templates-missing', '/^tmp/']);
     expect(obsidianExcluded('/nowhere')).toEqual([]);
   });
-  it('proposes only rules Quorum can enforce from the fixture vault, with counts, and lists what it left out', () => {
+  it('proposes only rules Quorum can enforce from the fixture vault, with counts, and lists what it left out', async () => {
     const root = FIXTURE; const vaultDir = path.join(FIXTURE, 'MyBrain');
-    const d = discoverConventions(root, vaultDir);
-    expect(d.notes).toBe(13);
+    const d = await discoverConventions(root, vaultDir);
+    expect(d).toMatchObject({ notes: 18, truncated: false });
     const ids = d.candidates.map((c) => c.id);
     // CLAUDE.md names a folder and a key; the folder's notes are counted, the key's notes too
     expect(ids).toContain('agent-os:path:MyBrain/05-knowledge/clients/northwind');
@@ -88,10 +93,16 @@ describe('the conventions a vault follows', () => {
     expect(ids.some((i) => i.includes('02-personal'))).toBe(false);
     // confidential: is built in, so it is never offered twice
     expect(ids).not.toContain('agent-os:frontmatter:confidential');
+    // 07-posts is five notes of `access: public` and `share: true`: open values never mark a note, so the folder is not
+    // offered, and those two keys are named as looked at, never offered as key rules
+    expect(ids.some((i) => i.includes('07-posts'))).toBe(false);
+    expect(ids).not.toContain('agent-os:frontmatter:access');
+    expect(ids).not.toContain('agent-os:frontmatter:share');
     // Obsidian's exclusion of an existing folder is offered; a missing folder and a pattern are named as left out
     expect(d.candidates.find((c) => c.id === 'agent-os:path:MyBrain/06-archive')).toMatchObject({ origin: 'obsidian', count: 1 });
-    expect(d.skipped.map((s) => s.name)).toEqual(['CLAUDE.md', '.obsidian/app.json: templates-missing', '.obsidian/app.json: /^tmp/']);
+    expect(d.skipped.map((s) => s.name)).toEqual(['CLAUDE.md', 'access:', 'share:', '.obsidian/app.json: templates-missing', '.obsidian/app.json: /^tmp/']);
     expect(d.skipped[0].reason).toContain('1 sharing rule names no folder or frontmatter key');
+    expect(d.skipped[1].reason).toContain('open value');
     // every candidate is a kind compile() enforces, and nothing is on until the person includes it
     for (const c of d.candidates) expect(['path', 'frontmatter']).toContain(c.kind);
     const list = effective({}, d);
@@ -102,17 +113,46 @@ describe('the conventions a vault follows', () => {
     expect(wouldBlock(c, 'MyBrain/03-legal/readme.md')).toBe('MyBrain/03-legal/ is private');
     expect(wouldBlock(c, 'MyBrain/05-knowledge/patterns.md', '---\nnda: true\n---')).toBe('marked nda: in its frontmatter');
   });
-  it('runs the whole discovery on the fixture: hooks, the opt-out list and the conventions, through the app handle', async () => {
+  it('runs the whole discovery on the fixture through the app handle, scanning once and keeping the result', async () => {
     const settings = {};
-    const g = createGuardrails({ settings, brain: () => ({ root: FIXTURE, vault: path.join(FIXTURE, 'MyBrain') }) });
-    const st = await g.get({ fresh: true });
+    let saves = 0;
+    const g = createGuardrails({ settings, saveSettings: () => { saves += 1; }, brain: () => ({ root: FIXTURE, vault: path.join(FIXTURE, 'MyBrain') }) });
+    // before any scan, the hot path sees the quick look only and never walks the vault
+    expect(g.rules().filter((r) => r.source === 'agent-os').map((r) => r.id)).toEqual(['agent-os:hook:opted-out-guard.py', 'agent-os:terms:scripts/opt-outs.txt']);
+    expect(settings.guardrails.conventions).toBeUndefined();
+    const st = await g.get();
     expect(st.rules.filter((r) => r.source === 'agent-os').map((r) => r.id)).toEqual([
       'agent-os:hook:opted-out-guard.py', 'agent-os:terms:scripts/opt-outs.txt',
       'agent-os:path:MyBrain/05-knowledge/clients/northwind', 'agent-os:frontmatter:visibility', 'agent-os:frontmatter:nda', 'agent-os:path:MyBrain/03-legal', 'agent-os:path:MyBrain/06-archive',
     ]);
-    expect(st.scanned).toMatchObject({ notes: 13 });
+    expect(st.scanned).toMatchObject({ notes: 18, truncated: false });
     expect(st.summary.toReview).toBe(7);
     expect(st.skipped.map((s) => s.name)).toContain('session-start.sh');
+    // the scan result is kept in settings, so the next read is served from it
+    expect(settings.guardrails.conventions).toMatchObject({ root: FIXTURE, notes: 18 });
+    const before = saves;
+    await g.get();
+    expect(saves).toBe(before);
+    for (const r of st.rules) expect(r.reach).toBe(ENFORCEMENT[r.kind]);
+  });
+  it('keeps an included Agent OS rule enforcing after discovery stops offering it, until the person leaves it out', async () => {
+    const root = vault();
+    const settings = {};
+    const g = createGuardrails({ settings, brain: () => ({ root, vault: root }) });
+    await g.get();
+    expect(g.set('agent-os:frontmatter:visibility', { enabled: true })).toEqual({ ok: true });
+    expect(settings.guardrails.agentOs['agent-os:frontmatter:visibility']).toMatchObject({ decision: 'included', kind: 'frontmatter', value: 'visibility' });
+    expect(g.compiled().frontmatterKeys).toEqual(['confidential', 'visibility']);
+    // the note that carried the key is gone; a fresh scan no longer proposes it, and the rule stays on and is marked
+    rmSync(path.join(root, 'roadmap.md'));
+    const st = await g.get({ fresh: true });
+    const r = st.rules.find((x) => x.id === 'agent-os:frontmatter:visibility');
+    expect(r).toMatchObject({ enabled: true, stale: true, decision: 'included', kind: 'frontmatter' });
+    expect(g.compiled().frontmatterKeys).toEqual(['confidential', 'visibility']);
+    // leaving it out removes it; an older install's bare word is still read
+    expect(g.set('agent-os:frontmatter:visibility', { enabled: false })).toEqual({ ok: true });
+    expect(g.rules().find((x) => x.id === 'agent-os:frontmatter:visibility')).toBeUndefined();
+    expect(effective({ agentOs: { 'agent-os:terms:x': 'included' } }, { candidates: [{ id: 'agent-os:terms:x', kind: 'term', value: '@/tmp/x', label: 'x' }] }).find((x) => x.id === 'agent-os:terms:x')).toMatchObject({ enabled: true, decision: 'included' });
   });
 });
 
@@ -127,9 +167,9 @@ describe('scope', () => {
 });
 
 describe('effective and compile', () => {
-  it('turns built-ins, included Agent OS items, personal rules and locked workspace rules into one deny set', () => {
+  it('turns built-ins, included Agent OS items, personal rules and locked workspace rules into one deny set', async () => {
     const root = vault();
-    const d = discover(root);
+    const d = await discover(root);
     const state = { builtIns: { 'built-in:secrets': false }, agentOs: { 'agent-os:terms:scripts/embed-bench/excluded.txt': 'included', 'agent-os:hook:opted-out-guard.py': 'excluded' }, rules: [{ id: 'personal:1', kind: 'path', value: 'clients/acme, drafts/', label: 'Acme', enabled: true }, { id: 'personal:2', kind: 'frontmatter', value: 'visibility', enabled: true }], workspace: [{ id: 'ws:1', kind: 'term', value: 'Project Falcon, hq', enabled: true }] };
     const list = effective(state, d);
     expect(list.filter((r) => r.source === 'built-in')).toHaveLength(BUILT_IN.length);

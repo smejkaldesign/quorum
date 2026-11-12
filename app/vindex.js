@@ -9,7 +9,9 @@ import { clusterColors } from './clusters.js';
 
 const IGNORED = /(^|\/)(\.git|\.obsidian|\.trash|\.claude|node_modules)(\/|$)/;
 
-export function createVaultIndex({ vault, isExcludedPath, isExcludedText, redact, onChange, log = () => {} }) {
+// isExcludedPath keeps a file out by its path; isDeniedText keeps a note out by what its frontmatter says (a denied
+// key); isExcludedText flags and redacts opted-out lines but keeps the note
+export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => false, isExcludedText, redact, onChange, log = () => {} }) {
   const files = new Map(); // rel -> { mtime, size, note, text, flagged, t }
   let resolve = () => null;
   let forward = new Map(); // rel -> [{ to, link }]
@@ -23,6 +25,7 @@ export function createVaultIndex({ vault, isExcludedPath, isExcludedText, redact
   function load(rel, st) {
     let raw;
     try { raw = readFileSync(path.join(vault, rel), 'utf8'); } catch { files.delete(rel); return; }
+    if (isDeniedText(raw)) { files.delete(rel); return; }
     const flagged = isExcludedText(raw);
     const text = flagged ? redact(raw) : raw;
     files.set(rel, { mtime: st.mtimeMs, size: st.size, note: parseNote(rel, text), text, flagged, t: noteDate(vault, rel, text) });
@@ -183,8 +186,11 @@ export function createVaultIndex({ vault, isExcludedPath, isExcludedText, redact
     return hits.sort((a, b) => b.score - a.score || a.rel.localeCompare(b.rel)).slice(0, limit);
   }
 
+  // after a rule change: forget everything and read the folder again, so a note that is now denied drops out
+  function rebuild() { files.clear(); forward = new Map(); backward = new Map(); unresolved = new Map(); const changed = sync(); if (changed.length) onChange?.(changed); return changed; }
+
   return {
-    start, stop, sync, graph, backlinks, outgoing, search, resolve: (target, from) => resolve(target, from),
+    start, stop, sync, rebuild, graph, backlinks, outgoing, search, resolve: (target, from) => resolve(target, from),
     note: (rel) => files.get(rel)?.note ?? null,
     linkHealth,
     aliasesOf,

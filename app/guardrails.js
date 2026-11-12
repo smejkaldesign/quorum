@@ -8,6 +8,7 @@
 // enforcement point consumes: the read guard's flags and hook list, the deny folders, and the term filter the
 // suggester, the transcript redactor and the MCP server share. Pure Node; the app passes in settings and the root.
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { open, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 export const KINDS = ['path', 'frontmatter', 'secret', 'term', 'hook'];
@@ -69,44 +70,65 @@ function wiredHooks(root) {
 }
 
 // frontmatter keys that mark a note as off limits in the vaults people keep; `confidential` is the built-in rule, the
-// rest are offered when notes carry them. Values are ignored: a note that has the key, with any value, is guarded
-export const MARKER_KEYS = ['confidential', 'private', 'internal', 'sensitive', 'restricted', 'visibility', 'access', 'nda', 'legal_hold', 'do_not_share', 'do-not-share', 'share'];
+// rest are offered when notes carry them. A marker key means off limits whatever its value. A value key only means it
+// when the value is not an open one, so a folder of `visibility: public` notes is never proposed, and a value key
+// whose notes include an open value is never offered as a key rule, since that rule would withhold those notes too
+export const MARKER_KEYS = ['confidential', 'private', 'internal', 'sensitive', 'restricted', 'nda', 'legal_hold', 'do_not_share', 'do-not-share'];
+export const VALUE_KEYS = ['visibility', 'access', 'share'];
+const OPEN_VALUES = new Set(['public', 'true', 'open', 'everyone', 'anyone', 'all', 'yes', 'shared']);
 const SKIP_DIRS = new Set(['.git', 'node_modules', '.obsidian', '.quorum', '.claude', '.trash', 'attachments']);
-const MAX_NOTES = 5000;
+export const MAX_NOTES = 5000;
+const HEAD_BYTES = 1500;
 const FOLDER_SHARE = 0.8;
 const FOLDER_MIN = 5;
 
-// the frontmatter keys at the top of a note, lowercased; nothing past the closing fence is read
-export function frontmatterKeys(text) {
+// the frontmatter at the top of a note as key and value pairs, keys lowercased; nothing past the closing fence is read
+export function frontmatterPairs(text) {
   const t = String(text);
   if (!t.startsWith('---')) return [];
   const end = t.indexOf('\n---', 3);
   const block = t.slice(3, end > 0 ? end : undefined);
-  const keys = [];
-  for (const line of block.split('\n')) { const m = /^([A-Za-z_][\w-]*)\s*:/.exec(line); if (m) keys.push(m[1].toLowerCase()); }
-  return keys;
+  const out = [];
+  for (const line of block.split('\n')) { const m = /^([A-Za-z_][\w-]*)\s*:\s*(.*?)\s*$/.exec(line); if (m) out.push({ key: m[1].toLowerCase(), value: m[2].replace(/^["']|["']$/g, '').toLowerCase() }); }
+  return out;
+}
+export const frontmatterKeys = (text) => frontmatterPairs(text).map((p) => p.key);
+
+// what a note's frontmatter says about keeping it off limits: the marker keys it carries, and the value keys set to an
+// open value, which count against offering that key as a rule
+const markersOf = (pairs) => ({
+  markers: pairs.filter((p) => MARKER_KEYS.includes(p.key) || (VALUE_KEYS.includes(p.key) && !OPEN_VALUES.has(p.value))).map((p) => p.key),
+  open: pairs.filter((p) => VALUE_KEYS.includes(p.key) && OPEN_VALUES.has(p.value)).map((p) => p.key),
+});
+
+// only the head of a file, so a long note costs the same as a short one
+async function readHead(abs, bytes = HEAD_BYTES) {
+  let fh = null;
+  try { fh = await open(abs, 'r'); const buf = Buffer.alloc(bytes); const { bytesRead } = await fh.read(buf, 0, bytes, 0); return buf.subarray(0, bytesRead).toString('utf8'); } catch { return ''; } finally { await fh?.close().catch(() => {}); }
 }
 
-// every note under the vault, as its path relative to the root and the marker keys it carries; bounded so a large
-// vault stays quick, and only the head of each file is read
-function tallyNotes(root, vault) {
+// every note under the vault, as its path relative to the root and what its frontmatter says; bounded so a large vault
+// stays quick, with `truncated` set when the bound was hit so the tally is never shown as complete when it is not.
+// Async so the main process never waits on the walk
+async function tallyNotes(root, vault) {
   const notes = [];
-  const walk = (dir) => {
-    if (notes.length >= MAX_NOTES) return;
-    let entries; try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  let truncated = false;
+  const walk = async (dir) => {
+    if (truncated) return;
+    let entries; try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
     for (const e of entries) {
-      if (notes.length >= MAX_NOTES) return;
+      if (truncated) return;
       if (e.name.startsWith('.') || SKIP_DIRS.has(e.name)) continue;
       const abs = path.join(dir, e.name);
-      if (e.isDirectory()) walk(abs);
+      if (e.isDirectory()) await walk(abs);
       else if (e.isFile() && e.name.endsWith('.md')) {
-        let head = ''; try { head = readFileSync(abs, { encoding: 'utf8', flag: 'r' }).slice(0, 1500); } catch {}
-        notes.push({ rel: path.relative(root, abs), markers: frontmatterKeys(head).filter((k) => MARKER_KEYS.includes(k)) });
+        if (notes.length >= MAX_NOTES) { truncated = true; return; }
+        notes.push({ rel: path.relative(root, abs), ...markersOf(frontmatterPairs(await readHead(abs))) });
       }
     }
   };
-  walk(vault);
-  return notes;
+  await walk(vault);
+  return { notes, truncated };
 }
 
 // the lines of a CLAUDE.md that state a sharing rule: a sentence that forbids surfacing, sharing, exposing, syncing or
@@ -138,21 +160,25 @@ export function obsidianExcluded(vault) {
   } catch { return []; }
 }
 
+// a folder named in CLAUDE.md or in Obsidian, as a path relative to the root: Obsidian's filters and most CLAUDE.md
+// paths are written from the vault, so the vault is tried first, then the root
 const relFolder = (root, vault, folder) => {
-  const abs = [path.join(root, folder), path.join(vault, folder)].find((p) => { try { return statSync(p).isDirectory(); } catch { return false; } });
+  const abs = [path.join(vault, folder), path.join(root, folder)].find((p) => { try { return statSync(p).isDirectory(); } catch { return false; } });
   return abs ? path.relative(root, abs) : null;
 };
 
 // the conventions the vault itself follows: rules its CLAUDE.md states, the marker keys its notes carry, folders where
 // nearly every note is marked, and the folders Obsidian already excludes. Each becomes a path or frontmatter candidate
 // the person reviews; what could not be turned into a rule is named in `skipped`, so the review shows its work
-export function discoverConventions(root, vault = root) {
+export async function discoverConventions(root, vault = root) {
   const candidates = [];
   const skipped = [];
   const seen = new Set();
-  const notes = tallyNotes(root, vault);
+  const { notes, truncated } = await tallyNotes(root, vault);
+  if (truncated) skipped.push({ name: 'the vault', reason: `has more than ${MAX_NOTES} notes; the first ${MAX_NOTES} were read and every count below stops there` });
   const byKey = {};
-  for (const n of notes) for (const k of n.markers) byKey[k] = (byKey[k] ?? 0) + 1;
+  const openByKey = {};
+  for (const n of notes) { for (const k of n.markers) byKey[k] = (byKey[k] ?? 0) + 1; for (const k of n.open) openByKey[k] = (openByKey[k] ?? 0) + 1; }
   const countIn = (rel) => notes.filter((n) => n.rel === rel || n.rel.startsWith(`${rel}${path.sep}`)).length;
   const markedIn = (rel) => notes.filter((n) => (n.rel === rel || n.rel.startsWith(`${rel}${path.sep}`)) && n.markers.length).length;
   const pathCandidate = (rel, origin, what) => {
@@ -164,6 +190,8 @@ export function discoverConventions(root, vault = root) {
   const keyCandidate = (key, origin, what) => {
     if (key === 'confidential' || seen.has(`key:${key}`)) return;
     seen.add(`key:${key}`);
+    // a key rule matches any value, so a value key with open values among the notes is named, never offered
+    if (openByKey[key]) { skipped.push({ name: `${key}:`, reason: `${openByKey[key]} ${openByKey[key] === 1 ? 'note sets' : 'notes set'} it to an open value such as public, and a key rule would withhold those notes too; add a folder rule by hand if you want it` }); return; }
     candidates.push({ id: `agent-os:frontmatter:${key}`, kind: 'frontmatter', origin, label: `Notes marked ${key}:`, path: null, value: key, what, mixed: false, wired: true, count: byKey[key] ?? 0 });
   };
   const noteWord = (n) => `${n} ${n === 1 ? 'note' : 'notes'}`;
@@ -182,8 +210,9 @@ export function discoverConventions(root, vault = root) {
     break;
   }
 
-  // 2. the marker keys notes carry
+  // 2. the marker keys notes carry; a value key only ever seen with open values is named as looked at
   for (const [k, n] of Object.entries(byKey).sort((a, b) => b[1] - a[1])) keyCandidate(k, 'frontmatter', `${noteWord(n)} ${n === 1 ? 'carries' : 'carry'} ${k}: in ${n === 1 ? 'its' : 'their'} frontmatter. With this on, a note that has it is never read, synced or shared.`);
+  for (const k of Object.keys(openByKey)) if (!byKey[k] && !seen.has(`key:${k}`)) keyCandidate(k, 'frontmatter', '');
 
   // 3. folders where nearly every note is marked: the whole folder, so a new note there is covered without a tag
   const folders = new Set();
@@ -199,13 +228,13 @@ export function discoverConventions(root, vault = root) {
     if (rel) pathCandidate(rel, 'obsidian', `Excluded from search in Obsidian. With this on, Quorum leaves it alone too: ${noteWord(countIn(rel))} never read, searched, synced or shared.`);
     else skipped.push({ name: `.obsidian/app.json: ${f}`, reason: 'excluded in Obsidian as a pattern or a missing folder, which Quorum cannot turn into a folder rule' });
   }
-  return { candidates, skipped, notes: notes.length };
+  return { candidates, skipped, notes: notes.length, truncated };
 }
 
-// what the connected Agent OS offers: guard hooks (relevant ones only), opt-out term lists, and the conventions above.
-// Everything else the folder's hooks do is listed in `skipped` with the reason, so the review is visibly diligent
-// rather than silent
-export function discover(root, vault = root) {
+// what the connected Agent OS offers at a glance: guard hooks (relevant ones only) and opt-out term lists. Cheap, so
+// it runs lazily. Everything else the folder's hooks do is listed in `skipped` with the reason, so the review is
+// visibly diligent rather than silent
+export function discoverQuick(root, vault = root) {
   const candidates = [];
   const skipped = [];
   const hooksDir = path.join(root, '.claude/hooks');
@@ -227,27 +256,47 @@ export function discover(root, vault = root) {
     break;
   }
   for (const c of candidates) if (!c.origin) c.origin = 'hook';
-  const conv = discoverConventions(root, vault);
-  return { candidates: [...candidates, ...conv.candidates], skipped: [...skipped, ...conv.skipped], notes: conv.notes };
+  return { candidates, skipped };
 }
+
+// the whole review: the quick look plus the vault's conventions, which read the head of every note
+export async function discover(root, vault = root) {
+  const quick = discoverQuick(root, vault);
+  const conv = await discoverConventions(root, vault);
+  return { candidates: [...quick.candidates, ...conv.candidates], skipped: [...quick.skipped, ...conv.skipped], notes: conv.notes, truncated: conv.truncated };
+}
+
+// a decision the person made on an Agent OS candidate, as stored: older installs kept the word alone, newer ones keep
+// the rule beside it so an included rule outlives the candidate
+const decisionOf = (raw) => (typeof raw === 'string' ? { decision: raw } : raw && typeof raw === 'object' ? raw : null);
 
 const readTerms = (file) => { try { return readFileSync(file, 'utf8').split('\n').map((l) => l.trim().toLowerCase()).filter((l) => l && !l.startsWith('#')); } catch { return []; } };
 
 // the effective list: built-ins (on unless turned off), included Agent OS items, the person's rules, and workspace
 // rules, which are locked on. The most restrictive combination applies, since every rule only ever denies
+export const scopeOf = (source) => (source === 'workspace' ? 'organization' : 'individual');
+
+// an included Agent OS rule keeps enforcing after discovery stops proposing it (the hook was deleted, the folder
+// renamed, the CLAUDE.md line removed); the row says it is no longer found, and leaving it out removes it
 export function effective(state = {}, discovery = { candidates: [] }) {
   const out = [];
-  for (const b of BUILT_IN) out.push({ ...b, source: 'built-in', scope: 'individual', enabled: state.builtIns?.[b.id] !== false, locked: false });
+  const add = (r, source, extra) => out.push({ ...r, source, scope: scopeOf(source), reach: ENFORCEMENT[r.kind] ?? '', ...extra });
+  for (const b of BUILT_IN) add(b, 'built-in', { enabled: state.builtIns?.[b.id] !== false, locked: false });
+  const proposed = new Set();
   for (const c of discovery.candidates ?? []) {
-    const decision = state.agentOs?.[c.id] ?? null;
-    out.push({ ...c, source: 'agent-os', scope: 'individual', enabled: decision === 'included', decision, locked: false });
+    proposed.add(c.id);
+    const decision = decisionOf(state.agentOs?.[c.id])?.decision ?? null;
+    add(c, 'agent-os', { enabled: decision === 'included', decision, locked: false });
   }
-  for (const r of state.rules ?? []) if (KINDS.includes(r.kind) && r.kind !== 'hook') out.push({ ...r, source: 'personal', scope: 'individual', enabled: r.enabled !== false, locked: false });
-  for (const r of state.workspace ?? []) if (KINDS.includes(r.kind) && r.kind !== 'hook' && r.enabled !== false) out.push({ ...r, source: 'workspace', scope: 'organization', enabled: true, locked: true });
+  for (const [id, raw] of Object.entries(state.agentOs ?? {})) {
+    const d = decisionOf(raw);
+    if (proposed.has(id) || d?.decision !== 'included' || !KINDS.includes(d.kind) || !d.value) continue;
+    add({ id, kind: d.kind, value: d.value, label: d.label ?? id, path: d.path ?? null, stage: d.stage, origin: d.origin, what: d.what, mixed: false, wired: false }, 'agent-os', { enabled: true, decision: 'included', locked: false, stale: true });
+  }
+  for (const r of state.rules ?? []) if (KINDS.includes(r.kind) && r.kind !== 'hook') add(r, 'personal', { enabled: r.enabled !== false, locked: false });
+  for (const r of state.workspace ?? []) if (KINDS.includes(r.kind) && r.kind !== 'hook' && r.enabled !== false) add(r, 'workspace', { enabled: true, locked: true });
   return out;
 }
-
-export const scopeOf = (source) => (source === 'workspace' ? 'organization' : 'individual');
 
 // what each enforcement point consumes. denyDirs are relative to the root; frontmatterKeys are matched case-insensitively
 export function compile(rules, { root = null, privateDirs = () => [] } = {}) {
@@ -295,20 +344,35 @@ const readDenials = (file, n = 30) => { try { return readFileSync(file, 'utf8').
 // the app's handle: state in settings.guardrails, discovery cached per root, the compiled set cached until something changes
 export function createGuardrails({ settings, saveSettings = () => {}, brain = () => null, privateDirs = () => [], denialLog = null, log = () => {} }) {
   const state = () => (settings.guardrails ??= { builtIns: {}, agentOs: {}, rules: [], workspace: [] });
-  let discovered = { root: null, at: 0, result: { candidates: [], skipped: [], notes: 0 } };
+  let quick = { root: null, at: 0, result: { candidates: [], skipped: [] } };
   let compiledCache = { key: '', value: null };
   let remote = null;
-  // the vault scan reads the head of every note, so a result is kept ten minutes; a reconnect or a page open forces it
-  const discovery = (force = false) => {
+  let scanning = null;
+  // the quick look (hooks and opt-out lists) is cheap and runs lazily, kept a minute
+  const quickLook = () => {
     const b = brain();
-    if (!b) return { candidates: [], skipped: [], notes: 0 };
-    if (!force && discovered.root === b.root && Date.now() - discovered.at < 600000) return discovered.result;
-    discovered = { root: b.root, at: Date.now(), result: discover(b.root, b.vault ?? b.root) };
+    if (!b) return { candidates: [], skipped: [] };
+    if (quick.root === b.root && Date.now() - quick.at < 60000) return quick.result;
+    quick = { root: b.root, at: Date.now(), result: discoverQuick(b.root, b.vault ?? b.root) };
     // an install that already relied on the vault's opt-out list keeps it; a new connect reviews it first
     const s = state();
-    if (!s.migrated) { for (const c of discovered.result.candidates) if (c.kind === 'term' && settings.memory) s.agentOs[c.id] = 'included'; s.migrated = true; saveSettings(); }
-    return discovered.result;
+    if (!s.migrated) { for (const c of quick.result.candidates) if (c.kind === 'term' && settings.memory) s.agentOs[c.id] = 'included'; s.migrated = true; saveSettings(); }
+    return quick.result;
   };
+  // the vault's conventions come from the last scan, kept in settings; the scan itself runs only on connect and when
+  // the Guardrails page asks, never from a hot path
+  const conventions = () => { const b = brain(); const c = state().conventions; return b && c && c.root === b.root ? c : { candidates: [], skipped: [], notes: 0, truncated: false, at: null }; };
+  const scan = () => {
+    const b = brain();
+    if (!b) return Promise.resolve(null);
+    if (scanning) return scanning;
+    scanning = discoverConventions(b.root, b.vault ?? b.root)
+      .then((r) => { state().conventions = { root: b.root, at: Date.now(), ...r }; compiledCache = { key: '', value: null }; saveSettings(); return r; })
+      .catch((e) => { log('guardrails scan', e?.message ?? e); return null; })
+      .finally(() => { scanning = null; });
+    return scanning;
+  };
+  const discovery = () => { const q = quickLook(); const c = conventions(); return { candidates: [...q.candidates, ...c.candidates], skipped: [...q.skipped, ...c.skipped], notes: c.notes, truncated: c.truncated, at: c.at }; };
   const rules = () => effective(state(), discovery());
   const compiled = () => {
     const b = brain();
@@ -323,26 +387,36 @@ export function createGuardrails({ settings, saveSettings = () => {}, brain = ()
     return value;
   };
   const save = () => { compiledCache = { key: '', value: null }; saveSettings(); };
+  // the page's payload; a first call after a connect scans the vault, and the page asks for a fresh scan when it opens
   const get = async ({ fresh = false } = {}) => {
     if (remote) { try { const r = await remote(); if (Array.isArray(r)) { state().workspace = r; } } catch (e) { log('guardrails workspace', e?.message ?? e); } }
-    const d = discovery(fresh);
+    const b = brain();
+    if (b && (fresh || state().conventions?.root !== b.root)) await scan();
+    const d = discovery();
     const list = rules();
     const c = compiled();
     return {
       rules: list.map(({ decision, ...r }) => ({ ...r, decision: decision ?? null })),
       skipped: d.skipped,
-      scanned: { notes: d.notes ?? 0, at: discovered.at || null },
+      scanned: { notes: d.notes ?? 0, at: d.at ?? null, truncated: d.truncated === true },
       denials: denialLog ? readDenials(denialLog) : [],
       summary: { on: list.filter((r) => r.enabled).length, toReview: list.filter((r) => r.source === 'agent-os' && r.decision === null).length, denyDirs: c.denyDirs.length, terms: c.allTerms().length },
     };
   };
   return {
-    get, compiled, rules, discovery,
+    get, compiled, rules, discovery, scan,
     setRemote: (fn) => { remote = fn; },
     set: (id, patch) => {
       const s = state();
       if (id.startsWith('built-in:') && typeof patch?.enabled === 'boolean') s.builtIns[id] = patch.enabled;
-      else if (id.startsWith('agent-os:') && typeof patch?.enabled === 'boolean') s.agentOs[id] = patch.enabled ? 'included' : 'excluded';
+      else if (id.startsWith('agent-os:') && typeof patch?.enabled === 'boolean') {
+        // the rule travels with the decision, so it keeps enforcing if the Agent OS stops offering it
+        const c = discovery().candidates.find((x) => x.id === id);
+        if (patch.enabled && c) s.agentOs[id] = { decision: 'included', kind: c.kind, value: c.value, label: c.label, path: c.path ?? null, stage: c.stage, origin: c.origin, what: c.what };
+        else if (patch.enabled) return { error: 'That rule is no longer found in your Agent OS.' };
+        else if (c) s.agentOs[id] = { decision: 'excluded' };
+        else delete s.agentOs[id];
+      }
       else { const r = s.rules.find((x) => x.id === id); if (!r) return { error: 'Unknown rule.' }; if (typeof patch?.enabled === 'boolean') r.enabled = patch.enabled; if (typeof patch?.label === 'string') r.label = patch.label.slice(0, 120); }
       save(); return { ok: true };
     },

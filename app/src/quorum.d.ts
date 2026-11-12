@@ -35,8 +35,10 @@ export type GuardrailKind = 'path' | 'frontmatter' | 'secret' | 'term' | 'hook';
 // admins and apply to everyone in the organization or team. origin says where an Agent OS candidate was found
 export type GuardrailScope = 'individual' | 'organization';
 export type GuardrailOrigin = 'hook' | 'terms' | 'claude-md' | 'frontmatter' | 'obsidian';
-export type GuardrailRule = { id: string; kind: GuardrailKind; label: string; value: string; what?: string; path?: string | null; stage?: 'pre' | 'post'; mixed?: boolean; wired?: boolean; origin?: GuardrailOrigin; count?: number; source: 'built-in' | 'agent-os' | 'personal' | 'workspace'; scope: GuardrailScope; enabled: boolean; locked: boolean; decision?: 'included' | 'excluded' | null };
-export type GuardrailsState = { rules: GuardrailRule[]; skipped: { name: string; reason: string }[]; scanned: { notes: number; at: number | null }; denials: { t: string; tool: string; path: string; reason: string }[]; summary: { on: number; toReview: number; denyDirs: number; terms: number } };
+// reach is what the rule touches once on, from the one table in app/guardrails.js; stale marks an included Agent OS
+// rule the Agent OS no longer offers, which keeps enforcing until the person leaves it out
+export type GuardrailRule = { id: string; kind: GuardrailKind; label: string; value: string; what?: string; path?: string | null; stage?: 'pre' | 'post'; mixed?: boolean; wired?: boolean; origin?: GuardrailOrigin; count?: number; reach?: string; stale?: boolean; source: 'built-in' | 'agent-os' | 'personal' | 'workspace'; scope: GuardrailScope; enabled: boolean; locked: boolean; decision?: 'included' | 'excluded' | null };
+export type GuardrailsState = { rules: GuardrailRule[]; skipped: { name: string; reason: string }[]; scanned: { notes: number; at: number | null; truncated: boolean }; denials: { t: string; tool: string; path: string; reason: string }[]; summary: { on: number; toReview: number; denyDirs: number; terms: number } };
 // in-app updates (app/updater.js): off means this build has no feed (a development copy, or a Cloud build without one)
 export type UpdateState = { status: 'off' | 'idle' | 'checking' | 'downloading' | 'ready' | 'failed'; current: string; version: string | null; percent: number; notes: string | null; checkedAt: number | null; error: string | null };
 export type GoogleCalendarStatus = { configured: boolean; connected: boolean; account: string | null; calendars: number; lastSyncAt: string | null; error: string | null };
