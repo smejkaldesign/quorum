@@ -1,0 +1,81 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { createFlagsCache, flagsRoute, shapeFlags, shapeRequires } from '../flags.js';
+
+const anonWith = (rows, { fail = false } = {}) => { let calls = 0; return { calls: () => calls, rpc: async () => { calls++; return fail ? { data: null, error: new Error('down') } : { data: rows, error: null }; } }; };
+const fakeRes = () => { const r = { status: 0, headers: {}, body: '' }; r.writeHead = (s, h) => { r.status = s; r.headers = h; }; r.end = (b) => { r.body = b ?? ''; }; return r; };
+
+describe('shaping the rows', () => {
+  it('keeps key and enabled only and skips malformed rows', () => {
+    assert.deepEqual(shapeFlags([{ key: 'a', enabled: true, name: 'x' }, { key: 'b', enabled: 'yes' }, null, { enabled: true }]), { a: true, b: false });
+    assert.deepEqual(shapeFlags(undefined), {});
+  });
+
+  it('keeps the parent each flag needs', () => {
+    assert.deepEqual(shapeRequires([{ key: 'screen-context', enabled: true, requires: 'manual-listen' }, { key: 'a', enabled: true, requires: null }, { key: 'b', requires: '' }]), { 'screen-context': 'manual-listen' });
+  });
+});
+
+describe('the cache', () => {
+  it('asks the project once a minute and answers from memory between', async () => {
+    let t = 1000;
+    const anon = anonWith([{ key: 'a', enabled: true }]);
+    const cache = createFlagsCache({ anon, now: () => t });
+    assert.deepEqual(await cache.get(), { flags: { a: true }, requires: {} });
+    t += 30_000;
+    await cache.get();
+    assert.equal(anon.calls(), 1);
+    t += 31_000;
+    await cache.get();
+    assert.equal(anon.calls(), 2);
+  });
+
+  it('answers null when the project fails before any answer, and asks again only after a TTL', async () => {
+    const logged = [];
+    let t = 0;
+    const down = anonWith([], { fail: true });
+    const bad = createFlagsCache({ anon: down, now: () => t, log: (e) => logged.push(e) });
+    assert.equal(await bad.get(), null);
+    assert.equal(logged[0], 'flags_failed');
+    t += 30_000;
+    await bad.get();
+    assert.equal(down.calls(), 1);
+    t += 31_000;
+    await bad.get();
+    assert.equal(down.calls(), 2);
+  });
+
+  it('serves the stale answer while the project is down', async () => {
+    let t = 0; let fail = false;
+    const anon = { rpc: async () => (fail ? { data: null, error: new Error('down') } : { data: [{ key: 'a', enabled: false }], error: null }) };
+    const cache = createFlagsCache({ anon, now: () => t });
+    assert.deepEqual(await cache.get(), { flags: { a: false }, requires: {} });
+    fail = true; t += 120_000;
+    assert.deepEqual(await cache.get(), { flags: { a: false }, requires: {} });
+  });
+});
+
+describe('the route', () => {
+  it('answers GET with open CORS and refuses other methods', async () => {
+    const handle = flagsRoute({ clients: { anon: anonWith([{ key: 'manual-listen', enabled: true }, { key: 'screen-context', enabled: true, requires: 'manual-listen' }]) } });
+    const res = fakeRes();
+    await handle({ method: 'GET', headers: {} }, res);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers['access-control-allow-origin'], '*');
+    assert.deepEqual(JSON.parse(res.body), { flags: { 'manual-listen': true, 'screen-context': true }, requires: { 'screen-context': 'manual-listen' } });
+    const pre = fakeRes();
+    await handle({ method: 'OPTIONS', headers: {} }, pre);
+    assert.equal(pre.status, 204);
+    const post = fakeRes();
+    await handle({ method: 'POST', headers: {} }, post);
+    assert.equal(post.status, 405);
+  });
+
+  it('answers 503 when the project has never answered', async () => {
+    const handle = flagsRoute({ clients: { anon: anonWith([], { fail: true }) } });
+    const res = fakeRes();
+    await handle({ method: 'GET', headers: {} }, res);
+    assert.equal(res.status, 503);
+    assert.equal(res.headers['cache-control'], 'no-store');
+  });
+});

@@ -243,4 +243,8 @@ contextBridge.exposeInMainWorld('quorum', {
   // the beta gate (beta.js): whether a code is still needed, and the check that stores an accepted one
   betaStatus: () => ipcRenderer.invoke('beta-status'),
   betaCheck: (code, email) => ipcRenderer.invoke('beta-check', code, email),
+  // feature flags (flags.js): the switches the admin app sets, with where each value came from; refresh asks the relay now
+  flags: () => ipcRenderer.invoke('flags'),
+  flagsRefresh: () => ipcRenderer.invoke('flags-refresh'),
+  onFlags: (cb) => { const h = (_e, s) => cb(s); ipcRenderer.on('flags', h); return () => ipcRenderer.removeListener('flags', h); },
 });

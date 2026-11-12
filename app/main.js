@@ -14,6 +14,7 @@ import { createTokenStore } from './sources/tokens.js';
 import { createViews } from './views.js';
 import { registerOnboarding } from './onboarding.js';
 import { gateOn, registerBeta } from './beta.js';
+import { registerFlags } from './flags.js';
 import { createKeeper } from './keeper.js';
 import { wouldBlock } from './guardrails.js';
 import { createPredicates } from './guardrails-predicates.js';
@@ -1955,6 +1956,9 @@ registerBeta({
   ipcMain, settings, saveSettings, on: gateOn({ pkg: packagedMeta }), edition: EDITION, version: app.getVersion(), log,
   source: () => account.envStatus?.().config ?? 'production', email: () => account.state?.().email ?? null,
 });
+// feature flags (flags.js): the admin app's switches, read from the relay on launch and every hour; QUORUM_FLAGS in
+// the environment overrides them for a dev copy. Both editions read the same list
+registerFlags({ ipcMain, settings, saveSettings, log, source: () => account.envStatus?.().config ?? 'production', emit: (s) => toUI('flags', s) });
 ipcMain.handle('connect-brain', async () => {
   const r = await dialog.showOpenDialog(win, {
     title: 'Connect your Agent OS',

@@ -90,6 +90,11 @@ export type AccountWorkspace = { id: string; name: string; domain: string | null
 // the beta gate (app/beta.js): gate is true while an access code is still needed; machineId is the anonymous id this
 // install reports with its code and version once a day while the beta lasts
 export type BetaState = { gate: boolean; on: boolean; code: string | null; plan: 'free' | 'cloud' | string | null; acceptedAt: string | null; machineId: string | null; lastHeartbeatAt: number | null };
+// feature flags (app/flags.js): each key with its value and where the value came from, in order of precedence env,
+// relay, cache (the last relay answer, from an earlier run), defaults (built into the app)
+export type FlagSource = 'env' | 'relay' | 'cache' | 'defaults';
+// enabled is the effective value; blockedBy names the parent flag (requires) that is off while the flag's own switch is on
+export type FlagsState = { flags: Record<string, { enabled: boolean; source: FlagSource; requires?: string; blockedBy?: string; own?: boolean }>; fetchedAt: number | null; source: string; error?: string | null; ok?: boolean };
 // the card on file for the workspace's subscription, read through the relay; null when none is stored yet
 export type BillingCard = { brand: string; last4: string; expMonth: number; expYear: number } | null;
 export type AccountInvite = { inviteId: string; workspaceId: string; workspaceName: string; role: Role; invitedByEmail: string | null; expiresAt: string };
@@ -401,6 +406,9 @@ declare global {
       teamEnabledSet(on: boolean): Promise<AccountState & { error?: string }>;
       betaStatus(): Promise<BetaState>;
       betaCheck(code: string, email?: string | null): Promise<{ ok: boolean; plan?: string; reason?: string; status?: BetaState }>;
+      flags(): Promise<FlagsState>;
+      flagsRefresh(): Promise<FlagsState>;
+      onFlags(cb: (s: FlagsState) => void): Unsub;
       envStatus(): Promise<EnvStatus>;
       envSetProduction(on: boolean): Promise<EnvStatus>;
     };

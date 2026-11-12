@@ -3,13 +3,14 @@ import type { Session } from '@supabase/supabase-js';
 import { type OwnerStatus, auth, configured, host } from './api';
 import { passkey } from './passkey';
 import { token } from './session';
-import { Button, Card, Centered, IconBuilding, IconHistory, IconHome, IconKey, IconPeople, type NavItem, Shell, ToastProvider } from './ui';
+import { Button, Card, Centered, IconBuilding, IconFlag, IconHistory, IconHome, IconKey, IconPeople, type NavItem, Shell, ToastProvider } from './ui';
 import { SignIn } from './pages/SignIn';
 import { Passkey } from './pages/Passkey';
 import { Overview } from './pages/Overview';
 import { Access } from './pages/Access';
 import { Workspaces } from './pages/Workspaces';
 import { Users } from './pages/Users';
+import { Flags } from './pages/Flags';
 import { Audit } from './pages/Audit';
 
 // one page at a time, named in the hash so a reload keeps the place
@@ -18,9 +19,10 @@ const PAGES: NavItem[] = [
   { id: 'access', label: 'Access', icon: IconKey },
   { id: 'workspaces', label: 'Workspaces', icon: IconBuilding },
   { id: 'users', label: 'Users', icon: IconPeople },
+  { id: 'flags', label: 'Feature flags', icon: IconFlag },
   { id: 'audit', label: 'Audit', icon: IconHistory },
 ];
-type PageId = 'overview' | 'access' | 'workspaces' | 'users' | 'audit';
+type PageId = 'overview' | 'access' | 'workspaces' | 'users' | 'flags' | 'audit';
 const pageFromHash = (): PageId => { const h = location.hash.replace(/^#\/?/, ''); return (PAGES.some((p) => p.id === h) ? h : 'overview') as PageId; };
 
 // sign-in is two steps: the email code gives the session, the passkey opens the owner's functions. The owner status
@@ -56,6 +58,7 @@ export function App() {
         {page === 'access' && <Access />}
         {page === 'workspaces' && <Workspaces />}
         {page === 'users' && <Users />}
+        {page === 'flags' && <Flags />}
         {page === 'audit' && <Audit />}
       </Shell>
     </ToastProvider>
