@@ -4,11 +4,11 @@
 // shows whenever no accepted code is stored, in both editions, including installs that onboarded before it existed.
 // Pure Node: the main process registers it; the tests call it with fake fetch and timers.
 import { randomUUID } from 'node:crypto';
+import { CODE, normalizeCode } from './betaCode.js';
+import { httpUrl, relayUrls, unreachable } from './relayUrl.js';
 
-export const DEFAULT_RELAY = 'https://relay.quorum.watch';
-export const LOCAL_RELAY = 'http://127.0.0.1:8787';
 export const HEARTBEAT_EVERY = 24 * 60 * 60 * 1000;
-const CODE = /^[A-Z0-9]{4}-?[A-Z0-9]{4}$/;
+export { normalizeCode };
 
 // the build-time switch: QUORUM_BETA_GATE in the environment wins (0, false, off turn it off), then the packaged
 // package.json's quorumBetaGate, and the gate is on when neither says otherwise
@@ -17,16 +17,6 @@ export function gateOn({ env = process.env, pkg = {} } = {}) {
   if (v) return !['0', 'false', 'off', 'no'].includes(v);
   return pkg.quorumBetaGate !== false;
 }
-
-// where the relay is reached over HTTP: QUORUM_RELAY_URL (ws or http form) wins, a copy on the local Supabase stack
-// talks to a relay on this Mac, everything else to Quorum's
-export function relayHttp({ env = process.env, source = 'production' } = {}) {
-  const u = String(env.QUORUM_RELAY_URL ?? '').trim().replace(/\/+$/, '');
-  if (u) return u.replace(/^ws(s?):\/\//, 'http$1://');
-  return source === 'local' ? LOCAL_RELAY : DEFAULT_RELAY;
-}
-
-export const normalizeCode = (code) => String(code ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().replace(/^(.{4})(.{4})$/, '$1-$2');
 
 // what the renderer sees: whether the gate stands, the accepted code and plan, and the id this install reports under
 export function betaState(settings, on) {
@@ -37,14 +27,20 @@ export function betaState(settings, on) {
 // how long until the next heartbeat is due: at once when none was sent, otherwise a day after the last one
 export const nextHeartbeatIn = (lastAt, now = Date.now()) => (lastAt ? Math.max(0, lastAt + HEARTBEAT_EVERY - now) : 0);
 
-export function createBeta({ settings, saveSettings = () => {}, on = true, edition = 'local', version = '0.0.0', relay = DEFAULT_RELAY, email = () => null, fetchImpl = globalThis.fetch, log = () => {}, now = Date.now, timers = { set: setTimeout, clear: clearTimeout } }) {
-  const relayOf = () => (typeof relay === 'function' ? relay() : relay);
+// `source` is which Supabase config the account runs on (relayUrl.js): a copy on the local stack talks to a relay on
+// this Mac, everything else to Quorum's, with its fallback address tried on a connection-level failure
+export function createBeta({ settings, saveSettings = () => {}, on = true, edition = 'local', version = '0.0.0', source = () => 'production', env = process.env, email = () => null, fetchImpl = globalThis.fetch, log = () => {}, now = Date.now, timers = { set: setTimeout, clear: clearTimeout } }) {
   const machineId = () => {
     if (!settings.machineId) { settings.machineId = randomUUID(); saveSettings(); }
     return settings.machineId;
   };
   const post = async (path, body) => {
-    const res = await fetchImpl(`${relayOf()}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const urls = relayUrls({ env, source: (typeof source === 'function' ? source() : source) ?? 'production' });
+    let res = null;
+    for (const url of urls) {
+      try { res = await fetchImpl(`${httpUrl(url)}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); break; }
+      catch (err) { if (unreachable(err) && url !== urls[urls.length - 1]) continue; throw err; }
+    }
     const json = await res.json().catch(() => ({}));
     if (!res.ok && json.ok === undefined) throw new Error(json.error || json.reason || `The relay answered ${res.status}`);
     return json;
@@ -64,7 +60,7 @@ export function createBeta({ settings, saveSettings = () => {}, on = true, editi
       return { ok: true, plan: settings.beta.plan };
     } catch (err) {
       log('beta check', err?.message ?? err);
-      return { ok: false, reason: /fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT/i.test(String(err?.message)) ? 'Quorum could not reach the server. Check your connection and try again.' : String(err?.message || 'That code could not be checked.') };
+      return { ok: false, reason: unreachable(err) ? 'Quorum could not reach the server. Check your connection and try again.' : String(err?.message || 'That code could not be checked.') };
     }
   }
 
@@ -79,22 +75,24 @@ export function createBeta({ settings, saveSettings = () => {}, on = true, editi
     } catch (err) { log('beta heartbeat', err?.message ?? err); return { ok: false }; }
   }
 
+  // one timer at a time: arm() clears whatever is pending, so start() can be called again without a second cycle
   let timer = null;
   let stopped = false;
+  const clear = () => { if (timer) timers.clear(timer); timer = null; };
   const tick = async () => {
     timer = null;
     if (stopped) return;
     await heartbeat();
-    if (!stopped) arm(HEARTBEAT_EVERY);
+    if (!stopped && !timer) arm(HEARTBEAT_EVERY);
   };
-  const arm = (ms) => { timer = timers.set(tick, ms); timer?.unref?.(); };
+  const arm = (ms) => { clear(); timer = timers.set(tick, ms); timer?.unref?.(); };
   // the schedule: the first beat waits for a day after the last recorded one, so a relaunch within the day sends nothing
   function start() {
     stopped = false;
     if (!on) return;
     arm(nextHeartbeatIn(settings.beta?.lastHeartbeatAt ?? null, now()));
   }
-  function stop() { stopped = true; if (timer) timers.clear(timer); timer = null; }
+  function stop() { stopped = true; clear(); }
 
   const handlers = {
     'beta-status': () => status(),
@@ -103,8 +101,8 @@ export function createBeta({ settings, saveSettings = () => {}, on = true, editi
   return { status, check, heartbeat, start, stop, machineId, handlers };
 }
 
-export function registerBeta({ ipcMain, settings, saveSettings, on, edition, version, relay, email, log }) {
-  const beta = createBeta({ settings, saveSettings, on, edition, version, relay, email, log });
+export function registerBeta({ ipcMain, settings, saveSettings, on, edition, version, source, email, log }) {
+  const beta = createBeta({ settings, saveSettings, on, edition, version, source, email, log });
   for (const [name, fn] of Object.entries(beta.handlers)) ipcMain.handle(name, (_e, ...a) => fn(...a));
   beta.start();
   const s = beta.status();

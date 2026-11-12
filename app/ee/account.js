@@ -167,14 +167,15 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
     if (settings.workspaceId !== (state.workspace?.id ?? null)) { settings.workspaceId = state.workspace?.id ?? null; saveSettings?.(); }
   };
 
-  async function teamFlags(ids) {
-    const out = new Map();
-    if (!ids.length) return out;
-    const { data, error } = await client.from('workspaces').select('id, team_enabled').in('id', ids);
-    if (error) { if (!/team_enabled/.test(error.message ?? '')) log('account teams', error.message); return out; }
-    for (const w of data ?? []) out.set(w.id, w.team_enabled === true);
-    return out;
-  }
+  // the memberships with their workspace rows; team_enabled came with migration 0019, so a project without it is asked
+  // once more without the column and every workspace reads as team off
+  let teamColumn = true;
+  const memberships = async () => {
+    const select = (withTeam) => client.from('members').select(`role, workspace:workspaces(id, name, domain, domain_join, ${withTeam ? 'team_enabled, ' : ''}deleted_at)`).is('deleted_at', null);
+    let r = await select(teamColumn);
+    if (r.error && teamColumn && /team_enabled/.test(r.error.message ?? '')) { teamColumn = false; log('account', 'workspaces have no team_enabled column (migration 0019); teams read as off'); r = await select(false); }
+    return r;
+  };
 
   // one read of everything the account page shows: memberships, invites waiting for this email, domain matches
   async function refresh() {
@@ -184,15 +185,12 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
       if (!session) { signedOut(); emit(); return snapshot(); }
       state.signedIn = true; state.email = session.user.email ?? null; state.userId = session.user.id;
       const [members, invites, domains] = await Promise.all([
-        client.from('members').select('role, workspace:workspaces(id, name, domain, domain_join, deleted_at)').is('deleted_at', null),
+        memberships(),
         client.rpc('pending_invites'),
         client.rpc('domain_workspaces'),
       ]);
       for (const r of [members, invites, domains]) if (r.error) throw r.error;
-      const mine = (members.data ?? []).filter((m) => m.workspace && !m.workspace.deleted_at);
-      // the team switch (migration 0019) is read on its own: a project without the column is a project without teams
-      const teams = await teamFlags(mine.map((m) => m.workspace.id));
-      state.workspaces = mine.map((m) => row({ ...m.workspace, team_enabled: teams.get(m.workspace.id) === true }, m.role)).sort((a, b) => a.name.localeCompare(b.name));
+      state.workspaces = (members.data ?? []).filter((m) => m.workspace && !m.workspace.deleted_at).map((m) => row(m.workspace, m.role)).sort((a, b) => a.name.localeCompare(b.name));
       state.invites = (invites.data ?? []).map((i) => ({ id: i.invite_id, inviteId: i.invite_id, workspaceId: i.workspace_id, workspaceName: i.workspace_name, role: i.role, invitedBy: i.invited_by_email ?? null, invitedByEmail: i.invited_by_email ?? null, expiresAt: i.expires_at }));
       state.domainMatches = (domains.data ?? []).map((d) => ({ id: d.workspace_id, workspaceId: d.workspace_id, name: d.name }));
       chooseWorkspace(settings.workspaceId);

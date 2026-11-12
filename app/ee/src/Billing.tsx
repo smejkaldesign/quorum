@@ -33,20 +33,20 @@ function BillingBody({ account }: { account: AccountState }) {
   const run = async (key: string, fn: () => Promise<{ error?: string }>) => { setBusy(key); setError(''); const r = await fn(); setBusy(null); if (r.error) setError(r.error); else load(); };
   const checkout = () => run('checkout', () => api.billingCheckout(Math.max(1, b?.members ?? 1)));
   if (!b) return <div data-ee={EE_MARKER}><h3>Plan</h3><div className="set-card"><p className="set-hint">{error || 'Loading…'}</p></div></div>;
+  // the plan is the switch for the whole page: with service the card and the team line show, and Cloud is current
   const service = hasService(b.plan);
   return (
     <div data-ee={EE_MARKER}>
-      <PlanCard b={b} canManage={canManage} busy={busy} error={error} run={run} onCheckout={checkout} />
+      <PlanCard b={b} service={service} canManage={canManage} busy={busy} error={error} run={run} onCheckout={checkout} />
       {service && canManage && <CardOnFile subscribed={b.subscribed} busy={busy} onPortal={() => run('portal', () => api.billingPortal())} />}
       <UsageCard b={b} wsId={ws.id} />
       {ws.teamEnabled && <TeamCard b={b} name={ws.name} />}
-      <PricingTable current={service ? 'cloud' : 'free'} canManage={canManage} busy={busy} onSwitch={checkout} />
+      <PricingTable current={service ? 'cloud' : 'free'} comped={service && b.plan !== 'paid'} canManage={canManage} busy={busy} onSwitch={checkout} />
     </div>
   );
 }
 
-function PlanCard({ b, canManage, busy, error, run, onCheckout }: { b: Billing; canManage: boolean; busy: string | null; error: string; run: (key: string, fn: () => Promise<{ error?: string }>) => Promise<void>; onCheckout: () => void }) {
-  const service = hasService(b.plan);
+function PlanCard({ b, service, canManage, busy, error, run, onCheckout }: { b: Billing; service: boolean; canManage: boolean; busy: string | null; error: string; run: (key: string, fn: () => Promise<{ error?: string }>) => Promise<void>; onCheckout: () => void }) {
   const allowance = (b.seats + b.hourPacks) * INCLUDED_HOURS;
   const packs = (n: number) => run('packs', () => api.billingPacks(Math.max(0, n)));
   return (
@@ -139,8 +139,9 @@ function TeamCard({ b, name }: { b: Billing; name: string }) {
   );
 }
 
-// Free and Cloud side by side, the current one marked; the switch is the same checkout the plan card opens
-function PricingTable({ current, canManage, busy, onSwitch }: { current: 'free' | 'cloud'; canManage: boolean; busy: string | null; onSwitch: () => void }) {
+// Free and Cloud side by side, the current one marked; the switch is the same checkout the plan card opens. A plan
+// Quorum set by hand (cloud, internal) has Cloud service without a price, and the column says so
+function PricingTable({ current, comped, canManage, busy, onSwitch }: { current: 'free' | 'cloud'; comped: boolean; canManage: boolean; busy: string | null; onSwitch: () => void }) {
   return (
     <>
       <h3>Plans</h3>
@@ -148,7 +149,9 @@ function PricingTable({ current, canManage, busy, onSwitch }: { current: 'free' 
         {PRICING.map((p) => (
           <div key={p.id} className={`bill-plan ${p.id === current ? 'on' : ''}`}>
             <div className="bill-plan-head"><strong>{p.name}</strong>{p.id === current && <em className="stub">Current</em>}</div>
-            <p className="bill-price"><span>{p.price}</span>{p.per && <small>{p.per}</small>}</p>
+            {p.id === 'cloud' && comped
+              ? <p className="bill-price"><span>Set by Quorum</span><small>nothing to pay here</small></p>
+              : <p className="bill-price"><span>{p.price}</span>{p.per && <small>{p.per}</small>}</p>}
             <ul>{p.lines.map((l) => <li key={l}>{l}</li>)}</ul>
             {p.id === 'cloud' && current === 'free' && (canManage
               ? <button className="pill primary" disabled={!!busy} onClick={onSwitch}>{busy === 'checkout' ? 'Opening…' : 'Switch to Cloud'}</button>

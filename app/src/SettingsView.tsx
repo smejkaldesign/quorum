@@ -153,7 +153,8 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
           ) : page === 'knowledge' ? (
             <KnowledgePage />
           ) : page === 'general' ? (
-            <WorkspacePage settings={settings} onSettings={onSettings} onGo={go} billing={(listed as string[]).includes('billing')} />
+            <WorkspacePage settings={settings} onSettings={onSettings} onGo={go} billing={(listed as string[]).includes('billing')}
+              company={(listed as string[]).includes('teams') && account?.workspace?.teamEnabled === true ? null : <CompanyCard settings={settings} onSettings={onSettings} />} />
           ) : page === 'teams' ? (
             <TeamsArea company={<CompanyCard settings={settings} onSettings={onSettings} />} />
           ) : page === 'billing' ? (
@@ -527,7 +528,9 @@ export function CompanyCard({ settings, onSettings }: { settings: Settings; onSe
   );
 }
 
-function WorkspacePage({ settings, onSettings, onGo, billing }: { settings: Settings; onSettings: (s: Settings) => void; onGo: (p: Page) => void; billing: boolean }) {
+// `company` is the CompanyCard while this page is its home: the Local edition, a Cloud build without a hosted account,
+// and a workspace whose team is off. Once a team is on, the card lives on the Teams page and this one gets null
+function WorkspacePage({ settings, onSettings, onGo, billing, company }: { settings: Settings; onSettings: (s: Settings) => void; onGo: (p: Page) => void; billing: boolean; company: ReactNode }) {
   const w = settings.workspace ?? {};
   const save = async (patch: Partial<Workspace>) => onSettings(await window.quorum.setSettings({ workspace: patch }));
   return (
@@ -536,6 +539,7 @@ function WorkspacePage({ settings, onSettings, onGo, billing }: { settings: Sett
         unconfigured={<><h3>Account</h3><p className="muted">Hosted accounts are not set up in this build</p></>} />
       {billing && <p className="set-note">The plan, the card on file and this month's usage live under <button className="link-btn" onClick={() => onGo('billing')}>Billing</button>.</p>}
       <EnvSwitch />
+      {company}
 
       <h3>Connections</h3>
       <WorkspaceDecisions connectedBy={w.decisions?.by} />

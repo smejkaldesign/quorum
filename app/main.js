@@ -13,7 +13,7 @@ import { createGoogleCalendar, googleClient, mergeEvents, repoRoot } from './sou
 import { createTokenStore } from './sources/tokens.js';
 import { createViews } from './views.js';
 import { registerOnboarding } from './onboarding.js';
-import { gateOn, registerBeta, relayHttp } from './beta.js';
+import { gateOn, registerBeta } from './beta.js';
 import { createKeeper } from './keeper.js';
 import { SECRET_NAMES, frontmatterKeys, wouldBlock } from './guardrails.js';
 import { createSuggester } from './suggest.js';
@@ -1191,6 +1191,8 @@ ipcMain.handle('set-settings', (_e, next) => {
   if (next.workspace && typeof next.workspace === 'object') {
     const clean = {};
     for (const [k, max] of Object.entries({ company: 80, companyDescription: 1000 })) if (typeof next.workspace[k] === 'string') clean[k] = next.workspace[k].slice(0, max);
+    // the company mark: a small PNG or JPEG data URL from the Teams page's picker, or the empty string to remove it
+    if (typeof next.workspace.companyLogo === 'string' && (next.workspace.companyLogo === '' || (/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(next.workspace.companyLogo) && next.workspace.companyLogo.length <= 90000))) clean.companyLogo = next.workspace.companyLogo;
     // one word each, different from each other; anything else keeps the current word
     for (const k of ['stopWord', 'goWord']) {
       const w = String(next.workspace[k] ?? '').trim().toUpperCase();
@@ -1950,7 +1952,7 @@ registerOnboarding({
 // A copy on the local Supabase stack checks its code against a relay on this Mac
 registerBeta({
   ipcMain, settings, saveSettings, on: gateOn({ pkg: packagedMeta }), edition: EDITION, version: app.getVersion(), log,
-  relay: () => relayHttp({ source: account.envStatus?.().config ?? 'production' }), email: () => account.state?.().email ?? null,
+  source: () => account.envStatus?.().config ?? 'production', email: () => account.state?.().email ?? null,
 });
 ipcMain.handle('connect-brain', async () => {
   const r = await dialog.showOpenDialog(win, {

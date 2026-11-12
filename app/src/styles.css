@@ -1458,6 +1458,7 @@ button.meta-pill { font: inherit; cursor: pointer; }
 /* beta gate (BetaGate.tsx): the code field under the onboarding card's copy */
 .beta-form { display: flex; flex-direction: column; gap: 10px; margin: 18px 0 6px; }
 .beta-form .set-field { width: 100%; }
+.beta-hint { margin: 0; color: var(--muted); font-size: 13px; }
 .onb-step .link-btn { font-size: inherit; }
 
 /* Settings › Admin › Billing (ee/src/Billing.tsx): the usage meter, per-seat lines and the two pricing columns */

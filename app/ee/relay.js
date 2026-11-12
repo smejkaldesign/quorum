@@ -2,24 +2,9 @@
 // events come back in the helper's own shape, so main.js feeds them to addFinal unchanged. Pure Node, no electron import.
 // The token travels in the hello message: the WHATWG WebSocket Node and Electron ship cannot set request headers.
 
-export const DEFAULT_RELAY = 'wss://relay.quorum.watch';
-// the relay's own Railway address: the same service, reached when the custom domain cannot be (certificate, DNS)
-export const FALLBACK_RELAY = 'wss://relay-production-e257.up.railway.app';
-export const LOCAL_RELAY = 'ws://127.0.0.1:8787';
-
-// QUORUM_RELAY_URL wins; a copy on the local Supabase stack talks to a relay on this Mac; everything else to Quorum's
-export function relayUrl({ env = process.env, source = 'production' } = {}) {
-  const u = String(env.QUORUM_RELAY_URL ?? '').trim();
-  if (u) return u.replace(/\/+$/, '');
-  return source === 'local' ? LOCAL_RELAY : DEFAULT_RELAY;
-}
-// every address to try, in order; only a connection-level failure moves to the next one
-export function relayUrls(opts = {}) {
-  const first = relayUrl(opts);
-  return first === DEFAULT_RELAY ? [DEFAULT_RELAY, FALLBACK_RELAY] : [first];
-}
-// a failure before the relay answered (DNS, TLS, refused socket), as opposed to a refusal the relay sent
-export const unreachable = (err) => /could not be reached|did not answer|fetch failed|ECONNREFUSED|ENOTFOUND|certificate|CERT_|EPROTO|ETIMEDOUT/i.test(String(err?.message ?? err?.cause?.message ?? err));
+// the addresses and the http form live in ../relayUrl.js, shared with the beta gate in both editions
+import { DEFAULT_RELAY, FALLBACK_RELAY, LOCAL_RELAY, httpUrl, relayUrl, relayUrls, unreachable } from '../relayUrl.js';
+export { DEFAULT_RELAY, FALLBACK_RELAY, LOCAL_RELAY, httpUrl, relayUrl, relayUrls, unreachable };
 
 // whether this call goes through the relay. The admin's settings win: required, or speech routed to an organization
 // connector. Otherwise the user's own choice (settings.transcription.engine). Default is the on-device engine.
@@ -61,7 +46,6 @@ export async function managedModelPlan({ client, state, settings }) {
 }
 
 // the relay's HTTP origin from its websocket url
-export const httpUrl = (url) => String(url).replace(/^ws(s?):\/\//, 'http$1://').replace(/\/+$/, '');
 
 // reads one server-sent-events body: data lines carry JSON with delta, done or error
 export async function readSse(body, onEvent) {

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { codeHint, isCode, normalizeCode } from '../betaCode.js';
 import { isCloud } from './edition';
 import mark from '../assets/quorum-mark.png';
 
@@ -13,12 +14,12 @@ export function BetaGate({ onDone }: { onDone: () => void }) {
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const clean = code.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-  const ready = clean.length === 8 && (!isCloud || !email.trim() || EMAIL.test(email.trim())) && !busy;
+  const hint = codeHint(code);
+  const ready = isCode(code) && (!isCloud || !email.trim() || EMAIL.test(email.trim())) && !busy;
   const submit = async () => {
     if (!ready) return;
     setBusy(true); setError('');
-    const r = await window.quorum.betaCheck(clean, isCloud && email.trim() ? email.trim() : null).catch((e) => ({ ok: false, reason: String((e as Error).message || e) }));
+    const r = await window.quorum.betaCheck(normalizeCode(code), isCloud && email.trim() ? email.trim() : null).catch((e) => ({ ok: false, reason: String((e as Error).message || e) }));
     setBusy(false);
     if (r.ok) onDone(); else setError(r.reason || 'That code was not accepted.');
   };
@@ -31,7 +32,8 @@ export function BetaGate({ onDone }: { onDone: () => void }) {
           <p>Enter your access code to continue. Request one at <button type="button" className="link-btn" onClick={() => window.quorum.openExternal(SITE)}>quorum.watch</button>.</p>
           <div className="beta-form">
             {isCloud && <label className="set-field wide"><input type="email" autoComplete="email" aria-label="Email the code was sent to" placeholder="Email the code was sent to (optional)" value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') submit(); }} /></label>}
-            <label className="set-field wide"><input autoFocus aria-label="Access code" placeholder="XXXX-XXXX" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} onKeyDown={(e) => { if (e.key === 'Enter') submit(); }} /></label>
+            <label className="set-field wide"><input autoFocus aria-label="Access code" placeholder="XXXX-XXXX" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} onBlur={() => { if (code) setCode(normalizeCode(code)); }} onKeyDown={(e) => { if (e.key === 'Enter') submit(); }} /></label>
+            {hint && <p className="beta-hint">{hint}</p>}
           </div>
           {error && <p className="set-error">{error}</p>}
           <p className="onb-muted">This install reports its code, an anonymous machine id and the app version to Quorum once a day during the beta.</p>

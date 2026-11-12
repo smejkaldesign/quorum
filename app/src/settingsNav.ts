@@ -23,8 +23,7 @@ export const workspacePages = (edition: 'local' | 'cloud', hosted: boolean | nul
   WORKSPACE_PAGES.filter((p) => {
     if (p === 'general') return true;
     if (edition !== 'cloud' || hosted !== true) return false;
-    if (p === 'teams' || p === 'billing') return true;
-    return teamEnabled;
+    return TEAM_PAGES.includes(p) ? teamEnabled : true;
   });
 
 export const modeOf = (page: string): NavMode => ((WORKSPACE_PAGES as readonly string[]).includes(page) ? 'admin' : 'account');

@@ -21,7 +21,7 @@ export const PRICING: { id: 'free' | 'cloud'; name: string; price: string; per: 
     'Built in highest quality and accuracy voice-to-text models',
     'Starter Agent OS, built and maintained for you',
     'Sync across Macs and the web',
-    'Team knowledge with members and invites',
+    'Team knowledge with members and invites, with a team enabled',
     'Hosted models and transcription, no API keys to manage',
     `${INCLUDED_HOURS} managed hours per seat each month, more in $${PACK.price} packs`,
   ] },
