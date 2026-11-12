@@ -120,7 +120,7 @@ a.metric:hover { background: var(--container-tile); }
 .pill { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--text); font-size: 14px; font-weight: 500; white-space: nowrap; transition: border-color 120ms ease; }
 .pill:hover:not(:disabled) { color: var(--text); border-color: #fff; }
 .pill.primary { background: #f2f2f2; border-color: #f2f2f2; color: #111; }
-.pill.primary:hover:not(:disabled) { background: #fff; }
+.pill.primary:hover:not(:disabled) { background: #fff; border-color: #fff; color: #111; }
 .pill.ghost { border-color: transparent; }
 .pill.ghost:hover:not(:disabled) { border-color: transparent; background: rgba(255, 255, 255, 0.06); }
 .pill.danger { color: var(--danger); }
