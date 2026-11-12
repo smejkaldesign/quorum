@@ -160,12 +160,21 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
   // key stays in the main process.
   const envStatus = () => ({ env: cloud.env, config: cloud.source, host: cloud.url ? new URL(cloud.url).host : null, useProduction: cloud.useProduction, configured: !!client });
 
-  const row = (w, role) => ({ id: w.id, name: w.name, domain: w.domain ?? null, domainJoin: w.domain_join !== false, role });
+  const row = (w, role) => ({ id: w.id, name: w.name, domain: w.domain ?? null, domainJoin: w.domain_join !== false, role, teamEnabled: w.team_enabled === true });
   const signedOut = () => { Object.assign(state, { signedIn: false, email: null, userId: null, workspace: null, workspaces: [], invites: [], domainMatches: [] }); };
   const chooseWorkspace = (id) => {
     state.workspace = state.workspaces.find((w) => w.id === id) ?? state.workspaces[0] ?? null;
     if (settings.workspaceId !== (state.workspace?.id ?? null)) { settings.workspaceId = state.workspace?.id ?? null; saveSettings?.(); }
   };
+
+  async function teamFlags(ids) {
+    const out = new Map();
+    if (!ids.length) return out;
+    const { data, error } = await client.from('workspaces').select('id, team_enabled').in('id', ids);
+    if (error) { if (!/team_enabled/.test(error.message ?? '')) log('account teams', error.message); return out; }
+    for (const w of data ?? []) out.set(w.id, w.team_enabled === true);
+    return out;
+  }
 
   // one read of everything the account page shows: memberships, invites waiting for this email, domain matches
   async function refresh() {
@@ -180,7 +189,10 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
         client.rpc('domain_workspaces'),
       ]);
       for (const r of [members, invites, domains]) if (r.error) throw r.error;
-      state.workspaces = (members.data ?? []).filter((m) => m.workspace && !m.workspace.deleted_at).map((m) => row(m.workspace, m.role)).sort((a, b) => a.name.localeCompare(b.name));
+      const mine = (members.data ?? []).filter((m) => m.workspace && !m.workspace.deleted_at);
+      // the team switch (migration 0019) is read on its own: a project without the column is a project without teams
+      const teams = await teamFlags(mine.map((m) => m.workspace.id));
+      state.workspaces = mine.map((m) => row({ ...m.workspace, team_enabled: teams.get(m.workspace.id) === true }, m.role)).sort((a, b) => a.name.localeCompare(b.name));
       state.invites = (invites.data ?? []).map((i) => ({ id: i.invite_id, inviteId: i.invite_id, workspaceId: i.workspace_id, workspaceName: i.workspace_name, role: i.role, invitedBy: i.invited_by_email ?? null, invitedByEmail: i.invited_by_email ?? null, expiresAt: i.expires_at }));
       state.domainMatches = (domains.data ?? []).map((d) => ({ id: d.workspace_id, workspaceId: d.workspace_id, name: d.name }));
       chooseWorkspace(settings.workspaceId);
@@ -328,6 +340,14 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
       const { error } = await client.rpc('remove_member', { ws: state.workspace.id, user_id: String(userId) });
       if (error) return fail(error, 'That member could not be removed.');
       return membersList();
+    }),
+    // the Teams page's switch (migration 0019): owners and admins turn the team-level pages on for the workspace
+    'team-enabled-set': signedInGuard(async (on) => {
+      if (!state.workspace) return NO_WORKSPACE;
+      if (state.workspace.role === 'member') return { error: 'Only owners and admins can enable a team.' };
+      const { error } = await client.rpc('workspace_set_team_enabled', { ws: state.workspace.id, enabled: on === true });
+      if (error) return fail(error, 'The team setting could not be saved.');
+      return refresh();
     }),
     'invite-revoke': signedInGuard(async (inviteId) => {
       if (!state.workspace) return NO_WORKSPACE;

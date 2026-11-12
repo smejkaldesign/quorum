@@ -177,6 +177,8 @@ const sample: Partial<Bridge> = {
   isDev: false,
   sitePreview: { quoteMs: 9000 },
   onboardingStatus: async () => ({ firstRun: false, defaultVaultDir: VAULT }),
+  betaStatus: async () => ({ gate: false, on: false, code: null, plan: null, acceptedAt: null, machineId: null, lastHeartbeatAt: null }),
+  betaCheck: async () => ({ ok: true, plan: 'free' }),
   screenContextStatus: async () => ({ on: true, granted: true }),
   screenContextSet: async (on: boolean) => ({ on, granted: true }),
   screenContextPrivacy: async () => {},

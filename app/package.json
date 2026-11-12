@@ -54,6 +54,7 @@
   },
   "productName": "Quorum",
   "description": "Meetings and your second brain, on your Mac",
+  "quorumBetaGate": true,
   "build": {
     "appId": "design.smejkal.quorum",
     "productName": "Quorum",

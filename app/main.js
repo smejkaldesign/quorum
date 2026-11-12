@@ -13,6 +13,7 @@ import { createGoogleCalendar, googleClient, mergeEvents, repoRoot } from './sou
 import { createTokenStore } from './sources/tokens.js';
 import { createViews } from './views.js';
 import { registerOnboarding } from './onboarding.js';
+import { gateOn, registerBeta, relayHttp } from './beta.js';
 import { createKeeper } from './keeper.js';
 import { SECRET_NAMES, frontmatterKeys, wouldBlock } from './guardrails.js';
 import { createSuggester } from './suggest.js';
@@ -1944,6 +1945,12 @@ registerOnboarding({
     const r = await dialog.showOpenDialog(win, { title: 'Where should your Agent OS live?', properties: ['openDirectory', 'createDirectory'], defaultPath: path.join(homedir(), 'Documents'), buttonLabel: 'Use folder' });
     return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
   },
+});
+// the beta gate (beta.js): an access code before anything else, in both editions, until the build turns the gate off.
+// A copy on the local Supabase stack checks its code against a relay on this Mac
+registerBeta({
+  ipcMain, settings, saveSettings, on: gateOn({ pkg: packagedMeta }), edition: EDITION, version: app.getVersion(), log,
+  relay: () => relayHttp({ source: account.envStatus?.().config ?? 'production' }), email: () => account.state?.().email ?? null,
 });
 ipcMain.handle('connect-brain', async () => {
   const r = await dialog.showOpenDialog(win, {

@@ -1454,3 +1454,29 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .guard-skipped ul { margin: 8px 0 0; padding-left: 18px; }
 .guard-skipped li { margin: 4px 0; }
 .guard-skipped strong { font-weight: 500; color: var(--text); }
+
+/* beta gate (BetaGate.tsx): the code field under the onboarding card's copy */
+.beta-form { display: flex; flex-direction: column; gap: 10px; margin: 18px 0 6px; }
+.beta-form .set-field { width: 100%; }
+.onb-step .link-btn { font-size: inherit; }
+
+/* Settings › Admin › Billing (ee/src/Billing.tsx): the usage meter, per-seat lines and the two pricing columns */
+.bill-meter { display: block; width: 140px; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.08); overflow: hidden; flex: none; }
+.bill-meter i { display: block; height: 100%; border-radius: 3px; background: var(--brand); transition: width 0.3s ease; }
+.bill-meter i.warn { background: var(--caution); }
+.bill-meter i.over { background: var(--danger); }
+.bill-seat { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; font-size: 14px; border-top: 1px solid var(--container-border); }
+.bill-seat em { font-style: normal; color: var(--muted); font-size: 13px; white-space: nowrap; }
+.bill-plans { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.bill-plan { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px; border: 1px solid var(--line-2); border-radius: 20px; background: #242426; }
+.bill-plan.on { border-color: rgba(var(--brand-rgb), 0.5); }
+.bill-plan-head { display: flex; align-items: center; justify-content: space-between; font-size: 16px; }
+.bill-price { font: 400 28px/1.1 "New York", ui-serif, Georgia, serif; }
+.bill-price small { font: 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif; color: var(--muted); margin-left: 4px; }
+.bill-plan ul { margin: 0; padding-left: 18px; color: var(--text); font-size: 14px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.bill-plan .pill { align-self: flex-start; }
+@media (max-width: 760px) { .bill-plans { grid-template-columns: 1fr; } }
+
+/* Settings › Admin › Teams: the company mark beside its picker */
+.company-logo { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; overflow: hidden; background: linear-gradient(var(--brand-grad-a), var(--brand-grad-b)); color: #fff; font: 500 16px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif; }
+.company-logo img { width: 100%; height: 100%; object-fit: cover; }

@@ -1,6 +1,6 @@
 import type { AccountState, Billing, ContributionMine, Member, MemberInvite, Result, Role, WorkspaceConnector, WorkspaceVoice } from '../../src/quorum';
 
-export type AccountApi = Pick<Window['quorum'], 'accountStatus' | 'accountSendCode' | 'accountVerifyCode' | 'accountSignOut' | 'accountGoogle' | 'onAccountOAuth' | 'orgCreate' | 'orgJoin' | 'orgSwitch' | 'membersList' | 'memberInvite' | 'memberRemove' | 'inviteRevoke' | 'syncSet' | 'syncNow' | 'onAccount'>;
+export type AccountApi = Pick<Window['quorum'], 'accountStatus' | 'accountSendCode' | 'accountVerifyCode' | 'accountSignOut' | 'accountGoogle' | 'onAccountOAuth' | 'orgCreate' | 'orgJoin' | 'orgSwitch' | 'membersList' | 'memberInvite' | 'memberRemove' | 'inviteRevoke' | 'syncSet' | 'syncNow' | 'onAccount' | 'teamEnabledSet'>;
 export type ConnectorsApi = Pick<Window['quorum'], 'connectorsList' | 'connectorSet' | 'connectorRemove' | 'connectorTest'>;
 export type VoiceApi = Pick<Window['quorum'], 'workspaceUsage' | 'workspaceVoiceGet' | 'workspaceVoiceSet'>;
 export type KnowledgeApi = Pick<Window['quorum'], 'knowledgeStatus' | 'knowledgeQueue' | 'knowledgeReview' | 'knowledgeAutoIncludeSet' | 'knowledgeList' | 'knowledgeRead'>;
@@ -23,7 +23,7 @@ export function knowledgeApi(): KnowledgeApi {
     knowledgeRead: async (rel) => ({ doc: { rel, title: rel.replace(/^.*\//, '').replace(/\.md$/, ''), body: 'A shared note from a teammate.\n\n- One point\n- Another point', pulledAt: iso(-DAY), behind: false, update: null } }),
   });
 }
-export type BillingApi = Pick<Window['quorum'], 'billingStatus' | 'billingCheckout' | 'billingPortal' | 'billingPacks'>;
+export type BillingApi = Pick<Window['quorum'], 'billingStatus' | 'billingCheckout' | 'billingPortal' | 'billingPacks' | 'billingCard' | 'workspaceUsage'>;
 // billing: a subscribed workspace with one pack, kept in memory; Stripe pages are not opened in the mock
 let billingMock: BillingApi | null = null;
 export function billingApi(): BillingApi {
@@ -35,6 +35,12 @@ export function billingApi(): BillingApi {
     billingCheckout: async () => { await delay(300); b = { ...b, plan: 'paid', subscribed: true, status: 'active' }; return ok; },
     billingPortal: async () => { await delay(300); return ok; },
     billingPacks: async (packs) => { await delay(300); b = { ...b, hourPacks: packs }; return { packs, remainingSeconds: (b.seats + packs) * 20 * 3600 }; },
+    billingCard: async () => ({ card: b.subscribed ? { brand: 'visa', last4: '4242', expMonth: 12, expYear: 2031 } : null }),
+    workspaceUsage: async () => ({ usage: { period: iso(-9 * DAY), hours: 31.5, managedHours: 24.2, seats: [
+      { userId: 'u_me', email: 'you@example.com', name: 'Alex Rivera', hours: 14.1, managedHours: 11 },
+      { userId: 'u_2', email: 'dana@example.com', name: 'Dana Whitfield', hours: 12.4, managedHours: 9.2 },
+      { userId: 'u_3', email: 'sam@example.com', name: null, hours: 5, managedHours: 4 },
+    ] } }),
   });
 }
 // organization voice: no usage yet (the relay is not written), overrides kept in memory
@@ -105,7 +111,7 @@ function makeMock(): AccountApi {
       { userId: 'u_3', email: `sam@${at}`, name: null, role: 'member', joinedAt: iso(-2 * DAY) },
     ];
     invites = [{ inviteId: 'inv_9', email: `lee@${at}`, role: 'member', expiresAt: iso(5 * DAY) }];
-    set({ workspace: { id: 'ws_1', name, domain, domainJoin, role }, workspaces: [{ id: 'ws_1', name, role }, { id: 'ws_acme', name: 'Acme Health', role: 'member' }], invites: [], domainMatches: [], sync: true, lastSyncAt: iso(-3 * 60000), syncError: null });
+    set({ workspace: { id: 'ws_1', name, domain, domainJoin, role, teamEnabled: true }, workspaces: [{ id: 'ws_1', name, role }, { id: 'ws_acme', name: 'Acme Health', role: 'member' }], invites: [], domainMatches: [], sync: true, lastSyncAt: iso(-3 * 60000), syncError: null });
   };
   // jump to a state from the console or QUORUM_EVAL
   (window as unknown as { __accountMock: unknown }).__accountMock = {
@@ -129,6 +135,7 @@ function makeMock(): AccountApi {
     inviteRevoke: async (inviteId) => { invites = invites.filter((i) => i.inviteId !== inviteId); return ok; },
     syncSet: async (on) => { set({ sync: on }); return ok; },
     syncNow: async () => { await delay(700); set({ lastSyncAt: iso(0), syncError: null }); return { pushed: { notes: 3, meetings: 1 } }; },
+    teamEnabledSet: async (on) => { await delay(200); if (state.workspace) set({ workspace: { ...state.workspace, teamEnabled: on } }); return state; },
     onAccount: (cb) => { subs.add(cb); return () => { subs.delete(cb); }; },
   };
 }

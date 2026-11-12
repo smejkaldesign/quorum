@@ -201,6 +201,9 @@ contextBridge.exposeInMainWorld('quorum', {
   billingCheckout: (seats) => ipcRenderer.invoke('billing-checkout', seats),
   billingPortal: () => ipcRenderer.invoke('billing-portal'),
   billingPacks: (packs) => ipcRenderer.invoke('billing-packs', packs),
+  billingCard: () => ipcRenderer.invoke('billing-card'),
+  // the Teams page's switch (migration 0019); handler in account.js
+  teamEnabledSet: (on) => ipcRenderer.invoke('team-enabled-set', on),
   // end account
   // environment (development or production) and which Supabase config the cloud edition is using; never the key
   envStatus: () => ipcRenderer.invoke('env-status'),
@@ -226,4 +229,7 @@ contextBridge.exposeInMainWorld('quorum', {
   onboardingRequestAccessibility: () => ipcRenderer.invoke('meeting-provider-check'),
   onboardingPickDir: () => ipcRenderer.invoke('onboarding-pick-dir'),
   onboardingDone: () => ipcRenderer.invoke('onboarding-done'),
+  // the beta gate (beta.js): whether a code is still needed, and the check that stores an accepted one
+  betaStatus: () => ipcRenderer.invoke('beta-status'),
+  betaCheck: (code, email) => ipcRenderer.invoke('beta-check', code, email),
 });

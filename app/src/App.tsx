@@ -4,6 +4,7 @@ import { Markdown } from './Markdown';
 import { useSession } from './session';
 import { EndView } from './EndView';
 import { Onboarding } from './Onboarding';
+import { BetaGate } from './BetaGate';
 import { AccountArea, EDITION, isCloud, KnowledgeTabArea } from './edition';
 import { MAIN_TAB_LABEL, keepTab, mainTabs, showsKnowledge, type MainTab } from './mainTabs';
 import markProd from '../assets/quorum-mark.png';
@@ -144,6 +145,9 @@ export function App() {
   // a fresh install shows the wizard until onboarding-done; null until the main process answers
   const [firstRun, setFirstRun] = useState<boolean | null>(null);
   useEffect(() => { window.quorum.onboardingStatus().then((s) => setFirstRun(s.firstRun)).catch(() => setFirstRun(false)); }, []);
+  // the beta gate comes before everything, wizard included, until an access code was accepted (beta.js)
+  const [gated, setGated] = useState<boolean | null>(null);
+  useEffect(() => { Promise.resolve(window.quorum.betaStatus?.()).then((s) => setGated(s?.gate === true)).catch(() => setGated(false)); }, []);
   const [settingsPage, setSettingsPage] = useState<({ page: SettingsPageId; n: number } & ConnectorsTarget) | null>(null);
   const openSettings = (page: SettingsPageId, target: ConnectorsTarget = {}) => { setSettingsPage({ page, ...target, n: Date.now() }); setView('settings'); };
   // the composer sits in three views, so its "Choose a model source" button asks for Settings through a window event
@@ -364,7 +368,8 @@ export function App() {
   const lastUserIdx = msgs.findLastIndex((x) => x.kind === 'user');
 
   // nothing renders until the main process says whether this is a first run, so the wizard never flashes in or out
-  if (firstRun === null) return <div className="panel" />;
+  if (firstRun === null || gated === null) return <div className="panel" />;
+  if (gated) return <div className="panel"><BetaGate onDone={() => setGated(false)} /></div>;
   if (firstRun) {
     return <div className="panel"><OnboardingShell brain={brain} onBrain={setBrain} onDone={() => setFirstRun(false)} /></div>;
   }
