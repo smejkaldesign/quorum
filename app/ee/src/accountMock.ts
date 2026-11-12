@@ -4,7 +4,7 @@ export type AccountApi = Pick<Window['quorum'], 'accountStatus' | 'accountSendCo
 export type ConnectorsApi = Pick<Window['quorum'], 'connectorsList' | 'connectorSet' | 'connectorRemove' | 'connectorTest'>;
 export type VoiceApi = Pick<Window['quorum'], 'workspaceUsage' | 'workspaceVoiceGet' | 'workspaceVoiceSet'>;
 export type KnowledgeApi = Pick<Window['quorum'], 'knowledgeStatus' | 'knowledgeQueue' | 'knowledgeReview' | 'knowledgeAutoIncludeSet' | 'knowledgeList' | 'knowledgeRead'>;
-export type TeamApi = Pick<Window['quorum'], 'teamSource' | 'teamSourceSet' | 'teamSourcePick' | 'teamPull' | 'teamTree' | 'teamSearch' | 'teamGraph' | 'teamNote' | 'onTeamChanged'>;
+export type TeamApi = Pick<Window['quorum'], 'teamSource' | 'teamSourceSet' | 'teamSourcePick' | 'teamPull' | 'teamTree' | 'teamSearch' | 'teamGraph' | 'teamNote' | 'teamResolve' | 'onTeamChanged'>;
 let teamMock: TeamApi | null = null;
 // team knowledge outside Electron: a sync source with two notes, so the tab renders with something to show
 export function teamApi(): TeamApi {
@@ -22,6 +22,7 @@ export function teamApi(): TeamApi {
     teamSearch: async (q) => ({ hits: q ? [{ rel: '05-knowledge/onboarding.md', title: 'Onboarding', score: 10, line: 2, snippet: 'Start here.' }] : [] }),
     teamGraph: async () => ({ graph: null }),
     teamNote: async (rel) => ({ doc: { rel, title: rel.replace(/^.*\//, '').replace(/\.md$/, ''), body: 'A page from the team knowledge.\n\n- One point\n- Another point', pulledAt: null, behind: false, update: null } }),
+    teamResolve: async (target) => ({ rel: /onboarding/i.test(target) ? '05-knowledge/onboarding.md' : /roadmap/i.test(target) ? 'roadmap.md' : null }),
     onTeamChanged: () => () => {},
   });
 }

@@ -23,12 +23,9 @@ export const matchesQuery = (note: { title: string; rel: string }, query: string
   return words.every((w) => hay.includes(w));
 };
 
-// whether the workspace has a team switched on (Settings › Admin › Teams). The flag arrives on the account status
-// once that page exists; a status without it means no team yet, so the tab never opens on a guess
-export const teamEnabledOf = (account: unknown): boolean => {
-  const a = account as { teamEnabled?: unknown; workspace?: { teamEnabled?: unknown } | null } | null | undefined;
-  return a?.workspace?.teamEnabled === true || a?.teamEnabled === true;
-};
+// whether the workspace has a team switched on (Settings › Admin › Teams, migration 0019): the flag rides on the
+// workspace in every account status, and a status without it means no team yet, so the tab never opens on a guess
+export const teamEnabledOf = (account: AccountLike): boolean => account?.workspace?.teamEnabled === true;
 
 // what the Knowledge tab shows, in order: the sign-in card, the plan card, the "enable a team" card, or the knowledge.
 // An unknown plan (still loading, or the project did not answer) keeps the gate closed

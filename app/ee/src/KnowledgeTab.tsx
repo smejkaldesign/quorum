@@ -78,7 +78,8 @@ type SourceState = { source: TeamSource; local: TeamLocal };
 function TeamKnowledge({ workspace, admin }: { workspace: string; admin: boolean }) {
   const [state, setState] = useState<SourceState | null>(null);
   const [error, setError] = useState('');
-  const [setup, setSetup] = useState(false);
+  // the source card opens on its own for an admin whose source is not on this Mac yet, and closes when asked
+  const [setup, setSetup] = useState<boolean | null>(null);
   const [query, setQuery] = useState('');
   const load = useCallback(() => team.teamSource().then((r) => { if (r.error) setError(r.error); else if (r.source && r.local) { setError(''); setState({ source: r.source, local: r.local }); } }), []);
   useEffect(() => { load(); }, [load]);
@@ -89,7 +90,7 @@ function TeamKnowledge({ workspace, admin }: { workspace: string; admin: boolean
   };
   if (!state) return <div className="tk" data-ee={EE_MARKER}>{error && <div className="tk-body"><p className="error">{error}</p></div>}</div>;
   const kind = state.source.kind;
-  const showSetup = setup || (admin && kind !== 'sync' && !state.local.exists && !state.local.pulling);
+  const showSetup = setup ?? (admin && kind !== 'sync' && !state.local.exists && !state.local.pulling);
   return (
     <div className="tk" data-ee={EE_MARKER}>
       <div className="tk-head">
@@ -98,7 +99,7 @@ function TeamKnowledge({ workspace, admin }: { workspace: string; admin: boolean
         <label className="kb-search"><IconSearch width={14} height={14} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={kind === 'sync' ? 'Search shared notes' : 'Search team knowledge'} aria-label="Search team knowledge" /></label>
         <span className="tk-count muted">{kind === 'sync' ? '' : `${state.local.notes} ${state.local.notes === 1 ? 'note' : 'notes'}`}</span>
         {kind !== 'sync' && <button className="tk-tool" onClick={pull} disabled={state.local.pulling} aria-label="Refresh team knowledge" data-tip="Refresh"><IconReset width={15} height={15} /></button>}
-        {admin && <button className={`tk-tool ${showSetup ? 'on' : ''}`} onClick={() => setSetup((v) => !v)} aria-label="Knowledge source" data-tip="Knowledge source"><IconSliders width={15} height={15} /></button>}
+        {admin && <button className={`tk-tool ${showSetup ? 'on' : ''}`} onClick={() => setSetup(!showSetup)} aria-label="Knowledge source" data-tip="Knowledge source"><IconSliders width={15} height={15} /></button>}
       </div>
       {error && <p className="error tk-error">{error}</p>}
       {showSetup && admin && <SourceCard state={state} onChange={(s) => { setState(s); setSetup(false); }} onClose={() => setSetup(false)} />}
@@ -297,9 +298,9 @@ function Reader({ doc, teamText, onTeamText, root, onBack, onWiki }: { doc: Know
 function Browser({ admin, query, state }: { admin: boolean; query: string; state: SourceState }) {
   const [tree, setTree] = useState<TreeItem[]>([]);
   const [graph, setGraph] = useState<GraphData | null>(null);
-  // search results stay tied to the query that produced them, so a cleared box shows the tree again at once
-  const [found, setFound] = useState<{ q: string; hits: TeamHit[] } | null>(null);
-  const hits = query.trim() && found?.q === query ? found.hits : null;
+  // the last results stay up while the next query runs; a cleared box shows the tree again at once
+  const [found, setFound] = useState<TeamHit[] | null>(null);
+  const hits = query.trim() ? found : null;
   const [openSet, setOpenSet] = useState<Set<string>>(new Set());
   const [doc, setDoc] = useState<KnowledgeDoc | null>(null);
   const [error, setError] = useState('');
@@ -313,7 +314,7 @@ function Browser({ admin, query, state }: { admin: boolean; query: string; state
   useEffect(() => {
     if (!query.trim()) return;
     let live = true;
-    team.teamSearch(query, 60).then((r) => { if (live && !r.error) setFound({ q: query, hits: r.hits ?? [] }); });
+    team.teamSearch(query, 60).then((r) => { if (live && !r.error) setFound(r.hits ?? []); });
     return () => { live = false; };
   }, [query]);
   const read = useCallback(async (rel: string) => {
@@ -321,13 +322,10 @@ function Browser({ admin, query, state }: { admin: boolean; query: string; state
     const r = await team.teamNote(rel);
     if (r.error) setError(r.error); else if (r.doc) setDoc(r.doc);
   }, []);
-  const follow = (target: string) => {
-    const want = target.replace(/\.md$/, '').toLowerCase();
-    const all: string[] = [];
-    const flat = (items: TreeItem[]) => { for (const it of items) { if (it.dir) flat(it.children ?? []); else all.push(it.path); } };
-    flat(tree);
-    const hit = all.find((p) => p.toLowerCase() === `${want}.md` || p.toLowerCase().endsWith(`/${want}.md`) || p.replace(/^.*\//, '').replace(/\.md$/, '').toLowerCase() === want);
-    if (hit) read(hit);
+  // a wikilink inside a team note goes through the index, the same resolution the graph uses
+  const follow = async (target: string) => {
+    const r = await team.teamResolve(target, doc?.rel ?? '');
+    if (r.error) setError(r.error); else if (r.rel) read(r.rel);
   };
   const toggle = (p: string) => setOpenSet((s) => { const n = new Set(s); if (n.has(p)) n.delete(p); else n.add(p); return n; });
   return (

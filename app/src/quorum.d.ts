@@ -391,6 +391,7 @@ declare global {
       teamSearch(q: string, limit?: number): Promise<Result & { hits?: TeamHit[] }>;
       teamGraph(): Promise<Result & { graph?: import('./Graph').GraphData | null }>;
       teamNote(rel: string): Promise<Result & { doc?: KnowledgeDoc }>;
+      teamResolve(target: string, from: string): Promise<Result & { rel?: string | null }>;
       onTeamChanged(cb: (rels: string[]) => void): Unsub;
       billingStatus(): Promise<Result & { billing?: Billing }>;
       billingCheckout(seats?: number): Promise<Result>;

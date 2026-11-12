@@ -206,6 +206,7 @@ contextBridge.exposeInMainWorld('quorum', {
   teamSearch: (q, limit) => ipcRenderer.invoke('team-search', q, limit),
   teamGraph: () => ipcRenderer.invoke('team-graph'),
   teamNote: (rel) => ipcRenderer.invoke('team-note', rel),
+  teamResolve: (target, from) => ipcRenderer.invoke('team-resolve', target, from),
   onTeamChanged: on('team-changed'),
   billingStatus: () => ipcRenderer.invoke('billing-status'),
   billingCheckout: (seats) => ipcRenderer.invoke('billing-checkout', seats),
