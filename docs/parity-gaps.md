@@ -4,9 +4,10 @@ Product gaps as of 2026-11-10. Each item says what is missing, what the app does
 
 ## Meetings
 
-- **Microsoft Teams.** Detection and capture are wired and untested. There is no chat notice yet. Plan in `docs/plans/microsoft-teams.md`.
-- **Cloud recordings.** The Zoom connector imports cloud recordings and their transcripts through Quorum Cloud (the relay holds the Zoom app's secret). Google Meet and Teams have no cloud-recording import yet; the live listener on this Mac covers them.
-- **Google Meet replies.** STOP and GO replies are read only while the Meet tab is the active tab. Plan in `docs/plans/google-meet.md`.
+- **Notetaker features are flagged.** Since 2026-11-12 Quorum imports meeting notes from the tools that take them and does not take its own. Call detection for Zoom, Google Meet and Teams, the "meeting detected" prompt, listening automatically, the chat notice with STOP and GO, and the never-listen list sit behind `meeting-capture` (off). Suggestions and speaker naming during a session sit behind `live-assist` (off). Manual listening, dictation and the running summary sit behind `manual-listen` (on), and screen context behind `screen-context` (on). The code stays in the repository; the gaps below apply only if `meeting-capture` comes back.
+- **Cloud recordings.** The Zoom connector imports cloud recordings and their transcripts through Quorum Cloud (the relay holds the Zoom app's secret). Google Meet and Teams have no cloud-recording import yet.
+- **Microsoft Teams (flagged off).** Detection and capture are wired and untested. There is no chat notice. Plan in `docs/plans/microsoft-teams.md`.
+- **Google Meet replies (flagged off).** STOP and GO replies are read only while the Meet tab is the active tab. Plan in `docs/plans/google-meet.md`.
 
 ## Agent OS
 

@@ -2,6 +2,8 @@
 
 Status: decided 2026-11-08 (price, tiers); other sections current as of that date. The pattern: Apache-2.0 core, `ee/` under its own license, bring your own key, one Cloud plan, one public repo.
 
+Positioning, decided 2026-11-12: Quorum combines a person's knowledge into one memory, keeps it current, and connects it to the team's knowledge. It connects to where people work and imports meeting notes from the tools that take them (Granola, Zoom cloud recordings). Quorum's own call detection and meeting notetaking are switched off behind feature flags; manual listening and dictation stay on behind their own flag and may be removed later.
+
 ## The rule that decides everything
 
 The open-source edition costs Smejkal Design $0 to operate. Every feature in it runs on the user's Mac with the user's own accounts and keys. Anything that needs a server, a company key, or a company account is Cloud.
@@ -21,7 +23,8 @@ The open-source edition is the same app with the same features. It is never a cr
 | | Local (open source) | Cloud (paid) | Team (later tier, same code path as Cloud) |
 |---|---|---|---|
 | Price | Free, Apache-2.0 | One paid plan for v1: $8 per seat per month, 20 managed transcription hours included, more in $5 packs of 20 hours | Not a tier in v1; Cloud gets team features first, the line moves when demand shows |
-| Meetings: capture, on-device transcription, Zoom/Meet/Teams detection, STOP/GO chat notice, end-of-call notes | Yes | Yes | Yes |
+| Manual listening and dictation with on-device transcription (flag `manual-listen`, on) | Yes | Yes | Yes |
+| Call detection, chat notice, live suggestions (flags `meeting-capture` and `live-assist`, off) | Off | Off | Off |
 | Agent OS: connect an existing notes folder (Obsidian vault, repo with CLAUDE.md), the Memory graph, search, read guard | Yes | Yes | Yes |
 | Model access | User's own Claude Code sign-in; bring your own API key (Anthropic, OpenAI, local Ollama); default is none | Same, plus managed transcription (cloud speech engine and notes on the company's keys, 20 hours a month per seat) | Same |
 | Tokens and model cost | $0 to Smejkal Design in every case | Transcription and notes within the 20-hour allowance, about $0.22 to $0.53 per hour; nothing else in v1. Paid hours past the allowance are a later option | Same as Cloud |
