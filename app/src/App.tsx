@@ -98,6 +98,17 @@ export function App() {
   // the notetaker flags (flags.ts): the main process refuses on its own; these keep the controls out of sight
   const nt = useNotetaker();
   const [phase, setPhase] = useState<Phase>('idle');
+  // why a Start did nothing (the main process refused it), shown for a few seconds under the header
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimer = useRef<number | null>(null);
+  const startListening = async () => {
+    const r = await window.quorum.start();
+    if (r?.error) {
+      setNotice(r.error);
+      if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
+      noticeTimer.current = window.setTimeout(() => setNotice(null), 6000);
+    }
+  };
   // paused from the header keeps the call; STOP from the chat deletes it
   const [held, setHeld] = useState(false);
   const [tab, setTab] = useSession<Tab>('tab', 'home', keepTab(EDITION));
@@ -420,7 +431,7 @@ export function App() {
             {(phase === 'listening' || phase === 'paused') && <button className="icon-btn call-btn" aria-label="Stop and summarize" data-tip="Stop and summarize" onClick={() => window.quorum.end()}><IconStop /></button>}
             {/* one button from idle to listening, so the label that slid out on hover is the one that turns green */}
             {(nt.manualListen || phase !== 'idle') && (
-            <button className={`status listen ${phase === 'blocked' ? 'off-call' : phase}`} onClick={phase === 'idle' ? () => window.quorum.start() : undefined}
+            <button className={`status listen ${phase === 'blocked' ? 'off-call' : phase}`} onClick={phase === 'idle' ? startListening : undefined}
               data-tip={phase === 'blocked' ? 'Someone on your never-listen list is in this call' : undefined} aria-label={phase === 'idle' ? 'Listen' : status.label}>
               <span className="listen-hint">{phase === 'idle' ? 'Listen' : status.label}</span>{status.icon}
             </button>
@@ -448,6 +459,7 @@ export function App() {
           </div>
         </div>
       </header>
+      {notice && <p className="set-error start-notice" role="alert">{notice}</p>}
 
       {view === 'settings' ? (
         <div className="body wide flush">
@@ -486,7 +498,7 @@ export function App() {
                 <p>{brain ? `Ask me anything from ${brain.name}. ` : 'Connect your Agent OS so I can answer from your notes. '}{nt.meetingCapture ? "When a call starts, I post a notice in the call's chat and listen on your Mac." : nt.manualListen ? 'Start listening to take a note of your own; I write it into your Agent OS.' : ''}</p>
                 {nt.manualListen && (
                 <div className="row">
-                  <button className="pill primary" onClick={() => window.quorum.start()}>Start listening</button>
+                  <button className="pill primary" onClick={startListening}>Start listening</button>
                   {nt.meetingCapture && <span className="hint">{settings.autoListen ? <><span className="live-dot" aria-hidden="true" />Auto-listen is on</> : 'Or turn on auto-listen in Settings'}</span>}
                 </div>
                 )}

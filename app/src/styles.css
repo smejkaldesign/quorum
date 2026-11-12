@@ -1522,3 +1522,7 @@ button.meta-pill { font: inherit; cursor: pointer; }
 /* a view loading on first use (App.tsx LazyView): the wait line and the card shown when its code failed to load */
 .lazy-wait { padding: 40px 0; text-align: center; }
 .lazy-fail { margin: 40px auto; max-width: 520px; }
+
+/* why a Start did nothing (App.tsx notice) */
+.start-notice { margin: 6px 16px 0; }
+.c-dictate-error { flex-basis: 100%; margin: 0 4px 4px; font-size: 13px; }

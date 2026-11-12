@@ -61,10 +61,10 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
             <ul className="onb-summary">
               <li><IconFolder width={16} height={16} /> {brain ? `Agent OS at ${home(brain.root)}` : 'No Agent OS yet (connect one in Settings)'}</li>
               <li><ProviderMark provider="anthropic" /> {managed ? "Model: Quorum's models (after you sign in)" : status?.model?.source && status.model.source !== 'none' ? `Model: ${SOURCE_NAMES[status.model.source]}` : 'No model source yet (choose one in Settings › Connectors)'}</li>
-              <li><IconMic width={16} height={16} /> {status?.permissions?.microphone === 'granted' ? 'Microphone allowed' : 'Microphone: macOS will ask on your first call'}</li>
+              {nt.manualListen && <li><IconMic width={16} height={16} /> {status?.permissions?.microphone === 'granted' ? 'Microphone allowed' : nt.meetingCapture ? 'Microphone: macOS will ask on your first call' : 'Microphone: macOS will ask the first time you start listening'}</li>}
               {nt.meetingCapture && <li><IconShield width={16} height={16} /> {status?.permissions?.accessibility === 'granted' ? 'Accessibility allowed' : 'Accessibility: needed to read the meeting chat'}</li>}
             </ul>
-            <p>Quorum lives in the menu bar. When a Zoom, Google Meet or Teams call starts, it offers to listen.</p>
+            <p>{nt.meetingCapture ? 'Quorum lives in the menu bar. When a Zoom, Google Meet or Teams call starts, it offers to listen.' : nt.manualListen ? 'Quorum lives in the menu bar. Start listening there or in the app to take a note of your own.' : 'Quorum lives in the menu bar.'}</p>
             <div className="onb-actions"><button className="pill ghost" onClick={back}>Back</button><button className="pill primary" autoFocus onClick={async () => { await window.quorum.onboardingDone(); onDone(); }}>Open Quorum</button></div>
           </section>
         )}
@@ -347,15 +347,16 @@ function PermissionsStep({ status, onRefresh, onPoll, onBack, onNext }: { status
   // asks for the microphone and the optional calendar
   const nt = useNotetaker();
   const perms = PERMS.filter((x) => x.id !== 'accessibility' || nt.meetingCapture);
-  useEffect(() => { if (granted(p?.accessibility) && poll.current) { window.clearInterval(poll.current); poll.current = null; } }, [p?.accessibility]);
+  // the two Quorum cannot work without (Accessibility only with meeting capture on); calendar stays optional. The
+  // poll stops once everything this step asks for is granted
+  const ready = granted(p?.microphone) && (!nt.meetingCapture || granted(p?.accessibility));
+  useEffect(() => { if (ready && poll.current) { window.clearInterval(poll.current); poll.current = null; } }, [ready]);
   const allow = async (id: (typeof PERMS)[number]['id']) => {
     if (id === 'microphone') await window.quorum.onboardingRequestMicrophone();
     else if (id === 'calendar') await window.quorum.calendarConnect();
     else if (id === 'accessibility') { await window.quorum.onboardingRequestAccessibility(); watch(); }
     onPoll();
   };
-  // the two Quorum cannot work without; calendar stays optional
-  const ready = granted(p?.microphone) && (!nt.meetingCapture || granted(p?.accessibility));
   return (
     <section className="onb-step">
       <h1>Permissions</h1>

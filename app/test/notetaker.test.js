@@ -1,83 +1,82 @@
 import { describe, expect, it } from 'vitest';
-import { FLAG, LISTEN_OFF, NOTETAKER_DEFAULTS, dictationAllowed, keepActions, meetingEventsAllowed, notetakerGates, startDecision, summaryAllowed, termsPlan } from '../notetaker.js';
-import { createFlags, resolveFlags } from '../flags.js';
+import { FLAG, LISTEN_OFF, keepActions, notetakerGates, sessionGates, startDecision, termsPlan } from '../notetaker.js';
+import { DEFAULTS, createFlags, resolveFlags } from '../flags.js';
+import { RENDERER_DEFAULTS } from '../src/flags';
 import { aboutFor, connectorsFor, featuresFor, CONNECTORS } from '../connectors/library.js';
 
-// a flag reader with the given switches and the defaults for the rest, the shape flags.get has
-const reader = (over = {}) => (key) => ({ ...NOTETAKER_DEFAULTS, ...over })[key] === true;
+// the gates for the defaults with some flags switched, resolved the way flags.js resolves them (requires applied)
+const gates = (over = {}) => notetakerGates(resolveFlags({ defaults: { ...DEFAULTS, ...over }, env: {} }));
 
 describe('notetaker gates', () => {
-  it('reads the defaults when no reader is given: no call detection, no live assistance, manual listening and screen context on', () => {
+  it('reads the defaults when nothing is given: no call detection, no live assistance, manual listening and screen context on', () => {
     expect(notetakerGates()).toEqual({ meetingCapture: false, liveAssist: false, manualListen: true, screenContext: true });
   });
 
-  it('turns screen context off whenever manual listening is off, whatever its own switch says', () => {
-    expect(notetakerGates(reader({ [FLAG.manualListen]: false, [FLAG.screenContext]: true })).screenContext).toBe(false);
-    expect(notetakerGates(reader({ [FLAG.screenContext]: false })).screenContext).toBe(false);
+  it('turns every notetaker surface off when manual listening is off, whatever their own switches say', () => {
+    expect(gates({ [FLAG.manualListen]: false, [FLAG.meetingCapture]: true, [FLAG.liveAssist]: true, [FLAG.screenContext]: true }))
+      .toEqual({ meetingCapture: false, liveAssist: false, manualListen: false, screenContext: false });
   });
 
-  it('agrees with flags.js on the default of every notetaker flag', () => {
-    const resolved = resolveFlags({ env: {} });
-    for (const [key, on] of Object.entries(NOTETAKER_DEFAULTS)) expect(resolved[key]?.enabled).toBe(on);
+  it('keeps the renderer defaults equal to the main process defaults', () => {
+    expect(RENDERER_DEFAULTS).toEqual(DEFAULTS);
   });
 });
 
 describe('starting a session', () => {
   it('starts a solo note with meeting capture off, even while a call app reports a call', () => {
-    const g = notetakerGates(reader());
-    expect(startDecision(g, { meetingActive: false })).toEqual({ ok: true, solo: true });
-    expect(startDecision(g, { meetingActive: true })).toEqual({ ok: true, solo: true });
+    expect(startDecision(gates(), { meetingActive: false })).toEqual({ ok: true, solo: true });
+    expect(startDecision(gates(), { meetingActive: true })).toEqual({ ok: true, solo: true });
   });
 
   it('starts on the noticed call when meeting capture is on and a call is active', () => {
-    const g = notetakerGates(reader({ [FLAG.meetingCapture]: true }));
+    const g = gates({ [FLAG.meetingCapture]: true });
     expect(startDecision(g, { meetingActive: true })).toEqual({ ok: true, solo: false });
     expect(startDecision(g, { meetingActive: false })).toEqual({ ok: true, solo: true });
   });
 
   it('refuses the start with manual listening off, call or no call', () => {
-    for (const meetingCapture of [false, true]) {
-      const g = notetakerGates(reader({ [FLAG.manualListen]: false, [FLAG.meetingCapture]: meetingCapture }));
-      expect(startDecision(g, { meetingActive: true })).toEqual({ ok: false, error: LISTEN_OFF });
-    }
+    const g = gates({ [FLAG.manualListen]: false, [FLAG.meetingCapture]: true });
+    expect(startDecision(g, { meetingActive: true })).toEqual({ ok: false, error: LISTEN_OFF });
+  });
+});
+
+describe('a session that is already running', () => {
+  it('keeps meeting capture for a call session after the flag turns off, and drops it once the session is over', () => {
+    const off = gates({ [FLAG.meetingCapture]: false });
+    expect(sessionGates(off, { callSession: true }).meetingCapture).toBe(true);
+    expect(keepActions(sessionGates(off, { callSession: true }), { solo: false })).toMatchObject({ softStop: true, optOut: true });
+    expect(sessionGates(off, { callSession: false }).meetingCapture).toBe(false);
   });
 
-  it('allows dictation and the running summary only with manual listening on', () => {
-    expect(dictationAllowed(notetakerGates(reader()))).toBe(true);
-    expect(summaryAllowed(notetakerGates(reader()))).toBe(true);
-    const off = notetakerGates(reader({ [FLAG.manualListen]: false }));
-    expect(dictationAllowed(off)).toBe(false);
-    expect(summaryAllowed(off)).toBe(false);
+  it('leaves the other flags as they are for a running session', () => {
+    const g = sessionGates(gates({ [FLAG.liveAssist]: false }), { callSession: true });
+    expect(g.liveAssist).toBe(false);
+    expect(g.manualListen).toBe(true);
   });
 });
 
 describe('what a final line does', () => {
   it('skips the STOP check, the opt-out match and suggestions in a solo note with the notetaker flags off', () => {
-    expect(keepActions(notetakerGates(reader()), { solo: true })).toEqual({ optOut: false, softStop: false, suggest: false });
+    expect(keepActions(gates(), { solo: true })).toEqual({ optOut: false, softStop: false, suggest: false });
   });
 
   it('runs the STOP check and the opt-out match only on a noticed call with meeting capture on', () => {
-    const g = notetakerGates(reader({ [FLAG.meetingCapture]: true }));
+    const g = gates({ [FLAG.meetingCapture]: true });
     expect(keepActions(g, { solo: false })).toMatchObject({ optOut: true, softStop: true });
     expect(keepActions(g, { solo: true })).toMatchObject({ optOut: false, softStop: false });
   });
 
   it('offers suggestions only with live assistance on', () => {
-    expect(keepActions(notetakerGates(reader({ [FLAG.liveAssist]: true })), { solo: true }).suggest).toBe(true);
+    expect(keepActions(gates({ [FLAG.liveAssist]: true }), { solo: true }).suggest).toBe(true);
   });
 });
 
-describe('call events and vocabulary', () => {
-  it('drops the helper call events with meeting capture off', () => {
-    expect(meetingEventsAllowed(notetakerGates(reader()))).toBe(false);
-    expect(meetingEventsAllowed(notetakerGates(reader({ [FLAG.meetingCapture]: true })))).toBe(true);
-  });
-
+describe('vocabulary and flag changes', () => {
   it('matches calendar invitees only for a noticed call and reads the screen with its own flag', () => {
-    expect(termsPlan(notetakerGates(reader()), { calendar: true })).toEqual({ invitees: false, screen: true });
-    expect(termsPlan(notetakerGates(reader({ [FLAG.meetingCapture]: true })), { calendar: true })).toEqual({ invitees: true, screen: true });
-    expect(termsPlan(notetakerGates(reader({ [FLAG.meetingCapture]: true })), { calendar: false })).toEqual({ invitees: false, screen: true });
-    expect(termsPlan(notetakerGates(reader({ [FLAG.screenContext]: false })), { calendar: false }).screen).toBe(false);
+    expect(termsPlan(gates(), { calendar: true })).toEqual({ invitees: false, screen: true });
+    expect(termsPlan(gates({ [FLAG.meetingCapture]: true }), { calendar: true })).toEqual({ invitees: true, screen: true });
+    expect(termsPlan(gates({ [FLAG.meetingCapture]: true }), { calendar: false })).toEqual({ invitees: false, screen: true });
+    expect(termsPlan(gates({ [FLAG.screenContext]: false }), { calendar: false }).screen).toBe(false);
   });
 
   it('follows a flag change from the relay on the next read, with no restart', async () => {
@@ -86,11 +85,14 @@ describe('call events and vocabulary', () => {
     const fetchImpl = async () => ({ ok: true, json: async () => ({ flags: answer }) });
     const flags = createFlags({ settings, env: { QUORUM_RELAY_URL: 'https://relay.example.com' }, fetchImpl, timers: { set: () => null, clear: () => {} } });
     await flags.refresh();
-    expect(notetakerGates((k) => flags.get(k)).meetingCapture).toBe(false);
-    answer = { ...answer, 'meeting-capture': true, 'manual-listen': false };
+    expect(notetakerGates(flags.all()).meetingCapture).toBe(false);
+    answer = { ...answer, 'meeting-capture': true };
     await flags.refresh();
-    const g = notetakerGates((k) => flags.get(k));
-    expect(g.meetingCapture).toBe(true);
+    expect(notetakerGates(flags.all()).meetingCapture).toBe(true);
+    answer = { ...answer, 'manual-listen': false };
+    await flags.refresh();
+    const g = notetakerGates(flags.all());
+    expect(g.meetingCapture).toBe(false);
     expect(startDecision(g, { meetingActive: true }).ok).toBe(false);
   });
 });

@@ -15,7 +15,7 @@ import { createViews } from './views.js';
 import { registerOnboarding } from './onboarding.js';
 import { gateOn, registerBeta } from './beta.js';
 import { registerFlags } from './flags.js';
-import { dictationAllowed, keepActions, meetingEventsAllowed, notetakerGates, startDecision, summaryAllowed, termsPlan } from './notetaker.js';
+import { DICTATION_OFF, keepActions, notetakerGates, sessionGates, startDecision, termsPlan } from './notetaker.js';
 import { createKeeper } from './keeper.js';
 import { wouldBlock } from './guardrails.js';
 import { createPredicates } from './guardrails-predicates.js';
@@ -142,12 +142,16 @@ const asset = (name) => path.join(here, 'assets', name);
 const meeting = { armed: false, capturing: false, id: null, dirs: [], dir: null, transcript: [], title: '', participants: 0, people: new Set(), terms: [], startedAt: null, endedAt: null, notes: null, summary: emptyState(), summaryAt: 0, privateNotes: '', invitees: [], saved: null };
 
 const log = (...a) => console.log('[quorum]', ...a);
-// the notetaker flags (notetaker.js): read on every use, so a change from the admin app applies without a restart.
-// Until registerFlags runs below, the built-in defaults answer
+// the notetaker flags (notetaker.js). The gates are worked out once from the resolved flags and kept until the flags
+// change (registerFlags' emit below), so a change from the admin app applies without a restart. Until registerFlags
+// runs, the built-in defaults answer. A session on a noticed call keeps meeting capture until it ends (sessionGates)
 let flagsApi = null;
 // what the helper was last told about call detection (syncMeetingWatch); null until the first sync
 let watchingMeetings = null;
-const gate =() => notetakerGates(flagsApi ? (k) => flagsApi.get(k) : null);
+let baseGates = notetakerGates();
+let callGates = sessionGates(baseGates, { callSession: true });
+const refreshGates = () => { baseGates = notetakerGates(flagsApi ? flagsApi.all() : undefined); callGates = sessionGates(baseGates, { callSession: true }); };
+const gate = () => (meeting.armed && !meeting.solo ? callGates : baseGates);
 // windows can be gone mid-quit while the helper or agent is still reporting
 const toUI = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
 const helperSend = (cmd) => helper?.stdin.write(JSON.stringify(cmd) + '\n');
@@ -344,6 +348,8 @@ async function worthKeeping() {
 function discardCall() {
   log('nothing worth keeping before the blacklist match; deleting the call');
   meeting.armed = false;
+  // a flag turned off during the call takes hold now that the session is over
+  setImmediate(() => syncMeetingWatch());
   meeting.transcript = [];
   const id = meeting.id;
   setTimeout(() => { store.meetings.deleteSession(id); deleteCallChats(id); }, 1500);
@@ -387,7 +393,7 @@ function onHelperEvent(evt) {
   // the helper waits for the app before it watches for calls (meeting-capture)
   if (evt.event === 'ready') syncMeetingWatch(true);
   // with meeting-capture off nothing reacts to a call: no popup, no chat reading, no participant tracking
-  if ((evt.event === 'chat' || evt.event === 'meeting' || evt.event === 'meetingInfo') && !meetingEventsAllowed(gate())) return;
+  if ((evt.event === 'chat' || evt.event === 'meeting' || evt.event === 'meetingInfo') && !gate().meetingCapture) return;
   if (evt.event === 'chat') return onChat(evt);
   if (evt.event === 'meeting') return onMeeting(evt);
   if (evt.event === 'meetingInfo') {
@@ -683,7 +689,7 @@ async function runNotesModel(kind, { turns, state, label, outline = '', onDelta 
 }
 
 async function runSummary() {
-  if (!summaryAllowed(gate()) || !meeting.armed || summaryBusy || !summaryDue({ turns: meeting.transcript, state: meeting.summary, lastAt: meeting.summaryAt, now: Date.now() })) return;
+  if (!gate().manualListen || !meeting.armed || summaryBusy || !summaryDue({ turns: meeting.transcript, state: meeting.summary, lastAt: meeting.summaryAt, now: Date.now() })) return;
   summaryBusy = true;
   meeting.summaryAt = Date.now();
   const turns = meeting.transcript;
@@ -820,6 +826,8 @@ async function endMeeting() {
   if (!meeting.armed) return null;
   const wasCapturing = meeting.capturing;
   meeting.armed = false;
+  // a flag turned off during the call takes hold now that the session is over
+  setImmediate(() => syncMeetingWatch());
   meeting.capturing = false;
   writeState();
   meeting.endedAt = new Date();
@@ -1986,7 +1994,8 @@ registerBeta({
 // the environment overrides them for a dev copy. Both editions read the same list
 // A change applies at once: the helper starts or stops watching for calls, the tray redraws, and every gate below reads
 // the new value on its next use
-flagsApi = registerFlags({ ipcMain, settings, saveSettings, log, source: () => account.envStatus?.().config ?? 'production', emit: (s) => { toUI('flags', s); syncMeetingWatch(); updateTray(); } });
+flagsApi = registerFlags({ ipcMain, settings, saveSettings, log, source: () => account.envStatus?.().config ?? 'production', emit: (s) => { refreshGates(); toUI('flags', s); syncMeetingWatch(); updateTray(); } });
+refreshGates();
 syncMeetingWatch();
 ipcMain.handle('connect-brain', async () => {
   const r = await dialog.showOpenDialog(win, {
@@ -2048,12 +2057,12 @@ function syncMeetingWatch(force = false) {
   watchingMeetings = on;
   helperSend({ cmd: 'meetingWatch', on });
   log('meeting watch', on ? 'on' : 'off');
-  if (!on && !(meeting.armed && !meeting.solo)) { meetingActive = false; hidePopup(); }
+  // gate() keeps capture on through a running call session, so reaching here with it off means no session needs it
+  if (!on) { meetingActive = false; hidePopup(); }
 }
 
 // one recording at a time: a meeting starting closes the note you were taking and saves it
 async function closeNoteForMeeting() {
-  if (!gate().meetingCapture) return;
   const notes = await endMeeting();
   if (notes && !notes.empty) saveNotes({ notes, followups: [] });
   meeting.notes = null;
@@ -2151,7 +2160,7 @@ ipcMain.handle('ax-settings-open', () => shell.openExternal('x-apple.systemprefe
 ipcMain.on('launch-id', (e) => { e.returnValue = LAUNCH_ID; });
 // dictation belongs to manual listening: off refuses a start, and a stop always goes through
 ipcMain.handle('dictate', async (_e, on) => {
-  if (on && !dictationAllowed(gate())) return { error: 'Dictation is turned off in this build of Quorum.' };
+  if (on && !gate().manualListen) return { error: DICTATION_OFF };
   helperSend(on ? { cmd: 'dictateStart', locale: settings.voice?.locale || 'en-US', terms: await sessionTerms({ calendar: false }) } : { cmd: 'dictateStop' });
   return null;
 });
@@ -2192,34 +2201,29 @@ function cliNote(rel) {
   if (excludedPath(path.relative(b.vault, abs))) throw new Error('That note is withheld');
   return abs;
 }
+const NO_SESSION = 'No session is running. Start one in Quorum; quorum end closes it.';
 async function control({ cmd, args = {} }) {
   if (CONTROL_WRITES.has(cmd) && settings.access === 'read') throw new Error('Quorum is set to read only. Change it in Settings > Connectors.');
   const b = brain();
   switch (cmd) {
     case 'ping': return { app: app.isPackaged ? 'Quorum' : 'Quorum Dev', access: settings.access ?? 'write' };
-    // start, stop and go act on a noticed call, so they follow meeting-capture; end closes any session
     case 'start':
-    case 'stop':
-    case 'go':
+      // start acts on a noticed call, so it follows meeting-capture; stop, go and end work on any running session
       if (!gate().meetingCapture) throw new Error('Quorum does not watch for calls in this build. Start listening from the app for a note of your own.');
-      break;
-    default:
-      break;
-  }
-  switch (cmd) {
-    case 'start':
       if (callBlocked) throw new Error("Quorum is off for this call. Someone on your never-listen list is in it.");
       if (meeting.capturing) return 'Already listening';
       if (!meetingActive) throw new Error('No Zoom, Google Meet or Microsoft Teams meeting found. Join a call first.');
       await startListening(OWNER);
       return meeting.armed ? (meeting.noticePosted ? `Listening. Quorum posted the notice in the ${provider().chatName}.` : `Listening. ${provider().name} has no chat Quorum can post in, so no notice went out.`) : `Quorum could not post the notice in the ${provider().chatName}, so it is not listening.`;
     case 'stop':
+      if (!meeting.armed) throw new Error(NO_SESSION);
       if (!meeting.capturing) throw new Error("Quorum isn't listening");
       stopAndDelete(OWNER);
       return 'Stopped. Nothing from this call is kept. Run quorum go to start again.';
     case 'go':
       if (callBlocked) throw new Error("Quorum is off for this call. Someone on your never-listen list is in it.");
-      if (!meeting.armed || meeting.capturing) throw new Error(meeting.capturing ? 'Already listening' : 'No stopped call to resume');
+      if (!meeting.armed) throw new Error(NO_SESSION);
+      if (meeting.capturing) throw new Error('Already listening');
       resume(OWNER);
       return 'Listening again';
     case 'end':

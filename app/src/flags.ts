@@ -38,12 +38,12 @@ export function useFlag(key: string): boolean {
 }
 
 // the notetaker switches the renderer mirrors (app/notetaker.js holds the same rules for the main process, which is the
-// one that refuses): call detection, live assistance, manual listening, and screen context, which needs manual listening
+// one that refuses). The values are the resolved ones from the main process, so a flag whose parent is off (every
+// notetaker flag requires manual-listen) already reads off here
 export type Notetaker = { meetingCapture: boolean; liveAssist: boolean; manualListen: boolean; screenContext: boolean };
 export function notetakerOf(s: FlagsState): Notetaker {
   const on = (k: string) => s.flags[k]?.enabled === true;
-  const manualListen = on('manual-listen');
-  return { meetingCapture: on('meeting-capture'), liveAssist: on('live-assist'), manualListen, screenContext: manualListen && on('screen-context') };
+  return { meetingCapture: on('meeting-capture'), liveAssist: on('live-assist'), manualListen: on('manual-listen'), screenContext: on('screen-context') };
 }
 export const useNotetaker = (): Notetaker => notetakerOf(useFlags());
 
