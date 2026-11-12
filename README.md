@@ -42,11 +42,11 @@ Most notetakers end at the summary. Quorum treats the summary as the start: the 
   </tr>
   <tr>
     <td><img alt="Connectors: Granola, the Calendar app, Zoom, Google Meet and Claude Code connected" src="docs/images/connectors.png"></td>
-    <td><img alt="Knowledge: the folder tree and the link graph of the Agent OS" src="docs/images/knowledge.png"></td>
+    <td><img alt="Memory: the folder tree and the link graph of the Agent OS" src="docs/images/knowledge.png"></td>
   </tr>
   <tr>
     <td align="center"><sub><strong>Connectors.</strong> Meeting notes apps, calendars, meeting apps and AI tools, each tagged with where things came from.</sub></td>
-    <td align="center"><sub><strong>Knowledge.</strong> The folder and the link graph of every note, searchable, with the agent's read guard in place.</sub></td>
+    <td align="center"><sub><strong>Memory.</strong> The folder and the link graph of every note, searchable, with the agent's read guard in place.</sub></td>
   </tr>
 </table>
 
@@ -63,7 +63,7 @@ Most notetakers end at the summary. Quorum treats the summary as the start: the 
   <tr>
     <td valign="top"><strong>Works with Zoom, Meet and Teams</strong><br>Detects the call and listens on this Mac. A notice in the meeting chat lets anyone type STOP to pause the notes and GO to resume. No bot joins the call.</td>
     <td valign="top"><strong>Ask anything</strong><br>During the call or a month later, questions run through Claude Code on your Mac with the whole Agent OS as context.</td>
-    <td valign="top"><strong>Knowledge graph</strong><br>The folder tree, wikilinks, backlinks and a link graph of every note, with link health checks and relinking tools.</td>
+    <td valign="top"><strong>Memory</strong><br>The folder tree, wikilinks, backlinks and a link graph of every note, with link health checks and relinking tools.</td>
   </tr>
   <tr>
     <td valign="top"><strong>Connectors</strong><br>Import from Granola today, with Zoom cloud recordings in Quorum Cloud. The calendar app feeds Home. Claude Code gets a <code>quorum</code> MCP server in one click.</td>
@@ -80,13 +80,13 @@ One repository, two editions. The Local edition is the default build and costs n
 |---|---|---|
 | License and price | Apache-2.0, free | One paid plan, per seat |
 | Capture, on-device transcription, Zoom, Google Meet and Microsoft Teams listener, chat notice, end-of-call notes | Yes | Yes |
-| Agent OS: connect a notes folder, knowledge graph, search, read guard, views | Yes | Yes |
+| Agent OS: connect a notes folder, the Memory graph, search, read guard, views | Yes | Yes |
 | Connectors: Granola, the Calendar app, Claude Code MCP | Yes | Yes |
 | Model access | Your Claude Code sign-in, or your own API key in Keychain | Same |
 | Managed transcription (cloud speech engine, summary and notes on Quorum's keys) | No | 20 hours a month per seat, more in packs |
 | Account, workspaces, members, sync across Macs | No | Yes |
 | Zoom cloud recordings and transcripts imported automatically | No | Yes |
-| Team knowledge: shared notes, roles, review queue | No | Yes |
+| Team knowledge: the Knowledge tab with shared notes, roles, review queue | No | Yes |
 
 The rule behind the split: the open-source edition is the same app with the same features, running on your Mac with your own accounts and keys. Anything that needs a server, a company key or a company account is Cloud. Full table and reasoning in `docs/open-source-strategy.md`.
 
@@ -164,7 +164,7 @@ Wispr Notetaker, Fireflies and Read AI over MCP; Otter, Fathom and tl;dv by API 
 flowchart LR
   subgraph mac["Your Mac"]
     helper["QuorumHelper (Swift)<br/>two-track capture, on-device transcription,<br/>Zoom chat, calendar"]
-    app["Quorum (Electron)<br/>Home, notes, Knowledge, Connectors"]
+    app["Quorum (Electron)<br/>Home, Memory, Knowledge, Connectors"]
     folder[("Agent OS folder<br/>plain markdown")]
     cc["Claude Code<br/>your own sign-in"]
     mcp["quorum MCP server and CLI"]

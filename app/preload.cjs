@@ -193,6 +193,8 @@ contextBridge.exposeInMainWorld('quorum', {
   knowledgeStatus: () => ipcRenderer.invoke('knowledge-status'),
   knowledgeQueue: () => ipcRenderer.invoke('knowledge-queue'),
   knowledgeTeamOpen: () => ipcRenderer.invoke('knowledge-team-open'),
+  knowledgeList: () => ipcRenderer.invoke('knowledge-list'),
+  knowledgeRead: (rel) => ipcRenderer.invoke('knowledge-read', rel),
   knowledgeReview: (id, decision) => ipcRenderer.invoke('knowledge-review', id, decision),
   knowledgeAutoIncludeSet: (on) => ipcRenderer.invoke('knowledge-auto-include-set', on),
   billingStatus: () => ipcRenderer.invoke('billing-status'),

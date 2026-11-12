@@ -25,6 +25,7 @@ Product gaps as of 2026-11-10. Each item says what is missing, what the app does
 
 ## Cloud edition
 
+- **Knowledge tab.** A third top tab in a signed-in Cloud build lists the workspace vault's shared notes with search and a read view, and carries the admin review queue (Settings › Knowledge keeps the auto-include switch). The graph view is named Memory. The tab reads the vault folder on this Mac; it does not yet show who shared a note, since the pull keeps no author in the bond.
 - **Workspace vault.** Teammates' included notes pull into `~/Documents/Quorum Team/<workspace>/` with provenance bonds (`docs/specs/team-knowledge.md`, Build status). The agent does not read that folder yet, and an edited copy marked behind has no Push improvement yet.
 
 - **Google sign-in.** Needs an OAuth client. Email code sign-in works today. (Google Calendar is separate and live: `docs/self-hosting.md`, Google Calendar connector.)

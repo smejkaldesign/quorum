@@ -1,6 +1,6 @@
 import { createContext, useContext, type ReactNode } from 'react';
 
-// in the Knowledge view, note links open inside Quorum instead of in another app
+// in the Memory view, note links open inside Quorum instead of in another app
 const WikiOpen = createContext<((target: string) => void) | null>(null);
 
 // just enough Markdown for agent answers: paragraphs, nested bullets, **bold**, `code`, [links](url).
@@ -55,7 +55,7 @@ function WikiLink({ target, label }: { target: string; label: string }) {
   return <button className="md-link" onClick={() => onWiki(target.replace(/#.*$/, ''))}>{label}</button>;
 }
 
-// web links open in the browser; note links open in Quorum's Knowledge view when it's showing, else the user's knowledge app
+// web links open in the browser; note links open in Quorum's Memory view when it's showing, else the user's knowledge app
 function Link({ label, href, root }: { label: string; href: string; root?: string }) {
   const onWiki = useContext(WikiOpen);
   const open = () => {

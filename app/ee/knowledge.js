@@ -1,9 +1,46 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 // Company knowledge (Cloud edition): the admin review queue and auto-include (migration 0012). A note a member marks
 // public becomes a contribution on the server; here admins list, include or decline, and members see their own.
 import { plain } from './account.js';
+import { bondOf, parseFrontmatter } from './sync.js';
 
 export const shapeQueueItem = (r) => ({ id: r.id, noteId: r.note_id, path: r.path, title: r.title || String(r.path ?? '').replace(/^.*\//, '').replace(/\.md$/, ''), authorEmail: r.author_email ?? null, authorName: r.author_name ?? null, createdAt: r.created_at, updatedAt: r.updated_at ?? null });
+// the workspace vault on disk (ee/sync.js pulls teammates' included notes there): every shared note with its title,
+// when it was pulled and whether the person's own edit holds a newer team version back. Dot folders (.updates) and the
+// "(removed)" copies sync leaves behind stay out
+const stripFm = (text) => text.replace(/^---\n[\s\S]*?\n---\n?/, '');
+const titleOf = (text, rel) => stripFm(text).match(/^#\s+(.+)$/m)?.[1]?.trim() || rel.replace(/^.*\//, '').replace(/\.md$/, '');
+const REMOVED = /\((removed|behind)( \d+)?\)\.md$/;
+export function listTeamNotes(root) {
+  if (!root || !existsSync(root)) return [];
+  const out = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.name.startsWith('.')) continue;
+      const abs = path.join(dir, e.name);
+      if (e.isDirectory()) { walk(abs); continue; }
+      if (!e.name.endsWith('.md') || REMOVED.test(e.name)) continue;
+      const rel = path.relative(root, abs).split(path.sep).join('/');
+      const text = readFileSync(abs, 'utf8');
+      const fm = parseFrontmatter(text);
+      const bond = bondOf(text);
+      out.push({ rel, title: titleOf(text, rel), pulledAt: fm.team_pulled_at ?? null, behind: !!bond?.behind, item: bond?.item ?? null });
+    }
+  };
+  walk(root);
+  return out.sort((a, b) => String(b.pulledAt ?? '').localeCompare(String(a.pulledAt ?? '')) || a.title.localeCompare(b.title));
+}
+// one shared note, by its path inside the vault; anything that resolves outside the root is refused
+export function readTeamNote(root, rel) {
+  if (!root || typeof rel !== 'string' || !rel.endsWith('.md')) return null;
+  const abs = path.resolve(root, rel);
+  if (abs !== root && !abs.startsWith(root + path.sep)) return null;
+  if (!existsSync(abs)) return null;
+  const text = readFileSync(abs, 'utf8');
+  const fm = parseFrontmatter(text);
+  return { rel, title: titleOf(text, rel), body: stripFm(text).replace(/^#\s+.+\n?/, '').trim(), pulledAt: fm.team_pulled_at ?? null, behind: bondOf(text)?.behind === true };
+}
 export const shapeMine = (r) => ({ noteId: r.note_id, path: r.path, status: r.status, reviewedAt: r.reviewed_at ?? null, createdAt: r.created_at });
 
 export function createKnowledge({ account, log = () => {}, shell = null }) {
@@ -34,6 +71,20 @@ export function createKnowledge({ account, log = () => {}, shell = null }) {
       mkdirSync(root, { recursive: true });
       await shell.openPath(root);
       return {};
+    },
+    // the Knowledge tab: what the workspace vault holds, and one note from it
+    'knowledge-list': async () => {
+      const no = ready(); if (no) return no;
+      const root = account.sync?.team?.()?.root ?? null;
+      try { return { root, notes: listTeamNotes(root) }; } catch (err) { return fail(err, 'The workspace vault could not be read.'); }
+    },
+    'knowledge-read': async (rel) => {
+      const no = ready(); if (no) return no;
+      const root = account.sync?.team?.()?.root ?? null;
+      try {
+        const doc = readTeamNote(root, rel);
+        return doc ? { doc } : { error: 'That note is not in the workspace vault.' };
+      } catch (err) { return fail(err, 'The note could not be read.'); }
     },
     'knowledge-queue': async () => {
       const no = ready(true); if (no) return no;

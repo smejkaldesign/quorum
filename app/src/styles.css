@@ -1418,3 +1418,31 @@ button.meta-pill { font: inherit; cursor: pointer; }
 @keyframes caret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 .set-field { position: relative; }
 .field-saved { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); font-size: 12px; color: var(--go); pointer-events: none; animation: sofar-breathe 1.4s ease-in-out 1; }
+
+/* Knowledge tab (Cloud): the workspace's shared notes, with the admin review queue above the list */
+.tk { display: flex; flex-direction: column; height: 100%; min-height: 0; border-top: 1px solid var(--line); background: #1c1c1c; }
+.tk-head { display: flex; align-items: center; gap: 14px; height: 48px; padding: 0 16px; border-bottom: 1px solid var(--line); flex: none; }
+.tk-head h2 { margin: 0; font: 400 20px/1 "New York", ui-serif, Georgia, serif; white-space: nowrap; }
+.tk-head .kb-search { flex: 1; max-width: 360px; margin: 0; }
+.tk-count { margin-left: auto; font-size: 13px; white-space: nowrap; }
+.tk-back { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; margin-left: -8px; border-radius: 8px; color: var(--muted); font-size: 14px; }
+.tk-back:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
+.tk-crumb { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tk-body { flex: 1; overflow-y: auto; padding: 8px 16px 24px; }
+.tk-col { max-width: 760px; margin: 0 auto; }
+.tk-section { margin: 22px 0 10px; font-size: 16px; font-weight: 500; color: var(--text); }
+.tk-list { padding: 6px 10px; }
+.tk-row { display: grid; grid-template-columns: 22px 1fr auto; align-items: center; gap: 12px; width: 100%; padding: 10px 8px; border-radius: 10px; text-align: left; }
+.tk-row:hover { background: rgba(255, 255, 255, 0.05); }
+.tk-row > svg { color: var(--muted); }
+.tk-text { min-width: 0; }
+.tk-text strong { display: block; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tk-text em { display: block; font-style: normal; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tk-when { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.tk-behind { font-style: normal; color: #e8c170; font-size: 12px; }
+.tk-empty { margin: 0; padding: 18px 8px; color: var(--muted); font-size: 14px; }
+.tk-doc { max-width: 720px; margin: 0 auto; padding: 16px 0 40px; }
+.tk-doc h1 { font: 400 32px/1.2 "New York", ui-serif, Georgia, serif; margin: 6px 0 8px; letter-spacing: -0.01em; }
+.tk-meta { margin: 0 0 22px; color: var(--muted); font-size: 13px; }
+.tk-gate { max-width: 560px; margin: 36px auto 0; }
+.tk-title { margin: 0 0 6px; font: 400 24px/1.2 "New York", ui-serif, Georgia, serif; }
