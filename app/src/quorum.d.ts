@@ -137,6 +137,12 @@ export type QueueItem = { id: string; noteId: string; path: string; title: strin
 // the Knowledge tab: a shared note as it sits in the workspace vault, and one opened for reading
 export type KnowledgeNote = { rel: string; title: string; pulledAt: string | null; behind: boolean; item: string | null };
 export type KnowledgeDoc = { rel: string; title: string; body: string; pulledAt: string | null; behind: boolean; update: string | null };
+// team knowledge (migration 0020): where the workspace's knowledge comes from, and how it stands on this Mac
+export type TeamSourceKind = 'sync' | 'folder' | 'git';
+export type TeamSource = { kind: TeamSourceKind; url: string | null; path: string | null; setAt: string | null };
+export type TeamSourceDraft = { kind: TeamSourceKind; url?: string; path?: string };
+export type TeamLocal = { kind: TeamSourceKind; root: string | null; exists: boolean; lastPullAt: string | null; lastError: string | null; gitAvailable: boolean; notes: number; pulling: boolean };
+export type TeamHit = { rel: string; title: string; score: number; line: number; snippet: string };
 export type ContributionMine = { noteId: string; path: string; status: 'pending' | 'included' | 'declined'; reviewedAt: string | null; createdAt: string };
 export type Billing = { plan: Plan; seats: number; seatsIncluded: number; hourPacks: number; members: number; status: string | null; periodEnd: string | null; subscribed: boolean };
 export type MemberInvite = { inviteId: string; email: string; role: Role; expiresAt: string };
@@ -377,6 +383,16 @@ declare global {
       knowledgeQueue(): Promise<Result & { queue?: QueueItem[] }>;
       knowledgeReview(id: string, decision: 'include' | 'decline'): Promise<Result & { status?: string }>;
       knowledgeAutoIncludeSet(on: boolean): Promise<Result & { autoInclude?: boolean }>;
+      teamSource(): Promise<Result & { source?: TeamSource; local?: TeamLocal }>;
+      teamSourceSet(draft: TeamSourceDraft): Promise<Result & { source?: TeamSource; local?: TeamLocal }>;
+      teamSourcePick(): Promise<Result & { path?: string; local?: TeamLocal }>;
+      teamPull(): Promise<Result & { local?: TeamLocal }>;
+      teamTree(): Promise<Result & { tree?: TreeItem[] }>;
+      teamSearch(q: string, limit?: number): Promise<Result & { hits?: TeamHit[] }>;
+      teamGraph(): Promise<Result & { graph?: import('./Graph').GraphData | null }>;
+      teamNote(rel: string): Promise<Result & { doc?: KnowledgeDoc }>;
+      teamResolve(target: string, from: string): Promise<Result & { rel?: string | null }>;
+      onTeamChanged(cb: (rels: string[]) => void): Unsub;
       billingStatus(): Promise<Result & { billing?: Billing }>;
       billingCheckout(seats?: number): Promise<Result>;
       billingPortal(): Promise<Result>;
