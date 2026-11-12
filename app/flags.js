@@ -3,7 +3,7 @@
 // QUORUM_FLAGS in the environment (a dev override), the relay's last answer, the copy cached in settings from an
 // earlier run, and the defaults built into this file. Pure Node: the main process registers it; the tests call it
 // with fake fetch and timers. Outside ee/ so the Local edition reads the same flags.
-import { httpUrl, relayUrls, unreachable } from './relayUrl.js';
+import { relayFetch, unreachable } from './relayUrl.js';
 
 export const REFRESH_EVERY = 60 * 60 * 1000;
 
@@ -28,7 +28,17 @@ export function parseEnvFlags(text) {
 }
 
 // the switches from a relay answer or a cache, booleans only
-export const cleanFlags = (obj) => Object.fromEntries(Object.entries(obj && typeof obj === 'object' ? obj : {}).filter(([k, v]) => typeof k === 'string' && typeof v === 'boolean'));
+export const cleanFlags = (obj) => Object.fromEntries(Object.entries(obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : {}).filter(([k, v]) => typeof k === 'string' && typeof v === 'boolean'));
+
+// a relay body the app accepts: `flags` is an object with at least one key and every value a boolean. Anything else
+// (an empty set, an error page, a value of another type) counts as a failed read, so the cache is never emptied
+export function acceptFlagsBody(body) {
+  const f = body?.flags;
+  if (!f || typeof f !== 'object' || Array.isArray(f)) return null;
+  const entries = Object.entries(f);
+  if (entries.length === 0 || entries.some(([, v]) => typeof v !== 'boolean')) return null;
+  return Object.fromEntries(entries);
+}
 
 // every known key with its value and where that value came from
 export function resolveFlags({ defaults = DEFAULTS, cache = {}, relay = null, env = {} } = {}) {
@@ -46,30 +56,30 @@ export function resolveFlags({ defaults = DEFAULTS, cache = {}, relay = null, en
 
 export function createFlags({ settings, saveSettings = () => {}, source = () => 'production', env = process.env, fetchImpl = globalThis.fetch, log = () => {}, now = Date.now, timers = { set: setTimeout, clear: clearTimeout }, emit = () => {}, defaults = DEFAULTS, refreshEvery = REFRESH_EVERY }) {
   let relay = null;
+  let lastError = null;
   const cache = () => cleanFlags(settings.flags?.cache);
   const all = () => resolveFlags({ defaults, cache: cache(), relay, env });
   const get = (key) => all()[key]?.enabled === true;
-  const state = () => ({ flags: all(), fetchedAt: settings.flags?.fetchedAt ?? null, source: (typeof source === 'function' ? source() : source) ?? 'production' });
+  const state = () => ({ flags: all(), fetchedAt: settings.flags?.fetchedAt ?? null, source: (typeof source === 'function' ? source() : source) ?? 'production', error: lastError });
 
   // one GET, the public relay then its fallback on a connection-level failure; a failure keeps what we had
   async function refresh() {
-    const urls = relayUrls({ env, source: (typeof source === 'function' ? source() : source) ?? 'production' });
     try {
-      let res = null;
-      for (const url of urls) {
-        try { res = await fetchImpl(`${httpUrl(url)}/v1/flags`, { method: 'GET', headers: { accept: 'application/json' } }); break; }
-        catch (err) { if (unreachable(err) && url !== urls[urls.length - 1]) continue; throw err; }
-      }
+      const res = await relayFetch('/v1/flags', { method: 'GET', headers: { accept: 'application/json' } }, { env, source, fetchImpl });
       if (!res.ok) throw new Error(`The relay answered ${res.status}`);
-      const body = await res.json();
-      relay = cleanFlags(body?.flags);
-      settings.flags = { cache: relay, fetchedAt: now() };
+      const accepted = acceptFlagsBody(await res.json().catch(() => null));
+      if (!accepted) throw new Error('The relay sent no flags.');
+      relay = accepted;
+      lastError = null;
+      settings.flags = { cache: accepted, fetchedAt: now() };
       saveSettings();
       emit(state());
       return { ok: true, flags: all() };
     } catch (err) {
       log('flags refresh', err?.message ?? err);
-      return { ok: false, flags: all(), error: unreachable(err) ? 'Quorum could not reach the server.' : String(err?.message || 'The flags could not be read.') };
+      lastError = unreachable(err) ? 'Quorum could not reach the server.' : String(err?.message || 'The flags could not be read.');
+      emit(state());
+      return { ok: false, flags: all(), error: lastError };
     }
   }
 
@@ -83,7 +93,8 @@ export function createFlags({ settings, saveSettings = () => {}, source = () => 
 
   const handlers = {
     flags: () => state(),
-    'flags-refresh': async () => { await refresh(); return state(); },
+    // the state with ok and the reason a read failed; the cached values and the last good read time stay
+    'flags-refresh': async () => { const r = await refresh(); return { ...state(), ok: r.ok, error: r.ok ? null : r.error }; },
   };
   return { get, all, state, refresh, start, stop, handlers };
 }

@@ -102,16 +102,20 @@ export const flagKeyFrom = (name: string): string => name.toLowerCase().replace(
 export const parseTags = (text: string): string[] => Array.from(new Set(text.split(',').map((t) => t.trim().toLowerCase().slice(0, 40)).filter(Boolean)));
 export const NAME_MAX = 80;
 export const DESCRIPTION_MAX = 500;
+export const KEY_MAX = 60;
+export const TAGS_MAX = 20;
 // the New flag and Edit flag forms, cleaned
 export function validateFlagForm(input: { name: string; key: string; description: string; tags: string }): { draft: { name: string; key: string; description: string; tags: string[] } } | { error: string } {
   const name = String(input.name ?? '').trim();
   if (!name) return { error: 'Give the flag a name.' };
   if (name.length > NAME_MAX) return { error: `The name is at most ${NAME_MAX} characters.` };
   const key = String(input.key ?? '').trim().toLowerCase();
-  if (!FLAG_KEY.test(key)) return { error: 'A key is lowercase letters, digits and hyphens, like dark-mode.' };
+  if (!FLAG_KEY.test(key) || key.length > KEY_MAX) return { error: 'A key is lowercase letters, digits and hyphens, like dark-mode.' };
   const description = String(input.description ?? '').trim();
   if (description.length > DESCRIPTION_MAX) return { error: `The description is at most ${DESCRIPTION_MAX} characters.` };
-  return { draft: { name, key, description, tags: parseTags(String(input.tags ?? '')) } };
+  const tags = parseTags(String(input.tags ?? ''));
+  if (tags.length > TAGS_MAX) return { error: `A flag has at most ${TAGS_MAX} tags.` };
+  return { draft: { name, key, description, tags } };
 }
 // the list the page shows: a search over name, key and tags, and the Enabled or Disabled filter
 export const filterFlags = (list: Flag[], q: string, status: 'all' | 'enabled' | 'disabled'): Flag[] => {

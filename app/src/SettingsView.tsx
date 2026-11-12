@@ -1294,15 +1294,23 @@ const FLAG_SOURCE: Record<string, string> = { env: 'QUORUM_FLAGS in the environm
 function FlagsCard() {
   const state = useFlags();
   const [busy, setBusy] = useState(false);
-  const refresh = async () => { setBusy(true); try { await window.quorum.flagsRefresh(); } finally { setBusy(false); } };
-  const entries = Object.entries(state?.flags ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  const [error, setError] = useState<string | null>(null);
+  const refresh = async () => {
+    setBusy(true); setError(null);
+    try { const r = await window.quorum.flagsRefresh(); if (r.ok === false) setError(r.error || 'The flags could not be read.'); }
+    catch { setError('The flags could not be read.'); }
+    finally { setBusy(false); }
+  };
+  const shownError = error ?? state.error ?? null;
+  const entries = Object.entries(state.flags).sort(([a], [b]) => a.localeCompare(b));
   return (
     <>
       <div className="set-head">
         <h3>Feature flags</h3>
         <span className="set-head-actions"><button className="pill small-pill" disabled={busy} onClick={refresh}>{busy ? 'Reading…' : 'Refresh'}</button></span>
       </div>
-      <p className="mcp-lede">Switches set in the admin app. This copy reads them on launch and every hour{state?.fetchedAt ? `; last read ${new Date(state.fetchedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}.</p>
+      <p className="mcp-lede">Switches set in the admin app. This copy reads them on launch and every hour{state.fetchedAt ? `; last read ${new Date(state.fetchedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '; not read from the relay yet'}.</p>
+      {shownError && <p className="set-error">{shownError} The values below are the last ones this copy had.</p>}
       <div className="set-card">
         {entries.length === 0 && <Row icon={<IconSliders width={18} height={18} />} title="No flags yet" desc="The relay has not answered and this build has no defaults" />}
         {entries.map(([key, v]) => (

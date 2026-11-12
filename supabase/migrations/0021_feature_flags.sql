@@ -18,11 +18,25 @@ create table public.feature_flags (
 alter table public.feature_flags enable row level security;
 revoke all on public.feature_flags from public, anon, authenticated;
 
--- the owner's full list, newest first
+-- the owner's full list, newest first; anyone else gets the same refusal the write functions give
 create or replace function public.platform_flags() returns setof public.feature_flags
-language sql security definer set search_path = public as $$
-  select * from public.feature_flags where public.is_platform_owner() order by created_at desc;
-$$;
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.is_platform_owner() then raise exception 'Only the platform owner can do that'; end if;
+  return query select * from public.feature_flags order by created_at desc;
+end $$;
+
+-- the limits the admin app also checks: a name of 80 characters, a description of 500, at most 20 tags of 40
+create or replace function public.flag_fields_check(name text, description text, tags text[]) returns void
+language plpgsql immutable set search_path = public as $$
+begin
+  if nullif(trim(coalesce(flag_fields_check.name, '')), '') is null then raise exception 'A flag needs a name'; end if;
+  if length(trim(flag_fields_check.name)) > 80 then raise exception 'The name is at most 80 characters'; end if;
+  if length(coalesce(flag_fields_check.description, '')) > 500 then raise exception 'The description is at most 500 characters'; end if;
+  if coalesce(cardinality(flag_fields_check.tags), 0) > 20 then raise exception 'A flag has at most 20 tags'; end if;
+  if exists (select 1 from unnest(coalesce(flag_fields_check.tags, '{}')) t where length(t) > 40 or length(trim(t)) = 0) then raise exception 'Each tag is 1 to 40 characters'; end if;
+end $$;
+revoke all on function public.flag_fields_check(text, text, text[]) from public, anon, authenticated;
 revoke all on function public.platform_flags() from public, anon;
 grant execute on function public.platform_flags() to authenticated, service_role;
 
@@ -45,8 +59,8 @@ declare f public.feature_flags; k text;
 begin
   if not public.is_platform_owner() then raise exception 'Only the platform owner can do that'; end if;
   k := lower(trim(coalesce(platform_flag_create.key, '')));
-  if k !~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' then raise exception 'A key is lowercase letters, digits and hyphens, like dark-mode'; end if;
-  if nullif(trim(coalesce(platform_flag_create.name, '')), '') is null then raise exception 'A flag needs a name'; end if;
+  if k !~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' or length(k) > 60 then raise exception 'A key is up to 60 lowercase letters, digits and hyphens, like dark-mode'; end if;
+  perform public.flag_fields_check(platform_flag_create.name, platform_flag_create.description, platform_flag_create.tags);
   if exists (select 1 from public.feature_flags ff where ff.key = k) then raise exception 'A flag with that key already exists'; end if;
   insert into public.feature_flags (key, name, description, tags)
     values (k, trim(platform_flag_create.name), coalesce(platform_flag_create.description, ''), coalesce(platform_flag_create.tags, '{}'))
@@ -62,7 +76,7 @@ language plpgsql security definer set search_path = public as $$
 declare f public.feature_flags;
 begin
   if not public.is_platform_owner() then raise exception 'Only the platform owner can do that'; end if;
-  if nullif(trim(coalesce(platform_flag_update.name, '')), '') is null then raise exception 'A flag needs a name'; end if;
+  perform public.flag_fields_check(platform_flag_update.name, platform_flag_update.description, platform_flag_update.tags);
   update public.feature_flags ff
     set name = trim(platform_flag_update.name), description = coalesce(platform_flag_update.description, ''), tags = coalesce(platform_flag_update.tags, '{}'), updated_at = now()
     where ff.key = platform_flag_update.key returning * into f;

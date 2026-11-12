@@ -5,7 +5,7 @@
 // Pure Node: the main process registers it; the tests call it with fake fetch and timers.
 import { randomUUID } from 'node:crypto';
 import { CODE, normalizeCode } from './betaCode.js';
-import { httpUrl, relayUrls, unreachable } from './relayUrl.js';
+import { relayFetch, unreachable } from './relayUrl.js';
 
 export const HEARTBEAT_EVERY = 24 * 60 * 60 * 1000;
 export { normalizeCode };
@@ -35,12 +35,7 @@ export function createBeta({ settings, saveSettings = () => {}, on = true, editi
     return settings.machineId;
   };
   const post = async (path, body) => {
-    const urls = relayUrls({ env, source: (typeof source === 'function' ? source() : source) ?? 'production' });
-    let res = null;
-    for (const url of urls) {
-      try { res = await fetchImpl(`${httpUrl(url)}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); break; }
-      catch (err) { if (unreachable(err) && url !== urls[urls.length - 1]) continue; throw err; }
-    }
+    const res = await relayFetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, { env, source, fetchImpl });
     const json = await res.json().catch(() => ({}));
     if (!res.ok && json.ok === undefined) throw new Error(json.error || json.reason || `The relay answered ${res.status}`);
     return json;

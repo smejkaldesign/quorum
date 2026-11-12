@@ -26,11 +26,22 @@ describe('the cache', () => {
     assert.equal(anon.calls(), 2);
   });
 
-  it('answers the empty set when the project fails before any answer, and the stale answer afterwards', async () => {
+  it('answers null when the project fails before any answer, and asks again only after a TTL', async () => {
     const logged = [];
-    const bad = createFlagsCache({ anon: anonWith([], { fail: true }), log: (e) => logged.push(e) });
-    assert.deepEqual(await bad.get(), {});
+    let t = 0;
+    const down = anonWith([], { fail: true });
+    const bad = createFlagsCache({ anon: down, now: () => t, log: (e) => logged.push(e) });
+    assert.equal(await bad.get(), null);
     assert.equal(logged[0], 'flags_failed');
+    t += 30_000;
+    await bad.get();
+    assert.equal(down.calls(), 1);
+    t += 31_000;
+    await bad.get();
+    assert.equal(down.calls(), 2);
+  });
+
+  it('serves the stale answer while the project is down', async () => {
     let t = 0; let fail = false;
     const anon = { rpc: async () => (fail ? { data: null, error: new Error('down') } : { data: [{ key: 'a', enabled: false }], error: null }) };
     const cache = createFlagsCache({ anon, now: () => t });
@@ -54,5 +65,13 @@ describe('the route', () => {
     const post = fakeRes();
     await handle({ method: 'POST', headers: {} }, post);
     assert.equal(post.status, 405);
+  });
+
+  it('answers 503 when the project has never answered', async () => {
+    const handle = flagsRoute({ clients: { anon: anonWith([], { fail: true }) } });
+    const res = fakeRes();
+    await handle({ method: 'GET', headers: {} }, res);
+    assert.equal(res.status, 503);
+    assert.equal(res.headers['cache-control'], 'no-store');
   });
 });

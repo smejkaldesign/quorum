@@ -13,7 +13,7 @@ export function Flags() {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState<'all' | 'enabled' | 'disabled'>('all');
   const [creating, setCreating] = useState(false);
-  const load = () => api.flags().then((r) => (r.ok ? setList(r.value) : setError(r.error)));
+  const load = () => { setError(''); return api.flags().then((r) => (r.ok ? setList(r.value) : setError(r.error))); };
   useEffect(() => { load(); }, []);
   const put = (f: Flag) => setList((l) => l?.map((x) => (x.key === f.key ? f : x)) ?? l);
   const shown = filterFlags(list ?? [], q, status);
@@ -28,11 +28,12 @@ export function Flags() {
           <Button variant="primary" onClick={() => setCreating(true)}>New flag</Button>
         </>}
       />
-      {error && <p className="error">{error}</p>}
       <Card list>
         <Table columns={COLS}>
           <TableHead><span>Flag</span><span>Tags</span><span>Changed</span><span>On</span></TableHead>
-          {list === null && <SkeletonRows />}
+          {list === null && error && <div className="pad"><p className="error" style={{ marginTop: 0 }}>{error}</p><Button onClick={load}>Try again</Button></div>}
+          {list === null && !error && <SkeletonRows />}
+          {list !== null && error && <p className="error pad">{error}</p>}
           {list !== null && shown.length === 0 && <Empty>{list.length === 0 ? 'No flags yet. Migration 0021 seeds the notetaker flags; New flag adds one.' : 'No flag matches.'}</Empty>}
           {shown.map((f) => <Row key={f.key} f={f} onChange={put} />)}
         </Table>

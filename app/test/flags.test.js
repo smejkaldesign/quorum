@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULTS, REFRESH_EVERY, cleanFlags, createFlags, describeFlags, parseEnvFlags, resolveFlags } from '../flags.js';
+import { DEFAULTS, REFRESH_EVERY, acceptFlagsBody, cleanFlags, createFlags, describeFlags, parseEnvFlags, resolveFlags } from '../flags.js';
 
 const okFetch = (flags) => vi.fn(async () => ({ ok: true, json: async () => ({ flags }) }));
 const downFetch = () => vi.fn(async () => { throw new Error('fetch failed'); });
@@ -65,6 +65,34 @@ describe('the relay', () => {
     expect(flags.all()['manual-listen']).toEqual({ enabled: true, source: 'defaults' });
   });
 
+  it('an empty, malformed or refused answer is a failed read that keeps the cache', async () => {
+    for (const body of [{ flags: {} }, { flags: { a: 'yes' } }, { flags: [] }, { error: 'x' }, null]) {
+      const { flags, settings, saveSettings } = make({ fetchImpl: vi.fn(async () => ({ ok: true, json: async () => body })), settings: { flags: { cache: { 'meeting-capture': true }, fetchedAt: 5 } } });
+      const r = await flags.refresh();
+      expect(r.ok).toBe(false);
+      expect(settings.flags).toEqual({ cache: { 'meeting-capture': true }, fetchedAt: 5 });
+      expect(saveSettings).not.toHaveBeenCalled();
+      expect(flags.all()['meeting-capture']).toEqual({ enabled: true, source: 'cache' });
+    }
+    const refused = make({ fetchImpl: vi.fn(async () => ({ ok: false, status: 503, json: async () => ({ error: 'later' }) })), settings: { flags: { cache: { 'live-assist': true }, fetchedAt: 5 } } });
+    const r = await refused.flags.refresh();
+    expect(r).toMatchObject({ ok: false, error: 'The relay answered 503' });
+    expect(refused.flags.get('live-assist')).toBe(true);
+  });
+
+  it('accepts a body only when flags is a non-empty object of booleans', () => {
+    expect(acceptFlagsBody({ flags: { a: true, b: false } })).toEqual({ a: true, b: false });
+    for (const b of [{ flags: {} }, { flags: { a: 1 } }, { flags: [true] }, {}, null, 'x']) expect(acceptFlagsBody(b)).toBeNull();
+  });
+
+  it('the refresh handler reports the failure and keeps the last good read time', async () => {
+    const { flags } = make({ fetchImpl: downFetch(), settings: { flags: { cache: { 'meeting-capture': true }, fetchedAt: 7 } } });
+    const s = await flags.handlers['flags-refresh']();
+    expect(s.ok).toBe(false);
+    expect(s.error).toBe('Quorum could not reach the server.');
+    expect(s.fetchedAt).toBe(7);
+  });
+
   it('the env override wins over the relay answer', async () => {
     const { flags } = make({ env: { QUORUM_RELAY_URL: 'https://relay.example.com', QUORUM_FLAGS: 'meeting-capture=0' } });
     await flags.refresh();
@@ -76,12 +104,23 @@ describe('the relay', () => {
     const before = flags.handlers.flags();
     expect(before.flags['meeting-capture'].source).toBe('defaults');
     const after = await flags.handlers['flags-refresh']();
+    expect(after.ok).toBe(true);
+    expect(after.error).toBeNull();
     expect(after.flags['meeting-capture']).toEqual({ enabled: true, source: 'relay' });
     expect(typeof after.fetchedAt).toBe('number');
   });
 
   it('reads one line at startup', () => {
     expect(describeFlags({ a: { enabled: true, source: 'defaults' }, b: { enabled: false, source: 'env' } })).toBe('a=on (defaults), b=off (env)');
+  });
+});
+
+describe('the renderer', () => {
+  it('starts from the same defaults as the main process', async () => {
+    const { RENDERER_DEFAULTS, currentFlags } = await import('../src/flags.ts');
+    expect(RENDERER_DEFAULTS).toEqual(DEFAULTS);
+    expect(currentFlags().flags['manual-listen']).toEqual({ enabled: true, source: 'defaults' });
+    expect(currentFlags().flags['meeting-capture'].enabled).toBe(false);
   });
 });
 

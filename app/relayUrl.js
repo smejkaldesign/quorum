@@ -21,3 +21,14 @@ export function relayUrls(opts = {}) {
 export const unreachable = (err) => /could not be reached|did not answer|fetch failed|ECONNREFUSED|ENOTFOUND|certificate|CERT_|EPROTO|ETIMEDOUT/i.test(String(err?.message ?? err?.cause?.message ?? err));
 // the same address for plain HTTP calls (notes, billing, the beta gate)
 export const httpUrl = (url) => String(url).replace(/^ws(s?):\/\//, 'http$1://').replace(/\/+$/, '');
+
+// one HTTP call to the relay, trying each address in order and moving on only when the address could not be reached;
+// answers the Response of the first address that answered at all. Used by the beta gate and the feature flags
+export async function relayFetch(path, init = {}, { env = process.env, source = 'production', fetchImpl = globalThis.fetch } = {}) {
+  const urls = relayUrls({ env, source: (typeof source === 'function' ? source() : source) ?? 'production' });
+  for (const url of urls) {
+    try { return await fetchImpl(`${httpUrl(url)}${path}`, init); }
+    catch (err) { if (unreachable(err) && url !== urls[urls.length - 1]) continue; throw err; }
+  }
+  throw new Error('No relay address to try');
+}

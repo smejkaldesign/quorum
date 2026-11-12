@@ -27,6 +27,10 @@ describe('the forms', () => {
     expect(validateFlagForm({ name: ' ', key: 'a', description: '', tags: '' })).toEqual({ error: 'Give the flag a name.' });
     expect(validateFlagForm({ name: 'A', key: 'Bad Key', description: '', tags: '' })).toEqual({ error: 'A key is lowercase letters, digits and hyphens, like dark-mode.' });
     expect(validateFlagForm({ name: 'A', key: '-a', description: '', tags: '' })).toHaveProperty('error');
+    expect(validateFlagForm({ name: 'A'.repeat(81), key: 'a', description: '', tags: '' })).toEqual({ error: 'The name is at most 80 characters.' });
+    expect(validateFlagForm({ name: 'A', key: 'a', description: 'x'.repeat(501), tags: '' })).toEqual({ error: 'The description is at most 500 characters.' });
+    expect(validateFlagForm({ name: 'A', key: 'a', description: '', tags: Array.from({ length: 21 }, (_, i) => `t${i}`).join(',') })).toEqual({ error: 'A flag has at most 20 tags.' });
+    expect(validateFlagForm({ name: 'A', key: 'a'.repeat(61), description: '', tags: '' })).toHaveProperty('error');
     expect(validateFlagForm({ name: ' Dark mode ', key: 'dark-mode', description: ' Night colors ', tags: 'ui, UI' })).toEqual({ draft: { name: 'Dark mode', key: 'dark-mode', description: 'Night colors', tags: ['ui'] } });
   });
 });

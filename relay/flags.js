@@ -4,33 +4,38 @@
 import { json } from './platform.js';
 
 export const FLAGS_TTL_MS = 60 * 1000;
-const OPEN = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '600', 'cache-control': 'public, max-age=60' };
+const OPEN = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '600' };
 
 // rows from the function into { key: enabled }; anything malformed is skipped
 export const shapeFlags = (rows) => Object.fromEntries((Array.isArray(rows) ? rows : []).filter((r) => r && typeof r.key === 'string').map((r) => [r.key, r.enabled === true]));
 
+// get() answers the flags, or null when the project has never answered. A failure is remembered for one TTL, so a
+// project that is down is asked at most once a minute; a stale answer is served meanwhile when there is one.
 export function createFlagsCache({ anon, now = Date.now, ttl = FLAGS_TTL_MS, log = () => {} } = {}) {
   let cached = null;
   let at = 0;
+  let checked = false;
   let pending = null;
   async function load() {
-    const { data, error } = await anon.rpc('public_flags');
-    if (error) throw new Error(error.message || 'public_flags failed');
-    cached = shapeFlags(data);
-    at = now();
+    try {
+      const { data, error } = await anon.rpc('public_flags');
+      if (error) throw new Error(error.message || 'public_flags failed');
+      cached = shapeFlags(data);
+    } catch (err) {
+      log('flags_failed', { message: err?.message });
+    } finally {
+      at = now();
+      checked = true;
+    }
     return cached;
   }
   return {
     async get() {
-      if (cached && now() - at < ttl) return cached;
+      if (checked && now() - at < ttl) return cached;
       if (!pending) pending = load().finally(() => { pending = null; });
-      try { return await pending; } catch (err) {
-        log('flags_failed', { message: err?.message });
-        // a stale answer beats none; a first failure answers the empty set so installs fall back to their defaults
-        return cached ?? {};
-      }
+      return pending;
     },
-    reset() { cached = null; at = 0; },
+    reset() { cached = null; at = 0; checked = false; },
   };
 }
 
@@ -40,6 +45,8 @@ export function flagsRoute({ clients, log = () => {}, now = Date.now, ttl = FLAG
     if (req.method === 'OPTIONS') { res.writeHead(204, OPEN); return res.end(); }
     if (req.method !== 'GET') return json(res, 405, { error: 'GET only.' }, OPEN);
     const flags = await cache.get();
-    json(res, 200, { flags }, OPEN);
+    // no answer yet: say so, so an install keeps its cached flags instead of reading an empty set as every flag off
+    if (!flags) return json(res, 503, { error: 'The flags could not be read. Try again in a minute.' }, { ...OPEN, 'cache-control': 'no-store' });
+    json(res, 200, { flags }, { ...OPEN, 'cache-control': 'public, max-age=60' });
   };
 }
