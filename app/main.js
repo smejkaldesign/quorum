@@ -1536,7 +1536,9 @@ ipcMain.handle('vault-tree', () => (brain() ? vaultTree(brain().vault, excludedP
 // 'cloud'. The local edition gets a stub whose pushes do nothing, so the call sites below stay the same in both editions.
 // sync never pushes private folders, notes marked confidential, or anything the opt-out list withholds
 const isPrivatePath = (rel) => { const b = brain(); if (!b) return false; const abs = path.resolve(b.vault, rel); return guardrails.compiled().denyDirs.some((d) => { const dir = path.join(b.root, d); return abs === dir || abs.startsWith(dir + path.sep); }); };
-const isConfidentialText = (text) => /^---\r?\n(?:[^\n]*\r?\n)*?confidential\s*:/i.test(String(text).slice(0, 2000));
+// every frontmatter key the guardrails deny (the built-in confidential: plus any the person or the workspace added), so
+// a note the agent may not read is also a note sync never pushes
+const isConfidentialText = (text) => { const head = String(text).slice(0, 2000); return /^---/.test(head) && guardrails.compiled().frontmatterKeys.some((k) => new RegExp(String.raw`^---\r?\n(?:[^\n]*\r?\n)*?${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\s*:`, 'i').test(head)); };
 const account = EDITION === 'cloud'
   ? (await loadEE('account.js')).registerAccount({ ipcMain, settings, saveSettings, toUI, log, brain, meetingIndex, isExcluded: (rel) => excludedPath(rel) || isPrivatePath(rel), isExcludedText: (t) => suggester.isExcluded(t) || isConfidentialText(t), openExternal: (u) => shell.openExternal(u), oauthRedirect: () => (app.isPackaged ? 'quorum://auth/callback' : 'http://127.0.0.1:47831/auth/callback') })
   : { sync: { pushNote() {}, pushMeetingNote() {}, pullNow() {}, live() {} } };
@@ -1777,7 +1779,7 @@ function callLink(e) {
 // in-app updates: the state the window renders, a check on request, and the install once a version is ready
 let updates = null;
 const packagedMeta = (() => { try { return JSON.parse(readFileSync(path.join(here, 'package.json'), 'utf8')); } catch { return {}; } })();
-ipcMain.handle('guardrails-get', () => guardrails.get());
+ipcMain.handle('guardrails-get', (_e, opts) => guardrails.get({ fresh: opts?.fresh === true }));
 ipcMain.handle('guardrails-set', (_e, id, patch) => guardrails.set(String(id ?? ''), patch ?? {}));
 ipcMain.handle('guardrails-add', (_e, rule) => guardrails.add(rule ?? {}));
 ipcMain.handle('guardrails-remove', (_e, id) => guardrails.remove(String(id ?? '')));

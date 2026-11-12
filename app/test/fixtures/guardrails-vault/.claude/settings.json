@@ -1,0 +1,1 @@
+{"hooks": {"PreToolUse": [{"matcher": "Read|Grep|Glob", "hooks": [{"type": "command", "command": "python3 .claude/hooks/opted-out-guard.py"}]}]}}

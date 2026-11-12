@@ -35,8 +35,9 @@ Product gaps as of 2026-11-10. Each item says what is missing, what the app does
 
 ## Guardrails
 
-- **Workspace rules need migration 0015** (`workspace_settings.guardrails`, `workspace_guardrails_set`). Until it is applied to a hosted project, the Admin, Guardrails page shows an error on save and members run with built-in and personal rules only.
-- **Hooks from the Agent OS run only with Claude Code.** An included hook is attached to Claude Code's run; Codex and Antigravity have no hook point, which is one reason the agent role stays with Claude Code.
+- **Two scopes.** Individual rules (built in, found in the Agent OS, the person's own) are the person's and work in both editions. Organization or team rules need migration 0015 (`workspace_settings.guardrails`, `workspace_guardrails_set`); admins set them under Admin, Guardrails, each one can be switched off there, and members cannot turn them off. Until 0015 is applied to a hosted project, that page shows an error on save and members run with individual rules only.
+- **Discovery on connect reads the vault itself.** Besides guard hooks and opt-out lists, the review reads CLAUDE.md for sharing rules that name a folder or a frontmatter marker, tallies the marker keys notes carry, finds folders where nearly every note is marked, and reads the folders Obsidian excludes. Each becomes a folder or frontmatter rule the person includes or leaves out; nothing is on until reviewed. What was looked at and left out is listed on the page. Only reads, search, sync and sharing rules are offered; a CLAUDE.md rule that names nothing Quorum can enforce is counted, not invented.
+- **Hooks from the Agent OS run only with Claude Code.** An included hook is attached to Claude Code's run; Codex and Antigravity have no hook point, so with those runners a hook is recorded and the row says so. Every other kind of rule is enforced in both editions through the read guard, the sync exclusion and the term filter.
 
 ## Runners
 
