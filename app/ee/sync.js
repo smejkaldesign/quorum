@@ -56,9 +56,11 @@ export const bondOf = (text) => { const fm = parseFrontmatter(text); return fm.t
 const safeName = (s) => String(s ?? '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Workspace';
 export const defaultTeamRoot = (ws) => path.join(homedir(), 'Documents', 'Quorum Team', safeName(ws?.name || ws?.id));
 
+// the note without its frontmatter block, newlines normalized; what a reader shows
+export const stripFrontmatter = (text) => String(text).replace(/\r\n?/g, '\n').replace(/^---\n[\s\S]*?\n---\n?/, '');
 // the frontmatter block as plain key: value pairs, with "- item" lists; enough for what notes carry
 export function parseFrontmatter(text) {
-  const m = text.match(/^---\n([\s\S]*?)\n---/);
+  const m = String(text).replace(/\r\n?/g, '\n').match(/^---\n([\s\S]*?)\n---/);
   const fm = {};
   if (!m) return fm;
   let list = null;

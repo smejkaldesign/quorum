@@ -13,6 +13,7 @@ const CloudVoice = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src
 const CloudGuardrails = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/WorkspaceGuardrails').then((m) => ({ default: m.WorkspaceGuardrailsPage }))) : null;
 const CloudBilling = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/Billing').then((m) => ({ default: m.BillingPage }))) : null;
 const CloudKnowledge = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/Knowledge').then((m) => ({ default: m.KnowledgePage }))) : null;
+const CloudKnowledgeTab = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/KnowledgeTab').then((m) => ({ default: m.KnowledgeTab }))) : null;
 
 // whether this build can reach a hosted account at runtime: the cloud edition without QUORUM_SUPABASE_URL and the anon key
 // reports configured: false from account-status. Local is always false; null while the cloud answer is on its way
@@ -57,7 +58,9 @@ function CloudPage({ Page, local }: { Page: ReturnType<typeof lazy> | null; loca
 
 // Settings › Admin › General: the plan, seats and hour packs; the Local edition has nothing to bill
 export const BillingArea = () => <CloudPage Page={CloudBilling} local={null} />;
-// Settings › Knowledge: the review queue and what each member shared; the Local edition shows its own zero state
+// the Knowledge top tab: the workspace's shared notes and the admin review queue; the Local edition has no such tab
+export const KnowledgeTabArea = () => <CloudPage Page={CloudKnowledgeTab} local={null} />;
+// Settings › Knowledge: auto-include and what each member shared; the Local edition shows its own zero state
 export const KnowledgeQueueArea = ({ local }: { local: ReactNode }) => <CloudPage Page={CloudKnowledge} local={local} />;
 // Settings › Admin › Connectors: organization providers an admin manages for everyone
 export const WorkspaceConnectorsArea = ({ local }: { local: ReactNode }) => <CloudPage Page={CloudConnectors} local={local} />;

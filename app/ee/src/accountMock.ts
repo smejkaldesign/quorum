@@ -3,7 +3,7 @@ import type { AccountState, Billing, ContributionMine, Member, MemberInvite, Res
 export type AccountApi = Pick<Window['quorum'], 'accountStatus' | 'accountSendCode' | 'accountVerifyCode' | 'accountSignOut' | 'accountGoogle' | 'onAccountOAuth' | 'orgCreate' | 'orgJoin' | 'orgSwitch' | 'membersList' | 'memberInvite' | 'memberRemove' | 'inviteRevoke' | 'syncSet' | 'syncNow' | 'onAccount'>;
 export type ConnectorsApi = Pick<Window['quorum'], 'connectorsList' | 'connectorSet' | 'connectorRemove' | 'connectorTest'>;
 export type VoiceApi = Pick<Window['quorum'], 'workspaceUsage' | 'workspaceVoiceGet' | 'workspaceVoiceSet'>;
-export type KnowledgeApi = Pick<Window['quorum'], 'knowledgeStatus' | 'knowledgeQueue' | 'knowledgeReview' | 'knowledgeAutoIncludeSet'>;
+export type KnowledgeApi = Pick<Window['quorum'], 'knowledgeStatus' | 'knowledgeQueue' | 'knowledgeReview' | 'knowledgeAutoIncludeSet' | 'knowledgeList' | 'knowledgeRead'>;
 let knowledgeMock: KnowledgeApi | null = null;
 export function knowledgeApi(): KnowledgeApi {
   if ((window.quorum as Partial<Window['quorum']>).knowledgeQueue) return window.quorum;
@@ -16,6 +16,11 @@ export function knowledgeApi(): KnowledgeApi {
     knowledgeQueue: async () => ({ queue }),
     knowledgeReview: async (id, decision) => { await delay(200); queue = queue.filter((q) => q.id !== id); return { status: decision === 'include' ? 'included' : 'declined' }; },
     knowledgeAutoIncludeSet: async (on) => { auto = on; return { autoInclude: on }; },
+    knowledgeList: async () => ({ root: '~/Documents/Quorum Team/Example Co', notes: [
+      { rel: '05-knowledge/onboarding.md', title: 'Onboarding', pulledAt: iso(-3 * DAY), behind: false, item: 't1' },
+      { rel: '08-meetings/2026-11-08 Roadmap review.md', title: 'Roadmap review', pulledAt: iso(-DAY), behind: true, item: 't2' },
+    ] }),
+    knowledgeRead: async (rel) => ({ doc: { rel, title: rel.replace(/^.*\//, '').replace(/\.md$/, ''), body: 'A shared note from a teammate.\n\n- One point\n- Another point', pulledAt: iso(-DAY), behind: false, update: null } }),
   });
 }
 export type BillingApi = Pick<Window['quorum'], 'billingStatus' | 'billingCheckout' | 'billingPortal' | 'billingPacks'>;

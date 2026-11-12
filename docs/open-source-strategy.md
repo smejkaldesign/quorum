@@ -22,7 +22,7 @@ The open-source edition is the same app with the same features. It is never a cr
 |---|---|---|---|
 | Price | Free, Apache-2.0 | One paid plan for v1: $8 per seat per month, 20 managed transcription hours included, more in $5 packs of 20 hours | Not a tier in v1; Cloud gets team features first, the line moves when demand shows |
 | Meetings: capture, on-device transcription, Zoom/Meet/Teams detection, STOP/GO chat notice, end-of-call notes | Yes | Yes | Yes |
-| Agent OS: connect an existing notes folder (Obsidian vault, repo with CLAUDE.md), knowledge graph, search, read guard | Yes | Yes | Yes |
+| Agent OS: connect an existing notes folder (Obsidian vault, repo with CLAUDE.md), the Memory graph, search, read guard | Yes | Yes | Yes |
 | Model access | User's own Claude Code sign-in; bring your own API key (Anthropic, OpenAI, local Ollama); default is none | Same, plus managed transcription (cloud speech engine and notes on the company's keys, 20 hours a month per seat) | Same |
 | Tokens and model cost | $0 to Smejkal Design in every case | Transcription and notes within the 20-hour allowance, about $0.22 to $0.53 per hour; nothing else in v1. Paid hours past the allowance are a later option | Same as Cloud |
 | Decision checks (System One models) | Bring your own key, off by default | Same | Same |

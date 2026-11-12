@@ -231,7 +231,7 @@ const sample: Partial<Bridge> = {
 };
 
 // Anything the sample does not define still answers: a subscription returns its unsubscribe, a call resolves to null.
-// A bridge method added to the app later therefore needs no change here unless Home or Knowledge reads its result.
+// A bridge method added to the app later therefore needs no change here unless Home or Memory reads its result.
 window.quorum = new Proxy(sample as Bridge, {
   get(target, key) {
     if (key in target) return target[key as keyof Bridge];

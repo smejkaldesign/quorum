@@ -1,10 +1,11 @@
 import { Component, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import type { Brain, HelperEvent, MeetingMeta, Notes, NotesDraft, Settings, Source, SpeakersEvent, SummaryEvent, UpdateState } from './quorum';
+import type { AccountState, Brain, HelperEvent, MeetingMeta, Notes, NotesDraft, Settings, Source, SpeakersEvent, SummaryEvent, UpdateState } from './quorum';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
 import { EndView } from './EndView';
 import { Onboarding } from './Onboarding';
-import { AccountArea } from './edition';
+import { AccountArea, EDITION, isCloud, KnowledgeTabArea } from './edition';
+import { MAIN_TAB_LABEL, keepTab, mainTabs, showsKnowledge, type MainTab } from './mainTabs';
 import markProd from '../assets/quorum-mark.png';
 import markDev from '../assets/quorum-mark-dev.png';
 
@@ -17,15 +18,16 @@ import { SettingsView } from './SettingsView';
 import type { ConnectorsTarget, OpenSettingsDetail, SettingsPageId } from './connectorsNav';
 import { IconPen, PrivateNotes, usePrivateNotes } from './PrivateNotes';
 import { Avatar, SpeakerName, similarCount, type SpeakerInfo } from './Speaker';
-import { IconFolderOpen, IconPerson, IconGear, IconHome, IconGraph, IconSearch, IconFolder, IconDoc, IconBack, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, Wave } from './icons';
+import { IconFolderOpen, IconPerson, IconGear, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconBack, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, Wave } from './icons';
 
 // one speaker turn as main.js built it; a turn that grows arrives again with the same id and replace: true
 type Line = { id: number; channel: 'me' | 'them'; text: string; start: number } & Partial<SpeakerInfo>;
 type Phase = 'idle' | 'starting' | 'listening' | 'paused' | 'review' | 'blocked';
-type Tab = 'home' | 'knowledge' | 'chat' | 'notes' | 'mine';
+type Tab = MainTab | 'chat' | 'notes' | 'mine';
 const inCall = (p: string) => p === 'listening' || p === 'paused' || p === 'starting';
-// Home and Knowledge always sit in the middle; on a call, Chat, live Notes and Logs, and Your notes open up beside Listening
-const MAIN_TABS = [['home', IconHome, 'Home'], ['knowledge', IconGraph, 'Knowledge']] as const;
+// Home and Memory always sit in the middle, Knowledge beside them in a signed-in Cloud build (mainTabs.ts); on a call,
+// Chat, live Notes and Logs, and Your notes open up beside Listening
+const MAIN_TAB_ICON = { home: IconHome, memory: IconGraph, knowledge: IconBrain } as const;
 const CALL_TABS = [['chat', IconChat, 'Chat'], ['notes', IconNotes, 'Live notes'], ['mine', IconPen, 'Your notes']] as const;
 type Msg =
   | { kind: 'user'; text: string; files?: string[] }
@@ -91,7 +93,20 @@ export function App() {
   const [phase, setPhase] = useState<Phase>('idle');
   // paused from the header keeps the call; STOP from the chat deletes it
   const [held, setHeld] = useState(false);
-  const [tab, setTab] = useSession<Tab>('tab', 'home', (t) => t === 'home' || t === 'knowledge');
+  const [tab, setTab] = useSession<Tab>('tab', 'home', keepTab(EDITION));
+  // the hosted account, for the Knowledge tab: the Local edition has none, so it never asks
+  const [account, setAccount] = useState<AccountState | null>(null);
+  useEffect(() => {
+    if (!isCloud) return;
+    let live = true;
+    window.quorum.accountStatus().then((a) => { if (live) setAccount(a); }).catch(() => {});
+    const off = window.quorum.onAccount?.(setAccount);
+    return () => { live = false; off?.(); };
+  }, []);
+  const tabs = mainTabs(EDITION, account);
+  // a remembered Knowledge tab waits for the account, shows once it allows the tab, and closes when it does not
+  const knowledgeOpen = tab === 'knowledge' && showsKnowledge(EDITION, account);
+  useEffect(() => { if (tab === 'knowledge' && account && !showsKnowledge(EDITION, account)) setTab('home'); }, [tab, account, setTab]);
   // off a call, chat lives inside Home as a conversation opened from Ask anything or a saved chat
   const [convoOpen, setConvoOpen] = useState(false);
   const [me, setMe] = useState<{ name: string; photo: string | null }>({ name: '', photo: null });
@@ -101,14 +116,14 @@ export function App() {
   const phaseRef = useRef<Phase>('idle');
   const [view, setView] = useSession<'main' | 'settings'>('view', 'main');
   const [kbCommand, setKbCommand] = useState<KbCommand>(null);
-  // a cited note opens in Quorum's Knowledge view
+  // a cited note opens in Quorum's Memory view
   const openInQuorum = (abs: string) => {
     if (!brain || !abs.startsWith(`${brain.vault}/`)) { window.quorum.openNote(abs); return; }
     setView('main');
-    setTab('knowledge');
+    setTab('memory');
     setKbCommand({ kind: 'open', rel: abs.slice(brain.vault.length + 1), n: Date.now() });
   };
-  // Obsidian's keys work from anywhere in Quorum: they jump to Knowledge and open the overlay
+  // Obsidian's keys work from anywhere in Quorum: they jump to Memory and open the overlay
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!e.metaKey || e.altKey || e.ctrlKey) return;
@@ -117,7 +132,7 @@ export function App() {
       if (!kind) return;
       e.preventDefault();
       setView('main');
-      setTab('knowledge');
+      setTab('memory');
       setKbCommand({ kind, n: Date.now() });
     };
     window.addEventListener('keydown', onKey);
@@ -364,12 +379,12 @@ export function App() {
       <header className="bar">
         <div className="brand static"><img src={mark} alt={window.quorum.isDev ? 'Quorum Dev' : 'Quorum'} /></div>
         <nav className="tabs" aria-label="Views">
-          {MAIN_TABS.map(([id, Icon, label]) => (
+          {tabs.map((id) => { const Icon = MAIN_TAB_ICON[id]; const label = MAIN_TAB_LABEL[id]; return (
             <button key={id} className={`tab ${view === 'main' && tab === id ? 'on' : ''}`} aria-label={label} data-tip={label}
               onClick={() => { setView('main'); setTab(id); }}>
               <Icon />
             </button>
-          ))}
+          ); })}
         </nav>
         <div className="right">
           {inCall(phase) && (
@@ -427,9 +442,15 @@ export function App() {
         </div>
       )}
 
-      {tab === 'knowledge' && (
+      {tab === 'memory' && (
         <div className="body wide flush">
           <KnowledgeView brain={brain} command={kbCommand} />
+        </div>
+      )}
+
+      {knowledgeOpen && (
+        <div className="body wide flush">
+          <KnowledgeTabArea />
         </div>
       )}
 
