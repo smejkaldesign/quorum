@@ -7,7 +7,7 @@ import { Card, CardLine, MetricCard, MetricGrid, PageHeader, SectionTitle } from
 export function Overview() {
   const [o, setO] = useState<OverviewData | null>(null);
   const [error, setError] = useState('');
-  const [relay, setRelay] = useState<{ engine: string; billing: boolean; mail: boolean; notes: boolean; zoom: boolean } | null | 'down'>(null);
+  const [relay, setRelay] = useState<{ engine: string; billing: boolean; mail: boolean; notes: boolean; zoom: boolean; flags: boolean } | null | 'down'>(null);
   useEffect(() => {
     api.overview().then((r) => (r.ok ? setO(r.value) : setError(r.error)));
     api.relayHealth().then((r) => setRelay(r.ok ? r.value : 'down'));
@@ -38,6 +38,7 @@ export function Overview() {
             <CardLine label="Billing">{on(relay.billing)}</CardLine>
             <CardLine label="Code email">{on(relay.mail, 'Off: set RESEND_API_KEY on the relay')}</CardLine>
             <CardLine label="Zoom connect">{on(relay.zoom)}</CardLine>
+            <CardLine label="Feature flags">{on(relay.flags, 'Off: the relay predates GET /v1/flags')}</CardLine>
           </>
         )}
       </Card>

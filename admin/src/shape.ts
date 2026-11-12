@@ -19,6 +19,8 @@ export type Install = { id: string; codeId: string; email: string | null; plan: 
 export type User = { userId: string; email: string; createdAt: string; lastSignInAt: string | null; workspaces: number; owner: boolean };
 export type Overview = { users: number; workspaces: number; paidWorkspaces: number; members: number; codesOpen: number; requestsPending: number; managedHoursMonth: number; monthStart: string };
 export type AuditRow = { id: string; actor: string | null; action: string; targetWorkspace: string | null; detail: Record<string, unknown>; createdAt: string };
+// a feature flag (migration 0021): one switch every install reads through the relay, plus the owner's own notes on it
+export type Flag = { id: string; key: string; name: string; description: string; enabled: boolean; tags: string[]; createdAt: string; updatedAt: string };
 
 export const PLANS: readonly Plan[] = ['free', 'cloud', 'internal', 'paid'];
 export const PLAN_LABEL: Record<Plan, string> = { free: 'Free', cloud: 'Cloud', internal: 'Internal', paid: 'Paid' };
@@ -89,6 +91,33 @@ export const shapeOverview = (o: Record<string, unknown>): Overview => ({
   users: num(o.users), workspaces: num(o.workspaces), paidWorkspaces: num(o.paid_workspaces), members: num(o.members), codesOpen: num(o.codes_open), requestsPending: num(o.requests_pending),
   managedHoursMonth: num(o.managed_hours_month), monthStart: String(o.month_start ?? periodStart()),
 });
+export const shapeFlag = (f: Record<string, unknown>): Flag => ({
+  id: String(f.id), key: String(f.key), name: String(f.name ?? f.key), description: String(f.description ?? ''), enabled: f.enabled === true,
+  tags: Array.isArray(f.tags) ? f.tags.map(String).filter(Boolean) : [], createdAt: String(f.created_at), updatedAt: String(f.updated_at ?? f.created_at),
+});
+// the key a name suggests, in the shape the database accepts: lowercase letters, digits and single hyphens
+export const FLAG_KEY = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+export const flagKeyFrom = (name: string): string => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+// "a, b ,c" into ['a', 'b', 'c'], each tag lowercased and bounded, duplicates dropped
+export const parseTags = (text: string): string[] => Array.from(new Set(text.split(',').map((t) => t.trim().toLowerCase().slice(0, 40)).filter(Boolean)));
+export const NAME_MAX = 80;
+export const DESCRIPTION_MAX = 500;
+// the New flag and Edit flag forms, cleaned
+export function validateFlagForm(input: { name: string; key: string; description: string; tags: string }): { draft: { name: string; key: string; description: string; tags: string[] } } | { error: string } {
+  const name = String(input.name ?? '').trim();
+  if (!name) return { error: 'Give the flag a name.' };
+  if (name.length > NAME_MAX) return { error: `The name is at most ${NAME_MAX} characters.` };
+  const key = String(input.key ?? '').trim().toLowerCase();
+  if (!FLAG_KEY.test(key)) return { error: 'A key is lowercase letters, digits and hyphens, like dark-mode.' };
+  const description = String(input.description ?? '').trim();
+  if (description.length > DESCRIPTION_MAX) return { error: `The description is at most ${DESCRIPTION_MAX} characters.` };
+  return { draft: { name, key, description, tags: parseTags(String(input.tags ?? '')) } };
+}
+// the list the page shows: a search over name, key and tags, and the Enabled or Disabled filter
+export const filterFlags = (list: Flag[], q: string, status: 'all' | 'enabled' | 'disabled'): Flag[] => {
+  const needle = q.trim().toLowerCase();
+  return list.filter((f) => (status === 'all' || (status === 'enabled') === f.enabled) && (!needle || f.name.toLowerCase().includes(needle) || f.key.includes(needle) || f.tags.some((t) => t.includes(needle))));
+};
 export const shapeAudit = (a: Record<string, unknown>): AuditRow => ({ id: String(a.id), actor: str(a.actor), action: String(a.action), targetWorkspace: str(a.target_workspace), detail: (a.detail && typeof a.detail === 'object' ? a.detail : {}) as Record<string, unknown>, createdAt: String(a.created_at) });
 
 // the Set plan form, cleaned: a known plan, a whole seat count of zero or more, notes trimmed and bounded
@@ -125,6 +154,9 @@ export function auditLine(a: AuditRow): string {
     case 'invite_request': return `Approved the access request from ${email ?? 'someone'}${d.plan === 'cloud' ? ' for Cloud' : ''}`;
     case 'set_code_plan': return `Moved ${email ?? 'someone'} to the ${d.plan === 'cloud' ? 'Cloud' : 'Free'} plan`;
     case 'decline_request': return `Declined the access request from ${email ?? 'someone'}`;
+    case 'flag_set': return `Turned the ${String(d.key ?? 'flag')} flag ${d.enabled === true ? 'on' : 'off'}`;
+    case 'flag_create': return `Created the ${String(d.key ?? 'flag')} flag`;
+    case 'flag_update': return `Edited the ${String(d.key ?? 'flag')} flag`;
     case 'set_plan': {
       const after = (d.after ?? {}) as Record<string, unknown>; const before = (d.before ?? {}) as Record<string, unknown>;
       return `Set the plan to ${PLAN_LABEL[after.plan as Plan] ?? after.plan ?? '?'} with ${num(after.seats_included)} seats included (was ${PLAN_LABEL[before.plan as Plan] ?? before.plan ?? '?'}, ${num(before.seats_included)})`;

@@ -2,7 +2,7 @@
 // owner-only RPCs, and the relay for the one thing a browser page cannot do itself, sending the code email.
 import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
 import { token } from './session';
-import { type AccessRequest, type AuditRow, type CodePlan, type Install, type Member, type Overview, type PlanDraft, type Usage, type User, type Workspace, periodStart, plain, requestWithCode, shapeAudit, shapeInstall, shapeMember, shapeOverview, shapeRequest, shapeUser, shapeUsage, shapeWorkspace } from './shape';
+import { type AccessRequest, type AuditRow, type CodePlan, type Flag, type Install, type Member, type Overview, type PlanDraft, type Usage, type User, type Workspace, periodStart, plain, requestWithCode, shapeAudit, shapeFlag, shapeInstall, shapeMember, shapeOverview, shapeRequest, shapeUser, shapeUsage, shapeWorkspace } from './shape';
 
 export const CONFIG = __QUORUM_SUPABASE__;
 export const RELAY_URL = __RELAY_URL__;
@@ -70,6 +70,13 @@ export const api = {
   setPlan: (workspaceId: string, draft: PlanDraft): Promise<Result<{ plan: string; seatsIncluded: number; notes: string | null }>> =>
     rpc('platform_set_plan', { workspace_id: workspaceId, plan: draft.plan, seats_included: draft.seatsIncluded, notes: draft.notes || null }, (d) => { const o = (d ?? {}) as Record<string, unknown>; return { plan: String(o.plan), seatsIncluded: Number(o.seats_included) || 0, notes: (o.notes as string | null) ?? null }; }, 'The plan could not be saved.'),
   users: (): Promise<Result<User[]>> => rpc('platform_users', undefined, (d) => rows(d).map(shapeUser)),
+  // feature flags (migration 0021): the owner's list, the switch, and the name, description and tags around it
+  flags: (): Promise<Result<Flag[]>> => rpc('platform_flags', undefined, (d) => rows(d).map(shapeFlag)),
+  setFlag: (key: string, enabled: boolean): Promise<Result<Flag>> => rpc('platform_flag_set', { key, enabled }, (d) => shapeFlag((d ?? {}) as Record<string, unknown>), 'The flag could not be changed.'),
+  createFlag: (draft: { key: string; name: string; description: string; tags: string[] }): Promise<Result<Flag>> =>
+    rpc('platform_flag_create', { key: draft.key, name: draft.name, description: draft.description, tags: draft.tags }, (d) => shapeFlag((d ?? {}) as Record<string, unknown>), 'The flag could not be created.'),
+  updateFlag: (draft: { key: string; name: string; description: string; tags: string[] }): Promise<Result<Flag>> =>
+    rpc('platform_flag_update', { key: draft.key, name: draft.name, description: draft.description, tags: draft.tags }, (d) => shapeFlag((d ?? {}) as Record<string, unknown>), 'The flag could not be saved.'),
   audit: async (limit = 100): Promise<Result<AuditRow[]>> => {
     try {
       const { data, error } = await supabase().from('platform_audit').select('id, actor, action, target_workspace, detail, created_at').order('created_at', { ascending: false }).limit(limit);
@@ -89,11 +96,11 @@ export const api = {
       return ok(true);
     } catch (err) { return no(err, 'The relay could not be reached.'); }
   },
-  relayHealth: async (): Promise<Result<{ engine: string; billing: boolean; mail: boolean; notes: boolean; zoom: boolean }>> => {
+  relayHealth: async (): Promise<Result<{ engine: string; billing: boolean; mail: boolean; notes: boolean; zoom: boolean; flags: boolean }>> => {
     try {
       const res = await fetch(`${RELAY_URL}/healthz`);
       const b = await res.json();
-      return ok({ engine: String(b.engine ?? ''), billing: b.billing === true, mail: b.mail === true, notes: b.notes === true, zoom: b.connect?.zoom === true });
+      return ok({ engine: String(b.engine ?? ''), billing: b.billing === true, mail: b.mail === true, notes: b.notes === true, zoom: b.connect?.zoom === true, flags: b.flags === true });
     } catch (err) { return no(err, 'The relay did not answer.'); }
   },
 };

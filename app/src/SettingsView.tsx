@@ -13,6 +13,7 @@ import { Row, Toggle, useMenu } from './controls';
 import { AccountArea, BillingArea, EDITION, KnowledgeQueueArea, MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { canAdmin, modeOf, resolvePage, workspacePages, type Page } from './settingsNav';
 import { EnvSwitch } from './EnvSwitch';
+import { useFlags } from './flags';
 import {
   IconBell, IconBrain, IconBuilding, IconCalendar, IconChat, IconFolder, IconGrid, IconKeyboard, IconLock,
   IconChevron, IconCode, IconExternal, IconGlobe, ProviderMark, IconMic, IconMore, IconNotes, IconPeople, IconPerson, IconPlus, IconPower, IconReset, IconSliders, IconStack, IconCheck, IconCopy, IconFolderFill, IconFork, IconShield, IconGraph, IconSearch, IconClose, Wave,
@@ -1275,12 +1276,40 @@ function DevelopersPage() {
     <>
       <ClaudeCard />
       <PersonalConnectors />
+      <FlagsCard />
       <h3>API</h3>
       <p className="mcp-lede">Keys for scripts and tools to reach your notes.</p>
       <div className="set-card">
         <Row icon={<IconCode width={18} height={18} />} title={<>Personal API keys<Soon /></>} desc="Will issue keys that let your scripts and tools read and write your notes">
           <button className="icon-btn" disabled aria-label="Manage API keys"><IconChevron className="right" /></button>
         </Row>
+      </div>
+    </>
+  );
+}
+
+// the feature flags this copy runs with (app/flags.js): read-only here, the admin app sets them; each row names where
+// its value came from, and Refresh asks the relay now instead of waiting for the hourly read
+const FLAG_SOURCE: Record<string, string> = { env: 'QUORUM_FLAGS in the environment', relay: 'the relay', cache: 'the last relay answer, cached', defaults: 'built into this build' };
+function FlagsCard() {
+  const state = useFlags();
+  const [busy, setBusy] = useState(false);
+  const refresh = async () => { setBusy(true); try { await window.quorum.flagsRefresh(); } finally { setBusy(false); } };
+  const entries = Object.entries(state?.flags ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  return (
+    <>
+      <div className="set-head">
+        <h3>Feature flags</h3>
+        <span className="set-head-actions"><button className="pill small-pill" disabled={busy} onClick={refresh}>{busy ? 'Reading…' : 'Refresh'}</button></span>
+      </div>
+      <p className="mcp-lede">Switches set in the admin app. This copy reads them on launch and every hour{state?.fetchedAt ? `; last read ${new Date(state.fetchedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}.</p>
+      <div className="set-card">
+        {entries.length === 0 && <Row icon={<IconSliders width={18} height={18} />} title="No flags yet" desc="The relay has not answered and this build has no defaults" />}
+        {entries.map(([key, v]) => (
+          <Row key={key} icon={<IconSliders width={18} height={18} />} title={<code className="ac-code">{key}</code>} desc={`${v.enabled ? 'On' : 'Off'}, from ${FLAG_SOURCE[v.source] ?? v.source}`}>
+            <Toggle on={v.enabled} disabled onChange={() => {}} />
+          </Row>
+        ))}
       </div>
     </>
   );

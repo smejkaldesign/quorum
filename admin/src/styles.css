@@ -236,3 +236,6 @@ button.trow:hover, button.trow.on { background: rgba(255, 255, 255, 0.05); }
 /* Access: the state and plan badges side by side; the approve dialog lays its two fields in one row */
 .badges { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .modal .fields { grid-template-columns: 1fr 1fr; margin-top: 16px; }
+
+/* feature flags: the key under a flag name, in the mono the desktop uses for codes */
+.flag-key { font: 500 12px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.02em; }

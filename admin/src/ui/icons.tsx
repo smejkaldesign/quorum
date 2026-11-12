@@ -48,6 +48,9 @@ export const IconSignOut = (p: SVGProps<SVGSVGElement>) => (
 export const IconSearch = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><circle cx="11" cy="11" r="6" /><path d="m20 20-4.5-4.5" /></svg>
 );
+export const IconFlag = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M5 21V4M5 4h11l-2 4 2 4H5" /></svg>
+);
 export const IconQuorum = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M12 3a7 7 0 0 0-7 7v7l3-2h4a7 7 0 0 0 0-12Z" /><circle cx="9.5" cy="10" r="1" fill="currentColor" /><circle cx="14.5" cy="10" r="1" fill="currentColor" /></svg>
 );
