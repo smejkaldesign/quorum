@@ -7,6 +7,33 @@
     el.setAttribute("title", "Available at launch");
   });
 
+  // The Download buttons go straight to the newest open-source disk image. Its filename carries the version, so
+  // the page asks GitHub for the latest release and picks the Mac DMG; if that fails, the release page opens.
+  var DOWNLOAD_API = "https://api.github.com/repos/smejkaldesign/quorum/releases/latest";
+  var downloads = Array.prototype.slice.call(document.querySelectorAll('[data-launch="download"][href]'));
+  var dmgUrl = null;
+  var resolveDmg = function () {
+    if (dmgUrl) return Promise.resolve(dmgUrl);
+    return fetch(DOWNLOAD_API, { headers: { Accept: "application/vnd.github+json" } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (rel) {
+        var asset = rel && (rel.assets || []).filter(function (a) { return /^Quorum-[0-9.]+-arm64\.dmg$/.test(a.name); })[0];
+        dmgUrl = asset ? asset.browser_download_url : null;
+        return dmgUrl;
+      })
+      .catch(function () { return null; });
+  };
+  if (downloads.length) {
+    resolveDmg().then(function (u) { if (u) downloads.forEach(function (el) { el.href = u; }); });
+    downloads.forEach(function (el) {
+      el.addEventListener("click", function (e) {
+        if (dmgUrl) return;
+        e.preventDefault();
+        resolveDmg().then(function (u) { window.location.href = u || el.href; });
+      });
+    });
+  }
+
   // The app preview is laid out at the app's default window width and scaled to the frame it sits in.
   var shot = document.querySelector("[data-app-preview]");
   if (shot) {
