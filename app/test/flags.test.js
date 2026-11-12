@@ -174,3 +174,12 @@ describe('the schedule', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('QUORUM_FLAGS_RELAY', () => {
+  it('points only the flag read at another relay', async () => {
+    const fetchImpl = okFetch({ 'manual-listen': true });
+    const f = createFlags({ settings: {}, source: () => 'local', env: { QUORUM_FLAGS_RELAY: 'wss://relay.quorum.watch' }, fetchImpl, timers: { set: () => 0, clear: () => {} } });
+    await f.refresh();
+    expect(String(fetchImpl.mock.calls[0][0])).toMatch(/^https:\/\/relay\.quorum\.watch\/v1\/flags/);
+  });
+});

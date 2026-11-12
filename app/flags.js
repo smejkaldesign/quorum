@@ -91,7 +91,10 @@ export function createFlags({ settings, saveSettings = () => {}, source = () => 
   // one GET, the public relay then its fallback on a connection-level failure; a failure keeps what we had
   async function refresh() {
     try {
-      const res = await relayFetch('/v1/flags', { method: 'GET', headers: { accept: 'application/json' } }, { env, source, fetchImpl });
+      // QUORUM_FLAGS_RELAY points only the flag read at another relay, so a development copy on the local stack follows
+      // the flags set in the hosted admin app while its other relay calls stay on this Mac
+      const flagsEnv = env.QUORUM_FLAGS_RELAY ? { ...env, QUORUM_RELAY_URL: env.QUORUM_FLAGS_RELAY } : env;
+      const res = await relayFetch('/v1/flags', { method: 'GET', headers: { accept: 'application/json' } }, { env: flagsEnv, source, fetchImpl });
       if (!res.ok) throw new Error(`The relay answered ${res.status}`);
       const body = await res.json().catch(() => null);
       const accepted = acceptFlagsBody(body);
