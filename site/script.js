@@ -25,11 +25,18 @@
   };
   if (downloads.length) {
     resolveDmg().then(function (u) { if (u) downloads.forEach(function (el) { el.href = u; }); });
+    // The DMG downloads without the page changing, so a line under the buttons says it started.
+    var started = function () {
+      var note = document.querySelector("[data-download-note]");
+      if (!note) return;
+      note.textContent = "Your download started. Open the disk image and drag Quorum to Applications.";
+      note.hidden = false;
+    };
     downloads.forEach(function (el) {
       el.addEventListener("click", function (e) {
-        if (dmgUrl) return;
+        if (dmgUrl) { started(); return; }
         e.preventDefault();
-        resolveDmg().then(function (u) { window.location.href = u || el.href; });
+        resolveDmg().then(function (u) { window.location.href = u || el.href; if (u) started(); });
       });
     });
   }

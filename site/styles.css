@@ -694,3 +694,5 @@ ul { margin: 0; padding: 0; list-style: none; }
   .glow::before, .glow::after { animation: none; }
   .shoot { display: none; }
 }
+
+.download-note { color: var(--brand-soft); font-size: 14px; text-align: center; margin: 14px 0 0; }
