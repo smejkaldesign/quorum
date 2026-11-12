@@ -88,7 +88,7 @@ One repository, two editions. The Local edition is the default build and costs n
 | Managed transcription (cloud speech engine, summary and notes on Quorum's keys) | No | 20 hours a month per seat, more in packs |
 | Account, workspaces, members, sync across Macs | No | Yes |
 | Zoom cloud recordings and transcripts imported automatically | No | Yes |
-| Team knowledge: the Knowledge tab with shared notes, roles, review queue | No | Yes |
+| Team knowledge: the Knowledge tab over a shared folder or repository, shared notes, roles, review queue | No | Yes |
 
 The rule behind the split: the open-source edition is the same app with the same features, running on your Mac with your own accounts and keys. Anything that needs a server, a company key or a company account is Cloud. Full table and reasoning in `docs/open-source-strategy.md`.
 

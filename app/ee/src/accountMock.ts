@@ -1,9 +1,30 @@
-import type { AccountState, Billing, ContributionMine, Member, MemberInvite, Result, Role, WorkspaceConnector, WorkspaceVoice } from '../../src/quorum';
+import type { AccountState, Billing, ContributionMine, Member, MemberInvite, Result, Role, TeamLocal, TeamSource, WorkspaceConnector, WorkspaceVoice } from '../../src/quorum';
 
 export type AccountApi = Pick<Window['quorum'], 'accountStatus' | 'accountSendCode' | 'accountVerifyCode' | 'accountSignOut' | 'accountGoogle' | 'onAccountOAuth' | 'orgCreate' | 'orgJoin' | 'orgSwitch' | 'membersList' | 'memberInvite' | 'memberRemove' | 'inviteRevoke' | 'syncSet' | 'syncNow' | 'onAccount' | 'teamEnabledSet'>;
 export type ConnectorsApi = Pick<Window['quorum'], 'connectorsList' | 'connectorSet' | 'connectorRemove' | 'connectorTest'>;
 export type VoiceApi = Pick<Window['quorum'], 'workspaceUsage' | 'workspaceVoiceGet' | 'workspaceVoiceSet'>;
 export type KnowledgeApi = Pick<Window['quorum'], 'knowledgeStatus' | 'knowledgeQueue' | 'knowledgeReview' | 'knowledgeAutoIncludeSet' | 'knowledgeList' | 'knowledgeRead'>;
+export type TeamApi = Pick<Window['quorum'], 'teamSource' | 'teamSourceSet' | 'teamSourcePick' | 'teamPull' | 'teamTree' | 'teamSearch' | 'teamGraph' | 'teamNote' | 'onTeamChanged'>;
+let teamMock: TeamApi | null = null;
+// team knowledge outside Electron: a sync source with two notes, so the tab renders with something to show
+export function teamApi(): TeamApi {
+  if ((window.quorum as Partial<Window['quorum']>).teamSource) return window.quorum;
+  if (teamMock) return teamMock;
+  let source: TeamSource = { kind: 'sync', url: null, path: null, setAt: null };
+  const local = (): TeamLocal => ({ kind: source.kind, root: source.kind === 'git' ? '~/Library/Application Support/Quorum/team-knowledge/ws_1' : source.path ?? '~/Documents/Quorum Team/Example Co', exists: true, lastPullAt: iso(-3600000), lastError: null, gitAvailable: true, notes: 2, pulling: false });
+  const tree = [{ name: '05-knowledge', path: '05-knowledge', dir: true, children: [{ name: 'onboarding', path: '05-knowledge/onboarding.md', dir: false }] }, { name: 'roadmap', path: 'roadmap.md', dir: false }];
+  return (teamMock = {
+    teamSource: async () => ({ source, local: local() }),
+    teamSourceSet: async (draft) => { await delay(300); source = { kind: draft.kind, url: draft.url ?? null, path: draft.path ?? null, setAt: iso(0) }; return { source, local: local() }; },
+    teamSourcePick: async () => ({ path: '/Volumes/Shared/Team knowledge' }),
+    teamPull: async () => { await delay(400); return { local: local() }; },
+    teamTree: async () => ({ tree }),
+    teamSearch: async (q) => ({ hits: q ? [{ rel: '05-knowledge/onboarding.md', title: 'Onboarding', score: 10, line: 2, snippet: 'Start here.' }] : [] }),
+    teamGraph: async () => ({ graph: null }),
+    teamNote: async (rel) => ({ doc: { rel, title: rel.replace(/^.*\//, '').replace(/\.md$/, ''), body: 'A page from the team knowledge.\n\n- One point\n- Another point', pulledAt: null, behind: false, update: null } }),
+    onTeamChanged: () => () => {},
+  });
+}
 let knowledgeMock: KnowledgeApi | null = null;
 export function knowledgeApi(): KnowledgeApi {
   if ((window.quorum as Partial<Window['quorum']>).knowledgeQueue) return window.quorum;
