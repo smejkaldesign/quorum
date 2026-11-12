@@ -4,7 +4,7 @@
 import { readFileSync, statSync, watch } from 'node:fs';
 import path from 'node:path';
 import { createResolver, parseNote } from './linkparse.js';
-import { graphConfig, noteDate, walk } from './vault.js';
+import { SKIP, graphConfig, noteDate, walk } from './vault.js';
 import { clusterColors } from './clusters.js';
 
 const IGNORED = /(^|\/)(\.git|\.obsidian|\.trash|\.claude|node_modules)(\/|$)/;
@@ -73,15 +73,49 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     return changed;
   }
 
+  // the paths the watcher named: each file is re-read or dropped on its own, and only a folder appearing or going
+  // falls back to the full walk. A dot folder or an ignored one never costs anything (walk skips them too)
+  const skipped = (rel) => rel.split('/').some((seg) => seg.startsWith('.') || SKIP.has(seg));
+  function syncPaths(rels) {
+    const changed = [];
+    for (const rel of rels) {
+      if (!rel || skipped(rel)) continue;
+      let st = null;
+      try { st = statSync(path.join(vault, rel)); } catch {}
+      if (st?.isDirectory()) return sync();
+      if (!st) {
+        if (files.delete(rel)) { changed.push(rel); continue; }
+        const prefix = `${rel}/`;
+        for (const r of files.keys()) if (r.startsWith(prefix)) return sync();
+        continue;
+      }
+      if (!rel.endsWith('.md')) continue;
+      if (isExcludedPath(rel)) { if (files.delete(rel)) changed.push(rel); continue; }
+      const f = files.get(rel);
+      if (!f || f.mtime !== st.mtimeMs || f.size !== st.size) { load(rel, st); changed.push(rel); }
+    }
+    if (changed.length) relink();
+    return changed;
+  }
+
   function start() {
     const t0 = Date.now();
     sync();
     log(`indexed ${files.size} notes in ${Date.now() - t0}ms`);
     try {
+      const pending = new Set();
+      let everything = false;
       watcher = watch(vault, { recursive: true }, (_ev, name) => {
         if (name && IGNORED.test(String(name))) return;
+        if (name) pending.add(String(name).split(path.sep).join('/')); else everything = true;
         clearTimeout(timer);
-        timer = setTimeout(() => { const changed = sync(); if (changed.length) onChange(changed); }, 250);
+        timer = setTimeout(() => {
+          const rels = [...pending];
+          pending.clear();
+          const changed = everything ? sync() : syncPaths(rels);
+          everything = false;
+          if (changed.length) onChange(changed);
+        }, 250);
       });
     } catch (err) { log('vault watch failed', String(err)); }
   }
@@ -190,7 +224,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   function rebuild() { files.clear(); forward = new Map(); backward = new Map(); unresolved = new Map(); const changed = sync(); if (changed.length) onChange?.(changed); return changed; }
 
   return {
-    start, stop, sync, rebuild, graph, backlinks, outgoing, search, resolve: (target, from) => resolve(target, from),
+    start, stop, sync, syncPaths, rebuild, graph, backlinks, outgoing, search, resolve: (target, from) => resolve(target, from),
     note: (rel) => files.get(rel)?.note ?? null,
     linkHealth,
     aliasesOf,

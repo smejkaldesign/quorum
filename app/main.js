@@ -1545,7 +1545,15 @@ const isPrivatePath = (rel) => { const b = brain(); if (!b) return false; const 
 // a note the agent may not read is also a note sync never pushes and the index never holds. Only the frontmatter block
 // counts, the same as the read guard: a body line that happens to start with the key is not a mark
 const isConfidentialText = (text) => { const denied = guardrails.compiled().frontmatterKeys; return denied.length > 0 && frontmatterKeys(String(text).slice(0, 4000)).some((k) => denied.includes(k)); };
-const isSecretPath = (rel) => { const c = guardrails.compiled(); return !c.secretsOff && new RegExp(c.secretPattern ?? SECRET_NAMES, 'i').test(String(rel)); };
+// the pattern is compiled once per rule set; the index asks for every note it walks
+let secretRe = { source: null, re: null };
+const isSecretPath = (rel) => {
+  const c = guardrails.compiled();
+  if (c.secretsOff) return false;
+  const source = c.secretPattern ?? SECRET_NAMES;
+  if (secretRe.source !== source) secretRe = { source, re: new RegExp(source, 'i') };
+  return secretRe.re.test(String(rel));
+};
 const account = EDITION === 'cloud'
   ? (await loadEE('account.js')).registerAccount({ ipcMain, settings, saveSettings, toUI, log, brain, meetingIndex, isExcluded: (rel) => excludedPath(rel) || isPrivatePath(rel), isExcludedText: (t) => suggester.isExcluded(t) || isConfidentialText(t), openExternal: (u) => shell.openExternal(u), oauthRedirect: () => (app.isPackaged ? 'quorum://auth/callback' : 'http://127.0.0.1:47831/auth/callback') })
   : { sync: { pushNote() {}, pushMeetingNote() {}, pullNow() {}, live() {} } };
@@ -2219,7 +2227,6 @@ app.whenReady().then(() => {
   store.meetings.ensureRoot();
   writeState();
   stopControl = startControl(CONTROL_SOCK, control, log);
-  openIndex();
   // the development copy wears a green icon so it's never mistaken for the installed app
   app.dock?.setIcon(asset(app.isPackaged ? 'icon.png' : 'icon-dev.png'));
   tray = new Tray(trayImage('idle'));
@@ -2242,6 +2249,8 @@ app.whenReady().then(() => {
   win.webContents.on('render-process-gone', (_e, d) => log('renderer gone', JSON.stringify(d)));
   win.webContents.on('preload-error', (_e, p, err) => log('preload error', p, err));
   win.loadFile(path.join(here, 'dist/index.html'));
+  // the vault index reads every note once; it runs after the window is on its way so a large vault never delays it
+  setImmediate(openIndex);
   popup = new BrowserWindow({
     width: POPUP_W, height: 84, show: false, frame: false, transparent: true, resizable: false, movable: false,
     alwaysOnTop: true, skipTaskbar: true, hasShadow: false, focusable: true, fullscreenable: false,

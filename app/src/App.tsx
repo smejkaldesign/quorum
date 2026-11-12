@@ -1,10 +1,14 @@
-import { Component, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { Component, Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { AccountState, Brain, HelperEvent, MeetingMeta, Notes, NotesDraft, Settings, Source, SpeakersEvent, SummaryEvent, UpdateState } from './quorum';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
-import { EndView } from './EndView';
-import { Onboarding } from './Onboarding';
 import { BetaGate } from './BetaGate';
+// the views a session may never open load on first use, so the window paints from a smaller bundle and the popup
+// window never parses them at all
+const EndView = lazy(() => import('./EndView').then((m) => ({ default: m.EndView })));
+const Onboarding = lazy(() => import('./Onboarding').then((m) => ({ default: m.Onboarding })));
+const KnowledgeView = lazy(() => import('./KnowledgeView').then((m) => ({ default: m.KnowledgeView })));
+const SettingsView = lazy(() => import('./SettingsView').then((m) => ({ default: m.SettingsView })));
 import { AccountArea, EDITION, isCloud, KnowledgeTabArea } from './edition';
 import { MAIN_TAB_LABEL, keepTab, mainTabs, showsKnowledge, type MainTab } from './mainTabs';
 import markProd from '../assets/quorum-mark.png';
@@ -13,12 +17,11 @@ import markDev from '../assets/quorum-mark-dev.png';
 const mark = window.quorum.isDev ? markDev : markProd;
 if (window.quorum.isDev) document.documentElement.dataset.dev = '';
 import { HistoryView } from './HistoryView';
-import { KnowledgeView, type KbCommand } from './KnowledgeView';
+import type { KbCommand } from './KnowledgeView';
 import { Composer } from './Composer';
-import { SettingsView } from './SettingsView';
 import type { ConnectorsTarget, OpenSettingsDetail, SettingsPageId } from './connectorsNav';
 import { IconPen, PrivateNotes, usePrivateNotes } from './PrivateNotes';
-import { Avatar, SpeakerName, similarCount, type SpeakerInfo } from './Speaker';
+import { Avatar, SpeakerName, similarCounts, type SpeakerInfo } from './Speaker';
 import { IconFolderOpen, IconPerson, IconGear, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconBack, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, Wave } from './icons';
 
 // one speaker turn as main.js built it; a turn that grows arrives again with the same id and replace: true
@@ -354,6 +357,10 @@ export function App() {
   const liveWords = settings.transcription?.live ?? true;
   const themLabel = themName ?? 'Them';
   const who = (l: { channel: 'me' | 'them'; speaker?: string | null }) => (l.channel === 'me' ? 'You' : l.speaker ?? themLabel);
+  // the live transcript draws every row on each render; the similar-turn count comes from one pass, and the row's
+  // callback stays the same object so the memoized rows skip the partial words that arrive several times a second
+  const similar = useMemo(() => similarCounts(lines), [lines]);
+  const pickSpeaker = useCallback((id: number, name: string | null, same: boolean) => setSpeaker(id, name, same), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const status = {
     idle: { label: 'Not listening', icon: <Wave live={false} /> },
@@ -375,8 +382,8 @@ export function App() {
   }
 
   if (phase === 'review') {
-    return <EndView notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing} transcript={lines.map((l) => ({ ...l, who: who(l) }))} participants={participants} onSpeaker={setSpeaker} me={me}
-      privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={() => { setPhase('idle'); resetMeeting(); setTab('home'); }} />;
+    return <Suspense fallback={<div className="panel" />}><EndView notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing} transcript={lines.map((l) => ({ ...l, who: who(l) }))} participants={participants} onSpeaker={setSpeaker} me={me}
+      privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={() => { setPhase('idle'); resetMeeting(); setTab('home'); }} /></Suspense>;
   }
 
   return (
@@ -438,7 +445,7 @@ export function App() {
 
       {view === 'settings' ? (
         <div className="body wide flush">
-          <SettingsView open={settingsPage} brain={brain} settings={settings} onSettings={setSettings} onConnect={async () => setBrain(await window.quorum.connectBrain())} onDisconnect={async () => setBrain(await window.quorum.disconnectBrain())} onBrain={setBrain} onBack={() => setView('main')} />
+          <Suspense fallback={null}><SettingsView open={settingsPage} brain={brain} settings={settings} onSettings={setSettings} onConnect={async () => setBrain(await window.quorum.connectBrain())} onDisconnect={async () => setBrain(await window.quorum.disconnectBrain())} onBrain={setBrain} onBack={() => setView('main')} /></Suspense>
         </div>
       ) : <>
       {tab === 'home' && !convoOpen && (
@@ -449,7 +456,7 @@ export function App() {
 
       {tab === 'memory' && (
         <div className="body wide flush">
-          <KnowledgeView brain={brain} command={kbCommand} />
+          <Suspense fallback={null}><KnowledgeView brain={brain} command={kbCommand} /></Suspense>
         </div>
       )}
 
@@ -543,15 +550,9 @@ export function App() {
                   <button className="pill ghost small" disabled={naming} data-tip="Quorum names the other speakers from context. One other participant needs no model." onClick={nameSpeakers}>{naming ? <><span className="spinner tiny" /> Naming…</> : 'Name speakers'}</button>
                 </div>
               )}
-              {lines.map((l, i) => {
-                const tail = liveWords && i === lines.length - 1 ? partial[l.channel] : '';
-                return (
-                  <p key={l.id} className={l.channel}>
-                    <span className="spk"><Avatar name={l.channel === 'me' ? me.name || 'You' : who(l)} photo={l.channel === 'me' ? me.photo : null} />{l.channel === 'them' ? <SpeakerName turn={l} fallback={themLabel} participants={participants} similar={similarCount(lines, l)} onPick={(name, similar) => setSpeaker(l.id, name, similar)} /> : <span>{who(l)}</span>}</span>
-                    <div>{l.text}{tail && <em className="partial"> {tail}</em>}</div>
-                  </p>
-                );
-              })}
+              {lines.map((l, i) => (
+                <TranscriptRow key={l.id} line={l} tail={liveWords && i === lines.length - 1 ? partial[l.channel] : ''} name={who(l)} meName={me.name} mePhoto={me.photo} themLabel={themLabel} participants={participants} similar={similar(l)} onPick={pickSpeaker} />
+              ))}
               {liveWords && (['me', 'them'] as const).map((c) => (partial[c] && lines[lines.length - 1]?.channel !== c ? <p key={`p-${c}`} className={c}><span className="spk"><Avatar name={c === 'me' ? me.name || 'You' : who({ channel: c })} photo={c === 'me' ? me.photo : null} /><span>{who({ channel: c })}</span></span><div><em className="partial">{partial[c]}</em></div></p> : null))}
               {!lines.length && !partial.me && !partial.them && (
                 <p className="muted">{phase === 'listening' ? 'Waiting for speech…' : 'The live transcript shows up here while Quorum is listening.'}</p>
@@ -634,9 +635,22 @@ function QuorumCard({ children }: { children: ReactNode }) {
   );
 }
 
+// one transcript row; memoized, so partial words landing on the last row leave the rows above untouched
+const TranscriptRow = memo(function TranscriptRow({ line, tail, name, meName, mePhoto, themLabel, participants, similar, onPick }: {
+  line: Line; tail: string; name: string; meName: string; mePhoto: string | null; themLabel: string; participants: string[]; similar: number;
+  onPick: (id: number, name: string | null, similar: boolean) => Promise<void>;
+}) {
+  return (
+    <p className={line.channel}>
+      <span className="spk"><Avatar name={line.channel === 'me' ? meName || 'You' : name} photo={line.channel === 'me' ? mePhoto : null} />{line.channel === 'them' ? <SpeakerName turn={line} fallback={themLabel} participants={participants} similar={similar} onPick={(n, s) => onPick(line.id, n, s)} /> : <span>{name}</span>}</span>
+      <div>{line.text}{tail && <em className="partial"> {tail}</em>}</div>
+    </p>
+  );
+});
+
 // the wizard's account step is the same card as Settings › Workspace, so sign-in state is shared; the local edition
 // has no account and says so in the same slot
 function OnboardingShell({ brain, onBrain, onDone }: { brain: Brain | null; onBrain: (b: Brain | null) => void; onDone: () => void }) {
   const slot = <AccountArea fallback={<p className="onb-muted">Sign in from Settings › Workspace once you are in.</p>} local={<p className="onb-muted">Local edition. Everything stays on this Mac.</p>} />;
-  return <Onboarding brain={brain} onBrain={onBrain} onDone={onDone} accountSlot={slot} />;
+  return <Suspense fallback={null}><Onboarding brain={brain} onBrain={onBrain} onDone={onDone} accountSlot={slot} /></Suspense>;
 }
