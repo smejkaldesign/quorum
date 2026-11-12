@@ -160,11 +160,21 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
   // key stays in the main process.
   const envStatus = () => ({ env: cloud.env, config: cloud.source, host: cloud.url ? new URL(cloud.url).host : null, useProduction: cloud.useProduction, configured: !!client });
 
-  const row = (w, role) => ({ id: w.id, name: w.name, domain: w.domain ?? null, domainJoin: w.domain_join !== false, role });
+  const row = (w, role) => ({ id: w.id, name: w.name, domain: w.domain ?? null, domainJoin: w.domain_join !== false, role, teamEnabled: w.team_enabled === true });
   const signedOut = () => { Object.assign(state, { signedIn: false, email: null, userId: null, workspace: null, workspaces: [], invites: [], domainMatches: [] }); };
   const chooseWorkspace = (id) => {
     state.workspace = state.workspaces.find((w) => w.id === id) ?? state.workspaces[0] ?? null;
     if (settings.workspaceId !== (state.workspace?.id ?? null)) { settings.workspaceId = state.workspace?.id ?? null; saveSettings?.(); }
+  };
+
+  // the memberships with their workspace rows; team_enabled came with migration 0019, so a project without it is asked
+  // once more without the column and every workspace reads as team off
+  let teamColumn = true;
+  const memberships = async () => {
+    const select = (withTeam) => client.from('members').select(`role, workspace:workspaces(id, name, domain, domain_join, ${withTeam ? 'team_enabled, ' : ''}deleted_at)`).is('deleted_at', null);
+    let r = await select(teamColumn);
+    if (r.error && teamColumn && /team_enabled/.test(r.error.message ?? '')) { teamColumn = false; log('account', 'workspaces have no team_enabled column (migration 0019); teams read as off'); r = await select(false); }
+    return r;
   };
 
   // one read of everything the account page shows: memberships, invites waiting for this email, domain matches
@@ -175,7 +185,7 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
       if (!session) { signedOut(); emit(); return snapshot(); }
       state.signedIn = true; state.email = session.user.email ?? null; state.userId = session.user.id;
       const [members, invites, domains] = await Promise.all([
-        client.from('members').select('role, workspace:workspaces(id, name, domain, domain_join, deleted_at)').is('deleted_at', null),
+        memberships(),
         client.rpc('pending_invites'),
         client.rpc('domain_workspaces'),
       ]);
@@ -328,6 +338,14 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
       const { error } = await client.rpc('remove_member', { ws: state.workspace.id, user_id: String(userId) });
       if (error) return fail(error, 'That member could not be removed.');
       return membersList();
+    }),
+    // the Teams page's switch (migration 0019): owners and admins turn the team-level pages on for the workspace
+    'team-enabled-set': signedInGuard(async (on) => {
+      if (!state.workspace) return NO_WORKSPACE;
+      if (state.workspace.role === 'member') return { error: 'Only owners and admins can enable a team.' };
+      const { error } = await client.rpc('workspace_set_team_enabled', { ws: state.workspace.id, enabled: on === true });
+      if (error) return fail(error, 'The team setting could not be saved.');
+      return refresh();
     }),
     'invite-revoke': signedInGuard(async (inviteId) => {
       if (!state.workspace) return NO_WORKSPACE;

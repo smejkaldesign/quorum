@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { SetupForm, answersFrom, draftFrom, draftIsEmpty, emptyDraft, type SetupDraft } from './SetupForm';
-import type { AccountState, Brain, CalendarSettings, ClaudeStatus, DecisionProvider, DecisionsStatus, KeeperStatus, Memory, MemoryItem, OptOut, Profile, ScreenContextStatus, Settings, TeamVault, Transcription, UpdateState, Voice, Workspace } from './quorum';
+import type { AccountState, BetaState, Brain, CalendarSettings, ClaudeStatus, DecisionProvider, DecisionsStatus, KeeperStatus, Memory, MemoryItem, OptOut, Profile, ScreenContextStatus, Settings, TeamVault, Transcription, UpdateState, Voice, Workspace } from './quorum';
 import { PersonalConnectors } from './Connectors';
 import { ConnectorsPage } from './ConnectorsPage';
 import { GuardrailsPage } from './Guardrails';
@@ -10,13 +10,13 @@ import { openConnectors, type ConnectorsTarget } from './connectorsNav';
 import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
-import { AccountArea, BillingArea, EDITION, KnowledgeQueueArea, MembersArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
+import { AccountArea, BillingArea, EDITION, KnowledgeQueueArea, MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { canAdmin, modeOf, resolvePage, workspacePages, type Page } from './settingsNav';
 import { EnvSwitch } from './EnvSwitch';
 import {
   IconBell, IconBrain, IconBuilding, IconCalendar, IconChat, IconFolder, IconGrid, IconKeyboard, IconLock,
   IconChevron, IconCode, IconExternal, IconGlobe, ProviderMark, IconMic, IconMore, IconNotes, IconPeople, IconPerson, IconPlus, IconPower, IconReset, IconSliders, IconStack, IconCheck, IconCopy, IconFolderFill, IconFork, IconShield, IconGraph, IconSearch, IconClose, Wave,
-  IconInfo, IconQuorum, IconUpload, IconListCheck, IconTrash,
+  IconInfo, IconQuorum, IconUpload, IconListCheck, IconTrash, IconScale,
 } from './icons';
 
 type Nav = { id: Page; label: string; icon: (p: { width?: number; height?: number }) => ReactNode; soon?: boolean };
@@ -35,8 +35,10 @@ const ACCOUNT: Nav[] = [
 // the pages behind the Admin button; settingsNav.workspacePages decides which of them a build lists
 const WORKSPACE: Nav[] = [
   { id: 'general', label: 'General', icon: IconBuilding },
+  { id: 'teams', label: 'Teams', icon: IconPeople },
+  { id: 'billing', label: 'Billing', icon: IconScale },
   { id: 'knowledge', label: 'Knowledge', icon: IconBrain },
-  { id: 'members', label: 'Members', icon: IconPeople },
+  { id: 'members', label: 'Members', icon: IconPerson },
   { id: 'org-connectors', label: 'Connectors', icon: IconGrid },
   { id: 'org-voice', label: 'Voice typing', icon: IconKeyboard },
   { id: 'org-guardrails', label: 'Guardrails', icon: IconShield },
@@ -70,7 +72,11 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   useEffect(() => { let live = true; window.quorum.accountStatus().then((a) => { if (live) setAccount(a); }).catch(() => {}); return () => { live = false; }; }, [settings.profile]);
   useEffect(() => { if (!window.quorum.onAccount) return; return window.quorum.onAccount(setAccount); }, []);
   const admin = canAdmin(EDITION, account?.workspace?.role);
-  const page = resolvePage(saved, admin);
+  // a cloud build without hosted account config has no members to list, so the page leaves the nav; the team-level
+  // pages come and go with the Teams page's switch
+  const hosted = useHostedAccounts();
+  const listed = workspacePages(EDITION, hosted, account?.workspace?.teamEnabled === true);
+  const page = resolvePage(saved, admin, listed);
   const mode = modeOf(page);
   const quorumEmail = account?.signedIn ? account.email : null;
   const email = quorumEmail || user?.email || '';
@@ -85,9 +91,6 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   }, [onBack]);
 
   const set = async (patch: Partial<Settings>) => onSettings(await window.quorum.setSettings(patch));
-  // a cloud build without hosted account config has no members to list, so the page leaves the nav
-  const hosted = useHostedAccounts();
-  const listed = workspacePages(EDITION, hosted);
   const workspaceNav = WORKSPACE.filter((n) => (listed as string[]).includes(n.id));
   const all = [...ACCOUNT, ...WORKSPACE];
   const current = all.find((n) => n.id === page)!;
@@ -131,6 +134,8 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
           {page === 'preferences' && <p className="set-lede">Quorum works best knowing a little about you. Quorum uses this when it writes your meeting notes and answers questions.</p>}
           {page === 'knowledge' && <p className="set-lede">Company knowledge for your whole workspace, chosen by admins.</p>}
           {page === 'general' && <p className="set-lede">Settings for everyone in your workspace. Quorum gives this context to every meeting summary and answer, so it's the same for each person.</p>}
+          {page === 'teams' && <p className="set-lede">A workspace starts as yours alone. Turn on a team to invite members and build knowledge together.</p>}
+          {page === 'billing' && <p className="set-lede">Your plan, the card it charges, and this month's usage against the hours it includes.</p>}
           {page === 'connectors' && !connectorDetail && <p className="set-lede">The tools Quorum is connected to. Meeting notes, calendars and AI tools, each tagged with where things came from.</p>}
           {page === 'developers' && <p className="set-lede">Model providers, Claude Code and Terminal access, and API keys for your own scripts.</p>}
           {page === 'preferences' ? (
@@ -148,7 +153,12 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
           ) : page === 'knowledge' ? (
             <KnowledgePage />
           ) : page === 'general' ? (
-            <><WorkspacePage settings={settings} onSettings={onSettings} /><BillingArea /></>
+            <WorkspacePage settings={settings} onSettings={onSettings} onGo={go} billing={(listed as string[]).includes('billing')}
+              company={(listed as string[]).includes('teams') && account?.workspace?.teamEnabled === true ? null : <CompanyCard settings={settings} onSettings={onSettings} />} />
+          ) : page === 'teams' ? (
+            <TeamsArea company={<CompanyCard settings={settings} onSettings={onSettings} />} />
+          ) : page === 'billing' ? (
+            <BillingArea />
           ) : page === 'memory' ? (
             <>
               <SecondBrain brain={brain} onConnect={onConnect} onDisconnect={onDisconnect} onBrain={onBrain} onViewConnector={goConnector} />
@@ -465,24 +475,71 @@ function ProfilePage({ settings, email, emailLabel, name, onSettings, children }
   );
 }
 
-function WorkspacePage({ settings, onSettings }: { settings: Settings; onSettings: (s: Settings) => void }) {
+// the team's name, description and mark, shown on the Teams page once a team is on. Quorum gives the name and
+// description to every meeting summary and answer; the logo is kept small, as a data URL in settings
+export function CompanyCard({ settings, onSettings }: { settings: Settings; onSettings: (s: Settings) => void }) {
   const w = settings.workspace ?? {};
   const save = async (patch: Partial<Workspace>) => onSettings(await window.quorum.setSettings({ workspace: patch }));
   const [about, setAbout] = useState(w.companyDescription ?? '');
   useEffect(() => setAbout(w.companyDescription ?? ''), [w.companyDescription]);
+  const [logoError, setLogoError] = useState('');
+  const pickLogo = (file: File | undefined) => {
+    if (!file) return;
+    if (!/^image\//.test(file.type)) { setLogoError('Choose an image file.'); return; }
+    setLogoError('');
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const side = 128, canvas = document.createElement('canvas');
+        canvas.width = side; canvas.height = side;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        const scale = Math.max(side / img.width, side / img.height);
+        const dw = img.width * scale, dh = img.height * scale;
+        ctx.drawImage(img, (side - dw) / 2, (side - dh) / 2, dw, dh);
+        save({ companyLogo: canvas.toDataURL('image/png') });
+      };
+      img.onerror = () => setLogoError('That image could not be read.');
+      img.src = String(reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
   return (
     <>
-      <AccountArea local={<><h3>Account</h3><p className="muted">Local edition. Everything stays on this Mac.</p></>}
-        unconfigured={<><h3>Account</h3><p className="muted">Hosted accounts are not set up in this build</p></>} />
-      <EnvSwitch />
       <h3>Company</h3>
       <div className="set-card form">
+        <div className="set-line">
+          <div className="set-label"><strong>Logo</strong><span>Shown beside the team's name in Quorum</span></div>
+          <div className="set-line-end">
+            <span className="company-logo" aria-hidden="true">{w.companyLogo ? <img src={w.companyLogo} alt="" /> : (w.company ?? 'Q')[0]?.toUpperCase()}</span>
+            <label className="pill small-pill">{w.companyLogo ? 'Change' : 'Choose'}<input type="file" accept="image/*" hidden onChange={(e) => { pickLogo(e.target.files?.[0]); e.target.value = ''; }} /></label>
+            {w.companyLogo && <button className="link-btn" onClick={() => save({ companyLogo: '' })}>Remove</button>}
+          </div>
+        </div>
+        {logoError && <p className="set-error">{logoError}</p>}
         <div className="set-line"><strong>Company name</strong><Field value={w.company ?? ''} placeholder="Company" onSave={(v) => save({ company: v })} /></div>
         <div className="set-line stacked">
           <div className="set-label"><strong>Company description</strong><span>Quorum takes this into account when it summarizes meetings and answers questions</span></div>
           <textarea className="set-area" value={about} maxLength={1000} placeholder="What the company does, who it serves, words people use internally" onChange={(e) => setAbout(e.target.value)} onBlur={() => { if (about !== (w.companyDescription ?? '')) save({ companyDescription: about.trim() }); }} />
         </div>
       </div>
+    </>
+  );
+}
+
+// `company` is the CompanyCard while this page is its home: the Local edition, a Cloud build without a hosted account,
+// and a workspace whose team is off. Once a team is on, the card lives on the Teams page and this one gets null
+function WorkspacePage({ settings, onSettings, onGo, billing, company }: { settings: Settings; onSettings: (s: Settings) => void; onGo: (p: Page) => void; billing: boolean; company: ReactNode }) {
+  const w = settings.workspace ?? {};
+  const save = async (patch: Partial<Workspace>) => onSettings(await window.quorum.setSettings({ workspace: patch }));
+  return (
+    <>
+      <AccountArea local={<><h3>Account</h3><p className="muted">Local edition. Everything stays on this Mac.</p></>}
+        unconfigured={<><h3>Account</h3><p className="muted">Hosted accounts are not set up in this build</p></>} />
+      {billing && <p className="set-note">The plan, the card on file and this month's usage live under <button className="link-btn" onClick={() => onGo('billing')}>Billing</button>.</p>}
+      <EnvSwitch />
+      {company}
 
       <h3>Connections</h3>
       <WorkspaceDecisions connectedBy={w.decisions?.by} />
@@ -922,6 +979,9 @@ function CalendarPage({ onConnector }: { onConnector: (id: string) => void }) {
 function AboutCard() {
   const [u, setU] = useState<UpdateState | null>(null);
   useEffect(() => { window.quorum.updateStatus().then((s) => setU(s ?? null)).catch(() => {}); return window.quorum.onUpdate(setU); }, []);
+  // the beta line: what this install reports and under which id, as long as the gate is part of the build
+  const [beta, setBeta] = useState<BetaState | null>(null);
+  useEffect(() => { Promise.resolve(window.quorum.betaStatus?.()).then((b) => setBeta(b ?? null)).catch(() => {}); }, []);
   if (!u) return null;
   const when = u.checkedAt ? new Date(u.checkedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : null;
   const desc = u.status === 'off' ? (u.current ? 'A development copy; updates come with the installed app' : 'No update feed for this build')
@@ -938,6 +998,9 @@ function AboutCard() {
           {u.status === 'ready' ? <button className="pill primary" onClick={() => window.quorum.updateInstall()}>Update and restart</button>
             : u.status !== 'off' && <button className="pill" disabled={u.status === 'checking' || u.status === 'downloading'} onClick={() => window.quorum.updateCheck()}>Check for updates</button>}
         </Row>
+        {beta?.on && (
+          <Row icon={<IconInfo width={18} height={18} />} title="Beta" desc={`This install reports its access code${beta.code ? ` (${beta.code})` : ''}, an anonymous machine id and the app version to Quorum once a day, so active installs can be counted while the beta lasts. Machine id: ${beta.machineId ?? 'not assigned yet'}.`} />
+        )}
       </div>
     </>
   );

@@ -63,6 +63,12 @@ export function createBilling({ account, log = () => {}, openExternal = async ()
       try { const r = await relayPost('/v1/billing/packs', { packs: Math.max(0, Math.trunc(Number(packs) || 0)) }); return { packs: r.packs, remainingSeconds: r.remainingSeconds }; }
       catch (err) { return fail(err, 'The hour packs could not be changed.'); }
     },
+    // the card on the subscription, brand and last four only; admins only, since it is the workspace's payment detail
+    'billing-card': async () => {
+      const no = ready(true); if (no) return no;
+      try { const r = await relayPost('/v1/billing/card', {}); return { card: r.card ?? null }; }
+      catch (err) { return fail(err, 'The card on file could not be read.'); }
+    },
   };
   return { handlers };
 }

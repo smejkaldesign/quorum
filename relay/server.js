@@ -9,7 +9,7 @@ import { ENGINES } from './lib/engines/index.js';
 import { log } from './lib/log.js';
 import { handleConnection } from './lib/session.js';
 import { handleNotes } from './summary.js';
-import { handleCheckout, handlePacks, handlePortal, handleWebhook } from './billing.js';
+import { handleCard, handleCheckout, handlePacks, handlePortal, handleWebhook } from './billing.js';
 import { handleConnect } from './connect.js';
 import { corsHeaders, handleAccessRequest, handleSendCode } from './platform.js';
 import { passkeyRoutes } from './passkeys.js';
@@ -33,6 +33,7 @@ const server = createServer((req, res) => {
   if (pathname === '/v1/billing/checkout') return handleCheckout(req, res, deps);
   if (pathname === '/v1/billing/portal') return handlePortal(req, res, deps);
   if (pathname === '/v1/billing/packs') return handlePacks(req, res, deps);
+  if (pathname === '/v1/billing/card') return handleCard(req, res, deps);
   if (pathname === '/v1/billing/webhook') return handleWebhook(req, res, deps);
   if (pathname.startsWith('/v1/connect/')) return handleConnect(req, res, deps);
   res.writeHead(404, { 'content-type': 'application/json' });

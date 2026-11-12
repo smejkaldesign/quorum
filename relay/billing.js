@@ -72,6 +72,32 @@ export async function handlePortal(req, res, { clients, config, log = () => {}, 
   } catch (err) { failJson(res, err, log, 'portal'); }
 }
 
+// the card the subscription charges: brand, last four and expiry from the customer's default payment method, or the
+// newest card on the customer. Nothing else about the customer leaves the relay. Admins only
+export function cardOf(customer, methods = []) {
+  const pm = customer?.invoice_settings?.default_payment_method;
+  const card = (typeof pm === 'object' && pm?.card) ? pm.card : methods.find((m) => m?.card)?.card ?? null;
+  return card ? { brand: card.brand ?? 'card', last4: card.last4 ?? '', expMonth: Number(card.exp_month) || 0, expYear: Number(card.exp_year) || 0 } : null;
+}
+export async function handleCard(req, res, { clients, config, log = () => {}, fetchImpl = fetch }) {
+  try {
+    if (req.method !== 'POST') throw new RelayError('bad_request', 'POST only.', 405);
+    requireStripe(config);
+    const b = await readJson(req, 64 * 1024);
+    const user = await authorize(clients, { token: bearer(req.headers.authorization), workspaceId: String(b.workspaceId ?? ''), anyPlan: true });
+    if (!ADMIN.has(user.role)) throw new RelayError('forbidden', 'Only owners and admins can see billing details.', 403);
+    const workspace = await workspaceRow(clients.db, b.workspaceId);
+    if (!workspace.stripe_customer_id) return json(res, 200, { card: null });
+    const customer = await stripeFetch(`/v1/customers/${encodeURIComponent(workspace.stripe_customer_id)}?expand[]=invoice_settings.default_payment_method`, { key: config.stripe.key, fetchImpl, method: 'GET' });
+    let methods = [];
+    if (!customer?.invoice_settings?.default_payment_method?.card) {
+      const list = await stripeFetch(`/v1/payment_methods?customer=${encodeURIComponent(workspace.stripe_customer_id)}&type=card&limit=1`, { key: config.stripe.key, fetchImpl, method: 'GET' });
+      methods = list?.data ?? [];
+    }
+    json(res, 200, { card: cardOf(customer, methods) });
+  } catch (err) { failJson(res, err, log, 'card'); }
+}
+
 // packs ride on the subscription as a second item on the pack price; quantity 0 removes the item. The workspace row is
 // updated at once so the allowance grows without waiting for the webhook, which confirms the same numbers
 export async function handlePacks(req, res, { clients, config, log = () => {}, fetchImpl = fetch }) {

@@ -12,6 +12,7 @@ const CloudConnectors = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../e
 const CloudVoice = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/WorkspaceVoice').then((m) => ({ default: m.WorkspaceVoicePage }))) : null;
 const CloudGuardrails = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/WorkspaceGuardrails').then((m) => ({ default: m.WorkspaceGuardrailsPage }))) : null;
 const CloudBilling = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/Billing').then((m) => ({ default: m.BillingPage }))) : null;
+const CloudTeams = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/Teams').then((m) => ({ default: m.TeamsPage }))) : null;
 const CloudKnowledge = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/Knowledge').then((m) => ({ default: m.KnowledgePage }))) : null;
 const CloudKnowledgeTab = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/KnowledgeTab').then((m) => ({ default: m.KnowledgeTab }))) : null;
 
@@ -56,8 +57,16 @@ function CloudPage({ Page, local }: { Page: ReturnType<typeof lazy> | null; loca
   return <Suspense fallback={null}><Page /></Suspense>;
 }
 
-// Settings › Admin › General: the plan, seats and hour packs; the Local edition has nothing to bill
+// Settings › Admin › Billing: the plan, seats, hours, the card and the upgrade; the Local edition has nothing to bill
 export const BillingArea = () => <CloudPage Page={CloudBilling} local={null} />;
+// Settings › Admin › Teams: the "Enable a team" switch, with the company card (a core settings form) shown once it is on
+export function TeamsArea({ company }: { company: ReactNode }) {
+  const hosted = useHostedAccounts();
+  if (!CloudTeams) return null;
+  if (hosted === null) return null;
+  if (!hosted) return NOT_SET_UP;
+  return <Suspense fallback={null}><CloudTeams company={company} /></Suspense>;
+}
 // the Knowledge top tab: the workspace's shared notes and the admin review queue; the Local edition has no such tab
 export const KnowledgeTabArea = () => <CloudPage Page={CloudKnowledgeTab} local={null} />;
 // Settings › Knowledge: auto-include and what each member shared; the Local edition shows its own zero state

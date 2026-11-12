@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canAdmin, modeOf, resolvePage, workspacePages, WORKSPACE_PAGES } from '../src/settingsNav.ts';
+import { canAdmin, modeOf, resolvePage, workspacePages, TEAM_PAGES, WORKSPACE_PAGES } from '../src/settingsNav.ts';
 
 describe('the Admin button', () => {
   it('shows for everyone in the Local edition', () => {
@@ -21,11 +21,19 @@ describe('which nav shows', () => {
     for (const p of ['preferences', 'memory', 'connectors', 'voice']) expect(modeOf(p)).toBe('account');
   });
 
-  it('lists Members only in a Cloud build that reached a hosted account', () => {
-    expect(workspacePages('local', false)).toEqual(['general', 'knowledge', 'org-connectors', 'org-voice', 'org-guardrails']);
-    expect(workspacePages('cloud', null)).toEqual(['general', 'knowledge', 'org-connectors', 'org-voice', 'org-guardrails']);
-    expect(workspacePages('cloud', false)).toEqual(['general', 'knowledge', 'org-connectors', 'org-voice', 'org-guardrails']);
-    expect(workspacePages('cloud', true)).toEqual(['general', 'knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails']);
+  it('lists General alone in the Local edition and in a Cloud build without a hosted account', () => {
+    expect(workspacePages('local', false)).toEqual(['general']);
+    expect(workspacePages('local', true, true)).toEqual(['general']);
+    expect(workspacePages('cloud', null)).toEqual(['general']);
+    expect(workspacePages('cloud', false)).toEqual(['general']);
+    expect(workspacePages('cloud', false, true)).toEqual(['general']);
+  });
+
+  it('adds Teams and Billing once a Cloud build reached a hosted account, and the team pages only with a team on', () => {
+    expect(workspacePages('cloud', true)).toEqual(['general', 'teams', 'billing']);
+    expect(workspacePages('cloud', true, false)).toEqual(['general', 'teams', 'billing']);
+    expect(workspacePages('cloud', true, true)).toEqual(['general', 'teams', 'billing', 'knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails']);
+    for (const p of TEAM_PAGES) expect(workspacePages('cloud', true, false)).not.toContain(p);
   });
 });
 
@@ -33,11 +41,19 @@ describe('resolving a remembered page', () => {
   it('keeps a page the current nav may show', () => {
     expect(resolvePage('org-voice', true)).toBe('org-voice');
     expect(resolvePage('calendar', false)).toBe('calendar');
+    expect(resolvePage('billing', true, ['general', 'teams', 'billing'])).toBe('billing');
   });
 
   it('sends a member who remembered a workspace page back to Preferences', () => {
     expect(resolvePage('general', false)).toBe('preferences');
     expect(resolvePage('org-connectors', false)).toBe('preferences');
+  });
+
+  it('lands a remembered team page on General once the team is off or the build stops listing it', () => {
+    expect(resolvePage('members', true, ['general', 'teams', 'billing'])).toBe('general');
+    expect(resolvePage('org-guardrails', true, ['general'])).toBe('general');
+    expect(resolvePage('members', true, ['general', 'teams', 'billing', 'knowledge', 'members'])).toBe('members');
+    expect(resolvePage('calendar', true, ['general'])).toBe('calendar');
   });
 
   it('maps the retired Profile and Platform pages and anything unknown to Preferences', () => {

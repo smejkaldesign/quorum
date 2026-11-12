@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { describe, it } from 'node:test';
-import { checkoutBody, eventPatch, handleCheckout, handleWebhook } from '../billing.js';
+import { cardOf, checkoutBody, eventPatch, handleCard, handleCheckout, handleWebhook } from '../billing.js';
 import { requirePlan, RelayError } from '../lib/auth.js';
 import { formBody, subscriptionPatch, verifyStripeSignature } from '../lib/stripe.js';
 import { baseTables, fakeAnon, fakeDb, TOKEN, USER, WS } from './helpers.js';
@@ -145,5 +145,39 @@ describe('the webhook', () => {
     await handleWebhook(fakeReq({ body: payload, headers: { 'stripe-signature': sign(payload, 'wrong') } }), res, { clients: { db }, config });
     await res.finished;
     assert.equal(res.status, 400); assert.equal(db.updates.length, 0);
+  });
+});
+
+describe('the card on file', () => {
+  const config = { stripe: { key: 'sk_test', seatPrice: 'price_seat', packPrice: 'price_pack', returnUrl: 'https://quorum.watch' } };
+  const anon = fakeAnon({ [TOKEN]: { id: USER, email: 'ana@example.com' } });
+  const visa = { brand: 'visa', last4: '4242', exp_month: 12, exp_year: 2031 };
+  it('reads brand, last four and expiry from the default payment method, or the newest card, or nothing', () => {
+    assert.deepEqual(cardOf({ invoice_settings: { default_payment_method: { card: visa } } }), { brand: 'visa', last4: '4242', expMonth: 12, expYear: 2031 });
+    assert.deepEqual(cardOf({ invoice_settings: { default_payment_method: 'pm_1' } }, [{ card: { brand: 'amex', last4: '0005', exp_month: 1, exp_year: 2030 } }]), { brand: 'amex', last4: '0005', expMonth: 1, expYear: 2030 });
+    assert.equal(cardOf({}, []), null);
+  });
+  it('answers an admin with the card and never with the customer itself', async () => {
+    const db = dbWithUpdate({ ...baseTables(), members: [{ workspace_id: WS, user_id: USER, role: 'admin', deleted_at: null }], workspaces: [{ id: WS, name: 'W', plan: 'paid', seats: 2, hour_packs: 0, stripe_customer_id: 'cus_1', deleted_at: null }] });
+    const urls = [];
+    const fetchImpl = async (url, init) => { urls.push({ url, method: init.method }); return new Response(JSON.stringify({ id: 'cus_1', email: 'ana@example.com', invoice_settings: { default_payment_method: { id: 'pm_1', card: visa } } }), { status: 200 }); };
+    const res = fakeRes();
+    await handleCard(fakeReq({ body: JSON.stringify({ workspaceId: WS }), headers: { authorization: `Bearer ${TOKEN}` } }), res, { clients: { anon, db }, config, fetchImpl });
+    await res.finished;
+    assert.equal(res.status, 200);
+    assert.deepEqual(JSON.parse(res.body), { card: { brand: 'visa', last4: '4242', expMonth: 12, expYear: 2031 } });
+    assert.equal(urls.length, 1); assert.equal(urls[0].method, 'GET'); assert.match(urls[0].url, /\/v1\/customers\/cus_1\?expand/);
+  });
+  it('answers null without a Stripe customer and refuses a member', async () => {
+    const db = dbWithUpdate({ ...baseTables(), members: [{ workspace_id: WS, user_id: USER, role: 'owner', deleted_at: null }], workspaces: [{ id: WS, name: 'W', plan: 'free', seats: 1, hour_packs: 0, deleted_at: null }] });
+    const res = fakeRes();
+    await handleCard(fakeReq({ body: JSON.stringify({ workspaceId: WS }), headers: { authorization: `Bearer ${TOKEN}` } }), res, { clients: { anon, db }, config, fetchImpl: async () => { throw new Error('no call'); } });
+    await res.finished;
+    assert.equal(res.status, 200); assert.deepEqual(JSON.parse(res.body), { card: null });
+    const db2 = dbWithUpdate({ ...baseTables(), workspaces: [{ id: WS, name: 'W', plan: 'paid', seats: 1, hour_packs: 0, stripe_customer_id: 'cus_1', deleted_at: null }] });
+    const res2 = fakeRes();
+    await handleCard(fakeReq({ body: JSON.stringify({ workspaceId: WS }), headers: { authorization: `Bearer ${TOKEN}` } }), res2, { clients: { anon, db: db2 }, config, fetchImpl: async () => { throw new Error('no call'); } });
+    await res2.finished;
+    assert.equal(res2.status, 403);
   });
 });

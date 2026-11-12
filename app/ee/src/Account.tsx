@@ -69,6 +69,8 @@ function SignIn() {
   // a new email needs an access code from the platform owner; the main process says so and the field appears
   const [needsCode, setNeedsCode] = useState(false);
   const [access, setAccess] = useState('');
+  // the code the beta gate accepted on this Mac is the same one sign-up needs, so it is prefilled
+  useEffect(() => { Promise.resolve(window.quorum.betaStatus?.()).then((b) => { if (b?.code) setAccess((a) => a || b.code!); }).catch(() => {}); }, []);
   // Google runs in the system browser; the main process reports the outcome when the browser comes back
   const [waiting, setWaiting] = useState(false);
   useEffect(() => api.onAccountOAuth((r) => { setWaiting(false); if (r.error) setError(r.error); }), []);

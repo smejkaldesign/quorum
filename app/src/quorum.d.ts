@@ -53,7 +53,7 @@ export type DecisionProvider = 'openai' | 'typesafe';
 // .env.development, the local stack, or none (local edition). host is the project URL's host; the key never crosses IPC
 export type EnvStatus = { env: 'development' | 'production'; config: 'shell' | 'production' | 'development' | 'local' | 'none'; host: string | null; useProduction: boolean; configured: boolean };
 export type DecisionsStatus = { connected: boolean; provider: DecisionProvider | null; providers: Record<DecisionProvider, { name: string; placeholder: string; keyHint: string }> };
-export type Workspace = { company?: string; companyDescription?: string; neverListen?: string[]; optOuts?: OptOut[]; decisions?: { provider: DecisionProvider; by?: string; at?: string }; stopWord?: string; goWord?: string };
+export type Workspace = { company?: string; companyDescription?: string; companyLogo?: string; neverListen?: string[]; optOuts?: OptOut[]; decisions?: { provider: DecisionProvider; by?: string; at?: string }; stopWord?: string; goWord?: string };
 export type Transcription = { echo?: 'auto' | 'off' | 'filter' | 'aec'; gap?: number; live?: boolean; capture?: 'meeting' | 'all'; clean?: boolean; engine?: 'local' | 'managed' };
 // where the model runs: none until chosen; claude-code is the only source with tools, so the only one that reads the Agent OS
 export type ModelSource = 'none' | 'claude-code' | 'anthropic-api' | 'local';
@@ -85,7 +85,13 @@ export type TeamVault = { root: string; notes: number; behind: number; last: { w
 export type Brain = { root: string; vault: string; name: string; made?: 'quorum' | null; markers: { agentOS: string | null; obsidian: boolean; search: boolean; safetyHooks: boolean } };
 // hosted edition: who is signed in, which organization they are in, and whether notes sync
 export type Role = 'owner' | 'admin' | 'member';
-export type AccountWorkspace = { id: string; name: string; domain: string | null; domainJoin: boolean; role: Role };
+// teamEnabled is the Teams page's switch (migration 0019): off, the workspace is one person's and no team-level page shows
+export type AccountWorkspace = { id: string; name: string; domain: string | null; domainJoin: boolean; role: Role; teamEnabled?: boolean };
+// the beta gate (app/beta.js): gate is true while an access code is still needed; machineId is the anonymous id this
+// install reports with its code and version once a day while the beta lasts
+export type BetaState = { gate: boolean; on: boolean; code: string | null; plan: 'free' | 'cloud' | string | null; acceptedAt: string | null; machineId: string | null; lastHeartbeatAt: number | null };
+// the card on file for the workspace's subscription, read through the relay; null when none is stored yet
+export type BillingCard = { brand: string; last4: string; expMonth: number; expYear: number } | null;
 export type AccountInvite = { inviteId: string; workspaceId: string; workspaceName: string; role: Role; invitedByEmail: string | null; expiresAt: string };
 export type AccountState = {
   live?: boolean;
@@ -375,6 +381,10 @@ declare global {
       billingCheckout(seats?: number): Promise<Result>;
       billingPortal(): Promise<Result>;
       billingPacks(packs: number): Promise<Result & { packs?: number; remainingSeconds?: number }>;
+      billingCard(): Promise<Result & { card?: BillingCard }>;
+      teamEnabledSet(on: boolean): Promise<AccountState & { error?: string }>;
+      betaStatus(): Promise<BetaState>;
+      betaCheck(code: string, email?: string | null): Promise<{ ok: boolean; plan?: string; reason?: string; status?: BetaState }>;
       envStatus(): Promise<EnvStatus>;
       envSetProduction(on: boolean): Promise<EnvStatus>;
     };

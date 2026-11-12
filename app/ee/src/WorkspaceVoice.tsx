@@ -16,9 +16,8 @@ export const PIPELINE: { role: VoiceStep; title: string; what: string; provider:
   { role: 'summary', title: 'Running summary', what: 'Keeps a short summary current during the call so answers and suggestions have context.', provider: 'Claude Haiku', cost: 'about $0.01', icon: IconStack },
   { role: 'notes', title: 'Final notes', what: 'Writes the meeting notes when the call ends.', provider: 'Claude Sonnet', cost: 'about $0.06', icon: IconNotes },
 ];
-export const INCLUDED_HOURS = 20;
-export const SEAT_PRICE = 8;
-export const PACK = { hours: 20, price: 5 };
+import { INCLUDED_HOURS, PACK, SEAT_PRICE } from './plan';
+export { INCLUDED_HOURS, PACK, SEAT_PRICE };
 
 export const hours = (h: number) => (h >= 10 ? Math.round(h).toString() : (Math.round(h * 10) / 10).toString());
 // packs the workspace would need on top of the included hours for what it has used so far this period
