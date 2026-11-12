@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
-import { type AccessRequest, CODE_LABEL, CODE_PLAN_LABEL, type CodePlan, DAYS_CHOICES, EMAIL, REQUEST_LABEL, activityLabel, formatCode, onDate } from '../shape';
+import { type AccessRequest, CODE_LABEL, CODE_PLAN_LABEL, type CodePlan, DAYS_CHOICES, EMAIL, REQUEST_LABEL, activityLabel, formatCode, onDate, sourceLabel, sourcePlan } from '../shape';
 import { Badge, type BadgeTone, Button, Card, Chip, ConfirmDialog, Dialog, Drawer, Empty, Field, IconChevron, Input, PageHeader, Select, SkeletonRows, Table, TableHead, TableItem, TableRowButton, useToast } from '../ui';
 
 // Access: every beta signup, pending first. Approving one picks the plan (free or cloud), issues its access code and
@@ -78,7 +78,7 @@ function AddPerson({ onDone }: { onDone: (added: boolean) => void }) {
 function Row({ r, onChange, onReload }: { r: AccessRequest; onChange: (r: AccessRequest) => void; onReload: () => void }) {
   const [open, setOpen] = useState(false);
   const [days, setDays] = useState<number>(30);
-  const [plan, setPlan] = useState<CodePlan>('free');
+  const [plan, setPlan] = useState<CodePlan>(sourcePlan(r.source));
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<'decline' | 'revoke' | 'approve' | null>(null);
@@ -107,7 +107,7 @@ function Row({ r, onChange, onReload }: { r: AccessRequest; onChange: (r: Access
     <TableItem open={open}>
       <TableRowButton on={open} onClick={() => setOpen(!open)}>
         <span className="who"><strong>{r.name || r.email}</strong>{r.name && <em>{r.email}</em>}</span>
-        <span className="hide">{r.source === 'admin' ? 'Added by you' : 'From the site'}{stage ? ` · ${stage}` : r.hasAccount ? ' · has an account' : ''}</span>
+        <span className="hide">{sourceLabel(r.source)}{stage ? ` · ${stage}` : r.hasAccount ? ' · has an account' : ''}</span>
         <span className="badges"><Badge tone={tone}>{state}</Badge>{r.code && <Badge tone={r.code.plan === 'cloud' ? 'good' : 'off'}>{CODE_PLAN_LABEL[r.code.plan]}</Badge>}</span>
         <span className="when hide">{r.status === 'pending' ? `Asked ${onDate(r.createdAt)}` : r.code?.status === 'redeemed' ? `Used ${onDate(r.code.redeemedAt)}` : live ? `Until ${onDate(r.code!.expiresAt)}` : onDate(r.decidedAt)}</span>
         <IconChevron className="chev" />
@@ -136,6 +136,7 @@ function Row({ r, onChange, onReload }: { r: AccessRequest; onChange: (r: Access
                   <Button onClick={copy}>Copy</Button>
                 </>
               )}
+              {movable && r.code!.status === 'redeemed' && <span className="muted small">Plan changes apply at the next sign-up unless the code already set a workspace's plan.</span>}
               {movable && (r.code!.plan === 'cloud'
                 ? <Button variant="link" disabled={!!busy} onClick={() => convert('free')}>{busy === 'convert' ? 'Moving…' : 'Move to Free'}</Button>
                 : <Button variant="link" disabled={!!busy} onClick={() => convert('cloud')}>{busy === 'convert' ? 'Moving…' : 'Convert to Cloud'}</Button>)}

@@ -8,7 +8,9 @@
 
 alter table public.access_codes
   add column plan text not null default 'free' check (plan in ('free', 'cloud')),
-  add column granted_workspace_id public.ulid references public.workspaces (id) on delete set null;
+  add column granted_workspace_id public.ulid references public.workspaces (id) on delete set null,
+  -- a free code is used up by the first Mac that enters it; the relay records that Mac here
+  add column redeemed_machine_id text;
 
 alter table public.access_requests
   add column user_id uuid references auth.users (id) on delete set null,
@@ -76,14 +78,18 @@ begin
   select * into r from public.access_requests a where a.id = platform_invite_request.id;
   if not found then raise exception 'That request no longer exists'; end if;
   issued := public.platform_issue_access_code(r.email, coalesce(nullif(trim(coalesce(platform_invite_request.note, '')), ''), r.name), coalesce(platform_invite_request.days, 30), platform_invite_request.plan);
+  -- approving the same email again (a fresh request after a revoke or an expiry) carries the installs its earlier
+  -- codes recorded onto the new code, so the row still says Installed and the Mac's next check finds its install
+  update public.beta_installs i set code_id = (issued->>'id')::public.ulid where i.code_id in (select a.id from public.access_codes a where a.email = r.email and a.id <> (issued->>'id')::public.ulid);
   update public.access_requests a set status = 'invited', decided_at = now(), decided_by = auth.uid(), code_id = (issued->>'id')::public.ulid, admin_note = nullif(trim(coalesce(platform_invite_request.note, '')), '')
     where a.id = platform_invite_request.id;
   insert into public.platform_audit (actor, action, detail) values (auth.uid(), 'invite_request', jsonb_build_object('email', r.email, 'request', r.id, 'plan', issued->>'plan'));
   return issued || jsonb_build_object('request_id', r.id, 'name', r.name);
 end $$;
 
--- an approved person moves between free and cloud in place: the code's plan changes, and a workspace the code already
--- put on the cloud plan (or that the person created after a free code) follows. Nothing is reissued.
+-- an approved person moves between free and cloud in place: the code's plan changes, and the one workspace the code
+-- itself put on a plan follows. A code that granted no workspace yet only changes what the next sign-up gets; no
+-- other workspace is guessed at. Nothing is reissued.
 create or replace function public.platform_set_code_plan(code_id public.ulid, plan text) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare c public.access_codes; p text; ws public.ulid;
@@ -95,14 +101,9 @@ begin
   if not found then raise exception 'That code no longer exists'; end if;
   if c.revoked_at is not null then raise exception 'That code was revoked; approve the request again'; end if;
   update public.access_codes a set plan = p where a.id = c.id;
-  -- the workspace the person made with this code, or the first workspace they own if the code was free at the time
   ws := c.granted_workspace_id;
-  if ws is null and c.redeemed_by is not null then
-    select w.id into ws from public.workspaces w where w.user_id = c.redeemed_by and w.deleted_at is null order by w.created_at limit 1;
-  end if;
   if ws is not null and (select w.plan from public.workspaces w where w.id = ws) in ('free', 'cloud') then
     update public.workspaces w set plan = case when p = 'cloud' then 'cloud' else 'free' end, seats_included = case when p = 'cloud' then greatest(w.seats_included, 1) else w.seats_included end where w.id = ws;
-    update public.access_codes a set granted_workspace_id = ws where a.id = c.id;
   end if;
   insert into public.platform_audit (actor, action, target_workspace, detail) values (auth.uid(), 'set_code_plan', ws, jsonb_build_object('email', c.email, 'plan', p));
   return jsonb_build_object('id', c.id, 'plan', p, 'workspace', ws);
@@ -120,17 +121,19 @@ begin
     order by i.last_seen desc;
 end $$;
 
--- sign-up redeems the code as before, and now also marks the request the code came from
+-- sign-up redeems the code as before and marks the request the code came from. A pending workspace invite still
+-- admits an email without a code; when that email also holds a claimed code, the code is redeemed all the same, so a
+-- cloud code's plan reaches the workspace the person creates and the request row shows them signed in.
 create or replace function public.auth_user_gate() returns trigger
 language plpgsql security definer set search_path = public as $$
-declare c public.access_codes;
+declare c public.access_codes; invited boolean;
 begin
-  if exists (select 1 from public.invites i where i.email = lower(new.email) and i.accepted_at is null and i.deleted_at is null and i.expires_at > now()) then return new; end if;
+  invited := exists (select 1 from public.invites i where i.email = lower(new.email) and i.accepted_at is null and i.deleted_at is null and i.expires_at > now());
   update public.access_codes a set redeemed_at = now(), redeemed_by = new.id
-    where a.email = lower(new.email) and a.redeemed_at is null and a.revoked_at is null and a.expires_at > now() and a.claimed_at > now() - interval '1 hour'
+    where a.email = lower(new.email) and a.redeemed_at is null and a.revoked_at is null and a.expires_at > now() and (invited or a.claimed_at > now() - interval '1 hour')
     returning * into c;
-  if not found then raise exception 'An access code is needed to sign up for Quorum Cloud'; end if;
-  update public.access_requests r set user_id = new.id, signed_in_at = now() where r.code_id = c.id;
+  if not found and not invited then raise exception 'An access code is needed to sign up for Quorum Cloud'; end if;
+  if c.id is not null then update public.access_requests r set user_id = new.id, signed_in_at = now() where r.code_id = c.id; end if;
   return new;
 end $$;
 

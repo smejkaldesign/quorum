@@ -6,10 +6,10 @@
 import { bearer, RelayError, verifyToken } from './lib/auth.js';
 import { readJson } from './summary.js';
 
-const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-const CODE = /^[A-Z2-9]{8}$/;
+export const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+export const CODE = /^[A-Z2-9]{8}$/;
 
-const json = (res, status, body, extra = {}) => { res.writeHead(status, { 'content-type': 'application/json', ...extra }); res.end(JSON.stringify(body)); };
+export const json = (res, status, body, extra = {}) => { res.writeHead(status, { 'content-type': 'application/json', ...extra }); res.end(JSON.stringify(body)); };
 const failJson = (res, err, log, what, extra = {}) => {
   const status = err instanceof RelayError ? err.status : 500;
   log(`${what}_failed`, { status, message: err.message });
@@ -68,7 +68,7 @@ export async function handleAccessRequest(req, res, { clients, config, log = () 
     // the owner hears about a new signup by email; a failure here changes nothing for the visitor
     if (data?.already !== true && config.mail?.resendKey && config.mail.notifyTo) {
       const m = signupNotice({ to: config.mail.notifyTo, email: r.email, name: r.name, note: r.note, source: r.source });
-      sendMail(config, fetchImpl, m).then((ok) => log(ok ? 'signup_notified' : 'signup_notify_refused', { domain: r.email.split('@')[1] })).catch((err) => log('signup_notify_failed', { message: err.message }));
+      sendMail(config, fetchImpl, m).then((sent) => log(sent.ok ? 'signup_notified' : 'signup_notify_refused', { domain: r.email.split('@')[1], status: sent.status })).catch((err) => log('signup_notify_failed', { message: err.message }));
     }
   } catch (err) { failJson(res, err, log, 'access_request', cors); }
 }
@@ -79,12 +79,13 @@ export function signupNotice({ to, email, name, note, source }) {
   return { to, subject: `New beta signup: ${email}`, text: lines.join('\n'), html: null };
 }
 
-async function sendMail(config, fetchImpl, m) {
+// every mail the relay sends goes through Resend here; the answer is whether Resend took it, plus the status for the log
+export async function sendMail(config, fetchImpl, m) {
   const r = await fetchImpl('https://api.resend.com/emails', {
     method: 'POST', headers: { authorization: `Bearer ${config.mail.resendKey}`, 'content-type': 'application/json' },
     body: JSON.stringify({ from: config.mail.from, to: [m.to], subject: m.subject, text: m.text, ...(m.html ? { html: m.html } : {}), ...(config.mail.replyTo ? { reply_to: config.mail.replyTo } : {}) }),
   });
-  return r.ok;
+  return { ok: r.ok, status: r.status };
 }
 
 // the one email the owner sends: which plan the person is approved for, the code, where to download, what to do
@@ -105,7 +106,7 @@ export function codeEmail({ email, name, code, expiresAt, downloadUrl, plan = 'c
     cloud ? '2. Open it, choose Sign in, and enter this email address.' : '2. Open it and enter this email address when the app asks.',
     cloud ? '3. Enter the access code when asked, then the 6-digit code from the sign-in email.' : '3. Enter the access code when asked.',
     '',
-    until ? `The access code works once and lasts until ${until}.` : 'The access code works once.',
+    cloud ? (until ? `The access code works once and lasts until ${until}.` : 'The access code works once.') : (until ? `Enter the code by ${until}. After that it stays with the Mac you entered it on.` : 'The code stays with the Mac you enter it on.'),
     '', `Reply to this email if anything gets in the way.`, '', `${product}`,
   ];
   const text = lines.join('\n');
@@ -119,7 +120,7 @@ export function codeEmail({ email, name, code, expiresAt, downloadUrl, plan = 'c
 <li>${cloud ? 'Open it, choose <strong>Sign in</strong>, and enter this email address.' : 'Open it and enter this email address when the app asks.'}</li>
 <li>${cloud ? 'Enter the access code when asked, then the 6-digit code from the sign-in email.' : 'Enter the access code when asked.'}</li>
 </ol>
-<p style="color: #555">${until ? `The access code works once and lasts until ${esc(until)}.` : 'The access code works once.'}</p>
+<p style="color: #555">${cloud ? (until ? `The access code works once and lasts until ${esc(until)}.` : 'The access code works once.') : (until ? `Enter the code by ${esc(until)}. After that it stays with the Mac you entered it on.` : 'The code stays with the Mac you enter it on.')}</p>
 <p>Reply to this email if anything gets in the way.</p>
 <p>${esc(product)}</p>
 </div>`;
@@ -147,11 +148,8 @@ export async function handleSendCode(req, res, { clients, config, log = () => {}
     if (!EMAIL.test(email)) throw new RelayError('bad_request', 'Enter a full email address.', 400);
     if (!CODE.test(code)) throw new RelayError('bad_request', 'That is not an access code.', 400);
     const mail = codeEmail({ email, name: b.name ?? null, code, expiresAt: b.expiresAt ?? null, downloadUrl: config.mail.downloadUrl, plan: b.plan === 'cloud' ? 'cloud' : 'free' });
-    const r = await fetchImpl('https://api.resend.com/emails', {
-      method: 'POST', headers: { authorization: `Bearer ${config.mail.resendKey}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ from: config.mail.from, to: [email], subject: mail.subject, text: mail.text, html: mail.html, ...(config.mail.replyTo ? { reply_to: config.mail.replyTo } : {}) }),
-    });
-    if (!r.ok) { log('code_mail_refused', { status: r.status }); throw new RelayError('mail', 'The email could not be sent. Copy the code and send it yourself.', 502); }
+    const sent = await sendMail(config, fetchImpl, mail);
+    if (!sent.ok) { log('code_mail_refused', { status: sent.status }); throw new RelayError('mail', 'The email could not be sent. Copy the code and send it yourself.', 502); }
     log('code_sent', { domain: email.split('@')[1], plan: mail.plan });
     json(res, 200, { ok: true, sent: true }, cors);
   } catch (err) { failJson(res, err, log, 'send_code', cors); }

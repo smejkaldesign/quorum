@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PLANS, PLAN_LABEL, activityLabel, auditLine, codeStatus, formatCode, installActive, periodStart, plain, requestWithCode, shapeInstall, shapeOverview, shapeRequest, shapeUsage, shapeUser, shapeWorkspace, validatePlanForm } from '../src/shape';
+import { PLANS, PLAN_LABEL, activityLabel, auditLine, codeStatus, formatCode, installActive, periodStart, plain, requestWithCode, shapeInstall, shapeOverview, shapeRequest, shapeUsage, shapeUser, shapeWorkspace, sourceLabel, sourcePlan, validatePlanForm } from '../src/shape';
 
 describe('rows from the platform RPCs', () => {
   it('turns a platform_workspaces row into the table row, with counts as numbers and nulls kept', () => {
@@ -84,5 +84,17 @@ describe('installs', () => {
     expect(installActive(i.lastSeen, now)).toBe(true);
     expect(installActive('2026-11-01T00:00:00Z', now)).toBe(false);
     expect(shapeInstall({ id: 'i2', code_id: 'c1', machine_id: 'm', edition: 'web', plan: 'odd', first_seen: '2026-11-01T00:00:00Z', last_seen: '2026-11-01T00:00:00Z' })).toMatchObject({ email: null, edition: 'local', plan: 'free', appVersion: null });
+  });
+});
+
+describe('request sources', () => {
+  it('names where a request came from and suggests the plan the card implies', () => {
+    expect(sourceLabel('pricing-cloud')).toBe('From the site: Cloud card');
+    expect(sourceLabel('pricing-free')).toBe('From the site: Free card');
+    expect(sourceLabel('hero')).toBe('From the site: hero');
+    expect(sourceLabel('admin')).toBe('Added by you');
+    expect(sourceLabel('site')).toBe('From the site');
+    expect(sourcePlan('pricing-cloud')).toBe('cloud');
+    expect(sourcePlan('hero')).toBe('free');
   });
 });
