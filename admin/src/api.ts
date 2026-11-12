@@ -2,7 +2,7 @@
 // owner-only RPCs, and the relay for the one thing a browser page cannot do itself, sending the code email.
 import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
 import { token } from './session';
-import { type AccessRequest, type AuditRow, type Member, type Overview, type PlanDraft, type Usage, type User, type Workspace, periodStart, plain, requestWithCode, shapeAudit, shapeMember, shapeOverview, shapeRequest, shapeUser, shapeUsage, shapeWorkspace } from './shape';
+import { type AccessRequest, type AuditRow, type CodePlan, type Install, type Member, type Overview, type PlanDraft, type Usage, type User, type Workspace, periodStart, plain, requestWithCode, shapeAudit, shapeInstall, shapeMember, shapeOverview, shapeRequest, shapeUser, shapeUsage, shapeWorkspace } from './shape';
 
 export const CONFIG = __QUORUM_SUPABASE__;
 export const RELAY_URL = __RELAY_URL__;
@@ -56,8 +56,12 @@ export const api = {
   requests: (): Promise<Result<AccessRequest[]>> => rpc('platform_access_requests', undefined, (d) => rows(d).map((r) => shapeRequest(r))),
   addRequest: (email: string, name: string, note: string): Promise<Result<{ id: string; already: boolean }>> =>
     rpc('platform_add_request', { email: email.trim().toLowerCase(), name: name.trim() || null, note: note.trim() || null }, (d) => { const o = (d ?? {}) as Record<string, unknown>; return { id: String(o.id), already: o.already === true }; }, 'The person could not be added.'),
-  invite: (r: AccessRequest, days: number, note: string): Promise<Result<AccessRequest>> =>
-    rpc('platform_invite_request', { id: r.id, days, note: note.trim() || null }, (d) => requestWithCode(r, (d ?? {}) as Record<string, unknown>), 'The request could not be approved.'),
+  invite: (r: AccessRequest, days: number, note: string, plan: CodePlan): Promise<Result<AccessRequest>> =>
+    rpc('platform_invite_request', { id: r.id, days, note: note.trim() || null, plan }, (d) => requestWithCode(r, (d ?? {}) as Record<string, unknown>), 'The request could not be approved.'),
+  // the code keeps its id; the plan it grants changes, and a workspace it already put on a plan follows
+  setCodePlan: (r: AccessRequest, plan: CodePlan): Promise<Result<AccessRequest>> =>
+    rpc('platform_set_code_plan', { code_id: r.code!.id, plan }, () => ({ ...r, code: r.code ? { ...r.code, plan } : null }), 'The plan could not be changed.'),
+  installs: (): Promise<Result<Install[]>> => rpc('platform_installs', undefined, (d) => rows(d).map(shapeInstall)),
   decline: (id: string, note: string): Promise<Result<true>> => rpc('platform_decline_request', { id, note: note.trim() || null }, () => true, 'The request could not be declined.'),
   revokeCode: (codeId: string): Promise<Result<true>> => rpc('platform_revoke_access_code', { id: codeId }, () => true, 'The code could not be revoked.'),
   workspaces: (): Promise<Result<Workspace[]>> => rpc('platform_workspaces', undefined, (d) => rows(d).map(shapeWorkspace)),
@@ -79,7 +83,7 @@ export const api = {
     try {
       const session = await auth.session();
       if (!session) return { ok: false, error: 'You are signed out. Sign in again.' };
-      const res = await fetch(`${RELAY_URL}/v1/platform/send-code`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${session.access_token}` }, body: JSON.stringify({ email: r.email, name: r.name, code: r.code.code, expiresAt: r.code.expiresAt }) });
+      const res = await fetch(`${RELAY_URL}/v1/platform/send-code`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${session.access_token}` }, body: JSON.stringify({ email: r.email, name: r.name, code: r.code.code, expiresAt: r.code.expiresAt, plan: r.code.plan }) });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) return { ok: false, error: String(body.error ?? 'The email could not be sent.') };
       return ok(true);

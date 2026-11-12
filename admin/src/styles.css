@@ -232,3 +232,7 @@ button.trow:hover, button.trow.on { background: rgba(255, 255, 255, 0.05); }
   .modal-actions { justify-content: space-between; }
   .toasts { left: 12px; right: 12px; bottom: 12px; max-width: none; }
 }
+
+/* Access: the state and plan badges side by side; the approve dialog lays its two fields in one row */
+.badges { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.modal .fields { grid-template-columns: 1fr 1fr; margin-top: 16px; }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PLANS, PLAN_LABEL, activityLabel, auditLine, codeStatus, formatCode, periodStart, plain, requestWithCode, shapeOverview, shapeRequest, shapeUsage, shapeUser, shapeWorkspace, validatePlanForm } from '../src/shape';
+import { PLANS, PLAN_LABEL, activityLabel, auditLine, codeStatus, formatCode, installActive, periodStart, plain, requestWithCode, shapeInstall, shapeOverview, shapeRequest, shapeUsage, shapeUser, shapeWorkspace, validatePlanForm } from '../src/shape';
 
 describe('rows from the platform RPCs', () => {
   it('turns a platform_workspaces row into the table row, with counts as numbers and nulls kept', () => {
@@ -20,8 +20,10 @@ describe('rows from the platform RPCs', () => {
     expect(shapeRequest({ ...base, code_id: 'c1', code: 'K7PQ2MX9', code_expires_at: '2026-12-01T00:00:00Z', code_redeemed_at: '2026-11-03T00:00:00Z', code_revoked_at: null }, now).code?.status).toBe('redeemed');
     expect(shapeRequest({ ...base, code_id: 'c1', code: 'K7PQ2MX9', code_expires_at: '2026-11-08T00:00:00Z', code_redeemed_at: null, code_revoked_at: null }, now).code?.status).toBe('expired');
     expect(shapeRequest({ ...base, status: 'pending', code_id: null, code: null }, now)).toMatchObject({ status: 'pending', code: null, hasAccount: false });
-    const invited = requestWithCode(shapeRequest({ ...base, status: 'pending', code_id: null, code: null }, now), { id: 'c2', code: 'ABCD2345', expires_at: '2026-12-09T00:00:00Z' }, now);
-    expect(invited).toMatchObject({ status: 'invited', code: { id: 'c2', code: 'ABCD2345', status: 'open' } });
+    const invited = requestWithCode(shapeRequest({ ...base, status: 'pending', code_id: null, code: null }, now), { id: 'c2', code: 'ABCD2345', expires_at: '2026-12-09T00:00:00Z', plan: 'cloud' }, now);
+    expect(invited).toMatchObject({ status: 'invited', code: { id: 'c2', code: 'ABCD2345', status: 'open', plan: 'cloud' } });
+    expect(open.code?.plan).toBe('free');
+    expect(shapeRequest({ ...base, code_id: 'c1', code: 'K7PQ2MX9', code_plan: 'cloud', code_expires_at: '2026-12-01T00:00:00Z', signed_in_at: '2026-11-05T00:00:00Z', installed: true }, now)).toMatchObject({ code: { plan: 'cloud' }, signedInAt: '2026-11-05T00:00:00Z', installed: true });
   });
   it('derives one code status word per row', () => {
     const now = new Date('2026-11-09T00:00:00Z').getTime();
@@ -60,6 +62,8 @@ describe('words for people', () => {
   it('writes one line per audit action', () => {
     const row = (action: string, detail: Record<string, unknown>) => ({ id: 'a', actor: null, action, targetWorkspace: null, detail, createdAt: 'c' });
     expect(auditLine(row('invite_request', { email: 'x@example.com' }))).toBe('Approved the access request from x@example.com');
+    expect(auditLine(row('invite_request', { email: 'x@example.com', plan: 'cloud' }))).toBe('Approved the access request from x@example.com for Cloud');
+    expect(auditLine(row('set_code_plan', { email: 'x@example.com', plan: 'cloud' }))).toBe('Moved x@example.com to the Cloud plan');
     expect(auditLine(row('set_plan', { before: { plan: 'free', seats_included: 0 }, after: { plan: 'cloud', seats_included: 3 } }))).toBe('Set the plan to Cloud with 3 seats included (was Free, 0)');
     expect(auditLine(row('something_new', {}))).toBe('something new');
   });
@@ -69,5 +73,16 @@ describe('words for people', () => {
     expect(plain({ message: 'Failed to fetch' })).toMatch(/could not be reached/);
     expect(plain({ message: 'Signups not allowed for otp' })).toMatch(/no account here/);
     expect(plain({ message: 'relation "x" does not exist {code 42P01}' })).toBe('Something went wrong. Try again.');
+  });
+});
+
+describe('installs', () => {
+  it('shapes a row and calls it active within a week of its last heartbeat', () => {
+    const now = Date.parse('2026-11-12T00:00:00Z');
+    const i = shapeInstall({ id: 'i1', code_id: 'c1', email: 'x@example.com', plan: 'cloud', machine_id: 'mac-1', edition: 'cloud', app_version: '0.2.9', first_seen: '2026-11-01T00:00:00Z', last_seen: '2026-11-10T00:00:00Z' });
+    expect(i).toMatchObject({ id: 'i1', email: 'x@example.com', plan: 'cloud', edition: 'cloud', appVersion: '0.2.9' });
+    expect(installActive(i.lastSeen, now)).toBe(true);
+    expect(installActive('2026-11-01T00:00:00Z', now)).toBe(false);
+    expect(shapeInstall({ id: 'i2', code_id: 'c1', machine_id: 'm', edition: 'web', plan: 'odd', first_seen: '2026-11-01T00:00:00Z', last_seen: '2026-11-01T00:00:00Z' })).toMatchObject({ email: null, edition: 'local', plan: 'free', appVersion: null });
   });
 });

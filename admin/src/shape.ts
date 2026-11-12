@@ -4,6 +4,7 @@ export type Plan = 'free' | 'cloud' | 'internal' | 'paid';
 export type Role = 'owner' | 'admin' | 'member';
 export type RequestStatus = 'pending' | 'invited' | 'declined';
 export type CodeStatus = 'open' | 'claimed' | 'redeemed' | 'revoked' | 'expired';
+export type CodePlan = 'free' | 'cloud';
 
 export type Workspace = { id: string; name: string; domain: string | null; plan: Plan; seatsIncluded: number; notes: string | null; members: number; createdAt: string; lastActivity: string | null };
 export type Member = { userId: string; email: string | null; name: string | null; role: Role; joinedAt: string };
@@ -11,8 +12,10 @@ export type Usage = { period: string; hours: number; managedHours: number; calls
 export type PlanDraft = { plan: Plan; seatsIncluded: number; notes: string };
 export type AccessRequest = {
   id: string; email: string; name: string | null; note: string | null; source: string; status: RequestStatus; createdAt: string; decidedAt: string | null; adminNote: string | null; hasAccount: boolean;
-  code: { id: string; code: string; expiresAt: string; redeemedAt: string | null; revokedAt: string | null; status: CodeStatus } | null;
+  signedInAt: string | null; installed: boolean;
+  code: { id: string; code: string; plan: CodePlan; expiresAt: string; redeemedAt: string | null; revokedAt: string | null; status: CodeStatus } | null;
 };
+export type Install = { id: string; codeId: string; email: string | null; plan: CodePlan; machineId: string; edition: 'local' | 'cloud'; appVersion: string | null; firstSeen: string; lastSeen: string };
 export type User = { userId: string; email: string; createdAt: string; lastSignInAt: string | null; workspaces: number; owner: boolean };
 export type Overview = { users: number; workspaces: number; paidWorkspaces: number; members: number; codesOpen: number; requestsPending: number; managedHoursMonth: number; monthStart: string };
 export type AuditRow = { id: string; actor: string | null; action: string; targetWorkspace: string | null; detail: Record<string, unknown>; createdAt: string };
@@ -20,6 +23,8 @@ export type AuditRow = { id: string; actor: string | null; action: string; targe
 export const PLANS: readonly Plan[] = ['free', 'cloud', 'internal', 'paid'];
 export const PLAN_LABEL: Record<Plan, string> = { free: 'Free', cloud: 'Cloud', internal: 'Internal', paid: 'Paid' };
 export const ROLE_LABEL: Record<Role, string> = { owner: 'Owner', admin: 'Admin', member: 'Member' };
+export const CODE_PLAN_LABEL: Record<CodePlan, string> = { free: 'Free', cloud: 'Cloud' };
+export const codePlan = (v: unknown): CodePlan => (v === 'cloud' ? 'cloud' : 'free');
 export const CODE_LABEL: Record<CodeStatus, string> = { open: 'Open', claimed: 'Claimed', redeemed: 'Used', revoked: 'Revoked', expired: 'Expired' };
 export const REQUEST_LABEL: Record<RequestStatus, string> = { pending: 'Pending', invited: 'Invited', declined: 'Declined' };
 export const NOTES_MAX = 500;
@@ -56,19 +61,26 @@ export function shapeUsage(rows: Record<string, unknown>[] | null, period: strin
 export const periodStart = (now = new Date()) => { const d = new Date(now); d.setUTCDate(1); d.setUTCHours(0, 0, 0, 0); return d.toISOString(); };
 
 export function shapeRequest(r: Record<string, unknown>, now = Date.now()): AccessRequest {
-  const code = r.code_id && r.code ? { id: String(r.code_id), code: String(r.code), expiresAt: String(r.code_expires_at), redeemedAt: str(r.code_redeemed_at), revokedAt: str(r.code_revoked_at) } : null;
+  const code = r.code_id && r.code ? { id: String(r.code_id), code: String(r.code), plan: codePlan(r.code_plan), expiresAt: String(r.code_expires_at), redeemedAt: str(r.code_redeemed_at), revokedAt: str(r.code_revoked_at) } : null;
   return {
     id: String(r.id), email: String(r.email), name: str(r.name), note: str(r.note), source: String(r.source ?? 'site'), status: (r.status as RequestStatus) ?? 'pending',
-    createdAt: String(r.created_at), decidedAt: str(r.decided_at), adminNote: str(r.admin_note), hasAccount: r.has_account === true,
+    createdAt: String(r.created_at), decidedAt: str(r.decided_at), adminNote: str(r.admin_note), hasAccount: r.has_account === true, signedInAt: str(r.signed_in_at), installed: r.installed === true,
     code: code ? { ...code, status: codeStatus(code, now) } : null,
   };
 }
 // the code platform_invite_request returns, onto the request it came from
 export const requestWithCode = (r: AccessRequest, issued: Record<string, unknown>, now = Date.now()): AccessRequest => {
-  const code = { id: String(issued.id), code: String(issued.code), expiresAt: String(issued.expires_at), redeemedAt: null, revokedAt: null };
+  const code = { id: String(issued.id), code: String(issued.code), plan: codePlan(issued.plan), expiresAt: String(issued.expires_at), redeemedAt: null, revokedAt: null };
   return { ...r, status: 'invited', decidedAt: new Date(now).toISOString(), code: { ...code, status: codeStatus(code, now) } };
 };
 
+// an install is active when its last heartbeat is within a week
+export const ACTIVE_DAYS = 7;
+export const installActive = (lastSeen: string, now = Date.now()): boolean => now - new Date(lastSeen).getTime() < ACTIVE_DAYS * 86400000;
+export const shapeInstall = (i: Record<string, unknown>): Install => ({
+  id: String(i.id), codeId: String(i.code_id), email: str(i.email), plan: codePlan(i.plan), machineId: String(i.machine_id), edition: i.edition === 'cloud' ? 'cloud' : 'local',
+  appVersion: str(i.app_version), firstSeen: String(i.first_seen), lastSeen: String(i.last_seen),
+});
 export const shapeUser = (u: Record<string, unknown>): User => ({ userId: String(u.user_id), email: String(u.email ?? ''), createdAt: String(u.created_at), lastSignInAt: str(u.last_sign_in_at), workspaces: num(u.workspaces), owner: u.owner === true });
 export const shapeOverview = (o: Record<string, unknown>): Overview => ({
   users: num(o.users), workspaces: num(o.workspaces), paidWorkspaces: num(o.paid_workspaces), members: num(o.members), codesOpen: num(o.codes_open), requestsPending: num(o.requests_pending),
@@ -107,7 +119,8 @@ export function auditLine(a: AuditRow): string {
   switch (a.action) {
     case 'issue_access_code': return `Issued an access code for ${email ?? 'someone'}`;
     case 'revoke_access_code': return `Revoked the access code for ${email ?? 'someone'}`;
-    case 'invite_request': return `Approved the access request from ${email ?? 'someone'}`;
+    case 'invite_request': return `Approved the access request from ${email ?? 'someone'}${d.plan === 'cloud' ? ' for Cloud' : ''}`;
+    case 'set_code_plan': return `Moved ${email ?? 'someone'} to the ${d.plan === 'cloud' ? 'Cloud' : 'Free'} plan`;
     case 'decline_request': return `Declined the access request from ${email ?? 'someone'}`;
     case 'set_plan': {
       const after = (d.after ?? {}) as Record<string, unknown>; const before = (d.before ?? {}) as Record<string, unknown>;

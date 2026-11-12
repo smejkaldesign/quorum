@@ -128,12 +128,13 @@
 
   // Beta access: the email goes to the relay, which writes the request for the admin app; the code comes back by email
   var REQUEST_ENDPOINT = "https://relay.quorum.watch/v1/access-requests";
-  var capture = document.querySelector("form.capture");
-  if (capture) {
-    var note = document.getElementById("capture-note");
+  document.querySelectorAll("form.capture").forEach(function (capture) {
+    var note = document.getElementById(capture.getAttribute("aria-describedby"));
     var email = capture.elements.email;
     var submit = capture.querySelector('[type="submit"]');
-    var say = function (text, kind) { note.textContent = text; note.className = "plan-note" + (kind ? " " + kind : ""); };
+    var label = submit.textContent;
+    var source = capture.getAttribute("data-source") || "site";
+    var say = function (text, kind) { if (!note) return; note.textContent = text; note.className = note.className.replace(/\b(ok|error)\b/g, "").trim() + (kind ? " " + kind : ""); };
     capture.addEventListener("submit", function (event) {
       event.preventDefault();
       if (!email.value.trim() || !email.checkValidity()) { email.setAttribute("aria-invalid", "true"); say("Enter a valid email address.", "error"); email.focus(); return; }
@@ -143,20 +144,20 @@
       fetch(REQUEST_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ email: email.value.trim(), source: "site", website: capture.elements.website ? capture.elements.website.value : "" }),
+        body: JSON.stringify({ email: email.value.trim(), source: source, website: capture.elements.website ? capture.elements.website.value : "" }),
       })
         .then(function (res) { return res.json().then(function (body) { if (!res.ok || !body.ok) throw new Error(body.error || ""); return body; }); })
         .then(function (body) {
           capture.reset();
-          say(body.already ? "You are already on the list. Your code arrives by email once it is your turn." : "Thanks. Your access code arrives by email once it is your turn.", "ok");
+          say(body.already ? "You are already on the list. Your access code arrives by email once it is your turn." : "Thanks. Your access code arrives by email once it is your turn.", "ok");
         })
         .catch(function (err) {
           say(err && err.message ? err.message : "That did not send. Try again in a moment.", "error");
         })
         .then(function () {
           submit.disabled = false;
-          submit.textContent = "Request access";
+          submit.textContent = label;
         });
     });
-  }
+  });
 })();
