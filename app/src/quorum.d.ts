@@ -78,7 +78,7 @@ export type SetupInput = Omit<SetupAnswers, 'projects' | 'people'> & { projects:
 export type KeeperRun = { filed: number; skipped: number; changed: number; reason: string; at: string; error: string | null; off?: boolean };
 export type KeeperStatus = { on: boolean; facts: boolean; running: boolean; lastRunAt: string | null; filed: number; last: KeeperRun | null; folders: Partial<Record<'people' | 'projects' | 'daily' | 'meetings', string>>; model: boolean };
 // screen context: on-screen text as spelling hints; granted is the Screen Recording permission, null when unknown
-export type ScreenContextStatus = { on: boolean; granted: boolean | null };
+export type ScreenContextStatus = { available?: boolean; on: boolean; granted: boolean | null };
 export type SetupRecord = { version: number; name: string; answers: SetupAnswers; createdAt: string; updatedAt?: string };
 // the workspace vault: where teammates' shared notes land on this Mac, with their provenance bonds
 export type TeamVault = { root: string; notes: number; behind: number; last: { written: number; behind: number; removed: number; skipped: number } };
@@ -183,7 +183,8 @@ export type StateEvent =
 declare global {
   interface Window {
     quorum: {
-      start(): Promise<void>;
+      // answers { error } when manual listening is off (the manual-listen flag)
+      start(): Promise<{ error: string } | null>;
       end(): Promise<Notes | null>;
       pause(): Promise<void>;
       resume(): Promise<void>;
@@ -193,7 +194,7 @@ declare global {
       discard(): Promise<void>;
       done(): Promise<void>;
       axStatus(): Promise<void>;
-      dictate(on: boolean): Promise<void>;
+      dictate(on: boolean): Promise<{ error: string } | null>;
       pickFiles(): Promise<{ path: string; name: string }[]>;
       stageFile(path: string): Promise<{ staged: string; thumb: string | null }>;
       unstageFile(path: string): Promise<void>;

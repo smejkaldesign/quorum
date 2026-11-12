@@ -37,5 +37,15 @@ export function useFlag(key: string): boolean {
   return useFlags().flags[key]?.enabled === true;
 }
 
+// the notetaker switches the renderer mirrors (app/notetaker.js holds the same rules for the main process, which is the
+// one that refuses): call detection, live assistance, manual listening, and screen context, which needs manual listening
+export type Notetaker = { meetingCapture: boolean; liveAssist: boolean; manualListen: boolean; screenContext: boolean };
+export function notetakerOf(s: FlagsState): Notetaker {
+  const on = (k: string) => s.flags[k]?.enabled === true;
+  const manualListen = on('manual-listen');
+  return { meetingCapture: on('meeting-capture'), liveAssist: on('live-assist'), manualListen, screenContext: manualListen && on('screen-context') };
+}
+export const useNotetaker = (): Notetaker => notetakerOf(useFlags());
+
 // for code outside React (and tests): the last state the renderer saw, or the defaults before any read
 export const currentFlags = (): FlagsState => shared ?? fallback;

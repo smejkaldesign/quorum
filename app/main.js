@@ -15,6 +15,7 @@ import { createViews } from './views.js';
 import { registerOnboarding } from './onboarding.js';
 import { gateOn, registerBeta } from './beta.js';
 import { registerFlags } from './flags.js';
+import { dictationAllowed, keepActions, meetingEventsAllowed, notetakerGates, startDecision, summaryAllowed, termsPlan } from './notetaker.js';
 import { createKeeper } from './keeper.js';
 import { wouldBlock } from './guardrails.js';
 import { createPredicates } from './guardrails-predicates.js';
@@ -141,11 +142,17 @@ const asset = (name) => path.join(here, 'assets', name);
 const meeting = { armed: false, capturing: false, id: null, dirs: [], dir: null, transcript: [], title: '', participants: 0, people: new Set(), terms: [], startedAt: null, endedAt: null, notes: null, summary: emptyState(), summaryAt: 0, privateNotes: '', invitees: [], saved: null };
 
 const log = (...a) => console.log('[quorum]', ...a);
+// the notetaker flags (notetaker.js): read on every use, so a change from the admin app applies without a restart.
+// Until registerFlags runs below, the built-in defaults answer
+let flagsApi = null;
+// what the helper was last told about call detection (syncMeetingWatch); null until the first sync
+let watchingMeetings = null;
+const gate =() => notetakerGates(flagsApi ? (k) => flagsApi.get(k) : null);
 // windows can be gone mid-quit while the helper or agent is still reporting
 const toUI = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
 const helperSend = (cmd) => helper?.stdin.write(JSON.stringify(cmd) + '\n');
 // a note started outside a call has no chat to post in, and neither do Meet or Teams yet
-const chat = (text) => { if (!meeting.solo && provider().chat) helperSend({ cmd: 'chatSend', text }); };
+const chat = (text) => { if (!meeting.solo && gate().meetingCapture && provider().chat) helperSend({ cmd: 'chatSend', text }); };
 
 function startHelper() {
   helper = spawn(HELPER, [], { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -195,14 +202,15 @@ const fixWords = (text) => (settings.voice?.dictionary ?? []).reduce((t, d) => t
 
 // a final joins the transcript as part of a speaker turn; the UI gets the whole turn, replace: true when it grew
 function keep(evt) {
-  if (mentionsOptOut(evt.text)) return blockCall('name');
-  softStop(evt.text, evt.channel === 'me' ? OWNER : 'someone on the call', 0.85);
+  const act = keepActions(gate(), { solo: !!meeting.solo });
+  if (act.optOut && mentionsOptOut(evt.text)) return blockCall('name');
+  if (act.softStop) softStop(evt.text, evt.channel === 'me' ? OWNER : 'someone on the call', 0.85);
   const { turns, changed, replace } = addFinal(meeting.transcript, { channel: evt.channel, text: evt.text, start: evt.start, end: evt.end, at: Date.now() }, tx().gap, { clean: tx().clean });
   if (!changed) return;
   meeting.transcript = turns;
   writeStateSoon();
   toUI('helper-event', { ...evt, ...changed, replace });
-  suggester.detect();
+  if (act.suggest) suggester.detect();
 }
 
 const pendingPosts = new Map();
@@ -221,6 +229,7 @@ function postConfirmed(text) {
 }
 
 async function postWithRetry(text, tries = 5) {
+  if (!gate().meetingCapture) return false;
   for (let i = 0; i < tries; i++) {
     try { await postConfirmed(text); return true; } catch (err) { log(`post attempt ${i + 1} failed: ${err.message}`); }
     if (!meetingActive) return false;
@@ -257,6 +266,7 @@ const nameWords = (s) => String(s ?? '').toLowerCase().replace(/\(.*?\)/g, ' ').
 let callGuard = { invited: false, named: false, names: [] };
 let callBlocked = false;
 async function refreshGuard() {
+  if (!gate().meetingCapture) { callGuard = { invited: false, named: false, names: [] }; return; }
   const names = neverList().filter((x) => x.includes('@')).map((x) => nameWords(x.split('@')[0].replace(/[._-]+/g, ' '))).filter((w) => w.length >= 2);
   let invited = false;
   let named = false;
@@ -374,6 +384,10 @@ function onHelperEvent(evt) {
   if (evt.event === 'pcm') return relay?.send(evt.channel, Buffer.from(evt.data, 'base64'));
   if (evt.event === 'audioRoute') { audioRoute = evt; log('audio out:', evt.name || evt.route, `(${evt.route})`); return toUI('helper-event', evt); }
   if (evt.event === 'level') return toUI('level', evt.v);
+  // the helper waits for the app before it watches for calls (meeting-capture)
+  if (evt.event === 'ready') syncMeetingWatch(true);
+  // with meeting-capture off nothing reacts to a call: no popup, no chat reading, no participant tracking
+  if ((evt.event === 'chat' || evt.event === 'meeting' || evt.event === 'meetingInfo') && !meetingEventsAllowed(gate())) return;
   if (evt.event === 'chat') return onChat(evt);
   if (evt.event === 'meeting') return onMeeting(evt);
   if (evt.event === 'meetingInfo') {
@@ -445,7 +459,8 @@ async function inviteesNow() {
 // the people and companies that come up most in the saved meetings. Only the count is logged; QUORUM_LOG_TERMS=1 on a
 // development run also logs a sample
 async function sessionTerms({ calendar = true, participants = [] } = {}) {
-  const invited = calendar ? await inviteesNow() : [];
+  const plan = termsPlan(gate(), { calendar });
+  const invited = plan.invitees ? await inviteesNow() : [];
   meeting.invitees = invited.filter((a) => a?.name).map((a) => ({ name: a.name, email: a.email ?? null }));
   const index = meetingIndex();
   const terms = buildTerms({
@@ -454,8 +469,10 @@ async function sessionTerms({ calendar = true, participants = [] } = {}) {
     vaultPeople: topNames(index.map((m) => m.people)), vaultOrgs: topNames(index.map((m) => m.orgs), 50),
   });
   // screen context: the words on the front window (the meeting app's during a call) join the list, on this Mac only
-  if (settings.screenContext) {
-    const r = await calAsk({ cmd: 'screenTerms', bundles: calendar ? provider().bundles ?? [] : [] });
+  if (plan.screen && settings.screenContext) {
+    const t0 = Date.now();
+    const r = await calAsk({ cmd: 'screenTerms', bundles: plan.invitees ? provider().bundles ?? [] : [] });
+    log(`screen context read in ${Date.now() - t0} ms`);
     const seen = new Set(terms.map((t) => t.toLowerCase()));
     const fresh = (Array.isArray(r.terms) ? r.terms : []).filter((t) => !seen.has(String(t).toLowerCase()));
     if (fresh.length) terms.push(...fresh);
@@ -602,6 +619,7 @@ const participantsNow = () => (meeting.solo ? [] : participantList({ people: [..
 // and a run already in flight is the one the caller waits for
 let speakersRun = null;
 function nameSpeakers() {
+  if (!gate().liveAssist) return Promise.resolve();
   if (speakersRun) return speakersRun;
   const participants = participantsNow();
   if (!participants.length || !meeting.transcript.some((t) => t.channel === 'them')) return Promise.resolve();
@@ -665,7 +683,7 @@ async function runNotesModel(kind, { turns, state, label, outline = '', onDelta 
 }
 
 async function runSummary() {
-  if (!meeting.armed || summaryBusy || !summaryDue({ turns: meeting.transcript, state: meeting.summary, lastAt: meeting.summaryAt, now: Date.now() })) return;
+  if (!summaryAllowed(gate()) || !meeting.armed || summaryBusy || !summaryDue({ turns: meeting.transcript, state: meeting.summary, lastAt: meeting.summaryAt, now: Date.now() })) return;
   summaryBusy = true;
   meeting.summaryAt = Date.now();
   const turns = meeting.transcript;
@@ -733,10 +751,13 @@ const suggester = createSuggester({
 
 // consent first: nothing records until Quorum's notice is confirmed in the chat
 async function startListening(by) {
+  // manual-listen off refuses; meeting-capture off makes every session a solo note (notetaker.js)
+  const decision = startDecision(gate(), { meetingActive });
+  if (!decision.ok) { log('start refused:', decision.error); toUI('log', decision.error); return { error: decision.error }; }
   if (meeting.armed || meeting.starting || callBlocked) return;
   meeting.starting = true;
   // with no call on, Start listening opens a note: mic and speakers, no chat notice, saved like any meeting
-  const solo = !meetingActive;
+  const solo = decision.solo;
   meeting.solo = solo;
   if (!solo) {
     await refreshGuard();
@@ -894,6 +915,7 @@ function noteMarkdown({ notes, followups }) {
 const providerOn = (id) => settings.meetingProviders?.[id]?.enabled !== false;
 
 function onMeeting({ active, app: source, provider: id }) {
+  if (!gate().meetingCapture) return;
   const pid = id ?? Object.keys(PROVIDERS).find((k) => PROVIDERS[k].name === source) ?? 'zoom';
   if (active && !providerOn(pid) && !meeting.armed) return log(`meeting detected but ${PROVIDERS[pid]?.name ?? pid} is removed in Settings`);
   log('meeting', active ? 'detected' : 'ended', source);
@@ -924,7 +946,7 @@ let popupHideTimer = null;
 
 // always the top-right corner of the screen you're on; the card slides in from the right edge
 function showPopup(mode) {
-  if (!popup || popup.isDestroyed()) return;
+  if (!popup || popup.isDestroyed() || !gate().meetingCapture) return;
   clearTimeout(popupHideTimer);
   const { workArea: wa } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   popup.setBounds({ x: wa.x + wa.width - POPUP_W, y: wa.y + 4, width: POPUP_W, height: 84 });
@@ -951,6 +973,7 @@ function openMain() {
 }
 
 function setAutoListen(on) {
+  if (!gate().meetingCapture) return;
   settings.autoListen = on;
   store.settings.save();
   toUI('settings', settings);
@@ -971,7 +994,8 @@ function trayImage(state) {
 function updateTray() {
   if (!tray) return;
   const listening = meeting.capturing;
-  const status = listening ? 'Quorum is listening' : callBlocked ? 'Off for this call' : meeting.armed ? 'Stopped, waiting for GO' : meetingActive ? `${provider().name} meeting detected` : 'Not listening';
+  const g = gate();
+  const status = listening ? 'Quorum is listening' : callBlocked ? 'Off for this call' : meeting.armed ? (meeting.solo ? 'Paused' : 'Stopped, waiting for GO') : meetingActive && g.meetingCapture ? `${provider().name} meeting detected` : 'Not listening';
   const focused = !!win && win.isVisible() && win.isFocused();
   tray.setImage(trayImage(listening ? 'listening' : focused || !app.isPackaged ? 'focused' : 'idle'));
   tray.setToolTip(`Quorum: ${status}`);
@@ -979,21 +1003,23 @@ function updateTray() {
     { label: status, enabled: false },
     { type: 'separator' },
     { label: 'Open Quorum', click: openMain },
-    meeting.armed
-      ? { label: 'Stop listening and summarize', click: () => { openMain(); endMeeting(); } }
-      : { label: 'Start listening', enabled: !meeting.starting, click: () => startListening() },
-    { label: 'Listen automatically', type: 'checkbox', checked: settings.autoListen, click: (item) => setAutoListen(item.checked) },
+    ...(meeting.armed
+      ? [{ label: 'Stop listening and summarize', click: () => { openMain(); endMeeting(); } }]
+      : g.manualListen ? [{ label: 'Start listening', enabled: !meeting.starting, click: () => startListening() }] : []),
+    ...(g.meetingCapture ? [{ label: 'Listen automatically', type: 'checkbox', checked: settings.autoListen, click: (item) => setAutoListen(item.checked) }] : []),
     ...(updates?.state().status === 'ready' ? [{ type: 'separator' }, { label: `Update to Quorum ${updates.state().version}`, click: () => updates.install() }] : []),
     { type: 'separator' },
     { label: 'Quit Quorum', click: () => app.quit() },
   ]);
 }
 
-ipcMain.handle('start', () => startListening());
-ipcMain.handle('popup-listen', () => { startListening(); });
+// start answers { error } when manual-listen is off, so the renderer can say why nothing happened
+ipcMain.handle('start', async () => (await startListening()) ?? null);
+ipcMain.handle('popup-listen', () => { if (gate().meetingCapture) startListening(); });
 ipcMain.handle('popup-open', () => { openMain(); hidePopup(); });
 ipcMain.handle('popup-dismiss', () => hidePopup());
 ipcMain.handle('popup-menu', () => {
+  if (!gate().meetingCapture) return;
   Menu.buildFromTemplate([
     { label: 'Listen automatically in every meeting', type: 'checkbox', checked: settings.autoListen, click: (item) => setAutoListen(item.checked) },
     { label: 'Open Quorum', click: openMain },
@@ -1096,7 +1122,7 @@ ipcMain.handle('cli-remove', () => {
 ipcMain.handle('mcp-remove', async () => ({ added: !(await claudeRun(['mcp', 'remove', 'quorum', '--scope', 'user'])).ok }));
 // signing in belongs to Claude Code, so Quorum opens Terminal on its login rather than handling credentials itself
 ipcMain.handle('claude-login', () => execFileSync('/usr/bin/osascript', ['-e', 'tell application "Terminal" to do script "claude auth login"', '-e', 'tell application "Terminal" to activate']));
-ipcMain.handle('accept-suggestion', (_e, id) => suggester.accept(id));
+ipcMain.handle('accept-suggestion', (_e, id) => (gate().liveAssist ? suggester.accept(id) : null));
 ipcMain.handle('open-note', (_e, abs) => openNote(String(abs)));
 ipcMain.handle('open-external', (_e, url) => { if (/^https:\/\//.test(String(url))) shell.openExternal(String(url)); });
 ipcMain.handle('copy', (_e, text) => clipboard.writeText(String(text)));
@@ -1958,7 +1984,10 @@ registerBeta({
 });
 // feature flags (flags.js): the admin app's switches, read from the relay on launch and every hour; QUORUM_FLAGS in
 // the environment overrides them for a dev copy. Both editions read the same list
-registerFlags({ ipcMain, settings, saveSettings, log, source: () => account.envStatus?.().config ?? 'production', emit: (s) => toUI('flags', s) });
+// A change applies at once: the helper starts or stops watching for calls, the tray redraws, and every gate below reads
+// the new value on its next use
+flagsApi = registerFlags({ ipcMain, settings, saveSettings, log, source: () => account.envStatus?.().config ?? 'production', emit: (s) => { toUI('flags', s); syncMeetingWatch(); updateTray(); } });
+syncMeetingWatch();
 ipcMain.handle('connect-brain', async () => {
   const r = await dialog.showOpenDialog(win, {
     title: 'Connect your Agent OS',
@@ -2011,8 +2040,20 @@ function saveNotes(payload) {
   return { file, rel: path.relative(path.dirname(suggester.vault()), file), ...noteLink(file) };
 }
 
+// the helper's call detection follows meeting-capture; turning it off also drops a call the app was showing (a session
+// already running on a noticed call keeps going until it ends)
+function syncMeetingWatch(force = false) {
+  const on = gate().meetingCapture;
+  if (!force && on === watchingMeetings) return;
+  watchingMeetings = on;
+  helperSend({ cmd: 'meetingWatch', on });
+  log('meeting watch', on ? 'on' : 'off');
+  if (!on && !(meeting.armed && !meeting.solo)) { meetingActive = false; hidePopup(); }
+}
+
 // one recording at a time: a meeting starting closes the note you were taking and saves it
 async function closeNoteForMeeting() {
+  if (!gate().meetingCapture) return;
   const notes = await endMeeting();
   if (notes && !notes.empty) saveNotes({ notes, followups: [] });
   meeting.notes = null;
@@ -2027,6 +2068,7 @@ async function closeNoteForMeeting() {
 // participants), or Unknown. similar also renames the turns the pass clustered with an unnamed one
 ipcMain.handle('name-speakers', async () => { await nameSpeakers(); return speakersPayload(); });
 ipcMain.handle('set-speaker', (_e, id, name, similar) => {
+  if (!gate().liveAssist) return speakersPayload();
   const typed = String(name ?? '').trim();
   if (typed && typed !== 'Unknown' && !participantsNow().some((p) => p.name.toLowerCase() === typed.toLowerCase())) meeting.people.add(typed);
   meeting.transcript = correctSpeaker(meeting.transcript, Number(id), typed || null, { similar: !!similar });
@@ -2048,6 +2090,7 @@ const LAUNCH_ID = String(Date.now());
 // meeting apps Quorum works with. Local and experimental: Quorum reads the app (or the browser running it) on this Mac.
 // Zoom also gets the notice posted in its chat; Meet and Teams detect and capture, with the notice shown on this Mac instead
 ipcMain.handle('meeting-providers', async () => {
+  if (!gate().meetingCapture) return [];
   const ax = (await new Promise((resolve) => { axWaiters.push(resolve); helperSend({ cmd: 'axStatus', prompt: false }); setTimeout(() => resolve(null), 3000); })) ?? lastAx;
   return Object.entries(PROVIDERS).map(([id, p]) => {
     const appPath = p.apps.find((a) => existsSync(a)) ?? null;
@@ -2058,21 +2101,23 @@ ipcMain.handle('meeting-providers', async () => {
 });
 // removing a provider stops Quorum from noticing its calls; the app itself is untouched
 ipcMain.handle('meeting-provider-set', (_e, id, on) => {
-  if (!PROVIDERS[id] || typeof on !== 'boolean') return;
+  if (!gate().meetingCapture || !PROVIDERS[id] || typeof on !== 'boolean') return;
   settings.meetingProviders = { ...settings.meetingProviders, [id]: { enabled: on } };
   store.settings.save();
 });
 // screen context: the setting plus whether macOS lets the helper take the screenshot; turning it on asks once
 const SCREEN_PANE = 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture';
-ipcMain.handle('screen-context-status', async () => ({ on: !!settings.screenContext, granted: (await calAsk({ cmd: 'screenAccess', prompt: false })).granted ?? null }));
+// both answer available: false while the screen-context flag (or manual-listen, which it needs) is off
+ipcMain.handle('screen-context-status', async () => (gate().screenContext ? { available: true, on: !!settings.screenContext, granted: (await calAsk({ cmd: 'screenAccess', prompt: false })).granted ?? null } : { available: false, on: false, granted: null }));
 ipcMain.handle('screen-context-set', async (_e, on) => {
+  if (!gate().screenContext) return { available: false, on: false, granted: null };
   settings.screenContext = on === true;
   store.settings.save();
   const granted = settings.screenContext ? (await calAsk({ cmd: 'screenAccess', prompt: true })).granted ?? null : (await calAsk({ cmd: 'screenAccess', prompt: false })).granted ?? null;
-  return { on: settings.screenContext, granted };
+  return { available: true, on: settings.screenContext, granted };
 });
 ipcMain.handle('screen-context-privacy', () => shell.openExternal(SCREEN_PANE));
-ipcMain.handle('meeting-provider-check', () => { helperSend({ cmd: 'axStatus', prompt: true }); });
+ipcMain.handle('meeting-provider-check', () => { if (gate().meetingCapture) helperSend({ cmd: 'axStatus', prompt: true }); });
 ipcMain.handle('decisions-status', async () => { const provider = await decisionProvider(); return { connected: !!provider, provider, providers: Object.fromEntries(Object.entries(DECISION_PROVIDERS).map(([id, p]) => [id, { name: p.name, placeholder: p.placeholder, keyHint: p.keyHint }])) }; });
 ipcMain.handle('decisions-set', async (_e, provider, key) => {
   if (!DECISION_PROVIDERS[provider]) return { error: 'Unknown provider' };
@@ -2104,9 +2149,16 @@ ipcMain.handle('model-key-set', (_e, key) => handlers['connector-key-set'](null,
 ipcMain.handle('model-key-remove', () => handlers['connector-key-remove'](null, 'anthropic'));
 ipcMain.handle('ax-settings-open', () => shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'));
 ipcMain.on('launch-id', (e) => { e.returnValue = LAUNCH_ID; });
-ipcMain.handle('dictate', async (_e, on) => helperSend(on ? { cmd: 'dictateStart', locale: settings.voice?.locale || 'en-US', terms: await sessionTerms({ calendar: false }) } : { cmd: 'dictateStop' }));
-// macOS's Accessibility prompt shows once per install, not on every launch or reload; after that, Settings shows the state
+// dictation belongs to manual listening: off refuses a start, and a stop always goes through
+ipcMain.handle('dictate', async (_e, on) => {
+  if (on && !dictationAllowed(gate())) return { error: 'Dictation is turned off in this build of Quorum.' };
+  helperSend(on ? { cmd: 'dictateStart', locale: settings.voice?.locale || 'en-US', terms: await sessionTerms({ calendar: false }) } : { cmd: 'dictateStop' });
+  return null;
+});
+// macOS's Accessibility prompt shows once per install, not on every launch or reload; after that, Settings shows the
+// state. Accessibility is only needed to notice calls, so with meeting-capture off the app never asks
 ipcMain.handle('ax-status', () => {
+  if (!gate().meetingCapture) { helperSend({ cmd: 'axStatus', prompt: false }); return; }
   const firstAsk = !settings.axPrompted;
   if (firstAsk) { settings.axPrompted = true; store.settings.save(); }
   helperSend({ cmd: 'axStatus', prompt: firstAsk });
@@ -2145,6 +2197,16 @@ async function control({ cmd, args = {} }) {
   const b = brain();
   switch (cmd) {
     case 'ping': return { app: app.isPackaged ? 'Quorum' : 'Quorum Dev', access: settings.access ?? 'write' };
+    // start, stop and go act on a noticed call, so they follow meeting-capture; end closes any session
+    case 'start':
+    case 'stop':
+    case 'go':
+      if (!gate().meetingCapture) throw new Error('Quorum does not watch for calls in this build. Start listening from the app for a note of your own.');
+      break;
+    default:
+      break;
+  }
+  switch (cmd) {
     case 'start':
       if (callBlocked) throw new Error("Quorum is off for this call. Someone on your never-listen list is in it.");
       if (meeting.capturing) return 'Already listening';

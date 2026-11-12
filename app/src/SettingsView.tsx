@@ -13,7 +13,7 @@ import { Row, Toggle, useMenu } from './controls';
 import { AccountArea, BillingArea, EDITION, KnowledgeQueueArea, MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { canAdmin, modeOf, resolvePage, workspacePages, type Page } from './settingsNav';
 import { EnvSwitch } from './EnvSwitch';
-import { useFlags } from './flags';
+import { useFlags, useNotetaker } from './flags';
 import {
   IconBell, IconBrain, IconBuilding, IconCalendar, IconChat, IconFolder, IconGrid, IconKeyboard, IconLock,
   IconChevron, IconCode, IconExternal, IconGlobe, ProviderMark, IconMic, IconMore, IconNotes, IconPeople, IconPerson, IconPlus, IconPower, IconReset, IconSliders, IconStack, IconCheck, IconCopy, IconFolderFill, IconFork, IconShield, IconGraph, IconSearch, IconClose, Wave,
@@ -51,6 +51,7 @@ const Soon = () => <em className="soon">Soon</em>;
 export function SettingsView({ open, brain, settings, onSettings, onConnect, onDisconnect, onBrain, onBack }: {
   open?: ({ page: Page; n: number } & ConnectorsTarget) | null; brain: Brain | null; settings: Settings; onSettings: (s: Settings) => void; onConnect: () => void; onDisconnect: () => void; onBrain?: (b: Brain) => void; onBack: () => void;
 }) {
+  const nt = useNotetaker();
   const [saved, setPage] = useSession<Page>('settingsPage', 'preferences');
   // an open connector detail page; cleared when the page changes
   const [connectorDetail, setConnectorDetail] = useState<string | null>(null);
@@ -143,10 +144,10 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
             <ProfilePage settings={settings} email={showEmail ? email : ''} emailLabel={emailLabel} name={user?.name ?? ''} onSettings={onSettings}>
               <h3>General</h3>
               <div className="set-card">
-                <Row icon={<IconChat width={18} height={18} />} title="Suggest answers from my notes" desc="Offers your notes when someone asks you a question">
+                {nt.liveAssist && <Row icon={<IconChat width={18} height={18} />} title="Suggest answers from my notes" desc="Offers your notes when someone asks you a question">
                   <Toggle on={settings.suggestions !== false} onChange={(v) => set({ suggestions: v })} />
-                </Row>
-                <ScreenContextRow />
+                </Row>}
+                {nt.screenContext && <ScreenContextRow />}
                 <Row icon={<IconLock width={18} height={18} />} title="Data" desc="Transcribed on this Mac, answered by Claude Enterprise" />
               </div>
               <AboutCard />
@@ -534,6 +535,7 @@ export function CompanyCard({ settings, onSettings }: { settings: Settings; onSe
 function WorkspacePage({ settings, onSettings, onGo, billing, company }: { settings: Settings; onSettings: (s: Settings) => void; onGo: (p: Page) => void; billing: boolean; company: ReactNode }) {
   const w = settings.workspace ?? {};
   const save = async (patch: Partial<Workspace>) => onSettings(await window.quorum.setSettings({ workspace: patch }));
+  const nt = useNotetaker();
   return (
     <>
       <AccountArea local={<><h3>Account</h3><p className="muted">Local edition. Everything stays on this Mac.</p></>}
@@ -545,6 +547,7 @@ function WorkspacePage({ settings, onSettings, onGo, billing, company }: { setti
       <h3>Connections</h3>
       <WorkspaceDecisions connectedBy={w.decisions?.by} />
 
+      {nt.meetingCapture && <>
       <h3>Meetings</h3>
       <div className="set-card form words">
         <div className="set-line"><div className="set-label"><strong>Stop word</strong><span>Stops Quorum and deletes the call when sent in the chat</span></div>
@@ -553,6 +556,7 @@ function WorkspacePage({ settings, onSettings, onGo, billing, company }: { setti
           <Field value={w.goWord ?? 'GO'} placeholder="GO" onSave={(v) => save({ goWord: v })} /></div>
       </div>
       <CustomerBlacklist list={w.optOuts ?? (w.neverListen ?? []).map((domain) => ({ domain }))} onChange={(optOuts) => save({ optOuts })} />
+      </>}
     </>
   );
 }
@@ -1229,8 +1233,11 @@ const ECHO_DESC: Record<NonNullable<Transcription['echo']>, string> = {
 function MeetingsPage({ settings, onSettings, onConnector }: { settings: Settings; onSettings: (s: Settings) => void; onConnector: (id: string) => void }) {
   const t = settings.transcription ?? {};
   const saveTx = async (patch: Transcription) => onSettings(await window.quorum.setSettings({ transcription: patch }));
+  // call detection and auto-listen follow meeting-capture; the transcription rows follow manual-listen (flags.ts)
+  const nt = useNotetaker();
   return (
     <>
+      {nt.meetingCapture && <>
       <h3>Listening</h3>
       <div className="set-card">
         <Row icon={<Wave live={false} />} title="Listen automatically" desc="Starts transcribing when a meeting begins in Zoom, Google Meet or Teams">
@@ -1238,13 +1245,16 @@ function MeetingsPage({ settings, onSettings, onConnector }: { settings: Setting
         </Row>
       </div>
       <MeetingProviders onConnector={onConnector} />
+      </>}
+      <h3>Meeting notes</h3>
       <div className="set-card">
         <ConnectHint connector="zoom" title="Cloud recordings" desc="Zoom's cloud recordings and transcripts import through the Zoom connector in Quorum Cloud. Google Meet and Teams recordings are next.">
           <button className="pill small-pill" onClick={() => onConnector('zoom')}>Open Zoom connector</button>
         </ConnectHint>
       </div>
+      {nt.manualListen && <>
       <h3>Transcribing</h3>
-      <p className="mcp-lede">How Quorum turns call audio into text.</p>
+      <p className="mcp-lede">How Quorum turns what it hears into text when you start listening.</p>
       {settings.providers?.speech && settings.providers.speech !== 'apple' && <p className="set-note">Cloud speech engines arrive with the speech provider interface. {BY_ID[settings.providers.speech]?.name ?? 'That provider'} is saved as your speech provider; until then Apple transcribes every meeting on this Mac.</p>}
       <div className="set-card even">
         <Row icon={<IconKeyboard width={18} height={18} />} title="Show words as they're heard" desc="Unconfirmed words appear dimmed"><Toggle on={t.live ?? true} onChange={(on) => saveTx({ live: on })} /></Row>
@@ -1266,7 +1276,7 @@ function MeetingsPage({ settings, onSettings, onConnector }: { settings: Setting
           </select>
         </Row>
       </div>
-
+      </>}
     </>
   );
 }
@@ -1309,7 +1319,7 @@ function FlagsCard() {
         <h3>Feature flags</h3>
         <span className="set-head-actions"><button className="pill small-pill" disabled={busy} onClick={refresh}>{busy ? 'Reading…' : 'Refresh'}</button></span>
       </div>
-      <p className="mcp-lede">Switches set in the admin app. This copy reads them on launch and every hour{state.fetchedAt ? `; last read ${new Date(state.fetchedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '; not read from the relay yet'}.</p>
+      <p className="mcp-lede">Switches set in the admin app. A change takes effect as soon as this copy reads it, with no restart; screen-context needs manual-listen on. This copy reads them on launch and every hour{state.fetchedAt ? `; last read ${new Date(state.fetchedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '; not read from the relay yet'}.</p>
       {shownError && <p className="set-error">{shownError} The values below are the last ones this copy had.</p>}
       <div className="set-card">
         {entries.length === 0 && <Row icon={<IconSliders width={18} height={18} />} title="No flags yet" desc="The relay has not answered and this build has no defaults" />}

@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 're
 import type { Settings } from './quorum';
 import { ClaudeLogo, IconArrowUp, IconChevron, IconClose, IconCode, IconDoc, IconMic, IconPlus, ProviderMark } from './icons';
 import { modelName, providerFor } from '../connectors/catalog';
+import { useFlag } from './flags';
 
 // the Claude picks: the composer's quick switch when Claude Code or the Anthropic API answers, and the same choice on
 // those rows in Settings › Connectors; other providers run the model named there (connectors/catalog.js)
@@ -31,6 +32,8 @@ export function Composer({ value, onChange, onSubmit, placeholder, disabled, bus
   const [files, setFiles] = useState<Attachment[]>([]);
   const staging = files.some((f) => !f.staged && !f.error);
   const [dictating, setDictating] = useState(false);
+  // dictation belongs to manual listening (the manual-listen flag)
+  const canDictate = useFlag('manual-listen');
   // only the composer that started dictation takes the words
   const dict = useRef<{ base: string; finals: string } | null>(null);
   const latest = useRef(onChange);
@@ -169,13 +172,15 @@ export function Composer({ value, onChange, onSubmit, placeholder, disabled, bus
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
-          if (e.metaKey && e.shiftKey && e.key.toLowerCase() === 'd' && !disabled) { e.preventDefault(); toggleDictation(); }
+          if (e.metaKey && e.shiftKey && e.key.toLowerCase() === 'd' && !disabled && (canDictate || dictating)) { e.preventDefault(); toggleDictation(); }
         }} />
       <div className="c-tools">
+        {(canDictate || dictating) && (
         <button type="button" className={`icon-btn mic ${dictating ? 'on' : ''}`} disabled={disabled} onClick={toggleDictation}
           aria-label={dictating ? 'Stop dictation' : 'Dictate'} aria-pressed={dictating} data-tip={dictating ? 'Stop dictation · ⌘⇧D' : 'Dictate · ⌘⇧D'} data-tip-pos="top">
           <IconMic />
         </button>
+        )}
         {claude ? (
           <div className="menu-wrap model-wrap">
             <button type="button" className="model" onClick={(e) => { e.stopPropagation(); setMenuUp(e.currentTarget.getBoundingClientRect().bottom + 330 > window.innerHeight); setMenu((o) => !o); }} aria-haspopup="menu" aria-expanded={menu}

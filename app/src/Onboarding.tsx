@@ -3,6 +3,7 @@ import type { AccountState, Brain, MeetingSourceInfo, OnboardingChecks, Onboardi
 import { ConnectHint } from './ConnectHint';
 import { IconCalendar, IconCheck, IconFolder, IconFolderOpen, IconLock, IconMic, IconPerson, IconQuorum, IconShield, ProviderMark } from './icons';
 import { isCloud } from './edition';
+import { useNotetaker } from './flags';
 import { detectProvider, KEY_NAMES, KEY_PROVIDERS, SOURCE_NAMES, type KeyProvider } from './modelSource';
 import { SetupForm, answersFrom, draftFrom, draftIsEmpty, emptyDraft, type SetupDraft } from './SetupForm';
 import mark from '../assets/quorum-mark.png';
@@ -17,6 +18,7 @@ const home = (p: string) => p.replace(/^\/Users\/[^/]+/, '~');
 export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Brain | null; onBrain: (b: Brain | null) => void; accountSlot?: ReactNode; onDone: () => void }) {
   const [step, setStep] = useState<Step>('welcome');
   const [status, setStatus] = useState<Status>(null);
+  const nt = useNotetaker();
   // Use Quorum's models was picked: the account step is then required, since the relay needs a signed-in Cloud account
   const [managed, setManaged] = useState(false);
   // the fast part first, then permissions and Claude Code, which can take a few seconds; resolves when both are in
@@ -60,7 +62,7 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
               <li><IconFolder width={16} height={16} /> {brain ? `Agent OS at ${home(brain.root)}` : 'No Agent OS yet (connect one in Settings)'}</li>
               <li><ProviderMark provider="anthropic" /> {managed ? "Model: Quorum's models (after you sign in)" : status?.model?.source && status.model.source !== 'none' ? `Model: ${SOURCE_NAMES[status.model.source]}` : 'No model source yet (choose one in Settings › Connectors)'}</li>
               <li><IconMic width={16} height={16} /> {status?.permissions?.microphone === 'granted' ? 'Microphone allowed' : 'Microphone: macOS will ask on your first call'}</li>
-              <li><IconShield width={16} height={16} /> {status?.permissions?.accessibility === 'granted' ? 'Accessibility allowed' : 'Accessibility: needed to read the meeting chat'}</li>
+              {nt.meetingCapture && <li><IconShield width={16} height={16} /> {status?.permissions?.accessibility === 'granted' ? 'Accessibility allowed' : 'Accessibility: needed to read the meeting chat'}</li>}
             </ul>
             <p>Quorum lives in the menu bar. When a Zoom, Google Meet or Teams call starts, it offers to listen.</p>
             <div className="onb-actions"><button className="pill ghost" onClick={back}>Back</button><button className="pill primary" autoFocus onClick={async () => { await window.quorum.onboardingDone(); onDone(); }}>Open Quorum</button></div>
@@ -341,6 +343,10 @@ function PermissionsStep({ status, onRefresh, onPoll, onBack, onNext }: { status
     poll.current = window.setInterval(() => { onPoll(); if (Date.now() > until && poll.current) { window.clearInterval(poll.current); poll.current = null; } }, 1500);
   };
   useEffect(() => () => { if (poll.current) window.clearInterval(poll.current); }, []);
+  // Accessibility is only for noticing calls and reading their chat (the meeting-capture flag); without it the step
+  // asks for the microphone and the optional calendar
+  const nt = useNotetaker();
+  const perms = PERMS.filter((x) => x.id !== 'accessibility' || nt.meetingCapture);
   useEffect(() => { if (granted(p?.accessibility) && poll.current) { window.clearInterval(poll.current); poll.current = null; } }, [p?.accessibility]);
   const allow = async (id: (typeof PERMS)[number]['id']) => {
     if (id === 'microphone') await window.quorum.onboardingRequestMicrophone();
@@ -349,13 +355,13 @@ function PermissionsStep({ status, onRefresh, onPoll, onBack, onNext }: { status
     onPoll();
   };
   // the two Quorum cannot work without; calendar stays optional
-  const ready = granted(p?.microphone) && granted(p?.accessibility);
+  const ready = granted(p?.microphone) && (!nt.meetingCapture || granted(p?.accessibility));
   return (
     <section className="onb-step">
       <h1>Permissions</h1>
-      <p>Quorum records and transcribes on this Mac only. Microphone and Accessibility are needed to listen and to read the meeting chat; Calendar is optional.</p>
+      <p>{nt.meetingCapture ? 'Quorum records and transcribes on this Mac only. Microphone and Accessibility are needed to listen and to read the meeting chat; Calendar is optional.' : 'Quorum records and transcribes on this Mac only when you start listening. The microphone is needed for that; Calendar is optional.'}</p>
       <div className="onb-perms">
-        {PERMS.map((x) => {
+        {perms.map((x) => {
           const s = p?.[x.id];
           const on = granted(s);
           return (
