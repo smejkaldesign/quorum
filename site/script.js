@@ -41,6 +41,15 @@
     });
   }
 
+  // "Join now" scrolls to the hero signup and puts the cursor in the email field.
+  var focusJoin = function () {
+    if (location.hash !== "#join") return;
+    var email = document.getElementById("hero-email");
+    if (email) setTimeout(function () { email.focus({ preventScroll: true }); }, 350);
+  };
+  window.addEventListener("hashchange", focusJoin);
+  focusJoin();
+
   // The app preview is laid out at the app's default window width and scaled to the frame it sits in.
   var shot = document.querySelector("[data-app-preview]");
   if (shot) {

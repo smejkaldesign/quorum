@@ -716,3 +716,5 @@ ul { margin: 0; padding: 0; list-style: none; }
 .connect-list li span { margin-left: 8px; color: var(--muted); font-size: 14px; }
 .connect-list.coming li { color: var(--muted); }
 @media (min-width: 760px) { .connect-groups { grid-template-columns: 1fr 1fr; gap: 48px; } }
+
+#join { scroll-margin-top: calc(var(--header-h) + 48px); }
