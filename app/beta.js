@@ -10,11 +10,13 @@ import { relayFetch, unreachable } from './relayUrl.js';
 export const HEARTBEAT_EVERY = 24 * 60 * 60 * 1000;
 export { normalizeCode };
 
-// the build-time switch: QUORUM_BETA_GATE in the environment wins (0, false, off turn it off), then the packaged
-// package.json's quorumBetaGate, and the gate is on when neither says otherwise
-export function gateOn({ env = process.env, pkg = {} } = {}) {
+// the build-time switch: QUORUM_BETA_GATE in the environment wins (0, false, off turn it off; 1 turns it on in a
+// development copy to test it), a development copy skips the gate otherwise, then the packaged package.json's
+// quorumBetaGate, and the gate is on when none of these says otherwise
+export function gateOn({ env = process.env, pkg = {}, development = false } = {}) {
   const v = String(env.QUORUM_BETA_GATE ?? '').trim().toLowerCase();
   if (v) return !['0', 'false', 'off', 'no'].includes(v);
+  if (development) return false;
   return pkg.quorumBetaGate !== false;
 }
 

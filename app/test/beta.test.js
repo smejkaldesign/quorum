@@ -191,3 +191,11 @@ describe('the heartbeat', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
+
+describe('gateOn in a development copy', () => {
+  it('is off unless QUORUM_BETA_GATE turns it on', () => {
+    expect(gateOn({ env: {}, pkg: { quorumBetaGate: true }, development: true })).toBe(false);
+    expect(gateOn({ env: { QUORUM_BETA_GATE: '1' }, pkg: {}, development: true })).toBe(true);
+    expect(gateOn({ env: {}, pkg: {}, development: false })).toBe(true);
+  });
+});

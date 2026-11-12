@@ -1987,7 +1987,7 @@ registerOnboarding({
 // the beta gate (beta.js): an access code before anything else, in both editions, until the build turns the gate off.
 // A copy on the local Supabase stack checks its code against a relay on this Mac
 registerBeta({
-  ipcMain, settings, saveSettings, on: gateOn({ pkg: packagedMeta }), edition: EDITION, version: app.getVersion(), log,
+  ipcMain, settings, saveSettings, on: gateOn({ pkg: packagedMeta, development: isDevelopment }), edition: EDITION, version: app.getVersion(), log,
   source: () => account.envStatus?.().config ?? 'production', email: () => account.state?.().email ?? null,
 });
 // feature flags (flags.js): the admin app's switches, read from the relay on launch and every hour; QUORUM_FLAGS in
