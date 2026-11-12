@@ -3,10 +3,13 @@ import type { GuardrailRule, GuardrailsState } from './quorum';
 import { Row, Toggle, useMenu } from './controls';
 import { IconCheck, IconClose, IconFolder, IconLock, IconMore, IconPlus, IconSearch, IconShield, IconTrash } from './icons';
 
-// Settings › Guardrails: what an agent may read from the Agent OS and say about it, as one list. Built-in rules first,
-// then what the connected Agent OS offers (reviewed one by one, off until included), the person's own rules with an
-// Add sheet and a live test, workspace rules an admin set (locked), and the recent denials so the guards are seen working.
+// Settings › Guardrails: what an agent may read from the Agent OS and say about it, as one list in two scopes. The
+// individual rules: built-in rules first, then what the connected Agent OS offers (its CLAUDE.md rules, frontmatter
+// conventions, Obsidian exclusions, guard hooks and opt-out lists, reviewed one by one and off until included), then
+// the person's own rules with an Add sheet and a live test. The organization or team rules an admin set, locked.
+// Then the recent denials so the guards are seen working. Every row says what it reaches once it is on.
 const KIND_LABEL: Record<string, string> = { path: 'Folder', frontmatter: 'Frontmatter key', secret: 'File name pattern', term: 'Term', hook: 'Hook from your Agent OS' };
+const ORIGIN: Record<string, string> = { hook: 'Hook', terms: 'Opt-out list', 'claude-md': 'CLAUDE.md', frontmatter: 'Frontmatter', obsidian: 'Obsidian' };
 const KIND_HINT: Record<string, string> = {
   path: 'A folder, relative to your Agent OS. Nothing in it is read or searched. Several, separated by commas.',
   frontmatter: 'A frontmatter key. A note that has it, with any value, is never read, synced or shared.',
@@ -19,8 +22,9 @@ export function GuardrailsPage() {
   const [st, setSt] = useState<GuardrailsState | null>(null);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState('');
-  const refresh = () => window.quorum.guardrailsGet().then((s) => { if (s) setSt(s); }).catch(() => {});
-  useEffect(() => { refresh(); }, []);
+  // opening the page scans the Agent OS again, so a rule added to CLAUDE.md or a newly tagged folder shows up here
+  const refresh = (fresh = false) => window.quorum.guardrailsGet(fresh ? { fresh: true } : undefined).then((s) => { if (s) setSt(s); }).catch(() => {});
+  useEffect(() => { refresh(true); }, []);
   if (!st) return null;
   const act = async (fn: () => Promise<{ ok?: boolean; error?: string } | null>) => { setError(''); const r = await fn(); if (r?.error) setError(r.error); await refresh(); };
   const builtIns = st.rules.filter((r) => r.source === 'built-in');
@@ -35,8 +39,8 @@ export function GuardrailsPage() {
     const Icon = KIND_ICON[r.kind] ?? IconShield;
     return (
       <Row key={r.id} icon={<Icon width={18} height={18} className={r.enabled ? 'ok' : undefined} />}
-        title={<>{r.label}{r.source === 'workspace' && <em className="stub">Workspace</em>}{r.mixed && <em className="stub warn">Read it first</em>}</>}
-        desc={r.what ?? `${KIND_LABEL[r.kind]} · ${valueOf(r)}`}>
+        title={<>{r.label}{r.source === 'workspace' && <em className="stub">Organization or team</em>}{r.source === 'agent-os' && r.origin && <em className="stub">{ORIGIN[r.origin] ?? r.origin}</em>}{r.stale && <em className="stub warn">No longer found in your Agent OS</em>}{r.mixed && <em className="stub warn">Read it first</em>}</>}
+        desc={<>{r.what ?? `${KIND_LABEL[r.kind]} · ${valueOf(r)}`}{r.stale && ' Still on until you leave it out.'}{r.reach && <span className="guard-reach">{r.reach}</span>}</>}>
         {r.source === 'agent-os' && r.decision === null ? (
           <span className="mem-actions">
             <span className="new-badge">New</span>
@@ -51,7 +55,7 @@ export function GuardrailsPage() {
 
   return (
     <>
-      <p className="set-lede">What Quorum's agent may read from your Agent OS and say about it. Every rule only ever denies, so the rules below add up. {st.summary.on} on{st.summary.toReview ? `, ${st.summary.toReview} to review` : ''}.</p>
+      <p className="set-lede">What Quorum's agent may read from your Agent OS and say about it. Every rule only ever denies, so the rules below add up. Individual rules are yours and work in both editions; organization or team rules come from your workspace admins. {st.summary.on} on{st.summary.toReview ? `, ${st.summary.toReview} to review` : ''}.</p>
       {error && <p className="set-error">{error}</p>}
 
       <h3>Built in</h3>
@@ -59,22 +63,29 @@ export function GuardrailsPage() {
 
       {pending.length > 0 && (
         <>
-          <h3>Found in your Agent OS</h3>
-          <p className="mcp-lede">Guards your Agent OS already has. Include one and it runs on every read Quorum makes. Only guards that change what an agent may read or say are offered here.</p>
+          <h3>Found in your Agent OS · {pending.length} to review</h3>
+          <p className="mcp-lede">{scanNote(st)} Include one and it applies on every read, sync and share Quorum makes; leave it out and nothing changes. Only rules that change what Quorum reads, writes, syncs, shares or lets an agent say are offered.</p>
           <div className="set-card">{pending.map(ruleRow)}</div>
         </>
       )}
       {decided.length > 0 && (
         <>
           <h3>From your Agent OS</h3>
+          {pending.length === 0 && <p className="mcp-lede">{scanNote(st)}</p>}
           <div className="set-card">{decided.map(ruleRow)}</div>
         </>
       )}
       {fromOs.length === 0 && (
         <>
           <h3>From your Agent OS</h3>
-          <p className="mcp-lede guard-note">No read guards to offer. The built-in rules cover its private folders and confidential notes.</p>
+          <p className="mcp-lede guard-note">{scanNote(st)} Nothing to offer beyond the built-in rules, which cover its private folders and confidential notes.</p>
         </>
+      )}
+      {st.skipped.length > 0 && (
+        <details className="guard-skipped">
+          <summary>{st.skipped.length} {st.skipped.length === 1 ? 'thing' : 'things'} in your Agent OS looked at and left out</summary>
+          <ul>{st.skipped.map((s) => <li key={s.name}><strong>{s.name}</strong> {s.reason}</li>)}</ul>
+        </details>
       )}
 
       <div className="set-head">
@@ -85,8 +96,8 @@ export function GuardrailsPage() {
 
       {workspace.length > 0 && (
         <>
-          <h3>Workspace rules</h3>
-          <p className="mcp-lede">Set by your workspace admins. They apply on every member's Mac and cannot be turned off here.</p>
+          <h3>Organization or team</h3>
+          <p className="mcp-lede">Set by your workspace admins for everyone in the organization or team. They apply on every member's Mac and cannot be turned off here.</p>
           <div className="set-card">{workspace.map(ruleRow)}</div>
         </>
       )}
@@ -104,6 +115,14 @@ export function GuardrailsPage() {
     </>
   );
 }
+
+// one line on how far the review went, so a short list is seen as a thorough look rather than a shallow one
+const scanNote = (st: GuardrailsState) => {
+  const n = st.scanned?.notes ?? 0;
+  const when = st.scanned?.at ? new Date(st.scanned.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : null;
+  const notes = st.scanned?.truncated ? `the first ${n} notes, which is where the review stopped` : `${n} ${n === 1 ? 'note' : 'notes'}`;
+  return `Reviewed its CLAUDE.md, hooks, Obsidian settings and the frontmatter of ${notes}${when ? ` at ${when}` : ''}.`;
+};
 
 function RuleMenu({ onRemove }: { onRemove: () => void }) {
   const [open, setOpen] = useMenu();

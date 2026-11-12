@@ -4,8 +4,8 @@ import { Row, Toggle } from '../../src/controls';
 import { IconFolder, IconLock, IconPlus, IconSearch, IconShield, IconTrash } from '../../src/icons';
 import { AccountCard, useAccount } from './Account';
 
-// Settings › Admin › Guardrails: rules for the whole workspace. Each member's Quorum merges them with its own rules and
-// cannot turn them off. Every rule only denies, so adding one can only hide more, never less.
+// Settings › Admin › Guardrails: rules for the whole organization or team. Each member's Quorum merges them with its
+// own individual rules and cannot turn them off. Every rule only denies, so adding one can only hide more, never less.
 const KIND_LABEL: Record<string, string> = { path: 'Folder', frontmatter: 'Frontmatter key', secret: 'File name pattern', term: 'Term' };
 const KIND_ICON: Record<string, typeof IconShield> = { path: IconFolder, frontmatter: IconLock, secret: IconLock, term: IconSearch };
 
@@ -33,14 +33,14 @@ function Rules({ account: acct }: { account: AccountState }) {
   const add = async () => {
     const value = draft.value.trim();
     if (!value) return;
-    await save([...rules, { id: '', kind: draft.kind as GuardrailRule['kind'], value, label: draft.label.trim() || value.slice(0, 60), enabled: true, source: 'workspace', locked: true }]);
+    await save([...rules, { id: '', kind: draft.kind as GuardrailRule['kind'], value, label: draft.label.trim() || value.slice(0, 60), enabled: true, source: 'workspace', scope: 'organization', locked: true }]);
     setDraft({ kind: draft.kind, value: '', label: '' });
   };
   return (
     <>
-      <p className="set-lede">Rules every member's Quorum applies on top of its own: folders no agent may read, frontmatter keys that mark a note off limits, file name patterns, and names that are withheld from transcripts and answers. Members see them under Settings, Guardrails and cannot turn them off.</p>
+      <p className="set-lede">Rules for the whole organization or team, applied on every member's Mac on top of their individual rules: folders no agent may read, frontmatter keys that mark a note off limits, file name patterns, and names that are withheld from transcripts and answers. Members see them under Settings, Guardrails and cannot turn them off. Each one can be switched off here without removing it.</p>
       {error && <p className="set-error">{error}</p>}
-      <h3>Workspace rules</h3>
+      <h3>Organization or team rules</h3>
       {rules.length ? (
         <div className="set-card">
           {rules.map((r, i) => { const Icon = KIND_ICON[r.kind] ?? IconShield; return (
@@ -50,7 +50,7 @@ function Rules({ account: acct }: { account: AccountState }) {
             </Row>
           ); })}
         </div>
-      ) : <div className="set-card set-zero small"><p>No workspace rules yet. Members run with Quorum's built-in guardrails and their own.</p></div>}
+      ) : <div className="set-card set-zero small"><p>No organization or team rules yet. Members run with Quorum's built-in guardrails and their own individual rules.</p></div>}
       {canManage && (
         <>
           <h3>Add a rule</h3>

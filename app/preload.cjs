@@ -144,7 +144,7 @@ contextBridge.exposeInMainWorld('quorum', {
   calendarPrivacy: () => ipcRenderer.invoke('calendar-privacy'),
   calendarOpen: (ev) => ipcRenderer.invoke('calendar-open', ev),
   gcalConnect: () => ipcRenderer.invoke('gcal-connect'),
-  guardrailsGet: () => ipcRenderer.invoke('guardrails-get'),
+  guardrailsGet: (opts) => ipcRenderer.invoke('guardrails-get', opts),
   guardrailsSet: (id, patch) => ipcRenderer.invoke('guardrails-set', id, patch),
   guardrailsAdd: (rule) => ipcRenderer.invoke('guardrails-add', rule),
   guardrailsRemove: (id) => ipcRenderer.invoke('guardrails-remove', id),

@@ -31,8 +31,14 @@ export type CalendarEvent = { id: string; title: string; start: string; end: str
 // the Google Calendar connector: configured means the app has a Google client to sign in with
 // guardrails (app/guardrails.js): one list of what the agent may not read or say, from four sources
 export type GuardrailKind = 'path' | 'frontmatter' | 'secret' | 'term' | 'hook';
-export type GuardrailRule = { id: string; kind: GuardrailKind; label: string; value: string; what?: string; path?: string; stage?: 'pre' | 'post'; mixed?: boolean; wired?: boolean; source: 'built-in' | 'agent-os' | 'personal' | 'workspace'; enabled: boolean; locked: boolean; decision?: 'included' | 'excluded' | null };
-export type GuardrailsState = { rules: GuardrailRule[]; skipped: { name: string; reason: string }[]; denials: { t: string; tool: string; path: string; reason: string }[]; summary: { on: number; toReview: number; denyDirs: number; terms: number } };
+// scope: individual rules are the person's own and work in both editions; organization rules come from the workspace's
+// admins and apply to everyone in the organization or team. origin says where an Agent OS candidate was found
+export type GuardrailScope = 'individual' | 'organization';
+export type GuardrailOrigin = 'hook' | 'terms' | 'claude-md' | 'frontmatter' | 'obsidian';
+// reach is what the rule touches once on, from the one table in app/guardrails.js; stale marks an included Agent OS
+// rule the Agent OS no longer offers, which keeps enforcing until the person leaves it out
+export type GuardrailRule = { id: string; kind: GuardrailKind; label: string; value: string; what?: string; path?: string | null; stage?: 'pre' | 'post'; mixed?: boolean; wired?: boolean; origin?: GuardrailOrigin; count?: number; reach?: string; stale?: boolean; source: 'built-in' | 'agent-os' | 'personal' | 'workspace'; scope: GuardrailScope; enabled: boolean; locked: boolean; decision?: 'included' | 'excluded' | null };
+export type GuardrailsState = { rules: GuardrailRule[]; skipped: { name: string; reason: string }[]; scanned: { notes: number; at: number | null; truncated: boolean }; denials: { t: string; tool: string; path: string; reason: string }[]; summary: { on: number; toReview: number; denyDirs: number; terms: number } };
 // in-app updates (app/updater.js): off means this build has no feed (a development copy, or a Cloud build without one)
 export type UpdateState = { status: 'off' | 'idle' | 'checking' | 'downloading' | 'ready' | 'failed'; current: string; version: string | null; percent: number; notes: string | null; checkedAt: number | null; error: string | null };
 export type GoogleCalendarStatus = { configured: boolean; connected: boolean; account: string | null; calendars: number; lastSyncAt: string | null; error: string | null };
@@ -298,7 +304,7 @@ declare global {
       calendarPrivacy(): Promise<void>;
       calendarOpen(ev: CalendarEvent): Promise<void>;
       gcalConnect(): Promise<GoogleCalendarStatus>;
-      guardrailsGet(): Promise<GuardrailsState>;
+      guardrailsGet(opts?: { fresh?: boolean }): Promise<GuardrailsState>;
       guardrailsSet(id: string, patch: { enabled?: boolean; label?: string }): Promise<Result>;
       guardrailsAdd(rule: { kind: string; value: string; label?: string }): Promise<Result & { id?: string }>;
       guardrailsRemove(id: string): Promise<Result>;

@@ -14,7 +14,7 @@ import { createTokenStore } from './sources/tokens.js';
 import { createViews } from './views.js';
 import { registerOnboarding } from './onboarding.js';
 import { createKeeper } from './keeper.js';
-import { wouldBlock } from './guardrails.js';
+import { SECRET_NAMES, frontmatterKeys, wouldBlock } from './guardrails.js';
 import { createSuggester } from './suggest.js';
 import { addFinal, isEcho, toJSON, toText } from './transcript.js';
 import { extractJson } from './json.js';
@@ -1521,8 +1521,10 @@ function openIndex() {
   vindex = null;
   const b = brain();
   if (!b) return;
+  // the guardrails reach search too: a denied folder, a secret-looking file name or a denied frontmatter key never
+  // enters the index, and a rule change rebuilds it (the guardrails IPC handlers below)
   vindex = createVaultIndex({
-    vault: b.vault, isExcludedPath: excludedPath, isExcludedText: suggester.isExcluded, redact: suggester.redactLines,
+    vault: b.vault, isExcludedPath: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isDeniedText: isConfidentialText, isExcludedText: suggester.isExcluded, redact: suggester.redactLines,
     onChange: (rels) => toUI('vault-changed', rels), log: (...a) => log('index', ...a),
   });
   vindex.start();
@@ -1536,7 +1538,11 @@ ipcMain.handle('vault-tree', () => (brain() ? vaultTree(brain().vault, excludedP
 // 'cloud'. The local edition gets a stub whose pushes do nothing, so the call sites below stay the same in both editions.
 // sync never pushes private folders, notes marked confidential, or anything the opt-out list withholds
 const isPrivatePath = (rel) => { const b = brain(); if (!b) return false; const abs = path.resolve(b.vault, rel); return guardrails.compiled().denyDirs.some((d) => { const dir = path.join(b.root, d); return abs === dir || abs.startsWith(dir + path.sep); }); };
-const isConfidentialText = (text) => /^---\r?\n(?:[^\n]*\r?\n)*?confidential\s*:/i.test(String(text).slice(0, 2000));
+// every frontmatter key the guardrails deny (the built-in confidential: plus any the person or the workspace added), so
+// a note the agent may not read is also a note sync never pushes and the index never holds. Only the frontmatter block
+// counts, the same as the read guard: a body line that happens to start with the key is not a mark
+const isConfidentialText = (text) => { const denied = guardrails.compiled().frontmatterKeys; return denied.length > 0 && frontmatterKeys(String(text).slice(0, 4000)).some((k) => denied.includes(k)); };
+const isSecretPath = (rel) => { const c = guardrails.compiled(); return !c.secretsOff && new RegExp(c.secretPattern ?? SECRET_NAMES, 'i').test(String(rel)); };
 const account = EDITION === 'cloud'
   ? (await loadEE('account.js')).registerAccount({ ipcMain, settings, saveSettings, toUI, log, brain, meetingIndex, isExcluded: (rel) => excludedPath(rel) || isPrivatePath(rel), isExcludedText: (t) => suggester.isExcluded(t) || isConfidentialText(t), openExternal: (u) => shell.openExternal(u), oauthRedirect: () => (app.isPackaged ? 'quorum://auth/callback' : 'http://127.0.0.1:47831/auth/callback') })
   : { sync: { pushNote() {}, pushMeetingNote() {}, pullNow() {}, live() {} } };
@@ -1777,10 +1783,12 @@ function callLink(e) {
 // in-app updates: the state the window renders, a check on request, and the install once a version is ready
 let updates = null;
 const packagedMeta = (() => { try { return JSON.parse(readFileSync(path.join(here, 'package.json'), 'utf8')); } catch { return {}; } })();
-ipcMain.handle('guardrails-get', () => guardrails.get());
-ipcMain.handle('guardrails-set', (_e, id, patch) => guardrails.set(String(id ?? ''), patch ?? {}));
-ipcMain.handle('guardrails-add', (_e, rule) => guardrails.add(rule ?? {}));
-ipcMain.handle('guardrails-remove', (_e, id) => guardrails.remove(String(id ?? '')));
+ipcMain.handle('guardrails-get', (_e, opts) => guardrails.get({ fresh: opts?.fresh === true }));
+// a changed rule set reaches the index right away, so search stops answering from what is now denied
+const reindexed = (r) => { if (r?.ok) setTimeout(() => vindex?.rebuild(), 0); return r; };
+ipcMain.handle('guardrails-set', (_e, id, patch) => reindexed(guardrails.set(String(id ?? ''), patch ?? {})));
+ipcMain.handle('guardrails-add', (_e, rule) => reindexed(guardrails.add(rule ?? {})));
+ipcMain.handle('guardrails-remove', (_e, id) => reindexed(guardrails.remove(String(id ?? ''))));
 ipcMain.handle('guardrails-test', (_e, rel) => guardrails.test(String(rel ?? '')));
 ipcMain.handle('update-status', () => updates?.state() ?? { status: 'off', current: app.getVersion(), version: null, percent: 0, notes: null, checkedAt: null, error: null });
 ipcMain.handle('update-check', async () => (updates ? updates.check() : { status: 'off' }));
@@ -1926,7 +1934,8 @@ ipcMain.handle('pick-meetings-dir', async () => {
   return true;
 });
 // the first-run wizard shares the connect step with Settings, so both end up in the same state
-const connectBrain = (b) => { Object.assign(settings, { brainRoot: b.root, vaultPath: b.vault, brainMade: null }); store.settings.save(); log('connected Agent OS', b.root); suggester.reset(); openIndex(); return b; };
+// a connect starts the guardrails review of the folder in the background; the Guardrails page shows it when it lands
+const connectBrain = (b) => { Object.assign(settings, { brainRoot: b.root, vaultPath: b.vault, brainMade: null }); store.settings.save(); log('connected Agent OS', b.root); suggester.reset(); openIndex(); guardrails.scan().then(() => vindex?.rebuild()).catch(() => {}); return b; };
 registerOnboarding({
   ipcMain, settings, saveSettings, inspectBrain, connect: connectBrain, systemPreferences, shell, helperAsk: (cmd) => calAsk({ cmd }), claudeStatus, modelStatus: () => modelStatus(null), log, hadSettings: store.settings.existed,
   runText: (prompt, system) => runClaude(prompt, system, 'haiku', { cwd: homedir() }), hasModel: () => modelSource() !== 'none', owner: () => OWNER, about: aboutMe,
