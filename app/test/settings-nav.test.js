@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canAdmin, modeOf, resolvePage, workspacePages, TEAM_PAGES, WORKSPACE_PAGES } from '../src/settingsNav.ts';
+import { canAdmin, flagHiddenPages, modeOf, resolvePage, voiceMode, workspacePages, TEAM_PAGES, WORKSPACE_PAGES } from '../src/settingsNav.ts';
 
 describe('the Admin button', () => {
   it('shows for everyone in the Local edition', () => {
@@ -21,7 +21,7 @@ describe('which nav shows', () => {
     for (const p of ['preferences', 'memory', 'connectors', 'voice']) expect(modeOf(p)).toBe('account');
   });
 
-  it('lists General alone in the Local edition and in a Cloud build without a hosted account', () => {
+  it('lists General and Notifications alone in the Local edition and in a Cloud build without a hosted account', () => {
     expect(workspacePages('local', false)).toEqual(['general', 'notifications']);
     expect(workspacePages('local', true, true)).toEqual(['general', 'notifications']);
     expect(workspacePages('cloud', null)).toEqual(['general', 'notifications']);
@@ -38,13 +38,20 @@ describe('which nav shows', () => {
 });
 
 describe('resolving a remembered page', () => {
-  it('puts Notifications behind the Admin button and drops Voice typing while dictation is off', () => {
+  it('puts Notifications behind the Admin button', () => {
     expect(modeOf('notifications')).toBe('admin');
     expect(resolvePage('notifications', false)).toBe('preferences');
     expect(resolvePage('notifications', true, ['general', 'notifications'])).toBe('notifications');
-    expect(resolvePage('voice', true, undefined, false)).toBe('preferences');
-    expect(resolvePage('org-voice', true, undefined, false)).toBe('general');
-    expect(resolvePage('voice', true, undefined, true)).toBe('voice');
+  });
+
+  it('shows Voice typing with dictation on, the Dictionary with only listening on, and nothing with both off', () => {
+    expect(voiceMode(true, true)).toBe('voice');
+    expect(voiceMode(false, true)).toBe('dictionary');
+    expect(voiceMode(false, false)).toBe(null);
+    expect(flagHiddenPages('dictionary')).toEqual([]);
+    expect(resolvePage('voice', true, undefined, flagHiddenPages(null))).toBe('preferences');
+    expect(resolvePage('voice', true, undefined, flagHiddenPages('dictionary'))).toBe('voice');
+    expect(resolvePage('org-voice', true, undefined, flagHiddenPages(null))).toBe('org-voice');
   });
 
   it('keeps a page the current nav may show', () => {

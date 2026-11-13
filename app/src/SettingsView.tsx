@@ -11,7 +11,7 @@ import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
 import { AccountArea, BillingArea, EDITION, KnowledgeQueueArea, MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
-import { PERSONAL_ADMIN_PAGES, canAdmin, modeOf, resolvePage, workspacePages, type Page } from './settingsNav';
+import { TOP_ADMIN_PAGES, canAdmin, flagHiddenPages, modeOf, resolvePage, voiceMode, workspacePages, type Page } from './settingsNav';
 import { EnvSwitch } from './EnvSwitch';
 import { useFlags, useNotetaker } from './flags';
 import {
@@ -79,7 +79,9 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   // pages come and go with the Teams page's switch
   const hosted = useHostedAccounts();
   const listed = workspacePages(EDITION, hosted, account?.workspace?.teamEnabled === true);
-  const page = resolvePage(saved, admin, listed, nt.dictation);
+  const voice = voiceMode(nt.dictation, nt.manualListen);
+  const hidden = flagHiddenPages(voice);
+  const page = resolvePage(saved, admin, listed, hidden);
   const mode = modeOf(page);
   const quorumEmail = account?.signedIn ? account.email : null;
   const email = quorumEmail || user?.email || '';
@@ -94,13 +96,13 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   }, [onBack]);
 
   const set = async (patch: Partial<Settings>) => onSettings(await window.quorum.setSettings(patch));
-  // Voice typing, the account page and the workspace one, shows only while the dictation flag is on
-  const shown = (n: Nav) => nt.dictation || (n.id !== 'voice' && n.id !== 'org-voice');
-  const accountNav = ACCOUNT.filter(shown);
-  const adminNav = WORKSPACE.filter((n) => (listed as string[]).includes(n.id) && shown(n));
-  const personalNav = adminNav.filter((n) => (PERSONAL_ADMIN_PAGES as readonly string[]).includes(n.id));
-  const workspaceNav = adminNav.filter((n) => !(PERSONAL_ADMIN_PAGES as readonly string[]).includes(n.id));
-  const all = [...ACCOUNT, ...WORKSPACE];
+  // with dictation off, the account Voice typing page is the Dictionary (settingsNav.voiceMode)
+  const named = (n: Nav): Nav => (n.id === 'voice' && voice === 'dictionary' ? { ...n, label: 'Dictionary' } : n);
+  const accountNav = ACCOUNT.filter((n) => !hidden.includes(n.id)).map(named);
+  const adminNav = WORKSPACE.filter((n) => (listed as Page[]).includes(n.id));
+  const topNav = adminNav.filter((n) => (TOP_ADMIN_PAGES as Page[]).includes(n.id));
+  const workspaceNav = adminNav.filter((n) => !(TOP_ADMIN_PAGES as Page[]).includes(n.id));
+  const all = [...ACCOUNT, ...WORKSPACE].map(named);
   const current = all.find((n) => n.id === page)!;
 
   const navItem = (n: Nav) => (
@@ -127,7 +129,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
           ) : (
             <>
               <button className="set-menu-back" onClick={() => go('preferences')}><IconChevron width={16} height={16} />Menu</button>
-              {personalNav.map(navItem)}
+              {topNav.map(navItem)}
               {workspaceNav.length > 0 && <h4>Workspace</h4>}
               {workspaceNav.map(navItem)}
             </>
@@ -185,7 +187,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
             : page === 'developers' ? <DevelopersPage />
             : page === 'notifications' ? <NotificationsPage />
             : page === 'connectors' ? <ConnectorsPage detail={connectorDetail} onDetail={setConnectorDetail} openLibrary={libraryOpen} />
-            : <VoicePage settings={settings} onSettings={onSettings} />}
+            : <VoicePage settings={settings} onSettings={onSettings} dictionaryOnly={voice === 'dictionary'} />}
         </div>
       </main>
     </div>
@@ -1435,36 +1437,27 @@ function MeetingProviders({ onConnector }: { onConnector: (id: string) => void }
 
 const LANGUAGES = [['en-US', 'English (US)'], ['en-GB', 'English (UK)'], ['en-AU', 'English (Australia)'], ['es-ES', 'Spanish (Spain)'], ['es-MX', 'Spanish (Mexico)'], ['fr-FR', 'French'], ['de-DE', 'German'], ['it-IT', 'Italian'], ['pt-BR', 'Portuguese (Brazil)'], ['ja-JP', 'Japanese']];
 
-// what works today applies to the dictate button in every Quorum composer; the eight Soon rows are system-wide voice typing
-function VoicePage({ settings, onSettings }: { settings: Settings; onSettings: (s: Settings) => void }) {
+// what works today applies to the dictate button in every Quorum composer; the eight Soon rows are system-wide voice typing.
+// With the dictation flag off the page is the Dictionary: the language and the word list, which listening uses too
+function VoicePage({ settings, onSettings, dictionaryOnly = false }: { settings: Settings; onSettings: (s: Settings) => void; dictionaryOnly?: boolean }) {
   const v = settings.voice ?? {};
   const save = async (patch: Partial<Voice>) => onSettings(await window.quorum.setSettings({ voice: patch }));
   const words = v.dictionary ?? [];
   const [heard, setHeard] = useState('');
   const [write, setWrite] = useState('');
   const addWord = () => { if (!heard.trim() || !write.trim()) return; save({ dictionary: [...words, { heard: heard.trim(), write: write.trim() }] }); setHeard(''); setWrite(''); };
-  return (
+  const language = (
+    <Row icon={<IconGlobe width={18} height={18} />} title="Language" desc="What you speak most, transcribed on this Mac">
+      <select className="set-select" value={v.locale ?? 'en-US'} onChange={(e) => save({ locale: e.target.value })}>
+        {LANGUAGES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+      </select>
+    </Row>
+  );
+  const dictionary = (
     <>
-      <div className="set-card">
-        <Row icon={<IconKeyboard width={18} height={18} />} title={<>Voice typing in any app<Soon /></>} desc="Will let you talk instead of type in every app, outside Quorum too"><Toggle on={false} onChange={noop} disabled /></Row>
-      </div>
-
-      <h3>In Quorum</h3>
-      <div className="set-card">
-        <Row icon={<IconMic width={18} height={18} />} title="Dictate in the composer" desc="Press to start, press again to finish">
-          <span className="keycap">⌘</span><span className="keycap">⇧</span><span className="keycap">D</span>
-        </Row>
-        <Row icon={<IconGlobe width={18} height={18} />} title="Language" desc="What you speak most, transcribed on this Mac">
-          <select className="set-select" value={v.locale ?? 'en-US'} onChange={(e) => save({ locale: e.target.value })}>
-            {LANGUAGES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-          </select>
-        </Row>
-        <Row icon={<Wave live={false} />} title="Sound effects" desc="A soft tone when dictation starts and stops"><Toggle on={v.sounds ?? false} onChange={(on) => save({ sounds: on })} /></Row>
-      </div>
-
       <h3>Dictionary</h3>
       <div className="set-card">
-        <p className="set-hint">When Quorum hears a word, write it your way instead. Applies to dictation and meeting transcripts.</p>
+        <p className="set-hint">{dictionaryOnly ? 'When Quorum hears a word, write it your way instead. Applies to transcripts.' : 'When Quorum hears a word, write it your way instead. Applies to dictation and meeting transcripts.'}</p>
         {words.map((w, i) => (
           <div key={`${w.heard}-${i}`} className="dict-row">
             <span className="dict-heard">{w.heard}</span><span className="muted">→</span><strong>{w.write}</strong>
@@ -1478,6 +1471,25 @@ function VoicePage({ settings, onSettings }: { settings: Settings; onSettings: (
           <button className="pill small-pill with-icon" disabled={!heard.trim() || !write.trim()} onClick={addWord}><IconPlus width={15} height={15} />Add</button>
         </div>
       </div>
+    </>
+  );
+  if (dictionaryOnly) return <><div className="set-card">{language}</div>{dictionary}</>;
+  return (
+    <>
+      <div className="set-card">
+        <Row icon={<IconKeyboard width={18} height={18} />} title={<>Voice typing in any app<Soon /></>} desc="Will let you talk instead of type in every app, outside Quorum too"><Toggle on={false} onChange={noop} disabled /></Row>
+      </div>
+
+      <h3>In Quorum</h3>
+      <div className="set-card">
+        <Row icon={<IconMic width={18} height={18} />} title="Dictate in the composer" desc="Press to start, press again to finish">
+          <span className="keycap">⌘</span><span className="keycap">⇧</span><span className="keycap">D</span>
+        </Row>
+        {language}
+        <Row icon={<Wave live={false} />} title="Sound effects" desc="A soft tone when dictation starts and stops"><Toggle on={v.sounds ?? false} onChange={(on) => save({ sounds: on })} /></Row>
+      </div>
+
+      {dictionary}
 
       <h3>Shortcuts</h3>
       <div className="set-card">
