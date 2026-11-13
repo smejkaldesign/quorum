@@ -28,7 +28,7 @@ export const ROLE_LABEL: Record<Role, string> = { owner: 'Owner', admin: 'Admin'
 export const CODE_PLAN_LABEL: Record<CodePlan, string> = { free: 'Free', cloud: 'Cloud' };
 export const codePlan = (v: unknown): CodePlan => (v === 'cloud' ? 'cloud' : 'free');
 // where a request came from, as the row says it, and the plan that source suggests for the approve dialog
-export const sourceLabel = (source: string): string => ({ admin: 'Added by you', hero: 'From the site: hero', 'pricing-free': 'From the site: Free card', 'pricing-cloud': 'From the site: Cloud card' })[source] ?? 'From the site';
+export const sourceLabel = (source: string): string => ({ admin: 'You', hero: 'Site', 'pricing-free': 'Free card', 'pricing-cloud': 'Cloud card' })[source] ?? 'Site';
 export const sourcePlan = (source: string): CodePlan => (source === 'pricing-cloud' ? 'cloud' : 'free');
 export const CODE_LABEL: Record<CodeStatus, string> = { open: 'Open', claimed: 'Claimed', redeemed: 'Used', revoked: 'Revoked', expired: 'Expired' };
 export const REQUEST_LABEL: Record<RequestStatus, string> = { pending: 'Pending', invited: 'Invited', declined: 'Declined' };
