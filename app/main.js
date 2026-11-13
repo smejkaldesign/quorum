@@ -2160,9 +2160,9 @@ ipcMain.handle('model-key-set', (_e, key) => handlers['connector-key-set'](null,
 ipcMain.handle('model-key-remove', () => handlers['connector-key-remove'](null, 'anthropic'));
 ipcMain.handle('ax-settings-open', () => shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'));
 ipcMain.on('launch-id', (e) => { e.returnValue = LAUNCH_ID; });
-// dictation belongs to manual listening: off refuses a start, and a stop always goes through
+// dictation has its own flag under manual listening: off refuses a start, and a stop always goes through
 ipcMain.handle('dictate', async (_e, on) => {
-  if (on && !gate().manualListen) return { error: DICTATION_OFF };
+  if (on && !gate().dictation) return { error: DICTATION_OFF };
   helperSend(on ? { cmd: 'dictateStart', locale: settings.voice?.locale || 'en-US', terms: await sessionTerms({ calendar: false }) } : { cmd: 'dictateStop' });
   return null;
 });

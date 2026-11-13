@@ -102,8 +102,9 @@ Quorum used to detect calls and take its own meeting notes. Those features are s
 |---|---|---|
 | `meeting-capture` | off | Detecting Zoom, Google Meet and Teams calls, the "meeting detected" prompt, listening automatically, the notice posted in the call chat with STOP and GO, the never-listen list |
 | `live-assist` | off | Suggestions and speaker naming during a session |
-| `manual-listen` | on | Start listening, dictation, the live transcript and the note a session writes, with the running summary |
+| `manual-listen` | on | Start listening, the live transcript and the note a session writes, with the running summary |
 | `screen-context` | on | While listening, reading names and product words from the front window to help the transcript and the running summary |
+| `dictation` | off | Voice typing in the composer (the dictate button and ⌘⇧D) and the Voice typing settings. Needs `manual-listen`. With it off, Settings keeps the Dictionary page, which transcripts use too |
 
 `QUORUM_FLAGS` overrides any of them for a development copy.
 

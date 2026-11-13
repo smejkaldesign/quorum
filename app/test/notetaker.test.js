@@ -8,13 +8,18 @@ import { aboutFor, connectorsFor, featuresFor, CONNECTORS } from '../connectors/
 const gates = (over = {}) => notetakerGates(resolveFlags({ defaults: { ...DEFAULTS, ...over }, env: {} }));
 
 describe('notetaker gates', () => {
-  it('reads the defaults when nothing is given: no call detection, no live assistance, manual listening and screen context on', () => {
-    expect(notetakerGates()).toEqual({ meetingCapture: false, liveAssist: false, manualListen: true, screenContext: true });
+  it('reads the defaults when nothing is given: no call detection, no live assistance, no dictation, manual listening and screen context on', () => {
+    expect(notetakerGates()).toEqual({ meetingCapture: false, liveAssist: false, manualListen: true, screenContext: true, dictation: false });
   });
 
   it('turns every notetaker surface off when manual listening is off, whatever their own switches say', () => {
-    expect(gates({ [FLAG.manualListen]: false, [FLAG.meetingCapture]: true, [FLAG.liveAssist]: true, [FLAG.screenContext]: true }))
-      .toEqual({ meetingCapture: false, liveAssist: false, manualListen: false, screenContext: false });
+    expect(gates({ [FLAG.manualListen]: false, [FLAG.meetingCapture]: true, [FLAG.liveAssist]: true, [FLAG.screenContext]: true, [FLAG.dictation]: true }))
+      .toEqual({ meetingCapture: false, liveAssist: false, manualListen: false, screenContext: false, dictation: false });
+  });
+
+  it('turns dictation on only with its own switch and manual listening both on', () => {
+    expect(gates({ [FLAG.dictation]: true }).dictation).toBe(true);
+    expect(gates({ [FLAG.dictation]: false }).dictation).toBe(false);
   });
 
   it('keeps the renderer defaults equal to the main process defaults', () => {
