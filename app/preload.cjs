@@ -242,7 +242,7 @@ contextBridge.exposeInMainWorld('quorum', {
   onboardingDone: () => ipcRenderer.invoke('onboarding-done'),
   // the beta gate (beta.js): whether a code is still needed, and the check that stores an accepted one
   betaStatus: () => ipcRenderer.invoke('beta-status'),
-  betaCheck: (code, email) => ipcRenderer.invoke('beta-check', code, email),
+  betaCheck: (code) => ipcRenderer.invoke('beta-check', code),
   // feature flags (flags.js): the switches the admin app sets, with where each value came from; refresh asks the relay now
   flags: () => ipcRenderer.invoke('flags'),
   flagsRefresh: () => ipcRenderer.invoke('flags-refresh'),

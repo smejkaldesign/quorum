@@ -34,9 +34,14 @@ describe('the check decision', () => {
     assert.equal(betaDecision({ row: bound, installs: [], machineId: 'mac-1', edition: 'local', now }).ok, true);
     assert.equal(betaDecision({ row: row(expired), installs: [{ machine_id: 'mac-1', edition: 'local' }], machineId: 'mac-1', edition: 'local', now }).ok, true);
   });
-  it('a cloud check needs the email the code was issued to, and then follows the account to any Mac', () => {
+  it('a cloud check without an email binds the code to its first Mac and leaves it unredeemed for the sign-up', () => {
     const cloud = row({ plan: 'cloud' });
-    assert.equal(betaDecision({ row: cloud, installs: [], machineId: 'mac-1', edition: 'cloud', now }).reason, 'email');
+    assert.deepEqual(betaDecision({ row: cloud, installs: [], machineId: 'mac-1', edition: 'cloud', now }), { ok: true, plan: 'cloud', bind: false });
+    assert.deepEqual(betaDecision({ row: cloud, installs: [{ machine_id: 'mac-1', edition: 'cloud' }], machineId: 'mac-1', edition: 'cloud', now }), { ok: true, plan: 'cloud', bind: false });
+    assert.equal(betaDecision({ row: cloud, installs: [{ machine_id: 'mac-1', edition: 'cloud' }], machineId: 'mac-2', edition: 'cloud', now }).reason, 'used');
+  });
+  it('a cloud check that sends an email (older builds) is validated against it and follows the account to any Mac', () => {
+    const cloud = row({ plan: 'cloud' });
     assert.equal(betaDecision({ row: cloud, installs: [], machineId: 'mac-1', edition: 'cloud', email: 'other@example.com', now }).reason, 'email');
     assert.deepEqual(betaDecision({ row: cloud, installs: [{ machine_id: 'mac-1', edition: 'cloud' }], machineId: 'mac-2', edition: 'cloud', email: 'x@example.com', now }), { ok: true, plan: 'cloud', bind: false });
   });
@@ -88,6 +93,13 @@ describe('POST /v1/beta/check', () => {
     assert.equal(r.status, 200);
     assert.deepEqual(r.body, { ok: true, plan: 'cloud' });
     assert.deepEqual(store.calls.upserts, [{ codeId: 'c1', email: 'x@example.com', machineId: 'mac-1', edition: 'cloud', version: '0.2.9' }]);
+    assert.equal(store.calls.redeems.length, 0);
+  });
+  it('records a cloud install sent without an email and still leaves the code unredeemed', async () => {
+    const store = fakeStore(row({ plan: 'cloud' }));
+    const r = await call(handleBetaCheck, { code: 'K7PQ-2MX9', machineId: 'mac-1', edition: 'cloud', version: '0.3.1' }, deps(store));
+    assert.deepEqual(r.body, { ok: true, plan: 'cloud' });
+    assert.equal(store.calls.upserts.length, 1);
     assert.equal(store.calls.redeems.length, 0);
   });
   it('a free code on its first Mac is recorded and redeemed for that Mac', async () => {

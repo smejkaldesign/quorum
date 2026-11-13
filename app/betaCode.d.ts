@@ -1,4 +1,17 @@
+export const GROUPS: number[];
+export const CODE_LENGTH: number;
 export const CODE: RegExp;
+export function codeChar(c: string | null | undefined): string | null;
+export function codeChars(raw: string | null | undefined): string[];
 export function normalizeCode(raw: string | null | undefined): string;
 export function isCode(raw: string | null | undefined): boolean;
 export function codeHint(raw: string | null | undefined): string;
+export const dashBefore: number[];
+export function emptyCells(): string[];
+export type CellEdit = { cells: string[]; focus: number; hint?: string };
+export function typeInto(cells: string[], index: number, raw: string): CellEdit;
+export function pasteCode(cells: string[], index: number, raw: string): CellEdit;
+export function backspace(cells: string[], index: number): CellEdit;
+export function cellsCode(cells: string[]): string;
+export function cellsFull(cells: string[]): boolean;
+export function shouldSend(cells: string[], sent: string, busy: boolean): boolean;

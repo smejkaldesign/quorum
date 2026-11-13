@@ -1,8 +1,8 @@
 // The beta gate for every install, both editions. The app asks once with its access code (POST /v1/beta/check) and
 // then reports a heartbeat (POST /v1/beta/heartbeat) carrying only the code, a machine id and the app version. The
-// relay reads and writes access_codes and beta_installs with the service role; nothing here needs a session. A free
-// code is used up by the first Mac that enters it and stays bound to that Mac; a cloud code is bound to the email it
-// was issued to and follows the account to any Mac, the sign-in itself still redeems it (migration 0009). Both routes
+// relay reads and writes access_codes and beta_installs with the service role; nothing here needs a session. A code
+// is held by the first Mac that enters it and stays bound to that Mac. A free code is marked redeemed then; a cloud
+// code stays open, because the Cloud sign-in redeems it by the account email (migrations 0009, 0018). Both routes
 // are public, rate limited per machine (per address when the body carries none).
 import { RelayError } from './lib/auth.js';
 import { readJson } from './summary.js';
@@ -37,16 +37,14 @@ export function betaDecision({ row, installs = [], machineId, edition, email, no
   const plan = row.plan === 'cloud' ? 'cloud' : 'free';
   const bound = boundTo(row, installs, machineId);
   if (!bound && new Date(row.expires_at).getTime() <= now) return { ok: false, reason: 'expired', message: 'That access code has expired. Ask for a new one.' };
-  if (edition === 'cloud') {
-    // a cloud code is tied to the email it was issued to; the app has to say who is signing in
-    if (!email) return { ok: false, reason: 'email', message: 'Enter the email address the code was sent to.' };
-    if (row.email !== email) return { ok: false, reason: 'email', message: 'That access code was issued to a different email address.' };
-    return { ok: true, plan, bind: false };
-  }
   if (email && row.email !== email) return { ok: false, reason: 'email', message: 'That access code was issued to a different email address.' };
-  // a free code is good for one Mac; a cloud code entered in the open-source edition behaves the same way
+  // a Cloud build that sends the email (builds before 0.3.1) follows the account to any Mac
+  if (edition === 'cloud' && email) return { ok: true, plan, bind: false };
+  // otherwise one code, one Mac: the first Mac that enters it holds it, and the same Mac checking again is admitted
   if (!bound && (row.redeemed_machine_id || installs.length)) return { ok: false, reason: 'used', message: 'That access code is already in use on another Mac.' };
-  return { ok: true, plan, bind: !row.redeemed_machine_id };
+  // the Cloud edition binds through its install row and leaves the code unredeemed, because the sign-up trigger
+  // (auth_user_gate, migration 0018) redeems it by the account email and takes only an unredeemed code
+  return { ok: true, plan, bind: edition !== 'cloud' && !row.redeemed_machine_id };
 }
 
 // what a heartbeat may do: touch a known install of a live code; a revoked code is refused, an expired one too

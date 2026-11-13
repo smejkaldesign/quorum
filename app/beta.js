@@ -44,12 +44,13 @@ export function createBeta({ settings, saveSettings = () => {}, on = true, editi
   };
   const status = () => betaState(settings, on);
 
-  // the code the person typed: the relay says whether it is good and which plan it carries; an accepted code is kept
-  async function check(code, mail = null) {
+  // the code the person typed: the relay says whether it is good and which plan it carries; an accepted code is kept.
+  // The gate asks for the code alone; a Cloud copy already signed in still sends its account email
+  async function check(code) {
     const c = normalizeCode(code);
     if (!CODE.test(c)) return { ok: false, reason: 'Enter the 8-character code, like ABCD-EFGH.' };
     try {
-      const r = await post('/v1/beta/check', { code: c, email: mail || email() || undefined, machineId: machineId(), edition, version });
+      const r = await post('/v1/beta/check', { code: c, email: email() || undefined, machineId: machineId(), edition, version });
       if (r.ok !== true) return { ok: false, reason: r.reason || r.error || 'That code was not accepted.' };
       settings.beta = { ...(settings.beta ?? {}), code: c, plan: r.plan ?? 'free', acceptedAt: new Date(now()).toISOString() };
       saveSettings();
@@ -93,7 +94,7 @@ export function createBeta({ settings, saveSettings = () => {}, on = true, editi
 
   const handlers = {
     'beta-status': () => status(),
-    'beta-check': async (code, mail) => { const r = await check(code, mail); if (r.ok) start(); return { ...r, status: status() }; },
+    'beta-check': async (code) => { const r = await check(code); if (r.ok) start(); return { ...r, status: status() }; },
   };
   return { status, check, heartbeat, start, stop, machineId, handlers };
 }
