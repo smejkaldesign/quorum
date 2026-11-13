@@ -5,7 +5,7 @@ import { readFileSync, statSync, watch } from 'node:fs';
 import path from 'node:path';
 import { createResolver, parseNote } from './linkparse.js';
 import { SKIP, graphConfig, noteDate, walk } from './vault.js';
-import { clusterColors } from './clusters.js';
+import { clusterAssign, clusterNames, groupLabel } from './clusters.js';
 
 // the folders walk() skips, as a test on a watcher path (the same list, so the two can never disagree)
 const IGNORED = new RegExp(`(^|/)(${[...SKIP].map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(/|$)`);
@@ -172,14 +172,15 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     const deg = new Array(rels.length + ghostNames.length).fill(0);
     for (const [a, b] of links) { deg[a]++; deg[b]++; }
     // notes that link among themselves share a color, so a vault reads as clusters the moment it connects
-    const auto = clusterColors([...rels, ...ghostNames.map((g) => `?${g}`)], links, (i) => i >= rels.length);
+    const { colors: auto, cluster } = clusterAssign([...rels, ...ghostNames.map((g) => `?${g}`)], links, (i) => i >= rels.length);
+    const autoNames = clusterNames(rels, cluster.slice(0, rels.length), deg, rels.map((rel) => path.basename(rel, '.md')));
     return {
       nodes: [
-        ...rels.map((rel, i) => ({
-          id: rel, name: path.basename(rel, '.md'), deg: deg[i], t: files.get(rel).t,
-          // first matching group wins, same as Obsidian; otherwise the cluster color
-          color: groups.find((g) => g.match(rel))?.color ?? auto[i],
-        })),
+        ...rels.map((rel, i) => {
+          // first matching group wins, same as Obsidian; otherwise the cluster color. `cluster` names whichever it is
+          const group = groups.find((g) => g.match(rel));
+          return { id: rel, name: path.basename(rel, '.md'), deg: deg[i], t: files.get(rel).t, color: group?.color ?? auto[i], cluster: group ? groupLabel(group.query) : auto[i] ? autoNames[i] : null };
+        }),
         ...ghostNames.map((name, j) => ({ id: `?${name}`, name, deg: deg[rels.length + j], t: 0, color: null, ghost: true })),
       ],
       links,

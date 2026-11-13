@@ -3,13 +3,13 @@ import { ForceSim, type GraphSettings, type SimNode } from './forceSim';
 
 export type GraphView = GraphSettings & { lineSizeMultiplier: number; textFadeMultiplier: number; showOrphans: boolean; showUnresolved: boolean };
 export type GraphData = {
-  nodes: { id: string; name: string; deg: number; color: string | null; t: number; ghost?: boolean }[];
+  nodes: { id: string; name: string; deg: number; color: string | null; t: number; ghost?: boolean; cluster?: string | null }[];
   links: [number, number][];
   settings: GraphView;
   groups: { query: string; color: string }[];
 };
 
-type Node = SimNode & { id: string; name: string; color: string; t: number };
+type Node = SimNode & { id: string; name: string; color: string; t: number; cluster?: string | null };
 type Api = { configure: (v: GraphView) => void; timelapse: () => void; stop: () => void; refit: () => void };
 
 const DEFAULT_NODE = '#8f8f8f';
@@ -30,6 +30,8 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
   const focusRef = useRef(focus ?? null);
   focusRef.current = focus ?? null;
   const canvas = useRef<HTMLCanvasElement>(null);
+  const badge = useRef<HTMLDivElement>(null);
+  const badgeText = useRef<HTMLSpanElement>(null);
   const queryRef = useRef(query);
   queryRef.current = query;
   const viewRef = useRef(view);
@@ -67,6 +69,16 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
     const cam = { k: 0.35, x: 0, y: 0 };
     let w = 0, h = 0, dpr = 1;
     let hover = -1;
+    // the hovered note's cluster, named in the badge at the top left; written to the DOM directly, once per change
+    const showCluster = () => {
+      const b = badge.current;
+      if (!b) return;
+      const n = hover >= 0 ? nodes[hover] : null;
+      if (!n?.cluster) { b.hidden = true; return; }
+      b.style.setProperty('--cluster', n.color);
+      if (badgeText.current) badgeText.current.textContent = n.cluster;
+      b.hidden = false;
+    };
     let userMoved = false;
     let raf = 0;
     let dirty = true;
@@ -137,6 +149,8 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
 
       const q = queryRef.current.trim().toLowerCase();
       const match = q ? new Set(nodes.map((n, i) => (n.name.toLowerCase().includes(q) ? i : -1)).filter((i) => i >= 0)) : null;
+      // a note the timelapse has not switched on yet can't stay hovered
+      if (hover >= 0 && !on[hover]) { hover = -1; showCluster(); }
       const hl = hover >= 0 ? hover : focused();
       const lit = hl >= 0 ? new Set([hl, ...neighbors[hl]]) : match;
       const dimmed = (i: number) => lit !== null && !lit.has(i);
@@ -310,7 +324,7 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
       }
       // only hover when the pointer is on the graph itself, not on a menu or panel floating above it
       const hit = e.target === el ? nodeAt(sx, sy) : -1;
-      if (hit !== hover) { hover = hit; el.style.cursor = hit >= 0 ? 'pointer' : 'grab'; dirty = true; }
+      if (hit !== hover) { hover = hit; el.style.cursor = hit >= 0 ? 'pointer' : 'grab'; dirty = true; showCluster(); }
     };
     const onUp = () => {
       if (drag && drag.node >= 0) {
@@ -330,7 +344,7 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
       cam.y = sy - h / 2 - before.y * cam.k;
       dirty = true;
     };
-    const onLeave = () => { if (hover >= 0) { hover = -1; dirty = true; } };
+    const onLeave = () => { if (hover >= 0) { hover = -1; dirty = true; showCluster(); } };
 
     el.addEventListener('mousedown', onDown);
     window.addEventListener('mousemove', onMove);
@@ -349,8 +363,14 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
       window.removeEventListener('mouseup', onUp);
       el.removeEventListener('wheel', onWheel);
       el.removeEventListener('mouseleave', onLeave);
+      if (badge.current) badge.current.hidden = true;
     };
   }, [data, view.showOrphans, view.showUnresolved, onOpen]);
 
-  return <canvas ref={canvas} className="graph-canvas" aria-label="Graph of notes in your Agent OS" />;
+  return (
+    <>
+      <canvas ref={canvas} className="graph-canvas" aria-label="Graph of notes in your Agent OS" />
+      <div ref={badge} className="graph-cluster" hidden aria-hidden="true"><span className="graph-cluster-dot" /><span ref={badgeText} className="graph-cluster-name" /></div>
+    </>
+  );
 }
