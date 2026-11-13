@@ -137,9 +137,18 @@ describe('POST /v1/beta/check', () => {
     const store = fakeStore(row({ plan: 'cloud' }), [{ machine_id: 'mac-1', edition: 'cloud' }]);
     const r = await call(handleBetaCheck, { code: 'K7PQ-2MX9', machineId: 'mac-2', edition: 'cloud', version: '0.3.1', email: 'other@example.com' }, deps(store));
     assert.equal(r.status, 200);
-    assert.deepEqual(r.body, { ok: true, plan: 'cloud' });
+    assert.deepEqual(r.body, { ok: true, plan: 'cloud', email: 'x@example.com' });
     assert.deepEqual(store.calls.upserts, [{ codeId: 'c1', email: 'x@example.com', machineId: 'mac-2', edition: 'cloud', version: '0.3.1' }]);
     assert.equal(store.calls.redeems.length, 0);
+  });
+  it('names the code email to the Cloud edition only, and never on a refusal', async () => {
+    const free = await call(handleBetaCheck, { code: 'K7PQ2MX9', machineId: 'mac-1', edition: 'cloud' }, deps(fakeStore(row())));
+    assert.deepEqual(free.body, { ok: true, plan: 'free', email: 'x@example.com' });
+    const local = await call(handleBetaCheck, { code: 'K7PQ2MX9', machineId: 'mac-1', edition: 'local' }, deps(fakeStore(row())));
+    assert.equal(local.body.email, undefined);
+    const revoked = await call(handleBetaCheck, { code: 'K7PQ2MX9', machineId: 'mac-1', edition: 'cloud' }, deps(fakeStore(row({ revoked_at: '2026-11-10T00:00:00Z' }))));
+    assert.equal(revoked.body.ok, false);
+    assert.equal(revoked.body.email, undefined);
   });
   it('a free code on its first Mac is bound before the install is recorded', async () => {
     const store = fakeStore(row());

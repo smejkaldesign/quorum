@@ -8,7 +8,7 @@ const make = (over = {}) => {
   const settings = over.settings ?? {};
   const saveSettings = vi.fn();
   const fetchImpl = over.fetchImpl ?? okFetch();
-  const beta = createBeta({ settings, saveSettings, on: over.on ?? true, edition: over.edition ?? 'local', version: '0.2.9', source: over.source ?? 'production', env: over.env ?? { QUORUM_RELAY_URL: 'https://relay.example.com' }, fetchImpl, timers: { set: setTimeout, clear: clearTimeout } });
+  const beta = createBeta({ settings, saveSettings, account: over.account ?? null, on: over.on ?? true, edition: over.edition ?? 'local', version: '0.2.9', source: over.source ?? 'production', env: over.env ?? { QUORUM_RELAY_URL: 'https://relay.example.com' }, fetchImpl, timers: { set: setTimeout, clear: clearTimeout } });
   return { beta, settings, saveSettings, fetchImpl };
 };
 
@@ -117,6 +117,62 @@ describe('the gate', () => {
     const first = beta.machineId();
     await beta.check('ABCD-EFGH');
     expect(settings.machineId).toBe(first);
+    beta.stop();
+  });
+});
+
+describe('the Cloud account is the identity', () => {
+  const cloudFetch = (email = 'ada@example.com') => vi.fn(async (url) => ({ ok: true, json: async () => (url.endsWith('/v1/beta/check') ? { ok: true, plan: 'cloud', email } : { ok: true }) }));
+  const fakeAccount = (email) => ({ email: vi.fn(async () => email), signOut: vi.fn(async () => {}) });
+
+  it('stands the gate down for a signed-in account, with no code stored', async () => {
+    const account = fakeAccount('ada@example.com');
+    const { beta } = make({ edition: 'cloud', account });
+    expect(beta.status().gate).toBe(true);
+    expect(await beta.gateStatus()).toMatchObject({ gate: false, signedIn: true });
+    expect(await beta.handlers['beta-status']()).toMatchObject({ gate: false });
+  });
+
+  it('keeps the gate up when no account is signed in, or when reading the session fails', async () => {
+    expect((await make({ edition: 'cloud', account: fakeAccount(null) }).beta.gateStatus()).gate).toBe(true);
+    const broken = { email: vi.fn(async () => { throw new Error('no session'); }), signOut: vi.fn() };
+    expect((await make({ edition: 'cloud', account: broken }).beta.gateStatus()).gate).toBe(true);
+  });
+
+  it('keeps the email the code was issued to, so sign-in can use it', async () => {
+    const { beta, settings } = make({ edition: 'cloud', fetchImpl: cloudFetch('Ada@Example.com'), account: fakeAccount(null) });
+    const r = await beta.check('abcd-efgh');
+    expect(r).toMatchObject({ ok: true, email: 'ada@example.com', notice: null });
+    expect(settings.beta.email).toBe('ada@example.com');
+    expect(beta.status().email).toBe('ada@example.com');
+    beta.stop();
+  });
+
+  it('signs out an account of another email and says so', async () => {
+    const account = fakeAccount('Rick@Example.com');
+    const { beta } = make({ edition: 'cloud', fetchImpl: cloudFetch('ada@example.com'), account });
+    const r = await beta.check('abcd-efgh');
+    expect(account.signOut).toHaveBeenCalledTimes(1);
+    expect(r.notice).toBe('You were signed in as rick@example.com. Quorum signed you out so you can sign in as ada@example.com, the email this code was issued to.');
+    beta.stop();
+  });
+
+  it('leaves the account signed in when it is the email the code was issued to', async () => {
+    const account = fakeAccount('ada@example.com');
+    const { beta } = make({ edition: 'cloud', fetchImpl: cloudFetch('ada@example.com'), account });
+    const r = await beta.check('abcd-efgh');
+    expect(account.signOut).not.toHaveBeenCalled();
+    expect(r.notice).toBeNull();
+    beta.stop();
+  });
+
+  it('ignores an email in the answer in the open-source edition', async () => {
+    const account = fakeAccount('rick@example.com');
+    const { beta, settings } = make({ edition: 'local', fetchImpl: cloudFetch('ada@example.com'), account });
+    const r = await beta.check('abcd-efgh');
+    expect(r.email).toBeNull();
+    expect(settings.beta.email).toBeNull();
+    expect(account.signOut).not.toHaveBeenCalled();
     beta.stop();
   });
 });

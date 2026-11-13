@@ -69,8 +69,17 @@ function SignIn() {
   // a new email needs an access code from the platform owner; the main process says so and the field appears
   const [needsCode, setNeedsCode] = useState(false);
   const [access, setAccess] = useState('');
-  // the code the beta gate accepted on this Mac is the same one sign-up needs, so it is prefilled
-  useEffect(() => { Promise.resolve(window.quorum.betaStatus?.()).then((b) => { if (b?.code) setAccess((a) => a || b.code!); }).catch(() => {}); }, []);
+  // the code the beta gate accepted on this Mac is the same one sign-up needs, so it is prefilled, and the email it was
+  // issued to is the one to sign in with: filled in and locked until the person asks for a different email. The
+  // database still refuses a new account whose email holds no code (migration 0018)
+  const [codeEmail, setCodeEmail] = useState<string | null>(null);
+  const [locked, setLocked] = useState(false);
+  useEffect(() => {
+    Promise.resolve(window.quorum.betaStatus?.()).then((b) => {
+      if (b?.code) setAccess((a) => a || b.code!);
+      if (b?.email) { setCodeEmail(b.email); setEmail((e) => e || b.email!); setLocked(true); }
+    }).catch(() => {});
+  }, []);
   // Google runs in the system browser; the main process reports the outcome when the browser comes back
   const [waiting, setWaiting] = useState(false);
   useEffect(() => api.onAccountOAuth((r) => { setWaiting(false); if (r.error) setError(r.error); }), []);
@@ -102,9 +111,12 @@ function SignIn() {
           </div>
           <div className="acct-or"><span>or use your email</span></div>
           <div className="set-line">
-            <label className="set-field wide"><input type="email" autoComplete="email" aria-label="Email" placeholder="you@example.com" value={email} onChange={(e) => { setEmail(e.target.value); setNeedsCode(false); }} onKeyDown={(e) => { if (e.key === 'Enter' && ok && accessOk && !busy) send(); }} /></label>
+            <label className="set-field wide"><input type="email" autoComplete="email" aria-label="Email" placeholder="you@example.com" value={email} readOnly={locked} onChange={(e) => { setEmail(e.target.value); setNeedsCode(false); }} onKeyDown={(e) => { if (e.key === 'Enter' && ok && accessOk && !busy) send(); }} /></label>
             {!needsCode && <div className="set-line-end"><button className="pill primary" disabled={!ok || busy} onClick={send}>{busy ? 'Sending…' : 'Send code'}</button></div>}
           </div>
+          {locked && codeEmail && (
+            <div className="set-line acct-alt"><span className="onb-muted">Your access code was issued to {codeEmail}.</span><button type="button" className="link-btn" onClick={() => { setLocked(false); setEmail(''); setNeedsCode(false); }}>Use a different email</button></div>
+          )}
           {needsCode && (
             <>
               <div className="set-line"><div className="set-label"><strong>Access code</strong><span>Quorum Cloud is invite-only right now. Enter the code you were given for {email.trim()}.</span></div></div>

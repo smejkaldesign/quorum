@@ -89,7 +89,7 @@ export type Role = 'owner' | 'admin' | 'member';
 export type AccountWorkspace = { id: string; name: string; domain: string | null; domainJoin: boolean; role: Role; teamEnabled?: boolean };
 // the beta gate (app/beta.js): gate is true while an access code is still needed; machineId is the anonymous id this
 // install reports with its code and version once a day while the beta lasts
-export type BetaState = { gate: boolean; on: boolean; code: string | null; plan: 'free' | 'cloud' | string | null; acceptedAt: string | null; machineId: string | null; lastHeartbeatAt: number | null };
+export type BetaState = { gate: boolean; on: boolean; code: string | null; plan: 'free' | 'cloud' | string | null; email?: string | null; signedIn?: boolean; acceptedAt: string | null; machineId: string | null; lastHeartbeatAt: number | null };
 // feature flags (app/flags.js): each key with its value and where the value came from, in order of precedence env,
 // relay, cache (the last relay answer, from an earlier run), defaults (built into the app)
 export type FlagSource = 'env' | 'relay' | 'cache' | 'defaults';
@@ -407,7 +407,7 @@ declare global {
       teamEnabledSet(on: boolean): Promise<AccountState & { error?: string }>;
       betaStatus(): Promise<BetaState>;
       // refused: the code itself was turned down (clear it); false when the relay could not be reached or failed
-      betaCheck(code: string): Promise<{ ok: boolean; plan?: string; reason?: string; refused?: boolean; status?: BetaState }>;
+      betaCheck(code: string): Promise<{ ok: boolean; plan?: string; email?: string | null; notice?: string | null; reason?: string; refused?: boolean; status?: BetaState }>;
       flags(): Promise<FlagsState>;
       flagsRefresh(): Promise<FlagsState>;
       onFlags(cb: (s: FlagsState) => void): Unsub;

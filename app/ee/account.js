@@ -406,7 +406,12 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
   }
   connect();
 
-  return { ...account, handlers, refresh, sync, envStatus, stop: () => { clearInterval(pullTimer); inner.stop(); } };
+  // the signed-in email from the stored session alone, with no network call, so an offline Mac still reads it
+  const sessionEmail = async () => {
+    if (!client) return null;
+    try { const { data } = await client.auth.getSession(); return data?.session?.user?.email?.toLowerCase() ?? null; } catch { return null; }
+  };
+  return { ...account, handlers, refresh, sync, envStatus, sessionEmail, stop: () => { clearInterval(pullTimer); inner.stop(); } };
 }
 
 // wires the account into the main process: one IPC handler per entry, and every change goes to the UI as 'account'
