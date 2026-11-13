@@ -68,3 +68,16 @@ describe('cluster names', () => {
     expect(groupLabel('')).toBe('Group');
   });
 });
+
+describe('cluster names, harder cases', () => {
+  it('keeps two clusters in one folder apart by their most linked note', () => {
+    const names = clusterNames(['work/a.md', 'work/b.md', 'work/c.md', 'work/x.md', 'work/y.md', 'work/z.md'], [0, 0, 0, 1, 1, 1], [3, 1, 1, 1, 4, 1]);
+    expect(names).toEqual(['work · a', 'work · a', 'work · a', 'work · y', 'work · y', 'work · y']);
+  });
+  it('reads a regex group by its literal start only', () => {
+    expect(groupLabel('path:/^01-daily\\/\\d{4}/')).toBe('01-daily');
+    expect(groupLabel('path:/notes.*/')).toBe('notes');
+    expect(groupLabel('path:/^MyBrain\\/05-knowledge\\/proj.*/')).toBe('05-knowledge');
+    expect(groupLabel('path:/(work|personal)\\//')).toBe('(work|personal)/');
+  });
+});

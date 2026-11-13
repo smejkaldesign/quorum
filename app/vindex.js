@@ -173,7 +173,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     for (const [a, b] of links) { deg[a]++; deg[b]++; }
     // notes that link among themselves share a color, so a vault reads as clusters the moment it connects
     const { colors: auto, cluster } = clusterAssign([...rels, ...ghostNames.map((g) => `?${g}`)], links, (i) => i >= rels.length);
-    const autoNames = clusterNames(rels, cluster.slice(0, rels.length), deg);
+    const autoNames = clusterNames(rels, cluster.slice(0, rels.length), deg, rels.map((rel) => path.basename(rel, '.md')));
     return {
       nodes: [
         ...rels.map((rel, i) => {

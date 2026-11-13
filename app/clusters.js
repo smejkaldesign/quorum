@@ -68,28 +68,51 @@ export function clusterAssign(ids, links, skip = () => false) {
 const baseName = (rel) => rel.split('/').pop().replace(/\.md$/i, '');
 
 // a name a person can read for each cluster: the folder most of its notes share, or else the name of its most linked
-// note. rels: the note path per node; cluster and deg per node as clusterAssign and the links give them. Returns one
-// name per node, null where the node has no cluster
-export function clusterNames(rels, cluster, deg) {
+// note. rels: the note path per node; cluster and deg per node as clusterAssign and the links give them; names: the
+// display name per note. Two clusters that would read the same add their most linked note. One name per node, null
+// where the node has no cluster
+export function clusterNames(rels, cluster, deg, names = rels.map(baseName)) {
   const members = new Map();
   cluster.forEach((c, i) => { if (c >= 0) (members.get(c) ?? members.set(c, []).get(c)).push(i); });
-  const names = new Map();
+  const label = new Map();
+  const top = new Map();
   for (const [c, m] of members) {
     const folders = new Map();
     for (const i of m) { const f = rels[i].includes('/') ? rels[i].slice(0, rels[i].lastIndexOf('/')) : ''; folders.set(f, (folders.get(f) ?? 0) + 1); }
     const [folder, count] = [...folders].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0];
-    if (folder && count >= m.length * 0.6) { names.set(c, folder.split('/').pop()); continue; }
-    const top = m.reduce((a, b) => (deg[b] > deg[a] || (deg[b] === deg[a] && rels[b] < rels[a]) ? b : a));
-    names.set(c, baseName(rels[top]));
+    const t = m.reduce((a, b) => (deg[b] > deg[a] || (deg[b] === deg[a] && rels[b] < rels[a]) ? b : a));
+    top.set(c, names[t]);
+    label.set(c, folder && count >= m.length * 0.6 ? folder.split('/').pop() : names[t]);
   }
-  return cluster.map((c) => (c === HUB_CLUSTER ? 'Hubs' : names.get(c) ?? null));
+  const seen = new Map();
+  for (const l of label.values()) seen.set(l, (seen.get(l) ?? 0) + 1);
+  for (const [c, l] of label) if (seen.get(l) > 1 && l !== top.get(c)) label.set(c, `${l} · ${top.get(c)}`);
+  return cluster.map((c) => (c === HUB_CLUSTER ? 'Hubs' : label.get(c) ?? null));
 }
 
-// a readable name for an Obsidian color group query: path:"01-daily/x.md" reads x, path:/^Projects\// reads
-// Projects; the first of several OR parts names the group
+// a readable name for an Obsidian color group query: the last folder or note of the literal path it starts with.
+// path:"01-daily/x.md" reads x, path:/^Projects\// reads Projects; a pattern with no literal start reads as written.
+// The first of several OR parts names the group
 export function groupLabel(query) {
-  const first = String(query ?? '').split(/\s+OR\s+/)[0].trim().replace(/^path:/, '').replace(/^"(.*)"$/, '$1').replace(/^\/(.*)\/$/, '$1');
-  const parts = first.replace(/\\(.)/g, '$1').replace(/[\^$*+?()[\]{}|]/g, '').replace(/\.md$/i, '').split('/').filter(Boolean);
-  return parts.pop() || first || 'Group';
+  const first = String(query ?? '').split(/\s+OR\s+/)[0].trim();
+  const exact = first.match(/^path:"(.*)"$/);
+  const regex = first.match(/^path:\/(.*)\/$/);
+  let literal = exact ? exact[1] : first.replace(/^path:/, '');
+  if (regex) {
+    // the pattern up to its first special character, with escaped slashes read as slashes
+    const body = regex[1].replace(/^\^/, '');
+    let out = '';
+    for (let i = 0; i < body.length; i++) {
+      if (body[i] === '\\' && body[i + 1] === '/') { out += '/'; i++; continue; }
+      if ('\\.*+?()[]{}|^$'.includes(body[i])) break;
+      out += body[i];
+    }
+    // a pattern cut off inside a name keeps the folders before it; with no folder before it, the start of the name
+    const cut = out.length < body.length && !out.endsWith('/');
+    const segs = out.split('/').filter(Boolean);
+    if (cut && segs.length > 1) segs.pop();
+    if (!segs.length) return regex[1].replace(/\\\//g, '/');
+    literal = segs.join('/');
+  }
+  return literal.replace(/\.md$/i, '').split('/').filter(Boolean).pop() || first || 'Group';
 }
-

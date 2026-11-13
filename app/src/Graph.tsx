@@ -31,6 +31,7 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
   focusRef.current = focus ?? null;
   const canvas = useRef<HTMLCanvasElement>(null);
   const badge = useRef<HTMLDivElement>(null);
+  const badgeText = useRef<HTMLSpanElement>(null);
   const queryRef = useRef(query);
   queryRef.current = query;
   const viewRef = useRef(view);
@@ -75,7 +76,7 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
       const n = hover >= 0 ? nodes[hover] : null;
       if (!n?.cluster) { b.hidden = true; return; }
       b.style.setProperty('--cluster', n.color);
-      b.lastChild!.textContent = n.cluster;
+      if (badgeText.current) badgeText.current.textContent = n.cluster;
       b.hidden = false;
     };
     let userMoved = false;
@@ -148,6 +149,8 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
 
       const q = queryRef.current.trim().toLowerCase();
       const match = q ? new Set(nodes.map((n, i) => (n.name.toLowerCase().includes(q) ? i : -1)).filter((i) => i >= 0)) : null;
+      // a note the timelapse has not switched on yet can't stay hovered
+      if (hover >= 0 && !on[hover]) { hover = -1; showCluster(); }
       const hl = hover >= 0 ? hover : focused();
       const lit = hl >= 0 ? new Set([hl, ...neighbors[hl]]) : match;
       const dimmed = (i: number) => lit !== null && !lit.has(i);
@@ -367,7 +370,7 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
   return (
     <>
       <canvas ref={canvas} className="graph-canvas" aria-label="Graph of notes in your Agent OS" />
-      <div ref={badge} className="graph-cluster" hidden aria-live="polite"><span className="graph-cluster-dot" /><span /></div>
+      <div ref={badge} className="graph-cluster" hidden aria-hidden="true"><span className="graph-cluster-dot" /><span ref={badgeText} className="graph-cluster-name" /></div>
     </>
   );
 }
