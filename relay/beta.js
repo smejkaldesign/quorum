@@ -1,9 +1,10 @@
 // The beta gate for every install, both editions. The app asks once with its access code (POST /v1/beta/check) and
 // then reports a heartbeat (POST /v1/beta/heartbeat) carrying only the code, a machine id and the app version. The
-// relay reads and writes access_codes and beta_installs with the service role; nothing here needs a session. A code
-// is held by the first Mac that enters it and stays bound to that Mac. A free code is marked redeemed then; a cloud
-// code stays open, because the Cloud sign-in redeems it by the account email (migrations 0009, 0018). Both routes
-// are public, rate limited per machine (per address when the body carries none).
+// relay reads and writes access_codes and beta_installs with the service role; nothing here needs a session. In the
+// open-source edition a code is held by the first Mac that enters it and stays bound to that Mac. In the Cloud
+// edition the account is the identity: the code is not tied to a Mac, and the Cloud sign-in redeems it by the
+// account email, one account per code (migrations 0009, 0018). Both routes are public, rate limited per machine (per
+// address when the body carries none).
 import { RelayError } from './lib/auth.js';
 import { readJson } from './summary.js';
 import { CODE, EMAIL, clientAddress, corsHeaders, createLimiter, json } from './platform.js';
@@ -29,22 +30,28 @@ export const cleanHeartbeat = (b = {}) => ({ code: cleanCode(b.code), machineId:
 // whether this Mac already holds the code: the redeeming Mac of a free code, or any install row for it
 export const boundTo = (row, installs, machineId) => (row?.redeemed_machine_id && row.redeemed_machine_id === machineId) || installs.some((i) => i.machine_id === machineId);
 
+const USED = 'That access code is already in use on another Mac.';
+
 // the decision, with no database in sight: a code row, the installs already on it, and what the app sent. Expiry
 // counts at first use only; a Mac the code is already bound to stays admitted. Revocation always counts.
-export function betaDecision({ row, installs = [], machineId, edition, email, now = Date.now() }) {
+export function betaDecision({ row, installs = [], machineId, edition, now = Date.now() }) {
   if (!row) return { ok: false, reason: 'unknown', message: 'That access code is not valid.' };
   if (row.revoked_at) return { ok: false, reason: 'revoked', message: 'That access code was revoked.' };
   const plan = row.plan === 'cloud' ? 'cloud' : 'free';
+  const expired = new Date(row.expires_at).getTime() <= now;
+  // the Cloud edition: the account sign-in is the identity, so the code is not tied to a Mac. A live code, or one an
+  // account already redeemed, is admitted on any Mac; the sign-up trigger (auth_user_gate, migration 0018) keeps one
+  // account per code. Any email an older build sends is ignored.
+  if (edition === 'cloud') {
+    if (expired && !row.redeemed_at) return { ok: false, reason: 'expired', message: 'That access code has expired. Ask for a new one.' };
+    return { ok: true, plan, bind: false };
+  }
+  // the open-source edition: one code, one Mac. The first Mac holds it and the same Mac checking again is admitted;
+  // expiry counts at first use only
   const bound = boundTo(row, installs, machineId);
-  if (!bound && new Date(row.expires_at).getTime() <= now) return { ok: false, reason: 'expired', message: 'That access code has expired. Ask for a new one.' };
-  if (email && row.email !== email) return { ok: false, reason: 'email', message: 'That access code was issued to a different email address.' };
-  // a Cloud build that sends the email (builds before 0.3.1) follows the account to any Mac
-  if (edition === 'cloud' && email) return { ok: true, plan, bind: false };
-  // otherwise one code, one Mac: the first Mac that enters it holds it, and the same Mac checking again is admitted
-  if (!bound && (row.redeemed_machine_id || installs.length)) return { ok: false, reason: 'used', message: 'That access code is already in use on another Mac.' };
-  // the Cloud edition binds through its install row and leaves the code unredeemed, because the sign-up trigger
-  // (auth_user_gate, migration 0018) redeems it by the account email and takes only an unredeemed code
-  return { ok: true, plan, bind: edition !== 'cloud' && !row.redeemed_machine_id };
+  if (!bound && expired) return { ok: false, reason: 'expired', message: 'That access code has expired. Ask for a new one.' };
+  if (!bound && (row.redeemed_machine_id || installs.some((i) => i.edition !== 'cloud'))) return { ok: false, reason: 'used', message: USED };
+  return { ok: true, plan, bind: !row.redeemed_machine_id };
 }
 
 // what a heartbeat may do: touch a known install of a live code; a revoked code is refused, an expired one too
@@ -75,10 +82,15 @@ export function betaStore(db) {
       const { error } = await db.from('beta_installs').upsert({ code_id: codeId, email, machine_id: machineId, edition, app_version: version, last_seen: new Date().toISOString() }, { onConflict: 'code_id,machine_id' });
       if (error) throw new RelayError('server', 'The install could not be recorded. Try again.', 500);
     },
-    // a free code is used up by its first Mac; an open code only, so a second call cannot move it
+    // a free code is held by its first Mac. The update only lands while no Mac holds the code, so two Macs racing for
+    // it cannot both win; the loser reads the row back and is told the code is in use. True when this Mac holds it.
     async redeemLocal({ codeId, machineId }) {
-      const { error } = await db.from('access_codes').update({ redeemed_at: new Date().toISOString(), redeemed_machine_id: machineId }).eq('id', codeId).is('redeemed_at', null);
+      const { data, error } = await db.from('access_codes').update({ redeemed_at: new Date().toISOString(), redeemed_machine_id: machineId }).eq('id', codeId).is('redeemed_machine_id', null).select('id');
       if (error) throw new RelayError('server', 'The install could not be recorded. Try again.', 500);
+      if ((data ?? []).length > 0) return true;
+      const again = await db.from('access_codes').select('redeemed_machine_id').eq('id', codeId).maybeSingle();
+      if (again.error) throw new RelayError('server', 'The install could not be recorded. Try again.', 500);
+      return again.data?.redeemed_machine_id === machineId;
     },
     async touch({ codeId, machineId, version }) {
       const { data, error } = await db.from('beta_installs').update({ last_seen: new Date().toISOString(), ...(version ? { app_version: version } : {}) }).eq('code_id', codeId).eq('machine_id', machineId).select('id');
@@ -109,10 +121,14 @@ export async function handleBetaCheck(req, res, { clients, config, log = () => {
     const c = cleanCheck(b);
     const row = await store.code(c.code);
     const installs = row ? await store.installs(row.id) : [];
-    const d = betaDecision({ row, installs, machineId: c.machineId, edition: c.edition, email: c.email });
+    const d = betaDecision({ row, installs, machineId: c.machineId, edition: c.edition });
     if (!d.ok) { log('beta_refused', { reason: d.reason, edition: c.edition }); return json(res, 200, { ok: false, reason: d.reason, error: d.message }, cors); }
-    await store.upsert({ codeId: row.id, email: c.email ?? row.email, machineId: c.machineId, edition: c.edition, version: c.version });
-    if (d.bind) await store.redeemLocal({ codeId: row.id, machineId: c.machineId });
+    // bind before recording the install, so a Mac that lost the race leaves no row behind
+    if (d.bind && !(await store.redeemLocal({ codeId: row.id, machineId: c.machineId }))) {
+      log('beta_refused', { reason: 'used', edition: c.edition, race: true });
+      return json(res, 200, { ok: false, reason: 'used', error: USED }, cors);
+    }
+    await store.upsert({ codeId: row.id, email: row.email, machineId: c.machineId, edition: c.edition, version: c.version });
     log('beta_admitted', { plan: d.plan, edition: c.edition, version: c.version, bound: d.bind });
     json(res, 200, { ok: true, plan: d.plan }, cors);
   } catch (err) { refuse(res, err, cors, log, 'beta_check'); }

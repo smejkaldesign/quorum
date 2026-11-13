@@ -7,14 +7,15 @@ const SITE = 'https://quorum.watch';
 
 // the beta gate: the first screen of a fresh install, and of any install without an accepted code, in both editions.
 // The code goes to the relay with an anonymous machine id; an accepted one is kept and the gate never shows again.
-// It is sent once, as soon as the last box is filled; Continue stays for keyboard and screen reader use.
+// It is sent once, as soon as the last box is filled; Continue stays for keyboard and screen reader use. A code the
+// relay turns down is cleared; when the relay cannot be reached the code stays, so Continue sends it again.
 export function BetaGate({ onDone }: { onDone: () => void }) {
   const [cells, setCells] = useState<string[]>(emptyCells);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [hint, setHint] = useState('');
   const [focusKey, setFocusKey] = useState(0);
-  // the code last sent, so a full code is sent once; a refusal resets it so the same code can be tried again
+  // the code last sent, so a full code is sent once on its own; Continue can always send it again
   const sent = useRef('');
   const full = cellsFull(cells);
 
@@ -22,13 +23,16 @@ export function BetaGate({ onDone }: { onDone: () => void }) {
     if (busy || !code) return;
     sent.current = code;
     setBusy(true); setError('');
-    const r = await window.quorum.betaCheck(code).catch((e) => ({ ok: false, reason: String((e as Error).message || e) }));
+    const r = await window.quorum.betaCheck(code).catch(() => ({ ok: false, refused: false, reason: 'Quorum could not reach the server. Try again.' }));
     setBusy(false);
     if (r.ok) { onDone(); return; }
     setError(r.reason || 'That code was not accepted.');
-    sent.current = '';
-    setCells(emptyCells());
-    setFocusKey((k) => k + 1);
+    if (r.refused) {
+      sent.current = '';
+      setCells(emptyCells());
+      setHint('');
+      setFocusKey((k) => k + 1);
+    }
   };
 
   useEffect(() => {
