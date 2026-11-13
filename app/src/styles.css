@@ -1535,3 +1535,7 @@ button.meta-pill { font: inherit; cursor: pointer; }
 /* why a Start did nothing (App.tsx notice) */
 .start-notice { margin: 6px 16px 0; }
 .c-dictate-error { flex-basis: 100%; margin: 0 4px 4px; font-size: 13px; }
+
+.onb-step .set-error { color: var(--danger); }
+.beta-form.invalid .code-box { border-color: rgba(240, 74, 74, 0.7); }
+.beta-form.invalid .code-box:focus { border-color: var(--danger); box-shadow: 0 0 0 3px var(--danger-bg); }

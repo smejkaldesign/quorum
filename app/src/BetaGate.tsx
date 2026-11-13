@@ -46,7 +46,7 @@ export function BetaGate({ onDone }: { onDone: () => void }) {
           <img className="onb-mark" src={mark} alt="" />
           <h1>Quorum is in early beta</h1>
           <p>Enter your access code to continue. Request one at <button type="button" className="link-btn inline" onClick={() => window.quorum.openExternal(SITE)}>quorum.watch</button>.</p>
-          <div className={`beta-form${busy ? ' checking' : ''}`} aria-busy={busy}>
+          <div className={`beta-form${busy ? ' checking' : ''}${error ? ' invalid' : ''}`} aria-busy={busy}>
             <CodeBoxes cells={cells} onChange={(c) => { setCells(c); if (error) setError(''); }} onHint={setHint} disabled={busy} focusKey={focusKey} />
             {hint && <p className="beta-hint" role="status">{hint}</p>}
           </div>
