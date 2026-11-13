@@ -149,6 +149,8 @@ describe('POST /v1/beta/check', () => {
     const revoked = await call(handleBetaCheck, { code: 'K7PQ2MX9', machineId: 'mac-1', edition: 'cloud' }, deps(fakeStore(row({ revoked_at: '2026-11-10T00:00:00Z' }))));
     assert.equal(revoked.body.ok, false);
     assert.equal(revoked.body.email, undefined);
+    const redeemed = await call(handleBetaCheck, { code: 'K7PQ2MX9', machineId: 'mac-1', edition: 'cloud' }, deps(fakeStore(row({ redeemed_at: '2026-11-10T00:00:00Z' }))));
+    assert.deepEqual(redeemed.body, { ok: true, plan: 'free' });
   });
   it('a free code on its first Mac is bound before the install is recorded', async () => {
     const store = fakeStore(row());

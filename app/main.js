@@ -1990,7 +1990,7 @@ registerBeta({
   ipcMain, settings, saveSettings, on: gateOn({ pkg: packagedMeta, development: isDevelopment }), edition: EDITION, version: app.getVersion(), log,
   source: () => account.envStatus?.().config ?? 'production',
   // Cloud edition: the account is the identity; a signed-in account skips the gate, and a code for another email signs it out
-  account: EDITION === 'cloud' && account?.sessionEmail ? { email: () => account.sessionEmail(), signOut: () => account.handlers['account-sign-out']() } : null,
+  account: EDITION === 'cloud' ? { email: account.sessionEmail, signOut: account.handlers['account-sign-out'] } : null,
 });
 // feature flags (flags.js): the admin app's switches, read from the relay on launch and every hour; QUORUM_FLAGS in
 // the environment overrides them for a dev copy. Both editions read the same list

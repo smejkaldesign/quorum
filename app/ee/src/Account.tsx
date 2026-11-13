@@ -74,10 +74,12 @@ function SignIn() {
   // database still refuses a new account whose email holds no code (migration 0018)
   const [codeEmail, setCodeEmail] = useState<string | null>(null);
   const [locked, setLocked] = useState(false);
+  // set once the person types, so a status that answers late never replaces or locks what they typed
+  const typed = useRef(false);
   useEffect(() => {
     Promise.resolve(window.quorum.betaStatus?.()).then((b) => {
       if (b?.code) setAccess((a) => a || b.code!);
-      if (b?.email) { setCodeEmail(b.email); setEmail((e) => e || b.email!); setLocked(true); }
+      if (b?.email && !typed.current) { setCodeEmail(b.email); setEmail(b.email); setLocked(true); }
     }).catch(() => {});
   }, []);
   // Google runs in the system browser; the main process reports the outcome when the browser comes back
@@ -111,7 +113,7 @@ function SignIn() {
           </div>
           <div className="acct-or"><span>or use your email</span></div>
           <div className="set-line">
-            <label className="set-field wide"><input type="email" autoComplete="email" aria-label="Email" placeholder="you@example.com" value={email} readOnly={locked} onChange={(e) => { setEmail(e.target.value); setNeedsCode(false); }} onKeyDown={(e) => { if (e.key === 'Enter' && ok && accessOk && !busy) send(); }} /></label>
+            <label className="set-field wide"><input type="email" autoComplete="email" aria-label="Email" placeholder="you@example.com" value={email} readOnly={locked} onChange={(e) => { typed.current = true; setEmail(e.target.value); setNeedsCode(false); }} onKeyDown={(e) => { if (e.key === 'Enter' && ok && accessOk && !busy) send(); }} /></label>
             {!needsCode && <div className="set-line-end"><button className="pill primary" disabled={!ok || busy} onClick={send}>{busy ? 'Sending…' : 'Send code'}</button></div>}
           </div>
           {locked && codeEmail && (

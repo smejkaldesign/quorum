@@ -123,7 +123,7 @@ describe('the gate', () => {
 
 describe('the Cloud account is the identity', () => {
   const cloudFetch = (email = 'ada@example.com') => vi.fn(async (url) => ({ ok: true, json: async () => (url.endsWith('/v1/beta/check') ? { ok: true, plan: 'cloud', email } : { ok: true }) }));
-  const fakeAccount = (email) => ({ email: vi.fn(async () => email), signOut: vi.fn(async () => {}) });
+  const fakeAccount = (email, { signOutWorks = true } = {}) => { let e = email; return { email: vi.fn(async () => e), signOut: vi.fn(async () => { if (signOutWorks) e = null; return signOutWorks ? {} : { error: 'no' }; }) }; };
 
   it('stands the gate down for a signed-in account, with no code stored', async () => {
     const account = fakeAccount('ada@example.com');
@@ -154,6 +154,16 @@ describe('the Cloud account is the identity', () => {
     const r = await beta.check('abcd-efgh');
     expect(account.signOut).toHaveBeenCalledTimes(1);
     expect(r.notice).toBe('You were signed in as rick@example.com. Quorum signed you out so you can sign in as ada@example.com, the email this code was issued to.');
+    beta.stop();
+  });
+
+  it('keeps no code and says why when the other account could not be signed out', async () => {
+    const account = fakeAccount('rick@example.com', { signOutWorks: false });
+    const { beta, settings } = make({ edition: 'cloud', fetchImpl: cloudFetch('ada@example.com'), account });
+    const r = await beta.check('abcd-efgh');
+    expect(r).toMatchObject({ ok: false, refused: false });
+    expect(r.reason).toMatch(/rick@example.com could not be signed out/);
+    expect(settings.beta?.code).toBeUndefined();
     beta.stop();
   });
 

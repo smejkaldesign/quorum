@@ -130,9 +130,9 @@ export async function handleBetaCheck(req, res, { clients, config, log = () => {
     }
     await store.upsert({ codeId: row.id, email: row.email, machineId: c.machineId, edition: c.edition, version: c.version });
     log('beta_admitted', { plan: d.plan, edition: c.edition, version: c.version, bound: d.bind });
-    // the Cloud edition signs in as the person the code was issued to, so the answer names that email; the code is the
-    // secret that unlocks it, and a refused code never reveals it
-    json(res, 200, { ok: true, plan: d.plan, ...(c.edition === 'cloud' && row.email ? { email: row.email } : {}) }, cors);
+    // the Cloud edition signs up as the person the code was issued to, so the answer names that email while no account
+    // has redeemed the code yet; the code is the secret that unlocks it, and a refused code never reveals it
+    json(res, 200, { ok: true, plan: d.plan, ...(c.edition === 'cloud' && row.email && !row.redeemed_at ? { email: row.email } : {}) }, cors);
   } catch (err) { refuse(res, err, cors, log, 'beta_check'); }
 }
 

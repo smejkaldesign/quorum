@@ -406,10 +406,20 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
   }
   connect();
 
-  // the signed-in email from the stored session alone, with no network call, so an offline Mac still reads it
+  // the signed-in email. getSession refreshes an expired token over the network and answers no session when that
+  // fails, so an offline Mac falls back to the stored session; a sign-out or a refused refresh removes it from the file
+  const storedEmail = () => {
+    const all = (() => { try { return JSON.parse(readFileSync(perConfig(cloud, 'auth', 'json'), 'utf8')); } catch { return {}; } })();
+    for (const [k, v] of Object.entries(all)) {
+      if (!k.endsWith('-auth-token')) continue;
+      try { const s = typeof v === 'string' ? JSON.parse(v) : v; if (s?.refresh_token && s?.user?.email) return s.user.email; } catch {}
+    }
+    return null;
+  };
   const sessionEmail = async () => {
     if (!client) return null;
-    try { const { data } = await client.auth.getSession(); return data?.session?.user?.email?.toLowerCase() ?? null; } catch { return null; }
+    try { const { data } = await client.auth.getSession(); if (data?.session?.user?.email) return data.session.user.email; } catch {}
+    return storedEmail();
   };
   return { ...account, handlers, refresh, sync, envStatus, sessionEmail, stop: () => { clearInterval(pullTimer); inner.stop(); } };
 }

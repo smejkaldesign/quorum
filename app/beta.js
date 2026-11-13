@@ -28,6 +28,7 @@ export function betaState(settings, on) {
 }
 
 // the sentence shown when a code for one person was entered while another account was signed in on this Mac
+export const SIGN_OUT_FAILED = (from) => `This code was issued to someone else, and ${from} could not be signed out. Try again.`;
 export const switchedMessage = (from, to) => `You were signed in as ${from}. Quorum signed you out so you can sign in as ${to}, the email this code was issued to.`;
 
 // how long until the next heartbeat is due: at once when none was sent, otherwise a day after the last one
@@ -76,17 +77,19 @@ export function createBeta({ settings, saveSettings = () => {}, account = null, 
       const r = await post('/v1/beta/check', { code: c, machineId: machineId(), edition, version }, timeout);
       if (r.ok !== true) return { ok: false, refused: definiteRefusal(r.reason), reason: r.error || r.reason || 'That code was not accepted.' };
       const email = edition === 'cloud' && typeof r.email === 'string' && r.email ? r.email.toLowerCase() : null;
-      settings.beta = { ...(settings.beta ?? {}), code: c, plan: r.plan ?? 'free', email, acceptedAt: new Date(now()).toISOString() };
-      saveSettings();
-      log('beta', 'code accepted', r.plan ?? 'free');
-      // a code is one person's: an account of another email signed in on this Mac is signed out before going on
+      // a code is one person's: an account of another email signed in on this Mac is signed out before the code is kept,
+      // and when it stays signed in the code is not kept and nothing says otherwise
       let notice = null;
       const current = email ? await accountEmail() : null;
       if (current && current !== email) {
         try { await account.signOut(); } catch (err) { log('beta sign-out', err?.message ?? err); }
+        if (await accountEmail()) return { ok: false, refused: false, reason: SIGN_OUT_FAILED(current) };
         notice = switchedMessage(current, email);
         log('beta', 'signed out a different account for the code email');
       }
+      settings.beta = { ...(settings.beta ?? {}), code: c, plan: r.plan ?? 'free', email, acceptedAt: new Date(now()).toISOString() };
+      saveSettings();
+      log('beta', 'code accepted', r.plan ?? 'free');
       return { ok: true, plan: settings.beta.plan, email, notice };
     } catch (err) {
       log('beta check', err?.message ?? err);
@@ -127,7 +130,7 @@ export function createBeta({ settings, saveSettings = () => {}, account = null, 
 
   const handlers = {
     'beta-status': () => gateStatus(),
-    'beta-check': async (code) => { const r = await check(code); if (r.ok) start(); return { ...r, status: status() }; },
+    'beta-check': async (code) => { const r = await check(code); if (r.ok) start(); return { ...r, status: await gateStatus() }; },
   };
   return { status, gateStatus, check, heartbeat, start, stop, machineId, handlers };
 }
