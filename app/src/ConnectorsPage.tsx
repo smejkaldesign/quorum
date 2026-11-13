@@ -1,17 +1,17 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { AgentSchedule, CalendarSettings, MeetingSourceInfo, PlatformInfo, SourceJob } from './quorum';
+import type { AgentSchedule, Brain, CalendarSettings, MeetingSourceInfo, PlatformInfo, SourceJob } from './quorum';
 import { TRADEOFFS } from '../sources/agent-import';
 import { CATEGORIES, aboutFor, connectorsFor, featuresFor, type LibraryConnector } from '../connectors/library';
 import { useFlag } from './flags';
 import { useMenu } from './controls';
-import { IconCheck, IconChevron, IconClose, IconExternal, IconGrid, IconMore, IconPlus, IconReset } from './icons';
+import { IconCheck, IconChevron, IconExternal, IconFolder, IconGrid, IconMore, IconReset } from './icons';
 
-// Settings › Connectors: the tools Quorum is connected to, grouped by what they do; a detail page per connector with
-// its metadata, the features it enables and its actions; and the library behind Add connector, where every tool
-// Quorum supports or plans to is listed. Anything not built yet is subdued with a Coming soon badge and offers no
-// action. Meeting-notes sources run through sources/index.js; the Calendar connector is the macOS permission;
-// Claude Code is the quorum MCP server registration.
+// Settings › Connectors: four fixed groups (your notes, calendar, meeting notes, AI), each row saying whether it is
+// connected and offering one action, and a detail page per connector. Connectors not built yet are named on one line
+// at the bottom and offer nothing. Meeting-notes sources run through sources/index.js; Apple Calendar is the macOS
+// permission; Claude Code is the quorum MCP server registration. The meeting apps that listen on this Mac appear only
+// with the meeting-capture flag on; with it off, Zoom stays as its cloud recordings import.
 type Provider = Awaited<ReturnType<typeof window.quorum.meetingProviders>>[number];
 type Live = { sources: MeetingSourceInfo[]; cal: CalendarSettings | null; mcp: { added: boolean; command: string } | null; providers: Provider[]; platforms: PlatformInfo[] };
 type Act = (fn: () => Promise<unknown>) => Promise<void>;
@@ -50,16 +50,25 @@ const ago = (iso: string | null) => {
 const elapsed = (from: number) => { const s = Math.max(0, Math.round((Date.now() - from) / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 const plural = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`;
 
+// the rows on the page, by group. `cat` is the library category a deep link names (openConnectors({ library }))
+const GROUPS: { title: string; cat: string; ids: string[] }[] = [
+  { title: 'Calendar', cat: 'calendar', ids: ['apple-calendar', 'google-calendar'] },
+  { title: 'Meeting notes', cat: 'meeting-notes', ids: ['granola', 'zoom', 'google-meet', 'teams'] },
+  { title: 'AI', cat: 'ai', ids: ['claude-code'] },
+];
+// the connectors not built yet named first on the More coming line, when they are still not built
+const MORE_FIRST = ['slack', 'notion', 'google-drive', 'linear', 'gmail', 'fireflies'];
+const MORE_NAMED = 6;
+const PRICING = 'https://quorum.watch/#pricing';
+
 // detail is which connector's page is open; SettingsView owns it so the page title can turn into breadcrumbs
-export function ConnectorsPage({ detail, onDetail, openLibrary }: { detail: string | null; onDetail: (id: string | null) => void; openLibrary?: { cat: string | true; n: number } | null }) {
+export function ConnectorsPage({ detail, onDetail, brain, onFolder, onNotes, focus }: { detail: string | null; onDetail: (id: string | null) => void; brain: Brain | null; onFolder: () => void; onNotes: () => void; focus?: { cat: string | true; n: number } | null }) {
   const [live, setLive] = useState<Live>({ sources: [], cal: null, mcp: null, providers: [], platforms: [] });
   const { list: libraryList, byId } = useLibrary();
+  // a connect refused for the wrong account opens the detail page, which offers signing in with another account
+  const [refused, setRefused] = useState<{ id: string; error: string } | null>(null);
   const [icons, setIcons] = useState<Record<string, string | null>>({});
-  const [library, setLibrary] = useState(false);
-  // the category the sheet opens on; a deep link from another surface names one
-  const [libraryCat, setLibraryCat] = useState('all');
-  useEffect(() => { if (!openLibrary) return; setLibraryCat(openLibrary.cat === true ? 'all' : openLibrary.cat); setLibrary(true); }, [openLibrary]);
-  // the first answer from the main process takes a moment (the Claude Code check shells out); until then a skeleton, never the zero state
+  // the first answer from the main process takes a moment (the Claude Code check shells out); until then a skeleton
   const [loaded, setLoaded] = useState(false);
   const load = async () => {
     // the local edition has no platform handlers; the call fails and the list stays empty
@@ -79,41 +88,66 @@ export function ConnectorsPage({ detail, onDetail, openLibrary }: { detail: stri
     const fresh = (j: SourceJob | null) => !!j && j.status !== 'running' && !!j.finishedAt && Date.now() - j.finishedAt < 2000;
     if (live.sources.some((s) => fresh(s.job)) || live.platforms.some((p) => fresh(p.job))) { const t = setTimeout(load, 500); return () => clearTimeout(t); }
   }, [live.sources, live.platforms]);
-  const lastRefused = useRef<{ id: string; error: string } | null>(null);
-  const openDetail = (id: string) => { setLibrary(false); onDetail(id); };
-  if (detail && byId[detail]) return <ConnectorDetail connector={byId[detail]} icon={icons[detail] ?? null} live={live} onChange={load} initialError={lastRefused.current?.id === detail ? lastRefused.current.error : ''} />;
-  const connected = libraryList.filter((x) => isConnected(x, live));
-  const groups = CATEGORIES.map((cat) => ({ cat, items: connected.filter((x) => x.category === cat.id) })).filter((g) => g.items.length);
+  // a deep link naming a group scrolls to it once the rows are in
+  useEffect(() => {
+    if (!focus || focus.cat === true || !loaded || detail) return;
+    document.querySelector(`[data-conn-group="${focus.cat}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }, [focus, loaded, detail]);
+  if (detail && byId[detail]) return <ConnectorDetail connector={byId[detail]} icon={icons[detail] ?? null} live={live} onChange={load} initialError={refused?.id === detail ? refused.error : ''} />;
+  // what the library offers today (with meeting capture off, Meet and Teams are not built as imports yet), and
+  // anything still connected whatever its status, so it can be disconnected
+  const listed = (id: string) => !!byId[id] && (byId[id].status !== 'soon' || isConnected(byId[id], live));
+  const soon = libraryList.filter((x) => x.status === 'soon');
+  const named = [...MORE_FIRST.map((id) => soon.find((x) => x.id === id)).filter((x): x is LibraryConnector => !!x), ...soon.filter((x) => !MORE_FIRST.includes(x.id))].slice(0, MORE_NAMED).map((x) => x.name);
+  const others = soon.length - named.length;
+  const openRefused = (id: string, error: string) => { setRefused({ id, error }); onDetail(id); };
+  if (!loaded) {
+    return (
+      <div className="conn-group" aria-busy="true" aria-label="Loading connectors">
+        <h4 className="skel skel-h" />
+        <div className="set-card conn-card">{[0, 1].map((i) => <div key={i} className="conn-line skel-row"><span className="skel skel-logo" /><span className="skel skel-title" /><span className="skel skel-meta" /></div>)}</div>
+      </div>
+    );
+  }
   return (
     <>
-      <div className="set-head">
-        <h3>Your connectors</h3>
-        <span className="set-head-actions"><button className="pill primary with-icon" onClick={() => { setLibraryCat('all'); setLibrary(true); }}><IconPlus width={15} height={15} />Add connector</button></span>
-      </div>
-      {!loaded ? (
-        <div className="conn-group" aria-busy="true" aria-label="Loading connectors">
-          <h4 className="skel skel-h" />
-          <div className="set-card conn-card">{[0, 1].map((i) => <div key={i} className="conn-line skel-row"><span className="skel skel-logo" /><span className="skel skel-title" /><span className="skel skel-meta" /></div>)}</div>
-        </div>
-      ) : groups.length === 0 ? (
-        <div className="set-card set-zero">
-          <span className="set-zero-icon"><IconGrid width={22} height={22} /></span>
-          <strong>No connectors yet</strong>
-          <p>Connect the tools that record your meetings, your calendar, and the AI tools you work in. Notes flow into your folder, tagged with where they came from.</p>
-          <button className="pill" onClick={() => { setLibraryCat('all'); setLibrary(true); }}>Browse the library</button>
-        </div>
-      ) : groups.map(({ cat, items }) => (
-        <div key={cat.id} className="conn-group">
-          <h4>{cat.name}</h4>
-          <div className="set-card conn-card">
-            {items.map((x) => <ConnectedRow key={x.id} connector={x} icon={icons[x.id] ?? null} live={live} onChange={load} onOpen={() => openDetail(x.id)} />)}
+      <div className="conn-group">
+        <h4>Your notes</h4>
+        <div className="set-card conn-card">
+          <div className="conn-row">
+            <div className="conn-line" role="button" tabIndex={0} onClick={onNotes} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onNotes(); } }}>
+              <span className="conn-logo blank" style={{ width: 28, height: 28 }}><IconFolder width={15} height={15} /></span>
+              <strong className="conn-title">Agent OS folder</strong>
+              <Status on={!!brain} />
+              {brain && <span className="conn-meta" title={brain.vault || brain.root}>{home(brain.vault || brain.root)}</span>}
+              {!brain && <span className="conn-actions" onClick={(e) => e.stopPropagation()}><button className="pill primary" onClick={onFolder}>Choose folder</button></span>}
+              <IconChevron className="right conn-chev" width={14} height={14} />
+            </div>
           </div>
         </div>
-      ))}
-      {library && <Library icons={icons} live={live} onChange={load} onOpen={openDetail} onClose={() => setLibrary(false)} lastRefused={lastRefused} initialCategory={libraryCat} />}
+      </div>
+      {GROUPS.map((g) => {
+        const items = g.ids.filter(listed).map((id) => byId[id]);
+        if (!items.length) return null;
+        return (
+          <div key={g.title} className="conn-group" data-conn-group={g.cat}>
+            <h4>{g.title}</h4>
+            <div className="set-card conn-card">
+              {items.map((x) => <ConnectorRow key={x.id} connector={x} icon={icons[x.id] ?? null} live={live} onChange={load} onOpen={() => onDetail(x.id)} onWrongAccount={(e) => openRefused(x.id, e)} />)}
+            </div>
+          </div>
+        );
+      })}
+      {named.length > 0 && <p className="conn-more">More coming: {others > 0 ? `${named.join(', ')} and ${others} more.` : `${named.slice(0, -1).join(', ')}${named.length > 1 ? ' and ' : ''}${named[named.length - 1]}.`}</p>}
     </>
   );
 }
+
+const home = (p: string) => p.replace(/^\/Users\/[^/]+/, '~');
+const Status = ({ on }: { on: boolean }) => (on ? <span className="conn-ok"><i />Connected</span> : <span className="conn-off">Not connected</span>);
+
+// a Cloud-only import with no Cloud account on this copy: a Cloud badge and a link to the plans
+const needsCloud = (x: LibraryConnector, live: Live) => cloudOnly(x) && !platformFor(x, live);
 
 function useAct(onChange: () => void): [boolean, string, Act] {
   const [busy, setBusy] = useState(false);
@@ -176,20 +210,27 @@ function Actions({ connector: x, live, busy, act, compact }: { connector: Librar
   );
 }
 
-function ConnectedRow({ connector: x, icon, live, onChange, onOpen }: { connector: LibraryConnector; icon: string | null; live: Live; onChange: () => void; onOpen: () => void }) {
+function ConnectorRow({ connector: x, icon, live, onChange, onOpen, onWrongAccount }: { connector: LibraryConnector; icon: string | null; live: Live; onChange: () => void; onOpen: () => void; onWrongAccount: (error: string) => void }) {
   const [busy, error, act] = useAct(onChange);
   const src = sourceFor(x, live);
   const running = src?.job?.status === 'running';
   const [, tick] = useState(0);
   useEffect(() => { if (!running) return; const t = setInterval(() => tick((n) => n + 1), 1000); return () => clearInterval(t); }, [running]);
-  const meta = metaLine(x, live);
+  const on = isConnected(x, live);
+  const cloud = needsCloud(x, live);
+  // a copy built without Quorum's Google client cannot connect Google Calendar; the row says so instead of offering it
+  const noClient = x.id === 'google-calendar' && live.cal?.google?.configured === false;
+  const meta = on ? metaLine(x, live) : noClient ? 'Needs the app\'s Google client' : null;
   return (
     <div className="conn-row">
       <div className="conn-line" role="button" tabIndex={0} onClick={onOpen} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}>
         <Logo icon={icon} />
         <strong className="conn-title">{x.name}</strong>
+        {cloud && <em className="soon grey">Cloud</em>}
+        <Status on={on} />
         {meta && <span className="conn-meta">{meta}</span>}
-        <Actions connector={x} live={live} busy={busy} act={act} compact />
+        {on ? <Actions connector={x} live={live} busy={busy} act={act} compact />
+          : <span className="conn-actions" onClick={(e) => e.stopPropagation()}>{cloud ? <button className="pill" onClick={() => window.quorum.openExternal(PRICING)}>See Cloud</button> : noClient ? null : <ConnectButton connector={x} live={live} busy={busy} act={act} onWrongAccount={onWrongAccount} />}</span>}
         <IconChevron className="right conn-chev" width={14} height={14} />
       </div>
       {src?.job && <div className="conn-sub"><JobLine job={src.job} oneLine /></div>}
@@ -198,7 +239,6 @@ function ConnectedRow({ connector: x, icon, live, onChange, onOpen }: { connecto
   );
 }
 
-// the detail page: header with the connect or sync controls, the details table, the features list
 function ConnectorDetail({ connector: x, icon, live, onChange, initialError = '' }: { connector: LibraryConnector; icon: string | null; live: Live; onChange: () => Promise<void>; initialError?: string }) {
   const [busy, actError, act] = useAct(onChange);
   const error = actError || initialError;
@@ -349,13 +389,13 @@ function TitleActions({ children }: { children: ReactNode }) {
   return slot ? createPortal(children, slot) : null;
 }
 
-function ConnectButton({ connector: x, live, busy, act }: { connector: LibraryConnector; live: Live; busy: boolean; act: Act }) {
+function ConnectButton({ connector: x, live, busy, act, onWrongAccount }: { connector: LibraryConnector; live: Live; busy: boolean; act: Act; onWrongAccount?: (error: string) => void }) {
   if (x.id === 'apple-calendar' && live.cal?.status === 'denied') return <button className="pill" onClick={() => window.quorum.calendarPrivacy()}>Open System Settings</button>;
   const prov = providerFor(x, live);
   if (prov?.enabled && prov.installed && prov.access === false) return <button className="pill" onClick={() => window.quorum.axSettingsOpen()}>Open System Settings</button>;
   if (prov?.enabled && !prov.installed) return <button className="pill" disabled={busy} onClick={() => act(async () => { await window.quorum.meetingProviderCheck(); await new Promise((r) => setTimeout(r, 1500)); })}>{busy ? 'Checking…' : 'Check again'}</button>;
   const fresh = x.kind === 'mcp-source' && !!sourceFor(x, live)?.freshNext;
-  return <button className="pill primary" disabled={busy} onClick={() => act(() => startConnect(x, fresh))}>{busy ? connectLabel(x, true, true) : fresh ? 'Connect with a different account' : connectLabel(x, false, true)}</button>;
+  return <button className="pill primary" disabled={busy} onClick={() => act(async () => { const r = await startConnect(x, fresh); if (r.wrongAccount && r.error && onWrongAccount) { onWrongAccount(r.error); return null; } return r; })}>{busy ? connectLabel(x, true, true) : fresh ? 'Connect with a different account' : connectLabel(x, false, true)}</button>;
 }
 
 // the fallback for a source the person's agent already has: the agent imports through the source's MCP server on the
@@ -476,77 +516,3 @@ function JobLine({ job, oneLine }: { job: SourceJob; oneLine?: boolean }) {
   );
 }
 
-// "Enables N features": click for the list of what the connector does for you
-function Features({ connector: x }: { connector: LibraryConnector }) {
-  const [open, setOpen] = useMenu();
-  const list = featuresFor(x, capture(x));
-  if (!list.length) return null;
-  return (
-    <span className="menu-wrap lib-feat" onClick={(e) => e.stopPropagation()}>
-      <button type="button" className="lib-feat-btn" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o: boolean) => !o)}>Enables {plural(list.length, 'feature')}</button>
-      {open && <div className="lib-pop" role="dialog" aria-label={`What ${x.name} enables`}><ul>{list.map((f) => <li key={f}>{f}</li>)}</ul></div>}
-    </span>
-  );
-}
-
-// the library sheet: categories down the left, a search box, and a tile per connector; a tile opens the detail page
-function Library({ icons, live, onChange, onOpen, onClose, lastRefused, initialCategory = 'all' }: { icons: Record<string, string | null>; live: Live; onChange: () => Promise<void>; onOpen: (id: string) => void; onClose: () => void; lastRefused: React.MutableRefObject<{ id: string; error: string } | null>; initialCategory?: string }) {
-  const [cat, setCat] = useState<string>(initialCategory);
-  const [q, setQ] = useState('');
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<Record<string, string>>({});
-  const { list: libraryList } = useLibrary();
-  const items = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    // typing searches the whole library, whatever category was open
-    if (needle) return libraryList.filter((x) => x.name.toLowerCase().includes(needle) || x.description.toLowerCase().includes(needle));
-    return libraryList.filter((x) => cat === 'all' || x.category === cat);
-  }, [cat, q, libraryList]);
-  const connect = async (x: LibraryConnector) => {
-    setBusy(x.id); setError((e) => ({ ...e, [x.id]: '' }));
-    const r = await startConnect(x);
-    setBusy(null);
-    if (r.error) { setError((e) => ({ ...e, [x.id]: r.error! })); if (r.wrongAccount) { lastRefused.current = { id: x.id, error: r.error! }; onOpen(x.id); } return; }
-    await onChange();
-  };
-  const counts = useMemo(() => Object.fromEntries(CATEGORIES.map((c) => [c.id, libraryList.filter((x) => x.category === c.id).length])), [libraryList]);
-  return (
-    <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }} onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}>
-      <div className="modal lib-modal" role="dialog" aria-modal="true" aria-labelledby="lib-title">
-        <div className="lib-head">
-          <div><h2 id="lib-title">Add a connector</h2><p>Everything Quorum connects to. Tools marked Soon are on the way. Click a tool for details.</p></div>
-          <button className="icon-btn" aria-label="Close" onClick={onClose}><IconClose width={16} height={16} /></button>
-        </div>
-        <div className="lib-body">
-          <nav className="lib-nav" aria-label="Connector categories">
-            <input className="lib-search" type="search" placeholder="Search" aria-label="Search connectors" value={q} onChange={(e) => { setQ(e.target.value); setCat('all'); }} autoFocus />
-            <button className={cat === 'all' ? 'on' : ''} onClick={() => { setCat('all'); setQ(''); }}>All<em>{libraryList.length}</em></button>
-            {CATEGORIES.map((c) => <button key={c.id} className={cat === c.id ? 'on' : ''} onClick={() => { setCat(c.id); setQ(''); }}>{c.name}<em>{counts[c.id]}</em></button>)}
-          </nav>
-          <div className="lib-main">
-            {q.trim() ? <p className="lib-blurb">{items.length ? `${items.length} ${items.length === 1 ? 'match' : 'matches'} across the library` : ''}</p> : cat !== 'all' && <p className="lib-blurb">{CATEGORIES.find((c) => c.id === cat)?.blurb}</p>}
-            <div className="lib-grid">
-              {items.map((x) => {
-                const on = isConnected(x, live);
-                const soon = x.status === 'soon';
-                return (
-                  <div key={x.id} className={`lib-tile${soon ? ' is-soon' : ''}${on ? ' is-on' : ''}`} role="button" tabIndex={0} onClick={() => onOpen(x.id)} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(x.id); }}>
-                    <div className="lib-tile-head"><span className="lib-tile-lead"><Logo icon={icons[x.id] ?? null} size={32} /><Features connector={x} /></span>{soon && <em className="soon grey">Soon</em>}{on && <span className="lib-on"><IconCheck width={13} height={13} />Connected</span>}</div>
-                    <strong>{x.name}</strong>
-                    <span>{x.description}</span>
-                    <div className="lib-tile-foot">
-                      {!soon && !on && <button className="pill small-pill primary" disabled={busy !== null} onClick={(e) => { e.stopPropagation(); connect(x); }}>{connectLabel(x, busy === x.id, false)}</button>}
-                      <span className="lib-details">Details<IconChevron className="right" width={12} height={12} /></span>
-                    </div>
-                    {error[x.id] && <p className="set-error one-line" title={error[x.id]}>{error[x.id]}</p>}
-                  </div>
-                );
-              })}
-              {items.length === 0 && <p className="lib-empty">Nothing matches that search.</p>}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
