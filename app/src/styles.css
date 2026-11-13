@@ -1455,11 +1455,20 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .guard-skipped li { margin: 4px 0; }
 .guard-skipped strong { font-weight: 500; color: var(--text); }
 
-/* beta gate (BetaGate.tsx): the code field under the onboarding card's copy */
+/* beta gate (BetaGate.tsx, CodeBoxes.tsx): one box per character of the code, a dash between the groups */
 .beta-form { display: flex; flex-direction: column; gap: 10px; margin: 18px 0 6px; }
-.beta-form .set-field { width: 100%; }
 .beta-hint { margin: 0; color: var(--muted); font-size: 13px; }
 .onb-step .link-btn { font-size: inherit; }
+.link-btn.inline { margin: 0; padding: 0; }
+.code-boxes { display: flex; align-items: center; gap: 8px; }
+.code-box { width: 44px; height: 52px; padding: 0; border-radius: 12px; border: 1px solid var(--line-2); background: var(--container-bg); color: var(--text); text-align: center; font: 500 22px/1 ui-monospace, "SF Mono", Menlo, monospace; text-transform: uppercase; caret-color: var(--brand); transition: border-color 120ms ease, box-shadow 120ms ease; }
+.code-box:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px rgba(var(--brand-rgb), 0.25); }
+.code-box:disabled { opacity: 0.55; }
+.code-dash { width: 14px; text-align: center; color: var(--muted); font: 500 22px/1 ui-monospace, "SF Mono", Menlo, monospace; }
+.beta-form.checking .code-box { border-color: rgba(var(--brand-rgb), 0.45); }
+.code-spin { display: inline-block; width: 12px; height: 12px; margin-right: 8px; vertical-align: -1px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: code-spin 0.8s linear infinite; }
+@keyframes code-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .code-spin { animation: none; } }
 
 /* Settings › Admin › Billing (ee/src/Billing.tsx): the usage meter, per-seat lines and the two pricing columns */
 .bill-meter { display: block; width: 140px; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.08); overflow: hidden; flex: none; }

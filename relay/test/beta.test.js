@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
-import { betaDecision, cleanCheck, cleanHeartbeat, handleBetaCheck, handleBetaHeartbeat, heartbeatDecision } from '../beta.js';
+import { betaDecision, betaStore, cleanCheck, cleanHeartbeat, handleBetaCheck, handleBetaHeartbeat, heartbeatDecision } from '../beta.js';
 
 const now = Date.parse('2026-11-12T00:00:00Z');
 const row = (over = {}) => ({ id: 'c1', email: 'x@example.com', plan: 'free', expires_at: '2026-12-12T00:00:00Z', revoked_at: null, redeemed_at: null, redeemed_machine_id: null, ...over });
@@ -34,16 +34,67 @@ describe('the check decision', () => {
     assert.equal(betaDecision({ row: bound, installs: [], machineId: 'mac-1', edition: 'local', now }).ok, true);
     assert.equal(betaDecision({ row: row(expired), installs: [{ machine_id: 'mac-1', edition: 'local' }], machineId: 'mac-1', edition: 'local', now }).ok, true);
   });
-  it('a cloud check needs the email the code was issued to, and then follows the account to any Mac', () => {
+  it('a cloud check is not tied to a Mac: any Mac is admitted and nothing is bound or refused as used', () => {
     const cloud = row({ plan: 'cloud' });
-    assert.equal(betaDecision({ row: cloud, installs: [], machineId: 'mac-1', edition: 'cloud', now }).reason, 'email');
-    assert.equal(betaDecision({ row: cloud, installs: [], machineId: 'mac-1', edition: 'cloud', email: 'other@example.com', now }).reason, 'email');
-    assert.deepEqual(betaDecision({ row: cloud, installs: [{ machine_id: 'mac-1', edition: 'cloud' }], machineId: 'mac-2', edition: 'cloud', email: 'x@example.com', now }), { ok: true, plan: 'cloud', bind: false });
+    const installs = [{ machine_id: 'mac-1', edition: 'cloud' }];
+    assert.deepEqual(betaDecision({ row: cloud, installs: [], machineId: 'mac-1', edition: 'cloud', now }), { ok: true, plan: 'cloud', bind: false });
+    assert.deepEqual(betaDecision({ row: cloud, installs, machineId: 'mac-2', edition: 'cloud', now }), { ok: true, plan: 'cloud', bind: false });
+    assert.deepEqual(betaDecision({ row: row({ redeemed_machine_id: 'mac-1' }), installs, machineId: 'mac-3', edition: 'cloud', now }), { ok: true, plan: 'free', bind: false });
+  });
+  it('a cloud check refuses an expired code unless an account already redeemed it, and a revoked code always', () => {
+    assert.equal(betaDecision({ row: row({ plan: 'cloud', ...expired }), machineId: 'mac-1', edition: 'cloud', now }).reason, 'expired');
+    assert.equal(betaDecision({ row: row({ plan: 'cloud', redeemed_at: '2026-11-01T00:00:00Z', ...expired }), machineId: 'mac-1', edition: 'cloud', now }).ok, true);
+    assert.equal(betaDecision({ row: row({ plan: 'cloud', revoked_at: '2026-11-01T00:00:00Z' }), machineId: 'mac-1', edition: 'cloud', now }).reason, 'revoked');
+  });
+  it('ignores any email an older build sends', () => {
+    assert.equal(betaDecision({ row: row({ plan: 'cloud' }), installs: [], machineId: 'mac-1', edition: 'cloud', email: 'other@example.com', now }).ok, true);
+    assert.equal(betaDecision({ row: row(), installs: [], machineId: 'mac-1', edition: 'local', email: 'other@example.com', now }).ok, true);
+  });
+  it('a free code held by a Cloud install alone is still open to its first open-source Mac', () => {
+    assert.deepEqual(betaDecision({ row: row(), installs: [{ machine_id: 'mac-9', edition: 'cloud' }], machineId: 'mac-1', edition: 'local', now }), { ok: true, plan: 'free', bind: true });
   });
   it('refuses an unknown, revoked or expired code', () => {
     assert.equal(betaDecision({ row: null, machineId: 'm', edition: 'local', now }).reason, 'unknown');
     assert.equal(betaDecision({ row: row({ revoked_at: '2026-11-01T00:00:00Z', redeemed_machine_id: 'm' }), machineId: 'm', edition: 'local', now }).reason, 'revoked');
     assert.equal(betaDecision({ row: row(expired), machineId: 'm', edition: 'local', now }).reason, 'expired');
+  });
+});
+
+// a stand-in for the access_codes table: the conditional update lands only while no Mac holds the code
+function fakeCodesDb(holder) {
+  const table = { redeemed_machine_id: holder };
+  const builder = (op, patch) => {
+    const filters = [];
+    const b = {
+      eq: () => b,
+      is: (col, val) => { filters.push([col, val]); return b; },
+      select: () => b,
+      maybeSingle: async () => ({ data: { ...table }, error: null }),
+      then: (resolve) => {
+        if (op === 'update') {
+          const open = filters.every(([col, val]) => table[col] === val);
+          if (open) Object.assign(table, patch);
+          return resolve({ data: open ? [{ id: 'c1' }] : [], error: null });
+        }
+        return resolve({ data: [{ ...table }], error: null });
+      },
+    };
+    return b;
+  };
+  return { table, from: () => ({ update: (patch) => builder('update', patch), select: () => builder('select') }) };
+}
+
+describe('binding a free code', () => {
+  it('lets the first Mac hold the code and refuses a second, even when both pass the earlier check', async () => {
+    const db = fakeCodesDb(null);
+    const store = betaStore(db);
+    assert.equal(await store.redeemLocal({ codeId: 'c1', machineId: 'mac-1' }), true);
+    assert.equal(await store.redeemLocal({ codeId: 'c1', machineId: 'mac-2' }), false);
+    assert.equal(db.table.redeemed_machine_id, 'mac-1');
+  });
+  it('answers true for the Mac that already holds the code', async () => {
+    const store = betaStore(fakeCodesDb('mac-1'));
+    assert.equal(await store.redeemLocal({ codeId: 'c1', machineId: 'mac-1' }), true);
   });
 });
 
@@ -68,33 +119,40 @@ function call(handler, body, deps) {
   const res = { writeHead: (s) => { out.status = s; }, end: (b) => { out.body = String(b ?? ''); } };
   return handler(req, res, deps).then(() => ({ status: out.status, body: JSON.parse(out.body || '{}') }));
 }
-function fakeStore(codeRow, installs = []) {
+function fakeStore(codeRow, installs = [], { bindWins = true } = {}) {
   const calls = { upserts: [], touches: [], redeems: [] };
   return {
     calls,
     code: async (code) => (codeRow && code === 'K7PQ2MX9' ? codeRow : null),
     installs: async () => installs,
     upsert: async (i) => { calls.upserts.push(i); },
-    redeemLocal: async (r) => { calls.redeems.push(r); },
+    redeemLocal: async (r) => { calls.redeems.push(r); return bindWins; },
     touch: async (t) => { calls.touches.push(t); return installs.some((i) => i.machine_id === t.machineId); },
   };
 }
 const deps = (store) => ({ clients: { db: null }, config: { corsOrigins: [] }, store });
 
 describe('POST /v1/beta/check', () => {
-  it('records a cloud install and answers the plan without binding the code', async () => {
-    const store = fakeStore(row({ plan: 'cloud' }));
-    const r = await call(handleBetaCheck, { code: 'K7PQ-2MX9', machineId: 'mac-1', edition: 'cloud', version: '0.2.9', email: 'x@example.com' }, deps(store));
+  it('records a cloud install on a second Mac with the code row email, ignoring the email the request sent, and binds nothing', async () => {
+    const store = fakeStore(row({ plan: 'cloud' }), [{ machine_id: 'mac-1', edition: 'cloud' }]);
+    const r = await call(handleBetaCheck, { code: 'K7PQ-2MX9', machineId: 'mac-2', edition: 'cloud', version: '0.3.1', email: 'other@example.com' }, deps(store));
     assert.equal(r.status, 200);
     assert.deepEqual(r.body, { ok: true, plan: 'cloud' });
-    assert.deepEqual(store.calls.upserts, [{ codeId: 'c1', email: 'x@example.com', machineId: 'mac-1', edition: 'cloud', version: '0.2.9' }]);
+    assert.deepEqual(store.calls.upserts, [{ codeId: 'c1', email: 'x@example.com', machineId: 'mac-2', edition: 'cloud', version: '0.3.1' }]);
     assert.equal(store.calls.redeems.length, 0);
   });
-  it('a free code on its first Mac is recorded and redeemed for that Mac', async () => {
+  it('a free code on its first Mac is bound before the install is recorded', async () => {
     const store = fakeStore(row());
     const r = await call(handleBetaCheck, { code: 'K7PQ2MX9', machineId: 'mac-1', edition: 'local', version: '0.2.9' }, deps(store));
     assert.deepEqual(r.body, { ok: true, plan: 'free' });
     assert.deepEqual(store.calls.redeems, [{ codeId: 'c1', machineId: 'mac-1' }]);
+    assert.equal(store.calls.upserts.length, 1);
+  });
+  it('a Mac that loses the race to bind a free code is told it is in use and leaves no install row', async () => {
+    const store = fakeStore(row(), [], { bindWins: false });
+    const r = await call(handleBetaCheck, { code: 'K7PQ2MX9', machineId: 'mac-2', edition: 'local', version: '0.2.9' }, deps(store));
+    assert.deepEqual(r.body, { ok: false, reason: 'used', error: 'That access code is already in use on another Mac.' });
+    assert.equal(store.calls.upserts.length, 0);
   });
   it('answers ok false with a reason and writes nothing when the code is refused', async () => {
     const store = fakeStore(row({ redeemed_machine_id: 'mac-1', redeemed_at: '2026-11-10T00:00:00Z' }), [{ machine_id: 'mac-1', edition: 'local' }]);

@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import store from '../store/index.js';
 import { DATA_DIR, ENV, isDevelopment } from '../edition.js';
+import { codeChars } from '../betaCode.js';
 import { createSync } from './sync.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -268,7 +269,8 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
       const needed = await client.rpc('access_code_needed', { email: e });
       if (needed.error) log('account access_code_needed', needed.error.message);
       if (needed.data === true) {
-        const code = String(accessCode ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+        // the same reading as the beta gate: dash and spaces dropped, uppercase, 0 as O and 1 as I
+        const code = codeChars(accessCode).join('');
         if (!code) return { needsCode: true, email: e };
         const claim = await client.rpc('access_code_claim', { email: e, code });
         if (claim.error) return fail(claim.error, 'That access code is not valid for this email.');

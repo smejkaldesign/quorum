@@ -1988,7 +1988,7 @@ registerOnboarding({
 // A copy on the local Supabase stack checks its code against a relay on this Mac
 registerBeta({
   ipcMain, settings, saveSettings, on: gateOn({ pkg: packagedMeta, development: isDevelopment }), edition: EDITION, version: app.getVersion(), log,
-  source: () => account.envStatus?.().config ?? 'production', email: () => account.state?.().email ?? null,
+  source: () => account.envStatus?.().config ?? 'production',
 });
 // feature flags (flags.js): the admin app's switches, read from the relay on launch and every hour; QUORUM_FLAGS in
 // the environment overrides them for a dev copy. Both editions read the same list

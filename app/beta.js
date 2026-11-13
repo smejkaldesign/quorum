@@ -4,7 +4,7 @@
 // shows whenever no accepted code is stored, in both editions, including installs that onboarded before it existed.
 // Pure Node: the main process registers it; the tests call it with fake fetch and timers.
 import { randomUUID } from 'node:crypto';
-import { CODE, normalizeCode } from './betaCode.js';
+import { CODE, LENGTH_MESSAGE, definiteRefusal, normalizeCode } from './betaCode.js';
 import { relayFetch, unreachable } from './relayUrl.js';
 
 export const HEARTBEAT_EVERY = 24 * 60 * 60 * 1000;
@@ -31,33 +31,40 @@ export const nextHeartbeatIn = (lastAt, now = Date.now()) => (lastAt ? Math.max(
 
 // `source` is which Supabase config the account runs on (relayUrl.js): a copy on the local stack talks to a relay on
 // this Mac, everything else to Quorum's, with its fallback address tried on a connection-level failure
-export function createBeta({ settings, saveSettings = () => {}, on = true, edition = 'local', version = '0.0.0', source = () => 'production', env = process.env, email = () => null, fetchImpl = globalThis.fetch, log = () => {}, now = Date.now, timers = { set: setTimeout, clear: clearTimeout } }) {
+export const CHECK_TIMEOUT = 15000;
+export const OFFLINE = 'Quorum could not reach the server. Try again.';
+
+export function createBeta({ settings, saveSettings = () => {}, on = true, edition = 'local', version = '0.0.0', source = () => 'production', env = process.env, fetchImpl = globalThis.fetch, log = () => {}, now = Date.now, timers = { set: setTimeout, clear: clearTimeout }, timeout = CHECK_TIMEOUT }) {
   const machineId = () => {
     if (!settings.machineId) { settings.machineId = randomUUID(); saveSettings(); }
     return settings.machineId;
   };
-  const post = async (path, body) => {
-    const res = await relayFetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, { env, source, fetchImpl });
+  const post = async (path, body, ms = null) => {
+    const signal = ms && typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(ms) : undefined;
+    const res = await relayFetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), ...(signal ? { signal } : {}) }, { env, source, fetchImpl });
     const json = await res.json().catch(() => ({}));
     if (!res.ok && json.ok === undefined) throw new Error(json.error || json.reason || `The relay answered ${res.status}`);
     return json;
   };
   const status = () => betaState(settings, on);
 
-  // the code the person typed: the relay says whether it is good and which plan it carries; an accepted code is kept
-  async function check(code, mail = null) {
+  // the code the person typed, and nothing else: the relay says whether it is good and which plan it carries; an
+  // accepted code is kept. `reason` is the sentence to show; `refused` is true when the code itself was turned down
+  // (so the screen clears it) and false when the relay could not be reached or answered with an error
+  async function check(code) {
     const c = normalizeCode(code);
-    if (!CODE.test(c)) return { ok: false, reason: 'Enter the 8-character code, like ABCD-EFGH.' };
+    if (!CODE.test(c)) return { ok: false, refused: true, reason: LENGTH_MESSAGE };
     try {
-      const r = await post('/v1/beta/check', { code: c, email: mail || email() || undefined, machineId: machineId(), edition, version });
-      if (r.ok !== true) return { ok: false, reason: r.reason || r.error || 'That code was not accepted.' };
+      const r = await post('/v1/beta/check', { code: c, machineId: machineId(), edition, version }, timeout);
+      if (r.ok !== true) return { ok: false, refused: definiteRefusal(r.reason), reason: r.error || r.reason || 'That code was not accepted.' };
       settings.beta = { ...(settings.beta ?? {}), code: c, plan: r.plan ?? 'free', acceptedAt: new Date(now()).toISOString() };
       saveSettings();
       log('beta', 'code accepted', r.plan ?? 'free');
       return { ok: true, plan: settings.beta.plan };
     } catch (err) {
       log('beta check', err?.message ?? err);
-      return { ok: false, reason: unreachable(err) ? 'Quorum could not reach the server. Check your connection and try again.' : String(err?.message || 'That code could not be checked.') };
+      const offline = unreachable(err) || err?.name === 'TimeoutError' || err?.name === 'AbortError';
+      return { ok: false, refused: false, reason: offline ? OFFLINE : String(err?.message || 'That code could not be checked.') };
     }
   }
 
@@ -93,13 +100,13 @@ export function createBeta({ settings, saveSettings = () => {}, on = true, editi
 
   const handlers = {
     'beta-status': () => status(),
-    'beta-check': async (code, mail) => { const r = await check(code, mail); if (r.ok) start(); return { ...r, status: status() }; },
+    'beta-check': async (code) => { const r = await check(code); if (r.ok) start(); return { ...r, status: status() }; },
   };
   return { status, check, heartbeat, start, stop, machineId, handlers };
 }
 
-export function registerBeta({ ipcMain, settings, saveSettings, on, edition, version, source, email, log }) {
-  const beta = createBeta({ settings, saveSettings, on, edition, version, source, email, log });
+export function registerBeta({ ipcMain, settings, saveSettings, on, edition, version, source, log }) {
+  const beta = createBeta({ settings, saveSettings, on, edition, version, source, log });
   for (const [name, fn] of Object.entries(beta.handlers)) ipcMain.handle(name, (_e, ...a) => fn(...a));
   beta.start();
   const s = beta.status();

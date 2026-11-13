@@ -4,12 +4,11 @@ import { codeHint, isCode, normalizeCode } from '../betaCode.js';
 import { DEFAULT_RELAY, FALLBACK_RELAY, httpUrl, relayUrls } from '../relayUrl.js';
 
 const okFetch = (plan = 'free') => vi.fn(async (url) => ({ ok: true, json: async () => (url.endsWith('/v1/beta/check') ? { ok: true, plan } : { ok: true }) }));
-const noFetch = (reason = 'That code was revoked.') => vi.fn(async () => ({ ok: false, status: 403, json: async () => ({ ok: false, reason }) }));
 const make = (over = {}) => {
   const settings = over.settings ?? {};
   const saveSettings = vi.fn();
   const fetchImpl = over.fetchImpl ?? okFetch();
-  const beta = createBeta({ settings, saveSettings, on: over.on ?? true, edition: over.edition ?? 'local', version: '0.2.9', source: over.source ?? 'production', env: over.env ?? { QUORUM_RELAY_URL: 'https://relay.example.com' }, fetchImpl, email: () => over.email ?? null, timers: { set: setTimeout, clear: clearTimeout } });
+  const beta = createBeta({ settings, saveSettings, on: over.on ?? true, edition: over.edition ?? 'local', version: '0.2.9', source: over.source ?? 'production', env: over.env ?? { QUORUM_RELAY_URL: 'https://relay.example.com' }, fetchImpl, timers: { set: setTimeout, clear: clearTimeout } });
   return { beta, settings, saveSettings, fetchImpl };
 };
 
@@ -66,7 +65,7 @@ describe('the gate', () => {
   });
 
   it('keeps an accepted code with its plan, a machine id and the edition and version it was checked with', async () => {
-    const { beta, settings, saveSettings, fetchImpl } = make({ fetchImpl: okFetch('cloud'), edition: 'cloud', email: 'pat@example.com' });
+    const { beta, settings, saveSettings, fetchImpl } = make({ fetchImpl: okFetch('cloud'), edition: 'cloud' });
     const r = await beta.check('abcd-efgh');
     expect(r).toMatchObject({ ok: true, plan: 'cloud' });
     expect(settings.beta.code).toBe('ABCD-EFGH');
@@ -74,7 +73,7 @@ describe('the gate', () => {
     expect(settings.machineId).toMatch(/^[0-9a-f-]{36}$/);
     expect(saveSettings).toHaveBeenCalled();
     const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
-    expect(body).toEqual({ code: 'ABCD-EFGH', email: 'pat@example.com', machineId: settings.machineId, edition: 'cloud', version: '0.2.9' });
+    expect(body).toEqual({ code: 'ABCD-EFGH', machineId: settings.machineId, edition: 'cloud', version: '0.2.9' });
     expect(fetchImpl.mock.calls[0][0]).toBe('https://relay.example.com/v1/beta/check');
     expect(beta.status().gate).toBe(false);
     beta.stop();
@@ -98,9 +97,10 @@ describe('the gate', () => {
   });
 
   it('passes the relay\'s reason through and stores nothing when the code is refused', async () => {
-    const { beta, settings } = make({ fetchImpl: noFetch('That code was revoked.') });
+    const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => ({ ok: false, reason: 'revoked', error: 'That access code was revoked.' }) }));
+    const { beta, settings } = make({ fetchImpl });
     const r = await beta.check('ABCD-EFGH');
-    expect(r).toEqual({ ok: false, reason: 'That code was revoked.' });
+    expect(r).toEqual({ ok: false, refused: true, reason: 'That access code was revoked.' });
     expect(settings.beta).toBeUndefined();
     expect(beta.status().gate).toBe(true);
   });

@@ -406,7 +406,8 @@ declare global {
       billingCard(): Promise<Result & { card?: BillingCard }>;
       teamEnabledSet(on: boolean): Promise<AccountState & { error?: string }>;
       betaStatus(): Promise<BetaState>;
-      betaCheck(code: string, email?: string | null): Promise<{ ok: boolean; plan?: string; reason?: string; status?: BetaState }>;
+      // refused: the code itself was turned down (clear it); false when the relay could not be reached or failed
+      betaCheck(code: string): Promise<{ ok: boolean; plan?: string; reason?: string; refused?: boolean; status?: BetaState }>;
       flags(): Promise<FlagsState>;
       flagsRefresh(): Promise<FlagsState>;
       onFlags(cb: (s: FlagsState) => void): Unsub;
