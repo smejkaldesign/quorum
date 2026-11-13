@@ -1,6 +1,6 @@
 // One way into Connectors from anywhere in the window. The event reaches App, which opens Settings on the page asked
-// for; a connector id opens that connector's detail page, and `library` opens the Add connector sheet, on a category
-// when one is named. Surfaces outside Settings (Home, onboarding) and pages inside it use this instead of threading
+// for; a connector id opens that connector's detail page. `library` names the group a surface was pointing at; every
+// group is on the one Connectors page, so it opens that page. Surfaces outside Settings (Home, onboarding) and pages inside it use this instead of threading
 // callbacks through every component between them and SettingsView.
 export type ConnectorsTarget = { connector?: string; library?: string | true };
 export type SettingsPageId = 'preferences' | 'memory' | 'connectors' | 'guardrails';

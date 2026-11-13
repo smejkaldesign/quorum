@@ -56,8 +56,6 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   const [saved, setPage] = useSession<Page>('settingsPage', 'preferences');
   // an open connector detail page; cleared when the page changes
   const [connectorDetail, setConnectorDetail] = useState<string | null>(null);
-  // the Add connector sheet, opened from outside on a category (Home's hints, the Memory page)
-  const [libraryOpen, setLibraryOpen] = useState<{ cat: string | true; n: number } | null>(null);
   // a page change clears the detail, so a connector named along with a page change waits until the page has changed
   const pending = useRef<string | null>(null);
   useEffect(() => { setConnectorDetail(pending.current); pending.current = null; }, [saved]);
@@ -66,7 +64,6 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
     if (!open) return;
     if (open.page !== saved) pending.current = open.connector ?? null; else setConnectorDetail(open.connector ?? null);
     setPage(open.page);
-    setLibraryOpen(open.library ? { cat: open.library, n: open.n } : null);
   }, [open, setPage]);
   const [user, setUser] = useState<{ name: string; email: string; photo: string | null } | null>(null);
   useEffect(() => { window.quorum.user().then(setUser); }, [settings.profile]);
@@ -186,7 +183,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
             : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} onConnector={goConnector} />
             : page === 'developers' ? <DevelopersPage />
             : page === 'notifications' ? <NotificationsPage />
-            : page === 'connectors' ? <ConnectorsPage detail={connectorDetail} onDetail={setConnectorDetail} openLibrary={libraryOpen} />
+            : page === 'connectors' ? <ConnectorsPage detail={connectorDetail} onDetail={setConnectorDetail} brain={brain} onFolder={onConnect} onNotes={() => go('memory')} />
             : <VoicePage settings={settings} onSettings={onSettings} dictionaryOnly={voice === 'dictionary'} />}
         </div>
       </main>

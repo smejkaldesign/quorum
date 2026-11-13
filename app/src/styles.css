@@ -1543,3 +1543,5 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .onb-step .set-error { color: var(--danger); }
 .beta-form.invalid .code-box { border-color: rgba(240, 74, 74, 0.7); }
 .beta-form.invalid .code-box:focus { border-color: var(--danger); box-shadow: 0 0 0 3px var(--danger-bg); }
+.conn-off { margin-left: 10px; font-size: 13px; color: var(--muted); }
+.conn-more { margin: 18px 2px 0; font-size: 13px; color: var(--muted); }
