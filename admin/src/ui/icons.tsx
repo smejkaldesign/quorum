@@ -51,6 +51,12 @@ export const IconSearch = (p: SVGProps<SVGSVGElement>) => (
 export const IconFlag = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M5 21V4M5 4h11l-2 4 2 4H5" /></svg>
 );
-export const IconQuorum = (p: SVGProps<SVGSVGElement>) => (
+export const IconNote = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M6 3.5h8.5L18 7v13.5H6Z" /><path d="M9 11h6M9 14.5h6M9 18h3.5" /></svg>
+);
+export const IconMore = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><circle cx="6" cy="12" r="1.3" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" /><circle cx="18" cy="12" r="1.3" fill="currentColor" stroke="none" /></svg>
+);
+export const IconQuorum =(p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M12 3a7 7 0 0 0-7 7v7l3-2h4a7 7 0 0 0 0-12Z" /><circle cx="9.5" cy="10" r="1" fill="currentColor" /><circle cx="14.5" cy="10" r="1" fill="currentColor" /></svg>
 );
