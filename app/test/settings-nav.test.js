@@ -22,22 +22,31 @@ describe('which nav shows', () => {
   });
 
   it('lists General alone in the Local edition and in a Cloud build without a hosted account', () => {
-    expect(workspacePages('local', false)).toEqual(['general']);
-    expect(workspacePages('local', true, true)).toEqual(['general']);
-    expect(workspacePages('cloud', null)).toEqual(['general']);
-    expect(workspacePages('cloud', false)).toEqual(['general']);
-    expect(workspacePages('cloud', false, true)).toEqual(['general']);
+    expect(workspacePages('local', false)).toEqual(['general', 'notifications']);
+    expect(workspacePages('local', true, true)).toEqual(['general', 'notifications']);
+    expect(workspacePages('cloud', null)).toEqual(['general', 'notifications']);
+    expect(workspacePages('cloud', false)).toEqual(['general', 'notifications']);
+    expect(workspacePages('cloud', false, true)).toEqual(['general', 'notifications']);
   });
 
   it('adds Teams and Billing once a Cloud build reached a hosted account, and the team pages only with a team on', () => {
-    expect(workspacePages('cloud', true)).toEqual(['general', 'teams', 'billing']);
-    expect(workspacePages('cloud', true, false)).toEqual(['general', 'teams', 'billing']);
-    expect(workspacePages('cloud', true, true)).toEqual(['general', 'teams', 'billing', 'knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails']);
+    expect(workspacePages('cloud', true)).toEqual(['general', 'notifications', 'teams', 'billing']);
+    expect(workspacePages('cloud', true, false)).toEqual(['general', 'notifications', 'teams', 'billing']);
+    expect(workspacePages('cloud', true, true)).toEqual(['general', 'notifications', 'teams', 'billing', 'knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails']);
     for (const p of TEAM_PAGES) expect(workspacePages('cloud', true, false)).not.toContain(p);
   });
 });
 
 describe('resolving a remembered page', () => {
+  it('puts Notifications behind the Admin button and drops Voice typing while dictation is off', () => {
+    expect(modeOf('notifications')).toBe('admin');
+    expect(resolvePage('notifications', false)).toBe('preferences');
+    expect(resolvePage('notifications', true, ['general', 'notifications'])).toBe('notifications');
+    expect(resolvePage('voice', true, undefined, false)).toBe('preferences');
+    expect(resolvePage('org-voice', true, undefined, false)).toBe('general');
+    expect(resolvePage('voice', true, undefined, true)).toBe('voice');
+  });
+
   it('keeps a page the current nav may show', () => {
     expect(resolvePage('org-voice', true)).toBe('org-voice');
     expect(resolvePage('calendar', false)).toBe('calendar');

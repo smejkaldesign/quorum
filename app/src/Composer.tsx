@@ -32,8 +32,8 @@ export function Composer({ value, onChange, onSubmit, placeholder, disabled, bus
   const [files, setFiles] = useState<Attachment[]>([]);
   const staging = files.some((f) => !f.staged && !f.error);
   const [dictating, setDictating] = useState(false);
-  // dictation belongs to manual listening (the manual-listen flag)
-  const canDictate = useFlag('manual-listen');
+  // dictation has its own flag, which needs manual-listen
+  const canDictate = useFlag('dictation');
   const [dictateError, setDictateError] = useState<string | null>(null);
   // only the composer that started dictation takes the words
   const dict = useRef<{ base: string; finals: string } | null>(null);

@@ -13,11 +13,12 @@ export const DEFAULTS = Object.freeze({
   'live-assist': false,
   'manual-listen': true,
   'screen-context': true,
+  dictation: false,
 });
 // the parent each flag needs, as 0021 seeds it; the relay's answer adds or replaces entries. A flag whose parent is
 // off reads as off, whatever its own switch says
-// (0021 and 0022). Every notetaker surface needs manual listening, so turning listening off turns them all off
-export const REQUIRES = Object.freeze({ 'screen-context': 'manual-listen', 'meeting-capture': 'manual-listen', 'live-assist': 'manual-listen' });
+// (0021, 0022 and 0023). Every notetaker surface needs manual listening, so turning listening off turns them all off
+export const REQUIRES = Object.freeze({ 'screen-context': 'manual-listen', 'meeting-capture': 'manual-listen', 'live-assist': 'manual-listen', dictation: 'manual-listen' });
 
 // QUORUM_FLAGS="meeting-capture=1,live-assist=0": one assignment per flag; 1, true, on and yes turn it on, 0, false,
 // off and no turn it off; anything else is ignored. A bare key means on.

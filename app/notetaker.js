@@ -6,11 +6,12 @@
 //   meeting-capture  call detection for Zoom, Meet and Teams, the "meeting detected" popup, auto-listen, the notice
 //                    posted into the call's chat, STOP and GO, the never-listen list, calendar matching for a call
 //   live-assist      suggestions during a session and speaker naming
-//   manual-listen    Start listening, dictation, the live transcript, the review and the note it writes, the running
+//   manual-listen    Start listening, the live transcript, the review and the note it writes, the running
 //                    summary
 //   screen-context   words read off the front window as spelling hints for a listening session
+//   dictation        voice typing with the dictation shortcut and the composer's dictate button (0023)
 //
-// meeting-capture, live-assist and screen-context each require manual-listen; flags.js applies that, so the resolved
+// meeting-capture, live-assist, screen-context and dictation each require manual-listen; flags.js applies that, so the resolved
 // flags this file reads already have them off whenever listening is off.
 //
 // One rule outranks the flags: a change never takes controls away from a session that is running. A session on a
@@ -23,9 +24,10 @@ export const FLAG = Object.freeze({
   liveAssist: 'live-assist',
   manualListen: 'manual-listen',
   screenContext: 'screen-context',
+  dictation: 'dictation',
 });
 
-// the four switches as booleans, from flags.js's resolved flags ({ key: { enabled } }); none given means the defaults
+// the five switches as booleans, from flags.js's resolved flags ({ key: { enabled } }); none given means the defaults
 export function notetakerGates(resolved = resolveFlags({ defaults: DEFAULTS, env: {} })) {
   const on = (key) => resolved?.[key]?.enabled === true;
   return {
@@ -33,6 +35,7 @@ export function notetakerGates(resolved = resolveFlags({ defaults: DEFAULTS, env
     liveAssist: on(FLAG.liveAssist),
     manualListen: on(FLAG.manualListen),
     screenContext: on(FLAG.screenContext),
+    dictation: on(FLAG.dictation),
   };
 }
 

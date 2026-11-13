@@ -11,7 +11,7 @@ import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
 import { AccountArea, BillingArea, EDITION, KnowledgeQueueArea, MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
-import { canAdmin, modeOf, resolvePage, workspacePages, type Page } from './settingsNav';
+import { PERSONAL_ADMIN_PAGES, canAdmin, modeOf, resolvePage, workspacePages, type Page } from './settingsNav';
 import { EnvSwitch } from './EnvSwitch';
 import { useFlags, useNotetaker } from './flags';
 import {
@@ -28,14 +28,15 @@ const ACCOUNT: Nav[] = [
   { id: 'calendar', label: 'Calendar', icon: IconCalendar },
   { id: 'meetings', label: 'Meetings', icon: IconMic },
   { id: 'connectors', label: 'Connectors', icon: IconGrid },
-  { id: 'notifications', label: 'Notifications', icon: IconBell, soon: true },
   { id: 'voice', label: 'Voice typing', icon: IconKeyboard },
   { id: 'developers', label: 'AI settings', icon: IconCode },
   { id: 'guardrails', label: 'Guardrails', icon: IconShield },
 ];
-// the pages behind the Admin button; settingsNav.workspacePages decides which of them a build lists
+// the pages behind the Admin button; settingsNav.workspacePages decides which of them a build lists. The first two are
+// about the person; the rest sit under the Workspace heading
 const WORKSPACE: Nav[] = [
   { id: 'general', label: 'General', icon: IconBuilding },
+  { id: 'notifications', label: 'Notifications', icon: IconBell, soon: true },
   { id: 'teams', label: 'Teams', icon: IconPeople },
   { id: 'billing', label: 'Billing', icon: IconScale },
   { id: 'knowledge', label: 'Knowledge', icon: IconBrain },
@@ -78,7 +79,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   // pages come and go with the Teams page's switch
   const hosted = useHostedAccounts();
   const listed = workspacePages(EDITION, hosted, account?.workspace?.teamEnabled === true);
-  const page = resolvePage(saved, admin, listed);
+  const page = resolvePage(saved, admin, listed, nt.dictation);
   const mode = modeOf(page);
   const quorumEmail = account?.signedIn ? account.email : null;
   const email = quorumEmail || user?.email || '';
@@ -93,7 +94,12 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   }, [onBack]);
 
   const set = async (patch: Partial<Settings>) => onSettings(await window.quorum.setSettings(patch));
-  const workspaceNav = WORKSPACE.filter((n) => (listed as string[]).includes(n.id));
+  // Voice typing, the account page and the workspace one, shows only while the dictation flag is on
+  const shown = (n: Nav) => nt.dictation || (n.id !== 'voice' && n.id !== 'org-voice');
+  const accountNav = ACCOUNT.filter(shown);
+  const adminNav = WORKSPACE.filter((n) => (listed as string[]).includes(n.id) && shown(n));
+  const personalNav = adminNav.filter((n) => (PERSONAL_ADMIN_PAGES as readonly string[]).includes(n.id));
+  const workspaceNav = adminNav.filter((n) => !(PERSONAL_ADMIN_PAGES as readonly string[]).includes(n.id));
   const all = [...ACCOUNT, ...WORKSPACE];
   const current = all.find((n) => n.id === page)!;
 
@@ -115,12 +121,14 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
         <nav className="set-navs">
           {mode === 'account' ? (
             <>
-              {ACCOUNT.map(navItem)}
+              {accountNav.map(navItem)}
               {admin && <button className="set-nav admin" onClick={() => go('general')}><IconBuilding width={18} height={18} /><span>Admin</span></button>}
             </>
           ) : (
             <>
               <button className="set-menu-back" onClick={() => go('preferences')}><IconChevron width={16} height={16} />Menu</button>
+              {personalNav.map(navItem)}
+              {workspaceNav.length > 0 && <h4>Workspace</h4>}
               {workspaceNav.map(navItem)}
             </>
           )}
