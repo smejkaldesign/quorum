@@ -20,11 +20,16 @@ export function gateOn({ env = process.env, pkg = {}, development = false } = {}
   return pkg.quorumBetaGate !== false;
 }
 
-// what the renderer sees: whether the gate stands, the accepted code and plan, and the id this install reports under
+// what the renderer sees: whether the gate stands, the accepted code, its plan and the email it was issued to (Cloud
+// edition only), and the id this install reports under
 export function betaState(settings, on) {
   const b = settings.beta ?? {};
-  return { gate: on === true && !b.code, on: on === true, code: b.code ?? null, plan: b.plan ?? null, acceptedAt: b.acceptedAt ?? null, machineId: settings.machineId ?? null, lastHeartbeatAt: b.lastHeartbeatAt ?? null };
+  return { gate: on === true && !b.code, on: on === true, code: b.code ?? null, plan: b.plan ?? null, email: b.email ?? null, acceptedAt: b.acceptedAt ?? null, machineId: settings.machineId ?? null, lastHeartbeatAt: b.lastHeartbeatAt ?? null };
 }
+
+// the sentence shown when a code for one person was entered while another account was signed in on this Mac
+export const SIGN_OUT_FAILED = (from) => `This code was issued to someone else, and ${from} could not be signed out. Try again.`;
+export const switchedMessage = (from, to) => `You were signed in as ${from}. Quorum signed you out so you can sign in as ${to}, the email this code was issued to.`;
 
 // how long until the next heartbeat is due: at once when none was sent, otherwise a day after the last one
 export const nextHeartbeatIn = (lastAt, now = Date.now()) => (lastAt ? Math.max(0, lastAt + HEARTBEAT_EVERY - now) : 0);
@@ -34,7 +39,11 @@ export const nextHeartbeatIn = (lastAt, now = Date.now()) => (lastAt ? Math.max(
 export const CHECK_TIMEOUT = 15000;
 export const OFFLINE = 'Quorum could not reach the server. Try again.';
 
-export function createBeta({ settings, saveSettings = () => {}, on = true, edition = 'local', version = '0.0.0', source = () => 'production', env = process.env, fetchImpl = globalThis.fetch, log = () => {}, now = Date.now, timers = { set: setTimeout, clear: clearTimeout }, timeout = CHECK_TIMEOUT }) {
+// `account` (Cloud edition only) is { email(), signOut() }: the signed-in account's email or null, and a local sign-out.
+// In the Cloud edition the account is the identity. A signed-in account passed the sign-up gate on auth.users
+// (migrations 0009, 0018), so no code is asked of it; without one, the code leads to sign-in as the email it was
+// issued to, and an account of another email that is signed in when the code is entered is signed out first
+export function createBeta({ settings, saveSettings = () => {}, account = null, on = true, edition = 'local', version = '0.0.0', source = () => 'production', env = process.env, fetchImpl = globalThis.fetch, log = () => {}, now = Date.now, timers = { set: setTimeout, clear: clearTimeout }, timeout = CHECK_TIMEOUT }) {
   const machineId = () => {
     if (!settings.machineId) { settings.machineId = randomUUID(); saveSettings(); }
     return settings.machineId;
@@ -47,6 +56,16 @@ export function createBeta({ settings, saveSettings = () => {}, on = true, editi
     return json;
   };
   const status = () => betaState(settings, on);
+  const accountEmail = async () => {
+    if (!account) return null;
+    try { const e = await account.email(); return e ? String(e).toLowerCase() : null; } catch (err) { log('beta account', err?.message ?? err); return null; }
+  };
+  // the renderer's reading: the gate stands down for a signed-in Cloud account
+  async function gateStatus() {
+    const s = status();
+    if (!s.gate || !account) return s;
+    return (await accountEmail()) ? { ...s, gate: false, signedIn: true } : s;
+  }
 
   // the code the person typed, and nothing else: the relay says whether it is good and which plan it carries; an
   // accepted code is kept. `reason` is the sentence to show; `refused` is true when the code itself was turned down
@@ -57,10 +76,21 @@ export function createBeta({ settings, saveSettings = () => {}, on = true, editi
     try {
       const r = await post('/v1/beta/check', { code: c, machineId: machineId(), edition, version }, timeout);
       if (r.ok !== true) return { ok: false, refused: definiteRefusal(r.reason), reason: r.error || r.reason || 'That code was not accepted.' };
-      settings.beta = { ...(settings.beta ?? {}), code: c, plan: r.plan ?? 'free', acceptedAt: new Date(now()).toISOString() };
+      const email = edition === 'cloud' && typeof r.email === 'string' && r.email ? r.email.toLowerCase() : null;
+      // a code is one person's: an account of another email signed in on this Mac is signed out before the code is kept,
+      // and when it stays signed in the code is not kept and nothing says otherwise
+      let notice = null;
+      const current = email ? await accountEmail() : null;
+      if (current && current !== email) {
+        try { await account.signOut(); } catch (err) { log('beta sign-out', err?.message ?? err); }
+        if (await accountEmail()) return { ok: false, refused: false, reason: SIGN_OUT_FAILED(current) };
+        notice = switchedMessage(current, email);
+        log('beta', 'signed out a different account for the code email');
+      }
+      settings.beta = { ...(settings.beta ?? {}), code: c, plan: r.plan ?? 'free', email, acceptedAt: new Date(now()).toISOString() };
       saveSettings();
       log('beta', 'code accepted', r.plan ?? 'free');
-      return { ok: true, plan: settings.beta.plan };
+      return { ok: true, plan: settings.beta.plan, email, notice };
     } catch (err) {
       log('beta check', err?.message ?? err);
       const offline = unreachable(err) || err?.name === 'TimeoutError' || err?.name === 'AbortError';
@@ -99,14 +129,14 @@ export function createBeta({ settings, saveSettings = () => {}, on = true, editi
   function stop() { stopped = true; clear(); }
 
   const handlers = {
-    'beta-status': () => status(),
-    'beta-check': async (code) => { const r = await check(code); if (r.ok) start(); return { ...r, status: status() }; },
+    'beta-status': () => gateStatus(),
+    'beta-check': async (code) => { const r = await check(code); if (r.ok) start(); return { ...r, status: await gateStatus() }; },
   };
-  return { status, check, heartbeat, start, stop, machineId, handlers };
+  return { status, gateStatus, check, heartbeat, start, stop, machineId, handlers };
 }
 
-export function registerBeta({ ipcMain, settings, saveSettings, on, edition, version, source, log }) {
-  const beta = createBeta({ settings, saveSettings, on, edition, version, source, log });
+export function registerBeta({ ipcMain, settings, saveSettings, account = null, on, edition, version, source, log }) {
+  const beta = createBeta({ settings, saveSettings, account, on, edition, version, source, log });
   for (const [name, fn] of Object.entries(beta.handlers)) ipcMain.handle(name, (_e, ...a) => fn(...a));
   beta.start();
   const s = beta.status();

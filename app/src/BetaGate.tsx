@@ -15,6 +15,8 @@ export function BetaGate({ onDone }: { onDone: () => void }) {
   const [error, setError] = useState('');
   const [hint, setHint] = useState('');
   const [focusKey, setFocusKey] = useState(0);
+  // set when the code belongs to another email than the account signed in here, which was signed out (beta.js)
+  const [notice, setNotice] = useState('');
   // the code last sent, so a full code is sent once on its own; Continue can always send it again
   const sent = useRef('');
   const full = cellsFull(cells);
@@ -25,7 +27,7 @@ export function BetaGate({ onDone }: { onDone: () => void }) {
     setBusy(true); setError('');
     const r = await window.quorum.betaCheck(code).catch(() => ({ ok: false, refused: false, reason: 'Quorum could not reach the server. Try again.' }));
     setBusy(false);
-    if (r.ok) { onDone(); return; }
+    if (r.ok) { const n = 'notice' in r ? r.notice : null; if (n) setNotice(n); else onDone(); return; }
     setError(r.reason || 'That code was not accepted.');
     if (r.refused) {
       sent.current = '';
@@ -38,6 +40,21 @@ export function BetaGate({ onDone }: { onDone: () => void }) {
   useEffect(() => {
     if (shouldSend(cells, sent.current, busy)) submit(cellsCode(cells));
   }, [cells]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (notice) return (
+    <div className="onb">
+      <div className="onb-card">
+        <section className="onb-step">
+          <img className="onb-mark" src={mark} alt="" />
+          <h1>Code accepted</h1>
+          <p role="status">{notice}</p>
+          <div className="onb-actions"><span />
+            <button className="pill primary" autoFocus onClick={onDone}>Continue</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
 
   return (
     <div className="onb">
