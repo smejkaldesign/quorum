@@ -28,11 +28,29 @@ export const ROLE_LABEL: Record<Role, string> = { owner: 'Owner', admin: 'Admin'
 export const CODE_PLAN_LABEL: Record<CodePlan, string> = { free: 'Free', cloud: 'Cloud' };
 export const codePlan = (v: unknown): CodePlan => (v === 'cloud' ? 'cloud' : 'free');
 // where a request came from, as the row says it, and the plan that source suggests for the approve dialog
-export const sourceLabel = (source: string): string => ({ admin: 'Added by you', hero: 'From the site: hero', 'pricing-free': 'From the site: Free card', 'pricing-cloud': 'From the site: Cloud card' })[source] ?? 'From the site';
+export const sourceLabel = (source: string): string => ({ admin: 'You', hero: 'Site', 'pricing-free': 'Free card', 'pricing-cloud': 'Cloud card' })[source] ?? 'Site';
 export const sourcePlan = (source: string): CodePlan => (source === 'pricing-cloud' ? 'cloud' : 'free');
 export const CODE_LABEL: Record<CodeStatus, string> = { open: 'Open', claimed: 'Claimed', redeemed: 'Used', revoked: 'Revoked', expired: 'Expired' };
 export const REQUEST_LABEL: Record<RequestStatus, string> = { pending: 'Pending', invited: 'Invited', declined: 'Declined' };
 export const NOTES_MAX = 500;
+
+// what an Access row offers in place: a pending request is approved or declined; a live code (open or claimed) is
+// sent, copied, moved between plans or revoked; anything used, declined, revoked or expired has no actions, its badges
+// say what happened. A used code's plan can still move, from the notes dialog.
+export type RowActions = { approve: boolean; decline: boolean; send: boolean; copy: boolean; convert: CodePlan | null; revoke: boolean };
+export function rowActions(r: Pick<AccessRequest, 'status' | 'code'>): RowActions {
+  const live = r.status === 'invited' && !!r.code && (r.code.status === 'open' || r.code.status === 'claimed');
+  return {
+    approve: r.status === 'pending',
+    decline: r.status === 'pending',
+    send: live,
+    copy: live,
+    convert: live ? (r.code!.plan === 'cloud' ? 'free' : 'cloud') : null,
+    revoke: live,
+  };
+}
+// how many notes a row carries: the person's own message and the owner's note
+export const noteCount = (r: Pick<AccessRequest, 'note' | 'adminNote'>): number => (r.note ? 1 : 0) + (r.adminNote ? 1 : 0);
 export const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 export const DAYS_CHOICES = [30, 90, 365] as const;
 

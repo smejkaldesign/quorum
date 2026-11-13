@@ -89,11 +89,11 @@ describe('installs', () => {
 
 describe('request sources', () => {
   it('names where a request came from and suggests the plan the card implies', () => {
-    expect(sourceLabel('pricing-cloud')).toBe('From the site: Cloud card');
-    expect(sourceLabel('pricing-free')).toBe('From the site: Free card');
-    expect(sourceLabel('hero')).toBe('From the site: hero');
-    expect(sourceLabel('admin')).toBe('Added by you');
-    expect(sourceLabel('site')).toBe('From the site');
+    expect(sourceLabel('pricing-cloud')).toBe('Cloud card');
+    expect(sourceLabel('pricing-free')).toBe('Free card');
+    expect(sourceLabel('hero')).toBe('Site');
+    expect(sourceLabel('admin')).toBe('You');
+    expect(sourceLabel('site')).toBe('Site');
     expect(sourcePlan('pricing-cloud')).toBe('cloud');
     expect(sourcePlan('hero')).toBe('free');
   });

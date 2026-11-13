@@ -239,3 +239,27 @@ button.trow:hover, button.trow.on { background: rgba(255, 255, 255, 0.05); }
 
 /* feature flags: the key under a flag name, in the mono the desktop uses for codes */
 .flag-key { font: 500 12px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.02em; }
+
+/* Access rows: actions in the row, no drawer. Compact pills, an overflow menu for plan moves and revoke, and a note
+   button whose dot shows the request carries a message or a note */
+.pill.sm { height: 30px; padding: 0 12px; font-size: 13px; }
+.trow.access-row { overflow: visible; }
+.trow.access-row > .row-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; overflow: visible; }
+.more { position: relative; display: inline-flex; }
+.more-menu { position: absolute; top: 34px; right: 0; z-index: 20; min-width: 170px; padding: 6px; border-radius: 12px; background: var(--side-bg); border: 1px solid var(--line-2); box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45); display: flex; flex-direction: column; }
+.more-menu button { text-align: left; padding: 8px 10px; border-radius: 8px; font-size: 13px; color: var(--text); }
+.more-menu button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.06); }
+.more-menu button.danger { color: var(--danger); }
+.note-btn { position: relative; }
+.note-dot { position: absolute; top: 5px; right: 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--brand); }
+.notes-body { display: flex; flex-direction: column; gap: 14px; margin: 12px 0 18px; }
+.notes-body .quote { margin: 0; }
+.notes-facts { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px 12px; margin: 0; font-size: 13px; }
+.notes-facts dt { color: var(--muted); }
+.notes-facts dd { margin: 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.modal .quote { margin: 10px 0 0; }
+
+@media (max-width: 820px) {
+  .trow.access-row { grid-template-columns: minmax(0, 1fr) auto auto; row-gap: 8px; }
+  .trow.access-row > .row-actions { grid-column: 1 / -1; justify-content: flex-start; flex-wrap: wrap; }
+}
