@@ -429,6 +429,10 @@ html.popup-root, html.popup-root body { background: transparent; }
 .kb-sep { color: var(--muted); opacity: 0.6; }
 .graph-canvas { flex: 1; width: 100%; min-height: 0; display: block; cursor: grab; }
 .graph-canvas:active { cursor: grabbing; }
+.graph-cluster { position: absolute; top: 12px; left: 12px; z-index: 1; display: inline-flex; align-items: center; gap: 6px; max-width: min(320px, calc(100% - 24px)); padding: 3px 10px 3px 8px; border-radius: 999px; font-size: 12px; line-height: 18px; color: var(--text); background: color-mix(in srgb, var(--cluster) 18%, #1c1c1c); border: 1px solid color-mix(in srgb, var(--cluster) 45%, transparent); pointer-events: none; white-space: nowrap; }
+.graph-cluster[hidden] { display: none; }
+.graph-cluster > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.graph-cluster-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--cluster); }
 .kb-preview { flex: 1; overflow-y: auto; }
 .kb-preview .doc { padding-top: 22px; }
 .kb-path { color: #6e6e74; font-size: 13px; margin: 0 0 8px; }
