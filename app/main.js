@@ -18,7 +18,8 @@ import { createViews } from './views.js';
 import { registerOnboarding } from './onboarding.js';
 import { gateOn, registerBeta } from './beta.js';
 import { registerFlags } from './flags.js';
-import { DICTATION_OFF, keepActions, notetakerGates, sessionGates, startDecision, termsPlan } from './notetaker.js';
+import { CALL_ACTIVE, DICTATION_OFF, keepActions, notetakerGates, recordDecision, screenReadsAllowed, sessionGates, startDecision, termsPlan } from './notetaker.js';
+import { hashText, newNoteText, noteFileName, rewriteNote, screenRead, splitNote, yamlStr } from './handnote.js';
 import { createKeeper } from './keeper.js';
 import { contextBudget } from './context-budget.js';
 import { skillUsage, stashSkill } from './skill-usage.js';
@@ -36,7 +37,7 @@ import { startControl } from './control.js';
 import { PROVIDERS as DECISION_PROVIDERS, connectedProvider, decide as decideRaw, removeDecisionsKey, setDecisionsKey } from './decisions.js';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -456,7 +457,7 @@ function calAsk(cmd) {
 }
 
 function onHelperEvent(evt) {
-  if ((evt.event === 'calResult' || evt.event === 'screenTerms' || evt.event === 'screenAccess') && pendingCal.has(evt.id)) { pendingCal.get(evt.id)(evt); pendingCal.delete(evt.id); return; }
+  if ((evt.event === 'calResult' || evt.event === 'screenTerms' || evt.event === 'screenText' || evt.event === 'callSpeakers' || evt.event === 'screenAccess') && pendingCal.has(evt.id)) { pendingCal.get(evt.id)(evt); pendingCal.delete(evt.id); return; }
   if ((evt.event === 'chatSent' || evt.event === 'chatFailed') && pendingPosts.has(evt.id)) {
     const p = pendingPosts.get(evt.id);
     pendingPosts.delete(evt.id);
@@ -540,7 +541,8 @@ async function inviteesNow() {
 // the vocabulary one capture hands the recognizer: this call's people first, then the dictionary, the company, you, and
 // the people and companies that come up most in the saved meetings. Only the count is logged; QUORUM_LOG_TERMS=1 on a
 // development run also logs a sample
-async function sessionTerms({ calendar = true, participants = [] } = {}) {
+// screen: a Record session with Screen on; nothing else reads the screen (dictation and plain starts never do)
+async function sessionTerms({ calendar = true, participants = [], screen = false } = {}) {
   const plan = termsPlan(gate(), { calendar });
   const invited = plan.invitees ? await inviteesNow() : [];
   meeting.invitees = invited.filter((a) => a?.name).map((a) => ({ name: a.name, email: a.email ?? null }));
@@ -550,10 +552,10 @@ async function sessionTerms({ calendar = true, participants = [] } = {}) {
     participants, dictionary: settings.voice?.dictionary, company: settings.workspace?.company, owner: USER_NAME,
     vaultPeople: topNames(index.map((m) => m.people)), vaultOrgs: topNames(index.map((m) => m.orgs), 50),
   });
-  // screen context: the words on the front window (the meeting app's during a call) join the list, on this Mac only
-  if (plan.screen && settings.screenContext) {
+  // screen context: the words on the call or front window join the list, on this Mac only, for a recording with Screen on
+  if (screen && plan.screen && settings.screenContext) {
     const t0 = Date.now();
-    const r = await calAsk({ cmd: 'screenTerms', bundles: plan.invitees ? provider().bundles ?? [] : [] });
+    const r = await calAsk({ cmd: 'screenTerms', bundles: plan.invitees ? provider().bundles ?? [] : [], excludePids: [process.pid] });
     log(`screen context read in ${Date.now() - t0} ms`);
     const seen = new Set(terms.map((t) => t.toLowerCase()));
     const fresh = (Array.isArray(r.terms) ? r.terms : []).filter((t) => !seen.has(String(t).toLowerCase()));
@@ -832,28 +834,40 @@ const suggester = createSuggester({
 });
 
 // consent first: nothing records until Quorum's notice is confirmed in the chat
-async function startListening(by) {
+// intoNote: Record in the note view; a solo session whose words go into the open note, with no running summary and no
+// review at the end
+// still: for Record, whether the note view that asked is still waiting; a Back or a reload during the start cancels it
+async function startListening(by, { intoNote = false, screen = false, still = () => true } = {}) {
   // manual-listen off refuses; meeting-capture off makes every session a solo note (notetaker.js)
-  const decision = startDecision(gate(), { meetingActive });
+  // Record in a note refuses a noticed call outright, so it never skips the call's consent and guards
+  const decision = intoNote ? { ...recordDecision(gate(), { meetingActive }), solo: true } : startDecision(gate(), { meetingActive });
   if (!decision.ok) { log('start refused:', decision.error); toUI('log', decision.error); return { error: decision.error }; }
   if (meeting.armed || meeting.starting || callBlocked) return;
   meeting.starting = true;
   // with no call on, Start listening opens a note: mic and speakers, no chat notice, saved like any meeting
   const solo = decision.solo;
   meeting.solo = solo;
+  meeting.intoNote = intoNote;
   if (!solo) {
     await refreshGuard();
     if (namedHere()) { meeting.starting = false; return blockCall('name'); }
     if (shouldBlock(lastInfo.names)) { meeting.starting = false; return blockCall(); }
     showPopup('starting');
   }
-  toUI('state', { phase: 'starting', chatName: !solo && provider().chat ? provider().chatName : null });
+  toUI('state', { phase: 'starting', chatName: !solo && provider().chat ? provider().chatName : null, ...(intoNote ? { intoNote: true } : {}) });
   // a provider without chat posting (Meet, Teams) still starts on your say-so; the on-screen card is the notice and the note records that
   const canPost = !solo && provider().chat;
   const notice = canPost ? MSG.on() : null;
   const posted = !canPost || await postWithRetry(notice);
-  const terms = posted ? await sessionTerms({ participants: solo ? [] : lastInfo.names ?? [] }) : [];
+  const terms = posted ? await sessionTerms({ participants: solo ? [] : lastInfo.names ?? [], screen }) : [];
   meeting.starting = false;
+  // Record never arms for a note view that is gone, or once a noticed call started during the start
+  if (intoNote && (!still() || !recordDecision(gate(), { meetingActive }).ok)) {
+    meeting.intoNote = false;
+    toUI('state', { phase: 'idle' });
+    updateTray();
+    return { error: still() ? CALL_ACTIVE : 'The note was closed before recording started.' };
+  }
   if (!posted) {
     log('notice never posted; not recording');
     showPopup('failed');
@@ -881,11 +895,11 @@ async function startListening(by) {
   meeting.privateNotes = '';
   meeting.saved = null;
   clearInterval(summaryTimer);
-  summaryTimer = setInterval(runSummary, 30000);
+  summaryTimer = intoNote ? null : setInterval(runSummary, 30000);
   meeting.armed = true;
   beginSegment();
   if (!solo) helperSend({ cmd: 'chatWatch', on: true });
-  toUI('state', { phase: 'listening', by });
+  toUI('state', { phase: 'listening', by, ...(intoNote ? { intoNote: true } : {}) });
   updateTray();
   if (!solo) showPopup('listening');
 }
@@ -900,6 +914,8 @@ function meetingMeta(title) {
 
 async function endMeeting() {
   if (!meeting.armed) return null;
+  // a recording into a note just stops; the note is already in the window
+  if (meeting.intoNote) { recordStop(); return null; }
   const wasCapturing = meeting.capturing;
   meeting.armed = false;
   // a flag turned off during the call takes hold now that the session is over
@@ -962,8 +978,6 @@ function localIso(d) {
   return `${local}${off >= 0 ? '+' : '-'}${pad(off / 60)}:${pad(off % 60)}`;
 }
 
-const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'meeting';
-const yamlStr = (s) => JSON.stringify(String(s));
 
 // same shape as the Granola notes so the vault treats them alike
 function noteMarkdown({ notes, followups }) {
@@ -1006,7 +1020,7 @@ function onMeeting({ active, app: source, provider: id }) {
   if (active) meetingProvider = pid;
   meetingActive = active;
   updateTray();
-  if (active && meeting.armed && meeting.solo) {
+  if (active && ((meeting.armed && meeting.solo) || record.screen || (meeting.starting && meeting.intoNote))) {
     closeNoteForMeeting().then(() => { if (meetingActive) onMeeting({ active: true, app: source, provider: pid }); });
     return;
   }
@@ -1079,7 +1093,7 @@ function updateTray() {
   if (!tray) return;
   const listening = meeting.capturing;
   const g = gate();
-  const status = listening ? 'Quorum is listening' : callBlocked ? 'Off for this call' : meeting.armed ? (meeting.solo ? 'Paused' : 'Stopped, waiting for GO') : meetingActive && g.meetingCapture ? `${provider().name} meeting detected` : 'Not listening';
+  const status = listening ? (meeting.intoNote ? 'Quorum is recording' : 'Quorum is listening') : callBlocked ? 'Off for this call' : meeting.armed ? (meeting.solo ? 'Paused' : 'Stopped, waiting for GO') : meetingActive && g.meetingCapture ? `${provider().name} meeting detected` : 'Not listening';
   const focused = !!win && win.isVisible() && win.isFocused();
   tray.setImage(trayImage(listening ? 'listening' : focused || !app.isPackaged ? 'focused' : 'idle'));
   tray.setToolTip(`Quorum: ${status}`);
@@ -1088,8 +1102,8 @@ function updateTray() {
     { type: 'separator' },
     { label: 'Open Quorum', click: openMain },
     ...(meeting.armed
-      ? [{ label: 'Stop listening and summarize', click: () => { openMain(); endMeeting(); } }]
-      : g.manualListen ? [{ label: 'Start listening', enabled: !meeting.starting, click: () => startListening() }] : []),
+      ? [{ label: meeting.intoNote ? 'Stop recording' : 'Stop listening and summarize', click: () => { openMain(); endMeeting(); } }]
+      : g.manualListen ? [{ label: 'New note', enabled: !meeting.starting, click: () => { openMain(); toUI('new-note', {}); } }] : []),
     ...(g.meetingCapture ? [{ label: 'Listen automatically', type: 'checkbox', checked: settings.autoListen, click: (item) => setAutoListen(item.checked) }] : []),
     ...(updates?.state().status === 'ready' ? [{ type: 'separator' }, { label: `Update to Quorum ${updates.state().version}`, click: () => updates.install() }] : []),
     { type: 'separator' },
@@ -1097,8 +1111,6 @@ function updateTray() {
   ]);
 }
 
-// start answers { error } when manual-listen is off, so the renderer can say why nothing happened
-ipcMain.handle('start', async () => (await startListening()) ?? null);
 ipcMain.handle('popup-listen', () => { if (gate().meetingCapture) startListening(); });
 ipcMain.handle('popup-open', () => { openMain(); hidePopup(); });
 ipcMain.handle('popup-dismiss', () => hidePopup());
@@ -2164,11 +2176,196 @@ ipcMain.handle('resume', () => { if (meeting.armed && !meeting.capturing && !cal
 // your notes from the call and its review: the outline the notes prompt fills, kept verbatim in the saved note
 ipcMain.handle('private-notes-set', (_e, text) => { meeting.privateNotes = String(text ?? ''); writeState(); });
 ipcMain.handle('save-notes', (_e, payload) => saveNotes(payload));
+// Record, from the note view: Transcription runs a solo session into the open note (startListening with intoNote). Screen,
+// on only while such a recording runs, is context for that recording and never text in the note:
+//   - every 2 s the helper reads the call app's accessibility tree (Zoom exposes its video tiles) for participant names
+//     and the active speaker; the renderer labels transcript paragraphs with them (src/attribution.ts)
+//   - once a minute, and at the start, one screenshot of the call app's window, else the frontmost window that is not
+//     Quorum's, is read with Vision; the text goes to screen.json beside the recording, for later processing
+// Screen needs the screen-context flag and the Preferences setting. Nothing records video, and Quorum's own windows are
+// never read (the helper skips this process, its parent and Quorum's bundle; screenRead drops anything named Quorum)
+const SCREEN_EVERY = 60000;
+const SPEAKERS_EVERY = 2000;
+const CALL_BUNDLES = ['us.zoom', 'com.microsoft.teams'];
+const SCREEN_DENIED = 'macOS has not allowed Screen Recording for Quorum, so Screen is off for this recording.';
+// session counts recordings, so a read that answers after its recording stopped is dropped
+const record = { screen: false, timer: null, speakerTimer: null, screenBusy: false, last: '', lastSpeakers: '', session: 0, dir: null, reads: [], speakers: [] };
+const recordState = () => ({ audio: !!(meeting.armed && meeting.intoNote), screen: record.screen });
+const recording = () => record.screen || !!(meeting.armed && meeting.intoNote);
+// the raw reads stay beside the recording (sessions folder, never the note) for later processing
+function writeSidecar() {
+  if (!record.dir) return;
+  try { writeFileSync(path.join(record.dir, 'screen.json'), JSON.stringify({ reads: record.reads, speakers: record.speakers }, null, 2)); } catch (err) { log('screen sidecar:', err.message); }
+}
+function stopScreen() {
+  if (record.screen) writeSidecar();
+  record.screen = false;
+  clearInterval(record.timer);
+  clearTimeout(record.speakerTimer);
+  record.timer = null;
+  record.speakerTimer = null;
+  record.last = '';
+  record.lastSpeakers = '';
+}
+// the reads stop for good the moment a noticed call is active: its window is only read after its consent notice
+function readsAllowed() {
+  if (screenReadsAllowed(gate(), { meetingActive })) return true;
+  log('screen context: a call is active; Screen stopped before reading its window');
+  recordStop();
+  return false;
+}
+async function screenTick() {
+  if (!record.screen || record.screenBusy || !readsAllowed()) return;
+  const session = record.session;
+  record.screenBusy = true;
+  const r = await calAsk({ cmd: 'screenText', bundles: CALL_BUNDLES, excludePids: [process.pid] }).finally(() => { record.screenBusy = false; });
+  if (!record.screen || session !== record.session) return;
+  const read = screenRead(r, record.last);
+  if (read.action === 'denied') {
+    stopScreen();
+    log('screen context: Screen Recording not allowed; Screen off for this recording');
+    toUI('record', { ...recordState(), notice: SCREEN_DENIED });
+    return;
+  }
+  if (read.action !== 'send') return;
+  record.last = read.key;
+  record.reads = [...record.reads.slice(-499), { ...read.event, at: Date.now() }];
+  writeSidecar();
+}
+// one accessibility read at a time: the next is scheduled when this one answers
+async function speakersTick() {
+  if (!record.screen || !readsAllowed()) return;
+  const session = record.session;
+  const r = await calAsk({ cmd: 'callSpeakers' });
+  if (!record.screen || session !== record.session) return;
+  record.speakerTimer = setTimeout(speakersTick, SPEAKERS_EVERY);
+  const names = Array.isArray(r.names) ? r.names.filter((n) => typeof n === 'string') : [];
+  const active = Array.isArray(r.active) ? r.active.filter((n) => typeof n === 'string') : [];
+  if (!names.length && !active.length) return;
+  const key = JSON.stringify([names, active]);
+  if (key === record.lastSpeakers) return;
+  record.lastSpeakers = key;
+  const ev = { at: Date.now(), app: typeof r.app === 'string' ? r.app : '', names, active };
+  record.speakers = [...record.speakers.slice(-4999), ev];
+  toUI('call-speakers', ev);
+}
+async function recordStart(opts) {
+  const g = gate();
+  const allowed = recordDecision(g, { meetingActive });
+  if (!allowed.ok) return { error: allowed.error };
+  const want = { audio: opts?.audio !== false, screen: opts?.screen === true && g.screenContext && !!settings.screenContext };
+  if (!want.audio && !want.screen) return { error: 'Turn on Transcription or Screen to record.' };
+  if (meeting.armed || meeting.starting || record.screen) return { error: 'A recording is already running. Stop it first.' };
+  // a recordStop (Back, a reload, a call) while this start runs bumps the session, and the start then stands down
+  const session = ++record.session;
+  const still = () => record.session === session;
+  if (want.audio) {
+    const r = await startListening(undefined, { intoNote: true, screen: want.screen, still });
+    if (r?.error) return r;
+    if (!meeting.armed) return { error: "The recording didn't start." };
+    if (!still()) { recordStop(); return { error: 'The note was closed before recording started.' }; }
+  }
+  if (!recordDecision(gate(), { meetingActive }).ok) { recordStop(); return { error: CALL_ACTIVE }; }
+  record.reads = [];
+  record.speakers = [];
+  record.dir = null;
+  if (want.screen) {
+    record.dir = want.audio && meeting.dir ? meeting.dir : store.meetings.beginSegment(`record-${new Date().toISOString().replace(/[:.]/g, '-')}`);
+    record.screen = true;
+    record.last = '';
+    record.lastSpeakers = '';
+    clearInterval(record.timer);
+    clearTimeout(record.speakerTimer);
+    record.timer = setInterval(screenTick, SCREEN_EVERY);
+    screenTick();
+    speakersTick();
+  }
+  toUI('record', recordState());
+  return recordState();
+}
+function recordStop() {
+  if (meeting.armed && meeting.intoNote) {
+    meeting.armed = false;
+    meeting.capturing = false;
+    meeting.intoNote = false;
+    meeting.endedAt = new Date();
+    setImmediate(() => syncMeetingWatch());
+    clearInterval(summaryTimer);
+    summaryTimer = null;
+    stopCapture();
+    if (meeting.dir && meeting.transcript.length) store.meetings.writeTranscript(meeting.dir, toJSON(meeting.transcript));
+    writeState();
+    updateTray();
+    toUI('state', { phase: 'idle' });
+  }
+  stopScreen();
+  record.session += 1;
+  toUI('record', recordState());
+  return recordState();
+}
+ipcMain.handle('record-start', (_e, opts) => recordStart(opts));
+ipcMain.handle('record-stop', () => recordStop());
+ipcMain.handle('record-status', () => recordState());
+// the note view owns a recording; a reload or a crashed renderer leaves nobody to write it into, so it stops
+function stopRecordingForRenderer(why) {
+  if (!recording() && !(meeting.starting && meeting.intoNote)) return;
+  log(`recording stopped: ${why}`);
+  recordStop();
+}
+
+// New note: a note you write in the window, saved where recorded notes go and with the same frontmatter. A save names
+// the hash it read, and a file changed on disk since then is left alone and reported as a conflict
+const handNoteDir = () => quorumNotesDir() ?? path.join(suggester.vault(), '08-meetings', 'quorum');
+const handNoteRef = (abs, text) => ({ file: abs, hash: hashText(text), rel: path.relative(path.dirname(suggester.vault()), abs), ...noteLink(abs) });
+ipcMain.handle('hand-note-open', (_e, file) => {
+  const abs = meetingFile(file);
+  if (!abs) return null;
+  const raw = store.notes.read(abs);
+  const readOnly = suggester.isExcluded(raw);
+  const { title, body } = splitNote(readOnly ? suggester.redactLines(raw) : raw);
+  return { ...handNoteRef(abs, raw), title, body, readOnly, date: raw.match(/^date:\s*(.+)$/m)?.[1]?.trim() ?? null };
+});
+ipcMain.handle('hand-note-save', (_e, payload) => saveHandNote(payload ?? {}));
+function saveHandNote({ id, file, title, body, hash, fresh }) {
+  if (!brain()) return { error: 'Connect your Agent OS to save notes.' };
+  const text = String(body ?? '');
+  if (!file) {
+    const now = new Date();
+    const qid = String(id || now.toISOString().replace(/[:.]/g, '-'));
+    const abs = path.join(handNoteDir(), noteFileName({ date: localIso(now).slice(0, 10), title, id: qid }));
+    if (existsSync(abs)) return { error: 'A note with this name already exists.' };
+    const out = newNoteText({ id: qid, title, body: text, date: localIso(now), owner: USER_NAME });
+    store.meetings.saveNote(abs, out);
+    log('note created', abs);
+    return handNoteRef(abs, out);
+  }
+  let abs = meetingFile(file);
+  if (!abs) return { error: 'This note was moved or deleted.' };
+  const raw = store.notes.read(abs);
+  if (hash && hashText(raw) !== hash) return { conflict: true };
+  if (suggester.isExcluded(raw)) return { error: 'This note has withheld lines, so edit it in the vault directly.' };
+  const out = rewriteNote(raw, { title, body: text });
+  // a note created in this editor keeps its file name in step with its title until the editor closes
+  if (fresh) {
+    const qid = raw.match(/^quorum_id:\s*(.+)$/m)?.[1]?.trim() ?? String(id ?? '');
+    const next = path.join(path.dirname(abs), noteFileName({ date: path.basename(abs).slice(0, 10), title, id: qid }));
+    if (next !== abs && !existsSync(next)) { renameSync(abs, next); abs = next; }
+  }
+  if (out !== raw) store.notes.write(abs, out);
+  return handNoteRef(abs, out);
+}
+// the editor closed: the note syncs and the keeper files it, once rather than on every autosave
+ipcMain.handle('hand-note-done', (_e, file) => {
+  const abs = file ? meetingFile(file) : null;
+  if (!abs) return;
+  account.sync.pushMeetingNote(abs);
+  keeper.schedule('note');
+});
 function saveNotes(payload) {
   const notes = { ...meeting.notes, ...payload.notes };
   const dir = quorumNotesDir() ?? path.join(suggester.vault(), '08-meetings', 'quorum');
   const date = localIso(meeting.startedAt || new Date()).slice(0, 10);
-  const file = path.join(dir, `${date}-${slug(notes.title)}-${String(meeting.id).slice(-8).toLowerCase()}.md`);
+  const file = path.join(dir, noteFileName({ date, title: notes.title, id: meeting.id }));
   // a speaker correction made after saving rewrites the same file from the turns
   meeting.saved = { file, payload: { notes, followups: payload.followups } };
   store.meetings.saveNote(file, noteMarkdown(meeting.saved.payload));
@@ -2194,6 +2391,13 @@ function syncMeetingWatch(force = false) {
 
 // one recording at a time: a meeting starting closes the note you were taking and saves it
 async function closeNoteForMeeting() {
+  // a recording into a note (audio, Screen alone, or one still starting) only stops; the note view saves what it has
+  // and gives way to the call, and nothing reads the call's window before its notice
+  if (meeting.intoNote || record.screen) {
+    recordStop();
+    toUI('log', 'A meeting started, so Quorum stopped recording into your note. Everything it heard so far is in the note.');
+    return;
+  }
   const notes = await endMeeting();
   if (notes && !notes.empty) saveNotes({ notes, followups: [] });
   meeting.notes = null;
@@ -2253,6 +2457,7 @@ ipcMain.handle('screen-context-set', async (_e, on) => {
   if (!gate().screenContext) return { available: false, on: false, granted: null };
   settings.screenContext = on === true;
   store.settings.save();
+  toUI('settings', settings);
   const granted = settings.screenContext ? (await calAsk({ cmd: 'screenAccess', prompt: true })).granted ?? null : (await calAsk({ cmd: 'screenAccess', prompt: false })).granted ?? null;
   return { available: true, on: settings.screenContext, granted };
 });
@@ -2445,7 +2650,8 @@ app.whenReady().then(() => {
   for (const ev of ['focus', 'blur', 'show', 'hide']) win.on(ev, () => updateTray());
   win.on('focus', () => updates?.onFocus());
   win.webContents.on('console-message', (e) => log('renderer', e.level, e.message));
-  win.webContents.on('render-process-gone', (_e, d) => log('renderer gone', JSON.stringify(d)));
+  win.webContents.on('render-process-gone', (_e, d) => { log('renderer gone', JSON.stringify(d)); stopRecordingForRenderer('renderer gone'); });
+  win.webContents.on('did-navigate', () => stopRecordingForRenderer('window reloaded'));
   win.webContents.on('preload-error', (_e, p, err) => log('preload error', p, err));
   win.loadFile(path.join(here, 'dist/index.html'));
   // the vault index reads every note once; it runs after the window is on its way so a large vault never delays it

@@ -7,12 +7,20 @@ const on = (channel) => (cb) => {
 };
 
 contextBridge.exposeInMainWorld('quorum', {
-  start: () => ipcRenderer.invoke('start'),
   end: () => ipcRenderer.invoke('end'),
   pause: () => ipcRenderer.invoke('pause'),
   resume: () => ipcRenderer.invoke('resume'),
   ask: (q, files) => ipcRenderer.invoke('ask', q, files),
   saveNotes: (payload) => ipcRenderer.invoke('save-notes', payload),
+  recordStart: (opts) => ipcRenderer.invoke('record-start', opts),
+  recordStop: () => ipcRenderer.invoke('record-stop'),
+  recordStatus: () => ipcRenderer.invoke('record-status'),
+  onRecord: on('record'),
+  onCallSpeakers: on('call-speakers'),
+  onNewNote: on('new-note'),
+  handNoteOpen: (file) => ipcRenderer.invoke('hand-note-open', file),
+  handNoteSave: (payload) => ipcRenderer.invoke('hand-note-save', payload),
+  handNoteDone: (file) => ipcRenderer.invoke('hand-note-done', file),
   privateNotesSet: (text) => ipcRenderer.invoke('private-notes-set', text),
   discard: () => ipcRenderer.invoke('discard'),
   done: () => ipcRenderer.invoke('done'),
