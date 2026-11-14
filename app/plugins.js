@@ -13,8 +13,8 @@ import path from 'node:path';
 // notice has to stand as its own line: a comment (<!-- --> or %% %%) that says so, a frontmatter key, or a line that
 // starts with the notice. Prose such as "Do not edit .env directly" is not a notice
 const NOTICE_RE = /^(?:this (?:file|note|page) (?:is|was) )?(?:auto-?generated\b|generated (?:by|from) \S+|do not hand-?edit\b|do not edit (?:this (?:file|note|page)|by hand)\b)/i;
-const COMMENT_NOTICE_RE = /^generated\.?$|auto-?generated\b|generated (?:by|from) \S+|do not (?:hand-?)?edit\b/i;
-const FRONTMATTER_RE = /^(?:auto[-_]?generated|generated(?:[-_]by)?)\s*:\s*\S/i;
+const COMMENT_NOTICE_RE = /^generated\.?$|^generated\s*:\s*(?!(?:false|no|0|off)\b)\S|auto-?generated\b|generated (?:by|from) \S+|do not (?:hand-?)?edit\b/i;
+const FRONTMATTER_RE = /^(?:auto[-_]?generated|generated(?:[-_]by)?)\s*:\s*(?!(?:false|no|0|off)\b)\S/i;
 export function isNotice(line) {
   const t = String(line).trim();
   const comment = t.match(/^(?:<!--|%%)\s*(.*?)\s*(?:-->|%%)?$/);
