@@ -18,6 +18,10 @@ import { gateOn, registerBeta } from './beta.js';
 import { registerFlags } from './flags.js';
 import { DICTATION_OFF, keepActions, notetakerGates, sessionGates, startDecision, termsPlan } from './notetaker.js';
 import { createKeeper } from './keeper.js';
+import { contextBudget } from './context-budget.js';
+import { skillUsage, stashSkill } from './skill-usage.js';
+import { createBrainCheck, fingerprint as checkPrint } from './brain-check.js';
+import { INSTRUCTIONS_LIMIT } from './agent.js';
 import { wouldBlock } from './guardrails.js';
 import { createPredicates } from './guardrails-predicates.js';
 import { createSuggester } from './suggest.js';
@@ -144,6 +148,54 @@ ipcMain.handle('keeper-run', (_e, opts) => keeper.run({ reason: 'manual', allowC
 ipcMain.handle('keeper-plugin', (_e, id, owner) => keeper.setPlugin(String(id), owner));
 ipcMain.handle('keeper-errors-open', () => { if (existsSync(KEEPER_ERRORS)) shell.openPath(KEEPER_ERRORS); });
 ipcMain.handle('keeper-errors-clear', () => keeper.clearErrors());
+// the report plugins read and show; each answers only while its plugin row is Quorum's, read from the last scan
+const pluginOn = (id) => keeper.cachedPlugins().find((p) => p.id === id)?.owner === 'quorum';
+// the instructions file Quorum's agent puts into its prompt itself, as agent.js agentArgs does: the included
+// Instructions item, and only while Skills and Agents are off (with either on, Claude Code loads CLAUDE.md itself)
+const agentInstructions = () => { const p = agentContext().powers; return p.instructions && !(p.skills || p.agents) ? p.instructions : null; };
+ipcMain.handle('plugin-context', () => { const b = brain(); return b && pluginOn('context') ? contextBudget({ root: b.root, vault: b.vault, instructions: agentInstructions() }) : null; });
+// transcripts are read on this Mac for skill names and dates only; counts per file are kept in memory between scans
+const skillScans = new Map();
+ipcMain.handle('plugin-skills', () => { const b = brain(); return b && pluginOn('skills') ? skillUsage({ root: b.root, cache: skillScans }) : null; });
+ipcMain.handle('plugin-skill-stash', (_e, dir, on) => {
+  const b = brain();
+  if (!b || !pluginOn('skills')) throw new Error('Skill usage is off');
+  const r = stashSkill(b.root, dir, on === true);
+  if (r.changed) log('skills', `${on === true ? 'stashed' : 'unstashed'} ${r.path}`);
+  return skillUsage({ root: b.root, cache: skillScans });
+});
+// the brain check asks each question the way a chat question in the Agent OS is asked, on the person's own provider,
+// with the same search hints and with the vault's instructions loaded whether or not Instructions is included in
+// Memory. A provider without tools gets the instructions in its system prompt and answers without reading notes
+const brainInstructions = (root) => agentContext().powers.instructions ?? ['CLAUDE.md', 'AGENTS.md'].map((f) => path.join(root, f)).find(existsSync) ?? null;
+async function brainAsk(question) {
+  const b = brain();
+  if (!b) throw new Error('Connect your Agent OS first');
+  const ctx = agentContext();
+  const instructions = brainInstructions(b.root);
+  if (roleProvider('agent') === 'claude-code') {
+    const r = await runModel({
+      source: modelSource(), providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question, transcript: '', root: b.root,
+      extra: { ...ctx, powers: { ...ctx.powers, instructions }, hints: await searchHints(question, ctx, b.root) }, model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: [], history: [], onStep: () => {},
+    });
+    return r.text;
+  }
+  let rules = '';
+  try { rules = instructions ? readFileSync(instructions, 'utf8').slice(0, INSTRUCTIONS_LIMIT) : ''; } catch {}
+  const system = [`You are Quorum, ${OWNER}'s assistant. Answer in 2-5 short sentences, plain and literal.`, rules && `Operating instructions of this Agent OS:\n${rules}`].filter(Boolean).join('\n\n');
+  return suggester.redactLines(await runClaude(question, system, settings.model, { role: 'agent' }));
+}
+const brainCheck = createBrainCheck({
+  file: path.join(DATA_DIR, 'brain-check.json'), ask: brainAsk, onChange: () => toUI('brain-check', null),
+  print: () => { const b = brain(); return b ? checkPrint({ model: `${roleProvider('agent') ?? 'none'}:${settings.model}`, root: b.root, instructions: brainInstructions(b.root) }) : null; },
+});
+ipcMain.handle('brain-check-status', () => { const b = brain(); return b ? brainCheck.status(b.root) : null; });
+ipcMain.handle('brain-check-save', (_e, checks) => { const b = brain(); if (!b) throw new Error('Connect your Agent OS first'); return brainCheck.setChecks(b.root, checks); });
+ipcMain.handle('brain-check-run', () => {
+  const b = brain();
+  if (!b || !pluginOn('brain-check')) throw new Error('Brain check is off');
+  return brainCheck.run(b.root);
+});
 let helper;
 const asset = (name) => path.join(here, 'assets', name);
 // a meeting can have several capture segments (STOP, GO, STOP...); STOP deletes all of them
