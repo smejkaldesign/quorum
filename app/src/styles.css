@@ -523,6 +523,8 @@ em.stub { font-style: normal; font-size: 12px; font-weight: 500; padding: 1px 9p
 .plugin-warn { color: var(--caution); }
 .plugin-pass { color: var(--go); }
 .plugin-fail { color: var(--caution); }
+.plugin-item.check-item { gap: 6px; padding-bottom: 6px; align-self: stretch; }
+.plugin-item.check-item .set-field { width: 100%; }
 .set-icon { width: 46px; height: 46px; flex: none; display: grid; place-items: center; border-radius: 12px; background: #2f2f32; color: #bdbdc2; }
 .emoji-tile { font-size: 20px; }
 .set-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }

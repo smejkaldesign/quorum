@@ -130,6 +130,19 @@ export const PLUGINS = [
     id: 'skills', title: 'Skill usage', does: 'Which skills ran lately, counted from the Claude Code transcripts on this Mac', report: true,
     detect: (ctx) => toolsMatching(ctx, /skill[-_]?(?:usage|telemetry|stats?|track(?:er|ing)?|audit|count)|(?:usage|telemetry)[-_]?(?:skill|track)|^telemetry/i),
   },
+  {
+    id: 'brain-check', title: 'Brain check', does: 'A few known questions, asked on your model source when you press Run', report: true, off: true,
+    detect(ctx) {
+      const out = [];
+      for (const base of [...new Set([ctx.root, ctx.vault])]) {
+        for (const d of ['evals', '.claude/evals', 'tests/evals']) {
+          const abs = path.join(base, d);
+          if (isDir(abs) && list(abs).length && !out.some((e) => e.path === ctx.rel(abs))) out.push({ path: ctx.rel(abs), why: 'eval prompts' });
+        }
+      }
+      return [...out, ...toolsMatching(ctx, /(?:^|[-_.])evals?(?:[-_.]|$)|brain[-_]?check|regression|golden[-_]?(?:set|prompts?|questions?)/i)];
+    },
+  },
 ];
 
 // the evidence a choice was made against, as one string; a change in it brings the default back

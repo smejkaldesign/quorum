@@ -20,6 +20,8 @@ import { DICTATION_OFF, keepActions, notetakerGates, sessionGates, startDecision
 import { createKeeper } from './keeper.js';
 import { contextBudget } from './context-budget.js';
 import { skillUsage, stashSkill } from './skill-usage.js';
+import { createBrainCheck, fingerprint as checkPrint } from './brain-check.js';
+import { INSTRUCTIONS_LIMIT } from './agent.js';
 import { wouldBlock } from './guardrails.js';
 import { createPredicates } from './guardrails-predicates.js';
 import { createSuggester } from './suggest.js';
@@ -158,6 +160,37 @@ ipcMain.handle('plugin-skill-stash', (_e, dir, on) => {
   const r = stashSkill(b.root, dir, on === true);
   if (r.changed) log('skills', `${on === true ? 'stashed' : 'unstashed'} ${r.path}`);
   return skillUsage({ root: b.root, cache: skillScans });
+});
+// the brain check asks each question the way a chat question in the Agent OS is asked, on the person's own provider,
+// with the vault's CLAUDE.md loaded whether or not Instructions is included in Memory. A provider without tools gets
+// the instructions in its system prompt and answers without reading notes
+async function brainAsk(question) {
+  const b = brain();
+  if (!b) throw new Error('Connect your Agent OS first');
+  const ctx = agentContext();
+  const instructions = ctx.powers.instructions ?? ['CLAUDE.md', 'AGENTS.md'].map((f) => path.join(b.root, f)).find(existsSync) ?? null;
+  if (roleProvider('agent') === 'claude-code') {
+    const r = await runModel({
+      source: modelSource(), providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question, transcript: '', root: b.root,
+      extra: { ...ctx, powers: { ...ctx.powers, instructions }, hints: [] }, model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: [], history: [], onStep: () => {},
+    });
+    return r.text;
+  }
+  let rules = '';
+  try { rules = instructions ? readFileSync(instructions, 'utf8').slice(0, INSTRUCTIONS_LIMIT) : ''; } catch {}
+  const system = [`You are Quorum, ${OWNER}'s assistant. Answer in 2-5 short sentences, plain and literal.`, rules && `Operating instructions of this Agent OS:\n${rules}`].filter(Boolean).join('\n\n');
+  return suggester.redactLines(await runClaude(question, system, settings.model, { role: 'agent' }));
+}
+const brainCheck = createBrainCheck({
+  file: path.join(DATA_DIR, 'brain-check.json'), ask: brainAsk, onChange: () => toUI('brain-check', null),
+  print: () => { const b = brain(); return b ? checkPrint({ model: `${roleProvider('agent') ?? 'none'}:${settings.model}`, root: b.root }) : null; },
+});
+ipcMain.handle('brain-check-status', () => { const b = brain(); return b ? brainCheck.status(b.root) : null; });
+ipcMain.handle('brain-check-save', (_e, checks) => { const b = brain(); if (!b) throw new Error('Connect your Agent OS first'); return brainCheck.setChecks(b.root, checks); });
+ipcMain.handle('brain-check-run', () => {
+  const b = brain();
+  if (!b || !pluginOn('brain-check')) throw new Error('Brain check is off');
+  return brainCheck.run(b.root);
 });
 let helper;
 const asset = (name) => path.join(here, 'assets', name);

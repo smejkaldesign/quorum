@@ -10,7 +10,7 @@ import { openConnectors, type ConnectorsTarget } from './connectorsNav';
 import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
-import { ContextPanel, SkillsPanel } from './PluginPanels';
+import { BrainCheckPanel, ContextPanel, SkillsPanel } from './PluginPanels';
 import { AccountArea, BillingArea, EDITION, KnowledgeQueueArea, MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { TOP_ADMIN_PAGES, canAdmin, flagHiddenPages, modeOf, resolvePage, voiceMode, workspacePages, type Page } from './settingsNav';
 import { EnvSwitch } from './EnvSwitch';
@@ -881,9 +881,9 @@ function KnowledgePage() {
 // default, and the vault's when the vault already does that job, with the files that show it. Report plugins write
 // nothing in the vault on their own, so they are listed whether upkeep is on or not, with their result under the row
 const PLUGIN_ICON: Record<string, (p: { width?: number; height?: number; className?: string }) => ReactNode> = {
-  index: IconFork, daily: IconCalendar, links: IconPeople, facts: IconBrain, search: IconSearch, context: IconScale, skills: IconStack,
+  index: IconFork, daily: IconCalendar, links: IconPeople, facts: IconBrain, search: IconSearch, context: IconScale, skills: IconStack, 'brain-check': IconListCheck,
 };
-const PLUGIN_PANEL: Record<string, () => ReactNode> = { context: () => <ContextPanel />, skills: () => <SkillsPanel /> };
+const PLUGIN_PANEL: Record<string, () => ReactNode> = { context: () => <ContextPanel />, skills: () => <SkillsPanel />, 'brain-check': () => <BrainCheckPanel /> };
 function KeeperCard({ brain }: { brain: Brain }) {
   const [k, setK] = useState<KeeperStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -896,7 +896,11 @@ function KeeperCard({ brain }: { brain: Brain }) {
   const last = k.last && !k.last.off && !k.last.held ? `${k.last.filed} filed${k.last.skipped ? `, ${k.last.skipped} withheld` : ''}${marked ? `, ${marked} generated ${marked === 1 ? 'file' : 'files'} left alone` : ''}${k.last.error ? ` · ${k.last.error}` : ''}` : null;
   const desc = !k.on ? 'Off. Quorum writes meeting notes here and changes nothing else.'
     : k.lastRunAt ? `Last run ${when(k.lastRunAt)}${last ? `: ${last}` : ''}` : 'Index, daily note, people and project notes, after each meeting';
-  const pick = async (p: KeeperPlugin, owner: 'quorum' | 'vault') => setK(await window.quorum.keeperPlugin(p.id, owner));
+  // turning the brain check on is one of the two moves that start a run (Run is the other); checks without terms are skipped
+  const pick = async (p: KeeperPlugin, owner: 'quorum' | 'vault') => {
+    setK(await window.quorum.keeperPlugin(p.id, owner));
+    if (p.id === 'brain-check' && owner === 'quorum') window.quorum.brainCheckRun().catch(() => {});
+  };
   // the learned list against its budget, and its share of the file it sits in
   const usage = (l: NonNullable<KeeperStatus['learned']>) => `${l.chars.toLocaleString()} of ${l.budget.toLocaleString()} characters in ${l.file}${l.fileChars ? `, ${Math.round((l.chars / l.fileChars) * 100)}% of the file` : ''}`;
   const factsOn = k.plugins.find((p) => p.id === 'facts')?.owner === 'quorum';

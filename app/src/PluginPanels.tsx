@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ContextBudget, ContextFile, SkillUsage, SkillUse } from './quorum';
+import type { BrainCheckItem, BrainCheckResult, BrainCheckStatus, ContextBudget, ContextFile, SkillUsage, SkillUse } from './quorum';
 
 // the result a report plugin shows under its row in Settings › Memory › Plugins, while the row is Quorum's
 const n = (v: number) => v.toLocaleString('en-US');
@@ -86,6 +86,63 @@ export function SkillsPanel() {
       ))}
       {err && <p className="plugin-line plugin-warn">{err}</p>}
       <p className="plugin-line muted">Stash adds disable-model-invocation: true to that skill's SKILL.md and changes nothing else. Transcripts stay on this Mac.</p>
+    </div>
+  );
+}
+
+// brain check: the questions and their expected terms are edited here; Run asks each one that has terms on the
+// person's own model source. Each result shows next to the run before it, so a change after a model or rules edit shows
+const MAX_CHECKS = 6;
+const verdict = (r: BrainCheckResult | undefined) => (!r ? null : r.error ? 'Failed to run' : r.pass ? 'Pass' : `Fail, missing ${r.missing.join(', ')}`);
+export function BrainCheckPanel() {
+  const [s, setS] = useState<BrainCheckStatus | null | undefined>(undefined);
+  const [draft, setDraft] = useState<{ id: string; prompt: string; terms: string }[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+  const fill = (st: BrainCheckStatus | null) => { setS(st); if (st) setDraft(st.checks.map((c) => ({ id: c.id, prompt: c.prompt, terms: c.expect.join(', ') }))); };
+  useEffect(() => {
+    window.quorum.brainCheckStatus().then(fill).catch(() => setS(null));
+    return window.quorum.onBrainCheck?.(() => { window.quorum.brainCheckStatus().then(setS).catch(() => {}); });
+  }, []);
+  if (!s) return null;
+  const toItems = (d: typeof draft): BrainCheckItem[] => d.map((c) => ({ id: c.id, prompt: c.prompt, expect: c.terms.split(',').map((t) => t.trim()).filter(Boolean) }));
+  const save = async (d = draft) => { try { fill(await window.quorum.brainCheckSave(toItems(d))); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } };
+  const edit = (i: number, k: 'prompt' | 'terms', v: string) => setDraft(draft.map((c, j) => (j === i ? { ...c, [k]: v } : c)));
+  const run = async () => { setErr(null); try { await save(); fill(await window.quorum.brainCheckRun()); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } };
+  const now = (id: string) => s.last?.results.find((r) => r.id === id);
+  const before = (id: string) => s.previous?.results.find((r) => r.id === id);
+  const when = (iso: string) => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return (
+    <div className="plugin-detail">
+      {s.changed.length > 0 && !s.running && <p className="plugin-line plugin-warn">Changed since the last run: {s.changed.join(', ')}. Run the checks again to compare.</p>}
+      <p className="plugin-line">
+        {s.running ? `Running, ${s.done} of ${s.ready} done…` : s.last ? `Last run ${when(s.last.at)}: ${s.last.results.filter((r) => r.pass).length} of ${s.last.results.length} passed.` : 'Not run yet.'}
+        {' '}A check runs once it has expected terms.
+      </p>
+      {draft.map((c, i) => {
+        const r = now(c.id);
+        const p = before(c.id);
+        return (
+          <div key={c.id} className="plugin-item check-item">
+            <label className="set-field wide"><input value={c.prompt} aria-label="Question" placeholder="Question" onChange={(e) => edit(i, 'prompt', e.target.value)} onBlur={() => save()} /></label>
+            <label className="set-field wide"><input value={c.terms} aria-label="Expected terms" placeholder="Expected terms, separated by commas" onChange={(e) => edit(i, 'terms', e.target.value)} onBlur={() => save()} /></label>
+            {r && <span className={r.pass ? 'plugin-pass' : 'plugin-fail'}>{verdict(r)}{p ? ` · run before: ${verdict(p)}` : ''}</span>}
+            {r && (
+              <details>
+                <summary className="plugin-meta">Answers</summary>
+                <p className="plugin-line">{r.error ?? r.answer}</p>
+                {p && <p className="plugin-line muted">Run before: {p.error ?? p.answer}</p>}
+              </details>
+            )}
+            <button className="link-btn plugin-meta" onClick={() => { const d = draft.filter((_, j) => j !== i); setDraft(d); save(d); }}>Remove</button>
+          </div>
+        );
+      })}
+      <div className="plugin-item row">
+        <button className="pill small-pill primary" disabled={s.running || !draft.some((c) => c.terms.trim() && c.prompt.trim())} onClick={run}>{s.running ? 'Running…' : 'Run'}</button>
+        {draft.length < MAX_CHECKS && <button className="pill small-pill" onClick={() => setDraft([...draft, { id: `check-${Date.now()}`, prompt: '', terms: '' }])}>Add a check</button>}
+      </div>
+      {err && <p className="plugin-line plugin-warn">{err}</p>}
+      <p className="plugin-line muted">Runs on your own model source in AI settings, only when you press Run. Answers stay in Quorum on this Mac.</p>
     </div>
   );
 }

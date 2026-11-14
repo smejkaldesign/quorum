@@ -58,10 +58,10 @@ describe('plugin detection', () => {
     expect(by.search.evidence.map((e) => e.path)).toEqual(['scripts/search-memory.py']);
     expect(by.links).toMatchObject({ owner: 'quorum', isNew: false, evidence: [] });
   });
-  it('a bare vault leaves every job with Quorum and nothing new', () => {
+  it('a bare vault leaves every job with Quorum and nothing new, except the brain check, which starts off', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'plugins-bare-'));
     writeStarter(dir, plan({ name: 'Studio', answers: { template: 'founder', role: 'Designer', goals: '', projects: ['Quorum'], people: [], organize: 'areas' } }));
-    for (const r of rowsFor(dir)) expect(r).toMatchObject({ owner: 'quorum', isNew: false, evidence: [] });
+    for (const r of rowsFor(dir)) expect(r).toMatchObject({ owner: r.id === 'brain-check' ? 'vault' : 'quorum', isNew: false, evidence: [] });
   });
   it('keeps a choice until the evidence changes, then brings the vault default back as new', () => {
     const dir = toolingVault();

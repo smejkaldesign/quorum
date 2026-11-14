@@ -100,6 +100,11 @@ export type ContextBudget = {
 // by window in days; coverageDays is how far back the transcripts go. Stashed skills carry disable-model-invocation
 export type SkillUse = { name: string; dir: string; path: string; runs: number; last: string | null; stashed: boolean; unused: Record<number, boolean>; namedBy: string[] };
 export type SkillUsage = { skills: SkillUse[]; transcripts: number; coverageDays: number; windows: number[] };
+// the brain check plugin (app/brain-check.js): questions with expected terms, run on the user's own model source
+export type BrainCheckItem = { id: string; prompt: string; expect: string[] };
+export type BrainCheckResult = BrainCheckItem & { answer: string; error: string | null; pass: boolean; missing: string[] };
+export type BrainCheckRun = { at: string; results: BrainCheckResult[] };
+export type BrainCheckStatus = { checks: BrainCheckItem[]; last: BrainCheckRun | null; previous: BrainCheckRun | null; running: boolean; done: number; changed: string[]; ready: number };
 // screen context: on-screen text as spelling hints; granted is the Screen Recording permission, null when unknown
 export type ScreenContextStatus = { available?: boolean; on: boolean; granted: boolean | null };
 export type SetupRecord = { version: number; name: string; answers: SetupAnswers; createdAt: string; updatedAt?: string };
@@ -393,6 +398,10 @@ declare global {
       pluginContext(): Promise<ContextBudget | null>;
       pluginSkills(): Promise<SkillUsage | null>;
       pluginSkillStash(dir: string, on: boolean): Promise<SkillUsage>;
+      brainCheckStatus(): Promise<BrainCheckStatus | null>;
+      brainCheckSave(checks: BrainCheckItem[]): Promise<BrainCheckStatus>;
+      brainCheckRun(): Promise<BrainCheckStatus>;
+      onBrainCheck?(cb: () => void): Unsub;
       onKeeper?(cb: (r: KeeperRun) => void): Unsub;
       onboardingOpenPermission(which: 'microphone' | 'audio' | 'accessibility' | 'calendar'): Promise<void>;
       onboardingRequestMicrophone(): Promise<boolean>;
