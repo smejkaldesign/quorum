@@ -120,20 +120,30 @@ begin
 end $$;
 create trigger kb_folders_check before insert or update of parent_id, kb_id on public.kb_folders for each row execute function public.kb_folders_check();
 
--- a note's KB and folder: the folder belongs to the KB, the KB to the note's workspace. Putting a note into a KB takes
--- admin rights on that KB; taking it out takes admin rights on it or being the note's author. An author who marks a
--- KB note private (frontmatter visibility from public to private) takes it out of the KB, so the change keeps its
--- 0012 meaning. Session-less writes (migrations, the service role) and the cleanup after a KB or folder is deleted
--- skip the rights check.
+-- a note is shared when its frontmatter says visibility: public and it carries no confidential key; only a shared
+-- note sits in a KB, so the author's own visibility switch keeps deciding who reads it
+create or replace function public.note_shared(frontmatter jsonb) returns boolean
+language sql immutable set search_path = public as $$
+  select coalesce(note_shared.frontmatter ->> 'visibility', 'private') = 'public' and coalesce(note_shared.frontmatter ->> 'confidential', '') = '';
+$$;
+
+-- a note's KB and folder: the folder belongs to the KB, the KB to the note's workspace, and the note is shared.
+-- Putting a note into a KB takes admin rights on that KB and being the note's author or a workspace owner or admin;
+-- taking it out takes admin rights on the KB or being the author. A KB note whose frontmatter stops being shared
+-- (private, no visibility key, or confidential) leaves the KB. Session-less writes (migrations, the service role),
+-- the system paths that set quorum.kb_system (review queue, default KB), and the cleanup after a KB or folder is
+-- deleted skip the rights check.
 create or replace function public.notes_kb_check() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare was_kb public.ulid := case when tg_op = 'UPDATE' then old.kb_id else null end;
         was_folder public.ulid := case when tg_op = 'UPDATE' then old.folder_id else null end;
         kb_ws public.ulid;
+        checked boolean := auth.uid() is not null and coalesce(current_setting('quorum.kb_system', true), '') <> 'on';
 begin
-  if tg_op = 'UPDATE' and new.kb_id is not null and new.kb_id is not distinct from old.kb_id
-     and coalesce(old.frontmatter ->> 'visibility', '') = 'public' and coalesce(new.frontmatter ->> 'visibility', '') = 'private' then
-    new.kb_id := null;
+  if new.kb_id is not null and not public.note_shared(new.frontmatter) then
+    if new.kb_id is not distinct from was_kb then new.kb_id := null;
+    else raise exception 'Only notes shared with the workspace can join a knowledge base';
+    end if;
   end if;
   if new.kb_id is null then new.folder_id := null; end if;
   if new.kb_id is not distinct from was_kb and new.folder_id is not distinct from was_folder then return new; end if;
@@ -143,9 +153,10 @@ begin
     if kb_ws is null then return new; end if;
     if kb_ws <> new.workspace_id then raise exception 'That knowledge base is in another workspace'; end if;
     if new.folder_id is not null and not exists (select 1 from public.kb_folders f where f.id = new.folder_id and f.kb_id = new.kb_id) then raise exception 'That folder is not in this knowledge base'; end if;
-    if auth.uid() is not null and not public.can_admin_kb(new.kb_id) then raise exception 'Only the knowledge base''s admins can add notes to it'; end if;
+    if checked and not public.can_admin_kb(new.kb_id) then raise exception 'Only the knowledge base''s admins can add notes to it'; end if;
+    if checked and new.user_id <> auth.uid() and not public.is_admin(new.workspace_id) then raise exception 'Only the note''s author or a workspace admin can move this note'; end if;
   end if;
-  if auth.uid() is not null and was_kb is not null and new.kb_id is distinct from was_kb
+  if checked and was_kb is not null and new.kb_id is distinct from was_kb
      and exists (select 1 from public.knowledge_bases k where k.id = was_kb)
      and not (public.can_admin_kb(was_kb) or new.user_id = auth.uid()) then
     raise exception 'Only the knowledge base''s admins or the note''s author can take a note out of it';
@@ -153,6 +164,28 @@ begin
   return new;
 end $$;
 create trigger notes_kb_check before insert or update of kb_id, folder_id, frontmatter on public.notes for each row execute function public.notes_kb_check();
+
+-- the review queue (0012) keeps deciding: a contribution that is declined or withdrawn takes its note out of any KB,
+-- and one that is included puts a note that sits in no KB into the workspace's default KB, when there is one (0025)
+create or replace function public.contribution_kb_sync() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare k public.ulid;
+begin
+  if new.status in ('declined', 'withdrawn') then
+    perform set_config('quorum.kb_system', 'on', true);
+    update public.notes n set kb_id = null, folder_id = null where n.id = new.note_id and n.kb_id is not null;
+    perform set_config('quorum.kb_system', '', true);
+  elsif new.status = 'included' then
+    select x.id into k from public.knowledge_bases x where x.workspace_id = new.workspace_id and x.is_default;
+    if k is not null then
+      perform set_config('quorum.kb_system', 'on', true);
+      update public.notes n set kb_id = k, folder_id = null where n.id = new.note_id and n.kb_id is null and n.deleted_at is null and public.note_shared(n.frontmatter);
+      perform set_config('quorum.kb_system', '', true);
+    end if;
+  end if;
+  return new;
+end $$;
+create trigger contributions_kb after insert or update of status on public.contributions for each row execute function public.contribution_kb_sync();
 
 -- note reads: personal notes as 0012 and 0013 left them; a KB note for anyone who can read its KB. A note in a KB is
 -- never readable through the workspace-wide "public and included" rule, so a restricted KB stays restricted
@@ -177,7 +210,9 @@ language sql stable security definer set search_path = public as $$
 $$;
 
 -- a KB as the app reads it: the caller's role, its folders flat (the app builds the tree), and its access list for
--- the KB's admins with each person's email and name
+-- the KB's admins with each person's email and name. Null for a KB the caller cannot read. source is for every
+-- reader, since each reader's Mac reads the folder or clones the repository (workspaces.team_source is member-readable
+-- for the same reason)
 create or replace function public.kb_shape(kb_id public.ulid) returns jsonb
 language sql stable security definer set search_path = public as $$
   select jsonb_build_object(
@@ -190,7 +225,7 @@ language sql stable security definer set search_path = public as $$
       select jsonb_agg(jsonb_build_object('principal', a.principal, 'user_id', a.user_id, 'team_id', a.team_id, 'role', a.role, 'email', p.email, 'name', p.name) order by a.principal desc, p.email)
       from public.kb_access a left join public.profiles p on p.user_id = a.user_id where a.kb_id = k.id), '[]'::jsonb) else null end
   )
-  from public.knowledge_bases k where k.id = kb_shape.kb_id;
+  from public.knowledge_bases k where k.id = kb_shape.kb_id and public.can_read_kb(k.id);
 $$;
 
 create or replace function public.kb_list(workspace_id public.ulid) returns jsonb
@@ -279,20 +314,22 @@ begin
   return jsonb_build_object('id', f.id, 'kb_id', f.kb_id, 'parent_id', f.parent_id, 'name', f.name, 'position', f.position);
 end $$;
 
--- a move within the same KB: a new parent (null for the KB's top level) and a position among the new siblings
-create or replace function public.kb_folder_move(folder_id public.ulid, parent_id public.ulid, "position" integer default null) returns jsonb
+-- a move within the same KB: with reparent, a new parent (null for the KB's top level); without it the parent stays
+-- and only the position changes. position is among the new siblings; left out, the folder lands last
+create or replace function public.kb_folder_move(folder_id public.ulid, parent_id public.ulid, "position" integer default null, reparent boolean default true) returns jsonb
 language plpgsql security definer set search_path = public as $$
 #variable_conflict use_column
-declare f public.kb_folders;
+declare f public.kb_folders; target public.ulid;
 begin
   select * into f from public.kb_folders x where x.id = kb_folder_move.folder_id;
   if f.id is null or not public.can_read_kb(f.kb_id) then raise exception 'That folder no longer exists'; end if;
   if not public.can_admin_kb(f.kb_id) then raise exception 'Only the knowledge base''s admins can move folders'; end if;
-  if kb_folder_move.parent_id = f.id then raise exception 'A folder cannot move inside itself'; end if;
-  if exists (select 1 from public.kb_folders x where x.kb_id = f.kb_id and x.parent_id is not distinct from kb_folder_move.parent_id and x.id <> f.id and lower(btrim(x.name)) = lower(btrim(f.name))) then raise exception 'A folder with that name is already there'; end if;
+  target := case when coalesce(kb_folder_move.reparent, true) then kb_folder_move.parent_id else f.parent_id end;
+  if target = f.id then raise exception 'A folder cannot move inside itself'; end if;
+  if exists (select 1 from public.kb_folders x where x.kb_id = f.kb_id and x.parent_id is not distinct from target and x.id <> f.id and lower(btrim(x.name)) = lower(btrim(f.name))) then raise exception 'A folder with that name is already there'; end if;
   update public.kb_folders x
-    set parent_id = kb_folder_move.parent_id,
-        position = coalesce(kb_folder_move."position", case when x.parent_id is not distinct from kb_folder_move.parent_id then x.position else public.kb_next_position(f.kb_id, kb_folder_move.parent_id) end)
+    set parent_id = target,
+        position = coalesce(kb_folder_move."position", case when x.parent_id is not distinct from target then x.position else public.kb_next_position(f.kb_id, target) end)
     where x.id = f.id returning * into f;
   return jsonb_build_object('id', f.id, 'kb_id', f.kb_id, 'parent_id', f.parent_id, 'name', f.name, 'position', f.position);
 end $$;
@@ -310,17 +347,19 @@ begin
 end $$;
 
 -- the whole access list at once: [{ "principal": "workspace" | "user" | "team", "user_id": uuid, "team_id": ulid,
--- "role": "admin" | "reader" }]. People must be members of the workspace. The KB's notes are touched so the pulls of
--- people who just gained access fetch them (pull sync reads updated_at)
+-- "role": "admin" | "reader" }]. People must be members of the workspace. When the list grants read to someone it did
+-- not before, the KB's notes are touched so those people's pulls fetch them (pull sync reads updated_at); a list that
+-- only narrows or changes roles leaves them alone, and sync drops copies a person can no longer read
 create or replace function public.kb_set_access(kb_id public.ulid, access jsonb) returns jsonb
 language plpgsql security definer set search_path = public as $$
 #variable_conflict use_column
-declare ws public.ulid; e jsonb; p text; r text; u uuid;
+declare ws public.ulid; e jsonb; p text; r text; u uuid; before text[];
 begin
   select k.workspace_id into ws from public.knowledge_bases k where k.id = kb_set_access.kb_id;
   if ws is null or not public.can_read_kb(kb_set_access.kb_id) then raise exception 'That knowledge base no longer exists'; end if;
   if not public.can_admin_kb(kb_set_access.kb_id) then raise exception 'Only the knowledge base''s admins can change who reads it'; end if;
   if jsonb_typeof(coalesce(kb_set_access.access, '[]'::jsonb)) <> 'array' then raise exception 'Access is a list of readers and admins'; end if;
+  before := array(select a.principal || ':' || coalesce(a.user_id::text, a.team_id::text, '') from public.kb_access a where a.kb_id = kb_set_access.kb_id);
   delete from public.kb_access a where a.kb_id = kb_set_access.kb_id;
   for e in select * from jsonb_array_elements(coalesce(kb_set_access.access, '[]'::jsonb)) loop
     p := coalesce(e ->> 'principal', '');
@@ -338,12 +377,15 @@ begin
     else raise exception 'A reader is the workspace, a team or a person';
     end if;
   end loop;
-  update public.notes n set updated_at = now() where n.kb_id = kb_set_access.kb_id and n.deleted_at is null;
+  if exists (select 1 from public.kb_access a where a.kb_id = kb_set_access.kb_id and not (a.principal || ':' || coalesce(a.user_id::text, a.team_id::text, '')) = any (before)) then
+    update public.notes n set updated_at = now() where n.kb_id = kb_set_access.kb_id and n.deleted_at is null;
+  end if;
   return public.kb_shape(kb_set_access.kb_id) -> 'access';
 end $$;
 
 -- puts a note into a KB folder (folder_id null for the KB's top level), or takes it out with kb_id null. Adding takes
--- admin rights on the KB and a note the caller can already read; the notes_kb_check trigger repeats the rights check
+-- admin rights on the KB, a note shared with the workspace, and being its author or a workspace owner or admin; the
+-- notes_kb_check trigger repeats these checks
 create or replace function public.kb_note_assign(note_id public.ulid, kb_id public.ulid, folder_id public.ulid default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
 #variable_conflict use_column
@@ -353,19 +395,22 @@ begin
   if n.id is null or not public.note_readable(n.id) then raise exception 'That note no longer exists'; end if;
   if kb_note_assign.kb_id is not null and not public.can_admin_kb(kb_note_assign.kb_id) then raise exception 'Only the knowledge base''s admins can add notes to it'; end if;
   if kb_note_assign.kb_id is null and kb_note_assign.folder_id is not null then raise exception 'Pick a knowledge base for that folder'; end if;
+  if kb_note_assign.kb_id is not null and n.user_id <> auth.uid() and not public.is_admin(n.workspace_id) then raise exception 'Only the note''s author or a workspace admin can move this note'; end if;
   update public.notes x set kb_id = kb_note_assign.kb_id, folder_id = kb_note_assign.folder_id where x.id = n.id returning * into n;
   return jsonb_build_object('note_id', n.id, 'kb_id', n.kb_id, 'folder_id', n.folder_id, 'updated_at', n.updated_at);
 end $$;
 
 do $$ declare f text; begin
   foreach f in array array[
-    'can_read_kb(public.ulid)', 'can_admin_kb(public.ulid)', 'kb_shape(public.ulid)', 'kb_list(public.ulid)', 'kb_next_position(public.ulid, public.ulid)',
+    'can_read_kb(public.ulid)', 'can_admin_kb(public.ulid)', 'kb_shape(public.ulid)', 'kb_list(public.ulid)',
     'kb_create(public.ulid, text, text, public.ulid)', 'kb_rename(public.ulid, text)', 'kb_delete(public.ulid)',
-    'kb_folder_create(public.ulid, public.ulid, text, integer)', 'kb_folder_rename(public.ulid, text)', 'kb_folder_move(public.ulid, public.ulid, integer)', 'kb_folder_delete(public.ulid)',
+    'kb_folder_create(public.ulid, public.ulid, text, integer)', 'kb_folder_rename(public.ulid, text)', 'kb_folder_move(public.ulid, public.ulid, integer, boolean)', 'kb_folder_delete(public.ulid)',
     'kb_set_access(public.ulid, jsonb)', 'kb_note_assign(public.ulid, public.ulid, public.ulid)'] loop
     execute format('revoke all on function public.%s from public, anon', f);
     execute format('grant execute on function public.%s to authenticated, service_role', f);
   end loop;
 end $$;
 revoke all on function public.kb_folders_check() from public, anon, authenticated;
+revoke all on function public.kb_next_position(public.ulid, public.ulid) from public, anon, authenticated;
+revoke all on function public.contribution_kb_sync() from public, anon, authenticated;
 revoke all on function public.notes_kb_check() from public, anon, authenticated;

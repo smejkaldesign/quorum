@@ -5,7 +5,8 @@
 -- A failed check stops the script with the check's message; the last line printed on success is "knowledge bases: ok".
 begin;
 
--- fixtures. The sign-up gate (0009) is replaced for this transaction only, so test accounts can be made directly
+-- fixtures. The sign-up gate (0009) is replaced for this transaction only, so test accounts can be made directly.
+-- a1 owns the workspace, a2 is an admin, a3 and a4 are members, a5 belongs to another workspace
 create or replace function public.auth_user_gate() returns trigger language plpgsql as $$ begin return new; end $$;
 insert into auth.users (id, email, aud, role) values
   ('00000000-0000-4000-8000-0000000000a1', 'owner@example.com', 'authenticated', 'authenticated'),
@@ -19,11 +20,14 @@ insert into public.members (id, user_id, workspace_id, role) values
   ('01KB00000000000000000000M2', '00000000-0000-4000-8000-0000000000a2', '01KB00000000000000000000WA', 'admin'),
   ('01KB00000000000000000000M3', '00000000-0000-4000-8000-0000000000a3', '01KB00000000000000000000WA', 'member'),
   ('01KB00000000000000000000M4', '00000000-0000-4000-8000-0000000000a4', '01KB00000000000000000000WA', 'member');
--- a personal note and a public note per member
+-- shared notes open a pending contribution (0012); N002 stays private
 insert into public.notes (id, user_id, workspace_id, path, frontmatter, body) values
-  ('01KB000000000000000000N001', '00000000-0000-4000-8000-0000000000a2', '01KB00000000000000000000WA', 'admin/plan.md', '{}', '# Plan'),
+  ('01KB000000000000000000N001', '00000000-0000-4000-8000-0000000000a2', '01KB00000000000000000000WA', 'admin/plan.md', '{"visibility": "public"}', '# Plan'),
   ('01KB000000000000000000N002', '00000000-0000-4000-8000-0000000000a4', '01KB00000000000000000000WA', 'member/diary.md', '{}', '# Diary'),
-  ('01KB000000000000000000N003', '00000000-0000-4000-8000-0000000000a4', '01KB00000000000000000000WA', 'member/shared.md', '{"visibility": "public"}', '# Shared');
+  ('01KB000000000000000000N003', '00000000-0000-4000-8000-0000000000a4', '01KB00000000000000000000WA', 'member/shared.md', '{"visibility": "public"}', '# Shared'),
+  ('01KB000000000000000000N004', '00000000-0000-4000-8000-0000000000a3', '01KB00000000000000000000WA', 'reader/notes.md', '{"visibility": "public"}', '# Reader'),
+  ('01KB000000000000000000N005', '00000000-0000-4000-8000-0000000000a4', '01KB00000000000000000000WA', 'member/draft.md', '{"visibility": "public"}', '# Draft'),
+  ('01KB000000000000000000N006', '00000000-0000-4000-8000-0000000000a4', '01KB00000000000000000000WA', 'member/approved.md', '{"visibility": "public"}', '# Approved');
 
 -- checks run as a signed-in person; pg_temp.expect_error runs a statement and requires a refusal matching a pattern
 create function pg_temp.as_user(u uuid) returns void language sql as $$
@@ -39,6 +43,7 @@ begin
 end $$;
 create temp table ids (k text primary key, v text);
 grant all on ids to authenticated;
+create function pg_temp.kb(name text) returns text language sql as $$ select v from ids where k = name $$;
 
 -- 1. only workspace owners and admins create a KB; names are unique per workspace; teams are not available yet
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a4');
@@ -53,9 +58,11 @@ select pg_temp.expect_error($$ select public.kb_create('01KB00000000000000000000
 select pg_temp.expect_error($$ select public.kb_create('01KB00000000000000000000WA', 'Ops', 'wiki') $$, 'general or meetings');
 select pg_temp.expect_error($$ select public.kb_create('01KB00000000000000000000WA', 'Ops', 'meetings', '01KB00000000000000000000T1') $$, 'Teams are not available');
 do $$ begin
-  assert (select kb_shape ->> 'name' from (select public.kb_shape((select v from ids where k = 'handbook'))) s) = 'Handbook', 'the name is trimmed';
-  assert (select public.kb_shape((select v from ids where k = 'handbook')) -> 'access') = '[{"principal": "workspace", "user_id": null, "team_id": null, "role": "reader", "email": null, "name": null}]'::jsonb, 'a new KB is readable by the workspace';
+  assert public.kb_shape(pg_temp.kb('handbook')) ->> 'name' = 'Handbook', 'the name is trimmed';
+  assert public.kb_shape(pg_temp.kb('handbook')) -> 'access' = '[{"principal": "workspace", "user_id": null, "team_id": null, "role": "reader", "email": null, "name": null}]'::jsonb, 'a new KB is readable by the workspace';
 end $$;
+-- kb_next_position is internal
+select pg_temp.expect_error($$ select public.kb_next_position(pg_temp.kb('handbook'), null) $$, 'permission denied');
 
 -- 2. the table API refuses every write, even for admins
 select pg_temp.expect_error($$ insert into public.knowledge_bases (workspace_id, name) values ('01KB00000000000000000000WA', 'Direct') $$, 'row-level security');
@@ -67,43 +74,47 @@ do $$ begin
   assert exists (select 1 from public.kb_access), 'a delete through the table removes nothing';
 end $$;
 
--- 3. access: Leadership becomes the reader's alone, with the admin's grant; teams are refused, outsiders too
-select pg_temp.expect_error($$ select public.kb_set_access((select v from ids where k = 'restricted'), '[{"principal": "team", "team_id": "01KB00000000000000000000T1"}]') $$, 'Teams are not available');
-select pg_temp.expect_error($$ select public.kb_set_access((select v from ids where k = 'restricted'), '[{"principal": "user", "user_id": "00000000-0000-4000-8000-0000000000a5"}]') $$, 'not a member');
-select pg_temp.expect_error($$ select public.kb_set_access((select v from ids where k = 'restricted'), '[{"principal": "user", "user_id": "nope"}]') $$, 'not a member');
-select pg_temp.expect_error($$ select public.kb_set_access((select v from ids where k = 'restricted'), '[{"principal": "workspace", "role": "owner"}]') $$, 'admin or reader');
-select public.kb_set_access((select v from ids where k = 'restricted'), '[{"principal": "user", "user_id": "00000000-0000-4000-8000-0000000000a3", "role": "reader"}]');
+-- 3. access: Leadership becomes the reader's alone; teams are refused, outsiders too
+select pg_temp.expect_error($$ select public.kb_set_access(pg_temp.kb('restricted'), '[{"principal": "team", "team_id": "01KB00000000000000000000T1"}]') $$, 'Teams are not available');
+select pg_temp.expect_error($$ select public.kb_set_access(pg_temp.kb('restricted'), '[{"principal": "user", "user_id": "00000000-0000-4000-8000-0000000000a5"}]') $$, 'not a member');
+select pg_temp.expect_error($$ select public.kb_set_access(pg_temp.kb('restricted'), '[{"principal": "user", "user_id": "nope"}]') $$, 'not a member');
+select pg_temp.expect_error($$ select public.kb_set_access(pg_temp.kb('restricted'), '[{"principal": "workspace", "role": "owner"}]') $$, 'admin or reader');
+select public.kb_set_access(pg_temp.kb('restricted'), '[{"principal": "user", "user_id": "00000000-0000-4000-8000-0000000000a3", "role": "reader"}]');
 
 -- 4. folders: nested without limit, siblings named once, moves stay inside the KB and never into themselves
-insert into ids select 'guides', public.kb_folder_create((select v from ids where k = 'handbook'), null, 'Guides') ->> 'id';
-insert into ids select 'onboarding', public.kb_folder_create((select v from ids where k = 'handbook'), (select v from ids where k = 'guides'), 'Onboarding') ->> 'id';
-insert into ids select 'week1', public.kb_folder_create((select v from ids where k = 'handbook'), (select v from ids where k = 'onboarding'), 'Week 1') ->> 'id';
-insert into ids select 'policies', public.kb_folder_create((select v from ids where k = 'handbook'), null, 'Policies') ->> 'id';
-insert into ids select 'board', public.kb_folder_create((select v from ids where k = 'restricted'), null, 'Board') ->> 'id';
-select pg_temp.expect_error($$ select public.kb_folder_create((select v from ids where k = 'handbook'), null, 'guides') $$, 'already there');
-select pg_temp.expect_error($$ select public.kb_folder_create((select v from ids where k = 'handbook'), null, 'a/b') $$, 'without slashes');
-select pg_temp.expect_error($$ select public.kb_folder_create((select v from ids where k = 'handbook'), (select v from ids where k = 'board'), 'Mixed') $$, 'another knowledge base');
-select pg_temp.expect_error($$ select public.kb_folder_move((select v from ids where k = 'guides'), (select v from ids where k = 'week1')) $$, 'inside itself');
-select pg_temp.expect_error($$ select public.kb_folder_move((select v from ids where k = 'guides'), (select v from ids where k = 'guides')) $$, 'inside itself');
-select pg_temp.expect_error($$ select public.kb_folder_move((select v from ids where k = 'guides'), (select v from ids where k = 'board')) $$, 'another knowledge base');
+insert into ids select 'guides', public.kb_folder_create(pg_temp.kb('handbook'), null, 'Guides') ->> 'id';
+insert into ids select 'onboarding', public.kb_folder_create(pg_temp.kb('handbook'), pg_temp.kb('guides'), 'Onboarding') ->> 'id';
+insert into ids select 'week1', public.kb_folder_create(pg_temp.kb('handbook'), pg_temp.kb('onboarding'), 'Week 1') ->> 'id';
+insert into ids select 'policies', public.kb_folder_create(pg_temp.kb('handbook'), null, 'Policies') ->> 'id';
+insert into ids select 'board', public.kb_folder_create(pg_temp.kb('restricted'), null, 'Board') ->> 'id';
+select pg_temp.expect_error($$ select public.kb_folder_create(pg_temp.kb('handbook'), null, 'guides') $$, 'already there');
+select pg_temp.expect_error($$ select public.kb_folder_create(pg_temp.kb('handbook'), null, 'a/b') $$, 'without slashes');
+select pg_temp.expect_error($$ select public.kb_folder_create(pg_temp.kb('handbook'), pg_temp.kb('board'), 'Mixed') $$, 'another knowledge base');
+select pg_temp.expect_error($$ select public.kb_folder_move(pg_temp.kb('guides'), pg_temp.kb('week1')) $$, 'inside itself');
+select pg_temp.expect_error($$ select public.kb_folder_move(pg_temp.kb('guides'), pg_temp.kb('guides')) $$, 'inside itself');
+select pg_temp.expect_error($$ select public.kb_folder_move(pg_temp.kb('guides'), pg_temp.kb('board')) $$, 'another knowledge base');
 do $$ begin
-  assert (select (public.kb_folder_move((select v from ids where k = 'week1'), (select v from ids where k = 'guides'))) ->> 'position') = '1', 'a moved folder lands after its new siblings';
-  assert (select (public.kb_folder_rename((select v from ids where k = 'week1'), 'First week')) ->> 'name') = 'First week', 'rename';
-  assert (select position from public.kb_folders where id = (select v from ids where k = 'policies')) = 1, 'a new top-level folder lands last';
+  assert (public.kb_folder_move(pg_temp.kb('week1'), pg_temp.kb('guides')) ->> 'position') = '1', 'a moved folder lands after its new siblings';
+  assert (public.kb_folder_move(pg_temp.kb('week1'), null, 7, false) ->> 'parent_id') = pg_temp.kb('guides'), 'without reparent the parent stays';
+  assert (select position from public.kb_folders where id = pg_temp.kb('week1')) = 7, 'and the position changes';
+  assert (public.kb_folder_rename(pg_temp.kb('week1'), 'First week') ->> 'name') = 'First week', 'rename';
+  assert (select position from public.kb_folders where id = pg_temp.kb('policies')) = 1, 'a new top-level folder lands last';
 end $$;
 
--- 5. notes: admins add notes they can read; members cannot; the folder has to be in the KB
-select public.kb_note_assign('01KB000000000000000000N001', (select v from ids where k = 'handbook'), (select v from ids where k = 'week1'));
-select pg_temp.expect_error($$ select public.kb_note_assign('01KB000000000000000000N002', (select v from ids where k = 'handbook')) $$, 'no longer exists');
-select pg_temp.expect_error($$ select public.kb_note_assign('01KB000000000000000000N001', (select v from ids where k = 'restricted'), (select v from ids where k = 'week1')) $$, 'not in this knowledge base');
-select public.kb_note_assign('01KB000000000000000000N001', (select v from ids where k = 'restricted'), (select v from ids where k = 'board'));
+-- 5. notes: admins add shared notes they can read; members cannot; the folder has to be in the KB
+select public.kb_note_assign('01KB000000000000000000N001', pg_temp.kb('handbook'), pg_temp.kb('week1'));
+select pg_temp.expect_error($$ select public.kb_note_assign('01KB000000000000000000N002', pg_temp.kb('handbook')) $$, 'no longer exists');
+select pg_temp.expect_error($$ select public.kb_note_assign('01KB000000000000000000N001', pg_temp.kb('restricted'), pg_temp.kb('week1')) $$, 'not in this knowledge base');
+select public.kb_note_assign('01KB000000000000000000N001', pg_temp.kb('restricted'), pg_temp.kb('board'));
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a4');
-select pg_temp.expect_error($$ select public.kb_note_assign('01KB000000000000000000N002', (select v from ids where k = 'handbook')) $$, 'Only the knowledge base''s admins');
--- the table route is checked as well: an author cannot move their own note into a KB by updating the row
-select pg_temp.expect_error($$ update public.notes set kb_id = (select v from ids where k = 'handbook') where id = '01KB000000000000000000N002' $$, 'Only the knowledge base''s admins');
-select pg_temp.expect_error($$ select public.kb_folder_create((select v from ids where k = 'handbook'), null, 'Mine') $$, 'Only the knowledge base''s admins');
-select pg_temp.expect_error($$ select public.kb_rename((select v from ids where k = 'handbook'), 'Mine') $$, 'Only the knowledge base''s admins');
-select pg_temp.expect_error($$ select public.kb_set_access((select v from ids where k = 'handbook'), '[]') $$, 'Only the knowledge base''s admins');
+select pg_temp.expect_error($$ select public.kb_note_assign('01KB000000000000000000N003', pg_temp.kb('handbook')) $$, 'Only the knowledge base''s admins');
+-- the table route is checked as well: an author cannot move their own note into a KB by updating the row, and a
+-- private note never joins one
+select pg_temp.expect_error($$ update public.notes set kb_id = pg_temp.kb('handbook') where id = '01KB000000000000000000N003' $$, 'Only the knowledge base''s admins');
+select pg_temp.expect_error($$ update public.notes set kb_id = pg_temp.kb('handbook') where id = '01KB000000000000000000N002' $$, 'Only notes shared');
+select pg_temp.expect_error($$ select public.kb_folder_create(pg_temp.kb('handbook'), null, 'Mine') $$, 'Only the knowledge base''s admins');
+select pg_temp.expect_error($$ select public.kb_rename(pg_temp.kb('handbook'), 'Mine') $$, 'Only the knowledge base''s admins');
+select pg_temp.expect_error($$ select public.kb_set_access(pg_temp.kb('handbook'), '[]') $$, 'Only the knowledge base''s admins');
 
 -- 6. reads: the member sees the Handbook and none of Leadership; the reader sees Leadership's note; the outsider nothing
 do $$ begin
@@ -113,82 +124,125 @@ do $$ begin
   assert jsonb_array_length(public.kb_list('01KB00000000000000000000WA')) = 1, 'kb_list returns readable KBs';
   assert public.kb_list('01KB00000000000000000000WA') -> 0 ->> 'role' = 'reader', 'the member reads';
   assert public.kb_list('01KB00000000000000000000WA') -> 0 -> 'access' = 'null'::jsonb, 'a reader does not see the access list';
+  assert public.kb_shape(pg_temp.kb('restricted')) is null, 'kb_shape answers nothing for a KB the caller cannot read';
   assert not exists (select 1 from public.notes where id = '01KB000000000000000000N001'), 'a note in a KB the member cannot read stays hidden';
   assert not public.note_readable('01KB000000000000000000N001'), 'and so do its side doors';
 end $$;
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a3');
 do $$ begin
   assert (select count(*) from public.knowledge_bases) = 2, 'the granted reader reads both KBs';
+  assert public.kb_shape(pg_temp.kb('restricted')) ->> 'role' = 'reader', 'kb_shape answers a reader';
   assert exists (select 1 from public.notes where id = '01KB000000000000000000N001'), 'the granted reader reads the KB note';
   assert (select count(*) from public.kb_access) = 1, 'a person sees their own grant';
-  assert not public.can_admin_kb((select v from ids where k = 'restricted')), 'a reader is not an admin';
+  assert not public.can_admin_kb(pg_temp.kb('restricted')), 'a reader is not an admin';
 end $$;
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a5');
 do $$ begin
   assert (select count(*) from public.knowledge_bases) = 0, 'an outsider reads no KB';
   assert jsonb_array_length(public.kb_list('01KB00000000000000000000WA')) = 0, 'kb_list returns nothing to an outsider';
+  assert public.kb_shape(pg_temp.kb('handbook')) is null, 'kb_shape answers nothing to another workspace';
   assert not exists (select 1 from public.notes where workspace_id = '01KB00000000000000000000WA'), 'an outsider reads no note';
 end $$;
-select pg_temp.expect_error($$ select public.kb_delete((select v from ids where k = 'handbook')) $$, 'no longer exists');
+select pg_temp.expect_error($$ select public.kb_delete(pg_temp.kb('handbook')) $$, 'no longer exists');
 
--- 7. a KB admin through kb_access manages the KB but cannot delete it; personal notes read as before
+-- 7. access changes touch the KB's notes only when someone gains read access
+reset role;
+alter table public.notes disable trigger notes_updated_at;
+update public.notes set updated_at = '2000-01-01' where id = '01KB000000000000000000N001';
+alter table public.notes enable trigger notes_updated_at;
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a2');
-select public.kb_set_access((select v from ids where k = 'handbook'), '[{"principal": "workspace"}, {"principal": "user", "user_id": "00000000-0000-4000-8000-0000000000a4", "role": "admin"}]');
+select public.kb_set_access(pg_temp.kb('restricted'), '[{"principal": "user", "user_id": "00000000-0000-4000-8000-0000000000a3", "role": "admin"}]');
+do $$ begin
+  assert (select updated_at from public.notes where id = '01KB000000000000000000N001') = '2000-01-01', 'a role change leaves the notes alone';
+  perform public.kb_set_access(pg_temp.kb('restricted'), '[{"principal": "user", "user_id": "00000000-0000-4000-8000-0000000000a3"}, {"principal": "user", "user_id": "00000000-0000-4000-8000-0000000000a4"}]');
+  assert (select updated_at from public.notes where id = '01KB000000000000000000N001') > '2000-01-01', 'a new reader touches the notes';
+  perform public.kb_set_access(pg_temp.kb('restricted'), '[{"principal": "user", "user_id": "00000000-0000-4000-8000-0000000000a3"}]');
+end $$;
+
+-- 8. a KB admin through kb_access manages the KB but cannot delete it, and moves only their own notes
+select public.kb_set_access(pg_temp.kb('handbook'), '[{"principal": "workspace"}, {"principal": "user", "user_id": "00000000-0000-4000-8000-0000000000a4", "role": "admin"}]');
+-- a workspace admin moves another member's shared note
+select public.kb_note_assign('01KB000000000000000000N004', pg_temp.kb('handbook'), null);
+select public.kb_note_assign('01KB000000000000000000N005', pg_temp.kb('handbook'), null);
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a4');
 do $$ begin
-  assert public.can_admin_kb((select v from ids where k = 'handbook')), 'the granted admin manages the KB';
+  assert public.can_admin_kb(pg_temp.kb('handbook')), 'the granted admin manages the KB';
   assert (select count(*) from public.kb_access) = 2, 'a KB admin reads the access list';
-  perform public.kb_note_assign('01KB000000000000000000N002', (select v from ids where k = 'handbook'), (select v from ids where k = 'policies'));
+  perform public.kb_note_assign('01KB000000000000000000N003', pg_temp.kb('handbook'), pg_temp.kb('policies'));
 end $$;
-select pg_temp.expect_error($$ select public.kb_delete((select v from ids where k = 'handbook')) $$, 'Only owners and admins');
+select pg_temp.expect_error($$ select public.kb_note_assign('01KB000000000000000000N004', pg_temp.kb('handbook'), pg_temp.kb('policies')) $$, 'Only the note''s author or a workspace admin');
+select pg_temp.expect_error($$ select public.kb_delete(pg_temp.kb('handbook')) $$, 'Only owners and admins');
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a3');
 do $$ begin
-  assert exists (select 1 from public.notes where id = '01KB000000000000000000N002'), 'a workspace reader reads the note added to the Handbook';
+  assert exists (select 1 from public.notes where id = '01KB000000000000000000N003'), 'a workspace reader reads the note added to the Handbook';
+  assert (select folder_id from public.notes where id = '01KB000000000000000000N004') is null, 'the KB admin did not move another member''s note';
 end $$;
 
--- 8. the author takes the note back by making it private; a public note outside KBs still follows the review queue
+-- 9. leaving a KB: no visibility key, confidential, and a declined contribution each take a note out
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a4');
-update public.notes set frontmatter = '{"visibility": "public"}' where id = '01KB000000000000000000N002';
-update public.notes set frontmatter = '{"visibility": "private"}' where id = '01KB000000000000000000N002';
+update public.notes set frontmatter = '{}' where id = '01KB000000000000000000N003';
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a3');
+update public.notes set frontmatter = '{"visibility": "public", "confidential": "hr"}' where id = '01KB000000000000000000N004';
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a2');
+select public.review_contribution((select id from public.contributions where note_id = '01KB000000000000000000N005'), 'decline');
+reset role;
 do $$ begin
-  assert (select kb_id from public.notes where id = '01KB000000000000000000N002') is null, 'marking a KB note private takes it out of the KB';
+  assert (select kb_id is null and folder_id is null from public.notes where id = '01KB000000000000000000N003'), 'a note without a visibility key leaves the KB';
+  assert (select status from public.contributions where note_id = '01KB000000000000000000N003') = 'withdrawn', 'and its contribution is withdrawn';
+  assert (select kb_id is null from public.notes where id = '01KB000000000000000000N004'), 'a confidential note leaves the KB';
+  assert (select kb_id is null from public.notes where id = '01KB000000000000000000N005'), 'a declined note leaves the KB';
 end $$;
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a3');
 do $$ begin
-  assert not exists (select 1 from public.notes where id = '01KB000000000000000000N002'), 'and other members stop reading it';
-  assert not exists (select 1 from public.notes where id = '01KB000000000000000000N003'), 'a public note that is still pending stays hidden';
+  assert not exists (select 1 from public.notes where id in ('01KB000000000000000000N003', '01KB000000000000000000N005')), 'readers stop reading the notes that left';
+end $$;
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a4');
+update public.notes set frontmatter = '{"visibility": "public"}' where id = '01KB000000000000000000N003';
+select pg_temp.expect_error($$ select public.kb_note_assign('01KB000000000000000000N002', pg_temp.kb('handbook')) $$, 'Only notes shared');
+select public.kb_note_assign('01KB000000000000000000N003', pg_temp.kb('handbook'));
+update public.notes set frontmatter = '{"visibility": "private"}' where id = '01KB000000000000000000N003';
+do $$ begin
+  assert (select kb_id is null from public.notes where id = '01KB000000000000000000N003'), 'visibility private takes it out too';
 end $$;
 
--- 9. deleting a folder lifts its notes to the KB's top level; deleting a KB leaves its notes with their authors
+-- 10. deleting a folder lifts its notes to the KB's top level; deleting a KB leaves its notes with their authors
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a2');
-select public.kb_note_assign('01KB000000000000000000N001', (select v from ids where k = 'handbook'), (select v from ids where k = 'week1'));
-select public.kb_folder_delete((select v from ids where k = 'guides'));
+select public.kb_note_assign('01KB000000000000000000N001', pg_temp.kb('handbook'), pg_temp.kb('week1'));
+select public.kb_folder_delete(pg_temp.kb('guides'));
 do $$ begin
-  assert (select count(*) from public.kb_folders where kb_id = (select v from ids where k = 'handbook')) = 1, 'the folders inside a deleted folder go with it';
+  assert (select count(*) from public.kb_folders where kb_id = pg_temp.kb('handbook')) = 1, 'the folders inside a deleted folder go with it';
   assert (select folder_id is null and kb_id is not null from public.notes where id = '01KB000000000000000000N001'), 'its note stays in the KB';
 end $$;
-select public.kb_delete((select v from ids where k = 'handbook'));
+select public.kb_delete(pg_temp.kb('handbook'));
 do $$ begin
   assert (select kb_id is null from public.notes where id = '01KB000000000000000000N001'), 'a deleted KB leaves its notes personal';
-  assert not exists (select 1 from public.knowledge_bases where id = (select v from ids where k = 'handbook')), 'the KB is gone';
+  assert not exists (select 1 from public.knowledge_bases where id = pg_temp.kb('handbook')), 'the KB is gone';
 end $$;
 
--- 10. the default KB (0025): made on demand, named after the workspace, readable by the workspace, and the 0020 RPC
--- writes its source
-reset role;
-select public.kb_ensure_default('01KB00000000000000000000WA');
+-- 11. the default KB (0025): none before the team switch, made when it turns on, named after the workspace and
+-- readable by the workspace; the 0020 RPC writes its source; the review queue fills it
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a1');
 select public.workspace_team_source_set('01KB00000000000000000000WA', '{"kind": "git", "url": "https://example.com/team/knowledge.git"}');
 do $$ begin
-  assert (select count(*) from public.knowledge_bases where is_default) = 1, 'one default KB';
+  assert not exists (select 1 from public.knowledge_bases where is_default), 'no default KB before the team switch is on';
+end $$;
+select public.workspace_set_team_enabled('01KB00000000000000000000WA', true);
+do $$ begin
+  assert (select count(*) from public.knowledge_bases where is_default) = 1, 'turning the team switch on makes the default KB';
   assert (select name from public.knowledge_bases where is_default) = 'Example Team', 'named after the workspace';
-  assert (select source ->> 'url' from public.knowledge_bases where is_default) = 'https://example.com/team/knowledge.git', 'the 0020 RPC mirrors the source';
-  assert (select team_source ->> 'kind' from public.workspaces where id = '01KB00000000000000000000WA') = 'git', 'and still writes the workspace row';
+  assert (select source ->> 'url' from public.knowledge_bases where is_default) = 'https://example.com/team/knowledge.git', 'it carries the team source';
+  assert (select team_source ->> 'kind' from public.workspaces where id = '01KB00000000000000000000WA') = 'git', 'the workspace row keeps it too';
 end $$;
 select pg_temp.expect_error($$ select public.kb_ensure_default('01KB00000000000000000000WA') $$, 'permission denied');
 select public.workspace_team_source_set('01KB00000000000000000000WA', '{"kind": "sync"}');
+select public.review_contribution((select id from public.contributions where note_id = '01KB000000000000000000N006'), 'include');
 do $$ begin
   assert (select source from public.knowledge_bases where is_default) is null, 'back to sync clears the KB source';
+  assert (select kb_id from public.notes where id = '01KB000000000000000000N006') = (select id from public.knowledge_bases where is_default), 'an included note joins the default KB';
+end $$;
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a3');
+do $$ begin
+  assert exists (select 1 from public.notes where id = '01KB000000000000000000N006'), 'and every member reads it there';
 end $$;
 
 reset role;
