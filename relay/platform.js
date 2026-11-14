@@ -47,10 +47,11 @@ export function createLimiter({ max = 5, windowMs = 3600000, now = Date.now } = 
   };
 }
 
-// the caller's address for rate limits. Railway's proxy appends the address it saw to X-Forwarded-For, so the last
-// entry is the one a client cannot forge; anything before it came from the client. Without the header (no proxy in
-// front) the socket address is the caller
-export const clientAddress = (req) => String(req.headers?.['x-forwarded-for'] ?? '').split(',').map((s) => s.trim()).filter(Boolean).at(-1) || req.socket?.remoteAddress || 'unknown';
+// the caller's address for rate limits. Railway's edge sets X-Real-IP to the address it saw, and a client cannot set
+// it through the edge. X-Forwarded-For can carry an internal Railway address as its last entry and a client-chosen
+// value as its first, so it is only a fallback (last entry). Without either header (no proxy in front) the socket
+// address is the caller
+export const clientAddress = (req) => String(req.headers?.['x-real-ip'] ?? '').trim() || String(req.headers?.['x-forwarded-for'] ?? '').split(',').map((s) => s.trim()).filter(Boolean).at(-1) || req.socket?.remoteAddress || 'unknown';
 
 const limiter = createLimiter();
 

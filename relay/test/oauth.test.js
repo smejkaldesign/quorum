@@ -198,6 +198,7 @@ describe('caller address', () => {
   it('takes the last X-Forwarded-For entry, which the proxy appended, else the socket', () => {
     assert.equal(clientAddress({ headers: { 'x-forwarded-for': '10.0.0.1, 198.51.100.7' }, socket: {} }), '198.51.100.7');
     assert.equal(clientAddress({ headers: {}, socket: { remoteAddress: '127.0.0.1' } }), '127.0.0.1');
+    assert.equal(clientAddress({ headers: { 'x-real-ip': '203.0.113.9', 'x-forwarded-for': '1.2.3.4, 10.0.0.1' }, socket: {} }), '203.0.113.9');
   });
 });
 
