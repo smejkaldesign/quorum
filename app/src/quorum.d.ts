@@ -15,6 +15,12 @@ export type HelperEvent =
   | { event: 'dictation'; state: 'on' | 'off' };
 
 // every generated line carries refs: the ids of the transcript turns it came from
+export type CliStatus = { added: boolean; where?: 'path' | 'alias'; name?: string; shadowed?: boolean | null; path?: string; onPath?: boolean | null; loaded?: boolean | null; file?: string; resolves?: string; error?: string | null; command?: string };
+export type AgentStatus = { installed: boolean; added: boolean; via?: 'cli' | 'config'; scope?: 'user' | 'project' | 'local' | null; ours?: boolean; error?: string | null };
+export type AgentsStatus = { claude: AgentStatus; codex: AgentStatus; cli: CliStatus };
+export type ConnectionCheckItem = { id: 'folder' | 'note' | 'search' | 'claude' | 'codex' | 'server' | 'cli'; label: string; state: 'ok' | 'fail' | 'warn' | 'skip'; fix: string | null; action: ConnectionCheckAction | null; detail: string | null };
+export type ConnectionCheckAction = 'add-claude' | 'add-codex' | 'add-cli' | 'fix-cli' | 'connect-folder' | 'choose-meetings' | 'retry';
+export type ConnectionCheck = { ok: boolean; checks: ConnectionCheckItem[]; agents?: AgentsStatus };
 export type Bullet = { text: string; sub: string[]; refs: number[] };
 export type Decision = { text: string; status: 'confirmed' | 'suggested'; refs: number[] };
 export type ActionItem = { task: string; owner: string | null; due: string | null; refs: number[] };
@@ -339,6 +345,7 @@ declare global {
       onNotesDelta(cb: (d: NotesDraft) => void): Unsub;
       onFocusComposer(cb: () => void): Unsub;
       brain(): Promise<Brain | null>;
+      onBrainChanged(cb: (b: Brain | null) => void): () => void;
       connectBrain(): Promise<Brain | null>;
       revealBrain(): Promise<void>;
       disconnectBrain(): Promise<null>;
@@ -413,9 +420,13 @@ declare global {
       onMcpOverlap(cb: () => void): () => void;
       mcpAdd(): Promise<{ added: boolean; error?: string | null }>;
       mcpRemove(): Promise<{ added: boolean }>;
-      cliStatus(): Promise<{ added: boolean; error?: string | null }>;
-      cliAdd(): Promise<{ added: boolean; error?: string | null }>;
+      cliStatus(): Promise<CliStatus>;
+      cliAdd(): Promise<CliStatus>;
       cliRemove(): Promise<{ added: boolean }>;
+      agentsStatus(): Promise<AgentsStatus>;
+      codexAdd(): Promise<{ added: boolean; error?: string | null }>;
+      codexRemove(): Promise<{ added: boolean }>;
+      connectionCheck(): Promise<ConnectionCheck>;
       meetingSources(): Promise<{ id: string; key: string; name: string; manual: boolean; rel: string; notes: number }[]>;
       meetingSourceAdd(): Promise<boolean>;
       meetingSourceRemove(id: string): Promise<boolean>;

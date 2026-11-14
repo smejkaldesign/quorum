@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { SetupForm, answersFrom, draftFrom, draftIsEmpty, emptyDraft, type SetupDraft } from './SetupForm';
-import type { AccountState, BetaState, Brain, CalendarSettings, ClaudeStatus, DecisionProvider, DecisionsStatus, KeeperPlugin, KeeperStatus, LearnedTarget, Memory, MemoryItem, OptOut, Profile, ScreenContextStatus, Settings, TeamVault, Transcription, UpdateState, Voice, Workspace } from './quorum';
+import type { AccountState, BetaState, Brain, CalendarSettings, DecisionProvider, DecisionsStatus, KeeperPlugin, KeeperStatus, LearnedTarget, Memory, MemoryItem, OptOut, Profile, ScreenContextStatus, Settings, TeamVault, Transcription, UpdateState, Voice, Workspace } from './quorum';
 import { PersonalConnectors } from './Connectors';
 import { ConnectorsPage } from './ConnectorsPage';
 import { GuardrailsPage } from './Guardrails';
@@ -14,6 +14,7 @@ import { BrainCheckPanel, ContextPanel, SkillsPanel } from './PluginPanels';
 import { AccountArea, BillingArea, EDITION, KnowledgeBasesArea, KnowledgeQueueArea, MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { TOP_ADMIN_PAGES, canAdmin, flagHiddenPages, modeOf, resolvePage, voiceMode, workspacePages, type Page } from './settingsNav';
 import { EnvSwitch } from './EnvSwitch';
+import { AgentRows, ConnectionCheckButton, ConnectionCheckList, useAgents, useConnectionCheck, type Agents } from './AgentLinks';
 import { MeetingSourcesRows } from './MeetingSources';
 import { useFlags, useNotetaker } from './flags';
 import {
@@ -391,7 +392,7 @@ function MeetingsRow() {
   const [dir, setDir] = useState<Awaited<ReturnType<typeof window.quorum.meetingsDir>> | undefined>();
   const [confirm, setConfirm] = useState(false);
   const load = () => window.quorum.meetingsDir().then(setDir);
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); return window.quorum.onBrainChanged(() => { load(); }); }, []);
   const pick = async () => { if (await window.quorum.pickMeetingsDir()) load(); };
   if (dir === undefined) return null;
   if (!dir) return (
@@ -1281,89 +1282,46 @@ function DecisionsKey({ provider, info, onDone }: { provider: DecisionProvider; 
   );
 }
 
-// Quorum reached from outside: the MCP server in Claude Code and the quorum command in Terminal. Claude Code as a model
-// provider is a row in PersonalConnectors above
+// Quorum reached from outside: the MCP server in Claude Code and Codex, and the quorum command in Terminal. Claude Code
+// as a model provider is a row in PersonalConnectors above
 function ClaudeCard() {
-  const [c, setC] = useState<ClaudeStatus | null>(null);
-  useEffect(() => { window.quorum.claudeStatus().then(setC); }, []);
+  const agents = useAgents();
+  const check = useConnectionCheck(agents);
   return (
     <>
       <div className="set-head"><h3>Connect to AI tools</h3></div>
-      <p className="mcp-lede">Give Claude Code and Terminal access to your notes and meetings through the quorum MCP server and command.</p>
+      <p className="mcp-lede">Give Claude Code, Codex and Terminal access to your notes and meetings through the quorum MCP server and command.</p>
       <div className="set-card">
-        <McpRows claude={c} />
+        <McpRows agents={agents} />
       </div>
+      <div className="conn-check-head">
+        <p className="mcp-lede">Check connection makes sure your agent can reach Quorum's meeting notes. It changes nothing in your Agent OS folder.</p>
+        <ConnectionCheckButton running={check.running} onRun={check.run} />
+      </div>
+      {check.result && <ConnectionCheckList result={check.result} running={check.running} onAction={check.act} />}
     </>
   );
 }
 
-// Quorum outside the app: the quorum MCP server in Claude Code (claude mcp add, read back with claude mcp get) and the
-// quorum command in Terminal. Both run the CLI that ships beside the app; nothing listens on a port
-function McpRows({ claude }: { claude: ClaudeStatus | null }) {
-  const [mcp, setMcp] = useState<Awaited<ReturnType<typeof window.quorum.mcpStatus>> | null>(null);
-  const [mcpBusy, setMcpBusy] = useState(false);
-  const [mcpMsg, setMcpMsg] = useState('');
-  const [cli, setCli] = useState<Awaited<ReturnType<typeof window.quorum.cliStatus>> | null>(null);
-  const [command, setCommand] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState('');
-  const [more, setMore] = useMenu();
+// the agent rows (AgentLinks.tsx) and the Access choice. All run the CLI that ships beside the app; nothing listens on
+// a port
+function McpRows({ agents }: { agents: Agents }) {
   const [access, setAccess] = useState<'read' | 'write'>('write');
-  const loadMcp = () => window.quorum.mcpStatus().then((st) => { setMcp(st); setCommand(st.command ? `alias quorum='${st.command.replace(/"/g, '')}'` : ''); });
-  useEffect(() => {
-    window.quorum.getSettings().then((st) => setAccess(st.access ?? 'write'));
-    window.quorum.cliStatus().then(setCli);
-    loadMcp();
-  }, []);
-  const addMcp = async () => { setMcpBusy(true); setMcpMsg(''); const r = await window.quorum.mcpAdd(); if (r.error) setMcpMsg(r.error); await loadMcp(); setMcpBusy(false); };
-  const removeMcp = async () => { setMcpBusy(true); setMcpMsg(''); await window.quorum.mcpRemove(); await loadMcp(); setMcpBusy(false); };
-  const noClaude = !!claude && !claude.installed;
-  const mcpDesc = !mcp ? 'Checking…'
-    : noClaude ? 'Install Claude Code first. Quorum then adds itself as an MCP server'
-    : mcp.added ? 'Added. claude mcp get quorum finds it, so Claude can read your meetings and notes'
-    : !mcp.command ? 'Node.js is needed to run the Quorum MCP server'
-    : 'Adds Quorum as an MCP server in Claude Code, so you can ask Claude about your meetings and notes';
-  const addCli = async () => { setBusy(true); setMsg(''); const r = await window.quorum.cliAdd(); if (r.error) setMsg(r.error); setCli(await window.quorum.cliStatus()); setBusy(false); };
-  const removeCli = async () => { setBusy(true); await window.quorum.cliRemove(); setCli(await window.quorum.cliStatus()); setBusy(false); };
-  const connected = !!cli?.added;
-  // connected shows as a green icon, broken as a red one; the line under it says what to do
-  const state = !connected ? 'Adds the quorum command to Terminal on this Mac'
-    : cli?.error ? `${cli.error}. Fix it from the menu.`
-    : 'Open a new Terminal window and type quorum';
+  useEffect(() => { window.quorum.getSettings().then((st) => setAccess(st.access ?? 'write')); }, []);
   return (
     <>
-        <Row icon={<ProviderMark provider="anthropic" />} title="Claude Code MCP" desc={mcpDesc}>
-          {mcp?.added
-            ? <button className="pill" disabled={mcpBusy} onClick={removeMcp}>{mcpBusy ? 'Removing…' : 'Remove'}</button>
-            : <button className="pill" disabled={mcpBusy || !mcp || noClaude || !mcp.command} onClick={addMcp}>{mcpBusy ? 'Adding…' : 'Add'}</button>}
-        </Row>
-        {mcpMsg && <p className="set-note mcp-msg">{mcpMsg}</p>}
-        <Row icon={<IconCode width={18} height={18} className={!connected ? undefined : cli?.error ? 'err' : 'ok'} />} title="Quorum CLI" desc={state}>
-          {connected
-            ? <span className="menu-wrap">
-                <button className="icon-btn" aria-label="Terminal options" aria-haspopup="menu" aria-expanded={more} onClick={(e) => { e.stopPropagation(); setMore((o) => !o); }}><IconMore width={16} height={16} /></button>
-                {more && (
-                  <div className="menu end" role="menu">
-                    {cli?.error && <button role="menuitem" disabled={busy} onClick={async () => { await removeCli(); await addCli(); }}><IconReset width={15} height={15} /> Fix connection</button>}
-                    <button role="menuitem" className="danger" disabled={busy} onClick={removeCli}><IconClose width={15} height={15} /> Disconnect</button>
-                  </div>
-                )}
-              </span>
-            : <button className="pill" disabled={busy || !command} onClick={addCli}>{busy ? 'Connecting…' : 'Connect'}</button>}
-        </Row>
-        {!connected && command && (
+        <AgentRows agents={agents} variant="settings" manual={(command) => (
           <div className="row-extra">
-            <p className="copy-label">Or set it up yourself: paste this line at the end of your .zshrc file</p>
+            <p className="copy-label">Or run Quorum in Terminal with its full path</p>
             <CopyField value={command} />
           </div>
-        )}
+        )} />
         <Row icon={<IconLock width={18} height={18} />} title="Access" desc="Your workspace admin will set this later">
           <select className="set-select" aria-label="Access" value={access} onChange={async (e) => { const v = e.target.value as 'read' | 'write'; setAccess(v); await window.quorum.setSettings({ access: v }); }}>
             <option value="write">Read and write</option>
             <option value="read">Read only</option>
           </select>
         </Row>
-        {msg && <p className="set-note mcp-msg">{msg}</p>}
     </>
   );
 }

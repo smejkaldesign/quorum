@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { AccountState, Brain, MeetingSourceInfo, OnboardingChecks, OnboardingStatus } from './quorum';
 import { ConnectHint } from './ConnectHint';
 import { McpPaths, useMcpOverlap } from './McpPaths';
+import { AgentRows, ConnectionCheckButton, ConnectionCheckList, useAgents, useConnectionCheck } from './AgentLinks';
 import { CONNECTORS, mcpPathsOf } from '../connectors/library';
 import { IconCalendar, IconCheck, IconFolder, IconFolderOpen, IconLock, IconMic, IconPerson, IconQuorum, IconShield, ProviderMark } from './icons';
 import { isCloud } from './edition';
@@ -10,8 +11,8 @@ import { detectProvider, KEY_NAMES, KEY_PROVIDERS, SOURCE_NAMES, type KeyProvide
 import { SetupForm, answersFrom, draftFrom, draftIsEmpty, emptyDraft, type SetupDraft } from './SetupForm';
 import mark from '../assets/quorum-mark.png';
 
-type Step = 'welcome' | 'agentos' | 'you' | 'model' | 'account' | 'permissions' | 'done';
-const ORDER: Step[] = ['welcome', 'agentos', 'you', 'model', 'account', 'permissions', 'done'];
+type Step = 'welcome' | 'agentos' | 'you' | 'model' | 'account' | 'permissions' | 'connect' | 'check' | 'done';
+const ORDER: Step[] = ['welcome', 'agentos', 'you', 'model', 'account', 'permissions', 'connect', 'check', 'done'];
 type Status = (OnboardingStatus & Partial<OnboardingChecks>) | null;
 const home = (p: string) => p.replace(/^\/Users\/[^/]+/, '~');
 
@@ -57,6 +58,8 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
         {step === 'model' && <ModelStep status={status} onRefresh={refresh} onBack={back} onNext={next} onManaged={setManaged} />}
         {step === 'account' && <AccountStep slot={accountSlot} required={managed} onBack={back} onNext={next} />}
         {step === 'permissions' && <PermissionsStep status={status} onRefresh={refresh} onPoll={refreshPermissions} onBack={back} onNext={next} />}
+        {step === 'connect' && <ConnectStep onBack={back} onNext={next} />}
+        {step === 'check' && <CheckStep onBack={back} onNext={next} />}
         {step === 'done' && (
           <section className="onb-step">
             <h1>You're set</h1>
@@ -117,6 +120,7 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain 
   const [notes, setNotes] = useState<Awaited<ReturnType<typeof window.quorum.meetingsDir>> | undefined>(undefined);
   useEffect(() => { if (!brain) { setNotes(undefined); return; } let live = true; window.quorum.meetingsDir().then((r) => { if (live) setNotes(r); }).catch(() => { if (live) setNotes(null); }); return () => { live = false; }; }, [brain?.root]);
   const pickNotes = async () => { if (await window.quorum.pickMeetingsDir()) setNotes(await window.quorum.meetingsDir()); };
+  useEffect(() => window.quorum.onBrainChanged((b) => { if (b) window.quorum.meetingsDir().then(setNotes).catch(() => {}); else setNotes(undefined); }), []);
   // a notetaker connected through the library (Granola today); its notes import into this folder in the background
   const [granola, setGranola] = useState<MeetingSourceInfo | null>(null);
   const loadGranola = () => window.quorum.sourcesList().then((l) => setGranola(l.find((s) => s.id === 'granola') ?? null)).catch(() => setGranola(null));
@@ -386,6 +390,40 @@ function PermissionsStep({ status, onRefresh, onPoll, onBack, onNext }: { status
         })}
       </div>
       <Actions onBack={onBack} onNext={onNext} ready={ready} extra={<CheckAgain onRun={onRefresh} />} />
+    </section>
+  );
+}
+
+// Quorum's MCP server in Claude Code and Codex, and the quorum command in Terminal. Optional: Skip for now shows until
+// one agent has Quorum
+function ConnectStep({ onBack, onNext }: { onBack: () => void; onNext: () => void }) {
+  const agents = useAgents();
+  const s = agents.status;
+  const ready = !!s && ((s.claude.added) || (s.codex.added && !s.codex.error));
+  return (
+    <section className="onb-step">
+      <h1>Connect your agent</h1>
+      <p>Add Quorum to the AI tools on this Mac so they can read your meetings and notes, and add the quorum command to Terminal. You can change these later in Settings &gt; AI settings.</p>
+      <div className="onb-perms"><AgentRows agents={agents} variant="onboarding" /></div>
+      <Actions onBack={onBack} onNext={onNext} ready={ready} onSkip={onNext} extra={<CheckAgain onRun={agents.refresh} />} />
+    </section>
+  );
+}
+
+// the last check before Open Quorum: runs on arrival, and Continue opens once it has run, passed or not. Each failure
+// has a button that fixes it
+function CheckStep({ onBack, onNext }: { onBack: () => void; onNext: () => void }) {
+  const agents = useAgents({ load: false });
+  const check = useConnectionCheck(agents);
+  useEffect(() => { check.run(); }, []);
+  const r = check.result;
+  return (
+    <section className="onb-step">
+      <h1>Check connection</h1>
+      <p>Quorum makes sure your agent can reach your meeting notes through Quorum's MCP server and the quorum command. It changes nothing in your Agent OS folder.</p>
+      {r ? <ConnectionCheckList result={r} running={check.running} onAction={check.act} /> : <p className="muted">Checking…</p>}
+      {r && !r.ok && <p className="muted">You can also fix these later in Settings &gt; AI settings.</p>}
+      <Actions onBack={onBack} onNext={onNext} ready={!!r} busy={check.running} extra={r ? <ConnectionCheckButton running={check.running} onRun={check.run} label="Check again" /> : undefined} />
     </section>
   );
 }

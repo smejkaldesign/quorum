@@ -5,7 +5,8 @@ import { BY_ID, cleanConnectors, cleanProviders, needsKey, providerFor, provider
 import { connectorKey, removeConnectorKey, setConnectorKey, testSavedConnector } from './connectors/keys.js';
 import { createConnectGuard, guardIpc } from './connectors/connectGuard.js';
 import { createOverlap } from './connectors/mcpOverlap.js';
-import { claudeRun } from './claudeCli.js';
+import { createAgentLink } from './agentLink.js';
+import { checkConnection } from './connectionCheck.js';
 import { openSpeech, SPEECH_ENGINES } from './speech/provider.js';
 import { createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTree } from './vault.js';
 import { createVaultIndex } from './vindex.js';
@@ -236,6 +237,8 @@ const refreshGates = () => { baseGates = notetakerGates(flagsApi ? flagsApi.all(
 const gate = () => (meeting.armed && !meeting.solo ? callGates : baseGates);
 // windows can be gone mid-quit while the helper or agent is still reporting
 const toUI = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
+// the Agent OS folder or the meetings folder changed; every open view reads the folder again
+const brainChanged = () => toUI('brain-changed', brain());
 const helperSend = (cmd) => helper?.stdin.write(JSON.stringify(cmd) + '\n');
 // a note started outside a call has no chat to post in, and neither do Meet or Teams yet
 const chat = (text) => { if (!meeting.solo && gate().meetingCapture && provider().chat) helperSend({ cmd: 'chatSend', text }); };
@@ -1182,9 +1185,9 @@ const CLI = app.isPackaged ? path.join(process.resourcesPath, 'cli/quorum.mjs') 
 // the MCP server and the quorum command need nothing installed. The dev copy's binary works the same way.
 const RUNTIME = process.execPath;
 const RUNTIME_ENV = { ELECTRON_RUN_AS_NODE: '1', ...(isDevelopment ? { QUORUM_ENV: 'development' } : {}) };
-const runtimeEnvArgs = () => Object.entries(RUNTIME_ENV).flatMap(([k, v]) => ['--env', `${k}=${v}`]);
-const runtimeEnvShell = () => Object.entries(RUNTIME_ENV).map(([k, v]) => `${k}=${v}`).join(' ');
-ipcMain.handle('mcp-status', async () => ({ added: (await claudeRun(['mcp', 'get', 'quorum'])).ok, node: RUNTIME, cli: CLI, command: `"${RUNTIME}" "${CLI}" mcp` }));
+// Claude Code, Codex and the quorum command, set up and read back through agentLink.js
+const agents = createAgentLink({ runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV });
+ipcMain.handle('mcp-status', async () => ({ added: (await agents.claude.status()).added, node: RUNTIME, cli: CLI, command: agents.mcpCommand }));
 // the provider MCP servers the person's agent already has, per connector (connectors/mcpOverlap.js). Read only. The
 // config files are read again on refresh (the Connections page asks on open and focus); `claude mcp list` runs once
 // per session in the background and again only on Check again, since it starts every local server to check it
@@ -1192,36 +1195,15 @@ const mcpOverlap = createOverlap({ onChange: () => toUI('mcp-overlap', null) });
 const overlapFolder = () => { const b = brain(); return { root: b?.root ?? null, vault: b?.vault ?? null }; };
 ipcMain.handle('mcp-overlap', (_e, opts) => mcpOverlap.get(overlapFolder(), { refresh: opts?.refresh === true }));
 ipcMain.handle('mcp-overlap-check', () => mcpOverlap.check(overlapFolder()));
-ipcMain.handle('mcp-add', async () => {
-  // the server name goes before -e: Claude Code's -e takes values until the next flag, so a name after it is read as
-  // one more env value; -- ends the list
-  const r = await claudeRun(['mcp', 'add', 'quorum', '--scope', 'user', ...runtimeEnvArgs(), '--', RUNTIME, CLI, 'mcp']);
-  if (!r.ok) return { added: false, error: r.out.trim().split('\n')[0] };
-  // trust what Claude Code reads back, not the add's exit code; a proxy managing MCP config can drop the entry
-  const added = (await claudeRun(['mcp', 'get', 'quorum'])).ok;
-  return { added, error: added ? null : "Claude Code didn't keep the Quorum entry. Another tool may manage your MCP servers." };
-});
-const ZSHRC = path.join(homedir(), '.zshrc');
-const CLI_MARK = '# added by Quorum';
-const readZshrc = () => { try { return readFileSync(ZSHRC, 'utf8'); } catch { return ''; } };
-// added means the line is in ~/.zshrc; broken means a path it points at is gone (Node moved, or Quorum moved)
-ipcMain.handle('cli-status', () => {
-  const line = readZshrc().split('\n').find((l) => l.startsWith('alias quorum=') && l.endsWith(CLI_MARK));
-  if (!line) return { added: false };
-  const [node, cli] = [...line.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-  const error = !node || !existsSync(node) ? "Can't find the runtime where it used to be" : !cli || !existsSync(cli) ? "Can't find Quorum where it used to be" : null;
-  return { added: true, error };
-});
-ipcMain.handle('cli-add', () => {
-  const text = readZshrc();
-  writeFileSync(ZSHRC, `${text}${text && !text.endsWith('\n') ? '\n' : ''}alias quorum='${runtimeEnvShell()} "${RUNTIME}" "${CLI}"' ${CLI_MARK}\n`);
-  return { added: true };
-});
-ipcMain.handle('cli-remove', () => {
-  writeFileSync(ZSHRC, readZshrc().split('\n').filter((l) => !(l.startsWith('alias quorum=') && l.endsWith(CLI_MARK))).join('\n'));
-  return { added: false };
-});
-ipcMain.handle('mcp-remove', async () => ({ added: !(await claudeRun(['mcp', 'remove', 'quorum', '--scope', 'user'])).ok }));
+ipcMain.handle('mcp-add', () => agents.claude.add());
+ipcMain.handle('mcp-remove', () => agents.claude.remove());
+ipcMain.handle('agents-status', async () => { const [claude, codex, cli] = await Promise.all([agents.claude.status(), agents.codex.status(), agents.cli.status()]); return { claude, codex, cli }; });
+ipcMain.handle('codex-add', () => agents.codex.add());
+ipcMain.handle('codex-remove', () => agents.codex.remove());
+ipcMain.handle('cli-status', () => agents.cli.status());
+ipcMain.handle('cli-add', () => agents.cli.add());
+ipcMain.handle('cli-remove', () => agents.cli.remove());
+ipcMain.handle('connection-check', () => checkConnection({ root: brain()?.root ?? null, notesDir: quorumNotesDir(), agent: agents }));
 // signing in belongs to Claude Code, so Quorum opens Terminal on its login rather than handling credentials itself
 ipcMain.handle('claude-login', () => execFileSync('/usr/bin/osascript', ['-e', 'tell application "Terminal" to do script "claude auth login"', '-e', 'tell application "Terminal" to activate']));
 ipcMain.handle('accept-suggestion', (_e, id) => (gate().liveAssist ? suggester.accept(id) : null));
@@ -2181,11 +2163,12 @@ ipcMain.handle('pick-meetings-dir', async () => {
   if (r.canceled || !r.filePaths[0]) return null;
   settings.meetingsDir = r.filePaths[0];
   saveSettings();
+  brainChanged();
   return true;
 });
 // the first-run wizard shares the connect step with Settings, so both end up in the same state
 // a connect starts the guardrails review of the folder in the background; the Guardrails page shows it when it lands
-const connectBrain = (b) => { Object.assign(settings, { brainRoot: b.root, vaultPath: b.vault, brainMade: null }); store.settings.save(); log('connected Agent OS', b.root); suggester.reset(); openIndex(); guardrails.scan().then(() => vindex?.rebuild()).catch(() => {}); return b; };
+const connectBrain = (b) => { Object.assign(settings, { brainRoot: b.root, vaultPath: b.vault, brainMade: null }); store.settings.save(); log('connected Agent OS', b.root); suggester.reset(); openIndex(); guardrails.scan().then(() => vindex?.rebuild()).catch(() => {}); brainChanged(); return b; };
 registerOnboarding({
   ipcMain, settings, saveSettings, inspectBrain, connect: connectBrain, systemPreferences, shell, helperAsk: (cmd) => calAsk({ cmd }), claudeStatus, modelStatus: () => modelStatus(null), log, hadSettings: store.settings.existed,
   runText: (prompt, system) => runClaude(prompt, system, 'haiku', { cwd: homedir() }), hasModel: () => modelSource() !== 'none', owner: () => OWNER, about: aboutMe,
@@ -2218,18 +2201,12 @@ ipcMain.handle('connect-brain', async () => {
     properties: ['openDirectory'],
   });
   if (r.canceled || !r.filePaths[0]) return brain();
-  const b = inspectBrain(r.filePaths[0]);
-  Object.assign(settings, { brainRoot: b.root, vaultPath: b.vault, brainMade: null });
-  store.settings.save();
-  log('connected Agent OS', b.root);
-  suggester.reset();
-  openIndex();
-  return b;
+  return connectBrain(inspectBrain(r.filePaths[0]));
 });
 ipcMain.handle('reveal-brain', () => { if (settings.brainRoot) shell.openPath(settings.brainRoot); });
 // forgetting the Agent OS leaves every file where it is; Quorum stops reading it, and a meetings folder found inside it is no longer found
-ipcMain.handle('disconnect-brain', () => { Object.assign(settings, { brainRoot: null, vaultPath: null, brainMade: null }); store.settings.save(); log('disconnected Agent OS'); suggester.reset(); openIndex(); return null; });
-ipcMain.handle('clear-meetings-dir', () => { settings.meetingsDir = null; saveSettings(); return true; });
+ipcMain.handle('disconnect-brain', () => { Object.assign(settings, { brainRoot: null, vaultPath: null, brainMade: null }); store.settings.save(); log('disconnected Agent OS'); suggester.reset(); openIndex(); brainChanged(); return null; });
+ipcMain.handle('clear-meetings-dir', () => { settings.meetingsDir = null; saveSettings(); brainChanged(); return true; });
 
 ipcMain.handle('end', () => endMeeting());
 // pause keeps everything so far; nothing new is recorded until resume

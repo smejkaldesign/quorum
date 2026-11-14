@@ -1758,3 +1758,15 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .kb-sync-list li:last-child { border-bottom: 0; }
 .kb-sync-list .kb-drive-name em.set-error { white-space: normal; }
 .kb-sync-status.warn { color: var(--danger); }
+
+/* Check connection (AgentLinks.tsx): one line per check, the fix under each failure */
+.conn-check-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 4px 8px; }
+.conn-check-head .mcp-lede { margin: 0; }
+.conn-check { list-style: none; margin: 0 4px 28px; padding: 0; display: grid; gap: 10px; }
+.onb-step .conn-check { margin: 4px 0 16px; }
+.conn-check-item { display: grid; grid-template-columns: 16px 1fr auto; gap: 10px; align-items: start; font-size: 13px; }
+.conn-check-item > svg { margin-top: 2px; }
+.conn-check-item strong { display: block; font-weight: 500; }
+.conn-check-item.skip strong { color: var(--muted); }
+.conn-check-fix { display: block; margin-top: 2px; color: var(--danger); }
+.conn-check-item .muted { display: block; margin-top: 2px; }
