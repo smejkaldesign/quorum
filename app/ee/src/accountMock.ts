@@ -10,12 +10,12 @@ let teamMock: TeamApi | null = null;
 export function teamApi(): TeamApi {
   if ((window.quorum as Partial<Window['quorum']>).teamSource) return window.quorum;
   if (teamMock) return teamMock;
-  let source: TeamSource = { kind: 'sync', url: null, path: null, setAt: null };
+  let source: TeamSource = { kind: 'sync', url: null, path: null, setAt: null, imported: null };
   const local = (): TeamLocal => ({ kind: source.kind, root: source.kind === 'git' ? '~/Library/Application Support/Quorum/team-knowledge/ws_1' : source.path ?? '~/Documents/Quorum Team/Example Co', exists: true, lastPullAt: iso(-3600000), lastError: null, gitAvailable: true, notes: 2, pulling: false });
   const tree = [{ name: '05-knowledge', path: '05-knowledge', dir: true, children: [{ name: 'onboarding', path: '05-knowledge/onboarding.md', dir: false }] }, { name: 'roadmap', path: 'roadmap.md', dir: false }];
   return (teamMock = {
     teamSource: async () => ({ source, local: local() }),
-    teamSourceSet: async (draft) => { await delay(300); source = { kind: draft.kind, url: draft.url ?? null, path: draft.path ?? null, setAt: iso(0) }; return { source, local: local() }; },
+    teamSourceSet: async (draft) => { await delay(300); source = { kind: draft.kind, url: draft.url ?? null, path: draft.path ?? null, setAt: iso(0), imported: null }; return { source, local: local() }; },
     teamSourcePick: async () => ({ path: '/Volumes/Shared/Team knowledge' }),
     teamPull: async () => { await delay(400); return { local: local() }; },
     teamTree: async () => ({ tree }),

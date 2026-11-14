@@ -190,7 +190,9 @@ export type KnowledgeNote = { rel: string; title: string; pulledAt: string | nul
 export type KnowledgeDoc = { rel: string; title: string; body: string; pulledAt: string | null; behind: boolean; update: string | null };
 // team knowledge (migration 0020): where the workspace's knowledge comes from, and how it stands on this Mac
 export type TeamSourceKind = 'sync' | 'folder' | 'git';
-export type TeamSource = { kind: TeamSourceKind; url: string | null; path: string | null; setAt: string | null };
+// a default KB imported from GitHub or a zip: the tab shows it read-only and reads it as Quorum sync
+export type TeamImport = { kind: 'github' | 'zip'; url: string | null; name: string | null };
+export type TeamSource = { kind: TeamSourceKind; url: string | null; path: string | null; setAt: string | null; imported?: TeamImport | null };
 export type TeamSourceDraft = { kind: TeamSourceKind; url?: string; path?: string };
 export type TeamLocal = { kind: TeamSourceKind; root: string | null; exists: boolean; lastPullAt: string | null; lastError: string | null; gitAvailable: boolean; notes: number; pulling: boolean };
 export type TeamHit = { rel: string; title: string; score: number; line: number; snippet: string };

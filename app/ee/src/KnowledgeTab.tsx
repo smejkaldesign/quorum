@@ -124,7 +124,8 @@ const KIND_COPY: Record<TeamSourceKind, { title: string; desc: string }> = {
   git: { title: 'A git repository', desc: 'Every Mac clones it and pulls on refresh. Private repositories need git access on each Mac (SSH keys or a credential helper).' },
 };
 
-// Settings for the source, inside the tab: three choices, one address or folder, and what happened on this Mac
+// Settings for the default KB's source, inside the tab: three choices, one address or folder, and what happened on
+// this Mac
 function SourceCard({ state, onChange, onClose }: { state: SourceState; onChange: (s: SourceState) => void; onClose: () => void }) {
   const [kind, setKind] = useState<TeamSourceKind>(state.source.kind);
   const [url, setUrl] = useState(state.source.url ?? '');
@@ -143,10 +144,23 @@ function SourceCard({ state, onChange, onClose }: { state: SourceState; onChange
     if (r.error) setError(r.error); else if (r.path) setPath(r.path);
   };
   const changed = kind !== state.source.kind || (kind === 'git' && url.trim() !== (state.source.url ?? '')) || (kind === 'folder' && path !== (state.source.path ?? ''));
+  // an imported default KB keeps its import source; the card names it and where it changes
+  if (state.source.imported) {
+    return (
+      <div className="tk-setup">
+        <div className="set-card tk-setup-card">
+          <h3 className="tk-setup-title">Where the team keeps its knowledge</h3>
+          <p className="muted">{describeSource(state.source)}. The workspace's default knowledge base keeps this import source, and its admins change it under Settings › Admin › Knowledge.</p>
+          <div className="tk-setup-actions"><button className="pill ghost" onClick={onClose}>Close</button></div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="tk-setup">
       <div className="set-card tk-setup-card">
         <h3 className="tk-setup-title">Where the team keeps its knowledge</h3>
+        <p className="muted">This is the source of the workspace's default knowledge base, marked Default under Settings › Admin › Knowledge.</p>
         {(Object.keys(KIND_COPY) as TeamSourceKind[]).map((k) => (
           <label key={k} className={`tk-kind ${kind === k ? 'on' : ''}`}>
             <input type="radio" name="tk-kind" checked={kind === k} onChange={() => setKind(k)} />
