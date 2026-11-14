@@ -81,3 +81,19 @@ describe('syncPaths', () => {
     expect(index.note('a.md').title).toBe('A edited');
   });
 });
+
+describe('graph cluster names', () => {
+  it('names a cluster by its folder in plain words and keeps a rename over the generated name', () => {
+    vault = mkdtempSync(path.join(tmpdir(), 'vindex-'));
+    const days = ['2026-11-01', '2026-11-02', '2026-11-03', '2026-11-04'];
+    days.forEach((d, i) => write(`01-daily/${d}.md`, `# ${d}\n\n[[${days[(i + 1) % days.length]}]]\n`));
+    const node = (g) => g.nodes.find((n) => n.id === '01-daily/2026-11-01.md');
+    let renamed = {};
+    const index = open({ renamed: () => renamed });
+    expect(node(index.graph())).toMatchObject({ cluster: 'Daily', clusterKey: 'folder:01-daily', clusterPath: '01-daily' });
+    renamed = { 'folder:01-daily': 'Journal' };
+    expect(node(index.graph()).cluster).toBe('Journal');
+    index.sync();
+    expect(node(index.graph()).cluster).toBe('Journal');
+  });
+});

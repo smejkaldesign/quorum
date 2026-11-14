@@ -433,6 +433,9 @@ html.popup-root, html.popup-root body { background: transparent; }
 .graph-cluster[hidden] { display: none; }
 .graph-cluster-name { overflow: hidden; text-overflow: ellipsis; }
 .graph-cluster-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--cluster); }
+.graph-cluster.pinned { pointer-events: auto; cursor: text; }
+.graph-cluster.pinned:hover { border-color: color-mix(in srgb, var(--cluster) 75%, transparent); }
+.graph-cluster-edit { width: 220px; outline: none; font: inherit; font-size: 12px; pointer-events: auto; }
 .kb-preview { flex: 1; overflow-y: auto; }
 .kb-preview .doc { padding-top: 22px; }
 .kb-path { color: #6e6e74; font-size: 13px; margin: 0 0 8px; }
