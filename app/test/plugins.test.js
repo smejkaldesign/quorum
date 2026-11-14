@@ -58,10 +58,26 @@ describe('plugin detection', () => {
     expect(by.search.evidence.map((e) => e.path)).toEqual(['scripts/search-memory.py']);
     expect(by.links).toMatchObject({ owner: 'quorum', isNew: false, evidence: [] });
   });
-  it('a bare vault leaves every job with Quorum and nothing new', () => {
+  it('a bare vault leaves every job with Quorum and nothing new, except the plugins that start off', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'plugins-bare-'));
     writeStarter(dir, plan({ name: 'Studio', answers: { template: 'founder', role: 'Designer', goals: '', projects: ['Quorum'], people: [], organize: 'areas' } }));
-    for (const r of rowsFor(dir)) expect(r).toMatchObject({ owner: 'quorum', isNew: false, evidence: [] });
+    for (const r of rowsFor(dir)) expect(r).toMatchObject({ owner: ['brain-check', 'skills'].includes(r.id) ? 'vault' : 'quorum', isNew: false, evidence: [] });
+  });
+  it('saves a report plugin pick without touching a held run or scheduling a pass', () => {
+    const dir = toolingVault();
+    const held = { count: 12, sample: ['01-daily/2026-11-10-brief.md'] };
+    put(dir, '.quorum/keeper.json', JSON.stringify({ done: {}, held }));
+    const settings = { keeper: { on: true } };
+    let saves = 0;
+    const k = keeperFor(dir, settings, { saveSettings: () => { saves++; } });
+    const st = k.setPlugin('context', 'vault');
+    expect(saves).toBe(1);
+    expect(settings.plugins.context.owner).toBe('vault');
+    expect(st.held).toEqual(held);
+    expect(JSON.parse(readFileSync(path.join(dir, '.quorum/keeper.json'), 'utf8')).held).toEqual(held);
+    // a writer plugin pick still clears the held run
+    k.setPlugin('daily', 'quorum');
+    expect(JSON.parse(readFileSync(path.join(dir, '.quorum/keeper.json'), 'utf8')).held).toBeUndefined();
   });
   it('keeps a choice until the evidence changes, then brings the vault default back as new', () => {
     const dir = toolingVault();

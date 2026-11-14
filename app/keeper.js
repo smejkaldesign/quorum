@@ -462,9 +462,13 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
   };
   // one plugin row handed to Quorum or to the vault. A held run planned with the old owners no longer applies, so it
   // is cleared and a new pass is scheduled
+  // a report plugin writes nothing in the vault, so its pick is saved and nothing else: no held run is cleared and no
+  // pass is scheduled
   const setPlugin = (id, to) => {
     const b = brain();
-    settings.plugins = choose(settings.plugins, plugins(), id, to);
+    const rows = plugins();
+    settings.plugins = choose(settings.plugins, rows, id, to);
+    if (rows.find((r) => r.id === id)?.report) { saveSettings(); return status(); }
     if (id === 'facts' && settings.keeper && 'facts' in settings.keeper) { settings.keeper = { ...settings.keeper }; delete settings.keeper.facts; }
     saveSettings();
     if (b) { const st = loadState(b.vault); if (st.held) { delete st.held; saveState(b.vault, st); } }
