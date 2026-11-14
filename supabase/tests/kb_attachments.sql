@@ -68,7 +68,7 @@ select pg_temp.expect_error($$select * from public.kb_sync_grants$$, 'permission
 select pg_temp.expect_error(format($$select * from public.kb_sync_token(%L)$$, pg_temp.id('att')), 'permission denied|only the relay');
 select pg_temp.expect_error($$select * from public.kb_sync_revocations(10)$$, 'permission denied|only the relay');
 select pg_temp.expect_error($$select * from public.relay_workspace_oauth_client('01KF00000000000000000000WS', 'google-drive')$$, 'permission denied|only the relay');
-select pg_temp.expect_error($$select public.kb_sync_claim(10, 600, 2)$$, 'permission denied|only the relay');
+select pg_temp.expect_error($$select public.kb_sync_claim(10, 600, 2, 'w1')$$, 'permission denied|only the relay');
 select pg_temp.expect_error($$select cursor from public.kb_attachments$$, 'permission denied');
 select pg_temp.expect_error($$select lease_until from public.kb_attachments$$, 'permission denied');
 select pg_temp.check(public.kb_attachments_list(pg_temp.id('kb'))::text !~ 'rt-sync', 'the admin list never carries the token');
@@ -94,16 +94,16 @@ select pg_temp.expect_error(format($$delete from public.kb_attachments where id 
 -- 6. pause keeps it off the schedule; resume puts it back; the claim leases it once
 select pg_temp.check((public.kb_attachment_pause(pg_temp.id('att'), true) ->> 'status') = 'paused', 'an admin pauses');
 select pg_temp.as_service();
-select pg_temp.check(jsonb_array_length(public.kb_sync_claim(10, 600)) = 0, 'a paused attachment is not claimed');
+select pg_temp.check(jsonb_array_length(public.kb_sync_claim(10, 600, 2, 'w1')) = 0, 'a paused attachment is not claimed');
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000f2');
 select pg_temp.check((public.kb_attachment_pause(pg_temp.id('att'), false) ->> 'status') = 'pending', 'an admin resumes');
 select pg_temp.as_service();
-insert into ids select 'claim', public.kb_sync_claim(10, 600)::text;
+insert into ids select 'claim', public.kb_sync_claim(10, 600, 2, 'w1')::text;
 select pg_temp.check(jsonb_array_length(pg_temp.id('claim')::jsonb) = 1, 'the worker claims the due attachment');
 select pg_temp.check(pg_temp.id('claim') !~ 'rt-sync', 'a claim carries no token');
 select pg_temp.check((pg_temp.id('claim')::jsonb -> 0 ->> 'kb_name') = 'Handbook', 'a claim carries the KB name');
-select pg_temp.check(jsonb_array_length(public.kb_sync_claim(10, 600)) = 0, 'a leased attachment is not claimed twice');
-select public.kb_sync_finish(pg_temp.id('att'), true, null, '{"listed_at": "2026-11-13T00:00:00Z"}', 3, 900);
+select pg_temp.check(jsonb_array_length(public.kb_sync_claim(10, 600, 2, 'w1')) = 0, 'a leased attachment is not claimed twice');
+select public.kb_sync_finish(pg_temp.id('att'), true, null, '{"listed_at": "2026-11-13T00:00:00Z"}', 3, 900, false, 'w1');
 select pg_temp.check((select status = 'active' and note_count = 3 and lease_until is null and last_synced_at is not null from public.kb_attachments where id = pg_temp.id('att')), 'a finished run is active with its count');
 select public.kb_sync_finish(pg_temp.id('att'), false, 'Google Drive is limiting requests.', null, null, 120);
 select pg_temp.check((select status = 'error' and failures = 1 and error like 'Google Drive%' from public.kb_attachments where id = pg_temp.id('att')), 'a failed run shows the error to admins');
@@ -114,7 +114,7 @@ update public.kb_attachments set next_run_at = now() - interval '1 minute' where
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000f1');
 select public.kb_set_access(pg_temp.id('kb'), '[{"principal": "user", "user_id": "00000000-0000-4000-8000-0000000000f2", "role": "reader"}]');
 select pg_temp.as_service();
-select pg_temp.check(jsonb_array_length(public.kb_sync_claim(10, 600)) = 0, 'an attachment by a former KB admin is not claimed');
+select pg_temp.check(jsonb_array_length(public.kb_sync_claim(10, 600, 2, 'w1')) = 0, 'an attachment by a former KB admin is not claimed');
 select pg_temp.check((select status from public.kb_attachments where id = pg_temp.id('att')) = 'needs_auth', 'it waits for another admin');
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000f1');
 select public.kb_set_access(pg_temp.id('kb'), '[{"principal": "user", "user_id": "00000000-0000-4000-8000-0000000000f2", "role": "admin"}]');
@@ -170,9 +170,9 @@ select pg_temp.check((select status from public.kb_attachments where id = pg_tem
 select pg_temp.as_service();
 select public.kb_sync_attach('00000000-0000-4000-8000-0000000000f1', pg_temp.id('kb'), null, 'google-drive', 'drive-file-10', 'file', '{}', 'A', null, 'rt-owner-2', 'quorum', true);
 select public.kb_sync_attach('00000000-0000-4000-8000-0000000000f1', pg_temp.id('kb'), null, 'google-drive', 'drive-file-11', 'file', '{}', 'B', null, null, 'quorum', true);
-select pg_temp.check(jsonb_array_length(public.kb_sync_claim(10, 600, 1)) = 1, 'one run at a time in the workspace');
-select pg_temp.check(jsonb_array_length(public.kb_sync_claim(10, 600, 1)) = 0, 'the second waits for the first');
-select pg_temp.check(jsonb_array_length(public.kb_sync_claim(10, 600, 2)) = 1, 'a higher cap lets the second run');
+select pg_temp.check(jsonb_array_length(public.kb_sync_claim(10, 600, 1, 'w1')) = 1, 'one run at a time in the workspace');
+select pg_temp.check(jsonb_array_length(public.kb_sync_claim(10, 600, 1, 'w1')) = 0, 'the second waits for the first');
+select pg_temp.check(jsonb_array_length(public.kb_sync_claim(10, 600, 2, 'w1')) = 1, 'a higher cap lets the second run');
 
 -- 12. the worker writes a synced note and its upstream base (0031) as the attaching admin; no client calls it
 select pg_temp.as_admin_role();
@@ -205,6 +205,87 @@ select pg_temp.as_admin_role();
 update public.workspaces set plan = 'paid' where id = '01KF00000000000000000000WS';
 select pg_temp.check((select status = 'pending' and paused_by is null and error is null from public.kb_attachments where id = pg_temp.id('drv')), 'the plan pause ends');
 select pg_temp.check((select status = 'paused' and paused_by = 'admin' from public.kb_attachments where remote_id = 'drive-file-11'), 'an admin pause stays');
+
+-- 14. the lease belongs to its owner: another owner cannot renew or finish it, and a removed attachment cannot be renewed
+select pg_temp.as_admin_role();
+update public.kb_attachments set next_run_at = now() - interval '1 minute', lease_until = null, lease_owner = null where id = pg_temp.id('drv');
+select pg_temp.as_service();
+select pg_temp.check(jsonb_array_length(public.kb_sync_claim(10, 600, 2, 'w2')) = 1, 'w2 claims the attachment');
+select pg_temp.check(not public.kb_sync_renew(pg_temp.id('drv'), 'w1', 600), 'another owner cannot renew');
+select pg_temp.check(public.kb_sync_renew(pg_temp.id('drv'), 'w2', 600), 'the owner renews');
+select pg_temp.check(not public.kb_sync_finish(pg_temp.id('drv'), true, null, null, null, 900, false, 'w1'), 'another owner cannot finish');
+select pg_temp.check(public.kb_sync_finish(pg_temp.id('drv'), true, null, null, null, 900, false, 'w2'), 'the owner finishes');
+select pg_temp.check(not public.kb_sync_renew(pg_temp.id('drv'), 'w2', 600), 'a finished run holds no lease');
+
+-- 15. one refresh per grant at a time, and the attach route finds the grant to lock
+insert into ids select 'g-f1', id::text from public.kb_sync_grants where user_id = '00000000-0000-4000-8000-0000000000f1' and provider = 'google-drive' and ended_at is null;
+select pg_temp.check(public.kb_sync_grant_of('00000000-0000-4000-8000-0000000000f1', pg_temp.id('kb'), 'google-drive')::text = pg_temp.id('g-f1'), 'the live grant is found');
+select pg_temp.check(public.kb_sync_refresh_lock(pg_temp.id('g-f1'), 'p1', 120), 'p1 locks');
+select pg_temp.check(not public.kb_sync_refresh_lock(pg_temp.id('g-f1'), 'p2', 120), 'p2 waits');
+select public.kb_sync_refresh_unlock(pg_temp.id('g-f1'), 'p2');
+select pg_temp.check(not public.kb_sync_refresh_lock(pg_temp.id('g-f1'), 'p2', 120), 'only the holder unlocks');
+select public.kb_sync_refresh_unlock(pg_temp.id('g-f1'), 'p1');
+select pg_temp.check(public.kb_sync_refresh_lock(pg_temp.id('g-f1'), 'p2', 120), 'p2 locks after the unlock');
+select public.kb_sync_refresh_unlock(pg_temp.id('g-f1'), 'p2');
+
+-- 16. a token from the workspace's own client starts a new grant; the admin's other attachments move to it and the
+-- old grant (shared with the Mac) is deleted with its secret
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000f1');
+select public.workspace_integration_save('01KF00000000000000000000WS', 'google-drive', 'org', '{"auth": "oauth_client", "client_id": "ws-client.apps"}', 'ws-client-secret-1234');
+select pg_temp.as_admin_role();
+insert into ids select 'g-f1-secret', secret_id::text from public.kb_sync_grants where id = pg_temp.id('g-f1');
+select pg_temp.as_service();
+select public.kb_sync_attach('00000000-0000-4000-8000-0000000000f1', pg_temp.id('kb'), null, 'google-drive', 'drive-file-12', 'file', '{}', 'C', null, 'rt-ws-1', 'workspace', false);
+select pg_temp.as_admin_role();
+insert into ids select 'g-ws', id::text from public.kb_sync_grants where user_id = '00000000-0000-4000-8000-0000000000f1' and provider = 'google-drive' and ended_at is null;
+select pg_temp.check((select client from public.kb_sync_grants where id = pg_temp.id('g-ws')) = 'workspace', 'the new grant is the workspace client''s');
+select pg_temp.check((select bool_and(grant_id::text = pg_temp.id('g-ws')) from public.kb_attachments where remote_id in ('drive-file-10', 'drive-file-11', 'drive-file-12')), 'the other attachments moved to it');
+select pg_temp.check(not exists (select 1 from public.kb_sync_grants where id = pg_temp.id('g-f1')), 'the old grant is gone');
+select pg_temp.check(not exists (select 1 from vault.secrets where id = pg_temp.id('g-f1-secret')::uuid), 'with its secret');
+select pg_temp.as_service();
+select pg_temp.check((select client_id = 'ws-client.apps' and client_secret = 'ws-client-secret-1234' from public.kb_sync_token(pg_temp.id('drv'))), 'the token carries the workspace client pair');
+
+-- 17. attaching an item again under another admin's grant ends the grant it leaves when nothing else uses it
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000f1');
+select public.kb_set_access(pg_temp.id('kb'), '[{"principal": "user", "user_id": "00000000-0000-4000-8000-0000000000f3", "role": "admin"}]');
+select public.workspace_integration_save('01KF00000000000000000000WS', 'github', 'personal', '{}', null);
+select pg_temp.as_service();
+select public.kb_sync_attach('00000000-0000-4000-8000-0000000000f3', pg_temp.id('kb'), null, 'github', 'octo/guides', 'folder', '{}', 'octo/guides', null, 'gh-s3-1', 'quorum', false);
+select pg_temp.as_admin_role();
+insert into ids select 'g-s3', id::text from public.kb_sync_grants where user_id = '00000000-0000-4000-8000-0000000000f3' and ended_at is null;
+select pg_temp.as_service();
+select public.kb_sync_attach('00000000-0000-4000-8000-0000000000f1', pg_temp.id('kb'), null, 'github', 'octo/guides', 'folder', '{}', 'octo/guides', null, 'gh-f1-2', 'quorum', false);
+select pg_temp.as_admin_role();
+select pg_temp.check((select revoke_pending and ended_reason = 'removed' from public.kb_sync_grants where id = pg_temp.id('g-s3')), 'the left grant ends and waits for its revoke');
+
+-- 18. a revoke the provider never confirms gives up after the attempts, deletes the secret and keeps the record
+insert into ids select 'g-s3-secret', secret_id::text from public.kb_sync_grants where id = pg_temp.id('g-s3');
+select pg_temp.as_service();
+select pg_temp.check(not public.kb_sync_revoke_failed(pg_temp.id('g-s3'), 2), 'the first failure waits');
+select pg_temp.check(not exists (select 1 from public.kb_sync_revocations(50) where grant_id::text = pg_temp.id('g-s3')), 'a grant waiting for its retry is not listed');
+select pg_temp.check(public.kb_sync_revoke_failed(pg_temp.id('g-s3'), 2), 'the last failure gives up');
+select pg_temp.as_admin_role();
+select pg_temp.check((select not revoke_pending and revoke_failed_at is not null and secret_id is null from public.kb_sync_grants where id = pg_temp.id('g-s3')), 'the record stays');
+select pg_temp.check(not exists (select 1 from vault.secrets where id = pg_temp.id('g-s3-secret')::uuid), 'the secret is deleted anyway');
+
+-- 19. notes left by a removed attachment leave the KB
+insert into public.notes (id, user_id, workspace_id, path, frontmatter, body, hash, kb_id)
+  values ('01KF000000000000000000NT03', '00000000-0000-4000-8000-0000000000f1', '01KF00000000000000000000WS', 'Knowledge bases/Handbook/Stray.md',
+    '{"visibility": "public", "kb_source": "google-drive:gone", "kb_attachment": "01KF0000000000000000000GNE"}', '# Stray', 'h-s', pg_temp.id('kb'));
+select pg_temp.as_service();
+select pg_temp.check(public.kb_sync_strays(pg_temp.id('drv')) = 0, 'a live attachment keeps its notes');
+select pg_temp.check(public.kb_sync_strays('01KF0000000000000000000GNE') = 1, 'a removed attachment''s note leaves');
+select pg_temp.as_admin_role();
+insert into public.notes (id, user_id, workspace_id, path, frontmatter, body, hash, kb_id)
+  values ('01KF000000000000000000NT04', '00000000-0000-4000-8000-0000000000f1', '01KF00000000000000000000WS', 'Knowledge bases/Handbook/Stray 2.md',
+    '{"visibility": "public", "kb_source": "google-drive:gone2", "kb_attachment": "01KF0000000000000000000GN2"}', '# Stray', 'h-s2', pg_temp.id('kb'));
+select pg_temp.as_service();
+select pg_temp.check(public.kb_sync_strays() >= 1, 'the sweep finds a stray');
+select pg_temp.as_admin_role();
+select pg_temp.check((select deleted_at is not null from public.notes where id = '01KF000000000000000000NT04'), 'the stray is soft deleted');
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000f1');
+select pg_temp.expect_error($$select public.kb_sync_strays()$$, 'permission denied|only the relay');
+select pg_temp.expect_error(format($$select public.kb_sync_refresh_lock(%L, 'x', 60)$$, pg_temp.id('g-ws')), 'permission denied|only the relay');
 
 select pg_temp.as_admin_role();
 select 'kb attachments: ok';

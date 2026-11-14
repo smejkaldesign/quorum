@@ -51,7 +51,9 @@ const upstreamClient = (db, a) => ({
 // the note's own text with the provider's new change marker, for a copy that is kept
 const withMarker = (text, f) => (f.sha ? setFrontmatterKey(text, 'kb_source_sha', fmValue(f.sha)) : f.modified ? setFrontmatterKey(text, 'kb_source_modified', fmValue(f.modified)) : text);
 
-export async function syncAttachment({ db, attachment: a, provider, token, fetchImpl = fetch, sleep, now = () => new Date(), log = () => {} }) {
+// guard() runs before every write and throws when the run lost its lease (the attachment was removed, paused or taken
+// over), so a run never writes for an attachment it no longer holds
+export async function syncAttachment({ db, attachment: a, provider, token, fetchImpl = fetch, sleep, now = () => new Date(), log = () => {}, guard = async () => {} }) {
   const at = now().toISOString();
   const cursorIn = a.cursor && typeof a.cursor === 'object' ? a.cursor : {};
   const listing = await provider.list({ token, attachment: a, cursor: cursorIn, fetchImpl, sleep });
@@ -82,9 +84,10 @@ export async function syncAttachment({ db, attachment: a, provider, token, fetch
   const seen = new Set();
   const gone = new Set();
   const skipped = [];
-  let written = 0, unchanged = 0, kept = 0, suggested = 0, removed = 0, stop = null;
+  let written = 0, unchanged = 0, kept = 0, suggested = 0, removed = 0, stop = null, incomplete = false;
 
   const removeNote = async (n) => {
+    await guard();
     const { error } = await db.from('notes').update({ deleted_at: at, updated_at: at }).eq('id', n.id);
     if (error) throw Object.assign(new Error('A note could not be taken out of the knowledge base.'), { code: 'db' });
     gone.add(n.id);
@@ -98,9 +101,17 @@ export async function syncAttachment({ db, attachment: a, provider, token, fetch
       const key = `${parent ?? ''}/${name.toLowerCase()}`;
       let f = folders.byName.get(key);
       if (!f) {
+        await guard();
         f = { id: ulid(), kb_id: a.kb_id, parent_id: parent, name, position: 0, created_by: a.attached_by };
         const { error } = await db.from('kb_folders').insert(f);
-        if (error) throw Object.assign(new Error('A folder could not be made in the knowledge base.'), { code: 'db' });
+        if (error?.code === '23505') {
+          // made meanwhile (by an admin, or another run): use that folder
+          let q = db.from('kb_folders').select('id, parent_id, name').eq('kb_id', a.kb_id);
+          q = parent ? q.eq('parent_id', parent) : q.is('parent_id', null);
+          const { data } = await q;
+          f = (data ?? []).find((x) => String(x.name).trim().toLowerCase() === name.toLowerCase()) ?? null;
+          if (!f) throw Object.assign(new Error('A folder could not be made in the knowledge base.'), { code: 'db' });
+        } else if (error) throw Object.assign(new Error('A folder could not be made in the knowledge base.'), { code: 'db' });
         folders.byId.set(f.id, f);
         folders.byName.set(key, f);
       }
@@ -122,6 +133,7 @@ export async function syncAttachment({ db, attachment: a, provider, token, fetch
     try { body = await provider.read({ token, attachment: a, file: f, fetchImpl, sleep }); }
     catch (err) {
       if (err?.code === 'auth' || err?.code === 'limited' || err?.code === 'network') stop = err;
+      incomplete = true;
       skipped.push({ path: f.name, reason: err?.code ? err.message : 'The file could not be read.' });
       if (had) held.add(had.id);
       continue;
@@ -155,7 +167,7 @@ export async function syncAttachment({ db, attachment: a, provider, token, fetch
       continue;
     }
     let folderId;
-    try { folderId = await folderFor(f.segs ?? []); } catch (err) { skipped.push({ path: f.name, reason: err.message }); continue; }
+    try { folderId = await folderFor(f.segs ?? []); } catch (err) { if (err?.code === 'lease') throw err; incomplete = true; skipped.push({ path: f.name, reason: err.message }); continue; }
     const segs = [...baseSegs, ...(f.segs ?? []).map(folderName)];
     const base = noteFileName(f.name).replace(/\.md$/, '');
     const id = ulid();
@@ -164,13 +176,14 @@ export async function syncAttachment({ db, attachment: a, provider, token, fetch
     for (let i = 1; i <= 20 && !ok; i++) {
       const rel = `${prefix}/${[...segs, i === 1 ? `${base}.md` : `${base} (${i}).md`].join('/')}`;
       if (taken.has(rel.toLowerCase())) continue;
+      await guard();
       const { error } = await db.from('notes').insert({ id, user_id: a.attached_by, workspace_id: a.workspace_id, path: rel, frontmatter, body: text, hash, mtime: at, kb_id: a.kb_id, folder_id: folderId });
       taken.add(rel.toLowerCase());
       if (!error) { ok = true; break; }
       // another note in the workspace (outside this KB) has the path: try the next name
       if (error.code !== '23505') break;
     }
-    if (!ok) { skipped.push({ path: f.name, reason: 'The note could not be written.' }); continue; }
+    if (!ok) { incomplete = true; skipped.push({ path: f.name, reason: 'The note could not be written.' }); continue; }
     held.add(id);
     bases.push(baseRow(id, text));
     written++;
@@ -179,19 +192,21 @@ export async function syncAttachment({ db, attachment: a, provider, token, fetch
   // a synced note goes up with its upstream row in one call (0031 through 0032's kb_sync_notes_write); without the
   // upstream store, as a plain write where the source's text wins
   const items = updates.map((u) => ({ note_id: u.note.id, body: u.text, frontmatter: parseFrontmatter(u.text), hash: sha256(u.text), mtime: at, upstream: u.keepUpstream ? null : baseRow(u.note.id, u.text, u.suggestions) }));
+  if (items.length) await guard();
   const res = items.length ? await upstream.write(a.kb_id, items) : { written: new Set(), failed: new Map() };
   for (const [i, u] of updates.entries()) {
     const item = items[i];
     if (res) {
-      if (res.failed.has(u.note.id)) { skipped.push({ path: u.from, reason: 'The note could not be written.' }); continue; }
+      if (res.failed.has(u.note.id)) { incomplete = true; skipped.push({ path: u.from, reason: 'The note could not be written.' }); continue; }
       if (!res.written.has(u.note.id)) continue;
     } else {
       const { error } = await db.from('notes').update({ body: item.body, frontmatter: item.frontmatter, hash: item.hash, mtime: at, updated_at: at }).eq('id', u.note.id);
-      if (error) { skipped.push({ path: u.from, reason: 'The note could not be written.' }); continue; }
+      if (error) { incomplete = true; skipped.push({ path: u.from, reason: 'The note could not be written.' }); continue; }
     }
     if (!u.keepUpstream) written++;
     suggested += u.fresh ?? 0;
   }
+  if (bases.length) await guard();
   await upstream.saveBases(a.kb_id, bases);
 
   // removed upstream: only from a whole listing, and only notes this attachment wrote
@@ -201,7 +216,9 @@ export async function syncAttachment({ db, attachment: a, provider, token, fetch
   log('kb_sync_run', { attachment: a.id, provider: provider.id, written, unchanged, kept, suggested, removed, skipped: skipped.length });
   return {
     // a stopped run keeps the old change marker, so the next run reads again what this one could not
-    cursor: stop ? cursorIn : listing.cursor,
+    // a run that skipped a file it should have read or written keeps the old marker too, so that file is tried again
+    // next run (a GitHub head marked complete would otherwise skip it until the next commit)
+    cursor: stop || incomplete ? cursorIn : listing.cursor,
     noteCount: held.size, written, unchanged, kept, suggested, removed, skipped, stop,
   };
 }

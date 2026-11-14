@@ -23,11 +23,16 @@ const GRANTS = {
   },
   github: {
     refresh: (c, refreshToken) => OAUTH_PROVIDERS.github.token(c, { grant: 'refresh', refreshToken }),
-    // GitHub deletes the grant from an access token, so the revoke refreshes once first
+    // only the relay's own token is revoked (DELETE /applications/{client_id}/token), never the person's whole grant to
+    // the app, which would also sign their Mac out of GitHub. That endpoint takes an access token, so the revoke
+    // refreshes once first
     revoke: async (c, refreshToken, fetchImpl) => {
       const t = await refreshAccess({ provider: 'github', client: c, refreshToken, fetchImpl });
-      const { url, init } = OAUTH_PROVIDERS.github.revoke(c, t.accessToken);
-      return fetchImpl(url, { ...init, signal: AbortSignal.timeout(20000) });
+      return fetchImpl(`https://api.github.com/applications/${encodeURIComponent(c.clientId)}/token`, {
+        method: 'DELETE', signal: AbortSignal.timeout(20000),
+        headers: { authorization: `Basic ${Buffer.from(`${c.clientId}:${c.clientSecret}`).toString('base64')}`, accept: 'application/vnd.github+json', 'content-type': 'application/json', 'user-agent': 'quorum-relay' },
+        body: JSON.stringify({ access_token: t.accessToken }),
+      });
     },
   },
 };

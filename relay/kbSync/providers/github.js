@@ -9,10 +9,20 @@ const API = 'https://api.github.com';
 const MARKDOWN = /\.(md|markdown)$/i;
 export const MAX_FILES = 2000;
 
-const limited = async (r) => r.status === 429 || (r.status === 403 && r.headers?.get?.('x-ratelimit-remaining') === '0');
+// a rate limit: 429, or a 403 that is GitHub's primary limit (no requests left), its secondary limit or abuse detection
+// (a Retry-After header, or a body that says so). Any other 403 is an access answer
+const limited = async (r) => {
+  if (r.status === 429) return true;
+  if (r.status !== 403) return false;
+  if (r.headers?.get?.('x-ratelimit-remaining') === '0' || r.headers?.get?.('retry-after')) return true;
+  try { const t = JSON.stringify(await r.clone().json()); return /secondary rate limit|abuse/i.test(t); } catch { return false; }
+};
 const failure = (r, what = 'The repository') => {
   if (r.status === 401) return new SyncError('GitHub no longer accepts this connection. Attach it again to keep it in sync.', 'auth', { status: r.status });
-  if (r.status === 404 || r.status === 403) return new SyncError(`${what} was not found, or the GitHub App cannot read it. Check the app's repository access.`, 'gone', { status: r.status });
+  // 404 is GitHub's answer for a repository that is gone and for one the app cannot see; a 403 that is no rate limit is
+  // an access refusal. Neither removes notes: the worker keeps them and asks an admin to look
+  if (r.status === 404) return new SyncError(`${what} was not found, or the GitHub App cannot read it. Check the app's repository access.`, 'gone', { status: r.status });
+  if (r.status === 403) return new SyncError('GitHub refused access to the repository. Check the GitHub App\'s repository access.', 'access', { status: r.status });
   return new SyncError('GitHub refused the request. The sync runs again later.', 'provider', { status: r.status });
 };
 const enc = (p) => p.split('/').map(encodeURIComponent).join('/');

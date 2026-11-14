@@ -47,11 +47,19 @@ create table public.kb_sync_grants (
   ended_at timestamptz,
   ended_reason text check (ended_reason is null or ended_reason in ('removed', 'disconnected', 'left', 'refused')),
   revoke_pending boolean not null default false,
+  -- the provider revoke of an ended grant: tries so far, when the next try is due, and when the worker gave up (the
+  -- Vault secret is deleted then anyway, and the row stays as the record that the provider revoke failed)
+  revoke_attempts integer not null default 0,
+  revoke_after timestamptz,
+  revoke_failed_at timestamptz,
+  -- one refresh at a time per grant across relay processes: a rotated refresh token works once
+  refresh_owner text,
+  refresh_until timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 create unique index kb_sync_grants_live on public.kb_sync_grants (workspace_id, user_id, provider) where ended_at is null;
-create index kb_sync_grants_revoke on public.kb_sync_grants (ended_at) where revoke_pending;
+create index kb_sync_grants_revoke on public.kb_sync_grants (revoke_after, ended_at) where revoke_pending;
 create trigger kb_sync_grants_updated_at before update on public.kb_sync_grants for each row execute function public.set_updated_at();
 alter table public.kb_sync_grants enable row level security;
 -- no policy and no grant: a client reads nothing here, not even its own row
@@ -86,6 +94,8 @@ create table public.kb_attachments (
   next_run_at timestamptz not null default now(),
   failures integer not null default 0,
   lease_until timestamptz,
+  -- the worker process holding the lease; renewals and the end of a run apply only for that owner
+  lease_owner text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -111,6 +121,9 @@ begin
   end if;
 end $$;
 revoke all on function public.kb_sync_service_only() from public, anon, authenticated;
+create or replace function public.kb_sync_service_check() returns boolean
+language plpgsql stable security definer set search_path = public as $$ begin perform public.kb_sync_service_only(); return true; end $$;
+revoke all on function public.kb_sync_service_check() from public, anon, authenticated;
 
 -- can_admin_kb for a given person instead of the caller: the worker runs with no session
 create or replace function public.can_admin_kb_as(kb_id public.ulid, uid uuid) returns boolean
@@ -125,6 +138,11 @@ language sql stable security definer set search_path = public as $$
   );
 $$;
 revoke all on function public.can_admin_kb_as(public.ulid, uuid) from public, anon, authenticated;
+-- the caller's check (0024) is the same rule for the signed-in person, so there is one definition of a KB admin
+create or replace function public.can_admin_kb(kb_id public.ulid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.can_admin_kb_as(can_admin_kb.kb_id, auth.uid());
+$$;
 
 -- a deleted grant takes its Vault secret with it, and so does a replaced secret
 create or replace function public.kb_sync_grant_drop_secret() returns trigger
@@ -156,7 +174,7 @@ begin
       else a.error end
     where a.grant_id = g.id and a.status <> 'paused';
   if do_revoke and g.secret_id is not null then
-    update public.kb_sync_grants x set ended_at = now(), ended_reason = reason, revoke_pending = true where x.id = g.id;
+    update public.kb_sync_grants x set ended_at = now(), ended_reason = reason, revoke_pending = true, revoke_after = now() where x.id = g.id;
   else
     delete from public.kb_sync_grants x where x.id = g.id;
   end if;
@@ -172,18 +190,19 @@ language sql immutable set search_path = public as $$
 $$;
 revoke all on function public.kb_sync_revokes(public.kb_sync_grants, text) from public, anon, authenticated;
 
--- removing the last attachment on a grant ends the grant
+-- removing the last attachment on a grant ends the grant, and so does moving the last one to another grant (an
+-- attach again under a new sign-in)
 create or replace function public.kb_attachment_gone() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare g public.kb_sync_grants;
 begin
-  if old.grant_id is null then return old; end if;
-  if exists (select 1 from public.kb_attachments a where a.grant_id = old.grant_id and a.id <> old.id) then return old; end if;
+  if old.grant_id is null or (tg_op = 'UPDATE' and new.grant_id is not distinct from old.grant_id) then return null; end if;
+  if exists (select 1 from public.kb_attachments a where a.grant_id = old.grant_id and a.id <> old.id) then return null; end if;
   select * into g from public.kb_sync_grants x where x.id = old.grant_id;
   if g.id is not null then perform public.kb_sync_grant_end(g.id, 'removed', public.kb_sync_revokes(g, 'removed')); end if;
-  return old;
+  return null;
 end $$;
-create trigger kb_attachments_gone after delete on public.kb_attachments for each row execute function public.kb_attachment_gone();
+create trigger kb_attachments_gone after delete or update of grant_id on public.kb_attachments for each row execute function public.kb_attachment_gone();
 revoke all on function public.kb_attachment_gone() from public, anon, authenticated;
 
 -- a member who leaves the workspace takes their grants with them
@@ -227,7 +246,7 @@ revoke all on function public.kb_sync_plan_changed() from public, anon, authenti
 -- an attachment as an admin sees it
 create or replace function public.kb_attachment_row(a public.kb_attachments) returns jsonb
 language sql stable security definer set search_path = public as $$
-  select (to_jsonb(a) - 'cursor' - 'lease_until' - 'failures' - 'grant_id') || jsonb_build_object(
+  select (to_jsonb(a) - 'cursor' - 'lease_until' - 'lease_owner' - 'failures' - 'grant_id') || jsonb_build_object(
     'connected', a.grant_id is not null,
     'attached_by_email', (select p.email from public.profiles p where p.user_id = a.attached_by),
     'account', (select g.account from public.kb_sync_grants g where g.id = a.grant_id));
@@ -330,6 +349,7 @@ declare
   tok text := coalesce(kb_sync_attach.token, '');
   opts jsonb := coalesce(kb_sync_attach.options, '{}'::jsonb);
   sid uuid;
+  old_grant public.kb_sync_grants;
 begin
   perform public.kb_sync_service_only();
   select * into k from public.knowledge_bases x where x.id = kb_sync_attach.kb_id;
@@ -362,8 +382,10 @@ begin
   select * into g from public.kb_sync_grants x where x.workspace_id = w.id and x.user_id = uid and x.provider = p and x.ended_at is null for update;
   if tok = '' and g.id is null then raise exception 'Sign in to the provider first'; end if;
   if tok <> '' and g.id is not null and (g.client <> kb_sync_attach.client) then
-    -- a token from another client cannot refresh under the stored one: the old grant ends and a new one starts
-    perform public.kb_sync_grant_end(g.id, 'removed', public.kb_sync_revokes(g, 'removed'));
+    -- a token from another client cannot refresh under the stored one: a new grant starts, the admin's other
+    -- attachments move to it, and the old grant then ends (revoked when it is a grant of its own)
+    old_grant := g;
+    update public.kb_sync_grants x set ended_at = now(), ended_reason = 'removed' where x.id = g.id;
     g := null;
   end if;
   if tok <> '' and g.id is not null then
@@ -377,6 +399,15 @@ begin
       returning * into g;
     sid := vault.create_secret(tok, 'kb_sync_grant:' || g.id, p || ' sync grant in workspace ' || w.id);
     update public.kb_sync_grants x set secret_id = sid where x.id = g.id returning * into g;
+  end if;
+  if old_grant.id is not null then
+    update public.kb_attachments x set grant_id = g.id, status = case when x.status = 'paused' then x.status else 'pending' end, next_run_at = now(), failures = 0
+      where x.grant_id = old_grant.id;
+    if public.kb_sync_revokes(old_grant, 'removed') and old_grant.secret_id is not null then
+      update public.kb_sync_grants x set revoke_pending = true, revoke_after = now() where x.id = old_grant.id;
+    else
+      delete from public.kb_sync_grants x where x.id = old_grant.id;
+    end if;
   end if;
 
   select * into a from public.kb_attachments x where x.kb_id = k.id and x.provider = p and x.remote_id = rid
@@ -398,11 +429,12 @@ end $$;
 -- per_workspace caps how many run at once in one workspace. An attachment whose admin is no longer an admin of the KB,
 -- or whose connector the workspace turned off, is set aside with a sentence instead. Each row carries what a run needs:
 -- the KB name and its folders and the attaching admin (never the token)
-create or replace function public.kb_sync_claim(max_rows integer default 20, lease_seconds integer default 600, per_workspace integer default 2) returns jsonb
+create or replace function public.kb_sync_claim(max_rows integer default 20, lease_seconds integer default 600, per_workspace integer default 2, owner text default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare out jsonb := '[]'::jsonb; a public.kb_attachments;
 begin
   perform public.kb_sync_service_only();
+  if coalesce(kb_sync_claim.owner, '') = '' then raise exception 'A claim names its owner'; end if;
   for a in
     select x.* from public.kb_attachments x
     where x.status in ('pending', 'active', 'error') and x.next_run_at <= now() and (x.lease_until is null or x.lease_until < now())
@@ -427,8 +459,9 @@ begin
     end if;
     -- the per-workspace cap counts runs under a lease right now, on every relay instance, this claim included
     if (select count(*) from public.kb_attachments y where y.workspace_id = a.workspace_id and y.lease_until > now()) >= greatest(1, coalesce(per_workspace, 2)) then continue; end if;
-    update public.kb_attachments x set lease_until = now() + make_interval(secs => greatest(60, coalesce(lease_seconds, 600))), last_attempt_at = now()
-      where x.id = a.id returning * into a;
+    update public.kb_attachments x set lease_until = now() + make_interval(secs => greatest(60, coalesce(lease_seconds, 600))), lease_owner = kb_sync_claim.owner, last_attempt_at = now()
+      where x.id = a.id and (x.lease_until is null or x.lease_until < now()) returning * into a;
+    if a.id is null then continue; end if;
     out := out || jsonb_build_array(to_jsonb(a) || jsonb_build_object(
       'kb_name', (select k.name from public.knowledge_bases k where k.id = a.kb_id),
       'folders', coalesce((select jsonb_agg(jsonb_build_object('id', f.id, 'parent_id', f.parent_id, 'name', f.name)) from public.kb_folders f where f.kb_id = a.kb_id), '[]'::jsonb)));
@@ -487,8 +520,9 @@ end $$;
 
 -- the end of one run. ok: synced, so status active, the cursor stored and the failure count reset. Otherwise status
 -- error with the sentence, and the next try after retry_seconds. needs_auth marks a sign-in problem instead
+-- Returns false when the run no longer holds the lease (the row was removed, or another owner took it): nothing changes
 create or replace function public.kb_sync_finish(attachment_id public.ulid, ok boolean, message text default null, cur jsonb default null,
-  note_count integer default null, retry_seconds integer default 900, needs_auth boolean default false) returns void
+  note_count integer default null, retry_seconds integer default 900, needs_auth boolean default false, owner text default null) returns boolean
 language plpgsql security definer set search_path = public as $$
 begin
   perform public.kb_sync_service_only();
@@ -500,8 +534,69 @@ begin
     last_synced_at = case when kb_sync_finish.ok then now() else x.last_synced_at end,
     failures = case when kb_sync_finish.ok then 0 else x.failures + 1 end,
     next_run_at = now() + make_interval(secs => greatest(30, coalesce(kb_sync_finish.retry_seconds, 900))),
-    lease_until = null
-  where x.id = kb_sync_finish.attachment_id;
+    lease_until = null, lease_owner = null
+  where x.id = kb_sync_finish.attachment_id and x.lease_owner is not distinct from kb_sync_finish.owner;
+  return found;
+end $$;
+
+-- the lease, renewed during a run. false: the attachment is gone, paused or ended, or another owner holds it, and the
+-- run stops writing
+create or replace function public.kb_sync_renew(attachment_id public.ulid, owner text, lease_seconds integer default 900) returns boolean
+language plpgsql security definer set search_path = public as $$
+begin
+  perform public.kb_sync_service_only();
+  update public.kb_attachments x set lease_until = now() + make_interval(secs => greatest(60, coalesce(kb_sync_renew.lease_seconds, 900)))
+    where x.id = kb_sync_renew.attachment_id and x.lease_owner = kb_sync_renew.owner and x.lease_until > now() and x.status <> 'paused';
+  return found;
+end $$;
+
+-- one refresh of a grant at a time, across relay processes and the attach route: a rotated refresh token works once,
+-- so a second refresh with the same token would fail and end the grant. The holder refreshes, stores the rotated
+-- token, then unlocks; an unlock never comes from a process that died, so the lock also ends after lock_seconds
+create or replace function public.kb_sync_refresh_lock(grant_id public.ulid, owner text, lock_seconds integer default 120) returns boolean
+language plpgsql security definer set search_path = public as $$
+begin
+  perform public.kb_sync_service_only();
+  if coalesce(kb_sync_refresh_lock.owner, '') = '' then raise exception 'A lock names its owner'; end if;
+  update public.kb_sync_grants x set refresh_owner = kb_sync_refresh_lock.owner, refresh_until = now() + make_interval(secs => greatest(10, coalesce(kb_sync_refresh_lock.lock_seconds, 120)))
+    where x.id = kb_sync_refresh_lock.grant_id and (x.refresh_until is null or x.refresh_until < now() or x.refresh_owner = kb_sync_refresh_lock.owner);
+  return found;
+end $$;
+
+create or replace function public.kb_sync_refresh_unlock(grant_id public.ulid, owner text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  perform public.kb_sync_service_only();
+  update public.kb_sync_grants x set refresh_owner = null, refresh_until = null where x.id = kb_sync_refresh_unlock.grant_id and x.refresh_owner = kb_sync_refresh_unlock.owner;
+end $$;
+
+-- the caller's live grant for a provider in the KB's workspace, for the attach route to lock before it replaces the token
+create or replace function public.kb_sync_grant_of(uid uuid, kb_id public.ulid, provider text) returns public.ulid
+language sql stable security definer set search_path = public as $$
+  select g.id from public.kb_sync_grants g join public.knowledge_bases k on k.workspace_id = g.workspace_id
+  where k.id = kb_sync_grant_of.kb_id and g.user_id = kb_sync_grant_of.uid and g.provider = kb_sync_grant_of.provider and g.ended_at is null
+    and public.kb_sync_service_check();
+$$;
+
+-- notes a removed attachment left behind (a run that wrote while the attachment was being removed) leave the KB. With
+-- an attachment id, the notes of that attachment when its row is gone; without, every stray note changed in the last
+-- two days, for the worker's periodic sweep
+create or replace function public.kb_sync_strays(attachment_id public.ulid default null) returns integer
+language plpgsql security definer set search_path = public as $$
+declare n integer;
+begin
+  perform public.kb_sync_service_only();
+  if kb_sync_strays.attachment_id is not null then
+    if exists (select 1 from public.kb_attachments a where a.id = kb_sync_strays.attachment_id) then return 0; end if;
+    update public.notes x set deleted_at = now(), updated_at = now()
+      where x.deleted_at is null and x.kb_id is not null and x.frontmatter ->> 'kb_attachment' = kb_sync_strays.attachment_id::text;
+  else
+    update public.notes x set deleted_at = now(), updated_at = now()
+      where x.deleted_at is null and x.kb_id is not null and x.updated_at > now() - interval '2 days' and x.frontmatter ? 'kb_attachment'
+        and not exists (select 1 from public.kb_attachments a where a.id::text = x.frontmatter ->> 'kb_attachment');
+  end if;
+  get diagnostics n = row_count;
+  return n;
 end $$;
 
 -- the 0031 writes for synced notes and their upstream rows (kb_synced_notes_write, kb_upstream_save), for the worker.
@@ -547,7 +642,26 @@ begin
     from public.kb_sync_grants g
     join vault.decrypted_secrets s on s.id = g.secret_id
     left join public.workspace_integrations i on i.id = g.integration_id
-    where g.revoke_pending order by g.ended_at limit greatest(1, least(coalesce(max_rows, 20), 200));
+    where g.revoke_pending and (g.revoke_after is null or g.revoke_after <= now())
+    order by g.revoke_after nulls first, g.ended_at limit greatest(1, least(coalesce(max_rows, 20), 200));
+end $$;
+
+-- a revoke the provider did not confirm: tried again later, with backoff. After max_attempts the worker gives up: the
+-- Vault secret is deleted anyway and the row stays, with revoke_failed_at, as the record that the provider revoke failed
+create or replace function public.kb_sync_revoke_failed(grant_id public.ulid, max_attempts integer default 5) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare g public.kb_sync_grants;
+begin
+  perform public.kb_sync_service_only();
+  update public.kb_sync_grants x set revoke_attempts = x.revoke_attempts + 1,
+    revoke_after = now() + make_interval(secs => least(86400, 300 * power(2, x.revoke_attempts)::integer))
+    where x.id = kb_sync_revoke_failed.grant_id and x.revoke_pending returning * into g;
+  if g.id is null then return false; end if;
+  if g.revoke_attempts >= greatest(1, coalesce(max_attempts, 5)) then
+    update public.kb_sync_grants x set revoke_pending = false, revoke_failed_at = now(), secret_id = null where x.id = g.id;
+    return true;
+  end if;
+  return false;
 end $$;
 
 create or replace function public.kb_sync_revoked(grant_id public.ulid) returns void
@@ -572,11 +686,17 @@ begin
   end loop;
   foreach f in array array[
     'kb_sync_attach(uuid, public.ulid, public.ulid, text, text, text, jsonb, text, text, text, text, boolean, text)',
-    'kb_sync_claim(integer, integer, integer)',
+    'kb_sync_claim(integer, integer, integer, text)',
+    'kb_sync_renew(public.ulid, text, integer)',
+    'kb_sync_refresh_lock(public.ulid, text, integer)',
+    'kb_sync_refresh_unlock(public.ulid, text)',
+    'kb_sync_grant_of(uuid, public.ulid, text)',
+    'kb_sync_strays(public.ulid)',
+    'kb_sync_revoke_failed(public.ulid, integer)',
     'kb_sync_token(public.ulid)',
     'kb_sync_token_store(public.ulid, text)',
     'kb_sync_grant_refused(public.ulid)',
-    'kb_sync_finish(public.ulid, boolean, text, jsonb, integer, integer, boolean)',
+    'kb_sync_finish(public.ulid, boolean, text, jsonb, integer, integer, boolean, text)',
     'kb_sync_revocations(integer)',
     'kb_sync_revoked(public.ulid)',
     'relay_workspace_oauth_client(public.ulid, text)',
