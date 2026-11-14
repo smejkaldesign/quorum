@@ -31,9 +31,22 @@ Use the Google Cloud project that already holds the Desktop client `247537775138
    - `https://www.googleapis.com/auth/calendar.readonly` (sensitive)
    - `https://www.googleapis.com/auth/drive.file` (non-sensitive)
 5. Clients: keep the existing Desktop app client. Desktop clients accept the loopback redirect on any port, so there is no redirect URI to enter.
-6. Verification. `calendar.readonly` is a sensitive scope, so publishing to production needs Google's verification: the scope justification, a short screen recording of the Connect flow and of where Quorum shows calendar events, and the verified domain. Sensitive scope verification is free and takes a few days to a few weeks. `drive.file` is non-sensitive and needs no extra review. Neither scope is restricted, so no CASA security assessment applies. Until verification passes, keep the app in Testing and add test users; Google expires refresh tokens issued in Testing after 7 days.
+6. Verification. `calendar.readonly` is a sensitive scope, so publishing to production needs Google's verification: the scope justification, a short screen recording of the Connect flow and of where Quorum shows calendar events, and the verified domain. Sensitive scope verification is free and takes a few days to a few weeks. `drive.file` is non-sensitive and needs no extra review. Neither scope is restricted, so no CASA security assessment applies. Until verification passes, keep the app in Testing and add test users; Google expires refresh tokens issued in Testing after 7 days. The step-by-step submission, with text to paste and the video shot list, is in `docs/google-verification.md`.
 
-Values: the client id and client secret are already the repository secrets `QUORUM_GOOGLE_CLIENT_ID` and `QUORUM_GOOGLE_CLIENT_SECRET`. Nothing new is needed for Drive.
+Values: the client id and client secret are already the repository secrets `QUORUM_GOOGLE_CLIENT_ID` and `QUORUM_GOOGLE_CLIENT_SECRET`.
+
+### Google Picker (Add from Google Drive)
+
+With `drive.file`, Quorum can read a Drive file only after the person picks it in the Google Picker. The knowledge base page and the Knowledge tab's folder menu open the picker for a KB admin. The picker is Google's web component, so it needs a browser page: the app serves that page on the loopback, `http://127.0.0.1:47833/picker/<random>`, opens it in the default browser, and the page posts the picked file ids back to the same address. The access token goes from the Keychain to that page and to Google only. Picking grants `drive.file` access to each picked file for Quorum's Google client; the Picker's app id (the Google Cloud project number) ties the grant to that client.
+
+1. APIs and services, Library: enable **Google Picker API** (Google Drive API is already on from step 1).
+2. APIs and services, Credentials, Create credentials, API key. Name it Quorum Picker, then edit it:
+   - Application restrictions: Websites, and add `http://127.0.0.1:47833/*`.
+   - API restrictions: Restrict key, and pick Google Picker API and Google Drive API.
+3. Copy the key. It ships inside the app, as every Picker key does in a web page, so the two restrictions above are what protect it.
+4. The app id is the project number (Google Cloud console, the project's Dashboard, Project info). The client id starts with the same number, and the app uses that number when no app id is set.
+
+Values: `QUORUM_GOOGLE_PICKER_API_KEY` (repository secret) and, only when the project number differs from the client id's prefix, `QUORUM_GOOGLE_PICKER_APP_ID` (repository variable). Until the key is in the build, Add from Google Drive says it is not available yet.
 
 ## Notion
 
@@ -89,9 +102,11 @@ The client ids are public. They go into the build; the secrets for Notion, Slack
 | `QUORUM_SLACK_CLIENT_ID` | repository variable; shell or repo `.env` for a dev build | Slack |
 | `QUORUM_GITHUB_APP_CLIENT_ID` | repository variable; shell or repo `.env` for a dev build | GitHub (the GitHub App's Client ID) |
 | `QUORUM_GITHUB_APP_SLUG` | repository variable; shell or repo `.env` for a dev build | the Choose repositories link |
+| `QUORUM_GOOGLE_PICKER_API_KEY` | repository secret; shell or repo `.env` for a dev build | the Google Picker behind Add from Google Drive |
+| `QUORUM_GOOGLE_PICKER_APP_ID` | optional repository variable; shell or repo `.env` for a dev build | the Picker's app id when it is not the client id's project number |
 | `QUORUM_RELAY_URL` | optional; shell for a dev build | a relay other than `wss://relay.quorum.watch` |
 
-The release workflow writes the new ids into the packaged `package.json` as `quorumOAuth.<provider>.clientId` (and `quorumOAuth.github.slug`), the same way it writes `quorumGoogle`.
+The release workflow writes the new ids into the packaged `package.json` as `quorumOAuth.<provider>.clientId` (and `quorumOAuth.github.slug`, and `quorumOAuth.googlePicker.apiKey` and `.appId`), the same way it writes `quorumGoogle`.
 
 ### Relay (Railway, service relay)
 

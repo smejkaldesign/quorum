@@ -182,16 +182,16 @@ export function readArchive(buf, { subpath = null, onEntry = () => {} } = {}) {
 }
 
 // a frontmatter value on one line, quoted when YAML would read it as something else
-const fmValue = (v) => { const s = String(v).replace(/[\r\n]+/g, ' ').trim(); return /^[\w./@~+-][\w ./:@~+%=-]*$/.test(s) && !/:\s/.test(s) ? s : `"${s.replace(/"/g, "'")}"`; };
+export const fmValue = (v) => { const s = String(v).replace(/[\r\n]+/g, ' ').trim(); return /^[\w./@~+-][\w ./:@~+%=-]*$/.test(s) && !/:\s/.test(s) ? s : `"${s.replace(/"/g, "'")}"`; };
 // the file's text with its frontmatter set: shared with the workspace, and where it came from
 export function sharedText(text, sourceLine) {
   const body = String(text).replace(/\r\n?/g, '\n');
   return localNotes.setFrontmatterKey(localNotes.setFrontmatterKey(body, 'visibility', 'public'), 'kb_source', fmValue(sourceLine));
 }
 
-const safeSeg = (s) => String(s ?? '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Knowledge base';
-const sha256 = (t) => createHash('sha256').update(t).digest('hex');
-const keyOf = (segs) => segs.map((s) => s.trim().toLowerCase()).join('/');
+export const safeSeg = (s) => String(s ?? '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Knowledge base';
+export const sha256 = (t) => createHash('sha256').update(t).digest('hex');
+export const keyOf = (segs) => segs.map((s) => s.trim().toLowerCase()).join('/');
 // a KB name from a repository or zip name: trimmed to the 120 characters the server takes
 const kbName = (s) => String(s ?? '').trim().slice(0, 120).trim() || 'Imported knowledge base';
 // why nothing could be imported, with the skipped files counted by reason

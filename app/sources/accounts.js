@@ -6,6 +6,7 @@
 // disconnected here, so the one Google client the two Google connectors share is revoked only when neither uses it.
 // Pure Node apart from the caller-supplied `open`.
 import { CLIENT_ID_ENV, GITHUB_APP_SLUG_ENV, OAUTH_APPS, isOAuthApp } from '../connectors/oauthApps.js';
+import { pickerConfig } from './drive.js';
 import { envLookup } from './env.js';
 import { exchange as googleExchange, googleClient, refresh as googleRefresh, revoke as googleRevoke } from './gcal.js';
 import { LOOPBACK_REDIRECT, awaitLoopback, json, newState, pkce } from './oauth.js';
@@ -18,8 +19,12 @@ export function oauthClients({ env = process.env, root = null, packaged = null }
   const lookup = envLookup({ env, root });
   const from = packaged?.quorumOAuth ?? {};
   const id = (c) => lookup(CLIENT_ID_ENV[c]) || from[c]?.clientId || null;
+  const google = googleClient({ lookup, packaged: packaged?.quorumGoogle ?? null });
   return {
-    google: googleClient({ lookup, packaged: packaged?.quorumGoogle ?? null }),
+    google,
+    // the Google Picker for Google Drive (sources/drive.js): its API key, and the app id that defaults to the project
+    // number in the Google client id
+    googlePicker: pickerConfig({ lookup, packaged, clientId: google.clientId }),
     notion: { clientId: id('notion') },
     slack: { clientId: id('slack') },
     github: { clientId: id('github'), slug: lookup(GITHUB_APP_SLUG_ENV) || from.github?.slug || null },

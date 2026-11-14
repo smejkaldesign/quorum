@@ -285,3 +285,25 @@ export function resolveKbLink<N extends Pick<KbNote, 'id' | 'path' | 'folderId'>
   }
   return best ? { kbId: best.kbId, note: best.note } : null;
 }
+
+// Google Drive files (ee/src/KbDrive.tsx): the folders a picked file can go into, nested by depth, top level first
+export function folderChoices(kb: Kb): { id: string | null; label: string }[] {
+  const out: { id: string | null; label: string }[] = [{ id: null, label: `${kb.name} (top level)` }];
+  const walk = (nodes: KbFolderNode[], depth: number) => { for (const n of nodes) { out.push({ id: n.id, label: `${'\u2003'.repeat(depth)}${n.name}` }); walk(n.children, depth + 1); } };
+  walk(kb.folders, 0);
+  return out;
+}
+
+// where a file sits, as the folder path inside the KB, or the KB's top level
+export function folderLabel(kb: Kb, folderId: string | null | undefined): string {
+  if (!folderId) return `${kb.name} (top level)`;
+  const segs = folderPath(kb.folders, folderId);
+  return segs.length ? segs.join(' / ') : kb.name;
+}
+
+// the line after an add or a sync: how many files were written, and what was skipped
+export function driveSummary(verb: string, n: number, skipped: KbImportSkipped[]): { headline: string; skipped: KbImportSkipped[] } {
+  const parts = [`${verb} ${n} ${n === 1 ? 'file' : 'files'} from Google Drive`];
+  if (skipped.length) parts.push(`skipped ${skipped.length}`);
+  return { headline: `${parts.join(', ')}.`, skipped };
+}

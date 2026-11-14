@@ -5,6 +5,7 @@ import { IconMore, IconPlus, IconStack } from '../../src/icons';
 import { AccountCard, EE_MARKER, useAccount } from './Account';
 import { accountApi } from './accountMock';
 import { accessDraft, KIND_LABEL, readersOf, readersSummary, sourceLine, type ReadersMode } from './kbTree';
+import { DrivePanel, hasDrive } from './KbDrive';
 import { announceKbChange, EMPTY_SOURCE, hasImport, ImportStatus, kbCall, KbConfirm, SourceFields, sourceOf, useImport, type SourceDraft } from './kbUi';
 
 // Settings › Admin › Knowledge, Cloud: the workspace's knowledge bases. Owners and admins create one (empty, from a
@@ -19,7 +20,7 @@ export function KnowledgeBasesPage() {
   return <Bases />;
 }
 
-type Panel = { kind: 'rename' | 'readers' | 'import' | 'refresh'; kbId: string } | null;
+type Panel = { kind: 'rename' | 'readers' | 'import' | 'refresh' | 'drive'; kbId: string } | null;
 
 function Bases() {
   const [kbs, setKbs] = useState<Kb[] | null>(null);
@@ -55,6 +56,7 @@ function Bases() {
             {panel?.kbId === kb.id && panel.kind === 'readers' && <Readers kb={kb} onDone={(next) => { if (next) replace(next); setPanel(null); }} />}
             {panel?.kbId === kb.id && panel.kind === 'import' && <ImportInto kb={kb} onDone={() => setPanel(null)} onImported={load} />}
             {panel?.kbId === kb.id && panel.kind === 'refresh' && <Refresh kb={kb} onDone={() => setPanel(null)} onImported={load} />}
+            {panel?.kbId === kb.id && panel.kind === 'drive' && <DrivePanel kb={kb} onDone={() => setPanel(null)} />}
           </div>
         ))}
         {kbs && !kbs.length && <p className="set-hint">No knowledge bases yet. Create one to give the workspace a shared place for notes.</p>}
@@ -68,7 +70,7 @@ function Bases() {
   );
 }
 
-function KbMenu({ kb, onPick }: { kb: Kb; onPick: (kind: 'rename' | 'import' | 'refresh' | 'delete') => void }) {
+function KbMenu({ kb, onPick }: { kb: Kb; onPick: (kind: 'rename' | 'import' | 'refresh' | 'drive' | 'delete') => void }) {
   const [open, setOpen] = useMenu();
   return (
     <span className="menu-wrap">
@@ -78,6 +80,7 @@ function KbMenu({ kb, onPick }: { kb: Kb; onPick: (kind: 'rename' | 'import' | '
           <button role="menuitem" onClick={() => onPick('rename')}>Rename</button>
           {hasImport() && kb.source?.kind === 'github' && <button role="menuitem" onClick={() => onPick('refresh')}>Refresh from GitHub</button>}
           {hasImport() && <button role="menuitem" onClick={() => onPick('import')}>Import notes</button>}
+          {hasDrive() && kb.role === 'admin' && <button role="menuitem" onClick={() => onPick('drive')}>Add from Google Drive</button>}
           {!kb.isDefault && <button role="menuitem" className="danger-pill" onClick={() => onPick('delete')}>Delete</button>}
         </div>
       )}

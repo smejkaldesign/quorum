@@ -1981,6 +1981,9 @@ const accountCall = async (fn) => { try { return await fn(); } catch (err) { ret
 ipcMain.handle('oauth-accounts', () => accounts.list());
 ipcMain.handle('oauth-connect', (_e, id) => accountCall(() => accounts.connect(String(id ?? ''))));
 ipcMain.handle('oauth-disconnect', (_e, id) => accountCall(() => accounts.disconnect(String(id ?? ''))));
+// Google Drive files attached to a knowledge base folder through the Google Picker (handlers and the IPC API in
+// ee/kbDrive.js; the picker page and the Drive reads in sources/drive.js)
+if (EDITION === 'cloud') (await loadEE('kbDrive.js')).registerKbDrive({ ipcMain, account, accounts, picker: oauthApps.googlePicker, open: (u) => shell.openExternal(u), log });
 ipcMain.handle('calendar-connect', async () => {
   const r = await calAsk({ cmd: 'calRequest' });
   settings.calendar = { ...calSettings(), enabled: r.status === 'granted' };
