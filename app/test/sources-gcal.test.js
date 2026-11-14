@@ -142,4 +142,18 @@ describe('createGoogleCalendar', () => {
     expect(r.error).toMatch(/Invalid Credentials|Connect Google Calendar again/);
     expect(g.status().error).toBe(r.error);
   });
+  it('revokes the Google grant on disconnect only when asked to', async () => {
+    const tokens = store();
+    const revoked = [];
+    const fetchImpl = async (url, init) => { if (url === 'https://oauth2.googleapis.com/revoke') revoked.push(new URLSearchParams(init.body).get('token')); return new Response('', { status: 200 }); };
+    let state = { connected: true };
+    const g = createGoogleCalendar({ tokens, client, open: async () => {}, fetchImpl, state: () => state, save: (v) => { state = v; } });
+    await tokens.set('google-calendar', { accessToken: 'a', refreshToken: 'r1' });
+    await g.disconnect();
+    expect(revoked).toEqual([]);
+    await tokens.set('google-calendar', { accessToken: 'a', refreshToken: 'r2' });
+    await g.disconnect({ revoke: true });
+    expect(revoked).toEqual(['r2']);
+    expect(await tokens.get('google-calendar')).toBeNull();
+  });
 });

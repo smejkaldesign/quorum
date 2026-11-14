@@ -116,6 +116,10 @@ The Google Calendar connector (Settings, Connectors, Calendar) reads upcoming ev
 
 The client id defaults to the one Quorum's own builds use, which is a public identifier; the secret has no default.
 
+## Personal account connectors
+
+Google Drive, Notion, Slack and GitHub connect from Settings, Connectors, Accounts with one sign-in each, in both editions. Google Drive uses the same Desktop client as Google Calendar (scope `drive.file`) and exchanges its code on the Mac. Notion, Slack and the GitHub App need a client secret for the code exchange, so the provider redirects to the relay's `/v1/oauth/<provider>/callback`, the relay bounces the browser to the app's loopback, and the app posts the code to the relay's `/v1/oauth/token`, which adds the secret and returns the tokens without storing them. Tokens stay in the Mac's Keychain. To use your own apps, register them as `docs/oauth-apps.md` describes with your relay's address in the redirect URIs, then set `QUORUM_NOTION_CLIENT_ID`, `QUORUM_SLACK_CLIENT_ID`, `QUORUM_GITHUB_APP_CLIENT_ID` and `QUORUM_GITHUB_APP_SLUG` for the app (shell, repo `.env`, or `quorumOAuth.<provider>` in a packaged `package.json`), point the app at your relay with `QUORUM_RELAY_URL`, and give the relay the pairs below. A connector without a client id shows Not available yet.
+
 ## Running the transcription relay
 
 The Local edition never needs this. The relay (`relay/`) is the Cloud edition's managed transcription: the app streams 16 kHz audio to it over one websocket, it forwards each channel to a speech engine (AssemblyAI Universal-Streaming by default, Deepgram Nova-3 as the alternative) and returns the same transcript events the on-device engine emits. It also runs the running summary and the final notes on a managed model key (`POST /v1/notes`, streamed as server-sent events). Audio is forwarded and dropped; the relay stores none of it and logs durations and engine names only.
@@ -139,6 +143,8 @@ node server.js           # health at http://127.0.0.1:8787/healthz
 | `RELAY_OPENAI_MODEL` | model for an OpenAI or OpenAI-compatible connector an admin pointed summary or notes at (default `gpt-4o-mini`) |
 | `RELAY_MAX_SESSION_SECONDS`, `RELAY_IDLE_MS` | one connection carries at most this much audio (default 14400, four hours) and closes after this long without a frame (default 20000) |
 | `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET` | the Zoom app's client credentials (`docs/specs/meeting-sources.md`). The relay exchanges the app's authorization code and refreshes tokens at `/v1/connect/zoom/token`, so the secret never ships inside the desktop app. Leave empty to serve no Zoom connections |
+| `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | the client pairs of the personal connector apps (`docs/oauth-apps.md`). The relay's `/v1/oauth/token` and `/v1/oauth/revoke` add the secret and call the provider; nothing is stored and no token reaches the log. Leave a pair empty to serve no connections for that provider |
+| `RELAY_PUBLIC_URL`, `OAUTH_EXTRA_REDIRECT_URIS` | the address this relay answers on (default `https://relay.quorum.watch`); the token route accepts only `<RELAY_PUBLIC_URL>/v1/oauth/<provider>/callback` as the redirect URI, plus any comma-separated extras listed here |
 | `ZOOM_WEBHOOK_SECRET` | the Zoom app's Secret Token. Zoom posts `recording.completed` to `/v1/connect/zoom/webhook`; the relay checks the signature and keeps the event in `connect_events` until the member's app fetches it |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | billing (`relay/billing.js`): Checkout sessions and the webhook at `/v1/billing/webhook`. Leave empty to run without paid plans |
 | `STRIPE_SEAT_PRICE`, `STRIPE_PACK_PRICE` | the Stripe price ids for a seat and for a 20-hour pack |
