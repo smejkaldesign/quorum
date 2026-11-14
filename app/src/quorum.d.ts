@@ -91,7 +91,7 @@ export type KeeperStatus = { on: boolean; meetingsIndex: boolean; facts: boolean
 // default; budgetPick is the budget select's value
 export type LearnedTarget = 'claude' | 'learned' | 'note';
 export type LearnedAuto = 'claude' | 'learned';
-export type KeeperLearned = { target: LearnedTarget; pick: LearnedTarget | 'auto'; auto: LearnedAuto; suggest: LearnedAuto | null; file: string; note: string; linked: boolean; indexGenerated: boolean; budget: number; maxFacts: number | null; budgetPick: number | 'auto'; defaultBudget: number; defaultFacts: number | null; suggestSmall: boolean; chars: number; fileChars: number };
+export type KeeperLearned = { target: LearnedTarget; pick: LearnedTarget | 'auto'; auto: LearnedAuto; suggest: LearnedAuto | null; file: string; note: string; linked: boolean; indexGenerated: boolean; budget: number; maxFacts: number | null; budgetPick: number | 'auto' | 'kept'; defaultBudget: number; defaultFacts: number | null; defaultMoves: number; suggestSmall: boolean; small: { budget: number; facts: number }; large: number; chars: number; fileChars: number };
 export type KeeperErrors = { count: number; last: { at: string; where: string; message: string } | null; file: string | null };
 // the context budget plugin (app/context-budget.js). scope: user, project and memory load every session; nested loads
 // only when Claude works in that folder; paths only for matching files. importedBy names the file whose @import loads it. loaded is what Claude Code reads (MEMORY.md stops at 200 lines)

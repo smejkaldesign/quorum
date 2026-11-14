@@ -920,6 +920,8 @@ function NotePathField({ value, onSave }: { value: string; onSave: (v: string) =
 function KeeperCard({ brain }: { brain: Brain }) {
   const [k, setK] = useState<KeeperStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  // picking Default when it would move lines out of the list asks first
+  const [askDefault, setAskDefault] = useState(false);
   const load = () => window.quorum.keeperStatus().then(setK).catch(() => setK(null));
   useEffect(() => { load(); return window.quorum.onKeeper?.(() => load()); }, [brain.root]);
   if (!k) return null;
@@ -1003,8 +1005,13 @@ function KeeperCard({ brain }: { brain: Brain }) {
                   <option value="note">A vault note</option>
                   <option value="claude">CLAUDE.md</option>
                 </select>
-                <select className="set-select" aria-label="Budget" value={String(k.learned.budgetPick)} onChange={async (e) => setK(await window.quorum.keeperSet({ factsBudget: e.target.value === 'auto' ? 'auto' : Number(e.target.value) }))}>
-                  <option value="auto">Default ({k.learned.defaultFacts ? `${k.learned.defaultBudget.toLocaleString()} characters or ${k.learned.defaultFacts} facts` : `${k.learned.defaultBudget.toLocaleString()} characters`})</option>
+                <select className="set-select" aria-label="Budget" value={String(k.learned.budgetPick)} onChange={async (e) => {
+                  if (e.target.value === 'kept') return;
+                  if (e.target.value === 'auto') { if (k.learned!.defaultMoves > 0) setAskDefault(true); else setK(await window.quorum.keeperSet({ factsBudget: 'auto' })); return; }
+                  setK(await window.quorum.keeperSet({ factsBudget: Number(e.target.value) }));
+                }}>
+                  {k.learned.budgetPick === 'kept' && <option value="kept">{k.learned.large.toLocaleString()} characters (your list so far)</option>}
+                  <option value="auto">Default ({k.learned.defaultFacts ? `${k.learned.defaultFacts} facts or ${k.learned.defaultBudget.toLocaleString()} characters` : `${k.learned.defaultBudget.toLocaleString()} characters`})</option>
                   {[1000, 2000, 4000, 8000].map((n) => <option key={n} value={n}>{n.toLocaleString()} characters</option>)}
                 </select>
               </Row>
@@ -1015,10 +1022,15 @@ function KeeperCard({ brain }: { brain: Brain }) {
               </Row>
             )}
             {k.on && factsOn && k.learned?.suggestSmall && (
-              <Row icon={<IconInfo width={18} height={18} />} title="Keep CLAUDE.md to 10 facts?"
-                desc="CLAUDE.md is loaded in every session. New lists keep 10 facts or 800 characters; yours keeps 2,000 characters until you switch. Lines past the new limit move to the changelog.">
-                <button className="pill small-pill" onClick={async () => setK(await window.quorum.keeperSet({ factsBudget: 'auto' }))}>Use the smaller default</button>
+              <Row icon={<IconInfo width={18} height={18} />} title={`Keep CLAUDE.md to ${k.learned.small.facts} facts?`}
+                desc={`CLAUDE.md is loaded in every session. New lists keep ${k.learned.small.facts} facts or ${k.learned.small.budget.toLocaleString()} characters; yours keeps ${k.learned.large.toLocaleString()} characters until you switch.`}>
+                <button className="pill small-pill" onClick={async () => { if (k.learned!.defaultMoves > 0) setAskDefault(true); else setK(await window.quorum.keeperSet({ factsBudget: 'auto' })); }}>Use the smaller default</button>
               </Row>
+            )}
+            {askDefault && k.learned && (
+              <ConfirmModal title={`Use the default of ${k.learned.defaultFacts ? `${k.learned.defaultFacts} facts or ` : ''}${k.learned.defaultBudget.toLocaleString()} characters?`}
+                body={`${k.learned.defaultMoves} older ${k.learned.defaultMoves === 1 ? 'fact moves' : 'facts move'} from ${k.learned.file} to .quorum/changelog.md, where you can copy them back.`}
+                action="Use the default" onDone={async (ok) => { setAskDefault(false); if (ok) setK(await window.quorum.keeperSet({ factsBudget: 'auto' })); }} />
             )}
             {k.on && factsOn && k.learned?.suggest && (
               <Row icon={<IconInfo width={18} height={18} />} title={`Move learned facts to ${k.learned.suggest === 'learned' ? '.quorum/learned.md' : 'CLAUDE.md'}?`}

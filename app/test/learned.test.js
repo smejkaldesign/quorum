@@ -377,7 +377,7 @@ describe('learned facts, review fixes', () => {
     const lines = learnedLines(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'));
     expect(lines).toHaveLength(21);
     expect(existsSync(path.join(dir, CHANGELOG)) && readFileSync(path.join(dir, CHANGELOG), 'utf8')).not.toContain('Moved out of the learned facts');
-    expect(k.status().learned).toMatchObject({ budget: LEARNED_BUDGET, maxFacts: null, budgetPick: 'auto', defaultBudget: LEARNED_BUDGET, defaultFacts: null, suggestSmall: true });
+    expect(k.status().learned).toMatchObject({ budget: LEARNED_BUDGET, maxFacts: null, budgetPick: 'kept', defaultBudget: CLAUDE_BUDGET, defaultFacts: CLAUDE_FACTS, defaultMoves: 11, suggestSmall: true, small: { budget: CLAUDE_BUDGET, facts: CLAUDE_FACTS } });
     // a later run keeps it too
     put(dir, '08-meetings/2026-11-11-review.md', NOTE('Review', '2026-11-11'));
     await k.run();
@@ -473,7 +473,7 @@ describe('a vault that generates its own index.md', () => {
     expect(readFileSync(path.join(dir, 'index.md'), 'utf8')).toBe(GEN);
     const log = readFileSync(path.join(dir, CHANGELOG), 'utf8');
     expect(log.match(/Index skipped/g)).toHaveLength(1);
-    expect(log).toContain('index.md is kept by your Agent OS, so the keeper left it unchanged for 2 meeting notes.');
+    expect(log).toContain('index.md is kept by your Agent OS, so the keeper leaves it unchanged and writes no meeting index lines.');
     // the facts and the rest still run
     expect(learnedLines(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'))).toHaveLength(1);
     // a run with nothing to file logs nothing
@@ -487,7 +487,7 @@ describe('a vault that generates its own index.md', () => {
     k.setPlugin('index', 'quorum');
     await k.run();
     expect(readFileSync(path.join(dir, 'index.md'), 'utf8')).toBe(GEN);
-    expect(readFileSync(path.join(dir, CHANGELOG), 'utf8')).toContain('index.md is marked as generated, so the keeper left it unchanged for 1 meeting note.');
+    expect(readFileSync(path.join(dir, CHANGELOG), 'utf8')).toContain('index.md is marked as generated, so the keeper leaves it unchanged and writes no meeting index lines.');
   });
   it('writes the index lines to the meetings folder index when turned on', async () => {
     const dir = wikiVault();
@@ -500,7 +500,7 @@ describe('a vault that generates its own index.md', () => {
     const mi = readFileSync(path.join(dir, '08-meetings/index.md'), 'utf8');
     expect(mi).toContain('- [[2026-11-10-plan]] - meeting 2026-11-10: Plan');
     expect(mi).toContain('- [[2026-11-11-review]] - meeting 2026-11-11: Review');
-    expect(readFileSync(path.join(dir, CHANGELOG), 'utf8')).toContain('Their index lines went to 08-meetings/index.md.');
+    expect(readFileSync(path.join(dir, CHANGELOG), 'utf8')).toContain('Meeting index lines go to 08-meetings/index.md.');
   });
   it('leaves a generated meetings index alone and counts a missing one in the create limit', async () => {
     const dir = wikiVault();
@@ -516,5 +516,125 @@ describe('a vault that generates its own index.md', () => {
     const r = await k2.run();
     expect(r.held.count).toBe(CREATE_LIMIT + 1);
     expect(existsSync(path.join(dir2, '08-meetings/index.md'))).toBe(false);
+  });
+});
+
+describe('learned facts, review round 3', () => {
+  const state = (dir) => JSON.parse(readFileSync(path.join(dir, '.quorum/keeper.json'), 'utf8'));
+  const many = (n) => Array.from({ length: n }, (_, i) => fact(`fact ${i} about the plan`, '2026-09-01'));
+  it('keeps a settings reset made while a run is going', async () => {
+    const dir = vault();
+    put(dir, 'CLAUDE.md', addLearned('# Agent OS\n', many(20).map((l) => l.slice(2)), { budget: 10000 }).text);
+    let release;
+    let started;
+    const asked = new Promise((r) => { started = r; });
+    const gate = new Promise((r) => { release = r; });
+    const { k } = keeperFor(dir, { opts: { runText: async () => { started(); await gate; return '- Ada owns the launch page'; } } });
+    const running = k.run();
+    await asked;
+    k.set({ factsBudget: 'auto' });
+    release();
+    await running;
+    expect(state(dir).claudeSmall).toBe(true);
+    expect(k.status().learned).toMatchObject({ suggestSmall: false, budget: CLAUDE_BUDGET });
+  });
+  it('keeps a list where an earlier version wrote it, with no factsNoteDefault in keeper.json', async () => {
+    const dir = vault();
+    mkdirSync(path.join(dir, '05-knowledge'));
+    put(dir, 'old/place.md', addLearned(LEARNED_HEADER, [fact('earlier fact about pricing', '2026-10-01').slice(2)]).text);
+    put(dir, '.quorum/keeper.json', JSON.stringify({ done: {}, factsNoteAt: 'old/place.md' }));
+    const { k } = keeperFor(dir, { keeper: { factsTarget: 'note' } });
+    expect(k.status().learned.note).toBe('old/place.md');
+    await k.run();
+    expect(learnedLines(readFileSync(path.join(dir, 'old/place.md'), 'utf8'))).toHaveLength(2);
+    expect(existsSync(path.join(dir, '05-knowledge/quorum-learned.md'))).toBe(false);
+    expect(state(dir).factsNoteDefault).toBe('old/place.md');
+  });
+  it('settles the smaller default only when Default is picked for CLAUDE.md', async () => {
+    const dir = vault();
+    put(dir, LEARNED_FILE, addLearned(LEARNED_HEADER, many(3).map((l) => l.slice(2))).text);
+    const { k } = keeperFor(dir, { keeper: { factsTarget: 'learned', factsBudget: 1000 } });
+    await k.run();
+    k.set({ factsBudget: 'auto' });
+    expect(state(dir).claudeSmall).toBe(false);
+    k.set({ factsTarget: 'claude' });
+    expect(k.status().learned).toMatchObject({ target: 'claude', budget: LEARNED_BUDGET, suggestSmall: true, budgetPick: 'kept' });
+  });
+  it('reads every verb form of an empty note as empty, and keeps real facts', () => {
+    for (const f of ['The notes have no action items', 'The transcript contains none', 'The notes are empty', 'The notes were blank', 'The note appears empty', 'The recording seems to be missing'])
+      expect(informative(f), f).toBe(false);
+    for (const f of ['Acme has no SOC 2 report', 'None of the vendors met the SLA']) expect(informative(f), f).toBe(true);
+  });
+  it('ignores quotes, trailing punctuation and a trailing parenthetical', () => {
+    for (const f of ['The note is empty;', '"No decisions were made."', '“The meeting note is empty”', 'No action items (meeting cancelled)', 'The notes are empty?', 'There were no decisions:', 'No decisions, (none recorded).'])
+      expect(informative(f), f).toBe(false);
+    expect(informative('Bo owns pricing (from December)')).toBe(true);
+  });
+});
+
+describe('meetings index backfill and skip log', () => {
+  const GEN = '<!-- generated -->\n# Index\n\n- [[a]] - a page\n';
+  function wikiVault() {
+    const dir = vault();
+    put(dir, 'index.md', GEN);
+    put(dir, 'scripts/wiki-index.py', 'print("rewrites index.md")\n');
+    return dir;
+  }
+  it('fills the meetings index with the meetings filed before it was turned on, once', async () => {
+    const dir = wikiVault();
+    const { k } = keeperFor(dir);
+    await k.run();
+    expect(existsSync(path.join(dir, '08-meetings/index.md'))).toBe(false);
+    k.set({ meetingsIndex: true });
+    await k.run();
+    const mi = readFileSync(path.join(dir, '08-meetings/index.md'), 'utf8');
+    expect(mi).toContain('- [[2026-11-10-plan]] - meeting 2026-11-10: Plan');
+    const log = readFileSync(path.join(dir, CHANGELOG), 'utf8');
+    expect(log).toContain('Meetings index\n\n- 08-meetings/index.md');
+    expect(log).toContain('Meeting index lines go to 08-meetings/index.md.');
+    // once: a line taken out by hand is not put back by the next run
+    put(dir, '08-meetings/index.md', '# Meetings\n');
+    await k.run();
+    expect(readFileSync(path.join(dir, '08-meetings/index.md'), 'utf8')).toBe('# Meetings\n');
+    expect(readFileSync(path.join(dir, 'index.md'), 'utf8')).toBe(GEN);
+  });
+  it('leaves a generated meetings index alone during the backfill', async () => {
+    const dir = wikiVault();
+    const { k } = keeperFor(dir);
+    await k.run();
+    put(dir, '08-meetings/index.md', GEN);
+    k.set({ meetingsIndex: true });
+    await k.run();
+    expect(readFileSync(path.join(dir, '08-meetings/index.md'), 'utf8')).toBe(GEN);
+    expect(readFileSync(path.join(dir, CHANGELOG), 'utf8')).toContain('08-meetings/index.md is marked as generated too, so no meeting index lines were written.');
+  });
+  it('holds the backfill with the rest of a held run', async () => {
+    const dir = wikiVault();
+    mkdirSync(path.join(dir, '01-daily'));
+    const { k } = keeperFor(dir);
+    await k.run();
+    k.set({ meetingsIndex: true });
+    for (let i = 1; i <= CREATE_LIMIT; i++) { const d = `2026-10-${String(i).padStart(2, '0')}`; put(dir, `08-meetings/${d}-m.md`, NOTE(`M${i}`, d)); }
+    const r = await k.run();
+    expect(r.held.count).toBe(CREATE_LIMIT + 1);
+    expect(existsSync(path.join(dir, '08-meetings/index.md'))).toBe(false);
+    expect(readFileSync(path.join(dir, CHANGELOG), 'utf8')).toContain('Meeting index lines wait for 08-meetings/index.md, which the held run has not created yet.');
+    await k.run({ allowCreate: true });
+    const mi = readFileSync(path.join(dir, '08-meetings/index.md'), 'utf8');
+    expect(mi).toContain('[[2026-11-10-plan]]');
+    expect(mi).toContain('[[2026-10-01-m]]');
+  });
+  it('logs the skip once per change of where the lines go', async () => {
+    const dir = wikiVault();
+    const { k } = keeperFor(dir);
+    await k.run();
+    put(dir, '08-meetings/2026-11-11-review.md', NOTE('Review', '2026-11-11'));
+    await k.run();
+    expect(readFileSync(path.join(dir, CHANGELOG), 'utf8').match(/Index skipped/g)).toHaveLength(1);
+    k.set({ meetingsIndex: true });
+    await k.run();
+    put(dir, '08-meetings/2026-11-12-later.md', NOTE('Later', '2026-11-12'));
+    await k.run();
+    expect(readFileSync(path.join(dir, CHANGELOG), 'utf8').match(/Index skipped/g)).toHaveLength(2);
   });
 });
