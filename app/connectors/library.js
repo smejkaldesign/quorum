@@ -6,7 +6,9 @@
 //   mcp-source   a meeting-notes source over its MCP server (sources/*.js)
 //   macos        a permission on this Mac (Calendar)
 //   quorum-mcp   registers Quorum's own MCP server in a coding tool (the quorum CLI)
-//   oauth        a hosted OAuth app Quorum registers once and every user authorizes (relay callback)
+//   oauth        an OAuth app Quorum registers once and every user authorizes; account: true marks the personal
+//                connectors in connectors/oauthApps.js (sources/accounts.js), which connect an account before their
+//                features ship
 export const CATEGORIES = [
   { id: 'meeting-notes', name: 'Meeting notes', blurb: 'Tools that already record your meetings. Their notes land in your meeting notes folder, tagged with where they came from.' },
   { id: 'calendar', name: 'Calendar', blurb: 'Upcoming meetings on Home, a reminder before each one, and the right title and people on every note.' },
@@ -31,14 +33,14 @@ export const CONNECTORS = [
   c('tldv', 'tl;dv', 'meeting-notes', 'tldv.io', 'Notes and transcripts from tl;dv meetings.'),
   // calendar
   c('apple-calendar', 'Calendar app', 'calendar', 'apple.com', 'Reads the calendars you already have in the Calendar app. Upcoming meetings show on Home.', 'available', 'macos'),
-  c('google-calendar', 'Google Calendar', 'calendar', 'calendar.google.com', 'Reads the calendars you have selected in Google Calendar, with your own Google account. Upcoming meetings show on Home.', 'available', 'oauth'),
+  c('google-calendar', 'Google Calendar', 'calendar', 'calendar.google.com', 'Reads the calendars you have selected in Google Calendar, with your own Google account. Upcoming meetings show on Home.', 'available', 'oauth', { account: true }),
   c('outlook', 'Outlook', 'calendar', 'outlook.com', 'See your upcoming meetings, get a reminder before each one, and give every note the right context.'),
   // meeting apps
   c('zoom', 'Zoom', 'meetings', 'zoom.us', 'Quorum listens to your Zoom calls on this Mac and writes the note live. Cloud recordings come next.', 'available', 'meeting-app', { app: 'zoom' }),
   c('google-meet', 'Google Meet', 'meetings', 'meet.google.com', 'Quorum listens to your Meet calls in the browser on this Mac and writes the note live. Cloud recordings come next.', 'available', 'meeting-app', { app: 'meet' }),
   c('teams', 'Microsoft Teams', 'meetings', 'teams.microsoft.com', 'Quorum listens to your Teams calls on this Mac and writes the note live. Cloud transcripts come next.', 'available', 'meeting-app', { app: 'teams' }),
   // communication
-  c('slack', 'Slack', 'communication', 'slack.com', 'Share meeting notes to any Slack channel, or post them from a folder on their own.'),
+  c('slack', 'Slack', 'communication', 'slack.com', 'Connect your Slack account with one sign-in. Sharing meeting notes to a channel comes next.', 'available', 'oauth', { account: true }),
   c('gmail', 'Gmail', 'communication', 'gmail.com', 'Follow-up emails drafted after your meetings, ready to review and send.'),
   // crm
   c('affinity', 'Affinity', 'crm', 'affinity.co', 'Send meeting notes to the matching Affinity records.'),
@@ -51,15 +53,15 @@ export const CONNECTORS = [
   // project management
   c('asana', 'Asana', 'tasks', 'asana.com', 'Turn action items into Asana tasks.'),
   c('clickup', 'ClickUp', 'tasks', 'clickup.com', 'Turn action items into ClickUp tasks.'),
-  c('github', 'GitHub', 'tasks', 'github.com', 'Turn action items into GitHub issues.'),
+  c('github', 'GitHub', 'tasks', 'github.com', 'Connect your GitHub account with one sign-in. Quorum gets read-only access to the repositories you choose, for knowledge base imports.', 'available', 'oauth', { account: true }),
   c('jira', 'Jira', 'tasks', 'atlassian.com', 'Turn action items into Jira issues.'),
   c('linear', 'Linear', 'tasks', 'linear.app', 'Turn action items into Linear issues.'),
   c('monday', 'monday.com', 'tasks', 'monday.com', 'Turn action items into monday.com items.'),
   c('trello', 'Trello', 'tasks', 'trello.com', 'Turn action items into Trello cards.'),
   // docs
   c('google-docs', 'Google Docs', 'docs', 'docs.google.com', 'Save meeting notes to Google Docs.'),
-  c('google-drive', 'Google Drive', 'docs', 'drive.google.com', 'Save meeting notes to Google Drive.'),
-  c('notion', 'Notion', 'docs', 'notion.so', 'Send meeting notes to a Notion database you can sort, filter and build on.'),
+  c('google-drive', 'Google Drive', 'docs', 'drive.google.com', 'Connect your Google Drive with one sign-in. Quorum sees only the files it creates or you open with it.', 'available', 'oauth', { account: true }),
+  c('notion', 'Notion', 'docs', 'notion.so', 'Connect your Notion workspace with one sign-in. Sending meeting notes to a Notion database comes next.', 'available', 'oauth', { account: true }),
   c('onedrive', 'OneDrive', 'docs', 'onedrive.live.com', 'Save meeting notes to OneDrive.'),
   c('onenote', 'OneNote', 'docs', 'onenote.com', 'Save meeting notes to OneNote.'),
   // ai and automation
@@ -94,17 +96,18 @@ const BY_CATEGORY = {
 const OVERRIDES = {
   zoom: () => ['Listens to Zoom calls on this Mac and writes the meeting note live', 'Posts Quorum\'s notice in the Zoom chat when it starts listening', 'Transcribes on this Mac, or with the transcription you chose', 'Imports Zoom cloud recordings and transcripts, covering calls Quorum did not hear (Quorum Cloud)'],
   'apple-calendar': () => ['Shows upcoming meetings from the Calendar app on Home', 'Gives each note the meeting title and the people in it', 'Reads on this Mac; nothing leaves it'],
-  slack: () => ['Shares a meeting note to any Slack channel', 'Posts notes from a folder on their own'],
+  slack: () => ['Connects your Slack account; the token stays in this Mac\'s Keychain', 'Soon: shares a meeting note to any Slack channel', 'Soon: posts notes from a folder on their own'],
   gmail: () => ['Drafts a follow-up email after each meeting, ready to review and send'],
   'claude-code': () => ['Lets Claude Code search your notes and meetings through the quorum MCP server', 'Writes specs, PRs and bug reports from what was said', 'Runs on this Mac; no server in between'],
   codex: () => ['Lets Codex search your notes and meetings through the quorum MCP server', 'Writes specs, PRs and bug reports from what was said'],
   cursor: () => ['Lets Cursor search your notes and meetings through the quorum MCP server', 'Writes specs and issues from what was said'],
   zapier: () => ['Sends a meeting note to thousands of apps through a Zap', 'Starts an automation when a note is saved'],
-  github: () => ['Turns action items into GitHub issues', 'Links each issue back to the meeting note'],
+  github: () => ['Connects your GitHub account; the token stays in this Mac\'s Keychain', 'Reads only the repositories where you install the Quorum GitHub App, and never writes to them', 'Soon: imports a private repository as a knowledge base', 'Soon: turns action items into GitHub issues'],
   jira: () => ['Turns action items into Jira issues', 'Links each issue back to the meeting note'],
   linear: () => ['Turns action items into Linear issues', 'Links each issue back to the meeting note'],
   trello: () => ['Turns action items into Trello cards', 'Links each card back to the meeting note'],
-  notion: () => ['Sends meeting notes to a Notion database you can sort, filter and build on', 'Keeps the Notion page in step with the note'],
+  notion: () => ['Connects your Notion workspace; the token stays in this Mac\'s Keychain', 'Soon: sends meeting notes to a Notion database you can sort, filter and build on', 'Soon: keeps the Notion page up to date with the note'],
+  'google-drive': () => ['Connects your Google Drive; the token stays in this Mac\'s Keychain', 'Reaches only the files Quorum creates or you open with it', 'Soon: saves meeting notes to Google Drive'],
 };
 // the lede on a connector's page: what it is and what Quorum does with it, in two short sentences
 const ABOUT = {
@@ -166,6 +169,9 @@ export function isConnected(x, live, { explicit = false } = {}) {
     return listening || cloud;
   }
   if (x.id === 'apple-calendar') return !!live.cal?.enabled && live.cal.status === 'granted';
+  // the personal OAuth connectors (sources/accounts.js); Google Calendar falls back to the calendar status for callers
+  // that do not load the account list
+  if (x.account) { const a = live.accounts?.find((y) => y.id === x.id); if (a) return !!a.connected; }
   if (x.id === 'google-calendar') return !!live.cal?.google?.connected;
   if (x.id === 'claude-code') return !!live.mcp?.added;
   return false;
