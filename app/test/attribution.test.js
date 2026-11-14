@@ -24,10 +24,10 @@ describe('speaker labels', () => {
   });
 
   it('never picks your own tile', () => {
-    const reads = [{ at: 100, names: ['Eric (me)', 'Ada'], active: ['Eric (me)'] }];
+    const reads = [{ at: 100, names: ['Sam Rivera (me)', 'Ada'], active: ['Sam Rivera (me)'] }];
     expect(speakerLabels([turn(1, 'them', 0, 200)], reads, { slack: 0 })).toEqual({ 1: 'Ada' });
-    const named = [{ at: 100, names: ['Eric Smejkal', 'Ada', 'Grace'], active: ['Eric Smejkal'] }];
-    expect(speakerLabels([turn(1, 'them', 0, 200)], named, { self: ['eric smejkal'], slack: 0 })).toEqual({ 1: 'Speaker 1' });
+    const named = [{ at: 100, names: ['Sam Rivera', 'Ada', 'Grace'], active: ['Sam Rivera'] }];
+    expect(speakerLabels([turn(1, 'them', 0, 200)], named, { self: ['sam rivera'], slack: 0 })).toEqual({ 1: 'Speaker 1' });
   });
 
   it('uses the one other person when nobody is shown speaking', () => {
