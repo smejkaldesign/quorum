@@ -24,6 +24,18 @@ export const config = {
     slack: { clientId: env('SLACK_CLIENT_ID'), clientSecret: env('SLACK_CLIENT_SECRET') },
     // a GitHub App (user-to-server tokens, read-only Contents and Metadata), so its own client pair
     github: { clientId: env('GITHUB_APP_CLIENT_ID'), clientSecret: env('GITHUB_APP_CLIENT_SECRET') },
+    // the Google Desktop client the Mac signs in with; the KB sync worker refreshes Google Drive grants with it
+    google: { clientId: env('GOOGLE_CLIENT_ID'), clientSecret: env('GOOGLE_CLIENT_SECRET') },
+  },
+  // the KB sync worker (kbSync/worker.js): off until KB_SYNC_WORKER=on, so a relay deploys before migration 0032 is
+  // applied. A tick every KB_SYNC_TICK_MS, each attachment every KB_SYNC_INTERVAL_SECONDS, at most
+  // KB_SYNC_CONCURRENCY runs at once and KB_SYNC_PER_WORKSPACE in one workspace
+  kbSync: {
+    enabled: env('KB_SYNC_WORKER', 'off') === 'on',
+    tickMs: Number(env('KB_SYNC_TICK_MS', 60000)),
+    intervalSeconds: Number(env('KB_SYNC_INTERVAL_SECONDS', 900)),
+    concurrency: Number(env('KB_SYNC_CONCURRENCY', 4)),
+    perWorkspace: Number(env('KB_SYNC_PER_WORKSPACE', 2)),
   },
   publicUrl: env('RELAY_PUBLIC_URL', 'https://relay.quorum.watch').replace(/\/+$/, ''),
   oauthExtraRedirects: env('OAUTH_EXTRA_REDIRECT_URIS', '').split(',').map((s) => s.trim()).filter(Boolean),
