@@ -51,6 +51,7 @@ function Bases() {
               <button className="pill small" aria-expanded={panel?.kind === 'readers' && panel.kbId === kb.id} onClick={() => setPanel(panel?.kind === 'readers' && panel.kbId === kb.id ? null : { kind: 'readers', kbId: kb.id })}>Readers</button>
               <KbMenu kb={kb} onPick={(kind) => (kind === 'delete' ? setDeleting(kb) : setPanel({ kind, kbId: kb.id }))} />
             </Row>
+            {kb.kind === 'meetings' && <p className="kb-hint muted">Meetings: members' meeting notes are saved here automatically, one folder per month. Each member can keep any note private.</p>}
             {panel?.kbId === kb.id && panel.kind === 'rename' && <Rename kb={kb} onDone={(next) => { if (next) replace(next); setPanel(null); }} />}
             {panel?.kbId === kb.id && panel.kind === 'readers' && <Readers kb={kb} onDone={(next) => { if (next) replace(next); setPanel(null); }} />}
             {panel?.kbId === kb.id && panel.kind === 'import' && <ImportInto kb={kb} onDone={() => setPanel(null)} onImported={load} />}

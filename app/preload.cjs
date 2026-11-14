@@ -72,6 +72,8 @@ contextBridge.exposeInMainWorld('quorum', {
   vaultGraph: () => ipcRenderer.invoke('vault-graph'),
   vaultClusterName: (key, name) => ipcRenderer.invoke('vault-cluster-name', key, name),
   noteVisibility: (file, value) => ipcRenderer.invoke('note-visibility', file, value),
+  meetingShare: (file) => ipcRenderer.invoke('meeting-share', file),
+  meetingShareSet: (file, keepPrivate, hash) => ipcRenderer.invoke('meeting-share-set', file, keepPrivate, hash),
   noteAsk: (file, question, history, files) => ipcRenderer.invoke('note-ask', file, question, history, files),
   noteApply: (file, body) => ipcRenderer.invoke('note-apply', file, body),
   vaultSearch: (q, limit) => ipcRenderer.invoke('vault-search', q, limit),

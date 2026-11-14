@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CONNECTOR_BY_ID } from '../connectors/library';
 import { ViewsPill } from './ViewsPill';
+import { KeepPrivate } from './KeepPrivate';
 import type { NoteDoc, Visibility } from './quorum';
 import { Markdown } from './Markdown';
 import { Composer } from './Composer';
@@ -102,6 +103,8 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack }: {
   const [draft, setDraft] = useState('');
   const [step, setStep] = useState('');
   const [preview, setPreview] = useState(false);
+  // a note in the team's meetings knowledge base shows Keep private in place of the visibility pill
+  const [inMeetingsKb, setInMeetingsKb] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const date = note.date ? new Date(note.date) : null;
   const busy = turns.some((t) => t.pending);
@@ -145,7 +148,8 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack }: {
           {/* continue this note in the note view: write in it, or Record more into it */}
           <button className="pill small-pill" disabled={note.withheld} data-tip={note.withheld ? 'This note has withheld lines; edit it in the vault' : undefined}
             onClick={() => window.dispatchEvent(new CustomEvent('quorum:new-note', { detail: { file: note.file } }))}>Edit note</button>
-          <VisibilityPill value={note.visibility} onChange={async (v) => { await window.quorum.noteVisibility(note.file, v); reload(); }} />
+          <KeepPrivate file={note.file} onAvailable={setInMeetingsKb} onRef={() => reload()} />
+          {!inMeetingsKb && <VisibilityPill value={note.visibility} onChange={async (v) => { await window.quorum.noteVisibility(note.file, v); reload(); }} />}
           <NoteMenu note={note} onDeleted={onBack} />
         </div>
       </div>

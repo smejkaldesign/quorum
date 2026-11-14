@@ -10,6 +10,7 @@ import store from '../store/index.js';
 import { DATA_DIR, ENV, isDevelopment } from '../edition.js';
 import { codeChars } from '../betaCode.js';
 import { createSync } from './sync.js';
+import { createMeetingsKb } from './meetingsKb.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(here, '../..');
@@ -140,7 +141,9 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
     onChange: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
     markSync: ({ lastSyncAt, lastPullAt, syncError, live }) => { if (lastSyncAt !== undefined) state.lastSyncAt = lastSyncAt; if (lastPullAt !== undefined) state.lastPullAt = lastPullAt; if (syncError !== undefined) state.syncError = syncError; if (live !== undefined) state.live = live; emit(); },
   };
-  const makeSync = (c) => createSync({ account, store, brain, log, meetingIndex, isExcluded, isExcludedText, idsFile: perConfig(c, 'sync-ids', 'json') });
+  // meeting notes into the workspace's meetings knowledge base, with the person's Keep private choice (ee/meetingsKb.js)
+  const meetingsKb = createMeetingsKb({ account: { state: () => state, client: () => client }, settings, saveSettings, isExcludedText, log });
+  const makeSync = (c) => createSync({ account, store, brain, log, meetingIndex, isExcluded, isExcludedText, idsFile: perConfig(c, 'sync-ids', 'json'), meetings: meetingsKb });
   let inner = makeSync(cloud);
   // main.js keeps one reference to sync; the developer switch below swaps what sits behind it. A full sync pulls
   // first so a remote edit lands before the local copy of the same note goes up.
@@ -421,7 +424,7 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
     try { const { data } = await client.auth.getSession(); if (data?.session?.user?.email) return data.session.user.email; } catch {}
     return storedEmail();
   };
-  return { ...account, handlers, refresh, sync, envStatus, sessionEmail, stop: () => { clearInterval(pullTimer); inner.stop(); } };
+  return { ...account, handlers, refresh, sync, meetingsKb, envStatus, sessionEmail, stop: () => { clearInterval(pullTimer); inner.stop(); } };
 }
 
 // wires the account into the main process: one IPC handler per entry, and every change goes to the UI as 'account'
