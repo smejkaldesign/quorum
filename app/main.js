@@ -2625,7 +2625,7 @@ async function control({ cmd, args = {} }) {
       return r;
     }
     // a live Granola search through the sign-in this app holds; opted-out customers are withheld before the answer leaves
-    case 'granola_search': return sourcesApi.searchGranola(args, { isExcluded: suggester.isExcluded, redact: suggester.redactLines });
+    case 'granola_search': return sourcesApi.searchGranola(args, { isExcluded: suggester.isExcluded });
     case 'start':
       // start acts on a noticed call, so it follows meeting-capture; stop, go and end work on any running session
       if (!gate().meetingCapture) throw new Error('Quorum does not watch for calls in this build. Start listening from the app for a note of your own.');

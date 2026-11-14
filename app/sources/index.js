@@ -14,8 +14,12 @@ import { createTokenStore } from './tokens.js';
 import { detectRunners, runnersWithSource } from './runners.js';
 import { SCHEDULES, dueFor, runImport } from './agent-import.js';
 import { granolaSearch } from './granola-search.js';
+import { NO_ACCOUNT } from './granola.js';
 
 const SYNC_EVERY = 30 * 60 * 1000;
+const FILED_FOR = 10 * 60 * 1000;
+// the raw Granola refusal, or the plain wording adapters put on it: this sign-in has no account at the source
+const UNKNOWN_ACCOUNT = new RegExp(`${NO_ACCOUNT.source}|No Granola account|no .* account for this sign-in`, 'i');
 
 // ids already in the vault: every markdown note under the meetings folder that names a granola_id or source_id
 export function scanExisting(root) {
@@ -66,6 +70,17 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
     clients[id] ??= createMcp({ url: src.url, token: () => tokenFor(id), onUnauthorized: () => tokenFor(id, true), clientInfo: { name: 'Quorum', version } });
     return clients[id];
   };
+
+  // an identity the source does not know is dropped, the same from a sync or a search
+  const forgetIfUnknown = async (id, err) => {
+    if (!UNKNOWN_ACCOUNT.test(err?.message ?? '')) return false;
+    await store.tokens.set(id, null); stateOf(id).connected = false; saveSettings(); delete clients[id];
+    return true;
+  };
+  // meeting ids the vault holds, for granola_search; a sync and every write keep it current, and it is rebuilt after
+  // ten minutes for notes that arrived another way
+  let filed = null, filedAt = 0;
+  const filedIds = () => { if (!filed || Date.now() - filedAt > FILED_FOR) { filed = scanExisting(meetingsDir()); filedAt = Date.now(); } return filed; };
 
   const folderFor = (id) => { const root = meetingsDir(); return root ? path.join(root, BY_ID[id].folder) : null; };
 
@@ -121,18 +136,19 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
     const acct = stateOf(id).account;
     const own = acct && !/[\r\n]/.test(acct) ? setFrontmatterKey(text, 'source_account', JSON.stringify(String(acct))) : text;
     writeFileSync(file, keepKeys(prev, own));
+    filed?.add(m.id);
     afterWrite(file);
     return file;
   };
 
   const runSync = (id, label = 'Importing') => jobs.run(id, label, async (progress) => {
     const src = BY_ID[id];
-    const s0 = stateOf(id);
-    const dropIfUnknown = async (err) => { if (/No Granola account|no .* account for this sign-in/i.test(err?.message ?? '')) { await store.tokens.set(id, null); s0.connected = false; saveSettings(); delete clients[id]; } throw err; };
+    const dropIfUnknown = async (err) => { await forgetIfUnknown(id, err); throw err; };
     const dir = folderFor(id);
     if (!dir) throw new Error('Pick a meeting notes folder in Settings › Memory first.');
     const s = stateOf(id);
     const existing = scanExisting(meetingsDir());
+    filed = existing; filedAt = Date.now();
     progress({ message: 'Checking Granola', total: null });
     const adapter = adapterFor(src);
     const result = await adapter.sync({ mcp: mcpFor(id), existing, since: s.since ?? undefined, write: writeNote(dir, id), progress }).catch(dropIfUnknown);
@@ -219,13 +235,13 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
   setTimeout(tick, 20000).unref?.();
 
   // the quorum MCP server's granola_search, asked over the control socket; the token never leaves this process
-  const searchGranola = async (input, { isExcluded, redact }) => {
+  const searchGranola = async (input, { isExcluded }) => {
     if (!stateOf('granola').connected || !(await store.tokens.get('granola'))) throw new Error('Granola is not connected in Quorum. Connect it in Quorum under Connectors, or search with your own Granola MCP.');
-    try { return await granolaSearch({ mcp: mcpFor('granola'), input, isExcluded, redact, filed: scanExisting(meetingsDir()) }); }
+    try { return await granolaSearch({ mcp: mcpFor('granola'), input, isExcluded, filed: filedIds() }); }
     catch (err) {
       log('sources granola_search', err.message);
       if (err.code === 'unauthorized') throw new Error('Granola no longer accepts Quorum\'s sign-in. Reconnect Granola in Quorum under Connectors.', { cause: err });
-      if (/not created a Granola account|mcp-signup/i.test(err.message)) throw new Error('No Granola account for the sign-in connected in Quorum. Reconnect Granola with the account your Granola app uses.', { cause: err });
+      if (await forgetIfUnknown('granola', err)) throw new Error('No Granola account for the sign-in connected in Quorum, so Quorum disconnected it. Connect Granola again with the account your Granola app uses.', { cause: err });
       throw err;
     }
   };

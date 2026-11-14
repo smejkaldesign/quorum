@@ -138,6 +138,8 @@ function ask(cmd, args = {}) {
   return new Promise((resolve, reject) => {
     const sock = net.connect(path.join(HOME, 'quorum.sock'));
     let buf = '';
+    // whole characters only: a multibyte character can arrive split across two chunks
+    sock.setEncoding('utf8');
     sock.on('connect', () => sock.write(`${JSON.stringify({ cmd, args })}\n`));
     sock.on('data', (d) => {
       buf += d;
@@ -219,15 +221,11 @@ function importMeeting({ source, id, title, date, participants = [], url = null,
   return { skipped: false, file: path.relative(root, file) };
 }
 
-// a live Granola search runs in the app, which holds the Granola sign-in; the results are withheld again here
+// a live Granola search runs in the app, which holds the Granola sign-in and withholds opted-out customers
 const APP_CLOSED_GRANOLA = 'granola_search runs through the Quorum app, which holds the Granola sign-in, and Quorum is not open. Open Quorum and try again, or search with your own Granola MCP.';
 async function granolaSearch(input) {
-  let r;
-  try { r = await ask('granola_search', input); }
+  try { return await ask('granola_search', input); }
   catch (e) { throw new Error(e.message.startsWith('Quorum isn\'t open') ? APP_CLOSED_GRANOLA : e.message, { cause: e }); }
-  const meetings = (r?.meetings ?? []).filter((m) => !isExcluded(`${m.title} ${(m.people ?? []).join(' ')}`))
-    .map((m) => (m.passages ? { ...m, passages: m.passages.map((p) => ({ ...p, text: redact(p.text) })) } : m));
-  return { ...r, meetings };
 }
 
 const TOOLS = [
@@ -235,7 +233,7 @@ const TOOLS = [
   { name: 'list_meetings', description: 'Meeting notes filed in the person\'s vault, newest first: Quorum\'s own notes and meetings imported from Granola and other apps. Each entry has an id for get_meeting, the title, date, source and people. Reads files on this Mac, so it works with Quorum closed and with the Granola MCP down.', inputSchema: { type: 'object', properties: { limit: { type: 'number', description: 'default 20' }, source: { type: 'string', description: 'only one source: quorum, granola, ...' } } }, run: ({ limit = 20, source }) => meetings().filter((m) => !source || m.source === source).slice(0, limit).map(brief) },
   { name: 'search_meetings', description: 'Search the meeting notes filed in the vault. A note matches when its title, attendees or text contain every word of the query; results come best first, each with one matching line. Use it for notes as the person filed them, next to their people and project notes, and as the fallback when a Granola MCP search fails for a meeting Quorum has imported. It does not reach Granola meetings Quorum has not imported; granola_search does.', inputSchema: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number', description: 'default 20' } }, required: ['query'] }, run: ({ query, limit }) => search(query, limit) },
   { name: 'get_meeting', description: 'The full text of one filed meeting note, frontmatter included: notes, summary and any imported transcript. Takes the id from list_meetings or search_meetings.', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] }, run: ({ id }) => getMeeting(id) },
-  { name: 'granola_search', description: 'Search the person\'s Granola account live, through the Granola sign-in connected in Quorum. Use it when your own Granola MCP is missing, signed out or failing, or to find Granola meetings Quorum has not imported yet. in "notes" (default) matches titles, summaries and private notes and can filter by participant and dates; in "transcripts" matches what was said and returns short passages. Each meeting says whether Quorum has filed it (inQuorum); read a filed one with search_meetings and get_meeting. Needs the Quorum app open with Granola connected.', inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'words that must all appear; required for transcripts' }, participant: { type: 'string', description: 'a whole name, email, company or domain' }, in: { type: 'string', enum: ['notes', 'transcripts'] }, from: { type: 'string', description: 'ISO date, inclusive' }, to: { type: 'string', description: 'ISO date, inclusive' }, limit: { type: 'number', description: '1 to 20, default 10' }, cursor: { type: 'string', description: 'nextCursor from the previous page' } } }, run: (a) => granolaSearch(a) },
+  { name: 'granola_search', description: 'Search the person\'s Granola account live, through the Granola sign-in connected in Quorum. Use it when your own Granola MCP is missing, signed out or failing, or to find Granola meetings Quorum has not imported yet. in "notes" (default) matches titles, summaries and private notes and can filter by participant and dates; in "transcripts" matches what was said and returns short passages. Each meeting says whether Quorum has filed it (inQuorum); read a filed one with search_meetings and get_meeting. A meeting that names an opted-out customer in its title, attendees or a matching passage is left out. Needs the Quorum app open with Granola connected.', inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'words that must all appear; required for transcripts' }, participant: { type: 'string', description: 'a whole name, email, company or domain' }, in: { type: 'string', enum: ['notes', 'transcripts'] }, from: { type: 'string', description: 'ISO date, inclusive' }, to: { type: 'string', description: 'ISO date, inclusive' }, limit: { type: 'number', description: '1 to 20, default 10' }, cursor: { type: 'string', description: 'nextCursor from the previous page. For the next page pass it with the same in; the other filters can be left out, and if given must be unchanged.' } } }, run: (a) => granolaSearch(a) },
   { name: 'list_chats', description: 'Recent chats the person had with Quorum in the app, newest first, with an id for get_chat.', inputSchema: { type: 'object', properties: { limit: { type: 'number', description: 'default 20' } } }, run: ({ limit }) => chats(limit) },
   { name: 'get_chat', description: 'The questions and answers in one Quorum chat, by the id from list_chats.', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] }, run: ({ id }) => getChat(id) },
   { name: 'live_transcript', description: 'The transcript so far of the call Quorum is recording right now, line by line with who spoke. Returns recording: false when no call is recording.', inputSchema: { type: 'object', properties: {} }, run: () => live() },

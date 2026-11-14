@@ -1,9 +1,16 @@
 // Granola over its MCP server: list meetings, fetch notes, write markdown in the same shape the vault already holds
 // for Granola notes (granola_id, participants, source: granola, granola_url) plus the generic source_id.
 const ATTR = /(\w+)="([^"]*)"/g;
-const decode = (s) => String(s ?? '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, '&');
+export const decode = (s) => String(s ?? '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, '&');
 const attrs = (tag) => { const o = {}; for (const m of tag.matchAll(ATTR)) o[m[1]] = decode(m[2]); return o; };
 const inner = (block, tag) => { const m = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`).exec(block); return m ? m[1] : null; };
+// Granola's answer when the signed-in identity has no Granola account
+export const NO_ACCOUNT = /not created a Granola account|mcp-signup/i;
+// who attended as Granola wrote it (companies and emails included), and how many attendees it left out of the list
+const attendees = (block) => {
+  const tag = /<known_participants\b([^>]*)>/.exec(block);
+  return { participantsText: decode(inner(block, 'known_participants') ?? ''), omitted: tag ? Number(attrs(tag[1]).omitted ?? 0) || 0 : 0 };
+};
 const selfClosed = (block, tag) => new RegExp(`<${tag}\\b[^>]*/>`).test(block);
 
 // "Alex Rivera (note creator) from Acme (alex@example.com), Dana Lee from Globex (dana@example.com)"
@@ -22,7 +29,7 @@ export function parseMeetingList(text) {
   for (const m of String(text).matchAll(/<meeting\b([^>]*)>([\s\S]*?)<\/meeting>/g)) {
     const a = attrs(m[1]);
     if (!a.id) continue;
-    meetings.push({ id: a.id, title: a.title ?? '', meetingAt: a.meeting_at ?? null, url: a.url ?? null, participants: parseParticipants(inner(m[2], 'known_participants')) });
+    meetings.push({ id: a.id, title: a.title ?? '', meetingAt: a.meeting_at ?? null, url: a.url ?? null, participants: parseParticipants(inner(m[2], 'known_participants')), ...attendees(m[2]) });
   }
   return { meetings, hasMore: p.has_more === 'true' && !!p.next_cursor, cursor: p.next_cursor ?? null, totalCount: p.total_count ? Number(p.total_count) : null };
 }
@@ -36,7 +43,7 @@ export function parseMeetingDetails(text) {
     const privateNotes = selfClosed(body, 'private_notes') ? '' : decode(inner(body, 'private_notes') ?? '').trim();
     out.push({
       id: a.id, title: a.title ?? '', meetingAt: a.meeting_at ?? a.created_at ?? null, createdAt: a.created_at ?? null, updatedAt: a.updated_at ?? null, url: a.url ?? null,
-      participants: parseParticipants(inner(body, 'known_participants')),
+      participants: parseParticipants(inner(body, 'known_participants')), ...attendees(body),
       privateNotes, summary: decode(inner(body, 'summary') ?? '').trim(),
       folders: (inner(body, 'folders') ?? '').split(/\s*,\s*|\n/).map((s) => decode(s).trim()).filter(Boolean),
     });
@@ -82,7 +89,7 @@ export async function transcript(mcp, id, { pageChars = 80000, maxPages = 60 } =
 export async function verify(mcp) {
   try { await mcp.call('get_account_info', {}); return { ok: true }; }
   catch (err) {
-    if (/not created a Granola account|mcp-signup/i.test(err.message)) throw new Error('No Granola account for this sign-in. Use the account your Granola app is signed in with.', { cause: err });
+    if (NO_ACCOUNT.test(err.message)) throw new Error('No Granola account for this sign-in. Use the account your Granola app is signed in with.', { cause: err });
     throw err;
   }
 }
@@ -129,7 +136,7 @@ export async function sync({ mcp, existing, since = '2015-01-01', write, progres
     let r;
     try { r = await mcp.call('search_meetings', args); }
     catch (err) {
-      if (/not created a Granola account|mcp-signup/i.test(err.message)) throw new Error('No Granola account for this sign-in. Reconnect with your Granola email.', { cause: err });
+      if (NO_ACCOUNT.test(err.message)) throw new Error('No Granola account for this sign-in. Reconnect with your Granola email.', { cause: err });
       throw err;
     }
     const page = parseMeetingList(r.text);
