@@ -96,6 +96,10 @@ export type ContextBudget = {
   quorum: { path: string; chars: number; everySession: boolean; share: number | null; aside: { path: string; chars: number } | null } | null;
   agent: { path: string; chars: number; limit: number; cut: number; learnedCut: boolean } | null;
 };
+// the skill usage plugin (app/skill-usage.js): runs counted from Claude Code transcripts on this Mac. unused is keyed
+// by window in days; coverageDays is how far back the transcripts go. Stashed skills carry disable-model-invocation
+export type SkillUse = { name: string; dir: string; path: string; runs: number; last: string | null; stashed: boolean; unused: Record<number, boolean>; namedBy: string[] };
+export type SkillUsage = { skills: SkillUse[]; transcripts: number; coverageDays: number; windows: number[] };
 // screen context: on-screen text as spelling hints; granted is the Screen Recording permission, null when unknown
 export type ScreenContextStatus = { available?: boolean; on: boolean; granted: boolean | null };
 export type SetupRecord = { version: number; name: string; answers: SetupAnswers; createdAt: string; updatedAt?: string };
@@ -387,6 +391,8 @@ declare global {
       keeperErrorsOpen(): Promise<void>;
       keeperErrorsClear(): Promise<KeeperStatus>;
       pluginContext(): Promise<ContextBudget | null>;
+      pluginSkills(): Promise<SkillUsage | null>;
+      pluginSkillStash(dir: string, on: boolean): Promise<SkillUsage>;
       onKeeper?(cb: (r: KeeperRun) => void): Unsub;
       onboardingOpenPermission(which: 'microphone' | 'audio' | 'accessibility' | 'calendar'): Promise<void>;
       onboardingRequestMicrophone(): Promise<boolean>;

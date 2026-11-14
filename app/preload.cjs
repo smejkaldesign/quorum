@@ -250,6 +250,8 @@ contextBridge.exposeInMainWorld('quorum', {
   keeperErrorsOpen: () => ipcRenderer.invoke('keeper-errors-open'),
   keeperErrorsClear: () => ipcRenderer.invoke('keeper-errors-clear'),
   pluginContext: () => ipcRenderer.invoke('plugin-context'),
+  pluginSkills: () => ipcRenderer.invoke('plugin-skills'),
+  pluginSkillStash: (dir, on) => ipcRenderer.invoke('plugin-skill-stash', dir, on),
   onKeeper: (cb) => { const h = (_e, r) => cb(r); ipcRenderer.on('keeper', h); return () => ipcRenderer.removeListener('keeper', h); },
   onboardingOpenPermission: (which) => ipcRenderer.invoke('onboarding-open-permission', which),
   onboardingRequestMicrophone: () => ipcRenderer.invoke('onboarding-request-microphone'),

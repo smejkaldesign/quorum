@@ -126,6 +126,10 @@ export const PLUGINS = [
     id: 'context', title: 'Context budget', does: 'Sizes of the files Claude Code loads every session, with warnings', report: true,
     detect: (ctx) => toolsMatching(ctx, /context[-_]?(?:budget|size|check|audit)|token[-_]?(?:budget|count)|claude[-_]?md[-_]?(?:size|lint|check|audit)|memory[-_]?(?:lint|size|budget)/i),
   },
+  {
+    id: 'skills', title: 'Skill usage', does: 'Which skills ran lately, counted from the Claude Code transcripts on this Mac', report: true,
+    detect: (ctx) => toolsMatching(ctx, /skill[-_]?(?:usage|telemetry|stats?|track(?:er|ing)?|audit|count)|(?:usage|telemetry)[-_]?(?:skill|track)|^telemetry/i),
+  },
 ];
 
 // the evidence a choice was made against, as one string; a change in it brings the default back

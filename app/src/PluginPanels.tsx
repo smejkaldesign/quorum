@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ContextBudget, ContextFile } from './quorum';
+import type { ContextBudget, ContextFile, SkillUsage, SkillUse } from './quorum';
 
 // the result a report plugin shows under its row in Settings › Memory › Plugins, while the row is Quorum's
 const n = (v: number) => v.toLocaleString('en-US');
@@ -31,6 +31,61 @@ export function ContextPanel() {
       {c.agent?.cut ? <p className="plugin-line plugin-warn">Quorum's own agent reads the first {n(c.agent.limit)} characters of {c.agent.path}, so the last {n(c.agent.cut)} are left out of its answers{c.agent.learnedCut ? ', including part of the learned facts' : ''}.</p> : null}
       <p className="plugin-line muted">Advice only. Quorum does not change these files.</p>
       <button className="pill small-pill" onClick={load}>Measure again</button>
+    </div>
+  );
+}
+
+// skill usage: the counts come from transcripts read on this Mac. Stash and unstash change one SKILL.md each, and only
+// on a click; a skill another skill names asks once more before it is stashed
+const day = (iso: string) => new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+export function SkillsPanel() {
+  const [u, setU] = useState<SkillUsage | null | undefined>(undefined);
+  const [win, setWin] = useState(90);
+  const [asking, setAsking] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => { window.quorum.pluginSkills().then(setU).catch(() => setU(null)); }, []);
+  if (u === undefined) return <div className="plugin-detail"><p className="plugin-line">Reading transcripts on this Mac…</p></div>;
+  if (!u) return null;
+  if (!u.skills.length) return <div className="plugin-detail"><p className="plugin-line muted">No skills in .claude/skills.</p></div>;
+  const stash = async (s: SkillUse, on: boolean) => {
+    if (on && s.namedBy.length && asking !== s.dir) { setAsking(s.dir); return; }
+    setAsking(null);
+    setErr(null);
+    try { setU(await window.quorum.pluginSkillStash(s.dir, on)); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  };
+  const unused = u.skills.filter((s) => s.unused[win] && !s.stashed);
+  const stashed = u.skills.filter((s) => s.stashed);
+  const used = u.skills.filter((s) => s.runs > 0).sort((a, b) => b.runs - a.runs).slice(0, 5);
+  return (
+    <div className="plugin-detail">
+      <p className="plugin-line">
+        <strong>{unused.length} of {u.skills.length} skills</strong> have no recorded run in {win} days.
+        {' '}From {n(u.transcripts)} {u.transcripts === 1 ? 'transcript' : 'transcripts'} on this Mac{u.transcripts ? `, going back ${n(u.coverageDays)} days` : ''}.
+      </p>
+      <div className="plugin-item row">
+        {u.windows.map((w) => <button key={w} className={`pill small-pill${w === win ? ' primary' : ''}`} onClick={() => setWin(w)}>{w} days</button>)}
+      </div>
+      {u.coverageDays < win && <p className="plugin-line muted">The transcripts cover less than {win} days, so a skill listed here may have run before they start.</p>}
+      {used.length > 0 && <p className="plugin-line muted">Most used: {used.map((s) => `${s.name} (${s.runs})`).join(', ')}</p>}
+      {unused.map((s) => (
+        <div key={s.dir} className="plugin-item">
+          <div className="plugin-item row">
+            <span className="plugin-path">{s.name}</span>
+            <span className="plugin-meta">{s.last ? `last ran ${day(s.last)}` : 'no recorded run'}</span>
+            <button className="pill small-pill" onClick={() => stash(s, true)}>{asking === s.dir ? 'Stash anyway' : 'Stash'}</button>
+          </div>
+          {asking === s.dir && <span className="plugin-warn">Named by {s.namedBy.join(', ')}. Stashed, it still runs when you type /{s.name}, but the model no longer picks it on its own.</span>}
+        </div>
+      ))}
+      {stashed.length > 0 && <p className="plugin-line muted">Stashed: the model does not see these, and /name still runs them.</p>}
+      {stashed.map((s) => (
+        <div key={s.dir} className="plugin-item row">
+          <span className="plugin-path">{s.name}</span>
+          <button className="pill small-pill" onClick={() => stash(s, false)}>Unstash</button>
+        </div>
+      ))}
+      {err && <p className="plugin-line plugin-warn">{err}</p>}
+      <p className="plugin-line muted">Stash adds disable-model-invocation: true to that skill's SKILL.md and changes nothing else. Transcripts stay on this Mac.</p>
     </div>
   );
 }

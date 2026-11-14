@@ -19,6 +19,7 @@ import { registerFlags } from './flags.js';
 import { DICTATION_OFF, keepActions, notetakerGates, sessionGates, startDecision, termsPlan } from './notetaker.js';
 import { createKeeper } from './keeper.js';
 import { contextBudget } from './context-budget.js';
+import { skillUsage, stashSkill } from './skill-usage.js';
 import { wouldBlock } from './guardrails.js';
 import { createPredicates } from './guardrails-predicates.js';
 import { createSuggester } from './suggest.js';
@@ -148,6 +149,16 @@ ipcMain.handle('keeper-errors-clear', () => keeper.clearErrors());
 // the report plugins read and show; each answers only while its plugin row is Quorum's
 const pluginOn = (id) => keeper.plugins().find((p) => p.id === id)?.owner === 'quorum';
 ipcMain.handle('plugin-context', () => { const b = brain(); return b && pluginOn('context') ? contextBudget({ root: b.root, vault: b.vault }) : null; });
+// transcripts are read on this Mac for skill names and dates only; counts per file are kept in memory between scans
+const skillScans = new Map();
+ipcMain.handle('plugin-skills', () => { const b = brain(); return b && pluginOn('skills') ? skillUsage({ root: b.root, cache: skillScans }) : null; });
+ipcMain.handle('plugin-skill-stash', (_e, dir, on) => {
+  const b = brain();
+  if (!b || !pluginOn('skills')) throw new Error('Skill usage is off');
+  const r = stashSkill(b.root, dir, on === true);
+  if (r.changed) log('skills', `${on === true ? 'stashed' : 'unstashed'} ${r.path}`);
+  return skillUsage({ root: b.root, cache: skillScans });
+});
 let helper;
 const asset = (name) => path.join(here, 'assets', name);
 // a meeting can have several capture segments (STOP, GO, STOP...); STOP deletes all of them
