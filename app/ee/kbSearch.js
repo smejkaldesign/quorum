@@ -1,29 +1,31 @@
 // Knowledge base search (Cloud edition; migration 0027, docs/specs/workspace-knowledge.md "Use"). Quorum chat, the
 // quorum CLI and the Quorum MCP server answer from every KB the asker can read. Every read goes through the signed-in
-// person's own Supabase session: kb_search runs as security invoker, so row level security (notes_select,
-// knowledge_bases_select, kb_folders_select) decides what comes back. The app holds no service key.
+// person's own Supabase session: kb_search runs as security invoker and the notes are read under notes_select, so
+// row level security decides what comes back. The app holds no service key.
 //
 // What this module gives main.js:
 //   search({ query, kb?, limit?, mode? })  -> { results: Hit[] }           kb is a KB id or name; mode 'all' (every
 //                                                                            word) falls back to 'any' when nothing matches
-//   read({ id? | path? })                  -> { note: Note }               id: the note's id; path: "KB/folder/.../title",
-//                                                                            or the note's own path
+//   read({ id? | path? })                  -> { note: Note }               id: the note's id; path: the note's own path,
+//                                                                            or "KB/folder/.../title"
 //   list()                                 -> { kbs: KbBrief[] }
 //   forChat(question)                      -> { block, hits } | null        the chat's context; never throws
 //   sources(labels, hits)                  -> source cards for the labels the answer cited
 //   available()                            -> boolean                      signed in with a workspace
-// Every method except forChat, sources and available resolves to { error: string } on a refusal.
+//   parseLink(url)                         -> { kbId, noteId } | null       a quorum://kb link
+// Every method except forChat, sources, available and parseLink resolves to { error: string } on a refusal.
 //
-//   Hit     { label?, noteId, kbId, kbName, folderId, folderPath: string[], path, title, snippet, rank, updatedAt, link, citation }
+//   Hit     { label?, body?, noteId, kbId, kbName, folderId, folderPath: string[], path, title, snippet, rank, updatedAt, link, citation }
 //   Note    { id, kbId, kbName, folderId, folderPath, path, title, body, updatedAt, link, citation }
 //   KbBrief { id, name, kind, role, isDefault, folders: string[] }   folders as "Parent/Child" paths
-import { plain } from './account.js';
-import { shapeKb } from './knowledgeBases.js';
+// Every name a person reads (KB, folders, path, title, snippet, body) goes through the opt-out redactor first, and
+// citations are built from the redacted parts.
+import { kbSession, titleOf } from './knowledgeBases.js';
 
 // what one chat question may take from the knowledge bases: as many results as the Agent OS search hints (main.js
 // searchHints asks for six), each excerpt and the whole block capped in characters, and the same six seconds a search
-// gets before Quorum answers without it
-export const KB_CHAT = { results: 6, excerpt: 700, total: 6000, timeoutMs: 6000 };
+// gets before Quorum answers without it. When the passages are short, the top notes' bodies are read instead
+export const KB_CHAT = { results: 6, excerpt: 700, total: 6000, timeoutMs: 6000, shortSnippets: 300, bodies: 2, bodyExcerpt: 2500 };
 const MAX_RESULTS = 50;
 const PAGE = 1000;
 const ULID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
@@ -41,28 +43,42 @@ export function parseKbLink(url) {
 export const kbPlace = (kbName, folderPath = []) => [kbName || 'Knowledge base', ...(folderPath ?? [])].join(' / ');
 export const citation = (h) => `${kbPlace(h.kbName, h.folderPath)} / ${h.title}`;
 
-const fileTitle = (p) => String(p ?? '').replace(/^.*\//, '').replace(/\.md$/, '');
 const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+const fileTitle = (p) => titleOf({ path: p });
 
-export function shapeHit(r, redact = (s) => s) {
-  const h = {
-    noteId: r.note_id, kbId: r.kb_id, kbName: r.kb_name ?? null, folderId: r.folder_id ?? null,
-    folderPath: Array.isArray(r.folder_path) ? r.folder_path.map(String) : [],
-    path: r.path ?? '', title: oneLine(redact(oneLine(r.title) || fileTitle(r.path))), snippet: oneLine(redact(String(r.snippet ?? ''))),
-    rank: Number(r.rank) || 0, updatedAt: r.updated_at ?? null,
+// the parts of a note's place a person reads, each through the redactor
+function named(r, redact) {
+  const red = (s) => oneLine(redact(oneLine(s)));
+  const n = {
+    kbName: r.kbName == null ? null : red(r.kbName),
+    folderPath: (r.folderPath ?? []).map((f) => red(f)),
+    path: r.path == null ? '' : red(r.path),
+    title: red(oneLine(r.title) || fileTitle(r.path)),
   };
-  return { ...h, link: kbLink(h.kbId, h.noteId), citation: citation(h) };
+  return { ...n, citation: citation(n) };
 }
 
-// the results as the block the agent reads, each under a label it cites (K1, K2, ...). Excerpts are cut to fit and a
-// result that would run past the total is left out, so the block never grows past what one question may take
-export function chatContext(hits, { excerpt = KB_CHAT.excerpt, total = KB_CHAT.total } = {}) {
+export function shapeHit(r, redact = (s) => s) {
+  const place = named({ kbName: r.kb_name ?? null, folderPath: Array.isArray(r.folder_path) ? r.folder_path.map(String) : [], path: r.path, title: r.title }, redact);
+  return {
+    noteId: r.note_id, kbId: r.kb_id, folderId: r.folder_id ?? null, ...place,
+    snippet: oneLine(redact(String(r.snippet ?? ''))), rank: Number(r.rank) || 0, updatedAt: r.updated_at ?? null,
+    link: kbLink(r.kb_id, r.note_id),
+  };
+}
+
+const cut = (s, max) => (s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s);
+
+// the results as the block the agent reads, each under a label it cites (K1, K2, ...). A result with a body (read
+// because the passages were short) shows the body; excerpts are cut to fit and a result that would run past the
+// total is left out, so the block never grows past what one question may take
+export function chatContext(hits, { excerpt = KB_CHAT.excerpt, bodyExcerpt = KB_CHAT.bodyExcerpt, total = KB_CHAT.total } = {}) {
   const used = [];
   const parts = [];
   let size = 0;
   for (const h of hits) {
     const label = `K${used.length + 1}`;
-    const text = h.snippet.length > excerpt ? `${h.snippet.slice(0, excerpt - 1).trimEnd()}…` : h.snippet;
+    const text = h.body ? cut(h.body.trim(), bodyExcerpt) : cut(h.snippet, excerpt);
     const part = `[${label}] ${h.citation}${h.updatedAt ? ` (updated ${String(h.updatedAt).slice(0, 10)})` : ''}\n${text || '(no matching passage)'}`;
     if (size + part.length > total) break;
     size += part.length + 2;
@@ -98,7 +114,7 @@ export function folderNames(tree = [], folderId) {
 }
 
 // "Handbook/Policies/Travel/Travel policy": the KB by name, folders by name, then a note by title or file name.
-// Names compare without case. Returns { kb, folderId, name } or { error }
+// Names compare without case. Returns { kb, folderId, name } or { error }; an error names only what was typed
 export function resolvePath(kbs, path) {
   const segs = String(path ?? '').split('/').map((s) => s.trim()).filter(Boolean);
   if (segs.length < 2) return { error: 'A knowledge base path is "KB/folder/note title", with at least the KB and the note.' };
@@ -109,125 +125,130 @@ export function resolvePath(kbs, path) {
   let folderId = null;
   for (const seg of segs.slice(1, -1)) {
     const f = level.find((n) => same(n.name, seg));
-    if (!f) return { error: `No folder "${seg}" in ${kbPlace(kb.name, folderNames(kb.folders, folderId))}.` };
+    if (!f) return { error: `No folder "${seg}" on that path.` };
     folderId = f.id;
     level = f.children;
   }
   return { kb, folderId, name: segs.at(-1).replace(/\.md$/i, '') };
 }
 
+// the best candidate among a folder's notes for a typed name: an exact title first, then an exact file name. The rows
+// come ordered by path, then id, so the same name always picks the same note
+export function pickByName(rows, name) {
+  const want = String(name ?? '').toLowerCase();
+  return rows.find((r) => oneLine(r.frontmatter?.title).toLowerCase() === want) ?? rows.find((r) => fileTitle(r.path).toLowerCase() === want) ?? null;
+}
+
 const withTimeout = (p, ms) => Promise.race([p, new Promise((resolve) => { setTimeout(() => resolve(null), ms).unref?.(); })]);
 
 export function createKbSearch({ account, redact = (s) => s, log = () => {} }) {
-  const fail = (err, fallback) => { log('kb search', err?.message ?? err); return { error: plain(err, fallback) }; };
-  const ready = () => {
-    if (!account.client?.()) return { error: 'Knowledge bases need a Quorum Cloud account, and hosted accounts are not set up in this build.' };
-    const s = account.state();
-    if (!s.signedIn) return { error: 'Sign in to Quorum first.' };
-    if (!s.workspace) return { error: 'Pick a workspace in Quorum first.' };
-    return null;
+  const { fail, ready, ws, rpc, call, listKbs } = kbSession({ account, log, tag: 'kb search' });
+  const NOTE_COLUMNS = 'id, kb_id, folder_id, path, frontmatter, body, updated_at';
+  // live notes in the KBs the caller can read; row level security reads under the same rule
+  const notes = (cols, kbIds) => account.client().from('notes').select(cols).eq('workspace_id', ws()).in('kb_id', kbIds).is('deleted_at', null);
+  const rows = async (query) => {
+    const out = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const { data, error } = await query().order('path').order('id').range(offset, offset + PAGE - 1);
+      if (error) throw error;
+      out.push(...(data ?? []));
+      if ((data ?? []).length < PAGE) break;
+    }
+    return out;
   };
-  const ws = () => account.state().workspace.id;
-  const guarded = (fallback, fn) => async (...args) => {
-    const no = ready(); if (no) return no;
-    try { return await fn(...args); } catch (err) { return fail(err, fallback); }
+  const shapeNote = (row, kbs) => {
+    const kb = kbs.find((k) => k.id === row.kb_id);
+    const place = named({ kbName: kb?.name ?? null, folderPath: kb ? folderNames(kb.folders, row.folder_id) : [], path: row.path, title: row.frontmatter?.title }, redact);
+    return { id: row.id, kbId: row.kb_id, folderId: row.folder_id ?? null, ...place, body: redact(String(row.body ?? '')), updatedAt: row.updated_at ?? null, link: kbLink(row.kb_id, row.id) };
   };
-  const loadKbs = async () => {
-    const { data, error } = await account.client().rpc('kb_list', { workspace_id: ws() });
-    if (error) throw Object.assign(new Error(error.message), { code: error.code ?? '' });
-    return (data ?? []).map(shapeKb);
-  };
-  const rpcSearch = async ({ query, onlyKb, limit, mode }) => {
-    const { data, error } = await account.client().rpc('kb_search', { workspace_id: ws(), query, only_kb: onlyKb, max_results: limit, mode });
-    if (error) throw Object.assign(new Error(error.message), { code: error.code ?? '' });
-    return (data ?? []).map((r) => shapeHit(r, redact));
-  };
-  const runSearch = async ({ query, kb = null, limit = 8, mode = null } = {}) => {
+  const match = async ({ query, onlyKb, limit, mode }) => ((await rpc('kb_search', { workspace_id: ws(), query, only_kb: onlyKb, max_results: limit, mode })) ?? []).map((r) => shapeHit(r, redact));
+
+  const search = async ({ query, kb = null, limit = 8, mode = null } = {}) => {
     const q = String(query ?? '').trim().slice(0, 1000);
     if (!q) return { error: 'Search for at least one word.' };
+    if (mode && mode !== 'all' && mode !== 'any') return { error: 'mode is all or any.' };
     const n = Math.max(1, Math.min(MAX_RESULTS, Number.parseInt(limit, 10) || 8));
     let onlyKb = null;
     if (kb) {
       if (ULID.test(String(kb))) onlyKb = String(kb);
       else {
-        const hit = (await loadKbs()).find((k) => k.name.toLowerCase() === String(kb).trim().toLowerCase());
+        const hit = (await listKbs()).find((k) => k.name.toLowerCase() === String(kb).trim().toLowerCase());
         if (!hit) return { error: `No knowledge base named "${kb}" that you can read.` };
         onlyKb = hit.id;
       }
     }
-    if (mode && mode !== 'all' && mode !== 'any') return { error: 'mode is all or any.' };
-    let results = await rpcSearch({ query: q, onlyKb, limit: n, mode: mode ?? 'all' });
+    let results = await match({ query: q, onlyKb, limit: n, mode: mode ?? 'all' });
     // a question in plain words rarely has every word in one note; with no mode asked for, any word will do
-    if (!results.length && !mode) results = await rpcSearch({ query: q, onlyKb, limit: n, mode: 'any' });
+    if (!results.length && !mode) results = await match({ query: q, onlyKb, limit: n, mode: 'any' });
     return { results };
   };
 
-  const NOTE_COLUMNS = 'id, kb_id, folder_id, path, frontmatter, body, updated_at';
-  const shapeNote = (row, kbs) => {
-    const kb = kbs.find((k) => k.id === row.kb_id);
-    const n = {
-      id: row.id, kbId: row.kb_id, kbName: kb?.name ?? null, folderId: row.folder_id ?? null,
-      folderPath: kb ? folderNames(kb.folders, row.folder_id) : [], path: row.path,
-      title: oneLine(redact(oneLine(row.frontmatter?.title) || fileTitle(row.path))), body: redact(String(row.body ?? '')), updatedAt: row.updated_at ?? null,
-    };
-    return { ...n, link: kbLink(n.kbId, n.id), citation: citation(n) };
-  };
-  const notes = () => account.client().from('notes').select(NOTE_COLUMNS).eq('workspace_id', ws()).not('kb_id', 'is', null).is('deleted_at', null);
-  const first = async (query) => { const { data, error } = await query.limit(1); if (error) throw error; return data?.[0] ?? null; };
-
-  const api = {
-    available: () => !ready(),
-    search: guarded('The knowledge bases could not be searched.', runSearch),
-    read: guarded('That note could not be read.', async ({ id = null, path = null } = {}) => {
-      const kbs = await loadKbs();
-      // a note outside every readable KB looks the same as one that does not exist
-      const missing = { error: 'No knowledge base note there that you can read.' };
-      if (id) {
-        if (!ULID.test(String(id))) return { error: 'A note id is 26 letters and digits, as kb_search returns it.' };
-        const row = await first(notes().eq('id', String(id)));
-        return row && kbs.some((k) => k.id === row.kb_id) ? { note: shapeNote(row, kbs) } : missing;
-      }
-      if (!path) return { error: 'Give a note id or a knowledge base path.' };
-      const exact = await first(notes().eq('path', String(path)));
-      if (exact && kbs.some((k) => k.id === exact.kb_id)) return { note: shapeNote(exact, kbs) };
-      const at = resolvePath(kbs, path);
-      if (at.error) return at;
-      const rows = [];
-      for (let offset = 0; ; offset += PAGE) {
-        let q = account.client().from('notes').select('id, path, frontmatter').eq('workspace_id', ws()).eq('kb_id', at.kb.id).is('deleted_at', null);
-        q = at.folderId ? q.eq('folder_id', at.folderId) : q.is('folder_id', null);
-        const { data, error } = await q.order('path').order('id').range(offset, offset + PAGE - 1);
-        if (error) throw error;
-        rows.push(...(data ?? []));
-        if ((data ?? []).length < PAGE) break;
-      }
-      const want = at.name.toLowerCase();
-      const hit = rows.find((r) => oneLine(r.frontmatter?.title).toLowerCase() === want) ?? rows.find((r) => fileTitle(r.path).toLowerCase() === want);
-      if (!hit) return missing;
-      const row = await first(notes().eq('id', hit.id));
+  // a note by its id, by its own path, or by "KB/folder/title". Every lookup is limited to the KBs the caller can
+  // read; a path tries the note's own path first, then the KB path by title, then by file name
+  const read = async ({ id = null, path = null } = {}) => {
+    const missing = { error: 'No knowledge base note there that you can read.' };
+    if (id && !ULID.test(String(id))) return { error: 'A note id is 26 letters and digits, as kb_search returns it.' };
+    if (!id && !path) return { error: 'Give a note id or a knowledge base path.' };
+    const kbs = await listKbs();
+    const ids = kbs.map((k) => k.id);
+    if (!ids.length) return missing;
+    const one = async (q) => { const { data, error } = await q.order('updated_at', { ascending: false }).order('id').limit(1); if (error) throw error; return data?.[0] ?? null; };
+    if (id) {
+      const row = await one(notes(NOTE_COLUMNS, ids).eq('id', String(id)));
       return row ? { note: shapeNote(row, kbs) } : missing;
-    }),
-    list: guarded('The knowledge bases could not be read.', async () => ({
-      kbs: (await loadKbs()).map((k) => ({ id: k.id, name: k.name, kind: k.kind, role: k.role, isDefault: k.isDefault, folders: folderPaths(k.folders) })),
+    }
+    const exact = await one(notes(NOTE_COLUMNS, ids).eq('path', String(path)));
+    if (exact) return { note: shapeNote(exact, kbs) };
+    const at = resolvePath(kbs, path);
+    if (at.error) return at;
+    const inFolder = await rows(() => {
+      const q = notes('id, path, frontmatter', [at.kb.id]);
+      return at.folderId ? q.eq('folder_id', at.folderId) : q.is('folder_id', null);
+    });
+    const hit = pickByName(inFolder, at.name);
+    if (!hit) return missing;
+    const row = await one(notes(NOTE_COLUMNS, [at.kb.id]).eq('id', hit.id));
+    return row ? { note: shapeNote(row, kbs) } : missing;
+  };
+
+  // short passages tell the agent little; the top notes' bodies (redacted) go in their place, within the same cap
+  const withBodies = async (hits) => {
+    const short = hits.reduce((n, h) => n + h.snippet.length, 0) < KB_CHAT.shortSnippets;
+    if (!short) return hits;
+    const top = hits.slice(0, KB_CHAT.bodies);
+    const { data, error } = await notes('id, body', [...new Set(top.map((h) => h.kbId))]).in('id', top.map((h) => h.noteId));
+    if (error) throw error;
+    const body = new Map((data ?? []).map((r) => [r.id, redact(String(r.body ?? ''))]));
+    return hits.map((h) => (body.get(h.noteId) ? { ...h, body: body.get(h.noteId) } : h));
+  };
+
+  return {
+    available: () => !ready(),
+    search: call(false, 'The knowledge bases could not be searched.', search),
+    read: call(false, 'That note could not be read.', read),
+    list: call(false, 'The knowledge bases could not be read.', async () => ({
+      kbs: (await listKbs()).map((k) => ({ id: k.id, name: oneLine(redact(k.name)), kind: k.kind, role: k.role, isDefault: k.isDefault, folders: folderPaths(k.folders).map((f) => f.split('/').map((s) => oneLine(redact(s))).join('/')) })),
     })),
     // the chat's knowledge base context: the best few results for the question, in any-word mode, within the
     // question's budget. Signed out, slow or failing, the chat answers from the Agent OS alone
     forChat: async (question) => {
       if (ready()) return null;
       try {
-        const results = await withTimeout(rpcSearch({ query: String(question ?? '').slice(0, 1000), onlyKb: null, limit: KB_CHAT.results, mode: 'any' }), KB_CHAT.timeoutMs);
-        return results?.length ? chatContext(results) : null;
-      } catch (err) { log('kb search', err?.message ?? err); return null; }
+        const run = async () => {
+          const hits = await match({ query: String(question ?? '').slice(0, 1000), onlyKb: null, limit: KB_CHAT.results, mode: 'any' });
+          return hits.length ? withBodies(hits) : hits;
+        };
+        const hits = await withTimeout(run(), KB_CHAT.timeoutMs);
+        return hits?.length ? chatContext(hits) : null;
+      } catch (err) { fail(err, ''); return null; }
     },
     sources: kbSources,
     parseLink: parseKbLink,
   };
-  return api;
 }
 
 // the MCP tools and CLI commands reach this through the running app's control socket (main.js control()): the app
 // holds the session, so `quorum kb ...` reads as the signed-in person
-export const KB_COMMANDS = ['kb_search', 'kb_read', 'kb_list'];
 export function runKbCommand(kb, cmd, args = {}) {
   if (cmd === 'kb_search') return kb.search({ query: args.query, kb: args.kb ?? null, limit: args.limit ?? 8, mode: args.mode ?? null });
   if (cmd === 'kb_read') return kb.read({ id: args.id ?? null, path: args.path ?? null });

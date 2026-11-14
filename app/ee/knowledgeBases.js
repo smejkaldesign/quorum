@@ -97,12 +97,14 @@ export function accessRows(list) {
   return { rows };
 }
 
-const titleOf = (n) => n.frontmatter?.title || String(n.path ?? '').replace(/^.*\//, '').replace(/\.md$/, '');
+export const titleOf = (n) => n.frontmatter?.title || String(n.path ?? '').replace(/^.*\//, '').replace(/\.md$/, '');
 
-export function createKnowledgeBases({ account, log = () => {} }) {
-  const fail = (err, fallback) => { log('kb', err?.message ?? err); return { error: plain(err, fallback) }; };
+// what every KB call shares (this module and ee/kbSearch.js): the readiness check with its refusals, the workspace,
+// the RPC wrapper, and call(), which puts one handler behind the check and turns a failure into a sentence
+export function kbSession({ account, log = () => {}, tag = 'kb' }) {
+  const fail = (err, fallback) => { log(tag, err?.message ?? err); return { error: plain(err, fallback) }; };
   const ready = (admin = false) => {
-    if (!account.client()) return { error: 'Hosted accounts are not set up in this build.' };
+    if (!account.client?.()) return { error: 'Hosted accounts are not set up in this build.' };
     const s = account.state();
     if (!s.signedIn) return { error: 'Sign in first.' };
     if (!s.workspace) return { error: 'Pick a workspace first.' };
@@ -120,10 +122,16 @@ export function createKnowledgeBases({ account, log = () => {} }) {
     const no = ready(admin); if (no) return no;
     try { return await fn(...args); } catch (err) { return fail(err, fallback); }
   };
+  const listKbs = async () => ((await rpc('kb_list', { workspace_id: ws() })) ?? []).map(shapeKb);
+  return { fail, ready, ws, rpc, call, listKbs };
+}
+
+export function createKnowledgeBases({ account, log = () => {} }) {
+  const { ws, rpc, call, listKbs } = kbSession({ account, log });
   const need = (v, what) => { if (!v || typeof v !== 'string') throw Object.assign(new Error(`Pick the ${what} first.`), { code: 'P0001' }); return v; };
 
   const handlers = {
-    'kb-list': call(false, 'The knowledge bases could not be read.', async () => ({ kbs: ((await rpc('kb_list', { workspace_id: ws() })) ?? []).map(shapeKb) })),
+    'kb-list': call(false, 'The knowledge bases could not be read.', async () => ({ kbs: await listKbs() })),
     'kb-create': call(true, 'The knowledge base could not be created.', async (draft = {}) => {
       const n = checkName(draft.name); if (n.error) return n;
       const kind = draft.kind ?? 'general';

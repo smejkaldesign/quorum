@@ -146,16 +146,16 @@ export function runAgent({ question, history, transcript, root, model, owner, on
   });
 }
 
-// "Sources:" block at the end becomes source cards; only files that exist in the brain count. A knowledge base label
-// (K1, K2, ...) passes through as kb, and main.js turns the ones it handed out into cards
+// "Sources:" block at the end becomes source cards; only files that exist in the brain count
 export function splitSources(text, root) {
   const m = text.match(/\n\s*\**Sources:?\**\s*\n([\s\S]*)$/i);
   if (!m) return { text: text.trim(), files: [], kb: [] };
   const lines = m[1].split('\n').map((l) => l.replace(/^[\s\-*\d.[\]()`]+/, '').replace(/[`)\]]+$/, '').trim());
-  const kb = [...new Set(m[1].split('\n').map((l) => l.match(/^[\s\-*`[(]*K(\d{1,2})\b/i)?.[1]).filter(Boolean).map((d) => `K${Number(d)}`))];
   const files = lines
     .filter((l) => l.endsWith('.md'))
     .map((rel) => (path.isAbsolute(rel) ? rel : path.join(root, rel)))
     .filter((abs) => abs.startsWith(root) && existsSync(abs));
+  // a knowledge base label (K1, K2, ...) passes through as kb; main.js turns the ones it handed out into cards
+  const kb = [...new Set(lines.map((l) => l.match(/^K(\d{1,2})\b/i)?.[1]).filter(Boolean).map((d) => `K${Number(d)}`))];
   return { text: text.slice(0, m.index).trim(), files: [...new Set(files)], kb };
 }

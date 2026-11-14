@@ -1,21 +1,25 @@
-// Knowledge base search (ee/kbSearch.js): result shaping, citations, the chat's context block and source cards, path
-// resolution, and the calls each method makes. The server's rights are tested in supabase/tests/kb_search.sql; here a
-// fake client records calls and answers with canned rows.
+// Knowledge base search (ee/kbSearch.js): result shaping, redaction, citations, the chat's context block and source
+// cards, path resolution, and the calls each method makes. The server's rights are tested in
+// supabase/tests/kb_search.sql; here a fake client records calls and answers with canned rows.
 import { describe, expect, it } from 'vitest';
 import { splitSources } from '../agent.js';
 
-const { KB_CHAT, chatContext, citation, createKbSearch, folderNames, folderPaths, kbLink, kbPlace, kbSources, parseKbLink, resolvePath, runKbCommand, shapeHit } = await import('../ee/kbSearch.js');
+const { KB_CHAT, chatContext, citation, createKbSearch, folderNames, folderPaths, kbLink, kbPlace, kbSources, parseKbLink, pickByName, resolvePath, runKbCommand, shapeHit } = await import('../ee/kbSearch.js');
 const { shapeKb } = await import('../ee/knowledgeBases.js');
 
 const KB = '01KB00000000000000000000K1';
 const KB2 = '01KB00000000000000000000K2';
 const N1 = '01KB000000000000000000N001';
 const N2 = '01KB000000000000000000N002';
+const N3 = '01KB000000000000000000N003';
 const ROW = { note_id: N1, kb_id: KB, kb_name: 'Handbook', folder_id: 'F2', folder_path: ['Policies', 'Travel'], path: 'handbook/travel.md', title: 'Travel policy', snippet: 'The per diem\ncovers  meals', rank: 0.4, user_id: 'u1', updated_at: '2026-11-01T10:00:00Z' };
 const KB_ROWS = [
   { id: KB, name: 'Handbook', kind: 'general', is_default: true, role: 'reader', folders: [{ id: 'F1', parent_id: null, name: 'Policies', position: 0 }, { id: 'F2', parent_id: 'F1', name: 'Travel', position: 0 }], access: null },
   { id: KB2, name: 'Leadership', kind: 'general', is_default: false, role: 'admin', folders: [], access: [] },
 ];
+// the app's redactor works line by line (suggest.js redactLines): a line naming an opted-out customer is replaced whole
+const WITHHELD = '[withheld: opted-out customer]';
+const redact = (t) => String(t).split('\n').map((l) => (/acme/i.test(l) ? WITHHELD : l)).join('\n');
 
 describe('result shaping and citations', () => {
   it('shapes a search row with its place, link and citation', () => {
@@ -34,9 +38,14 @@ describe('result shaping and citations', () => {
     expect(h.citation).toBe('Handbook / travel');
   });
 
-  it('runs the snippet through the redactor', () => {
-    const h = shapeHit({ ...ROW, snippet: 'met with Acme about it' }, (s) => s.replace('Acme', '[withheld]'));
-    expect(h.snippet).toBe('met with [withheld] about it');
+  it('withholds an opted-out name wherever it shows: KB, folder, path, file name, title and snippet', () => {
+    const h = shapeHit({ ...ROW, kb_name: 'Acme rollout', folder_path: ['Customers', 'Acme'], path: 'customers/acme-renewal.md', title: '', snippet: 'met with Acme about it' }, redact);
+    expect(h).toMatchObject({ kbName: WITHHELD, folderPath: ['Customers', WITHHELD], path: WITHHELD, title: WITHHELD, snippet: WITHHELD });
+    expect(h.citation).toBe(`${WITHHELD} / Customers / ${WITHHELD} / ${WITHHELD}`);
+    expect(JSON.stringify(h)).not.toMatch(/acme/i);
+    const { hits } = chatContext([h]);
+    expect(chatContext([h]).block).not.toMatch(/acme/i);
+    expect(JSON.stringify(kbSources(['K1'], hits))).not.toMatch(/acme/i);
   });
 
   it('formats places and citations', () => {
@@ -74,6 +83,15 @@ describe('the chat context and its sources', () => {
     expect(full.block.length).toBeLessThanOrEqual(KB_CHAT.total);
   });
 
+  it('shows a body in place of its snippet, cut to the body excerpt, and still within the total', () => {
+    const withBody = { ...hits[0], body: 'x'.repeat(5000) };
+    const c = chatContext([withBody, { ...hits[1], body: 'y'.repeat(5000) }, hits[1]]);
+    const first = c.block.split('\n\n')[0].split('\n')[1];
+    expect(first.length).toBe(KB_CHAT.bodyExcerpt);
+    expect(c.block.length).toBeLessThanOrEqual(KB_CHAT.total);
+    expect(c.hits.map((h) => h.label)).toEqual(['K1', 'K2', 'K3']);
+  });
+
   it('is null with nothing to say', () => {
     expect(chatContext([])).toBeNull();
   });
@@ -104,28 +122,43 @@ describe('folders and paths', () => {
     expect(folderNames(kbs[0].folders, 'gone')).toEqual([]);
   });
 
-  it('resolves "KB/folder/title" without case', () => {
+  it('resolves "KB/folder/title" without case, and names only what was typed when it cannot', () => {
     expect(resolvePath(kbs, 'handbook/policies/TRAVEL/Travel policy.md')).toMatchObject({ kb: { id: KB }, folderId: 'F2', name: 'Travel policy' });
     expect(resolvePath(kbs, 'Leadership/Board plan')).toMatchObject({ kb: { id: KB2 }, folderId: null, name: 'Board plan' });
     expect(resolvePath(kbs, 'Handbook').error).toMatch(/at least the KB and the note/);
     expect(resolvePath(kbs, 'Secret/x').error).toMatch(/No knowledge base named "Secret"/);
-    expect(resolvePath(kbs, 'Handbook/Nope/x').error).toMatch(/No folder "Nope" in Handbook/);
+    expect(resolvePath(kbs, 'Handbook/Nope/x').error).toBe('No folder "Nope" on that path.');
+  });
+
+  it('picks a note by title before file name, the first in path order', () => {
+    const rows = [{ id: 'a', path: 'a/plan.md', frontmatter: { title: 'Other' } }, { id: 'b', path: 'b/x.md', frontmatter: { title: 'Plan' } }, { id: 'c', path: 'c/x.md', frontmatter: { title: 'plan' } }];
+    expect(pickByName(rows, 'plan').id).toBe('b');
+    expect(pickByName(rows.slice(0, 1), 'plan').id).toBe('a');
+    expect(pickByName(rows, 'missing')).toBeNull();
   });
 });
 
-// a client that records rpc and table calls; rpc answers come from `answers`, table reads from `tables`
+// a client that records rpc and table calls. rpc answers come from `answers` (data, or a function returning
+// { data, error }); table reads return `tables[table]` rows that pass the eq, in and is filters, ordered as asked
 function fakeAccount({ answers = {}, tables = {}, state = { signedIn: true, workspace: { id: 'W', role: 'member' }, userId: 'u1' } } = {}) {
   const calls = [];
   const query = (table) => {
-    const q = { table, filters: [] };
+    const q = { table, filters: [], orders: [] };
+    const result = () => {
+      calls.push(['from', q]);
+      let rows = (tables[table] ?? []).filter((r) => q.filters.every(([op, k, v]) => (op === 'eq' ? r[k] === v : op === 'in' ? v.includes(r[k]) : op === 'is' ? (r[k] ?? null) === v : true)));
+      for (const [k, asc] of [...q.orders].reverse()) rows = [...rows].sort((a, b) => String(a[k]).localeCompare(String(b[k])) * (asc ? 1 : -1));
+      return rows;
+    };
     const chain = {
       select: (cols) => { q.cols = cols; return chain; },
       eq: (k, v) => { q.filters.push(['eq', k, v]); return chain; },
+      in: (k, v) => { q.filters.push(['in', k, v]); return chain; },
       is: (k, v) => { q.filters.push(['is', k, v]); return chain; },
-      not: (k, op, v) => { q.filters.push(['not', k, op, v]); return chain; },
-      order: () => chain,
-      range: () => { calls.push(['from', q]); return Promise.resolve({ data: tables[table]?.(q) ?? [], error: null }); },
-      limit: () => { calls.push(['from', q]); return Promise.resolve({ data: tables[table]?.(q) ?? [], error: null }); },
+      order: (k, o = {}) => { q.orders.push([k, o.ascending !== false]); return chain; },
+      range: (a, b) => Promise.resolve({ data: result().slice(a, b + 1), error: null }),
+      limit: (n) => Promise.resolve({ data: result().slice(0, n), error: null }),
+      then: (ok, bad) => Promise.resolve({ data: result(), error: null }).then(ok, bad),
     };
     return chain;
   };
@@ -136,6 +169,7 @@ function fakeAccount({ answers = {}, tables = {}, state = { signedIn: true, work
   return { account: { client: () => client, state: () => state }, calls };
 }
 const has = (q, ...f) => q.filters.some((x) => JSON.stringify(x) === JSON.stringify(f));
+const NOTE = { id: N1, kb_id: KB, folder_id: 'F2', path: 'handbook/travel.md', frontmatter: { title: 'Travel policy' }, body: 'Ask Acme first.\nThen book.', updated_at: '2026-11-02', workspace_id: 'W', deleted_at: null };
 
 describe('the calls each method makes', () => {
   it('searches as the signed-in person in their workspace, and falls back to any word', async () => {
@@ -162,71 +196,96 @@ describe('the calls each method makes', () => {
     expect((await kb.search({ query: 'x', mode: 'some' })).error).toMatch(/all or any/);
   });
 
-  it('refuses plainly when signed out or with no workspace, and never calls the server', async () => {
+  it('refuses with the same sentences as the rest of the KB calls, and never calls the server', async () => {
     const out = fakeAccount({ state: { signedIn: false } });
-    expect((await createKbSearch({ account: out.account }).search({ query: 'x' })).error).toBe('Sign in to Quorum first.');
+    expect((await createKbSearch({ account: out.account }).search({ query: 'x' })).error).toBe('Sign in first.');
     const none = fakeAccount({ state: { signedIn: true, workspace: null } });
-    expect((await createKbSearch({ account: none.account }).list()).error).toBe('Pick a workspace in Quorum first.');
+    expect((await createKbSearch({ account: none.account }).list()).error).toBe('Pick a workspace first.');
     expect(createKbSearch({ account: none.account }).available()).toBe(false);
     expect(await createKbSearch({ account: none.account }).forChat('anything')).toBeNull();
     expect([...out.calls, ...none.calls]).toEqual([]);
-    expect((await createKbSearch({ account: { client: () => null, state: () => ({}) } }).search({ query: 'x' })).error).toMatch(/Quorum Cloud/);
+    expect((await createKbSearch({ account: { client: () => null, state: () => ({}) } }).search({ query: 'x' })).error).toBe('Hosted accounts are not set up in this build.');
   });
 
   it('turns a server failure into a plain sentence', async () => {
     const { account } = fakeAccount({ answers: { kb_search: () => ({ data: null, error: { message: 'relation "x" does not exist', code: '42P01' } }) } });
     const logged = [];
     expect(await createKbSearch({ account, log: (...a) => logged.push(a) }).search({ query: 'x' })).toEqual({ error: 'The knowledge bases could not be searched.' });
-    expect(logged).toHaveLength(1);
+    expect(logged).toEqual([['kb search', 'relation "x" does not exist']]);
   });
 
-  it('gives chat the best few results in any-word mode, and nothing when the search fails', async () => {
-    const { account, calls } = fakeAccount({ answers: { kb_search: [ROW] } });
+  it('gives chat the best few results in any-word mode, passages only when they are long enough', async () => {
+    const long = { ...ROW, snippet: 'p'.repeat(400) };
+    const { account, calls } = fakeAccount({ answers: { kb_search: [long] }, tables: { notes: [NOTE] } });
     const c = await createKbSearch({ account }).forChat('What is the travel policy?');
     expect(calls).toEqual([['rpc', 'kb_search', { workspace_id: 'W', query: 'What is the travel policy?', only_kb: null, max_results: KB_CHAT.results, mode: 'any' }]]);
     expect(c.hits[0]).toMatchObject({ label: 'K1', noteId: N1 });
+    expect(c.hits[0].body).toBeUndefined();
     const broken = fakeAccount({ answers: { kb_search: () => { throw new Error('offline'); } } });
     expect(await createKbSearch({ account: broken.account, log: () => {} }).forChat('x')).toBeNull();
   });
 
-  it('reads a note by id through the notes table, KB notes only, with the body redacted', async () => {
-    const note = { id: N1, kb_id: KB, folder_id: 'F2', path: 'handbook/travel.md', frontmatter: { title: 'Travel policy' }, body: 'Ask Acme first.', updated_at: 't' };
-    const { account, calls } = fakeAccount({ answers: { kb_list: KB_ROWS }, tables: { notes: (q) => (has(q, 'eq', 'id', N1) ? [note] : []) } });
-    const kb = createKbSearch({ account, redact: (s) => s.replace('Acme', '[withheld]') });
+  it('reads the top bodies, redacted, when the passages are short', async () => {
+    const n2 = { ...NOTE, id: N2, kb_id: KB2, body: 'Second body.' };
+    const n3 = { ...NOTE, id: N3, body: 'Third body.' };
+    const rows = [ROW, { ...ROW, note_id: N2, kb_id: KB2 }, { ...ROW, note_id: N3 }];
+    const { account, calls } = fakeAccount({ answers: { kb_search: rows }, tables: { notes: [NOTE, n2, n3] } });
+    const c = await createKbSearch({ account, redact }).forChat('travel');
+    expect(c.hits.map((h) => h.body ?? null)).toEqual([`${WITHHELD}\nThen book.`, 'Second body.', null]);
+    expect(c.block).not.toMatch(/acme/i);
+    const read = calls.find((x) => x[0] === 'from')[1];
+    expect(has(read, 'in', 'id', [N1, N2]) && has(read, 'in', 'kb_id', [KB, KB2]) && has(read, 'is', 'deleted_at', null)).toBe(true);
+  });
+
+  it('reads a note by id among the readable KBs, with every name and the body redacted', async () => {
+    const acme = { ...NOTE, path: 'customers/acme.md', frontmatter: {} };
+    const { account, calls } = fakeAccount({ answers: { kb_list: KB_ROWS }, tables: { notes: [acme] } });
+    const kb = createKbSearch({ account, redact });
     const r = await kb.read({ id: N1 });
-    expect(r.note).toEqual({ id: N1, kbId: KB, kbName: 'Handbook', folderId: 'F2', folderPath: ['Policies', 'Travel'], path: 'handbook/travel.md', title: 'Travel policy', body: 'Ask [withheld] first.', updatedAt: 't', link: kbLink(KB, N1), citation: 'Handbook / Policies / Travel / Travel policy' });
+    expect(r.note).toEqual({ id: N1, kbId: KB, kbName: 'Handbook', folderId: 'F2', folderPath: ['Policies', 'Travel'], path: WITHHELD, title: WITHHELD, body: `${WITHHELD}\nThen book.`, updatedAt: '2026-11-02', link: kbLink(KB, N1), citation: `Handbook / Policies / Travel / ${WITHHELD}` });
     const read = calls.find((c) => c[0] === 'from')[1];
     expect(read.table).toBe('notes');
-    expect(has(read, 'eq', 'workspace_id', 'W') && has(read, 'not', 'kb_id', 'is', null) && has(read, 'is', 'deleted_at', null)).toBe(true);
+    expect(has(read, 'eq', 'workspace_id', 'W') && has(read, 'in', 'kb_id', [KB, KB2]) && has(read, 'is', 'deleted_at', null)).toBe(true);
     expect((await kb.read({ id: N2 })).error).toMatch(/No knowledge base note there/);
     expect((await kb.read({ id: 'x' })).error).toMatch(/26 letters/);
     expect((await kb.read({})).error).toMatch(/note id or a knowledge base path/);
   });
 
-  it('a note whose KB is not in the readable list reads as missing', async () => {
-    const own = { id: N1, kb_id: '01KB00000000000000000000K9', folder_id: null, path: 'mine.md', frontmatter: {}, body: 'mine', updated_at: 't' };
-    const { account } = fakeAccount({ answers: { kb_list: KB_ROWS }, tables: { notes: () => [own] } });
-    expect((await createKbSearch({ account }).read({ id: N1 })).error).toMatch(/No knowledge base note there/);
+  it('a note in a KB the caller cannot read reads as missing, by id and by path', async () => {
+    const elsewhere = { ...NOTE, kb_id: '01KB00000000000000000000K9' };
+    const { account } = fakeAccount({ answers: { kb_list: KB_ROWS }, tables: { notes: [elsewhere] } });
+    const kb = createKbSearch({ account });
+    expect((await kb.read({ id: N1 })).error).toMatch(/No knowledge base note there/);
+    expect((await kb.read({ path: 'handbook/travel.md' })).error).toMatch(/No knowledge base note there/);
+    const nothing = fakeAccount({ answers: { kb_list: [] }, tables: { notes: [NOTE] } });
+    expect((await createKbSearch({ account: nothing.account }).read({ id: N1 })).error).toMatch(/No knowledge base note there/);
   });
 
-  it('reads a note by "KB/folder/title", in that folder only', async () => {
-    const listed = [{ id: N2, path: 'other.md', frontmatter: { title: 'Other' } }, { id: N1, path: 'handbook/travel.md', frontmatter: { title: 'Travel policy' } }];
-    const note = { id: N1, kb_id: KB, folder_id: 'F2', path: 'handbook/travel.md', frontmatter: { title: 'Travel policy' }, body: 'Trains.', updated_at: 't' };
-    const { account, calls } = fakeAccount({
-      answers: { kb_list: KB_ROWS },
-      tables: { notes: (q) => (q.cols === 'id, path, frontmatter' ? listed : has(q, 'eq', 'id', N1) ? [note] : []) },
-    });
-    const r = await createKbSearch({ account }).read({ path: 'Handbook/Policies/Travel/travel policy' });
-    expect(r.note.id).toBe(N1);
-    const listing = calls.map((c) => c[1]).find((q) => q.cols === 'id, path, frontmatter');
-    expect(has(listing, 'eq', 'kb_id', KB) && has(listing, 'eq', 'folder_id', 'F2')).toBe(true);
+  it('reads by the note\'s own path first, the newest when two match', async () => {
+    const older = { ...NOTE, id: N2, updated_at: '2026-10-01' };
+    const { account } = fakeAccount({ answers: { kb_list: KB_ROWS }, tables: { notes: [older, NOTE] } });
+    expect((await createKbSearch({ account }).read({ path: 'handbook/travel.md' })).note.id).toBe(N1);
   });
 
-  it('lists readable KBs with folder paths', async () => {
-    const { account } = fakeAccount({ answers: { kb_list: KB_ROWS } });
-    expect(await createKbSearch({ account }).list()).toEqual({ kbs: [
+  it('reads by "KB/folder/title", in that folder only, falling back to the file name', async () => {
+    const other = { ...NOTE, id: N2, path: 'handbook/other.md', frontmatter: { title: 'Other' } };
+    const top = { ...NOTE, id: N3, folder_id: null, path: 'handbook/travel-top.md', frontmatter: { title: 'Travel policy' } };
+    const { account, calls } = fakeAccount({ answers: { kb_list: KB_ROWS }, tables: { notes: [other, NOTE, top] } });
+    const kb = createKbSearch({ account });
+    expect((await kb.read({ path: 'Handbook/Policies/Travel/travel policy' })).note.id).toBe(N1);
+    const listing = calls.map((c) => c[1]).find((q) => q?.cols === 'id, path, frontmatter');
+    expect(has(listing, 'in', 'kb_id', [KB]) && has(listing, 'eq', 'folder_id', 'F2')).toBe(true);
+    expect((await kb.read({ path: 'Handbook/Policies/Travel/other' })).note.id).toBe(N2);
+    expect((await kb.read({ path: 'Handbook/Travel policy' })).note.id).toBe(N3);
+    expect((await kb.read({ path: 'Handbook/Policies/Travel/nothing' })).error).toMatch(/No knowledge base note there/);
+  });
+
+  it('lists readable KBs with folder paths, names redacted', async () => {
+    const rows = [KB_ROWS[0], { ...KB_ROWS[1], name: 'Acme deal', folders: [{ id: 'F9', parent_id: null, name: 'Acme', position: 0 }] }];
+    const { account } = fakeAccount({ answers: { kb_list: rows } });
+    expect(await createKbSearch({ account, redact }).list()).toEqual({ kbs: [
       { id: KB, name: 'Handbook', kind: 'general', role: 'reader', isDefault: true, folders: ['Policies', 'Policies/Travel'] },
-      { id: KB2, name: 'Leadership', kind: 'general', role: 'admin', isDefault: false, folders: [] },
+      { id: KB2, name: WITHHELD, kind: 'general', role: 'admin', isDefault: false, folders: [WITHHELD] },
     ] });
   });
 
