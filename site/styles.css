@@ -341,6 +341,40 @@ ul { margin: 0; padding: 0; list-style: none; }
   position: absolute; inset: 0;
   will-change: background-position;
 }
+/* Every dot here is solid white, so the mask on .stars is the only thing that sets how bright a star is. These two
+   sets replace the dimmer ones shared with the Custom plans block; tile size and drift stay the same. Dot size is
+   the only variation: 0.7px, 1px and 1.4px radius. */
+.stars::before {
+  background-image:
+    radial-gradient(circle at 12px 18px, #fff 0 1px, transparent 1.5px),
+    radial-gradient(circle at 86px 54px, #fff 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 150px 120px, #fff 0 1.4px, transparent 1.9px),
+    radial-gradient(circle at 40px 170px, #fff 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 190px 30px, #fff 0 1px, transparent 1.5px),
+    radial-gradient(circle at 64px 112px, #fff 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 118px 196px, #fff 0 1px, transparent 1.5px),
+    radial-gradient(circle at 204px 88px, #fff 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 28px 78px, #fff 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 132px 14px, #fff 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 176px 162px, #fff 0 1px, transparent 1.5px),
+    radial-gradient(circle at 96px 148px, #fff 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 56px 208px, #fff 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 208px 204px, #fff 0 0.7px, transparent 1.2px);
+}
+.stars::after {
+  background-image:
+    radial-gradient(circle at 60px 100px, #fff 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 130px 20px, #fff 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 20px 70px, #fff 0 1px, transparent 1.5px),
+    radial-gradient(circle at 110px 150px, #fff 0 1.4px, transparent 1.9px),
+    radial-gradient(circle at 34px 26px, #fff 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 92px 62px, #fff 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 146px 96px, #fff 0 1px, transparent 1.5px),
+    radial-gradient(circle at 74px 138px, #fff 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 18px 128px, #fff 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 150px 142px, #fff 0 0.7px, transparent 1.2px);
+}
+.stars .shoot { background: linear-gradient(90deg, transparent, #fff); }
 /* the streaks start in the lower two thirds, where the mask lets them show */
 .stars .shoot:nth-child(1) { top: 38%; left: 8%; }
 .stars .shoot:nth-child(2) { top: 52%; left: 56%; }
