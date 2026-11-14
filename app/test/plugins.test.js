@@ -75,7 +75,7 @@ describe('plugin detection', () => {
     const dir = toolingVault();
     const held = { count: 12, sample: ['01-daily/2026-11-10-brief.md'] };
     put(dir, '.quorum/keeper.json', JSON.stringify({ done: {}, held }));
-    const settings = { keeper: { on: true } };
+    const settings = { keeper: { on: true, editVault: true } };
     let saves = 0;
     const k = keeperFor(dir, settings, { saveSettings: () => { saves++; } });
     const st = k.setPlugin('context', 'vault');
@@ -106,7 +106,7 @@ describe('keeper with plugins', () => {
   it('writes nothing to a vault that owns the index and daily jobs', async () => {
     const dir = toolingVault();
     const dailyBefore = readdirSync(path.join(dir, '01-daily')).sort();
-    const k = keeperFor(dir, undefined, { runText: async () => '- Ada leads design', hasModel: () => true, owner: () => 'Rick Bot' });
+    const k = keeperFor(dir, { keeper: { on: true, editVault: true } }, { runText: async () => '- Ada leads design', hasModel: () => true, owner: () => 'Rick Bot' });
     put(dir, 'MEMORY.md', '# Memory\n');
     const r = await k.run();
     expect(r).toMatchObject({ filed: 2, held: null });
@@ -119,7 +119,7 @@ describe('keeper with plugins', () => {
   });
   it('writes daily lines into the vault naming once the job is handed to Quorum', async () => {
     const dir = toolingVault();
-    const settings = { keeper: { on: true } };
+    const settings = { keeper: { on: true, editVault: true } };
     const k = keeperFor(dir, settings);
     k.setPlugin('daily', 'quorum');
     expect(settings.plugins.daily).toMatchObject({ owner: 'quorum' });
@@ -140,7 +140,7 @@ describe('keeper with plugins', () => {
     mkdirSync(path.join(dir, '01-daily'));
     put(dir, 'index.md', '# Index\n');
     for (let i = 1; i <= CREATE_LIMIT + 2; i++) { const d = `2026-10-${String(i).padStart(2, '0')}`; put(dir, `08-meetings/${d}-m.md`, NOTE(`M${i}`, d)); }
-    const k = keeperFor(dir);
+    const k = keeperFor(dir, { keeper: { on: true, editVault: true } });
     const r = await k.run();
     expect(r.held).toMatchObject({ count: CREATE_LIMIT + 2 });
     expect(r.filed).toBe(0);
@@ -161,14 +161,13 @@ describe('keeper with plugins', () => {
     put(dir, '08-meetings/2026-12-01-x.md', NOTE('X', '2026-09-01'));
     for (let i = 1; i <= CREATE_LIMIT + 1; i++) { const d = `2026-10-${String(i).padStart(2, '0')}`; put(dir, `08-meetings/${d}-m.md`, NOTE(`M${i}`, d)); }
     const calls = [];
-    const k = keeperFor(dir, undefined, { runText: async (p) => { calls.push(p); return `- fact from ${p.match(/Meeting: (\S+)/)[1]}`; }, hasModel: () => true });
+    const k = keeperFor(dir, { keeper: { on: true, editVault: true } }, { runText: async (p) => { calls.push(p); return `- fact from ${p.match(/Meeting: (\S+)/)[1]}`; }, hasModel: () => true });
     const r = await k.run();
     expect(r.filed).toBe(1);
     expect(r.held.count).toBe(CREATE_LIMIT + 1);
     expect(readFileSync(path.join(dir, '01-daily', '2026-09-01.md'), 'utf8')).toContain('[[2026-12-01-x]]');
     expect(calls).toHaveLength(CREATE_LIMIT + 2);
-    // CLAUDE.md keeps the newest 10 facts by default
-    expect(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8')).toContain('fact from M11 ([[2026-10-11-m]], 2026-10-11)');
+    expect(readFileSync(path.join(dir, '.quorum', 'learned.md'), 'utf8')).toContain('fact from M11 ([[2026-10-11-m]], 2026-10-11)');
     // the held notes are not sent for facts a second time when they are filed
     await k.run({ allowCreate: true });
     expect(calls).toHaveLength(CREATE_LIMIT + 2);
@@ -203,7 +202,7 @@ describe('keeper with plugins', () => {
     rmSync(path.join(dir, 'MEMORY.md'));
     expect(k.status()).toMatchObject({ facts: true });
     await k.run();
-    expect(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8')).toContain('Ada leads design');
+    expect(readFileSync(path.join(dir, '.quorum', 'learned.md'), 'utf8')).toContain('Ada leads design');
   });
 });
 

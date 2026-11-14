@@ -321,6 +321,7 @@ contextBridge.exposeInMainWorld('quorum', {
   screenContextSet: (on) => ipcRenderer.invoke('screen-context-set', on),
   screenContextPrivacy: () => ipcRenderer.invoke('screen-context-privacy'),
   keeperSet: (patch) => ipcRenderer.invoke('keeper-set', patch),
+  keeperRemoveClaude: () => ipcRenderer.invoke('keeper-remove-claude'),
   keeperRun: (opts) => ipcRenderer.invoke('keeper-run', opts),
   keeperPlugin: (id, owner) => ipcRenderer.invoke('keeper-plugin', id, owner),
   keeperErrorsOpen: () => ipcRenderer.invoke('keeper-errors-open'),

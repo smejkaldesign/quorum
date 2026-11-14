@@ -8,6 +8,7 @@ import net from 'node:net';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
+import { learnedFileIn, learnedLines } from './learned.mjs';
 
 // a development copy of the app keeps its data in Quorum Dev (app/edition.js); QUORUM_ENV=development reads that folder
 const HOME = path.join(homedir(), 'Library/Application Support', process.env.QUORUM_ENV === 'development' ? 'Quorum Dev' : 'Quorum');
@@ -179,6 +180,19 @@ function vaultNoteText(rel) {
   return readFileSync(abs, 'utf8');
 }
 
+// the learned facts the keeper keeps (app/keeper.js), from the file it last wrote them to
+function learnedFacts() {
+  const v = vault();
+  if (!v) throw new Error('No Agent OS connected');
+  const rel = learnedFileIn(readJson(path.join(v, '.quorum', 'keeper.json'), {}));
+  const abs = path.resolve(v, rel);
+  const file = rel.split(path.sep).join('/');
+  if (!abs.startsWith(v + path.sep) || !existsSync(abs)) return { file, facts: [] };
+  const text = readFileSync(abs, 'utf8');
+  logView(abs, Buffer.byteLength(text));
+  return { file, facts: learnedLines(text).map((l) => redact(l.slice(2))) };
+}
+
 // for a status line: bright blue while Quorum listens, dim while a call is stopped, nothing otherwise
 function statusline() {
   const s = readJson(path.join(HOME, 'state.json'), {});
@@ -236,6 +250,7 @@ const TOOLS = [
   { name: 'granola_search', description: 'Search the person\'s Granola account live, through the Granola sign-in connected in Quorum. Use it when your own Granola MCP is missing, signed out or failing, or to find Granola meetings Quorum has not imported yet. in "notes" (default) matches titles, summaries and private notes and can filter by participant and dates; in "transcripts" matches what was said and returns short passages. Each meeting says whether Quorum has filed it (inQuorum); read a filed one with search_meetings and get_meeting. A meeting that names an opted-out customer in its title, attendees or a matching passage is left out. Needs the Quorum app open with Granola connected.', inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'words that must all appear; required for transcripts' }, participant: { type: 'string', description: 'a whole name, email, company or domain' }, in: { type: 'string', enum: ['notes', 'transcripts'] }, from: { type: 'string', description: 'ISO date, inclusive' }, to: { type: 'string', description: 'ISO date, inclusive' }, limit: { type: 'number', description: '1 to 20, default 10' }, cursor: { type: 'string', description: 'nextCursor from the previous page. For the next page pass it with the same in; the other filters can be left out, and if given must be unchanged.' } } }, run: (a) => granolaSearch(a) },
   { name: 'list_chats', description: 'Recent chats the person had with Quorum in the app, newest first, with an id for get_chat.', inputSchema: { type: 'object', properties: { limit: { type: 'number', description: 'default 20' } } }, run: ({ limit }) => chats(limit) },
   { name: 'get_chat', description: 'The questions and answers in one Quorum chat, by the id from list_chats.', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] }, run: ({ id }) => getChat(id) },
+  { name: 'learned_facts', description: 'The facts Quorum learned from meeting notes: people and their roles, project decisions, commitments with dates. Each line cites its meeting note. Newest last.', inputSchema: { type: 'object', properties: {} }, run: () => learnedFacts() },
   { name: 'live_transcript', description: 'The transcript so far of the call Quorum is recording right now, line by line with who spoke. Returns recording: false when no call is recording.', inputSchema: { type: 'object', properties: {} }, run: () => live() },
   // knowledge bases (Quorum Cloud): the running app answers as the person signed in to it, so the server's row level
   // security decides which KBs and notes come back. With Quorum closed or signed out these say so
@@ -254,7 +269,7 @@ function serveMcp() {
     const { id, method, params } = req;
     if (id === undefined) return;
     if (method === 'initialize') { client = String(params?.clientInfo?.name ?? 'mcp').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'mcp'; }
-    if (method === 'initialize') return send({ id, result: { protocolVersion: params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'quorum', version: '0.1.0' }, instructions: 'Quorum is the person\'s record of past meetings and conversations. Use it when they ask about an earlier meeting or call, what was decided, who said what, or something discussed weeks or months ago. Start with search_meetings (every word must match, so search by a person, project or topic), then get_meeting for the full note. Notes are filed in their vault, linked to people and projects. If your own Granola MCP is missing or fails, use granola_search. Meetings and lines naming an opted-out customer are withheld. live_transcript is the call recording now. list_chats and get_chat are past chats with Quorum. kb_search, kb_read and kb_list read Quorum Cloud knowledge bases. import_meeting saves a meeting from another app into the vault.' } });
+    if (method === 'initialize') return send({ id, result: { protocolVersion: params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'quorum', version: '0.1.0' }, instructions: 'Quorum is the person\'s record of past meetings and conversations. Use it when they ask about an earlier meeting or call, what was decided, who said what, or something discussed weeks or months ago. Start with search_meetings (every word must match, so search by a person, project or topic), then get_meeting for the full note. Notes are filed in their vault, linked to people and projects. If your own Granola MCP is missing or fails, use granola_search. Meetings and lines naming an opted-out customer are withheld. live_transcript is the call recording now. list_chats and get_chat are past chats with Quorum. learned_facts lists the facts Quorum learned from meetings: roles, decisions, commitments. kb_search, kb_read and kb_list read Quorum Cloud knowledge bases. import_meeting saves a meeting from another app into the vault.' } });
     if (method === 'ping') return send({ id, result: {} });
     if (method === 'tools/list') return send({ id, result: { tools: TOOLS.map(({ run, ...t }) => t) } });
     if (method === 'tools/call') {
@@ -278,6 +293,7 @@ Read
   quorum chats [n]                  recent chats with Quorum
   quorum chat <id>                  one chat's questions and answers
   quorum live                       the call being recorded right now
+  quorum learned                    the facts Quorum learned from meeting notes
 
 Ask Quorum
   quorum ask <question>             answers from your Agent OS, saved to History
@@ -332,6 +348,7 @@ try {
     case 'chats': print(chats(Number(rest[0]) || 15), (l) => l.map((c) => `${day(c.date)}  ${c.title}  (${c.questions})\n    ${c.id}`).join('\n')); break;
     case 'chat': print(getChat(rest[0]), (c) => c.turns.map((t) => `> ${t.q}\n\n${t.a}`).join('\n\n')); break;
     case 'live': print(live(), (l) => (l.recording ? `${l.title ?? 'Untitled call'}\n\n${l.transcript.map((t) => `${t.who === 'me' ? 'Me' : 'Others'}: ${t.text}`).join('\n')}` : 'Not recording.')); break;
+    case 'learned': print(learnedFacts(), (l) => (l.facts.length ? l.facts.map((f) => `- ${f}`).join('\n') : `No learned facts in ${l.file}.`)); break;
     case 'statusline': process.stdout.write(statusline()); break;
     case 'ask': {
       const q = rest.join(' ') || readStdin();

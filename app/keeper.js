@@ -1,11 +1,16 @@
 // the keeper: what maintains an Agent OS after Quorum writes into it. Each new meeting note gets an index line, a line
 // in the daily note, and a line under "## Meetings" in every people note and project note it concerns; a dated entry in
 // .quorum/changelog.md records each change. With a model source chosen, a few learned facts per note go into a marked
-// list: CLAUDE.md, .quorum/learned.md, or a vault note linked from index.md (Claude Code loads neither of the last two
-// on its own). The list stays under a budget in characters, smaller by default in CLAUDE.md: the oldest lines move to
+// list in .quorum/learned.md, or in a vault note linked from index.md. Claude Code loads neither on its own; the Quorum
+// MCP server reads them (learned_facts). The list stays under a budget in characters: the oldest lines move to
 // .quorum/changelog.md when it runs over, and a line marked #keep stays. A fact that only says a note is empty or holds
-// no decisions is left out. Everything else is append-only: no note body is rewritten, and a line already present is
-// left alone.
+// no decisions is left out. CLAUDE.md is written only when the user turns that on: it then holds a copy of the newest
+// facts, which each run rewrites. With it off, a block in CLAUDE.md is left as it is until the user removes it from
+// Settings. Everything else is append-only: no note body is rewritten, and a line already present is left alone.
+// Quorum edits only the files it made unless the user turns on editVault: files under .quorum, files the keeper
+// created (recorded in keeper.json as made), the files the starter wrote into a folder Quorum built, and a facts note
+// that starts with LEARNED_HEADER. With it off, an index.md, daily, people or project note the person made is left as
+// it is, and the meeting index lines go to the meetings folder's own index.md, which Quorum makes.
 // Confidential notes, private folders and secret-looking files never enter the index, the links or the facts.
 // Progress is kept in .quorum/keeper.json by note hash, so a note changed later is filed again and an unchanged one
 // is skipped; a backlog left by days with the app closed runs in one pass at launch.
@@ -17,29 +22,34 @@ import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, 
 import path from 'node:path';
 import { parseFrontmatter } from './linkparse.js';
 import { writeAtomic } from './relink.js';
-import { slug } from './starter.js';
+import { SETUP_FILE, plan, readSetup, slug } from './starter.js';
+import { LEARNED_CLOSE, LEARNED_FILE, LEARNED_OPEN, blockAt, learnedFileIn, learnedLines } from './cli/learned.mjs';
 import { DAILY_DEFAULT, choose, dailyName, dailyPattern, detect, isGenerated, owns, resolvePlugins, scanContext } from './plugins.js';
 
 export const KEEPER_FILE = path.join('.quorum', 'keeper.json');
 export const CHANGELOG = path.join('.quorum', 'changelog.md');
-export const LEARNED_OPEN = '<!-- quorum:learned -->';
-export const LEARNED_CLOSE = '<!-- /quorum:learned -->';
-export const LEARNED_FILE = path.join('.quorum', 'learned.md');
+export { LEARNED_CLOSE, LEARNED_FILE, LEARNED_OPEN, learnedFileIn, learnedLines } from './cli/learned.mjs';
 export const LEARNED_BUDGET = 2000;
-// CLAUDE.md is loaded in every session, so by default its list holds CLAUDE_FACTS lines or CLAUDE_BUDGET characters,
-// whichever is reached first. A budget the user picks applies to every file
+// CLAUDE.md is loaded in every session, so the copy there, when the user turns it on, holds the newest CLAUDE_FACTS
+// lines within CLAUDE_BUDGET characters
 export const CLAUDE_BUDGET = 800;
 export const CLAUDE_FACTS = 10;
 // the vault note target: in the vault's knowledge folder (05-knowledge or knowledge) when it has one, else at the root
 export const NOTE_FILE = 'quorum-learned.md';
 export const NOTE_LINK = 'learned facts from meetings, kept by Quorum';
 export const KEEP_RE = /#keep\b/i;
+// the first lines of the index files the keeper makes; only Quorum writes them
+export const INDEX_HEADER = '# Index\n\nOne line per note. Quorum starts here when it looks for an answer.\n';
+export const MEETINGS_HEADER = '# Meetings\n\nOne line per meeting, written by Quorum.\n';
+// a daily note exactly as the keeper makes it: a date heading and meeting lines, nothing the person added
+const KEEPER_DAILY_RE = /^# \d{4}-\d{2}-\d{2}\n\n## Meetings\n\n(?:- \[\[[^\]\n]+\]\][^\n]*\n)+$/;
 // a run that would add more new files than this to the vault waits for the user (a backlog of months of meetings
 // against a vault with its own daily naming once made 86)
 export const CREATE_LIMIT = 10;
 // the upkeep error log stays small: past ERR_MAX bytes it keeps its last ERR_KEEP lines
 const ERR_MAX = 96 * 1024;
 const ERR_KEEP = 200;
+const posix = (rel) => rel.split(path.sep).join('/');
 const sha = (t) => createHash('sha256').update(t).digest('hex').slice(0, 16);
 const today = (d = new Date()) => d.toISOString().slice(0, 10);
 
@@ -111,15 +121,6 @@ export const factKey = (l) => l.normalize('NFKC').replace(/^-\s*/, '').replace(K
 const factDate = (l) => l.match(CITE_RE)?.[0].match(/\d{4}-\d{2}-\d{2}/)[0] ?? null;
 // a line with its citation swapped for a newer one; the wording and a #keep marker stay as they were
 const withCite = (line, cite) => (CITE_RE.test(line) ? line.replace(CITE_RE, cite) : line.replace(/\s*(#keep\s*)?$/i, (_m, k) => ` ${cite}${k ? ` ${k.trim()}` : ''}`));
-const blockAt = (text) => {
-  const a = text.indexOf(LEARNED_OPEN);
-  const b = text.indexOf(LEARNED_CLOSE);
-  return a >= 0 && b > a ? [a, b + LEARNED_CLOSE.length] : null;
-};
-export function learnedLines(text) {
-  const at = blockAt(text);
-  return at ? text.slice(at[0] + LEARNED_OPEN.length, at[1] - LEARNED_CLOSE.length).split('\n').map((l) => l.trim()).filter((l) => l.startsWith('- ')) : [];
-}
 export const learnedChars = (lines) => lines.reduce((n, l) => n + l.length + 1, 0);
 
 // the lines that fit the budget, oldest in the list first: the block is kept newest last, and a fact confirmed again
@@ -172,13 +173,26 @@ export function addLearned(text, facts, { budget = LEARNED_BUDGET, maxLines = In
   return next === text ? null : { text: next, dropped };
 }
 
-// CLAUDE.md, when the facts live in .quorum/learned.md: its block becomes a pointer to that file. null when it already is
+// the block an earlier version wrote into CLAUDE.md while the facts lived in .quorum/learned.md
 export const LEARNED_POINTER = [LEARNED_OPEN, '## Learned from meetings', '', 'Quorum keeps facts from meeting notes in [.quorum/learned.md](.quorum/learned.md). That file is not loaded on its own; read it when a question needs them.', LEARNED_CLOSE].join('\n');
-export function pointLearned(text) {
-  const next = putBlock(text, LEARNED_POINTER);
-  return next === text ? null : next;
-}
 const isPointer = (text) => text != null && text.includes(LEARNED_POINTER);
+// the copy in CLAUDE.md: the newest lines of the list that say something, at most CLAUDE_FACTS lines and CLAUDE_BUDGET
+// characters, newest last, with no blank lines. A block holding COPY_NOTE is a copy, so its lines are never read back
+// into the list. null when no line qualifies
+export const COPY_NOTE = 'Quorum rewrites this block on each run';
+const isCopy = (text) => { const at = text == null ? null : blockAt(text); return !!at && text.slice(at[0], at[1]).includes(COPY_NOTE); };
+export function claudeCopy(lines, file) {
+  const out = [];
+  let chars = 0;
+  for (let i = lines.length - 1; i >= 0 && out.length < CLAUDE_FACTS; i--) {
+    const l = lines[i].trim();
+    if (!l.startsWith('- ') || !informative(l.slice(2))) continue;
+    if (chars + l.length + 1 > CLAUDE_BUDGET) break;
+    out.unshift(l);
+    chars += l.length + 1;
+  }
+  return out.length ? [LEARNED_OPEN, '## Learned from meetings', `The newest facts from ${file}. ${COPY_NOTE}, so edit the facts in that file.`, ...out, LEARNED_CLOSE].join('\n') : null;
+}
 // the top of .quorum/learned.md; true whether or not CLAUDE.md could take a pointer
 export const LEARNED_HEADER = '# Learned from meetings\n\nFacts Quorum keeps from meeting notes. Claude Code does not load this file on its own.\n';
 
@@ -225,29 +239,28 @@ export const parseFacts = (out) => String(out ?? '').split('\n').map((l) => l.tr
 export function createKeeper({ brain, settings, saveSettings = () => {}, guards = () => null, wouldBlock = () => null, runText = null, hasModel = () => false, owner = () => '', log = () => {}, onChange = () => {}, errorLog = null }) {
   // factsBudget and factsNote are null until the user picks one
   // meetingsIndex writes the meeting index lines to <meetings folder>/index.md while the vault owns the root index
-  const conf = () => ({ on: settings.keeper?.on ?? settings.brainMade === 'quorum', factsBudget: settings.keeper?.factsBudget ?? null, factsTarget: settings.keeper?.factsTarget ?? null, factsNote: settings.keeper?.factsNote ?? null, meetingsIndex: settings.keeper?.meetingsIndex === true });
-  // whether CLAUDE.md gets the smaller default, settled once in keeper.json: a vault that has a learned list already
-  // keeps LEARNED_BUDGET until the user picks Default, so no existing list is pruned by it; a vault with none starts small
-  const hasList = (vault, st) => ['CLAUDE.md', LEARNED_FILE, st.factsNoteAt].some((rel) => rel && learnedLines(read(path.join(vault, rel)) ?? '').length > 0);
-  // small is claudeSmall's answer, worked out once per caller since hasList reads up to three files
-  const claudeSmall = (vault, st) => st.claudeSmall ?? !hasList(vault, st);
-  const SMALL = { budget: CLAUDE_BUDGET, maxLines: CLAUDE_FACTS };
-  const LARGE = { budget: LEARNED_BUDGET, maxLines: Infinity };
-  const defaultBudget = (target, small) => (target === 'claude' && small ? SMALL : LARGE);
-  // the budget for a target: the user's pick for any file, else the default above
-  const budgetFor = (target, small) => {
-    const picked = conf().factsBudget;
-    return picked != null ? { budget: picked, maxLines: Infinity } : defaultBudget(target, small);
-  };
+  // editVault lets the keeper edit files Quorum did not make, and factsInClaude turns on the copy in CLAUDE.md; both are
+  // off unless the user picks them
+  const conf = () => ({ on: settings.keeper?.on ?? settings.brainMade === 'quorum', editVault: settings.keeper?.editVault === true, factsInClaude: settings.keeper?.factsInClaude === true, factsBudget: settings.keeper?.factsBudget ?? null, factsTarget: settings.keeper?.factsTarget ?? null, factsNote: settings.keeper?.factsNote ?? null, meetingsIndex: settings.keeper?.meetingsIndex === true });
+  // the list's budget: the user's pick, else LEARNED_BUDGET
+  const budgetFor = () => ({ budget: conf().factsBudget ?? LEARNED_BUDGET, maxLines: Infinity });
   // the vault note's path: the user's, else the default settled in keeper.json at its first write, else the default.
   // factsNoteAt is where the list was written last, so a move knows where to take it from
   const noteFor = (vault, st) => conf().factsNote ?? st.factsNoteDefault ?? defaultNote(vault);
   // settings changes that touch keeper.json (a settled default reset by the user), waiting for the state a run will
   // save; set() applies them at once when no run is going, and a running run applies them before it saves
   let resets = {};
+  // refile: editVault was turned on, so the notes that left lines out (st.left) are filed again, without asking for
+  // their facts a second time
+  let refile = false;
   const applyResets = (st) => {
     for (const [key, v] of Object.entries(resets)) { if (v == null) delete st[key]; else st[key] = v; }
     resets = {};
+    if (!refile) return;
+    refile = false;
+    st.partial ??= {};
+    for (const [rel, h] of Object.entries(st.left ?? {})) if (st.done?.[rel] === h) { delete st.done[rel]; st.partial[rel] = h; }
+    delete st.left;
   };
   let running = null;
   let queued = null;
@@ -258,13 +271,32 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
   const stateFile = (vault) => path.join(vault, KEEPER_FILE);
   // a keeper.json from before factsNoteDefault existed gets it from where the list was last written, so an existing
   // list never moves on its own
+  // made is a Set in memory and an array in the file. A keeper.json from before made existed gets it from provenMade
   const loadState = (vault) => {
     let st;
-    try { st = JSON.parse(readFileSync(stateFile(vault), 'utf8')); } catch { return { done: {} }; }
+    try { st = JSON.parse(readFileSync(stateFile(vault), 'utf8')); } catch { st = { done: {} }; }
     if (st.factsNoteAt && !('factsNoteDefault' in st)) st.factsNoteDefault = st.factsNoteAt;
+    st.made = new Set(Array.isArray(st.made) ? st.made : provenMade(vault));
     return st;
   };
-  const saveState = (vault, st) => { mkdirSync(path.dirname(stateFile(vault)), { recursive: true }); writeAtomic(stateFile(vault), JSON.stringify(st, null, 2) + '\n'); };
+  const saveState = (vault, st) => { mkdirSync(path.dirname(stateFile(vault)), { recursive: true }); writeAtomic(stateFile(vault), JSON.stringify({ ...st, made: [...(st.made ?? [])] }, null, 2) + '\n'); };
+  // the files an earlier keeper made, for a keeper.json without made: a file the changelog names whose text is still
+  // only what the keeper writes (an index under INDEX_HEADER or MEETINGS_HEADER, a daily note of meeting lines and
+  // nothing else). Anything it cannot prove stays the person's. Worked out once per vault until a run saves made
+  const proven = new Map();
+  const provenMade = (vault) => {
+    if (proven.has(vault)) return proven.get(vault);
+    const log = read(path.join(vault, CHANGELOG)) ?? '';
+    const named = new Set(log.split('\n').map((l) => l.match(/^- ([^[\n]+\.md)$/)?.[1]).filter(Boolean));
+    const out = [...named].filter((rel) => {
+      const cur = read(path.join(vault, rel));
+      if (cur == null) return false;
+      const base = path.posix.basename(rel);
+      return (rel === 'index.md' && cur.startsWith(INDEX_HEADER)) || (base === 'index.md' && cur.startsWith(MEETINGS_HEADER)) || KEEPER_DAILY_RE.test(cur);
+    }).sort();
+    proven.set(vault, out);
+    return out;
+  };
 
   // the plugin rows for this vault, and the daily naming it uses. The rows are the only record of whether facts are on;
   // the older facts switch, saved as off before plugins existed, reads as the vault owning facts until the user picks
@@ -275,8 +307,28 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     let rows = resolvePlugins(detect(ctx), settings.plugins);
     if (settings.keeper?.facts === false && !settings.plugins?.facts) rows = rows.map((r) => (r.id === 'facts' ? { ...r, owner: 'vault', overridden: false, isNew: false } : r));
     lastRows = rows;
-    return { f, rows, daily: f.daily ? dailyPattern(ctx.daily).template : DAILY_DEFAULT };
+    return { vault: b.vault, f, rows, daily: f.daily ? dailyPattern(ctx.daily).template : DAILY_DEFAULT, made: starterMade(b) };
   };
+  // the files the starter wrote, vault-relative, when Quorum built the folder; a folder the person connected has none
+  // worked out again only when setup.json changes (a rerun of the setup adds files)
+  let starterCache = null;
+  const starterMade = (b) => {
+    if (settings.brainMade !== 'quorum') return new Set();
+    let mtime;
+    try { mtime = statSync(path.join(b.root, SETUP_FILE)).mtimeMs; } catch { return new Set(); }
+    const key = `${b.root}\n${b.vault}\n${mtime}`;
+    if (starterCache?.key === key) return starterCache.made;
+    const setup = readSetup(b.root);
+    let files = {};
+    try { if (setup?.answers) files = plan({ name: setup.name, answers: setup.answers }).files; } catch {}
+    starterCache = { key, made: new Set(Object.keys(files).map((rel) => posix(path.relative(b.vault, path.join(b.root, rel))))) };
+    return starterCache.made;
+  };
+  // whether a file is Quorum's (see the top of this file), and whether the keeper may write it: a file that does not
+  // exist yet is made by the keeper and recorded as its own
+  const quorumMade = (reg, st, rel, cur) => rel.startsWith('.quorum/') || reg.made.has(rel) || !!st.made?.has(rel) || (cur != null && cur.startsWith(LEARNED_HEADER));
+  const mayEdit = (reg, st, rel, cur) => cur == null || conf().editVault || quorumMade(reg, st, rel, cur);
+  const markMade = (st, rel) => { st.made ??= new Set(); st.made.add(rel); };
 
   // an upkeep error goes to the console and to a log file under Application Support, which the settings page counts.
   // Past ERR_MAX bytes the file is cut to its last ERR_KEEP lines, and status reads only that much from its end
@@ -298,55 +350,53 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
   };
   const clearErrors = () => { if (errorLog) rmSync(errorLog, { force: true }); return status(); };
 
-  // where learned facts go. The user's pick wins. Otherwise the automatic choice, settled at the first write and kept in
-  // keeper.json so it never changes by itself: .quorum/learned.md when it exists already or when the vault has its own
-  // memory system (the facts plugin found one), else CLAUDE.md
-  const evidenceTarget = (reg) => (reg.rows.find((r) => r.id === 'facts')?.evidence.length ? 'learned' : 'claude');
-  const autoTarget = (vault, reg, st) => {
-    if (st.factsAuto) return st.factsAuto;
-    if (existsSync(path.join(vault, LEARNED_FILE))) return 'learned';
-    return evidenceTarget(reg);
-  };
-  const learnedTarget = (vault, reg, st) => conf().factsTarget ?? autoTarget(vault, reg, st);
+  // where learned facts go: the vault note when the user picked one and the keeper may write it, else
+  // .quorum/learned.md. A factsTarget of claude saved by an earlier version reads as .quorum/learned.md, and the list it
+  // left in CLAUDE.md stays there
+  const noteAllowed = (vault, reg, st) => { const note = noteFor(vault, st); return mayEdit(reg, st, note, read(path.join(vault, note))); };
+  const learnedTarget = (vault, reg, st) => (conf().factsTarget === 'note' && noteAllowed(vault, reg, st) ? 'note' : 'learned');
 
   // the vault note is linked from index.md only while Quorum owns the index job and index.md exists and is not marked
   // generated; an index the vault keeps itself is never written to. unlinkNote takes out only the line linkNote wrote
-  const indexFor = (vault, reg) => {
+  const indexFor = (vault, reg, st) => {
     if (!owns(reg.rows, 'index')) return null;
     const abs = path.join(vault, 'index.md');
     const cur = read(abs);
-    return cur == null || isGenerated(cur) ? null : { abs, cur };
+    return cur == null || isGenerated(cur) || !mayEdit(reg, st, 'index.md', cur) ? null : { abs, cur };
   };
   const noteLine = (note) => `- [[${path.posix.basename(note, '.md')}]] - ${NOTE_LINK}`;
-  const linkNote = (vault, reg, note, changed) => {
-    const ix = indexFor(vault, reg);
+  const linkNote = (vault, reg, st, note, changed) => {
+    const ix = indexFor(vault, reg, st);
     const base = path.posix.basename(note, '.md');
     if (!ix || [`[[${base}]]`, `[[${base}|`, `[[${note.replace(/\.md$/i, '')}`].some((l) => ix.cur.includes(l))) return;
     writeAtomic(ix.abs, ix.cur.replace(/\s*$/, '') + '\n' + noteLine(note) + '\n');
     changed.push('index.md');
   };
-  const unlinkNote = (vault, reg, note, changed) => {
-    const ix = indexFor(vault, reg);
+  const unlinkNote = (vault, reg, st, note, changed) => {
+    const ix = indexFor(vault, reg, st);
     const line = noteLine(note);
     if (!ix || !ix.cur.split('\n').includes(line)) return;
     writeAtomic(ix.abs, ix.cur.split('\n').filter((l) => l !== line).join('\n'));
     changed.push('index.md');
   };
 
-  // the list into its target, with new facts, under the target's budget. When the target changed, the list moves with
-  // it: into .quorum/learned.md with a pointer in CLAUDE.md; into the vault note, with CLAUDE.md's block taken out and
-  // a CLAUDE.md without one left as it is; or back into CLAUDE.md, with learned.md removed. A note the list leaves
-  // loses its block, and is removed with its index line when nothing else is in it. A source is cleared only once the
-  // target holds the list; a file marked generated stops the move, changes nothing and is logged. dropped gets only
-  // lines that really left a written list
+  // the list into its target, with new facts, under the budget. When the target changed, the list moves with it, between
+  // .quorum/learned.md and the vault note or from one note path to another. A note the list leaves loses its block, and
+  // is removed with its index line when nothing else is in it. A source is cleared only once the target holds the list;
+  // a file marked generated stops the move, changes nothing and is logged. dropped gets only lines that really left a
+  // written list. With the CLAUDE.md copy off, CLAUDE.md is never read or written here. With it on, a list block in
+  // CLAUDE.md (from an earlier version, or written by hand) joins the list once and the block becomes the copy
   // A generated .quorum/learned.md is never read from or removed. With noCreate (a held run) a vault note that does not
   // exist yet is left uncreated; the run counts it in createsFor and asks for the facts again once it may create files
   const saveFacts = (vault, reg, st, target, facts, changed, dropped, { noCreate = false } = {}) => {
-    st.claudeSmall ??= !hasList(vault, st);
-    const opts = budgetFor(target, st.claudeSmall);
+    const opts = budgetFor();
     const claudeAbs = path.join(vault, 'CLAUDE.md');
     const learnedAbs = path.join(vault, LEARNED_FILE);
-    const claude = read(claudeAbs);
+    const claudeNow = conf().factsInClaude ? read(claudeAbs) : null;
+    const inClaude = conf().factsInClaude && mayEdit(reg, st, 'CLAUDE.md', claudeNow);
+    const claude = inClaude ? claudeNow : null;
+    const cGen = claude != null && isGenerated(claude);
+    const fromClaude = claude != null && !cGen && !isPointer(claude) && !isCopy(claude) ? learnedLines(claude) : [];
     const learned = read(learnedAbs);
     const lGen = learned != null && isGenerated(learned);
     const fromLearned = learned != null && !lGen ? learnedLines(learned) : [];
@@ -355,35 +405,39 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     const oldNote = st.factsNoteAt && st.factsNoteAt !== note ? st.factsNoteAt : null;
     const oldText = oldNote ? read(path.join(vault, oldNote)) : null;
     const fromOld = oldText != null && !isGenerated(oldText) ? learnedLines(oldText) : [];
-    const put = (abs, next) => { if (next == null) return; mkdirSync(path.dirname(abs), { recursive: true }); writeAtomic(abs, next); changed.push(path.relative(vault, abs)); };
+    const put = (abs, next) => {
+      if (next == null) return;
+      const rel = posix(path.relative(vault, abs));
+      if (!existsSync(abs)) markMade(st, rel);
+      mkdirSync(path.dirname(abs), { recursive: true });
+      writeAtomic(abs, next);
+      changed.push(path.relative(vault, abs));
+    };
+    // a note the person made keeps its block when the list leaves it, unless editVault is on
     const clearOld = () => {
       if (!oldNote) return;
       delete st.factsNoteAt;
-      if (oldText == null || isGenerated(oldText) || !blockAt(oldText)) return;
+      if (oldText == null || isGenerated(oldText) || !blockAt(oldText) || !mayEdit(reg, st, oldNote, oldText)) return;
       const abs = path.join(vault, oldNote);
       const rest = dropBlock(oldText);
       if (rest.trim() !== LEARNED_HEADER.trim()) { put(abs, rest); return; }
       rmSync(abs, { force: true });
       changed.push(path.relative(vault, abs));
-      unlinkNote(vault, reg, oldNote, changed);
+      unlinkNote(vault, reg, st, oldNote, changed);
     };
-    if (target === 'claude') {
-      const back = [...fromLearned, ...fromOld];
-      if (claude != null && isGenerated(claude)) { if (facts.length || back.length) fail('facts', 'CLAUDE.md is marked as generated, so learned facts were not written'); return; }
-      const r = addLearned(claude ?? '# Agent OS\n', [...back, ...facts], opts);
-      put(claudeAbs, r ? r.text : isPointer(claude) ? dropBlock(claude) : null);
-      if (r) dropped.push(...r.dropped);
-      dropLearned();
-      clearOld();
-      return;
-    }
-    const cGen = claude != null && isGenerated(claude);
+    // the copy in CLAUDE.md from the list as written; a CLAUDE.md marked generated is logged only when the list changed
+    const copy = (rel, text, wrote) => {
+      if (!inClaude) return;
+      if (cGen) { if (wrote) fail('facts', 'CLAUDE.md is marked as generated, so it has no copy of the learned facts'); return; }
+      const block = claudeCopy(learnedLines(text ?? ''), rel);
+      const next = block ? putBlock(claude ?? '# Agent OS\n', block) : isCopy(claude) ? dropBlock(claude) : null;
+      if (next !== claude) put(claudeAbs, next);
+    };
     if (target === 'note') {
       const noteAbs = path.join(vault, note);
       const cur = read(noteAbs);
       if (cur != null && isGenerated(cur)) { fail('facts', `${note} is marked as generated, so learned facts were not written`); return; }
       if (cur == null && noCreate) return;
-      const fromClaude = claude != null && !cGen && !isPointer(claude) ? learnedLines(claude) : [];
       const r = addLearned(cur ?? LEARNED_HEADER, [...fromClaude, ...fromLearned, ...fromOld, ...facts], opts);
       if (r) { put(noteAbs, r.text); dropped.push(...r.dropped); }
       if (!r && cur == null) return;
@@ -391,26 +445,18 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
       st.factsNoteAt = note;
       if (!conf().factsNote) st.factsNoteDefault = note;
       dropLearned();
-      if (claude != null && !cGen && blockAt(claude)) put(claudeAbs, dropBlock(claude));
-      linkNote(vault, reg, note, changed);
+      copy(note, r ? r.text : cur, !!r);
+      linkNote(vault, reg, st, note, changed);
       return;
     }
     if (lGen) { fail('facts', '.quorum/learned.md is marked as generated, so learned facts were not written'); return; }
-    const moved = claude != null && !cGen ? learnedLines(claude) : [];
-    const r = addLearned(learned ?? LEARNED_HEADER, [...moved, ...fromOld, ...facts], opts);
+    const r = addLearned(learned ?? LEARNED_HEADER, [...fromClaude, ...fromOld, ...facts], opts);
     if (r) { put(learnedAbs, r.text); dropped.push(...r.dropped); }
     if (!r && learned == null) return;
     clearOld();
-    if (cGen) { if (r) fail('facts', 'CLAUDE.md is marked as generated, so it has no pointer to .quorum/learned.md'); return; }
-    // with no CLAUDE.md yet, a short one is made to hold the pointer
-    put(claudeAbs, pointLearned(claude ?? '# Agent OS\n'));
+    copy(LEARNED_FILE.split(path.sep).join('/'), r ? r.text : learned, !!r);
   };
-  const placeFacts = (vault, reg, st, facts, changed, dropped, opts) => {
-    const target = learnedTarget(vault, reg, st);
-    const before = changed.length;
-    saveFacts(vault, reg, st, target, facts, changed, dropped, opts);
-    if (!conf().factsTarget && !st.factsAuto && changed.length > before) st.factsAuto = target;
-  };
+  const placeFacts = (vault, reg, st, facts, changed, dropped, opts) => saveFacts(vault, reg, st, learnedTarget(vault, reg, st), facts, changed, dropped, opts);
   // one dated entry at the end of .quorum/changelog.md, which is made with its header when missing
   const appendChangelog = (vault, title, body) => {
     const abs = path.join(vault, CHANGELOG);
@@ -428,9 +474,9 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
   // saying where the meeting index lines went: the meetings folder's index.md, held until the run may create it, or
   // nowhere. It is written once per change of that state (kept in keeper.json as indexSkip), so runs do not repeat it
   const logIndexSkip = (vault, reg, st, marked) => {
-    const why = !owns(reg.rows, 'index') ? 'index.md is kept by your Agent OS' : marked.includes('index.md') ? 'index.md is marked as generated' : null;
+    const why = !owns(reg.rows, 'index') ? 'index.md is kept by your Agent OS' : marked.includes('index.md') ? 'index.md is marked as generated' : !rootIndex(reg, st) ? 'Quorum did not make index.md' : null;
     if (!why) { delete st.indexSkip; return; }
-    const ix = indexFile(reg);
+    const ix = indexFile(reg, st);
     const rel = ix && ix.rel !== 'index.md' ? ix.rel : null;
     const cur = rel ? read(path.join(vault, rel)) : null;
     const outcome = !rel ? 'none' : marked.includes(rel) || (cur != null && isGenerated(cur)) ? 'generated' : cur == null ? 'held' : 'written';
@@ -475,24 +521,27 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
   // list of files changed. A file whose first lines say it is generated is left alone and named in marked. With
   // noCreate, the index and the daily note are written only when they exist already; those are the files a held run
   // counts
-  async function file(vault, reg, st, rel, text, { facts, marked, noCreate = false }) {
+  async function file(vault, reg, st, rel, text, { facts, marked, left = [], noCreate = false }) {
     const { f, rows, daily } = reg;
     const changed = [];
     const { props, base, title, date } = meta(rel, text);
     const people = (Array.isArray(props.participants) ? props.participants : []).map((p) => String(p).replace(/\s*\(recorder\)\s*$/i, '').trim()).filter((p) => p && p.toLowerCase() !== owner().toLowerCase());
     const link = `[[${base}]]`;
+    // a file the person made is left as it is unless editVault is on, and named in left
     const touch = (abs, next, cur) => {
       if (next == null) return;
+      const r = posix(path.relative(vault, abs));
       if (cur != null && isGenerated(cur)) {
-        const r = path.relative(vault, abs).split(path.sep).join('/');
         if (!marked.includes(r)) marked.push(r);
         return;
       }
+      if (!mayEdit(reg, st, r, cur)) { if (!left.includes(r)) left.push(r); return; }
+      if (cur == null) markMade(st, r);
       writeAtomic(abs, next);
       changed.push(path.relative(vault, abs));
     };
     // index: one line per note, in the file indexFile names
-    const ix = indexFile(reg);
+    const ix = indexFile(reg, st);
     if (ix && !(noCreate && !existsSync(path.join(vault, ix.rel)))) {
       const indexAbs = path.join(vault, ix.rel);
       const cur = read(indexAbs);
@@ -546,15 +595,16 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
   // the meetings folder's index.md, filled once with the meetings filed before it was turned on (kept in keeper.json as
   // meetingsIndexAt). null when it is off, or the root index is Quorum's
   const backfillFor = (reg, st) => {
-    const ix = indexFile(reg);
+    const ix = indexFile(reg, st);
     return ix && ix.rel !== 'index.md' && st.meetingsIndexAt !== ix.rel ? ix : null;
   };
   // index lines for the meetings filed already: unchanged since filing and not withheld. Into an existing file, or a
   // new one when the run may create files; a file marked generated is named in marked and left alone
-  const backfill = (vault, ix, st, notes, compiled, marked, mayCreate) => {
+  const backfill = (vault, reg, ix, st, notes, compiled, marked, mayCreate) => {
     const abs = path.join(vault, ix.rel);
     const cur = read(abs);
     if (cur != null && isGenerated(cur)) { if (!marked.includes(ix.rel)) marked.push(ix.rel); st.meetingsIndexAt = ix.rel; return []; }
+    if (cur != null && !mayEdit(reg, st, ix.rel, cur)) { st.meetingsIndexAt = ix.rel; return []; }
     if (cur == null && !mayCreate) return [];
     let index = cur ?? ix.header;
     for (const { rel, text } of notes) {
@@ -564,14 +614,22 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     }
     st.meetingsIndexAt = ix.rel;
     if (index === cur || (cur == null && index === ix.header)) return [];
+    if (cur == null) markMade(st, ix.rel);
     writeAtomic(abs, index);
     return [ix.rel];
   };
   // the file a note's index line goes into: index.md while Quorum owns the index job; while the vault owns it, the
   // meetings folder's own index.md when the user turned that on; else none
-  const indexFile = (reg) => {
-    if (owns(reg.rows, 'index')) return { rel: 'index.md', header: '# Index\n\nOne line per note. Quorum starts here when it looks for an answer.\n' };
-    if (conf().meetingsIndex && reg.f.meetings) return { rel: `${reg.f.meetings}/index.md`, header: '# Meetings\n\nOne line per meeting, written by Quorum.\n' };
+  // the root index.md takes the lines while Quorum owns the index job and may write it; when Quorum owns the job but
+  // the person made index.md, the lines go to the meetings folder's index.md instead
+  // worked out once per registry, so once per run; a run that makes index.md finds it its own either way
+  const rootIndex = (reg, st) => {
+    if (reg.rootIndex == null) { const cur = read(path.join(reg.vault, 'index.md')); reg.rootIndex = (cur != null && isGenerated(cur)) || mayEdit(reg, st, 'index.md', cur); }
+    return reg.rootIndex;
+  };
+  const indexFile = (reg, st) => {
+    if (owns(reg.rows, 'index') && rootIndex(reg, st)) return { rel: 'index.md', header: INDEX_HEADER };
+    if ((conf().meetingsIndex || owns(reg.rows, 'index')) && reg.f.meetings) return { rel: `${reg.f.meetings}/index.md`, header: MEETINGS_HEADER };
     return null;
   };
   // whether a note's facts would go into a vault note that does not exist yet
@@ -585,7 +643,7 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
   // vault note for learned facts when that is the target and does not exist yet
   const createsFor = (vault, reg, st, n) => {
     const out = [];
-    const ix = indexFile(reg);
+    const ix = indexFile(reg, st);
     if (ix && !existsSync(path.join(vault, ix.rel))) out.push(ix.rel);
     const note = factsCreate(vault, reg, st, n);
     if (note) out.push(note);
@@ -610,13 +668,15 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     running = (async () => {
       const b = brain();
       const c = conf();
-      const result = { filed: 0, skipped: 0, changed: 0, reason, at: new Date().toISOString(), error: null, marked: [], held: null };
+      const result = { filed: 0, skipped: 0, changed: 0, reason, at: new Date().toISOString(), error: null, marked: [], left: [], held: null };
       if (!b || !c.on) return { ...result, off: true };
       const vault = b.vault;
       const reg = registry(b);
       if (!reg.f.meetings) return result;
+      // the state is saved even when the run fails part way, so the files it made stay recorded as Quorum's
+      let st = null;
       try {
-        const st = loadState(vault);
+        st = loadState(vault);
         st.done ??= {};
         const compiled = guards();
         const pending = [];
@@ -632,8 +692,11 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
         st.partial ??= {};
         result.changed += tidyFacts(vault, reg, st).length;
         for (const n of pending) n.creates = n.why ? [] : createsFor(vault, reg, st, n);
-        if (!conf().meetingsIndex) delete st.meetingsIndexAt;
+        // the backfill ran for this target already unless the meetings index is no longer where the lines go
+        if (indexFile(reg, st)?.rel !== st.meetingsIndexAt) delete st.meetingsIndexAt;
         const fill = filed.length ? backfillFor(reg, st) : null;
+        // with nothing filed yet there is nothing to fill in: the notes of this run write their own lines
+        if (!filed.length) { const ix = indexFile(reg, st); if (ix && ix.rel !== 'index.md') st.meetingsIndexAt = ix.rel; }
         const creates = [...new Set([...pending.flatMap((n) => n.creates), ...(fill && !existsSync(path.join(vault, fill.rel)) ? [fill.rel] : [])])].sort();
         const hold = creates.length > CREATE_LIMIT && !allowCreate;
         result.held = hold ? { count: creates.length, sample: creates.slice(0, 5) } : null;
@@ -646,8 +709,12 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
           // create files
           const later = waits && !!factsCreate(vault, reg, st, n);
           const facts = st.partial[n.rel] !== n.h && !later;
-          const changed = await file(vault, reg, st, n.rel, n.text, { facts, marked: result.marked, noCreate: waits });
+          const left = [];
+          const changed = await file(vault, reg, st, n.rel, n.text, { facts, marked: result.marked, left, noCreate: waits });
           result.changed += changed.length;
+          for (const r of left) if (!result.left.includes(r)) result.left.push(r);
+          st.left ??= {};
+          if (left.length) st.left[n.rel] = n.h; else delete st.left[n.rel];
           indexed++;
           if (waits) { if (!later) st.partial[n.rel] = n.h; continue; }
           delete st.partial[n.rel];
@@ -655,18 +722,22 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
           result.filed++;
         }
         if (fill) {
-          const changed = backfill(vault, fill, st, filed, compiled, result.marked, !hold);
+          const changed = backfill(vault, reg, fill, st, filed, compiled, result.marked, !hold);
           logChange(vault, 'Meetings index', changed, []);
           result.changed += changed.length;
         }
         if (indexed || fill) logIndexSkip(vault, reg, st, result.marked);
+        if (st.left && !Object.keys(st.left).length) delete st.left;
         st.lastRunAt = result.at;
         st.last = result;
-        applyResets(st);
-        saveState(vault, st);
       } catch (e) {
         result.error = String(e?.message || e);
         fail('run', e);
+      } finally {
+        if (st) {
+          applyResets(st);
+          try { saveState(vault, st); } catch (e) { fail('run', e); }
+        }
       }
       lastRun = result;
       if (result.filed || result.skipped) log('keeper', `${reason}: ${result.filed} filed, ${result.changed} files changed, ${result.skipped} withheld`);
@@ -688,31 +759,73 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     const c = conf();
     const st = b ? loadState(b.vault) : { done: {} };
     const reg = b ? registry(b) : null;
-    return { on: c.on, meetingsIndex: c.meetingsIndex, facts: reg ? owns(reg.rows, 'facts') : false, running: !!running, lastRunAt: st.lastRunAt ?? null, filed: Object.keys(st.done ?? {}).length, last: st.last ?? lastRun, held: st.held ?? null, folders: reg?.f ?? {}, model: hasModel(), plugins: reg?.rows ?? [], learned: reg ? learnedStatus(b.vault, reg, st) : null, errors: errors() };
+    return { on: c.on, editVault: c.editVault, meetingsIndex: c.meetingsIndex, facts: reg ? owns(reg.rows, 'facts') : false, running: !!running, lastRunAt: st.lastRunAt ?? null, filed: Object.keys(st.done ?? {}).length, last: st.last ?? lastRun, held: st.held ?? null, folders: reg?.f ?? {}, model: hasModel(), plugins: reg?.rows ?? [], learned: reg ? learnedStatus(b.vault, reg, st) : null, errors: errors() };
   };
-  // the learned list's size against its budget and its share of the file it lives in; pick is the select's value, auto
-  // what Automatic resolves to, and suggest the other file when the vault's memory has changed since that was settled
+  // the learned list's size against its budget and its share of the file it lives in, and what CLAUDE.md holds: no
+  // block, the copy, a pointer or a list from an earlier version, or a list written by hand
   const learnedStatus = (vault, reg, st) => {
     const target = learnedTarget(vault, reg, st);
-    const auto = autoTarget(vault, reg, st);
     const note = noteFor(vault, st);
-    const file = target === 'learned' ? LEARNED_FILE.split(path.sep).join('/') : target === 'note' ? note : 'CLAUDE.md';
+    const file = target === 'note' ? note : LEARNED_FILE.split(path.sep).join('/');
     const text = read(path.join(vault, file)) ?? '';
-    const suggest = !conf().factsTarget && evidenceTarget(reg) !== auto ? evidenceTarget(reg) : null;
-    const small = claudeSmall(vault, st);
-    const { budget, maxLines } = budgetFor(target, small);
-    // what picking Default applies (for CLAUDE.md always the smaller default), and how many lines it would move to the
-    // changelog, for the confirm the settings page shows
-    const def = defaultBudget(target, true);
     const lines = learnedLines(text);
-    const defaultMoves = pruneLearned(lines, def.budget, def.maxLines).dropped.length;
-    // a CLAUDE.md list kept at LEARNED_BUDGET from before the smaller default: offered, never applied on its own
-    const suggestSmall = target === 'claude' && conf().factsBudget == null && !small;
+    // how many lines picking Default would move to the changelog, for the confirm the settings page shows
+    const defaultMoves = pruneLearned(lines, LEARNED_BUDGET).dropped.length;
     // the note is linked while Quorum owns the index job, also before index.md exists; indexGenerated says why not
     const index = read(path.join(vault, 'index.md'));
     const indexGenerated = owns(reg.rows, 'index') && index != null && isGenerated(index);
-    return { target, pick: conf().factsTarget ?? 'auto', auto, suggest, file, note, linked: owns(reg.rows, 'index') && !indexGenerated, indexGenerated, budget, maxFacts: Number.isFinite(maxLines) ? maxLines : null, budgetPick: conf().factsBudget ?? (suggestSmall ? 'kept' : 'auto'), defaultBudget: def.budget, defaultFacts: Number.isFinite(def.maxLines) ? def.maxLines : null, defaultMoves, suggestSmall, small: { budget: CLAUDE_BUDGET, facts: CLAUDE_FACTS }, large: LEARNED_BUDGET, chars: learnedChars(lines), fileChars: text.length };
+    const claude = read(path.join(vault, 'CLAUDE.md'));
+    const block = claude == null || !blockAt(claude) ? null : isCopy(claude) ? 'copy' : isPointer(claude) ? 'pointer' : 'list';
+    // a picked note the person made, which takes the facts only with editVault on
+    const noteHeld = conf().factsTarget === 'note' && target !== 'note';
+    return {
+      target, pick: conf().factsTarget === 'note' ? 'note' : 'learned', file, note, noteHeld, linked: owns(reg.rows, 'index') && !indexGenerated, indexGenerated,
+      budget: budgetFor().budget, budgetPick: conf().factsBudget ?? 'auto', defaultBudget: LEARNED_BUDGET, defaultMoves, chars: learnedChars(lines), fileChars: text.length,
+      claude: { on: conf().factsInClaude, editable: mayEdit(reg, st, 'CLAUDE.md', claude), block, lines: block === 'list' ? learnedLines(claude).length : 0, generated: claude != null && isGenerated(claude), facts: CLAUDE_FACTS, budget: CLAUDE_BUDGET },
+    };
   };
+  // the block in CLAUDE.md taken out when the user asks from Settings: only the text between the quorum:learned
+  // markers goes. A list in it joins Quorum's own list first, so no fact is lost; when that list cannot take the lines
+  // (marked generated), CLAUDE.md stays as it was. The copy is turned off too, so no later run writes it again
+  async function removeClaude() {
+    if (running) await running.catch(() => {});
+    const b = brain();
+    if (!b) return status();
+    if (conf().factsInClaude) { settings.keeper = { ...settings.keeper, factsInClaude: false }; saveSettings(); }
+    const vault = b.vault;
+    const abs = path.join(vault, 'CLAUDE.md');
+    const cur = read(abs);
+    if (cur == null || isGenerated(cur) || !blockAt(cur)) return status();
+    const st = loadState(vault);
+    const reg = registry(b);
+    const changed = [];
+    const dropped = [];
+    // a line with nothing in it, or one that only says a note was empty, does not move: it is named in the changelog
+    const all = isPointer(cur) || isCopy(cur) ? [] : learnedLines(cur);
+    const lines = all.filter((l) => factKey(l) && informative(l));
+    const left = all.filter((l) => !lines.includes(l));
+    if (lines.length) {
+      let moved = false;
+      try {
+        placeFacts(vault, reg, st, lines, changed, dropped);
+        const have = new Set([...learnedLines(read(path.join(vault, learnedFileIn(st))) ?? ''), ...dropped].map(factKey));
+        moved = lines.every((l) => have.has(factKey(l)));
+      } catch (e) { fail('facts', e); }
+      if (!moved) {
+        saveState(vault, st);
+        if (changed.length) logChange(vault, 'Learned facts', changed, dropped);
+        fail('facts', 'the learned facts in CLAUDE.md could not be moved, so CLAUDE.md was left as it was');
+        return status();
+      }
+    }
+    writeAtomic(abs, dropBlock(cur));
+    changed.push('CLAUDE.md');
+    logChange(vault, 'Learned facts removed from CLAUDE.md', changed, dropped);
+    if (left.length) appendChangelog(vault, 'Lines left out of the learned facts', `Empty or saying nothing, so not moved from CLAUDE.md:\n\n${left.join('\n')}\n\n`);
+    saveState(vault, st);
+    onChange({ ...(lastRun ?? {}), changed: changed.length, reason: 'settings' });
+    return status();
+  }
   // one plugin row handed to Quorum or to the vault. A held run planned with the old owners no longer applies, so it
   // is cleared and a new pass is scheduled
   // a report plugin writes nothing in the vault, so its pick is saved and nothing else: no held run is cleared and no
@@ -737,14 +850,16 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     const next = { ...settings.keeper };
     if (typeof patch.on === 'boolean') next.on = patch.on;
     if (typeof patch.meetingsIndex === 'boolean') next.meetingsIndex = patch.meetingsIndex;
-    // picking Default is the one way a CLAUDE.md list kept from before the smaller default takes it; reset holds the
-    // keeper.json fields a pick settles. A cleared note path settles the default note, so the list moves there
+    if (typeof patch.factsInClaude === 'boolean') next.factsInClaude = patch.factsInClaude;
+    if (typeof patch.editVault === 'boolean') next.editVault = patch.editVault;
+    if (patch.editVault === true && !before.editVault) refile = true;
+    // reset holds the keeper.json fields a pick settles. A cleared note path settles the default note, so the list moves
+    // there
     const reset = {};
-    let pickedDefault = false;
     if (Number.isInteger(patch.factsBudget) && patch.factsBudget >= 500 && patch.factsBudget <= 20000) next.factsBudget = patch.factsBudget;
-    else if (patch.factsBudget === 'auto') { delete next.factsBudget; pickedDefault = true; }
-    if (patch.factsTarget === 'claude' || patch.factsTarget === 'learned' || patch.factsTarget === 'note') next.factsTarget = patch.factsTarget;
-    else if (patch.factsTarget === 'auto') delete next.factsTarget;
+    else if (patch.factsBudget === 'auto') delete next.factsBudget;
+    if (patch.factsTarget === 'note') next.factsTarget = 'note';
+    else if (patch.factsTarget === 'learned' || patch.factsTarget === 'auto') delete next.factsTarget;
     // a note path outside the meetings folder, which the keeper files as meetings; an empty one goes back to the default
     if (typeof patch.factsNote === 'string') {
       const rel = notePath(patch.factsNote);
@@ -755,16 +870,14 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     settings.keeper = next;
     saveSettings();
     const after = conf();
-    // Default settles the smaller CLAUDE.md budget only while the list lives in CLAUDE.md
-    if (b && pickedDefault && learnedTarget(b.vault, registry(b), loadState(b.vault)) === 'claude') reset.claudeSmall = true;
     // a running run saves its own copy of keeper.json, so the reset waits for it there; otherwise it is saved now
     let st = null;
-    if (b && Object.keys(reset).length) {
+    if (b && (Object.keys(reset).length || refile)) {
       Object.assign(resets, reset);
       if (!running) { st = loadState(b.vault); applyResets(st); saveState(b.vault, st); }
     }
-    // another budget, file or note applies now, unless upkeep is off or a run is about to do it
-    const factsChanged = Object.keys(reset).length > 0 || ['factsBudget', 'factsTarget', 'factsNote'].some((key) => before[key] !== after[key]);
+    // another budget, file, note or CLAUDE.md copy applies now, unless upkeep is off or a run is about to do it
+    const factsChanged = Object.keys(reset).length > 0 || ['factsBudget', 'factsTarget', 'factsNote', 'factsInClaude', 'editVault'].some((key) => before[key] !== after[key]);
     if (b && after.on && !running && factsChanged) {
       st ??= loadState(b.vault);
       const changed = tidyFacts(b.vault, registry(b), st);
@@ -774,5 +887,5 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     if (after.on) schedule('settings');
     return status();
   };
-  return { run, schedule, status, set, setPlugin, plugins, cachedPlugins, conf, clearErrors, errorLog };
+  return { run, schedule, status, set, setPlugin, removeClaude, plugins, cachedPlugins, conf, clearErrors, errorLog };
 }
