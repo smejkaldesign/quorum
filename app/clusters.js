@@ -66,34 +66,92 @@ export function clusterAssign(ids, links, skip = () => false) {
 }
 
 const baseName = (rel) => rel.split('/').pop().replace(/\.md$/i, '');
+const own = (renamed, key) => (renamed && Object.hasOwn(renamed, key) && typeof renamed[key] === 'string' && renamed[key] ? renamed[key] : null);
 
-// a name a person can read for each cluster: the folder most of its notes share, or else the name of its most linked
-// note. rels: the note path per node; cluster and deg per node as clusterAssign and the links give them; names: the
-// display name per note. Two clusters that would read the same add their most linked note. One name per node, null
-// where the node has no cluster
-export function clusterNames(rels, cluster, deg, names = rels.map(baseName)) {
+// a folder name as a person would say it: a numeric ordering prefix and the separators go, so 00-inbox reads Inbox,
+// 01-daily reads Daily and auto-memory reads Auto memory. Digits that belong to the name stay: 3d-printing reads
+// 3d printing, 2fa and 1password stay, and 2026-11 keeps its dash
+export function folderLabel(folder) {
+  const seg = String(folder ?? '').split('/').filter(Boolean).pop() ?? '';
+  const words = seg.replace(/^\d+[-_]+(?=[^\d\s_-])/, '').replace(/(?<!\d)[-_]+|[-_]+(?!\d)/g, ' ').replace(/\s+/g, ' ').trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : seg;
+}
+
+// the folders that hold more than half of the whole vault (a wrapper such as MyBrain/ around everything): too broad to
+// name a cluster. allRels: every note path in the vault. Returns a test on a folder path
+export function wrapperFolders(allRels) {
+  const counts = new Map();
+  for (const rel of allRels) {
+    let i = rel.indexOf('/');
+    while (i > 0) { const f = rel.slice(0, i); counts.set(f, (counts.get(f) ?? 0) + 1); i = rel.indexOf('/', i + 1); }
+  }
+  return (folder) => (counts.get(folder) ?? 0) > allRels.length / 2;
+}
+
+// the deepest folder that holds at least `share` of the notes, counting notes in its subfolders, or '' when none does
+// or the best one is a wrapper. Notes spread over 04-projects/a and 04-projects/b share 04-projects
+export function sharedFolder(rels, share = 0.6, wrapper = () => false) {
+  const counts = new Map();
+  for (const rel of rels) {
+    let i = rel.indexOf('/');
+    while (i > 0) { const f = rel.slice(0, i); counts.set(f, (counts.get(f) ?? 0) + 1); i = rel.indexOf('/', i + 1); }
+  }
+  const depth = (f) => f.split('/').length;
+  const fits = [...counts].filter(([, n]) => n >= rels.length * share);
+  fits.sort((a, b) => depth(b[0]) - depth(a[0]) || b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+  const best = fits[0]?.[0] ?? '';
+  return best && !wrapper(best) ? best : '';
+}
+
+// a name a person can read for each cluster: the folder most of its notes share, in plain words, or else the name of
+// its most linked note. rels: every note path, one per node; cluster and deg per node as clusterAssign and the links
+// give them; names: the display name per note; renamed: the person's own names by key, which win over the generated
+// ones. Two clusters that would read the same, generated or renamed, add their most linked note. One entry per node,
+// null where the node has no cluster: { key, name, folder }.
+// key is what a rename is kept against: folder:<path> for a cluster named by its folder, so it holds across launches
+// and re-indexes. A cluster with no shared folder is keyed by its most linked note, note:<path>, which moves if another
+// note becomes the most linked one; a rename kept against it is then dropped. folder is the path the name stands for,
+// '' when the name comes from a note
+export function clusterLabels(rels, cluster, deg, names = rels.map(baseName), renamed = {}) {
+  const wrapper = wrapperFolders(rels);
   const members = new Map();
   cluster.forEach((c, i) => { if (c >= 0) (members.get(c) ?? members.set(c, []).get(c)).push(i); });
   const label = new Map();
-  const top = new Map();
   for (const [c, m] of members) {
-    const folders = new Map();
-    for (const i of m) { const f = rels[i].includes('/') ? rels[i].slice(0, rels[i].lastIndexOf('/')) : ''; folders.set(f, (folders.get(f) ?? 0) + 1); }
-    const [folder, count] = [...folders].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0];
+    const folder = sharedFolder(m.map((i) => rels[i]), 0.6, wrapper);
     const t = m.reduce((a, b) => (deg[b] > deg[a] || (deg[b] === deg[a] && rels[b] < rels[a]) ? b : a));
-    top.set(c, names[t]);
-    label.set(c, folder && count >= m.length * 0.6 ? folder.split('/').pop() : names[t]);
+    const key = folder ? `folder:${folder}` : `note:${rels[t]}`;
+    label.set(c, { key, name: own(renamed, key) ?? (folder ? folderLabel(folder) : names[t]), folder, top: names[t] });
   }
   const seen = new Map();
-  for (const l of label.values()) seen.set(l, (seen.get(l) ?? 0) + 1);
-  for (const [c, l] of label) if (seen.get(l) > 1 && l !== top.get(c)) label.set(c, `${l} · ${top.get(c)}`);
-  return cluster.map((c) => (c === HUB_CLUSTER ? 'Hubs' : label.get(c) ?? null));
+  for (const l of label.values()) seen.set(l.name, (seen.get(l.name) ?? 0) + 1);
+  const out = new Map();
+  for (const [c, l] of label) out.set(c, { key: l.key, name: seen.get(l.name) > 1 && l.name !== l.top ? `${l.name} · ${l.top}` : l.name, folder: l.folder });
+  const hubs = { key: 'hubs', name: own(renamed, 'hubs') ?? 'Hubs', folder: '' };
+  return cluster.map((c) => (c === HUB_CLUSTER ? hubs : out.get(c) ?? null));
+}
+
+// the names alone, one per node
+export const clusterNames = (rels, cluster, deg, names, renamed) => clusterLabels(rels, cluster, deg, names, renamed).map((l) => l?.name ?? null);
+
+// an Obsidian color group named the same way: by the folder its notes share, else by the path its query starts with.
+// Only a folder name is put in plain words; a note name or a regex the query holds is shown as written.
+// members: the paths of the notes the group colors; wrapper: as wrapperFolders gives it
+export function groupInfo(query, members, wrapper = () => false, renamed = {}) {
+  const key = `group:${query}`;
+  const folder = sharedFolder(members, 0.6, wrapper);
+  const named = groupPath(query);
+  const name = folder ? folderLabel(folder) : named.folder ? folderLabel(named.label) || named.label : named.label;
+  return { key, name: own(renamed, key) ?? name, folder };
 }
 
 // a readable name for an Obsidian color group query: the last folder or note of the literal path it starts with.
 // path:"01-daily/x.md" reads x, path:/^Projects\// reads Projects; a pattern with no literal start reads as written.
 // The first of several OR parts names the group
-export function groupLabel(query) {
+export const groupLabel = (query) => groupPath(query).label;
+
+// the same, plus whether the name is a folder (as opposed to a note, a cut-off name or a raw pattern)
+function groupPath(query) {
   const first = String(query ?? '').split(/\s+OR\s+/)[0].trim();
   const exact = first.match(/^path:"(.*)"$/);
   const regex = first.match(/^path:\/(.*)\/$/);
@@ -111,8 +169,11 @@ export function groupLabel(query) {
     const cut = out.length < body.length && !out.endsWith('/');
     const segs = out.split('/').filter(Boolean);
     if (cut && segs.length > 1) segs.pop();
-    if (!segs.length) return regex[1].replace(/\\\//g, '/');
-    literal = segs.join('/');
+    if (!segs.length) return { label: regex[1].replace(/\\\//g, '/'), folder: false };
+    return { label: segs[segs.length - 1], folder: !(cut && segs.length === 1 && !out.includes('/')) };
   }
-  return literal.replace(/\.md$/i, '').split('/').filter(Boolean).pop() || first || 'Group';
+  const segs = literal.split('/').filter(Boolean);
+  const last = segs.pop();
+  if (!last) return { label: first || 'Group', folder: false };
+  return { label: last.replace(/\.md$/i, ''), folder: !/\.md$/i.test(last) };
 }

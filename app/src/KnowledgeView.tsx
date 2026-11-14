@@ -138,6 +138,9 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   const openGraphNode = useCallback((id: string) => {
     if (id.startsWith('?')) { setPanel(false); setHealth({ focus: id.slice(1) }); } else setFocus(id);
   }, []);
+  // a cluster renamed from the graph badge: saved in main, which answers with every note's cluster name; the graph
+  // applies them in place
+  const renameCluster = useCallback((key: string, name: string) => window.quorum.vaultClusterName(key, name), []);
 
   // [[links]] in an open note resolve the way the graph does, then open inside Quorum
   const openLink = useCallback(async (target: string) => {
@@ -348,7 +351,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
         ) : graph ? (
           <>
             <div className={`kb-stage ${health ? 'taken-over' : ''}`}>
-              {view && <Graph data={graph} view={view} query={query} focus={focus} timelapse={lapse} onOpen={openGraphNode} onTimelapseEnd={endLapse} />}
+              {view && <Graph data={graph} view={view} query={query} focus={focus} timelapse={lapse} onOpen={openGraphNode} onTimelapseEnd={endLapse} onRenameCluster={renameCluster} />}
               {healthShown && (
                 <div className={`kb-takeover ${health ? 'in' : 'out'}`}>
                   <LinkHealth focus={healthShown.focus} onOpen={openNote} onCreate={(name) => { quickCreate(name); }} onClose={() => setHealth(null)} onChanged={() => { load(); countIssues(); }} />
