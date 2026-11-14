@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { AgentSchedule, Brain, CalendarSettings, MeetingSourceInfo, PlatformInfo, SourceJob } from './quorum';
+import type { AgentSchedule, Brain, CalendarSettings, MeetingSourceInfo, OAuthAccount, PlatformInfo, SourceJob } from './quorum';
 import { TRADEOFFS } from '../sources/agent-import';
 import { CATEGORIES, CONNECTORS_CHANGED, aboutFor, connectorsFor, featuresFor, isConnected, type LibraryConnector } from '../connectors/library';
 import { useFlag } from './flags';
@@ -10,10 +10,11 @@ import { IconCheck, IconChevron, IconExternal, IconFolder, IconGrid, IconMore, I
 // Settings › Connectors: four fixed groups (your notes, calendar, meeting notes, AI), each row saying whether it is
 // connected and offering one action, and a detail page per connector. Connectors not built yet are named on one line
 // at the bottom and offer nothing. Meeting-notes sources run through sources/index.js; Apple Calendar is the macOS
-// permission; Claude Code is the quorum MCP server registration. The meeting apps that listen on this Mac appear only
+// permission; Claude Code is the quorum MCP server registration; the Accounts group is the personal OAuth connectors
+// (sources/accounts.js), one sign-in each through Quorum's registered apps. The meeting apps that listen on this Mac appear only
 // with the meeting-capture flag on; with it off, Zoom stays as its cloud recordings import.
 type Provider = Awaited<ReturnType<typeof window.quorum.meetingProviders>>[number];
-type Live = { sources: MeetingSourceInfo[]; cal: CalendarSettings | null; mcp: { added: boolean; command: string } | null; providers: Provider[]; platforms: PlatformInfo[] };
+type Live = { sources: MeetingSourceInfo[]; cal: CalendarSettings | null; mcp: { added: boolean; command: string } | null; providers: Provider[]; platforms: PlatformInfo[]; accounts: OAuthAccount[] };
 type Act = (fn: () => Promise<unknown>) => Promise<void>;
 
 const sourceFor = (x: LibraryConnector, live: Live) => (x.source ? live.sources.find((s) => s.id === x.source) ?? null : null);
@@ -31,9 +32,12 @@ function useLibrary() {
   return useMemo(() => { const list = connectorsFor({ meetingCapture }); return { list, byId: Object.fromEntries(list.map((x) => [x.id, x])) as Record<string, LibraryConnector> }; }, [meetingCapture]);
 }
 const appWhere = (x: LibraryConnector) => (x.app === 'zoom' ? 'the Zoom app' : x.app === 'teams' ? 'the Teams app or a browser' : 'the browser');
+// the personal OAuth account behind an Accounts row; configured is false when this build has no client id for it
+const accountFor = (x: LibraryConnector, live: Live) => (x.account ? live.accounts.find((a) => a.id === x.id) ?? null : null);
+const unavailable = (x: LibraryConnector, live: Live) => !!x.account && accountFor(x, live)?.configured !== true;
 const googleFor = (x: LibraryConnector, live: Live) => (x.id === 'google-calendar' ? live.cal?.google ?? null : null);
 const connectionType = (x: LibraryConnector) =>
-  x.kind === 'mcp-source' ? `${x.name} account, over its MCP server (OAuth)` : x.kind === 'macos' ? 'Permission on this Mac' : cloudOnly(x) ? `${x.name} account, through Quorum Cloud` : x.kind === 'meeting-app' ? `Reads ${appWhere(x)} on this Mac; no account` : x.kind === 'quorum-mcp' ? `The quorum MCP server, registered in ${x.name}` : `${x.name} account (OAuth)`;
+  x.kind === 'mcp-source' ? `${x.name} account, over its MCP server (OAuth)` : x.kind === 'macos' ? 'Permission on this Mac' : cloudOnly(x) ? `${x.name} account, through Quorum Cloud` : x.kind === 'meeting-app' ? `Reads ${appWhere(x)} on this Mac; no account` : x.kind === 'quorum-mcp' ? `The quorum MCP server, registered in ${x.name}` : x.account ? `${x.name} account (OAuth through Quorum's registered app)` : `${x.name} account (OAuth)`;
 
 const ago = (iso: string | null) => {
   if (!iso) return 'never';
@@ -52,16 +56,17 @@ const plural = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`;
 const GROUPS: { title: string; cat: string; ids: string[] }[] = [
   { title: 'Calendar', cat: 'calendar', ids: ['apple-calendar', 'google-calendar'] },
   { title: 'Meeting notes', cat: 'meeting-notes', ids: ['granola', 'zoom', 'google-meet', 'teams'] },
+  { title: 'Accounts', cat: 'accounts', ids: ['google-drive', 'notion', 'slack', 'github'] },
   { title: 'AI', cat: 'ai', ids: ['claude-code'] },
 ];
 // the connectors not built yet named first on the More coming line, when they are still not built
-const MORE_FIRST = ['slack', 'notion', 'google-drive', 'linear', 'gmail', 'fireflies'];
+const MORE_FIRST = ['linear', 'gmail', 'fireflies', 'hubspot', 'jira'];
 const MORE_NAMED = 6;
 const PRICING = 'https://quorum.watch/#pricing';
 
 // detail is which connector's page is open; SettingsView owns it so the page title can turn into breadcrumbs
 export function ConnectorsPage({ detail, onDetail, brain, onFolder, onNotes, focus }: { detail: string | null; onDetail: (id: string | null) => void; brain: Brain | null; onFolder: () => void; onNotes: () => void; focus?: { cat: string | true; n: number } | null }) {
-  const [live, setLive] = useState<Live>({ sources: [], cal: null, mcp: null, providers: [], platforms: [] });
+  const [live, setLive] = useState<Live>({ sources: [], cal: null, mcp: null, providers: [], platforms: [], accounts: [] });
   const { list: libraryList, byId } = useLibrary();
   // a connect refused for the wrong account opens the detail page, which offers signing in with another account
   const [refused, setRefused] = useState<{ id: string; error: string } | null>(null);
@@ -70,8 +75,8 @@ export function ConnectorsPage({ detail, onDetail, brain, onFolder, onNotes, foc
   const [loaded, setLoaded] = useState(false);
   const load = async () => {
     // the local edition has no platform handlers; the call fails and the list stays empty
-    const [sources, cal, mcp, providers, platforms] = await Promise.all([window.quorum.sourcesList(), window.quorum.calendarStatus(), window.quorum.mcpStatus(), window.quorum.meetingProviders(), window.quorum.platformsList().catch(() => [] as PlatformInfo[])]);
-    setLive({ sources, cal, mcp, providers, platforms });
+    const [sources, cal, mcp, providers, platforms, accounts] = await Promise.all([window.quorum.sourcesList(), window.quorum.calendarStatus(), window.quorum.mcpStatus(), window.quorum.meetingProviders(), window.quorum.platformsList().catch(() => [] as PlatformInfo[]), window.quorum.oauthAccounts().catch(() => [] as OAuthAccount[])]);
+    setLive({ sources, cal, mcp, providers, platforms, accounts });
     setLoaded(true);
   };
   useEffect(() => {
@@ -162,6 +167,7 @@ const metaLine = (x: LibraryConnector, live: Live) => {
   if (x.id === 'apple-calendar') return 'Upcoming meetings on Home';
   if (x.id === 'google-calendar') { const g = googleFor(x, live); return g?.connected ? `${g.account ?? 'Google account'} · ${plural(g.calendars, 'calendar')}` : null; }
   if (x.id === 'claude-code') return 'quorum MCP server added';
+  if (x.account) return accountFor(x, live)?.account ?? `${x.name} account`;
   const p = providerFor(x, live);
   if (p) { const plat = platformFor(x, live); return `${p.inCall ? 'In a call now' : 'Listening on this Mac'}${plat?.connected ? ` · ${plural(plat.notes, 'recording')} imported` : ''}`; }
   const plat = platformFor(x, live);
@@ -190,7 +196,8 @@ function Actions({ connector: x, live, busy, act, compact }: { connector: Librar
             {src?.folderPath && <button role="menuitem" onClick={() => { setOpen(false); window.quorum.meetingSourceOpen(src.folderPath!); }}><IconExternal width={15} height={15} /> Show notes folder</button>}
             {x.kind === 'mcp-source' && src && <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.sourceDisconnect(src.id)); }}>Disconnect</button>}
             {x.id === 'apple-calendar' && <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.calendarSet({ enabled: false })); }}>Disconnect</button>}
-            {x.id === 'google-calendar' && <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.gcalDisconnect()); }}>Disconnect</button>}
+            {accountFor(x, live)?.manageUrl && <button role="menuitem" onClick={() => { setOpen(false); window.quorum.openExternal(accountFor(x, live)!.manageUrl!); }}><IconExternal width={15} height={15} /> Choose repositories</button>}
+            {x.account && <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.oauthDisconnect(x.id)); }}>Disconnect</button>}
             {x.id === 'claude-code' && <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.mcpRemove()); }}>Remove from Claude Code</button>}
             {x.kind === 'meeting-app' && x.app && <>
               {!cloudOnly(x) && <button role="menuitem" onClick={() => { setOpen(false); act(async () => { await window.quorum.meetingProviderCheck(); await new Promise((r) => setTimeout(r, 1500)); }); }}><IconReset width={15} height={15} /> Check again</button>}
@@ -217,9 +224,9 @@ function ConnectorRow({ connector: x, icon, live, onChange, onOpen, onWrongAccou
   useEffect(() => { if (!running) return; const t = setInterval(() => tick((n) => n + 1), 1000); return () => clearInterval(t); }, [running]);
   const on = isConnected(x, live);
   const cloud = needsCloud(x, live);
-  // a copy built without Quorum's Google client cannot connect Google Calendar; the row says so instead of offering it
-  const noClient = x.id === 'google-calendar' && live.cal?.google?.configured === false;
-  const meta = on ? metaLine(x, live) : noClient ? 'Needs the app\'s Google client' : null;
+  // a copy built without the provider's client id cannot connect it; the row says so instead of offering it
+  const off = !on && unavailable(x, live);
+  const meta = on ? metaLine(x, live) : off ? 'Not available yet' : null;
   return (
     <div className="conn-row">
       <div className="conn-line" role="button" tabIndex={0} onClick={onOpen} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}>
@@ -229,7 +236,7 @@ function ConnectorRow({ connector: x, icon, live, onChange, onOpen, onWrongAccou
         <Status on={on} />
         {meta && <span className="conn-meta">{meta}</span>}
         {on ? <Actions connector={x} live={live} busy={busy} act={act} compact />
-          : <span className="conn-actions" onClick={(e) => e.stopPropagation()}>{cloud ? <button className="pill" onClick={() => window.quorum.openExternal(PRICING)}>See Cloud</button> : noClient ? null : <ConnectButton connector={x} live={live} busy={busy} act={act} onWrongAccount={onWrongAccount} />}</span>}
+          : <span className="conn-actions" onClick={(e) => e.stopPropagation()}>{cloud ? <button className="pill" onClick={() => window.quorum.openExternal(PRICING)}>See Cloud</button> : off ? null : <ConnectButton connector={x} live={live} busy={busy} act={act} onWrongAccount={onWrongAccount} />}</span>}
         <IconChevron className="right conn-chev" width={14} height={14} />
       </div>
       {src?.job && <div className="conn-sub"><JobLine job={src.job} oneLine /></div>}
@@ -251,11 +258,12 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
   useEffect(() => { if (!running) return; const t = setInterval(() => tick((n) => n + 1), 1000); return () => clearInterval(t); }, [running]);
   const cat = CATEGORIES.find((c) => c.id === x.category);
   const google = googleFor(x, live);
-  const status = soon ? 'Soon' : on ? 'Connected' : x.id === 'apple-calendar' && live.cal?.status === 'denied' ? 'Access is off in System Settings'
-    : google && !google.configured ? 'Needs the app\'s Google client (docs/self-hosting.md)'
+  const acct = accountFor(x, live);
+  const off = !on && unavailable(x, live);
+  const status = soon ? 'Soon' : on ? 'Connected' : off ? 'Not available yet' : x.id === 'apple-calendar' && live.cal?.status === 'denied' ? 'Access is off in System Settings'
     : prov && !prov.enabled ? 'Not listening' : prov && !prov.installed ? `${x.name} isn't installed on this Mac` : prov && prov.access === false ? 'Needs Accessibility access' : 'Not connected';
   // one message for the page: the latest action's error wins, else the last failed import
-  const alert = error || (src?.job?.status === 'failed' ? src.job.error : null) || (google?.connected && google.error ? google.error : null) || null;
+  const alert = error || (src?.job?.status === 'failed' ? src.job.error : null) || (acct?.error ?? null) || null;
   const accountProblem = !!alert && /No \w+ account for|account for this sign-in|different account|Use the account your/i.test(alert);
   const rows: [string, ReactNode][] = [
     ...(on ? [] : [['Status', status] as [string, ReactNode]]),
@@ -277,12 +285,16 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
   }
   if (x.id === 'apple-calendar') rows.push(['Permission', live.cal?.status ?? 'unknown'], ['Reads', 'The calendars in the Calendar app on this Mac; nothing leaves this Mac']);
   if (google?.connected) rows.push(
-    ...(google.account ? [['Account', google.account] as [string, ReactNode]] : []),
     ['Calendars', plural(google.calendars, 'calendar')],
     ['Last read', google.lastSyncAt ? `${ago(google.lastSyncAt)} (${new Date(google.lastSyncAt).toLocaleString()})` : 'not yet'],
-    ['Reads', 'Upcoming events from the calendars selected in Google Calendar, read only. Tokens stay in this Mac\'s Keychain'],
+    ['Reads', 'Upcoming events from the calendars selected in Google Calendar, read only'],
   );
-  if (google && !google.connected) rows.push(['Scope', 'calendar.readonly: Quorum reads events and never writes to your calendar']);
+  if (x.account) rows.push(
+    ...(acct?.connected && acct.account ? [['Account', acct.account] as [string, ReactNode]] : []),
+    ...(acct?.connected && acct.connectedAt ? [['Connected', `${ago(acct.connectedAt)} (${new Date(acct.connectedAt).toLocaleString()})`] as [string, ReactNode]] : []),
+    ['Access', acct?.scope ?? 'Set by the provider\'s consent screen'],
+    ['Tokens', x.id.startsWith('google-') ? 'Stored in this Mac\'s Keychain. Disconnect removes them, and revokes Quorum\'s Google access once no other Google connector uses the same account' : 'Stored in this Mac\'s Keychain. Disconnect revokes them with the provider and removes them'],
+  );
   if (prov) rows.push(
     ['Listens to', `${x.name} calls in ${appWhere(x)} on this Mac`],
     ['App', prov.installed ? `Installed${prov.version ? ` · ${prov.version}` : ''}` : 'Not installed'],
@@ -303,7 +315,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
         </div>
       </div>
       <TitleActions>
-        {!soon && !on && !(accountProblem && x.kind === 'mcp-source') && <ConnectButton connector={x} live={live} busy={busy} act={act} />}
+        {!soon && !on && !off && !(accountProblem && x.kind === 'mcp-source') && <ConnectButton connector={x} live={live} busy={busy} act={act} />}
         {on && <Actions connector={x} live={live} busy={busy} act={act} compact />}
       </TitleActions>
       {alert && <div className="conn-alert" role="alert"><strong>{accountProblem ? 'Sign in with a different account' : alert.split('. ')[0].replace(/\.$/, '')}</strong><span>{alert}</span></div>}
@@ -316,7 +328,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
           ? <DifferentAccount connector={x} busy={busy} act={act} />
           : src?.job && src.job.status !== 'failed'
             ? <JobLine job={src.job} />
-            : <p className="src-status">{on ? (src ? `Last sync ${ago(src.lastSyncAt)}. Next automatic sync within 30 minutes while Quorum runs.` : google ? `Connected as ${google.account ?? 'your Google account'}. Home reads upcoming events every few minutes while Quorum runs.` : 'Connected on this Mac.') : soon ? 'Not available yet.' : 'Not connected yet.'}</p>}
+            : <p className="src-status">{on ? (src ? `Last sync ${ago(src.lastSyncAt)}. Next automatic sync within 30 minutes while Quorum runs.` : google ? `Connected as ${google.account ?? 'your Google account'}. Home reads upcoming events every few minutes while Quorum runs.` : acct ? `Connected as ${acct.account ?? `your ${x.name} account`}. The ${x.name} features in the list below use this account as they ship.` : 'Connected on this Mac.') : soon || off ? 'Not available yet.' : 'Not connected yet.'}</p>}
       </div>
       {on ? (
         <div className="conn-tabs" role="tablist">
@@ -365,7 +377,7 @@ const startConnect = async (x: LibraryConnector, fresh = false): Promise<{ ok?: 
   if (x.kind === 'mcp-source' && x.source) return window.quorum.sourceConnect(x.source, fresh ? { fresh: true } : undefined);
   if (x.id === 'apple-calendar') { const c = await window.quorum.calendarConnect(); return c.status === 'granted' ? { ok: true } : c.status === 'denied' ? { error: 'Calendar access is off for Quorum in System Settings.' } : { error: 'macOS did not grant calendar access.' }; }
   if (x.id === 'claude-code') { const a = await window.quorum.mcpAdd(); return a.added ? { ok: true } : { error: a.error ?? 'Claude Code did not accept the server.' }; }
-  if (x.id === 'google-calendar') { const g = await window.quorum.gcalConnect(); return g.connected && !g.error ? { ok: true } : { error: g.error ?? 'Google did not finish the sign-in.' }; }
+  if (x.account) { const a = await window.quorum.oauthConnect(x.id); return 'connected' in a && a.connected && !a.error ? { ok: true } : { error: a.error ?? `${x.name} did not finish the sign-in.` }; }
   if (cloudOnly(x) && x.app) return window.quorum.platformConnect(x.app).catch(() => ({ error: `${x.name} cloud recordings are part of Quorum Cloud.` }));
   if (x.kind === 'meeting-app' && x.app) {
     await window.quorum.meetingProviderSet(x.app, true);

@@ -16,6 +16,10 @@ name: Release
 # Repository variables (not secret; the anon key is the publishable one every installed Cloud app carries):
 #   QUORUM_SUPABASE_URL,                  The hosted Supabase project the Cloud edition signs in to. Without them the
 #   QUORUM_SUPABASE_ANON_KEY              Cloud job is skipped and the release carries the Local edition only.
+#   QUORUM_NOTION_CLIENT_ID,              Optional. The public client ids of Quorum's apps for the personal
+#   QUORUM_SLACK_CLIENT_ID,               connectors (docs/oauth-apps.md) and the GitHub App's URL name, written
+#   QUORUM_GITHUB_APP_CLIENT_ID,          into the packaged package.json as quorumOAuth. A connector without its id
+#   QUORUM_GITHUB_APP_SLUG                shows Not available yet. The secrets live on the relay, never in the app.
 on:
   push:
     tags: ['v*']
@@ -43,6 +47,10 @@ jobs:
       GOOGLE_CLIENT_SECRET: ${{ secrets.QUORUM_GOOGLE_CLIENT_SECRET }}
       QUORUM_SUPABASE_URL: ${{ vars.QUORUM_SUPABASE_URL }}
       QUORUM_SUPABASE_ANON_KEY: ${{ vars.QUORUM_SUPABASE_ANON_KEY }}
+      NOTION_CLIENT_ID: ${{ vars.QUORUM_NOTION_CLIENT_ID }}
+      SLACK_CLIENT_ID: ${{ vars.QUORUM_SLACK_CLIENT_ID }}
+      GITHUB_APP_CLIENT_ID: ${{ vars.QUORUM_GITHUB_APP_CLIENT_ID }}
+      GITHUB_APP_SLUG: ${{ vars.QUORUM_GITHUB_APP_SLUG }}
     steps:
       - name: Cloud edition needs its Supabase project
         if: matrix.edition == 'cloud' && (env.QUORUM_SUPABASE_URL == '' || env.QUORUM_SUPABASE_ANON_KEY == '')
@@ -106,6 +114,10 @@ jobs:
       - name: Add the Google Calendar client
         if: env.SKIP != '1' && env.GOOGLE_CLIENT_SECRET != ''
         run: node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.quorumGoogle={clientId:process.env.GOOGLE_CLIENT_ID||undefined,clientSecret:process.env.GOOGLE_CLIENT_SECRET};fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');console.log('quorumGoogle set')"
+        working-directory: app
+      - name: Add the personal connector client ids
+        if: env.SKIP != '1' && (env.NOTION_CLIENT_ID != '' || env.SLACK_CLIENT_ID != '' || env.GITHUB_APP_CLIENT_ID != '')
+        run: node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));const id=(v)=>v?{clientId:v}:undefined;p.quorumOAuth={notion:id(process.env.NOTION_CLIENT_ID),slack:id(process.env.SLACK_CLIENT_ID),github:process.env.GITHUB_APP_CLIENT_ID?{clientId:process.env.GITHUB_APP_CLIENT_ID,slug:process.env.GITHUB_APP_SLUG||undefined}:undefined};fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');console.log('quorumOAuth set')"
         working-directory: app
       - name: Package the Local edition
         if: env.SKIP != '1' && matrix.edition == 'local'

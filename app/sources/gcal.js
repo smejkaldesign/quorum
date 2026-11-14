@@ -4,38 +4,24 @@
 // public identifier for installed apps), so the pair comes from the environment, the repo's .env files, or the
 // quorumGoogle field electron-builder writes into the packaged package.json, never from this file. Tokens live in the
 // Keychain under the source token store. Pure Node apart from the caller-supplied `open`, so vitest runs it as is.
-import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { LOOPBACK_REDIRECT, awaitLoopback, emailOf, pkce } from './oauth.js';
+import { OAUTH_APPS } from '../connectors/oauthApps.js';
+import { envLookup } from './env.js';
+import { LOOPBACK_REDIRECT, awaitLoopback, emailOf, json, newState, pkce } from './oauth.js';
 
 export const SOURCE_ID = 'google-calendar';
-export const SCOPES = ['https://www.googleapis.com/auth/calendar.readonly', 'openid', 'email'];
+export const SCOPES = OAUTH_APPS[SOURCE_ID].scopes;
 export const DEFAULT_CLIENT_ID = '247537775138-ms93108a3kv4a50ulnnia80ipfs1hha6.apps.googleusercontent.com';
 const AUTHORIZE = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN = 'https://oauth2.googleapis.com/token';
 const API = 'https://www.googleapis.com/calendar/v3';
 const MAX_CALENDARS = 10;
 
-const b64url = (buf) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-const json = async (r) => { const t = await r.text(); try { return JSON.parse(t); } catch { return null; } };
-
-export function readEnvFile(file) {
-  const out = {};
-  if (!file || !existsSync(file)) return out;
-  for (const line of readFileSync(file, 'utf8').split('\n')) {
-    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
-    if (m) out[m[1]] = m[2].replace(/^["']|["']$/g, '');
-  }
-  return out;
-}
-
 // the OAuth client, in order: the shell, the repo's .env then .env.development, the packaged package.json. The id has
 // a public default; the secret has none, and without it the connector says what to set
-export function googleClient({ env = process.env, root = null, packaged = null } = {}) {
-  const files = root ? [readEnvFile(path.join(root, '.env')), readEnvFile(path.join(root, '.env.development'))] : [];
-  const pick = (key, field) => env[key] || files.map((f) => f[key]).find(Boolean) || packaged?.[field] || null;
+export function googleClient({ env = process.env, root = null, packaged = null, lookup = envLookup({ env, root }) } = {}) {
+  const pick = (key, field) => lookup(key) || packaged?.[field] || null;
   return { clientId: pick('QUORUM_GOOGLE_CLIENT_ID', 'clientId') || DEFAULT_CLIENT_ID, clientSecret: pick('QUORUM_GOOGLE_CLIENT_SECRET', 'clientSecret') };
 }
 
@@ -68,11 +54,19 @@ export const exchange = (client, { code, verifier, redirectUri = LOOPBACK_REDIRE
 export const refresh = (client, tokens, fetchImpl = fetch) =>
   tokenRequest(client, { grant_type: 'refresh_token', refresh_token: tokens.refreshToken }, fetchImpl).then((t) => ({ ...t, refreshToken: t.refreshToken ?? tokens.refreshToken, email: t.email ?? tokens.email ?? null }));
 
+// revoking any token revokes the person's whole grant to this client, Calendar and Drive scopes alike, so the caller
+// decides whether another Google connector on the same account still needs it (accounts.js)
+export async function revoke(tokens, fetchImpl = fetch) {
+  const token = tokens?.refreshToken || tokens?.accessToken;
+  if (!token) return false;
+  try { return (await fetchImpl('https://oauth2.googleapis.com/revoke', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token }), signal: AbortSignal.timeout(15000) })).ok; } catch { return false; }
+}
+
 // the browser round trip: resolves with the tokens (and the account's email when Google sent an id_token)
 export async function connect({ client, open, loopback = awaitLoopback, fetchImpl = fetch, redirectUri = LOOPBACK_REDIRECT }) {
   if (!client?.clientSecret) throw new Error('Google Calendar needs the app\'s Google client secret. Set QUORUM_GOOGLE_CLIENT_SECRET (docs/self-hosting.md, Google Calendar).');
   const { verifier, challenge } = pkce();
-  const state = b64url(randomBytes(16));
+  const state = newState();
   const waiting = loopback();
   await open(authorizeUrl({ clientId: client.clientId, challenge, state, redirectUri }));
   const q = await waiting;
@@ -173,7 +167,10 @@ export function createGoogleCalendar({ tokens, client, open, log = () => {}, fet
       } catch (err) { lastError = err.message; log('google calendar connect failed', err.message); }
       return { ...status(), error: lastError };
     },
-    async disconnect() {
+    // revoke: true also revokes the grant with Google; accounts.js passes false while Google Drive on the same account is
+    // still connected
+    async disconnect({ revoke: withGoogle = false } = {}) {
+      if (withGoogle) { const t = await tokens.get(SOURCE_ID); if (t) await revoke(t, fetchImpl); }
       await tokens.set(SOURCE_ID, null);
       save(null);
       cache = { at: 0, days: 0, events: [] };

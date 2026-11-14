@@ -41,10 +41,16 @@ export function handleCallback(req, res, { log = () => {} } = {}) {
   const provider = providerOf(url.pathname);
   if (!PROVIDERS[provider]) return json(res, 404, { error: 'Unknown platform.', code: 'bad_request' });
   if (req.method !== 'GET') return json(res, 405, { error: 'GET only.', code: 'bad_request' });
-  const out = new URL(`http://127.0.0.1:${loopbackFor(url.searchParams.get('state'))}/callback`);
-  for (const k of ['code', 'state', 'error', 'error_description']) { const v = url.searchParams.get(k); if (v) out.searchParams.set(k, v); }
   log('connect_callback', { provider, ok: !!url.searchParams.get('code') });
-  res.writeHead(302, { location: out.toString(), 'cache-control': 'no-store' });
+  bounceToLoopback(url, res);
+}
+
+// the redirect both callback routes answer with (this file's platforms, oauth.js's personal connectors): the app's
+// loopback with the code, state or error the provider sent, bounded in length
+export function bounceToLoopback(url, res) {
+  const out = new URL(`http://127.0.0.1:${loopbackFor(url.searchParams.get('state'))}/callback`);
+  for (const k of ['code', 'state', 'error', 'error_description']) { const v = url.searchParams.get(k); if (v) out.searchParams.set(k, v.slice(0, 2048)); }
+  res.writeHead(302, { location: out.toString(), 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
   res.end();
 }
 

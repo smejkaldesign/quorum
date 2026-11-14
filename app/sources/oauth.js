@@ -10,8 +10,11 @@ export const LOOPBACK_PORT = 47832;
 export const LOOPBACK_REDIRECT = `http://127.0.0.1:${LOOPBACK_PORT}/callback`;
 export const CLIENT_NAME = 'Quorum';
 
-const json = async (r) => { const t = await r.text(); try { return JSON.parse(t); } catch { return null; } };
+// a response body as JSON, or null when it is not; shared with gcal.js and accounts.js
+export const json = async (r) => { const t = await r.text(); try { return JSON.parse(t); } catch { return null; } };
 const b64url = (buf) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+// the random state every authorization request carries and checks on return
+export const newState = () => b64url(randomBytes(16));
 // the email claim of an id_token, when the server issued one; never verified here, only shown to the person
 export const emailOf = (idToken) => { try { return JSON.parse(Buffer.from(String(idToken).split('.')[1], 'base64url').toString()).email ?? null; } catch { return null; } };
 
@@ -183,7 +186,7 @@ export async function connect({ resourceUrl, open, clients, fetchImpl = fetch, r
   let client = await clients.get(meta.issuer);
   if (!client || client.redirectUri !== redirectUri) { client = await register(meta, { redirectUri, fetchImpl }); await clients.set(meta.issuer, client); }
   const { verifier, challenge } = pkce();
-  const state = b64url(randomBytes(16));
+  const state = newState();
   const waiting = loopback();
   await open(authorizeUrl(meta, { clientId: client.clientId, redirectUri, challenge, state }));
   const q = await waiting;
