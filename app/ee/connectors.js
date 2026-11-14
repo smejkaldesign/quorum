@@ -4,6 +4,7 @@
 import { KEY_PROVIDER_IDS, ROLE_IDS } from '../connectors/catalog.js';
 import { testConnector } from '../connectors/keys.js';
 import { plain } from './account.js';
+import { createIntegrations } from './integrations.js';
 
 // the provider list and the read-only test request come from the shared catalog (connectors/catalog.js, keys.js)
 export { testConnector };
@@ -132,6 +133,8 @@ export function cleanVoice(voice) {
 
 export function registerConnectors({ ipcMain, account, log }) {
   const c = createConnectors({ account, log });
-  for (const [name, fn] of Object.entries(c.handlers)) ipcMain.handle(name, (_e, ...a) => fn(...a));
+  // the library connectors a workspace enables (migration 0030) register alongside the provider keys
+  const handlers = { ...c.handlers, ...createIntegrations({ account, log }).handlers };
+  for (const [name, fn] of Object.entries(handlers)) ipcMain.handle(name, (_e, ...a) => fn(...a));
   return c;
 }

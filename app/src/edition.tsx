@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { policyOf, type ConnectorPolicy } from '../connectors/approval';
 
 // The renderer's edition, fixed at build time by Vite's define (vite.config.ts). Cloud-only UI lives in ee/src and is
 // reached only through the dynamic imports below. Because __QUORUM_EDITION__ is a string literal in the bundle, the
@@ -79,3 +80,34 @@ export const WorkspaceConnectorsArea = ({ local }: { local: ReactNode }) => <Clo
 // Settings › Admin › Voice typing: the managed pipeline, its usage, and which connector handles each step
 export const WorkspaceVoiceArea = ({ local }: { local: ReactNode }) => <CloudPage Page={CloudVoice} local={local} />;
 export const WorkspaceGuardrailsArea = ({ local }: { local: ReactNode }) => <CloudPage Page={CloudGuardrails} local={local} />;
+
+// Settings › Connections in Cloud: the workspace's connector policy (migration 0030). null in the Local edition, while
+// it loads, and whenever no policy applies (signed out, no team, or the "approved connectors only" switch off), so the
+// page shows the full library. report tells the workspace which of its connectors this member has connected, for the
+// connection counts on the admin page; it sends only when the list changed.
+export function useConnectorPolicy(): { policy: ConnectorPolicy | null; report: (connected: string[]) => void } {
+  const [policy, setPolicy] = useState<ConnectorPolicy | null>(null);
+  const sent = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isCloud) return;
+    let live = true;
+    const load = () => window.quorum.connectorPolicy().then((r) => { if (live) setPolicy(policyOf(r?.policy)); }).catch(() => { if (live) setPolicy(null); });
+    load();
+    // the account emits on every sync; only a workspace switch or the team switch changes the policy
+    let seen: string | null = null;
+    const off = window.quorum.onAccount((s) => {
+      const key = `${s.workspace?.id ?? ''}:${s.workspace?.teamEnabled === true}`;
+      if (seen !== null && key !== seen) { sent.current = null; load(); }
+      seen = key;
+    });
+    return () => { live = false; off(); };
+  }, []);
+  const report = useCallback((connected: string[]) => {
+    if (!isCloud) return;
+    const key = [...connected].sort().join(',');
+    if (sent.current === key) return;
+    sent.current = key;
+    window.quorum.memberIntegrationsSync(connected).catch(() => { sent.current = null; });
+  }, []);
+  return { policy, report };
+}
