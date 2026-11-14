@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { CHANGELOG, CLAUDE_BUDGET, CLAUDE_FACTS, LEARNED_BUDGET, LEARNED_FILE, LEARNED_HEADER, LEARNED_OPEN, LEARNED_POINTER, NOTE_LINK, addLearned, createKeeper, defaultNote, factKey, informative, learnedChars, learnedLines, notePath, parseFacts, pointLearned, pruneLearned } from '../keeper.js';
+import { CHANGELOG, CREATE_LIMIT, CLAUDE_BUDGET, CLAUDE_FACTS, LEARNED_BUDGET, LEARNED_FILE, LEARNED_HEADER, LEARNED_OPEN, LEARNED_POINTER, NOTE_LINK, addLearned, createKeeper, defaultNote, factKey, informative, learnedChars, learnedLines, notePath, parseFacts, pointLearned, pruneLearned } from '../keeper.js';
 
 const put = (dir, rel, text) => { mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); writeFileSync(path.join(dir, rel), text); };
 const NOTE = (title, date) => `---\ntitle: ${title}\ndate: ${date}T15:00:00-08:00\nparticipants:\n  - Ada Lovelace\nsource: quorum\n---\n\n# ${title}\n\nAda owns the launch page.\n`;
@@ -226,15 +226,17 @@ describe('facts that carry nothing', () => {
 
 describe('learned facts budget by target', () => {
   const many = (n) => Array.from({ length: n }, (_, i) => fact(`fact ${i} about the plan`, '2026-09-01'));
-  it('keeps CLAUDE.md to 10 facts or 800 characters by default, whichever is smaller', async () => {
+  it('keeps CLAUDE.md to 10 facts or 800 characters by default in a vault that had no list yet', async () => {
     const dir = vault();
-    put(dir, 'CLAUDE.md', addLearned('# Agent OS\n', many(20).map((l) => l.slice(2)), { budget: 10000 }).text);
     const { k } = keeperFor(dir);
     await k.run();
-    const lines = learnedLines(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'));
-    expect(lines).toHaveLength(CLAUDE_FACTS);
-    expect(lines.at(-1)).toContain('Ada owns the launch page');
-    expect(k.status().learned).toMatchObject({ target: 'claude', budget: CLAUDE_BUDGET, maxFacts: CLAUDE_FACTS, budgetPick: 'auto' });
+    expect(k.status().learned).toMatchObject({ target: 'claude', budget: CLAUDE_BUDGET, maxFacts: CLAUDE_FACTS, budgetPick: 'auto', defaultBudget: CLAUDE_BUDGET, defaultFacts: CLAUDE_FACTS, suggestSmall: false });
+    // the list grows past 10 lines; the next run trims it
+    const grown = addLearned(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'), many(20).map((l) => l.slice(2)), { budget: 10000 }).text;
+    put(dir, 'CLAUDE.md', grown);
+    put(dir, '08-meetings/2026-11-11-review.md', NOTE('Review', '2026-11-11'));
+    await k.run();
+    expect(learnedLines(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'))).toHaveLength(CLAUDE_FACTS);
     expect(readFileSync(path.join(dir, CHANGELOG), 'utf8')).toContain(many(20)[0]);
     // long lines reach the character limit before the line limit
     const long = Array.from({ length: 8 }, (_, i) => `fact ${i} ${'about the long planning session '.repeat(4)}`);
@@ -361,5 +363,278 @@ describe('learned facts in a vault note', () => {
     expect(readFileSync(path.join(dir, 'mine.md'), 'utf8')).toBe('# Mine\n\nMy own text.\n');
     expect(learnedLines(readFileSync(path.join(dir, LEARNED_FILE), 'utf8'))).toHaveLength(1);
     expect(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8')).toContain(LEARNED_POINTER);
+  });
+});
+
+describe('learned facts, review fixes', () => {
+  const many = (n) => Array.from({ length: n }, (_, i) => fact(`fact ${i} about the plan`, '2026-09-01'));
+  it('never prunes a CLAUDE.md list from before the smaller default, and offers it instead', async () => {
+    const dir = vault();
+    const before = addLearned('# Agent OS\n', many(20).map((l) => l.slice(2)), { budget: 10000 }).text;
+    put(dir, 'CLAUDE.md', before);
+    const { k, settings } = keeperFor(dir);
+    await k.run();
+    const lines = learnedLines(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'));
+    expect(lines).toHaveLength(21);
+    expect(existsSync(path.join(dir, CHANGELOG)) && readFileSync(path.join(dir, CHANGELOG), 'utf8')).not.toContain('Moved out of the learned facts');
+    expect(k.status().learned).toMatchObject({ budget: LEARNED_BUDGET, maxFacts: null, budgetPick: 'kept', defaultBudget: CLAUDE_BUDGET, defaultFacts: CLAUDE_FACTS, defaultMoves: 11, suggestSmall: true, small: { budget: CLAUDE_BUDGET, facts: CLAUDE_FACTS } });
+    // a later run keeps it too
+    put(dir, '08-meetings/2026-11-11-review.md', NOTE('Review', '2026-11-11'));
+    await k.run();
+    expect(learnedLines(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'))).toHaveLength(21);
+    // picking Default applies the smaller one, with the pruned lines in the changelog
+    k.set({ factsBudget: 'auto' });
+    expect(learnedLines(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'))).toHaveLength(CLAUDE_FACTS);
+    expect(readFileSync(path.join(dir, CHANGELOG), 'utf8')).toContain(many(20)[0]);
+    expect(k.status().learned).toMatchObject({ budget: CLAUDE_BUDGET, defaultFacts: CLAUDE_FACTS, suggestSmall: false });
+    expect(settings.keeper).toEqual({ on: true });
+  });
+  it('goes back to the default note when the path is cleared, and moves the facts there', async () => {
+    const dir = vault();
+    mkdirSync(path.join(dir, '05-knowledge'));
+    const { k, settings } = keeperFor(dir, { keeper: { factsTarget: 'note', factsNote: 'notes/facts.md' } });
+    await k.run();
+    expect(learnedLines(readFileSync(path.join(dir, 'notes/facts.md'), 'utf8'))).toHaveLength(1);
+    k.set({ factsNote: '' });
+    expect(settings.keeper.factsNote).toBeUndefined();
+    expect(existsSync(path.join(dir, 'notes/facts.md'))).toBe(false);
+    expect(learnedLines(readFileSync(path.join(dir, '05-knowledge/quorum-learned.md'), 'utf8'))).toHaveLength(1);
+    expect(k.status().learned.note).toBe('05-knowledge/quorum-learned.md');
+  });
+  it('never reads from or removes a generated .quorum/learned.md', async () => {
+    const gen = '<!-- generated by memory-sync -->\n# Learned\n\n<!-- quorum:learned -->\n- a line the tool owns\n<!-- /quorum:learned -->\n';
+    for (const target of ['claude', 'note']) {
+      const dir = vault();
+      put(dir, LEARNED_FILE, gen);
+      const { k } = keeperFor(dir, { keeper: { factsTarget: target } });
+      await k.run();
+      expect(readFileSync(path.join(dir, LEARNED_FILE), 'utf8'), target).toBe(gen);
+      const file = target === 'claude' ? 'CLAUDE.md' : 'quorum-learned.md';
+      const lines = learnedLines(readFileSync(path.join(dir, file), 'utf8'));
+      expect(lines.join('\n'), target).not.toContain('a line the tool owns');
+      expect(lines.join('\n'), target).toContain('Ada owns the launch page');
+    }
+  });
+  it('refuses a note path in the meetings folder whatever its case or spelling', () => {
+    const dir = vault();
+    const { k, settings } = keeperFor(dir, { keeper: { factsTarget: 'note' } });
+    for (const p of ['08-meetings/facts.md', '08-Meetings/facts.md', './08-MEETINGS/facts', '08-meetings\\facts.md']) {
+      k.set({ factsNote: p });
+      expect(settings.keeper.factsNote, p).toBeUndefined();
+    }
+  });
+  it('keeps real facts that start like an empty one', () => {
+    for (const f of ['Acme has no SOC 2 report', 'None of the vendors met the SLA', 'The meeting has no budget for contractors this year', 'No decisions on pricing until the board meets in March', 'The note lists no owner for the migration, so Bo takes it'])
+      expect(informative(f), f).toBe(true);
+  });
+  it('counts the vault note in a held run and creates neither it nor an index line until allowed', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'learned-held-'));
+    put(dir, 'CLAUDE.md', '# Agent OS\n');
+    mkdirSync(path.join(dir, '01-daily'));
+    for (let i = 1; i <= CREATE_LIMIT; i++) { const d = `2026-10-${String(i).padStart(2, '0')}`; put(dir, `08-meetings/${d}-m.md`, NOTE(`M${i}`, d)); }
+    const calls = [];
+    const { k } = keeperFor(dir, { keeper: { factsTarget: 'note' }, opts: { runText: async (p) => { calls.push(p); return '- Ada owns the launch page'; } } });
+    const r = await k.run();
+    expect(r.held.count).toBe(CREATE_LIMIT + 2);
+    expect(existsSync(path.join(dir, 'quorum-learned.md'))).toBe(false);
+    expect(existsSync(path.join(dir, 'index.md'))).toBe(false);
+    expect(calls).toHaveLength(0);
+    await k.run({ allowCreate: true });
+    expect(calls).toHaveLength(CREATE_LIMIT);
+    expect(learnedLines(readFileSync(path.join(dir, 'quorum-learned.md'), 'utf8'))).toHaveLength(1);
+    expect(readFileSync(path.join(dir, 'index.md'), 'utf8')).toContain('[[quorum-learned]]');
+    expect(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8')).toBe('# Agent OS\n');
+  });
+  it('says the note is linked while Quorum owns the index, before index.md exists', () => {
+    const dir = vault();
+    const { k } = keeperFor(dir, { keeper: { factsTarget: 'note' } });
+    expect(k.status().learned).toMatchObject({ linked: true, indexGenerated: false });
+    const dir2 = vault();
+    put(dir2, 'scripts/build-index.py', 'print(1)\n');
+    expect(keeperFor(dir2, { keeper: { factsTarget: 'note' } }).k.status().learned).toMatchObject({ linked: false, indexGenerated: false });
+  });
+});
+
+describe('a vault that generates its own index.md', () => {
+  const GEN = '<!-- generated -->\n# Index\n\n- [[a]] - a page\n';
+  function wikiVault() {
+    const dir = vault();
+    put(dir, 'index.md', GEN);
+    put(dir, 'scripts/wiki-index.py', 'print("rewrites index.md")\n');
+    put(dir, '08-meetings/2026-11-11-review.md', NOTE('Review', '2026-11-11'));
+    return dir;
+  }
+  it('leaves index.md unchanged and logs the skip once per run', async () => {
+    const dir = wikiVault();
+    const { k } = keeperFor(dir);
+    expect(k.status().plugins.find((p) => p.id === 'index').owner).toBe('vault');
+    const r = await k.run();
+    expect(r.filed).toBe(2);
+    expect(readFileSync(path.join(dir, 'index.md'), 'utf8')).toBe(GEN);
+    const log = readFileSync(path.join(dir, CHANGELOG), 'utf8');
+    expect(log.match(/Index skipped/g)).toHaveLength(1);
+    expect(log).toContain('index.md is kept by your Agent OS, so the keeper leaves it unchanged and writes no meeting index lines.');
+    // the facts and the rest still run
+    expect(learnedLines(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'))).toHaveLength(1);
+    // a run with nothing to file logs nothing
+    await k.run();
+    expect(readFileSync(path.join(dir, CHANGELOG), 'utf8').match(/Index skipped/g)).toHaveLength(1);
+  });
+  it('logs the skip when Quorum owns the index job but index.md is marked generated', async () => {
+    const dir = vault();
+    put(dir, 'index.md', GEN);
+    const { k } = keeperFor(dir, { settings: { plugins: {} } });
+    k.setPlugin('index', 'quorum');
+    await k.run();
+    expect(readFileSync(path.join(dir, 'index.md'), 'utf8')).toBe(GEN);
+    expect(readFileSync(path.join(dir, CHANGELOG), 'utf8')).toContain('index.md is marked as generated, so the keeper leaves it unchanged and writes no meeting index lines.');
+  });
+  it('writes the index lines to the meetings folder index when turned on', async () => {
+    const dir = wikiVault();
+    const { k } = keeperFor(dir);
+    expect(k.status().meetingsIndex).toBe(false);
+    k.set({ meetingsIndex: true });
+    expect(k.status().meetingsIndex).toBe(true);
+    await k.run();
+    expect(readFileSync(path.join(dir, 'index.md'), 'utf8')).toBe(GEN);
+    const mi = readFileSync(path.join(dir, '08-meetings/index.md'), 'utf8');
+    expect(mi).toContain('- [[2026-11-10-plan]] - meeting 2026-11-10: Plan');
+    expect(mi).toContain('- [[2026-11-11-review]] - meeting 2026-11-11: Review');
+    expect(readFileSync(path.join(dir, CHANGELOG), 'utf8')).toContain('Meeting index lines go to 08-meetings/index.md.');
+  });
+  it('leaves a generated meetings index alone and counts a missing one in the create limit', async () => {
+    const dir = wikiVault();
+    put(dir, '08-meetings/index.md', GEN);
+    const { k } = keeperFor(dir, { keeper: { meetingsIndex: true } });
+    await k.run();
+    expect(readFileSync(path.join(dir, '08-meetings/index.md'), 'utf8')).toBe(GEN);
+    const dir2 = mkdtempSync(path.join(tmpdir(), 'learned-mi-held-'));
+    put(dir2, 'index.md', GEN);
+    mkdirSync(path.join(dir2, '01-daily'));
+    for (let i = 1; i <= CREATE_LIMIT; i++) { const d = `2026-10-${String(i).padStart(2, '0')}`; put(dir2, `08-meetings/${d}-m.md`, NOTE(`M${i}`, d)); }
+    const { k: k2 } = keeperFor(dir2, { keeper: { meetingsIndex: true } });
+    const r = await k2.run();
+    expect(r.held.count).toBe(CREATE_LIMIT + 1);
+    expect(existsSync(path.join(dir2, '08-meetings/index.md'))).toBe(false);
+  });
+});
+
+describe('learned facts, review round 3', () => {
+  const state = (dir) => JSON.parse(readFileSync(path.join(dir, '.quorum/keeper.json'), 'utf8'));
+  const many = (n) => Array.from({ length: n }, (_, i) => fact(`fact ${i} about the plan`, '2026-09-01'));
+  it('keeps a settings reset made while a run is going', async () => {
+    const dir = vault();
+    put(dir, 'CLAUDE.md', addLearned('# Agent OS\n', many(20).map((l) => l.slice(2)), { budget: 10000 }).text);
+    let release;
+    let started;
+    const asked = new Promise((r) => { started = r; });
+    const gate = new Promise((r) => { release = r; });
+    const { k } = keeperFor(dir, { opts: { runText: async () => { started(); await gate; return '- Ada owns the launch page'; } } });
+    const running = k.run();
+    await asked;
+    k.set({ factsBudget: 'auto' });
+    release();
+    await running;
+    expect(state(dir).claudeSmall).toBe(true);
+    expect(k.status().learned).toMatchObject({ suggestSmall: false, budget: CLAUDE_BUDGET });
+  });
+  it('keeps a list where an earlier version wrote it, with no factsNoteDefault in keeper.json', async () => {
+    const dir = vault();
+    mkdirSync(path.join(dir, '05-knowledge'));
+    put(dir, 'old/place.md', addLearned(LEARNED_HEADER, [fact('earlier fact about pricing', '2026-10-01').slice(2)]).text);
+    put(dir, '.quorum/keeper.json', JSON.stringify({ done: {}, factsNoteAt: 'old/place.md' }));
+    const { k } = keeperFor(dir, { keeper: { factsTarget: 'note' } });
+    expect(k.status().learned.note).toBe('old/place.md');
+    await k.run();
+    expect(learnedLines(readFileSync(path.join(dir, 'old/place.md'), 'utf8'))).toHaveLength(2);
+    expect(existsSync(path.join(dir, '05-knowledge/quorum-learned.md'))).toBe(false);
+    expect(state(dir).factsNoteDefault).toBe('old/place.md');
+  });
+  it('settles the smaller default only when Default is picked for CLAUDE.md', async () => {
+    const dir = vault();
+    put(dir, LEARNED_FILE, addLearned(LEARNED_HEADER, many(3).map((l) => l.slice(2))).text);
+    const { k } = keeperFor(dir, { keeper: { factsTarget: 'learned', factsBudget: 1000 } });
+    await k.run();
+    k.set({ factsBudget: 'auto' });
+    expect(state(dir).claudeSmall).toBe(false);
+    k.set({ factsTarget: 'claude' });
+    expect(k.status().learned).toMatchObject({ target: 'claude', budget: LEARNED_BUDGET, suggestSmall: true, budgetPick: 'kept' });
+  });
+  it('reads every verb form of an empty note as empty, and keeps real facts', () => {
+    for (const f of ['The notes have no action items', 'The transcript contains none', 'The notes are empty', 'The notes were blank', 'The note appears empty', 'The recording seems to be missing'])
+      expect(informative(f), f).toBe(false);
+    for (const f of ['Acme has no SOC 2 report', 'None of the vendors met the SLA']) expect(informative(f), f).toBe(true);
+  });
+  it('ignores quotes, trailing punctuation and a trailing parenthetical', () => {
+    for (const f of ['The note is empty;', '"No decisions were made."', '“The meeting note is empty”', 'No action items (meeting cancelled)', 'The notes are empty?', 'There were no decisions:', 'No decisions, (none recorded).'])
+      expect(informative(f), f).toBe(false);
+    expect(informative('Bo owns pricing (from December)')).toBe(true);
+  });
+});
+
+describe('meetings index backfill and skip log', () => {
+  const GEN = '<!-- generated -->\n# Index\n\n- [[a]] - a page\n';
+  function wikiVault() {
+    const dir = vault();
+    put(dir, 'index.md', GEN);
+    put(dir, 'scripts/wiki-index.py', 'print("rewrites index.md")\n');
+    return dir;
+  }
+  it('fills the meetings index with the meetings filed before it was turned on, once', async () => {
+    const dir = wikiVault();
+    const { k } = keeperFor(dir);
+    await k.run();
+    expect(existsSync(path.join(dir, '08-meetings/index.md'))).toBe(false);
+    k.set({ meetingsIndex: true });
+    await k.run();
+    const mi = readFileSync(path.join(dir, '08-meetings/index.md'), 'utf8');
+    expect(mi).toContain('- [[2026-11-10-plan]] - meeting 2026-11-10: Plan');
+    const log = readFileSync(path.join(dir, CHANGELOG), 'utf8');
+    expect(log).toContain('Meetings index\n\n- 08-meetings/index.md');
+    expect(log).toContain('Meeting index lines go to 08-meetings/index.md.');
+    // once: a line taken out by hand is not put back by the next run
+    put(dir, '08-meetings/index.md', '# Meetings\n');
+    await k.run();
+    expect(readFileSync(path.join(dir, '08-meetings/index.md'), 'utf8')).toBe('# Meetings\n');
+    expect(readFileSync(path.join(dir, 'index.md'), 'utf8')).toBe(GEN);
+  });
+  it('leaves a generated meetings index alone during the backfill', async () => {
+    const dir = wikiVault();
+    const { k } = keeperFor(dir);
+    await k.run();
+    put(dir, '08-meetings/index.md', GEN);
+    k.set({ meetingsIndex: true });
+    await k.run();
+    expect(readFileSync(path.join(dir, '08-meetings/index.md'), 'utf8')).toBe(GEN);
+    expect(readFileSync(path.join(dir, CHANGELOG), 'utf8')).toContain('08-meetings/index.md is marked as generated too, so no meeting index lines were written.');
+  });
+  it('holds the backfill with the rest of a held run', async () => {
+    const dir = wikiVault();
+    mkdirSync(path.join(dir, '01-daily'));
+    const { k } = keeperFor(dir);
+    await k.run();
+    k.set({ meetingsIndex: true });
+    for (let i = 1; i <= CREATE_LIMIT; i++) { const d = `2026-10-${String(i).padStart(2, '0')}`; put(dir, `08-meetings/${d}-m.md`, NOTE(`M${i}`, d)); }
+    const r = await k.run();
+    expect(r.held.count).toBe(CREATE_LIMIT + 1);
+    expect(existsSync(path.join(dir, '08-meetings/index.md'))).toBe(false);
+    expect(readFileSync(path.join(dir, CHANGELOG), 'utf8')).toContain('Meeting index lines wait for 08-meetings/index.md, which the held run has not created yet.');
+    await k.run({ allowCreate: true });
+    const mi = readFileSync(path.join(dir, '08-meetings/index.md'), 'utf8');
+    expect(mi).toContain('[[2026-11-10-plan]]');
+    expect(mi).toContain('[[2026-10-01-m]]');
+  });
+  it('logs the skip once per change of where the lines go', async () => {
+    const dir = wikiVault();
+    const { k } = keeperFor(dir);
+    await k.run();
+    put(dir, '08-meetings/2026-11-11-review.md', NOTE('Review', '2026-11-11'));
+    await k.run();
+    expect(readFileSync(path.join(dir, CHANGELOG), 'utf8').match(/Index skipped/g)).toHaveLength(1);
+    k.set({ meetingsIndex: true });
+    await k.run();
+    put(dir, '08-meetings/2026-11-12-later.md', NOTE('Later', '2026-11-12'));
+    await k.run();
+    expect(readFileSync(path.join(dir, CHANGELOG), 'utf8').match(/Index skipped/g)).toHaveLength(2);
   });
 });

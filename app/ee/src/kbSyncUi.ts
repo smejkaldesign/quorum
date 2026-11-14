@@ -8,8 +8,8 @@ export type SyncTone = 'ok' | 'busy' | 'paused' | 'warn';
 export const providerName = (p: string): string => (p === 'github' ? 'GitHub' : p === 'google-drive' ? 'Google Drive' : p);
 
 // one status per row, as the connector rows have: what the worker last reported, in words
-export function syncStatus(a: Pick<KbSyncAttachment, 'status' | 'connected' | 'last_synced_at'>): { label: string; tone: SyncTone } {
-  if (a.status === 'paused') return { label: 'Paused', tone: 'paused' };
+export function syncStatus(a: Pick<KbSyncAttachment, 'status' | 'connected' | 'last_synced_at' | 'paused_by'>): { label: string; tone: SyncTone } {
+  if (a.status === 'paused') return { label: a.paused_by === 'plan' ? 'Paused, plan ended' : 'Paused', tone: 'paused' };
   if (a.status === 'needs_auth' || !a.connected) return { label: 'Needs attention', tone: 'warn' };
   if (a.status === 'error') return { label: 'Needs attention', tone: 'warn' };
   if (a.status === 'pending') return { label: a.last_synced_at ? 'Sync queued' : 'Waiting for the first sync', tone: 'busy' };
@@ -47,10 +47,11 @@ export function remoteLine(a: Pick<KbSyncAttachment, 'provider' | 'remote_kind' 
 
 export const noteCount = (n: number): string => (n === 1 ? '1 note' : `${n} notes`);
 
-// which actions a row offers: Sync now while it runs or failed, Resume while paused, Pause otherwise; Remove always
-export function syncActions(a: Pick<KbSyncAttachment, 'status' | 'connected'>): { syncNow: boolean; pause: boolean; resume: boolean } {
+// which actions a row offers: Sync now while it runs or failed, Resume while an admin paused it, Pause otherwise;
+// Remove always. A pause because the workspace's plan ended lifts itself when the plan is active again
+export function syncActions(a: Pick<KbSyncAttachment, 'status' | 'connected' | 'paused_by'>): { syncNow: boolean; pause: boolean; resume: boolean } {
   const paused = a.status === 'paused';
-  return { syncNow: !paused && a.connected && a.status !== 'needs_auth', pause: !paused, resume: paused };
+  return { syncNow: !paused && a.connected && a.status !== 'needs_auth', pause: !paused, resume: paused && a.paused_by !== 'plan' };
 }
 
 // a GitHub address the relay can sync: https://github.com/owner/repo, with an optional /tree/<branch>/<folder>

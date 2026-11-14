@@ -19,6 +19,7 @@
 //   kb-note-assign   ({ noteId? | path?, kbId, folderId? })       -> { placement: Placement }   kbId null takes it out;
 //                                                                                               path finds the caller's own note
 //   kb-notes         (kbId)                                      -> { notes: KbNote[] }         readable notes in a KB, all pages
+//   kb-suggestion, kb-suggestion-apply, kb-suggestion-dismiss    Quorum's edits kept as suggestions (ee/kbUpstream.js)
 //
 //   Kb          { id, name, kind: 'general' | 'meetings', teamId, isDefault, source, role: 'admin' | 'reader',
 //                 createdAt, updatedAt, folders: FolderNode[], access: Access[] | null }
@@ -41,6 +42,7 @@
 // review queue includes. Pull sync (ee/sync.js) carries each note's kb_id and folder_id onto the local id map and
 // into a shared note's bond.
 import { plain } from './account.js';
+import { createKbSuggestions } from './kbUpstream.js';
 
 export const KB_KINDS = ['general', 'meetings'];
 // folder and git are Mac-side sources (0020, 0025); github and zip say where an import came from (0026, ee/kbImport.js)
@@ -141,6 +143,7 @@ export function kbSession({ account, log = () => {}, tag = 'kb' }) {
 
 export function createKnowledgeBases({ account, log = () => {} }) {
   const { ws, rpc, call, listKbs } = kbSession({ account, log });
+  const suggestions = createKbSuggestions({ account, ws, rpc, call });
   const need = (v, what) => { if (!v || typeof v !== 'string') throw Object.assign(new Error(`Pick the ${what} first.`), { code: 'P0001' }); return v; };
 
   const handlers = {
@@ -199,6 +202,7 @@ export function createKnowledgeBases({ account, log = () => {} }) {
       }
       return { notes: rows.map((n) => ({ id: n.id, path: n.path, title: titleOf(n), folderId: n.folder_id ?? null, userId: n.user_id, updatedAt: n.updated_at ?? null })) };
     }),
+    ...suggestions,
   };
   return { handlers };
 }

@@ -10,7 +10,9 @@
 import { bearer, requirePlan, RelayError, verifyToken } from '../lib/auth.js';
 import { clientAddress, createLimiter } from '../platform.js';
 import { readJson } from '../summary.js';
+import { randomUUID } from 'node:crypto';
 import { clientFor, refreshAccess } from './tokens.js';
+import { lockGrant } from './worker.js';
 
 const json = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); };
 const str = (v, max) => { const s = String(v ?? '').trim(); if (s.length > max) throw new RelayError('bad_request', 'The request has a value that is too long.', 400); return s; };
@@ -36,7 +38,7 @@ export function cleanAttach(raw) {
 
 const limiter = createLimiter({ max: 60, windowMs: 10 * 60 * 1000 });
 
-export async function handleKbSyncAttach(req, res, { clients, config, log = () => {}, fetchImpl = fetch, worker = null, limit = limiter }) {
+export async function handleKbSyncAttach(req, res, { clients, config, log = () => {}, fetchImpl = fetch, worker = null, limit = limiter, sleep }) {
   try {
     if (req.method !== 'POST') throw new RelayError('bad_request', 'POST only.', 405);
     if (!limit.allow(clientAddress(req))) throw new RelayError('rate_limit', 'Too many requests from this connection. Try again in a few minutes.', 429);
@@ -48,36 +50,46 @@ export async function handleKbSyncAttach(req, res, { clients, config, log = () =
     await requirePlan(clients.db, kb.workspace_id);
 
     let token = b.refreshToken;
-    if (token) {
-      // prove the token works before it is stored, with the client that issued it
-      let client = clientFor(config, { provider: b.provider, client: 'quorum' });
-      if (b.client === 'workspace') {
-        const { data, error } = await clients.db.rpc('relay_workspace_oauth_client', { workspace_id: kb.workspace_id, provider: b.provider });
-        const row = Array.isArray(data) ? data[0] : data;
-        if (error || !row?.client_id) throw new RelayError('connector', 'The workspace has no OAuth client for this connector.', 400);
-        client = { clientId: row.client_id, clientSecret: row.client_secret };
+    // a new token replaces the one on the caller's live grant: that waits for any refresh the worker is running on it,
+    // so the worker cannot store a rotated old token over the new one
+    const rpcOf = async (name, args) => { const { data, error } = await clients.db.rpc(name, args); if (error) throw new RelayError('server', 'Syncing is unavailable right now.', 500); return data; };
+    const owner = `attach-${randomUUID()}`;
+    const live = token ? await rpcOf('kb_sync_grant_of', { uid: user.userId, kb_id: b.kbId, provider: b.provider }) : null;
+    if (live && !(await lockGrant(rpcOf, live, owner, { sleep }))) throw new RelayError('busy', 'This connection is being refreshed right now. Try again in a minute.', 409);
+    try {
+      if (token) {
+        // prove the token works before it is stored, with the client that issued it
+        let client = clientFor(config, { provider: b.provider, client: 'quorum' });
+        if (b.client === 'workspace') {
+          const { data, error } = await clients.db.rpc('relay_workspace_oauth_client', { workspace_id: kb.workspace_id, provider: b.provider });
+          const row = Array.isArray(data) ? data[0] : data;
+          if (error || !row?.client_id) throw new RelayError('connector', 'The workspace has no OAuth client for this connector.', 400);
+          client = { clientId: row.client_id, clientSecret: row.client_secret };
+        }
+        try {
+          const t = await refreshAccess({ provider: b.provider, client, refreshToken: token, fetchImpl });
+          if (t.refreshToken) token = t.refreshToken;
+        } catch (err) {
+          log('kb_sync_attach_refused', { provider: b.provider, code: err.code ?? 'server' });
+          throw new RelayError('connector', err.code === 'config' ? err.message : 'The provider did not accept the sign-in. Connect the account again and retry.', err.code === 'config' ? 503 : 400);
+        }
       }
-      try {
-        const t = await refreshAccess({ provider: b.provider, client, refreshToken: token, fetchImpl });
-        if (t.refreshToken) token = t.refreshToken;
-      } catch (err) {
-        log('kb_sync_attach_refused', { provider: b.provider, code: err.code ?? 'server' });
-        throw new RelayError('connector', err.code === 'config' ? err.message : 'The provider did not accept the sign-in. Connect the account again and retry.', err.code === 'config' ? 503 : 400);
+      const options = b.provider === 'github' ? { branch: b.remote.branch, path: b.remote.path } : {};
+      const { data, error } = await clients.db.rpc('kb_sync_attach', {
+        uid: user.userId, kb_id: b.kbId, folder_id: b.folderId, provider: b.provider, remote_id: b.remote.id, remote_kind: b.remote.kind,
+        options, name: b.remote.name || b.remote.id, url: b.remote.url, token, client: b.client, shared_with_mac: b.sharedWithMac, account: b.account,
+      });
+      if (error) {
+        const msg = plainDb(error);
+        log('kb_sync_attach_failed', { provider: b.provider, kind: b.remote.kind, refused: !!msg });
+        throw msg ? new RelayError('forbidden', msg, 400) : new RelayError('server', 'The folder could not be attached. Try again.', 500);
       }
+      log('kb_sync_attach', { provider: b.provider, kind: b.remote.kind, token: !!token });
+      worker?.poke();
+      json(res, 200, { attachment: data });
+    } finally {
+      if (live) await rpcOf('kb_sync_refresh_unlock', { grant_id: live, owner }).catch(() => {});
     }
-    const options = b.provider === 'github' ? { branch: b.remote.branch, path: b.remote.path } : {};
-    const { data, error } = await clients.db.rpc('kb_sync_attach', {
-      uid: user.userId, kb_id: b.kbId, folder_id: b.folderId, provider: b.provider, remote_id: b.remote.id, remote_kind: b.remote.kind,
-      options, name: b.remote.name || b.remote.id, url: b.remote.url, token, client: b.client, shared_with_mac: b.sharedWithMac, account: b.account,
-    });
-    if (error) {
-      const msg = plainDb(error);
-      log('kb_sync_attach_failed', { provider: b.provider, kind: b.remote.kind, refused: !!msg });
-      throw msg ? new RelayError('forbidden', msg, 400) : new RelayError('server', 'The folder could not be attached. Try again.', 500);
-    }
-    log('kb_sync_attach', { provider: b.provider, kind: b.remote.kind, token: !!token });
-    worker?.poke();
-    json(res, 200, { attachment: data });
   } catch (err) {
     const status = err instanceof RelayError ? err.status : 500;
     if (!(err instanceof RelayError)) log('kb_sync_attach_error', { code: 'server' });

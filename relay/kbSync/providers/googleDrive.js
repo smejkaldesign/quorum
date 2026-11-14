@@ -21,10 +21,15 @@ const limited = async (r) => {
   if (r.status !== 403) return false;
   try { const b = await r.clone().json(); return RATE_REASONS.has(b?.error?.errors?.[0]?.reason ?? b?.error?.status); } catch { return false; }
 };
-const failure = (r) => {
+// the reason Drive gives for a refusal (error.errors[0].reason)
+const reasonOf = async (r) => { try { const b = await r.clone().json(); return b?.error?.errors?.[0]?.reason ?? null; } catch { return null; } };
+// Drive's answers that mean this item is gone for this grant: not found, or no permission on this file. Any other 403
+// is no proof of that, so it is a plain refusal
+const GONE_REASONS = new Set(['notFound', 'insufficientFilePermissions', 'appNotAuthorizedToFile']);
+const failure = async (r) => {
   if (r.status === 401) return new SyncError('Google Drive no longer accepts this connection. Attach it again to keep it in sync.', 'auth', { status: r.status });
   if (r.status === 404) return new SyncError('The item is no longer in Google Drive, or the admin who attached it lost access.', 'gone', { status: r.status });
-  if (r.status === 403) return new SyncError('The admin who attached this cannot read it in Google Drive any more.', 'gone', { status: r.status });
+  if (r.status === 403 && GONE_REASONS.has(await reasonOf(r))) return new SyncError('The admin who attached this cannot read it in Google Drive any more.', 'gone', { status: r.status });
   return new SyncError('Google Drive refused the request. The sync runs again later.', 'provider', { status: r.status });
 };
 const shape = (m, segs) => ({ remoteId: m.id, name: m.name ?? 'Untitled', segs, mimeType: m.mimeType, modified: m.modifiedTime ?? null, url: m.webViewLink ?? null, size: Number(m.size) || 0 });
@@ -39,7 +44,7 @@ export const googleDrive = {
   // note whose file is not in it was removed upstream
   async list({ token, attachment, fetchImpl, sleep }) {
     const get = (url) => call(fetchImpl, url, { headers: { authorization: `Bearer ${token}`, accept: 'application/json' } }, { limited, label: 'Google Drive', sleep });
-    const read = async (r) => { if (!r.ok) throw failure(r); const b = await r.json().catch(() => null); if (!b) throw new SyncError('Google Drive sent an answer Quorum could not read.', 'provider'); return b; };
+    const read = async (r) => { if (!r.ok) throw await failure(r); const b = await r.json().catch(() => null); if (!b) throw new SyncError('Google Drive sent an answer Quorum could not read.', 'provider'); return b; };
     const root = await read(await get(`${API}/${encodeURIComponent(attachment.remote_id)}?fields=${FIELDS}&supportsAllDrives=true`));
     if (root.trashed) throw new SyncError('The item is in the Google Drive trash.', 'gone');
     if (attachment.remote_kind === 'file') {
@@ -76,13 +81,13 @@ export const googleDrive = {
       const md = await get(`${API}/${id}/export?mimeType=${encodeURIComponent('text/markdown')}`);
       if (md.ok) return readText(md);
       // 400 is an export format Drive does not offer for this document; anything else is the file or the token
-      if (md.status !== 400) throw failure(md);
+      if (md.status !== 400) throw await failure(md);
       const txt = await get(`${API}/${id}/export?mimeType=${encodeURIComponent('text/plain')}`);
-      if (!txt.ok) throw failure(txt);
+      if (!txt.ok) throw await failure(txt);
       return readText(txt);
     }
     const a = await get(`${API}/${id}?alt=media&supportsAllDrives=true`);
-    if (!a.ok) throw failure(a);
+    if (!a.ok) throw await failure(a);
     return readText(a);
   },
 };
