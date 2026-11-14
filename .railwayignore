@@ -7,8 +7,15 @@ app/eval
 app/test
 app/assets
 app/src
-app/ee
-app/store
+# the relay image copies a few app/ee and app/store files (see Dockerfile); everything else in them stays out
+app/ee/*
+!app/ee/kbUpstream.js
+!app/ee/sync.js
+!app/ee/store/
+app/ee/store/*
+!app/ee/store/remote.js
+app/store/*
+!app/store/local.js
 app/guards
 app/cli
 helper
