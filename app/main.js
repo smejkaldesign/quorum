@@ -5,7 +5,8 @@ import { BY_ID, cleanConnectors, cleanProviders, needsKey, providerFor, provider
 import { connectorKey, removeConnectorKey, setConnectorKey, testSavedConnector } from './connectors/keys.js';
 import { createConnectGuard, guardIpc } from './connectors/connectGuard.js';
 import { createOverlap } from './connectors/mcpOverlap.js';
-import { claudeRun } from './claudeCli.js';
+import { createAgentLink } from './agentLink.js';
+import { checkConnection } from './connectionCheck.js';
 import { openSpeech, SPEECH_ENGINES } from './speech/provider.js';
 import { createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTree } from './vault.js';
 import { createVaultIndex } from './vindex.js';
@@ -1182,9 +1183,9 @@ const CLI = app.isPackaged ? path.join(process.resourcesPath, 'cli/quorum.mjs') 
 // the MCP server and the quorum command need nothing installed. The dev copy's binary works the same way.
 const RUNTIME = process.execPath;
 const RUNTIME_ENV = { ELECTRON_RUN_AS_NODE: '1', ...(isDevelopment ? { QUORUM_ENV: 'development' } : {}) };
-const runtimeEnvArgs = () => Object.entries(RUNTIME_ENV).flatMap(([k, v]) => ['--env', `${k}=${v}`]);
-const runtimeEnvShell = () => Object.entries(RUNTIME_ENV).map(([k, v]) => `${k}=${v}`).join(' ');
-ipcMain.handle('mcp-status', async () => ({ added: (await claudeRun(['mcp', 'get', 'quorum'])).ok, node: RUNTIME, cli: CLI, command: `"${RUNTIME}" "${CLI}" mcp` }));
+// Claude Code, Codex and the quorum command, set up and read back through agentLink.js
+const agents = createAgentLink({ runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV });
+ipcMain.handle('mcp-status', async () => ({ added: (await agents.claude.status()).added, node: RUNTIME, cli: CLI, command: `"${RUNTIME}" "${CLI}" mcp` }));
 // the provider MCP servers the person's agent already has, per connector (connectors/mcpOverlap.js). Read only. The
 // config files are read again on refresh (the Connections page asks on open and focus); `claude mcp list` runs once
 // per session in the background and again only on Check again, since it starts every local server to check it
@@ -1192,36 +1193,15 @@ const mcpOverlap = createOverlap({ onChange: () => toUI('mcp-overlap', null) });
 const overlapFolder = () => { const b = brain(); return { root: b?.root ?? null, vault: b?.vault ?? null }; };
 ipcMain.handle('mcp-overlap', (_e, opts) => mcpOverlap.get(overlapFolder(), { refresh: opts?.refresh === true }));
 ipcMain.handle('mcp-overlap-check', () => mcpOverlap.check(overlapFolder()));
-ipcMain.handle('mcp-add', async () => {
-  // the server name goes before -e: Claude Code's -e takes values until the next flag, so a name after it is read as
-  // one more env value; -- ends the list
-  const r = await claudeRun(['mcp', 'add', 'quorum', '--scope', 'user', ...runtimeEnvArgs(), '--', RUNTIME, CLI, 'mcp']);
-  if (!r.ok) return { added: false, error: r.out.trim().split('\n')[0] };
-  // trust what Claude Code reads back, not the add's exit code; a proxy managing MCP config can drop the entry
-  const added = (await claudeRun(['mcp', 'get', 'quorum'])).ok;
-  return { added, error: added ? null : "Claude Code didn't keep the Quorum entry. Another tool may manage your MCP servers." };
-});
-const ZSHRC = path.join(homedir(), '.zshrc');
-const CLI_MARK = '# added by Quorum';
-const readZshrc = () => { try { return readFileSync(ZSHRC, 'utf8'); } catch { return ''; } };
-// added means the line is in ~/.zshrc; broken means a path it points at is gone (Node moved, or Quorum moved)
-ipcMain.handle('cli-status', () => {
-  const line = readZshrc().split('\n').find((l) => l.startsWith('alias quorum=') && l.endsWith(CLI_MARK));
-  if (!line) return { added: false };
-  const [node, cli] = [...line.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-  const error = !node || !existsSync(node) ? "Can't find the runtime where it used to be" : !cli || !existsSync(cli) ? "Can't find Quorum where it used to be" : null;
-  return { added: true, error };
-});
-ipcMain.handle('cli-add', () => {
-  const text = readZshrc();
-  writeFileSync(ZSHRC, `${text}${text && !text.endsWith('\n') ? '\n' : ''}alias quorum='${runtimeEnvShell()} "${RUNTIME}" "${CLI}"' ${CLI_MARK}\n`);
-  return { added: true };
-});
-ipcMain.handle('cli-remove', () => {
-  writeFileSync(ZSHRC, readZshrc().split('\n').filter((l) => !(l.startsWith('alias quorum=') && l.endsWith(CLI_MARK))).join('\n'));
-  return { added: false };
-});
-ipcMain.handle('mcp-remove', async () => ({ added: !(await claudeRun(['mcp', 'remove', 'quorum', '--scope', 'user'])).ok }));
+ipcMain.handle('mcp-add', () => agents.claude.add());
+ipcMain.handle('mcp-remove', () => agents.claude.remove());
+ipcMain.handle('agents-status', async () => { const [claude, codex, cli] = await Promise.all([agents.claude.status(), agents.codex.status(), agents.cli.status()]); return { claude, codex, cli }; });
+ipcMain.handle('codex-add', () => agents.codex.add());
+ipcMain.handle('codex-remove', () => agents.codex.remove());
+ipcMain.handle('cli-status', () => agents.cli.status());
+ipcMain.handle('cli-add', () => agents.cli.add());
+ipcMain.handle('cli-remove', () => agents.cli.remove());
+ipcMain.handle('connection-check', () => checkConnection({ root: brain()?.root ?? null, notesDir: quorumNotesDir(), agent: agents }));
 // signing in belongs to Claude Code, so Quorum opens Terminal on its login rather than handling credentials itself
 ipcMain.handle('claude-login', () => execFileSync('/usr/bin/osascript', ['-e', 'tell application "Terminal" to do script "claude auth login"', '-e', 'tell application "Terminal" to activate']));
 ipcMain.handle('accept-suggestion', (_e, id) => (gate().liveAssist ? suggester.accept(id) : null));
