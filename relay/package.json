@@ -10,7 +10,8 @@
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "check:image": "node scripts/check-image.mjs"
   },
   "dependencies": {
     "@simplewebauthn/server": "^14.1.0",
