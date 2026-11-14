@@ -1,5 +1,5 @@
 // Personal connectors in both editions: the token exchange for providers whose OAuth apps need a server-held client
-// secret (Notion, Slack, GitHub). Three routes, all stateless and open to the free edition (no Quorum sign-in):
+// secret (Notion, Slack, and the GitHub App's user tokens). Three routes, all stateless and open to the free edition (no Quorum sign-in):
 //   GET  /v1/oauth/<provider>/callback  the provider lands here and the browser is sent on to the app's loopback
 //   POST /v1/oauth/token                { provider, code, code_verifier, redirect_uri } or { provider, grant_type:
 //                                       'refresh_token', refresh_token }: the relay adds the client secret, calls the
@@ -8,7 +8,7 @@
 // Nothing is stored. Tokens, codes and verifiers never reach the log: the log carries the provider, the grant and the
 // provider's HTTP status only.
 import { RelayError } from './lib/auth.js';
-import { loopbackFor } from './connect.js';
+import { bounceToLoopback } from './connect.js';
 import { clientAddress, createLimiter } from './platform.js';
 import { readJson } from './summary.js';
 
@@ -77,21 +77,23 @@ export function allowedRedirects(config, provider) {
   return [...(base ? [`${base}/v1/oauth/${provider}/callback`] : []), ...(config.oauthExtraRedirects ?? [])];
 }
 
-// GET /v1/oauth/<provider>/callback: only the app's loopback can be the destination, so a forged state cannot send the browser anywhere else
+// GET /v1/oauth/<provider>/callback: only the app's loopback can be the destination, so a forged state cannot send
+// the browser anywhere else
 export function handleOAuthCallback(req, res, { log = () => {} } = {}) {
   const url = new URL(req.url, 'http://relay');
   const provider = providerName(url.pathname.split('/')[3]);
   if (!Object.hasOwn(OAUTH_PROVIDERS, provider)) return json(res, 404, { error: 'Unknown provider.', code: 'bad_request' });
   if (req.method !== 'GET') return json(res, 405, { error: 'GET only.', code: 'bad_request' });
-  const out = new URL(`http://127.0.0.1:${loopbackFor(url.searchParams.get('state'))}/callback`);
-  for (const k of ['code', 'state', 'error', 'error_description']) { const v = url.searchParams.get(k); if (v) out.searchParams.set(k, v.slice(0, 2048)); }
   log('oauth_callback', { provider, ok: !!url.searchParams.get('code') });
-  res.writeHead(302, { location: out.toString(), 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
-  res.end();
+  bounceToLoopback(url, res);
 }
 
+// a JSON body that is an object, or a 400 with a plain message (null, an array or a bare value is not a request)
+const objectBody = (b) => { if (!b || typeof b !== 'object' || Array.isArray(b)) throw new RelayError('bad_request', 'The body must be a JSON object.', 400); return b; };
+
 // the body the app sent, checked and bounded; snake_case on the wire as OAuth names the fields
-export function cleanTokenRequest(b = {}) {
+export function cleanTokenRequest(raw) {
+  const b = objectBody(raw);
   const provider = providerName(b.provider);
   const str = (v, max = 4096) => { const s = String(v ?? ''); if (s.length > max) throw new RelayError('bad_request', 'The sign-in details are too long.', 400); return s; };
   if (b.grant_type === 'refresh_token') {
@@ -104,20 +106,34 @@ export function cleanTokenRequest(b = {}) {
   return { provider, grant: 'code', code, codeVerifier: codeVerifier || null, redirectUri };
 }
 
-// one limiter per process for both POST routes: plenty for people connecting accounts, little for a script
-const sharedLimiter = createLimiter({ max: 30, windowMs: 10 * 60 * 1000 });
+// two limits on the token and revoke routes (the callback is not counted): per caller address, plenty for people
+// connecting accounts and little for a script; and per provider across all callers, so many addresses together cannot
+// spend the relay's standing with one provider
+export function createOAuthLimits({ perAddress = 30, perProvider = 600, windowMs = 10 * 60 * 1000, now = Date.now } = {}) {
+  const address = createLimiter({ max: perAddress, windowMs, now });
+  const provider = createLimiter({ max: perProvider, windowMs, now });
+  return {
+    address: (req) => { if (!address.allow(clientAddress(req))) throw new RelayError('rate_limit', 'Too many requests from this connection. Try again in a few minutes.', 429); },
+    provider: (name) => { if (!provider.allow(name)) throw new RelayError('rate_limit', 'Too many sign-ins for this provider right now. Try again in a few minutes.', 429); },
+  };
+}
+const sharedLimits = createOAuthLimits();
 
-export async function handleOAuthToken(req, res, { config, log = () => {}, fetchImpl = fetch, limiter = sharedLimiter, now = Date.now }) {
+// the provider's answer as an object; anything else (null, text, an array) reads as an empty answer, which fails ok()
+const providerBody = async (r) => { const t = await r.json().catch(() => null); return t && typeof t === 'object' && !Array.isArray(t) ? t : {}; };
+
+export async function handleOAuthToken(req, res, { config, log = () => {}, fetchImpl = fetch, limits = sharedLimits, now = Date.now }) {
   try {
     if (req.method !== 'POST') throw new RelayError('bad_request', 'POST only.', 405);
-    if (!limiter.allow(clientAddress(req))) throw new RelayError('rate_limit', 'Too many sign-ins from this connection. Try again in a few minutes.', 429);
+    limits.address(req);
     const b = cleanTokenRequest(await readJson(req, 32 * 1024));
     const p = requireProvider(b.provider);
+    limits.provider(b.provider);
     if (b.grant === 'code' && !allowedRedirects(config, b.provider).includes(b.redirectUri)) throw new RelayError('bad_request', 'That redirect address is not allowed.', 400);
     const creds = requireCredentials(config, b.provider);
     const { url, init } = p.token(creds, b);
     const r = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(20000) });
-    const t = await r.json().catch(() => ({}));
+    const t = await providerBody(r);
     if (!r.ok || !p.ok(t)) {
       log('oauth_token_refused', { provider: b.provider, grant: b.grant, status: r.status });
       throw new RelayError('connector', b.grant === 'refresh' ? 'The provider no longer accepts this connection. Connect it again.' : 'The provider did not accept the sign-in. Try connecting again.', 400);
@@ -127,22 +143,25 @@ export async function handleOAuthToken(req, res, { config, log = () => {}, fetch
   } catch (err) { fail(res, err, log, 'oauth_token'); }
 }
 
-export async function handleOAuthRevoke(req, res, { config, log = () => {}, fetchImpl = fetch, limiter = sharedLimiter }) {
+export async function handleOAuthRevoke(req, res, { config, log = () => {}, fetchImpl = fetch, limits = sharedLimits }) {
   try {
     if (req.method !== 'POST') throw new RelayError('bad_request', 'POST only.', 405);
-    if (!limiter.allow(clientAddress(req))) throw new RelayError('rate_limit', 'Too many requests from this connection. Try again in a few minutes.', 429);
-    const b = await readJson(req, 16 * 1024);
+    limits.address(req);
+    const b = objectBody(await readJson(req, 16 * 1024));
     const provider = providerName(b.provider);
     const p = requireProvider(provider);
     if (!p.revoke) throw new RelayError('bad_request', 'This provider is revoked from the app.', 400);
+    limits.provider(provider);
     const token = String(b.token ?? '');
     if (!token || token.length > 4096) throw new RelayError('bad_request', 'The token is missing.', 400);
     const { url, init } = p.revoke(requireCredentials(config, provider), token);
     const r = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(20000) });
-    // a token the provider already forgot counts as revoked
-    const done = r.ok || r.status === 404 || r.status === 401;
+    // 200 and 204 confirm the revoke and 404 means the provider already forgot the token. 401 and 403 mean the provider
+    // refused this relay's client credentials, so the token is still live: that is a failure the operator must see
+    if (r.status === 401 || r.status === 403) { log('oauth_revoke_rejected', { provider, status: r.status }); throw new RelayError('connector', 'The provider refused the relay\'s credentials, so the token was not revoked.', 502); }
+    if (![200, 204, 404].includes(r.status)) { log('oauth_revoke_refused', { provider, status: r.status }); throw new RelayError('connector', 'The provider did not confirm the revoke.', 502); }
     log('oauth_revoke', { provider, status: r.status });
-    json(res, done ? 200 : 502, done ? { ok: true } : { error: 'The provider did not confirm the revoke.', code: 'connector' });
+    json(res, 200, { ok: true });
   } catch (err) { fail(res, err, log, 'oauth_revoke'); }
 }
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { allowedRedirects, cleanTokenRequest, handleOAuth, handleOAuthCallback, handleOAuthRevoke, handleOAuthToken, oauthStatus } from '../oauth.js';
-import { createLimiter } from '../platform.js';
+import { allowedRedirects, cleanTokenRequest, createOAuthLimits, handleOAuth, handleOAuthCallback, handleOAuthRevoke, handleOAuthToken, oauthStatus } from '../oauth.js';
+import { clientAddress } from '../platform.js';
 
 const config = (over = {}) => ({
   publicUrl: 'https://relay.example.com',
@@ -29,7 +29,7 @@ function provider(reply, status = 200) {
   const fetchImpl = async (url, init) => { calls.push({ url, init }); return { ok: status >= 200 && status < 300, status, json: async () => reply }; };
   return { calls, fetchImpl };
 }
-const run = async (handler, req, deps) => { const res = fakeRes(); await handler(req, res, { config: config(), log: () => {}, limiter: createLimiter({ max: 100 }), now: () => 1000, ...deps }); return res; };
+const run = async (handler, req, deps) => { const res = fakeRes(); await handler(req, res, { config: config(), log: () => {}, limits: createOAuthLimits({ perAddress: 100, perProvider: 100 }), now: () => 1000, ...deps }); return res; };
 
 describe('oauth callback bounce', () => {
   it('sends the browser to the app loopback with code and state', () => {
@@ -123,11 +123,35 @@ describe('POST /v1/oauth/token', () => {
   });
   it('rate limits by address', async () => {
     const p = provider({ access_token: 'x' });
-    const limiter = createLimiter({ max: 2 });
+    const limits = createOAuthLimits({ perAddress: 2, perProvider: 100 });
     const body = { provider: 'notion', code: 'c', redirect_uri: redirect('notion') };
-    for (let i = 0; i < 2; i++) assert.equal((await run(handleOAuthToken, fakeReq({ body }), { fetchImpl: p.fetchImpl, limiter })).status, 200);
-    assert.equal((await run(handleOAuthToken, fakeReq({ body }), { fetchImpl: p.fetchImpl, limiter })).status, 429);
-    assert.equal((await run(handleOAuthToken, fakeReq({ body, headers: { 'x-forwarded-for': '198.51.100.4' } }), { fetchImpl: p.fetchImpl, limiter })).status, 200);
+    for (let i = 0; i < 2; i++) assert.equal((await run(handleOAuthToken, fakeReq({ body }), { fetchImpl: p.fetchImpl, limits })).status, 200);
+    assert.equal((await run(handleOAuthToken, fakeReq({ body }), { fetchImpl: p.fetchImpl, limits })).status, 429);
+    // a client that prepends its own X-Forwarded-For entry is still counted by the address the proxy appended
+    assert.equal((await run(handleOAuthToken, fakeReq({ body, headers: { 'x-forwarded-for': '198.51.100.4, 203.0.113.9' } }), { fetchImpl: p.fetchImpl, limits })).status, 429);
+    assert.equal((await run(handleOAuthToken, fakeReq({ body, headers: { 'x-forwarded-for': '198.51.100.4' } }), { fetchImpl: p.fetchImpl, limits })).status, 200);
+  });
+  it('caps each provider across all addresses, and counts the cap separately per provider', async () => {
+    const p = provider({ access_token: 'x' });
+    const limits = createOAuthLimits({ perAddress: 100, perProvider: 2 });
+    const body = { provider: 'notion', code: 'c', redirect_uri: redirect('notion') };
+    for (const ip of ['192.0.2.1', '192.0.2.2']) assert.equal((await run(handleOAuthToken, fakeReq({ body, headers: { 'x-forwarded-for': ip } }), { fetchImpl: p.fetchImpl, limits })).status, 200);
+    assert.equal((await run(handleOAuthToken, fakeReq({ body, headers: { 'x-forwarded-for': '192.0.2.3' } }), { fetchImpl: p.fetchImpl, limits })).status, 429);
+    assert.equal((await run(handleOAuthToken, fakeReq({ body: { provider: 'slack', code: 'c', redirect_uri: redirect('slack') }, headers: { 'x-forwarded-for': '192.0.2.3' } }), { fetchImpl: provider({ ok: true, authed_user: { access_token: 'u' } }).fetchImpl, limits })).status, 200);
+  });
+  it('answers a null or non-object body with a plain 400', async () => {
+    for (const body of ['null', '[]', '"x"']) {
+      const res = await run(handleOAuthToken, fakeReq({ body }), { fetchImpl: provider({}).fetchImpl });
+      assert.equal(res.status, 400, body);
+      assert.match(out(res).error, /JSON object/);
+      const rv = await run(handleOAuthRevoke, fakeReq({ url: '/v1/oauth/revoke', body }), { fetchImpl: provider({}).fetchImpl });
+      assert.equal(rv.status, 400, body);
+    }
+  });
+  it('treats a null or unreadable provider answer as a refusal', async () => {
+    const res = await run(handleOAuthToken, fakeReq({ body: { provider: 'github', code: 'c', redirect_uri: redirect('github') } }), { fetchImpl: provider(null).fetchImpl });
+    assert.equal(res.status, 400);
+    assert.match(out(res).error, /did not accept/);
   });
   it('never writes a token, code, verifier or secret to the log', async () => {
     const lines = [];
@@ -156,6 +180,24 @@ describe('POST /v1/oauth/revoke', () => {
     assert.equal((await run(handleOAuthRevoke, fakeReq({ url: '/v1/oauth/revoke', body: { provider: 'notion', token: 't' } }), { fetchImpl: p.fetchImpl })).status, 200);
     assert.equal(p.calls[0].url, 'https://api.notion.com/v1/oauth/revoke');
     assert.equal((await run(handleOAuthRevoke, fakeReq({ url: '/v1/oauth/revoke', body: { provider: 'slack', token: 't' } }), { fetchImpl: p.fetchImpl })).status, 400);
+  });
+  it('counts 404 as already revoked, and 401 or 403 as the provider refusing the relay, logged', async () => {
+    assert.equal((await run(handleOAuthRevoke, fakeReq({ url: '/v1/oauth/revoke', body: { provider: 'github', token: 't' } }), { fetchImpl: provider({}, 404).fetchImpl })).status, 200);
+    for (const status of [401, 403]) {
+      const lines = [];
+      const res = await run(handleOAuthRevoke, fakeReq({ url: '/v1/oauth/revoke', body: { provider: 'notion', token: 't' } }), { fetchImpl: provider({}, status).fetchImpl, log: (event, f) => lines.push({ event, ...f }) });
+      assert.equal(res.status, 502, String(status));
+      assert.match(out(res).error, /refused the relay/);
+      assert.ok(lines.some((l) => l.event === 'oauth_revoke_rejected' && l.status === status));
+    }
+    assert.equal((await run(handleOAuthRevoke, fakeReq({ url: '/v1/oauth/revoke', body: { provider: 'github', token: 't' } }), { fetchImpl: provider({}, 500).fetchImpl })).status, 502);
+  });
+});
+
+describe('caller address', () => {
+  it('takes the last X-Forwarded-For entry, which the proxy appended, else the socket', () => {
+    assert.equal(clientAddress({ headers: { 'x-forwarded-for': '10.0.0.1, 198.51.100.7' }, socket: {} }), '198.51.100.7');
+    assert.equal(clientAddress({ headers: {}, socket: { remoteAddress: '127.0.0.1' } }), '127.0.0.1');
   });
 });
 

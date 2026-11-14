@@ -22,7 +22,8 @@ export const config = {
   oauth: {
     notion: { clientId: env('NOTION_CLIENT_ID'), clientSecret: env('NOTION_CLIENT_SECRET') },
     slack: { clientId: env('SLACK_CLIENT_ID'), clientSecret: env('SLACK_CLIENT_SECRET') },
-    github: { clientId: env('GITHUB_CLIENT_ID'), clientSecret: env('GITHUB_CLIENT_SECRET') },
+    // a GitHub App (user-to-server tokens, read-only Contents and Metadata), so its own client pair
+    github: { clientId: env('GITHUB_APP_CLIENT_ID'), clientSecret: env('GITHUB_APP_CLIENT_SECRET') },
   },
   publicUrl: env('RELAY_PUBLIC_URL', 'https://relay.quorum.watch').replace(/\/+$/, ''),
   oauthExtraRedirects: env('OAUTH_EXTRA_REDIRECT_URIS', '').split(',').map((s) => s.trim()).filter(Boolean),
