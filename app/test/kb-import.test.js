@@ -196,8 +196,8 @@ describe('fetching from GitHub', () => {
 
 // a Supabase client fake: KBs and folders kept in memory, kb_* RPCs acting on them, and a notes table that takes
 // upserts and answers the KB notes read
-function fakeServer({ role = 'admin', notes = [], kbs = [], folderFail = null, sourceSet = true, profiles = [], upstream = true } = {}) {
-  const state = { kbs: kbs.map((k) => ({ folders: [], source: null, role: 'admin', ...k })), notes: notes.map((n) => ({ ...n })), calls: [], upstream: new Map() };
+function fakeServer({ role = 'admin', notes = [], kbs = [], folderFail = null, sourceSet = true, profiles = [], upstream = true, upstreamRead = true, refuse = [] } = {}) {
+  const state = { kbs: kbs.map((k) => ({ folders: [], source: null, role: 'admin', ...k })), notes: notes.map((n) => ({ ...n })), calls: [], upstream: new Map(), opts: { upstreamRead, refuse } };
   let seq = 0;
   const id = (p) => `${p}${String(++seq).padStart(4, '0')}`;
   const answer = (data, error = null) => ({ data, error });
@@ -218,10 +218,24 @@ function fakeServer({ role = 'admin', notes = [], kbs = [], folderFail = null, s
       kb.folders.push({ id: f.id, parent_id: f.parent_id, name: f.name, position: 0 });
       return answer(f);
     }
-    if (name === 'kb_upstream_save') {
-      if (!upstream) return answer(null, { message: 'Could not find the function public.kb_upstream_save', code: 'PGRST202' });
-      for (const r of args.rows) state.upstream.set(r.note_id, { ...r, kb_id: args.kb_id });
-      return answer(args.rows.length);
+    if (name === 'kb_upstream_save' || name === 'kb_synced_notes_write') {
+      if (!upstream) return answer(null, { message: `Could not find the function public.${name}`, code: 'PGRST202' });
+      if (name === 'kb_upstream_save') {
+        let saved = 0;
+        for (const r of args.rows) {
+          const n = state.notes.find((x) => x.id === r.note_id && !x.deleted_at);
+          if (!n || n.hash !== r.base_hash) continue;
+          state.upstream.set(r.note_id, { ...r, suggestions: state.upstream.get(r.note_id)?.suggestions ?? [], kb_id: args.kb_id });
+          saved++;
+        }
+        return answer(saved);
+      }
+      if (args.rows.some((r) => state.opts.refuse.includes(r.note_id))) return answer(null, { message: 'A synced note keeps the source it came from', code: 'P0001' });
+      for (const r of args.rows) {
+        Object.assign(state.notes.find((x) => x.id === r.note_id), { body: r.body, frontmatter: r.frontmatter, hash: r.hash, mtime: r.mtime });
+        if (r.upstream) state.upstream.set(r.note_id, { ...r.upstream, note_id: r.note_id, kb_id: args.kb_id });
+      }
+      return answer(args.rows.map((r) => r.note_id));
     }
     if (name === 'kb_source_set') {
       if (!sourceSet) return answer(null, { message: 'Could not find the function public.kb_source_set', code: 'PGRST202' });
@@ -240,8 +254,10 @@ function fakeServer({ role = 'admin', notes = [], kbs = [], folderFail = null, s
     b.then = (res, rej) => {
       if (table === 'kb_note_upstream') {
         if (!upstream) return Promise.resolve({ data: null, error: { message: 'relation "public.kb_note_upstream" does not exist', code: '42P01' } }).then(res, rej);
-        const kbId = ops.find((o) => o[0] === 'eq' && o[1] === 'kb_id')?.[2];
-        return Promise.resolve({ data: [...state.upstream.values()].filter((u) => u.kb_id === kbId).map((u) => ({ ...u })), error: null }).then(res, rej);
+        if (!state.opts.upstreamRead) return Promise.resolve({ data: null, error: { message: 'canceling statement due to statement timeout', code: '57014' } }).then(res, rej);
+        const ids = ops.find((o) => o[0] === 'in' && o[1] === 'note_id')?.[2] ?? [];
+        state.calls.push(['read:kb_note_upstream', ids.length]);
+        return Promise.resolve({ data: [...state.upstream.values()].filter((u) => ids.includes(u.note_id)).map((u) => structuredClone(u)), error: null }).then(res, rej);
       }
       if (table === 'profiles') {
         const ids = ops.find((o) => o[0] === 'in')?.[2] ?? [];
@@ -513,7 +529,6 @@ describe('kb-import', () => {
   });
 });
 
-// a real zip file on disk through the default readers, so the fs path is covered once
 // Quorum's copy edited the way a vault push writes it: new text and its hash
 const editNote = (server, end, change) => {
   const n = server.state.notes.find((x) => x.path.endsWith(end));
@@ -522,66 +537,96 @@ const editNote = (server, end, change) => {
   return n;
 };
 const README = (text) => HANDBOOK.map((e) => (e.name.endsWith('README.md') ? { ...e, data: text } : e));
+const readme = (server) => server.state.notes.find((x) => x.path.endsWith('README.md'));
 
 describe('kb-import with Quorum\'s edits', () => {
   const repo = { kind: 'github', url: 'https://github.com/example-org/handbook' };
+  const importFrom = async (server, files, kbId) => importer(server, { zips: { main: makeZip(files) } }).handlers['kb-import'](kbId ? { kbId } : { name: 'Handbook', source: repo });
   const twice = async (server, firstZip, secondZip) => {
-    const first = await importer(server, { zips: { main: makeZip(firstZip) } }).handlers['kb-import']({ name: 'Handbook', source: repo });
-    return { first, again: (edit) => { edit?.(); return importer(server, { zips: { main: makeZip(secondZip) } }).handlers['kb-import']({ kbId: first.kb.id }); } };
+    const first = await importFrom(server, firstZip);
+    return { first, again: (edit) => { edit?.(); return importFrom(server, secondZip, first.kb.id); } };
   };
 
   it('records the upstream base of every imported note', async () => {
     const server = fakeServer();
-    await importer(server, { zips: { main: makeZip(HANDBOOK) } }).handlers['kb-import']({ source: repo });
+    await importFrom(server, HANDBOOK);
     expect(server.state.upstream.size).toBe(3);
-    for (const n of server.state.notes) expect(server.state.upstream.get(n.id)).toMatchObject({ base_body: n.body, base_hash: n.hash, suggestion_state: null });
+    for (const n of server.state.notes) expect(server.state.upstream.get(n.id)).toMatchObject({ base_body: n.body, base_hash: n.hash, suggestions: [] });
   });
 
-  it('keeps Quorum\'s edit while the source is unchanged, and writes nothing back to GitHub', async () => {
+  it('keeps an edit while the source is unchanged, reads only the synced notes\' rows, and writes nothing back', async () => {
     const server = fakeServer();
     const { again } = await twice(server, HANDBOOK, HANDBOOK);
     let edited;
     const r = await again(() => { edited = editNote(server, 'README.md', (b) => `${b}\n\n- [[Ana]]\n`).body; });
     expect(r).toMatchObject({ imported: 2, kept: 1, suggested: 0 });
-    expect(server.state.notes.find((n) => n.path.endsWith('README.md')).body).toBe(edited);
-    expect(r.kb.id).toBeTruthy();
+    expect(readme(server).body).toBe(edited);
+    expect(server.state.calls.filter(([n]) => n === 'read:kb_note_upstream').map(([, c]) => c)).toEqual([3, 1]);
   });
 
-  it('writes a changed source and keeps a clean edit as a ready suggestion', async () => {
+  it('writes a changed source with its base in one call and keeps a clean edit as a ready suggestion', async () => {
     const server = fakeServer();
     const { again } = await twice(server, HANDBOOK, README('# Handbook\n\nStart here, then read the guides.'));
     const r = await again(() => editNote(server, 'README.md', (b) => `${b}\n\n## Meetings\n\n- [[Ana]]\n`));
     expect(r).toMatchObject({ kept: 0, suggested: 1 });
-    const n = server.state.notes.find((x) => x.path.endsWith('README.md'));
+    const n = readme(server);
     expect(n.body).toMatch(/then read the guides\.$/);
     expect(n.body).not.toContain('[[Ana]]');
+    expect(server.state.calls.filter(([c]) => c === 'kb_synced_notes_write')).toHaveLength(1);
     const u = server.state.upstream.get(n.id);
-    expect(u).toMatchObject({ base_body: n.body, suggestion_state: 'ready' });
-    expect(u.suggestion_body).toContain('then read the guides.');
-    expect(u.suggestion_body).toContain('- [[Ana]]');
+    expect(u).toMatchObject({ base_body: n.body, base_hash: n.hash });
+    expect(u.suggestions).toHaveLength(1);
+    expect(u.suggestions[0]).toMatchObject({ state: 'ready' });
+    expect(u.suggestions[0].body).toContain('then read the guides.');
+    expect(u.suggestions[0].body).toContain('- [[Ana]]');
   });
 
   it('keeps an edit that clashes with the source change as a stale suggestion with its old base', async () => {
     const server = fakeServer();
     const { again } = await twice(server, HANDBOOK, README('# Handbook\n\nStart with the guides.'));
     let base;
-    const r = await again(() => { base = server.state.notes.find((x) => x.path.endsWith('README.md')).body; editNote(server, 'README.md', (b) => b.replace('Start here.', 'Start here. Ask Ana.')); });
+    const r = await again(() => { base = readme(server).body; editNote(server, 'README.md', (b) => b.replace('Start here.', 'Start here. Ask Ana.')); });
     expect(r.suggested).toBe(1);
-    const n = server.state.notes.find((x) => x.path.endsWith('README.md'));
-    expect(n.body).toContain('Start with the guides.');
-    const u = server.state.upstream.get(n.id);
-    expect(u).toMatchObject({ suggestion_state: 'stale', suggestion_base: base });
-    expect(u.suggestion_body).toContain('Start here. Ask Ana.');
+    expect(readme(server).body).toContain('Start with the guides.');
+    const [s] = server.state.upstream.get(readme(server).id).suggestions;
+    expect(s).toMatchObject({ state: 'stale', base });
+    expect(s.body).toContain('Start here. Ask Ana.');
   });
 
-  it('writes the source over a note Quorum did not edit, with no suggestion', async () => {
+  it('keeps an earlier suggestion beside a new one when both edits wait on a newer source', async () => {
+    const server = fakeServer();
+    const first = await importFrom(server, HANDBOOK);
+    editNote(server, 'README.md', (b) => b.replace('Start here.', 'Start here. Ask Ana.'));
+    await importFrom(server, README('# Handbook\n\nStart with the guides.'), first.kb.id);
+    editNote(server, 'README.md', (b) => `${b}\n\n- [[Bo]]\n`);
+    const r = await importFrom(server, README('# Title\n\nStart with the guides.'), first.kb.id);
+    expect(r.suggested).toBe(1);
+    const list = server.state.upstream.get(readme(server).id).suggestions;
+    expect(list.map((s) => s.state)).toEqual(['stale', 'ready']);
+    expect(list[0].body).toContain('Ask Ana.');
+    expect(list[1].body).toContain('# Title');
+    expect(list[1].body).toContain('- [[Bo]]');
+  });
+
+  it('writes the source over a note nobody edited, with no suggestion', async () => {
     const server = fakeServer();
     const { again } = await twice(server, HANDBOOK, README('# Handbook\n\nNew start.'));
     const r = await again();
     expect(r).toMatchObject({ kept: 0, suggested: 0 });
-    const n = server.state.notes.find((x) => x.path.endsWith('README.md'));
-    expect(n.body).toContain('New start.');
-    expect(server.state.upstream.get(n.id)).toMatchObject({ base_body: n.body, suggestion_state: null });
+    expect(readme(server).body).toContain('New start.');
+    expect(server.state.upstream.get(readme(server).id)).toMatchObject({ base_body: readme(server).body, suggestions: [] });
+  });
+
+  it('names a note the database refuses and counts no suggestion for it', async () => {
+    const server = fakeServer();
+    const first = await importFrom(server, HANDBOOK);
+    editNote(server, 'README.md', (b) => `${b}\n\n- [[Ana]]\n`);
+    server.state.opts.refuse = [readme(server).id];
+    const r = await importFrom(server, README('# Handbook\n\nNew start.'), first.kb.id);
+    expect(r).toMatchObject({ suggested: 0 });
+    expect(r.skipped).toContainEqual({ path: 'README.md', reason: 'A synced note keeps the source it came from.' });
+    expect(readme(server).body).toContain('[[Ana]]');
+    expect(server.state.upstream.get(readme(server).id).suggestions).toEqual([]);
   });
 
   it('on a database without migration 0031, imports as before', async () => {
@@ -590,11 +635,23 @@ describe('kb-import with Quorum\'s edits', () => {
     const r = await again(() => editNote(server, 'README.md', (b) => `${b}\n- edit\n`));
     expect(r.error).toBeUndefined();
     expect(r).toMatchObject({ imported: 3, kept: 0, suggested: 0 });
-    expect(server.state.notes.find((x) => x.path.endsWith('README.md')).body).toContain('New start.');
+    expect(readme(server).body).toContain('New start.');
     expect(server.state.upstream.size).toBe(0);
+  });
+
+  it('when the upstream rows cannot be read, imports as before for that run instead of stopping', async () => {
+    const server = fakeServer();
+    const first = await importFrom(server, HANDBOOK);
+    editNote(server, 'README.md', (b) => `${b}\n- edit\n`);
+    server.state.opts.upstreamRead = false;
+    const r = await importFrom(server, README('# Handbook\n\nNew start.'), first.kb.id);
+    expect(r.error).toBeUndefined();
+    expect(r).toMatchObject({ imported: 3, suggested: 0 });
+    expect(readme(server).body).toContain('New start.');
   });
 });
 
+// a real zip file on disk through the default readers, so the fs path is covered once
 describe('the default file readers', () => {
   it('reads a zip from disk', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'quorum-kbimport-zip-'));

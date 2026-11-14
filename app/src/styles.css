@@ -1509,6 +1509,7 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .kbs.stale { border-style: dashed; }
 .kbs-title { display: flex; align-items: center; gap: 10px; margin: 0 0 6px; font-size: 14px; font-weight: 600; }
 .kbs-tag { font-size: 12px; font-weight: 500; color: #e8c170; }
+.kbs-day { font-size: 12px; font-weight: 400; color: var(--muted); }
 .kbs-text { margin: 0 0 10px; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .kbs-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .kbs-diff { margin-top: 12px; max-height: 360px; overflow: auto; border-radius: 10px; border: 1px solid var(--line); font: 12px/1.6 ui-monospace, "SF Mono", Menlo, monospace; }
