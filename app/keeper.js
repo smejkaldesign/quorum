@@ -22,14 +22,13 @@ import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, 
 import path from 'node:path';
 import { parseFrontmatter } from './linkparse.js';
 import { writeAtomic } from './relink.js';
-import { plan, readSetup, slug } from './starter.js';
+import { SETUP_FILE, plan, readSetup, slug } from './starter.js';
+import { LEARNED_CLOSE, LEARNED_FILE, LEARNED_OPEN, blockAt, learnedFileIn, learnedLines } from './cli/learned.mjs';
 import { DAILY_DEFAULT, choose, dailyName, dailyPattern, detect, isGenerated, owns, resolvePlugins, scanContext } from './plugins.js';
 
 export const KEEPER_FILE = path.join('.quorum', 'keeper.json');
 export const CHANGELOG = path.join('.quorum', 'changelog.md');
-export const LEARNED_OPEN = '<!-- quorum:learned -->';
-export const LEARNED_CLOSE = '<!-- /quorum:learned -->';
-export const LEARNED_FILE = path.join('.quorum', 'learned.md');
+export { LEARNED_CLOSE, LEARNED_FILE, LEARNED_OPEN, learnedFileIn, learnedLines } from './cli/learned.mjs';
 export const LEARNED_BUDGET = 2000;
 // CLAUDE.md is loaded in every session, so the copy there, when the user turns it on, holds the newest CLAUDE_FACTS
 // lines within CLAUDE_BUDGET characters
@@ -39,6 +38,11 @@ export const CLAUDE_FACTS = 10;
 export const NOTE_FILE = 'quorum-learned.md';
 export const NOTE_LINK = 'learned facts from meetings, kept by Quorum';
 export const KEEP_RE = /#keep\b/i;
+// the first lines of the index files the keeper makes; only Quorum writes them
+export const INDEX_HEADER = '# Index\n\nOne line per note. Quorum starts here when it looks for an answer.\n';
+export const MEETINGS_HEADER = '# Meetings\n\nOne line per meeting, written by Quorum.\n';
+// a daily note exactly as the keeper makes it: a date heading and meeting lines, nothing the person added
+const KEEPER_DAILY_RE = /^# \d{4}-\d{2}-\d{2}\n\n## Meetings\n\n(?:- \[\[[^\]\n]+\]\][^\n]*\n)+$/;
 // a run that would add more new files than this to the vault waits for the user (a backlog of months of meetings
 // against a vault with its own daily naming once made 86)
 export const CREATE_LIMIT = 10;
@@ -117,15 +121,6 @@ export const factKey = (l) => l.normalize('NFKC').replace(/^-\s*/, '').replace(K
 const factDate = (l) => l.match(CITE_RE)?.[0].match(/\d{4}-\d{2}-\d{2}/)[0] ?? null;
 // a line with its citation swapped for a newer one; the wording and a #keep marker stay as they were
 const withCite = (line, cite) => (CITE_RE.test(line) ? line.replace(CITE_RE, cite) : line.replace(/\s*(#keep\s*)?$/i, (_m, k) => ` ${cite}${k ? ` ${k.trim()}` : ''}`));
-const blockAt = (text) => {
-  const a = text.indexOf(LEARNED_OPEN);
-  const b = text.indexOf(LEARNED_CLOSE);
-  return a >= 0 && b > a ? [a, b + LEARNED_CLOSE.length] : null;
-};
-export function learnedLines(text) {
-  const at = blockAt(text);
-  return at ? text.slice(at[0] + LEARNED_OPEN.length, at[1] - LEARNED_CLOSE.length).split('\n').map((l) => l.trim()).filter((l) => l.startsWith('- ')) : [];
-}
 export const learnedChars = (lines) => lines.reduce((n, l) => n + l.length + 1, 0);
 
 // the lines that fit the budget, oldest in the list first: the block is kept newest last, and a fact confirmed again
@@ -255,9 +250,17 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
   // settings changes that touch keeper.json (a settled default reset by the user), waiting for the state a run will
   // save; set() applies them at once when no run is going, and a running run applies them before it saves
   let resets = {};
+  // refile: editVault was turned on, so the notes that left lines out (st.left) are filed again, without asking for
+  // their facts a second time
+  let refile = false;
   const applyResets = (st) => {
     for (const [key, v] of Object.entries(resets)) { if (v == null) delete st[key]; else st[key] = v; }
     resets = {};
+    if (!refile) return;
+    refile = false;
+    st.partial ??= {};
+    for (const [rel, h] of Object.entries(st.left ?? {})) if (st.done?.[rel] === h) { delete st.done[rel]; st.partial[rel] = h; }
+    delete st.left;
   };
   let running = null;
   let queued = null;
@@ -268,13 +271,32 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
   const stateFile = (vault) => path.join(vault, KEEPER_FILE);
   // a keeper.json from before factsNoteDefault existed gets it from where the list was last written, so an existing
   // list never moves on its own
+  // made is a Set in memory and an array in the file. A keeper.json from before made existed gets it from provenMade
   const loadState = (vault) => {
     let st;
-    try { st = JSON.parse(readFileSync(stateFile(vault), 'utf8')); } catch { return { done: {} }; }
+    try { st = JSON.parse(readFileSync(stateFile(vault), 'utf8')); } catch { st = { done: {} }; }
     if (st.factsNoteAt && !('factsNoteDefault' in st)) st.factsNoteDefault = st.factsNoteAt;
+    st.made = new Set(Array.isArray(st.made) ? st.made : provenMade(vault));
     return st;
   };
-  const saveState = (vault, st) => { mkdirSync(path.dirname(stateFile(vault)), { recursive: true }); writeAtomic(stateFile(vault), JSON.stringify(st, null, 2) + '\n'); };
+  const saveState = (vault, st) => { mkdirSync(path.dirname(stateFile(vault)), { recursive: true }); writeAtomic(stateFile(vault), JSON.stringify({ ...st, made: [...(st.made ?? [])] }, null, 2) + '\n'); };
+  // the files an earlier keeper made, for a keeper.json without made: a file the changelog names whose text is still
+  // only what the keeper writes (an index under INDEX_HEADER or MEETINGS_HEADER, a daily note of meeting lines and
+  // nothing else). Anything it cannot prove stays the person's. Worked out once per vault until a run saves made
+  const proven = new Map();
+  const provenMade = (vault) => {
+    if (proven.has(vault)) return proven.get(vault);
+    const log = read(path.join(vault, CHANGELOG)) ?? '';
+    const named = new Set(log.split('\n').map((l) => l.match(/^- ([^[\n]+\.md)$/)?.[1]).filter(Boolean));
+    const out = [...named].filter((rel) => {
+      const cur = read(path.join(vault, rel));
+      if (cur == null) return false;
+      const base = path.posix.basename(rel);
+      return (rel === 'index.md' && cur.startsWith(INDEX_HEADER)) || (base === 'index.md' && cur.startsWith(MEETINGS_HEADER)) || KEEPER_DAILY_RE.test(cur);
+    }).sort();
+    proven.set(vault, out);
+    return out;
+  };
 
   // the plugin rows for this vault, and the daily naming it uses. The rows are the only record of whether facts are on;
   // the older facts switch, saved as off before plugins existed, reads as the vault owning facts until the user picks
@@ -288,18 +310,25 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     return { vault: b.vault, f, rows, daily: f.daily ? dailyPattern(ctx.daily).template : DAILY_DEFAULT, made: starterMade(b) };
   };
   // the files the starter wrote, vault-relative, when Quorum built the folder; a folder the person connected has none
+  // worked out again only when setup.json changes (a rerun of the setup adds files)
+  let starterCache = null;
   const starterMade = (b) => {
-    const setup = settings.brainMade === 'quorum' ? readSetup(b.root) : null;
-    if (!setup?.answers) return new Set();
+    if (settings.brainMade !== 'quorum') return new Set();
+    let mtime;
+    try { mtime = statSync(path.join(b.root, SETUP_FILE)).mtimeMs; } catch { return new Set(); }
+    const key = `${b.root}\n${b.vault}\n${mtime}`;
+    if (starterCache?.key === key) return starterCache.made;
+    const setup = readSetup(b.root);
     let files = {};
-    try { files = plan({ name: setup.name, answers: setup.answers }).files; } catch {}
-    return new Set(Object.keys(files).map((rel) => posix(path.relative(b.vault, path.join(b.root, rel)))));
+    try { if (setup?.answers) files = plan({ name: setup.name, answers: setup.answers }).files; } catch {}
+    starterCache = { key, made: new Set(Object.keys(files).map((rel) => posix(path.relative(b.vault, path.join(b.root, rel))))) };
+    return starterCache.made;
   };
   // whether a file is Quorum's (see the top of this file), and whether the keeper may write it: a file that does not
   // exist yet is made by the keeper and recorded as its own
-  const quorumMade = (reg, st, rel, cur) => rel.startsWith('.quorum/') || reg.made.has(rel) || (st.made ?? []).includes(rel) || (cur != null && cur.startsWith(LEARNED_HEADER));
+  const quorumMade = (reg, st, rel, cur) => rel.startsWith('.quorum/') || reg.made.has(rel) || !!st.made?.has(rel) || (cur != null && cur.startsWith(LEARNED_HEADER));
   const mayEdit = (reg, st, rel, cur) => cur == null || conf().editVault || quorumMade(reg, st, rel, cur);
-  const markMade = (st, rel) => { st.made ??= []; if (!st.made.includes(rel)) st.made.push(rel); };
+  const markMade = (st, rel) => { st.made ??= new Set(); st.made.add(rel); };
 
   // an upkeep error goes to the console and to a log file under Application Support, which the settings page counts.
   // Past ERR_MAX bytes the file is cut to its last ERR_KEEP lines, and status reads only that much from its end
@@ -593,10 +622,14 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
   // meetings folder's own index.md when the user turned that on; else none
   // the root index.md takes the lines while Quorum owns the index job and may write it; when Quorum owns the job but
   // the person made index.md, the lines go to the meetings folder's index.md instead
-  const rootIndex = (reg, st) => { const cur = read(path.join(reg.vault, 'index.md')); return (cur != null && isGenerated(cur)) || mayEdit(reg, st, 'index.md', cur); };
+  // worked out once per registry, so once per run; a run that makes index.md finds it its own either way
+  const rootIndex = (reg, st) => {
+    if (reg.rootIndex == null) { const cur = read(path.join(reg.vault, 'index.md')); reg.rootIndex = (cur != null && isGenerated(cur)) || mayEdit(reg, st, 'index.md', cur); }
+    return reg.rootIndex;
+  };
   const indexFile = (reg, st) => {
-    if (owns(reg.rows, 'index') && rootIndex(reg, st)) return { rel: 'index.md', header: '# Index\n\nOne line per note. Quorum starts here when it looks for an answer.\n' };
-    if ((conf().meetingsIndex || owns(reg.rows, 'index')) && reg.f.meetings) return { rel: `${reg.f.meetings}/index.md`, header: '# Meetings\n\nOne line per meeting, written by Quorum.\n' };
+    if (owns(reg.rows, 'index') && rootIndex(reg, st)) return { rel: 'index.md', header: INDEX_HEADER };
+    if ((conf().meetingsIndex || owns(reg.rows, 'index')) && reg.f.meetings) return { rel: `${reg.f.meetings}/index.md`, header: MEETINGS_HEADER };
     return null;
   };
   // whether a note's facts would go into a vault note that does not exist yet
@@ -640,8 +673,10 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
       const vault = b.vault;
       const reg = registry(b);
       if (!reg.f.meetings) return result;
+      // the state is saved even when the run fails part way, so the files it made stay recorded as Quorum's
+      let st = null;
       try {
-        const st = loadState(vault);
+        st = loadState(vault);
         st.done ??= {};
         const compiled = guards();
         const pending = [];
@@ -657,8 +692,11 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
         st.partial ??= {};
         result.changed += tidyFacts(vault, reg, st).length;
         for (const n of pending) n.creates = n.why ? [] : createsFor(vault, reg, st, n);
-        if (!conf().meetingsIndex) delete st.meetingsIndexAt;
+        // the backfill ran for this target already unless the meetings index is no longer where the lines go
+        if (indexFile(reg, st)?.rel !== st.meetingsIndexAt) delete st.meetingsIndexAt;
         const fill = filed.length ? backfillFor(reg, st) : null;
+        // with nothing filed yet there is nothing to fill in: the notes of this run write their own lines
+        if (!filed.length) { const ix = indexFile(reg, st); if (ix && ix.rel !== 'index.md') st.meetingsIndexAt = ix.rel; }
         const creates = [...new Set([...pending.flatMap((n) => n.creates), ...(fill && !existsSync(path.join(vault, fill.rel)) ? [fill.rel] : [])])].sort();
         const hold = creates.length > CREATE_LIMIT && !allowCreate;
         result.held = hold ? { count: creates.length, sample: creates.slice(0, 5) } : null;
@@ -671,8 +709,12 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
           // create files
           const later = waits && !!factsCreate(vault, reg, st, n);
           const facts = st.partial[n.rel] !== n.h && !later;
-          const changed = await file(vault, reg, st, n.rel, n.text, { facts, marked: result.marked, left: result.left, noCreate: waits });
+          const left = [];
+          const changed = await file(vault, reg, st, n.rel, n.text, { facts, marked: result.marked, left, noCreate: waits });
           result.changed += changed.length;
+          for (const r of left) if (!result.left.includes(r)) result.left.push(r);
+          st.left ??= {};
+          if (left.length) st.left[n.rel] = n.h; else delete st.left[n.rel];
           indexed++;
           if (waits) { if (!later) st.partial[n.rel] = n.h; continue; }
           delete st.partial[n.rel];
@@ -685,13 +727,17 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
           result.changed += changed.length;
         }
         if (indexed || fill) logIndexSkip(vault, reg, st, result.marked);
+        if (st.left && !Object.keys(st.left).length) delete st.left;
         st.lastRunAt = result.at;
         st.last = result;
-        applyResets(st);
-        saveState(vault, st);
       } catch (e) {
         result.error = String(e?.message || e);
         fail('run', e);
+      } finally {
+        if (st) {
+          applyResets(st);
+          try { saveState(vault, st); } catch (e) { fail('run', e); }
+        }
       }
       lastRun = result;
       if (result.filed || result.skipped) log('keeper', `${reason}: ${result.filed} filed, ${result.changed} files changed, ${result.skipped} withheld`);
@@ -733,7 +779,7 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     // a picked note the person made, which takes the facts only with editVault on
     const noteHeld = conf().factsTarget === 'note' && target !== 'note';
     return {
-      target, file, note, noteHeld, linked: owns(reg.rows, 'index') && !indexGenerated, indexGenerated,
+      target, pick: conf().factsTarget === 'note' ? 'note' : 'learned', file, note, noteHeld, linked: owns(reg.rows, 'index') && !indexGenerated, indexGenerated,
       budget: budgetFor().budget, budgetPick: conf().factsBudget ?? 'auto', defaultBudget: LEARNED_BUDGET, defaultMoves, chars: learnedChars(lines), fileChars: text.length,
       claude: { on: conf().factsInClaude, editable: mayEdit(reg, st, 'CLAUDE.md', claude), block, lines: block === 'list' ? learnedLines(claude).length : 0, generated: claude != null && isGenerated(claude), facts: CLAUDE_FACTS, budget: CLAUDE_BUDGET },
     };
@@ -754,16 +800,28 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     const reg = registry(b);
     const changed = [];
     const dropped = [];
-    const lines = isPointer(cur) || isCopy(cur) ? [] : learnedLines(cur);
+    // a line with nothing in it, or one that only says a note was empty, does not move: it is named in the changelog
+    const all = isPointer(cur) || isCopy(cur) ? [] : learnedLines(cur);
+    const lines = all.filter((l) => factKey(l) && informative(l));
+    const left = all.filter((l) => !lines.includes(l));
     if (lines.length) {
-      try { placeFacts(vault, reg, st, lines, changed, dropped); } catch (e) { fail('facts', e); return status(); }
-      const kept = learnedLines(read(path.join(vault, learnedTarget(vault, reg, st) === 'note' ? noteFor(vault, st) : LEARNED_FILE)) ?? '');
-      const have = new Set([...kept, ...dropped].map(factKey));
-      if (!lines.every((l) => have.has(factKey(l)))) { fail('facts', 'the learned facts in CLAUDE.md could not be moved, so CLAUDE.md was left as it was'); return status(); }
+      let moved = false;
+      try {
+        placeFacts(vault, reg, st, lines, changed, dropped);
+        const have = new Set([...learnedLines(read(path.join(vault, learnedFileIn(st))) ?? ''), ...dropped].map(factKey));
+        moved = lines.every((l) => have.has(factKey(l)));
+      } catch (e) { fail('facts', e); }
+      if (!moved) {
+        saveState(vault, st);
+        if (changed.length) logChange(vault, 'Learned facts', changed, dropped);
+        fail('facts', 'the learned facts in CLAUDE.md could not be moved, so CLAUDE.md was left as it was');
+        return status();
+      }
     }
     writeAtomic(abs, dropBlock(cur));
     changed.push('CLAUDE.md');
     logChange(vault, 'Learned facts removed from CLAUDE.md', changed, dropped);
+    if (left.length) appendChangelog(vault, 'Lines left out of the learned facts', `Empty or saying nothing, so not moved from CLAUDE.md:\n\n${left.join('\n')}\n\n`);
     saveState(vault, st);
     onChange({ ...(lastRun ?? {}), changed: changed.length, reason: 'settings' });
     return status();
@@ -794,6 +852,7 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     if (typeof patch.meetingsIndex === 'boolean') next.meetingsIndex = patch.meetingsIndex;
     if (typeof patch.factsInClaude === 'boolean') next.factsInClaude = patch.factsInClaude;
     if (typeof patch.editVault === 'boolean') next.editVault = patch.editVault;
+    if (patch.editVault === true && !before.editVault) refile = true;
     // reset holds the keeper.json fields a pick settles. A cleared note path settles the default note, so the list moves
     // there
     const reset = {};
@@ -813,7 +872,7 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     const after = conf();
     // a running run saves its own copy of keeper.json, so the reset waits for it there; otherwise it is saved now
     let st = null;
-    if (b && Object.keys(reset).length) {
+    if (b && (Object.keys(reset).length || refile)) {
       Object.assign(resets, reset);
       if (!running) { st = loadState(b.vault); applyResets(st); saveState(b.vault, st); }
     }

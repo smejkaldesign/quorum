@@ -1004,7 +1004,7 @@ function KeeperCard({ brain }: { brain: Brain }) {
             {k.on && factsOn && k.learned && (
               <Row icon={<IconNotes width={18} height={18} />} title="Learned facts file"
                 desc={`${k.learned.target === 'note' ? `A note in your Agent OS. ${k.learned.linked ? 'index.md links to it' : k.learned.indexGenerated ? 'index.md is marked as generated, so Quorum adds no link to it' : 'index.md is kept by your Agent OS, so Quorum adds no link to it'}. ` : ''}Claude Code does not load this file on its own. Agents read it through the Quorum MCP server. The oldest lines move to the changelog past the budget`}>
-                <select className="set-select" aria-label="Learned facts file" value={k.learned.target} onChange={async (e) => setK(await window.quorum.keeperSet({ factsTarget: e.target.value as LearnedTarget }))}>
+                <select className="set-select" aria-label="Learned facts file" value={k.learned.pick} onChange={async (e) => setK(await window.quorum.keeperSet({ factsTarget: e.target.value as LearnedTarget }))}>
                   <option value="learned">.quorum/learned.md</option>
                   <option value="note">A vault note</option>
                 </select>

@@ -8,6 +8,7 @@ import net from 'node:net';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
+import { learnedFileIn, learnedLines } from './learned.mjs';
 
 // a development copy of the app keeps its data in Quorum Dev (app/edition.js); QUORUM_ENV=development reads that folder
 const HOME = path.join(homedir(), 'Library/Application Support', process.env.QUORUM_ENV === 'development' ? 'Quorum Dev' : 'Quorum');
@@ -179,21 +180,17 @@ function vaultNoteText(rel) {
   return readFileSync(abs, 'utf8');
 }
 
-// the learned facts the keeper keeps (app/keeper.js): .quorum/learned.md, or the vault note picked in Settings
+// the learned facts the keeper keeps (app/keeper.js), from the file it last wrote them to
 function learnedFacts() {
   const v = vault();
   if (!v) throw new Error('No Agent OS connected');
-  const k = settings().keeper ?? {};
-  const st = readJson(path.join(v, '.quorum', 'keeper.json'), {});
-  const rel = (k.factsTarget === 'note' && (k.factsNote ?? st.factsNoteAt ?? st.factsNoteDefault)) || '.quorum/learned.md';
+  const rel = learnedFileIn(readJson(path.join(v, '.quorum', 'keeper.json'), {}));
   const abs = path.resolve(v, rel);
-  if (!abs.startsWith(v + path.sep) || !existsSync(abs)) return { file: rel, facts: [] };
+  const file = rel.split(path.sep).join('/');
+  if (!abs.startsWith(v + path.sep) || !existsSync(abs)) return { file, facts: [] };
   const text = readFileSync(abs, 'utf8');
-  const a = text.indexOf('<!-- quorum:learned -->');
-  const b = text.indexOf('<!-- /quorum:learned -->');
-  const facts = a >= 0 && b > a ? text.slice(a, b).split('\n').map((l) => l.trim()).filter((l) => l.startsWith('- ')).map((l) => redact(l.slice(2))) : [];
   logView(abs, Buffer.byteLength(text));
-  return { file: rel, facts };
+  return { file, facts: learnedLines(text).map((l) => redact(l.slice(2))) };
 }
 
 // for a status line: bright blue while Quorum listens, dim while a call is stopped, nothing otherwise

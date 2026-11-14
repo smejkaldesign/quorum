@@ -30,4 +30,8 @@ if (missing.length) { console.error(`package check: ${missing.length} module(s) 
 const guard = path.resolve(appDir, 'Contents/Resources/app.asar.unpacked/guards/read-guard.py');
 if (!existsSync(guard)) { console.error(`package check: read guard is not unpacked at ${guard}`); process.exit(1); }
 execFileSync('python3', ['-c', `compile(open(${JSON.stringify(guard)}).read(), 'read-guard.py', 'exec')`]);
+// the CLI runs from Resources/cli outside the archive, so every file it imports has to sit next to it
+const cli = path.resolve(appDir, 'Contents/Resources/cli');
+const cliMissing = [...readFileSync(path.join(cli, 'quorum.mjs'), 'utf8').matchAll(/import\s[^'"]*?from\s*['"](\.{1,2}\/[^'"]+)['"]/g)].map((m) => m[1]).filter((rel) => !existsSync(path.join(cli, rel)));
+if (cliMissing.length) { console.error(`package check: the CLI imports files missing from Resources/cli: ${cliMissing.join(', ')}`); process.exit(1); }
 console.log(`package check: ${seen.size} modules resolve inside app.asar; read guard unpacked`);
