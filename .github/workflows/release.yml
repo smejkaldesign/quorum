@@ -13,6 +13,9 @@ name: Release
 #   APPLE_API_ISSUER                      electron-builder notarizes the app with them and notarize-dmg.sh notarizes the image.
 #   QUORUM_GOOGLE_CLIENT_ID,              Optional. The Google Calendar connector's Desktop OAuth client (docs/self-hosting.md).
 #   QUORUM_GOOGLE_CLIENT_SECRET           Written into the packaged package.json as quorumGoogle; without them the connector asks for a client.
+#   QUORUM_GOOGLE_PICKER_API_KEY          Optional. The Google Picker's browser API key (docs/oauth-apps.md, Google Picker), written
+#                                         into the packaged package.json as quorumOAuth.googlePicker. Without it Add from Google Drive
+#                                         says it is not available yet. It ships in the app, so restrict it in Google Cloud.
 # Repository variables (not secret; the anon key is the publishable one every installed Cloud app carries):
 #   QUORUM_SUPABASE_URL,                  The hosted Supabase project the Cloud edition signs in to. Without them the
 #   QUORUM_SUPABASE_ANON_KEY              Cloud job is skipped and the release carries the Local edition only.
@@ -20,6 +23,7 @@ name: Release
 #   QUORUM_SLACK_CLIENT_ID,               connectors (docs/oauth-apps.md) and the GitHub App's URL name, written
 #   QUORUM_GITHUB_APP_CLIENT_ID,          into the packaged package.json as quorumOAuth. A connector without its id
 #   QUORUM_GITHUB_APP_SLUG                shows Not available yet. The secrets live on the relay, never in the app.
+#   QUORUM_GOOGLE_PICKER_APP_ID           Optional. The Google Cloud project number; the default is the number in the Google client id.
 on:
   push:
     tags: ['v*']
@@ -51,6 +55,8 @@ jobs:
       SLACK_CLIENT_ID: ${{ vars.QUORUM_SLACK_CLIENT_ID }}
       GITHUB_APP_CLIENT_ID: ${{ vars.QUORUM_GITHUB_APP_CLIENT_ID }}
       GITHUB_APP_SLUG: ${{ vars.QUORUM_GITHUB_APP_SLUG }}
+      GOOGLE_PICKER_API_KEY: ${{ secrets.QUORUM_GOOGLE_PICKER_API_KEY }}
+      GOOGLE_PICKER_APP_ID: ${{ vars.QUORUM_GOOGLE_PICKER_APP_ID }}
     steps:
       - name: Cloud edition needs its Supabase project
         if: matrix.edition == 'cloud' && (env.QUORUM_SUPABASE_URL == '' || env.QUORUM_SUPABASE_ANON_KEY == '')
@@ -116,8 +122,8 @@ jobs:
         run: node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.quorumGoogle={clientId:process.env.GOOGLE_CLIENT_ID||undefined,clientSecret:process.env.GOOGLE_CLIENT_SECRET};fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');console.log('quorumGoogle set')"
         working-directory: app
       - name: Add the personal connector client ids
-        if: env.SKIP != '1' && (env.NOTION_CLIENT_ID != '' || env.SLACK_CLIENT_ID != '' || env.GITHUB_APP_CLIENT_ID != '')
-        run: node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));const id=(v)=>v?{clientId:v}:undefined;p.quorumOAuth={notion:id(process.env.NOTION_CLIENT_ID),slack:id(process.env.SLACK_CLIENT_ID),github:process.env.GITHUB_APP_CLIENT_ID?{clientId:process.env.GITHUB_APP_CLIENT_ID,slug:process.env.GITHUB_APP_SLUG||undefined}:undefined};fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');console.log('quorumOAuth set')"
+        if: env.SKIP != '1' && (env.NOTION_CLIENT_ID != '' || env.SLACK_CLIENT_ID != '' || env.GITHUB_APP_CLIENT_ID != '' || env.GOOGLE_PICKER_API_KEY != '')
+        run: node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));const id=(v)=>v?{clientId:v}:undefined;p.quorumOAuth={notion:id(process.env.NOTION_CLIENT_ID),slack:id(process.env.SLACK_CLIENT_ID),github:process.env.GITHUB_APP_CLIENT_ID?{clientId:process.env.GITHUB_APP_CLIENT_ID,slug:process.env.GITHUB_APP_SLUG||undefined}:undefined,googlePicker:process.env.GOOGLE_PICKER_API_KEY?{apiKey:process.env.GOOGLE_PICKER_API_KEY,appId:process.env.GOOGLE_PICKER_APP_ID||undefined}:undefined};fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');console.log('quorumOAuth set')"
         working-directory: app
       - name: Package the Local edition
         if: env.SKIP != '1' && matrix.edition == 'local'

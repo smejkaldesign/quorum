@@ -245,6 +245,13 @@ contextBridge.exposeInMainWorld('quorum', {
   kbImport: (req) => ipcRenderer.invoke('kb-import', req),
   kbImportPickZip: () => ipcRenderer.invoke('kb-import-pick-zip'),
   onKbImportProgress: on('kb-import-progress'),
+  // Google Drive files in a KB folder, picked with the Google Picker (hosted edition; handlers and API in ee/kbDrive.js)
+  kbDriveStatus: () => ipcRenderer.invoke('kb-drive-status'),
+  kbDriveFiles: (kbId) => ipcRenderer.invoke('kb-drive-files', kbId),
+  kbDriveAdd: (req) => ipcRenderer.invoke('kb-drive-add', req),
+  kbDriveCancel: () => ipcRenderer.invoke('kb-drive-cancel'),
+  kbDriveSync: (req) => ipcRenderer.invoke('kb-drive-sync', req),
+  kbDriveRemove: (req) => ipcRenderer.invoke('kb-drive-remove', req),
   billingStatus: () => ipcRenderer.invoke('billing-status'),
   billingCheckout: (seats) => ipcRenderer.invoke('billing-checkout', seats),
   billingPortal: () => ipcRenderer.invoke('billing-portal'),
