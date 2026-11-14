@@ -8,7 +8,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 const home = mkdtempSync(path.join(tmpdir(), 'quorum-mkb-home-'));
 process.env.HOME = home;
-const { EXCLUDED, SYNC_OFF, createMeetingsKb, isMeetingNote, meetingRoute, monthOf, originOf, startSince } = await import('../ee/meetingsKb.js');
+const { EXCLUDED, SYNC_OFF, createMeetingsKb, isMeetingNote, meetingRoute, meetingTeamOf, monthOf, originOf, startSince } = await import('../ee/meetingsKb.js');
 const { KEPT_KEYS, carryKeys, choiceOf, reconcile, withChoice } = await import('../shareChoice.js');
 const { createSync, parseFrontmatter } = await import('../ee/sync.js');
 
@@ -337,5 +337,64 @@ describe('the placed-once mark', () => {
     const row = upserts.filter((u) => u.table === 'notes').at(-1).rows[0];
     expect(row.kb_id).toBeUndefined();
     expect(row.folder_id).toBeUndefined();
+  });
+});
+
+describe('teams (migration 0035)', () => {
+  const ALPHA = { id: 'T-alpha', name: 'Alpha', meetings_default: false };
+  const BETA = { id: 'T-beta', name: 'Beta', meetings_default: false };
+  const alphaInfo = (teams = [ALPHA]) => ({ kb_id: 'KB-alpha', name: 'Alpha meetings', team_id: 'T-alpha', teams });
+
+  it('names the meeting team the way the server routes: the chosen one, else the first joined, else none', () => {
+    expect(meetingTeamOf([])).toBeNull();
+    expect(meetingTeamOf(undefined)).toBeNull();
+    expect(meetingTeamOf([ALPHA])).toBe('T-alpha');
+    expect(meetingTeamOf([ALPHA, BETA])).toBe('T-alpha');
+    expect(meetingTeamOf([ALPHA, { ...BETA, meetings_default: true }])).toBe('T-beta');
+  });
+
+  it('places a team member\'s shared note in the team meetings KB the server answers with', async () => {
+    const h = harness({ info: alphaInfo(), folder: { kb_id: 'KB-alpha', folder_id: 'FA11', month: '2026-11', team_id: 'T-alpha' } });
+    h.since(SINCE);
+    const abs = h.put('meetings/quorum/design.md', note({ source: 'quorum', date: DATE }));
+    expect(await h.sync.pushMeetingNote(abs)).toBe(true);
+    expect(h.pushedNote()).toMatchObject({ kb_id: 'KB-alpha', folder_id: 'FA11' });
+    expect((await h.mkb.stateOf(abs)).kbName).toBe('Alpha meetings');
+  });
+
+  it('routes before the team meetings KB exists, since the folder call makes it', async () => {
+    const h = harness({ info: { ...alphaInfo(), kb_id: null }, folder: { kb_id: 'KB-new', folder_id: 'FN11', month: '2026-11', team_id: 'T-alpha' } });
+    h.since(SINCE);
+    const abs = h.put('meetings/quorum/kickoff.md', note({ source: 'quorum', date: DATE }));
+    await h.sync.pushMeetingNote(abs);
+    expect(h.pushedNote()).toMatchObject({ kb_id: 'KB-new', folder_id: 'FN11' });
+  });
+
+  it('keeps the per-source share choice in force for team members', async () => {
+    const h = harness({ info: alphaInfo(), folder: { kb_id: 'KB-alpha', folder_id: 'FA11', month: '2026-11' } });
+    const abs = h.put('meetings/granola/call.md', note({ source: 'granola', source_account: 'alex@example.com', date: DATE, visibility: 'private' }));
+    await h.sync.pushMeetingNote(abs);
+    expect(h.pushedNote()?.kb_id).toBeUndefined();
+    expect(h.rpcs.some((r) => r.name === 'kb_meetings_folder')).toBe(false);
+    expect((await h.mkb.sources()).sources[0]).toMatchObject({ key: 'granola:alex@example.com', choice: null });
+  });
+
+  it('offers the meeting team choice only to a person in several teams', async () => {
+    expect(await harness({ info: alphaInfo() }).mkb.sources()).toMatchObject({ available: true, teams: [], teamId: 'T-alpha' });
+    expect(await harness({ info: alphaInfo([ALPHA, BETA]) }).mkb.sources()).toMatchObject({ teams: [{ id: 'T-alpha', name: 'Alpha' }, { id: 'T-beta', name: 'Beta' }], teamId: 'T-alpha' });
+    // a server before 0035 sends no team: nothing to choose, and the workspace KB is used as before
+    expect(await harness().mkb.sources()).toMatchObject({ available: true, kbName: 'Meetings', teams: [], teamId: null });
+  });
+
+  it('saves the choice on the server and asks again where notes go', async () => {
+    const h = harness({ info: alphaInfo([ALPHA, BETA]) });
+    await h.mkb.sources();
+    expect(await h.mkb.setTeam('T-beta')).toEqual({ ok: true, teamId: 'T-beta' });
+    expect(h.rpcs.find((r) => r.name === 'team_meetings_default_set').args).toEqual({ workspace_id: h.state.workspace.id, team_id: 'T-beta' });
+    await h.mkb.sources();
+    expect(h.rpcs.filter((r) => r.name === 'kb_meetings_info')).toHaveLength(2);
+    expect(await h.mkb.setTeam(null)).toEqual({ ok: true, teamId: null });
+    h.state.workspace.teamEnabled = false;
+    expect((await h.mkb.setTeam('T-beta')).error).toMatch(/workspace with a team/);
   });
 });

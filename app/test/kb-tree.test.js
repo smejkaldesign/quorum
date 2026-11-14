@@ -140,8 +140,9 @@ describe('readers', () => {
   });
 
   it('reads the current choice back from the access list', () => {
-    expect(readersOf([ws, ann])).toMatchObject({ mode: 'workspace', people: [] });
-    expect(readersOf([ann, bo])).toMatchObject({ mode: 'people', people: ['bo'] });
+    expect(readersOf([ws, ann])).toMatchObject({ mode: 'workspace', people: [], teams: [] });
+    expect(readersOf([ann, bo])).toMatchObject({ mode: 'people', people: ['bo'], teams: [] });
+    expect(readersOf([ann, { principal: 'team', userId: null, teamId: 'design', role: 'reader', email: null, name: null }])).toMatchObject({ mode: 'people', people: [], teams: ['design'] });
   });
 
   it('keeps KB admins and drops person readers when the whole workspace reads', () => {
@@ -151,12 +152,78 @@ describe('readers', () => {
     ]);
   });
 
-  it('lists chosen people once, never demoting an admin and never sending teams', () => {
+  it('lists chosen people once, never demoting an admin, and drops team readers left unchosen', () => {
     const team = { principal: 'team', userId: null, teamId: 't', role: 'reader', email: null, name: null };
     expect(accessDraft([ws, ann, team], 'people', ['bo', 'bo', 'ann'])).toEqual([
       { principal: 'user', userId: 'ann', role: 'admin' },
       { principal: 'user', userId: 'bo', role: 'reader' },
     ]);
+  });
+
+  describe('teams in the readers picker', () => {
+    const design = { principal: 'team', userId: null, teamId: 'design', role: 'reader', email: null, name: null };
+    const ops = { principal: 'team', userId: null, teamId: 'ops', role: 'admin', email: null, name: null };
+
+    it('counts teams in the summary', () => {
+      expect(readersSummary([design])).toBe('1 team');
+      expect(readersSummary([design, { ...design, teamId: 'eng' }, bo, ann])).toBe('2 teams · 1 person · 1 KB admin');
+      expect(readersSummary([ws, design])).toBe('Whole workspace');
+    });
+
+    it('sends chosen teams once as readers, alongside chosen people', () => {
+      expect(accessDraft([ann], 'people', ['bo'], null, ['design', 'design', 'eng'])).toEqual([
+        { principal: 'user', userId: 'ann', role: 'admin' },
+        { principal: 'team', teamId: 'design', role: 'reader' },
+        { principal: 'team', teamId: 'eng', role: 'reader' },
+        { principal: 'user', userId: 'bo', role: 'reader' },
+      ]);
+    });
+
+    it('keeps a team that is a KB admin as admin, chosen or not', () => {
+      expect(accessDraft([ops], 'people', [], null, ['ops'])).toEqual([{ principal: 'team', teamId: 'ops', role: 'admin' }]);
+      expect(accessDraft([ops, design], 'workspace', [], null, ['design'])).toEqual([{ principal: 'workspace', role: 'reader' }, { principal: 'team', teamId: 'ops', role: 'admin' }]);
+    });
+
+    it('a team-owned KB always keeps its own team, even unchecked or with the whole workspace reading', () => {
+      expect(accessDraft([design], 'people', [], null, [], 'design')).toEqual([{ principal: 'team', teamId: 'design', role: 'reader' }]);
+      expect(accessDraft([design], 'workspace', [], null, [], 'design')).toEqual([{ principal: 'workspace', role: 'reader' }, { principal: 'team', teamId: 'design', role: 'reader' }]);
+      expect(accessDraft([design], 'people', [], null, ['eng'], 'design')).toEqual([{ principal: 'team', teamId: 'eng', role: 'reader' }, { principal: 'team', teamId: 'design', role: 'reader' }]);
+    });
+  });
+
+  describe('every role the server returns', () => {
+    const cy = { principal: 'user', userId: 'cy', teamId: null, role: 'editor', email: null, name: 'Cy' };
+    const eng = { principal: 'team', userId: null, teamId: 'eng', role: 'editor', email: null, name: null };
+    const odd = { principal: 'user', userId: 'di', teamId: null, role: 'owner', email: null, name: 'Di' };
+    const hosted = { editors: ['cy'], workspaceEdits: false };
+
+    it('keeps team editor and admin rows, and a person or team role it does not know, in either mode', () => {
+      expect(accessDraft([ws, ann, cy, eng, odd], 'workspace', [], hosted)).toEqual([
+        { principal: 'workspace', role: 'reader' },
+        { principal: 'user', userId: 'ann', role: 'admin' },
+        { principal: 'user', userId: 'di', role: 'owner' },
+        { principal: 'team', teamId: 'eng', role: 'editor' },
+        { principal: 'user', userId: 'cy', role: 'editor' },
+      ]);
+      expect(accessDraft([cy, eng, odd], 'people', ['cy', 'bo', 'di'], hosted, ['eng'])).toEqual([
+        { principal: 'user', userId: 'di', role: 'owner' },
+        { principal: 'team', teamId: 'eng', role: 'editor' },
+        { principal: 'user', userId: 'cy', role: 'editor' },
+        { principal: 'user', userId: 'bo', role: 'reader' },
+      ]);
+    });
+
+    it('a person stops editing when unchosen as an editor, and editors read on a KB without hosted storage', () => {
+      expect(accessDraft([cy], 'people', ['cy'], { editors: [], workspaceEdits: false })).toEqual([{ principal: 'user', userId: 'cy', role: 'reader' }]);
+      expect(accessDraft([cy], 'people', ['cy'])).toEqual([{ principal: 'user', userId: 'cy', role: 'reader' }]);
+    });
+
+    it('reads editors back and counts them apart from admins', () => {
+      expect(readersOf([cy, eng, bo])).toMatchObject({ mode: 'people', people: ['cy', 'bo'], editors: ['cy'], teams: [] });
+      expect(readersSummary([cy, bo])).toBe('2 people · 1 editor');
+      expect(readersSummary([ws, cy, { ...cy, userId: 'dd' }])).toBe('Whole workspace · 2 editors');
+      expect(readersSummary([eng])).toBe('1 team');
+    });
   });
 });
 

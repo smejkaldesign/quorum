@@ -104,6 +104,13 @@ export function createSync({ account, store, brain = () => null, log = () => {},
     if (!s.sync || !s.signedIn || !s.workspace || !client) return null;
     return { remote: createRemote({ client, workspaceId: s.workspace.id, userId: s.userId }), ws: s.workspace.id, me: s.userId ?? null, vault: brain()?.vault ?? null, team: teamRoot(s.workspace) };
   };
+  // the person's waiting resync request in the workspace (its time), or null; a server before 0035 has none
+  const resyncPending = async (ws) => {
+    try { const { data, error } = await account.client().rpc('kb_resync_pending', { workspace_id: ws }); return error ? null : data ?? null; } catch { return null; }
+  };
+  const resyncDone = async (ws, at) => {
+    try { const { error } = await account.client().rpc('kb_resync_done', { workspace_id: ws, requested_at: at }); if (error) log('sync', 'resync', error.message); } catch (err) { log('sync', 'resync', err?.message ?? err); }
+  };
   const relOf = (vault, abs) => { const r = path.relative(vault, abs); return r && !r.startsWith('..') && !path.isAbsolute(r) ? r.split(path.sep).join('/') : null; };
   const fail = (what, err, verb = 'push') => { log('sync', what, err?.message ?? err); account.markSync({ syncError: `Sync could not ${verb} ${what}.` }); };
 
@@ -379,7 +386,10 @@ export function createSync({ account, store, brain = () => null, log = () => {},
       const counts = { written: 0, conflicts: 0, removed: 0, skipped: 0 };
       try {
         const since = pulls[t.ws]?.lastPullAt ?? null;
-        const [notes, meetings] = await Promise.all([changed(t.remote.notes.changedSince, since), changed(t.remote.meetings.changedSince, since)]);
+        // a resync request (migration 0035: this person joined a team) asks for every note once, since the notes they
+        // may now read did not change; it is cleared only after the pull went through
+        const resync = await resyncPending(t.ws);
+        const [notes, meetings] = await Promise.all([changed(t.remote.notes.changedSince, resync ? null : since), changed(t.remote.meetings.changedSince, since)]);
         const shared = { written: 0, behind: 0, removed: 0, skipped: 0 };
         for (const row of notes) (hostedRow(row) || (row.user_id && t.me && row.user_id !== t.me) ? applyShared(t, row, shared) : applyNote(t, row, counts));
         await reconcileShared(t, shared);
@@ -393,6 +403,7 @@ export function createSync({ account, store, brain = () => null, log = () => {},
         const newest = [...notes, ...meetings].map((r) => r.updated_at).filter(Boolean).sort().at(-1);
         if (newest) { (pulls[t.ws] ??= {}).lastPullAt = newest; savePulls(); }
         saveIds();
+        if (resync) await resyncDone(t.ws, resync);
         lastPull = counts;
         if (notes.length || meetings.length) log('sync', `pulled ${notes.length} notes, ${meetings.length} meetings: ${counts.written} written, ${counts.conflicts} conflicts, ${counts.removed} removed, ${counts.skipped} withheld`);
         account.markSync({ lastPullAt: new Date().toISOString(), syncError: null });

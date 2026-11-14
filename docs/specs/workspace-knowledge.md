@@ -57,7 +57,7 @@ Removed: Zoom, Google Meet and Teams as local entries (they only existed for cal
 
 **Links between KBs.** Notes can link across KBs with ordinary wiki links. A KB's readers can follow a link only into KBs they can read; otherwise the link shows as restricted.
 
-**Access.** Readers per KB: the whole workspace, chosen teams, or chosen people. A team's meetings KB defaults to that team only; its admin can grant read access to other teams so they can look up decisions.
+**Access.** Readers per KB: the whole workspace, chosen teams, or chosen people. A team's meetings KB defaults to that team only; its admin can grant read access to other teams so they can look up decisions. Built in migration 0035 (`app/ee/teams.js`, Settings > Admin > Teams): `teams` and `team_members` (lead or member; a person can be in many teams, and leaving the workspace removes their memberships). A KB with a `team_id` is team-owned: its team always reads it and its leads are its admins, with the workspace owners and admins. A team grant in `kb_access` carries any role (admin, editor, reader). Each team gets a meetings KB readable by that team; a member's meeting notes go to the meetings KB of their meeting team (their only team, the one they pick in Settings > Meetings when they are in several, else the one they joined first), and a member in no team uses the workspace's. Deleting a team turns its KBs into workspace KBs (its meetings KB becomes general) and removes it from every access list. A workspace without teams works as before.
 
 **Use.** Quorum chat answers from every KB the asker can read, with sources cited (the Glean-style experience). The Quorum MCP server and CLI expose the same search and read tools to Claude Code and Codex, under the same permissions.
 

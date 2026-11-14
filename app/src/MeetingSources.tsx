@@ -53,7 +53,7 @@ export function MeetingSourcesRows() {
   const [data, load] = useMeetingSources();
   const [confirming, setConfirming] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  if (!data?.available || !data.sources.length) return null;
+  if (!data?.available || (!data.sources.length && !(data.teams?.length ?? 0))) return null;
   const set = async (key: string, choice: 'share' | 'private') => { const r = await window.quorum.meetingsSourceSet(key, choice); setNote('error' in r ? r.error : null); load(); };
   const sharePast = async (key: string) => {
     setConfirming(null);
@@ -63,6 +63,7 @@ export function MeetingSourcesRows() {
   };
   return (
     <>
+      <MeetingTeamRow data={data} onDone={load} />
       {data.sources.map((s) => (
         <div key={s.key}>
           <Row icon={<IconNotes width={18} height={18} />} title={`Meetings from ${s.label}`}
@@ -88,6 +89,33 @@ export function MeetingSourcesRows() {
         </div>
       ))}
       {note && <p className="set-hint" role="status">{note}</p>}
+    </>
+  );
+}
+
+// Settings > Meetings for a person in several teams: which team's meetings knowledge base receives their meeting notes.
+// Until they choose, the team they joined first does
+export function MeetingTeamRow({ data, onDone }: { data: MeetingSources; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const teams = data.teams ?? [];
+  if (teams.length < 2) return null;
+  const pick = async (teamId: string) => {
+    setBusy(true);
+    setError(null);
+    const r = await window.quorum.meetingsTeamSet(teamId).catch((err) => ({ error: String(err) }));
+    setBusy(false);
+    if ('error' in r) setError(r.error); else onDone();
+  };
+  return (
+    <>
+      <Row icon={<IconNotes width={18} height={18} />} title="Meeting team"
+        desc={`You are in ${teams.length} teams. Shared meeting notes go to the meetings knowledge base of the team you pick${data.kbName ? `, now ${data.kbName}` : ''}.`}>
+        <select className="set-select" value={data.teamId ?? teams[0].id} disabled={busy} aria-label="Meeting team" onChange={(e) => pick(e.target.value)}>
+          {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+      </Row>
+      {error && <p className="set-error" role="alert">{error}</p>}
     </>
   );
 }

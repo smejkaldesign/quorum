@@ -172,38 +172,54 @@ export function readersSummary(access: KbAccess[] | null): string {
   if (!access) return 'Readers are visible to its admins';
   const people = access.filter((a) => a.principal === 'user');
   const admins = people.filter((a) => a.role === 'admin').length;
-  const editors = people.filter((a) => a.role === 'editor').length;
+  // 0034's editor, and any other role above reader the server grants, counts as an editor
+  const editors = people.filter((a) => a.role !== 'admin' && a.role !== 'reader').length;
   const readers = people.length - admins;
+  const teams = access.filter((a) => a.principal === 'team').length;
   const parts: string[] = [];
   const ws = access.find((a) => a.principal === 'workspace');
   if (ws) parts.push(ws.role === 'admin' ? 'Whole workspace (all can manage)' : ws.role === 'editor' ? 'Whole workspace (all can edit)' : 'Whole workspace');
-  else if (readers) parts.push(`${readers} ${readers === 1 ? 'person' : 'people'}`);
-  else parts.push('Owners and admins only');
+  else {
+    if (teams) parts.push(`${teams} ${teams === 1 ? 'team' : 'teams'}`);
+    if (readers) parts.push(`${readers} ${readers === 1 ? 'person' : 'people'}`);
+    if (!teams && !readers) parts.push('Owners and admins only');
+  }
   if (editors) parts.push(`${editors} ${editors === 1 ? 'editor' : 'editors'}`);
   if (admins) parts.push(`${admins} KB ${admins === 1 ? 'admin' : 'admins'}`);
   return parts.join(' · ');
 }
 
+// a person or team row whose role is above reader (admin, 0034's editor, or any role the server adds)
+export const isGrant = (a: Pick<KbAccess, 'role'>): boolean => a.role !== 'reader';
+
 export type ReadersMode = 'workspace' | 'people';
-// which way an access list reads, the people it names as readers or editors, which of them edit (hosted KBs), and
-// whether the whole workspace edits
-export function readersOf(access: KbAccess[] | null): { mode: ReadersMode; people: string[]; editors: string[]; workspaceEdits: boolean } {
+// which way an access list reads, the people it names as readers or editors, which of them edit (hosted KBs), whether
+// the whole workspace edits, and the teams it names as readers
+export function readersOf(access: KbAccess[] | null): { mode: ReadersMode; people: string[]; editors: string[]; workspaceEdits: boolean; teams: string[] } {
   const list = access ?? [];
   return {
     mode: list.some((a) => a.principal === 'workspace') ? 'workspace' : 'people',
     people: list.filter((a) => a.principal === 'user' && (a.role === 'reader' || a.role === 'editor') && a.userId).map((a) => a.userId!),
     editors: list.filter((a) => a.principal === 'user' && a.role === 'editor' && a.userId).map((a) => a.userId!),
     workspaceEdits: list.some((a) => a.principal === 'workspace' && a.role === 'editor'),
+    teams: list.filter((a) => a.principal === 'team' && a.role === 'reader' && a.teamId).map((a) => a.teamId!),
   };
 }
 
-// the whole list kb-access-set takes for a readers choice. The KB admins already on the list stay admins; teams are
-// not offered yet, so team rows are left out; a person chosen who is also an admin stays an admin. On a KB hosted by
-// Quorum, editors (people chosen to edit) and workspaceEdits (the whole workspace edits) give the editor role; a person
-// named as an editor keeps that role with the whole workspace reading too
-export function accessDraft(current: KbAccess[] | null, mode: ReadersMode, people: string[], hosted: { editors: string[]; workspaceEdits: boolean } | null = null): KbAccessDraft[] {
+// the whole list kb-access-set takes for a readers choice.
+// - People: KB admins stay admins. On a KB hosted by Quorum, editors (people chosen to edit) and workspaceEdits (the
+//   whole workspace edits) give the editor role; a person named as an editor keeps that role with the whole workspace
+//   reading too. A person row with a role this app does not know stays as it is.
+// - Teams: a team row above reader (admin, editor, or a role this app does not know) stays with its role; chosen teams
+//   read; a team-owned KB (ownerTeam) always keeps its own team as a reader, which the server adds back too.
+export function accessDraft(current: KbAccess[] | null, mode: ReadersMode, people: string[], hosted: { editors: string[]; workspaceEdits: boolean } | null = null, teams: string[] = [], ownerTeam: string | null = null): KbAccessDraft[] {
   const list = current ?? [];
+  const known = ['admin', 'editor', 'reader'];
   const admins = list.filter((a) => a.principal === 'user' && a.role === 'admin' && a.userId).map((a) => a.userId!);
+  const otherPeople = list.filter((a) => a.principal === 'user' && a.userId && !known.includes(a.role));
+  const kept = new Set([...admins, ...otherPeople.map((a) => a.userId!)]);
+  const teamGrants = list.filter((a) => a.principal === 'team' && a.teamId && isGrant(a));
+  const grantedTeams = new Set(teamGrants.map((a) => a.teamId!));
   const editors = new Set(hosted?.editors ?? []);
   const out: KbAccessDraft[] = [];
   if (mode === 'workspace') {
@@ -211,8 +227,13 @@ export function accessDraft(current: KbAccess[] | null, mode: ReadersMode, peopl
     out.push({ principal: 'workspace', role: was === 'admin' ? 'admin' : hosted ? (hosted.workspaceEdits ? 'editor' : 'reader') : was === 'editor' ? 'reader' : was });
   }
   for (const id of admins) out.push({ principal: 'user', userId: id, role: 'admin' });
-  if (mode === 'people') for (const id of [...new Set(people)]) if (!admins.includes(id)) out.push({ principal: 'user', userId: id, role: hosted && editors.has(id) ? 'editor' : 'reader' });
-  if (mode === 'workspace' && hosted) for (const id of editors) if (!admins.includes(id)) out.push({ principal: 'user', userId: id, role: 'editor' });
+  for (const a of otherPeople) out.push({ principal: 'user', userId: a.userId!, role: a.role });
+  for (const a of teamGrants) out.push({ principal: 'team', teamId: a.teamId!, role: a.role });
+  const readerTeams = new Set(mode === 'people' ? teams : []);
+  if (ownerTeam) readerTeams.add(ownerTeam);
+  for (const id of readerTeams) if (!grantedTeams.has(id)) out.push({ principal: 'team', teamId: id, role: 'reader' });
+  if (mode === 'people') for (const id of [...new Set(people)]) if (!kept.has(id)) out.push({ principal: 'user', userId: id, role: hosted && editors.has(id) ? 'editor' : 'reader' });
+  if (mode === 'workspace' && hosted) for (const id of editors) if (!kept.has(id)) out.push({ principal: 'user', userId: id, role: 'editor' });
   return out;
 }
 
