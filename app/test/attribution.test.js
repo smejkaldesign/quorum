@@ -1,6 +1,6 @@
 // Record with Screen on: who said each paragraph, from timed turns and the call app's timed speaker reads
 import { describe, expect, it } from 'vitest';
-import { speakerLabels, timedTurn } from '../src/attribution.ts';
+import { labelFor, othersIn, speakerLabels, timedTurn } from '../src/attribution.ts';
 
 const turn = (id, channel, startMs, endMs, extra = {}) => ({ id, channel, startMs, endMs, ...extra });
 
@@ -47,5 +47,12 @@ describe('speaker labels', () => {
 
   it('places a final turn on the wall clock from its length and arrival', () => {
     expect(timedTurn({ id: 7, channel: 'them', start: 10, end: 12.5 }, 100000)).toEqual({ id: 7, channel: 'them', startMs: 97500, endMs: 100000, cluster: null, speaker: null });
+  });
+  it('labels one incoming turn from the reads in its own window only', () => {
+    const reads = [{ at: 1000, names: ['Ada', 'Grace'], active: ['Ada'] }, { at: 50000, names: ['Ada', 'Grace'], active: ['Grace'] }];
+    const prior = [turn(1, 'them', 0, 1500, { cluster: 'a' })];
+    expect(labelFor(turn(2, 'them', 49000, 50500), prior, reads, othersIn(reads), { slack: 500 })).toBe('Grace');
+    expect(labelFor(turn(3, 'them', 20000, 21000, { cluster: 'b' }), prior, [], new Set())).toBe('Speaker 2');
+    expect(labelFor(turn(4, 'them', 20000, 21000, { cluster: 'a' }), prior, [], new Set())).toBe('Speaker 1');
   });
 });

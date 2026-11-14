@@ -176,9 +176,14 @@ export function App() {
   // New note: the note view on a fresh Untitled note (file null) or an existing one, optionally recording from the start.
   // Opened from the header's Record, the Home card, the tray, and a `quorum:new-note` window event ({ file? } detail)
   // fresh: a note this view created; file follows its first save so a remount reopens it; leave closes the view for a call
-  const [note, setNote] = useState<{ file: string | null; fresh: boolean; record: RecordChoice | null; n: number; leave: number } | null>(null);
+  // next: a note asked for while another is open; the open one closes the way Back does (save, stop its recording), then it opens
+  type NoteOpen = { file: string | null; fresh: boolean; record: RecordChoice | null; n: number; leave: number; next?: { file: string | null; record: RecordChoice | null } | null };
+  const [note, setNote] = useState<NoteOpen | null>(null);
   // never over a live call or its review: the call UI stays in view
-  const openNoteView = (file: string | null = null, record: RecordChoice | null = null) => { if (phaseRef.current === 'idle') setNote({ file, fresh: !file, record, n: Date.now(), leave: 0 }); };
+  const openNoteView = (file: string | null = null, record: RecordChoice | null = null) => {
+    if (phaseRef.current !== 'idle') return;
+    setNote((n) => (n ? (n.leave ? n : { ...n, leave: Date.now(), next: { file, record } }) : { file, fresh: !file, record, n: Date.now(), leave: 0 }));
+  };
   useEffect(() => {
     const onEvent = (e: Event) => { const f = (e as CustomEvent<{ file?: string } | undefined>).detail?.file; openNoteView(typeof f === 'string' ? f : null); };
     window.addEventListener('quorum:new-note', onEvent);
@@ -345,7 +350,9 @@ export function App() {
       window.quorum.onSummary(setSoFar),
       window.quorum.onState((s) => {
         // a call session taking over while a note is open: the note view saves and gives way to the call UI
-        if (s.phase !== 'idle' && !('intoNote' in s && s.intoNote)) setNote((n) => (n && !n.leave ? { ...n, leave: Date.now() } : n));
+        if (s.phase !== 'idle' && !('intoNote' in s && s.intoNote)) setNote((n) => (n && !n.leave ? { ...n, leave: Date.now(), next: null } : n));
+        // a recording into a note belongs to the note view: Home's chat, live lines and your notes are left alone
+        if ('intoNote' in s && s.intoNote) return;
         if (s.phase === 'starting') { setPhase('starting'); setStartingChat(s.chatName ?? null); addLog(s.chatName ? `posting Quorum's notice in the ${s.chatName}…` : 'starting…'); return; }
         if (s.phase === 'idle') { setPhase('idle'); return; }
         if (s.phase === 'summarizing') { setPhase('review'); setSummarizing(true); setNotes(null); setNotesDraft(null); setMeta(s.meta ?? null); return; }
@@ -486,7 +493,7 @@ export function App() {
   }
 
   if (note) {
-    const close = () => setNote(null);
+    const close = () => setNote((n) => (n?.next ? { file: n.next.file, fresh: !n.next.file, record: n.next.record, n: Date.now(), leave: 0 } : null));
     return <div className="panel"><LazyView name="your note" onClose={close}><NoteView key={note.n} file={note.file} fresh={note.fresh} record={note.record} canRecord={nt.manualListen} screenOffered={screenOffered} leave={note.leave}
       onSaved={(file) => setNote((n) => (n ? { ...n, file, record: null } : n))} onClose={close} /></LazyView></div>;
   }

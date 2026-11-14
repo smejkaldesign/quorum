@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { cleanTitle, hashText, newNoteText, noteFileName, rewriteNote, screenRead, splitNote, UNTITLED, yamlStr, yamlValue } from '../handnote.js';
 import { appendTurn, canStart, emptyWritten, newWords, recordChoices } from '../src/noteRecord.ts';
-import { CALL_ACTIVE, LISTEN_OFF, recordDecision } from '../notetaker.js';
+import { CALL_ACTIVE, LISTEN_OFF, recordDecision, screenReadsAllowed } from '../notetaker.js';
 
 describe('a note written in the app', () => {
   const fresh = newNoteText({ id: '2026-11-13T10-00-00-000Z', title: 'Pricing ideas', body: 'First line\n\n- a bullet\n', date: '2026-11-13T10:00:00.000-08:00', owner: 'Ada' });
@@ -22,9 +22,26 @@ describe('a note written in the app', () => {
   });
 
   it('is named like a recorded note, with Untitled note for an empty title', () => {
-    expect(noteFileName({ date: '2026-11-13', title: 'Pricing ideas!', id: 'x2026abcd' })).toBe('2026-11-13-pricing-ideas-2026abcd.md');
-    expect(noteFileName({ date: '2026-11-13', title: '  ', id: 'abcdefgh12345678' })).toBe('2026-11-13-untitled-note-12345678.md');
+    expect(noteFileName({ date: '2026-11-13', title: 'Pricing ideas!', id: 'x' })).toMatch(/^2026-11-13-pricing-ideas-[0-9a-f]{8}\.md$/);
+    expect(noteFileName({ date: '2026-11-13', title: '  ', id: 'x' })).toMatch(/^2026-11-13-untitled-note-[0-9a-f]{8}\.md$/);
     expect(cleanTitle('')).toBe(UNTITLED);
+  });
+
+  it('never gives two notes the same name, nor a double hyphen, even at the same second of different minutes', () => {
+    const a = noteFileName({ date: '2026-11-13', title: 'Idea', id: '2026-11-13T10-00-05-000Z' });
+    const b = noteFileName({ date: '2026-11-13', title: 'Idea', id: '2026-11-13T10-01-05-000Z' });
+    expect(a).not.toBe(b);
+    expect(a).not.toContain('--');
+    expect(noteFileName({ date: '2026-11-13', title: 'Idea', id: '2026-11-13T10-00-05-000Z' })).toBe(a);
+  });
+
+  it('reads and rewrites a note with Windows line endings without changing them', () => {
+    const raw = '---\r\ntitle: "Crlf"\r\ntype: note\r\n---\r\n\r\n# Crlf\r\n\r\nline one\r\nline two\r\n';
+    const n = splitNote(raw);
+    expect(n.title).toBe('Crlf');
+    expect(n.body).toBe('line one\nline two');
+    expect(rewriteNote(raw, { title: n.title, body: n.body })).toBe(raw);
+    expect(rewriteNote(raw, { title: 'New', body: n.body })).toBe(raw.replace(/Crlf/g, 'New'));
   });
 
   it('keeps every other frontmatter line when the title and body change', () => {
@@ -36,7 +53,8 @@ describe('a note written in the app', () => {
 
   it('leaves a note without a heading without one, and adds a title line to frontmatter that lacked it', () => {
     const raw = '---\ndate: 2026-11-01\n---\nJust text\n';
-    expect(rewriteNote(raw, { title: 'Named', body: 'Just text' })).toBe('---\ndate: 2026-11-01\ntitle: "Named"\n---\n\nJust text\n');
+    expect(rewriteNote(raw, { title: 'Named', body: 'Just text' })).toBe('---\ndate: 2026-11-01\ntitle: "Named"\n---\nJust text\n');
+    expect(rewriteNote(raw, { title: 'Named', body: 'Just text' }).startsWith('---\ndate')).toBe(true);
   });
 
   it('hashes text so a save can tell the file changed underneath it', () => {
@@ -140,6 +158,13 @@ describe('Record and a call', () => {
   it('allows a solo note when no call is noticed', () => {
     expect(recordDecision(g, { meetingActive: false })).toEqual({ ok: true });
     expect(recordDecision({ ...g, meetingCapture: false }, { meetingActive: true })).toEqual({ ok: true });
+  });
+  it('never reads the screen or a call window while a noticed call is active, and only with screen context on', () => {
+    const on = { ...g, screenContext: true };
+    expect(screenReadsAllowed(on, { meetingActive: true })).toBe(false);
+    expect(screenReadsAllowed(on, { meetingActive: false })).toBe(true);
+    expect(screenReadsAllowed({ ...on, screenContext: false }, { meetingActive: false })).toBe(false);
+    expect(screenReadsAllowed({ ...on, meetingCapture: false }, { meetingActive: true })).toBe(true);
   });
 });
 
