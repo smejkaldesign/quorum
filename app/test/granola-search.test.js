@@ -187,6 +187,13 @@ describe('granola_search over MCP', () => {
     expect(a.get(3).result.isError).toBe(true);
     expect(text(a, 3)).toMatch(/^Granola is not connected in Quorum/);
   });
+  it('fits what Claude Code and Codex read: instructions and descriptions under 2048 characters, the core in the first 512', async () => {
+    const a = await session(closed, [{ id: 1, method: 'initialize', params: {} }, { id: 2, method: 'tools/list' }]);
+    const { instructions } = a.get(1).result;
+    expect(instructions.length).toBeLessThan(2048);
+    for (const w of ['past meetings', 'search_meetings', 'get_meeting', 'granola_search']) expect(instructions.slice(0, 512)).toContain(w);
+    for (const t of a.get(2).result.tools) expect(t.description.length).toBeLessThan(2048);
+  });
   it('says the app has to be open when Quorum is closed', async () => {
     const a = await session(closed, [{ id: 1, method: 'tools/call', params: { name: 'granola_search', arguments: { query: 'x' } } }]);
     expect(a.get(1).result).toEqual({ isError: true, content: [{ type: 'text', text: 'granola_search runs through the Quorum app, which holds the Granola sign-in, and Quorum is not open. Open Quorum and try again, or search with your own Granola MCP.' }] });

@@ -142,7 +142,8 @@ export async function sync({ mcp, existing, since = '2015-01-01', write, progres
     const page = parseMeetingList(r.text);
     listed.push(...page.meetings);
     totalCount ??= page.totalCount;
-    cursor = page.hasMore ? page.cursor : null;
+    // Granola pages on while next_cursor is present; a cursor handed back twice ends the listing
+    cursor = page.cursor && page.cursor !== args.cursor ? page.cursor : null;
     progress({ phase: 'list', message: totalCount ? `Found ${listed.length} of ${totalCount} meetings` : `Found ${listed.length} meetings`, done: listed.length, total: totalCount });
   } while (cursor);
   // a page boundary can repeat a meeting; one entry per id
