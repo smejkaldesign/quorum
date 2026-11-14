@@ -7,7 +7,10 @@ import { LEARNED_CLOSE, LEARNED_OPEN, folders } from '../keeper.js';
 import { detect, resolvePlugins, scanContext } from '../plugins.js';
 
 const put = (dir, rel, text) => { mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); writeFileSync(path.join(dir, rel), text); };
-const temp = (name) => mkdtempSync(path.join(tmpdir(), `${name}-`));
+// every test folder sits under one base, and the walk up from a vault stops there, so a CLAUDE.md that happens to
+// sit in a parent of the system temp folder is never counted
+const base = mkdtempSync(path.join(tmpdir(), 'ctx-base-'));
+const temp = (name) => mkdtempSync(path.join(base, `${name}-`));
 const lines = (n, f = (i) => `- [Entry ${i}](entry-${i}.md) one line`) => Array.from({ length: n }, (_, i) => f(i + 1)).join('\n') + '\n';
 
 // a vault and a fake home with Claude Code's auto memory for it, both under the temp folder
@@ -36,7 +39,7 @@ describe('context budget', () => {
   });
   it('reports a 237-line MEMORY.md as 37 entries that never load', () => {
     const { home, root } = setup({ memory: 237 });
-    const c = contextBudget({ root, home });
+    const c = contextBudget({ root, home, top: base });
     const mem = c.files.find((f) => f.scope === 'memory');
     expect(mem).toMatchObject({ lines: 237, cut: 37 });
     expect(mem.path.startsWith('~/.claude/projects/')).toBe(true);
@@ -51,7 +54,7 @@ describe('context budget', () => {
     put(root, 'projects/alpha/CLAUDE.md', '# Alpha\n');
     put(root, 'node_modules/pkg/CLAUDE.md', '# skipped\n');
     put(root, '.hidden/CLAUDE.md', '# skipped\n');
-    const c = contextBudget({ root, home });
+    const c = contextBudget({ root, home, top: base });
     const by = Object.fromEntries(c.files.map((f) => [f.path, f.scope]));
     expect(by).toMatchObject({ '~/.claude/CLAUDE.md': 'user', 'CLAUDE.md': 'project', 'projects/alpha/CLAUDE.md': 'nested' });
     expect(Object.keys(by).some((p) => p.includes('node_modules') || p.includes('.hidden'))).toBe(false);
@@ -63,8 +66,8 @@ describe('context budget', () => {
     const learned = `${LEARNED_OPEN}\n## Learned from meetings\n\n${facts}\n${LEARNED_CLOSE}\n`;
     const { home, root } = setup({ claude: `# Rules\n\n${'x'.repeat(17000)}\n\n${learned}` });
     // without the Instructions item in the agent's prompt, there is no agent cut to report
-    expect(contextBudget({ root, home }).agent).toBe(null);
-    const c = contextBudget({ root, home, instructions: path.join(root, 'CLAUDE.md') });
+    expect(contextBudget({ root, home, top: base }).agent).toBe(null);
+    const c = contextBudget({ root, home, instructions: path.join(root, 'CLAUDE.md'), top: base });
     expect(c.quorum).toMatchObject({ path: 'CLAUDE.md', chars: learned.length - 1, everySession: true });
     expect(c.quorum.share).toBeGreaterThan(0);
     expect(c.quorum.share).toBeLessThan(0.1);
@@ -76,7 +79,7 @@ describe('context budget', () => {
     const pointer = `${LEARNED_OPEN}\n## Learned from meetings\n\nSee .quorum/learned.md.\n${LEARNED_CLOSE}\n`;
     const { home, root } = setup({ claude: `# Rules\n\n${pointer}` });
     put(root, '.quorum/learned.md', '# Learned from meetings\n\n- A fact\n');
-    const c = contextBudget({ root, home });
+    const c = contextBudget({ root, home, top: base });
     expect(c.quorum).toMatchObject({ chars: pointer.length - 1, aside: { path: '.quorum/learned.md', chars: 34 } });
     expect(c.files.some((f) => f.path === '.quorum/learned.md')).toBe(false);
   });
@@ -84,7 +87,7 @@ describe('context budget', () => {
     const { home, root } = setup();
     const custom = path.join(temp('ctx-custom'), 'RULES.md');
     writeFileSync(custom, 'z'.repeat(16500));
-    const c = contextBudget({ root, home, instructions: custom });
+    const c = contextBudget({ root, home, instructions: custom, top: base });
     expect(c.agent).toMatchObject({ path: custom, chars: 16500, cut: 500, learnedCut: false });
     expect(c.warnings.at(-1)).toMatch(/^.*RULES\.md: Quorum's own agent reads the first 16,000 characters, so the last 500/);
   });
@@ -97,7 +100,7 @@ describe('context budget', () => {
     put(root, '.claude/CLAUDE.md', '# Project rules\n');
     put(root, '.claude/rules/always.md', '# Always\n');
     put(root, '.claude/rules/tests.md', '---\npaths:\n  - "test/**"\n---\n# Tests\n');
-    const c = contextBudget({ root, home });
+    const c = contextBudget({ root, home, top: base });
     const by = Object.fromEntries(c.files.map((f) => [f.path, f]));
     expect(by['docs/style.md']).toMatchObject({ scope: 'project', importedBy: 'CLAUDE.md' });
     expect(by['~/shared.md']).toMatchObject({ scope: 'project', importedBy: 'CLAUDE.md' });
@@ -116,13 +119,13 @@ describe('context budget', () => {
       const { home, root } = setup();
       const vault = path.join(root, sub);
       put(vault, 'CLAUDE.md', `# Vault\n\n${learned}`);
-      const c = contextBudget({ root, vault, home });
+      const c = contextBudget({ root, vault, home, top: base });
       expect(c.quorum).toMatchObject({ path: `${sub}/CLAUDE.md`, everySession: false, share: null });
     }
   });
   it('warns on a CLAUDE.md past the size Claude Code flags', () => {
     const { home, root } = setup({ claude: 'y'.repeat(LARGE_FILE + 1) });
-    const c = contextBudget({ root, home });
+    const c = contextBudget({ root, home, top: base });
     expect(c.files.find((f) => f.path === 'CLAUDE.md').warn).toMatch(/^Over 40,000 characters/);
   });
   it('leaves the job to a vault with its own context check', () => {

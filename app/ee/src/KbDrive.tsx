@@ -48,7 +48,7 @@ export function DrivePanel({ kb, folderId, onChanged, onDone }: { kb: Kb; folder
     if (r.error) { setError(r.error); return; }
     if (r.canceled) { setResult({ headline: 'Nothing was picked.', skipped: [] }); return; }
     if (r.files) setFiles(r.files);
-    setResult(driveSummary(verb, r.synced ?? 0, r.skipped ?? [], r.unchanged ?? 0));
+    setResult(driveSummary(verb, r.synced ?? 0, r.skipped ?? [], r.unchanged ?? 0, r.kept ?? 0, r.suggested ?? 0));
     changed();
   };
   const run = async (kind: string, fn: () => Promise<KbDriveResult> | undefined, verb: string, fallback: string) => {

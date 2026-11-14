@@ -890,17 +890,24 @@ const PLUGIN_ICON: Record<string, (p: { width?: number; height?: number; classNa
 };
 const PLUGIN_PANEL: Record<string, () => ReactNode> = { context: () => <ContextPanel />, skills: () => <SkillsPanel />, 'brain-check': () => <BrainCheckPanel /> };
 // the vault note's path. It saves on blur or Enter only, since each save moves the list to the new path; a path the
-// keeper refuses (outside the folder, in a dot folder or the meetings folder) leaves the saved one and says why
+// keeper refuses (outside the folder, in a dot folder or the meetings folder) leaves the saved one and says why. Paths
+// are compared the way the keeper stores them, so ./notes/facts and notes/facts.md are the same path
+const normNote = (p: string) => { const t = p.normalize('NFC').trim().replace(/\\/g, '/').replace(/^(\.\/)+/, ''); return t && !/\.md$/i.test(t) ? `${t}.md` : t; };
 function NotePathField({ value, onSave }: { value: string; onSave: (v: string) => Promise<string> }) {
   const [v, setV] = useState(value);
   const [refused, setRefused] = useState(false);
   useEffect(() => { setV(value); }, [value]);
   const commit = async () => {
-    const t = v.trim();
-    if (t === value) return;
-    const saved = await onSave(t);
-    setRefused(!!t && saved === value);
-    setV(saved);
+    const t = normNote(v);
+    if (t === normNote(value)) return;
+    try {
+      const saved = await onSave(t);
+      setRefused(!!t && normNote(saved) !== t);
+      setV(saved);
+    } catch {
+      setRefused(true);
+      setV(value);
+    }
   };
   return (
     <label className="set-field wide">
@@ -913,6 +920,8 @@ function NotePathField({ value, onSave }: { value: string; onSave: (v: string) =
 function KeeperCard({ brain }: { brain: Brain }) {
   const [k, setK] = useState<KeeperStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  // picking Default when it would move lines out of the list asks first
+  const [askDefault, setAskDefault] = useState(false);
   const load = () => window.quorum.keeperStatus().then(setK).catch(() => setK(null));
   useEffect(() => { load(); return window.quorum.onKeeper?.(() => load()); }, [brain.root]);
   if (!k) return null;
@@ -979,10 +988,16 @@ function KeeperCard({ brain }: { brain: Brain }) {
           <h3>Plugins</h3>
           <div className="set-card">
             {k.on ? writers.map(plugin) : <Row icon={<IconReset width={18} height={18} />} title="Upkeep is off" desc="Quorum writes nothing for these jobs while Keep this folder current is off. Turn it on to choose which ones it does. The reports below work either way." />}
+            {k.on && k.folders.meetings && k.plugins.find((p) => p.id === 'index')?.owner === 'vault' && (
+              <Row icon={<IconFork width={18} height={18} />} title={`Write meeting index lines to ${k.folders.meetings}/index.md`}
+                desc="Your Agent OS keeps index.md, so Quorum leaves it alone. This keeps one line per meeting in the meetings folder instead, which your index can link to.">
+                <Toggle on={k.meetingsIndex} onChange={async (on) => setK(await window.quorum.keeperSet({ meetingsIndex: on }))} />
+              </Row>
+            )}
             {k.on && factsOn && k.learned && (
               <Row icon={<IconNotes width={18} height={18} />} title="Learned facts file"
                 desc={k.learned.target === 'learned' ? 'Claude Code does not load .quorum/learned.md on its own; CLAUDE.md points to it'
-                  : k.learned.target === 'note' ? `A note in your Agent OS, which Claude Code does not load on its own. ${k.learned.linked ? 'index.md links to it' : 'index.md is kept by your Agent OS, so Quorum adds no link to it'}`
+                  : k.learned.target === 'note' ? `A note in your Agent OS, which Claude Code does not load on its own. ${k.learned.linked ? 'index.md links to it' : k.learned.indexGenerated ? 'index.md is marked as generated, so Quorum adds no link to it' : 'index.md is kept by your Agent OS, so Quorum adds no link to it'}`
                   : `CLAUDE.md, loaded in every session that reads it${k.learned.maxFacts ? `, so it keeps ${k.learned.maxFacts} facts by default` : ''}. The oldest lines move to the changelog past the budget`}>
                 <select className="set-select" aria-label="Learned facts file" value={k.learned.pick} onChange={async (e) => setK(await window.quorum.keeperSet({ factsTarget: e.target.value as LearnedTarget | 'auto' }))}>
                   <option value="auto">Automatic ({k.learned.auto === 'learned' ? '.quorum/learned.md' : 'CLAUDE.md'})</option>
@@ -990,8 +1005,13 @@ function KeeperCard({ brain }: { brain: Brain }) {
                   <option value="note">A vault note</option>
                   <option value="claude">CLAUDE.md</option>
                 </select>
-                <select className="set-select" aria-label="Budget" value={String(k.learned.budgetPick)} onChange={async (e) => setK(await window.quorum.keeperSet({ factsBudget: e.target.value === 'auto' ? 'auto' : Number(e.target.value) }))}>
-                  <option value="auto">Default ({k.learned.maxFacts ? `${k.learned.budget.toLocaleString()} characters or ${k.learned.maxFacts} facts` : `${k.learned.budget.toLocaleString()} characters`})</option>
+                <select className="set-select" aria-label="Budget" value={String(k.learned.budgetPick)} onChange={async (e) => {
+                  if (e.target.value === 'kept') return;
+                  if (e.target.value === 'auto') { if (k.learned!.defaultMoves > 0) setAskDefault(true); else setK(await window.quorum.keeperSet({ factsBudget: 'auto' })); return; }
+                  setK(await window.quorum.keeperSet({ factsBudget: Number(e.target.value) }));
+                }}>
+                  {k.learned.budgetPick === 'kept' && <option value="kept">{k.learned.large.toLocaleString()} characters (your list so far)</option>}
+                  <option value="auto">Default ({k.learned.defaultFacts ? `${k.learned.defaultFacts} facts or ${k.learned.defaultBudget.toLocaleString()} characters` : `${k.learned.defaultBudget.toLocaleString()} characters`})</option>
                   {[1000, 2000, 4000, 8000].map((n) => <option key={n} value={n}>{n.toLocaleString()} characters</option>)}
                 </select>
               </Row>
@@ -1000,6 +1020,17 @@ function KeeperCard({ brain }: { brain: Brain }) {
               <Row icon={<IconNotes width={18} height={18} />} title="Learned facts note" desc="A path inside your Agent OS. Changing it moves the facts to the new note">
                 <NotePathField value={k.learned.note} onSave={async (p) => { const s = await window.quorum.keeperSet({ factsNote: p }); setK(s); return s.learned?.note ?? p; }} />
               </Row>
+            )}
+            {k.on && factsOn && k.learned?.suggestSmall && (
+              <Row icon={<IconInfo width={18} height={18} />} title={`Keep CLAUDE.md to ${k.learned.small.facts} facts?`}
+                desc={`CLAUDE.md is loaded in every session. New lists keep ${k.learned.small.facts} facts or ${k.learned.small.budget.toLocaleString()} characters; yours keeps ${k.learned.large.toLocaleString()} characters until you switch.`}>
+                <button className="pill small-pill" onClick={async () => { if (k.learned!.defaultMoves > 0) setAskDefault(true); else setK(await window.quorum.keeperSet({ factsBudget: 'auto' })); }}>Use the smaller default</button>
+              </Row>
+            )}
+            {askDefault && k.learned && (
+              <ConfirmModal title={`Use the default of ${k.learned.defaultFacts ? `${k.learned.defaultFacts} facts or ` : ''}${k.learned.defaultBudget.toLocaleString()} characters?`}
+                body={`${k.learned.defaultMoves} older ${k.learned.defaultMoves === 1 ? 'fact moves' : 'facts move'} from ${k.learned.file} to .quorum/changelog.md, where you can copy them back.`}
+                action="Use the default" onDone={async (ok) => { setAskDefault(false); if (ok) setK(await window.quorum.keeperSet({ factsBudget: 'auto' })); }} />
             )}
             {k.on && factsOn && k.learned?.suggest && (
               <Row icon={<IconInfo width={18} height={18} />} title={`Move learned facts to ${k.learned.suggest === 'learned' ? '.quorum/learned.md' : 'CLAUDE.md'}?`}

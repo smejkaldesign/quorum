@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  accessDraft, buildFolderTree, checkGithubUrl, descendantIds, flattenFolders, folderPath, importSummary, moveCheck, moveTargets,
+  accessDraft, buildFolderTree, checkGithubUrl, descendantIds, driveSummary, flattenFolders, folderPath, importSummary, moveCheck, moveTargets,
   notesIn, openPathTo, progressLabel, progressShare, readersOf, readersSummary, resolveKbLink, sourceLine, treeKey, visibleRows, withFolder, withoutFolder,
 } from '../ee/src/kbTree.ts';
 
@@ -185,6 +185,8 @@ describe('import lines', () => {
     expect(s.skipped).toHaveLength(20);
     expect(s.more).toBe(3);
     expect(importSummary({ imported: 2, skipped: [], removed: 1 }).headline).toBe('Imported 2 notes, removed 1 note the source no longer has.');
+    expect(importSummary({ imported: 2, skipped: [], kept: 1, suggested: 2 }).headline).toBe('Imported 2 notes, kept 1 edited note as it is, kept 2 edits as suggestions on the new text.');
+    expect(driveSummary('Synced', 1, [], 2, 2, 1).headline).toBe('Synced 1 file from Google Drive, 2 unchanged since the last sync, kept 2 edited files as they are, kept 1 edit as a suggestion on the new text.');
   });
 
   it('names where a KB comes from, with the branch', () => {
