@@ -188,10 +188,11 @@ describe('import lines', () => {
   });
 
   it('names where a KB comes from, with the branch', () => {
-    const base = { url: null, path: null, branch: null, name: null, importedAt: null };
+    const base = { url: null, path: null, branch: null, subpath: null, name: null, importedAt: null };
     expect(sourceLine(null)).toBeNull();
     expect(sourceLine({ ...base, kind: 'github', url: 'https://github.com/acme/handbook', branch: 'main' })).toBe('GitHub acme/handbook (main)');
     expect(sourceLine({ ...base, kind: 'github', url: 'https://github.com/acme/handbook.git' })).toBe('GitHub acme/handbook');
+    expect(sourceLine({ ...base, kind: 'github', url: 'https://github.com/acme/mono', subpath: '/docs/', branch: 'dev' })).toBe('GitHub acme/mono/docs (dev)');
     expect(sourceLine({ ...base, kind: 'zip', name: 'handbook.zip' })).toBe('Zip handbook.zip');
     expect(sourceLine({ ...base, kind: 'zip', path: '/tmp/x/export.zip' })).toBe('Zip export.zip');
     expect(sourceLine({ ...base, kind: 'git', url: 'https://example.com/team/kb.git' })).toBe('Repository example.com/team/kb');

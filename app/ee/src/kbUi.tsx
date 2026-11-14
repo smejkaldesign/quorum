@@ -97,7 +97,7 @@ export function useImport() {
     try { off?.(); } catch { /* the listener is gone either way */ }
     setRunning(false);
     if (r.error || !r.kb) { const why = r.error ?? 'The import did not finish.'; setError(why); return why; }
-    setResult({ kb: r.kb, imported: r.imported ?? 0, skipped: r.skipped ?? [], removed: (r as { removed?: number }).removed ?? 0 });
+    setResult({ kb: r.kb, imported: r.imported ?? 0, skipped: r.skipped ?? [], removed: r.removed ?? 0 });
     announceKbChange();
     return null;
   };

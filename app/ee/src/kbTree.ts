@@ -238,7 +238,7 @@ export function importSummary(r: Pick<KbImportResult, 'imported' | 'skipped'> & 
 export function sourceLine(s: KbSource | null): string | null {
   if (!s) return null;
   const repo = (u: string | null) => (u ?? '').replace(/^https?:\/\/(www\.)?github\.com\//, '').replace(/\.git$/, '');
-  if (s.kind === 'github') return `GitHub ${repo(s.url) || 'repository'}${s.branch ? ` (${s.branch})` : ''}`;
+  if (s.kind === 'github') return `GitHub ${repo(s.url) || 'repository'}${s.subpath ? `/${s.subpath.replace(/^\/+|\/+$/g, '')}` : ''}${s.branch ? ` (${s.branch})` : ''}`;
   if (s.kind === 'zip') return `Zip ${s.name ?? (s.path ?? '').replace(/^.*\//, '')}`.trim();
   if (s.kind === 'git') return `Repository ${(s.url ?? '').replace(/^https?:\/\//, '').replace(/\.git$/, '')}${s.branch ? ` (${s.branch})` : ''}`.trim();
   return `Folder ${(s.path ?? '').replace(/^\/Users\/[^/]+/, '~')}`.trim();
