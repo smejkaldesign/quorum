@@ -4,8 +4,10 @@
 -- storage and the editor role): kb_set_access and can_edit_kb_as below start from its bodies.
 --
 -- 1. teams and team_members. A member can be in many teams, as lead or member. Workspace members read every team and
---    membership in their workspace; owners, admins and the team's leads change them through the RPCs below. Leaving
---    the workspace (members.deleted_at set, or the row deleted) removes the person's team memberships.
+--    membership in their workspace. Who is in a team, and who leads it, is for workspace owners and admins only: a
+--    team's grants reach every member, so a lead adding people would widen what those grants reach. A lead renames the
+--    team and manages the team's own KBs; anyone can leave a team. Leaving the workspace (members.deleted_at set, or
+--    the row deleted) removes the person's team memberships.
 -- 2. kb_access principal 'team' is accepted. One helper, kb_access_applies(kb, uid, roles), says whether an access row
 --    covers a person: the workspace row, their own user row, or a team row for a team they are in. can_read_kb,
 --    can_admin_kb_as and can_edit_kb_as (0034) all use it, so a team grant carries every role: admin, editor, reader.
@@ -15,8 +17,11 @@
 --    notes go to the meetings KB of their meeting team: their only team, the team they chose when they are in several,
 --    or the team they joined first when they have not chosen; a member in no team uses the workspace meetings KB as
 --    before. The per-source share choice (0029, app side) still decides whether a note is shared at all.
--- 5. Deleting a team keeps its knowledge: its KBs become workspace KBs (a meetings KB becomes general), its team rows
---    leave every access list, and nobody gains read access they did not have.
+-- 5. Deleting a team (team_delete) keeps its knowledge: its KBs become workspace KBs (a meetings KB becomes general),
+--    its team rows leave every access list, and nobody gains read access they did not have. A workspace that is
+--    removed takes its teams and KBs with it through the foreign keys.
+-- 6. A person who joins a team gets a resync request (kb_resync) instead of a touch of every note: their next pull
+--    fetches every note it may read once, and nobody else's pull changes.
 
 create table public.teams (
   id public.ulid primary key default public.gen_ulid(),
@@ -52,7 +57,18 @@ create policy teams_select on public.teams for select to authenticated using (pu
 create policy team_members_select on public.team_members for select to authenticated using (public.is_member(workspace_id));
 -- writes go through the RPCs below; with no insert, update or delete policy the table API refuses them
 
--- a KB's team is a team of the KB's workspace; deleting the team is handled by teams_before_delete below
+-- a person whose reads widened without their KBs' notes changing (they joined a team): their next pull asks for every
+-- note once instead of those changed since the last pull. Each person reads their own rows; the RPCs below write them
+create table public.kb_resync (
+  workspace_id public.ulid not null references public.workspaces (id) on delete cascade,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  requested_at timestamptz not null default now(),
+  primary key (workspace_id, user_id)
+);
+alter table public.kb_resync enable row level security;
+create policy kb_resync_select on public.kb_resync for select to authenticated using (user_id = auth.uid());
+
+-- a KB's team is a team of the KB's workspace; team_delete clears it first, and a workspace delete removes both
 alter table public.knowledge_bases add constraint knowledge_bases_team foreign key (team_id, workspace_id) references public.teams (id, workspace_id);
 create index knowledge_bases_team on public.knowledge_bases (team_id) where team_id is not null;
 alter table public.kb_access add constraint kb_access_team foreign key (team_id) references public.teams (id) on delete cascade;
@@ -84,7 +100,7 @@ language sql stable security definer set search_path = public as $$
     select 1 from public.team_members t join public.members m on m.workspace_id = t.workspace_id and m.user_id = t.user_id and m.deleted_at is null
     where t.team_id = is_team_lead_as.team_id and t.user_id = uid and t.role = 'lead');
 $$;
--- who manages a team: the workspace's owners and admins and the team's leads
+-- who renames a team: the workspace's owners and admins and the team's leads (membership is owners and admins only)
 create or replace function public.can_manage_team(team_id public.ulid) returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.teams t where t.id = can_manage_team.team_id and (public.is_admin(t.workspace_id) or public.is_team_lead_as(t.id, auth.uid())));
@@ -139,19 +155,23 @@ language sql stable security definer set search_path = public as $$
     where k.id = can_edit_kb_as.kb_id and public.kb_access_applies(k.id, uid, array['editor'])));
 $$;
 
--- touches the notes of every KB a team reads, so a person who just joined it fetches them on their next pull (pull
--- sync reads updated_at), as kb_set_access does for a new reader. It is a system write, as in 0034's kb_set_access,
--- so 0034's guard on hosted KB notes lets it through
-create or replace function public.team_touch_kbs(team_id public.ulid) returns void
-language plpgsql security definer set search_path = public as $$
-begin
-  perform set_config('quorum.kb_system', 'on', true);
-  update public.notes n set updated_at = now()
-  where n.deleted_at is null and n.kb_id in (
-    select k.id from public.knowledge_bases k where k.team_id = team_touch_kbs.team_id
-    union select a.kb_id from public.kb_access a where a.principal = 'team' and a.team_id = team_touch_kbs.team_id);
-  perform set_config('quorum.kb_system', '', true);
-end $$;
+-- asks for one person's full pull in a workspace; a request already waiting moves to now
+create or replace function public.kb_resync_request(ws public.ulid, uid uuid) returns void
+language sql security definer set search_path = public as $$
+  insert into public.kb_resync (workspace_id, user_id) values (ws, uid)
+    on conflict (workspace_id, user_id) do update set requested_at = now();
+$$;
+
+-- the caller's waiting request in a workspace, as its time, or null. The app pulls every note and then calls
+-- kb_resync_done with that time, so a request made during the pull stays for the next one
+create or replace function public.kb_resync_pending(workspace_id public.ulid) returns timestamptz
+language sql stable security definer set search_path = public as $$
+  select r.requested_at from public.kb_resync r where r.workspace_id = kb_resync_pending.workspace_id and r.user_id = auth.uid();
+$$;
+create or replace function public.kb_resync_done(workspace_id public.ulid, requested_at timestamptz) returns void
+language sql security definer set search_path = public as $$
+  delete from public.kb_resync r where r.workspace_id = kb_resync_done.workspace_id and r.user_id = auth.uid() and r.requested_at <= kb_resync_done.requested_at;
+$$;
 
 -- the meetings KB of the person's meeting team: their only team, the one they chose among several, or the team they
 -- joined first. Null when they are in no team, so the workspace meetings KB is used
@@ -164,27 +184,34 @@ language sql stable security definer set search_path = public as $$
 $$;
 
 -- a team's meetings KB, made on first use and readable by that team only; called by team_create, the meetings routing
--- and nothing a client can reach
+-- and nothing a client can reach. A name another KB already has gets a short suffix; a concurrent create of the same
+-- team's meetings KB returns that one
 create or replace function public.kb_ensure_team_meetings(team_id public.ulid) returns public.ulid
 language plpgsql security definer set search_path = public as $$
-declare t public.teams; k public.ulid; n text; who uuid;
+declare t public.teams; k public.ulid; n text; who uuid; attempt integer := 0;
 begin
   select * into t from public.teams x where x.id = kb_ensure_team_meetings.team_id;
   if t.id is null then return null; end if;
   select x.id into k from public.knowledge_bases x where x.team_id = t.id and x.kind = 'meetings';
   if k is not null then return k; end if;
   who := coalesce(t.created_by, (select w.user_id from public.workspaces w where w.id = t.workspace_id));
-  foreach n in array array[t.name || ' meetings', t.name || ' meeting notes', t.name || ' meetings ' || to_char(now(), 'YYYY-MM-DD HH24:MI:SS')] loop
-    exit when not exists (select 1 from public.knowledge_bases x where x.workspace_id = t.workspace_id and lower(btrim(x.name)) = lower(btrim(n)));
+  loop
+    attempt := attempt + 1;
+    n := left(t.name || ' meetings', 112) || case when attempt = 1 then '' else ' ' || substr(md5(random()::text || clock_timestamp()::text), 1, 4) end;
+    if not exists (select 1 from public.knowledge_bases x where x.workspace_id = t.workspace_id and lower(btrim(x.name)) = lower(btrim(n))) then
+      begin
+        insert into public.knowledge_bases (workspace_id, name, kind, team_id, created_by) values (t.workspace_id, n, 'meetings', t.id, who) returning id into k;
+        insert into public.kb_access (kb_id, principal, team_id, role, created_by) values (k, 'team', t.id, 'reader', who);
+        return k;
+      exception when unique_violation then
+        -- another transaction made this team's meetings KB first, or took the name between the check and the insert
+        select x.id into k from public.knowledge_bases x where x.team_id = t.id and x.kind = 'meetings';
+        if k is not null then return k; end if;
+      end;
+    end if;
+    exit when attempt >= 8;
   end loop;
-  begin
-    insert into public.knowledge_bases (workspace_id, name, kind, team_id, created_by) values (t.workspace_id, left(n, 120), 'meetings', t.id, who) returning id into k;
-  exception when unique_violation then
-    select x.id into k from public.knowledge_bases x where x.team_id = t.id and x.kind = 'meetings';
-    return k;
-  end;
-  insert into public.kb_access (kb_id, principal, team_id, role, created_by) values (k, 'team', t.id, 'reader', who);
-  return k;
+  raise exception 'The team''s meetings knowledge base could not be named. Rename a knowledge base called % and try again', t.name || ' meetings';
 end $$;
 
 -- 0029's kb_meetings_of: the workspace's own meetings KB, the oldest when there are two; team meetings KBs are not it
@@ -343,6 +370,7 @@ language sql stable security definer set search_path = public as $$
     'id', t.id, 'workspace_id', t.workspace_id, 'name', t.name, 'created_at', t.created_at,
     'my_role', (select tm.role from public.team_members tm where tm.team_id = t.id and tm.user_id = auth.uid()),
     'can_manage', public.can_manage_team(t.id),
+    'can_manage_members', public.is_admin(t.workspace_id),
     'meetings_kb_id', (select k.id from public.knowledge_bases k where k.team_id = t.id and k.kind = 'meetings'),
     'members', coalesce((
       select jsonb_agg(jsonb_build_object('user_id', tm.user_id, 'role', tm.role, 'email', p.email, 'name', p.name) order by tm.role, lower(coalesce(p.name, p.email, '')))
@@ -394,7 +422,8 @@ begin
   if not public.can_manage_team(t.id) then raise exception 'Only owners, admins and the team''s leads can rename it'; end if;
   n := public.team_name_check(t.workspace_id, team_rename.name, t.id);
   update public.teams x set name = n where x.id = t.id;
-  if not exists (select 1 from public.knowledge_bases x where x.workspace_id = t.workspace_id and lower(btrim(x.name)) = lower(n || ' meetings')) then
+  if not exists (select 1 from public.knowledge_bases x where x.workspace_id = t.workspace_id and lower(btrim(x.name)) = lower(n || ' meetings')
+                 and not (x.team_id = t.id and x.kind = 'meetings')) then
     update public.knowledge_bases k set name = left(n || ' meetings', 120) where k.team_id = t.id and k.kind = 'meetings' and lower(k.name) = lower(t.name || ' meetings');
   end if;
   return public.team_shape(t.id);
@@ -408,20 +437,14 @@ begin
   select * into t from public.teams x where x.id = team_delete.team_id;
   if t.id is null or not public.is_member(t.workspace_id) then raise exception 'That team no longer exists'; end if;
   if not public.is_admin(t.workspace_id) then raise exception 'Only owners and admins can delete a team'; end if;
+  -- its KBs become workspace KBs (a meetings KB becomes general, so the workspace's own meetings KB stays the only one
+  -- without a team); its rows leave every access list by the foreign key
+  update public.knowledge_bases k set team_id = null, kind = 'general' where k.team_id = t.id;
   delete from public.teams x where x.id = t.id;
 end $$;
 
--- before a team goes: its KBs become workspace KBs (a meetings KB becomes general, so the workspace's own meetings KB
--- stays the only one without a team) and its rows leave every access list by the foreign key
-create or replace function public.teams_before_delete() returns trigger
-language plpgsql security definer set search_path = public as $$
-begin
-  update public.knowledge_bases k set team_id = null, kind = 'general' where k.team_id = old.id;
-  return old;
-end $$;
-create trigger teams_before_delete before delete on public.teams for each row execute function public.teams_before_delete();
-
--- adds a workspace member to a team, or changes their role in it. The team's leads, owners and admins only
+-- adds a workspace member to a team, or changes their role in it. Owners and admins only, since the team's grants
+-- reach whoever is in it. Someone new to the team gets a resync request for their next pull
 create or replace function public.team_member_set(team_id public.ulid, user_id uuid, role text default 'member') returns jsonb
 language plpgsql security definer set search_path = public as $$
 #variable_conflict use_column
@@ -429,7 +452,7 @@ declare t public.teams; r text := coalesce(team_member_set.role, 'member'); adde
 begin
   select * into t from public.teams x where x.id = team_member_set.team_id;
   if t.id is null or not public.is_member(t.workspace_id) then raise exception 'That team no longer exists'; end if;
-  if not public.can_manage_team(t.id) then raise exception 'Only owners, admins and the team''s leads can change its members'; end if;
+  if not public.is_admin(t.workspace_id) then raise exception 'Only owners and admins can change who is in a team'; end if;
   if r not in ('lead', 'member') then raise exception 'A team role is lead or member'; end if;
   if team_member_set.user_id is null or not exists (select 1 from public.members m where m.workspace_id = t.workspace_id and m.user_id = team_member_set.user_id and m.deleted_at is null) then
     raise exception 'That person is not a member of this workspace';
@@ -437,11 +460,11 @@ begin
   added := not exists (select 1 from public.team_members x where x.team_id = t.id and x.user_id = team_member_set.user_id);
   insert into public.team_members (team_id, workspace_id, user_id, role) values (t.id, t.workspace_id, team_member_set.user_id, r)
     on conflict (team_id, user_id) do update set role = excluded.role;
-  if added then perform public.team_touch_kbs(t.id); end if;
+  if added then perform public.kb_resync_request(t.workspace_id, team_member_set.user_id); end if;
   return public.team_shape(t.id);
 end $$;
 
--- takes a person out of a team. The team's leads, owners and admins, and the person themselves
+-- takes a person out of a team. Owners and admins, and the person themselves
 create or replace function public.team_member_remove(team_id public.ulid, user_id uuid) returns jsonb
 language plpgsql security definer set search_path = public as $$
 #variable_conflict use_column
@@ -449,7 +472,7 @@ declare t public.teams;
 begin
   select * into t from public.teams x where x.id = team_member_remove.team_id;
   if t.id is null or not public.is_member(t.workspace_id) then raise exception 'That team no longer exists'; end if;
-  if team_member_remove.user_id is distinct from auth.uid() and not public.can_manage_team(t.id) then raise exception 'Only owners, admins and the team''s leads can change its members'; end if;
+  if team_member_remove.user_id is distinct from auth.uid() and not public.is_admin(t.workspace_id) then raise exception 'Only owners and admins can change who is in a team'; end if;
   delete from public.team_members x where x.team_id = t.id and x.user_id = team_member_remove.user_id;
   return public.team_shape(t.id);
 end $$;
@@ -487,15 +510,15 @@ do $$ declare f text; begin
     'team_list(public.ulid)', 'team_shape(public.ulid)', 'team_create(public.ulid, text)', 'team_rename(public.ulid, text)', 'team_delete(public.ulid)',
     'team_member_set(public.ulid, uuid, text)', 'team_member_remove(public.ulid, uuid)', 'team_meetings_default_set(public.ulid, public.ulid)',
     'can_read_kb(public.ulid)', 'can_manage_team(public.ulid)', 'kb_create(public.ulid, text, text, public.ulid)', 'kb_set_access(public.ulid, jsonb)',
-    'kb_meetings_folder(public.ulid, text)', 'kb_meetings_info(public.ulid)'] loop
+    'kb_meetings_folder(public.ulid, text)', 'kb_meetings_info(public.ulid)', 'kb_resync_pending(public.ulid)', 'kb_resync_done(public.ulid, timestamptz)'] loop
     execute format('revoke all on function public.%s from public, anon', f);
     execute format('grant execute on function public.%s to authenticated, service_role', f);
   end loop;
   foreach f in array array[
     'is_team_member_as(public.ulid, uuid)', 'is_team_lead_as(public.ulid, uuid)', 'kb_access_applies(public.ulid, uuid, text[])', 'can_read_kb_as(public.ulid, uuid)',
-    'can_admin_kb_as(public.ulid, uuid)', 'can_edit_kb_as(public.ulid, uuid)', 'team_touch_kbs(public.ulid)', 'kb_meetings_team(public.ulid, uuid)',
+    'can_admin_kb_as(public.ulid, uuid)', 'can_edit_kb_as(public.ulid, uuid)', 'kb_resync_request(public.ulid, uuid)', 'kb_meetings_team(public.ulid, uuid)',
     'kb_ensure_team_meetings(public.ulid)', 'kb_meetings_of(public.ulid)', 'kb_meetings_target(public.ulid, uuid)', 'kb_meetings_open(public.ulid, public.ulid, uuid)',
-    'team_name_check(public.ulid, text, public.ulid)', 'teams_before_delete()', 'member_left_end_teams()'] loop
+    'team_name_check(public.ulid, text, public.ulid)', 'member_left_end_teams()'] loop
     execute format('revoke all on function public.%s from public, anon, authenticated', f);
   end loop;
 end $$;

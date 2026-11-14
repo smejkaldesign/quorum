@@ -75,17 +75,50 @@ do $$ begin
   assert public.team_list('01TM00000000000000000000WA') = '[]'::jsonb, 'nor through team_list';
 end $$;
 
--- 2. memberships: the owner names a lead, the lead adds members, a plain member cannot
+-- 2. memberships are for owners and admins: a lead cannot add a member or a lead, or remove anyone but themselves,
+-- since the team's grants reach whoever is in it; a lead can rename the team; a plain member can do neither
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000d1');
 select public.team_member_set(pg_temp.id('alpha'), '00000000-0000-4000-8000-0000000000d2', 'lead');
 select public.team_member_set(pg_temp.id('beta'), '00000000-0000-4000-8000-0000000000d4');
 select pg_temp.expect_error($$ select public.team_member_set(pg_temp.id('alpha'), '00000000-0000-4000-8000-0000000000d6') $$, 'not a member of this workspace');
 select pg_temp.expect_error($$ select public.team_member_set(pg_temp.id('alpha'), '00000000-0000-4000-8000-0000000000d5', 'owner') $$, 'lead or member');
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000d2');
+select pg_temp.expect_error($$ select public.team_member_set(pg_temp.id('alpha'), '00000000-0000-4000-8000-0000000000d3') $$, 'Only owners and admins can change who is in a team');
+select pg_temp.expect_error($$ select public.team_member_set(pg_temp.id('alpha'), '00000000-0000-4000-8000-0000000000d5', 'lead') $$, 'Only owners and admins can change who is in a team');
+select pg_temp.expect_error($$ select public.team_member_set(pg_temp.id('beta'), '00000000-0000-4000-8000-0000000000d5') $$, 'Only owners and admins');
+select pg_temp.expect_error($$ select public.team_member_remove(pg_temp.id('beta'), '00000000-0000-4000-8000-0000000000d4') $$, 'Only owners and admins');
+do $$ begin
+  assert (public.team_rename(pg_temp.id('alpha'), 'Alpha') ->> 'name') = 'Alpha', 'a lead can rename the team';
+  assert (public.team_shape(pg_temp.id('alpha')) ->> 'can_manage')::boolean and not (public.team_shape(pg_temp.id('alpha')) ->> 'can_manage_members')::boolean, 'a lead manages the team but not its members';
+  assert not exists (select 1 from public.team_members where team_id = pg_temp.id('alpha') and user_id = '00000000-0000-4000-8000-0000000000d3'), 'the lead added nobody';
+end $$;
+-- the owner adds the member; the new member gets a resync request, and nobody else's notes are touched
+reset role;
+create temp table touched as select id, updated_at from public.notes;
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000d1');
 select public.team_member_set(pg_temp.id('alpha'), '00000000-0000-4000-8000-0000000000d3');
-select pg_temp.expect_error($$ select public.team_member_set(pg_temp.id('beta'), '00000000-0000-4000-8000-0000000000d5') $$, 'leads can change');
+reset role;
+do $$ begin
+  assert (select count(*) from public.kb_resync where workspace_id = '01TM00000000000000000000WA' and user_id = '00000000-0000-4000-8000-0000000000d3') = 1, 'the new member has a resync request';
+  assert (select count(*) from public.kb_resync where workspace_id = '01TM00000000000000000000WA') = 3, 'one request for each person added so far';
+end $$;
+do $$ begin
+  assert not exists (select 1 from public.notes n join touched t on t.id = n.id where n.updated_at <> t.updated_at), 'joining a team touches no note';
+end $$;
+-- each person reads only their own request, and clears it after a full pull
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000d3');
-select pg_temp.expect_error($$ select public.team_member_set(pg_temp.id('alpha'), '00000000-0000-4000-8000-0000000000d5') $$, 'leads can change');
+do $$ declare at timestamptz; begin
+  assert (select count(*) from public.kb_resync) = 1, 'a person reads only their own resync request';
+  at := public.kb_resync_pending('01TM00000000000000000000WA');
+  assert at is not null, 'kb_resync_pending answers with its time';
+  perform public.kb_resync_done('01TM00000000000000000000WA', at - interval '1 second');
+  assert public.kb_resync_pending('01TM00000000000000000000WA') is not null, 'a request newer than the pull stays';
+  perform public.kb_resync_done('01TM00000000000000000000WA', at);
+  assert public.kb_resync_pending('01TM00000000000000000000WA') is null, 'kb_resync_done clears it';
+end $$;
+select pg_temp.expect_error($$ insert into public.kb_resync (workspace_id, user_id) values ('01TM00000000000000000000WA', '00000000-0000-4000-8000-0000000000d3') $$, 'row-level security');
+select pg_temp.expect_error($$ select public.kb_resync_request('01TM00000000000000000000WA', '00000000-0000-4000-8000-0000000000d3') $$, 'permission denied');
+select pg_temp.expect_error($$ select public.team_member_set(pg_temp.id('alpha'), '00000000-0000-4000-8000-0000000000d5') $$, 'Only owners and admins');
 select pg_temp.expect_error($$ select public.team_rename(pg_temp.id('alpha'), 'Mine') $$, 'leads can rename');
 select pg_temp.expect_error($$ select public.team_delete(pg_temp.id('alpha')) $$, 'Only owners and admins');
 do $$ begin
@@ -210,7 +243,23 @@ select pg_temp.as_user('00000000-0000-4000-8000-0000000000d2');
 select public.team_rename(pg_temp.id('alpha'), 'Platform');
 do $$ begin
   assert (select name from public.knowledge_bases where id = pg_temp.id('alpha-meetings')) = 'Platform meetings', 'the meetings KB follows the team name';
+  -- a change of case only: the team's own meetings KB does not count as a name already taken
+  perform public.team_rename(pg_temp.id('alpha'), 'PLATFORM');
+  assert (select name from public.knowledge_bases where id = pg_temp.id('alpha-meetings')) = 'PLATFORM meetings', 'its own meetings KB is no collision';
+  perform public.team_rename(pg_temp.id('alpha'), 'Platform');
 end $$;
+-- a new team whose meetings name is taken gets a suffixed name instead of no meetings KB
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000d1');
+select public.kb_create('01TM00000000000000000000WA', 'Gamma meetings');
+insert into ids select 'gamma', public.team_create('01TM00000000000000000000WA', 'Gamma') ->> 'id';
+do $$ declare n text; begin
+  select name into n from public.knowledge_bases where team_id = pg_temp.id('gamma') and kind = 'meetings';
+  assert n ~ '^Gamma meetings [0-9a-f]{4}$', format('a taken name gets a suffix, got %s', n);
+  assert public.team_shape(pg_temp.id('gamma')) ->> 'meetings_kb_id' is not null, 'the team has its meetings KB';
+end $$;
+-- a team-owned general KB for Gamma, so the workspace delete below removes team KBs of more than one kind
+insert into ids select 'gamma-docs', public.kb_create('01TM00000000000000000000WA', 'Gamma docs', 'general', pg_temp.id('gamma')) ->> 'id';
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000d2');
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000d1');
 select public.team_delete(pg_temp.id('alpha'));
 do $$ begin
@@ -229,12 +278,19 @@ do $$ begin
   assert not pg_temp.reads('docs'), 'and gains no other';
 end $$;
 
--- 8. a workspace that is removed takes its teams and their KBs with it
+-- 8. a workspace that is removed takes its teams, their memberships, their KBs and access rows with it
 reset role;
+do $$ begin
+  assert (select count(*) from public.knowledge_bases where workspace_id = '01TM00000000000000000000WA' and team_id is not null) >= 3, 'team KBs exist before the delete';
+  assert exists (select 1 from public.kb_access where principal = 'team' and team_id = pg_temp.id('beta')), 'and team grants';
+end $$;
 delete from public.workspaces where id = '01TM00000000000000000000WA';
 do $$ begin
   assert not exists (select 1 from public.teams where workspace_id = '01TM00000000000000000000WA'), 'teams go with the workspace';
+  assert not exists (select 1 from public.team_members where workspace_id = '01TM00000000000000000000WA'), 'and memberships';
   assert not exists (select 1 from public.knowledge_bases where workspace_id = '01TM00000000000000000000WA'), 'and their KBs';
+  assert not exists (select 1 from public.kb_access where team_id in (pg_temp.id('beta'), pg_temp.id('gamma'))), 'and team grants';
+  assert not exists (select 1 from public.kb_resync where workspace_id = '01TM00000000000000000000WA'), 'and resync requests';
 end $$;
 
 select 'teams: ok';
