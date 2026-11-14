@@ -204,7 +204,11 @@ export type KbImportSkipped = { path: string; reason: string };
 // a Google Drive file attached to a KB folder (ee/kbDrive.js); any admin of the KB syncs or removes it
 export type KbDriveFile = { fileId: string; noteId: string; name: string; folderId: string | null; url: string | null; syncedAt: string | null; modifiedAt: string | null };
 export type KbDriveStatus = { connected: boolean; available: boolean; account: string | null };
-export type KbDriveResult = Result & { files?: KbDriveFile[]; synced?: number; unchanged?: number; skipped?: KbImportSkipped[]; canceled?: true };
+export type KbDriveResult = Result & { files?: KbDriveFile[]; synced?: number; unchanged?: number; kept?: number; suggested?: number; skipped?: KbImportSkipped[]; canceled?: true };
+// Quorum's edit to a synced KB note, kept as a suggestion after the source changed (ee/kbUpstream.js); KB admins only.
+// '~' stands for unchanged lines left out of the view, and its text counts them
+export type KbDiffLine = { op: ' ' | '+' | '-' | '~'; text: string };
+export type KbSuggestion = { id: string; state: 'ready' | 'stale'; at: string | null; lines: KbDiffLine[]; blocked?: string };
 export type KbImportProgress = { kbId: string; phase: 'fetching' | 'reading' | 'writing' | 'done'; done: number; total: number };
 export type KbPlacement = { noteId: string; kbId: string | null; folderId: string | null; updatedAt: string | null };
 export type KbNote = { id: string; path: string; title: string; folderId: string | null; userId: string; updatedAt: string | null };
@@ -523,7 +527,11 @@ declare global {
       kbNotes(kbId: string): Promise<Result & { notes?: KbNote[] }>;
       onKbOpen(cb: (t: { kbId: string; noteId: string }) => void): Unsub;
       kbOpenReady(): Promise<void>;
-      kbImport(req: KbImportRequest): Promise<Result & { kb?: Kb; imported?: number; removed?: number; skipped?: KbImportSkipped[] }>;
+      kbSuggestion(noteId: string): Promise<Result & { edited?: boolean; noteHash?: string | null; suggestions?: KbSuggestion[] }>;
+      // noteHash is the note's hash as the page read it; changed says the note moved on and the page reads again
+      kbSuggestionApply(noteId: string, suggestionId: string, noteHash: string | null): Promise<Result & { ok?: true; title?: string | null; body?: string; changed?: true }>;
+      kbSuggestionDismiss(noteId: string, suggestionId: string): Promise<Result & { ok?: true }>;
+      kbImport(req: KbImportRequest): Promise<Result & { kb?: Kb; imported?: number; removed?: number; kept?: number; suggested?: number; skipped?: KbImportSkipped[] }>;
       kbImportPickZip(): Promise<{ path?: string; canceled?: true }>;
       onKbImportProgress(cb: (p: KbImportProgress) => void): Unsub;
       kbDriveStatus(): Promise<KbDriveStatus>;
