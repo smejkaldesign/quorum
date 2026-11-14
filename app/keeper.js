@@ -1,7 +1,9 @@
 // the keeper: what maintains an Agent OS after Quorum writes into it. Each new meeting note gets an index line, a line
 // in the daily note, and a line under "## Meetings" in every people note and project note it concerns; a dated entry in
 // .quorum/changelog.md records each change. With a model source chosen, a few learned facts per note go into a marked
-// block in CLAUDE.md. Everything is append-only: no note body is rewritten, and a line already present is left alone.
+// list (CLAUDE.md, or .quorum/learned.md, which Claude Code does not load on its own). The list stays under a budget in
+// characters: the oldest lines move to .quorum/changelog.md when it runs over, and a line marked #keep stays. Everything
+// else is append-only: no note body is rewritten, and a line already present is left alone.
 // Confidential notes, private folders and secret-looking files never enter the index, the links or the facts.
 // Progress is kept in .quorum/keeper.json by note hash, so a note changed later is filed again and an unchanged one
 // is skipped; a backlog left by days with the app closed runs in one pass at launch.
@@ -9,7 +11,7 @@
 // touches a file whose first lines say it is generated, names daily notes the way the vault already does, and holds a
 // run that would create more than CREATE_LIMIT new files until the user says to go ahead
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { parseFrontmatter } from './linkparse.js';
 import { writeAtomic } from './relink.js';
@@ -20,7 +22,9 @@ export const KEEPER_FILE = path.join('.quorum', 'keeper.json');
 export const CHANGELOG = path.join('.quorum', 'changelog.md');
 export const LEARNED_OPEN = '<!-- quorum:learned -->';
 export const LEARNED_CLOSE = '<!-- /quorum:learned -->';
-const LEARNED_CAP = 40;
+export const LEARNED_FILE = path.join('.quorum', 'learned.md');
+export const LEARNED_BUDGET = 2000;
+export const KEEP_RE = /#keep\b/i;
 // a run that would add more new files than this to the vault waits for the user (a backlog of months of meetings
 // against a vault with its own daily naming once made 86)
 export const CREATE_LIMIT = 10;
@@ -59,17 +63,63 @@ export function appendUnder(text, heading, line) {
   return lines.join('\n') + '\n';
 }
 
-// the learned block: a marked list at the end of CLAUDE.md, newest last, capped, with no repeats
-export function addLearned(text, facts) {
+// the learned block: a marked list, newest last, with no repeats. Two lines that differ only in case, punctuation or the
+// note they cite count as the same fact
+const factKey = (l) => l.replace(/^-\s*/, '').replace(KEEP_RE, '').replace(/\(\[\[[^\]]+\]\],\s*\d{4}-\d{2}-\d{2}\)\s*$/, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const factDate = (l) => l.match(/(\d{4}-\d{2}-\d{2})\)\s*(?:#keep\s*)?$/i)?.[1] ?? null;
+export function learnedLines(text) {
   const a = text.indexOf(LEARNED_OPEN);
   const b = text.indexOf(LEARNED_CLOSE);
-  const existing = a >= 0 && b > a ? text.slice(a + LEARNED_OPEN.length, b).split('\n').map((l) => l.trim()).filter((l) => l.startsWith('- ')) : [];
-  const fresh = facts.map((f) => `- ${f.replace(/^[-*]\s*/, '').trim()}`).filter((f) => f.length > 2 && !existing.includes(f));
-  if (!fresh.length) return null;
-  const all = [...existing, ...fresh].slice(-LEARNED_CAP);
-  const block = [LEARNED_OPEN, '## Learned from meetings', '', 'Facts Quorum picked up from meeting notes, newest last. Edit or delete any line; the keeper never rewrites them.', '', ...all, LEARNED_CLOSE].join('\n');
+  return a >= 0 && b > a ? text.slice(a + LEARNED_OPEN.length, b).split('\n').map((l) => l.trim()).filter((l) => l.startsWith('- ')) : [];
+}
+export const learnedChars = (lines) => lines.reduce((n, l) => n + l.length + 1, 0);
+
+// the lines that fit the budget: dated lines go oldest first, then undated ones (most likely written by hand) in order;
+// a #keep line is never dropped, so kept lines alone can run over
+export function pruneLearned(lines, budget = LEARNED_BUDGET) {
+  let total = learnedChars(lines);
+  const order = lines.map((l, i) => ({ l, i, d: factDate(l) })).filter((x) => !KEEP_RE.test(x.l))
+    .sort((x, y) => (x.d ? 0 : 1) - (y.d ? 0 : 1) || (x.d && y.d ? x.d.localeCompare(y.d) : 0) || x.i - y.i);
+  const out = new Set();
+  for (const x of order) {
+    if (total <= budget) break;
+    out.add(x.i);
+    total -= x.l.length + 1;
+  }
+  return { kept: lines.filter((_, i) => !out.has(i)), dropped: lines.filter((_, i) => out.has(i)) };
+}
+
+const learnedBlock = (lines, budget) => [LEARNED_OPEN, '## Learned from meetings', '',
+  `Facts Quorum picked up from meeting notes, newest last. The list stays under ${budget.toLocaleString('en-US')} characters: when it runs over, the oldest lines move to .quorum/changelog.md. Add #keep to a line to hold it. Edit or delete any line.`,
+  '', ...lines, LEARNED_CLOSE].join('\n');
+const putBlock = (text, block) => {
+  const a = text.indexOf(LEARNED_OPEN);
+  const b = text.indexOf(LEARNED_CLOSE);
   if (a >= 0 && b > a) return text.slice(0, a) + block + text.slice(b + LEARNED_CLOSE.length);
   return text.replace(/\s*$/, '') + '\n\n' + block + '\n';
+};
+
+// new facts into the block, pruned to the budget; null when every fact is already there. dropped lists the lines that
+// left the block, for the changelog
+export function addLearned(text, facts, { budget = LEARNED_BUDGET } = {}) {
+  const existing = learnedLines(text);
+  const keys = new Set(existing.map(factKey));
+  const fresh = [];
+  for (const f of facts) {
+    const line = `- ${f.replace(/^[-*]\s*/, '').trim()}`;
+    const k = factKey(line);
+    if (line.length > 2 && k && !keys.has(k)) { keys.add(k); fresh.push(line); }
+  }
+  if (!fresh.length) return null;
+  const { kept, dropped } = pruneLearned([...existing, ...fresh], budget);
+  return { text: putBlock(text, learnedBlock(kept, budget)), dropped };
+}
+
+// CLAUDE.md, when the facts live in .quorum/learned.md: its block becomes a pointer to that file. null when it already is
+export const LEARNED_POINTER = [LEARNED_OPEN, '## Learned from meetings', '', 'Quorum keeps facts from meeting notes in [.quorum/learned.md](.quorum/learned.md). That file is not loaded on its own; read it when a question needs them.', LEARNED_CLOSE].join('\n');
+export function pointLearned(text) {
+  const next = putBlock(text, LEARNED_POINTER);
+  return next === text ? null : next;
 }
 
 export const FACTS_SYSTEM = 'You keep a short list of durable facts about a person\'s work. Answer with plain lines starting with "- " and nothing else.';
@@ -80,8 +130,8 @@ export const factsPrompt = ({ title, date, participants, body }) => [
 ].join('\n');
 export const parseFacts = (out) => String(out ?? '').split('\n').map((l) => l.trim()).filter((l) => l.startsWith('- ')).map((l) => l.slice(2).trim()).filter((l) => l && !/^none\b/i.test(l)).slice(0, 3);
 
-export function createKeeper({ brain, settings, saveSettings = () => {}, guards = () => null, wouldBlock = () => null, runText = null, hasModel = () => false, owner = () => '', log = () => {}, onChange = () => {} }) {
-  const conf = () => ({ on: settings.keeper?.on ?? settings.brainMade === 'quorum' });
+export function createKeeper({ brain, settings, saveSettings = () => {}, guards = () => null, wouldBlock = () => null, runText = null, hasModel = () => false, owner = () => '', log = () => {}, onChange = () => {}, errorLog = null }) {
+  const conf = () => ({ on: settings.keeper?.on ?? settings.brainMade === 'quorum', factsBudget: settings.keeper?.factsBudget ?? LEARNED_BUDGET, factsTarget: settings.keeper?.factsTarget ?? null });
   let running = null;
   let queued = null;
   let lastRows = null;
@@ -103,6 +153,24 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     lastRows = rows;
     return { f, rows, daily: f.daily ? dailyPattern(ctx.daily).template : DAILY_DEFAULT };
   };
+
+  // an upkeep error goes to the console and to a log file under Application Support, which the settings page counts
+  const fail = (where, e) => {
+    const message = String(e?.message || e);
+    log(`keeper ${where} failed`, message);
+    if (!errorLog) return;
+    try { mkdirSync(path.dirname(errorLog), { recursive: true }); appendFileSync(errorLog, JSON.stringify({ at: new Date().toISOString(), where, message }) + '\n'); } catch {}
+  };
+  const errors = () => {
+    const lines = errorLog ? (read(errorLog) ?? '').split('\n').filter(Boolean) : [];
+    let last = null;
+    try { last = lines.length ? JSON.parse(lines.at(-1)) : null; } catch {}
+    return { count: lines.length, last, file: errorLog };
+  };
+
+  // where learned facts go: the user's pick, else .quorum/learned.md when the vault has its own memory system (the facts
+  // plugin found one), else CLAUDE.md
+  const learnedTarget = (reg) => conf().factsTarget ?? (reg.rows.find((r) => r.id === 'facts')?.evidence.length ? 'learned' : 'claude');
 
   const meetingNotes = (vault, dir) => {
     const out = [];
@@ -176,22 +244,36 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
         if (hit) touch(abs, appendUnder(cur, '## Meetings', `- ${date} ${link} ${title}`), cur);
       }
     }
-    // learned facts, with the person's own model source
+    // learned facts, with the person's own model source, into CLAUDE.md or into .quorum/learned.md with a pointer in
+    // CLAUDE.md; lines pruned to fit the budget are kept in the changelog entry
+    const dropped = [];
     if (facts && owns(rows, 'facts') && runText && hasModel()) {
       try {
         const out = await runText(factsPrompt({ title, date, participants: people, body: text.slice(parseFrontmatter(text).end) }), FACTS_SYSTEM);
-        const got = parseFacts(out);
-        if (got.length) {
-          const abs = path.join(vault, 'CLAUDE.md');
+        const got = parseFacts(out).map((g) => `${g} (${link}, ${date})`);
+        const budget = conf().factsBudget;
+        const claudeAbs = path.join(vault, 'CLAUDE.md');
+        const claude = read(claudeAbs);
+        if (got.length && learnedTarget(reg) === 'learned') {
+          // lines still in CLAUDE.md move over first, so the two never hold different lists
+          const moved = claude != null && !isGenerated(claude) ? learnedLines(claude) : [];
+          const abs = path.join(vault, LEARNED_FILE);
           const cur = read(abs);
-          touch(abs, addLearned(cur ?? `# Agent OS\n`, got.map((g) => `${g} (${link}, ${date})`)), cur);
+          const r = addLearned(cur ?? '# Learned from meetings\n\nClaude Code does not load this file on its own. CLAUDE.md points here.\n', [...moved, ...got], { budget });
+          if (r) { mkdirSync(path.dirname(abs), { recursive: true }); touch(abs, r.text, cur); dropped.push(...r.dropped); }
+          if (claude != null) touch(claudeAbs, pointLearned(claude), claude);
+        } else if (got.length) {
+          const r = addLearned(claude ?? `# Agent OS\n`, got, { budget });
+          if (r && !(claude != null && isGenerated(claude))) dropped.push(...r.dropped);
+          touch(claudeAbs, r?.text, claude);
         }
-      } catch (e) { log('keeper facts failed', e?.message || e); }
+      } catch (e) { fail('facts', e); }
     }
     if (changed.length) {
       const abs = path.join(vault, CHANGELOG);
       mkdirSync(path.dirname(abs), { recursive: true });
-      const entry = `## ${new Date().toISOString().slice(0, 16).replace('T', ' ')} ${title}\n\n${changed.filter((c) => c !== CHANGELOG).map((c) => `- ${c}`).join('\n')}\n\n`;
+      const pruned = dropped.length ? `Moved out of the learned facts to stay under the budget:\n\n${dropped.join('\n')}\n\n` : '';
+      const entry = `## ${new Date().toISOString().slice(0, 16).replace('T', ' ')} ${title}\n\n${changed.filter((c) => c !== CHANGELOG).map((c) => `- ${c}`).join('\n')}\n\n${pruned}`;
       writeAtomic(abs, (read(abs) ?? '# Changelog\n\nWhat the keeper changed, newest last. Each entry names the files it touched for one meeting note.\n\n') + entry);
     }
     return changed;
@@ -262,7 +344,7 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
         saveState(vault, st);
       } catch (e) {
         result.error = String(e?.message || e);
-        log('keeper', result.error);
+        fail('run', e);
       }
       lastRun = result;
       if (result.filed || result.skipped) log('keeper', `${reason}: ${result.filed} filed, ${result.changed} files changed, ${result.skipped} withheld`);
@@ -284,7 +366,14 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     const c = conf();
     const st = b ? loadState(b.vault) : { done: {} };
     const reg = b ? registry(b) : null;
-    return { on: c.on, facts: reg ? owns(reg.rows, 'facts') : false, running: !!running, lastRunAt: st.lastRunAt ?? null, filed: Object.keys(st.done ?? {}).length, last: st.last ?? lastRun, held: st.held ?? null, folders: reg?.f ?? {}, model: hasModel(), plugins: reg?.rows ?? [] };
+    return { on: c.on, facts: reg ? owns(reg.rows, 'facts') : false, running: !!running, lastRunAt: st.lastRunAt ?? null, filed: Object.keys(st.done ?? {}).length, last: st.last ?? lastRun, held: st.held ?? null, folders: reg?.f ?? {}, model: hasModel(), plugins: reg?.rows ?? [], learned: reg ? learnedStatus(b.vault, reg) : null, errors: errors() };
+  };
+  // the learned list's size against its budget, and its share of the file it lives in
+  const learnedStatus = (vault, reg) => {
+    const target = learnedTarget(reg);
+    const file = target === 'learned' ? LEARNED_FILE.split(path.sep).join('/') : 'CLAUDE.md';
+    const text = read(path.join(vault, file)) ?? '';
+    return { target, file, budget: conf().factsBudget, chars: learnedChars(learnedLines(text)), fileChars: text.length };
   };
   // one plugin row handed to Quorum or to the vault. A held run planned with the old owners no longer applies, so it
   // is cleared and a new pass is scheduled
@@ -300,7 +389,13 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
   // facts in a patch is the older switch; it now sets the facts plugin row
   const set = (patch = {}) => {
     if (typeof patch.facts === 'boolean') setPlugin('facts', patch.facts ? 'quorum' : 'vault');
-    settings.keeper = { ...settings.keeper, ...conf(), ...(typeof patch.on === 'boolean' ? { on: patch.on } : {}) };
+    settings.keeper = {
+      ...settings.keeper,
+      ...conf(),
+      ...(typeof patch.on === 'boolean' ? { on: patch.on } : {}),
+      ...(Number.isInteger(patch.factsBudget) && patch.factsBudget >= 500 && patch.factsBudget <= 20000 ? { factsBudget: patch.factsBudget } : {}),
+      ...(patch.factsTarget === 'claude' || patch.factsTarget === 'learned' ? { factsTarget: patch.factsTarget } : {}),
+    };
     saveSettings();
     if (settings.keeper.on) schedule('settings');
     return status();

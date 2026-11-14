@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { CHANGELOG, LEARNED_OPEN, addLearned, appendUnder, createKeeper, folders, parseFacts } from '../keeper.js';
+import { CHANGELOG, LEARNED_BUDGET, LEARNED_OPEN, addLearned, appendUnder, createKeeper, folders, learnedChars, learnedLines, parseFacts } from '../keeper.js';
 import { plan, writeStarter } from '../starter.js';
 import { compile, effective } from '../guardrails.js';
 import { wouldBlock } from '../guardrails.js';
@@ -35,12 +35,13 @@ describe('keeper pieces', () => {
     const c = appendUnder('# P\n\n## Meetings\n\n- old\n\n## Related\n\n- [[x]]\n', '## Meetings', '- new');
     expect(c).toContain('- old\n- new\n\n## Related');
   });
-  it('keeps a capped, deduplicated learned block', () => {
-    const t = addLearned('# Mine\n', ['Ada leads design', 'Ship in Q1']);
+  it('keeps a budgeted, deduplicated learned block', () => {
+    const t = addLearned('# Mine\n', ['Ada leads design', 'Ship in Q1']).text;
     expect(t).toContain(LEARNED_OPEN);
     expect(addLearned(t, ['Ada leads design'])).toBeNull();
-    const more = addLearned(t, Array.from({ length: 50 }, (_, i) => `fact ${i}`));
-    expect(more.split('\n').filter((l) => l.startsWith('- ')).length).toBe(40);
+    expect(addLearned(t, ['ada leads design.'])).toBeNull();
+    const more = addLearned(t, Array.from({ length: 50 }, (_, i) => `fact number ${i} about the launch plan`)).text;
+    expect(learnedChars(learnedLines(more))).toBeLessThanOrEqual(LEARNED_BUDGET);
     expect(more).toContain('# Mine');
     expect(parseFacts('- one\n- none\n\n- two\n- three\n- four')).toEqual(['one', 'two', 'three']);
   });
