@@ -5,7 +5,7 @@ import { IconBack, IconCalendar, IconFolder, IconNotes, IconRecord, IconStop } f
 import { IconPen } from './PrivateNotes';
 import { RecordMenu } from './Record';
 import { appendTurn, emptyWritten, recordChoices, type RecordChoice, type Written } from './noteRecord';
-import { speakerLabels, timedTurn, type SpeakerRead, type TimedTurn } from './attribution';
+import { MAX_READS, MAX_TURNS, labelFor, othersIn, timedTurn, type SpeakerRead, type TimedTurn } from './attribution';
 
 const SAVE_AFTER = 800;
 type Status = 'idle' | 'saving' | 'saved' | 'conflict';
@@ -20,7 +20,8 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
   file: string | null; fresh: boolean; record: RecordChoice | null; canRecord: boolean; screenOffered: boolean; leave: number;
   onSaved: (file: string) => void; onClose: () => void;
 }) {
-  const [id] = useState(() => new Date().toISOString().replace(/[:.]/g, '-'));
+  // the note's id: the time it was opened plus a random part, so two notes never share one
+  const [id] = useState(() => `${new Date().toISOString().replace(/[:.]/g, '-')}-${Math.random().toString(36).slice(2, 10)}`);
   // the file is read once per mount; later saves move it through live.current.ref
   const [openFile] = useState(initialFile);
   const [loaded, setLoaded] = useState(!openFile);
@@ -40,12 +41,14 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
   // the text the save timer, Record and the close read outside a render. readOnly stops saving and appending; a
   // conflict stops saving only, so Record keeps writing into the text on screen, which the person can copy
   const live = useRef({
-    title: '', body: '', ref: null as HandNoteRef | null, dirty: false, readOnly: false, conflict: false, closing: false,
+    title: '', body: '', ref: null as HandNoteRef | null, dirty: false, readOnly: false, conflict: false, closing: false, starting: false,
     inflight: null as Promise<boolean> | null, rec: { audio: false, screen: false } as RecordState,
   });
   const written = useRef<Written>(emptyWritten());
   // this recording's timed turns and the call app's speaker reads, for the paragraph labels; self is your own name
-  const heard = useRef<{ turns: TimedTurn[]; reads: SpeakerRead[]; self: string[] }>({ turns: [], reads: [], self: [] });
+  const heard = useRef<{ turns: TimedTurn[]; reads: SpeakerRead[]; others: Set<string>; self: string[] }>({ turns: [], reads: [], others: new Set(), self: [] });
+  // Back could not save: the view stays open with the text, Copy and a way to close anyway
+  const [unsaved, setUnsaved] = useState(false);
   const timer = useRef<number | null>(null);
   const recording = rec.audio || rec.screen;
   live.current.rec = rec;
@@ -130,14 +133,22 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
       window.quorum.onHelperEvent((e) => {
         if (e.event !== 'transcript' || !e.isFinal || e.channel === 'dictation' || !live.current.rec.audio) return;
         const h = heard.current;
-        const timed = timedTurn({ ...e, channel: e.channel }, Date.now());
-        const i = h.turns.findIndex((t) => t.id === timed.id);
-        if (i < 0) h.turns.push(timed); else h.turns[i] = { ...timed, startMs: Math.min(h.turns[i].startMs, timed.startMs) };
-        const label = speakerLabels(h.turns, h.reads, { self: h.self })[timed.id];
+        const now = timedTurn({ ...e, channel: e.channel }, Date.now());
+        const i = h.turns.findIndex((t) => t.id === now.id);
+        const timed = i < 0 ? now : { ...now, startMs: Math.min(h.turns[i].startMs, now.startMs) };
+        if (i < 0) h.turns = [...h.turns.slice(-(MAX_TURNS - 1)), timed]; else h.turns[i] = timed;
+        // only this turn is labeled, against the reads in its own window
+        const label = labelFor(timed, h.turns.filter((t) => t.id !== timed.id && t.startMs <= timed.startMs), h.reads, h.others, { self: h.self });
         const turn = { id: timed.id, channel: e.channel, text: e.text, replace: e.replace, label };
         append((b) => appendTurn(b, written.current, turn));
       }),
-      window.quorum.onCallSpeakers((r) => { if (live.current.rec.screen) heard.current.reads.push({ at: r.at, names: r.names, active: r.active }); }),
+      window.quorum.onCallSpeakers((r) => {
+        if (!live.current.rec.screen) return;
+        const h = heard.current;
+        const read = { at: r.at, names: r.names, active: r.active };
+        h.reads = [...h.reads.slice(-(MAX_READS - 1)), read];
+        for (const n of othersIn([read], h.self)) h.others.add(n);
+      }),
     ];
     window.quorum.user().then((u) => { if (u?.name) heard.current.self = [u.name]; }).catch(() => {});
     window.quorum.recordStatus().then((s) => setRec({ audio: s.audio, screen: s.screen })).catch(() => {});
@@ -170,9 +181,13 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
     setMenu(false);
     setError(null);
     written.current = emptyWritten();
-    heard.current = { ...heard.current, turns: [], reads: [] };
-    const r = await window.quorum.recordStart(c);
-    if ('error' in r) { setError(r.error); return; }
+    heard.current = { ...heard.current, turns: [], reads: [], others: new Set() };
+    const s = live.current;
+    s.starting = true;
+    const r = await window.quorum.recordStart(c).finally(() => { s.starting = false; });
+    if ('error' in r) { if (!s.closing) setError(r.error); return; }
+    // Back was pressed while it started: main stands the start down, and this makes sure nothing keeps running
+    if (s.closing) { await window.quorum.recordStop(); return; }
     setRec({ audio: r.audio, screen: r.screen });
   }
   const stop = async () => { const s = await window.quorum.recordStop(); setRec({ audio: s.audio, screen: s.screen }); };
@@ -181,14 +196,21 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
 
   // Back: the recording stops, the save in flight finishes and the latest text is saved, then the note syncs. A note
   // stopped by a conflict goes to the clipboard so nothing typed or heard is lost
-  async function close() {
+  async function close(force = false) {
     const s = live.current;
     if (s.closing) return;
     s.closing = true;
-    if (s.rec.audio || s.rec.screen) await window.quorum.recordStop();
+    // a recording that is running, or still starting, stops before anything else
+    if (s.rec.audio || s.rec.screen || s.starting) setRec(await window.quorum.recordStop());
     if (timer.current) { window.clearTimeout(timer.current); timer.current = null; }
     await save();
     if (s.conflict) await copyText().catch(() => {});
+    // a save that failed for another reason keeps the view open, so the text is never closed away unsaved
+    if (!force && !s.conflict && !s.readOnly && s.dirty && (s.ref || s.title.trim() || s.body.trim())) {
+      s.closing = false;
+      setUnsaved(true);
+      return;
+    }
     await window.quorum.handNoteDone(s.ref?.file ?? null);
     onClose();
   }
@@ -200,7 +222,7 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
   return (
     <div className="panel end note-view">
       <header className="end-bar">
-        <button className="pill ghost" onClick={close}><IconBack width={16} height={16} /> Back</button>
+        <button className="pill ghost" onClick={() => close()}><IconBack width={16} height={16} /> Back</button>
         <div className="end-actions">
           {status === 'saving' && <span className="muted note-status">Saving…</span>}
           {status === 'saved' && ref && <span className="saved">Saved to {ref.rel.replace(/^MyBrain\//, '')}</span>}
@@ -238,6 +260,13 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
             </div>
           </div>
           {error && <p className="set-error" role="alert">{error}</p>}
+          {unsaved && (
+            <p className="set-error" role="alert">
+              Quorum couldn't save this note, so it stayed open. Copy your text, or try Back again.{' '}
+              <button className="pill small-pill" onClick={copyText}>Copy your text</button>
+              <button className="pill small-pill" onClick={() => close(true)}>Close without saving</button>
+            </p>
+          )}
           {status === 'conflict' && (
             <p className="set-error" role="alert">
               This note changed on disk since it was opened, so Quorum stopped saving to keep that version.{' '}

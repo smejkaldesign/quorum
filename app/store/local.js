@@ -4,6 +4,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync,
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { writeAtomic } from '../relink.js';
+import { readFrontmatter, setFrontmatterKey } from '../frontmatter.js';
 import { DATA_DIR, isDevelopment } from '../edition.js';
 
 // DATA_DIR is ~/Library/Application Support/Quorum, or Quorum Dev for a development copy (edition.js)
@@ -33,36 +34,6 @@ export const settings = {
 export const state = {
   write: (data) => { try { writeFileSync(STATE_FILE, JSON.stringify(data)); } catch {} },
 };
-
-// minimal frontmatter reader for the meeting notes (title, date, participants list)
-function readFrontmatter(text) {
-  const m = text.match(/^---\n([\s\S]*?)\n---/);
-  const fm = { participants: [] };
-  if (!m) return fm;
-  let inList = false;
-  for (const line of m[1].split('\n')) {
-    const kv = line.match(/^(\w+):\s*(.*)$/);
-    if (kv) {
-      inList = kv[1] === 'participants' && !kv[2];
-      if (!inList) fm[kv[1]] = kv[2].replace(/^"(.*)"$/, '$1');
-    } else if (inList && /^\s+-\s+/.test(line)) {
-      fm.participants.push(line.replace(/^\s+-\s+/, ''));
-    }
-  }
-  return fm;
-}
-
-// set one frontmatter key in place; everything else in the file stays byte-for-byte. An empty block ("---" then
-// "---") is filled in, so the file never gets a second block in front of it
-function setFrontmatterKey(text, key, value) {
-  const line = `${key}: ${value}`;
-  const m = text.match(/^---\n(?:([\s\S]*?)\n)??---(?=[ \t]*(?:\n|$))/);
-  if (!m) return `---\n${line}\n---\n${text}`;
-  const block = m[1] ?? '';
-  const re = new RegExp(`^${key}:.*$`, 'm');
-  const fm = re.test(block) ? block.replace(re, () => line) : block ? `${block}\n${line}` : line;
-  return `---\n${fm}\n---${text.slice(m[0].length)}`;
-}
 
 function noteTitle(abs) {
   try {

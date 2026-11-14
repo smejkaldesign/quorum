@@ -59,4 +59,18 @@ final class ScreenContextTests: XCTestCase {
         XCTAssertEqual(ZoomChat.tile("Sam")?.name, "Sam")
         XCTAssertNil(ZoomChat.tile(""))
     }
+
+    func testZoomTileRoleListAndCommasInNames() {
+        let host = ZoomChat.tile("Ada Lovelace (Host, me), Video on")
+        XCTAssertEqual(host?.name, "Ada Lovelace")
+        XCTAssertEqual(host?.me, true)
+        XCTAssertEqual(ZoomChat.tile("Grace Hopper (Co-host), Talking")?.name, "Grace Hopper")
+        XCTAssertEqual(ZoomChat.tile("Grace Hopper (Co-host), Talking")?.me, false)
+        XCTAssertEqual(ZoomChat.tile("Sam (me)")?.me, true)
+        XCTAssertEqual(ZoomChat.tile("Lovelace, Ada")?.name, "Lovelace, Ada")
+        let comma = ZoomChat.tile("Lovelace, Ada, Video off, Speaking")
+        XCTAssertEqual(comma?.name, "Lovelace, Ada")
+        XCTAssertEqual(comma?.active, true)
+        XCTAssertEqual(ZoomChat.tile("Team (Design)")?.name, "Team (Design)")
+    }
 }

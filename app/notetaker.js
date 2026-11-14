@@ -62,6 +62,10 @@ export function recordDecision(g, { meetingActive = false } = {}) {
   return d.solo ? { ok: true } : { ok: false, error: CALL_ACTIVE };
 }
 
+// Record's Screen reads (screenshots and the call app's tiles) only run while Record itself would be allowed: never on
+// a noticed call, whose window is read only after its consent notice, through the call's own session
+export const screenReadsAllowed = (g, { meetingActive = false } = {}) => recordDecision(g, { meetingActive }).ok && g.screenContext;
+
 // what keep() does with each final line: the STOP-intent check and the opted-out name match only make sense on a
 // noticed call; suggestions are live assistance
 export const keepActions = (g, { solo = true } = {}) => ({
