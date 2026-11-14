@@ -76,6 +76,35 @@ create policy member_integrations_select on public.member_integrations for selec
 revoke all on public.member_integrations from anon, authenticated;
 grant select on public.member_integrations to authenticated;
 
+-- members' connections end when the connector is turned off or switched to org mode (removing it deletes the rows), and
+-- when a member leaves the workspace
+create or replace function public.workspace_integration_end_connections() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if (old.enabled and not new.enabled) or (old.mode = 'personal' and new.mode = 'org') then
+    update public.member_integrations m set status = 'disconnected' where m.integration_id = new.id and m.status = 'connected';
+  end if;
+  return new;
+end $$;
+create trigger workspace_integrations_end_connections after update of enabled, mode on public.workspace_integrations for each row execute function public.workspace_integration_end_connections();
+revoke all on function public.workspace_integration_end_connections() from public, anon, authenticated;
+
+create or replace function public.member_left_end_connections() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare u uuid; ws public.ulid;
+begin
+  if tg_op = 'DELETE' then u := old.user_id; ws := old.workspace_id;
+  elsif old.deleted_at is null and new.deleted_at is not null then u := new.user_id; ws := new.workspace_id;
+  else return new;
+  end if;
+  update public.member_integrations m set status = 'disconnected'
+    from public.workspace_integrations i
+    where m.integration_id = i.id and i.workspace_id = ws and m.user_id = u and m.status = 'connected';
+  return coalesce(new, old);
+end $$;
+create trigger members_end_connections after update of deleted_at or delete on public.members for each row execute function public.member_left_end_connections();
+revoke all on function public.member_left_end_connections() from public, anon, authenticated;
+
 alter table public.workspaces add column approved_connectors_only boolean not null default true;
 
 -- the config as stored: only the known keys, each cleaned. scopes are the provider scopes the organization picked,
@@ -128,14 +157,19 @@ begin
 end $$;
 
 -- the row as an admin sees it: every non-secret column, whether a secret is set, its last four characters, and how many
--- connections it has (an org connector has one shared connection once a secret is set or mock mode is on)
+-- connections it has. A turned-off connector has none. An org connector has one shared connection once a secret is set
+-- (or mock mode is on, which no screen offers yet). A personal connector counts the current members who are connected.
 create or replace function public.workspace_integration_admin_row(i public.workspace_integrations) returns jsonb
 language sql stable security definer set search_path = public as $$
   select (to_jsonb(i) - 'secret_id' - 'secret_last4') || jsonb_build_object(
     'secret_set', i.secret_id is not null,
     'secret_last4', i.secret_last4,
-    'connections', case when i.mode = 'org' then (case when i.secret_id is not null or coalesce(i.config ->> 'mock', '') = 'true' then 1 else 0 end)
-      else (select count(*) from public.member_integrations m where m.integration_id = i.id and m.status = 'connected') end);
+    'connections', case
+      when not i.enabled then 0
+      when i.mode = 'org' then (case when i.secret_id is not null or coalesce(i.config ->> 'mock', '') = 'true' then 1 else 0 end)
+      else (select count(*) from public.member_integrations m
+        join public.members w on w.user_id = m.user_id and w.workspace_id = i.workspace_id and w.deleted_at is null
+        where m.integration_id = i.id and m.status = 'connected') end);
 $$;
 
 -- enables or updates the workspace's connector for one provider. secret: a new API key or client secret for org mode;
@@ -162,8 +196,10 @@ begin
   if length(k) > 4000 then raise exception 'That secret is too long'; end if;
   cfg := public.workspace_integration_config(ws, workspace_integration_save.config);
   select * into i from public.workspace_integrations x where x.workspace_id = ws and x.provider = p;
-  if m = 'org' and k = '' and (i.id is null or i.secret_id is null) and not (cfg ->> 'mock')::boolean then
-    raise exception 'An org connector needs an API key or client secret, or mock mode';
+  -- a blank secret keeps the stored one only under the auth method it was saved for: an API key is no client secret
+  if m = 'org' and k = '' and not (cfg ->> 'mock')::boolean then
+    if i.id is null or i.secret_id is null then raise exception 'An org connector needs an API key or client secret'; end if;
+    if coalesce(i.config ->> 'auth', 'api_key') <> cfg ->> 'auth' then raise exception 'A new auth method needs a new secret'; end if;
   end if;
   if i.id is null then
     nid := public.gen_ulid();

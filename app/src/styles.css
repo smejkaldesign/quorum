@@ -1689,9 +1689,6 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .wsi-crumbs .link-btn.plain { margin: 0; padding: 0; color: var(--muted); }
 .wsi-head-actions { flex: none; display: inline-flex; align-items: center; gap: 8px; padding-top: 10px; }
 .wsi-lede { margin: 4px 0 8px; color: var(--muted); font-size: 14px; line-height: 1.55; }
-.wsi-mock { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 12px 0 4px; padding: 12px 14px; border: 1px dashed var(--line-2); border-radius: 12px; }
-.wsi-mock > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.wsi-mock span { color: var(--muted); font-size: 13px; line-height: 1.5; }
 .wsi-actions { margin-top: 16px; justify-content: space-between; }
 .wsi-form { max-width: 620px; }
 .wsi-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 6px 0 8px; }

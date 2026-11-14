@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import type { AgentSchedule, Brain, CalendarSettings, MeetingSourceInfo, OAuthAccount, PlatformInfo, SourceJob } from './quorum';
 import { TRADEOFFS } from '../sources/agent-import';
 import { CATEGORIES, CONNECTORS_CHANGED, aboutFor, connectorsFor, featuresFor, isConnected, type LibraryConnector } from '../connectors/library';
-import { BLOCKED_SENTENCE, UNAPPROVED_LABEL, approvalOf, isGoverned, type Approval } from '../connectors/approval';
+import { BLOCKED_SENTENCE, ORG_LABEL, ORG_SENTENCE, UNAPPROVED_LABEL, approvalOf, canConnect, hasLocalPart, hiddenFromList, isGoverned, type Approval } from '../connectors/approval';
 import { useConnectorPolicy } from './edition';
 import { useFlag } from './flags';
 import { useMenu } from './controls';
@@ -36,6 +36,9 @@ function useLibrary() {
 const appWhere = (x: LibraryConnector) => (x.app === 'zoom' ? 'the Zoom app' : x.app === 'teams' ? 'the Teams app or a browser' : 'the browser');
 // the personal OAuth account behind an Accounts row; configured is false when this build has no client id for it
 const accountFor = (x: LibraryConnector, live: Live) => (x.account ? live.accounts.find((a) => a.id === x.id) ?? null : null);
+// connected to the outside account the workspace governs: for a meeting app, its cloud import account only, since
+// listening on this Mac is not an account
+const accountConnected = (x: LibraryConnector, live: Live) => (x.kind === 'meeting-app' ? !!platformFor(x, live)?.connected : isConnected(x, live));
 const unavailable = (x: LibraryConnector, live: Live) => !!x.account && accountFor(x, live)?.configured !== true;
 const googleFor = (x: LibraryConnector, live: Live) => (x.id === 'google-calendar' ? live.cal?.google ?? null : null);
 const connectionType = (x: LibraryConnector) =>
@@ -78,7 +81,7 @@ export function ConnectorsPage({ detail, onDetail, brain, onFolder, onNotes, foc
   // Cloud on a team with "approved connectors only" on: connectors the workspace did not enable are hidden unless
   // already connected (connectors/approval.js). null everywhere else, which leaves the page as it was
   const { policy, report } = useConnectorPolicy();
-  const approval = (x: LibraryConnector): Approval => approvalOf(x, policy, isConnected(x, live));
+  const approval = (x: LibraryConnector): Approval => approvalOf(x, policy, accountConnected(x, live));
   const load = async () => {
     // the local edition has no platform handlers; the call fails and the list stays empty
     const [sources, cal, mcp, providers, platforms, accounts] = await Promise.all([window.quorum.sourcesList(), window.quorum.calendarStatus(), window.quorum.mcpStatus(), window.quorum.meetingProviders(), window.quorum.platformsList().catch(() => [] as PlatformInfo[]), window.quorum.oauthAccounts().catch(() => [] as OAuthAccount[])]);
@@ -98,7 +101,7 @@ export function ConnectorsPage({ detail, onDetail, brain, onFolder, onNotes, foc
     if (live.sources.some((s) => fresh(s.job)) || live.platforms.some((p) => fresh(p.job))) { const t = setTimeout(load, 500); return () => clearTimeout(t); }
   }, [live.sources, live.platforms]);
   // the workspace counts which of its connectors this member has connected (migration 0030 member_integrations)
-  useEffect(() => { if (loaded) report(libraryList.filter((x) => isGoverned(x) && isConnected(x, live)).map((x) => x.id)); }, [loaded, live, libraryList, report]);
+  useEffect(() => { if (loaded) report(libraryList.filter((x) => isGoverned(x) && accountConnected(x, live)).map((x) => x.id)); }, [loaded, live, libraryList, report]);
   // a deep link naming a group scrolls to it once the rows are in
   useEffect(() => {
     if (!focus || focus.cat === true || !loaded || detail) return;
@@ -107,7 +110,7 @@ export function ConnectorsPage({ detail, onDetail, brain, onFolder, onNotes, foc
   if (detail && byId[detail]) return <ConnectorDetail connector={byId[detail]} icon={icons[detail] ?? null} live={live} onChange={load} initialError={refused?.id === detail ? refused.error : ''} approval={approval(byId[detail])} />;
   // what the library offers today (with meeting capture off, Meet and Teams are not built as imports yet), and
   // anything still connected whatever its status, so it can be disconnected
-  const listed = (id: string) => !!byId[id] && (byId[id].status !== 'soon' || isConnected(byId[id], live)) && approval(byId[id]) !== 'blocked';
+  const listed = (id: string) => !!byId[id] && (byId[id].status !== 'soon' || isConnected(byId[id], live)) && !hiddenFromList(byId[id], approval(byId[id]));
   const soon = libraryList.filter((x) => x.status === 'soon');
   const named = [...MORE_FIRST.map((id) => soon.find((x) => x.id === id)).filter((x): x is LibraryConnector => !!x), ...soon.filter((x) => !MORE_FIRST.includes(x.id))].slice(0, MORE_NAMED).map((x) => x.name);
   const others = soon.length - named.length;
@@ -235,6 +238,9 @@ function ConnectorRow({ connector: x, icon, live, approval, onChange, onOpen, on
   const cloud = needsCloud(x, live);
   // a copy built without the provider's client id cannot connect it; the row says so instead of offering it
   const off = !on && unavailable(x, live);
+  // the workspace runs it with a shared identity: read-only here, with no personal Connect
+  const org = approval === 'org' && !on;
+  const personal = canConnect(approval) || hasLocalPart(x);
   const meta = approval === 'unapproved' ? UNAPPROVED_LABEL : on ? metaLine(x, live) : off ? 'Not available yet' : null;
   return (
     <div className="conn-row">
@@ -243,10 +249,10 @@ function ConnectorRow({ connector: x, icon, live, approval, onChange, onOpen, on
         <strong className="conn-title">{x.name}</strong>
         {cloud && <em className="soon grey">Cloud</em>}
         {approval === 'approved' && <em className="soon grey">Workspace</em>}
-        <Status on={on} />
+        {org ? <span className="conn-ok"><i />{ORG_LABEL}</span> : <Status on={on} />}
         {meta && <span className="conn-meta">{meta}</span>}
         {on ? <Actions connector={x} live={live} busy={busy} act={act} compact />
-          : <span className="conn-actions" onClick={(e) => e.stopPropagation()}>{cloud ? <button className="pill" onClick={() => window.quorum.openExternal(PRICING)}>See Cloud</button> : off ? null : <ConnectButton connector={x} live={live} busy={busy} act={act} onWrongAccount={onWrongAccount} />}</span>}
+          : <span className="conn-actions" onClick={(e) => e.stopPropagation()}>{cloud ? <button className="pill" onClick={() => window.quorum.openExternal(PRICING)}>See Cloud</button> : off || !personal ? null : <ConnectButton connector={x} live={live} busy={busy} act={act} onWrongAccount={onWrongAccount} />}</span>}
         <IconChevron className="right conn-chev" width={14} height={14} />
       </div>
       {src?.job && <div className="conn-sub"><JobLine job={src.job} oneLine /></div>}
@@ -257,6 +263,9 @@ function ConnectorRow({ connector: x, icon, live, approval, onChange, onOpen, on
 
 function ConnectorDetail({ connector: x, icon, live, onChange, initialError = '', approval = 'open' }: { connector: LibraryConnector; icon: string | null; live: Live; onChange: () => Promise<void>; initialError?: string; approval?: Approval }) {
   const blocked = approval === 'blocked';
+  // a personal connect or reconnect needs an open or approved connector; listening on this Mac is never governed
+  const refusal = canConnect(approval) ? null : approval === 'org' ? ORG_SENTENCE(x.name) : BLOCKED_SENTENCE;
+  const personal = !refusal || hasLocalPart(x);
   const [busy, actError, act] = useAct(onChange);
   const error = actError || initialError;
   const [tab, setTab] = useState<'details' | 'settings'>('details');
@@ -326,17 +335,18 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
         </div>
       </div>
       <TitleActions>
-        {!soon && !on && !off && !blocked && !(accountProblem && x.kind === 'mcp-source') && <ConnectButton connector={x} live={live} busy={busy} act={act} />}
+        {!soon && !on && !off && personal && !(accountProblem && x.kind === 'mcp-source') && <ConnectButton connector={x} live={live} busy={busy} act={act} />}
         {on && <Actions connector={x} live={live} busy={busy} act={act} compact />}
       </TitleActions>
-      {(blocked || approval === 'unapproved') && <div className="conn-alert" role="status"><strong>{blocked ? 'Not approved by your workspace' : UNAPPROVED_LABEL}</strong><span>{blocked ? BLOCKED_SENTENCE : 'You connected this yourself. It keeps working until you disconnect it. Connecting it again needs an owner or admin to approve it.'}</span></div>}
+      {(blocked || approval === 'unapproved') && <div className="conn-alert" role="status"><strong>{UNAPPROVED_LABEL}</strong><span>{blocked ? BLOCKED_SENTENCE : 'You connected this yourself. It keeps working until you disconnect it. Connecting it again needs an owner or admin to approve it.'}</span></div>}
+      {approval === 'org' && <div className="conn-alert" role="status"><strong>{ORG_LABEL}</strong><span>{ORG_SENTENCE(x.name)}</span></div>}
       {alert && <div className="conn-alert" role="alert"><strong>{accountProblem ? 'Sign in with a different account' : alert.split('. ')[0].replace(/\.$/, '')}</strong><span>{alert}</span></div>}
       <h4>Connectivity</h4>
       <div className={`set-card conn-jobcard${on ? ' on' : ''}`}>
         {on && !prov && <span className="conn-ok conn-badge"><i />Connected{src && !src.syncNotes ? ' · sync off' : ''}</span>}
         {prov || cloudOnly(x)
-          ? <Capabilities connector={x} provider={prov} platform={platformFor(x, live)} busy={busy} act={act} blocked={blocked} />
-          : accountProblem && !on && x.kind === 'mcp-source'
+          ? <Capabilities connector={x} provider={prov} platform={platformFor(x, live)} busy={busy} act={act} refusal={refusal} />
+          : accountProblem && !on && x.kind === 'mcp-source' && !refusal
           ? <DifferentAccount connector={x} busy={busy} act={act} />
           : src?.job && src.job.status !== 'failed'
             ? <JobLine job={src.job} />
@@ -460,7 +470,7 @@ function AgentImport({ source: src, busy, act }: { source: MeetingSourceInfo; bu
 
 // a meeting app has two capabilities: listening on this Mac, which needs no account, and importing its cloud
 // recordings through the user's own account on the platform, which is part of Quorum Cloud
-function Capabilities({ connector: x, provider: p, platform: plat, busy, act, blocked = false }: { connector: LibraryConnector; provider: Provider | null; platform: PlatformInfo | null; busy: boolean; act: Act; blocked?: boolean }) {
+function Capabilities({ connector: x, provider: p, platform: plat, busy, act, refusal = null }: { connector: LibraryConnector; provider: Provider | null; platform: PlatformInfo | null; busy: boolean; act: Act; refusal?: string | null }) {
   const live = listening(p);
   const why = !p ? '' : !p.enabled ? `Off. Quorum ignores ${x.name} calls until you start listening.`
     : !p.installed ? `${x.name} isn't installed on this Mac.`
@@ -481,7 +491,7 @@ function Capabilities({ connector: x, provider: p, platform: plat, busy, act, bl
         {plat && plat.available && !plat.connected && (
           <div className="conn-cap-row">
             <p>Transcripts of your {x.name} cloud recordings become meeting notes, downloaded straight to this Mac.</p>
-            {blocked ? <p className="muted">{BLOCKED_SENTENCE}</p> : <button className="pill primary small-pill" disabled={busy} onClick={() => act(() => window.quorum.platformConnect(x.app!))}>{busy ? 'Finish in your browser…' : `Connect ${x.name} account`}</button>}
+            {refusal ? <p className="muted">{refusal}</p> : <button className="pill primary small-pill" disabled={busy} onClick={() => act(() => window.quorum.platformConnect(x.app!))}>{busy ? 'Finish in your browser…' : `Connect ${x.name} account`}</button>}
           </div>
         )}
         {plat?.connected && (plat.job && plat.job.status !== 'failed' && running

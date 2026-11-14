@@ -9,6 +9,7 @@
 // connected, so the admin page can count connections. No tokens go to the server in this step.
 import { plain } from './account.js';
 import { cleanIntegrationDraft } from './integrationDraft.js';
+import { policyOf } from '../connectors/approval.js';
 
 export { cleanIntegrationDraft };
 
@@ -46,6 +47,22 @@ export function createIntegrations({ account, log = () => {} }) {
     return null;
   };
   const ws = () => account.state().workspace.id;
+  // the last policy read for a workspace: a failed read answers with it, so a dropped connection does not lift the policy
+  const known = new Map();
+  const readPolicy = async () => {
+    if (ready()) return null;
+    const id = ws();
+    try {
+      const { data, error } = await account.client().rpc('workspace_connector_policy', { workspace_id: id });
+      if (error) throw error;
+      const p = policyRow(data);
+      known.set(id, p);
+      return p;
+    } catch (err) {
+      log('integrations', err?.message ?? err);
+      return known.get(id) ?? null;
+    }
+  };
   const adminList = async () => {
     const { data, error } = await account.client().rpc('workspace_integrations_admin', { workspace_id: ws() });
     if (error) throw error;
@@ -97,12 +114,7 @@ export function createIntegrations({ account, log = () => {} }) {
     },
     // read by every member's Connections page; signed out or without a workspace, no policy applies
     'connector-policy': async () => {
-      if (ready()) return { policy: null };
-      try {
-        const { data, error } = await account.client().rpc('workspace_connector_policy', { workspace_id: ws() });
-        if (error) { log('integrations', error.message ?? error); return { policy: null }; }
-        return { policy: policyRow(data) };
-      } catch (err) { log('integrations', err?.message ?? err); return { policy: null }; }
+      return { policy: await readPolicy() };
     },
     'member-integrations-sync': async (connected) => {
       if (ready()) return { ok: false };
@@ -114,5 +126,7 @@ export function createIntegrations({ account, log = () => {} }) {
       } catch (err) { log('integrations', err?.message ?? err); return { ok: false }; }
     },
   };
-  return { handlers };
+  // the connect guard's view (connectors/connectGuard.js): read fresh at each connect
+  const guardPolicy = async () => policyOf(await readPolicy());
+  return { handlers, guardPolicy };
 }

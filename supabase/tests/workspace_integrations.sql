@@ -105,6 +105,40 @@ select pg_temp.expect_error($$insert into public.member_integrations (user_id, i
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000e3');
 select pg_temp.check(public.member_integrations_sync('01KE00000000000000000000WA', array[]::text[]) = 0, 'disconnecting clears the connection');
 
+-- 7b. connections end when the connector is turned off, switched to org, or the member leaves
+create function pg_temp.drive_status() returns text language sql as $$
+  select m.status from public.member_integrations m join public.workspace_integrations i on i.id = m.integration_id
+  where i.provider = 'google-drive' and m.user_id = '00000000-0000-4000-8000-0000000000e3' $$;
+create function pg_temp.drive_count() returns int language sql as $$
+  select (r ->> 'connections')::int from jsonb_array_elements(public.workspace_integrations_admin('01KE00000000000000000000WA')) r where r ->> 'provider' = 'google-drive' $$;
+select public.member_integrations_sync('01KE00000000000000000000WA', array['google-drive']);
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000e1');
+select public.workspace_integration_set_enabled((select id from public.workspace_integrations where provider = 'google-drive'), false);
+select pg_temp.check(pg_temp.drive_count() = 0, 'a turned-off connector counts no connections');
+select pg_temp.as_admin_role();
+select pg_temp.check(pg_temp.drive_status() = 'disconnected', 'turning a connector off ends members'' connections');
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000e1');
+select public.workspace_integration_set_enabled((select id from public.workspace_integrations where provider = 'google-drive'), true);
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000e3');
+select public.member_integrations_sync('01KE00000000000000000000WA', array['google-drive']);
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000e1');
+select public.workspace_integration_save('01KE00000000000000000000WA', 'google-drive', 'org', '{}', 'secret_DRIVEKEY0001');
+select pg_temp.as_admin_role();
+select pg_temp.check(pg_temp.drive_status() = 'disconnected', 'switching to org ends members'' personal connections');
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000e1');
+select public.workspace_integration_save('01KE00000000000000000000WA', 'google-drive', 'personal', '{}', null);
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000e3');
+select public.member_integrations_sync('01KE00000000000000000000WA', array['google-drive']);
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000e1');
+select pg_temp.check(pg_temp.drive_count() = 1, 'a current member counts');
+select pg_temp.as_admin_role();
+update public.members set deleted_at = now() where user_id = '00000000-0000-4000-8000-0000000000e3' and workspace_id = '01KE00000000000000000000WA';
+select pg_temp.check(pg_temp.drive_status() = 'disconnected', 'a member who leaves is disconnected');
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000e1');
+select pg_temp.check(pg_temp.drive_count() = 0, 'a former member does not count');
+select pg_temp.as_admin_role();
+update public.members set deleted_at = null where user_id = '00000000-0000-4000-8000-0000000000e3' and workspace_id = '01KE00000000000000000000WA';
+
 -- 8. validation: org without a secret, a short secret, a personal secret, an owner who is not a member, a bad scope
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000e1');
 select pg_temp.expect_error($$select public.workspace_integration_save('01KE00000000000000000000WA', 'slack', 'org', '{}', null)$$, 'needs an API key');
@@ -126,6 +160,8 @@ select pg_temp.as_admin_role();
 create temp table old_secret as select secret_id from public.workspace_integrations where provider = 'notion';
 select pg_temp.check((select s.decrypted_secret from vault.decrypted_secrets s where s.id = (select secret_id from old_secret)) = 'secret_NEWVALUE9876', 'Vault holds the new secret');
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000e1');
+select pg_temp.expect_error($$select public.workspace_integration_save('01KE00000000000000000000WA', 'notion', 'org', '{"auth": "oauth_client", "client_id": "abc"}', null)$$, 'new auth method needs a new secret');
+select pg_temp.check((public.workspace_integration_save('01KE00000000000000000000WA', 'notion', 'org', '{"auth": "oauth_client", "client_id": "abc"}', 'client_SECRET_4321') ->> 'secret_last4') = '4321', 'a new auth method with its secret saves');
 select public.workspace_integration_save('01KE00000000000000000000WA', 'notion', 'personal', '{}', null);
 select pg_temp.as_admin_role();
 select pg_temp.check(not exists (select 1 from vault.secrets where id = (select secret_id from old_secret)), 'switching to personal removes the Vault secret');

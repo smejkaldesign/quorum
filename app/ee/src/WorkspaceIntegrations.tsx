@@ -3,9 +3,9 @@ import type { AccountState, ConnectorPolicyInfo, IntegrationConfig, IntegrationD
 import { Row, Toggle } from '../../src/controls';
 import { IconGrid, IconPlus, IconTrash } from '../../src/icons';
 import { connectorsFor, type LibraryConnector } from '../../connectors/library';
-import { workspaceStateOf } from '../../connectors/approval';
+import { POLICY_CHANGED, workspaceStateOf } from '../../connectors/approval';
 import { OAUTH_APPS } from '../../connectors/oauthApps';
-import { ELIGIBLE_IDS, checkScope, cleanIntegrationDraft } from '../integrationDraft';
+import { ELIGIBLE_IDS, checkScope, cleanIntegrationDraft, keepsSecret } from '../integrationDraft';
 import { EE_MARKER } from './Account';
 
 // Settings > Admin > Workspace > Connectors, the library part (migration 0030): each connector Quorum can reach, with
@@ -41,6 +41,8 @@ export function WorkspaceIntegrations({ account, onDetail }: { account: AccountS
   const [error, setError] = useState('');
   const [open, setOpen] = useState<string | null>(null);
   const [form, setForm] = useState<{ connector: LibraryConnector; row: WorkspaceIntegration | null } | null>(null);
+  // every change here can change what members see, so Connections reloads its policy
+  const changed = () => { window.dispatchEvent(new Event(POLICY_CHANGED)); load(); };
   const load = async () => {
     const r = await window.quorum.integrationsAdmin();
     if (r.error) { setError(r.error); return; }
@@ -58,19 +60,19 @@ export function WorkspaceIntegrations({ account, onDetail }: { account: AccountS
   const setApprovedOnly = async (on: boolean) => {
     setError('');
     const r = await window.quorum.approvedOnlySet(on);
-    if (r.error) setError(r.error); else load();
+    if (r.error) setError(r.error); else changed();
   };
   const toggle = async (row: WorkspaceIntegration, on: boolean) => {
     setError('');
     const r = await window.quorum.integrationEnable(row.id, on);
-    if (r.error) setError(r.error); else load();
+    if (r.error) setError(r.error); else changed();
   };
   const remove = async (row: WorkspaceIntegration) => {
     setError('');
     const r = await window.quorum.integrationRemove(row.id);
-    if (r.error) setError(r.error); else { setOpen(null); load(); }
+    if (r.error) setError(r.error); else { setOpen(null); changed(); }
   };
-  const sheet = form && <IntegrationForm connector={form.connector} row={form.row} members={members} onDone={(saved) => { setForm(null); if (saved) { load(); setOpen(form.connector.id); } }} />;
+  const sheet = form && <IntegrationForm connector={form.connector} row={form.row} members={members} onDone={(saved) => { setForm(null); if (saved) { changed(); setOpen(form.connector.id); } }} />;
   const openConnector = open ? LIBRARY.find((x) => x.id === open) : null;
   const openRow = open ? rows?.find((r) => r.provider === open) ?? null : null;
   if (openConnector && openRow) {
@@ -96,7 +98,7 @@ export function WorkspaceIntegrations({ account, onDetail }: { account: AccountS
       <div className="set-card">
         {LIBRARY.map((x) => {
           const { state, row } = workspaceStateOf(x.id, rows);
-          const desc = !row ? x.description : !row.enabled ? `Turned off · ${STATE_LABEL[row.mode]} identity` : row.mode === 'org' ? `Shared org identity · ${row.secretSet ? 'secret set' : row.config.mock ? 'mock mode' : 'no secret'}` : `Each member's own account · ${plural(row.connections, 'connection')}`;
+          const desc = !row ? x.description : !row.enabled ? `Turned off · ${STATE_LABEL[row.mode]} identity` : row.mode === 'org' ? `Shared org identity · ${row.secretSet ? 'secret set' : 'no secret'}` : `Each member's own account · ${plural(row.connections, 'connection')}`;
           return (
             <Row key={x.id} icon={<Logo icon={icons[x.id] ?? null} />} title={<>{x.name}<em className={`stub${state === 'off' ? '' : ' new'}`}>{STATE_LABEL[state]}</em></>} desc={desc}>
               {row ? <button className="pill small-pill" onClick={() => setOpen(x.id)}>Open</button>
@@ -156,11 +158,6 @@ function IntegrationView({ connector: x, row, icon, members, onBack, onEdit, onT
           ? `${x.name} runs as one identity your organization provisions. Quorum uses it on the organization's behalf; members never see or authorize it.`
           : `Each member links their own ${x.name} account the first time they connect it in Settings, Connections. Quorum acts as that member, with only the access they granted.`}</p>
         {rows.map(([k, v]) => <div key={k} className="conn-kv"><span>{k}</span><span>{v}</span></div>)}
-        {org && (
-          <div className="wsi-mock">
-            <div><strong>Mock mode</strong><span>{row.config.mock ? 'On. Serves sample data instead of a live connection, and every member sees the connector as connected without signing in.' : 'Off.'}</span></div>
-          </div>
-        )}
       </div>
       <div className="modal-actions wsi-actions">
         <button className="pill with-icon danger" onClick={() => (confirm ? onRemove() : setConfirm(true))}><IconTrash width={15} height={15} />{confirm ? 'Remove for everyone' : 'Remove'}</button>
@@ -172,7 +169,7 @@ function IntegrationView({ connector: x, row, icon, members, onBack, onEdit, onT
 }
 
 // the form: two identity modes. Org takes an API key or OAuth client secret (write-only), an accountable owner, custom
-// scopes and mock mode. Personal shows how members connect. Checks run here (integrationDraft.js) and again on save
+// scopes. Personal shows how members connect. Checks run here (integrationDraft.js) and again on save
 export function IntegrationForm({ connector: x, row, members, onDone }: { connector: LibraryConnector; row: WorkspaceIntegration | null; members: Member[]; onDone: (saved: boolean) => void }) {
   const [mode, setMode] = useState<IntegrationMode>(row?.mode ?? 'personal');
   const [auth, setAuth] = useState<IntegrationConfig['auth']>(row?.config.auth ?? 'api_key');
@@ -182,12 +179,14 @@ export function IntegrationForm({ connector: x, row, members, onDone }: { connec
   const [customScopes, setCustomScopes] = useState(row?.config.customScopes ?? false);
   const [scopes, setScopes] = useState<string[]>(row?.config.scopes ?? []);
   const [scopeText, setScopeText] = useState('');
-  const [mock, setMock] = useState(row?.config.mock ?? false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
-  const draft: IntegrationDraft = { provider: x.id, mode, secret, config: { auth, clientId, ownerId: ownerId || null, customScopes, scopes, mock } };
+  // the secret travels only with org mode
+  const draft: IntegrationDraft = { provider: x.id, mode, ...(mode === 'org' && secret ? { secret } : {}), config: { auth, clientId, ownerId: ownerId || null, customScopes, scopes } };
   const check = cleanIntegrationDraft(draft, row);
   const stored = row?.mode === 'org' && row.secretSet;
+  // a blank field keeps the stored secret only under the auth method it was saved for
+  const keeps = keepsSecret(row, auth);
   const addScope = () => {
     const r = checkScope(scopeText);
     if (r.error) { setNote(r.error); return; }
@@ -209,7 +208,7 @@ export function IntegrationForm({ connector: x, row, members, onDone }: { connec
         <div className="wsi-modes" role="radiogroup" aria-label="Identity">
           <label className={`wsi-mode${mode === 'org' ? ' on' : ''}`}><input type="radio" name="wsi-mode" checked={mode === 'org'} onChange={() => setMode('org')} />
             <strong>Org shared identity</strong><span>One identity your organization provisions. Quorum uses it on the organization's behalf; members never see or authorize it.</span></label>
-          <label className={`wsi-mode${mode === 'personal' ? ' on' : ''}`}><input type="radio" name="wsi-mode" checked={mode === 'personal'} onChange={() => setMode('personal')} />
+          <label className={`wsi-mode${mode === 'personal' ? ' on' : ''}`}><input type="radio" name="wsi-mode" checked={mode === 'personal'} onChange={() => { setMode('personal'); setSecret(''); }} />
             <strong>Personal</strong><span>Each member authorizes their own {x.name} account. Quorum acts as that member, with only the access they granted.</span></label>
         </div>
         {mode === 'org' ? <>
@@ -228,8 +227,9 @@ export function IntegrationForm({ connector: x, row, members, onDone }: { connec
           )}
           <div className="set-line stacked">
             <div className="set-label"><strong>{secretLabel}</strong><span>Stored in the server vault and never returned to this app.</span></div>
-            <label className="set-field wide"><input type="password" autoComplete="off" aria-label={secretLabel} placeholder={stored ? `•••••••• ${row?.secretLast4 ?? ''}`.trim() : `Paste the ${secretLabel.toLowerCase()}`} value={secret} onChange={(e) => { setSecret(e.target.value); setNote(''); }} /></label>
-            {stored && <span className="muted wsi-hint">Saved. Enter a new value to replace it, or leave it blank to keep it.</span>}
+            <label className="set-field wide"><input type="password" autoComplete="off" aria-label={secretLabel} placeholder={keeps ? `•••••••• ${row?.secretLast4 ?? ''}`.trim() : `Paste the ${secretLabel.toLowerCase()}`} value={secret} onChange={(e) => { setSecret(e.target.value); setNote(''); }} /></label>
+            {keeps && <span className="muted wsi-hint">Saved. Enter a new value to replace it, or leave it blank to keep it.</span>}
+            {stored && !keeps && <span className="muted wsi-hint">The stored secret belongs to the other auth method. Paste a new one to switch.</span>}
           </div>
         </> : (
           <div className="set-card conn-table wsi-personal">
@@ -259,12 +259,6 @@ export function IntegrationForm({ connector: x, row, members, onDone }: { connec
             </div>
           </>}
         </div>
-        {mode === 'org' && (
-          <div className="wsi-mock">
-            <div><strong>Mock mode</strong><span>Serves sample data instead of a live connection. Every member sees {x.name} as connected, without signing in.</span></div>
-            <Toggle on={mock} onChange={setMock} />
-          </div>
-        )}
         {note && <p className="set-error">{note}</p>}
         <div className="modal-actions">
           <span />
