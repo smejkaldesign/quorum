@@ -232,9 +232,9 @@ export type RecordState = { audio: boolean; screen: boolean; notice?: string };
 // who the call app shows, read from its accessibility tree while a recording with Screen on runs
 export type CallSpeakersEvent = { at: number; app: string; names: string[]; active: string[] };
 // a note opened in the note view; hash is the file as read, so a save can tell it changed on disk
-export type HandNoteRef = { file: string; hash: string; rel: string; app: string; url: string };
+export type HandNoteRef = { file: string; hash: string; rel: string; app: string; url: string; frontmatter: string };
 export type HandNote = HandNoteRef & { title: string; body: string; readOnly: boolean; date: string | null };
-export type HandNoteSave = HandNoteRef | { conflict: true } | { error: string };
+export type HandNoteSave = (HandNoteRef & { propsError?: string }) | { conflict: true } | { error: string };
 
 declare global {
   interface Window {
@@ -251,7 +251,7 @@ declare global {
       onCallSpeakers(cb: (e: CallSpeakersEvent) => void): Unsub;
       onNewNote(cb: (d: { file?: string }) => void): Unsub;
       handNoteOpen(file: string): Promise<HandNote | null>;
-      handNoteSave(p: { id: string; file: string | null; title: string; body: string; hash: string | null; fresh: boolean }): Promise<HandNoteSave>;
+      handNoteSave(p: { id: string; file: string | null; title: string; body: string; hash: string | null; fresh: boolean; frontmatter?: string }): Promise<HandNoteSave>;
       handNoteDone(file: string | null): Promise<void>;
       privateNotesSet(text: string): Promise<void>;
       discard(): Promise<void>;

@@ -6,6 +6,9 @@ import { IconPen } from './PrivateNotes';
 import { RecordMenu } from './Record';
 import { appendTurn, emptyWritten, recordChoices, type RecordChoice, type Written } from './noteRecord';
 import { MAX_READS, MAX_TURNS, labelFor, othersIn, timedTurn, type SpeakerRead, type TimedTurn } from './attribution';
+import { NoteEditor, type NoteEditorHandle } from './editor/NoteEditor';
+import { Properties } from './editor/Properties';
+import { isLossless } from './editor/markdown';
 
 const SAVE_AFTER = 800;
 type Status = 'idle' | 'saving' | 'saved' | 'conflict';
@@ -36,12 +39,18 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
   const [menu, setMenu] = useState(false);
   const [choice, setChoice] = useState<RecordChoice>(() => recordChoices(screenOffered));
   const [preview, setPreview] = useState(false);
+  // rich text when the body survives the editor's round trip unchanged, plain text otherwise (decided once it loads)
+  const [rich, setRich] = useState(true);
+  const [frontmatter, setFrontmatter] = useState('');
   const editor = useRef<HTMLTextAreaElement>(null);
+  const richEditor = useRef<NoteEditorHandle>(null);
+  // a properties save the main process turned down: shown in the panel, while the title and body still save
+  const [propsError, setPropsError] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   // the text the save timer, Record and the close read outside a render. readOnly stops saving and appending; a
   // conflict stops saving only, so Record keeps writing into the text on screen, which the person can copy
   const live = useRef({
-    title: '', body: '', ref: null as HandNoteRef | null, dirty: false, readOnly: false, conflict: false, closing: false, starting: false,
+    title: '', body: '', ref: null as HandNoteRef | null, frontmatter: undefined as string | undefined, rich: true, dirty: false, readOnly: false, conflict: false, closing: false, starting: false,
     inflight: null as Promise<boolean> | null, rec: { audio: false, screen: false } as RecordState,
   });
   const written = useRef<Written>(emptyWritten());
@@ -60,12 +69,16 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
     s.dirty = false;
     setStatus('saving');
     try {
-      const r = await window.quorum.handNoteSave({ id, file: s.ref?.file ?? null, title: s.title, body: s.body, hash: s.ref?.hash ?? null, fresh });
+      const fm = s.frontmatter;
+      const r = await window.quorum.handNoteSave({ id, file: s.ref?.file ?? null, title: s.title, body: s.body, hash: s.ref?.hash ?? null, fresh, ...(fm !== undefined && s.ref ? { frontmatter: fm } : {}) });
       if ('conflict' in r) { s.conflict = true; setStatus('conflict'); return false; }
       if ('error' in r) { s.dirty = true; setStatus('idle'); setError(r.error); return false; }
       const moved = r.file !== s.ref?.file;
+      if (s.frontmatter === fm) s.frontmatter = undefined;
+      setPropsError('propsError' in r && r.propsError ? r.propsError : null);
       s.ref = r;
       setRef(r);
+      setFrontmatter(r.frontmatter);
       setError(null);
       setStatus('saved');
       if (moved) onSaved(r.file);
@@ -94,6 +107,7 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
   }
   const editTitle = (t: string) => { live.current.title = t; setTitle(t); schedule(); };
   const editBody = (b: string) => { live.current.body = b; setBody(b); schedule(); };
+  const editProps = (fm: string) => { live.current.frontmatter = fm; setFrontmatter(fm); schedule(); };
 
   // what Record adds goes at the end; a caret in the editor stays where it was
   function append(next: (b: string) => { body: string; written: Written }) {
@@ -120,6 +134,9 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
       setTitle(n.title);
       setBody(n.body);
       setRef(n);
+      setFrontmatter(n.frontmatter);
+      setRich(isLossless(n.body));
+      live.current.rich = isLossless(n.body);
       setReadOnly(n.readOnly);
       if (n.date && !Number.isNaN(Date.parse(n.date))) setDate(new Date(n.date));
       setLoaded(true);
@@ -140,7 +157,9 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
         // only this turn is labeled, against the reads in its own window
         const label = labelFor(timed, h.turns.filter((t) => t.id !== timed.id && t.startMs <= timed.startMs), h.reads, h.others, { self: h.self });
         const turn = { id: timed.id, channel: e.channel, text: e.text, replace: e.replace, label };
-        append((b) => appendTurn(b, written.current, turn));
+        // rich text: the editor writes the turn by position and keeps the caret; plain text: the string model
+        if (live.current.rich && richEditor.current) richEditor.current.recordTurn(turn);
+        else append((b) => appendTurn(b, written.current, turn));
       }),
       window.quorum.onCallSpeakers((r) => {
         if (!live.current.rec.screen) return;
@@ -169,7 +188,8 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
     window.addEventListener('click', shut);
     return () => window.removeEventListener('click', shut);
   }, [menu]);
-  useEffect(() => { if (loaded && !openFile) editor.current?.focus(); }, [loaded, openFile]);
+  // a new note puts the cursor in the body: the rich editor focuses itself (autoFocus), the plain one here
+  useEffect(() => { if (loaded && !openFile && !rich) editor.current?.focus(); }, [loaded, openFile, rich]);
   useLayoutEffect(() => {
     const ta = editor.current;
     if (!ta) return;
@@ -202,6 +222,9 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
     s.closing = true;
     // a recording that is running, or still starting, stops before anything else
     if (s.rec.audio || s.rec.screen || s.starting) setRec(await window.quorum.recordStop());
+    // the rich editor hands over its latest markdown before the last save
+    const md = richEditor.current?.flush();
+    if (md !== undefined && md !== s.body) editBody(md);
     if (timer.current) { window.clearTimeout(timer.current); timer.current = null; }
     await save();
     if (s.conflict) await copyText().catch(() => {});
@@ -246,7 +269,7 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
       <div className="end-scroll" ref={scroller}>
         <article className="doc">
           <input className="note-title" value={title} placeholder="Untitled" aria-label="Title" readOnly={readOnly} disabled={!loaded}
-            onChange={(e) => editTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); editor.current?.focus(); } }} />
+            onChange={(e) => editTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (editor.current ?? document.querySelector<HTMLElement>('.note-view .ProseMirror'))?.focus(); } }} />
           <div className="meta-row">
             <span className="meta-pill"><IconCalendar width={16} height={16} />{day} · {time}</span>
             {recording && (
@@ -254,11 +277,14 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
                 <span className="live-dot" aria-hidden="true" />Recording{rec.audio ? ' · Transcription' : ''}{rec.screen ? ' · Screen' : ''}
               </span>
             )}
+            {!rich && (
             <div className="view-toggle" role="group" aria-label="Show">
               <button className={!preview ? 'on' : ''} aria-pressed={!preview} aria-label="Write" data-tip="Write" onClick={() => setPreview(false)}><IconPen width={16} height={16} /></button>
               <button className={preview ? 'on' : ''} aria-pressed={preview} aria-label="Preview" data-tip="Preview" onClick={() => setPreview(true)}><IconNotes width={16} height={16} /></button>
             </div>
+            )}
           </div>
+          {ref && <Properties value={frontmatter} readOnly={readOnly || status === 'conflict'} error={propsError} onChange={editProps} />}
           {error && <p className="set-error" role="alert">{error}</p>}
           {unsaved && (
             <p className="set-error" role="alert">
@@ -276,7 +302,11 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
             </p>
           )}
           {readOnly && ref && <p className="muted">This note has withheld lines, so it opens read-only here. Edit it in the vault.</p>}
-          {preview ? (
+          {!rich && loaded && <p className="muted note-plain">Opened as plain text, so saving keeps this note's markdown exactly as it is.</p>}
+          {rich && loaded ? (
+            <NoteEditor ref={richEditor} value={body} onChange={editBody} readOnly={readOnly} autoFocus={!openFile}
+              placeholder={canRecord ? 'Start writing, or press Record to transcribe into this note. Type / for blocks, [[ to link a note.' : 'Start writing. Type / for blocks, [[ to link a note.'} />
+          ) : preview ? (
             body.trim() ? <Markdown text={body} headings /> : <p className="muted">Nothing written yet.</p>
           ) : (
             <textarea ref={editor} className="note-editor" value={body} readOnly={readOnly} disabled={!loaded} spellCheck
