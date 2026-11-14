@@ -1598,6 +1598,8 @@ if (EDITION === 'cloud') { const conn = (await loadEE('connectors.js')).register
 if (EDITION === 'cloud') (await loadEE('knowledge.js')).registerKnowledge({ ipcMain, account, log, shell });
 // team knowledge (the Knowledge tab's source and read-only index; handlers in ee/teamKnowledge.js)
 if (EDITION === 'cloud') (await loadEE('teamKnowledge.js')).registerTeamKnowledge({ ipcMain, account, settings, saveSettings: () => store.settings.save(), dataDir: DATA_DIR, log, toUI, pickFolder: async () => { const r = await dialog.showOpenDialog(win, { title: 'Team knowledge folder', message: 'Choose the folder that holds the team knowledge on this Mac.', properties: ['openDirectory'] }); return r.canceled ? null : r.filePaths[0] ?? null; } });
+// knowledge bases: KBs, folders, readers and note placement (handlers and the IPC API in ee/knowledgeBases.js)
+if (EDITION === 'cloud') (await loadEE('knowledgeBases.js')).registerKnowledgeBases({ ipcMain, account, log });
 if (EDITION === 'cloud') (await loadEE('billing.js')).registerBilling({ ipcMain, account, log, openExternal: (u) => shell.openExternal(u) });
 // meeting sources (Settings › Sources): Granola and the like, connected per user in either edition
 // a sign-in window with a session nothing else has touched: the browser's cookies cannot answer for the person, so

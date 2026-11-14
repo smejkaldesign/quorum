@@ -43,7 +43,7 @@ const sha256 = (text) => createHash('sha256').update(text).digest('hex');
 // a teammate's shared note lands in the workspace vault with a provenance bond in its frontmatter: which team item it
 // is, which version, from which workspace, and when it was pulled. The keys are added to the note's own block, or a
 // block is opened for a note that has none
-export const BOND_KEYS = ['team_item', 'team_version', 'team_workspace', 'team_pulled_at', 'team_behind'];
+export const BOND_KEYS = ['team_item', 'team_version', 'team_workspace', 'team_pulled_at', 'team_behind', 'team_kb', 'team_folder'];
 export function withBond(body, bond) {
   const lines = Object.entries(bond).filter(([, v]) => v !== undefined && v !== null && v !== false).map(([k, v]) => `${k}: ${v}`);
   const m = body.match(/^---\n([\s\S]*?)\n---(\n|$)/);
@@ -52,6 +52,10 @@ export function withBond(body, bond) {
   return `---\n${[...kept, ...lines].join('\n')}\n---${m[2]}${body.slice(m[0].length)}`;
 }
 export const bondOf = (text) => { const fm = parseFrontmatter(text); return fm.team_item ? { item: fm.team_item, version: fm.team_version ?? '', behind: fm.team_behind === 'true' } : null; };
+// the knowledge base and folder a pulled row sits in (migration 0024), kept on the id map entry and in a shared note's
+// bond; a note outside any knowledge base carries neither
+export const placeOf = (row) => (row?.kb_id ? { kb: row.kb_id, folder: row.folder_id ?? null } : { kb: undefined, folder: undefined });
+const samePlace = (e, p) => (e?.kb ?? null) === (p.kb ?? null) && (e?.folder ?? null) === (p.folder ?? null);
 // the folder for a workspace's shared notes: outside the personal vault, so the watcher never pushes it back
 const safeName = (s) => String(s ?? '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Workspace';
 export const defaultTeamRoot = (ws) => path.join(homedir(), 'Documents', 'Quorum Team', safeName(ws?.name || ws?.id));
@@ -261,8 +265,8 @@ export function createSync({ account, store, brain = () => null, log = () => {},
     const remoteHash = row.hash || sha256(body);
     const localHash = local === null ? null : sha256(local);
     // the row is what this device last pushed; a local edit since then goes up on the next push
-    if (e && e.hash === remoteHash && localHash !== remoteHash) { e.id = row.id; return; }
-    if (localHash === remoteHash) { bucket[rel] = { id: row.id, hash: remoteHash }; return; }
+    if (e && e.hash === remoteHash && localHash !== remoteHash) { e.id = row.id; Object.assign(e, placeOf(row)); return; }
+    if (localHash === remoteHash) { bucket[rel] = { id: row.id, hash: remoteHash, ...placeOf(row) }; return; }
     if (local !== null && (!e || e.hash !== localHash)) {
       const copy = sibling(t.vault, rel, `conflict ${new Date().toISOString().slice(0, 10)}`);
       writeRel(t.vault, copy, local);
@@ -270,7 +274,7 @@ export function createSync({ account, store, brain = () => null, log = () => {},
       counts.conflicts++;
     }
     writeRel(t.vault, rel, body);
-    bucket[rel] = { id: row.id, hash: remoteHash };
+    bucket[rel] = { id: row.id, hash: remoteHash, ...placeOf(row) };
     counts.written++;
   }
 
@@ -293,19 +297,28 @@ export function createSync({ account, store, brain = () => null, log = () => {},
     }
     const body = String(row.body ?? '');
     const version = row.hash || sha256(body);
-    if (e && e.hash === version && local !== null) return;
-    const bond = { team_item: row.id, team_version: version, team_workspace: t.ws, team_pulled_at: new Date().toISOString() };
+    const place = placeOf(row);
+    if (e && e.hash === version && local !== null) {
+      if (samePlace(e, place)) return;
+      // only the note's knowledge base or folder changed: the bond follows it, the text and any edit of it stay
+      const fm = parseFrontmatter(local);
+      const moved = withBond(local, { team_item: fm.team_item ?? row.id, team_version: fm.team_version ?? version, team_workspace: fm.team_workspace ?? t.ws, team_pulled_at: fm.team_pulled_at, team_behind: fm.team_behind === 'true', team_kb: place.kb, team_folder: place.folder });
+      writeRel(t.team, rel, moved);
+      bucket[key] = { ...e, ...place, written: e.written === sha256(local) ? sha256(moved) : e.written };
+      return;
+    }
+    const bond = { team_item: row.id, team_version: version, team_workspace: t.ws, team_pulled_at: new Date().toISOString(), team_kb: place.kb, team_folder: place.folder };
     if (local !== null && e && sha256(local) !== e.written) {
       // the person changed their copy: it stays, flagged, and the team's text waits beside it
       writeRel(t.team, rel, withBond(local, { ...bond, team_behind: true }));
       writeRel(t.team, `.updates/${rel}`, body);
-      bucket[key] = { id: row.id, hash: version, written: sha256(readFileSync(abs, 'utf8')), behind: true };
+      bucket[key] = { id: row.id, hash: version, written: sha256(readFileSync(abs, 'utf8')), behind: true, ...place };
       counts.behind++;
       return;
     }
     const text = withBond(body, bond);
     writeRel(t.team, rel, text);
-    bucket[key] = { id: row.id, hash: version, written: sha256(text) };
+    bucket[key] = { id: row.id, hash: version, written: sha256(text), ...place };
     counts.written++;
   }
 

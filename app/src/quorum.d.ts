@@ -153,6 +153,16 @@ export type TeamSource = { kind: TeamSourceKind; url: string | null; path: strin
 export type TeamSourceDraft = { kind: TeamSourceKind; url?: string; path?: string };
 export type TeamLocal = { kind: TeamSourceKind; root: string | null; exists: boolean; lastPullAt: string | null; lastError: string | null; gitAvailable: boolean; notes: number; pulling: boolean };
 export type TeamHit = { rel: string; title: string; score: number; line: number; snippet: string };
+// knowledge bases (migrations 0024 and 0025; API notes in ee/knowledgeBases.js)
+export type KbKind = 'general' | 'meetings';
+export type KbRole = 'admin' | 'reader';
+export type KbFolder = { id: string; kbId: string; parentId: string | null; name: string; position: number };
+export type KbFolderNode = { id: string; parentId: string | null; name: string; position: number; children: KbFolderNode[] };
+export type KbAccess = { principal: 'workspace' | 'team' | 'user'; userId: string | null; teamId: string | null; role: KbRole; email: string | null; name: string | null };
+export type KbAccessDraft = { principal: 'workspace' | 'team' | 'user'; userId?: string; teamId?: string; role?: KbRole };
+export type Kb = { id: string; name: string; kind: KbKind; teamId: string | null; isDefault: boolean; source: { kind: 'folder' | 'git'; url: string | null; path: string | null } | null; role: KbRole; createdAt: string | null; updatedAt: string | null; folders: KbFolderNode[]; access: KbAccess[] | null };
+export type KbPlacement = { noteId: string; kbId: string | null; folderId: string | null; updatedAt: string | null };
+export type KbNote = { id: string; path: string; title: string; folderId: string | null; userId: string; updatedAt: string | null };
 export type ContributionMine = { noteId: string; path: string; status: 'pending' | 'included' | 'declined'; reviewedAt: string | null; createdAt: string };
 export type Billing = { plan: Plan; seats: number; seatsIncluded: number; hourPacks: number; members: number; status: string | null; periodEnd: string | null; subscribed: boolean };
 export type MemberInvite = { inviteId: string; email: string; role: Role; expiresAt: string };
@@ -406,6 +416,18 @@ declare global {
       teamNote(rel: string): Promise<Result & { doc?: KnowledgeDoc }>;
       teamResolve(target: string, from: string): Promise<Result & { rel?: string | null }>;
       onTeamChanged(cb: (rels: string[]) => void): Unsub;
+      kbList(): Promise<Result & { kbs?: Kb[] }>;
+      kbCreate(draft: { name: string; kind?: KbKind }): Promise<Result & { kb?: Kb }>;
+      kbRename(kbId: string, name: string): Promise<Result & { kb?: Kb }>;
+      kbDelete(kbId: string): Promise<Result>;
+      kbFolderCreate(draft: { kbId: string; parentId?: string | null; name: string; position?: number }): Promise<Result & { folder?: KbFolder }>;
+      kbFolderRename(folderId: string, name: string): Promise<Result & { folder?: KbFolder }>;
+      // parentId left out keeps the current parent (a reorder); null moves the folder to the KB's top level
+      kbFolderMove(draft: { folderId: string; parentId?: string | null; position?: number }): Promise<Result & { folder?: KbFolder }>;
+      kbFolderDelete(folderId: string): Promise<Result>;
+      kbAccessSet(kbId: string, access: KbAccessDraft[]): Promise<Result & { access?: KbAccess[] }>;
+      kbNoteAssign(draft: { noteId?: string; path?: string; kbId: string | null; folderId?: string | null }): Promise<Result & { placement?: KbPlacement }>;
+      kbNotes(kbId: string): Promise<Result & { notes?: KbNote[] }>;
       billingStatus(): Promise<Result & { billing?: Billing }>;
       billingCheckout(seats?: number): Promise<Result>;
       billingPortal(): Promise<Result>;
