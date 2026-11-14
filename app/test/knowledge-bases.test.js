@@ -53,7 +53,7 @@ describe('what the renderer gets', () => {
     expect(checkName('a/b').name).toBe('a/b');
     expect(accessRows([{ principal: 'workspace' }, { principal: 'user', userId: 'u1', role: 'admin' }])).toEqual({ rows: [{ principal: 'workspace', role: 'reader' }, { principal: 'user', role: 'admin', user_id: 'u1' }] });
     expect(accessRows([{ principal: 'user' }]).error).toMatch(/person/);
-    expect(accessRows([{ principal: 'workspace', role: 'owner' }]).error).toMatch(/admin or reader/);
+    expect(accessRows([{ principal: 'workspace', role: 'owner' }]).error).toMatch(/admin, editor or reader/);
     expect(accessRows([{ principal: 'everyone' }]).error).toMatch(/workspace, a team or a person/);
     expect(accessRows('all').error).toMatch(/list/);
   });

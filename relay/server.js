@@ -18,6 +18,7 @@ import { handleBetaCheck, handleBetaHeartbeat } from './beta.js';
 import { flagsRoute } from './flags.js';
 import { handleKbSyncAttach } from './kbSync/routes.js';
 import { createKbSyncWorker } from './kbSync/worker.js';
+import { createKbFilesCleanup } from './kbFilesCleanup.js';
 
 checkConfig();
 const clients = makeClients();
@@ -27,6 +28,9 @@ const handleFlags = flagsRoute(deps);
 // the KB sync worker runs in this process when KB_SYNC_WORKER=on; relay/kbSyncWorker.js runs it as its own service
 const kbSync = config.kbSync.enabled ? createKbSyncWorker({ db: clients.db, config, log }) : null;
 kbSync?.start();
+// the sweep for hosted KB files rides with the sync worker (relay/kbFilesCleanup.js)
+const kbFiles = config.kbSync.enabled ? createKbFilesCleanup({ db: clients.db, log }) : null;
+kbFiles?.start();
 
 const server = createServer((req, res) => {
   const { pathname } = new URL(req.url, 'http://relay');
@@ -59,6 +63,6 @@ server.on('upgrade', (req, socket, head) => {
 });
 
 server.listen(config.port, () => log('listening', { port: config.port, engine: config.engine, notes: !!config.keys.anthropic }));
-const stop = () => { log('stopping'); kbSync?.stop(); wss.clients.forEach((c) => c.close(1001, 'restart')); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 5000).unref(); };
+const stop = () => { log('stopping'); kbSync?.stop(); kbFiles?.stop(); wss.clients.forEach((c) => c.close(1001, 'restart')); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 5000).unref(); };
 process.on('SIGTERM', stop);
 process.on('SIGINT', stop);

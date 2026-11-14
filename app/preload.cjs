@@ -249,6 +249,18 @@ contextBridge.exposeInMainWorld('quorum', {
   kbAccessSet: (kbId, access) => ipcRenderer.invoke('kb-access-set', kbId, access),
   kbNoteAssign: (draft) => ipcRenderer.invoke('kb-note-assign', draft),
   kbNotes: (kbId) => ipcRenderer.invoke('kb-notes', kbId),
+  // knowledge bases hosted by Quorum: notes and attachments written in the Knowledge tab (hosted edition; ee/kbHosted.js)
+  kbHostedCreate: (name, teamId) => ipcRenderer.invoke('kb-hosted-create', name, teamId),
+  kbHostedNote: (noteId) => ipcRenderer.invoke('kb-hosted-note', noteId),
+  kbHostedNoteSave: (draft) => ipcRenderer.invoke('kb-hosted-note-save', draft),
+  kbHostedNoteMove: (noteId, folderId) => ipcRenderer.invoke('kb-hosted-note-move', noteId, folderId),
+  kbHostedNoteDelete: (noteId, baseHash) => ipcRenderer.invoke('kb-hosted-note-delete', noteId, baseHash),
+  kbFiles: (noteId) => ipcRenderer.invoke('kb-files', noteId),
+  kbFileAttach: (noteId) => ipcRenderer.invoke('kb-file-attach', noteId),
+  kbFileOpen: (idOrLink) => ipcRenderer.invoke('kb-file-open', idOrLink),
+  kbFileData: (idOrLink) => ipcRenderer.invoke('kb-file-data', idOrLink),
+  kbFileRemove: (fileId) => ipcRenderer.invoke('kb-file-remove', fileId),
+  kbFilesUsage: () => ipcRenderer.invoke('kb-files-usage'),
   // Quorum's edits to synced KB notes kept as suggestions (hosted edition; handlers and API in ee/kbUpstream.js)
   kbSuggestion: (noteId) => ipcRenderer.invoke('kb-suggestion', noteId),
   kbSuggestionApply: (noteId, suggestionId, noteHash) => ipcRenderer.invoke('kb-suggestion-apply', noteId, suggestionId, noteHash),
