@@ -890,17 +890,24 @@ const PLUGIN_ICON: Record<string, (p: { width?: number; height?: number; classNa
 };
 const PLUGIN_PANEL: Record<string, () => ReactNode> = { context: () => <ContextPanel />, skills: () => <SkillsPanel />, 'brain-check': () => <BrainCheckPanel /> };
 // the vault note's path. It saves on blur or Enter only, since each save moves the list to the new path; a path the
-// keeper refuses (outside the folder, in a dot folder or the meetings folder) leaves the saved one and says why
+// keeper refuses (outside the folder, in a dot folder or the meetings folder) leaves the saved one and says why. Paths
+// are compared the way the keeper stores them, so ./notes/facts and notes/facts.md are the same path
+const normNote = (p: string) => { const t = p.normalize('NFC').trim().replace(/\\/g, '/').replace(/^(\.\/)+/, ''); return t && !/\.md$/i.test(t) ? `${t}.md` : t; };
 function NotePathField({ value, onSave }: { value: string; onSave: (v: string) => Promise<string> }) {
   const [v, setV] = useState(value);
   const [refused, setRefused] = useState(false);
   useEffect(() => { setV(value); }, [value]);
   const commit = async () => {
-    const t = v.trim();
-    if (t === value) return;
-    const saved = await onSave(t);
-    setRefused(!!t && saved === value);
-    setV(saved);
+    const t = normNote(v);
+    if (t === normNote(value)) return;
+    try {
+      const saved = await onSave(t);
+      setRefused(!!t && normNote(saved) !== t);
+      setV(saved);
+    } catch {
+      setRefused(true);
+      setV(value);
+    }
   };
   return (
     <label className="set-field wide">
@@ -979,10 +986,16 @@ function KeeperCard({ brain }: { brain: Brain }) {
           <h3>Plugins</h3>
           <div className="set-card">
             {k.on ? writers.map(plugin) : <Row icon={<IconReset width={18} height={18} />} title="Upkeep is off" desc="Quorum writes nothing for these jobs while Keep this folder current is off. Turn it on to choose which ones it does. The reports below work either way." />}
+            {k.on && k.folders.meetings && k.plugins.find((p) => p.id === 'index')?.owner === 'vault' && (
+              <Row icon={<IconFork width={18} height={18} />} title={`Write meeting index lines to ${k.folders.meetings}/index.md`}
+                desc="Your Agent OS keeps index.md, so Quorum leaves it alone. This keeps one line per meeting in the meetings folder instead, which your index can link to.">
+                <Toggle on={k.meetingsIndex} onChange={async (on) => setK(await window.quorum.keeperSet({ meetingsIndex: on }))} />
+              </Row>
+            )}
             {k.on && factsOn && k.learned && (
               <Row icon={<IconNotes width={18} height={18} />} title="Learned facts file"
                 desc={k.learned.target === 'learned' ? 'Claude Code does not load .quorum/learned.md on its own; CLAUDE.md points to it'
-                  : k.learned.target === 'note' ? `A note in your Agent OS, which Claude Code does not load on its own. ${k.learned.linked ? 'index.md links to it' : 'index.md is kept by your Agent OS, so Quorum adds no link to it'}`
+                  : k.learned.target === 'note' ? `A note in your Agent OS, which Claude Code does not load on its own. ${k.learned.linked ? 'index.md links to it' : k.learned.indexGenerated ? 'index.md is marked as generated, so Quorum adds no link to it' : 'index.md is kept by your Agent OS, so Quorum adds no link to it'}`
                   : `CLAUDE.md, loaded in every session that reads it${k.learned.maxFacts ? `, so it keeps ${k.learned.maxFacts} facts by default` : ''}. The oldest lines move to the changelog past the budget`}>
                 <select className="set-select" aria-label="Learned facts file" value={k.learned.pick} onChange={async (e) => setK(await window.quorum.keeperSet({ factsTarget: e.target.value as LearnedTarget | 'auto' }))}>
                   <option value="auto">Automatic ({k.learned.auto === 'learned' ? '.quorum/learned.md' : 'CLAUDE.md'})</option>
