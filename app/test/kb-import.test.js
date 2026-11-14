@@ -1,6 +1,7 @@
 // Importing a knowledge base from a GitHub repository or a zip (ee/kbImport.js, ee/zipRead.js, migration 0026).
 // Fixture zips are built here byte by byte, so the tests can also make the hostile ones (paths that leave the archive,
 // symbolic links, too many files). GitHub and the database are fakes; nothing reaches the network.
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -195,8 +196,8 @@ describe('fetching from GitHub', () => {
 
 // a Supabase client fake: KBs and folders kept in memory, kb_* RPCs acting on them, and a notes table that takes
 // upserts and answers the KB notes read
-function fakeServer({ role = 'admin', notes = [], kbs = [], folderFail = null, sourceSet = true, profiles = [] } = {}) {
-  const state = { kbs: kbs.map((k) => ({ folders: [], source: null, role: 'admin', ...k })), notes: notes.map((n) => ({ ...n })), calls: [] };
+function fakeServer({ role = 'admin', notes = [], kbs = [], folderFail = null, sourceSet = true, profiles = [], upstream = true } = {}) {
+  const state = { kbs: kbs.map((k) => ({ folders: [], source: null, role: 'admin', ...k })), notes: notes.map((n) => ({ ...n })), calls: [], upstream: new Map() };
   let seq = 0;
   const id = (p) => `${p}${String(++seq).padStart(4, '0')}`;
   const answer = (data, error = null) => ({ data, error });
@@ -217,6 +218,11 @@ function fakeServer({ role = 'admin', notes = [], kbs = [], folderFail = null, s
       kb.folders.push({ id: f.id, parent_id: f.parent_id, name: f.name, position: 0 });
       return answer(f);
     }
+    if (name === 'kb_upstream_save') {
+      if (!upstream) return answer(null, { message: 'Could not find the function public.kb_upstream_save', code: 'PGRST202' });
+      for (const r of args.rows) state.upstream.set(r.note_id, { ...r, kb_id: args.kb_id });
+      return answer(args.rows.length);
+    }
     if (name === 'kb_source_set') {
       if (!sourceSet) return answer(null, { message: 'Could not find the function public.kb_source_set', code: 'PGRST202' });
       const kb = state.kbs.find((k) => k.id === args.kb_id);
@@ -232,6 +238,11 @@ function fakeServer({ role = 'admin', notes = [], kbs = [], folderFail = null, s
     b.upsert = (rows) => { ops.push(['upsert', rows]); return b; };
     b.update = (patch) => { ops.push(['update', patch]); return b; };
     b.then = (res, rej) => {
+      if (table === 'kb_note_upstream') {
+        if (!upstream) return Promise.resolve({ data: null, error: { message: 'relation "public.kb_note_upstream" does not exist', code: '42P01' } }).then(res, rej);
+        const kbId = ops.find((o) => o[0] === 'eq' && o[1] === 'kb_id')?.[2];
+        return Promise.resolve({ data: [...state.upstream.values()].filter((u) => u.kb_id === kbId).map((u) => ({ ...u })), error: null }).then(res, rej);
+      }
       if (table === 'profiles') {
         const ids = ops.find((o) => o[0] === 'in')?.[2] ?? [];
         return Promise.resolve({ data: profiles.filter((p) => ids.includes(p.user_id)), error: null }).then(res, rej);
@@ -256,6 +267,8 @@ function fakeServer({ role = 'admin', notes = [], kbs = [], folderFail = null, s
         state.calls.push([`upsert:${table}`, up[1].length]);
         return Promise.resolve({ data: [], error: null }).then(res, rej);
       }
+      const byId = ops.find((o) => o[0] === 'in' && o[1] === 'id');
+      if (byId) return Promise.resolve({ data: state.notes.filter((n) => byId[2].includes(n.id)).map((n) => ({ ...n })), error: null }).then(res, rej);
       const kbId = ops.find((o) => o[0] === 'eq' && o[1] === 'kb_id')?.[2];
       const [, lo, hi] = ops.find((o) => o[0] === 'range') ?? [null, 0, 999];
       const rows = state.notes.filter((n) => n.kb_id === kbId && !n.deleted_at).slice(lo, hi + 1);
@@ -501,6 +514,87 @@ describe('kb-import', () => {
 });
 
 // a real zip file on disk through the default readers, so the fs path is covered once
+// Quorum's copy edited the way a vault push writes it: new text and its hash
+const editNote = (server, end, change) => {
+  const n = server.state.notes.find((x) => x.path.endsWith(end));
+  n.body = change(n.body);
+  n.hash = createHash('sha256').update(n.body).digest('hex');
+  return n;
+};
+const README = (text) => HANDBOOK.map((e) => (e.name.endsWith('README.md') ? { ...e, data: text } : e));
+
+describe('kb-import with Quorum\'s edits', () => {
+  const repo = { kind: 'github', url: 'https://github.com/example-org/handbook' };
+  const twice = async (server, firstZip, secondZip) => {
+    const first = await importer(server, { zips: { main: makeZip(firstZip) } }).handlers['kb-import']({ name: 'Handbook', source: repo });
+    return { first, again: (edit) => { edit?.(); return importer(server, { zips: { main: makeZip(secondZip) } }).handlers['kb-import']({ kbId: first.kb.id }); } };
+  };
+
+  it('records the upstream base of every imported note', async () => {
+    const server = fakeServer();
+    await importer(server, { zips: { main: makeZip(HANDBOOK) } }).handlers['kb-import']({ source: repo });
+    expect(server.state.upstream.size).toBe(3);
+    for (const n of server.state.notes) expect(server.state.upstream.get(n.id)).toMatchObject({ base_body: n.body, base_hash: n.hash, suggestion_state: null });
+  });
+
+  it('keeps Quorum\'s edit while the source is unchanged, and writes nothing back to GitHub', async () => {
+    const server = fakeServer();
+    const { again } = await twice(server, HANDBOOK, HANDBOOK);
+    let edited;
+    const r = await again(() => { edited = editNote(server, 'README.md', (b) => `${b}\n\n- [[Ana]]\n`).body; });
+    expect(r).toMatchObject({ imported: 2, kept: 1, suggested: 0 });
+    expect(server.state.notes.find((n) => n.path.endsWith('README.md')).body).toBe(edited);
+    expect(r.kb.id).toBeTruthy();
+  });
+
+  it('writes a changed source and keeps a clean edit as a ready suggestion', async () => {
+    const server = fakeServer();
+    const { again } = await twice(server, HANDBOOK, README('# Handbook\n\nStart here, then read the guides.'));
+    const r = await again(() => editNote(server, 'README.md', (b) => `${b}\n\n## Meetings\n\n- [[Ana]]\n`));
+    expect(r).toMatchObject({ kept: 0, suggested: 1 });
+    const n = server.state.notes.find((x) => x.path.endsWith('README.md'));
+    expect(n.body).toMatch(/then read the guides\.$/);
+    expect(n.body).not.toContain('[[Ana]]');
+    const u = server.state.upstream.get(n.id);
+    expect(u).toMatchObject({ base_body: n.body, suggestion_state: 'ready' });
+    expect(u.suggestion_body).toContain('then read the guides.');
+    expect(u.suggestion_body).toContain('- [[Ana]]');
+  });
+
+  it('keeps an edit that clashes with the source change as a stale suggestion with its old base', async () => {
+    const server = fakeServer();
+    const { again } = await twice(server, HANDBOOK, README('# Handbook\n\nStart with the guides.'));
+    let base;
+    const r = await again(() => { base = server.state.notes.find((x) => x.path.endsWith('README.md')).body; editNote(server, 'README.md', (b) => b.replace('Start here.', 'Start here. Ask Ana.')); });
+    expect(r.suggested).toBe(1);
+    const n = server.state.notes.find((x) => x.path.endsWith('README.md'));
+    expect(n.body).toContain('Start with the guides.');
+    const u = server.state.upstream.get(n.id);
+    expect(u).toMatchObject({ suggestion_state: 'stale', suggestion_base: base });
+    expect(u.suggestion_body).toContain('Start here. Ask Ana.');
+  });
+
+  it('writes the source over a note Quorum did not edit, with no suggestion', async () => {
+    const server = fakeServer();
+    const { again } = await twice(server, HANDBOOK, README('# Handbook\n\nNew start.'));
+    const r = await again();
+    expect(r).toMatchObject({ kept: 0, suggested: 0 });
+    const n = server.state.notes.find((x) => x.path.endsWith('README.md'));
+    expect(n.body).toContain('New start.');
+    expect(server.state.upstream.get(n.id)).toMatchObject({ base_body: n.body, suggestion_state: null });
+  });
+
+  it('on a database without migration 0031, imports as before', async () => {
+    const server = fakeServer({ upstream: false });
+    const { again } = await twice(server, HANDBOOK, README('# Handbook\n\nNew start.'));
+    const r = await again(() => editNote(server, 'README.md', (b) => `${b}\n- edit\n`));
+    expect(r.error).toBeUndefined();
+    expect(r).toMatchObject({ imported: 3, kept: 0, suggested: 0 });
+    expect(server.state.notes.find((x) => x.path.endsWith('README.md')).body).toContain('New start.');
+    expect(server.state.upstream.size).toBe(0);
+  });
+});
+
 describe('the default file readers', () => {
   it('reads a zip from disk', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'quorum-kbimport-zip-'));

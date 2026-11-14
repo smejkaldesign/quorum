@@ -1,5 +1,6 @@
 // Google Drive files in a knowledge base folder (sources/drive.js, ee/kbDrive.js). Google's APIs and the database are
 // fakes; the only sockets are the picker page's loopback server and the test's own requests to it.
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -213,11 +214,16 @@ describe('note text', () => {
 // a Supabase client fake: one KB with folders, kb_list, the 0028 functions (or none, as an older database answers), and
 // a notes table that takes upserts, soft deletes and reads
 function fakeServer({ role = 'admin', notes = [], folders = [], fns = true, userId = 'me' } = {}) {
-  const state = { kbs: [{ id: 'KB1', name: 'Team', role, folders, source: null }], notes: notes.map((n) => ({ ...n })), rpcs: [] };
+  const state = { kbs: [{ id: 'KB1', name: 'Team', role, folders, source: null }], notes: notes.map((n) => ({ ...n })), rpcs: [], upstream: new Map() };
   const answer = (data, error = null) => ({ data, error });
   const live = (id) => state.notes.find((n) => n.id === id && !n.deleted_at);
   const rpc = async (name, args) => {
     if (name === 'kb_list') return answer(structuredClone(state.kbs));
+    if (name === 'kb_upstream_save') {
+      if (!fns) return answer(null, { message: `Could not find the function public.${name}`, code: 'PGRST202' });
+      for (const r of args.rows) state.upstream.set(r.note_id, { ...r, kb_id: args.kb_id });
+      return answer(args.rows.length);
+    }
     if (!name.startsWith('kb_drive_note_')) return answer(null, { message: `unknown rpc ${name}` });
     if (!fns) return answer(null, { message: `Could not find the function public.${name}`, code: 'PGRST202' });
     state.rpcs.push([name, args]);
@@ -229,13 +235,17 @@ function fakeServer({ role = 'admin', notes = [], folders = [], fns = true, user
     if (name === 'kb_drive_note_remove') n.deleted_at = 'now';
     return answer(null);
   };
-  const from = () => {
+  const from = (table) => {
     const ops = [];
     const b = {};
     for (const op of ['select', 'eq', 'is', 'order', 'range', 'in']) b[op] = (...a) => { ops.push([op, ...a]); return b; };
     b.upsert = (rows) => { ops.push(['upsert', rows]); return b; };
     b.update = (patch) => { ops.push(['update', patch]); return b; };
     b.then = (res, rej) => {
+      if (table === 'kb_note_upstream') {
+        if (!fns) return Promise.resolve(answer(null, { message: 'relation "public.kb_note_upstream" does not exist', code: '42P01' })).then(res, rej);
+        return Promise.resolve(answer([...state.upstream.values()].map((u) => ({ ...u })))).then(res, rej);
+      }
       const upd = ops.find((o) => o[0] === 'update');
       if (upd) {
         const ids = ops.find((o) => o[0] === 'in')?.[2] ?? [];
@@ -254,6 +264,8 @@ function fakeServer({ role = 'admin', notes = [], folders = [], fns = true, user
         }
         return Promise.resolve(answer([])).then(res, rej);
       }
+      const byId = ops.find((o) => o[0] === 'in' && o[1] === 'id');
+      if (byId) return Promise.resolve(answer(state.notes.filter((n) => byId[2].includes(n.id)).map((n) => ({ ...n })))).then(res, rej);
       const kbId = ops.find((o) => o[0] === 'eq' && o[1] === 'kb_id')?.[2];
       return Promise.resolve(answer(state.notes.filter((n) => n.kb_id === kbId && !n.deleted_at))).then(res, rej);
     };
@@ -435,5 +447,70 @@ describe('kb-drive', () => {
     expect(await drive(server, { picks: 'cancel' }).handlers['kb-drive-add']({ kbId: 'KB1' })).toEqual({ canceled: true });
     expect(server.state.notes).toHaveLength(0);
     expect(await drive(fakeServer(), { connected: false }).handlers['kb-drive-status']()).toEqual({ connected: false, available: true, account: 'person@example.com' });
+  });
+});
+
+describe('kb-drive with Quorum\'s edits', () => {
+  const edit = (server, change) => {
+    const n = server.state.notes[0];
+    n.body = change(n.body);
+    n.hash = createHash('sha256').update(n.body).digest('hex');
+    return n;
+  };
+  const setUp = async () => {
+    const server = fakeServer();
+    const files = structuredClone(FILES);
+    const k = drive(server, { picks: [{ id: DOC_ID }], files });
+    await k.handlers['kb-drive-add']({ kbId: 'KB1' });
+    return { server, files, k };
+  };
+
+  it('records the base, keeps Quorum\'s edit when the file\'s text is unchanged, and never writes to Drive', async () => {
+    const { server, files, k } = await setUp();
+    expect(server.state.upstream.get(server.state.notes[0].id)).toMatchObject({ base_body: server.state.notes[0].body, suggestion_state: null });
+    const edited = edit(server, (b) => `${b}\n\n## Meetings\n\n- [[Ana]]\n`).body;
+    files[DOC_ID].modifiedTime = '2026-11-12T10:00:00Z';
+    const s = await k.handlers['kb-drive-sync']({ kbId: 'KB1' });
+    expect(s).toMatchObject({ synced: 0, unchanged: 1, suggested: 0 });
+    expect(server.state.notes[0].body).toBe(edited);
+    expect(server.state.rpcs.map((r) => r[0])).toEqual(['kb_drive_note_checked']);
+    expect(k.d.calls.every((u) => !/method=|upload|PATCH/i.test(u))).toBe(true);
+  });
+
+  it('writes the changed file and keeps a clean edit as a ready suggestion', async () => {
+    const { server, files, k } = await setUp();
+    edit(server, (b) => `${b}\n\n## Meetings\n\n- [[Ana]]\n`);
+    files[DOC_ID].markdown = '# Week one\n\nBring a laptop.\n\nMeet the team.';
+    files[DOC_ID].modifiedTime = '2026-11-12T10:00:00Z';
+    const s = await k.handlers['kb-drive-sync']({ kbId: 'KB1' });
+    expect(s).toMatchObject({ synced: 1, suggested: 1 });
+    const n = server.state.notes[0];
+    expect(n.body).toContain('Bring a laptop.');
+    expect(n.body).not.toContain('[[Ana]]');
+    const u = server.state.upstream.get(n.id);
+    expect(u).toMatchObject({ base_body: n.body, suggestion_state: 'ready' });
+    expect(u.suggestion_body).toContain('Bring a laptop.');
+    expect(u.suggestion_body).toContain('- [[Ana]]');
+    expect(u.suggestion_body).toContain('kb_source_modified: 2026-11-12T10:00:00Z');
+  });
+
+  it('keeps a clashing edit as a stale suggestion, and the change Drive made alone writes no suggestion', async () => {
+    const { server, files, k } = await setUp();
+    const base = server.state.notes[0].body;
+    edit(server, (b) => b.replace('Meet the team.', 'Meet the team and Ana.'));
+    files[DOC_ID].markdown = '# Week one\n\nMeet the whole team.';
+    files[DOC_ID].modifiedTime = '2026-11-12T10:00:00Z';
+    expect(await k.handlers['kb-drive-sync']({ kbId: 'KB1' })).toMatchObject({ synced: 1, suggested: 1 });
+    const u = server.state.upstream.get(server.state.notes[0].id);
+    expect(u).toMatchObject({ suggestion_state: 'stale', suggestion_base: base });
+    expect(u.suggestion_body).toContain('Meet the team and Ana.');
+    // a later change in Drive, with no new edit in Quorum, merges the kept suggestion onto the newer text
+    files[DOC_ID].markdown = '# Week one\n\nMeet the team.\n\nLunch at noon.';
+    files[DOC_ID].modifiedTime = '2026-11-12T11:00:00Z';
+    expect(await k.handlers['kb-drive-sync']({ kbId: 'KB1' })).toMatchObject({ synced: 1, suggested: 1 });
+    const again = server.state.upstream.get(server.state.notes[0].id);
+    expect(again.suggestion_state).toBe('ready');
+    expect(again.suggestion_body).toContain('Meet the team and Ana.');
+    expect(again.suggestion_body).toContain('Lunch at noon.');
   });
 });

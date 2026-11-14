@@ -15,7 +15,7 @@
 //   kb-drive-sync   ({ kbId, fileId? })         -> Synced                          fileId left out: every file in the KB
 //   kb-drive-remove ({ kbId, fileId })          -> { files }                       the note leaves the KB and the vaults
 //
-//   Synced      { files: DriveFile[], synced, unchanged, skipped: Skipped[] }
+//   Synced      { files: DriveFile[], synced, unchanged, suggested, skipped: Skipped[] }
 //   DriveFile   { fileId, noteId, name, folderId, url, syncedAt, modifiedAt }
 //   Skipped     { path, reason }   path is the file's name in Drive
 //
@@ -26,12 +26,15 @@
 // note's kb_source_modified is not read again; only its check time (kb_checked_at, in the row's frontmatter, outside
 // the note text) moves. Any admin of the KB syncs or removes any attached file, reading Drive with their own Google
 // token; the note stays its author's row, so those writes go through the 0028 functions. A file that has become
-// confidential takes its note out of the KB. One file failing (no access, rate limited, offline) never discards the
+// confidential takes its note out of the KB. A note Quorum edited since the last sync (ee/kbUpstream.js) keeps that edit
+// while the file's text is unchanged; when the file changed, the file's text is written and Quorum's edit is kept as a
+// suggestion (counted in suggested). Nothing is ever written back to Drive. One file failing (no access, rate limited, offline) never discards the
 // files already read: what was read is written and each failure is reported.
 import path from 'node:path';
 import { plain } from './account.js';
 import { dropFalseConfidential, fmValue, isConfidential, keyOf, safeSeg, sha256, sharedText } from './kbImport.js';
 import { kbSession } from './knowledgeBases.js';
+import { resyncPlan, upstreamRow, upstreamStore } from './kbUpstream.js';
 import { createRemote, ulid } from './store/remote.js';
 import { parseFrontmatter } from './sync.js';
 import { notes as localNotes } from '../store/local.js';
@@ -40,7 +43,7 @@ import { awaitPicker, cancelPicker, driveFile, driveText } from '../sources/driv
 export const DRIVE_PREFIX = 'google-drive:';
 const NOT_CONNECTED = 'Connect Google Drive in Settings, Connections first.';
 const NOT_AVAILABLE = 'Adding files from Google Drive is not available in this build yet.';
-const COLUMNS = 'id, path, folder_id, user_id, frontmatter, updated_at';
+const COLUMNS = 'id, path, folder_id, user_id, frontmatter, hash, updated_at';
 export const NOW_CONFIDENTIAL = 'The file is now marked confidential, so its note left the knowledge base.';
 const NEEDS_UPDATE = 'This needs the latest database update. Only the admin who added the file can sync or remove it until then.';
 
@@ -123,6 +126,8 @@ export function createKbDrive({ account, accounts, picker = null, pick = awaitPi
     const attached = new Map(driveNotes(rows).map((n) => [driveIdOf(n.frontmatter.kb_source), n]));
     const taken = new Set(rows.map((n) => keyOf([...(n.folder_id ? segsOf(n.folder_id) : []), path.posix.basename(String(n.path ?? ''))])));
     const access = await token();
+    const upstream = upstreamStore({ client: () => account.client(), ws, log, tag: 'kb-drive' });
+    const bases = picks.some((p) => attached.has(p.id)) ? await upstream.load(kb.id) : new Map();
     const prefix = `Knowledge bases/${safeSeg(kb.name)}`;
     const at = now().toISOString();
     const skipped = [];
@@ -154,7 +159,21 @@ export function createKbDrive({ account, accounts, picker = null, pick = awaitPi
         continue;
       }
       const row = { text, frontmatter, hash: sha256(text), mtime: at, kbId: kb.id, from: meta.name };
-      if (had) { updates.push({ note: had, row: { ...row, id: had.id, rel: had.path, folderId: had.folder_id ?? null } }); continue; }
+      if (had) {
+        const base = bases.get(had.id) ?? null;
+        let plan = { write: true, suggestion: null };
+        if (base) {
+          let current = base.base_body;
+          if (had.hash !== base.base_hash) {
+            try { current = (await upstream.bodies([had.id])).get(had.id) ?? base.base_body; } catch (err) { skipped.push({ path: meta.name, reason: plain(err, 'The note could not be read.') }); continue; }
+          }
+          plan = resyncPlan({ base, current, upstream: text });
+        }
+        // Quorum's copy has edits and the file's text did not change: the copy stays, only the check time moves
+        if (!plan.write) { checked.push(had); continue; }
+        updates.push({ note: had, plan, row: { ...row, id: had.id, rel: had.path, folderId: had.folder_id ?? null } });
+        continue;
+      }
       const segs = folderId ? segsOf(folderId) : [];
       const base = noteFileName(meta.name).replace(/\.md$/, '');
       let file = `${base}.md`;
@@ -170,14 +189,24 @@ export function createKbDrive({ account, accounts, picker = null, pick = awaitPi
       skipped.push({ path: from, reason: /duplicate key|notes_workspace_path/i.test(msg) ? 'Another note in the workspace already uses this path.' : err?.code === 'DRIVE' ? err.message : plain(err, fallback) });
     };
     let synced = 0;
-    for (const r of creates) { try { await remote.notes.push(r); synced++; } catch (err) { failed(r.from, err, 'The note could not be written.'); } }
-    for (const u of updates) { try { await updateNote(u.note, u.row, remote); synced++; } catch (err) { failed(u.row.from, err, 'The note could not be written.'); } }
+    const ups = [];
+    let suggested = 0;
+    for (const r of creates) { try { await remote.notes.push(r); synced++; ups.push(upstreamRow(r.id, r.text, null)); } catch (err) { failed(r.from, err, 'The note could not be written.'); } }
+    for (const u of updates) {
+      try {
+        await updateNote(u.note, u.row, remote);
+        synced++;
+        if (u.plan.suggestion) suggested++;
+        ups.push(upstreamRow(u.note.id, u.row.text, u.plan.suggestion, bases.get(u.note.id)));
+      } catch (err) { failed(u.row.from, err, 'The note could not be written.'); }
+    }
+    try { await upstream.save(kb.id, ups); } catch (err) { log('kb-drive', 'upstream not stored', err?.message ?? err); }
     for (const l of leaving) {
       try { await removeNote(l.note); skipped.push({ path: l.label, reason: NOW_CONFIDENTIAL }); } catch (err) { failed(l.label, err, 'The file is now marked confidential, and its note could not be taken out of the knowledge base.'); }
     }
     for (const n of checked) await markChecked(n, at);
-    log('kb-drive', `${synced} written, ${checked.length} unchanged, ${skipped.length} skipped in ${kb.id}`);
-    return { files: filesOf(await kbNotes(kb.id, COLUMNS)), synced, unchanged: checked.length, skipped };
+    log('kb-drive', `${synced} written, ${checked.length} unchanged, ${suggested} suggested, ${skipped.length} skipped in ${kb.id}`);
+    return { files: filesOf(await kbNotes(kb.id, COLUMNS)), synced, unchanged: checked.length, suggested, skipped };
   }
 
   // reading and writing run one batch at a time; a second batch waits for the first

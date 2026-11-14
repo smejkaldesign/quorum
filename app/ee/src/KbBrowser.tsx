@@ -6,13 +6,15 @@ import { IconBack, IconBrain, IconChevron, IconDoc, IconFolder, IconMore, IconSt
 import { descendantIds, findFolder, folderPath, moveCheck, moveTargets, notesIn, openPathTo, resolveKbLink, rowKey, treeKey, visibleRows, withFolder, withoutFolder, type TreeRow } from './kbTree';
 import { KB_CHANGED, kbCall, KbConfirm, useLatest } from './kbUi';
 import { DrivePanel, hasDrive } from './KbDrive';
+import { KbSuggestionBanner } from './KbSuggestion';
 import { KB_OPEN, takeKbOpen, type KbOpenTarget } from '../../src/kbOpen';
 
 // The knowledge bases in the Knowledge tab: one left column with the team knowledge entry (and, for a folder or git
 // source, that source's own file tree, which the team view portals into the slot below it) and one top-level row per
 // KB the person can read with its folders inside; the selected folder's notes on the right. KB admins create, rename,
 // move (drag, or Move to) and delete folders. With the team entry selected the right side shows `children`, the team
-// knowledge view as it was; it stays mounted while a KB is open so its place is kept.
+// knowledge view as it was; it stays mounted while a KB is open so its place is kept. An admin opening a synced note
+// sees what Quorum changed in its copy, and a suggestion kept from before the source changed (KbSuggestion).
 
 type Sel = { kbId: string; folderId: string | null };
 type Edit = { mode: 'rename'; kbId: string; folderId: string | null; name: string } | { mode: 'new'; kbId: string; parentId: string | null; name: string };
@@ -317,6 +319,7 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
               {error && <p className="error tk-error" role="alert">{error}</p>}
               <div className="tk-body"><article className="tk-doc">
                 <h1>{doc.title}</h1>
+                {selKb.role === 'admin' && <KbSuggestionBanner key={doc.note.id} noteId={doc.note.id} onApplied={(d) => setDoc({ ...doc, title: d.title || doc.title, body: d.body })} />}
                 <Markdown text={doc.body} headings onWiki={follow} />
               </article></div>
             </>
