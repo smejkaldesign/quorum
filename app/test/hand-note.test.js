@@ -1,7 +1,8 @@
 // New note and Record: the note text the main process writes, and what Record appends into an open note
 import { describe, expect, it } from 'vitest';
-import { cleanTitle, hashText, newNoteText, noteFileName, rewriteNote, splitNote, UNTITLED } from '../handnote.js';
-import { appendScreen, appendTurn, canStart, recordChoices, screenBlock } from '../src/noteRecord.ts';
+import { cleanTitle, hashText, newNoteText, noteFileName, rewriteNote, screenRead, splitNote, UNTITLED, yamlStr, yamlValue } from '../handnote.js';
+import { appendScreen, appendTurn, canStart, emptyWritten, newWords, recordChoices, screenBlock } from '../src/noteRecord.ts';
+import { CALL_ACTIVE, LISTEN_OFF, recordDecision } from '../notetaker.js';
 
 describe('a note written in the app', () => {
   const fresh = newNoteText({ id: '2026-11-13T10-00-00-000Z', title: 'Pricing ideas', body: 'First line\n\n- a bullet\n', date: '2026-11-13T10:00:00.000-08:00', owner: 'Ada' });
@@ -58,37 +59,51 @@ describe('Record choices', () => {
 });
 
 describe('what Record appends to the note', () => {
-  it('adds each final turn as a paragraph at the end of the note', () => {
-    let r = appendTurn('My notes', null, { id: 1, channel: 'me', text: 'Call the bank' });
-    expect(r.body).toBe('My notes\n\nCall the bank');
-    r = appendTurn(r.body, r.last, { id: 2, channel: 'them', text: 'Sure, Tuesday works' });
-    expect(r.body).toBe('My notes\n\nCall the bank\n\n**Others:** Sure, Tuesday works');
+  const run = (body, turns) => turns.reduce((r, t) => appendTurn(r.body, r.written, t), { body, written: emptyWritten() });
+
+  it('adds each final turn as a paragraph at the end, labeled You or Others', () => {
+    const r = run('My notes', [{ id: 1, channel: 'me', text: 'Call the bank' }, { id: 2, channel: 'them', text: 'Sure, Tuesday works' }]);
+    expect(r.body).toBe('My notes\n\n**You:** Call the bank\n\n**Others:** Sure, Tuesday works');
   });
 
   it('starts an empty note without blank lines', () => {
-    expect(appendTurn('', null, { id: 1, channel: 'me', text: 'Hello' }).body).toBe('Hello');
+    expect(run('', [{ id: 1, channel: 'me', text: 'Hello' }]).body).toBe('**You:** Hello');
   });
 
   it('rewrites the last paragraph when its turn grows', () => {
-    let r = appendTurn('', null, { id: 1, channel: 'me', text: 'Call the' });
-    r = appendTurn(r.body, r.last, { id: 1, channel: 'me', text: 'Call the bank today', replace: true });
-    expect(r.body).toBe('Call the bank today');
-    r = appendTurn(r.body, r.last, { id: 1, channel: 'me', text: 'Call the bank today at noon', replace: true });
-    expect(r.body).toBe('Call the bank today at noon');
+    const r = run('', [{ id: 1, channel: 'me', text: 'Call the' }, { id: 1, channel: 'me', text: 'Call the bank today', replace: true }, { id: 1, channel: 'me', text: 'Call the bank today at noon', replace: true }]);
+    expect(r.body).toBe('**You:** Call the bank today at noon');
   });
 
   it('adds only the gained words once something follows the turn', () => {
-    let r = appendTurn('', null, { id: 1, channel: 'me', text: 'Call the' });
-    const typed = `${r.body}\n\nmy own line`;
-    r = appendTurn(typed, r.last, { id: 1, channel: 'me', text: 'Call the bank', replace: true });
-    expect(r.body).toBe('Call the\n\nmy own line\n\nbank');
-    r = appendTurn(r.body, r.last, { id: 1, channel: 'me', text: 'Call the bank today', replace: true });
-    expect(r.body).toBe('Call the\n\nmy own line\n\nbank today');
+    let r = run('', [{ id: 1, channel: 'me', text: 'Call the' }]);
+    r = appendTurn(`${r.body}\n\nmy own line`, r.written, { id: 1, channel: 'me', text: 'Call the bank', replace: true });
+    expect(r.body).toBe('**You:** Call the\n\nmy own line\n\nbank');
+    r = appendTurn(r.body, r.written, { id: 1, channel: 'me', text: 'Call the bank today', replace: true });
+    expect(r.body).toBe('**You:** Call the\n\nmy own line\n\nbank today');
   });
 
-  it('ignores a grown turn it never wrote, and empty text', () => {
-    expect(appendTurn('x', null, { id: 9, channel: 'me', text: 'late', replace: true }).body).toBe('x');
-    expect(appendTurn('x', null, { id: 9, channel: 'me', text: '  ' }).body).toBe('x');
+  it('keeps the new words of a cleanup rewrite that does not extend the earlier text', () => {
+    expect(newWords('**You:** um so call the bank', '**You:** So, call the bank today.')).toBe('today.');
+    let r = run('', [{ id: 1, channel: 'me', text: 'um so call the bank' }, { id: 2, channel: 'them', text: 'Okay' }]);
+    r = appendTurn(r.body, r.written, { id: 1, channel: 'me', text: 'So, call the bank today.', replace: true });
+    expect(r.body).toBe('**You:** um so call the bank\n\n**Others:** Okay\n\ntoday.');
+    // and a grown tail that was itself rewritten keeps its words too
+    r = run('', [{ id: 1, channel: 'me', text: 'call the' }]);
+    r = appendTurn(`${r.body}\n\nmine`, r.written, { id: 1, channel: 'me', text: 'call the bank', replace: true });
+    r = appendTurn(r.body, r.written, { id: 1, channel: 'me', text: 'Call the bank, then email Sam', replace: true });
+    expect(r.body).toBe('**You:** call the\n\nmine\n\nbank then email Sam');
+  });
+
+  it('rewrites the whole paragraph while it is still last, cleanup included', () => {
+    const r = run('', [{ id: 1, channel: 'me', text: 'um so call the bank' }, { id: 1, channel: 'me', text: 'So, call the bank.', replace: true }]);
+    expect(r.body).toBe('**You:** So, call the bank.');
+  });
+
+  it('writes a grown turn it never saw in full, and ignores empty text', () => {
+    expect(run('x', [{ id: 9, channel: 'me', text: 'late words', replace: true }]).body).toBe('x\n\n**You:** late words');
+    expect(run('x', [{ id: 9, channel: 'me', text: '  ' }]).body).toBe('x');
+    expect(run('x', [{ id: 1, channel: 'me', text: 'same' }, { id: 1, channel: 'me', text: 'same', replace: true }]).body).toBe('x\n\n**You:** same');
   });
 
   it('writes a screen read as a folded callout naming the window, capped in length', () => {
@@ -101,5 +116,49 @@ describe('what Record appends to the note', () => {
     expect(long.endsWith('> …')).toBe(true);
     expect(appendScreen('Notes', { text: ' ', at })).toBe('Notes');
     expect(appendScreen('Notes', { text: 'Hi', at })).toMatch(/^Notes\n\n> \[!info\]- Screen at/);
+  });
+});
+
+describe('a screen read from the helper', () => {
+  it('turns Screen off on a missing permission, skips empty and repeated reads, and sends the rest', () => {
+    expect(screenRead({ granted: false, text: 'x' }, null)).toEqual({ action: 'denied' });
+    expect(screenRead({ granted: true, text: '  ' }, null)).toEqual({ action: 'skip' });
+    const first = screenRead({ granted: true, app: 'Figma', title: 'Home', text: 'Hero' }, null);
+    expect(first.action).toBe('send');
+    expect(first.event).toEqual({ app: 'Figma', title: 'Home', text: 'Hero' });
+    expect(screenRead({ app: 'Figma', title: 'Home', text: 'Hero' }, first.key)).toEqual({ action: 'skip' });
+    // the same text in another window is new
+    expect(screenRead({ app: 'Figma', title: 'Pricing', text: 'Hero' }, first.key).action).toBe('send');
+  });
+});
+
+describe('Record and a call', () => {
+  const g = { manualListen: true, meetingCapture: true };
+  it('refuses while a noticed call is active, and when listening is off', () => {
+    expect(recordDecision(g, { meetingActive: true })).toEqual({ ok: false, error: CALL_ACTIVE });
+    expect(recordDecision({ ...g, manualListen: false }, { meetingActive: false })).toEqual({ ok: false, error: LISTEN_OFF });
+  });
+  it('allows a solo note when no call is noticed', () => {
+    expect(recordDecision(g, { meetingActive: false })).toEqual({ ok: true });
+    expect(recordDecision({ ...g, meetingCapture: false }, { meetingActive: true })).toEqual({ ok: true });
+  });
+});
+
+describe('frontmatter titles', () => {
+  it('reads back exactly what it writes, backslashes and quotes included, with line breaks folded to spaces', () => {
+    for (const t of ['Plain', 'Say "hi"', 'C:\\Users\\ada', 'a \\"tricky\\" one', 'colon: here', "it's #1"]) {
+      const raw = newNoteText({ id: 'x', title: t, body: '', date: 'd', owner: 'Ada' });
+      expect(yamlValue(yamlStr(t))).toBe(t);
+      expect(splitNote(raw).title).toBe(t);
+      expect(splitNote(rewriteNote(raw, { title: t, body: 'b' })).title).toBe(t);
+    }
+    expect(splitNote(newNoteText({ id: 'x', title: 'two\nlines', body: '', date: 'd', owner: 'Ada' })).title).toBe('two lines');
+  });
+  it('reads single-quoted and plain titles written by other apps', () => {
+    expect(splitNote("---\ntitle: 'It''s here'\n---\nx").title).toBe("It's here");
+    expect(splitNote('---\ntitle: Plain words\n---\nx').title).toBe('Plain words');
+  });
+  it('keeps $ patterns in a title literal', () => {
+    expect(rewriteNote('---\ntitle: "a"\n---\n\n# a\n\nbody\n', { title: 'Cost $& $1', body: 'body' })).toContain('title: "Cost $& $1"');
   });
 });

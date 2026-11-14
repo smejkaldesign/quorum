@@ -4,7 +4,7 @@ import { Markdown } from './Markdown';
 import { IconBack, IconCalendar, IconFolder, IconNotes, IconRecord, IconScreen, IconStop } from './icons';
 import { IconPen } from './PrivateNotes';
 import { RecordMenu } from './Record';
-import { appendScreen, appendTurn, recordChoices, type RecordChoice, type Written } from './noteRecord';
+import { appendScreen, appendTurn, emptyWritten, recordChoices, type RecordChoice, type Written } from './noteRecord';
 
 const SAVE_AFTER = 800;
 type Status = 'idle' | 'saving' | 'saved' | 'conflict';
@@ -12,13 +12,17 @@ type Status = 'idle' | 'saving' | 'saved' | 'conflict';
 // New note: the note view a recording ends on, opened on a fresh Untitled note (file null) or on an existing note to
 // continue it. The title and the markdown body are edited by hand and saved on a short pause into the vault folder
 // recorded notes go to. Record appends what it hears, and with Screen what the front window shows, at the end of the
-// note. canRecord follows the manual-listen flag; screenOffered is the screen-context flag plus its setting
-export function NoteView({ file: openFile, record: startWith, canRecord, screenOffered, onClose }: {
-  file: string | null; record: RecordChoice | null; canRecord: boolean; screenOffered: boolean; onClose: () => void;
+// note. canRecord follows the manual-listen flag; screenOffered is the screen-context flag plus its setting.
+// fresh marks a note this editor created, whose file name follows its title; onSaved reports the file after a save so
+// a remount reopens it. A change in leave closes the view the way Back does (a call started)
+export function NoteView({ file: initialFile, fresh, record: startWith, canRecord, screenOffered, leave, onSaved, onClose }: {
+  file: string | null; fresh: boolean; record: RecordChoice | null; canRecord: boolean; screenOffered: boolean; leave: number;
+  onSaved: (file: string) => void; onClose: () => void;
 }) {
   const [id] = useState(() => new Date().toISOString().replace(/[:.]/g, '-'));
-  const fresh = !openFile;
-  const [loaded, setLoaded] = useState(fresh);
+  // the file is read once per mount; later saves move it through live.current.ref
+  const [openFile] = useState(initialFile);
+  const [loaded, setLoaded] = useState(!openFile);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [date, setDate] = useState(() => new Date());
@@ -32,34 +36,50 @@ export function NoteView({ file: openFile, record: startWith, canRecord, screenO
   const [preview, setPreview] = useState(false);
   const editor = useRef<HTMLTextAreaElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
-  // the text the save timer, Record and the close read outside a render
-  const live = useRef({ title: '', body: '', ref: null as HandNoteRef | null, dirty: false, saving: false, blocked: false, rec: { audio: false, screen: false } as RecordState });
-  const last = useRef<Written>(null);
+  // the text the save timer, Record and the close read outside a render. readOnly stops saving and appending; a
+  // conflict stops saving only, so Record keeps writing into the text on screen, which the person can copy
+  const live = useRef({
+    title: '', body: '', ref: null as HandNoteRef | null, dirty: false, readOnly: false, conflict: false, closing: false,
+    inflight: null as Promise<boolean> | null, rec: { audio: false, screen: false } as RecordState,
+  });
+  const written = useRef<Written>(emptyWritten());
   const timer = useRef<number | null>(null);
   const recording = rec.audio || rec.screen;
   live.current.rec = rec;
 
-  async function save() {
+  // one save at a time: a save asked for while another runs waits for it, then saves the latest text if it changed.
+  // Resolves once nothing newer is left to save, or the last attempt failed
+  async function writeOnce(): Promise<boolean> {
     const s = live.current;
-    if (!s.dirty || s.saving || s.blocked) return;
-    if (!s.ref && !s.title.trim() && !s.body.trim()) return;
-    s.saving = true;
     s.dirty = false;
     setStatus('saving');
     try {
       const r = await window.quorum.handNoteSave({ id, file: s.ref?.file ?? null, title: s.title, body: s.body, hash: s.ref?.hash ?? null, fresh });
-      if ('conflict' in r) { s.blocked = true; setStatus('conflict'); return; }
-      if ('error' in r) { s.dirty = true; setStatus('idle'); setError(r.error); return; }
+      if ('conflict' in r) { s.conflict = true; setStatus('conflict'); return false; }
+      if ('error' in r) { s.dirty = true; setStatus('idle'); setError(r.error); return false; }
+      const moved = r.file !== s.ref?.file;
       s.ref = r;
       setRef(r);
       setError(null);
       setStatus('saved');
+      if (moved) onSaved(r.file);
+      return true;
     } catch (err) {
       s.dirty = true;
       setStatus('idle');
       setError(`Couldn't save: ${String(err).replace(/^.*Error:\s*/, '')}`);
-    } finally { s.saving = false; }
-    if (s.dirty) schedule();
+      return false;
+    }
+  }
+  async function save(): Promise<void> {
+    const s = live.current;
+    if (s.inflight) { const ok = await s.inflight; if (ok && s.dirty) return save(); return; }
+    if (!s.dirty || s.readOnly || s.conflict) return;
+    if (!s.ref && !s.title.trim() && !s.body.trim()) return;
+    s.inflight = writeOnce();
+    const ok = await s.inflight;
+    s.inflight = null;
+    if (ok && s.dirty) { if (s.closing) return save(); schedule(); }
   }
   function schedule() {
     live.current.dirty = true;
@@ -70,11 +90,11 @@ export function NoteView({ file: openFile, record: startWith, canRecord, screenO
   const editBody = (b: string) => { live.current.body = b; setBody(b); schedule(); };
 
   // what Record adds goes at the end; a caret in the editor stays where it was
-  function append(next: (b: string) => { body: string; last: Written }) {
-    if (live.current.blocked) return;
+  function append(next: (b: string) => { body: string; written: Written }) {
+    if (live.current.readOnly) return;
     const r = next(live.current.body);
+    written.current = r.written;
     if (r.body === live.current.body) return;
-    last.current = r.last;
     const ta = editor.current;
     const caret = ta && document.activeElement === ta ? [ta.selectionStart, ta.selectionEnd] as const : null;
     editBody(r.body);
@@ -89,13 +109,12 @@ export function NoteView({ file: openFile, record: startWith, canRecord, screenO
     let on = true;
     window.quorum.handNoteOpen(openFile).then((n) => {
       if (!on) return;
-      if (!n) { setError('This note was moved or deleted.'); setReadOnly(true); setLoaded(true); return; }
-      live.current = { ...live.current, title: n.title, body: n.body, ref: n };
+      if (!n) { setError('This note was moved or deleted.'); setReadOnly(true); live.current.readOnly = true; setLoaded(true); return; }
+      live.current = { ...live.current, title: n.title, body: n.body, ref: n, readOnly: n.readOnly };
       setTitle(n.title);
       setBody(n.body);
       setRef(n);
       setReadOnly(n.readOnly);
-      live.current.blocked = n.readOnly;
       if (n.date && !Number.isNaN(Date.parse(n.date))) setDate(new Date(n.date));
       setLoaded(true);
     });
@@ -104,15 +123,15 @@ export function NoteView({ file: openFile, record: startWith, canRecord, screenO
 
   useEffect(() => {
     const offs = [
-      window.quorum.onRecord(setRec),
+      window.quorum.onRecord((s) => { setRec({ audio: s.audio, screen: s.screen }); if (s.notice) setError(s.notice); }),
       window.quorum.onHelperEvent((e) => {
         if (e.event !== 'transcript' || !e.isFinal || e.channel === 'dictation' || !live.current.rec.audio) return;
         const turn = { id: e.id ?? 0, channel: e.channel, text: e.text, replace: e.replace };
-        append((b) => appendTurn(b, last.current, turn));
+        append((b) => appendTurn(b, written.current, turn));
       }),
-      window.quorum.onScreenContext((s) => { if (live.current.rec.screen) append((b) => ({ body: appendScreen(b, s), last: last.current })); }),
+      window.quorum.onScreenContext((s) => { if (live.current.rec.screen) append((b) => ({ body: appendScreen(b, s), written: written.current })); }),
     ];
-    window.quorum.recordStatus().then(setRec).catch(() => {});
+    window.quorum.recordStatus().then((s) => setRec({ audio: s.audio, screen: s.screen })).catch(() => {});
     return () => offs.forEach((off) => off());
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -130,7 +149,7 @@ export function NoteView({ file: openFile, record: startWith, canRecord, screenO
     window.addEventListener('click', shut);
     return () => window.removeEventListener('click', shut);
   }, [menu]);
-  useEffect(() => { if (loaded && fresh) editor.current?.focus(); }, [loaded, fresh]);
+  useEffect(() => { if (loaded && !openFile) editor.current?.focus(); }, [loaded, openFile]);
   useLayoutEffect(() => {
     const ta = editor.current;
     if (!ta) return;
@@ -141,22 +160,30 @@ export function NoteView({ file: openFile, record: startWith, canRecord, screenO
   async function start(c: RecordChoice) {
     setMenu(false);
     setError(null);
-    last.current = null;
+    written.current = emptyWritten();
     const r = await window.quorum.recordStart(c);
     if ('error' in r) { setError(r.error); return; }
-    setRec(r);
+    setRec({ audio: r.audio, screen: r.screen });
   }
-  const stop = async () => setRec(await window.quorum.recordStop());
-
-  async function close() {
-    if (live.current.rec.audio || live.current.rec.screen) await window.quorum.recordStop();
-    if (timer.current) { window.clearTimeout(timer.current); timer.current = null; }
-    await save();
-    window.quorum.handNoteDone(live.current.ref?.file ?? null);
-    onClose();
-  }
+  const stop = async () => { const s = await window.quorum.recordStop(); setRec({ audio: s.audio, screen: s.screen }); };
 
   const copyText = () => navigator.clipboard.writeText(`# ${live.current.title || 'Untitled note'}\n\n${live.current.body}`);
+
+  // Back: the recording stops, the save in flight finishes and the latest text is saved, then the note syncs. A note
+  // stopped by a conflict goes to the clipboard so nothing typed or heard is lost
+  async function close() {
+    const s = live.current;
+    if (s.closing) return;
+    s.closing = true;
+    if (s.rec.audio || s.rec.screen) await window.quorum.recordStop();
+    if (timer.current) { window.clearTimeout(timer.current); timer.current = null; }
+    await save();
+    if (s.conflict) await copyText().catch(() => {});
+    await window.quorum.handNoteDone(s.ref?.file ?? null);
+    onClose();
+  }
+  useEffect(() => { if (leave) close(); }, [leave]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const time = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const day = date.toDateString() === new Date().toDateString() ? 'Today' : date.toLocaleDateString();
 
@@ -204,7 +231,9 @@ export function NoteView({ file: openFile, record: startWith, canRecord, screenO
           {error && <p className="set-error" role="alert">{error}</p>}
           {status === 'conflict' && (
             <p className="set-error" role="alert">
-              This note changed on disk since it was opened, so Quorum stopped saving to keep that version. Your text is still here.{' '}
+              This note changed on disk since it was opened, so Quorum stopped saving to keep that version.{' '}
+              {recording ? 'Recording still writes into the text below, which is not saved. ' : 'Your text below is not saved. '}
+              Back copies it to the clipboard.{' '}
               <button className="pill small-pill" onClick={copyText}>Copy your text</button>
             </p>
           )}

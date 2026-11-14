@@ -10,23 +10,57 @@ enum ScreenContext {
     static func access(prompt: Bool) -> Bool { prompt ? CGRequestScreenCaptureAccess() : CGPreflightScreenCaptureAccess() }
 
     // the front window of an app whose bundle id starts with one of the prefixes, else the frontmost app's front window
-    static func terms(bundlePrefixes: [String]) async -> [String] {
-        guard let shot = await read(bundlePrefixes: bundlePrefixes) else { return [] }
+    static func terms(bundlePrefixes: [String], excludePids: [Int32] = []) async -> [String] {
+        guard let shot = await read(bundlePrefixes: bundlePrefixes, excludePids: excludePids) else { return [] }
         return extract(shot.text)
     }
 
-    // one screenshot of that window, recognized with Vision: the lines of text, the app's name and the window title.
-    // Record's Screen option adds these to the open note; nothing is stored here, and the image is dropped once read
-    static func read(bundlePrefixes: [String]) async -> (text: String, app: String, title: String)? {
+    // Quorum's own windows are never read: the app's bundle, the process that started this helper, and any process
+    // the app names
+    static let ownBundles = ["design.smejkal.quorum"]
+
+    // one on-screen window as the window server lists it, front to back
+    struct Candidate: Equatable {
+        let id: CGWindowID
+        let pid: Int32
+        let bundle: String
+        let layer: Int
+        let width: Double
+        let height: Double
+    }
+
+    // the window to read: the frontmost window of an app named by a prefix, else the frontmost window that is not
+    // Quorum's. Small windows and anything off the normal layer (menus, the Dock, overlays) are skipped. nil when
+    // nothing is left, so a read never falls back to Quorum itself
+    static func pick(_ windows: [Candidate], bundlePrefixes: [String], excludePids: Set<Int32>, excludeBundles: [String] = ownBundles) -> CGWindowID? {
+        let ok = windows.filter { w in
+            w.layer == 0 && w.width > 300 && w.height > 200 && !excludePids.contains(w.pid) && !excludeBundles.contains { w.bundle.hasPrefix($0) }
+        }
+        return (ok.first { w in bundlePrefixes.contains { w.bundle.hasPrefix($0) } } ?? ok.first)?.id
+    }
+
+    // the window server's on-screen list, which comes front to back
+    static func candidates() -> [Candidate] {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return [] }
+        var bundles: [Int32: String] = [:]
+        return list.compactMap { info in
+            guard let id = info[kCGWindowNumber as String] as? CGWindowID, let pid = info[kCGWindowOwnerPID as String] as? Int32 else { return nil }
+            let bounds = info[kCGWindowBounds as String] as? [String: Any]
+            if bundles[pid] == nil { bundles[pid] = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? "" }
+            return Candidate(id: id, pid: pid, bundle: bundles[pid] ?? "", layer: info[kCGWindowLayer as String] as? Int ?? 0,
+                             width: (bounds?["Width"] as? Double) ?? 0, height: (bounds?["Height"] as? Double) ?? 0)
+        }
+    }
+
+    // one screenshot of the picked window, recognized with Vision: the lines of text, the app's name and the window
+    // title. Record's Screen option adds these to the open note; nothing is stored here, and the image is dropped once read
+    static func read(bundlePrefixes: [String], excludePids: [Int32] = []) async -> (text: String, app: String, title: String)? {
         guard CGPreflightScreenCaptureAccess() else { return nil }
         do {
+            let skip = Set(excludePids + [getpid(), getppid()])
+            guard let id = pick(candidates(), bundlePrefixes: bundlePrefixes, excludePids: skip) else { return nil }
             let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
-            let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
-            let wins = content.windows.filter { $0.isOnScreen && $0.frame.width > 300 && $0.frame.height > 200 && $0.windowLayer == 0 }
-            let pick = wins.first { w in bundlePrefixes.contains { p in (w.owningApplication?.bundleIdentifier ?? "").hasPrefix(p) } }
-                ?? wins.first { $0.owningApplication?.processID == front }
-                ?? wins.first
-            guard let win = pick else { return nil }
+            guard let win = content.windows.first(where: { $0.windowID == id }) else { return nil }
             let config = SCStreamConfiguration()
             let scale = 2.0
             config.width = Int(win.frame.width * scale)

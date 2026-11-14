@@ -1535,7 +1535,6 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .lazy-fail { margin: 40px auto; max-width: 520px; }
 
 /* why a Start did nothing (App.tsx notice) */
-.start-notice { margin: 6px 16px 0; }
 .c-dictate-error { flex-basis: 100%; margin: 0 4px 4px; font-size: 13px; }
 
 .onb-step .set-error { color: var(--danger); }

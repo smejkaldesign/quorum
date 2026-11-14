@@ -53,6 +53,15 @@ export function startDecision(g, { meetingActive = false } = {}) {
   return { ok: true, solo: !(g.meetingCapture && meetingActive) };
 }
 
+// Record in a note is always a solo session. A noticed call (meeting capture on and a call active) needs the consent
+// notice, the never-listen check, opt-outs and STOP, so Record refuses it and points at the call controls instead
+export const CALL_ACTIVE = 'A call is active. Use the call controls to record it.';
+export function recordDecision(g, { meetingActive = false } = {}) {
+  const d = startDecision(g, { meetingActive });
+  if (!d.ok) return d;
+  return d.solo ? { ok: true } : { ok: false, error: CALL_ACTIVE };
+}
+
 // what keep() does with each final line: the STOP-intent check and the opted-out name match only make sense on a
 // noticed call; suggestions are live assistance
 export const keepActions = (g, { solo = true } = {}) => ({

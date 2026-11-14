@@ -220,12 +220,12 @@ export type StateEvent =
   | { phase: 'listening' | 'paused'; by?: string; go?: string; soft?: boolean; intoNote?: boolean }
   | { phase: 'blocked' }
   | { phase: 'summarizing'; meta?: MeetingMeta }
-  | { phase: 'starting'; chatName?: string | null }
+  | { phase: 'starting'; chatName?: string | null; intoNote?: boolean }
   | { phase: 'idle' }
   | { phase: 'review'; notes: Notes; meta?: MeetingMeta };
 
 // Record in the note view: what is running (audio is Transcription), and a screen read for the open note
-export type RecordState = { audio: boolean; screen: boolean };
+export type RecordState = { audio: boolean; screen: boolean; notice?: string };
 export type ScreenContextEvent = { app: string; title: string; text: string; at: number };
 // a note opened in the note view; hash is the file as read, so a save can tell it changed on disk
 export type HandNoteRef = { file: string; hash: string; rel: string; app: string; url: string };
@@ -235,8 +235,6 @@ export type HandNoteSave = HandNoteRef | { conflict: true } | { error: string };
 declare global {
   interface Window {
     quorum: {
-      // answers { error } when manual listening is off (the manual-listen flag)
-      start(): Promise<{ error: string } | null>;
       end(): Promise<Notes | null>;
       pause(): Promise<void>;
       resume(): Promise<void>;

@@ -7,7 +7,6 @@ const on = (channel) => (cb) => {
 };
 
 contextBridge.exposeInMainWorld('quorum', {
-  start: () => ipcRenderer.invoke('start'),
   end: () => ipcRenderer.invoke('end'),
   pause: () => ipcRenderer.invoke('pause'),
   resume: () => ipcRenderer.invoke('resume'),
