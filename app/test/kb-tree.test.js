@@ -140,8 +140,9 @@ describe('readers', () => {
   });
 
   it('reads the current choice back from the access list', () => {
-    expect(readersOf([ws, ann])).toEqual({ mode: 'workspace', people: [] });
-    expect(readersOf([ann, bo])).toEqual({ mode: 'people', people: ['bo'] });
+    expect(readersOf([ws, ann])).toEqual({ mode: 'workspace', people: [], teams: [] });
+    expect(readersOf([ann, bo])).toEqual({ mode: 'people', people: ['bo'], teams: [] });
+    expect(readersOf([ann, { principal: 'team', userId: null, teamId: 'design', role: 'reader', email: null, name: null }])).toEqual({ mode: 'people', people: [], teams: ['design'] });
   });
 
   it('keeps KB admins and drops person readers when the whole workspace reads', () => {
@@ -151,12 +152,43 @@ describe('readers', () => {
     ]);
   });
 
-  it('lists chosen people once, never demoting an admin and never sending teams', () => {
+  it('lists chosen people once, never demoting an admin, and drops team readers left unchosen', () => {
     const team = { principal: 'team', userId: null, teamId: 't', role: 'reader', email: null, name: null };
     expect(accessDraft([ws, ann, team], 'people', ['bo', 'bo', 'ann'])).toEqual([
       { principal: 'user', userId: 'ann', role: 'admin' },
       { principal: 'user', userId: 'bo', role: 'reader' },
     ]);
+  });
+
+  describe('teams in the readers picker', () => {
+    const design = { principal: 'team', userId: null, teamId: 'design', role: 'reader', email: null, name: null };
+    const ops = { principal: 'team', userId: null, teamId: 'ops', role: 'admin', email: null, name: null };
+
+    it('counts teams in the summary', () => {
+      expect(readersSummary([design])).toBe('1 team');
+      expect(readersSummary([design, { ...design, teamId: 'eng' }, bo, ann])).toBe('2 teams · 1 person · 1 KB admin');
+      expect(readersSummary([ws, design])).toBe('Whole workspace');
+    });
+
+    it('sends chosen teams once as readers, alongside chosen people', () => {
+      expect(accessDraft([ann], 'people', ['bo'], ['design', 'design', 'eng'])).toEqual([
+        { principal: 'user', userId: 'ann', role: 'admin' },
+        { principal: 'team', teamId: 'design', role: 'reader' },
+        { principal: 'team', teamId: 'eng', role: 'reader' },
+        { principal: 'user', userId: 'bo', role: 'reader' },
+      ]);
+    });
+
+    it('keeps a team that is a KB admin as admin, chosen or not', () => {
+      expect(accessDraft([ops], 'people', [], ['ops'])).toEqual([{ principal: 'team', teamId: 'ops', role: 'admin' }]);
+      expect(accessDraft([ops, design], 'workspace', [], ['design'])).toEqual([{ principal: 'workspace', role: 'reader' }, { principal: 'team', teamId: 'ops', role: 'admin' }]);
+    });
+
+    it('a team-owned KB always keeps its own team, even unchecked or with the whole workspace reading', () => {
+      expect(accessDraft([design], 'people', [], [], 'design')).toEqual([{ principal: 'team', teamId: 'design', role: 'reader' }]);
+      expect(accessDraft([design], 'workspace', [], [], 'design')).toEqual([{ principal: 'workspace', role: 'reader' }, { principal: 'team', teamId: 'design', role: 'reader' }]);
+      expect(accessDraft([design], 'people', [], ['eng'], 'design')).toEqual([{ principal: 'team', teamId: 'eng', role: 'reader' }, { principal: 'team', teamId: 'design', role: 'reader' }]);
+    });
   });
 });
 

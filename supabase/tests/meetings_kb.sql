@@ -69,7 +69,7 @@ do $$ declare r jsonb; begin
   r := public.kb_meetings_folder('01MK00000000000000000000WA', '2026-11');
   assert r ->> 'folder_id' = pg_temp.id('nov') and r ->> 'kb_id' = pg_temp.id('kb') and r ->> 'month' = '2026-11', 'the same folder comes back';
   assert (select count(*) from public.kb_folders where kb_id = pg_temp.id('kb') and name = '2026-11' and parent_id is null) = 1, 'one top-level folder per month';
-  assert public.kb_meetings_info('01MK00000000000000000000WA') = jsonb_build_object('kb_id', pg_temp.id('kb'), 'name', 'Meetings'), 'a member reads the meetings KB id and name';
+  assert public.kb_meetings_info('01MK00000000000000000000WA') @> jsonb_build_object('kb_id', pg_temp.id('kb'), 'name', 'Meetings'), 'a member reads the meetings KB id and name';
 end $$;
 select pg_temp.expect_error($$ select public.kb_meetings_folder('01MK00000000000000000000WA', '2026-13') $$, 'named like 2026-11');
 select pg_temp.expect_error($$ select public.kb_meetings_folder('01MK00000000000000000000WA', '../x') $$, 'named like 2026-11');

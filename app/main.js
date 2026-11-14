@@ -1603,6 +1603,7 @@ ipcMain.handle('meeting-share', async (_e, file) => {
 ipcMain.handle('meetings-sources', async () => (account.meetingsKb ? account.meetingsKb.sources() : { available: false, sources: [] }));
 ipcMain.handle('meetings-source-set', async (_e, key, choice) => (account.meetingsKb ? account.meetingsKb.setSource(String(key ?? ''), choice) : { error: 'Sharing meeting notes needs Quorum Cloud with a team.' }));
 ipcMain.handle('meetings-source-share-past', async (_e, key) => (account.meetingsKb ? account.meetingsKb.sharePast(String(key ?? '')) : { error: 'Sharing meeting notes needs Quorum Cloud with a team.' }));
+ipcMain.handle('meetings-team-set', async (_e, teamId) => (account.meetingsKb ? account.meetingsKb.setTeam(typeof teamId === 'string' && teamId ? teamId : null) : { error: 'Sharing meeting notes needs Quorum Cloud with a team.' }));
 ipcMain.handle('meeting-share-set', async (_e, file, keepPrivate, hash) => {
   const abs = meetingFile(file);
   if (!abs) return { error: 'This note was moved or deleted.' };
@@ -1740,6 +1741,8 @@ if (EDITION === 'cloud') (await loadEE('knowledge.js')).registerKnowledge({ ipcM
 if (EDITION === 'cloud') (await loadEE('teamKnowledge.js')).registerTeamKnowledge({ ipcMain, account, settings, saveSettings: () => store.settings.save(), dataDir: DATA_DIR, log, toUI, pickFolder: async () => { const r = await dialog.showOpenDialog(win, { title: 'Team knowledge folder', message: 'Choose the folder that holds the team knowledge on this Mac.', properties: ['openDirectory'] }); return r.canceled ? null : r.filePaths[0] ?? null; } });
 // knowledge bases: KBs, folders, readers and note placement (handlers and the IPC API in ee/knowledgeBases.js)
 if (EDITION === 'cloud') (await loadEE('knowledgeBases.js')).registerKnowledgeBases({ ipcMain, account, log });
+// teams inside a workspace: members, leads and each team's meetings knowledge base (ee/teams.js)
+if (EDITION === 'cloud') (await loadEE('teams.js')).registerTeams({ ipcMain, account, log });
 // knowledge base search for chat and for the quorum CLI and MCP server, as the signed-in person (ee/kbSearch.js)
 const kbModule = EDITION === 'cloud' ? await loadEE('kbSearch.js') : null;
 if (kbModule) kbSearch = kbModule.createKbSearch({ account, redact: (t) => suggester.redactLines(t), log });

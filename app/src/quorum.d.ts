@@ -272,7 +272,12 @@ export type MeetingShare = { available: boolean; keepPrivate: boolean; locked: b
 // the meeting-notes source accounts a team workspace has seen: the person's choice for each (null until asked and
 // answered) and how many past notes "Share past meeting notes" would share
 export type MeetingSource = { key: string; label: string; choice: 'share' | 'private' | null; past: number };
-export type MeetingSources = { available: boolean; sync?: boolean; workspaceName?: string | null; kbName?: string | null; sources: MeetingSource[] };
+export type MeetingTeam = { id: string; name: string };
+// teams lists the person's teams when they are in several; teamId is the one whose meetings KB receives their notes
+export type MeetingSources = { available: boolean; sync?: boolean; workspaceName?: string | null; kbName?: string | null; sources: MeetingSource[]; teams?: MeetingTeam[]; teamId?: string | null };
+export type TeamRole = 'lead' | 'member';
+export type TeamMember = { userId: string; role: TeamRole; email: string | null; name: string | null };
+export type Team = { id: string; name: string; myRole: TeamRole | null; canManage: boolean; meetingsKbId: string | null; members: TeamMember[] };
 export type HandNoteRef = { file: string; hash: string; rel: string; app: string; url: string; frontmatter: string };
 export type HandNote = HandNoteRef & { title: string; body: string; readOnly: boolean; date: string | null };
 export type HandNoteSave = (HandNoteRef & { propsError?: string }) | { conflict: true } | { error: string };
@@ -350,6 +355,7 @@ declare global {
       meetingsSources(): Promise<MeetingSources>;
       meetingsSourceSet(key: string, choice: 'share' | 'private'): Promise<{ ok: true; choice: 'share' | 'private' } | { error: string }>;
       meetingsSourceSharePast(key: string): Promise<{ shared: number } | { error: string }>;
+      meetingsTeamSet(teamId: string | null): Promise<{ ok: true; teamId: string | null } | { error: string }>;
       onMeetingsSources(cb: () => void): Unsub;
       noteAsk(file: string, question: string, history: { q: string; a: string }[], files?: string[]): Promise<{ text: string; proposal: string | null }>;
       noteApply(file: string, body: string): Promise<boolean>;
@@ -535,6 +541,12 @@ declare global {
       teamResolve(target: string, from: string): Promise<Result & { rel?: string | null }>;
       onTeamChanged(cb: (rels: string[]) => void): Unsub;
       kbList(): Promise<Result & { kbs?: Kb[] }>;
+      teamList(): Promise<Result & { teams?: Team[] }>;
+      teamCreate(name: string): Promise<Result & { team?: Team }>;
+      teamRename(teamId: string, name: string): Promise<Result & { team?: Team }>;
+      teamDelete(teamId: string): Promise<Result & { ok?: true }>;
+      teamMemberSet(draft: { teamId: string; userId: string; role?: TeamRole }): Promise<Result & { team?: Team }>;
+      teamMemberRemove(draft: { teamId: string; userId: string }): Promise<Result & { team?: Team }>;
       kbCreate(draft: { name: string; kind?: KbKind }): Promise<Result & { kb?: Kb }>;
       kbRename(kbId: string, name: string): Promise<Result & { kb?: Kb }>;
       kbDelete(kbId: string): Promise<Result>;

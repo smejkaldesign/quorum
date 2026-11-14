@@ -1,6 +1,9 @@
-// Meeting notes saved into the workspace's meetings knowledge base (Cloud edition with a team switched on; migration
-// 0029, docs/specs/workspace-knowledge.md "Meeting notes" and Decisions 4). A workspace has one meetings KB. Shared
-// meeting notes go into it through the push sync.js makes for every meeting note, one folder per month ("2026-11").
+// Meeting notes saved into a meetings knowledge base (Cloud edition with a team switched on; migrations 0029 and 0035,
+// docs/specs/workspace-knowledge.md "Meeting notes" and Decisions 4). A workspace has one meetings KB of its own and
+// one per team (0035). The server picks the KB for each person (meetingTeamOf below states the same rule): a person
+// in no team uses the workspace's; a person in teams uses their meeting team's, which is the one they chose in
+// Settings > Meetings when they are in several, else the team they joined first. Shared meeting notes go into it
+// through the push sync.js makes for every meeting note, one folder per month ("2026-11").
 // That push keeps every guardrail: a note in an excluded folder, with opted-out lines, confidential, or with a
 // denied frontmatter key is never pushed (sync.js noteRow with isExcluded and isExcludedText), and this module never
 // rewrites such a note.
@@ -92,6 +95,13 @@ export function startSince(date, now, floor = null) {
   return new Date(s).toISOString();
 }
 
+// the team whose meetings KB receives the person's notes, from their teams in the order they joined (kb_meetings_info
+// lists them so): the one marked as their default, else the first; null for a person in no team
+export function meetingTeamOf(teams = []) {
+  const list = Array.isArray(teams) ? teams : [];
+  return (list.find((t) => t?.meetings_default === true || t?.meetingsDefault === true) ?? list[0])?.id ?? null;
+}
+
 export function createMeetingsKb({ account, settings, saveSettings = () => {}, isExcluded = () => false, isExcludedText = () => false, relOf = () => null, listNotes = () => [], push = async () => {}, onChange = () => {}, log = () => {}, read = (abs) => readFileSync(abs, 'utf8'), write = localNotes.write, now = () => new Date() }) {
   const conf = () => (settings.meetingsKb ??= {});
   const autoSave = () => conf().autoSave !== false;
@@ -108,13 +118,18 @@ export function createMeetingsKb({ account, settings, saveSettings = () => {}, i
     if (error) throw new Error(error.message);
     return data;
   };
-  // the workspace's meetings KB the person can read, as { id, name }; cached for a few minutes
+  // the meetings KB the person's notes go to, as { id, name, teamId, teams }; cached for a few minutes. id is null for a
+  // team whose meetings KB the first note will make. A server before 0035 answers with no team
   async function meetingsKb(ws) {
     if (cache.ws === ws.id && Date.now() - cache.at < INFO_TTL) return cache.info;
     const r = await rpc('kb_meetings_info', { workspace_id: ws.id });
-    cache = { ws: ws.id, at: Date.now(), info: r?.kb_id ? { id: r.kb_id, name: r.name ?? 'Meetings' } : null, folders: new Map() };
+    const teams = Array.isArray(r?.teams) ? r.teams.filter((t) => t?.id).map((t) => ({ id: t.id, name: t.name ?? 'Team', meetings_default: t.meetings_default === true })) : [];
+    const teamId = r?.team_id ?? meetingTeamOf(teams);
+    const info = r?.kb_id || r?.team_id ? { id: r.kb_id ?? null, name: r.name ?? 'Meetings', teamId: teamId ?? null, teams } : null;
+    cache = { ws: ws.id, at: Date.now(), info, folders: new Map() };
     return cache.info;
   }
+  const dropCache = () => { cache = { ws: null, at: 0, info: null, folders: new Map() }; };
   async function folderFor(ws, month) {
     if (cache.ws === ws.id && cache.folders.has(month)) return cache.folders.get(month);
     const r = await rpc('kb_meetings_folder', { workspace_id: ws.id, month });
@@ -257,7 +272,22 @@ export function createMeetingsKb({ account, settings, saveSettings = () => {}, i
     return {
       available: true, sync: account.state().sync === true, workspaceName: ws.name ?? null, kbName: info.name,
       sources: Object.entries(sourcesOf(ws.id)).map(([key, s]) => ({ key, label: s.label ?? key, choice: s.choice ?? null, past: (past.get(key) ?? []).length })),
+      // the meeting team choice is offered only to a person in several teams
+      teams: info.teams.length > 1 ? info.teams.map((t) => ({ id: t.id, name: t.name })) : [],
+      teamId: info.teamId ?? null,
     };
+  }
+
+  // the person's meeting team when they are in several (null: the team they joined first). It is stored on the server,
+  // so every Mac of theirs routes the same way; the next note goes to that team's meetings KB
+  async function setTeam(teamId) {
+    const ws = workspace();
+    if (!ws) return { error: 'Sharing meeting notes needs a workspace with a team.' };
+    try { await rpc('team_meetings_default_set', { workspace_id: ws.id, team_id: teamId ?? null }); }
+    catch (err) { log('meetings kb', err?.message ?? err); return { error: String(err?.message ?? 'The meeting team could not be saved.').replace(/\.?$/, '.') }; }
+    dropCache();
+    onChange();
+    return { ok: true, teamId: teamId ?? null };
   }
 
   // the person's choice for a source account. Share starts from the first note that asked (within a day) or, when it
@@ -302,5 +332,5 @@ export function createMeetingsKb({ account, settings, saveSettings = () => {}, i
     return { shared };
   }
 
-  return { route, stateOf, setKeepPrivate, setAutoSave, sources, setSource, sharePast, autoSave };
+  return { route, stateOf, setKeepPrivate, setAutoSave, sources, setSource, sharePast, setTeam, autoSave };
 }

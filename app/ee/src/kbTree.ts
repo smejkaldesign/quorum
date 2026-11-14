@@ -173,33 +173,44 @@ export function readersSummary(access: KbAccess[] | null): string {
   const people = access.filter((a) => a.principal === 'user');
   const admins = people.filter((a) => a.role === 'admin').length;
   const readers = people.length - admins;
+  const teams = access.filter((a) => a.principal === 'team').length;
   const parts: string[] = [];
   const ws = access.find((a) => a.principal === 'workspace');
   if (ws) parts.push(ws.role === 'admin' ? 'Whole workspace (all can manage)' : 'Whole workspace');
-  else if (readers) parts.push(`${readers} ${readers === 1 ? 'person' : 'people'}`);
-  else parts.push('Owners and admins only');
+  else {
+    if (teams) parts.push(`${teams} ${teams === 1 ? 'team' : 'teams'}`);
+    if (readers) parts.push(`${readers} ${readers === 1 ? 'person' : 'people'}`);
+    if (!teams && !readers) parts.push('Owners and admins only');
+  }
   if (admins) parts.push(`${admins} KB ${admins === 1 ? 'admin' : 'admins'}`);
   return parts.join(' · ');
 }
 
 export type ReadersMode = 'workspace' | 'people';
-// which way an access list reads, and the people it names as readers
-export function readersOf(access: KbAccess[] | null): { mode: ReadersMode; people: string[] } {
+// which way an access list reads, and the people and teams it names as readers
+export function readersOf(access: KbAccess[] | null): { mode: ReadersMode; people: string[]; teams: string[] } {
   const list = access ?? [];
   return {
     mode: list.some((a) => a.principal === 'workspace') ? 'workspace' : 'people',
     people: list.filter((a) => a.principal === 'user' && a.role === 'reader' && a.userId).map((a) => a.userId!),
+    teams: list.filter((a) => a.principal === 'team' && a.role === 'reader' && a.teamId).map((a) => a.teamId!),
   };
 }
 
-// the whole list kb-access-set takes for a readers choice. The KB admins already on the list stay admins; teams are
-// not offered yet, so team rows are left out; a person chosen who is also an admin stays an admin
-export function accessDraft(current: KbAccess[] | null, mode: ReadersMode, people: string[]): KbAccessDraft[] {
+// the whole list kb-access-set takes for a readers choice. KB admins already on the list (people or teams) stay
+// admins, and a person or team chosen who is also an admin stays an admin. A team-owned KB (ownerTeam) always keeps its
+// own team as a reader; the server adds it back too
+export function accessDraft(current: KbAccess[] | null, mode: ReadersMode, people: string[], teams: string[] = [], ownerTeam: string | null = null): KbAccessDraft[] {
   const list = current ?? [];
   const admins = list.filter((a) => a.principal === 'user' && a.role === 'admin' && a.userId).map((a) => a.userId!);
+  const adminTeams = list.filter((a) => a.principal === 'team' && a.role === 'admin' && a.teamId).map((a) => a.teamId!);
   const out: KbAccessDraft[] = [];
   if (mode === 'workspace') out.push({ principal: 'workspace', role: list.find((a) => a.principal === 'workspace')?.role ?? 'reader' });
   for (const id of admins) out.push({ principal: 'user', userId: id, role: 'admin' });
+  for (const id of adminTeams) out.push({ principal: 'team', teamId: id, role: 'admin' });
+  const readerTeams = new Set(mode === 'people' ? teams : []);
+  if (ownerTeam) readerTeams.add(ownerTeam);
+  for (const id of readerTeams) if (!adminTeams.includes(id)) out.push({ principal: 'team', teamId: id, role: 'reader' });
   if (mode === 'people') for (const id of [...new Set(people)]) if (!admins.includes(id)) out.push({ principal: 'user', userId: id, role: 'reader' });
   return out;
 }
