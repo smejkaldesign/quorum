@@ -17,7 +17,7 @@ import { registerOnboarding } from './onboarding.js';
 import { gateOn, registerBeta } from './beta.js';
 import { registerFlags } from './flags.js';
 import { DICTATION_OFF, keepActions, notetakerGates, recordDecision, sessionGates, startDecision, termsPlan } from './notetaker.js';
-import { hashText, newNoteText, noteFileName, rewriteNote, screenRead, splitNote, yamlStr } from './handnote.js';
+import { hashText, newNoteText, noteFileName, rewriteNote, screenRead, splitNote, validFrontmatter, yamlStr } from './handnote.js';
 import { createKeeper } from './keeper.js';
 import { contextBudget } from './context-budget.js';
 import { skillUsage, stashSkill } from './skill-usage.js';
@@ -2248,7 +2248,7 @@ function stopRecordingForRenderer(why) {
 // New note: a note you write in the window, saved where recorded notes go and with the same frontmatter. A save names
 // the hash it read, and a file changed on disk since then is left alone and reported as a conflict
 const handNoteDir = () => quorumNotesDir() ?? path.join(suggester.vault(), '08-meetings', 'quorum');
-const handNoteRef = (abs, text) => ({ file: abs, hash: hashText(text), rel: path.relative(path.dirname(suggester.vault()), abs), ...noteLink(abs) });
+const handNoteRef = (abs, text) => ({ file: abs, hash: hashText(text), rel: path.relative(path.dirname(suggester.vault()), abs), frontmatter: splitNote(text).fm, ...noteLink(abs) });
 ipcMain.handle('hand-note-open', (_e, file) => {
   const abs = meetingFile(file);
   if (!abs) return null;
@@ -2258,7 +2258,8 @@ ipcMain.handle('hand-note-open', (_e, file) => {
   return { ...handNoteRef(abs, raw), title, body, readOnly, date: raw.match(/^date:\s*(.+)$/m)?.[1]?.trim() ?? null };
 });
 ipcMain.handle('hand-note-save', (_e, payload) => saveHandNote(payload ?? {}));
-function saveHandNote({ id, file, title, body, hash, fresh }) {
+// frontmatter, when given, replaces the note's frontmatter (the Properties panel); its title line still follows the title
+function saveHandNote({ id, file, title, body, hash, fresh, frontmatter }) {
   if (!brain()) return { error: 'Connect your Agent OS to save notes.' };
   const text = String(body ?? '');
   if (!file) {
@@ -2276,7 +2277,8 @@ function saveHandNote({ id, file, title, body, hash, fresh }) {
   const raw = store.notes.read(abs);
   if (hash && hashText(raw) !== hash) return { conflict: true };
   if (suggester.isExcluded(raw)) return { error: 'This note has withheld lines, so edit it in the vault directly.' };
-  const out = rewriteNote(raw, { title, body: text });
+  if (frontmatter !== undefined && !validFrontmatter(frontmatter)) return { error: 'Those properties are not valid frontmatter.' };
+  const out = rewriteNote(frontmatter === undefined ? raw : `${frontmatter}${raw.slice(splitNote(raw).fm.length)}`, { title, body: text });
   // a note created in this editor keeps its file name in step with its title until the editor closes
   if (fresh) {
     const qid = raw.match(/^quorum_id:\s*(.+)$/m)?.[1]?.trim() ?? String(id ?? '');

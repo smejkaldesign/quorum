@@ -68,6 +68,9 @@ export function rewriteNote(raw, { title, body }) {
   return `${front}${front ? '\n' : ''}${heading || !front ? `# ${t}\n\n` : ''}${text}\n`;
 }
 
+// what the Properties panel may save: nothing (no frontmatter), or one --- block that ends the way it starts
+export const validFrontmatter = (fm) => typeof fm === 'string' && (fm === '' || (/^---\n[\s\S]*\n---\n$/.test(fm) && !fm.slice(4, -4).split('\n').includes('---')));
+
 // Record's Screen option, one helper answer at a time: a missing permission turns Screen off for the recording (said
 // once), an empty read, a read of Quorum, or one identical to the last (same app, title and text) is skipped, anything
 // else is kept beside the recording
