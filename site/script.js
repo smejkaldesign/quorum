@@ -53,7 +53,9 @@
   // The app preview is laid out at the app's default window width and scaled to the frame it sits in.
   var shot = document.querySelector("[data-app-preview]");
   if (shot) {
-    var fit = function () { shot.style.setProperty("--s", String(shot.clientWidth / 1040)); };
+    // --s goes on the section, so the frame and the starfield behind it read the same scale
+    var shotHost = shot.closest(".app-shot") || shot;
+    var fit = function () { shotHost.style.setProperty("--s", String(shot.clientWidth / 1040)); };
     fit();
     if (window.ResizeObserver) new ResizeObserver(fit).observe(shot);
     else window.addEventListener("resize", fit);
