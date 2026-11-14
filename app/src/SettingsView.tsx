@@ -894,13 +894,16 @@ function KeeperCard({ brain }: { brain: Brain }) {
   const desc = !k.on ? 'Off. Quorum writes meeting notes here and changes nothing else.'
     : k.lastRunAt ? `Last run ${when(k.lastRunAt)}${last ? `: ${last}` : ''}` : 'Index, daily note, people and project notes, after each meeting';
   const pick = async (p: KeeperPlugin, owner: 'quorum' | 'vault') => setK(await window.quorum.keeperPlugin(p.id, owner));
+  // the learned list against its budget, and its share of the file it sits in
+  const usage = (l: NonNullable<KeeperStatus['learned']>) => `${l.chars.toLocaleString()} of ${l.budget.toLocaleString()} characters in ${l.file}${l.fileChars ? `, ${Math.round((l.chars / l.fileChars) * 100)}% of the file` : ''}`;
+  const factsOn = k.plugins.find((p) => p.id === 'facts')?.owner === 'quorum';
   const plugin = (p: KeeperPlugin) => {
     const Icon = PLUGIN_ICON[p.id] ?? IconFolder;
     const on = p.owner === 'quorum';
     const found = p.evidence.map((e) => `${e.path} (${e.why})`).join(', ');
     const pdesc = p.evidence.length
       ? (on ? `Quorum does this. Your Agent OS also has ${found}` : `Used already in your Agent OS: ${found}. Quorum reads and links, and writes nothing for this.`)
-      : on ? `${p.does}${p.id === 'facts' && !k.model ? '. Needs a model source in AI settings' : ''}`
+      : on ? `${p.does}${p.id === 'facts' && !k.model ? '. Needs a model source in AI settings' : p.id === 'facts' && k.learned ? `. ${usage(k.learned)}` : ''}`
       : 'Off. Quorum writes nothing for this.';
     return (
       <Row key={p.id} icon={<Icon width={18} height={18} className={on ? 'ok' : undefined} />} title={p.title} desc={pdesc}>
@@ -918,6 +921,12 @@ function KeeperCard({ brain }: { brain: Brain }) {
           {k.on && <button className="pill small-pill" disabled={busy || k.running} onClick={() => run()}>{busy || k.running ? 'Running…' : 'Run now'}</button>}
           <Toggle on={k.on} onChange={async (on) => setK(await window.quorum.keeperSet({ on }))} />
         </Row>
+        {k.errors.count > 0 && (
+          <Row icon={<IconInfo width={18} height={18} />} title={`${k.errors.count} upkeep ${k.errors.count === 1 ? 'error' : 'errors'}`}
+            desc={k.errors.last ? `Last: ${k.errors.last.where}, ${k.errors.last.message}` : 'Logged under Application Support'}>
+            <button className="pill small-pill" onClick={() => window.quorum.keeperErrorsOpen()}>Open log</button>
+          </Row>
+        )}
         {k.on && k.held && (
           <Row icon={<IconInfo width={18} height={18} />} title={`Waiting to create ${k.held.count} new files`}
             desc={`The last run would have added ${k.held.count} files, such as ${k.held.sample.slice(0, 3).join(', ')}. Nothing was written. Turn off a plugin below, or create them.`}>
@@ -930,6 +939,18 @@ function KeeperCard({ brain }: { brain: Brain }) {
           <h3>Plugins</h3>
           <div className="set-card">
             {k.on ? k.plugins.map(plugin) : <Row icon={<IconReset width={18} height={18} />} title="Upkeep is off" desc="Quorum does none of these jobs while Keep this folder current is off. Turn it on to choose which ones it does." />}
+            {k.on && factsOn && k.learned && (
+              <Row icon={<IconNotes width={18} height={18} />} title="Learned facts file"
+                desc={k.learned.target === 'learned' ? 'Claude Code does not load .quorum/learned.md on its own; CLAUDE.md points to it' : 'CLAUDE.md, loaded in every session that reads it. The oldest lines move to the changelog past the budget'}>
+                <select className="set-select" aria-label="Learned facts file" value={k.learned.target} onChange={async (e) => setK(await window.quorum.keeperSet({ factsTarget: e.target.value as 'claude' | 'learned' }))}>
+                  <option value="learned">.quorum/learned.md</option>
+                  <option value="claude">CLAUDE.md</option>
+                </select>
+                <select className="set-select" aria-label="Budget" value={k.learned.budget} onChange={async (e) => setK(await window.quorum.keeperSet({ factsBudget: Number(e.target.value) }))}>
+                  {[1000, 2000, 4000, 8000].map((n) => <option key={n} value={n}>{n.toLocaleString()} characters</option>)}
+                </select>
+              </Row>
+            )}
           </div>
         </>
       )}

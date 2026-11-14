@@ -135,12 +135,13 @@ const guardrails = createGuardrails({ settings, saveSettings: () => store.settin
 const keeper = createKeeper({
   brain: () => brain(), settings, saveSettings: () => store.settings.save(), guards: () => guardrails.compiled(), wouldBlock,
   runText: (prompt, system) => runClaude(prompt, system, 'haiku'), hasModel: () => modelSource() !== 'none', owner: () => USER_NAME,
-  log: (...a) => log(...a), onChange: (r) => toUI('keeper', r),
+  log: (...a) => log(...a), onChange: (r) => toUI('keeper', r), errorLog: path.join(DATA_DIR, 'keeper-errors.log'),
 });
 ipcMain.handle('keeper-status', () => keeper.status());
 ipcMain.handle('keeper-set', (_e, patch) => keeper.set(patch ?? {}));
 ipcMain.handle('keeper-run', (_e, opts) => keeper.run({ reason: 'manual', allowCreate: opts?.allowCreate === true }));
 ipcMain.handle('keeper-plugin', (_e, id, owner) => keeper.setPlugin(String(id), owner));
+ipcMain.handle('keeper-errors-open', () => { const f = keeper.status().errors.file; if (f && existsSync(f)) shell.openPath(f); });
 let helper;
 const asset = (name) => path.join(here, 'assets', name);
 // a meeting can have several capture segments (STOP, GO, STOP...); STOP deletes all of them
