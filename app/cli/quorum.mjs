@@ -227,6 +227,11 @@ const TOOLS = [
   { name: 'list_chats', description: 'Recent chats with Quorum in Quorum.', inputSchema: { type: 'object', properties: { limit: { type: 'number' } } }, run: ({ limit }) => chats(limit) },
   { name: 'get_chat', description: 'The questions and answers in one Quorum chat.', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] }, run: ({ id }) => getChat(id) },
   { name: 'live_transcript', description: 'The transcript of the call Quorum is recording right now, if any.', inputSchema: { type: 'object', properties: {} }, run: () => live() },
+  // knowledge bases (Quorum Cloud): the running app answers as the person signed in to it, so the server's row level
+  // security decides which KBs and notes come back. With Quorum closed or signed out these say so
+  { name: 'kb_search', description: 'Search the Quorum knowledge bases you can read in your workspace. Returns the best notes first, each with its knowledge base, folder path, title, a passage around the match, a note id for kb_read and a quorum:// link that opens it in Quorum. Words must all match; quotes make a phrase and -word leaves a word out. When nothing matches every word, notes matching any word come back.', inputSchema: { type: 'object', properties: { query: { type: 'string' }, kb: { type: 'string', description: 'only this knowledge base, by name or id (from kb_list)' }, limit: { type: 'number', description: '1 to 50, default 8' } }, required: ['query'] }, run: ({ query, kb, limit }) => ask('kb_search', { query, kb, limit }) },
+  { name: 'kb_read', description: 'The full text of one knowledge base note, by the id kb_search returns, or by its path: "Knowledge base/Folder/Note title".', inputSchema: { type: 'object', properties: { id: { type: 'string' }, path: { type: 'string' } } }, run: ({ id, path: p }) => ask('kb_read', { id, path: p }) },
+  { name: 'kb_list', description: 'The Quorum knowledge bases you can read, with your role in each and their folders.', inputSchema: { type: 'object', properties: {} }, run: () => ask('kb_list') },
   { name: 'import_meeting', description: 'Write one meeting note from another app into Quorum\'s meeting notes folder, under the source\'s subfolder. Skips a meeting Quorum already has (same source id). Keep body as the original notes in markdown.', inputSchema: { type: 'object', properties: { source: { type: 'string', description: 'connector id, for example granola' }, id: { type: 'string', description: 'the meeting\'s id in the source app' }, title: { type: 'string' }, date: { type: 'string', description: 'ISO 8601' }, participants: { type: 'array', items: { type: 'string' } }, url: { type: 'string' }, body: { type: 'string', description: 'the notes as markdown' } }, required: ['source', 'id', 'title', 'body'] }, run: (a) => importMeeting(a) },
 ];
 
@@ -239,14 +244,15 @@ function serveMcp() {
     const { id, method, params } = req;
     if (id === undefined) return;
     if (method === 'initialize') { client = String(params?.clientInfo?.name ?? 'mcp').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'mcp'; }
-    if (method === 'initialize') return send({ id, result: { protocolVersion: params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'quorum', version: '0.1.0' }, instructions: 'Quorum meeting notes, Quorum chats and the live call transcript, read-only, plus import_meeting to add a meeting note from another app. Lines naming opted-out customers are withheld.' } });
+    if (method === 'initialize') return send({ id, result: { protocolVersion: params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'quorum', version: '0.1.0' }, instructions: 'Quorum meeting notes, Quorum chats and the live call transcript, read-only, plus import_meeting to add a meeting note from another app. With Quorum Cloud, kb_search, kb_read and kb_list read the workspace knowledge bases you can read, through the Quorum app you are signed in to. Lines naming opted-out customers are withheld.' } });
     if (method === 'ping') return send({ id, result: {} });
     if (method === 'tools/list') return send({ id, result: { tools: TOOLS.map(({ run, ...t }) => t) } });
     if (method === 'tools/call') {
       const tool = TOOLS.find((t) => t.name === params?.name);
       if (!tool) return send({ id, error: { code: -32602, message: `Unknown tool ${params?.name}` } });
-      try { return send({ id, result: { content: [{ type: 'text', text: JSON.stringify(tool.run(params.arguments ?? {}), null, 2) }] } }); }
-      catch (e) { return send({ id, result: { content: [{ type: 'text', text: e.message }], isError: true } }); }
+      return Promise.resolve().then(() => tool.run(params.arguments ?? {}))
+        .then((r) => send({ id, result: { content: [{ type: 'text', text: JSON.stringify(r, null, 2) }] } }))
+        .catch((e) => send({ id, result: { content: [{ type: 'text', text: e.message }], isError: true } }));
     }
     send({ id, error: { code: -32601, message: `Method not found: ${method}` } });
   });
@@ -265,6 +271,11 @@ Read
 
 Ask Quorum
   quorum ask <question>             answers from your Agent OS, saved to History
+
+Knowledge bases (Quorum Cloud, needs the app open and signed in)
+  quorum kb list                    the knowledge bases you can read
+  quorum kb search <words> [--kb k] notes matching every word, best first
+  quorum kb read <id | KB/folder/title>  one note's full text
 
 During a call
   quorum start                      start listening (posts the notice in the Zoom chat)
@@ -295,6 +306,10 @@ const day = (d) => {
   const t = d && new Date(d);
   return t && !Number.isNaN(t.getTime()) ? t.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).padEnd(18) : ''.padEnd(18);
 };
+// a source under an answer: a file by its path; a knowledge base note by title and place, with its id and link
+const sourceRow = (src) => (src.kb ? `[${src.n}] ${src.title}  (${src.rel})\n    ${src.kb.noteId}\n    ${src.url}` : `[${src.n}] ${src.rel}`);
+const kbRow = (k) => `${k.name}  (${k.role}${k.isDefault ? ', default' : ''})${k.folders.length ? `\n    ${k.folders.join('\n    ')}` : ''}`;
+const kbHit = (h) => `${h.citation}\n    ${h.noteId}\n    ${h.snippet}`;
 const row = (m) => `${day(m.date)}  ${m.title}${m.source !== 'quorum' ? `  [${m.source}]` : ''}\n    ${m.id}`;
 
 try {
@@ -313,8 +328,26 @@ try {
       if (!q.trim()) throw new Error('Usage: quorum ask <question>');
       console.error('Quorum is looking through your notes…');
       const r = await ask('ask', { question: q });
-      print(r, (x) => `${x.text}${x.sources?.length ? `\n\n${x.sources.map((src) => `[${src.n}] ${src.rel}`).join('\n')}` : ''}`);
+      print(r, (x) => `${x.text}${x.sources?.length ? `\n\n${x.sources.map(sourceRow).join('\n')}` : ''}`);
       break;
+    }
+    case 'kb': {
+      const [sub, ...words] = rest;
+      if (sub === 'list') { print(await ask('kb_list'), (r) => (r.kbs.length ? r.kbs.map(kbRow).join('\n') : 'No knowledge bases you can read.')); break; }
+      if (sub === 'search') {
+        const kb = flag(words, '--kb');
+        const query = words.join(' ');
+        if (!query.trim()) throw new Error('Usage: quorum kb search <words> [--kb <name or id>]');
+        print(await ask('kb_search', { query, kb }), (r) => (r.results.length ? r.results.map(kbHit).join('\n') : 'No matches.'));
+        break;
+      }
+      if (sub === 'read') {
+        const ref = words.join(' ').trim();
+        if (!ref) throw new Error('Usage: quorum kb read <note id | KB/folder/note title>');
+        print(await ask('kb_read', /^[0-9A-HJKMNP-TV-Z]{26}$/.test(ref) ? { id: ref } : { path: ref }), (r) => `${r.note.citation}\n${r.note.link}\n\n${r.note.body}`);
+        break;
+      }
+      throw new Error('Usage: quorum kb list | quorum kb search <words> | quorum kb read <id or path>');
     }
     case 'start': case 'stop': case 'go': case 'end': print(await ask(cmd), (m) => m); break;
     case 'new': {

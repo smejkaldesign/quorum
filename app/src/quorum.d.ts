@@ -212,7 +212,8 @@ export type OutLink = { target: string; rel: string | null; title: string; ancho
 export type TreeItem = { name: string; path: string; dir: boolean; mtime?: number; ctime?: number; children?: TreeItem[] };
 export type TreeSort = 'name-asc' | 'name-desc' | 'mtime-desc' | 'mtime-asc' | 'ctime-desc' | 'ctime-asc';
 export type Suggestion = { id: string; kind: 'question' | 'topic'; text: string; caption: string };
-export type Source = { n: number; title: string; rel: string; abs: string; app: string; url: string };
+// a knowledge base source (Cloud) has kb and no file: rel is where it sits ("Handbook / Policies"), and it opens in the Knowledge tab
+export type Source = { n: number; title: string; rel: string; abs: string | null; app: string; url: string; kb?: { kbId: string; noteId: string } };
 export type PopupMode = 'detected' | 'starting' | 'listening' | 'failed';
 export type PopupEvent = { mode: PopupMode; durationMs: number; autoListen: boolean; provider?: string; chatName?: string; chat?: boolean };
 // the running summary during a call: what the model has gathered so far, and whether a pass is in flight
@@ -470,6 +471,8 @@ declare global {
       kbAccessSet(kbId: string, access: KbAccessDraft[]): Promise<Result & { access?: KbAccess[] }>;
       kbNoteAssign(draft: { noteId?: string; path?: string; kbId: string | null; folderId?: string | null }): Promise<Result & { placement?: KbPlacement }>;
       kbNotes(kbId: string): Promise<Result & { notes?: KbNote[] }>;
+      onKbOpen(cb: (t: { kbId: string; noteId: string }) => void): Unsub;
+      kbOpenReady(): Promise<void>;
       kbImport(req: KbImportRequest): Promise<Result & { kb?: Kb; imported?: number; removed?: number; skipped?: KbImportSkipped[] }>;
       kbImportPickZip(): Promise<{ path?: string; canceled?: true }>;
       onKbImportProgress(cb: (p: KbImportProgress) => void): Unsub;
