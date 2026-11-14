@@ -114,6 +114,15 @@ do $$ begin
   assert pg_temp.column_source('01DS00000000000000000000WG') is null, 'and the refused calls left the column alone';
 end $$;
 
+-- a hosted default KB (0034) keeps its hosted source
+reset role;
+update public.knowledge_bases set source = '{"kind": "hosted"}' where workspace_id = '01DS00000000000000000000WG' and is_default;
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000c1');
+select pg_temp.expect_error($$ select public.kb_default_source_set('01DS00000000000000000000WG', '{"kind": "sync"}') $$, 'hosted by Quorum');
+do $$ begin
+  assert pg_temp.kb_source('01DS00000000000000000000WG') ->> 'kind' = 'hosted', 'the hosted source is still there';
+end $$;
+
 -- 7. Quorum sync clears both
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000c2');
 select public.kb_default_source_set('01DS00000000000000000000WA', '{"kind": "sync"}');

@@ -11,7 +11,8 @@
 --    (one the team switch never made), carrying the source over.
 --
 -- A default KB imported from GitHub or a zip (kb_source_set, 0026) keeps its import source: the team source is not
--- changed on it, and its admins change it under Settings › Admin › Knowledge. Safe to run again.
+-- changed on it, and its admins change it under Settings › Admin › Knowledge. A hosted default KB (0034) keeps its
+-- hosted source too. Safe to run again.
 
 -- 1. the Mac-side source of the workspace's default KB: the notes Quorum sync pulls (no source), a folder every
 -- member has on their Mac, or a git repository each Mac clones. Owners and admins only; the value keeps who set it
@@ -34,6 +35,7 @@ begin
   select x.id, x.source ->> 'kind' into k, current_kind from public.knowledge_bases x where x.workspace_id = kb_default_source_set.workspace_id and x.is_default;
   if current_kind = 'github' and src_kind <> current_kind then raise exception 'This knowledge base was imported from GitHub. Change its source in Settings › Admin › Knowledge'; end if;
   if current_kind = 'zip' and src_kind <> current_kind then raise exception 'This knowledge base was imported from a zip. Change its source in Settings › Admin › Knowledge'; end if;
+  if current_kind = 'hosted' then raise exception 'This knowledge base is hosted by Quorum and has no source to change'; end if;
   v := case when src_kind = 'sync' then null else jsonb_build_object('kind', src_kind, 'url', case when src_kind = 'git' then src_url end, 'path', case when src_kind = 'folder' then src_path end, 'set_by', auth.uid(), 'set_at', now()) end;
   -- the 0020 column, for apps from 0.3.x; 0037 removes this line with the column. Written first, so a default KB
   -- made below starts with the same value
