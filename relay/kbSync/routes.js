@@ -5,8 +5,9 @@
 // token is never returned, and the log carries the provider, the kind and the outcome only.
 //
 // Body: { kb_id, folder_id?, provider: 'google-drive' | 'github', remote: { id, kind: 'folder' | 'file', name, url?,
-// branch?, path? }, refresh_token?, client?: 'quorum' | 'workspace', shared_with_mac?, account? }. With no
-// refresh_token the caller's live grant for the provider is used.
+// branch?, path? }, refresh_token?, client?: 'quorum' | 'workspace', shared_with_mac?, account?, attach_id? }. With no
+// refresh_token the caller's live grant for the provider is used. attach_id is an id the app makes per attach: the
+// same id again answers the attachment it made (migration 0033), so a retry after a timeout attaches once.
 import { bearer, requirePlan, RelayError, verifyToken } from '../lib/auth.js';
 import { clientAddress, createLimiter } from '../platform.js';
 import { readJson } from '../summary.js';
@@ -33,6 +34,7 @@ export function cleanAttach(raw) {
   return {
     kbId: str(raw.kb_id, 40), folderId: str(raw.folder_id, 40) || null, provider, remote, client,
     refreshToken: str(raw.refresh_token, 4096) || null, sharedWithMac: raw.shared_with_mac === true, account: str(raw.account, 320) || null,
+    attachId: (() => { const a = str(raw.attach_id, 80); if (a && !/^[A-Za-z0-9_-]{8,80}$/.test(a)) throw new RelayError('bad_request', 'That attach id is not valid.', 400); return a || null; })(),
   };
 }
 
@@ -49,6 +51,13 @@ export async function handleKbSyncAttach(req, res, { clients, config, log = () =
     if (!kb) throw new RelayError('bad_request', 'That knowledge base no longer exists.', 404);
     await requirePlan(clients.db, kb.workspace_id);
 
+    // the same attach sent again (the app retries after a timeout): answer what the first one made, before the token is
+    // used again, since a rotated refresh token works once
+    if (b.attachId) {
+      const { data: had, error: hadErr } = await clients.db.rpc('kb_sync_attachment_by_attach_id', { uid: user.userId, attach_id: b.attachId });
+      if (hadErr) throw new RelayError('server', 'Syncing is unavailable right now.', 500);
+      if (had) { log('kb_sync_attach_repeat', { provider: b.provider }); return json(res, 200, { attachment: had }); }
+    }
     let token = b.refreshToken;
     // a new token replaces the one on the caller's live grant: that waits for any refresh the worker is running on it,
     // so the worker cannot store a rotated old token over the new one
@@ -77,7 +86,7 @@ export async function handleKbSyncAttach(req, res, { clients, config, log = () =
       const options = b.provider === 'github' ? { branch: b.remote.branch, path: b.remote.path } : {};
       const { data, error } = await clients.db.rpc('kb_sync_attach', {
         uid: user.userId, kb_id: b.kbId, folder_id: b.folderId, provider: b.provider, remote_id: b.remote.id, remote_kind: b.remote.kind,
-        options, name: b.remote.name || b.remote.id, url: b.remote.url, token, client: b.client, shared_with_mac: b.sharedWithMac, account: b.account,
+        options, name: b.remote.name || b.remote.id, url: b.remote.url, token, client: b.client, shared_with_mac: b.sharedWithMac, account: b.account, attach_id: b.attachId,
       });
       if (error) {
         const msg = plainDb(error);

@@ -518,3 +518,42 @@ test('attach checks the session and the token, stores the rotated token, and nev
   assert.throws(() => cleanAttach({ provider: 'notion', remote: { id: 'x', kind: 'folder' } }), /cannot sync folders yet/);
   assert.throws(() => cleanAttach({ provider: 'google-drive', remote: { id: 'x', kind: 'drive' } }), /folder or a file/);
 });
+
+test('one owner per file: a file another admin added on their Mac is not written a second time', async () => {
+  const tables = { notes: [{ id: 'mac', path: 'Knowledge bases/Handbook/Plan.md', kb_id: KB, user_id: 'another-admin', frontmatter: { kb_source: 'google-drive:d1', visibility: 'public' }, hash: 'h' }], kb_folders: [], kb_note_upstream: [] };
+  const db = fakeDb({ tables, rpcs: upstreamRpcs(tables) });
+  const files = [{ parent: 'root-folder', id: 'd1', name: 'Plan.md', mimeType: 'text/markdown', modifiedTime: 'm' }];
+  const r = await syncAttachment({ db, attachment: attachment(), provider: googleDrive, token: 't', fetchImpl: fakeFetch(driveRoutes(files)) });
+  assert.equal(r.written, 0);
+  assert.equal(tables.notes.length, 1);
+  assert.match(r.skipped[0].reason, /Another admin added this file/);
+});
+
+test('an attach sent again with its attach id answers the first attachment without using the token again', async () => {
+  const stored = [];
+  const db = fakeDb({
+    tables: { knowledge_bases: [{ id: KB, workspace_id: WS }], workspaces: [{ id: WS, plan: 'paid', deleted_at: null }] },
+    rpcs: {
+      kb_sync_attachment_by_attach_id: ({ attach_id }) => ({ data: attach_id === 'attach-1234-abcd' ? { id: 'A-first', attach_id } : null, error: null }),
+      kb_sync_attach: (args) => { stored.push(args); return { data: { id: 'A-new' }, error: null }; },
+      kb_sync_grant_of: () => ({ data: null, error: null }),
+    },
+  });
+  const anon = { auth: { getUser: async () => ({ data: { user: { id: ADMIN } }, error: null }) } };
+  const fetchImpl = fakeFetch([[/access_token/, () => res(200, { access_token: 'gh-at', refresh_token: 'gh-rt-2' })]]);
+  const deps = { clients: { anon, db }, config, fetchImpl, limit: { allow: () => true } };
+  const body = { kb_id: KB, provider: 'github', remote: { id: 'octo/h', kind: 'folder', name: 'octo/h' }, refresh_token: 'gh-rt-1', attach_id: 'attach-1234-abcd' };
+  const again = captureRes();
+  await handleKbSyncAttach(attachReq(body), again, deps);
+  assert.equal(again.status, 200);
+  assert.equal(again.body.attachment.id, 'A-first');
+  assert.equal(fetchImpl.seen.length, 0, 'the token is not refreshed again');
+  assert.equal(stored.length, 0);
+  const fresh = captureRes();
+  await handleKbSyncAttach(attachReq({ ...body, attach_id: 'attach-5678-efgh' }), fresh, deps);
+  assert.equal(fresh.body.attachment.id, 'A-new');
+  assert.equal(stored[0].attach_id, 'attach-5678-efgh');
+  const bad = captureRes();
+  await handleKbSyncAttach(attachReq({ ...body, attach_id: 'no spaces allowed' }), bad, deps);
+  assert.equal(bad.status, 400);
+});

@@ -123,6 +123,8 @@ export const refresh = (meta, client, refreshToken, fetchImpl = fetch) =>
 // one browser visit on the loopback: resolves with the query (code, state or error), answers the tab with a short page.
 // Starting a new wait cancels one still pending, so a second Connect never fails on the busy port
 let pending = null;
+// ends a sign-in still waiting (a panel closed or its Cancel), which frees the port; the wait rejects with code canceled
+export const cancelLoopback = () => { const p = pending; if (!p) return false; p(Object.assign(new Error('The sign-in was cancelled.'), { code: 'canceled' })); return true; };
 export function awaitLoopback({ port = LOOPBACK_PORT, path = '/callback', timeoutMs = 5 * 60 * 1000, page = loopbackPage } = {}) {
   pending?.();
   return new Promise((resolve, reject) => {
@@ -138,7 +140,7 @@ export function awaitLoopback({ port = LOOPBACK_PORT, path = '/callback', timeou
       finish(() => resolve({ ...q, finish: (r) => answer(page({ ...q, ...r })) }));
     });
     const finish = (fn) => { if (done) return; done = true; clearTimeout(timer); server.close(); if (pending === cancel) pending = null; fn(); };
-    const cancel = () => finish(() => reject(new Error('Replaced by a newer sign-in.')));
+    const cancel = (why) => finish(() => reject(why ?? new Error('Replaced by a newer sign-in.')));
     pending = cancel;
     const timer = setTimeout(() => finish(() => reject(new Error('The sign-in did not finish within five minutes.'))), timeoutMs);
     timer.unref?.();

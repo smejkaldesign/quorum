@@ -4,7 +4,7 @@ import type { AgentSchedule, Brain, CalendarSettings, McpOverlap, McpOverlapServ
 import { TRADEOFFS } from '../sources/agent-import';
 import { CATEGORIES, CONNECTORS_CHANGED, aboutFor, connectorsFor, featuresFor, isConnected, mcpPathsOf, type LibraryConnector } from '../connectors/library';
 import { BLOCKED_SENTENCE, ORG_LABEL, ORG_SENTENCE, UNAPPROVED_LABEL, approvalOf, canConnect, hasLocalPart, hiddenFromList, isGoverned, type Approval } from '../connectors/approval';
-import { useConnectorPolicy } from './edition';
+import { SyncedFolderConnections, useConnectorPolicy } from './edition';
 import { useFlag } from './flags';
 import { McpPaths, McpStatus, useMcpOverlap } from './McpPaths';
 import { useMenu } from './controls';
@@ -155,6 +155,7 @@ export function ConnectorsPage({ detail, onDetail, brain, onFolder, onNotes, foc
           </div>
         );
       })}
+      <SyncedFolderConnections />
       {policy && <p className="conn-more">{policy.enabled.length ? 'Your workspace lists the connectors an admin approved.' : 'Your workspace allows only connectors an admin approved, and none are approved yet.'}</p>}
       {named.length > 0 && <p className="conn-more">More coming: {others > 0 ? `${named.join(', ')} and ${others} more.` : `${named.slice(0, -1).join(', ')}${named.length > 1 ? ' and ' : ''}${named[named.length - 1]}.`}</p>}
     </>

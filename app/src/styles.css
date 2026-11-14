@@ -1739,3 +1739,9 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .wsi-scope-add { display: flex; align-items: center; gap: 8px; }
 .wsi-scope-add .set-field { flex: 1; }
 @media (max-width: 640px) { .wsi-modes { grid-template-columns: 1fr; } }
+/* synced folders in a knowledge base (ee/src/KbSync.tsx) */
+.kb-sync-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.kb-sync-list li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--container-border); }
+.kb-sync-list li:last-child { border-bottom: 0; }
+.kb-sync-list .kb-drive-name em.set-error { white-space: normal; }
+.kb-sync-status.warn { color: var(--danger); }
