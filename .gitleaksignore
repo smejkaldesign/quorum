@@ -5,3 +5,7 @@
 35a9157360488b59e9d1ffce3bf1b83218201032:app/test/workspace-integrations.test.js:generic-api-key:90
 e4a5bb8277579da1cf2e9e9f6830c3fa26718135:app/test/workspace-integrations.test.js:generic-api-key:130
 e4a5bb8277579da1cf2e9e9f6830c3fa26718135:app/test/workspace-integrations.test.js:generic-api-key:158
+# MCP overlap redaction test fixtures (made up; the GitHub-shaped one fails GitHub's checksum; none match a real token). Approved by Eric 2026-11-14.
+57220ff27c4a9494dd2596e5ba1b14b869d19b49:app/test/mcp-overlap.test.js:generic-api-key:40
+57220ff27c4a9494dd2596e5ba1b14b869d19b49:app/test/mcp-overlap.test.js:generic-api-key:9
+57220ff27c4a9494dd2596e5ba1b14b869d19b49:app/test/mcp-overlap.test.js:github-pat:8
