@@ -1096,6 +1096,8 @@ ipcMain.handle('popup-menu', () => {
   ]).popup({ window: popup });
 });
 ipcMain.handle('hide-window', () => win?.hide());
+// Hide in the header menu: the whole app, as Cmd+H does, so the call popup goes too
+ipcMain.handle('hide-app', () => app.hide?.());
 
 // the account shown in Settings is the Claude Enterprise sign-in Quorum's model calls run as
 let userCache = null;
