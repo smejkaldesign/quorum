@@ -222,6 +222,8 @@ contextBridge.exposeInMainWorld('quorum', {
   kbAccessSet: (kbId, access) => ipcRenderer.invoke('kb-access-set', kbId, access),
   kbNoteAssign: (draft) => ipcRenderer.invoke('kb-note-assign', draft),
   kbNotes: (kbId) => ipcRenderer.invoke('kb-notes', kbId),
+  // a quorum://kb link opened from outside the app (kb_search and kb_read in the CLI and MCP server return them)
+  onKbOpen: on('kb-open'),
   // importing a KB from a GitHub repository or a zip (hosted edition; handlers and API in ee/kbImport.js)
   kbImport: (req) => ipcRenderer.invoke('kb-import', req),
   kbImportPickZip: () => ipcRenderer.invoke('kb-import-pick-zip'),

@@ -22,6 +22,7 @@ import { nextMenuIndex, updateBadge } from './headerItems';
 import { useExclusiveMenu } from './menuBus';
 import type { KbCommand } from './KnowledgeView';
 import { Composer } from './Composer';
+import { requestKbOpen, type KbOpenTarget } from './kbOpen';
 import type { ConnectorsTarget, OpenSettingsDetail, SettingsPageId } from './connectorsNav';
 import { IconPen, PrivateNotes, usePrivateNotes } from './PrivateNotes';
 import { Avatar, SpeakerName, similarCounts, type SpeakerInfo } from './Speaker';
@@ -216,6 +217,13 @@ export function App() {
     setTab('memory');
     setKbCommand({ kind: 'open', rel: abs.slice(brain.vault.length + 1), n: Date.now() });
   };
+  // a cited knowledge base note opens in the Knowledge tab
+  const openKbNote = useCallback((t: KbOpenTarget) => {
+    setView('main');
+    setTab('knowledge');
+    requestKbOpen(t);
+  }, [setView, setTab]);
+  useEffect(() => window.quorum.onKbOpen?.(openKbNote), [openKbNote]);
   // Obsidian's keys work from anywhere in Quorum: they jump to Memory and open the overlay
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -594,13 +602,13 @@ export function App() {
                 {(!m.pending || m.text) && <QuorumCard>
                 <Markdown text={m.text} root={brain?.root} />
                 {m.sources?.map((src) => (
-                  <div key={src.rel} className="source">
+                  <div key={`${src.n}-${src.rel}`} className="source">
                     <span className="source-icon"><IconDoc /></span>
-                    <button className="source-text" onClick={() => openInQuorum(src.abs)} data-tip="Open in Quorum">
+                    <button className="source-text" onClick={() => (src.kb ? openKbNote(src.kb) : src.abs && openInQuorum(src.abs))} data-tip={src.kb ? 'Open in Knowledge' : 'Open in Quorum'}>
                       <strong>[{src.n}] {src.title}</strong>
                       <span>{src.rel.replace(/^MyBrain\//, '')}</span>
                     </button>
-                    <button className="icon-btn" aria-label={`Show in ${src.app}`} data-tip={`Show in ${src.app}`} onClick={() => window.quorum.openNote(src.abs)}><IconFolder /></button>
+                    {src.abs && <button className="icon-btn" aria-label={`Show in ${src.app}`} data-tip={`Show in ${src.app}`} onClick={() => window.quorum.openNote(src.abs!)}><IconFolder /></button>}
                   </div>
                 ))}
               </QuorumCard>}

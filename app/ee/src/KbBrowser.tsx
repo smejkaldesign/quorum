@@ -5,6 +5,7 @@ import { matchesQuery } from '../../src/mainTabs';
 import { IconBack, IconBrain, IconChevron, IconDoc, IconFolder, IconMore, IconStack } from '../../src/icons';
 import { descendantIds, findFolder, folderPath, moveCheck, moveTargets, notesIn, openPathTo, resolveKbLink, rowKey, treeKey, visibleRows, withFolder, withoutFolder, type TreeRow } from './kbTree';
 import { KB_CHANGED, kbCall, KbConfirm, useLatest } from './kbUi';
+import { KB_OPEN, takeKbOpen, type KbOpenTarget } from '../../src/kbOpen';
 
 // The knowledge bases in the Knowledge tab: one left column with the team knowledge entry (and, for a folder or git
 // source, that source's own file tree, which the team view portals into the slot below it) and one top-level row per
@@ -173,6 +174,29 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
   };
   // a [[link]] inside a KB note: resolveKbLink picks the note among the KBs whose notes are loaded, preferring the
   // linking note's folder, then its KB. A note in another folder or KB opens there
+  // a note asked for from outside the tab (a chat source card, a quorum://kb link): once its KB's notes are here, the
+  // KB opens to the note's folder and the note opens
+  const [opening, setOpening] = useState<KbOpenTarget | null>(() => takeKbOpen());
+  useEffect(() => {
+    const take = () => { const t = takeKbOpen(); if (t) setOpening(t); };
+    window.addEventListener(KB_OPEN, take);
+    return () => window.removeEventListener(KB_OPEN, take);
+  }, []);
+  const openRequested = useLatest(() => {
+    if (!opening || !kbs) return;
+    const kb = kbOf(opening.kbId);
+    if (!kb) { setOpening(null); setError('That knowledge base is not one you can read.'); return; }
+    const list = notes[kb.id];
+    if (!list) { if (!inFlight.current.has(kb.id)) loadNotes(kb.id); return; }
+    const note = list.find((n) => n.id === opening.noteId);
+    setOpening(null);
+    if (!note) { select({ kbId: kb.id, folderId: null }); setError('That note is no longer in this knowledge base.'); return; }
+    openKeys(openPathTo(kb, note.folderId ?? null));
+    setSel({ kbId: kb.id, folderId: note.folderId ?? null });
+    openNote(note);
+  });
+  useEffect(() => { openRequested.current(); }, [opening, kbs, notes, openRequested]);
+
   const follow = (target: string) => {
     if (!sel) return;
     const hit = resolveKbLink(target, { kbId: sel.kbId, note: doc?.note ?? null }, notes);

@@ -1350,10 +1350,15 @@ function agentContext() {
   const powers = { instructions: on('instructions')?.path ?? null, skills: !!on('skills'), agents: !!on('agents'), mcp: on('mcp')?.path ?? null };
   return { index: on('index')?.path ?? null, dirs: inc.filter((i) => i.kind === 'folder').map((i) => i.path), search, graph: !!search && inc.some((i) => i.kind === 'graph'), powers };
 }
+// Cloud: the knowledge bases the person can read (ee/kbSearch.js), searched alongside the Agent OS; null in the local edition
+let kbSearch = null;
 async function agentExtra(question, root) {
   const ctx = agentContext();
   if (ctx.search) toUI('agent-step', { text: 'Searching your Agent OS' });
-  return { ...ctx, hints: await searchHints(question, ctx, root) };
+  const kbOn = !!kbSearch?.available();
+  if (kbOn) toUI('agent-step', { text: 'Searching your knowledge bases' });
+  const [hints, kbContext] = await Promise.all([searchHints(question, ctx, root), kbOn ? kbSearch.forChat(question) : null]);
+  return { ...ctx, hints, kb: kbContext };
 }
 // runs the Agent OS's search before Quorum starts so she opens the likely notes first; a slow or broken search just means no hints
 function searchHints(question, ctx, root) {
@@ -1649,7 +1654,13 @@ const account = EDITION === 'cloud'
   : { sync: { pushNote() {}, pushMeetingNote() {}, pullNow() {}, live() {} } };
 // the installed app owns the quorum:// scheme (package.json build.protocols); Google sign-in comes back on it
 if (app.isPackaged) app.setAsDefaultProtocolClient('quorum');
-app.on('open-url', (e, url) => { e.preventDefault(); if (/^quorum:\/\/auth\//.test(url)) account.finishOAuth?.(url); });
+app.on('open-url', (e, url) => {
+  e.preventDefault();
+  if (/^quorum:\/\/auth\//.test(url)) account.finishOAuth?.(url);
+  // a knowledge base note link (kb_search and kb_read return them) opens the note in the Knowledge tab
+  const kbNote = kbSearch?.parseLink(url);
+  if (kbNote) { win?.show(); toUI('kb-open', kbNote); }
+});
 // workspace connectors (Settings › Admin › Connectors) ride on the same account and client
 if (EDITION === 'cloud') { const conn = (await loadEE('connectors.js')).registerConnectors({ ipcMain, account, log }); guardrails.setRemote(async () => { const r = await conn.handlers['workspace-guardrails-get'](); return r?.rules ?? null; }); }
 if (EDITION === 'cloud') (await loadEE('knowledge.js')).registerKnowledge({ ipcMain, account, log, shell });
@@ -1657,6 +1668,9 @@ if (EDITION === 'cloud') (await loadEE('knowledge.js')).registerKnowledge({ ipcM
 if (EDITION === 'cloud') (await loadEE('teamKnowledge.js')).registerTeamKnowledge({ ipcMain, account, settings, saveSettings: () => store.settings.save(), dataDir: DATA_DIR, log, toUI, pickFolder: async () => { const r = await dialog.showOpenDialog(win, { title: 'Team knowledge folder', message: 'Choose the folder that holds the team knowledge on this Mac.', properties: ['openDirectory'] }); return r.canceled ? null : r.filePaths[0] ?? null; } });
 // knowledge bases: KBs, folders, readers and note placement (handlers and the IPC API in ee/knowledgeBases.js)
 if (EDITION === 'cloud') (await loadEE('knowledgeBases.js')).registerKnowledgeBases({ ipcMain, account, log });
+// knowledge base search for chat and for the quorum CLI and MCP server, as the signed-in person (ee/kbSearch.js)
+const kbModule = EDITION === 'cloud' ? await loadEE('kbSearch.js') : null;
+if (kbModule) kbSearch = kbModule.createKbSearch({ account, redact: (t) => suggester.redactLines(t), log });
 // importing a KB from a GitHub repository or a zip (handlers and the IPC API in ee/kbImport.js)
 if (EDITION === 'cloud') (await loadEE('kbImport.js')).registerKbImport({ ipcMain, account, log, toUI, pickZip: async () => { const r = await dialog.showOpenDialog(win, { title: 'Import a knowledge base', message: 'Choose a zip of markdown files.', properties: ['openFile'], filters: [{ name: 'Zip archives', extensions: ['zip'] }] }); return r.canceled ? null : r.filePaths[0] ?? null; } });
 if (EDITION === 'cloud') (await loadEE('billing.js')).registerBilling({ ipcMain, account, log, openExternal: (u) => shell.openExternal(u) });
@@ -1861,13 +1875,17 @@ ipcMain.handle('ask', async (_e, question, files) => {
     saveChat(question, text, [], []);
     return { text, sources: [], steps: [] };
   }
+  const extra = await agentExtra(String(question), b.root);
   const r = await runModel({
     source, providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(),
-    question, transcript, root: b.root, extra: await agentExtra(String(question), b.root), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached,
+    question, transcript, root: b.root, extra, model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached,
     history: chatHistory.slice(-4), onStep: (text) => { steps.push(text); toUI('agent-step', { text }); }, onDelta: (text) => toUI('agent-delta', { text }),
   }).finally(() => unstage(attached));
   chatHistory.push({ q: question, a: r.text });
-  const sources = r.files.map((abs, i) => ({ n: i + 1, abs, rel: path.relative(b.root, abs), title: noteTitle(abs), ...noteLink(abs) }));
+  const fileCards = r.files.map((abs, i) => ({ n: i + 1, abs, rel: path.relative(b.root, abs), title: noteTitle(abs), ...noteLink(abs) }));
+  // knowledge base notes the answer cited open in the Knowledge tab
+  const kbCards = extra.kb && kbSearch ? kbSearch.sources(r.kb ?? [], extra.kb.hits) : [];
+  const sources = [...fileCards, ...kbCards.map((c, i) => ({ n: fileCards.length + i + 1, ...c }))];
   saveChat(question, r.text, sources, steps);
   return { text: r.text, sources, steps };
 });
@@ -2287,6 +2305,13 @@ async function control({ cmd, args = {} }) {
   const b = brain();
   switch (cmd) {
     case 'ping': return { app: app.isPackaged ? 'Quorum' : 'Quorum Dev', access: settings.access ?? 'write' };
+    // knowledge bases, read as the person signed in to this app; the server's row level security decides what comes back
+    case 'kb_search': case 'kb_read': case 'kb_list': {
+      if (!kbModule || !kbSearch) throw new Error('Knowledge bases are part of Quorum Cloud. This build of Quorum has none.');
+      const r = await kbModule.runKbCommand(kbSearch, cmd, args);
+      if (r?.error) throw new Error(r.error);
+      return r;
+    }
     case 'start':
       // start acts on a noticed call, so it follows meeting-capture; stop, go and end work on any running session
       if (!gate().meetingCapture) throw new Error('Quorum does not watch for calls in this build. Start listening from the app for a note of your own.');
