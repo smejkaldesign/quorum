@@ -10,7 +10,7 @@ import { openConnectors, type ConnectorsTarget } from './connectorsNav';
 import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
-import { AccountArea, BillingArea, EDITION, KnowledgeQueueArea, MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
+import { AccountArea, BillingArea, EDITION, KnowledgeBasesArea, KnowledgeQueueArea,MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { TOP_ADMIN_PAGES, canAdmin, flagHiddenPages, modeOf, resolvePage, voiceMode, workspacePages, type Page } from './settingsNav';
 import { EnvSwitch } from './EnvSwitch';
 import { useFlags, useNotetaker } from './flags';
@@ -848,13 +848,17 @@ function MemoryScan() {
 function KnowledgePage() {
   return (
     <>
-      <h3>Company knowledge</h3>
-      <div className="set-card set-zero">
-        <span className="set-zero-icon"><IconBuilding width={22} height={22} /></span>
-        <strong>No company knowledge source<Soon /></strong>
-        <p>Admins will connect a repo, wiki or knowledge base, and Quorum will read it for everyone in the workspace.</p>
-        <button className="pill" disabled>Connect to company knowledge source</button>
-      </div>
+      <KnowledgeBasesArea local={(
+        <>
+          <h3>Company knowledge</h3>
+          <div className="set-card set-zero">
+            <span className="set-zero-icon"><IconBuilding width={22} height={22} /></span>
+            <strong>No company knowledge source<Soon /></strong>
+            <p>Admins will connect a repo, wiki or knowledge base, and Quorum will read it for everyone in the workspace.</p>
+            <button className="pill" disabled>Connect to company knowledge source</button>
+          </div>
+        </>
+      )} />
 
       <KnowledgeQueueArea local={(
         <>

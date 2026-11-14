@@ -8,6 +8,7 @@ import { IconBack, IconChevron, IconDoc, IconFolder, IconGraph, IconReset, IconS
 import { AccountCard, EE_MARKER, useAccount } from './Account';
 import { billingApi, knowledgeApi, teamApi } from './accountMock';
 import { BillingPage, hasService } from './Billing';
+import { KbBrowser } from './KbBrowser';
 
 const api = knowledgeApi();
 const team = teamApi();
@@ -17,8 +18,9 @@ const onTime = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString(u
 
 // The Knowledge tab, Cloud: the workspace's team knowledge. Admins pick where it comes from (the notes members share
 // through Quorum, a folder every member has, or a git repository each Mac clones); members browse, search and read it;
-// contributions still go through the review queue. The gates come first: sign in, a plan with Cloud service, and a
-// team switched on in Settings › Admin › Teams.
+// contributions still go through the review queue. The knowledge bases the person can read sit in a tree on the left
+// (KbBrowser.tsx). The gates come first: sign in, a plan with Cloud service, and a team switched on in Settings › Admin
+// › Teams.
 export function KnowledgeTab() {
   const a = useAccount();
   // the plan decides whether team knowledge shows; unknown (loading, or the project did not answer) keeps the gate closed,
@@ -69,13 +71,13 @@ export function KnowledgeTab() {
       </div>
     );
   }
-  return <TeamKnowledge workspace={a.workspace.name} admin={a.workspace.role !== 'member'} />;
+  return <TeamKnowledge workspace={a.workspace.name} admin={a.workspace.role !== 'member'} me={a.userId} />;
 }
 
 type SourceState = { source: TeamSource; local: TeamLocal };
 
 // the source and its state on this Mac, loaded once per open and after every change
-function TeamKnowledge({ workspace, admin }: { workspace: string; admin: boolean }) {
+function TeamKnowledge({ workspace, admin, me }: { workspace: string; admin: boolean; me: string | null }) {
   const [state, setState] = useState<SourceState | null>(null);
   const [error, setError] = useState('');
   // the source card opens on its own for an admin whose source is not on this Mac yet, and closes when asked
@@ -103,8 +105,10 @@ function TeamKnowledge({ workspace, admin }: { workspace: string; admin: boolean
       </div>
       {error && <p className="error tk-error">{error}</p>}
       {showSetup && admin && <SourceCard state={state} onChange={(s) => { setState(s); setSetup(false); }} onClose={() => setSetup(false)} />}
-      {!showSetup && kind !== 'sync' && !state.local.exists && <MissingFolder state={state} admin={admin} onChange={(s) => setState(s)} />}
-      {kind === 'sync' ? <Shared admin={admin} query={query} /> : state.local.exists && <Browser admin={admin} query={query} state={state} />}
+      <KbBrowser me={me} query={query}>
+        {!showSetup && kind !== 'sync' && !state.local.exists && <MissingFolder state={state} admin={admin} onChange={(s) => setState(s)} />}
+        {kind === 'sync' ? <Shared admin={admin} query={query} /> : state.local.exists && <Browser admin={admin} query={query} state={state} />}
+      </KbBrowser>
     </div>
   );
 }
