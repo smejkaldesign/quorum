@@ -67,9 +67,10 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
     noteSeq.current.set(kbId, seq);
     inFlight.current.add(kbId);
     const r = await kbCall(() => window.quorum.kbNotes(kbId), 'The notes could not be read.');
-    if (noteSeq.current.get(kbId) !== seq) return;
+    if (noteSeq.current.get(kbId) !== seq) return true;
     inFlight.current.delete(kbId);
     if (r.error) setError(r.error); else setNotes((n) => ({ ...n, [kbId]: r.notes ?? [] }));
+    return !r.error;
   }, []);
   const selKbId = sel?.kbId ?? null;
   const haveNotes = selKbId ? !!notes[selKbId] : true;
@@ -175,7 +176,8 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
   // a [[link]] inside a KB note: resolveKbLink picks the note among the KBs whose notes are loaded, preferring the
   // linking note's folder, then its KB. A note in another folder or KB opens there
   // a note asked for from outside the tab (a chat source card, a quorum://kb link): once its KB's notes are here, the
-  // KB opens to the note's folder and the note opens
+  // KB opens to the note's folder and the note opens. A request that cannot be met (the list or the notes fail to
+  // load, the KB or the note is gone) is dropped with the reason shown, so it never opens something later
   const [opening, setOpening] = useState<KbOpenTarget | null>(() => takeKbOpen());
   useEffect(() => {
     const take = () => { const t = takeKbOpen(); if (t) setOpening(t); };
@@ -183,11 +185,15 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
     return () => window.removeEventListener(KB_OPEN, take);
   }, []);
   const openRequested = useLatest(() => {
-    if (!opening || !kbs) return;
+    if (!opening) return;
+    if (!kbs) { if (listError) { setOpening(null); setError(listError); } return; }
     const kb = kbOf(opening.kbId);
     if (!kb) { setOpening(null); setError('That knowledge base is not one you can read.'); return; }
     const list = notes[kb.id];
-    if (!list) { if (!inFlight.current.has(kb.id)) loadNotes(kb.id); return; }
+    if (!list) {
+      if (!inFlight.current.has(kb.id)) loadNotes(kb.id).then((ok) => { if (!ok) setOpening(null); });
+      return;
+    }
     const note = list.find((n) => n.id === opening.noteId);
     setOpening(null);
     if (!note) { select({ kbId: kb.id, folderId: null }); setError('That note is no longer in this knowledge base.'); return; }
@@ -195,7 +201,7 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
     setSel({ kbId: kb.id, folderId: note.folderId ?? null });
     openNote(note);
   });
-  useEffect(() => { openRequested.current(); }, [opening, kbs, notes, openRequested]);
+  useEffect(() => { openRequested.current(); }, [opening, kbs, notes, listError, openRequested]);
 
   const follow = (target: string) => {
     if (!sel) return;

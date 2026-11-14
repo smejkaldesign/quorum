@@ -223,7 +223,11 @@ export function App() {
     setTab('knowledge');
     requestKbOpen(t);
   }, [setView, setTab]);
-  useEffect(() => window.quorum.onKbOpen?.(openKbNote), [openKbNote]);
+  useEffect(() => {
+    const off = window.quorum.onKbOpen?.(openKbNote);
+    window.quorum.kbOpenReady?.();
+    return off;
+  }, [openKbNote]);
   // Obsidian's keys work from anywhere in Quorum: they jump to Memory and open the overlay
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

@@ -306,6 +306,8 @@ const day = (d) => {
   const t = d && new Date(d);
   return t && !Number.isNaN(t.getTime()) ? t.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).padEnd(18) : ''.padEnd(18);
 };
+// a source under an answer: a file by its path; a knowledge base note by title and place, with its id and link
+const sourceRow = (src) => (src.kb ? `[${src.n}] ${src.title}  (${src.rel})\n    ${src.kb.noteId}\n    ${src.url}` : `[${src.n}] ${src.rel}`);
 const kbRow = (k) => `${k.name}  (${k.role}${k.isDefault ? ', default' : ''})${k.folders.length ? `\n    ${k.folders.join('\n    ')}` : ''}`;
 const kbHit = (h) => `${h.citation}\n    ${h.noteId}\n    ${h.snippet}`;
 const row = (m) => `${day(m.date)}  ${m.title}${m.source !== 'quorum' ? `  [${m.source}]` : ''}\n    ${m.id}`;
@@ -326,7 +328,7 @@ try {
       if (!q.trim()) throw new Error('Usage: quorum ask <question>');
       console.error('Quorum is looking through your notes…');
       const r = await ask('ask', { question: q });
-      print(r, (x) => `${x.text}${x.sources?.length ? `\n\n${x.sources.map((src) => `[${src.n}] ${src.rel}`).join('\n')}` : ''}`);
+      print(r, (x) => `${x.text}${x.sources?.length ? `\n\n${x.sources.map(sourceRow).join('\n')}` : ''}`);
       break;
     }
     case 'kb': {

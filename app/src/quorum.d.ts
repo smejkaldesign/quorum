@@ -469,6 +469,7 @@ declare global {
       kbNoteAssign(draft: { noteId?: string; path?: string; kbId: string | null; folderId?: string | null }): Promise<Result & { placement?: KbPlacement }>;
       kbNotes(kbId: string): Promise<Result & { notes?: KbNote[] }>;
       onKbOpen(cb: (t: { kbId: string; noteId: string }) => void): Unsub;
+      kbOpenReady(): Promise<void>;
       kbImport(req: KbImportRequest): Promise<Result & { kb?: Kb; imported?: number; removed?: number; skipped?: KbImportSkipped[] }>;
       kbImportPickZip(): Promise<{ path?: string; canceled?: true }>;
       onKbImportProgress(cb: (p: KbImportProgress) => void): Unsub;

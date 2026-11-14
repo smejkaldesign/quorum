@@ -43,6 +43,20 @@ import { createUpdater, feedFor } from './updater.js';
 import { createGuardrails } from './guardrails.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+// quorum://kb links (kb_search and kb_read return them) open the note in the Knowledge tab. A link can arrive before
+// the window, the knowledge base module or the renderer is ready (it can launch the app), so links wait here until all
+// three are, then the main window comes forward with the note
+const kbLinks = { queue: [], parse: null, subscribed: false };
+app.on('open-url', (e, url) => { if (/^quorum:\/\/kb\//.test(url)) { e.preventDefault(); kbLinks.queue.push(url); flushKbLinks(); } });
+function flushKbLinks() {
+  if (!kbLinks.parse || !kbLinks.subscribed || !win || win.isDestroyed()) return;
+  for (const url of kbLinks.queue.splice(0)) {
+    const target = kbLinks.parse(url);
+    if (!target) continue;
+    openMain();
+    toUI('kb-open', target);
+  }
+}
 // one copy per environment: the lock lives in the environment's own data folder (edition.js DATA_DIR: Quorum, or
 // Quorum Dev for a development copy), so the installed app and a development copy run side by side. Only one of them
 // should watch a call, so a development copy leaves auto-listen off while the installed app is running (see below).
@@ -1352,10 +1366,11 @@ function agentContext() {
 }
 // Cloud: the knowledge bases the person can read (ee/kbSearch.js), searched alongside the Agent OS; null in the local edition
 let kbSearch = null;
-async function agentExtra(question, root) {
+// kb: false leaves the knowledge bases out; a note question edits that note, so it gets the Agent OS only
+async function agentExtra(question, root, { kb = true } = {}) {
   const ctx = agentContext();
   if (ctx.search) toUI('agent-step', { text: 'Searching your Agent OS' });
-  const kbOn = !!kbSearch?.available();
+  const kbOn = kb && !!kbSearch?.available();
   if (kbOn) toUI('agent-step', { text: 'Searching your knowledge bases' });
   const [hints, kbContext] = await Promise.all([searchHints(question, ctx, root), kbOn ? kbSearch.forChat(question) : null]);
   return { ...ctx, hints, kb: kbContext };
@@ -1566,7 +1581,7 @@ ipcMain.handle('note-ask', async (_e, file, question, history, files) => {
   const source = modelSource();
   // the note body is in the prompt, so a provider without tools can still answer about it and propose edits; only Claude Code can read the rest of the Agent OS or attachments
   const r = roleProvider('agent') === 'claude-code'
-    ? await runModel({ source, providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question: prompt, transcript: '', root: b.root, extra: await agentExtra(String(question), b.root), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached, history: (history ?? []).slice(-4), onStep: (text) => toUI('agent-step', { text }) }).finally(() => unstage(attached))
+    ? await runModel({ source, providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question: prompt, transcript: '', root: b.root, extra: await agentExtra(String(question), b.root, { kb: false }), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached, history: (history ?? []).slice(-4), onStep: (text) => toUI('agent-step', { text }) }).finally(() => unstage(attached))
     : await noteAskWithoutTools(prompt, history, attached);
   const m = r.text.match(/<updated-note>\n?([\s\S]*?)\n?<\/updated-note>/);
   const answer = r.text.replace(/<updated-note>[\s\S]*?<\/updated-note>/, '').trim();
@@ -1654,13 +1669,7 @@ const account = EDITION === 'cloud'
   : { sync: { pushNote() {}, pushMeetingNote() {}, pullNow() {}, live() {} } };
 // the installed app owns the quorum:// scheme (package.json build.protocols); Google sign-in comes back on it
 if (app.isPackaged) app.setAsDefaultProtocolClient('quorum');
-app.on('open-url', (e, url) => {
-  e.preventDefault();
-  if (/^quorum:\/\/auth\//.test(url)) account.finishOAuth?.(url);
-  // a knowledge base note link (kb_search and kb_read return them) opens the note in the Knowledge tab
-  const kbNote = kbSearch?.parseLink(url);
-  if (kbNote) { win?.show(); toUI('kb-open', kbNote); }
-});
+app.on('open-url', (e, url) => { e.preventDefault(); if (/^quorum:\/\/auth\//.test(url)) account.finishOAuth?.(url); });
 // workspace connectors (Settings › Admin › Connectors) ride on the same account and client
 if (EDITION === 'cloud') { const conn = (await loadEE('connectors.js')).registerConnectors({ ipcMain, account, log }); guardrails.setRemote(async () => { const r = await conn.handlers['workspace-guardrails-get'](); return r?.rules ?? null; }); }
 if (EDITION === 'cloud') (await loadEE('knowledge.js')).registerKnowledge({ ipcMain, account, log, shell });
@@ -1671,6 +1680,10 @@ if (EDITION === 'cloud') (await loadEE('knowledgeBases.js')).registerKnowledgeBa
 // knowledge base search for chat and for the quorum CLI and MCP server, as the signed-in person (ee/kbSearch.js)
 const kbModule = EDITION === 'cloud' ? await loadEE('kbSearch.js') : null;
 if (kbModule) kbSearch = kbModule.createKbSearch({ account, redact: (t) => suggester.redactLines(t), log });
+kbLinks.parse = kbSearch?.parseLink ?? null;
+// the renderer asks for links that arrived before it was listening (a launch from a quorum://kb link)
+ipcMain.handle('kb-open-ready', () => { kbLinks.subscribed = true; flushKbLinks(); });
+flushKbLinks();
 // importing a KB from a GitHub repository or a zip (handlers and the IPC API in ee/kbImport.js)
 if (EDITION === 'cloud') (await loadEE('kbImport.js')).registerKbImport({ ipcMain, account, log, toUI, pickZip: async () => { const r = await dialog.showOpenDialog(win, { title: 'Import a knowledge base', message: 'Choose a zip of markdown files.', properties: ['openFile'], filters: [{ name: 'Zip archives', extensions: ['zip'] }] }); return r.canceled ? null : r.filePaths[0] ?? null; } });
 if (EDITION === 'cloud') (await loadEE('billing.js')).registerBilling({ ipcMain, account, log, openExternal: (u) => shell.openExternal(u) });

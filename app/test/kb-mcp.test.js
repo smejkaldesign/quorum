@@ -19,6 +19,10 @@ const stop = startControl(path.join(appDir, 'quorum.sock'), async ({ cmd, args }
   seen.push({ cmd, args });
   if (cmd === 'kb_search') return { results: [{ noteId: '01KB000000000000000000N001', citation: 'Handbook / Travel policy', snippet: 'Trains for short trips.' }] };
   if (cmd === 'kb_read') throw new Error('No knowledge base note there that you can read.');
+  if (cmd === 'ask') return { text: 'Book trains.', steps: [], sources: [
+    { n: 1, rel: 'notes/travel.md', title: 'travel', abs: '/v/notes/travel.md', app: 'Vault', url: 'quorum://note/notes%2Ftravel.md' },
+    { n: 2, rel: 'Handbook / Policies', title: 'Travel policy', abs: null, app: 'Knowledge', url: 'quorum://kb/01KB00000000000000000000K1/01KB000000000000000000N001', kb: { kbId: '01KB00000000000000000000K1', noteId: '01KB000000000000000000N001' } },
+  ] };
   return { kbs: [] };
 }, () => {});
 afterAll(() => { stop(); rmSync(home, { recursive: true, force: true }); });
@@ -40,6 +44,25 @@ async function session(requests) {
   return answers;
 }
 
+// one CLI command against the fake app; resolves to what it printed
+function cli(args) {
+  return new Promise((resolve) => {
+    const proc = spawn(process.execPath, [CLI, ...args], { env: { ...process.env, HOME: home, QUORUM_ENV: '' } });
+    let out = '';
+    proc.stdout.on('data', (d) => { out += d; });
+    proc.on('close', () => resolve(out));
+  });
+}
+
+describe('quorum ask', () => {
+  it('prints a knowledge base source with its title, place, note id and link', async () => {
+    expect(await cli(['ask', 'how do I travel'])).toBe([
+      'Book trains.', '', '[1] notes/travel.md',
+      '[2] Travel policy  (Handbook / Policies)', '    01KB000000000000000000N001', '    quorum://kb/01KB00000000000000000000K1/01KB000000000000000000N001', '',
+    ].join('\n'));
+  });
+});
+
 describe('the knowledge base tools over MCP', () => {
   it('lists the three tools and forwards a call to the running app', async () => {
     const a = await session([
@@ -55,7 +78,7 @@ describe('the knowledge base tools over MCP', () => {
     expect(JSON.parse(a.get(3).result.content[0].text).results[0].citation).toBe('Handbook / Travel policy');
     expect(a.get(4).result).toEqual({ content: [{ type: 'text', text: 'No knowledge base note there that you can read.' }], isError: true });
     expect(JSON.parse(a.get(5).result.content[0].text)).toEqual({ kbs: [] });
-    expect(seen).toEqual([
+    expect(seen.filter((s) => s.cmd !== 'ask')).toEqual([
       { cmd: 'kb_search', args: { query: 'travel policy', kb: 'Handbook', limit: 3 } },
       { cmd: 'kb_read', args: { path: 'Handbook/Secret' } },
       { cmd: 'kb_list', args: {} },
