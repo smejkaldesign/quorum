@@ -1767,7 +1767,7 @@ function openFreshSignIn(url, name) {
   win.loadURL(url);
   return Promise.resolve();
 }
-registerSources({ ipcMain: connectIpc, settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), openFresh: openFreshSignIn, afterWrite: (file) => { account.sync.pushMeetingNote(file); keeper.schedule('import'); }, version: app.getVersion(), agentRuntime: { runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV } });
+const sourcesApi = registerSources({ ipcMain: connectIpc, settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), openFresh: openFreshSignIn, afterWrite: (file) => { account.sync.pushMeetingNote(file); keeper.schedule('import'); }, version: app.getVersion(), agentRuntime: { runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV } });
 // platform accounts for cloud recordings (Zoom first) go through the relay, so they exist in the hosted edition only
 if (EDITION === 'cloud') (await loadEE('platforms.js')).registerPlatforms({ ipcMain: connectIpc, account, settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file) });
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);
@@ -2624,6 +2624,8 @@ async function control({ cmd, args = {} }) {
       if (r?.error) throw new Error(r.error);
       return r;
     }
+    // a live Granola search through the sign-in this app holds; opted-out customers are withheld before the answer leaves
+    case 'granola_search': return sourcesApi.searchGranola(args, { isExcluded: suggester.isExcluded });
     case 'start':
       // start acts on a noticed call, so it follows meeting-capture; stop, go and end work on any running session
       if (!gate().meetingCapture) throw new Error('Quorum does not watch for calls in this build. Start listening from the app for a note of your own.');

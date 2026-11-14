@@ -80,6 +80,14 @@ describe('granola sync', () => {
     expect(r).toMatchObject({ listed: 2, imported: 1, skipped: 1, failed: [] });
     expect(existing.has('bb6744f5-f2f5')).toBe(true);
   });
+  it('keeps paging while next_cursor is present, with or without has_more', async () => {
+    const calls = [];
+    const pages = { '': '<pagination next_cursor="p2"/><meeting id="a1" title="A"></meeting>', p2: '<pagination next_cursor="p3"/><meeting id="a2" title="B"></meeting>', p3: '<pagination next_cursor="p3"/><meeting id="a3" title="C"></meeting>' };
+    const fake = { call: async (name, args) => { calls.push([name, args]); return { text: name === 'search_meetings' ? pages[args.cursor ?? ''] : '' }; } };
+    const r = await sync({ mcp: fake, existing: new Set(['a1', 'a2', 'a3']), write: async () => '' });
+    expect(calls.map((c) => c[1].cursor ?? null)).toEqual([null, 'p2', 'p3']);
+    expect(r.listed).toBe(3);
+  });
   it('keeps going when one batch fails and reports it', async () => {
     const failing = { call: async (name) => { if (name === 'search_meetings') return { text: LIST.replace('has_more="true"', 'has_more="false"') }; throw new Error('rate limited'); } };
     const r = await sync({ mcp: failing, existing: new Set(), write: async () => {} });

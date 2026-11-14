@@ -6,6 +6,7 @@ export function startControl(sockPath, handle, log) {
   rmSync(sockPath, { force: true });
   const server = net.createServer((conn) => {
     let buf = '';
+    conn.setEncoding('utf8');
     conn.on('data', (d) => {
       buf += d;
       if (buf.length > 1 << 20) { conn.destroy(); return; }
