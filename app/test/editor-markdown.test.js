@@ -31,6 +31,13 @@ describe('markdown round trip', () => {
     expect(link).toMatchObject({ type: 'wikiLink', attrs: { target: 'a/b', alias: 'c' } });
   });
 
+  it('keeps images character for character, a hosted KB file among them', () => {
+    const id = '01KH00000000000000000000F1';
+    for (const md of [`![Shot.png](quorum://kb-file/${id})`, `Text\n\n[Plan.pdf](quorum://kb-file/${id})`, `a ![x](quorum://kb-file/${id}) b`, '![](https://example.com/a.png)']) {
+      expect(roundTrip(md)).toBe(md);
+      expect(isLossless(md)).toBe(true);
+    }
+  });
   it('opens a note whose markdown would be rewritten as plain text', () => {
     expect(isLossless('* star bullet')).toBe(false);
     expect(isLossless('_under italic_')).toBe(false);

@@ -258,6 +258,7 @@ contextBridge.exposeInMainWorld('quorum', {
   kbFiles: (noteId) => ipcRenderer.invoke('kb-files', noteId),
   kbFileAttach: (noteId) => ipcRenderer.invoke('kb-file-attach', noteId),
   kbFileOpen: (idOrLink) => ipcRenderer.invoke('kb-file-open', idOrLink),
+  kbFileData: (idOrLink) => ipcRenderer.invoke('kb-file-data', idOrLink),
   kbFileRemove: (fileId) => ipcRenderer.invoke('kb-file-remove', fileId),
   kbFilesUsage: () => ipcRenderer.invoke('kb-files-usage'),
   // Quorum's edits to synced KB notes kept as suggestions (hosted edition; handlers and API in ee/kbUpstream.js)

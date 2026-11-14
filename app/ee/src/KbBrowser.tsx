@@ -21,8 +21,10 @@ import { KbHostedNote } from './KbHostedNote';
 type Sel = { kbId: string; folderId: string | null };
 type Edit = { mode: 'rename'; kbId: string; folderId: string | null; name: string } | { mode: 'new'; kbId: string; parentId: string | null; name: string };
 type Doc = { title: string; body: string; note: KbNote };
-// a note of a KB hosted by Quorum, open in the note editor; note null is a new note in folderId
-type Hosted = { kbId: string; note: KbNote | null; folderId: string | null };
+// a note of a KB hosted by Quorum, open in the note editor; note null is a new note in folderId. open numbers each
+// opening, so the view keeps its editor while a save gives a new note its id
+type Hosted = { open: number; kbId: string; note: KbNote | null; folderId: string | null };
+let opens = 0;
 const onDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
 
 // the team view's way into the left column: where to render its file tree, and how to bring the team view forward
@@ -175,7 +177,7 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
     setError('');
     const inKb = kbId ? kbOf(kbId) : null;
     // a hosted KB's note opens from Supabase in the note editor, for its readers too, since it is in no vault
-    if (inKb?.hosted) { setDoc(null); setHosted({ kbId: inKb.id, note: n, folderId: n.folderId ?? null }); return; }
+    if (inKb?.hosted) { setDoc(null); setHosted({ open: ++opens, kbId: inKb.id, note: n, folderId: n.folderId ?? null }); return; }
     setHosted(null);
     if (me && n.userId === me) {
       try {
@@ -328,7 +330,7 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
         <section className="kbt-main">
           <div className="kbt-team" hidden={!!(sel && selKb)}>{children}</div>
           {!sel || !selKb ? null : hosted && hosted.kbId === selKb.id ? (
-            <KbHostedNote key={hosted.note?.id ?? `new:${hosted.folderId ?? ''}`} kb={selKb} note={hosted.note} folderId={hosted.folderId}
+            <KbHostedNote key={hosted.open} kb={selKb} note={hosted.note} folderId={hosted.folderId}
               onBack={() => setHosted(null)} onChanged={() => loadNotes(selKb.id)}
               onMoved={(folderId) => { openKeys(openPathTo(selKb, folderId)); setSel({ kbId: selKb.id, folderId }); }}
               onDeleted={() => { setHosted(null); loadNotes(selKb.id); }}
@@ -349,7 +351,7 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
           ) : (
             <FolderView kb={selKb} folderId={sel.folderId} notes={notes[selKb.id] ?? null} query={query} error={error}
               onFolder={(id) => { openKeys(openPathTo(selKb, id)); select({ kbId: selKb.id, folderId: id }); }} onNote={(n) => openNote(n, selKb.id)}
-              onNew={selKb.writable ? () => setHosted({ kbId: selKb.id, note: null, folderId: sel.folderId }) : undefined} />
+              onNew={selKb.writable ? () => setHosted({ open: ++opens, kbId: selKb.id, note: null, folderId: sel.folderId }) : undefined} />
           )}
         </section>
         {moving && kbOf(moving.kbId) && (

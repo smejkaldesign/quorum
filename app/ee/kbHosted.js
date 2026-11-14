@@ -14,6 +14,7 @@
 //   kb-files              (noteId)                                      -> { files }
 //   kb-file-attach        (noteId)                                      -> { file } | { canceled }   picks a file
 //   kb-file-open          (fileIdOrLink)                                -> { ok }         downloads it, then opens it
+//   kb-file-data          (fileIdOrLink)                                -> { name, mime, dataUrl? }   a picture's bytes
 //   kb-file-remove        (fileId)                                      -> { ok }
 //   kb-files-usage        ()                                            -> { used, quota }
 //
@@ -29,7 +30,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { readFile as fsReadFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { kbSession, shapeKb } from './knowledgeBases.js';
+import { kbSession, removeKbObjects, shapeKb } from './knowledgeBases.js';
 import { merge3 } from './kbUpstream.js';
 import { stripFrontmatter, ulid } from './sync.js';
 
@@ -49,8 +50,17 @@ export function parseFileLink(s) {
 }
 // every file a note's text links to, once each, in order
 export const fileLinks = (text) => [...new Set([...String(text ?? '').matchAll(LINKS)].map((m) => m[1]))];
-// the markdown a note holds for a file: a link with the file's name, brackets taken out so the link stays one link
-export const fileMarkdown = (f) => `[${String(f.name ?? 'File').replace(/[[\]]/g, '')}](${f.link ?? `quorum://kb-file/${f.id}`})`;
+// the markdown a note holds for a file: an image for a picture, a link for a PDF, with the file's name as the text and
+// brackets taken out so it stays one link (ee/src/kbFiles.ts writes the same for the editor)
+export const fileMarkdown = (f) => `${String(f.mime ?? '').startsWith('image/') ? '!' : ''}[${String(f.name ?? 'File').replace(/[[\]]/g, '')}](${f.link ?? `quorum://kb-file/${f.id}`})`;
+const EXT_BY_MIME = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/heic': 'heic', 'application/pdf': 'pdf' };
+// a name for the downloaded copy on disk: no slashes, colons or control characters, and the type's extension
+export function diskName(name, mime) {
+  const ext = EXT_BY_MIME[mime] ?? '';
+  let n = [...String(name ?? '')].map((c) => (c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127 ? ' ' : c)).join('').replace(/[/\\:]+/g, ' ').replace(/ {2,}/g, ' ').trim().replace(/^\.+/, '').slice(0, 120) || 'File';
+  if (ext && path.extname(n).slice(1).toLowerCase() !== ext && !(ext === 'jpg' && /\.jpe?g$/i.test(n))) n = `${n}.${ext}`;
+  return n;
+}
 export const mimeOf = (file) => MIME_BY_EXT[path.extname(String(file)).slice(1).toLowerCase()] ?? null;
 
 export const shapeNote = (r) => (r ? {
@@ -80,12 +90,14 @@ export function createKbHosted({ account, log = () => {}, pickFile = async () =>
     if (error) throw error;
     return data?.[0] ?? null;
   };
-  const removeObjects = async (paths) => {
-    const list = (paths ?? []).filter(Boolean);
-    for (let i = 0; i < list.length; i += 100) {
-      const { error } = await storage().remove(list.slice(i, i + 100));
-      if (error) log('kb-hosted', 'storage remove', error.message);
-    }
+  const removeObjects = (paths) => removeKbObjects(account.client(), paths, log);
+  // pictures shown in a note's preview, as data URLs (the page's content policy loads images from the app only), kept
+  // for the session by file id
+  const pictures = new Map();
+  const signed = async (f) => {
+    const { data, error } = await storage().createSignedUrl(f.object_path, SIGNED_SECONDS);
+    if (error || !data?.signedUrl) { log('kb-hosted', 'sign', error?.message); return null; }
+    return data.signedUrl;
   };
 
   const handlers = {
@@ -146,7 +158,10 @@ export function createKbHosted({ account, log = () => {}, pickFile = async () =>
       const bytes = await readFile(file);
       const { error } = await storage().upload(begun.object_path, bytes, { contentType: mime, upsert: false });
       if (error) { log('kb-hosted', 'upload', error.message); return { error: 'The upload did not finish. Attach the file again.' }; }
-      return { file: shapeFile(await rpc('kb_file_done', { id: begun.id })) };
+      const done = await rpc('kb_file_done', { id: begun.id });
+      // the server counts the size Storage reports; a file larger than begun or past the quota is refused and goes
+      if (done?.rejected) { await removeObjects([done.object_path]); return { error: `${String(done.reason ?? 'The file could not be attached').replace(/\.$/, '')}.` }; }
+      return { file: shapeFile(done) };
     }),
     // on demand: the file is fetched through a short signed URL into this Mac's cache, then opened in its own app
     'kb-file-open': call(false, 'The file could not be opened.', async (idOrLink) => {
@@ -154,20 +169,38 @@ export function createKbHosted({ account, log = () => {}, pickFile = async () =>
       if (!id) return { error: 'That link is not a Quorum file.' };
       const f = await fileRow(id);
       if (!f) return { error: 'That file is not one you can read, or it was removed.' };
-      const { data, error } = await storage().createSignedUrl(f.object_path, SIGNED_SECONDS);
-      if (error || !data?.signedUrl) { log('kb-hosted', 'sign', error?.message); return { error: 'That file is not one you can read, or it was removed.' }; }
-      if (!cacheDir) return { url: data.signedUrl };
-      const res = await get(data.signedUrl);
+      const url = await signed(f);
+      if (!url) return { error: 'That file is not one you can read, or it was removed.' };
+      if (!cacheDir) return { url };
+      const res = await get(url);
       if (!res.ok) return { error: 'The file could not be downloaded.' };
       const dir = path.join(cacheDir, ws(), f.id);
       mkdirSync(dir, { recursive: true });
-      const to = path.join(dir, path.basename(f.name));
+      const to = path.join(dir, diskName(f.name, f.mime));
       writeFileSync(to, Buffer.from(await res.arrayBuffer()));
       const why = await openPath(to);
       return why ? { error: 'The file was downloaded but no app opened it.' } : { ok: true };
     }),
+    // a picture for the preview: its bytes through a short signed URL, as a data URL. A PDF answers with its name only
+    'kb-file-data': call(false, 'The picture could not be shown.', async (idOrLink) => {
+      const id = parseFileLink(idOrLink);
+      if (!id) return { error: 'That link is not a Quorum file.' };
+      if (pictures.has(id)) return pictures.get(id);
+      const f = await fileRow(id);
+      if (!f) return { error: 'That file is not one you can read, or it was removed.' };
+      if (!String(f.mime).startsWith('image/')) return { name: f.name, mime: f.mime };
+      const url = await signed(f);
+      if (!url) return { error: 'That file is not one you can read, or it was removed.' };
+      const res = await get(url);
+      if (!res.ok) return { error: 'The picture could not be downloaded.' };
+      const out = { name: f.name, mime: f.mime, dataUrl: `data:${f.mime};base64,${Buffer.from(await res.arrayBuffer()).toString('base64')}` };
+      if (pictures.size >= 40) pictures.delete(pictures.keys().next().value);
+      pictures.set(id, out);
+      return out;
+    }),
     'kb-file-remove': call(false, 'The file could not be removed.', async (fileId) => {
       const object = await rpc('kb_file_remove', { id: need(fileId, 'file') });
+      pictures.delete(fileId);
       await removeObjects([object]);
       return { ok: true };
     }),

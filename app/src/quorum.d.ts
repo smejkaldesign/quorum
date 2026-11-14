@@ -558,6 +558,7 @@ declare global {
       kbFiles(noteId: string): Promise<Result & { files?: KbFile[] }>;
       kbFileAttach(noteId: string): Promise<Result & { file?: KbFile; canceled?: true }>;
       kbFileOpen(idOrLink: string): Promise<Result & { ok?: true }>;
+      kbFileData(idOrLink: string): Promise<Result & { name?: string; mime?: string; dataUrl?: string }>;
       kbFileRemove(fileId: string): Promise<Result & { ok?: true }>;
       kbFilesUsage(): Promise<Result & { used?: number; quota?: number }>;
       onKbOpen(cb: (t: { kbId: string; noteId: string }) => void): Unsub;

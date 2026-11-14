@@ -9,7 +9,8 @@
 //   kb-list          ()                                          -> { kbs: Kb[] }               readable KBs, default first
 //   kb-create        ({ name, kind? })                           -> { kb: Kb }                  owners and admins only
 //   kb-rename        (kbId, name)                                -> { kb: Kb }
-//   kb-delete        (kbId)                                      -> { ok: true }                owners and admins only
+//   kb-delete        (kbId)                                      -> { ok: true }                owners and admins only;
+//                                                                                               a hosted KB's files go too
 //   kb-folder-create ({ kbId, parentId?, name, position? })      -> { folder: Folder }
 //   kb-folder-rename (folderId, name)                            -> { folder: Folder }
 //   kb-folder-move   ({ folderId, parentId?, position? })        -> { folder: Folder }         parentId left out: same
@@ -102,6 +103,20 @@ export function accessRows(list) {
   return { rows };
 }
 
+// Storage objects of hosted KB files whose rows are gone (kb_files_trash, 0034), deleted 100 at a time; a batch Storage
+// refuses is logged and left for the relay's sweep (relay/kbFilesCleanup.js)
+export const KB_FILES_BUCKET = 'kb-files';
+export async function removeKbObjects(client, paths, log = () => {}) {
+  const list = [...new Set((Array.isArray(paths) ? paths : []).filter((p) => typeof p === 'string' && p))];
+  let removed = 0;
+  for (let i = 0; i < list.length; i += 100) {
+    const batch = list.slice(i, i + 100);
+    const r = await client.storage.from(KB_FILES_BUCKET).remove(batch);
+    if (r?.error) log('kb', 'storage remove', r.error.message); else removed += batch.length;
+  }
+  return removed;
+}
+
 export const titleOf = (n) => n.frontmatter?.title || String(n.path ?? '').replace(/^.*\//, '').replace(/\.md$/, '');
 
 // what every KB call shares: the readiness check with its refusals, the workspace, the RPC wrapper, and call(), which
@@ -145,16 +160,7 @@ export function kbSession({ account, log = () => {}, tag = 'kb' }) {
 }
 
 export function createKnowledgeBases({ account, log = () => {} }) {
-  const { ws, rpc, call, listKbs, findKb } = kbSession({ account, log });
-  const purgeFiles = async (kbId) => {
-    const { data, error } = await account.client().from('kb_files').select('object_path').eq('kb_id', kbId);
-    if (error) throw error;
-    const paths = (data ?? []).map((f) => f.object_path).filter(Boolean);
-    for (let i = 0; i < paths.length; i += 100) {
-      const r = await account.client().storage.from('kb-files').remove(paths.slice(i, i + 100));
-      if (r.error) log('kb', 'storage remove', r.error.message);
-    }
-  };
+  const { ws, rpc, call, listKbs } = kbSession({ account, log });
   const suggestions = createKbSuggestions({ account, ws, rpc, call });
   const need = (v, what) => { if (!v || typeof v !== 'string') throw Object.assign(new Error(`Pick the ${what} first.`), { code: 'P0001' }); return v; };
 
@@ -170,16 +176,11 @@ export function createKnowledgeBases({ account, log = () => {} }) {
       const n = checkName(name); if (n.error) return n;
       return { kb: shapeKb(await rpc('kb_rename', { kb_id: need(kbId, 'knowledge base'), name: n.name })) };
     }),
-    // a hosted KB's files go from Storage first, while their rows still say where they are; the server refuses the
-    // delete itself on a lapsed plan, and then the files are kept, since the KB is read-only
+    // the answer lists the Storage objects of the KB's files (a KB hosted by Quorum, 0034), pending uploads included;
+    // they go once the delete went through. One that does not go now stays in the trash for the relay's sweep
     'kb-delete': call(true, 'The knowledge base could not be deleted.', async (kbId) => {
-      const id = need(kbId, 'knowledge base');
-      const kb = await findKb(id);
-      if (kb?.source?.kind === 'hosted') {
-        if (!kb.writable) return { error: 'The workspace\'s plan ended, so this knowledge base is read-only. Renew Quorum Cloud to delete it.' };
-        await purgeFiles(id);
-      }
-      await rpc('kb_delete', { kb_id: id });
+      const r = await rpc('kb_delete', { kb_id: need(kbId, 'knowledge base') });
+      await removeKbObjects(account.client(), r?.objects, log);
       return { ok: true };
     }),
     'kb-folder-create': call(false, 'The folder could not be created.', async (draft = {}) => {

@@ -66,7 +66,7 @@ function Bases() {
       {creating ? <Create onDone={(kb) => { setCreating(false); if (kb) load(); }} /> : (
         <p><button className="pill with-icon" onClick={() => { setCreating(true); setPanel(null); }}><IconPlus width={15} height={15} />New knowledge base</button></p>
       )}
-      {deleting && <KbConfirm title={`Delete ${deleting.name}?`} body={deleting.hosted ? 'Its folders, notes and attached files are deleted for everyone, and each Mac removes its copies. This cannot be undone.' : 'Its folders are deleted. Its notes stay with the people who wrote them and leave the knowledge base. This cannot be undone.'} action="Delete" onDone={(ok) => (ok ? remove(deleting) : setDeleting(null))} />}
+      {deleting && <KbConfirm title={`Delete ${deleting.name}?`} body={deleting.hosted ? `${deleting.writable ? '' : 'The workspace\'s plan ended, and the knowledge base stays readable while it is kept. '}Its folders, notes and attached files are deleted for everyone, and each Mac removes its copies. This cannot be undone.` : 'Its folders are deleted. Its notes stay with the people who wrote them and leave the knowledge base. This cannot be undone.'} action="Delete" onDone={(ok) => (ok ? remove(deleting) : setDeleting(null))} />}
     </div>
   );
 }

@@ -1,14 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Kb, KbFile, KbHostedConflict, KbHostedNote as Note, KbNote } from '../../src/quorum';
+import { Markdown } from '../../src/Markdown';
 import { NoteEditor, type NoteEditorHandle } from '../../src/editor/NoteEditor';
-import { IconBack } from '../../src/icons';
+import { IconBack, IconNotes } from '../../src/icons';
+import { IconPen } from '../../src/PrivateNotes';
+import { withFile, withoutFile } from './kbFiles';
 import { findFolder, flattenFolders, folderPath } from './kbTree';
 import { kbCall, KbConfirm } from './kbUi';
 
 // A note of a knowledge base hosted by Quorum, in the note editor (ee/kbHosted.js, migration 0034). Editors and admins
-// write, rename, move and delete it and attach images or PDFs; readers read it. Save sends the hash the note was opened
-// at. When someone saved the note in between, nothing is written and the newer version is shown, with the choice to use
-// the merge of both edits (when they do not touch the same lines), keep this text, or take the newer version.
+// write, rename, move and delete it and attach images or PDFs; readers read it in the preview, where pictures show
+// inline. Save sends the hash the note was opened at. When someone saved the note in between, nothing is written and
+// the newer version is shown, with the choice to use the merge of both edits (when they do not touch the same lines),
+// keep this text, or take the newer version.
+//
+// The note opened is read once, when the view mounts. A save updates the note in place: the text typed while the save
+// was on its way stays in the editor, and a new note keeps its editor through its first save (KbBrowser keys the view
+// by the open, not by the note's id).
 
 type Base = { hash: string | null; title: string; content: string };
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
@@ -18,9 +26,11 @@ const asKbNote = (n: Note): KbNote => ({ id: n.id, path: n.path, title: n.title,
 export function KbHostedNote({ kb, note, folderId, onBack, onChanged, onSaved, onMoved, onDeleted }: {
   kb: Kb; note: KbNote | null; folderId: string | null; onBack: () => void; onChanged: () => void; onSaved: (n: KbNote) => void; onMoved: (folderId: string | null) => void; onDeleted: () => void;
 }) {
+  const root = useRef<HTMLDivElement>(null);
   const editor = useRef<NoteEditorHandle>(null);
+  const [opened] = useState(note);
   const [loaded, setLoaded] = useState<Note | null>(null);
-  const [ready, setReady] = useState(!note);
+  const [ready, setReady] = useState(!opened);
   const [base, setBase] = useState<Base>({ hash: null, title: '', content: '' });
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
@@ -32,6 +42,10 @@ export function KbHostedNote({ kb, note, folderId, onBack, onChanged, onSaved, o
   const [files, setFiles] = useState<KbFile[]>([]);
   const [deleting, setDeleting] = useState(false);
   const writable = !!kb.writable;
+  const [preview, setPreview] = useState(!writable);
+  // the latest values for the save, which runs from a key press and from the attach and remove buttons
+  const latest = useRef({ title, content, base, loaded, folder, preview });
+  useEffect(() => { latest.current = { title, content, base, loaded, folder, preview }; });
 
   const take = (n: Note) => {
     setLoaded(n); setFolder(n.folderId);
@@ -39,40 +53,60 @@ export function KbHostedNote({ kb, note, folderId, onBack, onChanged, onSaved, o
     setTitle(n.title); setContent(n.content);
   };
   useEffect(() => {
-    if (!note) return;
+    if (!opened) return;
     let live = true;
-    kbCall(() => window.quorum.kbHostedNote(note.id), 'The note could not be opened.').then((r) => {
+    kbCall(() => window.quorum.kbHostedNote(opened.id), 'The note could not be opened.').then((r) => {
       if (!live) return;
       if (r.error || !r.note) setError(r.error ?? 'The note could not be opened.'); else take(r.note);
       setReady(true);
     });
-    kbCall(() => window.quorum.kbFiles(note.id), 'The attachments could not be read.').then((r) => { if (live && r.files) setFiles(r.files); });
+    kbCall(() => window.quorum.kbFiles(opened.id), 'The attachments could not be read.').then((r) => { if (live && r.files) setFiles(r.files); });
     return () => { live = false; };
-  }, [note]);
+  }, [opened]);
 
-  const current = () => editor.current?.flush() ?? content;
+  const current = () => (latest.current.preview ? latest.current.content : editor.current?.flush() ?? latest.current.content);
   const dirty = title.trim() !== base.title || content !== base.content;
 
-  // over: the hash to save on top of (Keep mine uses the newer version's); asNew saves a note deleted meanwhile again
-  const save = useCallback(async (over?: { hash: string | null; content: string }, asNew = false) => {
+  // over: the version to save on top of (Keep mine uses the newer one's hash); text: what to save instead of the
+  // editor's text (a removed file's link taken out); asNew saves a note deleted meanwhile as a new note
+  const save = useCallback(async (opts: { over?: { hash: string | null; content: string }; text?: string; asNew?: boolean } = {}) => {
     if (busy || !writable) return;
-    const text = current();
-    const t = title.trim();
+    const sent = opts.text ?? current();
+    const now = latest.current;
+    const t = now.title.trim();
     if (!t) { setError('A note needs a title.'); return; }
     setBusy(true); setError(''); setNotice('');
-    const from = over ?? { hash: base.hash, content: base.content };
-    const r = await kbCall(() => window.quorum.kbHostedNoteSave({ kbId: kb.id, noteId: asNew ? undefined : loaded?.id, folderId: folder, title: t, content: text, baseHash: from.hash, baseContent: from.content }), 'The note could not be saved.');
+    const from = opts.over ?? { hash: now.base.hash, content: now.base.content };
+    const r = await kbCall(() => window.quorum.kbHostedNoteSave({ kbId: kb.id, noteId: opts.asNew ? undefined : now.loaded?.id, folderId: now.folder, title: t, content: sent, baseHash: from.hash, baseContent: from.content }), 'The note could not be saved.');
     setBusy(false);
     if (r.error) { setError(r.error); return; }
     if (r.conflict) { setConflict(r.conflict); return; }
-    if (r.note) { setConflict(null); take(r.note); onSaved(asKbNote(r.note)); onChanged(); setNotice('Saved.'); }
-  }, [busy, writable, title, base, kb.id, loaded, folder, onSaved, onChanged]); // eslint-disable-line react-hooks/exhaustive-deps
+    const n = r.note;
+    if (!n) return;
+    setConflict(null);
+    setLoaded(n); setFolder(n.folderId);
+    setBase({ hash: n.hash, title: n.title, content: n.content });
+    // what was typed while the save was on its way stays; an unchanged editor takes the stored text (line ends)
+    const typed = latest.current.preview ? latest.current.content : editor.current?.flush() ?? latest.current.content;
+    if (typed === sent) setContent(n.content); else setContent(typed);
+    if (latest.current.title.trim() === t) setTitle(n.title);
+    onSaved(asKbNote(n)); onChanged();
+    setNotice('Saved.');
+  }, [busy, writable, kb.id, onSaved, onChanged]);
 
+  // Cmd+S or Ctrl+S saves only while this view has the focus and shows, the note has changes, and no conflict waits
   useEffect(() => {
-    const key = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); save(); } };
+    const key = (e: KeyboardEvent) => {
+      if (!((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's')) return;
+      const el = root.current;
+      if (!el || !el.contains(document.activeElement) || el.offsetParent === null) return;
+      e.preventDefault();
+      if (!writable || conflict || busy || !dirty) return;
+      save();
+    };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [save]);
+  }, [save, writable, conflict, busy, dirty]);
 
   const useMerge = () => {
     if (!conflict?.theirs || conflict.merged === null) return;
@@ -88,7 +122,7 @@ export function KbHostedNote({ kb, note, folderId, onBack, onChanged, onSaved, o
     setConflict(null);
     setNotice('Showing the newer version. Your edit was set aside.');
   };
-  const keepMine = () => { if (conflict?.theirs) save({ hash: conflict.theirs.hash, content: conflict.theirs.content }); };
+  const keepMine = () => { if (conflict?.theirs) save({ over: { hash: conflict.theirs.hash, content: conflict.theirs.content } }); };
 
   const attach = async () => {
     if (!loaded) { setError('Save the note before attaching files.'); return; }
@@ -98,19 +132,25 @@ export function KbHostedNote({ kb, note, folderId, onBack, onChanged, onSaved, o
     if (!r.file) return;
     const f = r.file;
     setFiles((list) => [...list, f]);
-    const text = current();
-    setContent(`${text.replace(/\s*$/, '')}${text.trim() ? '\n\n' : ''}[${f.name.replace(/[[\]]/g, '')}](${f.link})\n`);
-    setNotice(`${f.name} is attached. Save the note to keep its link in the text.`);
+    setContent(withFile(current(), f));
+    setNotice(`${f.name} is attached. Save the note to keep it in the text.`);
   };
   const openFile = async (f: KbFile) => {
     setError('');
     const r = await kbCall(() => window.quorum.kbFileOpen(f.id), 'The file could not be opened.');
     if (r.error) setError(r.error);
   };
+  // the file goes from the note and from its text; the text is saved at once so no link points at a removed file
   const removeFile = async (f: KbFile) => {
     setError('');
     const r = await kbCall(() => window.quorum.kbFileRemove(f.id), 'The file could not be removed.');
-    if (r.error) setError(r.error); else setFiles((list) => list.filter((x) => x.id !== f.id));
+    if (r.error) { setError(r.error); return; }
+    setFiles((list) => list.filter((x) => x.id !== f.id));
+    const before = current();
+    const text = withoutFile(before, f.id);
+    if (text === before) return;
+    setContent(text);
+    if (!conflict) await save({ text });
   };
   const move = async (to: string | null) => {
     if (!loaded) { setFolder(to); return; }
@@ -133,12 +173,16 @@ export function KbHostedNote({ kb, note, folderId, onBack, onChanged, onSaved, o
   const place = [kb.name, ...(folder ? folderPath(kb.folders, folder) : [])].join(' / ');
   const targets = [{ id: null as string | null, label: `${kb.name} (top level)` }, ...flattenFolders(kb.folders).map((f) => ({ id: f.id as string | null, label: [kb.name, ...folderPath(kb.folders, f.id)].join(' / ') }))];
   return (
-    <>
+    <div ref={root} className="kbh-view">
       <div className="tk-subhead">
         <button className="tk-back" onClick={onBack}><IconBack width={16} height={16} />{folder ? findFolder(kb.folders, folder)?.name ?? kb.name : kb.name}</button>
         <span className="tk-crumb">{loaded ? loaded.path : `New note in ${place}`}</span>
         {writable && (
           <span className="kbh-actions">
+            <span className="seg" role="group" aria-label="Mode">
+              <button className={!preview ? 'on' : ''} aria-pressed={!preview} aria-label="Write" data-tip="Write" onClick={() => setPreview(false)}><IconPen width={16} height={16} /></button>
+              <button className={preview ? 'on' : ''} aria-pressed={preview} aria-label="Preview" data-tip="Preview" onClick={() => { setContent(current()); setPreview(true); }}><IconNotes width={16} height={16} /></button>
+            </span>
             <select className="kb-role" aria-label="Folder" value={folder ?? ''} disabled={busy} onChange={(e) => move(e.target.value || null)}>
               {targets.map((t) => <option key={t.id ?? 'top'} value={t.id ?? ''}>{t.label}</option>)}
             </select>
@@ -152,15 +196,17 @@ export function KbHostedNote({ kb, note, folderId, onBack, onChanged, onSaved, o
         {!ready ? <p className="muted">Loading…</p> : (
           <>
             {writable
-              ? <input className="kbh-title" value={title} placeholder="Title" aria-label="Title" autoFocus={!note} onChange={(e) => setTitle(e.target.value)} />
+              ? <input className="kbh-title" value={title} placeholder="Title" aria-label="Title" autoFocus={!opened} onChange={(e) => setTitle(e.target.value)} />
               : <h1>{title}</h1>}
             {!writable && kb.role !== 'reader' && <p className="muted">The workspace's plan ended, so this knowledge base is read-only until the plan is renewed.</p>}
             {loaded?.editedBy && <p className="muted">Last saved by {loaded.editedBy}{loaded.updatedAt ? `, ${when(loaded.updatedAt)}` : ''}.</p>}
             {error && <p className="set-error" role="alert">{error}</p>}
             {notice && !error && <p className="muted" role="status">{notice}</p>}
-            {conflict && <ConflictPanel conflict={conflict} busy={busy} onMerge={useMerge} onKeep={keepMine} onTheirs={useTheirs} onSaveNew={() => save(undefined, true)} onDiscard={onDeleted} />}
-            <NoteEditor ref={editor} value={content} onChange={setContent} readOnly={!writable} autoFocus={!!note && writable}
-              placeholder={writable ? 'Start writing. Type / for blocks, [[ to link a note.' : 'Nothing written yet.'} />
+            {conflict && <ConflictPanel conflict={conflict} busy={busy} onMerge={useMerge} onKeep={keepMine} onTheirs={useTheirs} onSaveNew={() => save({ asNew: true })} onDiscard={onDeleted} />}
+            {preview
+              ? (content.trim() ? <Markdown text={content} headings /> : <p className="muted">Nothing written yet.</p>)
+              : <NoteEditor ref={editor} value={content} onChange={setContent} readOnly={!writable} autoFocus={!!opened && writable}
+                  placeholder="Start writing. Type / for blocks, [[ to link a note." />}
             {files.length > 0 && (
               <div className="kbh-files">
                 <p className="kb-label">Attached files</p>
@@ -168,7 +214,7 @@ export function KbHostedNote({ kb, note, folderId, onBack, onChanged, onSaved, o
                   <div key={f.id} className="kbh-file">
                     <button className="md-link" onClick={() => openFile(f)}>{f.name}</button>
                     <em className="muted">{sizeOf(f.size)}</em>
-                    {writable && <button className="pill small ghost" onClick={() => removeFile(f)}>Remove</button>}
+                    {writable && <button className="pill small ghost" disabled={busy} onClick={() => removeFile(f)}>Remove</button>}
                   </div>
                 ))}
               </div>
@@ -177,7 +223,7 @@ export function KbHostedNote({ kb, note, folderId, onBack, onChanged, onSaved, o
         )}
       </article></div>
       {deleting && <KbConfirm title={`Delete ${title || 'this note'}?`} body="It is deleted for everyone, with its attached files, and each Mac removes its copy. This cannot be undone." action="Delete note" onDone={(ok) => (ok ? remove() : setDeleting(false))} />}
-    </>
+    </div>
   );
 }
 

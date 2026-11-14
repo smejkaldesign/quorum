@@ -9,7 +9,9 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 const home = mkdtempSync(path.join(tmpdir(), 'quorum-kbh-home-'));
 process.env.HOME = home;
-const { conflictOf, createKbHosted, fileLinks, fileMarkdown, mimeOf, parseFileLink, shapeNote } = await import('../ee/kbHosted.js');
+const { conflictOf, createKbHosted, diskName, fileLinks, fileMarkdown, mimeOf, parseFileLink, shapeNote } = await import('../ee/kbHosted.js');
+const { withFile, withoutFile } = await import('../ee/src/kbFiles.ts');
+const { removeKbObjects } = await import('../ee/knowledgeBases.js');
 const { hostedRow } = await import('../ee/sync.js');
 const { shapeKb } = await import('../ee/knowledgeBases.js');
 const { accessDraft, canArrange, readersOf, sourceLine } = await import('../ee/src/kbTree.ts');
@@ -65,7 +67,8 @@ describe('quorum://kb-file links', () => {
   it('lists every file a note links to once, and writes a link that stays one link', () => {
     const text = `See [a](quorum://kb-file/${FILE}) and [b](quorum://kb-file/${FILE}) and [c](quorum://kb-file/01KH00000000000000000000F2).`;
     expect(fileLinks(text)).toEqual([FILE, '01KH00000000000000000000F2']);
-    expect(fileMarkdown({ id: FILE, name: 'Plan [v2].pdf', link: `quorum://kb-file/${FILE}` })).toBe(`[Plan v2.pdf](quorum://kb-file/${FILE})`);
+    expect(fileMarkdown({ id: FILE, name: 'Plan [v2].pdf', mime: 'application/pdf', link: `quorum://kb-file/${FILE}` })).toBe(`[Plan v2.pdf](quorum://kb-file/${FILE})`);
+    expect(fileMarkdown({ id: FILE, name: 'Shot.png', mime: 'image/png', link: `quorum://kb-file/${FILE}` })).toBe(`![Shot.png](quorum://kb-file/${FILE})`);
     expect(mimeOf('/x/Photo.JPG')).toBe('image/jpeg');
     expect(mimeOf('/x/doc.pdf')).toBe('application/pdf');
     expect(mimeOf('/x/run.sh')).toBeNull();
@@ -73,7 +76,7 @@ describe('quorum://kb-file links', () => {
   it('resolves a link to a short signed URL, downloads the file on demand and opens it', async () => {
     const cache = mkdtempSync(path.join(tmpdir(), 'quorum-kbh-cache-'));
     dirs.push(cache);
-    const f = { id: FILE, note_id: NOTE, kb_id: KB, name: 'Diagram.png', mime: 'image/png', size: 3, object_path: `W1/${KB}/${NOTE}/${FILE}/Diagram.png` };
+    const f = { id: FILE, note_id: NOTE, kb_id: KB, name: 'Diagram.png', mime: 'image/png', size: 3, object_path: `W1/${KB}/${NOTE}/${FILE}.png` };
     const { account, calls } = fakeAccount({ tables: { kb_files: [f] } });
     const opened = [];
     const fetched = [];
@@ -102,6 +105,52 @@ describe('creating a hosted KB', () => {
     expect((await h['kb-hosted-create']('Wiki')).kb.id).toBe(KB);
     expect(calls.filter((c) => c[1] === 'kb_create_hosted').map((c) => c[2])).toEqual([{ workspace_id: 'W1', name: 'Wiki', team_id: 'T1' }, { workspace_id: 'W1', name: 'Wiki', team_id: null }]);
     expect((await createKbHosted(fakeAccount()).handlers['kb-hosted-create']('Wiki')).error).toMatch(/Only owners and admins/);
+  });
+});
+
+describe('file links in a note\'s text', () => {
+  const F2 = '01KH00000000000000000000F2';
+  const pic = { id: FILE, name: 'Shot [1].png', mime: 'image/png', link: `quorum://kb-file/${FILE}` };
+  const pdf = { id: F2, name: 'Plan.pdf', mime: 'application/pdf', link: `quorum://kb-file/${F2}` };
+  it('puts a picture as an image and a PDF as a link at the end, after a blank line', () => {
+    expect(withFile('', pic)).toBe(`![Shot 1.png](quorum://kb-file/${FILE})\n`);
+    expect(withFile('Intro\n\n', pdf)).toBe(`Intro\n\n[Plan.pdf](quorum://kb-file/${F2})\n`);
+  });
+  it('takes a removed file out of the text, with the line it leaves empty, and leaves other files', () => {
+    const text = `Intro\n\n![Shot.png](quorum://kb-file/${FILE})\n\nSee [the plan](quorum://kb-file/${F2}) and [it again](quorum://kb-file/${FILE}).\n`;
+    expect(withoutFile(text, FILE)).toBe(`Intro\n\nSee [the plan](quorum://kb-file/${F2}) and .\n`);
+    expect(withoutFile(text, 'not-an-id')).toBe(text);
+  });
+  it('names the downloaded copy safely, with its type\'s extension', () => {
+    expect(diskName('Screenshot 2026-11-13 at 10.00.00\u202fAM.png', 'image/png')).toBe('Screenshot 2026-11-13 at 10.00.00\u202fAM.png');
+    expect(diskName('a/b:c\u0001.pdf', 'application/pdf')).toBe('a b c .pdf');
+    expect(diskName('Résumé', 'application/pdf')).toBe('Résumé.pdf');
+    expect(diskName('photo.jpeg', 'image/jpeg')).toBe('photo.jpeg');
+    expect(diskName('..', 'image/png')).toBe('File.png');
+  });
+  it('removes Storage objects 100 at a time, each once', async () => {
+    const { account, calls } = fakeAccount();
+    const paths = [...Array.from({ length: 150 }, (_, i) => `W/K/N/F${i}.png`), 'W/K/N/F0.png', null];
+    expect(await removeKbObjects(account.client(), paths)).toBe(150);
+    expect(calls.filter((c) => c[0] === 'remove').map((c) => c[2].length)).toEqual([100, 50]);
+  });
+});
+
+describe('a picture for the preview', () => {
+  it('comes back as a data URL through a signed URL, once per file', async () => {
+    const f = { id: FILE, note_id: NOTE, kb_id: KB, name: 'Shot.png', mime: 'image/png', size: 3, object_path: `W1/${KB}/${NOTE}/${FILE}.png` };
+    const { account, calls } = fakeAccount({ tables: { kb_files: [f] } });
+    let fetched = 0;
+    const h = createKbHosted({ account, fetch: async () => { fetched++; return { ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer }; } }).handlers;
+    expect(await h['kb-file-data'](`quorum://kb-file/${FILE}`)).toEqual({ name: 'Shot.png', mime: 'image/png', dataUrl: 'data:image/png;base64,AQID' });
+    await h['kb-file-data'](FILE);
+    expect(fetched).toBe(1);
+    expect(calls.filter((c) => c[0] === 'sign')).toHaveLength(1);
+  });
+  it('gives a PDF\'s name only, and refuses another link', async () => {
+    const f = { id: FILE, name: 'Plan.pdf', mime: 'application/pdf', object_path: 'p' };
+    expect(await createKbHosted(fakeAccount({ tables: { kb_files: [f] } })).handlers['kb-file-data'](FILE)).toEqual({ name: 'Plan.pdf', mime: 'application/pdf' });
+    expect((await createKbHosted(fakeAccount()).handlers['kb-file-data']('https://example.com/a.png')).error).toMatch(/not a Quorum file/);
   });
 });
 
@@ -143,6 +192,20 @@ describe('saving a hosted note', () => {
     expect(again.note.hash).toBe('h3');
     expect(calls.filter((c) => c[1] === 'kb_hosted_note_save').map((c) => c[2].expected_hash)).toEqual(['h1', 'h2']);
   });
+  it('answers a save on a note deleted meanwhile with no newer version', async () => {
+    const { account } = fakeAccount({ rpc: { kb_hosted_note_save: { conflict: true, note: { id: NOTE, deleted: true } } } });
+    const r = await createKbHosted({ account }).handlers['kb-hosted-note-save']({ kbId: KB, noteId: NOTE, folderId: null, title: 'Setup', content: 'mine', baseHash: 'h1', baseContent: 'one' });
+    expect(r).toEqual({ conflict: { theirs: null, merged: null } });
+  });
+  it('deletes a KB, then removes the objects the server listed', async () => {
+    const { createKnowledgeBases } = await import('../ee/knowledgeBases.js');
+    const { account, calls } = fakeAccount({ rpc: { kb_delete: { ok: true, objects: ['W1/K/N/a.png', 'W1/K/N/b.pdf'] } } });
+    account.state().workspace.role = 'owner';
+    expect(await createKnowledgeBases({ account }).handlers['kb-delete'](KB)).toEqual({ ok: true });
+    const order = calls.filter((c) => c[1] === 'kb_delete' || c[0] === 'remove').map((c) => c[0]);
+    expect(order).toEqual(['rpc', 'remove']);
+    expect(calls).toContainEqual(['remove', 'kb-files', ['W1/K/N/a.png', 'W1/K/N/b.pdf']]);
+  });
   it('says the note was deleted when there is no newer version, and passes a refusal through', async () => {
     expect(conflictOf({ theirs: null, base: 'a', mine: 'b' })).toEqual({ theirs: null, merged: null });
     expect(conflictOf({ theirs: row({ deleted: true }), base: 'a', mine: 'b' })).toEqual({ theirs: null, merged: null });
@@ -165,7 +228,7 @@ describe('saving a hosted note', () => {
 });
 
 describe('attaching a file', () => {
-  const begun = { id: FILE, object_path: `W1/${KB}/${NOTE}/${FILE}/Diagram.png` };
+  const begun = { id: FILE, object_path: `W1/${KB}/${NOTE}/${FILE}.png` };
   const done = { id: FILE, note_id: NOTE, name: 'Diagram.png', mime: 'image/png', size: 4, link: `quorum://kb-file/${FILE}`, created_at: 't' };
   it('begins the file, uploads it to its object without overwriting, and marks it done', async () => {
     const { account, calls } = fakeAccount({ rpc: { kb_file_begin: begun, kb_file_done: done } });
@@ -181,6 +244,13 @@ describe('attaching a file', () => {
     expect((await createKbHosted({ account: a.account, pickFile: async () => '/tmp/big.pdf', statFile: async () => ({ size: 25 * 1024 * 1024 + 1 }) }).handlers['kb-file-attach'](NOTE)).error).toBe('A file can be up to 25 MB.');
     expect(a.calls.some((c) => c[0] === 'rpc' || c[0] === 'upload')).toBe(false);
     expect(await createKbHosted({ account: a.account, pickFile: async () => null }).handlers['kb-file-attach'](NOTE)).toEqual({ canceled: true });
+  });
+  it('removes the object when the server refuses the finished upload', async () => {
+    const rejected = { rejected: true, object_path: begun.object_path, reason: 'The file is larger than it was when the upload began. Attach it again' };
+    const { account, calls } = fakeAccount({ rpc: { kb_file_begin: begun, kb_file_done: rejected } });
+    const h = createKbHosted({ account, pickFile: async () => '/tmp/Diagram.png', statFile: async () => ({ size: 4 }), readFile: async () => Buffer.from('png!') }).handlers;
+    expect((await h['kb-file-attach'](NOTE)).error).toBe('The file is larger than it was when the upload began. Attach it again.');
+    expect(calls).toContainEqual(['remove', 'kb-files', [begun.object_path]]);
   });
   it('says so when the upload fails and does not mark the file done', async () => {
     const { account, calls } = fakeAccount({ rpc: { kb_file_begin: begun, kb_file_done: done }, storage: { uploadError: { message: 'new row violates row-level security policy' } } });

@@ -109,7 +109,6 @@ describe('the IPC handlers', () => {
       ['kb_list', { workspace_id: 'W' }],
       ['kb_create', { workspace_id: 'W', name: 'Handbook', kind: 'general' }],
       ['kb_rename', { kb_id: KB, name: 'Handbook' }],
-      ['kb_list', { workspace_id: 'W' }],
       ['kb_delete', { kb_id: KB }],
       ['kb_folder_create', { kb_id: KB, parent_id: 'F1', name: 'New', position: null }],
       ['kb_folder_rename', { folder_id: 'F9', name: 'New' }],

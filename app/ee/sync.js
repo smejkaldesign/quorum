@@ -292,6 +292,16 @@ export function createSync({ account, store, brain = () => null, log = () => {},
   // a teammate's note (public, included, readable under the workspace policy) goes to the workspace vault, never the
   // personal one. The first pull writes it with its bond; a newer version replaces an untouched copy, and marks an
   // edited copy as behind, keeping the fresh text under .updates/ for the diff. A soft-deleted row renames the copy
+  // id -> team: key for one workspace's bucket, so a pull finds a note's earlier path without scanning the bucket
+  const teamIndex = (bucket) => new Map(Object.entries(bucket).filter(([k]) => k.startsWith('team:')).map(([k, v]) => [v.id, k]));
+  function dropOld(t, bucket, k) {
+    const v = bucket[k];
+    const oldRel = k.slice(5), oldAbs = path.join(t.team, oldRel);
+    let old = null;
+    try { old = readFileSync(oldAbs, 'utf8'); } catch {}
+    if (old !== null) { if (v && sha256(old) === v.written) unlinkSync(oldAbs); else renameSync(oldAbs, path.join(t.team, sibling(t.team, oldRel, 'removed'))); }
+    delete bucket[k];
+  }
   function applyShared(t, row, counts) {
     const rel = safeRel(row.path);
     if (!rel) { counts.skipped++; return; }
@@ -301,21 +311,20 @@ export function createSync({ account, store, brain = () => null, log = () => {},
     const abs = path.join(t.team, rel);
     let local = null;
     try { local = readFileSync(abs, 'utf8'); } catch {}
+    // the key the note sat under before, found through the id index built once per pull
+    const byId = t.teamById ??= teamIndex(bucket);
+    const prev = byId.get(row.id);
     if (row.deleted_at) {
       if (local !== null) { const to = sibling(t.team, rel, 'removed'); renameSync(abs, path.join(t.team, to)); counts.removed++; }
       delete bucket[key];
+      if (prev && prev !== key) dropOld(t, bucket, prev);
+      byId.delete(row.id);
       return;
     }
     // a renamed or moved note (a hosted KB's notes change path with their title and folder): the copy at the old path
     // goes when nobody edited it, and is kept as "(removed)" when someone did
-    for (const [k, v] of Object.entries(bucket)) {
-      if (k === key || !k.startsWith('team:') || v.id !== row.id) continue;
-      const oldRel = k.slice(5), oldAbs = path.join(t.team, oldRel);
-      let old = null;
-      try { old = readFileSync(oldAbs, 'utf8'); } catch {}
-      if (old !== null) { if (sha256(old) === v.written) unlinkSync(oldAbs); else renameSync(oldAbs, path.join(t.team, sibling(t.team, oldRel, 'removed'))); }
-      delete bucket[k];
-    }
+    if (prev && prev !== key) dropOld(t, bucket, prev);
+    byId.set(row.id, key);
     const body = String(row.body ?? '');
     const version = row.hash || sha256(body);
     const place = placeOf(row);

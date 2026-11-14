@@ -6,11 +6,15 @@ import { makeClients } from './lib/auth.js';
 import { config } from './lib/config.js';
 import { log } from './lib/log.js';
 import { createKbSyncWorker } from './kbSync/worker.js';
+import { createKbFilesCleanup } from './kbFilesCleanup.js';
 
 const missing = ['supabaseUrl', 'supabaseAnonKey', 'supabaseServiceRoleKey'].filter((k) => !config[k]);
 if (missing.length) throw new Error(`kb sync worker: missing ${missing.map((k) => k.replace(/([A-Z])/g, '_$1').toUpperCase()).join(', ')}`);
 const worker = createKbSyncWorker({ db: makeClients().db, config, log });
 worker.start();
-const stop = async () => { log('stopping'); await worker.stop(); process.exit(0); };
+// the sweep for hosted KB files (relay/kbFilesCleanup.js) runs where the sync worker runs
+const files = createKbFilesCleanup({ db: makeClients().db, log });
+files.start();
+const stop = async () => { log('stopping'); await Promise.all([worker.stop(), files.stop()]); process.exit(0); };
 process.on('SIGTERM', stop);
 process.on('SIGINT', stop);
