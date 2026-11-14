@@ -27,6 +27,7 @@ import { createBrainCheck, fingerprint as checkPrint } from './brain-check.js';
 import { INSTRUCTIONS_LIMIT } from './agent.js';
 import { wouldBlock } from './guardrails.js';
 import { createPredicates } from './guardrails-predicates.js';
+import { KEPT_KEYS, carryKeys, reconcile, withChoice } from './shareChoice.js';
 import { createSuggester } from './suggest.js';
 import { addFinal, isEcho, toJSON, toText } from './transcript.js';
 import { extractJson } from './json.js';
@@ -721,7 +722,7 @@ function speakersChanged() {
   toUI('speakers', speakersPayload());
   writeStateSoon();
   if (meeting.dir && meeting.transcript.length) store.meetings.writeTranscript(meeting.dir, toJSON(meeting.transcript));
-  if (meeting.saved) store.meetings.saveNote(meeting.saved.file, noteMarkdown(meeting.saved.payload));
+  if (meeting.saved) store.meetings.saveNote(meeting.saved.file, withShareChoice(meeting.saved.file, noteMarkdown(meeting.saved.payload)));
 }
 const speakersPayload = () => ({ turns: speakerView(meeting.transcript), participants: participantsNow().map((p) => p.name) });
 
@@ -985,7 +986,7 @@ function noteMarkdown({ notes, followups }) {
   const lines = [
     '---',
     `quorum_id: ${meeting.id}`,
-    ...(meeting.solo ? ['type: note'] : []),
+    ...(meeting.solo ? ['type: note', 'recorded: true'] : []),
     `title: ${yamlStr(notes.title)}`,
     `date: ${localIso(date)}`,
     `duration_minutes: ${meetingMeta(notes.title).minutes}`,
@@ -1281,6 +1282,11 @@ ipcMain.handle('set-settings', (_e, next) => {
     settings.suggestions = next.suggestions;
     store.settings.save();
   }
+  // Cloud with a team: whether new meeting notes go to the workspace's meetings knowledge base (ee/meetingsKb.js)
+  if (next.meetingsKb && typeof next.meetingsKb === 'object' && typeof next.meetingsKb.autoSave === 'boolean') {
+    if (account.meetingsKb) account.meetingsKb.setAutoSave(next.meetingsKb.autoSave);
+    else { settings.meetingsKb = { ...settings.meetingsKb, autoSave: next.meetingsKb.autoSave }; store.settings.save(); }
+  }
   // saved notes stay clean by default; refs puts a footnote with the transcript turn behind every bullet
   if (next.notes && typeof next.notes === 'object' && typeof next.notes.refs === 'boolean') {
     settings.notes = { ...settings.notes, refs: next.notes.refs };
@@ -1571,10 +1577,47 @@ const meetingFile = (file) => {
   return roots.some((r) => abs.startsWith(r + path.sep)) && abs.endsWith('.md') && existsSync(abs) ? abs : null;
 };
 
+// a note written again from its parts (a speaker correction, a second save, a connector re-import) keeps the share
+// choice, the confidential mark, where it came from and every frontmatter key the guardrails deny, as the file on
+// disk had them (shareChoice.js), so a note made private or confidential never goes back to the team on its own
+const keptKeys = () => [...KEPT_KEYS, ...guardrails.compiled().frontmatterKeys];
+function withShareChoice(file, text) {
+  let prev = null;
+  try { prev = existsSync(file) ? store.notes.read(file) : null; } catch {}
+  return carryKeys(prev, text, keptKeys());
+}
+
+// Keep private, in the History reader and the note view (Cloud with a team; ee/meetingsKb.js). The Local edition and
+// solo workspaces read { available: false } and show no toggle. Setting it writes the choice into the note and pushes
+// it at once, so a note made private leaves the meetings knowledge base without waiting for the editor to close
+const NO_SHARE = { available: false, keepPrivate: true, locked: false, kbName: null, reason: null, ask: null };
+ipcMain.handle('meeting-share', async (_e, file) => {
+  const abs = meetingFile(file);
+  if (!abs || !account.meetingsKb) return NO_SHARE;
+  return account.meetingsKb.stateOf(abs);
+});
+// the connector source accounts a team workspace has seen and the person's choice for each (Settings > Meetings and
+// the History banner); the Local edition has none
+ipcMain.handle('meetings-sources', async () => (account.meetingsKb ? account.meetingsKb.sources() : { available: false, sources: [] }));
+ipcMain.handle('meetings-source-set', async (_e, key, choice) => (account.meetingsKb ? account.meetingsKb.setSource(String(key ?? ''), choice) : { error: 'Sharing meeting notes needs Quorum Cloud with a team.' }));
+ipcMain.handle('meetings-source-share-past', async (_e, key) => (account.meetingsKb ? account.meetingsKb.sharePast(String(key ?? '')) : { error: 'Sharing meeting notes needs Quorum Cloud with a team.' }));
+ipcMain.handle('meeting-share-set', async (_e, file, keepPrivate, hash) => {
+  const abs = meetingFile(file);
+  if (!abs) return { error: 'This note was moved or deleted.' };
+  if (!account.meetingsKb) return { error: 'This note has no team meetings knowledge base to join or leave.' };
+  if (hash && hashText(store.notes.read(abs)) !== hash) return { conflict: true };
+  const r = await account.meetingsKb.setKeepPrivate(abs, keepPrivate === true);
+  if (r.error) return r;
+  await account.sync.pushMeetingNote(abs);
+  return { state: r, ref: handNoteRef(abs, store.notes.read(abs)) };
+});
+
 ipcMain.handle('note-visibility', (_e, file, value) => {
   const abs = meetingFile(file);
   if (!abs || !['private', 'public'].includes(value)) return null;
-  store.notes.write(abs, setFrontmatterKey(store.notes.read(abs), 'visibility', value));
+  // in Cloud, keep_private follows visibility, so the two never disagree (shareChoice.js)
+  store.notes.write(abs, account.meetingsKb ? withChoice(store.notes.read(abs), value === 'private') : setFrontmatterKey(store.notes.read(abs), 'visibility', value));
+  if (account.meetingsKb) account.sync.pushMeetingNote(abs);
   return value;
 });
 
@@ -1680,7 +1723,7 @@ ipcMain.handle('vault-tree', () => (brain() ? vaultTree(brain().vault, excludedP
 const { isPrivatePath, isSecretPath, isConfidentialText } = createPredicates({ guardrails, brain: () => brain() });
 const account = EDITION === 'cloud'
   ? (await loadEE('account.js')).registerAccount({ ipcMain, settings, saveSettings, toUI, log, brain, meetingIndex, isExcluded: (rel) => excludedPath(rel) || isPrivatePath(rel), isExcludedText: (t) => suggester.isExcluded(t) || isConfidentialText(t), openExternal: (u) => shell.openExternal(u), oauthRedirect: () => (app.isPackaged ? 'quorum://auth/callback' : 'http://127.0.0.1:47831/auth/callback') })
-  : { sync: { pushNote() {}, pushMeetingNote() {}, pullNow() {}, live() {} } };
+  : { sync: { pushNote() {}, pushMeetingNote() {}, pullNow() {}, live() {} }, meetingsKb: null };
 // the installed app owns the quorum:// scheme (package.json build.protocols); Google sign-in comes back on it
 if (app.isPackaged) app.setAsDefaultProtocolClient('quorum');
 app.on('open-url', (e, url) => { e.preventDefault(); if (/^quorum:\/\/auth\//.test(url)) account.finishOAuth?.(url); });
@@ -1713,9 +1756,9 @@ function openFreshSignIn(url, name) {
   win.loadURL(url);
   return Promise.resolve();
 }
-registerSources({ ipcMain, settings, saveSettings, toUI, log, meetingsDir, openExternal: (u) => shell.openExternal(u), openFresh: openFreshSignIn, afterWrite: (file) => { account.sync.pushMeetingNote(file); keeper.schedule('import'); }, version: app.getVersion(), agentRuntime: { runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV } });
+registerSources({ ipcMain, settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), openFresh: openFreshSignIn, afterWrite: (file) => { account.sync.pushMeetingNote(file); keeper.schedule('import'); }, version: app.getVersion(), agentRuntime: { runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV } });
 // platform accounts for cloud recordings (Zoom first) go through the relay, so they exist in the hosted edition only
-if (EDITION === 'cloud') (await loadEE('platforms.js')).registerPlatforms({ ipcMain, account, settings, saveSettings, toUI, log, meetingsDir, openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file) });
+if (EDITION === 'cloud') (await loadEE('platforms.js')).registerPlatforms({ ipcMain, account, settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file) });
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);
 // the person's own name for a graph cluster, kept per vault in settings so it survives a restart and a re-index; an
 // empty name goes back to the generated one. Answers with every note's cluster name after the change (a rename can
@@ -2352,7 +2395,11 @@ function saveHandNote({ id, file, title, body, hash, fresh, frontmatter }) {
   // the last valid frontmatter stays on disk
   const badProps = frontmatter !== undefined && !validFrontmatter(frontmatter);
   const props = frontmatter === undefined || badProps ? raw : `${frontmatter}${raw.slice(splitNote(raw).fm.length)}`;
-  const out = rewriteNote(props, { title, body: text });
+  // a note recorded into is a meeting note for the meetings knowledge base (ee/meetingsKb.js)
+  const recordedInto = meeting.armed && meeting.intoNote && !/^recorded:\s*true\s*$/m.test(splitNote(props).fm);
+  // in Cloud a Properties edit of visibility or keep_private moves the other key with it (shareChoice.js)
+  const agreed = account.meetingsKb && frontmatter !== undefined && !badProps ? reconcile(raw, props) : props;
+  const out = rewriteNote(recordedInto ? setFrontmatterKey(agreed, 'recorded', 'true') : agreed, { title, body: text });
   // a note created in this editor keeps its file name in step with its title until the editor closes
   if (fresh) {
     const qid = raw.match(/^quorum_id:\s*(.+)$/m)?.[1]?.trim() ?? String(id ?? '');
@@ -2376,7 +2423,7 @@ function saveNotes(payload) {
   const file = path.join(dir, noteFileName({ date, title: notes.title, id: meeting.id }));
   // a speaker correction made after saving rewrites the same file from the turns
   meeting.saved = { file, payload: { notes, followups: payload.followups } };
-  store.meetings.saveNote(file, noteMarkdown(meeting.saved.payload));
+  store.meetings.saveNote(file, withShareChoice(file, noteMarkdown(meeting.saved.payload)));
   log('saved note', file);
   account.sync.pushMeetingNote(file);
   keeper.schedule('note');

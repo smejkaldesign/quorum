@@ -9,6 +9,7 @@ import { MAX_READS, MAX_TURNS, labelFor, othersIn, timedTurn, type SpeakerRead, 
 import { NoteEditor, type NoteEditorHandle } from './editor/NoteEditor';
 import { Properties } from './editor/Properties';
 import { isLossless } from './editor/markdown';
+import { KeepPrivate } from './KeepPrivate';
 
 const SAVE_AFTER = 800;
 type Status = 'idle' | 'saving' | 'saved' | 'conflict';
@@ -212,6 +213,22 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
   }
   const stop = async () => { const s = await window.quorum.recordStop(); setRec({ audio: s.audio, screen: s.screen }); };
 
+  // Keep private writes into the file from the main process: the text on screen is saved first, so the choice is made
+  // on the latest version, and the file state that comes back keeps later saves from reading as a conflict
+  async function flushForChoice() {
+    const md = richEditor.current?.flush();
+    if (md !== undefined && md !== live.current.body) editBody(md);
+    if (timer.current) { window.clearTimeout(timer.current); timer.current = null; }
+    await save();
+    return live.current.ref?.hash ?? null;
+  }
+  function tookChoice(r: HandNoteRef) {
+    live.current.ref = r;
+    setRef(r);
+    setFrontmatter(r.frontmatter);
+    if (live.current.frontmatter !== undefined) live.current.frontmatter = r.frontmatter;
+  }
+
   const copyText = () => navigator.clipboard.writeText(`# ${live.current.title || 'Untitled note'}\n\n${live.current.body}`);
 
   // Back: the recording stops, the save in flight finishes and the latest text is saved, then the note syncs. A note
@@ -250,6 +267,7 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
           {status === 'saving' && <span className="muted note-status">Saving…</span>}
           {status === 'saved' && ref && <span className="saved">Saved to {ref.rel.replace(/^MyBrain\//, '')}</span>}
           {ref && <button className="pill" onClick={() => window.quorum.openNote(ref.file)}><IconFolder width={15} height={15} /> Show in {ref.app}</button>}
+          {ref && <KeepPrivate file={ref.file} disabled={readOnly || status === 'conflict'} beforeChange={flushForChoice} onRef={tookChoice} />}
           {canRecord && !readOnly && (
             <div className="menu-wrap">
               {recording ? (

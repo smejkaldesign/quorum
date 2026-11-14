@@ -4,6 +4,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { BY_ID, SOURCES, publicManifest } from './catalog.js';
+import { setFrontmatterKey } from '../frontmatter.js';
 import { adapterFor } from './adapters.js';
 import { createJobs } from './jobs.js';
 import { countTranscripts, syncTranscripts } from './transcripts.js';
@@ -36,7 +37,7 @@ export function scanExisting(root) {
   return ids;
 }
 
-export function createSources({ settings, saveSettings, toUI = () => {}, log = () => {}, meetingsDir, openExternal, openFresh = null, afterWrite = () => {}, store = createTokenStore(), version = '0', agentRuntime = null, detect = detectRunners }) {
+export function createSources({ settings, saveSettings, toUI = () => {}, log = () => {}, meetingsDir, openExternal, openFresh = null, afterWrite = () => {}, keepKeys = (_prev, next) => next, store = createTokenStore(), version = '0', agentRuntime = null, detect = detectRunners }) {
   const conf = () => (settings.sources ??= {});
   const stateOf = (id) => (conf()[id] ??= { method: BY_ID[id]?.recommended ?? 'connect', connected: false, syncNotes: true, syncTranscripts: false, lastSyncAt: null, imported: 0 });
   const jobs = createJobs({ emit: (job) => toUI('source-job', job) });
@@ -107,12 +108,18 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
   };
   const countNotes = (dir) => { try { return readdirSync(dir).filter((f) => f.endsWith('.md')).length; } catch { return 0; } };
 
-  const writeNote = (dir) => async (name, text, m) => {
+  // the note carries the account it came from (source_account), so a team workspace can ask once per account whether
+  // its meetings are shared. A re-import of a note already on disk keeps what keepKeys keeps of it (main.js: the
+  // share choice, the confidential mark and the guardrail keys)
+  const writeNote = (dir, id) => async (name, text, m) => {
     mkdirSync(dir, { recursive: true });
     let file = path.join(dir, name);
     // a second meeting with the same title on the same day keeps the first file and gets the id in its own name
-    if (existsSync(file) && !readFileSync(file, 'utf8').includes(m.id)) file = path.join(dir, name.replace(/\.md$/, `-${m.id.slice(0, 8)}.md`));
-    writeFileSync(file, text);
+    let prev = existsSync(file) ? readFileSync(file, 'utf8') : null;
+    if (prev !== null && !prev.includes(m.id)) { file = path.join(dir, name.replace(/\.md$/, `-${m.id.slice(0, 8)}.md`)); prev = existsSync(file) ? readFileSync(file, 'utf8') : null; }
+    const acct = stateOf(id).account;
+    const own = acct && !/[\r\n]/.test(acct) ? setFrontmatterKey(text, 'source_account', JSON.stringify(String(acct))) : text;
+    writeFileSync(file, keepKeys(prev, own));
     afterWrite(file);
     return file;
   };
@@ -127,7 +134,7 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
     const existing = scanExisting(meetingsDir());
     progress({ message: 'Checking Granola', total: null });
     const adapter = adapterFor(src);
-    const result = await adapter.sync({ mcp: mcpFor(id), existing, since: s.since ?? undefined, write: writeNote(dir), progress }).catch(dropIfUnknown);
+    const result = await adapter.sync({ mcp: mcpFor(id), existing, since: s.since ?? undefined, write: writeNote(dir, id), progress }).catch(dropIfUnknown);
     // extras run after the notes, so a failing transcript never costs a note
     if (s.syncTranscripts && adapter.transcript) {
       const t = await syncTranscripts({ adapter, mcp: mcpFor(id), dir, source: id, progress, afterWrite });

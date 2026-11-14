@@ -76,7 +76,7 @@ export function parseFrontmatter(text) {
   return fm;
 }
 
-export function createSync({ account, store, brain = () => null, log = () => {}, meetingIndex = () => [], isExcluded = () => false, isExcludedText = () => false, idsFile = DEFAULT_IDS_FILE, teamRoot = defaultTeamRoot }) {
+export function createSync({ account, store, brain = () => null, log = () => {}, meetingIndex = () => [], isExcluded = () => false, isExcludedText = () => false, idsFile = DEFAULT_IDS_FILE, teamRoot = defaultTeamRoot, meetings = null }) {
   const IDS_FILE = idsFile;
   // path -> { id, hash } per workspace, so a note keeps its id across pushes and unchanged notes are skipped
   let ids = {};
@@ -148,11 +148,19 @@ export function createSync({ account, store, brain = () => null, log = () => {},
     if (!t || !t.vault) return false;
     const rel = relOf(t.vault, file);
     if (!rel) return false;
+    // the meetings knowledge base (ee/meetingsKb.js) may write the person's choice into the note first, so the row is
+    // read after it. A note goes into the KB once: its entry keeps the place the push set or the last pull saw
+    // (placeOf), and later pushes leave a placed note alone, so an admin's move stands
+    const place = meetings && !isExcluded(rel) ? await meetings.route(file) : null;
     const row = noteRow(t, file, rel, true);
     if (!row) return false;
+    const e = entry(t.ws, rel);
+    if (place?.kbId && (!e.kb || place.fresh)) Object.assign(row, { kbId: place.kbId, folderId: place.folderId });
     const m = meetingRow(t, file, rel, row.frontmatter);
     try {
       await t.remote.notes.push(row);
+      if (row.kbId) Object.assign(e, { kb: row.kbId, folder: row.folderId ?? null });
+      else if (place?.private) Object.assign(e, placeOf(null));
       await t.remote.meetings.push(m);
       if (m.visibility === 'public' && row.frontmatter.quorum_id) await t.remote.meetings.pushSegments(m, sessionSegments(t, String(row.frontmatter.quorum_id)));
       commit(t, [row]);

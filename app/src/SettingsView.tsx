@@ -14,6 +14,7 @@ import { BrainCheckPanel, ContextPanel, SkillsPanel } from './PluginPanels';
 import { AccountArea, BillingArea, EDITION, KnowledgeBasesArea, KnowledgeQueueArea, MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { TOP_ADMIN_PAGES, canAdmin, flagHiddenPages, modeOf, resolvePage, voiceMode, workspacePages, type Page } from './settingsNav';
 import { EnvSwitch } from './EnvSwitch';
+import { MeetingSourcesRows } from './MeetingSources';
 import { useFlags, useNotetaker } from './flags';
 import {
   IconBell, IconBrain, IconBuilding, IconCalendar, IconChat, IconFolder, IconGrid, IconKeyboard, IconLock,
@@ -184,7 +185,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
             : page === 'org-guardrails' ? <WorkspaceGuardrailsArea local={<p className="set-lede">Workspace guardrails come with Quorum Cloud: rules an admin sets once that every member's Quorum applies and cannot turn off. Your own rules live under Settings, Guardrails.</p>} />
             : page === 'guardrails' ? <GuardrailsPage />
             : page === 'calendar' ? <CalendarPage onConnector={goConnector} />
-            : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} onConnector={goConnector} />
+            : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} onConnector={goConnector} teamMeetings={EDITION === 'cloud' && account?.workspace?.teamEnabled === true} />
             : page === 'developers' ? <DevelopersPage />
             : page === 'notifications' ? <NotificationsPage />
             : page === 'connectors' ? <ConnectorsPage detail={connectorDetail} onDetail={setConnectorDetail} brain={brain} onFolder={onConnect} onNotes={() => go('memory')} focus={connectorsFocus} />
@@ -1318,7 +1319,7 @@ const ECHO_DESC: Record<NonNullable<Transcription['echo']>, string> = {
   off: 'Call audio can show as you on speakers',
 };
 
-function MeetingsPage({ settings, onSettings, onConnector }: { settings: Settings; onSettings: (s: Settings) => void; onConnector: (id: string) => void }) {
+function MeetingsPage({ settings, onSettings, onConnector, teamMeetings }: { settings: Settings; onSettings: (s: Settings) => void; onConnector: (id: string) => void; teamMeetings: boolean }) {
   const t = settings.transcription ?? {};
   const saveTx = async (patch: Transcription) => onSettings(await window.quorum.setSettings({ transcription: patch }));
   // call detection and auto-listen follow meeting-capture; the transcription rows follow manual-listen (flags.ts)
@@ -1339,6 +1340,13 @@ function MeetingsPage({ settings, onSettings, onConnector }: { settings: Setting
         <ConnectHint connector="zoom" title="Cloud recordings" desc="Zoom's cloud recordings and transcripts import through the Zoom connector in Quorum Cloud. Google Meet and Teams recordings are next.">
           <button className="pill small-pill" onClick={() => onConnector('zoom')}>Open Zoom connector</button>
         </ConnectHint>
+        {teamMeetings && (
+          <Row icon={<IconNotes width={18} height={18} />} title="Save meeting notes to the team's meetings knowledge base"
+            desc="New notes you record with Record or Start listening are shared with your team, one folder per month. Each meeting-notes account asks first, below. Confidential notes stay private, and Keep private on any note takes it out.">
+            <Toggle on={settings.meetingsKb?.autoSave !== false} onChange={async (on) => onSettings(await window.quorum.setSettings({ meetingsKb: { autoSave: on } }))} />
+          </Row>
+        )}
+        {teamMeetings && <MeetingSourcesRows />}
       </div>
       {nt.manualListen && <>
       <h3>Transcribing</h3>
