@@ -1192,7 +1192,9 @@ const claudeRun = (args) => new Promise((resolve) => {
 });
 ipcMain.handle('mcp-status', async () => ({ added: (await claudeRun(['mcp', 'get', 'quorum'])).ok, node: RUNTIME, cli: CLI, command: `"${RUNTIME}" "${CLI}" mcp` }));
 ipcMain.handle('mcp-add', async () => {
-  const r = await claudeRun(['mcp', 'add', '--scope', 'user', ...runtimeEnvArgs(), 'quorum', '--', RUNTIME, CLI, 'mcp']);
+  // the server name goes before -e: Claude Code's -e takes values until the next flag, so a name after it is read as
+  // one more env value; -- ends the list
+  const r = await claudeRun(['mcp', 'add', 'quorum', '--scope', 'user', ...runtimeEnvArgs(), '--', RUNTIME, CLI, 'mcp']);
   if (!r.ok) return { added: false, error: r.out.trim().split('\n')[0] };
   // trust what Claude Code reads back, not the add's exit code; a proxy managing MCP config can drop the entry
   const added = (await claudeRun(['mcp', 'get', 'quorum'])).ok;
