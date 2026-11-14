@@ -13,7 +13,7 @@ import { registerSources } from './sources/index.js';
 import { DATA_DIR, EDITION, ENV, loadEE, isDevelopment } from './edition.js';
 import { createGoogleCalendar, mergeEvents, repoRoot } from './sources/gcal.js';
 import { createTokenStore } from './sources/tokens.js';
-import { createAccounts, oauthClients } from './sources/accounts.js';
+import { connectAccount, createAccounts, oauthClients, tokenKey } from './sources/accounts.js';
 import { httpUrl, relayFetch, relayUrl } from './relayUrl.js';
 import { createViews } from './views.js';
 import { registerOnboarding } from './onboarding.js';
@@ -2032,8 +2032,11 @@ ipcMain.handle('calendar-status', async () => ({ ...calSettings(), status: (awai
 // personal OAuth connectors (sources/accounts.js): Quorum's registered apps for Google Drive, Notion, Slack and GitHub
 // in both editions. Tokens stay in the Keychain; settings.accounts keeps whether each is connected and its label. The
 // providers whose apps need a server-held secret exchange the code through the relay this copy already talks to
+const accountTokens = createTokenStore().tokens;
+// set below for the Cloud edition (ee/kbSync.js); a disconnect ends the relay's sync grant for that provider too
+let kbSync = null;
 const accounts = createAccounts({
-  tokens: createTokenStore().tokens, clients: oauthApps, open: (u) => shell.openExternal(u), log, delegates: { 'google-calendar': gcal },
+  tokens: accountTokens, clients: oauthApps, open: (u) => shell.openExternal(u), log, delegates: { 'google-calendar': gcal },
   relayBase: () => httpUrl(relayUrl({ source: account.envStatus?.().config ?? 'production' })),
   relayFetch: (route, init) => relayFetch(route, init, { source: () => account.envStatus?.().config ?? 'production' }),
   state: (id) => settings.accounts?.[id] ?? null,
@@ -2042,10 +2045,17 @@ const accounts = createAccounts({
 const accountCall = async (fn) => { try { return await fn(); } catch (err) { return { error: err.message }; } };
 ipcMain.handle('oauth-accounts', () => accounts.list());
 connectIpc.handle('oauth-connect', (_e, id) => accountCall(() => accounts.connect(String(id ?? ''))));
-ipcMain.handle('oauth-disconnect', (_e, id) => accountCall(() => accounts.disconnect(String(id ?? ''))));
+ipcMain.handle('oauth-disconnect', (_e, id) => accountCall(async () => { const r = await accounts.disconnect(String(id ?? '')); await kbSync?.disconnected(String(id ?? '')); return r; }));
 // Google Drive files attached to a knowledge base folder through the Google Picker (handlers and the IPC API in
 // ee/kbDrive.js; the picker page and the Drive reads in sources/drive.js)
 if (EDITION === 'cloud') (await loadEE('kbDrive.js')).registerKbDrive({ ipcMain, account, accounts, picker: oauthApps.googlePicker, open: (u) => shell.openExternal(u), log });
+// Drive folders and GitHub repositories the relay keeps in sync in a KB folder (ee/kbSync.js; the worker is relay/kbSync/).
+// The Drive grant is the one in the Keychain; GitHub signs in again for a grant only the relay holds
+if (EDITION === 'cloud') kbSync = (await loadEE('kbSync.js')).registerKbSync({
+  ipcMain, account, accounts, picker: oauthApps.googlePicker, open: (u) => shell.openExternal(u), log,
+  refreshTokenOf: async (id) => (await accountTokens.get(tokenKey(id)))?.refreshToken ?? null,
+  signIn: (id) => connectAccount(id, { clients: oauthApps, open: (u) => shell.openExternal(u), relayBase: httpUrl(relayUrl({ source: account.envStatus?.().config ?? 'production' })), relayFetch: (route, init) => relayFetch(route, init, { source: () => account.envStatus?.().config ?? 'production' }) }),
+});
 ipcMain.handle('calendar-connect', async () => {
   const r = await calAsk({ cmd: 'calRequest' });
   settings.calendar = { ...calSettings(), enabled: r.status === 'granted' };

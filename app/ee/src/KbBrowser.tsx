@@ -6,6 +6,7 @@ import { IconBack, IconBrain, IconChevron, IconDoc, IconFolder, IconMore, IconSt
 import { descendantIds, findFolder, folderPath, moveCheck, moveTargets, notesIn, openPathTo, resolveKbLink, rowKey, treeKey, visibleRows, withFolder, withoutFolder, type TreeRow } from './kbTree';
 import { KB_CHANGED, kbCall, KbConfirm, useLatest } from './kbUi';
 import { DrivePanel, hasDrive } from './KbDrive';
+import { hasKbSync, SyncPanel, type SyncSource } from './KbSync';
 import { KB_OPEN, takeKbOpen, type KbOpenTarget } from '../../src/kbOpen';
 
 // The knowledge bases in the Knowledge tab: one left column with the team knowledge entry (and, for a folder or git
@@ -39,6 +40,7 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
   const [deleting, setDeleting] = useState<{ kbId: string; folderId: string; name: string } | null>(null);
   const [drag, setDrag] = useState<{ kbId: string; folderId: string } | null>(null);
   const [driving, setDriving] = useState<{ kbId: string; folderId: string | null } | null>(null);
+  const [syncing, setSyncing] = useState<{ kbId: string; folderId: string | null; source: SyncSource } | null>(null);
   const [dropKey, setDropKey] = useState<string | null>(null);
   const refs = useRef(new Map<string, HTMLButtonElement>());
 
@@ -223,6 +225,10 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
       { label: 'Rename', run: () => setEdit({ mode: 'rename', kbId: row.kbId, folderId: row.folderId, name: row.name }) },
     ];
     if (hasDrive()) items.push({ label: 'Add from Google Drive', run: () => setDriving({ kbId: row.kbId, folderId: row.folderId }) });
+    if (hasKbSync()) {
+      items.push({ label: 'Sync a Drive folder', run: () => setSyncing({ kbId: row.kbId, folderId: row.folderId, source: 'google-drive' }) });
+      items.push({ label: 'Sync a GitHub repository', run: () => setSyncing({ kbId: row.kbId, folderId: row.folderId, source: 'github' }) });
+    }
     if (row.kind === 'folder') {
       items.push({ label: 'Move to…', run: () => setMoving({ kbId: row.kbId, folderId: row.folderId! }) });
       items.push({ label: 'Delete', danger: true, run: () => setDeleting({ kbId: row.kbId, folderId: row.folderId!, name: row.name }) });
@@ -332,6 +338,10 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
           <DriveDialog kb={kbOf(driving.kbId)!} folderId={driving.folderId} onChanged={() => loadNotes(driving.kbId)}
             onDone={() => { const d = driving; setDriving(null); focusRow(rowKey(d.kbId, d.folderId)); }} />
         )}
+        {syncing && kbOf(syncing.kbId) && (
+          <SyncDialog kb={kbOf(syncing.kbId)!} folderId={syncing.folderId} source={syncing.source} onChanged={() => loadNotes(syncing.kbId)}
+            onDone={() => { const d = syncing; setSyncing(null); focusRow(rowKey(d.kbId, d.folderId)); }} />
+        )}
         {deleting && (
           <KbConfirm title={`Delete ${deleting.name}?`} body="The folders inside it are deleted too. Its notes stay in the knowledge base, at the top level." action="Delete folder"
             onDone={(ok) => { const d = deleting; if (ok) remove(d); else { setDeleting(null); focusRow(rowKey(d.kbId, d.folderId)); } }} />
@@ -384,6 +394,25 @@ function DriveDialog({ kb, folderId, onChanged, onDone }: { kb: Kb; folderId: st
       <div className="modal kb-drive-modal" role="dialog" aria-modal="true" aria-labelledby="kbt-drive-title">
         <h2 id="kbt-drive-title">Add from Google Drive</h2>
         <DrivePanel kb={kb} folderId={folderId} onChanged={onChanged} onDone={onDone} />
+      </div>
+    </div>
+  );
+}
+
+// Sync a Drive folder or a GitHub repository, from a folder's menu: the synced-folders panel for that folder in a
+// dialog; Escape or Done closes it
+function SyncDialog({ kb, folderId, source, onChanged, onDone }: { kb: Kb; folderId: string | null; source: SyncSource; onChanged: () => void; onDone: () => void }) {
+  const done = useLatest(onDone);
+  useEffect(() => {
+    const esc = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape' && !document.querySelector('[role="alertdialog"]')) { e.stopPropagation(); done.current(); } };
+    window.addEventListener('keydown', esc, true);
+    return () => window.removeEventListener('keydown', esc, true);
+  }, [done]);
+  return (
+    <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onDone(); }}>
+      <div className="modal kb-drive-modal" role="dialog" aria-modal="true" aria-labelledby="kbt-sync-title">
+        <h2 id="kbt-sync-title">{source === 'github' ? 'Sync a GitHub repository' : 'Sync a Drive folder'}</h2>
+        <SyncPanel kb={kb} folderId={folderId} source={source} onChanged={onChanged} onDone={onDone} />
       </div>
     </div>
   );

@@ -89,7 +89,8 @@ export function createKbDrive({ account, accounts, picker = null, pick = awaitPi
     if (kb.role !== 'admin') return { error: 'Only the knowledge base\'s admins can manage its Google Drive files.' };
     return { kb };
   };
-  const driveNotes = (rows) => rows.filter((n) => driveIdOf(n.frontmatter?.kb_source));
+  // a note the relay keeps in sync from an attached folder (ee/kbSync.js) belongs to that attachment, not to this list
+  const driveNotes = (rows) => rows.filter((n) => driveIdOf(n.frontmatter?.kb_source) && !n.frontmatter?.kb_attachment);
   const filesOf = (rows) => driveNotes(rows).map(shapeFile).sort((a, b) => a.name.localeCompare(b.name));
   const token = async () => {
     const t = await accounts.accessToken('google-drive');

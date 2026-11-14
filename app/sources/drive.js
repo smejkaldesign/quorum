@@ -18,6 +18,7 @@ export const PICKER_ORIGIN = `http://127.0.0.1:${PICKER_PORT}`;
 export const PICKER_API_KEY_ENV = 'QUORUM_GOOGLE_PICKER_API_KEY';
 export const PICKER_APP_ID_ENV = 'QUORUM_GOOGLE_PICKER_APP_ID';
 export const GOOGLE_DOC = 'application/vnd.google-apps.document';
+const FOLDER = 'application/vnd.google-apps.folder';
 // what the picker offers and what a sync reads: Google Docs, markdown and plain text
 export const PICKABLE = [GOOGLE_DOC, 'text/markdown', 'text/x-markdown', 'text/plain'];
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -36,8 +37,9 @@ export function pickerConfig({ lookup = () => null, packaged = null, clientId = 
 // a value placed inside the page's script: JSON with every character that could end the script tag escaped
 const inScript = (v) => JSON.stringify(v).replace(/[<>&\u2028\u2029]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
 
-export function pickerPage({ apiKey, appId, accessToken, nonce }) {
-  const cfg = inScript({ apiKey, appId, token: accessToken, done: `/picker/${nonce}/done`, alive: `/picker/${nonce}/alive`, mimeTypes: PICKABLE.join(','), max: MAX_PICKS });
+// folders: the KB folder sync mode (ee/kbSync.js), where one folder or one file is picked for the relay to keep in sync
+export function pickerPage({ apiKey, appId, accessToken, nonce, folders = false }) {
+  const cfg = inScript({ apiKey, appId, token: accessToken, done: `/picker/${nonce}/done`, alive: `/picker/${nonce}/alive`, mimeTypes: (folders ? [FOLDER, ...PICKABLE] : PICKABLE).join(','), max: folders ? 1 : MAX_PICKS, folders, title: folders ? 'Choose a folder or file to sync' : 'Choose files for Quorum' });
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="strict-origin-when-cross-origin"><title>Choose files for Quorum</title>
 <style>html,body{height:100%;margin:0}body{background:#0b0b0c;color:#f2f2f3;font:16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",Helvetica,Arial,sans-serif;display:grid;place-items:center;text-align:center}
@@ -57,11 +59,13 @@ async function send(payload) {
   else say('Nothing was picked', 'You can close this tab and go back to Quorum.');
 }
 function show() {
-  const view = new google.picker.DocsView(google.picker.ViewId.DOCS).setMimeTypes(CFG.mimeTypes).setIncludeFolders(true).setSelectFolderEnabled(false).setMode(google.picker.DocsViewMode.LIST);
-  const picker = new google.picker.PickerBuilder()
+  const view = new google.picker.DocsView(google.picker.ViewId.DOCS).setMimeTypes(CFG.mimeTypes).setIncludeFolders(true).setSelectFolderEnabled(CFG.folders).setMode(google.picker.DocsViewMode.LIST);
+  const builder = new google.picker.PickerBuilder()
     .setDeveloperKey(CFG.apiKey).setAppId(CFG.appId).setOAuthToken(CFG.token).setOrigin(location.origin)
-    .addView(view).enableFeature(google.picker.Feature.MULTISELECT_ENABLED).enableFeature(google.picker.Feature.SUPPORT_DRIVES)
-    .setMaxItems(CFG.max).setTitle('Choose files for Quorum')
+    .addView(view).enableFeature(google.picker.Feature.SUPPORT_DRIVES);
+  if (!CFG.folders) builder.enableFeature(google.picker.Feature.MULTISELECT_ENABLED);
+  const picker = builder
+    .setMaxItems(CFG.max).setTitle(CFG.title)
     .setCallback((data) => {
       const action = data[google.picker.Response.ACTION];
       if (action === google.picker.Action.PICKED) send({ action: 'picked', docs: (data[google.picker.Response.DOCUMENTS] || []).map((d) => ({ id: d[google.picker.Document.ID], name: d[google.picker.Document.NAME], mimeType: d[google.picker.Document.MIME_TYPE] })) });
@@ -88,7 +92,7 @@ const cleanPicks = (docs) => (Array.isArray(docs) ? docs : []).slice(0, MAX_PICK
 // maxMs in all
 let pending = null;
 export const cancelPicker = () => { const p = pending; pending = null; p?.(); return !!p; };
-export function awaitPicker({ apiKey, appId, accessToken, open, port = PICKER_PORT, idleMs = 2 * 60 * 1000, maxMs = 30 * 60 * 1000 } = {}) {
+export function awaitPicker({ apiKey, appId, accessToken, open, folders = false, port = PICKER_PORT, idleMs = 2 * 60 * 1000, maxMs = 30 * 60 * 1000 } = {}) {
   pending?.();
   const nonce = randomBytes(18).toString('base64url');
   const origin = `http://127.0.0.1:${port}`;
@@ -101,7 +105,7 @@ export function awaitPicker({ apiKey, appId, accessToken, open, port = PICKER_PO
       if (req.method === 'GET' && u.pathname === `/picker/${nonce}`) {
         stillThere();
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY' });
-        res.end(pickerPage({ apiKey, appId, accessToken, nonce }));
+        res.end(pickerPage({ apiKey, appId, accessToken, nonce, folders }));
         return;
       }
       if (req.method === 'POST' && u.pathname === `/picker/${nonce}/alive` && req.headers.origin === origin) {

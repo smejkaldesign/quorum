@@ -205,6 +205,14 @@ export type KbImportSkipped = { path: string; reason: string };
 export type KbDriveFile = { fileId: string; noteId: string; name: string; folderId: string | null; url: string | null; syncedAt: string | null; modifiedAt: string | null };
 export type KbDriveStatus = { connected: boolean; available: boolean; account: string | null };
 export type KbDriveResult = Result & { files?: KbDriveFile[]; synced?: number; unchanged?: number; skipped?: KbImportSkipped[]; canceled?: true };
+// a remote folder or file the relay keeps in sync in a KB folder (ee/kbSync.js, migration 0032), as KB admins see it
+export type KbSyncAttachment = {
+  id: string; kb_id: string; folder_id: string | null; provider: 'google-drive' | 'github' | string; remote_id: string; remote_kind: 'folder' | 'file';
+  options: { branch?: string; path?: string } | null; name: string; url: string | null;
+  status: 'pending' | 'active' | 'paused' | 'error' | 'needs_auth'; error: string | null; note_count: number;
+  last_synced_at: string | null; next_run_at: string | null; connected: boolean; account: string | null; attached_by: string | null; attached_by_email: string | null;
+};
+export type KbSyncResult = Result & { attachment?: KbSyncAttachment | null; canceled?: true };
 export type KbImportProgress = { kbId: string; phase: 'fetching' | 'reading' | 'writing' | 'done'; done: number; total: number };
 export type KbPlacement = { noteId: string; kbId: string | null; folderId: string | null; updatedAt: string | null };
 export type KbNote = { id: string; path: string; title: string; folderId: string | null; userId: string; updatedAt: string | null };
@@ -532,6 +540,13 @@ declare global {
       kbDriveCancel(): Promise<{ canceled: boolean }>;
       kbDriveSync(req: { kbId: string; fileId?: string }): Promise<KbDriveResult>;
       kbDriveRemove(req: { kbId: string; fileId: string }): Promise<Result & { files?: KbDriveFile[] }>;
+      kbSyncList(kbId: string): Promise<Result & { attachments?: KbSyncAttachment[] }>;
+      kbSyncAttachDrive(req: { kbId: string; folderId?: string | null }): Promise<KbSyncResult>;
+      kbSyncAttachGithub(req: { kbId: string; folderId?: string | null; url: string; branch?: string | null }): Promise<KbSyncResult>;
+      kbSyncCancel(): Promise<{ canceled: boolean }>;
+      kbSyncPause(req: { id: string; paused: boolean }): Promise<KbSyncResult>;
+      kbSyncNow(req: { id: string }): Promise<KbSyncResult>;
+      kbSyncRemove(req: { id: string }): Promise<Result & { removed?: number }>;
       billingStatus(): Promise<Result & { billing?: Billing }>;
       billingCheckout(seats?: number): Promise<Result>;
       billingPortal(): Promise<Result>;
