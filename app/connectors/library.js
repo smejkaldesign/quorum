@@ -33,7 +33,7 @@ export const CONNECTORS = [
   c('tldv', 'tl;dv', 'meeting-notes', 'tldv.io', 'Notes and transcripts from tl;dv meetings.'),
   // calendar
   c('apple-calendar', 'Calendar app', 'calendar', 'apple.com', 'Reads the calendars you already have in the Calendar app. Upcoming meetings show on Home.', 'available', 'macos'),
-  c('google-calendar', 'Google Calendar', 'calendar', 'calendar.google.com', 'Reads the calendars you have selected in Google Calendar, with your own Google account. Upcoming meetings show on Home.', 'available', 'oauth'),
+  c('google-calendar', 'Google Calendar', 'calendar', 'calendar.google.com', 'Reads the calendars you have selected in Google Calendar, with your own Google account. Upcoming meetings show on Home.', 'available', 'oauth', { account: true }),
   c('outlook', 'Outlook', 'calendar', 'outlook.com', 'See your upcoming meetings, get a reminder before each one, and give every note the right context.'),
   // meeting apps
   c('zoom', 'Zoom', 'meetings', 'zoom.us', 'Quorum listens to your Zoom calls on this Mac and writes the note live. Cloud recordings come next.', 'available', 'meeting-app', { app: 'zoom' }),
@@ -53,7 +53,7 @@ export const CONNECTORS = [
   // project management
   c('asana', 'Asana', 'tasks', 'asana.com', 'Turn action items into Asana tasks.'),
   c('clickup', 'ClickUp', 'tasks', 'clickup.com', 'Turn action items into ClickUp tasks.'),
-  c('github', 'GitHub', 'tasks', 'github.com', 'Connect your GitHub account with one sign-in, so Quorum can read your private repositories for knowledge base imports.', 'available', 'oauth', { account: true }),
+  c('github', 'GitHub', 'tasks', 'github.com', 'Connect your GitHub account with one sign-in. Quorum gets read-only access to the repositories you choose, for knowledge base imports.', 'available', 'oauth', { account: true }),
   c('jira', 'Jira', 'tasks', 'atlassian.com', 'Turn action items into Jira issues.'),
   c('linear', 'Linear', 'tasks', 'linear.app', 'Turn action items into Linear issues.'),
   c('monday', 'monday.com', 'tasks', 'monday.com', 'Turn action items into monday.com items.'),
@@ -102,7 +102,7 @@ const OVERRIDES = {
   codex: () => ['Lets Codex search your notes and meetings through the quorum MCP server', 'Writes specs, PRs and bug reports from what was said'],
   cursor: () => ['Lets Cursor search your notes and meetings through the quorum MCP server', 'Writes specs and issues from what was said'],
   zapier: () => ['Sends a meeting note to thousands of apps through a Zap', 'Starts an automation when a note is saved'],
-  github: () => ['Connects your GitHub account; the token stays in this Mac\'s Keychain', 'Soon: imports a private repository as a knowledge base', 'Soon: turns action items into GitHub issues'],
+  github: () => ['Connects your GitHub account; the token stays in this Mac\'s Keychain', 'Reads only the repositories where you install the Quorum GitHub App, and never writes to them', 'Soon: imports a private repository as a knowledge base', 'Soon: turns action items into GitHub issues'],
   jira: () => ['Turns action items into Jira issues', 'Links each issue back to the meeting note'],
   linear: () => ['Turns action items into Linear issues', 'Links each issue back to the meeting note'],
   trello: () => ['Turns action items into Trello cards', 'Links each card back to the meeting note'],

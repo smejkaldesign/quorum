@@ -10,10 +10,10 @@ import { addAlias, retargetLinks, rewriteLinks } from './relink.js';
 import store from './store/index.js';
 import { registerSources } from './sources/index.js';
 import { DATA_DIR, EDITION, ENV, loadEE, isDevelopment } from './edition.js';
-import { createGoogleCalendar, googleClient, mergeEvents, repoRoot } from './sources/gcal.js';
+import { createGoogleCalendar, mergeEvents, repoRoot } from './sources/gcal.js';
 import { createTokenStore } from './sources/tokens.js';
 import { createAccounts, oauthClients } from './sources/accounts.js';
-import { httpUrl, relayUrl } from './relayUrl.js';
+import { httpUrl, relayFetch, relayUrl } from './relayUrl.js';
 import { createViews } from './views.js';
 import { registerOnboarding } from './onboarding.js';
 import { gateOn, registerBeta } from './beta.js';
@@ -1880,9 +1880,12 @@ ipcMain.handle('brain', () => brain());
 // two calendar sources: the Calendar app on this Mac (settings.calendar.enabled, once access is granted) and a Google
 // account connected through the Google Calendar connector (settings.calendar.google, tokens in the Keychain)
 const calSettings = () => ({ source: 'mac', days: 3, showAll: false, hidden: [], ...settings.calendar });
-const packagedGoogle = (() => { try { return JSON.parse(readFileSync(path.join(here, 'package.json'), 'utf8')).quorumGoogle ?? null; } catch { return null; } })();
+// the app's own package.json, read once: the packaged build carries the edition, the update feed, the beta gate and the
+// OAuth client ids (quorumGoogle, quorumOAuth) there
+const packagedMeta = (() => { try { return JSON.parse(readFileSync(path.join(here, 'package.json'), 'utf8')); } catch { return {}; } })();
+const oauthApps = oauthClients({ root: repoRoot(), packaged: packagedMeta });
 const gcal = createGoogleCalendar({
-  tokens: createTokenStore().tokens, client: googleClient({ root: repoRoot(), packaged: packagedGoogle }), open: (u) => shell.openExternal(u), log,
+  tokens: createTokenStore().tokens, client: oauthApps.google, open: (u) => shell.openExternal(u), log,
   state: () => settings.calendar?.google ?? null,
   save: (g) => { settings.calendar = { ...calSettings(), google: g }; saveSettings(); toUI('settings', settings); },
 });
@@ -1905,7 +1908,6 @@ function callLink(e) {
 }
 // in-app updates: the state the window renders, a check on request, and the install once a version is ready
 let updates = null;
-const packagedMeta = (() => { try { return JSON.parse(readFileSync(path.join(here, 'package.json'), 'utf8')); } catch { return {}; } })();
 ipcMain.handle('guardrails-get', (_e, opts) => guardrails.get({ fresh: opts?.fresh === true }));
 // a changed rule set reaches the index right away, so search stops answering from what is now denied
 const reindexed = (r) => { if (r?.ok) setTimeout(() => vindex?.rebuild(), 0); return r; };
@@ -1934,15 +1936,13 @@ ipcMain.handle('calendar', async () => {
   return { connected: true, status, events, days: c.days, showAll: c.showAll, hidden };
 });
 ipcMain.handle('calendar-status', async () => ({ ...calSettings(), status: (await calAsk({ cmd: 'calStatus' })).status, google: gcal.status() }));
-ipcMain.handle('gcal-connect', () => gcal.connect());
-ipcMain.handle('gcal-disconnect', () => gcal.disconnect());
 // personal OAuth connectors (sources/accounts.js): Quorum's registered apps for Google Drive, Notion, Slack and GitHub
 // in both editions. Tokens stay in the Keychain; settings.accounts keeps whether each is connected and its label. The
 // providers whose apps need a server-held secret exchange the code through the relay this copy already talks to
-const packagedOAuth = (() => { try { return JSON.parse(readFileSync(path.join(here, 'package.json'), 'utf8')).quorumOAuth ?? null; } catch { return null; } })();
 const accounts = createAccounts({
-  tokens: createTokenStore().tokens, clients: oauthClients({ root: repoRoot(), packaged: packagedOAuth, packagedGoogle }), open: (u) => shell.openExternal(u), log,
+  tokens: createTokenStore().tokens, clients: oauthApps, open: (u) => shell.openExternal(u), log, delegates: { 'google-calendar': gcal },
   relayBase: () => httpUrl(relayUrl({ source: account.envStatus?.().config ?? 'production' })),
+  relayFetch: (route, init) => relayFetch(route, init, { source: () => account.envStatus?.().config ?? 'production' }),
   state: (id) => settings.accounts?.[id] ?? null,
   save: (id, v) => { const next = { ...(settings.accounts ?? {}) }; if (v) next[id] = v; else delete next[id]; settings.accounts = next; saveSettings(); },
 });

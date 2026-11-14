@@ -1,27 +1,29 @@
 // Personal OAuth connectors (connectors/oauthApps.js) in both editions: authorization code with PKCE where the provider
 // supports it, a random state checked on return, the loopback redirect the MCP sources already use (directly for
-// Google, through the relay's callback bounce for providers whose apps need a server-held secret), token refresh, and
-// revoke on disconnect. Tokens live in the Keychain only (sources/tokens.js, service ...-source-account-<id>); settings
-// keep whether an account is connected and its label. Pure Node apart from the caller-supplied `open`.
-import { randomBytes } from 'node:crypto';
-import path from 'node:path';
-import { CLIENT_ID_ENV, OAUTH_APPS, isOAuthApp } from '../connectors/oauthApps.js';
-import { exchange as googleExchange, googleClient, readEnvFile, refresh as googleRefresh } from './gcal.js';
-import { LOOPBACK_REDIRECT, awaitLoopback, pkce } from './oauth.js';
+// Google, through the relay's callback for providers whose apps need a server-held secret), token refresh, and revoke
+// on disconnect. Tokens live in the Keychain only (sources/tokens.js, service ...-source-account-<id>); settings keep
+// whether an account is connected and its label. Google Calendar signs in through gcal.js and is listed, connected and
+// disconnected here, so the one Google client the two Google connectors share is revoked only when neither uses it.
+// Pure Node apart from the caller-supplied `open`.
+import { CLIENT_ID_ENV, GITHUB_APP_SLUG_ENV, OAUTH_APPS, isOAuthApp } from '../connectors/oauthApps.js';
+import { envLookup } from './env.js';
+import { exchange as googleExchange, googleClient, refresh as googleRefresh, revoke as googleRevoke } from './gcal.js';
+import { LOOPBACK_REDIRECT, awaitLoopback, json, newState, pkce } from './oauth.js';
 
-const b64url = (buf) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-const json = async (r) => { const t = await r.text(); try { return JSON.parse(t); } catch { return null; } };
 export const tokenKey = (id) => `account-${id}`;
 
-// every provider's client, in the order gcal.js uses: the shell, the repo's .env then .env.development, the packaged
-// package.json (quorumOAuth.<client>.clientId, and quorumGoogle for the Google pair). A provider without a client id
-// is not configured and its row says "Not available yet"
-export function oauthClients({ env = process.env, root = null, packaged = null, packagedGoogle = null } = {}) {
-  const files = root ? [readEnvFile(path.join(root, '.env')), readEnvFile(path.join(root, '.env.development'))] : [];
-  const pick = (key) => env[key] || files.map((f) => f[key]).find(Boolean) || null;
-  const out = { google: googleClient({ env, root, packaged: packagedGoogle }) };
-  for (const c of ['notion', 'slack', 'github']) out[c] = { clientId: pick(CLIENT_ID_ENV[c]) || packaged?.[c]?.clientId || null };
-  return out;
+// every provider's client: the shell, the repo's .env files, then the packaged package.json (quorumOAuth.<client>, and
+// quorumGoogle for the Google pair). A provider without a client id is not configured and shows "Not available yet"
+export function oauthClients({ env = process.env, root = null, packaged = null } = {}) {
+  const lookup = envLookup({ env, root });
+  const from = packaged?.quorumOAuth ?? {};
+  const id = (c) => lookup(CLIENT_ID_ENV[c]) || from[c]?.clientId || null;
+  return {
+    google: googleClient({ lookup, packaged: packaged?.quorumGoogle ?? null }),
+    notion: { clientId: id('notion') },
+    slack: { clientId: id('slack') },
+    github: { clientId: id('github'), slug: lookup(GITHUB_APP_SLUG_ENV) || from.github?.slug || null },
+  };
 }
 
 // configured means Connect can work: a client id, and for Google the Desktop secret as well
@@ -32,6 +34,8 @@ export const configured = (id, clients) => {
 };
 
 export const redirectFor = (id, relayBase) => (OAUTH_APPS[id].exchange === 'relay' ? `${relayBase}/v1/oauth/${id}/callback` : LOOPBACK_REDIRECT);
+// where the person picks the repositories the GitHub App may read
+export const installUrl = (clients) => (clients?.github?.slug ? `https://github.com/apps/${encodeURIComponent(clients.github.slug)}/installations/new` : null);
 
 export function authorizeUrl(id, { clientId, redirectUri, state, challenge = null }) {
   const app = OAUTH_APPS[id];
@@ -46,39 +50,42 @@ export function authorizeUrl(id, { clientId, redirectUri, state, challenge = nul
   return u.toString();
 }
 
-async function relayPost(relayBase, route, body, fetchImpl) {
+// one call to the relay's /v1/oauth routes; relayFetch is relayUrl.js's, which moves to the fallback address only when
+// the first cannot be reached
+async function relayPost(relayFetch, route, body) {
   let r;
-  try { r = await fetchImpl(`${relayBase}/v1/oauth/${route}`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(25000) }); }
+  try { r = await relayFetch(`/v1/oauth/${route}`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(25000) }); }
   catch { throw new Error('Quorum\'s relay could not be reached. Check the connection and try again.'); }
   const data = await json(r);
   if (!r.ok) { const e = new Error(data?.error || `The relay answered ${r.status}.`); e.code = data?.code ?? null; throw e; }
+  if (!data || typeof data !== 'object') throw new Error('The relay sent an answer Quorum could not read. Try again.');
   return data;
 }
 
 // code for tokens: Google directly with its Desktop pair, the others through the relay
-export async function exchangeCode(id, { clients, code, verifier, redirectUri, relayBase, fetchImpl = fetch }) {
+export async function exchangeCode(id, { clients, code, verifier, redirectUri, relayFetch, fetchImpl = fetch }) {
   const app = OAUTH_APPS[id];
   if (app.exchange === 'direct') { const t = await googleExchange(clients.google, { code, verifier, redirectUri }, fetchImpl); return { ...t, account: t.email ?? null }; }
-  return relayPost(relayBase, 'token', { provider: id, code, code_verifier: app.pkce ? verifier : undefined, redirect_uri: redirectUri }, fetchImpl);
+  return relayPost(relayFetch, 'token', { provider: id, code, code_verifier: app.pkce ? verifier : undefined, redirect_uri: redirectUri });
 }
 
-export async function refreshTokens(id, tokens, { clients, relayBase, fetchImpl = fetch }) {
+export async function refreshTokens(id, tokens, { clients, relayFetch, fetchImpl = fetch }) {
   const app = OAUTH_APPS[id];
   if (!tokens?.refreshToken) throw Object.assign(new Error(`${app.name} needs to be connected again.`), { code: 'reauth' });
   const t = app.exchange === 'direct'
     ? await googleRefresh(clients.google, tokens, fetchImpl)
-    : await relayPost(relayBase, 'token', { provider: id, grant_type: 'refresh_token', refresh_token: tokens.refreshToken }, fetchImpl);
+    : await relayPost(relayFetch, 'token', { provider: id, grant_type: 'refresh_token', refresh_token: tokens.refreshToken });
+  if (!t?.accessToken) throw new Error(`${app.name} did not return a token. Connect it again.`);
   return { ...tokens, ...t, refreshToken: t.refreshToken ?? tokens.refreshToken, account: tokens.account ?? t.account ?? null };
 }
 
 // best effort: a provider that already forgot the token, or a relay that cannot be reached, still ends in a disconnect
-export async function revokeTokens(id, tokens, { relayBase, fetchImpl = fetch }) {
-  const token = tokens?.refreshToken || tokens?.accessToken;
-  if (!token) return false;
+export async function revokeTokens(id, tokens, { relayFetch, fetchImpl = fetch }) {
+  if (!tokens?.accessToken && !tokens?.refreshToken) return false;
   try {
-    if (id === 'google-drive') return (await fetchImpl('https://oauth2.googleapis.com/revoke', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token }), signal: AbortSignal.timeout(15000) })).ok;
+    if (OAUTH_APPS[id].client === 'google') return googleRevoke(tokens, fetchImpl);
     if (id === 'slack') return (await json(await fetchImpl('https://slack.com/api/auth.revoke', { method: 'POST', headers: { authorization: `Bearer ${tokens.accessToken}` }, signal: AbortSignal.timeout(15000) })))?.ok === true;
-    await relayPost(relayBase, 'revoke', { provider: id, token: tokens.accessToken }, fetchImpl);
+    await relayPost(relayFetch, 'revoke', { provider: id, token: tokens.accessToken });
     return true;
   } catch { return false; }
 }
@@ -94,11 +101,11 @@ export async function accountLabel(id, tokens, fetchImpl = fetch) {
 }
 
 // the browser sign-in for one provider: resolves with the tokens and the account label
-export async function connectAccount(id, { clients, open, relayBase, loopback = awaitLoopback, fetchImpl = fetch }) {
+export async function connectAccount(id, { clients, open, relayBase, relayFetch, loopback = awaitLoopback, fetchImpl = fetch }) {
   const app = OAUTH_APPS[id];
   if (!configured(id, clients)) throw new Error(`${app.name} is not available in this build yet.`);
   const { verifier, challenge } = pkce();
-  const state = b64url(randomBytes(16));
+  const state = newState();
   const redirectUri = redirectFor(id, relayBase);
   const waiting = loopback();
   await open(authorizeUrl(id, { clientId: clients[app.client].clientId, redirectUri, state, challenge }));
@@ -109,7 +116,7 @@ export async function connectAccount(id, { clients, open, relayBase, loopback = 
   if (q.state !== state) fail('The sign-in answer did not match the request.');
   if (!q.code) fail('The sign-in did not return a code.');
   let tokens;
-  try { tokens = await exchangeCode(id, { clients, code: q.code, verifier, redirectUri, relayBase, fetchImpl }); } catch (err) { fail(err.message); }
+  try { tokens = await exchangeCode(id, { clients, code: q.code, verifier, redirectUri, relayFetch, fetchImpl }); } catch (err) { fail(err.message); }
   if (!tokens?.accessToken) fail(`${app.name} did not return a token.`);
   if (app.exchange === 'direct' && !tokens.refreshToken) fail(`${app.name} did not issue a refresh token. Remove Quorum under your Google Account, Third-party access, then connect again.`);
   const account = await accountLabel(id, tokens, fetchImpl);
@@ -118,23 +125,40 @@ export async function connectAccount(id, { clients, open, relayBase, loopback = 
 }
 
 // the connectors as the app sees them. state(id) and save(id, value) are the caller's settings (connected, account,
-// connectedAt); tokens are the Keychain store
-export function createAccounts({ tokens, clients, relayBase, open, log = () => {}, fetchImpl = fetch, state, save, loopback = awaitLoopback }) {
+// connectedAt); tokens are the Keychain store. delegates maps a connector with its own sign-in module to that module's
+// { status(), connect(), disconnect({ revoke }) } (gcal.js for Google Calendar)
+export function createAccounts({ tokens, clients, relayBase, relayFetch, open, log = () => {}, fetchImpl = fetch, state, save, loopback = awaitLoopback, delegates = {} }) {
   const errors = {};
+  const refreshing = new Map();
   const base = () => (typeof relayBase === 'function' ? relayBase() : relayBase);
+  const delegateOf = (id) => (OAUTH_APPS[id].delegate ? delegates[id] ?? null : null);
   const info = (id) => {
-    const s = state(id);
-    return { id, name: OAUTH_APPS[id].name, configured: configured(id, clients), connected: !!s?.connected, account: s?.account ?? null, connectedAt: s?.connectedAt ?? null, scope: OAUTH_APPS[id].scopeNote, error: errors[id] ?? null };
+    const app = OAUTH_APPS[id];
+    const d = delegateOf(id);
+    const s = d ? d.status() : state(id);
+    return {
+      id, name: app.name, configured: configured(id, clients), connected: !!s?.connected, account: s?.account ?? null, connectedAt: s?.connectedAt ?? null, scope: app.scopeNote,
+      manageUrl: id === 'github' ? installUrl(clients) : null,
+      error: (d ? s?.error : errors[id]) ?? null,
+    };
   };
   const known = (id) => { if (!isOAuthApp(id)) throw new Error('Unknown connector.'); return id; };
+  // revoking a Google token ends the person's whole grant to the shared client, so it waits until the last Google
+  // connector on that account disconnects; an unknown account on either side counts as the same account
+  const sharedGrantInUse = (id, account) => Object.keys(OAUTH_APPS).some((other) => {
+    if (other === id || OAUTH_APPS[other].client !== OAUTH_APPS[id].client || OAUTH_APPS[id].client !== 'google') return false;
+    const o = info(other);
+    return o.connected && (!account || !o.account || o.account === account);
+  });
   return {
     list: () => Object.keys(OAUTH_APPS).map(info),
-    status: (id) => info(known(id)),
     async connect(id) {
       known(id);
+      const d = delegateOf(id);
+      if (d) { await d.connect(); return info(id); }
       errors[id] = null;
       try {
-        const t = await connectAccount(id, { clients, open, relayBase: base(), loopback, fetchImpl });
+        const t = await connectAccount(id, { clients, open, relayBase: base(), relayFetch, loopback, fetchImpl });
         if (!(await tokens.set(tokenKey(id), t))) throw new Error('The Keychain did not accept the token. Try again.');
         save(id, { connected: true, account: t.account ?? null, connectedAt: new Date().toISOString() });
         log('account connected', id);
@@ -143,25 +167,38 @@ export function createAccounts({ tokens, clients, relayBase, open, log = () => {
     },
     async disconnect(id) {
       known(id);
+      const revoke = !sharedGrantInUse(id, info(id).account);
+      const d = delegateOf(id);
+      if (d) { await d.disconnect({ revoke }); log('account disconnected', id, revoke ? 'revoked' : 'local only'); return info(id); }
       const t = await tokens.get(tokenKey(id));
-      const revoked = t ? await revokeTokens(id, t, { relayBase: base(), fetchImpl }) : false;
+      const revoked = t && revoke ? await revokeTokens(id, t, { relayFetch, fetchImpl }) : false;
       await tokens.set(tokenKey(id), null);
       save(id, null);
       errors[id] = null;
       log('account disconnected', id, revoked ? 'revoked' : 'local only');
       return info(id);
     },
-    // a fresh access token for the features that use the account; refreshes a minute before expiry
+    // a fresh access token for the features that use the account; refreshes a minute before expiry, one refresh per
+    // provider at a time (a rotated refresh token works once, so a second concurrent refresh would fail)
     async accessToken(id) {
       known(id);
+      if (delegateOf(id)) throw new Error(`${OAUTH_APPS[id].name} reads its own tokens.`);
+      if (refreshing.has(id)) return refreshing.get(id);
       const t = await tokens.get(tokenKey(id));
       if (!t) return null;
+      if (refreshing.has(id)) return refreshing.get(id);
       if (!t.expiresAt || t.expiresAt - Date.now() > 60000) return t.accessToken;
-      try {
-        const next = await refreshTokens(id, t, { clients, relayBase: base(), fetchImpl });
-        await tokens.set(tokenKey(id), next);
-        return next.accessToken;
-      } catch (err) { errors[id] = err.message; log('account refresh failed', id, err.message); return null; }
+      const run = (async () => {
+        try {
+          const next = await refreshTokens(id, t, { clients, relayFetch, fetchImpl });
+          errors[id] = null;
+          if (!(await tokens.set(tokenKey(id), next))) { errors[id] = 'The Keychain did not accept the refreshed token. Connect again if this keeps happening.'; log('account refresh not stored', id); }
+          return next.accessToken;
+        } catch (err) { errors[id] = err.message; log('account refresh failed', id, err.message); return null; }
+        finally { refreshing.delete(id); }
+      })();
+      refreshing.set(id, run);
+      return run;
     },
   };
 }
