@@ -11,6 +11,8 @@ import { DATA_DIR } from './edition.js';
 const GUARD = path.join(path.dirname(fileURLToPath(import.meta.url)), 'guards', 'read-guard.py').replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
 
 const TIMEOUT_MS = 150000;
+// how much of the vault's CLAUDE.md goes into the system prompt when Quorum loads it herself
+export const INSTRUCTIONS_LIMIT = 16000;
 
 // Quorum's own read guard always runs, with the compiled guardrails as its flags (app/guardrails.js: deny folders,
 // frontmatter keys, the secret pattern); the Agent OS's own guard hooks run too, but only the ones the person included
@@ -57,7 +59,7 @@ export function agentArgs({ model, system, root, guards = {}, files = [], extra 
   if (p.mcp) { try { servers = Object.keys(JSON.parse(readFile(p.mcp)).mcpServers ?? {}); } catch { servers = []; } }
   let prompt = system;
   if (p.instructions && !project) {
-    try { prompt += `\n\nOperating instructions of this Agent OS, from ${path.basename(p.instructions)}; follow what applies to answering:\n${readFile(p.instructions).slice(0, 16000)}`; } catch {}
+    try { prompt += `\n\nOperating instructions of this Agent OS, from ${path.basename(p.instructions)}; follow what applies to answering:\n${readFile(p.instructions).slice(0, INSTRUCTIONS_LIMIT)}`; } catch {}
   }
   return [
     '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', model,

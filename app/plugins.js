@@ -3,7 +3,9 @@
 // the vault already has tooling for the job, and to Quorum otherwise. The user can hand a job to the other side; that
 // choice is saved with the evidence it was made against, so tooling found later brings the vault default back and
 // shows the row as new until the user picks again. Detection reads file names and the first lines of a few files only,
-// and never runs anything. A new plugin is one more entry in PLUGINS with its own detect()
+// and never runs anything. A new plugin is one more entry in PLUGINS with its own detect(). A report plugin writes
+// nothing in the vault on its own: it reads and shows a result in Settings, so it does not wait for upkeep to be on.
+// A plugin marked off starts with the vault even when no tooling is found, and runs only after the user turns it on
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
@@ -43,7 +45,8 @@ export function dailyPattern(names) {
 }
 export const dailyName = (template, date) => template.replace('{date}', date);
 
-// what detect() functions get: the two roots, the area folders the keeper found, and the scripts in the usual places
+// what detect() functions get: the two roots, the area folders the keeper found, the scripts in the usual places and
+// the Claude Code hooks
 export function scanContext(root, vault, folders = {}) {
   const rel = (abs) => path.relative(root, abs).split(path.sep).join('/') || path.basename(abs);
   const seen = new Set();
@@ -56,11 +59,20 @@ export function scanContext(root, vault, folders = {}) {
       }
     }
   }
+  const hooks = [];
+  for (const base of [...new Set([vault, root])]) {
+    for (const n of list(path.join(base, '.claude/hooks'))) {
+      const abs = path.join(base, '.claude/hooks', n);
+      if (!seen.has(abs)) { seen.add(abs); hooks.push({ name: n, abs, rel: rel(abs) }); }
+    }
+  }
   const daily = folders.daily ? list(path.join(vault, folders.daily)) : [];
-  return { root, vault, folders, scripts, daily, rel };
+  return { root, vault, folders, scripts, hooks, daily, rel };
 }
 
 const scriptsMatching = (ctx, re, not) => ctx.scripts.filter((s) => re.test(s.name) && !(not && not.test(s.name))).map((s) => ({ path: s.rel, why: 'script' }));
+const hooksMatching = (ctx, re) => (ctx.hooks ?? []).filter((h) => re.test(h.name)).map((h) => ({ path: h.rel, why: 'hook' }));
+const toolsMatching = (ctx, re) => [...scriptsMatching(ctx, re), ...hooksMatching(ctx, re)];
 
 export const PLUGINS = [
   {
@@ -110,6 +122,10 @@ export const PLUGINS = [
     id: 'search', title: 'Search', does: 'Finds the notes behind an answer', always: true,
     detect: (ctx) => scriptsMatching(ctx, /search/i),
   },
+  {
+    id: 'context', title: 'Context budget', does: 'Sizes of the files Claude Code loads every session, with warnings', report: true,
+    detect: (ctx) => toolsMatching(ctx, /context[-_]?(?:budget|size|check|audit)|token[-_]?(?:budget|count)|claude[-_]?md[-_]?(?:size|lint|check|audit)|memory[-_]?(?:lint|size|budget)/i),
+  },
 ];
 
 // the evidence a choice was made against, as one string; a change in it brings the default back
@@ -128,9 +144,9 @@ export function resolvePlugins(found, saved = {}) {
     const key = evidenceKey(evidence);
     const s = saved?.[p.id];
     const chose = !!s && (s.owner === 'quorum' || s.owner === 'vault') && s.ack === key;
-    const fallback = evidence.length ? 'vault' : 'quorum';
+    const fallback = evidence.length || p.off ? 'vault' : 'quorum';
     const owner = chose ? s.owner : fallback;
-    return { id: p.id, title: p.title, does: p.does, always: !!p.always, evidence, owner, overridden: evidence.length > 0 && owner === 'quorum', isNew: evidence.length > 0 && !chose };
+    return { id: p.id, title: p.title, does: p.does, always: !!p.always, report: !!p.report, evidence, owner, overridden: evidence.length > 0 && owner === 'quorum', isNew: evidence.length > 0 && !chose };
   });
 }
 

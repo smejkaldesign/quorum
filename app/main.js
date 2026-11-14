@@ -18,6 +18,7 @@ import { gateOn, registerBeta } from './beta.js';
 import { registerFlags } from './flags.js';
 import { DICTATION_OFF, keepActions, notetakerGates, sessionGates, startDecision, termsPlan } from './notetaker.js';
 import { createKeeper } from './keeper.js';
+import { contextBudget } from './context-budget.js';
 import { wouldBlock } from './guardrails.js';
 import { createPredicates } from './guardrails-predicates.js';
 import { createSuggester } from './suggest.js';
@@ -144,6 +145,9 @@ ipcMain.handle('keeper-run', (_e, opts) => keeper.run({ reason: 'manual', allowC
 ipcMain.handle('keeper-plugin', (_e, id, owner) => keeper.setPlugin(String(id), owner));
 ipcMain.handle('keeper-errors-open', () => { if (existsSync(KEEPER_ERRORS)) shell.openPath(KEEPER_ERRORS); });
 ipcMain.handle('keeper-errors-clear', () => keeper.clearErrors());
+// the report plugins read and show; each answers only while its plugin row is Quorum's
+const pluginOn = (id) => keeper.plugins().find((p) => p.id === id)?.owner === 'quorum';
+ipcMain.handle('plugin-context', () => { const b = brain(); return b && pluginOn('context') ? contextBudget({ root: b.root, vault: b.vault }) : null; });
 let helper;
 const asset = (name) => path.join(here, 'assets', name);
 // a meeting can have several capture segments (STOP, GO, STOP...); STOP deletes all of them

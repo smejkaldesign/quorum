@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { SetupForm, answersFrom, draftFrom, draftIsEmpty, emptyDraft, type SetupDraft } from './SetupForm';
 import type { AccountState, BetaState, Brain, CalendarSettings, ClaudeStatus, DecisionProvider, DecisionsStatus, KeeperPlugin, KeeperStatus, Memory, MemoryItem, OptOut, Profile, ScreenContextStatus, Settings, TeamVault, Transcription, UpdateState, Voice, Workspace } from './quorum';
 import { PersonalConnectors } from './Connectors';
@@ -10,6 +10,7 @@ import { openConnectors, type ConnectorsTarget } from './connectorsNav';
 import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
+import { ContextPanel } from './PluginPanels';
 import { AccountArea, BillingArea, EDITION, KnowledgeQueueArea, MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { TOP_ADMIN_PAGES, canAdmin, flagHiddenPages, modeOf, resolvePage, voiceMode, workspacePages, type Page } from './settingsNav';
 import { EnvSwitch } from './EnvSwitch';
@@ -877,10 +878,12 @@ function KnowledgePage() {
 // upkeep: the keeper (keeper.js) files each new meeting note into the index, the daily note and the people and project
 // notes it concerns, and writes learned facts with the person's own model source. On by default for a folder Quorum
 // built; a folder the person connected themselves turns it on here. Each job is a plugin row below: Quorum's by
-// default, and the vault's when the vault already does that job, with the files that show it
+// default, and the vault's when the vault already does that job, with the files that show it. Report plugins write
+// nothing in the vault on their own, so they are listed whether upkeep is on or not, with their result under the row
 const PLUGIN_ICON: Record<string, (p: { width?: number; height?: number; className?: string }) => ReactNode> = {
-  index: IconFork, daily: IconCalendar, links: IconPeople, facts: IconBrain, search: IconSearch,
+  index: IconFork, daily: IconCalendar, links: IconPeople, facts: IconBrain, search: IconSearch, context: IconScale,
 };
+const PLUGIN_PANEL: Record<string, () => ReactNode> = { context: () => <ContextPanel /> };
 function KeeperCard({ brain }: { brain: Brain }) {
   const [k, setK] = useState<KeeperStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -902,17 +905,22 @@ function KeeperCard({ brain }: { brain: Brain }) {
     const on = p.owner === 'quorum';
     const found = p.evidence.map((e) => `${e.path} (${e.why})`).join(', ');
     const pdesc = p.evidence.length
-      ? (on ? `Quorum does this. Your Agent OS also has ${found}` : `Used already in your Agent OS: ${found}. Quorum reads and links, and writes nothing for this.`)
+      ? (on ? `Quorum does this. Your Agent OS also has ${found}` : `Used already in your Agent OS: ${found}. ${p.report ? 'Quorum leaves this to it.' : 'Quorum reads and links, and writes nothing for this.'}`)
       : on ? `${p.does}${p.id === 'facts' && !k.model ? '. Needs a model source in AI settings' : p.id === 'facts' && k.learned ? `. ${usage(k.learned)}` : ''}`
-      : 'Off. Quorum writes nothing for this.';
+      : p.report ? `Off. ${p.does}.` : 'Off. Quorum writes nothing for this.';
     return (
-      <Row key={p.id} icon={<Icon width={18} height={18} className={on ? 'ok' : undefined} />} title={p.title} desc={pdesc}>
-        {p.isNew && <span className="new-badge">New</span>}
-        {p.isNew && <button className="pill small-pill" onClick={() => pick(p, 'vault')}>Keep as is</button>}
-        <Toggle on={on} disabled={p.always && !p.evidence.length} onChange={(v) => pick(p, v ? 'quorum' : 'vault')} />
-      </Row>
+      <Fragment key={p.id}>
+        <Row icon={<Icon width={18} height={18} className={on ? 'ok' : undefined} />} title={p.title} desc={pdesc}>
+          {p.isNew && <span className="new-badge">New</span>}
+          {p.isNew && <button className="pill small-pill" onClick={() => pick(p, 'vault')}>Keep as is</button>}
+          <Toggle on={on} disabled={p.always && !p.evidence.length} onChange={(v) => pick(p, v ? 'quorum' : 'vault')} />
+        </Row>
+        {on && PLUGIN_PANEL[p.id]?.()}
+      </Fragment>
     );
   };
+  const writers = k.plugins.filter((p) => !p.report);
+  const reports = k.plugins.filter((p) => p.report);
   return (
     <>
       <h3>Upkeep</h3>
@@ -939,7 +947,7 @@ function KeeperCard({ brain }: { brain: Brain }) {
         <>
           <h3>Plugins</h3>
           <div className="set-card">
-            {k.on ? k.plugins.map(plugin) : <Row icon={<IconReset width={18} height={18} />} title="Upkeep is off" desc="Quorum does none of these jobs while Keep this folder current is off. Turn it on to choose which ones it does." />}
+            {k.on ? writers.map(plugin) : <Row icon={<IconReset width={18} height={18} />} title="Upkeep is off" desc="Quorum writes nothing for these jobs while Keep this folder current is off. Turn it on to choose which ones it does. The reports below work either way." />}
             {k.on && factsOn && k.learned && (
               <Row icon={<IconNotes width={18} height={18} />} title="Learned facts file"
                 desc={k.learned.target === 'learned' ? 'Claude Code does not load .quorum/learned.md on its own; CLAUDE.md points to it' : 'CLAUDE.md, loaded in every session that reads it. The oldest lines move to the changelog past the budget'}>
@@ -959,6 +967,7 @@ function KeeperCard({ brain }: { brain: Brain }) {
                 <button className="pill small-pill" onClick={async () => setK(await window.quorum.keeperSet({ factsTarget: k.learned!.suggest! }))}>Move</button>
               </Row>
             )}
+            {reports.map(plugin)}
           </div>
         </>
       )}
