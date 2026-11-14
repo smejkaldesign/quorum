@@ -59,6 +59,10 @@ select pg_temp.expect_error($$ select public.kb_source_set(pg_temp.kb('docs'), '
 select pg_temp.expect_error($$ select public.kb_source_set(pg_temp.kb('docs'), '{"kind": "github", "url": "https://example.com/a/b"}') $$, 'GitHub repository address');
 select pg_temp.expect_error($$ select public.kb_source_set(pg_temp.kb('docs'), '{"kind": "github", "url": "https://github.com/a/b/tree/main"}') $$, 'GitHub repository address');
 select pg_temp.expect_error($$ select public.kb_source_set('01KB00000000000000000000XX', '{"kind": "zip"}') $$, 'no longer exists');
+do $$ begin
+  assert public.kb_source_set(pg_temp.kb('docs'), '{"kind": "github", "url": "https://github.com/example-org/handbook", "branch": "release/v2", "subpath": "/docs/guides/"}') -> 'source' ->> 'subpath' = 'docs/guides', 'a GitHub source keeps the folder it was imported from';
+end $$;
+select pg_temp.expect_error($$ select public.kb_source_set(pg_temp.kb('docs'), '{"kind": "github", "url": "https://github.com/a/b", "subpath": "docs/../.."}') $$, 'folder path is not valid');
 
 -- 3. a member who reads the KB cannot set its source or write notes into it
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000b3');
@@ -71,6 +75,41 @@ update public.knowledge_bases set source = '{"kind": "folder", "path": "/Shared/
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000b1');
 do $$ begin
   assert public.kb_source_set(pg_temp.kb('docs'), '{"kind": "zip", "name": "x.zip"}') -> 'source' ->> 'kind' = 'folder', 'a folder source stays';
+end $$;
+
+-- 5. leaving a KB: an inclusion that came from the KB goes back to the review queue; one an admin made stays
+do $$ begin
+  assert (select source from public.contributions where note_id = '01KB000000000000000000NC01') = 'kb', 'the inclusion records that it came from the KB';
+  assert (select source from public.contributions where note_id = '01KB000000000000000000NC02') = 'review', 'a pending note is a review contribution';
+end $$;
+-- the author takes a note out of its KB
+select public.kb_note_assign('01KB000000000000000000NC01', null);
+do $$ begin
+  assert (select status from public.contributions where note_id = '01KB000000000000000000NC01') = 'pending', 'taken out, the note waits for review again';
+  assert (select source from public.contributions where note_id = '01KB000000000000000000NC01') = 'review', 'as an ordinary contribution';
+end $$;
+-- a restricted KB holding one imported note and one note the admin approved through the queue, then deleted
+insert into ids select 'restricted', public.kb_create('01KB00000000000000000000WC', 'Restricted') ->> 'id';
+select public.kb_set_access(pg_temp.kb('restricted'), '[]');
+insert into public.notes (id, user_id, workspace_id, path, frontmatter, body, kb_id)
+  select '01KB000000000000000000NC04', '00000000-0000-4000-8000-0000000000b1', '01KB00000000000000000000WC', 'Knowledge bases/Restricted/plan.md', '{"visibility": "public"}', '# Plan', pg_temp.kb('restricted');
+select public.review_contribution((select id from public.contributions where note_id = '01KB000000000000000000NC02'), 'include');
+select public.kb_note_assign('01KB000000000000000000NC02', pg_temp.kb('restricted'));
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000b3');
+do $$ begin
+  assert not exists (select 1 from public.notes where id = '01KB000000000000000000NC04'), 'the member cannot read the restricted KB note';
+end $$;
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000b1');
+select public.kb_delete(pg_temp.kb('restricted'));
+do $$ begin
+  assert (select kb_id from public.notes where id = '01KB000000000000000000NC04') is null, 'deleting the KB clears the note''s KB';
+  assert (select status from public.contributions where note_id = '01KB000000000000000000NC04') = 'pending', 'the imported note waits for review instead of reaching the workspace';
+  assert (select status from public.contributions where note_id = '01KB000000000000000000NC02') = 'included', 'the note approved through the queue stays included';
+end $$;
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000b3');
+do $$ begin
+  assert not exists (select 1 from public.notes where id = '01KB000000000000000000NC04'), 'the member still cannot read it';
+  assert exists (select 1 from public.notes where id = '01KB000000000000000000NC02'), 'the approved note is readable by the workspace';
 end $$;
 
 reset role;

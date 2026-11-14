@@ -7,53 +7,71 @@
 //
 // IPC API (preload exposes each as window.quorum.<camelName>):
 //
-//   kb-import          ({ kbId?, name?, source?, folderId? })  -> { kb: Kb, imported: number, skipped: Skipped[] } | { error }
+//   kb-import          ({ kbId?, name?, source?, folderId? })  -> { kb: Kb, imported, removed, skipped: Skipped[] } | { error, skipped? }
 //   kb-import-pick-zip ()                                      -> { path } | { canceled: true }
 //   kb-import-progress (event to the renderer)                   { kbId, phase: 'fetching' | 'reading' | 'writing' | 'done', done, total }
 //
-//   source      { kind: 'github', url, branch? } | { kind: 'zip', path }. Left out with a kbId, the KB's stored GitHub
-//               source is fetched again; a zip has to be chosen again.
+//   source      { kind: 'github', url, branch? } | { kind: 'zip', path }. A GitHub address may end in /tree/<branch>/<folder>
+//               to import that folder only. Left out with a kbId, the KB's stored GitHub source is fetched again; a zip
+//               has to be chosen again.
 //   Skipped     { path, reason }   path inside the source; reason is a sentence for the page
 //
 // With no kbId a KB is created, named `name`, else the repository or zip name; it is deleted again when the source
-// cannot be read. folderId puts the import inside that folder of the KB. An import into a KB that already holds the
-// notes updates them by their place in the KB (folder path and file name) and adds none twice. Notes no longer in the
-// source are left in the KB. Progress phases: fetching counts bytes (total 0 when the size is unknown), reading counts
-// archive entries, writing counts notes, done repeats the imported count.
+// cannot be read or nothing in it could be imported. folderId puts the import inside that folder of the KB.
+// Re-importing into a KB updates the notes an earlier import wrote (they carry kb_source) at the same place in the KB
+// (folder path and file name), adds none twice, and removes those from the same source that are gone from it (counted
+// in removed). A note written by hand at the same place is left alone, as is another member's note. Progress phases:
+// fetching counts bytes (total 0 when the size is unknown), reading counts archive entries, writing counts notes, done
+// repeats the imported count.
 import { createHash } from 'node:crypto';
 import { readFile as fsReadFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { plain } from './account.js';
 import { checkName, shapeKb } from './knowledgeBases.js';
 import { createRemote, ulid } from './store/remote.js';
+import { notes as localNotes } from '../store/local.js';
 import { parseFrontmatter } from './sync.js';
 import { listZip, MAX_BYTES, readEntry } from './zipRead.js';
 
 const BATCH = 100;
 const PAGE = 1000;
+const FOLDER_CALLS = 8;
 const MAX_NOTE_BYTES = 5 * 1024 * 1024;
+const PROGRESS_BYTES = 256 * 1024;
 const MARKDOWN = /\.(md|markdown)$/i;
 export const PRIVATE_REPO = 'That repository was not found, or it is private. Private repositories need the GitHub connector, which comes later.';
+export const RATE_LIMITED = 'GitHub is limiting requests from this network. Try again in an hour.';
+const ADDRESS = 'Enter a GitHub repository address, like https://github.com/owner/repository.';
 
-// https://github.com/<owner>/<repo>, with an optional .git, trailing slash or /tree/<branch>; a branch given apart
-// from the address wins over one inside it
-const GITHUB = /^https:\/\/github\.com\/([A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38})\/([A-Za-z0-9._-]{1,100})(?:\/tree\/([^?#\s]+?))?\/?$/;
+// https://github.com/<owner>/<repo>, with an optional .git, trailing slash or /tree/<branch>[/<folder>]. Which part of
+// the tree path is the branch is settled against the repository's branches (names can hold slashes) in fetchGithubZip
+const GITHUB = /^https:\/\/github\.com\/([A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38})\/([A-Za-z0-9._-]{1,100})(?:\/tree\/([^?#]+?))?\/?$/;
 export function checkBranch(b) {
   const s = String(b ?? '').trim();
   if (!s) return { branch: null };
   if (s.length > 200 || !/^[A-Za-z0-9._/-]+$/.test(s) || s.startsWith('-') || s.startsWith('/') || s.endsWith('/') || s.endsWith('.lock') || s.includes('..') || s.includes('//')) return { error: 'That branch name is not valid.' };
   return { branch: s };
 }
+// the /tree/ part of an address: plain path segments, none of them "." or ".."
+function checkTree(raw) {
+  let s;
+  try { s = decodeURIComponent(raw); } catch { return { error: ADDRESS }; }
+  const segs = s.split('/');
+  if (s.length > 500 || segs.some((p) => !p || p === '.' || p === '..' || /[\p{Cc}\\]/u.test(p))) return { error: ADDRESS };
+  return { tree: segs.join('/') };
+}
 export function parseGithubUrl(url, branch) {
   const raw = String(url ?? '').trim();
   if (!raw) return { error: 'Enter the repository address.' };
   const m = raw.match(GITHUB);
-  if (!m) return { error: 'Enter a GitHub repository address, like https://github.com/owner/repository.' };
+  if (!m) return { error: ADDRESS };
   const repo = m[2].replace(/\.git$/i, '');
-  if (!repo || repo === '.' || repo === '..') return { error: 'Enter a GitHub repository address, like https://github.com/owner/repository.' };
-  const b = checkBranch(branch ?? (m[3] ? decodeURIComponent(m[3]) : ''));
+  if (!repo || repo === '.' || repo === '..') return { error: ADDRESS };
+  const b = checkBranch(branch);
   if (b.error) return b;
-  return { owner: m[1], repo, branch: b.branch, url: `https://github.com/${m[1]}/${repo}` };
+  const t = m[3] ? checkTree(m[3]) : { tree: null };
+  if (t.error) return t;
+  return { owner: m[1], repo, branch: b.branch, tree: t.tree, url: `https://github.com/${m[1]}/${repo}` };
 }
 
 class ImportError extends Error {
@@ -62,12 +80,13 @@ class ImportError extends Error {
 
 // a response body as one Buffer, refused past the cap; onBytes reports progress
 async function readCapped(res, onBytes, cap = MAX_BYTES) {
+  const tooLarge = () => new ImportError(`The repository archive is larger than ${Math.round(cap / 1024 / 1024)} MB.`);
   const total = Number(res.headers?.get?.('content-length')) || 0;
-  if (total > cap) throw new ImportError(`The repository archive is larger than ${Math.round(cap / 1024 / 1024)} MB.`);
+  if (total > cap) throw tooLarge();
   const reader = res.body?.getReader?.();
   if (!reader) {
     const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length > cap) throw new ImportError(`The repository archive is larger than ${Math.round(cap / 1024 / 1024)} MB.`);
+    if (buf.length > cap) throw tooLarge();
     onBytes(buf.length, total || buf.length);
     return buf;
   }
@@ -77,60 +96,88 @@ async function readCapped(res, onBytes, cap = MAX_BYTES) {
     const { done, value } = await reader.read();
     if (done) break;
     size += value.length;
-    if (size > cap) { try { await reader.cancel(); } catch {} throw new ImportError(`The repository archive is larger than ${Math.round(cap / 1024 / 1024)} MB.`); }
+    if (size > cap) { try { await reader.cancel(); } catch {} throw tooLarge(); }
     parts.push(Buffer.from(value));
     onBytes(size, total);
   }
   return Buffer.concat(parts);
 }
 
-// the repository's zip from GitHub without credentials: the API says whether the repository is public and names its
-// default branch, then codeload serves the archive of that branch
-export async function fetchGithubZip({ owner, repo, branch }, { fetch: get = globalThis.fetch, onBytes = () => {} } = {}) {
+// the repository's zip from GitHub without credentials. The API says whether the repository is public and names its
+// default branch; a /tree/ path is split into a branch and a folder by asking for the branches that start with its
+// first segment and taking the longest one the path begins with. codeload then serves the branch's archive
+export async function fetchGithubZip({ owner, repo, branch = null, tree = null }, { fetch: get = globalThis.fetch, onBytes = () => {} } = {}) {
   const headers = { accept: 'application/vnd.github+json', 'user-agent': 'Quorum' };
   const reach = async (url, h) => { try { return await get(url, { headers: h, redirect: 'follow' }); } catch { throw new ImportError('GitHub could not be reached. Check your connection and try again.'); } };
+  const limited = (res) => res.status === 403 || res.status === 429;
   const api = await reach(`https://api.github.com/repos/${owner}/${repo}`, headers);
   if (api.status === 404 || api.status === 401) throw new ImportError(PRIVATE_REPO);
-  if (api.status === 403 || api.status === 429) throw new ImportError('GitHub is limiting requests right now. Try again in a few minutes.');
+  if (limited(api)) throw new ImportError(RATE_LIMITED);
   if (!api.ok) throw new ImportError('GitHub could not be reached. Try again in a moment.');
   const info = await api.json().catch(() => ({}));
   if (info?.private) throw new ImportError(PRIVATE_REPO);
-  const ref = branch || info?.default_branch || 'HEAD';
+
+  let ref = branch;
+  let subpath = null;
+  if (tree && branch) {
+    if (tree !== branch && !tree.startsWith(`${branch}/`)) throw new ImportError('The branch does not match the branch in the address.');
+    subpath = tree === branch ? null : tree.slice(branch.length + 1);
+  } else if (tree) {
+    const first = tree.split('/')[0];
+    const refs = await reach(`https://api.github.com/repos/${owner}/${repo}/git/matching-refs/heads/${encodeURIComponent(first)}`, headers);
+    if (limited(refs)) throw new ImportError(RATE_LIMITED);
+    const names = refs.ok ? ((await refs.json().catch(() => [])) ?? []).map((r) => String(r?.ref ?? '').replace(/^refs\/heads\//, '')) : [];
+    const match = names.filter((n) => n && (tree === n || tree.startsWith(`${n}/`))).sort((a, b) => b.length - a.length)[0];
+    if (!match) throw new ImportError('The branch in that address was not found in the repository.');
+    ref = match;
+    subpath = tree === match ? null : tree.slice(match.length + 1);
+  }
+  ref ||= info?.default_branch || 'HEAD';
   const zip = await reach(`https://codeload.github.com/${owner}/${repo}/zip/${ref.split('/').map(encodeURIComponent).join('/')}`, { 'user-agent': 'Quorum' });
   if (zip.status === 404) throw new ImportError(branch ? `The branch ${branch} was not found in that repository.` : PRIVATE_REPO);
-  if (zip.status === 403 || zip.status === 429) throw new ImportError('GitHub is limiting requests right now. Try again in a few minutes.');
+  if (limited(zip)) throw new ImportError(RATE_LIMITED);
   if (!zip.ok) throw new ImportError('GitHub could not send the repository. Try again in a moment.');
-  return { buf: await readCapped(zip, onBytes), branch: ref };
+  return { buf: await readCapped(zip, onBytes), branch: ref, subpath };
 }
 
 // paths an import passes over without a word: dot files and folders, macOS resource forks, installed packages
 const quiet = (p) => p.split('/').some((s) => s.startsWith('.') || s === '__MACOSX' || s === 'node_modules');
 
 // the markdown files in an archive, as { rel, text }, with every other file named in skipped. One folder that holds
-// everything (a GitHub archive's "repo-branch/", a zipped folder) is taken off the front of each path
-export function readArchive(buf, { onEntry = () => {} } = {}) {
-  const entries = listZip(buf);
-  const live = entries.filter((e) => !quiet(e.path));
-  const tops = new Set(live.map((e) => e.path.split('/')[0]));
-  const rootFiles = live.some((e) => !e.dir && !e.path.includes('/'));
+// everything (a GitHub archive's "repo-branch/", a zipped folder) is taken off the front of each path first, ignoring a
+// top-level __MACOSX folder; then subpath, when given, keeps only that folder's contents. A file that cannot be read
+// from the archive is skipped with its path and the import goes on
+export function readArchive(buf, { subpath = null, onEntry = () => {} } = {}) {
+  const entries = listZip(buf).filter((e) => e.path.split('/')[0] !== '__MACOSX');
+  const tops = new Set(entries.map((e) => e.path.split('/')[0]));
+  const rootFiles = entries.some((e) => !e.dir && !e.path.includes('/'));
   const strip = tops.size === 1 && !rootFiles ? `${[...tops][0]}/` : '';
+  const under = subpath ? `${subpath}/` : '';
   const files = [];
   const skipped = [];
+  let inSubpath = !subpath;
   let n = 0;
-  for (const e of live) {
+  for (const e of entries) {
     n++;
-    if (n % 100 === 0) onEntry(n, live.length);
-    if (e.dir) continue;
-    const rel = strip && e.path.startsWith(strip) ? e.path.slice(strip.length) : e.path;
-    if (!rel) continue;
+    if (n % 100 === 0) onEntry(n, entries.length);
+    let rel = strip && e.path.startsWith(strip) ? e.path.slice(strip.length) : e.path;
+    if (under) {
+      if (rel !== subpath && !rel.startsWith(under)) continue;
+      inSubpath = true;
+      rel = rel.slice(under.length);
+    }
+    if (!rel || e.dir || quiet(rel)) continue;
     if (e.symlink) { skipped.push({ path: rel, reason: 'Symbolic links are not imported.' }); continue; }
     if (!MARKDOWN.test(rel)) { skipped.push({ path: rel, reason: 'Only markdown files are imported.' }); continue; }
     if (e.encrypted) { skipped.push({ path: rel, reason: 'The file is encrypted.' }); continue; }
     if (e.size > MAX_NOTE_BYTES) { skipped.push({ path: rel, reason: 'The file is larger than 5 MB.' }); continue; }
     if (e.method !== 0 && e.method !== 8) { skipped.push({ path: rel, reason: 'The file is compressed in a way Quorum cannot read.' }); continue; }
-    files.push({ rel, text: readEntry(buf, e).toString('utf8').replace(/^\uFEFF/, '') });
+    let text;
+    try { text = readEntry(buf, e).toString('utf8').replace(/^\uFEFF/, ''); } catch { skipped.push({ path: rel, reason: 'The file is damaged in the archive.' }); continue; }
+    files.push({ rel, text });
   }
-  onEntry(live.length, live.length);
+  if (!inSubpath) throw new ImportError(`The folder ${subpath} was not found in the repository.`);
+  onEntry(entries.length, entries.length);
   return { files, skipped };
 }
 
@@ -139,16 +186,22 @@ const fmValue = (v) => { const s = String(v).replace(/[\r\n]+/g, ' ').trim(); re
 // the file's text with its frontmatter set: shared with the workspace, and where it came from
 export function sharedText(text, sourceLine) {
   const body = String(text).replace(/\r\n?/g, '\n');
-  const set = { visibility: 'public', kb_source: fmValue(sourceLine) };
-  const m = body.match(/^---\n([\s\S]*?)\n---(\n|$)/);
-  if (!m) return `---\n${Object.entries(set).map(([k, v]) => `${k}: ${v}`).join('\n')}\n---\n${body}`;
-  const kept = m[1].split('\n').filter((l) => !Object.keys(set).some((k) => l.startsWith(`${k}:`)));
-  return `---\n${[...kept, ...Object.entries(set).map(([k, v]) => `${k}: ${v}`)].join('\n')}\n---${m[2]}${body.slice(m[0].length)}`;
+  return localNotes.setFrontmatterKey(localNotes.setFrontmatterKey(body, 'visibility', 'public'), 'kb_source', fmValue(sourceLine));
 }
 
 const safeSeg = (s) => String(s ?? '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Knowledge base';
 const sha256 = (t) => createHash('sha256').update(t).digest('hex');
 const keyOf = (segs) => segs.map((s) => s.trim().toLowerCase()).join('/');
+// a KB name from a repository or zip name: trimmed to the 120 characters the server takes
+const kbName = (s) => String(s ?? '').trim().slice(0, 120).trim() || 'Imported knowledge base';
+// why nothing could be imported, with the skipped files counted by reason
+function nothingImported(files, skipped) {
+  const counts = new Map();
+  for (const s of skipped) counts.set(s.reason, (counts.get(s.reason) ?? 0) + 1);
+  const lead = files ? 'None of the markdown files could be imported.' : 'No markdown files were found in the source.';
+  if (!counts.size) return lead;
+  return `${lead} Skipped: ${[...counts].map(([r, c]) => `${c} ${c === 1 ? 'file' : 'files'} (${r.replace(/\.$/, '')})`).join(', ')}.`;
+}
 
 export function createKbImport({ account, fetch: get = globalThis.fetch, readFile = fsReadFile, statFile = stat, pickZip = async () => null, toUI = () => {}, log = () => {} }) {
   const ready = (admin) => {
@@ -159,36 +212,48 @@ export function createKbImport({ account, fetch: get = globalThis.fetch, readFil
     if (admin && s.workspace.role === 'member') return { error: 'Only owners and admins can create a knowledge base.' };
     return null;
   };
-  const ws = () => account.state().workspace.id;
   const rpc = async (name, args) => {
     const { data, error } = await account.client().rpc(name, args);
     if (error) throw Object.assign(new Error(error.message), { code: error.code ?? '' });
     return data;
   };
-  const findKb = async (kbId) => ((await rpc('kb_list', { workspace_id: ws() })) ?? []).find((k) => k.id === kbId) ?? null;
-  // fetching reports at most once per 256 KB, so a large download does not flood the renderer
-  let lastBytes = -1;
+  const findKb = async (wsId, kbId) => ((await rpc('kb_list', { workspace_id: wsId })) ?? []).find((k) => k.id === kbId) ?? null;
+  // fetching reports at most once per 256 KB, whether or not the size is known, plus the first and last byte
+  let lastBytes = 0;
   const progress = (kbId, phase, done, total) => {
-    if (phase === 'fetching' && done > 0 && done < total && done - lastBytes < 256 * 1024) return;
-    if (phase === 'fetching') lastBytes = done;
+    if (phase === 'fetching') {
+      const last = total > 0 && done >= total;
+      if (done > 0 && !last && done - lastBytes < PROGRESS_BYTES) return;
+      lastBytes = done;
+    }
     toUI('kb-import-progress', { kbId, phase, done, total });
   };
 
   // every live note in the KB the person can read, page by page
-  const kbNotes = async (kbId) => {
+  const kbNotes = async (wsId, kbId) => {
     const rows = [];
     for (let offset = 0; ; offset += PAGE) {
-      const { data, error } = await account.client().from('notes').select('id, path, folder_id, user_id')
-        .eq('workspace_id', ws()).eq('kb_id', kbId).is('deleted_at', null).order('id').range(offset, offset + PAGE - 1);
+      const { data, error } = await account.client().from('notes').select('id, path, folder_id, user_id, frontmatter')
+        .eq('workspace_id', wsId).eq('kb_id', kbId).is('deleted_at', null).order('id').range(offset, offset + PAGE - 1);
       if (error) throw error;
       rows.push(...(data ?? []));
       if ((data ?? []).length < PAGE) return rows;
     }
   };
+  // who owns each of these notes, as a name for a skipped reason
+  const ownerNames = async (ids) => {
+    if (!ids.length) return new Map();
+    const { data, error } = await account.client().from('profiles').select('user_id, name, email').in('user_id', ids);
+    if (error) { log('kb-import', 'profiles', error.message); return new Map(); }
+    return new Map((data ?? []).map((p) => [p.user_id, p.name || p.email || null]));
+  };
 
-  // the source's bytes and the KB's name for it, before anything is created
-  const resolveSource = async (source, stored) => {
-    const src = source ?? (stored?.kind === 'github' ? { kind: 'github', url: stored.url, branch: stored.branch ?? undefined } : null);
+  // the source as the import reads it, before anything is created
+  const resolveSource = (source, stored) => {
+    const again = stored?.kind === 'github' && stored.url
+      ? (stored.subpath && stored.branch ? { kind: 'github', url: `${stored.url}/tree/${stored.branch}/${stored.subpath}` } : { kind: 'github', url: stored.url, branch: stored.branch ?? undefined })
+      : null;
+    const src = source ?? again;
     if (!src) return { error: stored?.kind === 'zip' ? 'Choose the zip again to refresh this knowledge base.' : 'Choose a GitHub repository or a zip to import.' };
     if (src.kind === 'github') {
       const g = parseGithubUrl(src.url, src.branch);
@@ -205,7 +270,10 @@ export function createKbImport({ account, fetch: get = globalThis.fetch, readFil
   const fetchBytes = async (src, kbId) => {
     if (src.kind === 'github') {
       const r = await fetchGithubZip(src.gh, { fetch: get, onBytes: (done, total) => progress(kbId, 'fetching', done, total) });
-      src.gh.branch = r.branch;
+      src.ref = r.branch;
+      src.subpath = r.subpath;
+      // a branch taken from the address is the one to fetch again on a refresh
+      if (src.gh.tree) src.asked = r.branch;
       return r.buf;
     }
     let info;
@@ -216,29 +284,39 @@ export function createKbImport({ account, fetch: get = globalThis.fetch, readFil
     progress(kbId, 'fetching', buf.length, buf.length);
     return buf;
   };
-  const sourceLine = (src, rel) => (src.kind === 'github' ? `${src.gh.url}/blob/${src.gh.branch}/${rel}` : `${src.name}.zip/${rel}`);
+  const sourceLine = (src, rel) => (src.kind === 'github' ? `${src.gh.url}/blob/${src.ref}/${src.subpath ? `${src.subpath}/` : ''}${rel}` : `${src.name}.zip/${rel}`);
+  // whether a note's kb_source came from this same source: the same repository (and folder), or any zip
+  const sameOrigin = (src, ks) => {
+    const s = String(ks ?? '');
+    if (src.kind === 'zip') return /^[^/]+\.zip\//i.test(s);
+    if (!s.startsWith(`${src.gh.url}/blob/`)) return false;
+    return !src.subpath || s.includes(`/${src.subpath}/`);
+  };
 
   let running = false;
   async function importKb(req = {}) {
     if (running) return { error: 'An import is already running. Wait for it to finish.' };
     const no = ready(!req.kbId); if (no) return no;
     running = true;
+    const wsId = account.state().workspace.id;
+    const me = account.state().userId;
     let kbId = req.kbId ?? null;
     let created = false;
     let wrote = 0;
+    const dropCreated = async () => { if (created && !wrote) { try { await rpc('kb_delete', { kb_id: kbId }); } catch (e) { log('kb-import', 'cleanup', e?.message ?? e); } } };
     try {
       let kb = null;
       if (kbId) {
-        kb = await findKb(kbId);
+        kb = await findKb(wsId, kbId);
         if (!kb) return { error: 'That knowledge base no longer exists.' };
         if (kb.role !== 'admin') return { error: 'Only the knowledge base\'s admins can import into it.' };
       }
-      const src = await resolveSource(req.source ?? null, kb?.source ?? null);
+      const src = resolveSource(req.source ?? null, kb?.source ?? null);
       if (src.error) return src;
       if (!kb) {
-        const n = checkName(req.name || src.name);
+        const n = checkName(kbName(req.name || src.name));
         if (n.error) return n;
-        kb = await rpc('kb_create', { workspace_id: ws(), name: n.name.slice(0, 120), kind: 'general' });
+        kb = await rpc('kb_create', { workspace_id: wsId, name: n.name, kind: 'general' });
         kbId = kb.id; created = true;
       }
       const folders = Array.isArray(kb.folders) ? kb.folders : [];
@@ -248,40 +326,49 @@ export function createKbImport({ account, fetch: get = globalThis.fetch, readFil
       if (rootId && !byId.has(rootId)) throw new ImportError('That folder is not in this knowledge base.');
       const rootSegs = rootId ? segsOf(rootId) : [];
 
-      lastBytes = -1;
+      lastBytes = 0;
       progress(kbId, 'fetching', 0, 0);
       const buf = await fetchBytes(src, kbId);
-      const { files, skipped } = readArchive(buf, { onEntry: (done, total) => progress(kbId, 'reading', done, total) });
+      const { files, skipped } = readArchive(buf, { subpath: src.subpath ?? null, onEntry: (done, total) => progress(kbId, 'reading', done, total) });
+      if (created && !files.length) { await dropCreated(); return { error: nothingImported(false, skipped), skipped }; }
 
-      // folders: the KB's own by their path of names (the server compares names without case), then the missing ones
-      // made parent first. Only folders on the way to a markdown file are made
+      // folders: the KB's own by their path of names (the server compares names without case), then the missing ones,
+      // one level at a time with a few calls in flight. Only folders on the way to a markdown file are made
       const folderAt = new Map([[keyOf(rootSegs), rootId]]);
       for (const f of folders) folderAt.set(keyOf(segsOf(f.id)), f.id);
       const failedDir = new Map();
-      const dirs = [...new Set(files.map((f) => path.posix.dirname(f.rel)).filter((d) => d !== '.'))];
       const wanted = new Set();
-      for (const d of dirs) { const segs = d.split('/'); for (let i = 1; i <= segs.length; i++) wanted.add(segs.slice(0, i).join('/')); }
-      for (const d of [...wanted].sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b))) {
-        const segs = d.split('/');
-        const parent = segs.slice(0, -1).join('/');
-        if (parent && failedDir.has(parent)) { failedDir.set(d, failedDir.get(parent)); continue; }
-        const key = keyOf([...rootSegs, ...segs]);
-        if (folderAt.has(key)) continue;
-        const n = checkName(segs.at(-1), { folder: true });
-        if (n.error) { failedDir.set(d, n.error); continue; }
-        try {
-          const f = await rpc('kb_folder_create', { kb_id: kbId, parent_id: folderAt.get(keyOf([...rootSegs, ...segs.slice(0, -1)])) ?? null, name: n.name, position: null });
-          folderAt.set(key, f.id);
-        } catch (err) { failedDir.set(d, plain(err, 'The folder could not be created.')); }
+      for (const f of files) { const segs = f.rel.split('/').slice(0, -1); for (let i = 1; i <= segs.length; i++) wanted.add(segs.slice(0, i).join('/')); }
+      const levels = [];
+      for (const d of wanted) (levels[d.split('/').length - 1] ??= []).push(d);
+      for (const level of levels) {
+        const todo = [];
+        for (const d of (level ?? []).sort()) {
+          const segs = d.split('/');
+          const parent = segs.slice(0, -1).join('/');
+          if (parent && failedDir.has(parent)) { failedDir.set(d, failedDir.get(parent)); continue; }
+          if (folderAt.has(keyOf([...rootSegs, ...segs]))) continue;
+          const n = checkName(segs.at(-1), { folder: true });
+          if (n.error) { failedDir.set(d, n.error); continue; }
+          todo.push({ d, segs, name: n.name });
+        }
+        for (let i = 0; i < todo.length; i += FOLDER_CALLS) {
+          await Promise.all(todo.slice(i, i + FOLDER_CALLS).map(async ({ d, segs, name }) => {
+            try {
+              const f = await rpc('kb_folder_create', { kb_id: kbId, parent_id: folderAt.get(keyOf([...rootSegs, ...segs.slice(0, -1)])) ?? null, name, position: null });
+              folderAt.set(keyOf([...rootSegs, ...segs]), f.id);
+            } catch (err) { failedDir.set(d, plain(err, 'The folder could not be created.')); }
+          }));
+        }
       }
 
-      // notes: an existing note at the same place in the KB keeps its id and path; another member's note there stays
-      const me = account.state().userId;
+      // notes: an earlier import's note at the same place keeps its id and path; a hand-written note or another
+      // member's note there stays as it is
       const existing = new Map();
-      for (const n of await kbNotes(kbId)) {
-        const name = path.posix.basename(String(n.path ?? ''));
-        existing.set(keyOf([...(n.folder_id ? segsOf(n.folder_id) : []), name]), n);
-      }
+      const placeKey = (n) => keyOf([...(n.folder_id ? segsOf(n.folder_id) : []), path.posix.basename(String(n.path ?? ''))]);
+      const inKb = await kbNotes(wsId, kbId);
+      for (const n of inKb) existing.set(placeKey(n), n);
+      const owners = await ownerNames([...new Set(inKb.filter((n) => n.user_id !== me).map((n) => n.user_id))]);
       const prefix = `Knowledge bases/${safeSeg(kb.name)}`;
       const rows = [];
       const seen = new Set();
@@ -297,37 +384,55 @@ export function createKbImport({ account, fetch: get = globalThis.fetch, readFil
         const frontmatter = parseFrontmatter(text);
         if (frontmatter.confidential) { skipped.push({ path: f.rel, reason: 'The note is marked confidential.' }); continue; }
         const had = existing.get(key);
-        if (had && had.user_id !== me) { skipped.push({ path: f.rel, reason: 'Another member\'s note is already at this place in the knowledge base.' }); continue; }
+        if (had && had.user_id !== me) {
+          const who = owners.get(had.user_id);
+          skipped.push({ path: f.rel, reason: who ? `${who} already has a note at this place in the knowledge base.` : 'Another member already has a note at this place in the knowledge base.' });
+          continue;
+        }
+        if (had && !had.frontmatter?.kb_source) { skipped.push({ path: f.rel, reason: 'A note with this name already exists.' }); continue; }
         rows.push({ id: had?.id ?? ulid(), rel: had?.path ?? `${prefix}/${kbSegs.join('/')}`, text, frontmatter, hash: sha256(text), mtime: new Date().toISOString(), kbId, folderId: folderAt.get(keyOf(kbSegs.slice(0, -1))) ?? null, from: f.rel });
       }
 
-      const remote = createRemote({ client: account.client(), workspaceId: ws(), userId: me });
+      const remote = createRemote({ client: account.client(), workspaceId: wsId, userId: me });
       progress(kbId, 'writing', 0, rows.length);
+      const clash = (e) => /duplicate key|notes_workspace_path/i.test(String(e?.message));
       for (let i = 0; i < rows.length; i += BATCH) {
         const batch = rows.slice(i, i + BATCH);
         try { await remote.notes.pushMany(batch); wrote += batch.length; } catch (err) {
-          if (!/duplicate key|notes_workspace_path/i.test(String(err?.message))) throw err;
+          if (!clash(err)) throw err;
           // a path another note already holds fails the whole batch; one at a time finds which
           for (const r of batch) {
             try { await remote.notes.push(r); wrote++; } catch (e) {
-              if (!/duplicate key|notes_workspace_path/i.test(String(e?.message))) throw e;
+              if (!clash(e)) throw e;
               skipped.push({ path: r.from, reason: 'Another note in the workspace already uses this path.' });
             }
           }
         }
         progress(kbId, 'writing', Math.min(i + BATCH, rows.length), rows.length);
       }
+      if (created && !wrote) { await dropCreated(); return { error: nothingImported(true, skipped), skipped }; }
 
-      const stored = src.kind === 'github' ? { kind: 'github', url: src.gh.url, branch: src.asked, name: src.gh.repo } : { kind: 'zip', name: `${src.name}.zip` };
+      // notes an earlier import of this source wrote under the same folder that the source no longer has
+      const rootKey = keyOf(rootSegs);
+      const gone = inKb.filter((n) => n.user_id === me && sameOrigin(src, n.frontmatter?.kb_source) && !seen.has(placeKey(n)) && (!rootKey || placeKey(n).startsWith(`${rootKey}/`))).map((n) => n.id);
+      let removed = 0;
+      for (let i = 0; i < gone.length; i += BATCH) {
+        const ids = gone.slice(i, i + BATCH);
+        const { error } = await account.client().from('notes').update({ deleted_at: new Date().toISOString() }).eq('workspace_id', wsId).eq('user_id', me).in('id', ids);
+        if (error) { log('kb-import', 'remove', error.message); break; }
+        removed += ids.length;
+      }
+
+      const stored = src.kind === 'github' ? { kind: 'github', url: src.gh.url, branch: src.asked, subpath: src.subpath, name: src.gh.repo } : { kind: 'zip', name: `${src.name}.zip` };
       let shaped = null;
       try { shaped = await rpc('kb_source_set', { kb_id: kbId, source: stored }); } catch (err) { log('kb-import', 'source not stored', err?.message ?? err); }
-      shaped ??= await findKb(kbId);
+      shaped ??= await findKb(wsId, kbId);
       progress(kbId, 'done', wrote, wrote);
-      log('kb-import', `${wrote} notes into ${kbId}, ${skipped.length} skipped`);
-      return { kb: shapeKb(shaped ?? kb), imported: wrote, skipped };
+      log('kb-import', `${wrote} notes into ${kbId}, ${removed} removed, ${skipped.length} skipped`);
+      return { kb: shapeKb(shaped ?? kb), imported: wrote, removed, skipped };
     } catch (err) {
       log('kb-import', err?.message ?? err);
-      if (created && !wrote) { try { await rpc('kb_delete', { kb_id: kbId }); } catch (e) { log('kb-import', 'cleanup', e?.message ?? e); } }
+      await dropCreated();
       const msg = err?.code === 'IMPORT' || err?.code === 'ZIP' ? err.message : plain(err, 'The import could not finish.');
       return { error: wrote ? `The import stopped after ${wrote} notes. ${msg}` : msg };
     } finally { running = false; }

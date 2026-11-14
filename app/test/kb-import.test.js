@@ -12,6 +12,7 @@ process.env.HOME = home;
 const { createKbImport, fetchGithubZip, parseGithubUrl, readArchive, sharedText, PRIVATE_REPO } = await import('../ee/kbImport.js');
 const { listZip, readEntry, safeEntryPath } = await import('../ee/zipRead.js');
 const { shapeKb } = await import('../ee/knowledgeBases.js');
+const { notes: localNotes } = await import('../store/local.js');
 
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
@@ -118,6 +119,13 @@ describe('what an archive becomes', () => {
     expect(skipped).toEqual([{ path: 'a.md', reason: 'The file is encrypted.' }]);
   });
 
+  it('fills an empty frontmatter block instead of adding a second one', () => {
+    expect(localNotes.setFrontmatterKey('---\n---\nBody\n---\nx', 'visibility', 'public')).toBe('---\nvisibility: public\n---\nBody\n---\nx');
+    expect(localNotes.setFrontmatterKey('---\n---', 'a', 'b')).toBe('---\na: b\n---');
+    expect(localNotes.setFrontmatterKey('---\ntitle: T\n---\nB', 'title', '$& x')).toBe('---\ntitle: $& x\n---\nB');
+    expect(sharedText('---\n---\n# Doc', 'a.zip/doc.md')).toBe('---\nvisibility: public\nkb_source: a.zip/doc.md\n---\n# Doc');
+  });
+
   it('marks every note shared and says where it came from', () => {
     expect(sharedText('# Plain', 'https://github.com/o/r/blob/main/a.md')).toBe('---\nvisibility: public\nkb_source: https://github.com/o/r/blob/main/a.md\n---\n# Plain');
     expect(sharedText('x: 1', 'a: b #c')).toBe('---\nvisibility: public\nkb_source: "a: b #c"\n---\nx: 1');
@@ -127,10 +135,13 @@ describe('what an archive becomes', () => {
 
 describe('GitHub addresses', () => {
   it('takes a repository address and an optional branch', () => {
-    expect(parseGithubUrl('https://github.com/example-org/handbook')).toEqual({ owner: 'example-org', repo: 'handbook', branch: null, url: 'https://github.com/example-org/handbook' });
-    expect(parseGithubUrl('https://github.com/example-org/handbook.git/', 'release/v2')).toMatchObject({ repo: 'handbook', branch: 'release/v2' });
-    expect(parseGithubUrl('https://github.com/example-org/handbook/tree/docs/v1')).toMatchObject({ branch: 'docs/v1' });
-    expect(parseGithubUrl('https://github.com/example-org/handbook/tree/x', 'main')).toMatchObject({ branch: 'main' });
+    expect(parseGithubUrl('https://github.com/example-org/handbook')).toEqual({ owner: 'example-org', repo: 'handbook', branch: null, tree: null, url: 'https://github.com/example-org/handbook' });
+    expect(parseGithubUrl('https://github.com/example-org/handbook.git/', 'release/v2')).toMatchObject({ repo: 'handbook', branch: 'release/v2', tree: null });
+    expect(parseGithubUrl('https://github.com/example-org/handbook/tree/release/v2/docs/guides')).toMatchObject({ branch: null, tree: 'release/v2/docs/guides' });
+    expect(parseGithubUrl('https://github.com/example-org/handbook/tree/main/Team%20docs/')).toMatchObject({ tree: 'main/Team docs' });
+    expect(parseGithubUrl('https://github.com/example-org/handbook/tree/main', 'main')).toMatchObject({ branch: 'main', tree: 'main' });
+    expect(parseGithubUrl('https://github.com/example-org/handbook/tree/main/../x').error).toBeTruthy();
+    expect(parseGithubUrl('https://github.com/example-org/handbook/tree/main//x').error).toBeTruthy();
   });
 
   it('refuses anything else', () => {
@@ -144,10 +155,12 @@ describe('GitHub addresses', () => {
 });
 
 // a fetch that answers the GitHub API and codeload from a table
-function fakeGithub({ api = { status: 200, json: { default_branch: 'main', private: false } }, zips = {} } = {}) {
+function fakeGithub({ api = { status: 200, json: { default_branch: 'main', private: false } }, zips = {}, branches = ['main'] } = {}) {
   const calls = [];
   const fetch = async (url) => {
     calls.push(url);
+    const refs = url.match(/^https:\/\/api\.github\.com\/repos\/[^/]+\/[^/]+\/git\/matching-refs\/heads\/(.+)$/);
+    if (refs) { const first = decodeURIComponent(refs[1]); return { status: 200, ok: true, json: async () => branches.filter((b) => b.startsWith(first)).map((b) => ({ ref: `refs/heads/${b}` })) }; }
     if (url.startsWith('https://api.github.com/')) return { status: api.status, ok: api.status < 300, json: async () => api.json };
     const ref = url.replace(/^https:\/\/codeload\.github\.com\/[^/]+\/[^/]+\/zip\//, '');
     const z = zips[decodeURIComponent(ref)];
@@ -182,7 +195,7 @@ describe('fetching from GitHub', () => {
 
 // a Supabase client fake: KBs and folders kept in memory, kb_* RPCs acting on them, and a notes table that takes
 // upserts and answers the KB notes read
-function fakeServer({ role = 'admin', notes = [], kbs = [], folderFail = null, sourceSet = true } = {}) {
+function fakeServer({ role = 'admin', notes = [], kbs = [], folderFail = null, sourceSet = true, profiles = [] } = {}) {
   const state = { kbs: kbs.map((k) => ({ folders: [], source: null, role: 'admin', ...k })), notes: notes.map((n) => ({ ...n })), calls: [] };
   let seq = 0;
   const id = (p) => `${p}${String(++seq).padStart(4, '0')}`;
@@ -217,7 +230,19 @@ function fakeServer({ role = 'admin', notes = [], kbs = [], folderFail = null, s
     const b = {};
     for (const op of ['select', 'eq', 'is', 'order', 'range', 'limit', 'neq', 'gt', 'in', 'like']) b[op] = (...a) => { ops.push([op, ...a]); return b; };
     b.upsert = (rows) => { ops.push(['upsert', rows]); return b; };
+    b.update = (patch) => { ops.push(['update', patch]); return b; };
     b.then = (res, rej) => {
+      if (table === 'profiles') {
+        const ids = ops.find((o) => o[0] === 'in')?.[2] ?? [];
+        return Promise.resolve({ data: profiles.filter((p) => ids.includes(p.user_id)), error: null }).then(res, rej);
+      }
+      const upd = ops.find((o) => o[0] === 'update');
+      if (upd) {
+        const ids = ops.find((o) => o[0] === 'in')?.[2] ?? [];
+        for (const n of state.notes) if (ids.includes(n.id)) Object.assign(n, upd[1]);
+        state.calls.push([`update:${table}`, ids.length]);
+        return Promise.resolve({ data: [], error: null }).then(res, rej);
+      }
       const up = ops.find((o) => o[0] === 'upsert');
       if (up) {
         for (const r of up[1]) {
@@ -309,11 +334,109 @@ describe('kb-import', () => {
     const r = await k.handlers['kb-import']({ kbId: 'KB1', folderId: 'FA', source: { kind: 'zip', path: '/tmp/quorum-kb/Team docs.zip' } });
     expect(r.error).toBeUndefined();
     expect(r.imported).toBe(1);
-    expect(r.skipped).toEqual(expect.arrayContaining([{ path: 'leave.md', reason: 'Another member\'s note is already at this place in the knowledge base.' }, { path: 'travel/map.pdf', reason: 'Only markdown files are imported.' }]));
+    expect(r.skipped).toEqual(expect.arrayContaining([{ path: 'leave.md', reason: 'Another member already has a note at this place in the knowledge base.' }, { path: 'travel/map.pdf', reason: 'Only markdown files are imported.' }]));
     const travel = server.state.kbs[0].folders.find((f) => f.name === 'travel');
     expect(travel.parent_id).toBe('FA');
     expect(server.state.notes.find((n) => n.path.endsWith('expenses.md'))).toMatchObject({ path: 'Knowledge bases/Team/Policies/travel/expenses.md', folder_id: travel.id, frontmatter: { kb_source: 'Team docs.zip/travel/expenses.md' } });
     expect(r.kb.source).toMatchObject({ kind: 'zip', name: 'Team docs.zip', url: null });
+  });
+
+  it('names the member who owns a note at the same place', async () => {
+    const server = fakeServer({ kbs: [{ id: 'KB1', name: 'Team' }], notes: [{ id: 'N1', path: 'x/leave.md', kb_id: 'KB1', folder_id: null, user_id: 'u2', frontmatter: { kb_source: 'old.zip/leave.md' } }], profiles: [{ user_id: 'u2', name: 'Sam Example', email: 'sam@example.com' }] });
+    const k = importer(server, { files: { '/tmp/t.zip': makeZip([{ name: 'leave.md', data: '# Leave' }]) } });
+    const r = await k.handlers['kb-import']({ kbId: 'KB1', source: { kind: 'zip', path: '/tmp/t.zip' } });
+    expect(r.skipped).toEqual([{ path: 'leave.md', reason: 'Sam Example already has a note at this place in the knowledge base.' }]);
+  });
+
+  it('leaves a hand-written note alone and removes imported notes the source no longer has', async () => {
+    const server = fakeServer();
+    const k = importer(server, { zips: { main: makeZip(HANDBOOK) } });
+    const first = await k.handlers['kb-import']({ source: { kind: 'github', url: 'https://github.com/example-org/handbook' } });
+    const kb = server.state.kbs[0];
+    // a note the person wrote by hand in the same folder, and one in another folder
+    server.state.notes.push({ id: 'H1', path: 'mine/faq.md', kb_id: kb.id, folder_id: kb.folders.find((f) => f.name === 'guides').id, user_id: 'me', frontmatter: { visibility: 'public' } });
+    server.state.notes.push({ id: 'H2', path: 'mine/other.md', kb_id: kb.id, folder_id: null, user_id: 'me', frontmatter: { visibility: 'public' } });
+    const next = HANDBOOK.filter((e) => !e.name.endsWith('onboarding.md')).concat({ name: 'handbook-main/guides/faq.md', data: '# FAQ' });
+    const again = await importer(server, { zips: { main: makeZip(next) } }).handlers['kb-import']({ kbId: first.kb.id });
+    expect(again.error).toBeUndefined();
+    expect(again).toMatchObject({ imported: 2, removed: 1 });
+    expect(again.skipped).toEqual(expect.arrayContaining([{ path: 'guides/faq.md', reason: 'A note with this name already exists.' }]));
+    const live = server.state.notes.filter((n) => !n.deleted_at).map((n) => n.id);
+    expect(live).toEqual(expect.arrayContaining(['H1', 'H2']));
+    expect(server.state.notes.find((n) => n.path.endsWith('onboarding.md')).deleted_at).toBeTruthy();
+    expect(server.state.notes.find((n) => n.id === 'H1').body).toBeUndefined();
+  });
+
+  it('imports only the folder a /tree/ address names, on a branch whose name has a slash', async () => {
+    const zip = makeZip([
+      { name: 'handbook-release-v2/' }, { name: 'handbook-release-v2/README.md', data: '# Root' },
+      { name: 'handbook-release-v2/docs/guides/a.md', data: '# A' }, { name: 'handbook-release-v2/docs/guides/sub/b.md', data: '# B' },
+      { name: 'handbook-release-v2/docs/other.md', data: '# Other' },
+    ]);
+    const server = fakeServer();
+    const gh = fakeGithub({ zips: { 'release/v2': zip }, branches: ['release', 'release/v2', 'main'] });
+    const k = importer(server, { gh });
+    const r = await k.handlers['kb-import']({ source: { kind: 'github', url: 'https://github.com/example-org/handbook/tree/release/v2/docs/guides' } });
+    expect(r.error).toBeUndefined();
+    expect(r.imported).toBe(2);
+    expect(server.state.notes.map((n) => n.path).sort()).toEqual(['Knowledge bases/handbook/a.md', 'Knowledge bases/handbook/sub/b.md']);
+    expect(server.state.notes.find((n) => n.path.endsWith('a.md')).frontmatter.kb_source).toBe('https://github.com/example-org/handbook/blob/release/v2/docs/guides/a.md');
+    expect(r.kb.source).toMatchObject({ kind: 'github', branch: 'release/v2', subpath: 'docs/guides' });
+    expect(gh.calls).toContain('https://api.github.com/repos/example-org/handbook/git/matching-refs/heads/release');
+    // a refresh reads the stored branch and folder again
+    const again = await importer(server, { gh }).handlers['kb-import']({ kbId: r.kb.id });
+    expect(again).toMatchObject({ imported: 2, removed: 0 });
+    // a folder or branch that is not there
+    const missing = await importer(fakeServer(), { gh }).handlers['kb-import']({ source: { kind: 'github', url: 'https://github.com/example-org/handbook/tree/release/v2/nope' } });
+    expect(missing.error).toBe('The folder nope was not found in the repository.');
+    const nobranch = await importer(fakeServer(), { gh }).handlers['kb-import']({ source: { kind: 'github', url: 'https://github.com/example-org/handbook/tree/feature/x' } });
+    expect(nobranch.error).toMatch(/branch in that address was not found/);
+  });
+
+  it('deletes a new KB that would hold no notes and says why', async () => {
+    const server = fakeServer();
+    const k = importer(server, { files: { '/tmp/code.zip': makeZip([{ name: 'a.js', data: '1' }, { name: 'b.png', data: 'x' }, { name: 'l.md', data: 'a.md', symlink: true }]) } });
+    const r = await k.handlers['kb-import']({ source: { kind: 'zip', path: '/tmp/code.zip' } });
+    expect(r.error).toBe('No markdown files were found in the source. Skipped: 2 files (Only markdown files are imported), 1 file (Symbolic links are not imported).');
+    expect(r.skipped).toHaveLength(3);
+    expect(server.state.kbs).toEqual([]);
+  });
+
+  it('skips a damaged file and imports the rest', async () => {
+    const buf = makeZip([{ name: 'a.md', data: 'hello world', deflate: false }, { name: 'b.md', data: '# B' }]);
+    buf[30 + 4 + 2] = 'X'.charCodeAt(0);
+    const { files, skipped } = readArchive(buf);
+    expect(files.map((f) => f.rel)).toEqual(['b.md']);
+    expect(skipped).toEqual([{ path: 'a.md', reason: 'The file is damaged in the archive.' }]);
+  });
+
+  it('takes the wrapping folder off before passing over resource forks', () => {
+    const { files, skipped } = readArchive(makeZip([{ name: '__MACOSX/Docs/._a.md', data: 'x' }, { name: 'Docs/a.md', data: '# A' }, { name: 'Docs/.hidden.md', data: '#' }]));
+    expect(files.map((f) => f.rel)).toEqual(['a.md']);
+    expect(skipped).toEqual([]);
+  });
+
+  it('names a KB from a long zip name within the limit', async () => {
+    const long = `/tmp/${'n'.repeat(150)}.zip`;
+    const server = fakeServer();
+    const r = await importer(server, { files: { [long]: makeZip([{ name: 'a.md', data: '#' }]) } }).handlers['kb-import']({ source: { kind: 'zip', path: long } });
+    expect(r.error).toBeUndefined();
+    expect(r.kb.name).toBe('n'.repeat(120));
+  });
+
+  it('reports download progress at most once per 256 KB when the size is unknown', async () => {
+    const zip = makeZip([{ name: 'a.md', data: '#' }]);
+    const chunks = [...Array(64)].map(() => new Uint8Array(16 * 1024));
+    chunks.push(new Uint8Array(zip));
+    let i = 0;
+    const fetch = async (url) => (url.includes('api.github.com')
+      ? { status: 200, ok: true, json: async () => ({ default_branch: 'main' }) }
+      : { status: 200, ok: true, headers: { get: () => null }, body: { getReader: () => ({ read: async () => (i < chunks.length ? { done: false, value: chunks[i++] } : { done: true }), cancel: async () => {} }) } });
+    const k = importer(fakeServer(), { gh: { fetch, calls: [] } });
+    await k.handlers['kb-import']({ source: { kind: 'github', url: 'https://github.com/o/r' } });
+    const fetching = k.events.filter(([, p]) => p.phase === 'fetching').map(([, p]) => p);
+    expect(fetching.length).toBeLessThanOrEqual(6);
+    expect(fetching.every((p) => p.total === 0)).toBe(true);
   });
 
   it('names a note whose path another note holds, and goes on with the rest', async () => {
@@ -372,7 +495,7 @@ describe('kb-import', () => {
   });
 
   it('shapes import sources on a KB', () => {
-    expect(shapeKb({ id: 'k', name: 'n', source: { kind: 'github', url: 'https://github.com/o/r', branch: 'main', name: 'r', imported_at: 't' } }).source).toEqual({ kind: 'github', url: 'https://github.com/o/r', path: null, branch: 'main', name: 'r', importedAt: 't' });
+    expect(shapeKb({ id: 'k', name: 'n', source: { kind: 'github', url: 'https://github.com/o/r', branch: 'main', name: 'r', imported_at: 't' } }).source).toEqual({ kind: 'github', url: 'https://github.com/o/r', path: null, branch: 'main', subpath: null, name: 'r', importedAt: 't' });
     expect(shapeKb({ id: 'k', name: 'n', source: { kind: 'zip', name: 'x.zip' } }).source).toMatchObject({ kind: 'zip', name: 'x.zip', url: null });
   });
 });

@@ -23,7 +23,7 @@
 //   Kb          { id, name, kind: 'general' | 'meetings', teamId, isDefault, source, role: 'admin' | 'reader',
 //                 createdAt, updatedAt, folders: FolderNode[], access: Access[] | null }
 //               folders is the tree; access is null unless role is admin. source is { kind, url, path, branch,
-//               name, importedAt } or null: kind folder or git is a Mac-side source (the default KB carries the 0020
+//               subpath, name, importedAt } or null: kind folder or git is a Mac-side source (the default KB carries the 0020
 //               team source); kind github or zip is where kb-import (ee/kbImport.js) last read the KB from.
 //   Folder      { id, kbId, parentId, name, position }
 //   FolderNode  { id, parentId, name, position, children: FolderNode[] }   siblings sorted by position, then name
@@ -74,7 +74,7 @@ export const shapeFolder = (f) => (f ? { id: f.id, kbId: f.kb_id, parentId: f.pa
 export const shapeKb = (k) => ({
   id: k.id, name: k.name, kind: KB_KINDS.includes(k.kind) ? k.kind : 'general', teamId: k.team_id ?? null, isDefault: !!k.is_default,
   source: k.source && typeof k.source === 'object' && SOURCE_KINDS.includes(k.source.kind)
-    ? { kind: k.source.kind, url: k.source.url ?? null, path: k.source.path ?? null, branch: k.source.branch ?? null, name: k.source.name ?? null, importedAt: k.source.imported_at ?? null }
+    ? { kind: k.source.kind, url: k.source.url ?? null, path: k.source.path ?? null, branch: k.source.branch ?? null, subpath: k.source.subpath ?? null, name: k.source.name ?? null, importedAt: k.source.imported_at ?? null }
     : null,
   role: k.role === 'admin' ? 'admin' : 'reader', createdAt: k.created_at ?? null, updatedAt: k.updated_at ?? null,
   folders: folderTree(Array.isArray(k.folders) ? k.folders : []),
