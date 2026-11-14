@@ -261,6 +261,7 @@ declare global {
       onSettings(cb: (s: Settings) => void): Unsub;
       onLevel(cb: (v: number) => void): Unsub;
       hideWindow(): Promise<void>;
+      hideApp(): Promise<void>;
       quit(): Promise<void>;
       user(): Promise<{ name: string; email: string; photo: string | null }>;
       onSuggestion(cb: (s: Suggestion) => void): Unsub;

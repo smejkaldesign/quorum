@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('quorum', {
   onSettings: on('settings'),
   onLevel: on('level'),
   hideWindow: () => ipcRenderer.invoke('hide-window'),
+  hideApp: () => ipcRenderer.invoke('hide-app'),
   quit: () => ipcRenderer.invoke('quit'),
   user: () => ipcRenderer.invoke('user'),
   onSuggestion: on('suggestion'),

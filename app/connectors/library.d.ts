@@ -12,3 +12,17 @@ export function aboutOf(connector: LibraryConnector): string;
 export function connectorsFor(opts?: { meetingCapture?: boolean }): readonly LibraryConnector[];
 export function aboutFor(connector: LibraryConnector, opts?: { meetingCapture?: boolean }): string;
 export function featuresFor(connector: LibraryConnector, opts?: { meetingCapture?: boolean }): string[];
+// what the main process reports about connections; added is settings.meetingProviders, the apps the person turned on
+export type ConnectionLive = {
+  sources?: readonly { id: string; connected: boolean }[];
+  providers?: readonly { id: string; enabled: boolean; installed: boolean; access: boolean | null }[];
+  platforms?: readonly { id: string; connected: boolean }[];
+  accounts?: readonly { id: string; connected: boolean }[];
+  cal?: { enabled?: boolean; status?: string; google?: { connected: boolean } | null } | null;
+  mcp?: { added: boolean } | null;
+  added?: Record<string, { enabled: boolean }>;
+};
+export function isConnected(connector: LibraryConnector, live: ConnectionLive, opts?: { explicit?: boolean }): boolean;
+export const NEW_NOTE_CATEGORIES: readonly string[];
+export function canNewNote(live: ConnectionLive, list?: readonly LibraryConnector[]): boolean;
+export const CONNECTORS_CHANGED: string;

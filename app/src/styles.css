@@ -1527,6 +1527,34 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .conn-off { margin-left: 10px; font-size: 13px; color: var(--muted); }
 .conn-more { margin: 18px 2px 0; font-size: 13px; color: var(--muted); }
 
+/* Up next strip: under the header on every tab (UpNext.tsx). Its heading row drags the window like the bar; the list
+   and its scrollbar take clicks */
+.up-strip { flex: none; padding: 2px 22px 6px; border-bottom: 1px solid var(--line); -webkit-app-region: drag; }
+.up-strip button, .up-strip label, .up-strip .hist-row, .up-list { -webkit-app-region: no-drag; }
+.up-strip .up-head { margin-bottom: 4px; }
+.up-strip .up-head h4 { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; color: var(--muted); }
+.up-head-end { display: inline-flex; align-items: center; gap: 12px; }
+.up-strip .up-new { height: 26px; padding: 0 10px 0 8px; display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
+.up-strip .up-empty { padding: 4px 0 6px; }
+.up-list { max-height: 42vh; overflow-y: auto; }
+.up-strip .hist-row { padding: 4px 0; gap: 12px; }
+.up-strip .avatar-sq { width: 32px; height: 32px; }
+.up-strip .hist-text { gap: 2px; }
+.up-strip .hist-text strong, .up-strip .hist-text span, .up-strip .hist-time { font-size: 13px; }
+.up-more-row { display: flex; justify-content: center; padding: 2px 0 4px; }
+.up-show-more { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 8px; font-size: 12px; color: var(--muted); }
+.up-show-more:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
+.up-chev { transition: transform 0.15s ease; }
+.up-chev.open { transform: rotate(180deg); }
+
+/* header: update progress while a version downloads, and the close button right of the menu */
+.update-progress { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; margin-right: 6px; border-radius: 9px; color: var(--go); background: rgba(127, 219, 131, 0.08); -webkit-app-region: no-drag; }
+.update-track { position: relative; width: 36px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+.update-track i { position: absolute; inset: 0 auto 0 0; background: var(--go); border-radius: 2px; transition: width 0.3s ease; }
+.status-wrap:has(.update-progress) { display: flex; align-items: center; gap: 2px; flex-wrap: nowrap; }
+.bar .right .close-win { color: var(--muted); }
+.bar .right .close-win:hover { color: var(--text); }
+
 /* knowledge bases: Settings › Admin › Knowledge and the tree in the Knowledge tab */
 .kb-badge { margin-left: 8px; padding: 2px 7px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); color: var(--muted); font-size: 11px; font-weight: 600; vertical-align: middle; }
 .kb-admin-item { border-bottom: 1px solid var(--container-border); }

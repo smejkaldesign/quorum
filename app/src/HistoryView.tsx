@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { Brain, CalendarEvent, ChatRow, MeetingRow, NoteDoc } from './quorum';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { Brain, ChatRow, MeetingRow, NoteDoc } from './quorum';
 import { NoteMenu, NoteReader, VisibilityPill } from './MeetingNote';
 import { quoteLink, useQuote } from './quotes';
 import { Composer } from './Composer';
 import { ConnectHint } from './ConnectHint';
 import { openConnectors } from './connectorsNav';
 import { useSession } from './session';
-import { IconCalendar, IconChat, IconClose, IconExternal, IconListCheck, IconMic, IconMore, IconNewNote, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
+import { dayLabel } from './upNextList';
+import { useCalendarView } from './UpNext';
+import { IconCalendar, IconChat, IconClose, IconExternal, IconListCheck, IconMic, IconNewNote, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
 
 type Filter = 'all' | 'meetings' | 'notes' | 'chats';
 type Row = { key: string; kind: 'meeting' | 'note' | 'chat'; title: string; sub: string; date: Date | null; avatar: string; open: () => void; meeting?: MeetingRow; children?: Row[] };
@@ -27,57 +29,23 @@ function peopleLine(people: string[], count: number) {
   return `${first.slice(0, 2).join(', ')} & ${first.length - 2} others`;
 }
 
-function dayLabel(d: Date | null) {
-  if (!d) return 'Undated';
-  const today = new Date();
-  const y = new Date(); y.setDate(today.getDate() - 1);
-  if (d.toDateString() === today.toDateString()) return 'Today';
-  if (d.toDateString() === y.toDateString()) return 'Yesterday';
-  const t = new Date(); t.setDate(today.getDate() + 1);
-  if (d.toDateString() === t.toDateString()) return 'Tomorrow';
-  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', ...(d.getFullYear() !== today.getFullYear() ? { year: 'numeric' } : {}) });
-}
-
 function colorFor(s: string) {
   let h = 0;
   for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0;
   return AVATAR_COLORS[h % AVATAR_COLORS.length];
 }
 
-export function HistoryView({ brain, focusAsk, onAsk, onOpenChat }: { brain: Brain | null; focusAsk: number; onAsk: (q: string, files?: string[]) => void; onOpenChat: (id: string) => void }) {
+export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: { brain: Brain | null; focusAsk: number; onAsk: (q: string, files?: string[]) => void; onOpenChat: (id: string) => void; onFiltered?: (filtered: boolean) => void }) {
   const askRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { if (focusAsk) askRef.current?.focus(); }, [focusAsk]);
   const [data, setData] = useState<{ meetings: MeetingRow[]; chats: ChatRow[] }>({ meetings: [], chats: [] });
   const [filter, setFilter] = useState<Filter>('all');
-  // upcoming events from the connected calendar; once a meeting happens its note lands under Today instead
-  const [upNext, setUpNext] = useState<CalendarEvent[]>([]);
-  // events without a call on a connected platform are kept out of the list unless asked for; hidden counts them
-  const [calView, setCalView] = useState<{ connected: boolean; showAll: boolean; hidden: number; status: string }>({ connected: false, showAll: false, hidden: 0, status: '' });
-  const [eventMenu, setEventMenu] = useState<string | null>(null);
+  // whether a calendar is connected, for the offer to connect one; Up next loads it (UpNext.tsx)
+  const calView = useCalendarView();
   // the offer to connect a calendar stays away for the rest of this launch once closed
   const [calHintHidden, setCalHintHidden] = useSession('calHintHidden', false);
   const [icons, setIcons] = useState<Record<string, string | null>>({});
   useEffect(() => { window.quorum.sourceIcons().then(setIcons); }, []);
-  const calRetry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  // the helper can still be starting on launch, so a miss retries in 10s instead of waiting for the 5 minute refresh
-  const loadCal = useCallback(() => window.quorum.calendar().then((c) => {
-    setUpNext(c.connected ? c.events.filter((e) => new Date(e.end) > new Date()) : []);
-    setCalView({ connected: c.connected, showAll: c.showAll, hidden: c.hidden, status: c.status });
-    clearTimeout(calRetry.current);
-    if (c.status === 'unavailable') calRetry.current = setTimeout(loadCal, 10000);
-  }), []);
-  useEffect(() => {
-    loadCal();
-    const t = setInterval(loadCal, 5 * 60000);
-    const off = window.quorum.onSettings(loadCal);
-    return () => { clearInterval(t); clearTimeout(calRetry.current); off(); };
-  }, [loadCal]);
-  useEffect(() => {
-    if (!eventMenu) return;
-    const close = () => setEventMenu(null);
-    window.addEventListener('mousedown', close);
-    return () => window.removeEventListener('mousedown', close);
-  }, [eventMenu]);
   const [picked, setPicked] = useState<string[]>([]);
   const [range, setRange] = useState<DateRange | null>(null);
   const [keyword, setKeyword] = useState('');
@@ -160,6 +128,9 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat }: { brain: Bra
 
   const refresh = () => window.quorum.history().then(setData);
   const filtered = filter === 'chats' || picked.length > 0 || !!range || !!keyword;
+  // Up next steps aside while the list is filtered, as it did when it lived here
+  useEffect(() => { onFiltered?.(filtered); }, [filtered, onFiltered]);
+  useEffect(() => () => onFiltered?.(false), [onFiltered]);
   if (note) return <NoteReader note={note} dayLabel={dayLabel} peopleLine={peopleLine} onBack={() => { setNote(null); refresh(); }} />;
 
   const ask = (q: string, files: string[] = []) => { if (q.trim()) { setDraft(''); onAsk(q.trim(), files); } };
@@ -199,44 +170,6 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat }: { brain: Bra
           <button className="pill small-pill primary" onClick={() => openConnectors({ library: 'calendar' })}>Connect a calendar</button>
           <button className="icon-btn" aria-label="Hide this" onClick={() => setCalHintHidden(true)}><IconClose width={14} height={14} /></button>
         </ConnectHint>
-      )}
-
-      {!filtered && calView.connected && (upNext.length > 0 || calView.hidden > 0) && (
-        <div className="hist-group up-next">
-          <div className="up-head">
-            <h4>Up next</h4>
-            {(calView.hidden > 0 || calView.showAll) && (
-              <label className="up-toggle"><input type="checkbox" checked={calView.showAll} onChange={(ev) => window.quorum.calendarSet({ showAll: ev.target.checked }).then(loadCal)} />Show no meeting{!calView.showAll && calView.hidden > 0 ? ` (${calView.hidden})` : ''}</label>
-            )}
-          </div>
-          {upNext.length === 0 && <p className="up-empty">No calls on a connected platform in the next few days.</p>}
-          {upNext.map((e) => {
-            const at = new Date(e.start), end = new Date(e.end);
-            const t = (d: Date) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?(AM|PM)/i, '');
-            const platform = e.platform ? { zoom: 'Zoom', meet: 'Google Meet', teams: 'Microsoft Teams' }[e.platform] : null;
-            const open = eventMenu === e.id;
-            return (
-              <div key={e.id} className="hist-item">
-                <div className={`hist-row up-row ${open ? 'menu-open' : ''}`} onClick={() => e.item && window.quorum.calendarOpen(e)}>
-                  <span className="avatar-sq cal"><IconCalendar width={20} height={20} /></span>
-                  <span className="hist-text"><strong>{e.title}</strong><span>{dayLabel(at)} · {t(at)} – {t(end)} {end.getHours() < 12 ? 'AM' : 'PM'}{platform ? ` · ${platform}` : ''}</span></span>
-                  {!e.platform && <span className="up-badge">No meeting</span>}
-                  <span className="hist-time">{t(at)}<small>{at.getHours() < 12 ? 'AM' : 'PM'}</small></span>
-                  <span className="hist-hover menu-wrap" onMouseDown={(ev) => ev.stopPropagation()}>
-                    <button className="icon-btn up-more" aria-label="More" aria-expanded={open} onClick={(ev) => { ev.stopPropagation(); setEventMenu(open ? null : e.id); }}><IconMore /></button>
-                    {open && (
-                      <div className="menu up-menu" onClick={(ev) => ev.stopPropagation()}>
-                        {e.item && <button onClick={() => { setEventMenu(null); window.quorum.calendarOpen(e); }}>View in Calendar</button>}
-                        {e.join && <button onClick={() => { setEventMenu(null); window.quorum.openExternal(e.join!); }}>Open call link</button>}
-                        <button onClick={() => { setEventMenu(null); window.quorum.calendarSet({ hide: e.id }).then(loadCal); }}>Remove from list</button>
-                      </div>
-                    )}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
       )}
 
       {groups.length === 0 ? (
