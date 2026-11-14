@@ -1,0 +1,7 @@
+# gitleaks fingerprints for test fixtures that are not secrets (form-validation values such as secret_12345678).
+# Each line names one commit, file, rule and line, so nothing else is ignored. Approved by Eric 2026-11-14.
+35a9157360488b59e9d1ffce3bf1b83218201032:app/test/workspace-integrations.test.js:generic-api-key:65
+35a9157360488b59e9d1ffce3bf1b83218201032:app/test/workspace-integrations.test.js:generic-api-key:68
+35a9157360488b59e9d1ffce3bf1b83218201032:app/test/workspace-integrations.test.js:generic-api-key:90
+e4a5bb8277579da1cf2e9e9f6830c3fa26718135:app/test/workspace-integrations.test.js:generic-api-key:130
+e4a5bb8277579da1cf2e9e9f6830c3fa26718135:app/test/workspace-integrations.test.js:generic-api-key:158
