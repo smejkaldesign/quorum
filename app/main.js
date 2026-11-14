@@ -1,3 +1,4 @@
+import './startup-flags.js';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, screen, session, shell, systemPreferences, Tray } from 'electron';
 import { NEEDS_SOURCE, NEEDS_TOOLS, SOURCES, modelLabel, runModel, sourceStatus } from './models.js';
 import { BY_ID, cleanConnectors, cleanProviders, needsKey, providerFor, providersFromSource, sourceFromProviders } from './connectors/catalog.js';
@@ -43,7 +44,10 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 // should watch a call, so a development copy leaves auto-listen off while the installed app is running (see below).
 app.setPath('userData', DATA_DIR);
 app.setPath('sessionData', DATA_DIR);
-const singleInstance = app.requestSingleInstanceLock();
+// a second launch in the same environment hands over: the running copy gets 'second-instance' and opens its window,
+// and this one exits here, before any start-up work and without the will-quit save that would overwrite the running
+// copy's state file
+if (!app.requestSingleInstanceLock()) process.exit(0);
 const installedCopyRunning = () => { try { return execFileSync('/usr/bin/pgrep', ['-f', '/Applications/Quorum.app/Contents/MacOS/Quorum'], { encoding: 'utf8' }).trim().length > 0; } catch { return false; } };
 const autoListenAllowed = () => { if (isDevelopment && installedCopyRunning()) { log('auto-listen left to the installed Quorum, which is running'); return false; } return true; };
 // the packaged app carries its own audio helper; in development it comes straight from the Swift build
@@ -1564,7 +1568,8 @@ function openIndex() {
   // enters the index, and a rule change rebuilds it (the guardrails IPC handlers below)
   vindex = createVaultIndex({
     vault: b.vault, isExcludedPath: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isDeniedText: isConfidentialText, isExcludedText: suggester.isExcluded, redact: suggester.redactLines,
-    onChange: (rels) => toUI('vault-changed', rels), log: (...a) => log('index', ...a),
+    onChange: (rels) => toUI('vault-changed', rels), renamed: () => settings.clusterNames?.[b.vault] ?? {},
+    forget: (keys) => { const mine = settings.clusterNames?.[b.vault]; if (!mine) return; for (const k of keys) delete mine[k]; store.settings.save(); }, log: (...a) => log('index', ...a),
   });
   vindex.start();
   // the keeper files whatever arrived while the app was closed, once the folder is open
@@ -1610,6 +1615,20 @@ registerSources({ ipcMain, settings, saveSettings, toUI, log, meetingsDir, openE
 // platform accounts for cloud recordings (Zoom first) go through the relay, so they exist in the hosted edition only
 if (EDITION === 'cloud') (await loadEE('platforms.js')).registerPlatforms({ ipcMain, account, settings, saveSettings, toUI, log, meetingsDir, openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file) });
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);
+// the person's own name for a graph cluster, kept per vault in settings so it survives a restart and a re-index; an
+// empty name goes back to the generated one. Answers with every note's cluster name after the change (a rename can
+// change how a second cluster is told apart), or null when nothing was saved
+ipcMain.handle('vault-cluster-name', (_e, key, name) => {
+  const b = brain();
+  key = String(key ?? '');
+  if (!b || !vindex || !(key === 'hubs' || /^(folder|note|group):./.test(key))) return null;
+  const own = String(name ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const all = settings.clusterNames ?? (settings.clusterNames = {});
+  const mine = all[b.vault] ?? (all[b.vault] = {});
+  if (own) mine[key] = own; else delete mine[key];
+  store.settings.save();
+  return Object.fromEntries(vindex.graph().nodes.filter((n) => n.cluster).map((n) => [n.id, n.cluster]));
+});
 ipcMain.handle('vault-search', (_e, q, limit) => vindex?.search(String(q), Math.min(Number(limit) || 30, 1000)) ?? []);
 ipcMain.handle('vault-link-health', () => vindex?.linkHealth() ?? []);
 // fix a missing link by pointing it at a note that exists; refuses a target that isn't a real note in the vault
@@ -2177,12 +2196,8 @@ ipcMain.handle('ax-status', () => {
   helperSend({ cmd: 'axStatus', prompt: firstAsk });
 });
 
-if (!singleInstance) {
-  app.whenReady().then(() => {
-    dialog.showMessageBoxSync({ type: 'info', message: 'Quorum is already running', detail: 'Another copy of Quorum (the installed app or the development copy) is open. Quit it from its menu bar owl, then open this one again.', buttons: ['OK'] });
-    app.quit();
-  });
-} else app.on('second-instance', () => openMain());
+// a launch that arrives before the window exists opens it once the app is ready and the window is made
+app.on('second-instance', () => { app.whenReady().then(openMain); });
 
 ipcMain.on('is-dev', (e) => { e.returnValue = !app.isPackaged; });
 // which environment this copy runs; the cloud edition's account.js answers these with the active Supabase config, the
@@ -2280,7 +2295,11 @@ async function control({ cmd, args = {} }) {
 // unix socket paths are capped at 104 bytes on macOS, so a deep home folder falls back to the temp dir
 const CONTROL_SOCK = (() => { const p = path.join(SESSIONS, '..', 'quorum.sock'); return p.length < 100 ? p : path.join(tmpdir(), `quorum-${process.getuid?.() ?? 'u'}.sock`); })();
 let stopControl = null;
-app.on('will-quit', () => { meeting.capturing = false; writeState(); stopControl?.(); });
+app.on('will-quit', () => {
+  // only the copy that holds the lock owns the state file
+  if (!app.hasSingleInstanceLock()) return;
+  meeting.capturing = false; writeState(); stopControl?.();
+});
 app.whenReady().then(() => {
   if (!app.hasSingleInstanceLock()) return;
   // installed builds check their feed on launch, every six hours and when the window comes back after an hour; the

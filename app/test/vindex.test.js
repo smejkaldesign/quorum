@@ -81,3 +81,31 @@ describe('syncPaths', () => {
     expect(index.note('a.md').title).toBe('A edited');
   });
 });
+
+describe('graph cluster names', () => {
+  it('names a cluster by its folder in plain words and keeps a rename over the generated name', () => {
+    vault = mkdtempSync(path.join(tmpdir(), 'vindex-'));
+    const days = ['2026-11-01', '2026-11-02', '2026-11-03', '2026-11-04'];
+    days.forEach((d, i) => write(`01-daily/${d}.md`, `# ${d}\n\n[[${days[(i + 1) % days.length]}]]\n`));
+    for (const n of ['a', 'b', 'c', 'd', 'e']) write(`00-inbox/${n}.md`, `# ${n}\n`);
+    const node = (g) => g.nodes.find((n) => n.id === '01-daily/2026-11-01.md');
+    let renamed = {};
+    const index = open({ renamed: () => renamed });
+    expect(node(index.graph())).toMatchObject({ cluster: 'Daily', clusterKey: 'folder:01-daily', clusterPath: '01-daily' });
+    renamed = { 'folder:01-daily': 'Journal' };
+    expect(node(index.graph()).cluster).toBe('Journal');
+    index.sync();
+    expect(node(index.graph()).cluster).toBe('Journal');
+  });
+
+  it('drops a kept name whose cluster is gone, once the vault has been read', () => {
+    vault = mkdtempSync(path.join(tmpdir(), 'vindex-'));
+    for (const n of ['a', 'b', 'c']) write(`work/${n}.md`, `# ${n}\n\n[[a]] [[b]] [[c]]\n`);
+    for (const n of ['p', 'q', 'r', 's']) write(`${n}.md`, `# ${n}\n`);
+    const renamed = { 'folder:work': 'Desk', 'folder:gone': 'Old' };
+    const forgotten = [];
+    const index = open({ renamed: () => renamed, forget: (keys) => forgotten.push(...keys) });
+    expect(index.graph().nodes.find((n) => n.id === 'work/a.md').cluster).toBe('Desk');
+    expect(forgotten).toEqual(['folder:gone']);
+  });
+});

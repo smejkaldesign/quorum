@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld('quorum', {
   loadChat: (id) => ipcRenderer.invoke('load-chat', id),
   vaultTree: () => ipcRenderer.invoke('vault-tree'),
   vaultGraph: () => ipcRenderer.invoke('vault-graph'),
+  vaultClusterName: (key, name) => ipcRenderer.invoke('vault-cluster-name', key, name),
   noteVisibility: (file, value) => ipcRenderer.invoke('note-visibility', file, value),
   noteAsk: (file, question, history, files) => ipcRenderer.invoke('note-ask', file, question, history, files),
   noteApply: (file, body) => ipcRenderer.invoke('note-apply', file, body),
