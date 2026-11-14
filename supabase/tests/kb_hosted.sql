@@ -1,9 +1,9 @@
--- Knowledge bases hosted by Quorum (migration 0033): the editor role, hosted notes with the expected-version save, the
+-- Knowledge bases hosted by Quorum (migration 0034): the editor role, hosted notes with the expected-version save, the
 -- guard on direct note writes, the kb-files Storage rules, the per-file cap and the workspace quota, and read-only
 -- hosted KBs on a lapsed plan. The file has no begin or rollback of its own: run it inside one transaction that is
--- rolled back, after 0033 when the database does not have it yet:
---   { echo 'begin;'; cat supabase/migrations/0033_kb_hosted.sql supabase/tests/kb_hosted.sql; echo 'rollback;'; } | docker exec -i supabase_db_quorum psql -U postgres -d postgres -v ON_ERROR_STOP=1 -f -
--- On a database with 0033 applied, leave the migration out of that list. A failed check stops the script with the
+-- rolled back, after 0034 when the database does not have it yet:
+--   { echo 'begin;'; cat supabase/migrations/0034_kb_hosted.sql supabase/tests/kb_hosted.sql; echo 'rollback;'; } | docker exec -i supabase_db_quorum psql -U postgres -d postgres -v ON_ERROR_STOP=1 -f -
+-- On a database with 0034 applied, leave the migration out of that list. A failed check stops the script with the
 -- check's message; the last line printed on success is "kb hosted: ok".
 
 -- fixtures. f1 owns the workspace (paid plan); f2 is made an editor of Wiki; f3 a reader of Wiki; f4 a member with no

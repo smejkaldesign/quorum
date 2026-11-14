@@ -48,7 +48,7 @@ function Bases() {
           <div key={kb.id} className="kb-admin-item">
             <Row icon={<IconStack width={18} height={18} />}
               title={<>{kb.name}{kb.isDefault && <span className="kb-badge">Default</span>}</>}
-              desc={[KIND_LABEL[kb.kind], readersSummary(kb.access), sourceLine(kb.source)].filter(Boolean).join(' · ')}>
+              desc={[KIND_LABEL[kb.kind], readersSummary(kb.access), sourceLine(kb.source), kb.hosted && !kb.writable ? 'Read-only until the plan is renewed' : null].filter(Boolean).join(' · ')}>
               <button className="pill small" aria-expanded={panel?.kind === 'readers' && panel.kbId === kb.id} onClick={() => setPanel(panel?.kind === 'readers' && panel.kbId === kb.id ? null : { kind: 'readers', kbId: kb.id })}>Readers</button>
               <KbMenu kb={kb} onPick={(kind) => (kind === 'delete' ? setDeleting(kb) : setPanel({ kind, kbId: kb.id }))} />
             </Row>
@@ -66,7 +66,7 @@ function Bases() {
       {creating ? <Create onDone={(kb) => { setCreating(false); if (kb) load(); }} /> : (
         <p><button className="pill with-icon" onClick={() => { setCreating(true); setPanel(null); }}><IconPlus width={15} height={15} />New knowledge base</button></p>
       )}
-      {deleting && <KbConfirm title={`Delete ${deleting.name}?`} body="Its folders are deleted. Its notes stay with the people who wrote them and leave the knowledge base. This cannot be undone." action="Delete" onDone={(ok) => (ok ? remove(deleting) : setDeleting(null))} />}
+      {deleting && <KbConfirm title={`Delete ${deleting.name}?`} body={deleting.hosted ? 'Its folders, notes and attached files are deleted for everyone, and each Mac removes its copies. This cannot be undone.' : 'Its folders are deleted. Its notes stay with the people who wrote them and leave the knowledge base. This cannot be undone.'} action="Delete" onDone={(ok) => (ok ? remove(deleting) : setDeleting(null))} />}
     </div>
   );
 }
@@ -80,8 +80,8 @@ function KbMenu({ kb, onPick }: { kb: Kb; onPick: (kind: 'rename' | 'import' | '
         <div className="menu" role="menu">
           <button role="menuitem" onClick={() => onPick('rename')}>Rename</button>
           {hasImport() && kb.source?.kind === 'github' && <button role="menuitem" onClick={() => onPick('refresh')}>Refresh from GitHub</button>}
-          {hasImport() && <button role="menuitem" onClick={() => onPick('import')}>Import notes</button>}
-          {hasDrive() && kb.role === 'admin' && <button role="menuitem" onClick={() => onPick('drive')}>Add from Google Drive</button>}
+          {hasImport() && !kb.hosted && <button role="menuitem" onClick={() => onPick('import')}>Import notes</button>}
+          {hasDrive() && kb.role === 'admin' && !kb.hosted && <button role="menuitem" onClick={() => onPick('drive')}>Add from Google Drive</button>}
           {!kb.isDefault && <button role="menuitem" className="danger-pill" onClick={() => onPick('delete')}>Delete</button>}
         </div>
       )}
@@ -120,6 +120,9 @@ function Readers({ kb, onDone }: { kb: Kb; onDone: (kb: Kb | null) => void }) {
   const start = readersOf(kb.access);
   const [mode, setMode] = useState<ReadersMode>(start.mode);
   const [people, setPeople] = useState<string[]>(start.people);
+  // a KB hosted by Quorum: who of the chosen people edit, and whether the whole workspace does
+  const [editors, setEditors] = useState<string[]>(start.editors);
+  const [workspaceEdits, setWorkspaceEdits] = useState(start.workspaceEdits);
   const [members, setMembers] = useState<Member[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -132,7 +135,7 @@ function Readers({ kb, onDone }: { kb: Kb; onDone: (kb: Kb | null) => void }) {
   const admins = new Set((kb.access ?? []).filter((a) => a.principal === 'user' && a.role === 'admin').map((a) => a.userId));
   const save = async () => {
     setBusy(true); setError('');
-    const r = await kbCall(() => window.quorum.kbAccessSet(kb.id, accessDraft(kb.access, mode, people)), 'Access could not be saved.');
+    const r = await kbCall(() => window.quorum.kbAccessSet(kb.id, accessDraft(kb.access, mode, people, kb.hosted ? { editors, workspaceEdits } : null)), 'Access could not be saved.');
     setBusy(false);
     if (r.error || !r.access) setError(r.error ?? 'Access could not be saved.'); else onDone({ ...kb, access: r.access });
   };
@@ -143,6 +146,9 @@ function Readers({ kb, onDone }: { kb: Kb; onDone: (kb: Kb | null) => void }) {
         <button role="radio" aria-checked={mode === 'workspace'} className={`pill ${mode === 'workspace' ? 'primary' : ''}`} onClick={() => setMode('workspace')}>Whole workspace</button>
         <button role="radio" aria-checked={mode === 'people'} className={`pill ${mode === 'people' ? 'primary' : ''}`} onClick={() => setMode('people')}>Chosen people</button>
       </div>
+      {kb.hosted && mode === 'workspace' && (
+        <label className="kb-person"><input type="checkbox" checked={workspaceEdits} onChange={(e) => setWorkspaceEdits(e.target.checked)} /><span>Everyone in the workspace can edit notes</span></label>
+      )}
       {mode === 'people' && (
         <fieldset className="kb-people">
           <legend className="muted">Owners and admins of the workspace read every knowledge base.</legend>
@@ -154,6 +160,13 @@ function Readers({ kb, onDone }: { kb: Kb; onDone: (kb: Kb | null) => void }) {
                 <input type="checkbox" checked={admin || people.includes(m.userId)} disabled={admin} onChange={(e) => toggle(m.userId, e.target.checked)} />
                 <span>{m.name || m.email}</span>
                 <em className="muted">{admin ? 'KB admin' : m.role === 'member' ? '' : m.role === 'owner' ? 'Owner' : 'Admin'}</em>
+                {kb.hosted && !admin && people.includes(m.userId) && (
+                  <select className="kb-role" aria-label={`Role for ${m.name || m.email}`} value={editors.includes(m.userId) ? 'editor' : 'reader'}
+                    onChange={(e) => setEditors((list) => (e.target.value === 'editor' ? [...new Set([...list, m.userId])] : list.filter((x) => x !== m.userId)))}>
+                    <option value="reader">Reads</option>
+                    <option value="editor">Edits</option>
+                  </select>
+                )}
               </label>
             );
           })}
@@ -226,7 +239,8 @@ function Create({ onDone }: { onDone: (kb: Kb | null) => void }) {
     setBusy(true);
     let kb = made;
     if (!kb) {
-      const r = await kbCall(() => window.quorum.kbCreate({ name: name.trim(), kind }), 'The knowledge base could not be created.');
+      const hosted = draft.kind === 'hosted';
+      const r = await kbCall(() => (hosted ? window.quorum.kbHostedCreate(name.trim()) : window.quorum.kbCreate({ name: name.trim(), kind })), 'The knowledge base could not be created.');
       if (r.error || !r.kb) { setBusy(false); setError(r.error ?? 'The knowledge base could not be created.'); return; }
       kb = r.kb;
       setMade(kb);
@@ -246,11 +260,12 @@ function Create({ onDone }: { onDone: (kb: Kb | null) => void }) {
       </div>
       <p className="kb-label">Kind</p>
       <div className="guard-kinds" role="radiogroup" aria-label="Kind">
-        {(Object.keys(KIND_LABEL) as KbKind[]).map((k) => <button key={k} role="radio" aria-checked={kind === k} disabled={running || !!made} className={`pill ${kind === k ? 'primary' : ''}`} onClick={() => setKind(k)}>{KIND_LABEL[k]}</button>)}
+        {(Object.keys(KIND_LABEL) as KbKind[]).map((k) => <button key={k} role="radio" aria-checked={kind === k} disabled={running || !!made || (k === 'meetings' && draft.kind === 'hosted')} className={`pill ${kind === k ? 'primary' : ''}`} onClick={() => setKind(k)}>{KIND_LABEL[k]}</button>)}
       </div>
       <p className="kb-hint muted">{kind === 'meetings' ? 'A meetings knowledge base collects meeting notes for a team.' : 'A general knowledge base holds any notes the workspace shares.'} The kind cannot be changed after the knowledge base is created.</p>
       <p className="kb-label">Start with</p>
-      <SourceFields draft={draft} onChange={setDraft} withEmpty={!made} disabled={running} />
+      <SourceFields draft={draft} onChange={(d) => { setDraft(d); if (d.kind === 'hosted') setKind('general'); }} withEmpty={!made} withHosted={!made} disabled={running} />
+      {draft.kind === 'hosted' && <p className="kb-hint muted">Quorum stores its notes and attached files. Members you make editors write and arrange notes in the Knowledge tab; readers read them. Part of Quorum Cloud. If the plan ends, the knowledge base stays readable and cannot be changed until the plan is renewed.</p>}
       <div className="kb-form-row">
         {imp.result ? <button className="pill primary" onClick={() => onDone(made)}>Done</button> : (
           <button className="pill primary" disabled={running || !name.trim()} onClick={go}>{running ? (imp.running ? 'Importing…' : 'Creating…') : made ? 'Import again' : 'Create'}</button>

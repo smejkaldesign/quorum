@@ -32,24 +32,28 @@ export const hasImport = (): boolean => {
   return typeof q?.kbImport === 'function' && typeof q?.kbImportPickZip === 'function';
 };
 
-export type SourceKind = 'empty' | 'github' | 'zip';
+// hosted: an empty KB whose notes Quorum holds and its editors write in the Knowledge tab (ee/kbHosted.js)
+export const hasHosted = (): boolean => typeof (window.quorum as Partial<Window['quorum']> | undefined)?.kbHostedCreate === 'function';
+
+export type SourceKind = 'empty' | 'hosted' | 'github' | 'zip';
 export type SourceDraft = { kind: SourceKind; url: string; branch: string; zip: string };
 export const EMPTY_SOURCE: SourceDraft = { kind: 'empty', url: '', branch: '', zip: '' };
 
 // the draft as the import's source, or the sentence that says what is missing
 export function sourceOf(d: SourceDraft): { source: KbImportSource | null } | { error: string } {
-  if (d.kind === 'empty') return { source: null };
+  if (d.kind === 'empty' || d.kind === 'hosted') return { source: null };
   if (d.kind === 'zip') return d.zip ? { source: { kind: 'zip', path: d.zip } } : { error: 'Choose a zip file.' };
   const u = checkGithubUrl(d.url);
   if ('error' in u) return u;
   return { source: { kind: 'github', url: u.url, ...(d.branch.trim() ? { branch: d.branch.trim() } : {}) } };
 }
 
-// where the notes come from: an empty KB, a GitHub repository or a zip; `withEmpty` false for importing into a KB
-export function SourceFields({ draft, onChange, withEmpty, disabled }: { draft: SourceDraft; onChange: (d: SourceDraft) => void; withEmpty: boolean; disabled?: boolean }) {
+// where the notes come from: an empty KB, a GitHub repository or a zip; `withEmpty` false for importing into a KB.
+// withHosted adds "Hosted by Quorum" when the build has it
+export function SourceFields({ draft, onChange, withEmpty, withHosted = false, disabled }: { draft: SourceDraft; onChange: (d: SourceDraft) => void; withEmpty: boolean; withHosted?: boolean; disabled?: boolean }) {
   const [error, setError] = useState('');
   const can = hasImport();
-  const kinds: { id: SourceKind; label: string }[] = [...(withEmpty ? [{ id: 'empty' as const, label: 'Empty' }] : []), { id: 'github', label: 'From GitHub' }, { id: 'zip', label: 'From a zip' }];
+  const kinds: { id: SourceKind; label: string }[] = [...(withEmpty ? [{ id: 'empty' as const, label: 'Empty' }] : []), ...(withHosted && hasHosted() ? [{ id: 'hosted' as const, label: 'Hosted by Quorum' }] : []), { id: 'github', label: 'From GitHub' }, { id: 'zip', label: 'From a zip' }];
   const pick = async () => {
     setError('');
     const r = await kbCall<Result & { path?: string; canceled?: true }>(() => window.quorum.kbImportPickZip(), 'The file picker did not open.');
@@ -59,7 +63,7 @@ export function SourceFields({ draft, onChange, withEmpty, disabled }: { draft: 
     <>
       <div className="guard-kinds" role="radiogroup" aria-label="Start with">
         {kinds.map((k) => {
-          const off = disabled || (k.id !== 'empty' && !can);
+          const off = disabled || (k.id !== 'empty' && k.id !== 'hosted' && !can);
           return <button key={k.id} type="button" role="radio" aria-checked={draft.kind === k.id} disabled={off} className={`pill ${draft.kind === k.id ? 'primary' : ''}`} onClick={() => onChange({ ...draft, kind: k.id })}>{k.label}</button>;
         })}
       </div>

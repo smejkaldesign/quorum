@@ -21,16 +21,18 @@
 //   kb-notes         (kbId)                                      -> { notes: KbNote[] }         readable notes in a KB, all pages
 //   kb-suggestion, kb-suggestion-apply, kb-suggestion-dismiss    Quorum's edits kept as suggestions (ee/kbUpstream.js)
 //
-//   Kb          { id, name, kind: 'general' | 'meetings', teamId, isDefault, source, role: 'admin' | 'reader',
-//                 createdAt, updatedAt, folders: FolderNode[], access: Access[] | null }
+//   Kb          { id, name, kind: 'general' | 'meetings', teamId, isDefault, source, role: 'admin' | 'editor' | 'reader',
+//                 hosted, writable, createdAt, updatedAt, folders: FolderNode[], access: Access[] | null }
 //               folders is the tree; access is null unless role is admin. source is { kind, url, path, branch,
 //               subpath, name, importedAt } or null: kind folder or git is a Mac-side source (the default KB carries the 0020
-//               team source); kind github or zip is where kb-import (ee/kbImport.js) last read the KB from.
+//               team source); kind github or zip is where kb-import (ee/kbImport.js) last read the KB from; kind
+//               hosted is a KB hosted by Quorum (0034, ee/kbHosted.js), whose notes are written in the Knowledge tab.
+//               writable is true when the caller may write a hosted KB now (an editor or admin on a paid plan).
 //   Folder      { id, kbId, parentId, name, position }
 //   FolderNode  { id, parentId, name, position, children: FolderNode[] }   siblings sorted by position, then name
-//   Access      { principal: 'workspace' | 'team' | 'user', userId, teamId, role: 'admin' | 'reader', email, name }
-//   AccessDraft { principal, userId?, teamId?, role? }   role defaults to reader; team principals are refused
-//               until teams exist. Workspace owners and admins read and manage every KB without a row here.
+//   Access      { principal: 'workspace' | 'team' | 'user', userId, teamId, role: 'admin' | 'editor' | 'reader', email, name }
+//   AccessDraft { principal, userId?, teamId?, role? }   role defaults to reader; editor is for hosted KBs only;
+//               team principals are refused until teams exist. Workspace owners and admins read and manage every KB without a row here.
 //   Placement   { noteId, kbId, folderId, updatedAt }
 //   KbNote      { id, path, title, folderId, userId, updatedAt }
 //
@@ -45,10 +47,11 @@ import { plain } from './account.js';
 import { createKbSuggestions } from './kbUpstream.js';
 
 export const KB_KINDS = ['general', 'meetings'];
-// folder and git are Mac-side sources (0020, 0025); github and zip say where an import came from (0026, ee/kbImport.js)
-const SOURCE_KINDS = ['folder', 'git', 'github', 'zip'];
+// folder and git are Mac-side sources (0020, 0025); github and zip say where an import came from (0026, ee/kbImport.js);
+// hosted is a KB whose notes Quorum holds (0034, ee/kbHosted.js)
+const SOURCE_KINDS = ['folder', 'git', 'github', 'zip', 'hosted'];
 const PAGE = 1000;
-const ROLES = ['admin', 'reader'];
+export const ROLES = ['admin', 'editor', 'reader'];
 const PRINCIPALS = ['workspace', 'team', 'user'];
 
 // a name the server will take: trimmed, 1 to 120 characters; folder names also have no slashes
@@ -78,7 +81,7 @@ export const shapeKb = (k) => ({
   source: k.source && typeof k.source === 'object' && SOURCE_KINDS.includes(k.source.kind)
     ? { kind: k.source.kind, url: k.source.url ?? null, path: k.source.path ?? null, branch: k.source.branch ?? null, subpath: k.source.subpath ?? null, name: k.source.name ?? null, importedAt: k.source.imported_at ?? null }
     : null,
-  role: k.role === 'admin' ? 'admin' : 'reader', createdAt: k.created_at ?? null, updatedAt: k.updated_at ?? null,
+  role: ROLES.includes(k.role) ? k.role : 'reader', hosted: k.source?.kind === 'hosted', writable: k.source?.kind === 'hosted' && k.writable === true, createdAt: k.created_at ?? null, updatedAt: k.updated_at ?? null,
   folders: folderTree(Array.isArray(k.folders) ? k.folders : []),
   access: Array.isArray(k.access) ? k.access.map(shapeAccess) : null,
 });
@@ -91,7 +94,7 @@ export function accessRows(list) {
     const principal = a?.principal;
     const role = a?.role ?? 'reader';
     if (!PRINCIPALS.includes(principal)) return { error: 'A reader is the workspace, a team or a person.' };
-    if (!ROLES.includes(role)) return { error: 'A role is admin or reader.' };
+    if (!ROLES.includes(role)) return { error: 'A role is admin, editor or reader.' };
     if (principal === 'user' && !a.userId) return { error: 'Pick the person.' };
     if (principal === 'team' && !a.teamId) return { error: 'Pick the team.' };
     rows.push({ principal, role, ...(principal === 'user' ? { user_id: a.userId } : {}), ...(principal === 'team' ? { team_id: a.teamId } : {}) });
@@ -142,7 +145,16 @@ export function kbSession({ account, log = () => {}, tag = 'kb' }) {
 }
 
 export function createKnowledgeBases({ account, log = () => {} }) {
-  const { ws, rpc, call, listKbs } = kbSession({ account, log });
+  const { ws, rpc, call, listKbs, findKb } = kbSession({ account, log });
+  const purgeFiles = async (kbId) => {
+    const { data, error } = await account.client().from('kb_files').select('object_path').eq('kb_id', kbId);
+    if (error) throw error;
+    const paths = (data ?? []).map((f) => f.object_path).filter(Boolean);
+    for (let i = 0; i < paths.length; i += 100) {
+      const r = await account.client().storage.from('kb-files').remove(paths.slice(i, i + 100));
+      if (r.error) log('kb', 'storage remove', r.error.message);
+    }
+  };
   const suggestions = createKbSuggestions({ account, ws, rpc, call });
   const need = (v, what) => { if (!v || typeof v !== 'string') throw Object.assign(new Error(`Pick the ${what} first.`), { code: 'P0001' }); return v; };
 
@@ -158,7 +170,18 @@ export function createKnowledgeBases({ account, log = () => {} }) {
       const n = checkName(name); if (n.error) return n;
       return { kb: shapeKb(await rpc('kb_rename', { kb_id: need(kbId, 'knowledge base'), name: n.name })) };
     }),
-    'kb-delete': call(true, 'The knowledge base could not be deleted.', async (kbId) => { await rpc('kb_delete', { kb_id: need(kbId, 'knowledge base') }); return { ok: true }; }),
+    // a hosted KB's files go from Storage first, while their rows still say where they are; the server refuses the
+    // delete itself on a lapsed plan, and then the files are kept, since the KB is read-only
+    'kb-delete': call(true, 'The knowledge base could not be deleted.', async (kbId) => {
+      const id = need(kbId, 'knowledge base');
+      const kb = await findKb(id);
+      if (kb?.source?.kind === 'hosted') {
+        if (!kb.writable) return { error: 'The workspace\'s plan ended, so this knowledge base is read-only. Renew Quorum Cloud to delete it.' };
+        await purgeFiles(id);
+      }
+      await rpc('kb_delete', { kb_id: id });
+      return { ok: true };
+    }),
     'kb-folder-create': call(false, 'The folder could not be created.', async (draft = {}) => {
       const n = checkName(draft.name, { folder: true }); if (n.error) return n;
       return { folder: shapeFolder(await rpc('kb_folder_create', { kb_id: need(draft.kbId, 'knowledge base'), parent_id: draft.parentId ?? null, name: n.name, position: Number.isInteger(draft.position) ? draft.position : null })) };

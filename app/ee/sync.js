@@ -7,7 +7,7 @@
 // pull stay as the fallback for a dropped socket. Realtime needs migration 0005, which adds both tables to the
 // supabase_realtime publication.
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, watch, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, watch, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { DATA_DIR } from '../edition.js';
@@ -54,6 +54,9 @@ export function withBond(body, bond) {
 export const bondOf = (text) => { const fm = parseFrontmatter(text); return fm.team_item ? { item: fm.team_item, version: fm.team_version ?? '', behind: fm.team_behind === 'true' } : null; };
 // the knowledge base and folder a pulled row sits in (migration 0024), kept on the id map entry and in a shared note's
 // bond; a note outside any knowledge base carries neither
+// a note of a KB hosted by Quorum (migration 0034): it lives in Supabase, so it goes to the workspace folder like a
+// teammate's note even when the person wrote it, and never into the personal vault the watcher pushes from
+export const hostedRow = (row) => !!(row?.frontmatter && typeof row.frontmatter === 'object' && row.frontmatter.kb_hosted);
 export const placeOf = (row) => (row?.kb_id ? { kb: row.kb_id, folder: row.folder_id ?? null } : { kb: undefined, folder: undefined });
 const samePlace = (e, p) => (e?.kb ?? null) === (p.kb ?? null) && (e?.folder ?? null) === (p.folder ?? null);
 // the folder for a workspace's shared notes: outside the personal vault, so the watcher never pushes it back
@@ -303,6 +306,16 @@ export function createSync({ account, store, brain = () => null, log = () => {},
       delete bucket[key];
       return;
     }
+    // a renamed or moved note (a hosted KB's notes change path with their title and folder): the copy at the old path
+    // goes when nobody edited it, and is kept as "(removed)" when someone did
+    for (const [k, v] of Object.entries(bucket)) {
+      if (k === key || !k.startsWith('team:') || v.id !== row.id) continue;
+      const oldRel = k.slice(5), oldAbs = path.join(t.team, oldRel);
+      let old = null;
+      try { old = readFileSync(oldAbs, 'utf8'); } catch {}
+      if (old !== null) { if (sha256(old) === v.written) unlinkSync(oldAbs); else renameSync(oldAbs, path.join(t.team, sibling(t.team, oldRel, 'removed'))); }
+      delete bucket[k];
+    }
     const body = String(row.body ?? '');
     const version = row.hash || sha256(body);
     const place = placeOf(row);
@@ -359,7 +372,7 @@ export function createSync({ account, store, brain = () => null, log = () => {},
         const since = pulls[t.ws]?.lastPullAt ?? null;
         const [notes, meetings] = await Promise.all([changed(t.remote.notes.changedSince, since), changed(t.remote.meetings.changedSince, since)]);
         const shared = { written: 0, behind: 0, removed: 0, skipped: 0 };
-        for (const row of notes) (row.user_id && t.me && row.user_id !== t.me ? applyShared(t, row, shared) : applyNote(t, row, counts));
+        for (const row of notes) (hostedRow(row) || (row.user_id && t.me && row.user_id !== t.me) ? applyShared(t, row, shared) : applyNote(t, row, counts));
         await reconcileShared(t, shared);
         if (shared.written || shared.behind || shared.removed) log('sync', `workspace vault: ${shared.written} written, ${shared.behind} behind, ${shared.removed} removed`);
         lastShared = shared;

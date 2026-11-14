@@ -268,6 +268,7 @@ export function createKbImport({ account, fetch: get = globalThis.fetch, readFil
         kb = await findKb(kbId);
         if (!kb) return { error: 'That knowledge base no longer exists.' };
         if (kb.role !== 'admin') return { error: 'Only the knowledge base\'s admins can import into it.' };
+        if (kb.source?.kind === 'hosted') return { error: 'A knowledge base hosted by Quorum is written in Quorum. Create a new knowledge base to import notes.' };
       }
       const src = resolveSource(req.source ?? null, kb?.source ?? null);
       if (src.error) return src;

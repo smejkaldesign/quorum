@@ -26,7 +26,7 @@ function fakeClient(rows = {}) {
     const call = { table, ops: [], rows: null };
     calls.push(call);
     const b = {};
-    for (const op of ['select', 'eq', 'neq', 'is', 'gt', 'in', 'like', 'order', 'range', 'limit', 'update']) b[op] = (...a) => { call.ops.push([op, ...a]); return b; };
+    for (const op of ['select', 'eq', 'neq', 'or', 'is', 'gt', 'in', 'like', 'order', 'range', 'limit', 'update']) b[op] = (...a) => { call.ops.push([op, ...a]); return b; };
     b.upsert = (data, opts) => { call.ops.push(['upsert', opts]); call.rows = data; return b; };
     b.then = (res, rej) => Promise.resolve({ data: call.ops.some(([o]) => o === 'upsert' || o === 'update') ? null : rows[table] ?? [], error: null }).then(res, rej);
     return b;
@@ -245,6 +245,18 @@ describe('workspace vault', () => {
     const before = h.tread('knowledge/pricing.md');
     await h.sync.pullNow();
     expect(h.tread('knowledge/pricing.md')).toBe(before);
+  });
+  it('writes a note of a KB hosted by Quorum to the workspace vault even when the person wrote it, and follows a rename', async () => {
+    const hosted = (over) => noteRow({ id: id(9), user_id: 'user-1', path: 'Knowledge bases/Wiki/Setup.md', frontmatter: { title: 'Setup', visibility: 'public', kb_hosted: 'KB1' }, body: TEAM, kb_id: 'KB1', folder_id: null, ...over });
+    const h = teamHarness({ notes: [hosted()] });
+    await h.sync.pullNow();
+    expect(h.has('Knowledge bases/Wiki/Setup.md')).toBe(false);
+    expect(h.tread('Knowledge bases/Wiki/Setup.md')).toContain('team_item: ' + id(9));
+    h.rows.notes = [hosted({ path: 'Knowledge bases/Wiki/Guides/Setup.md', folder_id: 'F1', hash: 'moved', updated_at: '2026-11-08T12:00:00.000Z' })];
+    await h.sync.pullNow();
+    expect(h.thas('Knowledge bases/Wiki/Setup.md')).toBe(false);
+    expect(h.tread('Knowledge bases/Wiki/Guides/Setup.md')).toContain('team_folder: F1');
+    expect(h.upserts('notes')).toEqual([]);
   });
   it('replaces an untouched copy with the newer team version', async () => {
     const h = teamHarness({ notes: [shared()] });

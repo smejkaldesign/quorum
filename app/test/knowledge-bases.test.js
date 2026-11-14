@@ -53,7 +53,7 @@ describe('what the renderer gets', () => {
     expect(checkName('a/b').name).toBe('a/b');
     expect(accessRows([{ principal: 'workspace' }, { principal: 'user', userId: 'u1', role: 'admin' }])).toEqual({ rows: [{ principal: 'workspace', role: 'reader' }, { principal: 'user', role: 'admin', user_id: 'u1' }] });
     expect(accessRows([{ principal: 'user' }]).error).toMatch(/person/);
-    expect(accessRows([{ principal: 'workspace', role: 'owner' }]).error).toMatch(/admin or reader/);
+    expect(accessRows([{ principal: 'workspace', role: 'owner' }]).error).toMatch(/admin, editor or reader/);
     expect(accessRows([{ principal: 'everyone' }]).error).toMatch(/workspace, a team or a person/);
     expect(accessRows('all').error).toMatch(/list/);
   });
@@ -109,6 +109,7 @@ describe('the IPC handlers', () => {
       ['kb_list', { workspace_id: 'W' }],
       ['kb_create', { workspace_id: 'W', name: 'Handbook', kind: 'general' }],
       ['kb_rename', { kb_id: KB, name: 'Handbook' }],
+      ['kb_list', { workspace_id: 'W' }],
       ['kb_delete', { kb_id: KB }],
       ['kb_folder_create', { kb_id: KB, parent_id: 'F1', name: 'New', position: null }],
       ['kb_folder_rename', { folder_id: 'F9', name: 'New' }],

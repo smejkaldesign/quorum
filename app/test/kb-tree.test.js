@@ -140,8 +140,8 @@ describe('readers', () => {
   });
 
   it('reads the current choice back from the access list', () => {
-    expect(readersOf([ws, ann])).toEqual({ mode: 'workspace', people: [] });
-    expect(readersOf([ann, bo])).toEqual({ mode: 'people', people: ['bo'] });
+    expect(readersOf([ws, ann])).toMatchObject({ mode: 'workspace', people: [] });
+    expect(readersOf([ann, bo])).toMatchObject({ mode: 'people', people: ['bo'] });
   });
 
   it('keeps KB admins and drops person readers when the whole workspace reads', () => {

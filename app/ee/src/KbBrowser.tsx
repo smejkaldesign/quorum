@@ -2,13 +2,14 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import type { Kb, KbNote } from '../../src/quorum';
 import { Markdown } from '../../src/Markdown';
 import { matchesQuery } from '../../src/mainTabs';
-import { IconBack, IconBrain, IconChevron, IconDoc, IconFolder, IconMore, IconStack } from '../../src/icons';
-import { descendantIds, findFolder, folderPath, moveCheck, moveTargets, notesIn, openPathTo, resolveKbLink, rowKey, treeKey, visibleRows, withFolder, withoutFolder, type TreeRow } from './kbTree';
+import { IconBack, IconBrain, IconChevron, IconDoc, IconFolder, IconMore, IconPlus, IconStack } from '../../src/icons';
+import { canArrange, descendantIds, findFolder, folderPath, moveCheck, moveTargets, notesIn, openPathTo, resolveKbLink, rowKey, treeKey, visibleRows, withFolder, withoutFolder, type TreeRow } from './kbTree';
 import { KB_CHANGED, kbCall, KbConfirm, useLatest } from './kbUi';
 import { DrivePanel, hasDrive } from './KbDrive';
 import { hasKbSync, SyncPanel, type SyncSource } from './KbSync';
 import { KbSuggestionBanner } from './KbSuggestion';
 import { KB_OPEN, takeKbOpen, type KbOpenTarget } from '../../src/kbOpen';
+import { KbHostedNote } from './KbHostedNote';
 
 // The knowledge bases in the Knowledge tab: one left column with the team knowledge entry (and, for a folder or git
 // source, that source's own file tree, which the team view portals into the slot below it) and one top-level row per
@@ -20,6 +21,8 @@ import { KB_OPEN, takeKbOpen, type KbOpenTarget } from '../../src/kbOpen';
 type Sel = { kbId: string; folderId: string | null };
 type Edit = { mode: 'rename'; kbId: string; folderId: string | null; name: string } | { mode: 'new'; kbId: string; parentId: string | null; name: string };
 type Doc = { title: string; body: string; note: KbNote };
+// a note of a KB hosted by Quorum, open in the note editor; note null is a new note in folderId
+type Hosted = { kbId: string; note: KbNote | null; folderId: string | null };
 const onDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
 
 // the team view's way into the left column: where to render its file tree, and how to bring the team view forward
@@ -36,6 +39,7 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
   const [notes, setNotes] = useState<Record<string, KbNote[]>>({});
   const [error, setError] = useState('');
   const [doc, setDoc] = useState<Doc | null>(null);
+  const [hosted, setHosted] = useState<Hosted | null>(null);
   const [edit, setEdit] = useState<Edit | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [moving, setMoving] = useState<{ kbId: string; folderId: string } | null>(null);
@@ -109,7 +113,7 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
   const openKeys = (keys: string[]) => setOpen((s) => new Set([...s, ...keys]));
   const toggle = (key: string) => setOpen((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n; });
   const focusRow = (key: string) => { setFocus(key); requestAnimationFrame(() => refs.current.get(key)?.focus()); };
-  const select = (s: Sel | null) => { setSel(s); setDoc(null); setError(''); };
+  const select = (s: Sel | null) => { setSel(s); setDoc(null); setHosted(null); setError(''); };
 
   const rename = async (e: Extract<Edit, { mode: 'rename' }>) => {
     setEdit(null);
@@ -167,8 +171,12 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
     focusRow(rowKey(d.kbId, null));
   };
 
-  const openNote = async (n: KbNote) => {
+  const openNote = async (n: KbNote, kbId: string | null = sel?.kbId ?? null) => {
     setError('');
+    const inKb = kbId ? kbOf(kbId) : null;
+    // a hosted KB's note opens from Supabase in the note editor, for its readers too, since it is in no vault
+    if (inKb?.hosted) { setDoc(null); setHosted({ kbId: inKb.id, note: n, folderId: n.folderId ?? null }); return; }
+    setHosted(null);
     if (me && n.userId === me) {
       try {
         const v = await window.quorum.vaultNote(n.path);
@@ -205,7 +213,7 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
     if (!note) { select({ kbId: kb.id, folderId: null }); setError('That note is no longer in this knowledge base.'); return; }
     openKeys(openPathTo(kb, note.folderId ?? null));
     setSel({ kbId: kb.id, folderId: note.folderId ?? null });
-    openNote(note);
+    openNote(note, kb.id);
   });
   useEffect(() => { openRequested.current(); }, [opening, kbs, notes, listError, openRequested]);
 
@@ -218,7 +226,7 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
       if (kb) openKeys(openPathTo(kb, hit.note.folderId ?? null));
       setSel({ kbId: hit.kbId, folderId: hit.note.folderId ?? null });
     }
-    openNote(hit.note);
+    openNote(hit.note, hit.kbId);
   };
 
   const menuItems = (row: TreeRow): { label: string; run: () => void; danger?: boolean }[] => {
@@ -226,8 +234,10 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
       { label: row.kind === 'kb' ? 'New folder' : 'New folder inside', run: () => { openKeys([row.key]); setEdit({ mode: 'new', kbId: row.kbId, parentId: row.folderId, name: '' }); } },
       { label: 'Rename', run: () => setEdit({ mode: 'rename', kbId: row.kbId, folderId: row.folderId, name: row.name }) },
     ];
-    if (hasDrive()) items.push({ label: 'Add from Google Drive', run: () => setDriving({ kbId: row.kbId, folderId: row.folderId }) });
-    if (hasKbSync()) {
+    // a KB hosted by Quorum is written in Quorum, so it takes no connector content
+    const hostedKb = !!kbOf(row.kbId)?.hosted;
+    if (hasDrive() && !hostedKb) items.push({ label: 'Add from Google Drive', run: () => setDriving({ kbId: row.kbId, folderId: row.folderId }) });
+    if (hasKbSync() && !hostedKb) {
       items.push({ label: 'Sync a Drive folder', run: () => setSyncing({ kbId: row.kbId, folderId: row.folderId, source: 'google-drive' }) });
       items.push({ label: 'Sync a GitHub repository', run: () => setSyncing({ kbId: row.kbId, folderId: row.folderId, source: 'github' }) });
     }
@@ -241,7 +251,8 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
   const onTreeKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).tagName === 'INPUT') return;
     const row = rows.find((r) => r.key === focus);
-    const admin = row ? kbOf(row.kbId)?.role === 'admin' : false;
+    const rowKb = row ? kbOf(row.kbId) : null;
+    const admin = rowKb ? canArrange(rowKb) : false;
     if (row && admin && e.key === 'F2') { e.preventDefault(); setEdit({ mode: 'rename', kbId: row.kbId, folderId: row.folderId, name: row.name }); return; }
     if (row && admin && row.kind === 'folder' && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); setDeleting({ kbId: row.kbId, folderId: row.folderId!, name: row.name }); return; }
     if (row && admin && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) { e.preventDefault(); setMenuFor(row.key); return; }
@@ -256,9 +267,9 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
   const canDrop = (row: TreeRow) => !!drag && drag.kbId === row.kbId && kbOf(row.kbId) !== null && moveCheck(kbOf(row.kbId)!.folders, drag.folderId, row.folderId).ok;
   const tabbable = focus && rows.some((r) => r.key === focus) ? focus : rows[0]?.key ?? null;
   const selKb = sel ? kbOf(sel.kbId) : null;
-  const anyAdmin = (kbs ?? []).some((k) => k.role === 'admin');
+  const anyAdmin = (kbs ?? []).some(canArrange);
 
-  const showTeam = useCallback(() => { setSel(null); setDoc(null); setError(''); }, []);
+  const showTeam = useCallback(() => { setSel(null); setDoc(null); setHosted(null); setError(''); }, []);
   return (
     <TeamSideSlot.Provider value={{ slot, showTeam }}>
       <div className="kbt">
@@ -274,7 +285,7 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
             <div role="tree" aria-labelledby="kbt-label" onKeyDown={onTreeKey}>
               {rows.map((row) => {
                 const kb = kbOf(row.kbId)!;
-                const admin = kb.role === 'admin';
+                const admin = canArrange(kb);
                 const isSel = sel?.kbId === row.kbId && (sel.folderId ?? null) === row.folderId;
                 const renaming = edit?.mode === 'rename' && edit.kbId === row.kbId && edit.folderId === row.folderId ? edit : null;
                 const adding = edit?.mode === 'new' && edit.kbId === row.kbId && edit.parentId === row.folderId ? edit : null;
@@ -312,11 +323,17 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
               })}
             </div>
           </div>
-          <p className="tk-side-foot muted">{anyAdmin ? 'Drag a folder to move it. F2 renames, Delete removes, Shift+F10 opens the menu.' : 'Read-only. Admins arrange the folders.'}</p>
+          <p className="tk-side-foot muted">{anyAdmin ? 'Drag a folder to move it. F2 renames, Delete removes, Shift+F10 opens the menu.' : 'Read-only. Admins and editors arrange the folders.'}</p>
         </aside>
         <section className="kbt-main">
           <div className="kbt-team" hidden={!!(sel && selKb)}>{children}</div>
-          {!sel || !selKb ? null : doc ? (
+          {!sel || !selKb ? null : hosted && hosted.kbId === selKb.id ? (
+            <KbHostedNote key={hosted.note?.id ?? `new:${hosted.folderId ?? ''}`} kb={selKb} note={hosted.note} folderId={hosted.folderId}
+              onBack={() => setHosted(null)} onChanged={() => loadNotes(selKb.id)}
+              onMoved={(folderId) => { openKeys(openPathTo(selKb, folderId)); setSel({ kbId: selKb.id, folderId }); }}
+              onDeleted={() => { setHosted(null); loadNotes(selKb.id); }}
+              onSaved={(n) => setHosted((h) => (h ? { ...h, note: n, folderId: n.folderId } : h))} />
+          ) : doc ? (
             <>
               <div className="tk-subhead">
                 <button className="tk-back" onClick={() => setDoc(null)}><IconBack width={16} height={16} />{sel.folderId ? findFolder(selKb.folders, sel.folderId)?.name ?? selKb.name : selKb.name}</button>
@@ -331,7 +348,8 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
             </>
           ) : (
             <FolderView kb={selKb} folderId={sel.folderId} notes={notes[selKb.id] ?? null} query={query} error={error}
-              onFolder={(id) => { openKeys(openPathTo(selKb, id)); select({ kbId: selKb.id, folderId: id }); }} onNote={openNote} />
+              onFolder={(id) => { openKeys(openPathTo(selKb, id)); select({ kbId: selKb.id, folderId: id }); }} onNote={(n) => openNote(n, selKb.id)}
+              onNew={selKb.writable ? () => setHosted({ kbId: selKb.id, note: null, folderId: sel.folderId }) : undefined} />
           )}
         </section>
         {moving && kbOf(moving.kbId) && (
@@ -450,14 +468,18 @@ function MoveDialog({ kb, folderId, onDone }: { kb: Kb; folderId: string; onDone
   );
 }
 
-function FolderView({ kb, folderId, notes, query, error, onFolder, onNote }: { kb: Kb; folderId: string | null; notes: KbNote[] | null; query: string; error: string; onFolder: (id: string) => void; onNote: (n: KbNote) => void }) {
+function FolderView({ kb, folderId, notes, query, error, onFolder, onNote, onNew }: { kb: Kb; folderId: string | null; notes: KbNote[] | null; query: string; error: string; onFolder: (id: string) => void; onNote: (n: KbNote) => void; onNew?: () => void }) {
   const folder = folderId ? findFolder(kb.folders, folderId) : null;
   const subfolders = folderId ? folder?.children ?? [] : kb.folders;
   const shown = notes ? notesIn(notes, folderId).filter((n) => matchesQuery({ title: n.title, rel: n.path }, query)) : null;
   const crumb = [kb.name, ...(folderId ? folderPath(kb.folders, folderId) : [])].join(' / ');
   return (
     <>
-      <div className="tk-subhead"><span className="tk-crumb"><IconStack width={14} height={14} /> {crumb}</span></div>
+      <div className="tk-subhead">
+        <span className="tk-crumb"><IconStack width={14} height={14} /> {crumb}</span>
+        {onNew && <button className="pill small with-icon" onClick={onNew}><IconPlus width={14} height={14} />New note</button>}
+        {kb.hosted && !kb.writable && kb.role !== 'reader' && <span className="muted">Read-only until the workspace's plan is renewed</span>}
+      </div>
       <div className="tk-body"><div className="tk-col">
         {error && <p className="error" role="alert">{error}</p>}
         <div className="set-card tk-list kbt-list">

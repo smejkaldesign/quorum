@@ -172,37 +172,53 @@ export function readersSummary(access: KbAccess[] | null): string {
   if (!access) return 'Readers are visible to its admins';
   const people = access.filter((a) => a.principal === 'user');
   const admins = people.filter((a) => a.role === 'admin').length;
+  const editors = people.filter((a) => a.role === 'editor').length;
   const readers = people.length - admins;
   const parts: string[] = [];
   const ws = access.find((a) => a.principal === 'workspace');
-  if (ws) parts.push(ws.role === 'admin' ? 'Whole workspace (all can manage)' : 'Whole workspace');
+  if (ws) parts.push(ws.role === 'admin' ? 'Whole workspace (all can manage)' : ws.role === 'editor' ? 'Whole workspace (all can edit)' : 'Whole workspace');
   else if (readers) parts.push(`${readers} ${readers === 1 ? 'person' : 'people'}`);
   else parts.push('Owners and admins only');
+  if (editors) parts.push(`${editors} ${editors === 1 ? 'editor' : 'editors'}`);
   if (admins) parts.push(`${admins} KB ${admins === 1 ? 'admin' : 'admins'}`);
   return parts.join(' · ');
 }
 
 export type ReadersMode = 'workspace' | 'people';
-// which way an access list reads, and the people it names as readers
-export function readersOf(access: KbAccess[] | null): { mode: ReadersMode; people: string[] } {
+// which way an access list reads, the people it names as readers or editors, which of them edit (hosted KBs), and
+// whether the whole workspace edits
+export function readersOf(access: KbAccess[] | null): { mode: ReadersMode; people: string[]; editors: string[]; workspaceEdits: boolean } {
   const list = access ?? [];
   return {
     mode: list.some((a) => a.principal === 'workspace') ? 'workspace' : 'people',
-    people: list.filter((a) => a.principal === 'user' && a.role === 'reader' && a.userId).map((a) => a.userId!),
+    people: list.filter((a) => a.principal === 'user' && (a.role === 'reader' || a.role === 'editor') && a.userId).map((a) => a.userId!),
+    editors: list.filter((a) => a.principal === 'user' && a.role === 'editor' && a.userId).map((a) => a.userId!),
+    workspaceEdits: list.some((a) => a.principal === 'workspace' && a.role === 'editor'),
   };
 }
 
 // the whole list kb-access-set takes for a readers choice. The KB admins already on the list stay admins; teams are
-// not offered yet, so team rows are left out; a person chosen who is also an admin stays an admin
-export function accessDraft(current: KbAccess[] | null, mode: ReadersMode, people: string[]): KbAccessDraft[] {
+// not offered yet, so team rows are left out; a person chosen who is also an admin stays an admin. On a KB hosted by
+// Quorum, editors (people chosen to edit) and workspaceEdits (the whole workspace edits) give the editor role; a person
+// named as an editor keeps that role with the whole workspace reading too
+export function accessDraft(current: KbAccess[] | null, mode: ReadersMode, people: string[], hosted: { editors: string[]; workspaceEdits: boolean } | null = null): KbAccessDraft[] {
   const list = current ?? [];
   const admins = list.filter((a) => a.principal === 'user' && a.role === 'admin' && a.userId).map((a) => a.userId!);
+  const editors = new Set(hosted?.editors ?? []);
   const out: KbAccessDraft[] = [];
-  if (mode === 'workspace') out.push({ principal: 'workspace', role: list.find((a) => a.principal === 'workspace')?.role ?? 'reader' });
+  if (mode === 'workspace') {
+    const was = list.find((a) => a.principal === 'workspace')?.role ?? 'reader';
+    out.push({ principal: 'workspace', role: was === 'admin' ? 'admin' : hosted ? (hosted.workspaceEdits ? 'editor' : 'reader') : was === 'editor' ? 'reader' : was });
+  }
   for (const id of admins) out.push({ principal: 'user', userId: id, role: 'admin' });
-  if (mode === 'people') for (const id of [...new Set(people)]) if (!admins.includes(id)) out.push({ principal: 'user', userId: id, role: 'reader' });
+  if (mode === 'people') for (const id of [...new Set(people)]) if (!admins.includes(id)) out.push({ principal: 'user', userId: id, role: hosted && editors.has(id) ? 'editor' : 'reader' });
+  if (mode === 'workspace' && hosted) for (const id of editors) if (!admins.includes(id)) out.push({ principal: 'user', userId: id, role: 'editor' });
   return out;
 }
+
+// who may create, rename, move and delete folders: a KB hosted by Quorum while the caller may write it (its editors
+// and admins on a paid plan), and any other KB's admins
+export const canArrange = (kb: Pick<Kb, 'role' | 'hosted' | 'writable'>): boolean => (kb.hosted ? !!kb.writable : kb.role === 'admin');
 
 export const KIND_LABEL: Record<Kb['kind'], string> = { general: 'General', meetings: 'Meetings' };
 
@@ -253,6 +269,7 @@ export function sourceLine(s: KbSource | null): string | null {
   if (!s) return null;
   const repo = (u: string | null) => (u ?? '').replace(/^https?:\/\/(www\.)?github\.com\//, '').replace(/\.git$/, '');
   if (s.kind === 'github') return `GitHub ${repo(s.url) || 'repository'}${s.subpath ? `/${s.subpath.replace(/^\/+|\/+$/g, '')}` : ''}${s.branch ? ` (${s.branch})` : ''}`;
+  if (s.kind === 'hosted') return 'Hosted by Quorum';
   if (s.kind === 'zip') return `Zip ${s.name ?? (s.path ?? '').replace(/^.*\//, '')}`.trim();
   if (s.kind === 'git') return `Repository ${(s.url ?? '').replace(/^https?:\/\//, '').replace(/\.git$/, '')}${s.branch ? ` (${s.branch})` : ''}`.trim();
   return `Folder ${(s.path ?? '').replace(/^\/Users\/[^/]+/, '~')}`.trim();
