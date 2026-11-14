@@ -205,6 +205,15 @@ contextBridge.exposeInMainWorld('quorum', {
   workspaceUsage: () => ipcRenderer.invoke('workspace-usage'),
   workspaceVoiceGet: () => ipcRenderer.invoke('workspace-voice-get'),
   workspaceVoiceSet: (voice) => ipcRenderer.invoke('workspace-voice-set', voice),
+  // library connectors a workspace enables (hosted edition, migration 0030); handlers in ee/integrations.js. A secret in a
+  // draft goes in and is never read back
+  integrationsAdmin: () => ipcRenderer.invoke('integrations-admin'),
+  integrationSave: (draft) => ipcRenderer.invoke('integration-save', draft),
+  integrationEnable: (id, on) => ipcRenderer.invoke('integration-enable', id, on),
+  integrationRemove: (id) => ipcRenderer.invoke('integration-remove', id),
+  approvedOnlySet: (on) => ipcRenderer.invoke('approved-only-set', on),
+  connectorPolicy: () => ipcRenderer.invoke('connector-policy'),
+  memberIntegrationsSync: (connected) => ipcRenderer.invoke('member-integrations-sync', connected),
   // billing (hosted edition; handlers in ee/billing.js): the plan and seats, and Stripe's pages opened in the browser
   // company knowledge review queue (hosted edition; handlers in ee/knowledge.js)
   knowledgeStatus: () => ipcRenderer.invoke('knowledge-status'),

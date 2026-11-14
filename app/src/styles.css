@@ -1683,3 +1683,26 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .kbt-slot:empty { display: none; }
 .kbt-slot .tk-tree { flex: none; overflow: visible; padding: 0; }
 .tk-browser.solo { grid-template-columns: 1fr; }
+
+/* Admin › Workspace › Connectors, the library connectors a workspace approves (ee/src/WorkspaceIntegrations.tsx) */
+.wsi-crumbs { margin: 0 0 14px; color: var(--muted); font-size: 14px; }
+.wsi-crumbs .link-btn.plain { margin: 0; padding: 0; color: var(--muted); }
+.wsi-head-actions { flex: none; display: inline-flex; align-items: center; gap: 8px; padding-top: 10px; }
+.wsi-lede { margin: 4px 0 8px; color: var(--muted); font-size: 14px; line-height: 1.55; }
+.wsi-actions { margin-top: 16px; justify-content: space-between; }
+.wsi-form { max-width: 620px; }
+.wsi-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 6px 0 8px; }
+.wsi-mode { position: relative; display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border: 1px solid var(--line-2); border-radius: 12px; cursor: pointer; }
+.wsi-mode input { position: absolute; opacity: 0; pointer-events: none; }
+.wsi-mode span { color: var(--muted); font-size: 13px; line-height: 1.45; }
+.wsi-mode.on { border-color: var(--text); }
+.wsi-mode:focus-within { outline: 2px solid var(--line-2); outline-offset: 2px; }
+.wsi-hint { font-size: 12px; }
+.wsi-personal { margin: 6px 0; }
+.wsi-switch-line { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.wsi-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.wsi-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border: 1px solid var(--line-2); border-radius: 999px; background: none; color: var(--text); font-size: 12px; cursor: pointer; }
+.wsi-chip code { font: 12px/1.5 var(--mono); }
+.wsi-scope-add { display: flex; align-items: center; gap: 8px; }
+.wsi-scope-add .set-field { flex: 1; }
+@media (max-width: 640px) { .wsi-modes { grid-template-columns: 1fr; } }

@@ -3,6 +3,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, scre
 import { NEEDS_SOURCE, NEEDS_TOOLS, SOURCES, modelLabel, runModel, sourceStatus } from './models.js';
 import { BY_ID, cleanConnectors, cleanProviders, needsKey, providerFor, providersFromSource, sourceFromProviders } from './connectors/catalog.js';
 import { connectorKey, removeConnectorKey, setConnectorKey, testSavedConnector } from './connectors/keys.js';
+import { createConnectGuard, guardIpc } from './connectors/connectGuard.js';
 import { openSpeech, SPEECH_ENGINES } from './speech/provider.js';
 import { createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTree } from './vault.js';
 import { createVaultIndex } from './vindex.js';
@@ -1729,8 +1730,12 @@ const account = EDITION === 'cloud'
 // the installed app owns the quorum:// scheme (package.json build.protocols); Google sign-in comes back on it
 if (app.isPackaged) app.setAsDefaultProtocolClient('quorum');
 app.on('open-url', (e, url) => { e.preventDefault(); if (/^quorum:\/\/auth\//.test(url)) account.finishOAuth?.(url); });
+// every connect channel (oauth-connect, source-connect, platform-connect) runs this guard first: in Cloud it refuses a
+// connector the workspace did not approve, or one it runs with a shared identity (connectors/connectGuard.js)
+const connectGuard = createConnectGuard();
+const connectIpc = guardIpc(ipcMain, connectGuard);
 // workspace connectors (Settings › Admin › Connectors) ride on the same account and client
-if (EDITION === 'cloud') { const conn = (await loadEE('connectors.js')).registerConnectors({ ipcMain, account, log }); guardrails.setRemote(async () => { const r = await conn.handlers['workspace-guardrails-get'](); return r?.rules ?? null; }); }
+if (EDITION === 'cloud') { const conn = (await loadEE('connectors.js')).registerConnectors({ ipcMain, account, log, connectGuard }); guardrails.setRemote(async () => { const r = await conn.handlers['workspace-guardrails-get'](); return r?.rules ?? null; }); }
 if (EDITION === 'cloud') (await loadEE('knowledge.js')).registerKnowledge({ ipcMain, account, log, shell });
 // team knowledge (the Knowledge tab's source and read-only index; handlers in ee/teamKnowledge.js)
 if (EDITION === 'cloud') (await loadEE('teamKnowledge.js')).registerTeamKnowledge({ ipcMain, account, settings, saveSettings: () => store.settings.save(), dataDir: DATA_DIR, log, toUI, pickFolder: async () => { const r = await dialog.showOpenDialog(win, { title: 'Team knowledge folder', message: 'Choose the folder that holds the team knowledge on this Mac.', properties: ['openDirectory'] }); return r.canceled ? null : r.filePaths[0] ?? null; } });
@@ -1758,9 +1763,9 @@ function openFreshSignIn(url, name) {
   win.loadURL(url);
   return Promise.resolve();
 }
-registerSources({ ipcMain, settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), openFresh: openFreshSignIn, afterWrite: (file) => { account.sync.pushMeetingNote(file); keeper.schedule('import'); }, version: app.getVersion(), agentRuntime: { runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV } });
+registerSources({ ipcMain: connectIpc, settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), openFresh: openFreshSignIn, afterWrite: (file) => { account.sync.pushMeetingNote(file); keeper.schedule('import'); }, version: app.getVersion(), agentRuntime: { runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV } });
 // platform accounts for cloud recordings (Zoom first) go through the relay, so they exist in the hosted edition only
-if (EDITION === 'cloud') (await loadEE('platforms.js')).registerPlatforms({ ipcMain, account, settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file) });
+if (EDITION === 'cloud') (await loadEE('platforms.js')).registerPlatforms({ ipcMain: connectIpc, account, settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file) });
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);
 // the person's own name for a graph cluster, kept per vault in settings so it survives a restart and a re-index; an
 // empty name goes back to the generated one. Answers with every note's cluster name after the change (a rename can
@@ -2036,7 +2041,7 @@ const accounts = createAccounts({
 });
 const accountCall = async (fn) => { try { return await fn(); } catch (err) { return { error: err.message }; } };
 ipcMain.handle('oauth-accounts', () => accounts.list());
-ipcMain.handle('oauth-connect', (_e, id) => accountCall(() => accounts.connect(String(id ?? ''))));
+connectIpc.handle('oauth-connect', (_e, id) => accountCall(() => accounts.connect(String(id ?? ''))));
 ipcMain.handle('oauth-disconnect', (_e, id) => accountCall(() => accounts.disconnect(String(id ?? ''))));
 // Google Drive files attached to a knowledge base folder through the Google Picker (handlers and the IPC API in
 // ee/kbDrive.js; the picker page and the Drive reads in sources/drive.js)

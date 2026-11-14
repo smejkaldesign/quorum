@@ -4,6 +4,7 @@ import { Row } from '../../src/controls';
 import { IconGrid, IconPlus, IconReset, IconTrash, ProviderMark } from '../../src/icons';
 import { AccountCard, EE_MARKER, useAccount } from './Account';
 import { connectorsApi } from './accountMock';
+import { WorkspaceIntegrations } from './WorkspaceIntegrations';
 import { needsBaseUrl, PROVIDER_IDS, PROVIDERS, ROLE_LABEL, rolesFor, validRoles } from './connectorRoles';
 
 const api = connectorsApi();
@@ -20,7 +21,19 @@ export function WorkspaceConnectorsPage() {
   const account = useAccount();
   if (!account) return null;
   if (!account.signedIn || !account.workspace) return <AccountCard account={account} />;
-  return <Connectors account={account} />;
+  return <Both account={account} />;
+}
+
+// the library connectors the workspace approves (WorkspaceIntegrations.tsx, migration 0030) on top, then the model
+// provider keys (migration 0006) as their own section; a connector's read view takes the whole page
+function Both({ account }: { account: AccountState }) {
+  const [detail, setDetail] = useState(false);
+  return (
+    <>
+      {'integrationsAdmin' in window.quorum && <WorkspaceIntegrations account={account} onDetail={setDetail} />}
+      {!detail && <Connectors account={account} />}
+    </>
+  );
 }
 
 function Connectors({ account }: { account: AccountState }) {
@@ -37,7 +50,7 @@ function Connectors({ account }: { account: AccountState }) {
   return (
     <div data-ee={EE_MARKER}>
       <div className="set-head">
-        <h3>Organization connectors</h3>
+        <h3>Model provider keys</h3>
         {canManage && <span className="set-head-actions"><button className="pill small-pill with-icon" onClick={() => setEditing('new')}><IconPlus width={15} height={15} />Add</button></span>}
       </div>
       <p className="mcp-lede">Provider keys for the whole workspace. Quorum keeps each key in the server vault and uses it only for the roles you pick; no one can read it back, not even here.</p>

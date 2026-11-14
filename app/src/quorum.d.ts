@@ -160,6 +160,13 @@ export type ConnectorProvider = 'assemblyai' | 'deepgram' | 'elevenlabs' | 'open
 export type ConnectorRole = 'speech' | 'summary' | 'notes' | 'agent' | 'voice';
 export type WorkspaceConnector = { id: string; workspaceId: string; provider: ConnectorProvider; label: string; baseUrl: string | null; roles: ConnectorRole[]; createdBy: string | null; createdAt: string; updatedAt: string };
 export type ConnectorDraft = { provider: ConnectorProvider; label: string; baseUrl: string | null; roles: ConnectorRole[]; secret: string };
+// a library connector a workspace enabled (migration 0030): org mode holds one shared identity whose secret stays in
+// the server vault (only secretSet and the last four characters come back); personal mode has each member sign in
+export type IntegrationMode = 'org' | 'personal';
+export type IntegrationConfig = { scopes: string[]; customScopes: boolean; ownerId: string | null; domain: string | null; mock: boolean; auth: 'api_key' | 'oauth_client'; clientId: string | null };
+export type WorkspaceIntegration = { id: string; workspaceId: string; provider: string; mode: IntegrationMode; enabled: boolean; config: IntegrationConfig; secretSet: boolean; secretLast4: string | null; connections: number; createdBy: string | null; createdAt: string; updatedAt: string };
+export type IntegrationDraft = { provider: string; mode: IntegrationMode; config: Partial<IntegrationConfig>; secret?: string; enabled?: boolean };
+export type ConnectorPolicyInfo = { teamEnabled: boolean; approvedConnectorsOnly: boolean; approvedOnly: boolean; enabled: { id: string; provider: string; mode: IntegrationMode }[] };
 // organization voice typing: which connector handles each managed step (absent means Quorum managed), and the hours used
 // this calendar month per seat. managedHours is the part on Quorum's keys, the part that counts against the allowance
 export type VoiceStep = 'speech' | 'summary' | 'notes';
@@ -478,6 +485,13 @@ declare global {
       workspaceUsage(): Promise<{ usage?: WorkspaceUsage; error?: string }>;
       workspaceVoiceGet(): Promise<{ voice?: WorkspaceVoice; error?: string }>;
       workspaceVoiceSet(voice: WorkspaceVoice): Promise<{ voice?: WorkspaceVoice; error?: string }>;
+      integrationsAdmin(): Promise<{ integrations?: WorkspaceIntegration[]; policy?: ConnectorPolicyInfo; error?: string }>;
+      integrationSave(draft: IntegrationDraft): Promise<{ integration?: WorkspaceIntegration; error?: string }>;
+      integrationEnable(id: string, on: boolean): Promise<{ integration?: WorkspaceIntegration; error?: string }>;
+      integrationRemove(id: string): Promise<Result>;
+      approvedOnlySet(on: boolean): Promise<Result & { approvedConnectorsOnly?: boolean }>;
+      connectorPolicy(): Promise<{ policy: ConnectorPolicyInfo | null }>;
+      memberIntegrationsSync(connected: string[]): Promise<{ ok: boolean }>;
       knowledgeStatus(): Promise<Result & { autoInclude?: boolean; mine?: ContributionMine[]; team?: TeamVault | null }>;
       knowledgeTeamOpen(): Promise<Result>;
       knowledgeList(): Promise<Result & { root?: string | null; notes?: KnowledgeNote[] }>;

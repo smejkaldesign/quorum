@@ -1,4 +1,6 @@
-import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from 'react';
+import { POLICY_CHANGED, policyOf, type ConnectorPolicy } from '../connectors/approval';
+import { createReporter } from './connectorReport';
 
 // The renderer's edition, fixed at build time by Vite's define (vite.config.ts). Cloud-only UI lives in ee/src and is
 // reached only through the dynamic imports below. Because __QUORUM_EDITION__ is a string literal in the bundle, the
@@ -79,3 +81,41 @@ export const WorkspaceConnectorsArea = ({ local }: { local: ReactNode }) => <Clo
 // Settings › Admin › Voice typing: the managed pipeline, its usage, and which connector handles each step
 export const WorkspaceVoiceArea = ({ local }: { local: ReactNode }) => <CloudPage Page={CloudVoice} local={local} />;
 export const WorkspaceGuardrailsArea = ({ local }: { local: ReactNode }) => <CloudPage Page={CloudGuardrails} local={local} />;
+
+// Settings › Connections in Cloud: the workspace's connector policy (migration 0030). null in the Local edition, while
+// it loads, and whenever no policy applies (signed out, no team, or the switch off with no org connectors), so the page
+// shows the full library. It loads at mount and on the first account update that has a workspace, and refreshes on a
+// workspace or team switch, on window focus, every few minutes, and when the admin page changes a connector
+// (POLICY_CHANGED). report tells the workspace which of its connectors this member has connected, for the admin page's
+// connection counts; a list is recorded as sent only once the workspace accepted it, so a failure is retried later.
+const POLICY_REFRESH_MS = 3 * 60 * 1000;
+export function useConnectorPolicy(): { policy: ConnectorPolicy | null; report: (connected: string[]) => void } {
+  const [policy, setPolicy] = useState<ConnectorPolicy | null>(null);
+  const [reporter] = useState(() => (isCloud ? createReporter((ids) => window.quorum.memberIntegrationsSync(ids)) : null));
+  useEffect(() => {
+    if (!isCloud) return;
+    let live = true;
+    const load = () => window.quorum.connectorPolicy().then((r) => { if (live) setPolicy(policyOf(r?.policy)); }).catch(() => {});
+    const refresh = () => { load(); reporter?.flush(); };
+    load();
+    let seen: string | null = null;
+    const off = window.quorum.onAccount((s) => {
+      if (!s.workspace) { seen = null; return; }
+      // the account emits on every sync; only the first update with a workspace, a workspace switch or the team switch
+      // changes the policy. A new workspace has its own connection list, so the last report is sent again
+      const key = `${s.workspace.id}:${s.workspace.teamEnabled === true}`;
+      if (key !== seen) {
+        const switched = seen !== null && seen.split(':')[0] !== s.workspace.id;
+        seen = key;
+        load();
+        if (switched) reporter?.reset(); else reporter?.flush();
+      }
+    });
+    const timer = setInterval(refresh, POLICY_REFRESH_MS);
+    window.addEventListener('focus', refresh);
+    window.addEventListener(POLICY_CHANGED, load);
+    return () => { live = false; off(); clearInterval(timer); window.removeEventListener('focus', refresh); window.removeEventListener(POLICY_CHANGED, load); };
+  }, [reporter]);
+  const report = useCallback((connected: string[]) => { reporter?.report(connected); }, [reporter]);
+  return { policy, report };
+}
