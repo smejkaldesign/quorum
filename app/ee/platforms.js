@@ -14,6 +14,7 @@ import { slug } from '../sources/granola.js';
 import { SUBFOLDER, transcriptMarkdown } from '../sources/transcripts.js';
 import { httpUrl, relayUrls, unreachable } from './relay.js';
 import { plain } from './account.js';
+import { setFrontmatterKey } from '../frontmatter.js';
 
 // The Zoom app's public client id and the redirect URI registered for it. Development credentials pair with the
 // railway.app redirect and serve the developer's own account until the app is published; both move to the
@@ -81,7 +82,7 @@ export function recordingNote(m, { transcriptRel = null, host = null } = {}) {
 export const fileNameFor = (m) => `${String(m.start_time ?? '').slice(0, 10) || 'undated'}-${slug(m.topic || 'zoom-meeting')}.md`;
 export const transcriptFile = (m) => (m.recording_files ?? []).find((f) => f.file_type === 'TRANSCRIPT' && (f.status ?? 'completed') === 'completed' && f.download_url) ?? null;
 
-export function createPlatforms({ account, settings, saveSettings = () => {}, meetingsDir, afterWrite = () => {}, log = () => {}, toUI = () => {}, openExternal = async () => {}, fetchImpl = globalThis.fetch, store = createTokenStore(), loopback = awaitLoopback, now = () => Date.now() }) {
+export function createPlatforms({ account, settings, saveSettings = () => {}, meetingsDir, afterWrite = () => {}, keepKeys = (_prev, next) => next, log = () => {}, toUI = () => {}, openExternal = async () => {}, fetchImpl = globalThis.fetch, store = createTokenStore(), loopback = awaitLoopback, now = () => Date.now() }) {
   const conf = () => (settings.platforms ??= {});
   const stateOf = (id) => (conf()[id] ??= { connected: false, account: null, accountId: null, name: null, connectedAt: null, lastSyncAt: null, imported: 0, since: null });
   const jobs = createJobs({ emit: (job) => toUI('platform-job', job), now });
@@ -184,7 +185,11 @@ export function createPlatforms({ account, settings, saveSettings = () => {}, me
         // a second meeting with the same title on the same day keeps the first file and gets the id in its own name
         let file = path.join(dir, name);
         if (existsSync(file) && !readFileSync(file, 'utf8').includes(m.uuid)) file = path.join(dir, name.replace(/\.md$/, `-${m.id}.md`));
-        writeFileSync(file, recordingNote(m, { transcriptRel: `${SUBFOLDER}/${name}`, host: s.name }));
+        // the note names the Zoom account it came from, and a re-import keeps the person's share choice and the keys
+        // the guardrails protect (keepKeys, from main.js)
+        const note = recordingNote(m, { transcriptRel: `${SUBFOLDER}/${name}`, host: s.name });
+        const own = s.account && !/[\r\n]/.test(s.account) ? setFrontmatterKey(note, 'source_account', JSON.stringify(String(s.account))) : note;
+        writeFileSync(file, keepKeys(existsSync(file) ? readFileSync(file, 'utf8') : null, own));
         afterWrite(file);
         existing.add(m.uuid);
         imported += 1;

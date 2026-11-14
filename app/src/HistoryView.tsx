@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { SourceAskBanner } from './MeetingSources';
 import type { Brain, ChatRow, MeetingRow, NoteDoc } from './quorum';
 import { NoteMenu, NoteReader, VisibilityPill } from './MeetingNote';
 import { quoteLink, useQuote } from './quotes';
@@ -148,6 +149,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
       </section>
 
       <Composer className="hist-ask" value={draft} onChange={setDraft} onSubmit={(q, f) => ask(q, f)} inputRef={askRef} disabled={!brain} placeholder="Ask anything" />
+      <SourceAskBanner />
       <div className="recipes">
         {RECIPES.map((r) => <button key={r.label} className="recipe" onClick={() => ask(r.label)}><r.icon width={15} height={15} />{r.label}</button>)}
       </div>

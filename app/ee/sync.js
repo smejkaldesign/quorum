@@ -149,17 +149,18 @@ export function createSync({ account, store, brain = () => null, log = () => {},
     const rel = relOf(t.vault, file);
     if (!rel) return false;
     // the meetings knowledge base (ee/meetingsKb.js) may write the person's choice into the note first, so the row is
-    // read after it. A note goes into the KB once; later pushes leave its place alone, so an admin's move stands
-    const place = meetings ? await meetings.route(file) : null;
+    // read after it. A note goes into the KB once: its entry keeps the place the push set or the last pull saw
+    // (placeOf), and later pushes leave a placed note alone, so an admin's move stands
+    const place = meetings && !isExcluded(rel) ? await meetings.route(file) : null;
     const row = noteRow(t, file, rel, true);
     if (!row) return false;
     const e = entry(t.ws, rel);
-    if (place?.kbId && (!e.meetings || place.fresh)) Object.assign(row, { kbId: place.kbId, folderId: place.folderId });
+    if (place?.kbId && (!e.kb || place.fresh)) Object.assign(row, { kbId: place.kbId, folderId: place.folderId });
     const m = meetingRow(t, file, rel, row.frontmatter);
     try {
       await t.remote.notes.push(row);
-      if (row.kbId) e.meetings = true;
-      else if (place?.private) delete e.meetings;
+      if (row.kbId) Object.assign(e, { kb: row.kbId, folder: row.folderId ?? null });
+      else if (place?.private) Object.assign(e, placeOf(null));
       await t.remote.meetings.push(m);
       if (m.visibility === 'public' && row.frontmatter.quorum_id) await t.remote.meetings.pushSegments(m, sessionSegments(t, String(row.frontmatter.quorum_id)));
       commit(t, [row]);

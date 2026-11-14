@@ -1,25 +1,37 @@
 // Meeting notes saved into the workspace's meetings knowledge base (Cloud edition with a team switched on; migration
-// 0028, docs/specs/workspace-knowledge.md "Meeting notes" and Decisions 4). A workspace has one meetings KB. Meeting
-// notes from members' meeting-notes connectors (Granola today, Zoom cloud recordings) and notes recorded with Record
-// go into it as shared notes, one folder per month ("2026-11"), through the same push sync.js makes for every meeting
-// note. That push keeps every existing guardrail: a note with opted-out lines, a confidential note, a denied folder
-// or frontmatter key is never pushed (sync.js noteRow with isExcluded and isExcludedText), and Quorum's own notes are
-// written with the opt-out lines already redacted (main.js noteMarkdown).
+// 0028, docs/specs/workspace-knowledge.md "Meeting notes" and Decisions 4). A workspace has one meetings KB. Shared
+// meeting notes go into it through the push sync.js makes for every meeting note, one folder per month ("2026-11").
+// That push keeps every guardrail: a note in an excluded folder, with opted-out lines, confidential, or with a
+// denied frontmatter key is never pushed (sync.js noteRow with isExcluded and isExcludedText), and this module never
+// rewrites such a note.
 //
-// Each note carries the person's choice in its frontmatter:
-//   keep_private: true   visibility: private   the author's private note, outside the KB
-//   keep_private: false  visibility: public    shared into the meetings KB
-// A note with neither key is undecided. On its first push an undecided meeting note dated after this workspace's
-// routing started (settings.meetingsKb.since) is shared, unless the person turned off "Save meeting notes to the
-// team's meetings knowledge base" (settings.meetingsKb.autoSave, default on). Older undecided notes stay as they
-// are. A note with visibility set and no keep_private follows its visibility. Transcripts never go in, and a written
-// note (type: note) goes in only when it was recorded (recorded: true). Solo workspaces and the Local edition never
-// load this module, so nothing changes for them.
+// The note's choice is keep_private in its frontmatter, with visibility following it (shareChoice.js). An undecided
+// note (no keep_private) gets a default on its first push:
+//   - a note recorded in Quorum (Record, a call, Start listening; source: quorum) follows "Save meeting notes to the
+//     team's meetings knowledge base" (settings.meetingsKb.autoSave, default on)
+//   - a note from a meeting-notes connector follows the person's choice for that source account (a Granola account,
+//     Zoom), asked once per workspace, since one account can hold another organization's meetings. Until they
+//     choose, its notes stay private
+// Either default covers notes dated from when it started applying (its since); older notes stay as they are until
+// the person shares them one by one, or a source's past notes at once from Settings > Meetings. Transcripts never go
+// in, and a written note (type: note) goes in only when it was recorded (recorded: true). Solo workspaces and the
+// Local edition never use this module.
+//
+// settings.meetingsKb: { autoSave, since: { [workspaceId]: iso }, floor: iso,
+//                        sources: { [workspaceId]: { [sourceKey]: { choice: 'share' | 'private' | null, label, since, firstDate } } } }
 import { readFileSync } from 'node:fs';
 import { notes as localNotes } from '../store/local.js';
+import { choiceOf, withChoice } from '../shareChoice.js';
 
-const KB_TTL = 5 * 60 * 1000;
+const INFO_TTL = 5 * 60 * 1000;
 const MONTH = /^(\d{4})-(0[1-9]|1[0-2])/;
+const HOUR = 60 * 60 * 1000;
+// a default that starts applying reaches back to the note that started it, less this margin, and never more than a day
+export const SINCE_MARGIN = 2 * HOUR;
+export const SINCE_REACH = 24 * HOUR;
+const SOURCE_NAMES = { granola: 'Granola', zoom: 'Zoom', teams: 'Microsoft Teams', meet: 'Google Meet' };
+export const SYNC_OFF = 'Turn on sync to share meeting notes.';
+export const EXCLUDED = 'Not shared (excluded folder).';
 
 // the month folder for a note: the year and month its date was written with (the meeting's own local date), else now
 export function monthOf(date, now = new Date()) {
@@ -36,41 +48,56 @@ export function isMeetingNote(fm = {}) {
   return true;
 }
 
-// what the person chose for the note: 'shared', 'private', or null when nothing is set
-export function shareChoice(fm = {}) {
-  const keep = String(fm.keep_private ?? '').trim();
-  if (keep === 'true') return 'private';
-  if (keep === 'false') return 'shared';
-  if (fm.visibility === 'public') return 'shared';
-  if (fm.visibility === 'private') return 'private';
-  return null;
+// where a note came from: 'recorded' for Quorum's own, { key, label } for a connector's source account, null for a
+// note no connector or recording made (a file dropped into a meetings folder by hand), which is never shared by default
+export function originOf(fm = {}) {
+  const source = String(fm.source ?? '').trim().toLowerCase();
+  if (source === 'quorum') return 'recorded';
+  if (!source) return null;
+  const acct = String(fm.source_account ?? '').trim();
+  const name = SOURCE_NAMES[source] ?? source.replace(/^./, (c) => c.toUpperCase());
+  return { key: `${source}:${acct.toLowerCase()}`, label: acct ? `${name} (${acct})` : name };
 }
+
+const isConfidential = (fm) => String(fm.confidential ?? '').trim() !== '';
+const after = (date, since) => { const at = Date.parse(String(date ?? '')); return !!since && !Number.isNaN(at) && at >= Date.parse(since); };
 
 // the routing rule for one meeting note:
-//   'leave'   not a meeting note, or undecided and the default does not apply: nothing changes
+//   'leave'   not a meeting note, in an excluded folder, or undecided with no default that applies: nothing changes
+//   'ask'     undecided, from a connector source the person has not chosen for yet: stays private, and they are asked
 //   'private' kept private, confidential, or with withheld lines: not in the KB
-//   'shared'  the person chose to share it: placed in the KB
+//   'shared'  keep_private is false: placed in the KB
 //   'share'   undecided and shared by default: the choice is written to the note, then it is placed
-export function meetingRoute({ fm = {}, withheld = false, autoSave = true, since = null }) {
-  if (!isMeetingNote(fm)) return 'leave';
-  if (withheld || String(fm.confidential ?? '').trim() !== '') return 'private';
-  const choice = shareChoice(fm);
+// source is the person's choice for the note's connector source: { choice, since } or undefined
+export function meetingRoute({ fm = {}, excluded = false, withheld = false, autoSave = true, since = null, source }) {
+  if (!isMeetingNote(fm) || excluded) return 'leave';
+  if (withheld || isConfidential(fm)) return 'private';
+  const choice = choiceOf(fm);
   if (choice) return choice;
-  if (!autoSave || !since) return 'leave';
-  const at = Date.parse(String(fm.date ?? ''));
-  if (Number.isNaN(at) || at < Date.parse(since)) return 'leave';
-  return 'share';
+  const origin = originOf(fm);
+  if (origin === 'recorded') return autoSave && after(fm.date, since) ? 'share' : 'leave';
+  if (!origin) return 'leave';
+  if (!source?.choice) return 'ask';
+  return source.choice === 'share' && after(fm.date, source.since) ? 'share' : 'leave';
 }
 
-// the note's text with the choice written into its frontmatter, every other byte kept
-export const withChoice = (text, keepPrivate) => localNotes.setFrontmatterKey(localNotes.setFrontmatterKey(text, 'keep_private', keepPrivate ? 'true' : 'false'), 'visibility', keepPrivate ? 'private' : 'public');
+// when a default starts applying because of a note dated `date`: that date less the margin, but never later than now
+// and never more than a day back, and never before floor (the last time the person turned it from off to on)
+export function startSince(date, now, floor = null) {
+  const t = now.getTime();
+  const at = Date.parse(String(date ?? ''));
+  let s = Number.isNaN(at) ? t : Math.min(t, at - SINCE_MARGIN);
+  s = Math.max(s, t - SINCE_REACH);
+  if (floor && !Number.isNaN(Date.parse(floor))) s = Math.max(s, Date.parse(floor));
+  return new Date(s).toISOString();
+}
 
-export function createMeetingsKb({ account, settings, saveSettings = () => {}, isExcludedText = () => false, log = () => {}, read = (abs) => readFileSync(abs, 'utf8'), write = localNotes.write, now = () => new Date() }) {
+export function createMeetingsKb({ account, settings, saveSettings = () => {}, isExcluded = () => false, isExcludedText = () => false, relOf = () => null, listNotes = () => [], push = async () => {}, onChange = () => {}, log = () => {}, read = (abs) => readFileSync(abs, 'utf8'), write = localNotes.write, now = () => new Date() }) {
   const conf = () => (settings.meetingsKb ??= {});
   const autoSave = () => conf().autoSave !== false;
   // files whose choice the person just turned to shared: their next push places them even if they were placed once
   const fresh = new Set();
-  let cache = { ws: null, at: 0, kb: null, folders: new Map() };
+  let cache = { ws: null, at: 0, info: null, folders: new Map() };
 
   const workspace = () => {
     const s = account.state();
@@ -81,13 +108,12 @@ export function createMeetingsKb({ account, settings, saveSettings = () => {}, i
     if (error) throw new Error(error.message);
     return data;
   };
-  // the workspace's meetings KB the person can read, the oldest if there are two; cached for a few minutes
+  // the workspace's meetings KB the person can read, as { id, name }; cached for a few minutes
   async function meetingsKb(ws) {
-    if (cache.ws === ws.id && Date.now() - cache.at < KB_TTL) return cache.kb;
-    const kbs = (await rpc('kb_list', { workspace_id: ws.id })) ?? [];
-    const k = kbs.filter((x) => x?.kind === 'meetings').sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))[0] ?? null;
-    cache = { ws: ws.id, at: Date.now(), kb: k ? { id: k.id, name: k.name } : null, folders: new Map() };
-    return cache.kb;
+    if (cache.ws === ws.id && Date.now() - cache.at < INFO_TTL) return cache.info;
+    const r = await rpc('kb_meetings_info', { workspace_id: ws.id });
+    cache = { ws: ws.id, at: Date.now(), info: r?.kb_id ? { id: r.kb_id, name: r.name ?? 'Meetings' } : null, folders: new Map() };
+    return cache.info;
   }
   async function folderFor(ws, month) {
     if (cache.ws === ws.id && cache.folders.has(month)) return cache.folders.get(month);
@@ -96,67 +122,185 @@ export function createMeetingsKb({ account, settings, saveSettings = () => {}, i
     if (place && cache.ws === ws.id) cache.folders.set(month, place);
     return place;
   }
-  // when this workspace's default started; set the first time it applies, so only notes from then on are shared
-  const sinceFor = (ws) => {
-    if (!autoSave()) return null;
-    const all = (conf().since ??= {});
-    if (!all[ws.id]) { all[ws.id] = now().toISOString(); saveSettings(); }
-    return all[ws.id];
-  };
+  const sourcesOf = (wsId) => ((conf().sources ??= {})[wsId] ??= {});
   const readNote = (abs) => { try { return read(abs); } catch { return null; } };
-  const routeOf = (ws, text, since) => meetingRoute({ fm: localNotes.readFrontmatter(text), withheld: isExcludedText(text), autoSave: autoSave(), since });
+  const excludedPath = (abs) => { const rel = relOf(abs); return !!rel && isExcluded(rel); };
+
+  // the inputs meetingRoute needs for one note. With start, a default that applies for the first time starts here
+  function inputs(ws, abs, text, start) {
+    const fm = localNotes.readFrontmatter(text);
+    const origin = originOf(fm);
+    let since = autoSave() ? conf().since?.[ws.id] ?? null : null;
+    if (start && origin === 'recorded' && autoSave() && !since && !choiceOf(fm)) {
+      since = startSince(fm.date, now(), conf().floor ?? null);
+      (conf().since ??= {})[ws.id] = since;
+      saveSettings();
+    }
+    let source;
+    if (origin && origin !== 'recorded') {
+      const all = sourcesOf(ws.id);
+      source = all[origin.key];
+      if (start && !source && !choiceOf(fm) && isMeetingNote(fm)) {
+        // the first note from this source account in this workspace: the person is asked once
+        source = all[origin.key] = { choice: null, label: origin.label, firstDate: fm.date ?? null };
+        saveSettings();
+        onChange();
+      }
+    }
+    return { fm, origin, args: { fm, excluded: excludedPath(abs), withheld: isExcludedText(text), autoSave: autoSave(), since, source } };
+  }
 
   // for sync.js before a meeting note is pushed: { kbId, folderId, fresh } to place it, { private: true } when it is
-  // kept out, or null when nothing applies. An undecided note shared by default gets its choice written first, so
-  // the push carries visibility public
+  // kept out, or null when nothing applies. The two choice keys are made to agree first, and an undecided note
+  // shared by default gets its choice written, so the push carries both
   async function route(abs) {
     const ws = workspace();
-    if (!ws) return null;
+    if (!ws || account.state().sync !== true) return null;
     const text = readNote(abs);
-    if (text === null || !isMeetingNote(localNotes.readFrontmatter(text))) return null;
+    if (text === null) return null;
     try {
-      if (!(await meetingsKb(ws))) return null;
-      const r = routeOf(ws, text, sinceFor(ws));
-      if (r === 'leave') return null;
-      if (r === 'private') { fresh.delete(abs); return { private: true }; }
-      const place = await folderFor(ws, monthOf(localNotes.readFrontmatter(text).date, now()));
+      if (!isMeetingNote(localNotes.readFrontmatter(text)) || !(await meetingsKb(ws))) return null;
+      const { fm, args } = inputs(ws, abs, text, true);
+      const r = meetingRoute(args);
+      if (r === 'leave' || r === 'ask') return null;
+      if (r === 'private') {
+        fresh.delete(abs);
+        // a kept private note whose visibility says public is pushed private; a confidential one is never pushed
+        if (choiceOf(fm) === 'private' && fm.visibility !== 'private') write(abs, withChoice(text, true));
+        return { private: true };
+      }
+      const place = await folderFor(ws, monthOf(fm.date, now()));
       if (!place) return null;
-      if (r === 'share') write(abs, withChoice(text, false));
+      if (r === 'share' || fm.visibility !== 'public') write(abs, withChoice(text, false));
       const isFresh = fresh.delete(abs) || r === 'share';
       return { ...place, fresh: isFresh };
     } catch (err) { log('meetings kb', err?.message ?? err); return null; }
   }
 
   // what the toggle shows for one note: available when the note is a meeting note in a team workspace with a meetings
-  // KB the person reads; locked when it cannot be shared (confidential or withheld lines)
+  // KB the person reads and sync on; locked when it cannot be shared. reason says why it is unavailable when the
+  // person can do something about it, or why it is not shared; ask names the source to choose for
   async function stateOf(abs) {
     const ws = workspace();
-    const off = { available: false, keepPrivate: true, locked: false, kbName: null };
+    const off = { available: false, keepPrivate: true, locked: false, kbName: null, reason: null, ask: null };
     if (!ws) return off;
     const text = readNote(abs);
     if (text === null) return off;
-    const fm = localNotes.readFrontmatter(text);
-    if (!isMeetingNote(fm)) return off;
-    let kb;
-    try { kb = await meetingsKb(ws); } catch (err) { log('meetings kb', err?.message ?? err); return off; }
-    if (!kb) return off;
-    const locked = isExcludedText(text) || String(fm.confidential ?? '').trim() !== '';
-    const r = routeOf(ws, text, autoSave() ? conf().since?.[ws.id] ?? null : null);
-    return { available: true, keepPrivate: !(r === 'shared' || r === 'share'), locked, kbName: kb.name };
+    if (!isMeetingNote(localNotes.readFrontmatter(text))) return off;
+    let info;
+    try { info = await meetingsKb(ws); } catch (err) { log('meetings kb', err?.message ?? err); return off; }
+    if (!info) return off;
+    if (account.state().sync !== true) return { ...off, kbName: info.name, reason: SYNC_OFF };
+    if (excludedPath(abs)) return { ...off, kbName: info.name, reason: EXCLUDED };
+    const { fm, origin, args } = inputs(ws, abs, text, false);
+    const r = meetingRoute(args);
+    const locked = args.withheld || isConfidential(fm);
+    const ask = r === 'ask' && origin && origin !== 'recorded' ? { key: origin.key, label: origin.label } : null;
+    return { available: true, keepPrivate: !(r === 'shared' || r === 'share'), locked, kbName: info.name, reason: null, ask };
   }
 
   // the Keep private toggle: writes the choice into the note; the caller pushes it
   async function setKeepPrivate(abs, keepPrivate) {
     const st = await stateOf(abs);
-    if (!st.available) return { error: 'This note has no team meetings knowledge base to join or leave.' };
+    if (!st.available) return { error: st.reason ?? 'This note has no team meetings knowledge base to join or leave.' };
     if (!keepPrivate && st.locked) return { error: 'This note is marked confidential or has withheld lines, so it stays private.' };
     const text = readNote(abs);
     if (text === null) return { error: 'This note was moved or deleted.' };
     const next = withChoice(text, keepPrivate);
     if (next !== text) write(abs, next);
     if (keepPrivate) fresh.delete(abs); else fresh.add(abs);
-    return { ...st, keepPrivate };
+    return { ...st, keepPrivate, ask: null };
   }
 
-  return { route, stateOf, setKeepPrivate, autoSave };
+  // the auto-save setting; turning it from off to on starts it from now, so notes made while it was off stay
+  function setAutoSave(on) {
+    const was = autoSave();
+    conf().autoSave = on === true;
+    if (on && !was) {
+      const t = now().toISOString();
+      conf().floor = t;
+      conf().since = Object.fromEntries(Object.keys(conf().since ?? {}).map((k) => [k, t]));
+      const ws = workspace();
+      if (ws) conf().since[ws.id] = t;
+    }
+    saveSettings();
+    onChange();
+    return { autoSave: autoSave() };
+  }
+
+  // undecided notes from each source that its default does not cover: dated before its since, or all while it is
+  // not shared. Excluded, confidential and withheld notes are never counted
+  function pastNotes(ws) {
+    const by = new Map();
+    const all = sourcesOf(ws.id);
+    for (const abs of listNotes()) {
+      const text = readNote(abs);
+      if (text === null) continue;
+      const { fm, origin, args } = inputs(ws, abs, text, false);
+      if (!origin || origin === 'recorded' || choiceOf(fm) || !isMeetingNote(fm) || args.excluded || args.withheld || isConfidential(fm)) continue;
+      const s = all[origin.key];
+      if (s?.choice === 'share' && after(fm.date, s.since)) continue;
+      by.set(origin.key, [...(by.get(origin.key) ?? []), abs]);
+    }
+    return by;
+  }
+
+  // the connector source accounts this workspace has seen, with the person's choice and how many past notes the
+  // "share past meeting notes" action would share
+  async function sources() {
+    const ws = workspace();
+    if (!ws) return { available: false, sources: [] };
+    let info = null;
+    try { info = await meetingsKb(ws); } catch (err) { log('meetings kb', err?.message ?? err); }
+    if (!info) return { available: false, sources: [] };
+    const past = pastNotes(ws);
+    return {
+      available: true, sync: account.state().sync === true, workspaceName: ws.name ?? null, kbName: info.name,
+      sources: Object.entries(sourcesOf(ws.id)).map(([key, s]) => ({ key, label: s.label ?? key, choice: s.choice ?? null, past: (past.get(key) ?? []).length })),
+    };
+  }
+
+  // the person's choice for a source account. Share starts from the first note that asked (within a day) or, when it
+  // was Keep private before, from now; the source's notes are pushed again so the ones in that window go in
+  async function setSource(key, choice) {
+    const ws = workspace();
+    if (!ws) return { error: 'Sharing meeting notes needs a workspace with a team.' };
+    if (!['share', 'private'].includes(choice)) return { error: 'Choose Share or Keep private.' };
+    const all = sourcesOf(ws.id);
+    const s = all[key] ??= { label: key, choice: null };
+    const was = s.choice;
+    s.choice = choice;
+    if (choice === 'share' && was !== 'share') s.since = was === 'private' ? now().toISOString() : startSince(s.firstDate, now());
+    saveSettings();
+    onChange();
+    if (choice === 'share') {
+      for (const abs of listNotes()) {
+        const text = readNote(abs);
+        if (text === null) continue;
+        const o = originOf(localNotes.readFrontmatter(text));
+        if (o && o !== 'recorded' && o.key === key) await push(abs).catch((err) => log('meetings kb', err?.message ?? err));
+      }
+    }
+    return { ok: true, choice };
+  }
+
+  // one-time: share every past note from a source (the count sources() reports), after the person confirmed
+  async function sharePast(key) {
+    const ws = workspace();
+    if (!ws) return { error: 'Sharing meeting notes needs a workspace with a team.' };
+    if (account.state().sync !== true) return { error: SYNC_OFF };
+    let shared = 0;
+    for (const abs of pastNotes(ws).get(key) ?? []) {
+      const text = readNote(abs);
+      if (text === null) continue;
+      write(abs, withChoice(text, false));
+      fresh.add(abs);
+      await push(abs).catch((err) => log('meetings kb', err?.message ?? err));
+      shared++;
+    }
+    onChange();
+    return { shared };
+  }
+
+  return { route, stateOf, setKeepPrivate, setAutoSave, sources, setSource, sharePast, autoSave };
 }

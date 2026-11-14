@@ -69,11 +69,15 @@ do $$ declare r jsonb; begin
   r := public.kb_meetings_folder('01MK00000000000000000000WA', '2026-11');
   assert r ->> 'folder_id' = pg_temp.id('nov') and r ->> 'kb_id' = pg_temp.id('kb') and r ->> 'month' = '2026-11', 'the same folder comes back';
   assert (select count(*) from public.kb_folders where kb_id = pg_temp.id('kb') and name = '2026-11' and parent_id is null) = 1, 'one top-level folder per month';
+  assert public.kb_meetings_info('01MK00000000000000000000WA') = jsonb_build_object('kb_id', pg_temp.id('kb'), 'name', 'Meetings'), 'a member reads the meetings KB id and name';
 end $$;
 select pg_temp.expect_error($$ select public.kb_meetings_folder('01MK00000000000000000000WA', '2026-13') $$, 'named like 2026-11');
 select pg_temp.expect_error($$ select public.kb_meetings_folder('01MK00000000000000000000WA', '../x') $$, 'named like 2026-11');
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000c5');
 select pg_temp.expect_error($$ select public.kb_meetings_folder('01MK00000000000000000000WA', '2026-11') $$, 'not one of yours');
+do $$ begin
+  assert public.kb_meetings_info('01MK00000000000000000000WA') is null, 'someone outside the workspace gets null';
+end $$;
 
 -- 4. a member's shared meeting note goes into the meetings KB the way the app's push writes it, included at once
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000c3');
@@ -137,6 +141,7 @@ select public.kb_set_access(pg_temp.id('kb'), '[{"principal": "user", "user_id":
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000c4');
 do $$ begin
   assert public.kb_meetings_folder('01MK00000000000000000000WA', '2026-11') is null, 'a member left out of the readers gets null';
+  assert public.kb_meetings_info('01MK00000000000000000000WA') is null, 'and no meetings KB to show';
   assert not exists (select 1 from public.notes where id = '01MK000000000000000000NM01'), 'and no longer reads the KB';
 end $$;
 select pg_temp.expect_error($$ update public.notes set kb_id = pg_temp.id('kb') where id = '01MK000000000000000000NM06' $$, 'admins can add notes');

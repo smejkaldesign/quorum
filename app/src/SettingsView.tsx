@@ -14,6 +14,7 @@ import { BrainCheckPanel, ContextPanel, SkillsPanel } from './PluginPanels';
 import { AccountArea, BillingArea, EDITION, KnowledgeBasesArea, KnowledgeQueueArea, MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { TOP_ADMIN_PAGES, canAdmin, flagHiddenPages, modeOf, resolvePage, voiceMode, workspacePages, type Page } from './settingsNav';
 import { EnvSwitch } from './EnvSwitch';
+import { MeetingSourcesRows } from './MeetingSources';
 import { useFlags, useNotetaker } from './flags';
 import {
   IconBell, IconBrain, IconBuilding, IconCalendar, IconChat, IconFolder, IconGrid, IconKeyboard, IconLock,
@@ -1341,10 +1342,11 @@ function MeetingsPage({ settings, onSettings, onConnector, teamMeetings }: { set
         </ConnectHint>
         {teamMeetings && (
           <Row icon={<IconNotes width={18} height={18} />} title="Save meeting notes to the team's meetings knowledge base"
-            desc="New meeting notes from your connectors and from Record are shared with your team, one folder per month. Confidential notes stay private, and Keep private on any note takes it out.">
+            desc="New notes you record with Record or Start listening are shared with your team, one folder per month. Each meeting-notes account asks first, below. Confidential notes stay private, and Keep private on any note takes it out.">
             <Toggle on={settings.meetingsKb?.autoSave !== false} onChange={async (on) => onSettings(await window.quorum.setSettings({ meetingsKb: { autoSave: on } }))} />
           </Row>
         )}
+        {teamMeetings && <MeetingSourcesRows />}
       </div>
       {nt.manualListen && <>
       <h3>Transcribing</h3>

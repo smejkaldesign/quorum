@@ -9,7 +9,7 @@
 --    readers with kb_set_access as for any KB. Workspaces whose switch is already on get one now.
 -- 3. kb_meetings_folder gives a member the meetings KB and the folder for a month, making the folder on first use. A
 --    member who cannot read the meetings KB (an admin narrowed its readers) gets null, and their notes stay where
---    they are.
+--    they are. kb_meetings_info gives the KB's id and name alone, for the app's Keep private toggle.
 -- 4. notes_kb_check (0024) lets a member place their own shared note in the meetings KB, at its top level or in a
 --    month folder, without admin rights on the KB. Everything else about placing notes is as 0024 left it. The note
 --    is shared (visibility public, not confidential), so 0026 opens its contribution as included with source 'kb'
@@ -122,6 +122,17 @@ begin
 end $$;
 revoke all on function public.kb_meetings_folder(public.ulid, text) from public, anon;
 grant execute on function public.kb_meetings_folder(public.ulid, text) to authenticated, service_role;
+
+-- the meetings KB's id and name for a member who can read it, else null; what the app needs for the Keep private
+-- toggle without reading every KB
+create or replace function public.kb_meetings_info(workspace_id public.ulid) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('kb_id', k.id, 'name', k.name)
+  from public.knowledge_bases k
+  where public.is_member(kb_meetings_info.workspace_id) and k.id = public.kb_meetings_of(kb_meetings_info.workspace_id) and public.can_read_kb(k.id);
+$$;
+revoke all on function public.kb_meetings_info(public.ulid) from public, anon;
+grant execute on function public.kb_meetings_info(public.ulid) to authenticated, service_role;
 
 -- 4. a place a member may put their own note without admin rights: the meetings KB they can read, at its top level or
 -- in a month folder

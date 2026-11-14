@@ -120,7 +120,7 @@ export function parseOAuthReturn(url) {
   return code ? { code } : { error: 'Google sign-in did not complete. Try again.' };
 }
 
-export function createAccount({ settings, saveSettings, log = () => {}, brain = () => null, meetingIndex = () => [], isExcluded, isExcludedText, openExternal = null, oauthRedirect = () => null } = {}) {
+export function createAccount({ settings, saveSettings, log = () => {}, brain = () => null, meetingIndex = () => [], isExcluded, isExcludedText, openExternal = null, oauthRedirect = () => null, onMeetingsChange = () => {} } = {}) {
   let cloud = resolveCloudConfig(settings);
   const makeClient = (c) => (c.url && c.key ? createClient(c.url, c.key, { auth: { flowType: 'pkce', persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storage: fileStorage(perConfig(c, 'auth', 'json')) } }) : null);
   let client = makeClient(cloud);
@@ -142,7 +142,11 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
     markSync: ({ lastSyncAt, lastPullAt, syncError, live }) => { if (lastSyncAt !== undefined) state.lastSyncAt = lastSyncAt; if (lastPullAt !== undefined) state.lastPullAt = lastPullAt; if (syncError !== undefined) state.syncError = syncError; if (live !== undefined) state.live = live; emit(); },
   };
   // meeting notes into the workspace's meetings knowledge base, with the person's Keep private choice (ee/meetingsKb.js)
-  const meetingsKb = createMeetingsKb({ account: { state: () => state, client: () => client }, settings, saveSettings, isExcludedText, log });
+  const vaultRel = (abs) => { const v = brain()?.vault; if (!v) return null; const r = path.relative(v, abs); return r && !r.startsWith('..') && !path.isAbsolute(r) ? r.split(path.sep).join('/') : null; };
+  const meetingsKb = createMeetingsKb({
+    account: { state: () => state, client: () => client }, settings, saveSettings, isExcluded, isExcludedText, relOf: vaultRel, log, onChange: onMeetingsChange,
+    listNotes: () => meetingIndex().filter((m) => m.file).map((m) => m.file), push: (abs) => inner.pushMeetingNote(abs),
+  });
   const makeSync = (c) => createSync({ account, store, brain, log, meetingIndex, isExcluded, isExcludedText, idsFile: perConfig(c, 'sync-ids', 'json'), meetings: meetingsKb });
   let inner = makeSync(cloud);
   // main.js keeps one reference to sync; the developer switch below swaps what sits behind it. A full sync pulls
@@ -429,7 +433,7 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
 
 // wires the account into the main process: one IPC handler per entry, and every change goes to the UI as 'account'
 export function registerAccount({ ipcMain, settings, saveSettings, toUI = () => {}, log = () => {}, brain, meetingIndex, isExcluded, isExcludedText, openExternal, oauthRedirect }) {
-  const acct = createAccount({ settings, saveSettings, log, brain, meetingIndex, isExcluded, isExcludedText, openExternal, oauthRedirect });
+  const acct = createAccount({ settings, saveSettings, log, brain, meetingIndex, isExcluded, isExcludedText, openExternal, oauthRedirect, onMeetingsChange: () => toUI('meetings-sources') });
   acct.onChange((s) => toUI('account', s));
   acct.onOAuth((r) => toUI('account-oauth', r));
   for (const [name, fn] of Object.entries(acct.handlers)) ipcMain.handle(name, (_e, ...a) => fn(...a));

@@ -234,7 +234,11 @@ export type CallSpeakersEvent = { at: number; app: string; names: string[]; acti
 // a note opened in the note view; hash is the file as read, so a save can tell it changed on disk
 // Keep private for a meeting note (Cloud with a team): available when the workspace has a meetings knowledge base the
 // person reads; locked when the note cannot be shared (confidential or withheld lines)
-export type MeetingShare = { available: boolean; keepPrivate: boolean; locked: boolean; kbName: string | null };
+export type MeetingShare = { available: boolean; keepPrivate: boolean; locked: boolean; kbName: string | null; reason: string | null; ask: { key: string; label: string } | null };
+// the meeting-notes source accounts a team workspace has seen: the person's choice for each (null until asked and
+// answered) and how many past notes "Share past meeting notes" would share
+export type MeetingSource = { key: string; label: string; choice: 'share' | 'private' | null; past: number };
+export type MeetingSources = { available: boolean; sync?: boolean; workspaceName?: string | null; kbName?: string | null; sources: MeetingSource[] };
 export type HandNoteRef = { file: string; hash: string; rel: string; app: string; url: string; frontmatter: string };
 export type HandNote = HandNoteRef & { title: string; body: string; readOnly: boolean; date: string | null };
 export type HandNoteSave = (HandNoteRef & { propsError?: string }) | { conflict: true } | { error: string };
@@ -309,6 +313,10 @@ declare global {
       noteVisibility(file: string, value: Visibility): Promise<Visibility | null>;
       meetingShare(file: string): Promise<MeetingShare>;
       meetingShareSet(file: string, keepPrivate: boolean, hash?: string | null): Promise<{ state: MeetingShare; ref: HandNoteRef } | { conflict: true } | { error: string }>;
+      meetingsSources(): Promise<MeetingSources>;
+      meetingsSourceSet(key: string, choice: 'share' | 'private'): Promise<{ ok: true; choice: 'share' | 'private' } | { error: string }>;
+      meetingsSourceSharePast(key: string): Promise<{ shared: number } | { error: string }>;
+      onMeetingsSources(cb: () => void): Unsub;
       noteAsk(file: string, question: string, history: { q: string; a: string }[], files?: string[]): Promise<{ text: string; proposal: string | null }>;
       noteApply(file: string, body: string): Promise<boolean>;
       vaultSearch(q: string, limit?: number): Promise<SearchHit[]>;
