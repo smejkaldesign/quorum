@@ -224,23 +224,39 @@ export type PopupEvent = { mode: PopupMode; durationMs: number; autoListen: bool
 export type SummaryState = { summary: string; decisions: Decision[]; actions: ActionItem[]; questions: Question[]; coveredUntil: number | null };
 export type SummaryEvent = { state: SummaryState; at: number; thinking: boolean };
 export type StateEvent =
-  | { phase: 'listening' | 'paused'; by?: string; go?: string; soft?: boolean }
+  | { phase: 'listening' | 'paused'; by?: string; go?: string; soft?: boolean; intoNote?: boolean }
   | { phase: 'blocked' }
   | { phase: 'summarizing'; meta?: MeetingMeta }
-  | { phase: 'starting'; chatName?: string | null }
+  | { phase: 'starting'; chatName?: string | null; intoNote?: boolean }
   | { phase: 'idle' }
   | { phase: 'review'; notes: Notes; meta?: MeetingMeta };
+
+// Record in the note view: what is running (audio is Transcription), and a screen read for the open note
+export type RecordState = { audio: boolean; screen: boolean; notice?: string };
+// who the call app shows, read from its accessibility tree while a recording with Screen on runs
+export type CallSpeakersEvent = { at: number; app: string; names: string[]; active: string[] };
+// a note opened in the note view; hash is the file as read, so a save can tell it changed on disk
+export type HandNoteRef = { file: string; hash: string; rel: string; app: string; url: string; frontmatter: string };
+export type HandNote = HandNoteRef & { title: string; body: string; readOnly: boolean; date: string | null };
+export type HandNoteSave = (HandNoteRef & { propsError?: string }) | { conflict: true } | { error: string };
 
 declare global {
   interface Window {
     quorum: {
-      // answers { error } when manual listening is off (the manual-listen flag)
-      start(): Promise<{ error: string } | null>;
       end(): Promise<Notes | null>;
       pause(): Promise<void>;
       resume(): Promise<void>;
       ask(q: string, files?: string[]): Promise<{ text: string; sources: Source[]; steps: string[] }>;
       saveNotes(p: { notes: Notes; followups: { q: string; a: string }[] }): Promise<{ file: string; rel: string; app: string; url: string }>;
+      recordStart(opts: RecordState): Promise<RecordState | { error: string }>;
+      recordStop(): Promise<RecordState>;
+      recordStatus(): Promise<RecordState>;
+      onRecord(cb: (s: RecordState) => void): Unsub;
+      onCallSpeakers(cb: (e: CallSpeakersEvent) => void): Unsub;
+      onNewNote(cb: (d: { file?: string }) => void): Unsub;
+      handNoteOpen(file: string): Promise<HandNote | null>;
+      handNoteSave(p: { id: string; file: string | null; title: string; body: string; hash: string | null; fresh: boolean; frontmatter?: string }): Promise<HandNoteSave>;
+      handNoteDone(file: string | null): Promise<void>;
       privateNotesSet(text: string): Promise<void>;
       discard(): Promise<void>;
       done(): Promise<void>;

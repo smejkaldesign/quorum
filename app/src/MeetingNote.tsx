@@ -142,6 +142,9 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack }: {
       <div className="reader-bar">
         <button className="pill primary small-pill" onClick={onBack}><IconBack width={16} height={16} /> Back</button>
         <div className="reader-actions">
+          {/* continue this note in the note view: write in it, or Record more into it */}
+          <button className="pill small-pill" disabled={note.withheld} data-tip={note.withheld ? 'This note has withheld lines; edit it in the vault' : undefined}
+            onClick={() => window.dispatchEvent(new CustomEvent('quorum:new-note', { detail: { file: note.file } }))}>Edit note</button>
           <VisibilityPill value={note.visibility} onChange={async (v) => { await window.quorum.noteVisibility(note.file, v); reload(); }} />
           <NoteMenu note={note} onDeleted={onBack} />
         </div>

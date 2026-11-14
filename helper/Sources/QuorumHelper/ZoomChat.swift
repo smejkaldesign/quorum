@@ -97,5 +97,51 @@ enum ZoomChat {
         return inMeeting ? (title, count, names) : nil
     }
 
+    // a video tile's accessibility description: the display name, an optional role list in parentheses ("(Host, me)",
+    // "(Co-host)", "(me)"), then states after commas ("Video on", "Muted", ...). The role list comes off first and "me"
+    // in it marks your own tile; only trailing parts that are known states are split off, so a name with a comma
+    // ("Lovelace, Ada") stays whole. Zoom's wording for the speaking state is not documented; "talking", "speaking"
+    // and "active speaker" are treated as the active speaker
+    static let roleWords: Set<String> = ["host", "co-host", "cohost", "me", "you", "guest", "organizer", "presenter"]
+    static let stateWords: Set<String> = ["video on", "video off", "camera on", "camera off", "audio on", "audio off", "muted", "unmuted", "audio muted", "audio unmuted", "screen sharing", "sharing screen", "pinned", "spotlighted", "hand raised"]
+    static let speakingWords = ["talking", "speaking", "active speaker"]
+
+    static func tile(_ desc: String) -> (name: String, active: Bool, me: Bool)? {
+        var text = desc.trimmingCharacters(in: .whitespaces)
+        var me = false
+        if let r = text.range(of: #"\s*\(([^()]*)\)"#, options: .regularExpression) {
+            let roles = text[r].trimmingCharacters(in: CharacterSet(charactersIn: " ()")).components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+            if !roles.isEmpty, roles.allSatisfy({ roleWords.contains($0) }) {
+                me = roles.contains("me") || roles.contains("you")
+                text.removeSubrange(r)
+            }
+        }
+        var parts = text.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        var active = false
+        while parts.count > 1, let last = parts.last?.lowercased() {
+            let speaking = speakingWords.contains { last.contains($0) }
+            guard speaking || stateWords.contains(last) else { break }
+            if speaking { active = true }
+            parts.removeLast()
+        }
+        let name = parts.joined(separator: ", ").trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? nil : (name, active, me)
+    }
+
+    // Record's Screen option during a Zoom call: the names on the other people's video tiles, and which of them is
+    // speaking. Your own tile is left out
+    static func speakers() -> (names: [String], active: [String])? {
+        guard let win = meetingWindow() else { return nil }
+        var names: [String] = [], active: [String] = []
+        for el in AX.children(win) where AX.role(el) == kAXTabGroupRole {
+            for button in AX.children(el) where AX.role(button) == kAXButtonRole {
+                guard let t = tile(AX.str(button, kAXDescriptionAttribute) ?? ""), !t.me else { continue }
+                if !names.contains(t.name) { names.append(t.name) }
+                if t.active, !active.contains(t.name) { active.append(t.name) }
+            }
+        }
+        return (names, active)
+    }
+
     static func dump() -> String { AX.dumpTree(windows()) }
 }

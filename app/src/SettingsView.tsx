@@ -999,17 +999,17 @@ function TeamVaultRow() {
   );
 }
 
-// what is on screen as spelling hints, for calls and dictation: one screenshot of the front window at each start, read on
-// this Mac. Needs the Screen Recording permission, asked for once when the toggle goes on
+// whether Record offers Screen: while a recording with Screen on runs, the call window is read on this Mac to name who
+// spoke. Nothing is read at any other time. Needs the Screen Recording permission, asked for once when the toggle goes on
 function ScreenContextRow() {
   const [s, setS] = useState<ScreenContextStatus | null>(null);
   useEffect(() => { window.quorum.screenContextStatus().then(setS).catch(() => setS(null)); }, []);
   if (!s) return null;
-  const desc = !s.on ? 'Names and product words on your screen, read on this Mac, spelled right in transcripts and dictation'
+  const desc = !s.on ? 'Adds Screen to Record: the call window is read on this Mac while you record, to name who spoke'
     : s.granted === false ? 'On, but macOS has not allowed Screen Recording for Quorum yet'
-    : 'On. The front window is read once at each start; nothing is stored or sent';
+    : 'On. Record offers Screen, off until you turn it on for a recording; nothing is read at other times';
   return (
-    <Row icon={<IconStack width={18} height={18} className={s.on && s.granted !== false ? 'ok' : undefined} />} title="Use what's on screen for spelling" desc={desc}>
+    <Row icon={<IconStack width={18} height={18} className={s.on && s.granted !== false ? 'ok' : undefined} />} title="Screen in Record" desc={desc}>
       {s.on && s.granted === false && <button className="pill small-pill" onClick={() => window.quorum.screenContextPrivacy()}>Open System Settings</button>}
       <Toggle on={s.on} onChange={async (on) => setS(await window.quorum.screenContextSet(on))} />
     </Row>

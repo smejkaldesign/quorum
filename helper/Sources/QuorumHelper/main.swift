@@ -102,8 +102,16 @@ func handle(_ line: String) async {
         Emit.send(["event": "screenAccess", "id": cmd["id"] as? String ?? "", "granted": ScreenContext.access(prompt: cmd["prompt"] as? Bool ?? false)])
     case "screenTerms":
         // what is on screen right now, as spelling hints; the meeting app's window first when one is named
-        let terms = await ScreenContext.terms(bundlePrefixes: cmd["bundles"] as? [String] ?? [])
+        let terms = await ScreenContext.terms(bundlePrefixes: cmd["bundles"] as? [String] ?? [], excludePids: (cmd["excludePids"] as? [Int] ?? []).map { Int32($0) })
         Emit.send(["event": "screenTerms", "id": cmd["id"] as? String ?? "", "terms": terms, "granted": ScreenContext.access(prompt: false)])
+    case "screenText":
+        // Record's Screen option: the frontmost window's text that is not Quorum's, with its app and title, for the open note
+        let shot = await ScreenContext.read(bundlePrefixes: cmd["bundles"] as? [String] ?? [], excludePids: (cmd["excludePids"] as? [Int] ?? []).map { Int32($0) })
+        Emit.send(["event": "screenText", "id": cmd["id"] as? String ?? "", "text": shot?.text ?? "", "app": shot?.app ?? "", "title": shot?.title ?? "", "granted": ScreenContext.access(prompt: false)])
+    case "callSpeakers":
+        // Record's Screen option: who the call app shows and who is speaking, from its accessibility tree (Zoom only so far)
+        let s = ZoomChat.speakers()
+        Emit.send(["event": "callSpeakers", "id": cmd["id"] as? String ?? "", "app": s == nil ? "" : "Zoom", "names": s?.names ?? [], "active": s?.active ?? []])
     case "axStatus":
         // only asks macOS to show its Accessibility prompt when the app says so (once, not on every launch)
         let running = Providers.runningMap()
