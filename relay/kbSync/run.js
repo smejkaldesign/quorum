@@ -18,6 +18,7 @@ const NOTE_COLUMNS = 'id, path, folder_id, user_id, frontmatter, hash';
 const PAGE = 1000;
 export const NOW_CONFIDENTIAL = 'The file is now marked confidential, so its note left the knowledge base.';
 const OTHER_ATTACHMENT = 'Another synced folder in this knowledge base already holds this file.';
+const OTHER_NOTE = 'Another admin added this file to the knowledge base on their Mac, so that note keeps it.';
 const folderName = (s) => String(s ?? '').replace(/[/\\]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || 'Untitled';
 
 async function kbNotes(db, kbId) {
@@ -73,7 +74,14 @@ export async function syncAttachment({ db, attachment: a, provider, token, fetch
     if (!src) continue;
     if (n.frontmatter?.kb_attachment === a.id || (!n.frontmatter?.kb_attachment && n.user_id === a.attached_by && !bySource.has(src))) bySource.set(src, n);
   }
-  const elsewhere = new Set(rows.filter((n) => n.frontmatter?.kb_attachment && n.frontmatter.kb_attachment !== a.id).map((n) => n.frontmatter.kb_source));
+  // one owner per kb_source: a file another attachment syncs, or another admin added on their Mac, is not written twice
+  const elsewhere = new Map();
+  for (const n of rows) {
+    const src = n.frontmatter?.kb_source;
+    if (!src || bySource.get(src) === n) continue;
+    if (n.frontmatter?.kb_attachment && n.frontmatter.kb_attachment !== a.id) elsewhere.set(src, OTHER_ATTACHMENT);
+    else if (!n.frontmatter?.kb_attachment && n.user_id !== a.attached_by && !bySource.has(src)) elsewhere.set(src, OTHER_NOTE);
+  }
   const taken = new Set(rows.map((n) => String(n.path).toLowerCase()));
   // Quorum's edits to these notes since the last sync, read once for the run (app/ee/kbUpstream.js)
   const upstream = syncUpstream({ client: () => upstreamClient(db, a), ws: () => a.workspace_id, now: () => at, tag: 'kb-sync',
@@ -126,7 +134,7 @@ export async function syncAttachment({ db, attachment: a, provider, token, fetch
 
   for (const f of listing.files) {
     const source = provider.sourceOf(f);
-    if (elsewhere.has(source)) { skipped.push({ path: f.name, reason: OTHER_ATTACHMENT }); continue; }
+    if (elsewhere.has(source)) { skipped.push({ path: f.name, reason: elsewhere.get(source) }); continue; }
     seen.add(source);
     const had = bySource.get(source);
     const sameMarker = !!had && provider.unchanged(had, f);

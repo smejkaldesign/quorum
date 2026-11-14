@@ -125,6 +125,15 @@ export function createKbDrive({ account, accounts, picker = null, pick = awaitPi
     const segsOf = (id) => { const out = []; for (let f = byId.get(id), guard = 0; f && guard < 1000; f = byId.get(f.parent_id ?? f.parentId), guard++) out.unshift(f.name); return out; };
     const rows = await kbNotes(kb.id, COLUMNS);
     const attached = new Map(driveNotes(rows).map((n) => [driveIdOf(n.frontmatter.kb_source), n]));
+    // one note per file: a file a synced folder already brings in (ee/kbSync.js) is not added a second time
+    const syncedBy = new Map(rows.filter((n) => driveIdOf(n.frontmatter?.kb_source) && n.frontmatter?.kb_attachment).map((n) => [driveIdOf(n.frontmatter.kb_source), n]));
+    let syncNames = null;
+    const syncedFrom = async (n) => {
+      if (!syncNames) {
+        try { syncNames = new Map(((await rpc('kb_attachments_list', { kb_id: kb.id })) ?? []).map((x) => [x.id, x.name])); } catch { syncNames = new Map(); }
+      }
+      return syncNames.get(n.frontmatter.kb_attachment) ?? (n.folder_id ? segsOf(n.folder_id).join(' / ') : kb.name);
+    };
     const taken = new Set(rows.map((n) => keyOf([...(n.folder_id ? segsOf(n.folder_id) : []), path.posix.basename(String(n.path ?? ''))])));
     const access = await token();
     // the upstream rows of the attached files in this batch, and the note texts the plans need, read once
@@ -143,6 +152,7 @@ export function createKbDrive({ account, accounts, picker = null, pick = awaitPi
     for (const p of picks) {
       const had = attached.get(p.id);
       const label = p.name || had?.frontmatter?.title || p.id;
+      if (!had && syncedBy.has(p.id)) { skipped.push({ path: label, reason: `This file is already synced from ${await syncedFrom(syncedBy.get(p.id))}.` }); continue; }
       if (stop) { skipped.push({ path: label, reason: stop }); continue; }
       let meta;
       let body;

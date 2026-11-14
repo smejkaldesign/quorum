@@ -327,6 +327,17 @@ describe('kb-drive', () => {
     expect((await k.handlers['kb-drive-files']('KB1')).files).toHaveLength(3);
   });
 
+  it('refuses a file a synced folder already brings in, so one file has one note', async () => {
+    const synced = { id: 'N-sync', path: 'Knowledge bases/Team/Guides/runbook.md', kb_id: 'KB1', folder_id: 'F1', user_id: 'someone', hash: 'h', frontmatter: { visibility: 'public', kb_source: `google-drive:${MD_ID}`, kb_attachment: 'ATT1' } };
+    const server = fakeServer({ folders: [{ id: 'F1', parent_id: null, name: 'Guides', position: 0 }], notes: [synced] });
+    const k = drive(server, { picks: [{ id: MD_ID, name: 'runbook.md' }] });
+    const r = await k.handlers['kb-drive-add']({ kbId: 'KB1', folderId: 'F1' });
+    expect(r.synced).toBe(0);
+    expect(r.skipped).toEqual([{ path: 'runbook.md', reason: 'This file is already synced from Guides.' }]);
+    expect(server.state.notes).toHaveLength(1);
+    expect(r.files).toEqual([]);
+  });
+
   it('syncs a changed file in place: same note, same path, new text, nothing duplicated', async () => {
     const server = fakeServer();
     const files = structuredClone(FILES);
