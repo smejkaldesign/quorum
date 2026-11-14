@@ -1,6 +1,6 @@
 # Quorum's OAuth apps for personal connectors
 
-Settings, Connectors, Accounts lists Google Drive, Notion, Slack and GitHub. Each connects with one sign-in through an OAuth app Quorum registers once with the provider, and both editions use the same apps. This page lists what to register under Quorum's developer accounts, the redirect URIs to enter, and where each value goes.
+Settings, Connectors lists Google Calendar and, under Accounts, Google Drive, Notion, Slack and GitHub. Each connects with one sign-in through an app Quorum registers once with the provider (for GitHub, a GitHub App), and both editions use the same apps. This page lists what to register under Quorum's developer accounts, the redirect URIs to enter, and where each value goes.
 
 Until a provider's client id is in the build, its row shows "Not available yet" and offers no button.
 
@@ -15,7 +15,7 @@ Until a provider's client id is in the build, its row shows "Not available yet" 
    - Notion, Slack, GitHub: the app posts `{ provider, code, code_verifier, redirect_uri }` to `https://relay.quorum.watch/v1/oauth/token`. The relay checks the provider and the redirect URI against its allowlists, adds the client secret from its environment, calls the provider and returns the tokens. Nothing is stored and no token, code or verifier is logged. The route is rate limited per address.
 4. Tokens go to the Mac's Keychain (service `quorum-source-account-<id>`). Settings keep only whether the account is connected and its label.
 5. Refresh runs a minute before expiry: Google directly, the others through the same relay route with `grant_type: refresh_token`.
-6. Disconnect revokes the token with the provider (Google and Slack from the app, Notion and GitHub through `/v1/oauth/revoke` on the relay, since their revoke calls need the secret), then deletes it from the Keychain. If the revoke fails, the local token is deleted anyway.
+6. Disconnect revokes the token with the provider (Google and Slack from the app, Notion and GitHub through `/v1/oauth/revoke` on the relay, since their revoke calls need the secret), then deletes it from the Keychain. If the revoke fails, the local token is deleted anyway. Google Calendar and Google Drive share one Google client, and revoking any token ends the whole grant to that client, so Quorum revokes with Google only when the other Google connector is not connected to the same account; otherwise it deletes the local token only.
 
 Google Calendar is the same Google client with the `calendar.readonly` scope and keeps its own flow (`app/sources/gcal.js`).
 
@@ -57,15 +57,24 @@ Notion does not review public integrations unless they are listed in its marketp
 
 The Slack Marketplace review is optional; a distributed app that is not listed works with the Connect button.
 
-## GitHub
+## GitHub (a GitHub App)
 
-1. Open `https://github.com/organizations/smejkaldesign/settings/applications` (or Settings, Developer settings, OAuth Apps on the personal account) and choose New OAuth app.
-2. Application name Quorum, homepage URL `https://quorum.watch`.
-3. Authorization callback URL: `https://relay.quorum.watch/v1/oauth/github/callback`
-4. Leave Enable Device Flow off. Register the app.
-5. Generate a new client secret and copy it with the Client ID.
+GitHub uses a GitHub App with user-to-server tokens. A GitHub App can be limited to read-only repository contents, which an OAuth app cannot: the narrowest OAuth app scope that reads private repositories is `repo`, which also grants write access.
 
-The app asks for `repo` and `read:user`. OAuth apps have no read-only scope for private repositories, so `repo` is the narrowest scope that lets a later knowledge base import read them. GitHub does not review OAuth apps.
+1. Open `https://github.com/organizations/smejkaldesign/settings/apps/new` (or Settings, Developer settings, GitHub Apps, New GitHub App on the personal account).
+2. GitHub App name Quorum, homepage URL `https://quorum.watch`. The name sets the app's URL name (its slug), shown afterwards as `https://github.com/apps/<slug>`.
+3. Identifying and authorizing users:
+   - Callback URL: `https://relay.quorum.watch/v1/oauth/github/callback`
+   - Expire user authorization tokens: on (the default). Tokens last 8 hours and come with a refresh token; the app refreshes them through the relay.
+   - Request user authorization (OAuth) during installation: off. With it on, GitHub sends a code from the install page to the callback without the state and PKCE challenge Quorum's Connect sends, and no Quorum sign-in is waiting for it. Connect authorizes the account; installing is a separate step (below).
+   - Enable Device Flow: off.
+4. Post installation: leave the Setup URL empty and Redirect on update off.
+5. Webhook: clear Active. Quorum needs no webhook.
+6. Permissions, Repository permissions: **Contents: Read-only**. **Metadata: Read-only** is set automatically. Leave every other repository, organization and account permission at No access.
+7. Where can this GitHub App be installed: Any account.
+8. Create the app. On its page, copy the Client ID (it starts with `Iv`), generate a client secret and copy it, and note the slug. Quorum does not use the app's private key or installation tokens.
+
+What this changes for the person: Connect signs them in and the token can read only repositories where the Quorum app is installed and that they can already read. The connected row's menu has Choose repositories, which opens `https://github.com/apps/<slug>/installations/new` to install the app on their account or organization and pick repositories. PKCE, the relay exchange, refresh and revoke (`DELETE /applications/<client_id>/grant`) work the same way as for an OAuth app. GitHub does not review GitHub Apps.
 
 ## Where the values go
 
@@ -78,10 +87,11 @@ The client ids are public. They go into the build; the secrets for Notion, Slack
 | `QUORUM_GOOGLE_CLIENT_ID`, `QUORUM_GOOGLE_CLIENT_SECRET` | repository secrets (already set); shell or repo `.env` for a dev build | Google Calendar and Google Drive |
 | `QUORUM_NOTION_CLIENT_ID` | repository variable; shell or repo `.env` for a dev build | Notion |
 | `QUORUM_SLACK_CLIENT_ID` | repository variable; shell or repo `.env` for a dev build | Slack |
-| `QUORUM_GITHUB_CLIENT_ID` | repository variable; shell or repo `.env` for a dev build | GitHub |
+| `QUORUM_GITHUB_APP_CLIENT_ID` | repository variable; shell or repo `.env` for a dev build | GitHub (the GitHub App's Client ID) |
+| `QUORUM_GITHUB_APP_SLUG` | repository variable; shell or repo `.env` for a dev build | the Choose repositories link |
 | `QUORUM_RELAY_URL` | optional; shell for a dev build | a relay other than `wss://relay.quorum.watch` |
 
-The release workflow writes the three new ids into the packaged `package.json` as `quorumOAuth.<provider>.clientId`, the same way it writes `quorumGoogle`.
+The release workflow writes the new ids into the packaged `package.json` as `quorumOAuth.<provider>.clientId` (and `quorumOAuth.github.slug`), the same way it writes `quorumGoogle`.
 
 ### Relay (Railway, service relay)
 
@@ -89,7 +99,7 @@ The release workflow writes the three new ids into the packaged `package.json` a
 |---|---|
 | `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET` | from the Notion integration |
 | `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` | from the Slack app |
-| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | from the GitHub OAuth app |
+| `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | from the GitHub App |
 | `RELAY_PUBLIC_URL` | leave unset; the default is `https://relay.quorum.watch` |
 | `OAUTH_EXTRA_REDIRECT_URIS` | leave unset in production; a development relay lists its own callback URLs here, comma separated |
 
@@ -97,7 +107,7 @@ After the variables are set and the relay is deployed, `https://relay.quorum.wat
 
 ## Testing against a relay on the Mac
 
-Run the relay with `RELAY_PUBLIC_URL=http://127.0.0.1:8787` and start the app with `QUORUM_RELAY_URL=ws://127.0.0.1:8787`. Add `http://127.0.0.1:8787/v1/oauth/<provider>/callback` as a second redirect URI on the Notion integration and the GitHub app. Slack expects HTTPS redirect URLs, so test Slack against the deployed relay.
+Run the relay with `RELAY_PUBLIC_URL=http://127.0.0.1:8787` and start the app with `QUORUM_RELAY_URL=ws://127.0.0.1:8787`. Add `http://127.0.0.1:8787/v1/oauth/<provider>/callback` as a second redirect URI on the Notion integration and as a second callback URL on the GitHub App. Slack expects HTTPS redirect URLs, so test Slack against the deployed relay.
 
 ## Self-hosting
 
