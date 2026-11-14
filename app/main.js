@@ -135,7 +135,8 @@ const keeper = createKeeper({
 });
 ipcMain.handle('keeper-status', () => keeper.status());
 ipcMain.handle('keeper-set', (_e, patch) => keeper.set(patch ?? {}));
-ipcMain.handle('keeper-run', () => keeper.run({ reason: 'manual' }));
+ipcMain.handle('keeper-run', (_e, opts) => keeper.run({ reason: 'manual', allowCreate: opts?.allowCreate === true }));
+ipcMain.handle('keeper-plugin', (_e, id, owner) => keeper.setPlugin(String(id), owner));
 let helper;
 const asset = (name) => path.join(here, 'assets', name);
 // a meeting can have several capture segments (STOP, GO, STOP...); STOP deletes all of them
@@ -1281,7 +1282,8 @@ function scanBrain(root, vault) {
 // what Quorum gets from Power-ups: the index to start from, and any folders you added
 function agentContext() {
   const inc = memoryState().items.filter((i) => i.include === true && existsSync(i.path));
-  const search = inc.find((i) => i.kind === 'search')?.path ?? null;
+  // the vault's own search runs only while the Search plugin is left with the vault; handed to Quorum, she uses her own index
+  const search = keeper.plugins().find((p) => p.id === 'search')?.owner === 'quorum' ? null : inc.find((i) => i.kind === 'search')?.path ?? null;
   const on = (k) => inc.find((i) => i.kind === k) ?? null;
   // the four that change how Claude Code itself runs (agent.js agentArgs)
   const powers = { instructions: on('instructions')?.path ?? null, skills: !!on('skills'), agents: !!on('agents'), mcp: on('mcp')?.path ?? null };
