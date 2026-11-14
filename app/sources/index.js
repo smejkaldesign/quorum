@@ -13,6 +13,7 @@ import { connect as oauthConnect, discover, refresh as oauthRefresh } from './oa
 import { createTokenStore } from './tokens.js';
 import { detectRunners, runnersWithSource } from './runners.js';
 import { SCHEDULES, dueFor, runImport } from './agent-import.js';
+import { granolaSearch } from './granola-search.js';
 
 const SYNC_EVERY = 30 * 60 * 1000;
 
@@ -217,7 +218,19 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
   const timer = setInterval(tick, SYNC_EVERY); timer.unref?.();
   setTimeout(tick, 20000).unref?.();
 
-  return { handlers, list, runSync, jobs, stop: () => clearInterval(timer) };
+  // the quorum MCP server's granola_search, asked over the control socket; the token never leaves this process
+  const searchGranola = async (input, { isExcluded, redact }) => {
+    if (!stateOf('granola').connected || !(await store.tokens.get('granola'))) throw new Error('Granola is not connected in Quorum. Connect it in Quorum under Connectors, or search with your own Granola MCP.');
+    try { return await granolaSearch({ mcp: mcpFor('granola'), input, isExcluded, redact, filed: scanExisting(meetingsDir()) }); }
+    catch (err) {
+      log('sources granola_search', err.message);
+      if (err.code === 'unauthorized') throw new Error('Granola no longer accepts Quorum\'s sign-in. Reconnect Granola in Quorum under Connectors.', { cause: err });
+      if (/not created a Granola account|mcp-signup/i.test(err.message)) throw new Error('No Granola account for the sign-in connected in Quorum. Reconnect Granola with the account your Granola app uses.', { cause: err });
+      throw err;
+    }
+  };
+
+  return { handlers, list, runSync, jobs, searchGranola, stop: () => clearInterval(timer) };
 }
 
 export function registerSources({ ipcMain, ...deps }) {
