@@ -5,7 +5,7 @@ import { readFileSync, statSync, watch } from 'node:fs';
 import path from 'node:path';
 import { createResolver, parseNote } from './linkparse.js';
 import { SKIP, graphConfig, noteDate, walk } from './vault.js';
-import { clusterAssign, clusterLabels, groupInfo } from './clusters.js';
+import { clusterAssign, clusterLabels, groupInfo, wrapperFolders } from './clusters.js';
 
 // the folders walk() skips, as a test on a watcher path (the same list, so the two can never disagree)
 const IGNORED = new RegExp(`(^|/)(${[...SKIP].map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(/|$)`);
@@ -13,8 +13,8 @@ const BATCH = 200;
 
 // isExcludedPath keeps a file out by its path; isDeniedText keeps a note out by what its frontmatter says (a denied
 // key); isExcludedText flags and redacts opted-out lines but keeps the note. renamed() gives the person's own names for
-// graph clusters, by cluster key
-export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => false, isExcludedText, redact, onChange, renamed = () => ({}), log = () => {} }) {
+// graph clusters, by cluster key; forget(keys) is told which of them no longer match a cluster
+export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => false, isExcludedText, redact, onChange, renamed = () => ({}), forget = () => {}, log = () => {} }) {
   const files = new Map(); // rel -> { mtime, size, note, text, flagged, t }
   let resolve = () => null;
   let forward = new Map(); // rel -> [{ to, link }]
@@ -24,6 +24,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   let watcher = null;
   let timer = null;
   let stopped = false;
+  let built = false; // the whole vault has been read once, so a cluster that is missing is gone
 
   const remember = (rel) => { let i = rel.indexOf('/'); while (i > 0) { dirs.add(rel.slice(0, i)); i = rel.indexOf('/', i + 1); } };
   const rememberAll = () => { dirs = new Set(); for (const rel of files.keys()) remember(rel); };
@@ -78,6 +79,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     }
     for (const rel of [...files.keys()]) if (!seen.has(rel)) { files.delete(rel); changed.push(rel); }
     if (changed.length) { relink(); rememberAll(); }
+    built = true;
     return changed;
   }
 
@@ -124,6 +126,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     }
     relink();
     rememberAll();
+    built = true;
     log(`indexed ${files.size} notes in ${Date.now() - t0}ms`);
     if (files.size) onChange([...files.keys()]);
     try {
@@ -174,20 +177,29 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     for (const [a, b] of links) { deg[a]++; deg[b]++; }
     // notes that link among themselves share a color, so a vault reads as clusters the moment it connects
     const { colors: auto, cluster } = clusterAssign([...rels, ...ghostNames.map((g) => `?${g}`)], links, (i) => i >= rels.length);
-    const autoLabels = clusterLabels(rels, cluster.slice(0, rels.length), deg, rels.map((rel) => path.basename(rel, '.md')));
-    // first matching group wins, same as Obsidian; otherwise the cluster color
-    const groupOf = rels.map((rel) => groups.find((g) => g.match(rel)) ?? null);
-    const groupLabels = new Map(groups.map((g) => [g, groupInfo(g.query, rels.filter((_, i) => groupOf[i] === g))]));
     // `cluster` names whichever colored the note, with the person's own name for it over the generated one;
     // clusterKey is what a rename is kept against and clusterPath the folder the name stands for
-    const names = renamed() ?? {};
+    const own = renamed() ?? {};
+    const autoLabels = clusterLabels(rels, cluster.slice(0, rels.length), deg, rels.map((rel) => path.basename(rel, '.md')), own);
+    // first matching group wins, same as Obsidian; otherwise the cluster color
+    const groupOf = rels.map((rel) => groups.find((g) => g.match(rel)) ?? null);
+    const members = new Map(groups.map((g) => [g, []]));
+    groupOf.forEach((g, i) => { if (g) members.get(g).push(rels[i]); });
+    const wrapper = wrapperFolders(rels);
+    const groupLabels = new Map(groups.map((g) => [g, groupInfo(g.query, members.get(g), wrapper, own)]));
     const labelFor = (i) => (groupOf[i] ? groupLabels.get(groupOf[i]) : auto[i] ? autoLabels[i] : null);
+    const labels = rels.map((_, i) => labelFor(i));
+    // a kept name whose cluster is gone (its folder moved, its group was removed) is dropped, once the vault is read
+    if (built) {
+      const live = new Set(labels.filter(Boolean).map((l) => l.key));
+      const stale = Object.keys(own).filter((k) => !live.has(k));
+      if (stale.length) forget(stale);
+    }
     return {
       nodes: [
         ...rels.map((rel, i) => {
-          const l = labelFor(i);
-          const own = l && typeof names[l.key] === 'string' ? names[l.key] : null;
-          return { id: rel, name: path.basename(rel, '.md'), deg: deg[i], t: files.get(rel).t, color: groupOf[i]?.color ?? auto[i], cluster: own ?? l?.name ?? null, clusterKey: l?.key ?? null, clusterPath: l?.folder ?? null };
+          const l = labels[i];
+          return { id: rel, name: path.basename(rel, '.md'), deg: deg[i], t: files.get(rel).t, color: groupOf[i]?.color ?? auto[i], cluster: l?.name ?? null, clusterKey: l?.key ?? null, clusterPath: l?.folder ?? null };
         }),
         ...ghostNames.map((name, j) => ({ id: `?${name}`, name, deg: deg[rels.length + j], t: 0, color: null, ghost: true })),
       ],

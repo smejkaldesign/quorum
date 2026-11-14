@@ -138,8 +138,9 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   const openGraphNode = useCallback((id: string) => {
     if (id.startsWith('?')) { setPanel(false); setHealth({ focus: id.slice(1) }); } else setFocus(id);
   }, []);
-  // a cluster renamed from the graph badge: saved in main, then the graph reloads with the new name
-  const renameCluster = useCallback((key: string, name: string) => { window.quorum.vaultClusterName(key, name).then(() => load()); }, [load]);
+  // a cluster renamed from the graph badge: saved in main, which answers with every note's cluster name; the graph
+  // applies them in place
+  const renameCluster = useCallback((key: string, name: string) => window.quorum.vaultClusterName(key, name), []);
 
   // [[links]] in an open note resolve the way the graph does, then open inside Quorum
   const openLink = useCallback(async (target: string) => {

@@ -238,7 +238,7 @@ declare global {
       loadChat(id: string): Promise<SavedChat | null>;
       vaultTree(): Promise<TreeItem[]>;
       vaultGraph(): Promise<import('./Graph').GraphData | null>;
-      vaultClusterName(key: string, name: string): Promise<boolean>;
+      vaultClusterName(key: string, name: string): Promise<Record<string, string> | null>;
       noteVisibility(file: string, value: Visibility): Promise<Visibility | null>;
       noteAsk(file: string, question: string, history: { q: string; a: string }[], files?: string[]): Promise<{ text: string; proposal: string | null }>;
       noteApply(file: string, body: string): Promise<boolean>;

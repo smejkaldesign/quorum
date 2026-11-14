@@ -10,7 +10,11 @@ export type GraphData = {
 };
 
 type Node = SimNode & { id: string; name: string; color: string; t: number; cluster?: string | null; clusterKey?: string | null; clusterPath?: string | null };
-type Api = { configure: (v: GraphView) => void; timelapse: () => void; stop: () => void; refit: () => void };
+type Api = {
+  configure: (v: GraphView) => void; timelapse: () => void; stop: () => void; refit: () => void;
+  // cluster names by note id, read and written in place
+  clusterNames: (key: string) => Map<string, string>; setClusterNames: (byId: Map<string, string>) => void;
+};
 
 const DEFAULT_NODE = '#8f8f8f';
 // a link to a note that doesn't exist yet: dimmer and smaller, like Obsidian's unresolved nodes
@@ -26,16 +30,20 @@ const radius = (deg: number, v: GraphView) => (1.8 + Math.sqrt(deg) * 1.0) * v.n
 // Obsidian-style graph on a 2D canvas: one batched path for links, nodes batched by color
 export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapseEnd, onRenameCluster }: {
   data: GraphData; view: GraphView; query: string; focus?: string | null; timelapse: number; onOpen: (id: string) => void; onTimelapseEnd: () => void;
-  onRenameCluster?: (key: string, name: string) => void;
+  onRenameCluster?: (key: string, name: string) => Promise<Record<string, string> | null>;
 }) {
   const focusRef = useRef(focus ?? null);
   focusRef.current = focus ?? null;
   const canvas = useRef<HTMLCanvasElement>(null);
   const badge = useRef<HTMLDivElement>(null);
   const badgeText = useRef<HTMLSpanElement>(null);
-  // the cluster the badge names right now, and whether it is pinned to the focused note (only then can it be renamed)
-  const shown = useRef<{ key: string; name: string; color: string; pinned: boolean } | null>(null);
+  // the cluster the badge names right now, if it can be renamed
+  const shown = useRef<{ key: string; name: string; color: string } | null>(null);
   const [editing, setEditing] = useState<{ key: string; name: string; color: string } | null>(null);
+  const renameRef = useRef(onRenameCluster);
+  renameRef.current = onRenameCluster;
+  // cluster names saved since this data was loaded, by note id, so a rebuild of the same data keeps them
+  const renamed = useRef<{ data: GraphData; byId: Map<string, string> } | null>(null);
   const queryRef = useRef(query);
   queryRef.current = query;
   const viewRef = useRef(view);
@@ -58,7 +66,8 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
     const remap = new Map(keep.map((old, i) => [old, i]));
     const nodes: Node[] = keep.map((i) => {
       const n = data.nodes[i];
-      return { ...n, color: n.ghost ? GHOST_NODE : n.color ?? DEFAULT_NODE, x: 0, y: 0, vx: 0, vy: 0, fx: null, fy: null, r: radius(n.deg, v0) };
+      const own = renamed.current?.data === data ? renamed.current.byId.get(n.id) : undefined;
+      return { ...n, cluster: own ?? n.cluster, color: n.ghost ? GHOST_NODE : n.color ?? DEFAULT_NODE, x: 0, y: 0, vx: 0, vy: 0, fx: null, fy: null, r: radius(n.deg, v0) };
     });
     const links = data.links.filter(([a, b]) => remap.has(a) && remap.has(b)).map(([a, b]) => [remap.get(a)!, remap.get(b)!] as [number, number]);
     const neighbors = nodes.map(() => new Set<number>());
@@ -75,7 +84,8 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
     let hover = -1;
     // the hovered note's cluster, named in the badge at the top left; written to the DOM directly, once per change.
     // With nothing hovered the badge names the focused note's cluster and stays there until the focus clears. Its
-    // tooltip is the folder the name stands for, so a friendly name never hides where the notes live
+    // tooltip is the folder the name stands for, so a friendly name never hides where the notes live. A cluster that
+    // can be renamed makes the badge a button; otherwise it is display only and hidden from assistive tech
     const showCluster = () => {
       const b = badge.current;
       if (!b) return;
@@ -83,12 +93,21 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
       const at = hover >= 0 ? hover : f;
       const n = at >= 0 ? nodes[at] : null;
       if (!n?.cluster) { shown.current = null; b.hidden = true; return; }
-      const pinned = at === f && !!n.clusterKey;
-      shown.current = n.clusterKey ? { key: n.clusterKey, name: n.cluster, color: n.color, pinned } : null;
+      const renameable = !!n.clusterKey && !!renameRef.current;
+      shown.current = renameable ? { key: n.clusterKey!, name: n.cluster, color: n.color } : null;
       b.style.setProperty('--cluster', n.color);
       if (badgeText.current) badgeText.current.textContent = n.cluster;
-      b.classList.toggle('pinned', pinned);
-      const tip = [n.clusterPath ? `${n.clusterPath}/` : '', pinned ? 'Click to rename' : ''].filter(Boolean).join(' · ');
+      b.classList.toggle('renameable', renameable);
+      if (renameable) {
+        b.setAttribute('role', 'button');
+        b.tabIndex = 0;
+        b.setAttribute('aria-label', `Rename the ${n.cluster} cluster`);
+        b.removeAttribute('aria-hidden');
+      } else {
+        for (const a of ['role', 'tabindex', 'aria-label']) b.removeAttribute(a);
+        b.setAttribute('aria-hidden', 'true');
+      }
+      const tip = [n.clusterPath ? `${n.clusterPath}/` : '', renameable ? 'Click to rename' : ''].filter(Boolean).join(' · ');
       if (tip) b.dataset.tip = tip; else delete b.dataset.tip;
       b.hidden = false;
     };
@@ -293,6 +312,11 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
         dirty = true;
       },
       refit: () => { userMoved = false; fit(true); dirty = true; showCluster(); },
+      clusterNames: (key) => new Map(nodes.filter((n) => n.clusterKey === key && n.cluster).map((n) => [n.id, n.cluster!])),
+      setClusterNames: (byId) => {
+        for (const n of nodes) { const name = byId.get(n.id); if (name !== undefined) n.cluster = name; }
+        showCluster();
+      },
       stop: () => {
         if (!lapse) return;
         while (lapse.next < lapse.order.length) reveal(lapse.order[lapse.next++]);
@@ -319,6 +343,7 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
       const { sx, sy } = pos(e);
       drag = { node: nodeAt(sx, sy), sx, sy, moved: false, vx: cam.x, vy: cam.y };
     };
+    const onBadge = (t: EventTarget | null) => !!badge.current && t instanceof Node && badge.current.contains(t);
     const onMove = (e: MouseEvent) => {
       const { sx, sy } = pos(e);
       if (drag) {
@@ -336,6 +361,8 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
         dirty = true;
         return;
       }
+      // the pointer on the badge keeps the cluster it names, so a click there renames that one
+      if (onBadge(e.target)) return;
       // only hover when the pointer is on the graph itself, not on a menu or panel floating above it
       const hit = e.target === el ? nodeAt(sx, sy) : -1;
       if (hit !== hover) { hover = hit; el.style.cursor = hit >= 0 ? 'pointer' : 'grab'; dirty = true; showCluster(); }
@@ -358,7 +385,7 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
       cam.y = sy - h / 2 - before.y * cam.k;
       dirty = true;
     };
-    const onLeave = () => { if (hover >= 0) { hover = -1; dirty = true; showCluster(); } };
+    const onLeave = (e: MouseEvent) => { if (!onBadge(e.relatedTarget) && hover >= 0) { hover = -1; dirty = true; showCluster(); } };
 
     el.addEventListener('mousedown', onDown);
     window.addEventListener('mousemove', onMove);
@@ -381,20 +408,31 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
     };
   }, [data, view.showOrphans, view.showUnresolved, onOpen]);
 
+  const startRename = () => { const s = shown.current; if (s && onRenameCluster) setEditing(s); };
+  // the new name shows at once and stays if main saves it; main answers with every note's cluster name (a rename can
+  // change how another cluster is told apart), and a failed save puts the old names back
+  const rename = async (key: string, name: string) => {
+    const before = api.current?.clusterNames(key) ?? new Map<string, string>();
+    if (name) api.current?.setClusterNames(new Map([...before.keys()].map((id) => [id, name])));
+    const saved = (await Promise.resolve(onRenameCluster?.(key, name)).catch(() => null)) ?? null;
+    if (!saved) { api.current?.setClusterNames(before); return; }
+    const byId = new Map(Object.entries(saved));
+    renamed.current = { data, byId };
+    api.current?.setClusterNames(byId);
+  };
+
   return (
     <>
       <canvas ref={canvas} className="graph-canvas" aria-label="Graph of notes in your Agent OS" />
-      <div ref={badge} className="graph-cluster" hidden style={editing ? { visibility: 'hidden' } : undefined}
-        onClick={() => { const s = shown.current; if (s?.pinned && onRenameCluster) setEditing({ key: s.key, name: s.name, color: s.color }); }}>
+      <div ref={badge} className="graph-cluster" hidden aria-hidden="true" style={editing ? { visibility: 'hidden' } : undefined}
+        onClick={startRename} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startRename(); } }}>
         <span className="graph-cluster-dot" /><span ref={badgeText} className="graph-cluster-name" />
       </div>
       {editing && (
         <ClusterRename key={editing.key} name={editing.name} color={editing.color}
           onDone={(name) => {
             setEditing(null);
-            if (name === null || name === editing.name) return;
-            if (badgeText.current && name) badgeText.current.textContent = name;
-            onRenameCluster?.(editing.key, name);
+            if (name !== null && name !== editing.name) void rename(editing.key, name);
           }} />
       )}
     </>

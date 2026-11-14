@@ -1564,7 +1564,8 @@ function openIndex() {
   // enters the index, and a rule change rebuilds it (the guardrails IPC handlers below)
   vindex = createVaultIndex({
     vault: b.vault, isExcludedPath: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isDeniedText: isConfidentialText, isExcludedText: suggester.isExcluded, redact: suggester.redactLines,
-    onChange: (rels) => toUI('vault-changed', rels), renamed: () => settings.clusterNames?.[b.vault] ?? {}, log: (...a) => log('index', ...a),
+    onChange: (rels) => toUI('vault-changed', rels), renamed: () => settings.clusterNames?.[b.vault] ?? {},
+    forget: (keys) => { const mine = settings.clusterNames?.[b.vault]; if (!mine) return; for (const k of keys) delete mine[k]; store.settings.save(); }, log: (...a) => log('index', ...a),
   });
   vindex.start();
   // the keeper files whatever arrived while the app was closed, once the folder is open
@@ -1609,17 +1610,18 @@ registerSources({ ipcMain, settings, saveSettings, toUI, log, meetingsDir, openE
 if (EDITION === 'cloud') (await loadEE('platforms.js')).registerPlatforms({ ipcMain, account, settings, saveSettings, toUI, log, meetingsDir, openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file) });
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);
 // the person's own name for a graph cluster, kept per vault in settings so it survives a restart and a re-index; an
-// empty name goes back to the generated one
+// empty name goes back to the generated one. Answers with every note's cluster name after the change (a rename can
+// change how a second cluster is told apart), or null when nothing was saved
 ipcMain.handle('vault-cluster-name', (_e, key, name) => {
   const b = brain();
   key = String(key ?? '');
-  if (!b || !(key === 'hubs' || /^(folder|note|group):./.test(key))) return false;
+  if (!b || !vindex || !(key === 'hubs' || /^(folder|note|group):./.test(key))) return null;
   const own = String(name ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
   const all = settings.clusterNames ?? (settings.clusterNames = {});
   const mine = all[b.vault] ?? (all[b.vault] = {});
   if (own) mine[key] = own; else delete mine[key];
   store.settings.save();
-  return true;
+  return Object.fromEntries(vindex.graph().nodes.filter((n) => n.cluster).map((n) => [n.id, n.cluster]));
 });
 ipcMain.handle('vault-search', (_e, q, limit) => vindex?.search(String(q), Math.min(Number(limit) || 30, 1000)) ?? []);
 ipcMain.handle('vault-link-health', () => vindex?.linkHealth() ?? []);
