@@ -29,5 +29,17 @@
         }
       ]
     }
+  ],
+  "redirects": [
+    {
+      "source": "/privacy",
+      "destination": "/legal/privacy",
+      "type": 301
+    },
+    {
+      "source": "/terms",
+      "destination": "/legal/terms",
+      "type": 301
+    }
   ]
 }
