@@ -1,4 +1,7 @@
-import type { Kb, KbAccess, KbAccessDraft, KbFolder, KbFolderNode, KbImportProgress, KbImportResult, KbNote } from '../../src/quorum';
+import type { Kb, KbAccess, KbAccessDraft, KbFolder, KbFolderNode, KbImportProgress, KbImportSkipped, KbNote, KbSource } from '../../src/quorum';
+
+// what a finished kb-import answers; removed counts notes a refresh took out because the source no longer has them
+export type KbImportResult = { kb: Kb; imported: number; skipped: KbImportSkipped[]; removed: number };
 
 // Pure helpers for the knowledge base screens: the folder tree, what a move may do, the rows the tree shows and how
 // the arrow keys walk them, the readers line, the access list the readers editor sends, and the import lines.
@@ -170,7 +173,8 @@ export function readersSummary(access: KbAccess[] | null): string {
   const admins = people.filter((a) => a.role === 'admin').length;
   const readers = people.length - admins;
   const parts: string[] = [];
-  if (access.some((a) => a.principal === 'workspace')) parts.push('Whole workspace');
+  const ws = access.find((a) => a.principal === 'workspace');
+  if (ws) parts.push(ws.role === 'admin' ? 'Whole workspace (all can manage)' : 'Whole workspace');
   else if (readers) parts.push(`${readers} ${readers === 1 ? 'person' : 'people'}`);
   else parts.push('Owners and admins only');
   if (admins) parts.push(`${admins} KB ${admins === 1 ? 'admin' : 'admins'}`);
@@ -220,9 +224,64 @@ export function progressLabel(p: KbImportProgress | null): string {
 export const progressShare = (p: KbImportProgress | null): number | null => (p && p.total > 0 && p.phase !== 'fetching' ? Math.max(0, Math.min(1, p.done / p.total)) : null);
 
 // the result of an import as a headline and the skipped files to list (the first `limit`, then a count of the rest)
-export function importSummary(r: Pick<KbImportResult, 'imported' | 'skipped'>, limit = 20): { headline: string; skipped: { path: string; reason: string }[]; more: number } {
+export function importSummary(r: Pick<KbImportResult, 'imported' | 'skipped'> & { removed?: number }, limit = 20): { headline: string; skipped: KbImportSkipped[]; more: number } {
   const n = r.imported ?? 0;
   const skipped = r.skipped ?? [];
-  const headline = `Imported ${n} ${n === 1 ? 'note' : 'notes'}${skipped.length ? `, skipped ${skipped.length} ${skipped.length === 1 ? 'file' : 'files'}` : ''}.`;
-  return { headline, skipped: skipped.slice(0, limit), more: Math.max(0, skipped.length - limit) };
+  const removed = r.removed ?? 0;
+  const parts = [`Imported ${n} ${n === 1 ? 'note' : 'notes'}`];
+  if (removed) parts.push(`removed ${removed} ${removed === 1 ? 'note' : 'notes'} the source no longer has`);
+  if (skipped.length) parts.push(`skipped ${skipped.length} ${skipped.length === 1 ? 'file' : 'files'}`);
+  return { headline: `${parts.join(', ')}.`, skipped: skipped.slice(0, limit), more: Math.max(0, skipped.length - limit) };
+}
+
+// where a KB's notes come from, in one line for the admin list; null when it has no source
+export function sourceLine(s: KbSource | null): string | null {
+  if (!s) return null;
+  const repo = (u: string | null) => (u ?? '').replace(/^https?:\/\/(www\.)?github\.com\//, '').replace(/\.git$/, '');
+  if (s.kind === 'github') return `GitHub ${repo(s.url) || 'repository'}${s.branch ? ` (${s.branch})` : ''}`;
+  if (s.kind === 'zip') return `Zip ${s.name ?? (s.path ?? '').replace(/^.*\//, '')}`.trim();
+  if (s.kind === 'git') return `Repository ${(s.url ?? '').replace(/^https?:\/\//, '').replace(/\.git$/, '')}${s.branch ? ` (${s.branch})` : ''}`.trim();
+  return `Folder ${(s.path ?? '').replace(/^\/Users\/[^/]+/, '~')}`.trim();
+}
+
+const compareRank = (a: number[], b: number[]) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
+const stripMd = (p: string) => p.replace(/\.md$/i, '');
+const dirOf = (p: string) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
+// a/./b/../c as a/c; a path that climbs above the top resolves to null
+function normalize(p: string): string | null {
+  const out: string[] = [];
+  for (const seg of p.split('/')) {
+    if (!seg || seg === '.') continue;
+    if (seg === '..') { if (!out.length) return null; out.pop(); } else out.push(seg);
+  }
+  return out.join('/');
+}
+
+// the note a [[link]] in `from` points at, among the KB notes loaded on this Mac. A link matches whole path segments:
+// the exact path relative to the linking note, the exact path from the KB's top, a path that ends in the link's
+// segments, or (for a bare name) a note whose file name is the link. The exact relative path wins; after it, a note in
+// the same folder as `from`, then one in the same KB, then the closer kind of match, then the first by path
+export function resolveKbLink<N extends Pick<KbNote, 'id' | 'path' | 'folderId'>>(
+  target: string, from: { kbId: string; note: Pick<KbNote, 'path' | 'folderId'> | null }, byKb: Record<string, N[]>,
+): { kbId: string; note: N } | null {
+  const raw = stripMd(target.split('|')[0].split('#')[0].trim().replace(/\\/g, '/')).toLowerCase();
+  if (!raw.replace(/[./]/g, '')) return null;
+  const fromDir = from.note ? dirOf(stripMd(from.note.path).toLowerCase()) : '';
+  const relative = normalize(fromDir ? `${fromDir}/${raw}` : raw);
+  // from the top of the KB, a link that climbs (../) only matches relative to the linking note
+  const t = normalize(raw);
+  if (relative === null && t === null) return null;
+  const bare = !raw.includes('/');
+  let best: { kbId: string; note: N; rank: number[] } | null = null;
+  for (const [kbId, notes] of Object.entries(byKb)) {
+    for (const n of notes) {
+      const p = stripMd(n.path).toLowerCase();
+      const how = p === relative ? 0 : t === null || raw.startsWith('..') ? -1 : p === t ? 1 : p.endsWith(`/${t}`) ? 2 : bare && p.slice(p.lastIndexOf('/') + 1) === t ? 3 : -1;
+      if (how === -1) continue;
+      const sameFolder = kbId === from.kbId && !!from.note && (n.folderId ?? null) === (from.note.folderId ?? null);
+      const rank = [how === 0 ? 0 : 1, sameFolder ? 0 : 1, kbId === from.kbId ? 0 : 1, how];
+      if (!best || compareRank(rank, best.rank) < 0 || (compareRank(rank, best.rank) === 0 && n.path < best.note.path)) best = { kbId, note: n, rank };
+    }
+  }
+  return best ? { kbId: best.kbId, note: best.note } : null;
 }

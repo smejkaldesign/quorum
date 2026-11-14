@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Kb, KbKind, Member, Result } from '../../src/quorum';
 import { Row, useMenu } from '../../src/controls';
 import { IconMore, IconPlus, IconStack } from '../../src/icons';
 import { AccountCard, EE_MARKER, useAccount } from './Account';
 import { accountApi } from './accountMock';
-import { accessDraft, KIND_LABEL, readersOf, readersSummary, type ReadersMode } from './kbTree';
-import { EMPTY_SOURCE, hasImport, ImportStatus, kbCall, KbConfirm, SourceFields, sourceOf, useImport, type SourceDraft } from './kbUi';
+import { accessDraft, KIND_LABEL, readersOf, readersSummary, sourceLine, type ReadersMode } from './kbTree';
+import { announceKbChange, EMPTY_SOURCE, hasImport, ImportStatus, kbCall, KbConfirm, SourceFields, sourceOf, useImport, type SourceDraft } from './kbUi';
 
 // Settings › Admin › Knowledge, Cloud: the workspace's knowledge bases. Owners and admins create one (empty, from a
 // GitHub repository or from a zip), rename it, set who reads it and delete it. A KB's kind is chosen when it is
@@ -19,7 +19,7 @@ export function KnowledgeBasesPage() {
   return <Bases />;
 }
 
-type Panel = { kind: 'rename' | 'readers' | 'import'; kbId: string } | null;
+type Panel = { kind: 'rename' | 'readers' | 'import' | 'refresh'; kbId: string } | null;
 
 function Bases() {
   const [kbs, setKbs] = useState<Kb[] | null>(null);
@@ -32,11 +32,11 @@ function Bases() {
     if (r.error) setError(r.error); else { setError(''); setKbs(r.kbs ?? []); }
   }, []);
   useEffect(() => { load(); }, [load]);
-  const replace = (kb: Kb) => setKbs((list) => (list ?? []).map((k) => (k.id === kb.id ? kb : k)));
+  const replace = (kb: Kb) => { announceKbChange(); setKbs((list) => (list ?? []).map((k) => (k.id === kb.id ? kb : k))); };
   const remove = async (kb: Kb) => {
     setDeleting(null);
     const r = await kbCall(() => window.quorum.kbDelete(kb.id), 'The knowledge base could not be deleted.');
-    if (r.error) setError(r.error); else { setError(''); setKbs((list) => (list ?? []).filter((k) => k.id !== kb.id)); if (panel?.kbId === kb.id) setPanel(null); }
+    if (r.error) setError(r.error); else { setError(''); announceKbChange(); setKbs((list) => (list ?? []).filter((k) => k.id !== kb.id)); if (panel?.kbId === kb.id) setPanel(null); }
   };
   return (
     <div data-ee={EE_MARKER}>
@@ -47,13 +47,14 @@ function Bases() {
           <div key={kb.id} className="kb-admin-item">
             <Row icon={<IconStack width={18} height={18} />}
               title={<>{kb.name}{kb.isDefault && <span className="kb-badge">Default</span>}</>}
-              desc={`${KIND_LABEL[kb.kind]} · ${readersSummary(kb.access)}${kb.source ? ` · ${kb.source.kind === 'git' ? 'Repository' : 'Folder'} ${kb.source.url ?? kb.source.path ?? ''}` : ''}`}>
+              desc={[KIND_LABEL[kb.kind], readersSummary(kb.access), sourceLine(kb.source)].filter(Boolean).join(' · ')}>
               <button className="pill small" aria-expanded={panel?.kind === 'readers' && panel.kbId === kb.id} onClick={() => setPanel(panel?.kind === 'readers' && panel.kbId === kb.id ? null : { kind: 'readers', kbId: kb.id })}>Readers</button>
               <KbMenu kb={kb} onPick={(kind) => (kind === 'delete' ? setDeleting(kb) : setPanel({ kind, kbId: kb.id }))} />
             </Row>
             {panel?.kbId === kb.id && panel.kind === 'rename' && <Rename kb={kb} onDone={(next) => { if (next) replace(next); setPanel(null); }} />}
             {panel?.kbId === kb.id && panel.kind === 'readers' && <Readers kb={kb} onDone={(next) => { if (next) replace(next); setPanel(null); }} />}
             {panel?.kbId === kb.id && panel.kind === 'import' && <ImportInto kb={kb} onDone={() => setPanel(null)} onImported={load} />}
+            {panel?.kbId === kb.id && panel.kind === 'refresh' && <Refresh kb={kb} onDone={() => setPanel(null)} onImported={load} />}
           </div>
         ))}
         {kbs && !kbs.length && <p className="set-hint">No knowledge bases yet. Create one to give the workspace a shared place for notes.</p>}
@@ -67,7 +68,7 @@ function Bases() {
   );
 }
 
-function KbMenu({ kb, onPick }: { kb: Kb; onPick: (kind: 'rename' | 'import' | 'delete') => void }) {
+function KbMenu({ kb, onPick }: { kb: Kb; onPick: (kind: 'rename' | 'import' | 'refresh' | 'delete') => void }) {
   const [open, setOpen] = useMenu();
   return (
     <span className="menu-wrap">
@@ -75,6 +76,7 @@ function KbMenu({ kb, onPick }: { kb: Kb; onPick: (kind: 'rename' | 'import' | '
       {open && (
         <div className="menu" role="menu">
           <button role="menuitem" onClick={() => onPick('rename')}>Rename</button>
+          {hasImport() && kb.source?.kind === 'github' && <button role="menuitem" onClick={() => onPick('refresh')}>Refresh from GitHub</button>}
           {hasImport() && <button role="menuitem" onClick={() => onPick('import')}>Import notes</button>}
           {!kb.isDefault && <button role="menuitem" className="danger-pill" onClick={() => onPick('delete')}>Delete</button>}
         </div>
@@ -88,9 +90,11 @@ function Rename({ kb, onDone }: { kb: Kb; onDone: (kb: Kb | null) => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const save = async () => {
-    if (name.trim() === kb.name) { onDone(null); return; }
+    const next = name.trim();
+    if (busy || !next) return;
+    if (next === kb.name) { onDone(null); return; }
     setBusy(true); setError('');
-    const r = await kbCall(() => window.quorum.kbRename(kb.id, name), 'The knowledge base could not be renamed.');
+    const r = await kbCall(() => window.quorum.kbRename(kb.id, next), 'The knowledge base could not be renamed.');
     setBusy(false);
     if (r.error || !r.kb) setError(r.error ?? 'The knowledge base could not be renamed.'); else onDone(r.kb);
   };
@@ -183,6 +187,24 @@ function ImportInto({ kb, onDone, onImported }: { kb: Kb; onDone: () => void; on
   );
 }
 
+// Refresh from GitHub: imports the KB's stored GitHub source again as soon as it opens, then shows the result
+function Refresh({ kb, onDone, onImported }: { kb: Kb; onDone: () => void; onImported: () => void }) {
+  const imp = useImport();
+  const started = useRef(false);
+  const { run } = imp;
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    run(kb.id).then((why) => { if (why === null) onImported(); });
+  }, [kb.id, run, onImported]);
+  return (
+    <div className="kb-panel">
+      <ImportStatus {...imp} />
+      <div className="kb-form-row"><button className="pill ghost" disabled={imp.running} onClick={onDone}>{imp.running ? 'Refreshing…' : 'Done'}</button></div>
+    </div>
+  );
+}
+
 // a new KB: its name and kind, then where its notes come from. An import runs into the KB just created, so a failed
 // import leaves the KB in place and empty, and says so
 function Create({ onDone }: { onDone: (kb: Kb | null) => void }) {
@@ -200,10 +222,11 @@ function Create({ onDone }: { onDone: (kb: Kb | null) => void }) {
     setBusy(true);
     let kb = made;
     if (!kb) {
-      const r = await kbCall(() => window.quorum.kbCreate({ name, kind }), 'The knowledge base could not be created.');
+      const r = await kbCall(() => window.quorum.kbCreate({ name: name.trim(), kind }), 'The knowledge base could not be created.');
       if (r.error || !r.kb) { setBusy(false); setError(r.error ?? 'The knowledge base could not be created.'); return; }
       kb = r.kb;
       setMade(kb);
+      announceKbChange();
     }
     if (!s.source) { setBusy(false); onDone(kb); return; }
     const why = await imp.run(kb.id, s.source);
@@ -215,13 +238,13 @@ function Create({ onDone }: { onDone: (kb: Kb | null) => void }) {
     <div className="set-card kb-create">
       <h3 className="kb-create-title">New knowledge base</h3>
       <div className="kb-form-row">
-        <span className="set-field wide"><input autoFocus value={name} disabled={running || !!made} onChange={(e) => setName(e.target.value)} placeholder="Name, for example Handbook" aria-label="Knowledge base name" onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) go(); if (e.key === 'Escape' && !running) onDone(null); }} /></span>
+        <span className="set-field wide"><input autoFocus value={name} disabled={running || !!made} onChange={(e) => setName(e.target.value)} placeholder="Name, for example Handbook" aria-label="Knowledge base name" onKeyDown={(e) => { if (e.key === 'Enter' && name.trim() && !running) go(); if (e.key === 'Escape' && !running) onDone(null); }} /></span>
       </div>
       <p className="kb-label">Kind</p>
       <div className="guard-kinds" role="radiogroup" aria-label="Kind">
         {(Object.keys(KIND_LABEL) as KbKind[]).map((k) => <button key={k} role="radio" aria-checked={kind === k} disabled={running || !!made} className={`pill ${kind === k ? 'primary' : ''}`} onClick={() => setKind(k)}>{KIND_LABEL[k]}</button>)}
       </div>
-      <p className="kb-hint muted">{kind === 'meetings' ? 'A meetings knowledge base collects meeting notes for a team.' : 'A general knowledge base holds any notes the workspace shares.'}</p>
+      <p className="kb-hint muted">{kind === 'meetings' ? 'A meetings knowledge base collects meeting notes for a team.' : 'A general knowledge base holds any notes the workspace shares.'} The kind cannot be changed after the knowledge base is created.</p>
       <p className="kb-label">Start with</p>
       <SourceFields draft={draft} onChange={setDraft} withEmpty={!made} disabled={running} />
       <div className="kb-form-row">

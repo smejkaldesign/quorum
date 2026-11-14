@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
-import type { KbImportProgress, KbImportResult, KbImportSource, Result } from '../../src/quorum';
+import { useEffect, useRef, useState } from 'react';
+import type { KbImportProgress, KbImportSource, Result } from '../../src/quorum';
 import { IconFolder } from '../../src/icons';
-import { checkGithubUrl, importSummary, progressLabel, progressShare } from './kbTree';
+import { checkGithubUrl, importSummary, progressLabel, progressShare, type KbImportResult } from './kbTree';
 
 // Shared pieces of the knowledge base screens: a call that never rejects, the import (which another change adds to
 // the main process, so the screens check for it before offering it), and the delete confirmation.
@@ -14,6 +14,17 @@ export async function kbCall<T extends Result>(fn: () => Promise<T> | undefined,
   } catch {
     return { error: fallback } as T;
   }
+}
+
+// Settings and the Knowledge tab are separate views; a change made in one tells the other to read the KBs again
+export const KB_CHANGED = 'quorum:kb-changed';
+export const announceKbChange = () => { try { window.dispatchEvent(new Event(KB_CHANGED)); } catch { /* no window in tests */ } };
+
+// a callback kept current in a ref, so a listener added once always calls the latest one
+export function useLatest<T>(value: T) {
+  const ref = useRef(value);
+  useEffect(() => { ref.current = value; });
+  return ref;
 }
 
 export const hasImport = (): boolean => {
@@ -41,7 +52,7 @@ export function SourceFields({ draft, onChange, withEmpty, disabled }: { draft: 
   const kinds: { id: SourceKind; label: string }[] = [...(withEmpty ? [{ id: 'empty' as const, label: 'Empty' }] : []), { id: 'github', label: 'From GitHub' }, { id: 'zip', label: 'From a zip' }];
   const pick = async () => {
     setError('');
-    const r = await kbCall(() => window.quorum.kbImportPickZip(), 'The file picker did not open.');
+    const r = await kbCall<Result & { path?: string; canceled?: true }>(() => window.quorum.kbImportPickZip(), 'The file picker did not open.');
     if (r.error) setError(r.error); else if (r.path) onChange({ ...draft, zip: r.path });
   };
   return (
@@ -76,16 +87,18 @@ export function useImport() {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<KbImportResult | null>(null);
   const [error, setError] = useState('');
-  // resolves to null when the import finished, or to the sentence that says why it did not
-  const run = async (kbId: string, source: KbImportSource): Promise<string | null> => {
+  // resolves to null when the import finished, or to the sentence that says why it did not. Without a source the
+  // import reads the KB's stored GitHub source again (Refresh from GitHub)
+  const run = async (kbId: string, source?: KbImportSource): Promise<string | null> => {
     setRunning(true); setProgress(null); setResult(null); setError('');
     let off: (() => void) | undefined;
     try { off = window.quorum.onKbImportProgress?.((p) => { if (p?.kbId === kbId) setProgress(p); }); } catch { off = undefined; }
-    const r = await kbCall(() => window.quorum.kbImport({ kbId, source }), 'The import did not finish.');
+    const r = await kbCall(() => window.quorum.kbImport(source ? { kbId, source } : { kbId }), 'The import did not finish.');
     try { off?.(); } catch { /* the listener is gone either way */ }
     setRunning(false);
     if (r.error || !r.kb) { const why = r.error ?? 'The import did not finish.'; setError(why); return why; }
-    setResult({ kb: r.kb, imported: r.imported ?? 0, skipped: r.skipped ?? [] });
+    setResult({ kb: r.kb, imported: r.imported ?? 0, skipped: r.skipped ?? [], removed: (r as { removed?: number }).removed ?? 0 });
+    announceKbChange();
     return null;
   };
   const reset = () => { setProgress(null); setResult(null); setError(''); };
@@ -120,11 +133,12 @@ export function ImportStatus({ running, progress, result, error }: { running: bo
 
 // the delete question, with Escape and the scrim as Cancel and focus on Cancel
 export function KbConfirm({ title, body, action, onDone }: { title: string; body: string; action: string; onDone: (ok: boolean) => void }) {
+  const done = useLatest(onDone);
   useEffect(() => {
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onDone(false); } };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); done.current(false); } };
     window.addEventListener('keydown', esc, true);
     return () => window.removeEventListener('keydown', esc, true);
-  }, [onDone]);
+  }, [done]);
   return (
     <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onDone(false); }}>
       <div className="modal" role="alertdialog" aria-modal="true" aria-labelledby="kb-confirm-title" aria-describedby="kb-confirm-body">

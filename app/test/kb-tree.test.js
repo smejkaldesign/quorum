@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   accessDraft, buildFolderTree, checkGithubUrl, descendantIds, flattenFolders, folderPath, importSummary, moveCheck, moveTargets,
-  notesIn, openPathTo, progressLabel, progressShare, readersOf, readersSummary, treeKey, visibleRows, withFolder, withoutFolder,
+  notesIn, openPathTo, progressLabel, progressShare, readersOf, readersSummary, resolveKbLink, sourceLine, treeKey, visibleRows, withFolder, withoutFolder,
 } from '../ee/src/kbTree.ts';
 
 // Handbook / Onboarding / Week one, Handbook / Policies, and Archive at the top level
@@ -136,6 +136,7 @@ describe('readers', () => {
     expect(readersSummary([bo])).toBe('1 person');
     expect(readersSummary([])).toBe('Owners and admins only');
     expect(readersSummary(null)).toBe('Readers are visible to its admins');
+    expect(readersSummary([{ ...ws, role: 'admin' }])).toBe('Whole workspace (all can manage)');
   });
 
   it('reads the current choice back from the access list', () => {
@@ -183,5 +184,52 @@ describe('import lines', () => {
     expect(s.headline).toBe('Imported 40 notes, skipped 23 files.');
     expect(s.skipped).toHaveLength(20);
     expect(s.more).toBe(3);
+    expect(importSummary({ imported: 2, skipped: [], removed: 1 }).headline).toBe('Imported 2 notes, removed 1 note the source no longer has.');
+  });
+
+  it('names where a KB comes from, with the branch', () => {
+    const base = { url: null, path: null, branch: null, name: null, importedAt: null };
+    expect(sourceLine(null)).toBeNull();
+    expect(sourceLine({ ...base, kind: 'github', url: 'https://github.com/acme/handbook', branch: 'main' })).toBe('GitHub acme/handbook (main)');
+    expect(sourceLine({ ...base, kind: 'github', url: 'https://github.com/acme/handbook.git' })).toBe('GitHub acme/handbook');
+    expect(sourceLine({ ...base, kind: 'zip', name: 'handbook.zip' })).toBe('Zip handbook.zip');
+    expect(sourceLine({ ...base, kind: 'zip', path: '/tmp/x/export.zip' })).toBe('Zip export.zip');
+    expect(sourceLine({ ...base, kind: 'git', url: 'https://example.com/team/kb.git' })).toBe('Repository example.com/team/kb');
+    expect(sourceLine({ ...base, kind: 'folder', path: '/Volumes/Shared/kb' })).toBe('Folder /Volumes/Shared/kb');
+  });
+});
+
+describe('following a link inside a KB note', () => {
+  const n = (id, path, folderId = null) => ({ id, path, folderId });
+  const byKb = {
+    k1: [n('a', 'guides/setup.md', 'g'), n('b', 'setup.md'), n('c', 'guides/deep/setup.md', 'd'), n('d', 'guides/notsetup.md', 'g'), n('e', 'ops/run book.md', 'o')],
+    k2: [n('x', 'policies/leave.md', 'p'), n('y', 'setup.md')],
+  };
+  const from = (path, folderId) => ({ kbId: 'k1', note: { path, folderId } });
+
+  it('matches whole path segments, never part of a name', () => {
+    expect(resolveKbLink('tup', from('index.md', null), byKb)).toBeNull();
+    expect(resolveKbLink('notsetup', from('index.md', null), byKb).note.id).toBe('d');
+    expect(resolveKbLink('book', from('index.md', null), byKb)).toBeNull();
+    expect(resolveKbLink('Run Book', from('index.md', null), byKb).note.id).toBe('e');
+  });
+
+  it('takes the exact path relative to the linking note first', () => {
+    expect(resolveKbLink('deep/setup', from('guides/intro.md', 'g'), byKb).note.id).toBe('c');
+    expect(resolveKbLink('../setup.md', from('guides/intro.md', 'g'), byKb).note.id).toBe('b');
+    expect(resolveKbLink('guides/setup', from('other/x.md', null), byKb).note.id).toBe('a');
+  });
+
+  it('prefers the same folder, then the same KB, for a bare name', () => {
+    expect(resolveKbLink('setup', from('guides/intro.md', 'g'), byKb).note.id).toBe('a');
+    expect(resolveKbLink('setup', from('guides/deep/other.md', 'd'), byKb).note.id).toBe('c');
+    expect(resolveKbLink('setup', from('elsewhere/x.md', 'z'), byKb)).toEqual({ kbId: 'k1', note: byKb.k1[1] });
+    expect(resolveKbLink('leave', from('index.md', null), byKb)).toEqual({ kbId: 'k2', note: byKb.k2[0] });
+  });
+
+  it('ignores headings and aliases and refuses paths above the top', () => {
+    expect(resolveKbLink('policies/leave#Parental|leave policy', from('index.md', null), byKb).note.id).toBe('x');
+    expect(resolveKbLink('../../setup', from('index.md', null), byKb)).toBeNull();
+    expect(resolveKbLink('  ', from('index.md', null), byKb)).toBeNull();
   });
 });

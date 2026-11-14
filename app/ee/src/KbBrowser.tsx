@@ -1,21 +1,28 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { Kb, KbNote } from '../../src/quorum';
 import { Markdown } from '../../src/Markdown';
 import { matchesQuery } from '../../src/mainTabs';
 import { IconBack, IconBrain, IconChevron, IconDoc, IconFolder, IconMore, IconStack } from '../../src/icons';
-import { findFolder, folderPath, moveCheck, moveTargets, notesIn, openPathTo, rowKey, treeKey, visibleRows, withFolder, withoutFolder, descendantIds, type TreeRow } from './kbTree';
-import { kbCall, KbConfirm } from './kbUi';
+import { descendantIds, findFolder, folderPath, moveCheck, moveTargets, notesIn, openPathTo, resolveKbLink, rowKey, treeKey, visibleRows, withFolder, withoutFolder, type TreeRow } from './kbTree';
+import { KB_CHANGED, kbCall, KbConfirm, useLatest } from './kbUi';
 
-// The knowledge bases in the Knowledge tab: a tree on the left with one top-level row per KB the person can read and
-// its folders inside, and the selected folder's notes on the right. KB admins create, rename, move (drag, or Move to)
-// and delete folders. With nothing selected the right side shows `children`, the team knowledge view as it was.
+// The knowledge bases in the Knowledge tab: one left column with the team knowledge entry (and, for a folder or git
+// source, that source's own file tree, which the team view portals into the slot below it) and one top-level row per
+// KB the person can read with its folders inside; the selected folder's notes on the right. KB admins create, rename,
+// move (drag, or Move to) and delete folders. With the team entry selected the right side shows `children`, the team
+// knowledge view as it was; it stays mounted while a KB is open so its place is kept.
 
 type Sel = { kbId: string; folderId: string | null };
 type Edit = { mode: 'rename'; kbId: string; folderId: string | null; name: string } | { mode: 'new'; kbId: string; parentId: string | null; name: string };
-type Doc = { title: string; body: string; path: string };
+type Doc = { title: string; body: string; note: KbNote };
 const onDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
 
+// the team view's way into the left column: where to render its file tree, and how to bring the team view forward
+export const TeamSideSlot = createContext<{ slot: HTMLElement | null; showTeam: () => void } | null>(null);
+export const useTeamSide = () => useContext(TeamSideSlot);
+
 export function KbBrowser({ me, query, children }: { me: string | null; query: string; children: ReactNode }) {
+  const [slot, setSlot] = useState<HTMLDivElement | null>(null);
   const [kbs, setKbs] = useState<Kb[] | null>(null);
   const [listError, setListError] = useState('');
   const [open, setOpen] = useState<Set<string>>(new Set());
@@ -32,23 +39,53 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
   const [dropKey, setDropKey] = useState<string | null>(null);
   const refs = useRef(new Map<string, HTMLButtonElement>());
 
-  useEffect(() => {
-    let live = true;
-    kbCall(() => window.quorum.kbList(), 'The knowledge bases could not be read.').then((r) => {
-      if (!live) return;
-      if (r.error) { setListError(r.error); return; }
-      const list = r.kbs ?? [];
-      setKbs(list);
-      setOpen(new Set(list.map((k) => rowKey(k.id, null))));
-    });
-    return () => { live = false; };
+  // one read of the list at a time counts: a later read's answer replaces an earlier one's, never the other way
+  const listSeq = useRef(0);
+  const seen = useRef(new Set<string>());
+  const loadList = useCallback(async () => {
+    const seq = ++listSeq.current;
+    const r = await kbCall(() => window.quorum.kbList(), 'The knowledge bases could not be read.');
+    if (seq !== listSeq.current) return;
+    if (r.error) { setListError(r.error); return; }
+    setListError('');
+    const list = r.kbs ?? [];
+    setKbs(list);
+    // a KB seen for the first time opens; one the person closed stays closed across refreshes
+    const fresh = list.map((k) => rowKey(k.id, null)).filter((k) => !seen.current.has(k));
+    for (const k of fresh) seen.current.add(k);
+    if (fresh.length) setOpen((s) => new Set([...s, ...fresh]));
+    setSel((s) => (s && !list.some((k) => k.id === s.kbId) ? null : s));
   }, []);
 
+  // the notes of each KB, read once per KB until something asks for a refresh. A request per KB carries a number; an
+  // answer that is not the latest for its KB is dropped, and a KB with a request on the way is not asked twice
+  const noteSeq = useRef(new Map<string, number>());
+  const inFlight = useRef(new Set<string>());
   const loadNotes = useCallback(async (kbId: string) => {
+    const seq = (noteSeq.current.get(kbId) ?? 0) + 1;
+    noteSeq.current.set(kbId, seq);
+    inFlight.current.add(kbId);
     const r = await kbCall(() => window.quorum.kbNotes(kbId), 'The notes could not be read.');
+    if (noteSeq.current.get(kbId) !== seq) return;
+    inFlight.current.delete(kbId);
     if (r.error) setError(r.error); else setNotes((n) => ({ ...n, [kbId]: r.notes ?? [] }));
   }, []);
-  useEffect(() => { if (sel && !notes[sel.kbId]) loadNotes(sel.kbId); }, [sel, notes, loadNotes]);
+  const selKbId = sel?.kbId ?? null;
+  const haveNotes = selKbId ? !!notes[selKbId] : true;
+  useEffect(() => { if (selKbId && !haveNotes && !inFlight.current.has(selKbId)) loadNotes(selKbId); }, [selKbId, haveNotes, loadNotes]);
+
+  // read the list again, and the open KB's notes, when the window comes back, when it becomes visible, and when
+  // Settings changes a KB (an import, a rename, new readers)
+  const refresh = useLatest(() => { loadList(); if (selKbId) loadNotes(selKbId); });
+  useEffect(() => {
+    loadList();
+    const again = () => refresh.current();
+    const visible = () => { if (document.visibilityState === 'visible') refresh.current(); };
+    window.addEventListener('focus', again);
+    window.addEventListener(KB_CHANGED, again);
+    document.addEventListener('visibilitychange', visible);
+    return () => { window.removeEventListener('focus', again); window.removeEventListener(KB_CHANGED, again); document.removeEventListener('visibilitychange', visible); };
+  }, [loadList, refresh]);
 
   useEffect(() => {
     if (!menuFor) return;
@@ -71,22 +108,24 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
     const kb = kbOf(e.kbId);
     if (!kb) return;
     const before = e.folderId ? findFolder(kb.folders, e.folderId)?.name : kb.name;
-    if (!e.name.trim() || e.name.trim() === before) { focusRow(rowKey(e.kbId, e.folderId)); return; }
+    const name = e.name.trim();
+    if (!name || name === before) { focusRow(rowKey(e.kbId, e.folderId)); return; }
     setError('');
     if (e.folderId) {
-      const r = await kbCall(() => window.quorum.kbFolderRename(e.folderId!, e.name), 'The folder could not be renamed.');
+      const r = await kbCall(() => window.quorum.kbFolderRename(e.folderId!, name), 'The folder could not be renamed.');
       if (r.error || !r.folder) setError(r.error ?? 'The folder could not be renamed.'); else setFolders(e.kbId, (t) => withFolder(t, r.folder!));
     } else {
-      const r = await kbCall(() => window.quorum.kbRename(e.kbId, e.name), 'The knowledge base could not be renamed.');
+      const r = await kbCall(() => window.quorum.kbRename(e.kbId, name), 'The knowledge base could not be renamed.');
       if (r.error || !r.kb) setError(r.error ?? 'The knowledge base could not be renamed.'); else setKb(r.kb);
     }
     focusRow(rowKey(e.kbId, e.folderId));
   };
   const create = async (e: Extract<Edit, { mode: 'new' }>) => {
     setEdit(null);
-    if (!e.name.trim()) { focusRow(rowKey(e.kbId, e.parentId)); return; }
+    const name = e.name.trim();
+    if (!name) { focusRow(rowKey(e.kbId, e.parentId)); return; }
     setError('');
-    const r = await kbCall(() => window.quorum.kbFolderCreate({ kbId: e.kbId, parentId: e.parentId, name: e.name }), 'The folder could not be created.');
+    const r = await kbCall(() => window.quorum.kbFolderCreate({ kbId: e.kbId, parentId: e.parentId, name }),'The folder could not be created.');
     if (r.error || !r.folder) { setError(r.error ?? 'The folder could not be created.'); focusRow(rowKey(e.kbId, e.parentId)); return; }
     setFolders(e.kbId, (t) => withFolder(t, r.folder!));
     openKeys([rowKey(e.kbId, e.parentId)]);
@@ -125,18 +164,25 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
     if (me && n.userId === me) {
       try {
         const v = await window.quorum.vaultNote(n.path);
-        if (v) setDoc({ title: v.title || n.title, body: v.body, path: n.path }); else setError('That note is not in your vault on this Mac.');
+        if (v) setDoc({ title: v.title || n.title, body: v.body, note: n }); else setError('That note is not in your vault on this Mac.');
       } catch { setError('That note could not be opened.'); }
       return;
     }
     const r = await kbCall(() => window.quorum.knowledgeRead(n.path), 'That note could not be opened.');
-    if (r.error) setError(r.error); else if (r.doc) setDoc({ title: r.doc.title, body: r.doc.body, path: n.path }); else setError('That note has not synced to this Mac yet.');
+    if (r.error) setError(r.error); else if (r.doc) setDoc({ title: r.doc.title, body: r.doc.body, note: n }); else setError('That note has not synced to this Mac yet.');
   };
-  // a [[link]] inside a KB note opens another note of the same KB when one matches; links leave the KB otherwise
+  // a [[link]] inside a KB note: resolveKbLink picks the note among the KBs whose notes are loaded, preferring the
+  // linking note's folder, then its KB. A note in another folder or KB opens there
   const follow = (target: string) => {
-    const want = target.replace(/\.md$/, '').toLowerCase();
-    const hit = (sel ? notes[sel.kbId] ?? [] : []).find((n) => n.title.toLowerCase() === want || n.path.toLowerCase().replace(/\.md$/, '').endsWith(want));
-    if (hit) openNote(hit); else setError(`No note named "${target}" in this knowledge base.`);
+    if (!sel) return;
+    const hit = resolveKbLink(target, { kbId: sel.kbId, note: doc?.note ?? null }, notes);
+    if (!hit) { setError(`No note named "${target}" in the knowledge bases loaded here.`); return; }
+    if (hit.kbId !== sel.kbId || (hit.note.folderId ?? null) !== (sel.folderId ?? null)) {
+      const kb = kbOf(hit.kbId);
+      if (kb) openKeys(openPathTo(kb, hit.note.folderId ?? null));
+      setSel({ kbId: hit.kbId, folderId: hit.note.folderId ?? null });
+    }
+    openNote(hit.note);
   };
 
   const menuItems = (row: TreeRow): { label: string; run: () => void; danger?: boolean }[] => {
@@ -171,85 +217,90 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
   const selKb = sel ? kbOf(sel.kbId) : null;
   const anyAdmin = (kbs ?? []).some((k) => k.role === 'admin');
 
+  const showTeam = useCallback(() => { setSel(null); setDoc(null); setError(''); }, []);
   return (
-    <div className="kbt">
-      <aside className="tk-side kbt-side">
-        <div className="tk-tree">
-          <button className={`tk-item ${sel ? '' : 'sel'}`} aria-current={sel ? undefined : 'page'} onClick={() => select(null)}>
-            <IconBrain width={14} height={14} /><span className="tk-item-text"><span>Team knowledge</span></span>
-          </button>
-          <h4 className="kbt-head" id="kbt-label">Knowledge bases</h4>
-          {listError && <p className="error kbt-note" role="alert">{listError}</p>}
-          {kbs && !kbs.length && <p className="tk-empty kbt-note">No knowledge bases you can read yet.</p>}
-          <div role="tree" aria-labelledby="kbt-label" onKeyDown={onTreeKey}>
-            {rows.map((row) => {
-              const kb = kbOf(row.kbId)!;
-              const admin = kb.role === 'admin';
-              const isSel = sel?.kbId === row.kbId && (sel.folderId ?? null) === row.folderId;
-              const renaming = edit?.mode === 'rename' && edit.kbId === row.kbId && edit.folderId === row.folderId ? edit : null;
-              const adding = edit?.mode === 'new' && edit.kbId === row.kbId && edit.parentId === row.folderId ? edit : null;
-              return (
-                <div key={row.key} role="none">
-                  <div role="none" className={`kbt-row ${dropKey === row.key ? 'drop' : ''}`}
-                    onDragOver={(e) => { if (canDrop(row)) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDropKey(row.key); } }}
-                    onDragLeave={() => setDropKey((k) => (k === row.key ? null : k))}
-                    onDrop={(e) => { e.preventDefault(); setDropKey(null); if (drag && canDrop(row)) move(drag.kbId, drag.folderId, row.folderId); setDrag(null); }}>
-                    {renaming ? (
-                      <NameInput depth={row.depth} label={`New name for ${row.name}`} value={renaming.name} onChange={(name) => setEdit({ ...renaming, name })} onDone={(ok) => (ok ? rename(renaming) : (setEdit(null), focusRow(row.key)))} />
-                    ) : (
-                      <button role="treeitem" ref={(el) => { if (el) refs.current.set(row.key, el); else refs.current.delete(row.key); }}
-                        aria-level={row.depth + 1} aria-expanded={row.hasChildren ? row.expanded : undefined} aria-selected={isSel}
-                        tabIndex={tabbable === row.key ? 0 : -1} className={`tk-item ${isSel ? 'sel' : ''}`} style={{ paddingLeft: 8 + row.depth * 14 }}
-                        draggable={admin && row.kind === 'folder'}
-                        onDragStart={(e) => { if (row.folderId) { setDrag({ kbId: row.kbId, folderId: row.folderId }); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', row.name); } }}
-                        onDragEnd={() => { setDrag(null); setDropKey(null); }}
-                        onFocus={() => setFocus(row.key)}
-                        onContextMenu={(e) => { if (admin) { e.preventDefault(); setMenuFor(row.key); } }}
-                        onClick={() => { setFocus(row.key); if (row.hasChildren && (isSel || !row.expanded)) toggle(row.key); select({ kbId: row.kbId, folderId: row.folderId }); }}>
-                        {row.hasChildren ? <IconChevron width={12} height={12} className={row.expanded ? '' : 'closed'} /> : <span className="kbt-spacer" />}
-                        {row.kind === 'kb' ? <IconStack width={14} height={14} /> : <IconFolder width={14} height={14} />}
-                        <span className="tk-item-text"><span>{row.name}</span></span>
-                      </button>
-                    )}
-                    {admin && !renaming && (
-                      <button className="kbt-more" tabIndex={-1} aria-label={`Actions for ${row.name}`} aria-haspopup="menu" aria-expanded={menuFor === row.key} onClick={(e) => { e.stopPropagation(); setMenuFor(menuFor === row.key ? null : row.key); }}><IconMore width={14} height={14} /></button>
-                    )}
-                    {menuFor === row.key && <RowMenu items={menuItems(row)} onClose={() => { setMenuFor(null); }} onEscape={() => { setMenuFor(null); focusRow(row.key); }} />}
+    <TeamSideSlot.Provider value={{ slot, showTeam }}>
+      <div className="kbt">
+        <aside className="tk-side kbt-side">
+          <div className="tk-tree">
+            <button className={`tk-item ${sel ? '' : 'sel'}`} aria-current={sel ? undefined : 'page'} onClick={showTeam}>
+              <IconBrain width={14} height={14} /><span className="tk-item-text"><span>Team knowledge</span></span>
+            </button>
+            <div ref={setSlot} className="kbt-slot" />
+            <h4 className="kbt-head" id="kbt-label">Knowledge bases</h4>
+            {listError && <p className="error kbt-note" role="alert">{listError}</p>}
+            {kbs && !kbs.length && <p className="tk-empty kbt-note">No knowledge bases you can read yet.</p>}
+            <div role="tree" aria-labelledby="kbt-label" onKeyDown={onTreeKey}>
+              {rows.map((row) => {
+                const kb = kbOf(row.kbId)!;
+                const admin = kb.role === 'admin';
+                const isSel = sel?.kbId === row.kbId && (sel.folderId ?? null) === row.folderId;
+                const renaming = edit?.mode === 'rename' && edit.kbId === row.kbId && edit.folderId === row.folderId ? edit : null;
+                const adding = edit?.mode === 'new' && edit.kbId === row.kbId && edit.parentId === row.folderId ? edit : null;
+                return (
+                  <div key={row.key} role="none">
+                    <div role="none" className={`kbt-row ${dropKey === row.key ? 'drop' : ''}`}
+                      onDragOver={(e) => { if (canDrop(row)) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDropKey(row.key); } }}
+                      onDragLeave={() => setDropKey((k) => (k === row.key ? null : k))}
+                      onDrop={(e) => { e.preventDefault(); setDropKey(null); if (drag && canDrop(row)) move(drag.kbId, drag.folderId, row.folderId); setDrag(null); }}>
+                      {renaming ? (
+                        <NameInput depth={row.depth} label={`New name for ${row.name}`} value={renaming.name} onChange={(name) => setEdit({ ...renaming, name })} onDone={(ok) => (ok ? rename(renaming) : (setEdit(null), focusRow(row.key)))} />
+                      ) : (
+                        <button role="treeitem" ref={(el) => { if (el) refs.current.set(row.key, el); else refs.current.delete(row.key); }}
+                          aria-level={row.depth + 1} aria-expanded={row.hasChildren ? row.expanded : undefined} aria-selected={isSel}
+                          tabIndex={tabbable === row.key ? 0 : -1} className={`tk-item ${isSel ? 'sel' : ''}`} style={{ paddingLeft: 8 + row.depth * 14 }}
+                          draggable={admin && row.kind === 'folder'}
+                          onDragStart={(e) => { if (row.folderId) { setDrag({ kbId: row.kbId, folderId: row.folderId }); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', row.name); } }}
+                          onDragEnd={() => { setDrag(null); setDropKey(null); }}
+                          onFocus={() => setFocus(row.key)}
+                          onContextMenu={(e) => { if (admin) { e.preventDefault(); setMenuFor(row.key); } }}
+                          onClick={() => { setFocus(row.key); if (row.hasChildren && (isSel || !row.expanded)) toggle(row.key); select({ kbId: row.kbId, folderId: row.folderId }); }}>
+                          {row.hasChildren ? <IconChevron width={12} height={12} className={row.expanded ? '' : 'closed'} /> : <span className="kbt-spacer" />}
+                          {row.kind === 'kb' ? <IconStack width={14} height={14} /> : <IconFolder width={14} height={14} />}
+                          <span className="tk-item-text"><span>{row.name}</span></span>
+                        </button>
+                      )}
+                      {admin && !renaming && (
+                        <button className="kbt-more" tabIndex={-1} aria-label={`Actions for ${row.name}`} aria-haspopup="menu" aria-expanded={menuFor === row.key} onClick={(e) => { e.stopPropagation(); setMenuFor(menuFor === row.key ? null : row.key); }}><IconMore width={14} height={14} /></button>
+                      )}
+                      {menuFor === row.key && <RowMenu items={menuItems(row)} onClose={() => { setMenuFor(null); }} onEscape={() => { setMenuFor(null); focusRow(row.key); }} />}
+                    </div>
+                    {adding && <div role="none" className="kbt-row"><NameInput depth={row.depth + 1} label="New folder name" value={adding.name} onChange={(name) => setEdit({ ...adding, name })} onDone={(ok) => (ok ? create(adding) : (setEdit(null), focusRow(row.key)))} /></div>}
                   </div>
-                  {adding && <div role="none" className="kbt-row"><NameInput depth={row.depth + 1} label="New folder name" value={adding.name} onChange={(name) => setEdit({ ...adding, name })} onDone={(ok) => (ok ? create(adding) : (setEdit(null), focusRow(row.key)))} /></div>}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-        <p className="tk-side-foot muted">{anyAdmin ? 'Drag a folder to move it. F2 renames, Delete removes, Shift+F10 opens the menu.' : 'Read-only. Admins arrange the folders.'}</p>
-      </aside>
-      <section className="kbt-main">
-        {!sel || !selKb ? children : doc ? (
-          <>
-            <div className="tk-subhead">
-              <button className="tk-back" onClick={() => setDoc(null)}><IconBack width={16} height={16} />{sel.folderId ? findFolder(selKb.folders, sel.folderId)?.name ?? selKb.name : selKb.name}</button>
-              <span className="tk-crumb">{doc.path}</span>
+                );
+              })}
             </div>
-            {error && <p className="error tk-error" role="alert">{error}</p>}
-            <div className="tk-body"><article className="tk-doc">
-              <h1>{doc.title}</h1>
-              <Markdown text={doc.body} headings onWiki={follow} />
-            </article></div>
-          </>
-        ) : (
-          <FolderView kb={selKb} folderId={sel.folderId} notes={notes[selKb.id] ?? null} query={query} error={error}
-            onFolder={(id) => { openKeys(openPathTo(selKb, id)); select({ kbId: selKb.id, folderId: id }); }} onNote={openNote} />
+          </div>
+          <p className="tk-side-foot muted">{anyAdmin ? 'Drag a folder to move it. F2 renames, Delete removes, Shift+F10 opens the menu.' : 'Read-only. Admins arrange the folders.'}</p>
+        </aside>
+        <section className="kbt-main">
+          <div className="kbt-team" hidden={!!(sel && selKb)}>{children}</div>
+          {!sel || !selKb ? null : doc ? (
+            <>
+              <div className="tk-subhead">
+                <button className="tk-back" onClick={() => setDoc(null)}><IconBack width={16} height={16} />{sel.folderId ? findFolder(selKb.folders, sel.folderId)?.name ?? selKb.name : selKb.name}</button>
+                <span className="tk-crumb">{doc.note.path}</span>
+              </div>
+              {error && <p className="error tk-error" role="alert">{error}</p>}
+              <div className="tk-body"><article className="tk-doc">
+                <h1>{doc.title}</h1>
+                <Markdown text={doc.body} headings onWiki={follow} />
+              </article></div>
+            </>
+          ) : (
+            <FolderView kb={selKb} folderId={sel.folderId} notes={notes[selKb.id] ?? null} query={query} error={error}
+              onFolder={(id) => { openKeys(openPathTo(selKb, id)); select({ kbId: selKb.id, folderId: id }); }} onNote={openNote} />
+          )}
+        </section>
+        {moving && kbOf(moving.kbId) && (
+          <MoveDialog kb={kbOf(moving.kbId)!} folderId={moving.folderId} onDone={(target) => { const m = moving; setMoving(null); if (target !== undefined) move(m.kbId, m.folderId, target); else focusRow(rowKey(m.kbId, m.folderId)); }} />
         )}
-      </section>
-      {moving && kbOf(moving.kbId) && (
-        <MoveDialog kb={kbOf(moving.kbId)!} folderId={moving.folderId} onDone={(target) => { const m = moving; setMoving(null); if (target !== undefined) move(m.kbId, m.folderId, target); else focusRow(rowKey(m.kbId, m.folderId)); }} />
-      )}
-      {deleting && (
-        <KbConfirm title={`Delete ${deleting.name}?`} body="The folders inside it are deleted too. Its notes stay in the knowledge base, at the top level." action="Delete folder"
-          onDone={(ok) => { const d = deleting; if (ok) remove(d); else { setDeleting(null); focusRow(rowKey(d.kbId, d.folderId)); } }} />
-      )}
-    </div>
+        {deleting && (
+          <KbConfirm title={`Delete ${deleting.name}?`} body="The folders inside it are deleted too. Its notes stay in the knowledge base, at the top level." action="Delete folder"
+            onDone={(ok) => { const d = deleting; if (ok) remove(d); else { setDeleting(null); focusRow(rowKey(d.kbId, d.folderId)); } }} />
+        )}
+      </div>
+    </TeamSideSlot.Provider>
   );
 }
 
@@ -287,11 +338,12 @@ function RowMenu({ items, onClose, onEscape }: { items: { label: string; run: ()
 function MoveDialog({ kb, folderId, onDone }: { kb: Kb; folderId: string; onDone: (parentId: string | null | undefined) => void }) {
   const targets = moveTargets(kb.folders, folderId);
   const name = findFolder(kb.folders, folderId)?.name ?? 'the folder';
+  const done = useLatest(onDone);
   useEffect(() => {
-    const esc = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onDone(undefined); } };
+    const esc = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); done.current(undefined); } };
     window.addEventListener('keydown', esc, true);
     return () => window.removeEventListener('keydown', esc, true);
-  }, [onDone]);
+  }, [done]);
   return (
     <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onDone(undefined); }}>
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="kbt-move-title">
