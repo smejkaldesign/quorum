@@ -1,4 +1,5 @@
--- Knowledge bases (migrations 0024 and 0025): row level security and the RPCs, run as the people who would call them.
+-- Knowledge bases (migrations 0024, 0025 and 0036): row level security and the RPCs, run as the people who would
+-- call them.
 -- Needs a database with every migration applied (supabase start, or supabase db reset on a local stack). Everything
 -- runs in one transaction that is rolled back, so it leaves the database as it found it:
 --   docker exec -i supabase_db_quorum psql -U postgres -d postgres -v ON_ERROR_STOP=1 -f - < supabase/tests/knowledge_bases.sql
@@ -219,14 +220,14 @@ do $$ begin
   assert not exists (select 1 from public.knowledge_bases where id = pg_temp.kb('handbook')), 'the KB is gone';
 end $$;
 
--- 11. the default KB (0025): none before the team switch, made when it turns on, named after the workspace and
--- readable by the workspace; the 0020 RPC writes its source; the review queue fills it
+-- 11. the default KB (0025, 0036): none before the team switch, made when it turns on, named after the workspace and
+-- readable by the workspace; the 0020 RPC (through kb_default_source_set) writes its source; the review queue fills it
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a1');
-select public.workspace_team_source_set('01KB00000000000000000000WA', '{"kind": "git", "url": "https://example.com/team/knowledge.git"}');
 do $$ begin
   assert not exists (select 1 from public.knowledge_bases where is_default), 'no default KB before the team switch is on';
 end $$;
 select public.workspace_set_team_enabled('01KB00000000000000000000WA', true);
+select public.workspace_team_source_set('01KB00000000000000000000WA', '{"kind": "git", "url": "https://example.com/team/knowledge.git"}');
 do $$ begin
   assert (select count(*) from public.knowledge_bases where is_default) = 1, 'turning the team switch on makes the default KB';
   assert (select name from public.knowledge_bases where is_default) = 'Example Team', 'named after the workspace';

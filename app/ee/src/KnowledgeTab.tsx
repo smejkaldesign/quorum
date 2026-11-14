@@ -144,6 +144,18 @@ function SourceCard({ state, onChange, onClose }: { state: SourceState; onChange
     if (r.error) setError(r.error); else if (r.path) setPath(r.path);
   };
   const changed = kind !== state.source.kind || (kind === 'git' && url.trim() !== (state.source.url ?? '')) || (kind === 'folder' && path !== (state.source.path ?? ''));
+  // an imported default KB keeps its import source; the card names it and where it changes
+  if (state.source.imported) {
+    return (
+      <div className="tk-setup">
+        <div className="set-card tk-setup-card">
+          <h3 className="tk-setup-title">Where the team keeps its knowledge</h3>
+          <p className="muted">{describeSource(state.source)}. The workspace's default knowledge base keeps this import source, and its admins change it under Settings › Admin › Knowledge.</p>
+          <div className="tk-setup-actions"><button className="pill ghost" onClick={onClose}>Close</button></div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="tk-setup">
       <div className="set-card tk-setup-card">
