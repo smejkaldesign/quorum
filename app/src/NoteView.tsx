@@ -1,18 +1,19 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { HandNoteRef, RecordState } from './quorum';
 import { Markdown } from './Markdown';
-import { IconBack, IconCalendar, IconFolder, IconNotes, IconRecord, IconScreen, IconStop } from './icons';
+import { IconBack, IconCalendar, IconFolder, IconNotes, IconRecord, IconStop } from './icons';
 import { IconPen } from './PrivateNotes';
 import { RecordMenu } from './Record';
-import { appendScreen, appendTurn, emptyWritten, recordChoices, type RecordChoice, type Written } from './noteRecord';
+import { appendTurn, emptyWritten, recordChoices, type RecordChoice, type Written } from './noteRecord';
+import { speakerLabels, timedTurn, type SpeakerRead, type TimedTurn } from './attribution';
 
 const SAVE_AFTER = 800;
 type Status = 'idle' | 'saving' | 'saved' | 'conflict';
 
 // New note: the note view a recording ends on, opened on a fresh Untitled note (file null) or on an existing note to
 // continue it. The title and the markdown body are edited by hand and saved on a short pause into the vault folder
-// recorded notes go to. Record appends what it hears, and with Screen what the front window shows, at the end of the
-// note. canRecord follows the manual-listen flag; screenOffered is the screen-context flag plus its setting.
+// recorded notes go to. Record appends what it hears at the end of the note; with Screen on, the call app's names label
+// each paragraph (the screen reads themselves stay beside the recording, never in the note). canRecord follows the manual-listen flag; screenOffered is the screen-context flag plus its setting.
 // fresh marks a note this editor created, whose file name follows its title; onSaved reports the file after a save so
 // a remount reopens it. A change in leave closes the view the way Back does (a call started)
 export function NoteView({ file: initialFile, fresh, record: startWith, canRecord, screenOffered, leave, onSaved, onClose }: {
@@ -43,6 +44,8 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
     inflight: null as Promise<boolean> | null, rec: { audio: false, screen: false } as RecordState,
   });
   const written = useRef<Written>(emptyWritten());
+  // this recording's timed turns and the call app's speaker reads, for the paragraph labels; self is your own name
+  const heard = useRef<{ turns: TimedTurn[]; reads: SpeakerRead[]; self: string[] }>({ turns: [], reads: [], self: [] });
   const timer = useRef<number | null>(null);
   const recording = rec.audio || rec.screen;
   live.current.rec = rec;
@@ -126,11 +129,17 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
       window.quorum.onRecord((s) => { setRec({ audio: s.audio, screen: s.screen }); if (s.notice) setError(s.notice); }),
       window.quorum.onHelperEvent((e) => {
         if (e.event !== 'transcript' || !e.isFinal || e.channel === 'dictation' || !live.current.rec.audio) return;
-        const turn = { id: e.id ?? 0, channel: e.channel, text: e.text, replace: e.replace };
+        const h = heard.current;
+        const timed = timedTurn({ ...e, channel: e.channel }, Date.now());
+        const i = h.turns.findIndex((t) => t.id === timed.id);
+        if (i < 0) h.turns.push(timed); else h.turns[i] = { ...timed, startMs: Math.min(h.turns[i].startMs, timed.startMs) };
+        const label = speakerLabels(h.turns, h.reads, { self: h.self })[timed.id];
+        const turn = { id: timed.id, channel: e.channel, text: e.text, replace: e.replace, label };
         append((b) => appendTurn(b, written.current, turn));
       }),
-      window.quorum.onScreenContext((s) => { if (live.current.rec.screen) append((b) => ({ body: appendScreen(b, s), written: written.current })); }),
+      window.quorum.onCallSpeakers((r) => { if (live.current.rec.screen) heard.current.reads.push({ at: r.at, names: r.names, active: r.active }); }),
     ];
+    window.quorum.user().then((u) => { if (u?.name) heard.current.self = [u.name]; }).catch(() => {});
     window.quorum.recordStatus().then((s) => setRec({ audio: s.audio, screen: s.screen })).catch(() => {});
     return () => offs.forEach((off) => off());
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -161,6 +170,7 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
     setMenu(false);
     setError(null);
     written.current = emptyWritten();
+    heard.current = { ...heard.current, turns: [], reads: [] };
     const r = await window.quorum.recordStart(c);
     if ('error' in r) { setError(r.error); return; }
     setRec({ audio: r.audio, screen: r.screen });
@@ -220,7 +230,6 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
             {recording && (
               <span className="meta-pill recording-pill" role="status">
                 <span className="live-dot" aria-hidden="true" />Recording{rec.audio ? ' · Transcription' : ''}{rec.screen ? ' · Screen' : ''}
-                {rec.screen && <button className="icon-btn" aria-label="Read the screen now" data-tip="Read the screen now" onClick={() => window.quorum.recordScreenNow()}><IconScreen width={15} height={15} /></button>}
               </span>
             )}
             <div className="view-toggle" role="group" aria-label="Show">

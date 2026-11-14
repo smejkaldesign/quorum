@@ -1,5 +1,5 @@
-// What Record writes into an open note. A transcript turn and a screen read are appended at the end of the note, each as
-// its own paragraph: your microphone as **You:**, the Mac's sound as **Others:**. A turn that grows or is cleaned up (the
+// What Record writes into an open note: each transcript turn is appended at the end of the note as its own paragraph,
+// labeled by who said it (src/attribution.ts: **You:** for the microphone, a name from the call app, or **Speaker 1:**). A turn that grows or is cleaned up (the
 // main process sends it again with the same id and replace: true) rewrites the paragraph it wrote while that paragraph
 // is still the end of the note; once something follows it, the words it gained are added as a new paragraph. Words are
 // never dropped: a rewrite that does not extend the earlier text adds the words after the last ones it shares with it.
@@ -8,8 +8,8 @@ export type RecordChoice = { audio: boolean; screen: boolean };
 // every turn written so far: its whole text, and the part of it that sits in the note's last paragraph it wrote
 export type Written = { last: number | null; turns: Record<number, { full: string; tail: string }> };
 export const emptyWritten = (): Written => ({ last: null, turns: {} });
-export type Turn = { id: number; channel: 'me' | 'them'; text: string; replace?: boolean };
-export type ScreenRead = { app?: string; title?: string; text: string; at: number };
+// label: who said it; without one the microphone is You and the Mac's sound is Speaker 1
+export type Turn = { id: number; channel: 'me' | 'them'; text: string; replace?: boolean; label?: string };
 
 // Screen is offered only when the screen-context flag and the Preferences setting are both on; otherwise Record means
 // transcription alone
@@ -19,7 +19,7 @@ export const recordChoices = (screenOffered: boolean, pick: Partial<RecordChoice
 });
 export const canStart = (c: RecordChoice) => c.audio || c.screen;
 
-const lineFor = (t: Turn) => `${t.channel === 'them' ? '**Others:**' : '**You:**'} ${t.text.trim()}`;
+const lineFor = (t: Turn) => `**${t.label ?? (t.channel === 'me' ? 'You' : 'Speaker 1')}:** ${t.text.trim()}`;
 const joinEnd = (body: string, para: string) => (body.trim() ? `${body.replace(/\s+$/, '')}\n\n${para}` : para);
 const norm = (w: string) => w.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 
@@ -59,24 +59,3 @@ export function appendTurn(body: string, w: Written, turn: Turn): { body: string
   // something came after it (your typing, a screen read, another turn): the gained words get a paragraph of their own
   return put(line, extra, joinEnd(body, extra));
 }
-
-const MAX_LINES = 30;
-const MAX_CHARS = 1500;
-
-// a screen read as a folded Obsidian callout: when and which window, then the recognized lines, capped
-export function screenBlock(r: ScreenRead): string {
-  const time = new Date(r.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  const where = [r.app, r.title].filter((s) => s && s.trim()).join(': ');
-  const lines: string[] = [];
-  let used = 0;
-  for (const raw of r.text.split('\n')) {
-    const l = raw.trim();
-    if (!l) continue;
-    if (lines.length >= MAX_LINES || used + l.length > MAX_CHARS) { lines.push('…'); break; }
-    lines.push(l);
-    used += l.length;
-  }
-  return [`> [!info]- Screen at ${time}${where ? `, ${where}` : ''}`, ...lines.map((l) => `> ${l}`)].join('\n');
-}
-
-export const appendScreen = (body: string, r: ScreenRead) => (r.text.trim() ? joinEnd(body, screenBlock(r)) : body);

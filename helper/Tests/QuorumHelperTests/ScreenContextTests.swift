@@ -51,4 +51,12 @@ final class ScreenContextTests: XCTestCase {
         XCTAssertNil(ScreenContext.pick(wins, bundlePrefixes: [], excludePids: [20]))
         XCTAssertNil(ScreenContext.pick([], bundlePrefixes: [], excludePids: []))
     }
+
+    func testZoomTileNamesAndTheSpeakingState() {
+        XCTAssertEqual(ZoomChat.tile("Ada Lovelace, Video on, Talking")?.name, "Ada Lovelace")
+        XCTAssertEqual(ZoomChat.tile("Ada Lovelace, Video on, Talking")?.active, true)
+        XCTAssertEqual(ZoomChat.tile("Grace Hopper, Muted")?.active, false)
+        XCTAssertEqual(ZoomChat.tile("Sam")?.name, "Sam")
+        XCTAssertNil(ZoomChat.tile(""))
+    }
 }

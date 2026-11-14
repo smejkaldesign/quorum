@@ -1,7 +1,7 @@
 // New note and Record: the note text the main process writes, and what Record appends into an open note
 import { describe, expect, it } from 'vitest';
 import { cleanTitle, hashText, newNoteText, noteFileName, rewriteNote, screenRead, splitNote, UNTITLED, yamlStr, yamlValue } from '../handnote.js';
-import { appendScreen, appendTurn, canStart, emptyWritten, newWords, recordChoices, screenBlock } from '../src/noteRecord.ts';
+import { appendTurn, canStart, emptyWritten, newWords, recordChoices } from '../src/noteRecord.ts';
 import { CALL_ACTIVE, LISTEN_OFF, recordDecision } from '../notetaker.js';
 
 describe('a note written in the app', () => {
@@ -61,9 +61,9 @@ describe('Record choices', () => {
 describe('what Record appends to the note', () => {
   const run = (body, turns) => turns.reduce((r, t) => appendTurn(r.body, r.written, t), { body, written: emptyWritten() });
 
-  it('adds each final turn as a paragraph at the end, labeled You or Others', () => {
+  it('adds each final turn as a paragraph at the end, labeled You or Speaker 1 without a name', () => {
     const r = run('My notes', [{ id: 1, channel: 'me', text: 'Call the bank' }, { id: 2, channel: 'them', text: 'Sure, Tuesday works' }]);
-    expect(r.body).toBe('My notes\n\n**You:** Call the bank\n\n**Others:** Sure, Tuesday works');
+    expect(r.body).toBe('My notes\n\n**You:** Call the bank\n\n**Speaker 1:** Sure, Tuesday works');
   });
 
   it('starts an empty note without blank lines', () => {
@@ -87,7 +87,7 @@ describe('what Record appends to the note', () => {
     expect(newWords('**You:** um so call the bank', '**You:** So, call the bank today.')).toBe('today.');
     let r = run('', [{ id: 1, channel: 'me', text: 'um so call the bank' }, { id: 2, channel: 'them', text: 'Okay' }]);
     r = appendTurn(r.body, r.written, { id: 1, channel: 'me', text: 'So, call the bank today.', replace: true });
-    expect(r.body).toBe('**You:** um so call the bank\n\n**Others:** Okay\n\ntoday.');
+    expect(r.body).toBe('**You:** um so call the bank\n\n**Speaker 1:** Okay\n\ntoday.');
     // and a grown tail that was itself rewritten keeps its words too
     r = run('', [{ id: 1, channel: 'me', text: 'call the' }]);
     r = appendTurn(`${r.body}\n\nmine`, r.written, { id: 1, channel: 'me', text: 'call the bank', replace: true });
@@ -106,16 +106,11 @@ describe('what Record appends to the note', () => {
     expect(run('x', [{ id: 1, channel: 'me', text: 'same' }, { id: 1, channel: 'me', text: 'same', replace: true }]).body).toBe('x\n\n**You:** same');
   });
 
-  it('writes a screen read as a folded callout naming the window, capped in length', () => {
-    const at = new Date(2026, 10, 13, 10, 42).getTime();
-    const block = screenBlock({ app: 'Figma', title: 'Homepage', text: 'Hero\n\n  Pricing table  \n', at });
-    expect(block.split('\n')[0]).toMatch(/^> \[!info\]- Screen at .*10:42.*, Figma: Homepage$/);
-    expect(block.split('\n').slice(1)).toEqual(['> Hero', '> Pricing table']);
-    const long = screenBlock({ text: Array.from({ length: 80 }, (_, i) => `line ${i}`).join('\n'), at });
-    expect(long.split('\n')).toHaveLength(32);
-    expect(long.endsWith('> …')).toBe(true);
-    expect(appendScreen('Notes', { text: ' ', at })).toBe('Notes');
-    expect(appendScreen('Notes', { text: 'Hi', at })).toMatch(/^Notes\n\n> \[!info\]- Screen at/);
+  it('uses the label attribution gave the turn', () => {
+    expect(run('', [{ id: 1, channel: 'them', text: 'Hi', label: 'Ada Lovelace' }]).body).toBe('**Ada Lovelace:** Hi');
+    // a later read that names the speaker relabels the paragraph while it is still last
+    const r = run('', [{ id: 1, channel: 'them', text: 'Hi' }, { id: 1, channel: 'them', text: 'Hi there', replace: true, label: 'Ada Lovelace' }]);
+    expect(r.body).toBe('**Ada Lovelace:** Hi there');
   });
 });
 
@@ -129,6 +124,10 @@ describe('a screen read from the helper', () => {
     expect(screenRead({ app: 'Figma', title: 'Home', text: 'Hero' }, first.key)).toEqual({ action: 'skip' });
     // the same text in another window is new
     expect(screenRead({ app: 'Figma', title: 'Pricing', text: 'Hero' }, first.key).action).toBe('send');
+    // Quorum's own window is never kept, whatever the helper sent
+    expect(screenRead({ app: 'Quorum', title: 'Untitled', text: 'My note' }, null)).toEqual({ action: 'skip' });
+    expect(screenRead({ app: 'Quorum Dev', title: '', text: 'x' }, null)).toEqual({ action: 'skip' });
+    expect(screenRead({ app: 'Quorumly', title: '', text: 'x' }, null).action).toBe('send');
   });
 });
 

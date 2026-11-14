@@ -441,7 +441,7 @@ function calAsk(cmd) {
 }
 
 function onHelperEvent(evt) {
-  if ((evt.event === 'calResult' || evt.event === 'screenTerms' || evt.event === 'screenText' || evt.event === 'screenAccess') && pendingCal.has(evt.id)) { pendingCal.get(evt.id)(evt); pendingCal.delete(evt.id); return; }
+  if ((evt.event === 'calResult' || evt.event === 'screenTerms' || evt.event === 'screenText' || evt.event === 'callSpeakers' || evt.event === 'screenAccess') && pendingCal.has(evt.id)) { pendingCal.get(evt.id)(evt); pendingCal.delete(evt.id); return; }
   if ((evt.event === 'chatSent' || evt.event === 'chatFailed') && pendingPosts.has(evt.id)) {
     const p = pendingPosts.get(evt.id);
     pendingPosts.delete(evt.id);
@@ -525,7 +525,8 @@ async function inviteesNow() {
 // the vocabulary one capture hands the recognizer: this call's people first, then the dictionary, the company, you, and
 // the people and companies that come up most in the saved meetings. Only the count is logged; QUORUM_LOG_TERMS=1 on a
 // development run also logs a sample
-async function sessionTerms({ calendar = true, participants = [] } = {}) {
+// screen: a Record session with Screen on; nothing else reads the screen (dictation and plain starts never do)
+async function sessionTerms({ calendar = true, participants = [], screen = false } = {}) {
   const plan = termsPlan(gate(), { calendar });
   const invited = plan.invitees ? await inviteesNow() : [];
   meeting.invitees = invited.filter((a) => a?.name).map((a) => ({ name: a.name, email: a.email ?? null }));
@@ -535,8 +536,8 @@ async function sessionTerms({ calendar = true, participants = [] } = {}) {
     participants, dictionary: settings.voice?.dictionary, company: settings.workspace?.company, owner: USER_NAME,
     vaultPeople: topNames(index.map((m) => m.people)), vaultOrgs: topNames(index.map((m) => m.orgs), 50),
   });
-  // screen context: the words on the front window (the meeting app's during a call) join the list, on this Mac only
-  if (plan.screen && settings.screenContext) {
+  // screen context: the words on the call or front window join the list, on this Mac only, for a recording with Screen on
+  if (screen && plan.screen && settings.screenContext) {
     const t0 = Date.now();
     const r = await calAsk({ cmd: 'screenTerms', bundles: plan.invitees ? provider().bundles ?? [] : [], excludePids: [process.pid] });
     log(`screen context read in ${Date.now() - t0} ms`);
@@ -819,7 +820,7 @@ const suggester = createSuggester({
 // consent first: nothing records until Quorum's notice is confirmed in the chat
 // intoNote: Record in the note view; a solo session whose words go into the open note, with no running summary and no
 // review at the end
-async function startListening(by, { intoNote = false } = {}) {
+async function startListening(by, { intoNote = false, screen = false } = {}) {
   // manual-listen off refuses; meeting-capture off makes every session a solo note (notetaker.js)
   // Record in a note refuses a noticed call outright, so it never skips the call's consent and guards
   const decision = intoNote ? { ...recordDecision(gate(), { meetingActive }), solo: true } : startDecision(gate(), { meetingActive });
@@ -841,7 +842,7 @@ async function startListening(by, { intoNote = false } = {}) {
   const canPost = !solo && provider().chat;
   const notice = canPost ? MSG.on() : null;
   const posted = !canPost || await postWithRetry(notice);
-  const terms = posted ? await sessionTerms({ participants: solo ? [] : lastInfo.names ?? [] }) : [];
+  const terms = posted ? await sessionTerms({ participants: solo ? [] : lastInfo.names ?? [], screen }) : [];
   meeting.starting = false;
   if (!posted) {
     log('notice never posted; not recording');
@@ -2120,27 +2121,41 @@ ipcMain.handle('resume', () => { if (meeting.armed && !meeting.capturing && !cal
 // your notes from the call and its review: the outline the notes prompt fills, kept verbatim in the saved note
 ipcMain.handle('private-notes-set', (_e, text) => { meeting.privateNotes = String(text ?? ''); writeState(); });
 ipcMain.handle('save-notes', (_e, payload) => saveNotes(payload));
-// Record, from the note view: Transcription runs a solo session into the open note (startListening with intoNote), and
-// Screen reads the front window's text once a minute, and on demand, for the same note. Screen needs the screen-context
-// flag and the Preferences setting; without them Record is transcription alone. Nothing here records video: a screen
-// read is one screenshot, recognized on this Mac by the helper and dropped once read
+// Record, from the note view: Transcription runs a solo session into the open note (startListening with intoNote). Screen,
+// on only while such a recording runs, is context for that recording and never text in the note:
+//   - every 2 s the helper reads the call app's accessibility tree (Zoom exposes its video tiles) for participant names
+//     and the active speaker; the renderer labels transcript paragraphs with them (src/attribution.ts)
+//   - once a minute, and at the start, one screenshot of the call app's window, else the frontmost window that is not
+//     Quorum's, is read with Vision; the text goes to screen.json beside the recording, for later processing
+// Screen needs the screen-context flag and the Preferences setting. Nothing records video, and Quorum's own windows are
+// never read (the helper skips this process, its parent and Quorum's bundle; screenRead drops anything named Quorum)
 const SCREEN_EVERY = 60000;
+const SPEAKERS_EVERY = 2000;
+const CALL_BUNDLES = ['us.zoom', 'com.microsoft.teams'];
 const SCREEN_DENIED = 'macOS has not allowed Screen Recording for Quorum, so Screen is off for this recording.';
 // session counts recordings, so a read that answers after its recording stopped is dropped
-const record = { screen: false, timer: null, last: '', session: 0 };
+const record = { screen: false, timer: null, speakerTimer: null, last: '', lastSpeakers: '', session: 0, dir: null, reads: [], speakers: [] };
 const recordState = () => ({ audio: !!(meeting.armed && meeting.intoNote), screen: record.screen });
 const recording = () => record.screen || !!(meeting.armed && meeting.intoNote);
+// the raw reads stay beside the recording (sessions folder, never the note) for later processing
+function writeSidecar() {
+  if (!record.dir) return;
+  try { writeFileSync(path.join(record.dir, 'screen.json'), JSON.stringify({ reads: record.reads, speakers: record.speakers }, null, 2)); } catch (err) { log('screen sidecar:', err.message); }
+}
 function stopScreen() {
+  if (record.screen) writeSidecar();
   record.screen = false;
   clearInterval(record.timer);
+  clearInterval(record.speakerTimer);
   record.timer = null;
+  record.speakerTimer = null;
   record.last = '';
+  record.lastSpeakers = '';
 }
 async function screenTick() {
   if (!record.screen) return;
   const session = record.session;
-  // the helper never reads Quorum's own windows; this process owns them in both the built app and development
-  const r = await calAsk({ cmd: 'screenText', bundles: [], excludePids: [process.pid] });
+  const r = await calAsk({ cmd: 'screenText', bundles: CALL_BUNDLES, excludePids: [process.pid] });
   if (!record.screen || session !== record.session) return;
   const read = screenRead(r, record.last);
   if (read.action === 'denied') {
@@ -2151,7 +2166,23 @@ async function screenTick() {
   }
   if (read.action !== 'send') return;
   record.last = read.key;
-  toUI('screen-context', { ...read.event, at: Date.now() });
+  record.reads = [...record.reads.slice(-499), { ...read.event, at: Date.now() }];
+  writeSidecar();
+}
+async function speakersTick() {
+  if (!record.screen) return;
+  const session = record.session;
+  const r = await calAsk({ cmd: 'callSpeakers' });
+  if (!record.screen || session !== record.session) return;
+  const names = Array.isArray(r.names) ? r.names.filter((n) => typeof n === 'string') : [];
+  const active = Array.isArray(r.active) ? r.active.filter((n) => typeof n === 'string') : [];
+  if (!names.length && !active.length) return;
+  const key = JSON.stringify([names, active]);
+  if (key === record.lastSpeakers) return;
+  record.lastSpeakers = key;
+  const ev = { at: Date.now(), app: typeof r.app === 'string' ? r.app : '', names, active };
+  record.speakers = [...record.speakers.slice(-4999), ev];
+  toUI('call-speakers', ev);
 }
 async function recordStart(opts) {
   const g = gate();
@@ -2161,17 +2192,25 @@ async function recordStart(opts) {
   if (!want.audio && !want.screen) return { error: 'Turn on Transcription or Screen to record.' };
   if (meeting.armed || meeting.starting || record.screen) return { error: 'A recording is already running. Stop it first.' };
   if (want.audio) {
-    const r = await startListening(undefined, { intoNote: true });
+    const r = await startListening(undefined, { intoNote: true, screen: want.screen });
     if (r?.error) return r;
     if (!meeting.armed) return { error: "The recording didn't start." };
   }
   record.session += 1;
+  record.reads = [];
+  record.speakers = [];
+  record.dir = null;
   if (want.screen) {
+    record.dir = want.audio && meeting.dir ? meeting.dir : store.meetings.beginSegment(`record-${new Date().toISOString().replace(/[:.]/g, '-')}`);
     record.screen = true;
     record.last = '';
+    record.lastSpeakers = '';
     clearInterval(record.timer);
+    clearInterval(record.speakerTimer);
     record.timer = setInterval(screenTick, SCREEN_EVERY);
+    record.speakerTimer = setInterval(speakersTick, SPEAKERS_EVERY);
     screenTick();
+    speakersTick();
   }
   toUI('record', recordState());
   return recordState();
@@ -2199,7 +2238,6 @@ function recordStop() {
 ipcMain.handle('record-start', (_e, opts) => recordStart(opts));
 ipcMain.handle('record-stop', () => recordStop());
 ipcMain.handle('record-status', () => recordState());
-ipcMain.handle('record-screen-now', async () => { if (!record.screen) return; record.last = ''; await screenTick(); });
 // the note view owns a recording; a reload or a crashed renderer leaves nobody to write it into, so it stops
 function stopRecordingForRenderer(why) {
   if (!recording()) return;

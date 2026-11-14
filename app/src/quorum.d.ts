@@ -226,7 +226,8 @@ export type StateEvent =
 
 // Record in the note view: what is running (audio is Transcription), and a screen read for the open note
 export type RecordState = { audio: boolean; screen: boolean; notice?: string };
-export type ScreenContextEvent = { app: string; title: string; text: string; at: number };
+// who the call app shows, read from its accessibility tree while a recording with Screen on runs
+export type CallSpeakersEvent = { at: number; app: string; names: string[]; active: string[] };
 // a note opened in the note view; hash is the file as read, so a save can tell it changed on disk
 export type HandNoteRef = { file: string; hash: string; rel: string; app: string; url: string };
 export type HandNote = HandNoteRef & { title: string; body: string; readOnly: boolean; date: string | null };
@@ -243,9 +244,8 @@ declare global {
       recordStart(opts: RecordState): Promise<RecordState | { error: string }>;
       recordStop(): Promise<RecordState>;
       recordStatus(): Promise<RecordState>;
-      recordScreenNow(): Promise<void>;
       onRecord(cb: (s: RecordState) => void): Unsub;
-      onScreenContext(cb: (e: ScreenContextEvent) => void): Unsub;
+      onCallSpeakers(cb: (e: CallSpeakersEvent) => void): Unsub;
       onNewNote(cb: (d: { file?: string }) => void): Unsub;
       handNoteOpen(file: string): Promise<HandNote | null>;
       handNoteSave(p: { id: string; file: string | null; title: string; body: string; hash: string | null; fresh: boolean }): Promise<HandNoteSave>;

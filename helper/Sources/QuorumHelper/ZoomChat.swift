@@ -97,5 +97,28 @@ enum ZoomChat {
         return inMeeting ? (title, count, names) : nil
     }
 
+    // a video tile's accessibility description: the display name first, then states after commas. Zoom's wording for the
+    // speaking state is not documented; "talking", "speaking" and "active speaker" are treated as the active speaker
+    static func tile(_ desc: String) -> (name: String, active: Bool)? {
+        let parts = desc.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard let name = parts.first, !name.isEmpty else { return nil }
+        let rest = parts.dropFirst().joined(separator: " ").lowercased()
+        return (name, ["talking", "speaking", "active speaker"].contains { rest.contains($0) })
+    }
+
+    // Record's Screen option during a Zoom call: the names on the video tiles, and which of them is speaking
+    static func speakers() -> (names: [String], active: [String])? {
+        guard let win = meetingWindow() else { return nil }
+        var names: [String] = [], active: [String] = []
+        for el in AX.children(win) where AX.role(el) == kAXTabGroupRole {
+            for button in AX.children(el) where AX.role(button) == kAXButtonRole {
+                guard let t = tile(AX.str(button, kAXDescriptionAttribute) ?? "") else { continue }
+                if !names.contains(t.name) { names.append(t.name) }
+                if t.active, !active.contains(t.name) { active.append(t.name) }
+            }
+        }
+        return (names, active)
+    }
+
     static func dump() -> String { AX.dumpTree(windows()) }
 }

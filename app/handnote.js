@@ -69,13 +69,16 @@ export function rewriteNote(raw, { title, body }) {
 }
 
 // Record's Screen option, one helper answer at a time: a missing permission turns Screen off for the recording (said
-// once), an empty read or one identical to the last (same app, title and text) is skipped, anything else goes to the note
+// once), an empty read, a read of Quorum, or one identical to the last (same app, title and text) is skipped, anything
+// else is kept beside the recording
 export function screenRead(r, lastKey) {
   if (r?.granted === false) return { action: 'denied' };
   const text = typeof r?.text === 'string' ? r.text.trim() : '';
   if (!text) return { action: 'skip' };
   const app = typeof r.app === 'string' ? r.app : '';
   const title = typeof r.title === 'string' ? r.title : '';
+  // Quorum's own window is never context: the helper skips it, and a read that still names it is dropped
+  if (/^quorum(\s|$)/i.test(app.trim())) return { action: 'skip' };
   const key = hashText(`${app}\n${title}\n${text}`);
   return key === lastKey ? { action: 'skip' } : { action: 'send', key, event: { app, title, text } };
 }
