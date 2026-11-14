@@ -174,6 +174,38 @@ select pg_temp.check(jsonb_array_length(public.kb_sync_claim(10, 600, 1)) = 1, '
 select pg_temp.check(jsonb_array_length(public.kb_sync_claim(10, 600, 1)) = 0, 'the second waits for the first');
 select pg_temp.check(jsonb_array_length(public.kb_sync_claim(10, 600, 2)) = 1, 'a higher cap lets the second run');
 
+-- 12. the worker writes a synced note and its upstream base (0031) as the attaching admin; no client calls it
+select pg_temp.as_admin_role();
+insert into ids select 'drv', id from public.kb_attachments where remote_id = 'drive-file-10';
+insert into public.notes (id, user_id, workspace_id, path, frontmatter, body, hash, kb_id)
+  values ('01KF000000000000000000NT02', '00000000-0000-4000-8000-0000000000f1', '01KF00000000000000000000WS', 'Knowledge bases/Handbook/A.md',
+    jsonb_build_object('visibility', 'public', 'kb_source', 'google-drive:drive-file-10', 'kb_attachment', pg_temp.id('drv')), '# A', 'h-a', pg_temp.id('kb'));
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000f1');
+select pg_temp.expect_error(format($$select public.kb_sync_notes_write(%L, '[]')$$, pg_temp.id('drv')), 'permission denied|only the relay');
+select pg_temp.as_service();
+select pg_temp.check((select count(*) from public.kb_sync_notes_write(pg_temp.id('drv'), jsonb_build_array(jsonb_build_object(
+  'note_id', '01KF000000000000000000NT02', 'body', '# A v2', 'hash', 'h-a2', 'mtime', now(),
+  'frontmatter', jsonb_build_object('visibility', 'public', 'kb_source', 'google-drive:drive-file-10', 'kb_attachment', pg_temp.id('drv')),
+  'upstream', jsonb_build_object('base_hash', 'h-a2', 'base_norm', 'n', 'base_body', '# A v2', 'suggestions', '[{"id": "s1", "state": "ready", "body": "# A edited"}]'::jsonb))))) = 1, 'the worker writes a note with its base');
+select pg_temp.as_admin_role();
+select pg_temp.check((select body = '# A v2' from public.notes where id = '01KF000000000000000000NT02'), 'the note has the new text');
+select pg_temp.check((select jsonb_array_length(suggestions) = 1 and base_hash = 'h-a2' from public.kb_note_upstream where note_id = '01KF000000000000000000NT02'), 'the suggestion is kept');
+select pg_temp.as_service();
+select pg_temp.check(public.kb_sync_upstream_save(pg_temp.id('drv'), '[{"note_id": "01KF000000000000000000NT02", "base_hash": "h-a2", "base_norm": "n2", "base_body": "# A v2"}]') = 1, 'the worker records a base');
+
+-- 13. a plan that ends pauses the workspace's attachments; an admin cannot resume them; an active plan resumes only those
+select pg_temp.as_admin_role();
+update public.kb_attachments set status = 'paused', paused_by = 'admin' where remote_id = 'drive-file-11';
+update public.workspaces set plan = 'free' where id = '01KF00000000000000000000WS';
+select pg_temp.check((select bool_and(status = 'paused') from public.kb_attachments where workspace_id = '01KF00000000000000000000WS'), 'every attachment is paused');
+select pg_temp.check((select paused_by = 'plan' and error = 'The workspace''s plan ended' from public.kb_attachments where id = pg_temp.id('drv')), 'with the reason');
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000f1');
+select pg_temp.expect_error(format($$select public.kb_attachment_pause(%L, false)$$, pg_temp.id('drv')), 'plan ended');
+select pg_temp.as_admin_role();
+update public.workspaces set plan = 'paid' where id = '01KF00000000000000000000WS';
+select pg_temp.check((select status = 'pending' and paused_by is null and error is null from public.kb_attachments where id = pg_temp.id('drv')), 'the plan pause ends');
+select pg_temp.check((select status = 'paused' and paused_by = 'admin' from public.kb_attachments where remote_id = 'drive-file-11'), 'an admin pause stays');
+
 select pg_temp.as_admin_role();
 select 'kb attachments: ok';
 rollback;

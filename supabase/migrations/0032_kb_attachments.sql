@@ -24,6 +24,13 @@
 --
 -- Access. KB admins read their KB's attachments (every column but the worker's cursor and lease) and manage them through
 -- the RPCs below. Attaching goes through the relay (it carries the token), so kb_sync_attach is for the service role.
+--
+-- Plans. When a workspace's plan ends (back to free) its attachments are paused with the reason "The workspace's plan
+-- ended"; when the plan is active again the ones the plan paused resume. A pause an admin made stays.
+--
+-- Suggestions. The worker writes synced notes and their upstream bases through 0031 (kb_synced_notes_write,
+-- kb_upstream_save), run as the attaching admin by kb_sync_notes_write and kb_sync_upstream_save, so an edit Quorum made
+-- to a worker-synced note is kept as a suggestion the same way kbImport and kbDrive keep one.
 
 create table public.kb_sync_grants (
   id public.ulid primary key default public.gen_ulid(),
@@ -68,6 +75,8 @@ create table public.kb_attachments (
   url text check (url is null or char_length(url) <= 2000),
   attached_by uuid references auth.users (id) on delete set null,
   status text not null default 'pending' check (status in ('pending', 'active', 'paused', 'error', 'needs_auth')),
+  -- who paused it: an admin, or the plan ending (the workspace's plan went back to free); a plan pause ends on its own
+  paused_by text check (paused_by is null or paused_by in ('admin', 'plan')),
   error text check (error is null or char_length(error) <= 500),
   note_count integer not null default 0,
   last_synced_at timestamptz,
@@ -87,7 +96,7 @@ create trigger kb_attachments_updated_at before update on public.kb_attachments 
 alter table public.kb_attachments enable row level security;
 create policy kb_attachments_select on public.kb_attachments for select to authenticated using (public.can_admin_kb(kb_id));
 revoke all on public.kb_attachments from anon, authenticated;
-grant select (id, workspace_id, kb_id, folder_id, provider, integration_id, remote_id, remote_kind, options, name, url, attached_by, status, error,
+grant select (id, workspace_id, kb_id, folder_id, provider, integration_id, remote_id, remote_kind, options, name, url, attached_by, status, paused_by, error,
   note_count, last_synced_at, last_attempt_at, next_run_at, created_at, updated_at) on public.kb_attachments to authenticated;
 grant select, insert, update, delete on public.kb_attachments to service_role;
 
@@ -194,6 +203,27 @@ end $$;
 create trigger members_end_kb_grants after update of deleted_at or delete on public.members for each row execute function public.member_left_end_kb_grants();
 revoke all on function public.member_left_end_kb_grants() from public, anon, authenticated;
 
+-- a workspace whose plan ends (back to free) has its attachments paused, and a plan that is active again resumes the
+-- ones the plan paused. An admin's own pause stays
+create or replace function public.kb_sync_plan_ended() returns text
+language sql immutable set search_path = public as $$ select 'The workspace''s plan ended'::text; $$;
+
+create or replace function public.kb_sync_plan_changed() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.plan = 'free' and old.plan is distinct from 'free' then
+    update public.kb_attachments a set status = 'paused', paused_by = 'plan', error = public.kb_sync_plan_ended(), lease_until = null
+      where a.workspace_id = new.id and a.status <> 'paused';
+  elsif old.plan = 'free' and new.plan is distinct from 'free' then
+    update public.kb_attachments a set status = case when a.grant_id is null then 'needs_auth' else 'pending' end, paused_by = null, error = null,
+      next_run_at = now(), failures = 0
+      where a.workspace_id = new.id and a.status = 'paused' and a.paused_by = 'plan';
+  end if;
+  return new;
+end $$;
+create trigger workspaces_kb_sync_plan after update of plan on public.workspaces for each row execute function public.kb_sync_plan_changed();
+revoke all on function public.kb_sync_plan_changed() from public, anon, authenticated;
+
 -- an attachment as an admin sees it
 create or replace function public.kb_attachment_row(a public.kb_attachments) returns jsonb
 language sql stable security definer set search_path = public as $$
@@ -224,15 +254,19 @@ begin
 end $$;
 revoke all on function public.kb_attachment_of(public.ulid) from public, anon, authenticated;
 
--- Pause stops the schedule and keeps the notes; Resume runs it again now
+-- Pause stops the schedule and keeps the notes; Resume runs it again now. While the workspace's plan has ended the
+-- attachment stays paused (kb_sync_plan_changed resumes it when the plan is active again)
 create or replace function public.kb_attachment_pause(id public.ulid, paused boolean) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare a public.kb_attachments := public.kb_attachment_of(kb_attachment_pause.id);
 begin
   if coalesce(kb_attachment_pause.paused, true) then
-    update public.kb_attachments x set status = 'paused', lease_until = null where x.id = a.id returning * into a;
+    update public.kb_attachments x set status = 'paused', paused_by = 'admin', error = case when x.paused_by = 'plan' then null else x.error end, lease_until = null
+      where x.id = a.id returning * into a;
   elsif a.status = 'paused' then
-    update public.kb_attachments x set status = case when x.grant_id is null then 'needs_auth' else 'pending' end, next_run_at = now(), failures = 0
+    if exists (select 1 from public.workspaces w where w.id = a.workspace_id and w.plan = 'free') then raise exception '%. Syncing resumes when the plan is active again.', public.kb_sync_plan_ended(); end if;
+    update public.kb_attachments x set status = case when x.grant_id is null then 'needs_auth' else 'pending' end, paused_by = null,
+      error = case when x.paused_by = 'plan' then null else x.error end, next_run_at = now(), failures = 0
       where x.id = a.id returning * into a;
   end if;
   return public.kb_attachment_row(a);
@@ -388,7 +422,7 @@ begin
       continue;
     end if;
     if exists (select 1 from public.workspaces w where w.id = a.workspace_id and (w.deleted_at is not null or w.plan = 'free')) then
-      update public.kb_attachments x set status = 'error', error = 'This workspace has no Quorum Cloud subscription, so syncing is paused.', next_run_at = now() + interval '6 hours' where x.id = a.id;
+      update public.kb_attachments x set status = 'paused', paused_by = 'plan', error = public.kb_sync_plan_ended(), lease_until = null where x.id = a.id;
       continue;
     end if;
     -- the per-workspace cap counts runs under a lease right now, on every relay instance, this claim included
@@ -470,6 +504,37 @@ begin
   where x.id = kb_sync_finish.attachment_id;
 end $$;
 
+-- the 0031 writes for synced notes and their upstream rows (kb_synced_notes_write, kb_upstream_save), for the worker.
+-- Those functions check that the caller is an admin of the KB, and the worker has no session, so these two run them as
+-- the attachment's admin, after checking that person is still an admin of the KB. app/ee/kbUpstream.js plans the
+-- notes on the relay the same way it does on the Mac, so an edit Quorum made to a synced note becomes a suggestion
+create or replace function public.kb_sync_as_attacher(attachment_id public.ulid) returns public.kb_attachments
+language plpgsql security definer set search_path = public as $$
+declare a public.kb_attachments;
+begin
+  perform public.kb_sync_service_only();
+  select * into a from public.kb_attachments x where x.id = kb_sync_as_attacher.attachment_id;
+  if a.id is null or not public.can_admin_kb_as(a.kb_id, a.attached_by) then raise exception 'That synced folder no longer exists'; end if;
+  -- for the rest of this transaction (one API call) the 0031 checks see the attaching admin
+  perform set_config('request.jwt.claims', json_build_object('sub', a.attached_by::text, 'role', 'authenticated')::text, true);
+  return a;
+end $$;
+revoke all on function public.kb_sync_as_attacher(public.ulid) from public, anon, authenticated;
+
+create or replace function public.kb_sync_notes_write(attachment_id public.ulid, rows jsonb) returns setof public.ulid
+language plpgsql security definer set search_path = public as $$
+declare a public.kb_attachments := public.kb_sync_as_attacher(kb_sync_notes_write.attachment_id);
+begin
+  return query select * from public.kb_synced_notes_write(a.kb_id, kb_sync_notes_write.rows);
+end $$;
+
+create or replace function public.kb_sync_upstream_save(attachment_id public.ulid, rows jsonb) returns integer
+language plpgsql security definer set search_path = public as $$
+declare a public.kb_attachments := public.kb_sync_as_attacher(kb_sync_upstream_save.attachment_id);
+begin
+  return public.kb_upstream_save(a.kb_id, kb_sync_upstream_save.rows);
+end $$;
+
 -- ended grants waiting to be revoked with the provider, with their tokens; kb_sync_revoked deletes one after the revoke
 create or replace function public.kb_sync_revocations(max_rows integer default 20) returns table (grant_id public.ulid, provider text, client text, refresh_token text, client_id text, client_secret text)
 language plpgsql stable security definer set search_path = public as $$
@@ -514,7 +579,9 @@ begin
     'kb_sync_finish(public.ulid, boolean, text, jsonb, integer, integer, boolean)',
     'kb_sync_revocations(integer)',
     'kb_sync_revoked(public.ulid)',
-    'relay_workspace_oauth_client(public.ulid, text)'
+    'relay_workspace_oauth_client(public.ulid, text)',
+    'kb_sync_notes_write(public.ulid, jsonb)',
+    'kb_sync_upstream_save(public.ulid, jsonb)'
   ] loop
     execute format('revoke all on function public.%s from public, anon, authenticated', f);
     execute format('grant execute on function public.%s to service_role', f);

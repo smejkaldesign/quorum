@@ -11,14 +11,14 @@
 // Tokens never reach the log: it carries attachment ids, providers, counts and HTTP statuses.
 import { SyncError } from './http.js';
 import { PROVIDERS } from './providers/index.js';
-import { keepUpstream, syncAttachment } from './run.js';
+import { syncAttachment } from './run.js';
 import { clientFor, refreshAccess, revokeGrant } from './tokens.js';
 
 const MAX_BACKOFF_S = 6 * 3600;
 export const backoffSeconds = (failures, base = 300) => Math.min(base * 2 ** Math.max(0, failures), MAX_BACKOFF_S);
 const rowOf = (data) => (Array.isArray(data) ? data[0] ?? null : data ?? null);
 
-export function createKbSyncWorker({ db, config, fetchImpl = fetch, log = () => {}, now = () => new Date(), sleep, providers = PROVIDERS, onLocalEdit = keepUpstream, settings = {} }) {
+export function createKbSyncWorker({ db, config, fetchImpl = fetch, log = () => {}, now = () => new Date(), sleep, providers = PROVIDERS, settings = {} }) {
   const s = { tickMs: 60000, intervalSeconds: 900, concurrency: 4, perWorkspace: 2, claim: 20, leaseSeconds: 900, ...config?.kbSync, ...settings };
   // access tokens for their lifetime, per grant, so a run does not refresh (and a rotating provider does not rotate)
   // more often than the token expires
@@ -71,7 +71,7 @@ export function createKbSyncWorker({ db, config, fetchImpl = fetch, log = () => 
       if (!provider) throw new SyncError('That connector cannot sync folders yet.', 'provider');
       const t = await accessToken(a);
       grantId = t.grantId;
-      const r = await syncAttachment({ db, attachment: a, provider, token: t.token, fetchImpl, sleep, now, log, onLocalEdit });
+      const r = await syncAttachment({ db, attachment: a, provider, token: t.token, fetchImpl, sleep, now, log });
       if (r.stop) {
         // a stop after some files were written still reports what happened, and tries again later
         if (r.stop.code === 'auth') return refused(a, grantId, r.stop, r);

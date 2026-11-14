@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { handleKbSyncAttach, cleanAttach } from '../kbSync/routes.js';
 import { googleDrive } from '../kbSync/providers/googleDrive.js';
 import { github } from '../kbSync/providers/github.js';
-import { isConfidential, parseFrontmatter, syncedNoteText } from '../kbSync/rules.js';
+import { isConfidential, parseFrontmatter, sha256, syncedNoteText } from '../kbSync/rules.js';
 import { syncAttachment } from '../kbSync/run.js';
 import { refreshAccess, revokeGrant } from '../kbSync/tokens.js';
 import { backoffSeconds, createKbSyncWorker } from '../kbSync/worker.js';
@@ -72,6 +72,30 @@ function fakeFetch(routes) {
   };
   f.seen = seen;
   return f;
+}
+
+// 0032's wrappers over the 0031 writes, as the database does them: a note and its upstream row together; a base only
+// for a note whose hash it matches
+function upstreamRpcs(tables) {
+  const upsert = (row) => { tables.kb_note_upstream ??= []; const i = tables.kb_note_upstream.findIndex((u) => u.note_id === row.note_id); if (i >= 0) tables.kb_note_upstream[i] = { ...tables.kb_note_upstream[i], ...row }; else tables.kb_note_upstream.push({ suggestions: [], ...row }); };
+  return {
+    kb_sync_notes_write: ({ rows }) => {
+      const ids = [];
+      for (const r of rows) {
+        const n = tables.notes.find((x) => x.id === r.note_id && !x.deleted_at);
+        if (!n) return { data: null, error: { message: 'That note is no longer synced into this knowledge base', code: 'P0001' } };
+        Object.assign(n, { body: r.body, frontmatter: r.frontmatter, hash: r.hash, mtime: r.mtime });
+        if (r.upstream) upsert({ note_id: n.id, ...r.upstream });
+        ids.push(n.id);
+      }
+      return { data: ids, error: null };
+    },
+    kb_sync_upstream_save: ({ rows }) => {
+      let saved = 0;
+      for (const r of rows) { const n = tables.notes.find((x) => x.id === r.note_id); if (!n || n.hash !== r.base_hash) continue; upsert({ ...r }); saved++; }
+      return { data: saved, error: null };
+    },
+  };
 }
 
 const attachment = (over = {}) => ({
@@ -149,7 +173,8 @@ test('a run writes new notes as the admin in KB folders, skips unchanged files, 
     { parent: 'root-folder', id: 'sub', name: 'Teams', mimeType: 'application/vnd.google-apps.folder' },
     { parent: 'sub', id: 'd2', name: 'Oncall.md', mimeType: 'text/markdown', modifiedTime: 'm2' },
   ];
-  const db = fakeDb({ tables: { notes: [], kb_folders: [{ id: FOLDER, kb_id: KB, parent_id: null, name: 'Policies' }] } });
+  const tables = { notes: [], kb_note_upstream: [], kb_folders: [{ id: FOLDER, kb_id: KB, parent_id: null, name: 'Policies' }] };
+  const db = fakeDb({ tables, rpcs: upstreamRpcs(tables) });
   const a = attachment();
   const fetchImpl = fakeFetch(driveRoutes(files, { docs: { d1: '# Leave\n\nTwenty days.' } }));
   const r1 = await syncAttachment({ db, attachment: a, provider: googleDrive, token: 'at', fetchImpl, now: () => new Date('2026-11-13T00:00:00Z') });
@@ -162,28 +187,46 @@ test('a run writes new notes as the admin in KB folders, skips unchanged files, 
   assert.equal(notes.find((n) => n.path.endsWith('Oncall.md')).folder_id, teams.id);
   assert.equal(notes.find((n) => n.path.endsWith('Leave.md')).folder_id, FOLDER);
 
-  // second run: d1 unchanged, d2 changed upstream and also edited in Quorum, a new confidential file, and d1 removed later
+  assert.equal(tables.kb_note_upstream.length, 2, 'each new note has its upstream base');
+
+  // second run: d1 unchanged, d2 changed upstream and also edited in Quorum, a new confidential file
   const leave = notes.find((n) => n.path.endsWith('Leave.md'));
   const oncall = notes.find((n) => n.path.endsWith('Oncall.md'));
-  oncall.hash = 'edited-in-quorum';
+  const synced = oncall.body;
+  oncall.body = `${synced}\nAgent note: page the secondary first.\n`;
+  oncall.hash = sha256(oncall.body);
   files[2].modifiedTime = 'm2b';
   files.push({ parent: 'root-folder', id: 'd3', name: 'Salaries.md', mimeType: 'text/markdown', modifiedTime: 'm3' });
-  const edits = [];
   const docs = { d1: '# Leave\n\nTwenty days.', d2: '# Oncall v2', d3: '---\nconfidential: true\n---\n# Pay' };
-  const r2 = await syncAttachment({ db, attachment: { ...a, cursor: r1.cursor, folders: db.tables.kb_folders }, provider: googleDrive, token: 'at', fetchImpl: fakeFetch(driveRoutes(files, { docs })), onLocalEdit: async (e) => { edits.push(e.note.id); } });
+  const r2 = await syncAttachment({ db, attachment: { ...a, cursor: r1.cursor, folders: db.tables.kb_folders }, provider: googleDrive, token: 'at', fetchImpl: fakeFetch(driveRoutes(files, { docs })) });
   assert.equal(r2.unchanged, 1);
   assert.equal(r2.written, 1);
-  assert.deepEqual(edits, [oncall.id]);
+  assert.equal(r2.suggested, 1);
   assert.match(oncall.body, /# Oncall v2/);
+  assert.doesNotMatch(oncall.body, /Agent note/, 'the source text is written as the note');
+  const row = tables.kb_note_upstream.find((u) => u.note_id === oncall.id);
+  assert.equal(row.suggestions.length, 1);
+  assert.equal(row.suggestions[0].state, 'ready', 'the edit merges onto the new text');
+  assert.match(row.suggestions[0].body, /# Oncall v2[\s\S]*Agent note: page the secondary first\./);
+  assert.equal(row.base_body, oncall.body);
   assert.equal(notes.length, 2, 'the confidential file is not written');
   assert.ok(r2.skipped.some((s) => s.path === 'Salaries.md'));
   assert.equal(r2.noteCount, 2);
+
+  // an edit to d1 while Drive only moved its time: Quorum's copy stays, with the new time
+  leave.body = `${leave.body}\nEdited in Quorum.\n`;
+  leave.hash = sha256(leave.body);
+  files[0].modifiedTime = 'm1b';
+  const rk = await syncAttachment({ db, attachment: { ...a, cursor: r2.cursor, folders: db.tables.kb_folders }, provider: googleDrive, token: 'at', fetchImpl: fakeFetch(driveRoutes(files, { docs })) });
+  assert.equal(rk.kept, 1);
+  assert.match(leave.body, /Edited in Quorum\./);
+  assert.equal(leave.frontmatter.kb_source_modified, 'm1b');
 
   // third run: d1 is gone from the folder, d2 turns confidential
   files.splice(0, 1);
   docs.d2 = '---\nconfidential: yes\n---\n# Oncall';
   files[1].modifiedTime = 'm2c';
-  const r3 = await syncAttachment({ db, attachment: { ...a, cursor: r2.cursor, folders: db.tables.kb_folders }, provider: googleDrive, token: 'at', fetchImpl: fakeFetch(driveRoutes(files, { docs })) });
+  const r3 = await syncAttachment({ db, attachment: { ...a, cursor: rk.cursor, folders: db.tables.kb_folders }, provider: googleDrive, token: 'at', fetchImpl: fakeFetch(driveRoutes(files, { docs })) });
   assert.equal(r3.removed, 2);
   assert.ok(leave.deleted_at && oncall.deleted_at);
 });
@@ -211,7 +254,8 @@ test('GitHub reads only changed markdown under the folder and stops after one ca
     { path: 'README.md', type: 'blob', sha: 'b0' }, { path: 'docs/.github/x.md', type: 'blob', sha: 'b5' }, { path: 'docs/logo.png', type: 'blob', sha: 'b6' },
   ];
   const a = attachment({ provider: 'github', remote_id: 'octo/handbook', options: { branch: 'main', path: 'docs' }, folder_id: null, folders: [] });
-  const db = fakeDb({ tables: { notes: [], kb_folders: [] } });
+  const ghTables = { notes: [], kb_folders: [], kb_note_upstream: [] };
+  const db = fakeDb({ tables: ghTables, rpcs: upstreamRpcs(ghTables) });
   const f1 = routes('c1', tree);
   const r1 = await syncAttachment({ db, attachment: a, provider: github, token: 'gh-at', fetchImpl: f1 });
   assert.equal(r1.written, 2);
