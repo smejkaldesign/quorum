@@ -5,6 +5,7 @@ import { matchesQuery } from '../../src/mainTabs';
 import { IconBack, IconBrain, IconChevron, IconDoc, IconFolder, IconMore, IconStack } from '../../src/icons';
 import { descendantIds, findFolder, folderPath, moveCheck, moveTargets, notesIn, openPathTo, resolveKbLink, rowKey, treeKey, visibleRows, withFolder, withoutFolder, type TreeRow } from './kbTree';
 import { KB_CHANGED, kbCall, KbConfirm, useLatest } from './kbUi';
+import { DrivePanel, hasDrive } from './KbDrive';
 import { KB_OPEN, takeKbOpen, type KbOpenTarget } from '../../src/kbOpen';
 
 // The knowledge bases in the Knowledge tab: one left column with the team knowledge entry (and, for a folder or git
@@ -37,6 +38,7 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
   const [moving, setMoving] = useState<{ kbId: string; folderId: string } | null>(null);
   const [deleting, setDeleting] = useState<{ kbId: string; folderId: string; name: string } | null>(null);
   const [drag, setDrag] = useState<{ kbId: string; folderId: string } | null>(null);
+  const [driving, setDriving] = useState<{ kbId: string; folderId: string | null } | null>(null);
   const [dropKey, setDropKey] = useState<string | null>(null);
   const refs = useRef(new Map<string, HTMLButtonElement>());
 
@@ -220,6 +222,7 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
       { label: row.kind === 'kb' ? 'New folder' : 'New folder inside', run: () => { openKeys([row.key]); setEdit({ mode: 'new', kbId: row.kbId, parentId: row.folderId, name: '' }); } },
       { label: 'Rename', run: () => setEdit({ mode: 'rename', kbId: row.kbId, folderId: row.folderId, name: row.name }) },
     ];
+    if (hasDrive()) items.push({ label: 'Add from Google Drive', run: () => setDriving({ kbId: row.kbId, folderId: row.folderId }) });
     if (row.kind === 'folder') {
       items.push({ label: 'Move to…', run: () => setMoving({ kbId: row.kbId, folderId: row.folderId! }) });
       items.push({ label: 'Delete', danger: true, run: () => setDeleting({ kbId: row.kbId, folderId: row.folderId!, name: row.name }) });
@@ -325,6 +328,10 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
         {moving && kbOf(moving.kbId) && (
           <MoveDialog kb={kbOf(moving.kbId)!} folderId={moving.folderId} onDone={(target) => { const m = moving; setMoving(null); if (target !== undefined) move(m.kbId, m.folderId, target); else focusRow(rowKey(m.kbId, m.folderId)); }} />
         )}
+        {driving && kbOf(driving.kbId) && (
+          <DriveDialog kb={kbOf(driving.kbId)!} folderId={driving.folderId} onChanged={() => loadNotes(driving.kbId)}
+            onDone={() => { const d = driving; setDriving(null); focusRow(rowKey(d.kbId, d.folderId)); }} />
+        )}
         {deleting && (
           <KbConfirm title={`Delete ${deleting.name}?`} body="The folders inside it are deleted too. Its notes stay in the knowledge base, at the top level." action="Delete folder"
             onDone={(ok) => { const d = deleting; if (ok) remove(d); else { setDeleting(null); focusRow(rowKey(d.kbId, d.folderId)); } }} />
@@ -360,6 +367,24 @@ function RowMenu({ items, onClose, onEscape }: { items: { label: string; run: ()
   return (
     <div className="menu kbt-menu" role="menu" onKeyDown={onKey} onClick={(e) => e.stopPropagation()}>
       {items.map((it, i) => <button key={it.label} ref={i === 0 ? first : undefined} role="menuitem" className={it.danger ? 'danger-pill' : undefined} onClick={() => { onClose(); it.run(); }}>{it.label}</button>)}
+    </div>
+  );
+}
+
+// Add from Google Drive, from a folder's menu: the Drive panel for that folder in a dialog; Escape or Done closes it
+function DriveDialog({ kb, folderId, onChanged, onDone }: { kb: Kb; folderId: string | null; onChanged: () => void; onDone: () => void }) {
+  const done = useLatest(onDone);
+  useEffect(() => {
+    const esc = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape' && !document.querySelector('[role="alertdialog"]')) { e.stopPropagation(); done.current(); } };
+    window.addEventListener('keydown', esc, true);
+    return () => window.removeEventListener('keydown', esc, true);
+  }, [done]);
+  return (
+    <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onDone(); }}>
+      <div className="modal kb-drive-modal" role="dialog" aria-modal="true" aria-labelledby="kbt-drive-title">
+        <h2 id="kbt-drive-title">Add from Google Drive</h2>
+        <DrivePanel kb={kb} folderId={folderId} onChanged={onChanged} onDone={onDone} />
+      </div>
     </div>
   );
 }

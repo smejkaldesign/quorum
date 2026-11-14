@@ -1647,6 +1647,14 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .kb-skipped li { display: flex; gap: 10px; padding: 3px 0; }
 .kb-skipped li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kb-skipped li em { margin-left: auto; font-style: normal; color: var(--muted); white-space: nowrap; }
+.kb-drive-files { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.kb-drive-files li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--container-border); }
+.kb-drive-files li:last-child { border-bottom: 0; }
+.kb-drive-name { display: flex; flex-direction: column; min-width: 0; flex: 1; font-size: 14px; }
+.kb-drive-name > button, .kb-drive-name > span { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-drive-name em { font-style: normal; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-drive-modal { width: min(560px, calc(100vw - 32px)); }
+.kb-drive-modal .kb-panel { padding: 0; }
 .kbt { flex: 1; min-height: 0; display: grid; grid-template-columns: 240px 1fr; }
 .kbt-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: #1c1c1c; }
 .kbt-head { margin: 14px 8px 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
