@@ -1,9 +1,9 @@
 // The note editor's markdown: what opens as rich text, round trips, wiki links, frontmatter rows, and the block a
 // Record append replaces
 import { describe, expect, it } from 'vitest';
-import { firstChangedBlock, isLossless, roundTrip, toDoc, toMarkdown } from '../src/editor/markdown.ts';
-import { linkName, parseProps, shownValue, storedValue, writeProps } from '../src/editor/frontmatter.ts';
-import { newNoteText, rewriteNote, splitNote, validFrontmatter } from '../handnote.js';
+import { firstChangedBlock, isLossless, pickerQuery, roundTrip, toDoc, toMarkdown } from '../src/editor/markdown.ts';
+import { draftOf, followSave, linkName, parseProps, propsProblem, shownValue, storedValue, titleProblem, uniqueKey, writeProps } from '../src/editor/frontmatter.ts';
+import { newNoteText, noteForEditor, rewriteNote, splitNote, validFrontmatter } from '../handnote.js';
 
 const exact = [
   '# Title\n\nA paragraph with **bold**, *italic*, ~~strike~~ and `code`.',
@@ -111,5 +111,68 @@ describe('saving properties', () => {
     const fm = writeProps([{ key: 'title', value: ' "Old"' }, { key: 'type', value: ' meeting' }, { key: 'tags', value: '\n  - pricing' }]);
     const next = rewriteNote(`${fm}${raw.slice(splitNote(raw).fm.length)}`, { title: 'New', body: 'body' });
     expect(next).toBe('---\ntitle: "New"\ntype: meeting\ntags:\n  - pricing\n---\n\n# New\n\nbody\n');
+  });
+});
+
+describe('properties panel rules', () => {
+  it('checks names: present, once, YAML-safe, and never title in a shown row', () => {
+    expect(propsProblem([{ key: 'type', value: ' note' }, { key: 'tags', value: '' }])).toBeNull();
+    expect(propsProblem([{ key: ' ', value: '' }])).toMatch(/needs a name/);
+    expect(propsProblem([{ key: 'a', value: '' }, { key: 'a', value: '' }])).toMatch(/twice/);
+    expect(propsProblem([{ key: 'a: b', value: '' }])).toMatch(/only use/);
+    expect(propsProblem([{ key: 'due date', value: '' }])).toBeNull();
+    expect(titleProblem('Title')).toMatch(/field above/);
+    expect(titleProblem('type')).toBeNull();
+  });
+
+  it('names a new row with a key no other row uses', () => {
+    expect(uniqueKey([])).toBe('key');
+    expect(uniqueKey([{ key: 'key', value: '' }, { key: 'key2', value: '' }])).toBe('key3');
+  });
+
+  it('keeps an edited draft when a title save rewrites the title line, and follows an untouched one', () => {
+    const before = '---\ntitle: "Old"\ntype: note\n---\n';
+    const after = '---\ntitle: "New"\ntype: note\n---\n';
+    const edited = { ...draftOf(before), rows: [{ key: 'title', value: ' "Old"' }, { key: 'type', value: ' meeting' }] };
+    const merged = followSave(edited, after);
+    expect(merged.rows).toEqual([{ key: 'title', value: ' "New"' }, { key: 'type', value: ' meeting' }]);
+    expect(merged.base).toBe(after);
+    expect(followSave(draftOf(before), after)).toEqual(draftOf(after));
+  });
+
+  it('splits and writes CRLF frontmatter with its own line endings', () => {
+    const fm = '---\r\ntitle: "A"\r\ntype: note\r\n---\r\n';
+    const rows = parseProps(fm);
+    expect(rows?.map((r) => r.key)).toEqual(['title', 'type']);
+    expect(writeProps(rows ?? [], '\r\n')).toBe(fm);
+  });
+});
+
+describe('a note opened for the editor', () => {
+  const redact = (t) => t.split('\n').map((l) => (l.includes('Acme') ? '[withheld: opted-out customer]' : l)).join('\n');
+  const isExcluded = (t) => t.includes('Acme');
+  it('replaces withheld lines in the frontmatter too, and opens read-only', () => {
+    const raw = '---\ntitle: "Call"\ncompany: Acme Corp\n---\n\n# Call\n\nnotes\n';
+    const n = noteForEditor(raw, { isExcluded, redact });
+    expect(n.readOnly).toBe(true);
+    expect(n.frontmatter).not.toContain('Acme');
+    expect(n.frontmatter).toContain('company: "[withheld: opted-out customer]"');
+    const rows = parseProps(n.frontmatter);
+    expect(rows?.map((r) => r.key)).toEqual(['title', 'company']);
+    expect(rows?.some((r) => r.value.includes('Acme'))).toBe(false);
+  });
+  it('passes a clean note through unchanged', () => {
+    const raw = '---\ntitle: "Call"\n---\n\n# Call\n\nnotes\n';
+    expect(noteForEditor(raw, { isExcluded, redact })).toMatchObject({ readOnly: false, title: 'Call', body: 'notes', frontmatter: '---\ntitle: "Call"\n---\n' });
+  });
+});
+
+describe('the pickers', () => {
+  it('opens block commands only for a slash at the start of a block or after a space', () => {
+    expect(pickerQuery('/')).toEqual({ kind: 'slash', query: '', typed: '/' });
+    expect(pickerQuery('see /head')).toEqual({ kind: 'slash', query: 'head', typed: '/head' });
+    expect(pickerQuery('1/2')).toBeNull();
+    expect(pickerQuery('src/app')).toBeNull();
+    expect(pickerQuery('link [[Pri')).toEqual({ kind: 'link', query: 'Pri', typed: '[[Pri' });
   });
 });

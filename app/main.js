@@ -19,7 +19,7 @@ import { registerOnboarding } from './onboarding.js';
 import { gateOn, registerBeta } from './beta.js';
 import { registerFlags } from './flags.js';
 import { CALL_ACTIVE, DICTATION_OFF, keepActions, notetakerGates, recordDecision, screenReadsAllowed, sessionGates, startDecision, termsPlan } from './notetaker.js';
-import { hashText, newNoteText, noteFileName, rewriteNote, screenRead, splitNote, validFrontmatter, yamlStr } from './handnote.js';
+import { hashText, newNoteText, noteFileName, noteForEditor, rewriteNote, screenRead, splitNote, validFrontmatter, yamlStr } from './handnote.js';
 import { createKeeper } from './keeper.js';
 import { contextBudget } from './context-budget.js';
 import { skillUsage, stashSkill } from './skill-usage.js';
@@ -2290,9 +2290,9 @@ ipcMain.handle('hand-note-open', (_e, file) => {
   const abs = meetingFile(file);
   if (!abs) return null;
   const raw = store.notes.read(abs);
-  const readOnly = suggester.isExcluded(raw);
-  const { title, body } = splitNote(readOnly ? suggester.redactLines(raw) : raw);
-  return { ...handNoteRef(abs, raw), title, body, readOnly, date: raw.match(/^date:\s*(.+)$/m)?.[1]?.trim() ?? null };
+  // withheld lines never reach the view, frontmatter included; the hash is of the file as it is
+  const view = noteForEditor(raw, { isExcluded: suggester.isExcluded, redact: suggester.redactLines });
+  return { ...handNoteRef(abs, raw), ...view };
 });
 ipcMain.handle('hand-note-save', (_e, payload) => saveHandNote(payload ?? {}));
 // frontmatter, when given, replaces the note's frontmatter (the Properties panel); its title line still follows the title
@@ -2314,8 +2314,11 @@ function saveHandNote({ id, file, title, body, hash, fresh, frontmatter }) {
   const raw = store.notes.read(abs);
   if (hash && hashText(raw) !== hash) return { conflict: true };
   if (suggester.isExcluded(raw)) return { error: 'This note has withheld lines, so edit it in the vault directly.' };
-  if (frontmatter !== undefined && !validFrontmatter(frontmatter)) return { error: 'Those properties are not valid frontmatter.' };
-  const out = rewriteNote(frontmatter === undefined ? raw : `${frontmatter}${raw.slice(splitNote(raw).fm.length)}`, { title, body: text });
+  // properties that are not valid frontmatter are left out of this save, which still writes the title and body, and
+  // the last valid frontmatter stays on disk
+  const badProps = frontmatter !== undefined && !validFrontmatter(frontmatter);
+  const props = frontmatter === undefined || badProps ? raw : `${frontmatter}${raw.slice(splitNote(raw).fm.length)}`;
+  const out = rewriteNote(props, { title, body: text });
   // a note created in this editor keeps its file name in step with its title until the editor closes
   if (fresh) {
     const qid = raw.match(/^quorum_id:\s*(.+)$/m)?.[1]?.trim() ?? String(id ?? '');
@@ -2323,7 +2326,7 @@ function saveHandNote({ id, file, title, body, hash, fresh, frontmatter }) {
     if (next !== abs && !existsSync(next)) { renameSync(abs, next); abs = next; }
   }
   if (out !== raw) store.notes.write(abs, out);
-  return handNoteRef(abs, out);
+  return { ...handNoteRef(abs, out), ...(badProps ? { propsError: 'Those properties are not valid frontmatter, so they were not saved.' } : {}) };
 }
 // the editor closed: the note syncs and the keeper files it, once rather than on every autosave
 ipcMain.handle('hand-note-done', (_e, file) => {

@@ -6,7 +6,7 @@ import { IconPen } from './PrivateNotes';
 import { RecordMenu } from './Record';
 import { appendTurn, emptyWritten, recordChoices, type RecordChoice, type Written } from './noteRecord';
 import { MAX_READS, MAX_TURNS, labelFor, othersIn, timedTurn, type SpeakerRead, type TimedTurn } from './attribution';
-import { NoteEditor } from './editor/NoteEditor';
+import { NoteEditor, type NoteEditorHandle } from './editor/NoteEditor';
 import { Properties } from './editor/Properties';
 import { isLossless } from './editor/markdown';
 
@@ -43,11 +43,14 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
   const [rich, setRich] = useState(true);
   const [frontmatter, setFrontmatter] = useState('');
   const editor = useRef<HTMLTextAreaElement>(null);
+  const richEditor = useRef<NoteEditorHandle>(null);
+  // a properties save the main process turned down: shown in the panel, while the title and body still save
+  const [propsError, setPropsError] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   // the text the save timer, Record and the close read outside a render. readOnly stops saving and appending; a
   // conflict stops saving only, so Record keeps writing into the text on screen, which the person can copy
   const live = useRef({
-    title: '', body: '', ref: null as HandNoteRef | null, frontmatter: undefined as string | undefined, dirty: false, readOnly: false, conflict: false, closing: false, starting: false,
+    title: '', body: '', ref: null as HandNoteRef | null, frontmatter: undefined as string | undefined, rich: true, dirty: false, readOnly: false, conflict: false, closing: false, starting: false,
     inflight: null as Promise<boolean> | null, rec: { audio: false, screen: false } as RecordState,
   });
   const written = useRef<Written>(emptyWritten());
@@ -72,6 +75,7 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
       if ('error' in r) { s.dirty = true; setStatus('idle'); setError(r.error); return false; }
       const moved = r.file !== s.ref?.file;
       if (s.frontmatter === fm) s.frontmatter = undefined;
+      setPropsError('propsError' in r && r.propsError ? r.propsError : null);
       s.ref = r;
       setRef(r);
       setFrontmatter(r.frontmatter);
@@ -132,6 +136,7 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
       setRef(n);
       setFrontmatter(n.frontmatter);
       setRich(isLossless(n.body));
+      live.current.rich = isLossless(n.body);
       setReadOnly(n.readOnly);
       if (n.date && !Number.isNaN(Date.parse(n.date))) setDate(new Date(n.date));
       setLoaded(true);
@@ -152,7 +157,9 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
         // only this turn is labeled, against the reads in its own window
         const label = labelFor(timed, h.turns.filter((t) => t.id !== timed.id && t.startMs <= timed.startMs), h.reads, h.others, { self: h.self });
         const turn = { id: timed.id, channel: e.channel, text: e.text, replace: e.replace, label };
-        append((b) => appendTurn(b, written.current, turn));
+        // rich text: the editor writes the turn by position and keeps the caret; plain text: the string model
+        if (live.current.rich && richEditor.current) richEditor.current.recordTurn(turn);
+        else append((b) => appendTurn(b, written.current, turn));
       }),
       window.quorum.onCallSpeakers((r) => {
         if (!live.current.rec.screen) return;
@@ -181,7 +188,8 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
     window.addEventListener('click', shut);
     return () => window.removeEventListener('click', shut);
   }, [menu]);
-  useEffect(() => { if (loaded && !openFile) editor.current?.focus(); }, [loaded, openFile]);
+  // a new note puts the cursor in the body: the rich editor focuses itself (autoFocus), the plain one here
+  useEffect(() => { if (loaded && !openFile && !rich) editor.current?.focus(); }, [loaded, openFile, rich]);
   useLayoutEffect(() => {
     const ta = editor.current;
     if (!ta) return;
@@ -214,6 +222,9 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
     s.closing = true;
     // a recording that is running, or still starting, stops before anything else
     if (s.rec.audio || s.rec.screen || s.starting) setRec(await window.quorum.recordStop());
+    // the rich editor hands over its latest markdown before the last save
+    const md = richEditor.current?.flush();
+    if (md !== undefined && md !== s.body) editBody(md);
     if (timer.current) { window.clearTimeout(timer.current); timer.current = null; }
     await save();
     if (s.conflict) await copyText().catch(() => {});
@@ -273,7 +284,7 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
             </div>
             )}
           </div>
-          {ref && <Properties value={frontmatter} readOnly={readOnly || status === 'conflict'} onChange={editProps} />}
+          {ref && <Properties value={frontmatter} readOnly={readOnly || status === 'conflict'} error={propsError} onChange={editProps} />}
           {error && <p className="set-error" role="alert">{error}</p>}
           {unsaved && (
             <p className="set-error" role="alert">
@@ -293,7 +304,7 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
           {readOnly && ref && <p className="muted">This note has withheld lines, so it opens read-only here. Edit it in the vault.</p>}
           {!rich && loaded && <p className="muted note-plain">Opened as plain text, so saving keeps this note's markdown exactly as it is.</p>}
           {rich && loaded ? (
-            <NoteEditor value={body} onChange={editBody} readOnly={readOnly}
+            <NoteEditor ref={richEditor} value={body} onChange={editBody} readOnly={readOnly} autoFocus={!openFile}
               placeholder={canRecord ? 'Start writing, or press Record to transcribe into this note. Type / for blocks, [[ to link a note.' : 'Start writing. Type / for blocks, [[ to link a note.'} />
           ) : preview ? (
             body.trim() ? <Markdown text={body} headings /> : <p className="muted">Nothing written yet.</p>

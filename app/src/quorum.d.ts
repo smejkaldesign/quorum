@@ -233,7 +233,7 @@ export type CallSpeakersEvent = { at: number; app: string; names: string[]; acti
 // a note opened in the note view; hash is the file as read, so a save can tell it changed on disk
 export type HandNoteRef = { file: string; hash: string; rel: string; app: string; url: string; frontmatter: string };
 export type HandNote = HandNoteRef & { title: string; body: string; readOnly: boolean; date: string | null };
-export type HandNoteSave = HandNoteRef | { conflict: true } | { error: string };
+export type HandNoteSave = (HandNoteRef & { propsError?: string }) | { conflict: true } | { error: string };
 
 declare global {
   interface Window {

@@ -70,6 +70,23 @@ export function rewriteNote(raw, { title, body }) {
   return `${front}${front ? (gap || '').replace(/\n/g, eol) : ''}${out.replace(/\n/g, eol)}`;
 }
 
+// a note as the note view gets it: a note with withheld lines opens read-only, and every withheld line is replaced
+// before it leaves, the frontmatter included, so the Properties panel never shows one
+export const WITHHELD = '[withheld: opted-out customer]';
+export function noteForEditor(raw, { isExcluded, redact }) {
+  const readOnly = !!isExcluded(raw);
+  const { fm: rawFm } = splitNote(raw);
+  // a withheld frontmatter line keeps its key, so the panel still splits into rows; only the value is replaced
+  const eol = eolOf(raw);
+  const fm = readOnly ? rawFm.split(/\r?\n/).map((l) => {
+    if (!isExcluded(l)) return l;
+    const kv = /^([A-Za-z0-9_][A-Za-z0-9_ .-]*):/.exec(l);
+    return kv ? `${kv[1]}: ${yamlStr(WITHHELD)}` : /^\s*-\s/.test(l) ? `${l.match(/^\s*-\s/)[0]}${yamlStr(WITHHELD)}` : WITHHELD;
+  }).join(eol) : rawFm;
+  const { title, body } = splitNote(readOnly ? redact(raw) : raw);
+  return { title: isExcluded(title) ? WITHHELD : title, body, frontmatter: fm, readOnly, date: readFrontmatter(fm).date ?? null };
+}
+
 // what the Properties panel may save: nothing (no frontmatter), or one --- block that ends the way it starts
 export const validFrontmatter = (fm) => typeof fm === 'string' && (fm === '' || (/^---\n[\s\S]*\n---\n$/.test(fm) && !fm.slice(4, -4).split('\n').includes('---')));
 

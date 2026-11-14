@@ -12,6 +12,15 @@ export const toMarkdown = (doc: JSONContent): string => markdownManager().serial
 export const roundTrip = (md: string) => toMarkdown(toDoc(md));
 export const isLossless = (md: string) => roundTrip(md) === md.replace(/\s+$/, '');
 
+// which picker the text before the cursor opens: "[[query" anywhere in the line links a note; "/query" opens the
+// block commands only when the slash starts the block or follows a space, so a path or a date like 1/2 types normally
+export function pickerQuery(before: string): { kind: 'link' | 'slash'; query: string; typed: string } | null {
+  const link = /\[\[([^\]\n[]*)$/.exec(before);
+  if (link) return { kind: 'link', query: link[1], typed: `[[${link[1]}` };
+  const slash = /(?:^|\s)\/(\w*)$/.exec(before);
+  return slash ? { kind: 'slash', query: slash[1], typed: `/${slash[1]}` } : null;
+}
+
 // the top-level block where two versions of the note first differ, given each block's markdown in the current doc.
 // Blocks are joined by a blank line; everything before the returned index is unchanged and keeps its place (and the
 // cursor in it), everything from it on is replaced. Record only ever changes the end, so this is the last block or

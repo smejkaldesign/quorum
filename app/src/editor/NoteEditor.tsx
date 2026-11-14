@@ -1,15 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import { Placeholder } from '@tiptap/extensions';
 import type { TreeItem } from '../quorum';
 import { noteExtensions } from './extensions';
-import { firstChangedBlock, toDoc, toMarkdown } from './markdown';
+import { firstChangedBlock, pickerQuery, toDoc, toMarkdown } from './markdown';
 import { linkName } from './frontmatter';
+import { emptyTail, mapTail, recordTurn, type TailModel } from './record';
+import type { Turn } from '../noteRecord';
 
-// The note view's rich editor. value is the note body as markdown; every edit comes back through onChange as
-// markdown. A value that changes from outside (Record appending) replaces only the blocks from the first changed one
-// to the end, so the cursor and everything above it stay put. Typing [[ opens a picker of vault notes, and / at the
-// start of an empty line opens the block commands; the toolbar holds the same commands with their shortcuts.
+const RECORD_META = 'quorumRecord';
+
+// The note view's rich editor. value is the note body as markdown; edits come back through onChange as markdown, a
+// moment after typing stops (flush() hands it over at once). Record writes through recordTurn (editor/record.ts),
+// which tracks each turn's paragraphs by position, so the selection and scroll stay put. A value that changes from
+// outside replaces only the blocks from the first changed one to the end. Typing [[ opens a picker of vault notes, and / at the
+// start of a block or after a space opens the block commands; the toolbar holds the same commands with their shortcuts.
 
 type Command = { id: string; label: string; keys: string; run: (e: Editor) => void };
 const COMMANDS: Command[] = [
@@ -33,35 +38,53 @@ const MARKS = [
 type Menu = { kind: 'link' | 'slash'; query: string; from: number; to: number; x: number; y: number; index: number } | null;
 const flatten = (items: TreeItem[], out: string[] = []) => { for (const it of items) { if (it.dir) flatten(it.children ?? [], out); else if (it.path.endsWith('.md')) out.push(it.path); } return out; };
 
-// the open picker's state from the text before the cursor: "[[query" anywhere in the line, or "/query" as the whole line
+// the open picker's state from the text before the cursor: "[[query" anywhere in the line, or "/query" typed at the
+// start of the block or after a space
 function menuAt(editor: Editor): Menu {
   const { state, view } = editor;
   const { $from, empty } = state.selection;
   if (!empty || !$from.parent.isTextblock) return null;
   const before = $from.parent.textBetween(0, $from.parentOffset, undefined, '￼');
-  const link = /\[\[([^\]\n[]*)$/.exec(before);
-  const slash = /^\/(\w*)$/.exec(before);
-  const m = link ?? slash;
-  if (!m) return null;
-  const from = $from.pos - m[0].length;
+  const p = pickerQuery(before);
+  if (!p) return null;
   const at = view.coordsAtPos($from.pos);
-  return { kind: link ? 'link' : 'slash', query: m[1], from, to: $from.pos, x: at.left, y: at.bottom + 6, index: 0 };
+  return { kind: p.kind, query: p.query, from: $from.pos - p.typed.length, to: $from.pos, x: at.left, y: at.bottom + 6, index: 0 };
 }
 
-export function NoteEditor({ value, onChange, readOnly, placeholder }: { value: string; onChange: (md: string) => void; readOnly: boolean; placeholder: string }) {
+// what the note view can ask of the editor: write a Record turn at the end, hand over the latest markdown now, focus
+export type NoteEditorHandle = { recordTurn: (turn: Turn) => void; flush: () => string; focus: () => void };
+
+const SERIALIZE_AFTER = 250;
+
+export const NoteEditor = forwardRef<NoteEditorHandle, { value: string; onChange: (md: string) => void; readOnly: boolean; placeholder: string; autoFocus?: boolean }>(function NoteEditor({ value, onChange, readOnly, placeholder, autoFocus }, handle) {
   const emitted = useRef(value);
   const applying = useRef(false);
+  const tail = useRef<TailModel>(emptyTail());
+  const serializeTimer = useRef<number | null>(null);
   const [menu, setMenu] = useState<Menu>(null);
   const menuRef = useRef<Menu>(null);
-  menuRef.current = menu;
   const [notes, setNotes] = useState<string[]>([]);
   useEffect(() => { window.quorum.vaultTree().then((t) => setNotes(flatten(t ?? []))).catch(() => {}); }, []);
+  const onChangeRef = useRef(onChange);
+  useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
 
+  // parsed once per mount; later values reach the document through the sync below
+  const [initial] = useState(() => toDoc(value));
   const extensions = useMemo(() => [...noteExtensions(), Placeholder.configure({ placeholder })], [placeholder]);
+
+  // the markdown is written on a short pause, and at once when the view asks (Back, a save)
+  function serialize(ed: Editor | null): string {
+    if (serializeTimer.current) { window.clearTimeout(serializeTimer.current); serializeTimer.current = null; }
+    if (!ed) return emitted.current;
+    const md = toMarkdown(ed.getJSON());
+    if (md !== emitted.current) { emitted.current = md; onChangeRef.current(md); }
+    return md;
+  }
   const editor = useEditor({
     extensions,
-    content: toDoc(value),
+    content: initial,
     editable: !readOnly,
+    autofocus: autoFocus ? 'end' : false,
     immediatelyRender: true,
     // the toolbar shows which marks and blocks are on at the cursor
     shouldRerenderOnTransaction: true,
@@ -69,21 +92,38 @@ export function NoteEditor({ value, onChange, readOnly, placeholder }: { value: 
       attributes: { class: 'note-rich', 'aria-label': 'Note' },
       handleKeyDown: (_view, e) => keyInMenu(e),
     },
-    onUpdate: ({ editor: ed }) => {
-      setMenu(menuAt(ed));
-      if (applying.current) return;
-      const md = toMarkdown(ed.getJSON());
-      if (md === emitted.current) return;
-      emitted.current = md;
-      onChange(md);
+    onTransaction: ({ transaction }) => {
+      // the turns Record wrote follow every other edit
+      if (transaction.docChanged && !transaction.getMeta(RECORD_META)) tail.current = mapTail(tail.current, transaction.mapping);
     },
-    onSelectionUpdate: ({ editor: ed }) => setMenu(menuAt(ed)),
-    onBlur: () => setTimeout(() => setMenu(null), 150),
+    onUpdate: ({ editor: ed }) => {
+      const m = menuAt(ed);
+      menuRef.current = m;
+      setMenu(m);
+      if (applying.current) return;
+      if (serializeTimer.current) window.clearTimeout(serializeTimer.current);
+      serializeTimer.current = window.setTimeout(() => serialize(ed), SERIALIZE_AFTER);
+    },
+    onSelectionUpdate: ({ editor: ed }) => { const m = menuAt(ed); menuRef.current = m; setMenu(m); },
+    onBlur: ({ editor: ed }) => { serialize(ed); setTimeout(() => { menuRef.current = null; setMenu(null); }, 150); },
   });
 
-  useEffect(() => { editor?.setEditable(!readOnly); }, [editor, readOnly]);
+  useImperativeHandle(handle, () => ({
+    recordTurn: (turn) => {
+      if (!editor || readOnly) return;
+      const r = recordTurn(editor.state, tail.current, turn);
+      if (!r) return;
+      tail.current = r.model;
+      if (r.tr.docChanged) editor.view.dispatch(r.tr.setMeta(RECORD_META, true));
+    },
+    flush: () => serialize(editor),
+    focus: () => { editor?.commands.focus('end'); },
+  }), [editor, readOnly]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // a value from outside: replace from the first changed top-level block to the end
+  useEffect(() => { editor?.setEditable(!readOnly); }, [editor, readOnly]);
+  useEffect(() => () => { if (serializeTimer.current) window.clearTimeout(serializeTimer.current); }, []);
+
+  // a value from outside the editor: replace from the first changed top-level block to the end
   useEffect(() => {
     if (!editor || value === emitted.current) return;
     const doc = editor.state.doc;
@@ -92,17 +132,15 @@ export function NoteEditor({ value, onChange, readOnly, placeholder }: { value: 
     const { index, offset } = firstChangedBlock(blocks, emitted.current, value);
     let from = 0;
     doc.forEach((n, pos, i) => { if (i < index) from = pos + n.nodeSize; });
-    const tail = value.slice(offset);
-    const nodes = tail.trim() ? (toDoc(tail).content ?? []).map((j) => editor.schema.nodeFromJSON(j)) : [];
+    const rest = value.slice(offset);
+    const nodes = rest.trim() ? (toDoc(rest).content ?? []).map((j) => editor.schema.nodeFromJSON(j)) : [];
     applying.current = true;
     try {
       const tr = editor.state.tr;
       if (nodes.length) tr.replaceWith(from, doc.content.size, nodes); else if (from < doc.content.size) tr.delete(from, doc.content.size);
       editor.view.dispatch(tr);
     } finally { applying.current = false; }
-    const md = toMarkdown(editor.getJSON());
-    emitted.current = md;
-    if (md !== value) onChange(md);
+    serialize(editor);
   }, [editor, value]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const items = useMemo(() => {
@@ -126,19 +164,24 @@ export function NoteEditor({ value, onChange, readOnly, placeholder }: { value: 
     }));
   }, [menu, notes, editor]);
   const itemsRef = useRef(items);
-  itemsRef.current = items;
+  useEffect(() => { itemsRef.current = items; }, [items]);
 
   function keyInMenu(e: KeyboardEvent): boolean {
     const m = menuRef.current;
     const list = itemsRef.current;
     if (!m || !list.length) return false;
+    const close = () => { menuRef.current = null; setMenu(null); };
+    if (e.key === 'Escape') { close(); return true; }
+    // a bare "/" is text until something is typed after it: Enter starts a new line
+    if (m.kind === 'slash' && !m.query && e.key === 'Enter') { close(); return false; }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       const step = e.key === 'ArrowDown' ? 1 : -1;
-      setMenu({ ...m, index: (m.index + step + list.length) % list.length });
+      const next = { ...m, index: (m.index + step + list.length) % list.length };
+      menuRef.current = next;
+      setMenu(next);
       return true;
     }
-    if (e.key === 'Enter' || e.key === 'Tab') { list[Math.min(m.index, list.length - 1)].run(); setMenu(null); return true; }
-    if (e.key === 'Escape') { setMenu(null); return true; }
+    if (e.key === 'Enter' || e.key === 'Tab') { list[Math.min(m.index, list.length - 1)].run(); close(); return true; }
     return false;
   }
 
@@ -171,6 +214,6 @@ export function NoteEditor({ value, onChange, readOnly, placeholder }: { value: 
       )}
     </div>
   );
-}
+});
 
 const TB_LABEL: Record<string, string> = { h1: 'H1', h2: 'H2', h3: 'H3', bullet: '•', ordered: '1.', task: '☑', quote: '❝', code: '{ }' };
