@@ -93,6 +93,18 @@ describe('quorum://kb-file links', () => {
   });
 });
 
+describe('creating a hosted KB', () => {
+  it('calls kb_create_hosted with the team when one is given, and refuses a member', async () => {
+    const { account, calls } = fakeAccount({ rpc: { kb_create_hosted: { id: KB, name: 'Wiki', kind: 'general', source: { kind: 'hosted' }, role: 'admin', writable: true } } });
+    account.state().workspace.role = 'admin';
+    const h = createKbHosted({ account }).handlers;
+    expect((await h['kb-hosted-create'](' Wiki ', 'T1')).kb).toMatchObject({ id: KB, hosted: true, writable: true });
+    expect((await h['kb-hosted-create']('Wiki')).kb.id).toBe(KB);
+    expect(calls.filter((c) => c[1] === 'kb_create_hosted').map((c) => c[2])).toEqual([{ workspace_id: 'W1', name: 'Wiki', team_id: 'T1' }, { workspace_id: 'W1', name: 'Wiki', team_id: null }]);
+    expect((await createKbHosted(fakeAccount()).handlers['kb-hosted-create']('Wiki')).error).toMatch(/Only owners and admins/);
+  });
+});
+
 describe('saving a hosted note', () => {
   it('creates a note with a new id and no expected hash', async () => {
     const { account, calls } = fakeAccount({ rpc: { kb_hosted_note_save: (a) => ({ ok: true, note: row({ id: a.note_id, hash: 'h1', body: `${fm('Setup')}one\n` }) }) } });

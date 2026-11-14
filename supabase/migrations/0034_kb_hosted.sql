@@ -7,7 +7,7 @@
 --    folders in a hosted KB; they do not change who reads it and do not delete it. The role is accepted on hosted KBs
 --    only, since the notes of every other KB come from its source. can_edit_kb_as is the one definition of write
 --    rights: a KB admin (can_admin_kb_as, 0032) or an editor grant.
--- 2. kb_create_hosted makes an empty hosted KB (owners and admins, on a paid plan). kb_source_set, kb_note_assign and
+-- 2. kb_create_hosted makes an empty hosted KB (owners and admins, on a paid plan), optionally a team's. kb_source_set, kb_note_assign and
 --    the table API cannot move a note into or out of a hosted KB or change one: a trigger refuses every write to a
 --    hosted KB's notes from a signed-in session unless it comes through the functions here (quorum.kb_system).
 -- 3. Saving a note takes the hash the editor opened (expected_hash). When the note changed since, nothing is written
@@ -136,14 +136,16 @@ begin
 end $$;
 
 -- 2. hosted KBs and their notes ---------------------------------------------------------------------------------------
-create or replace function public.kb_create_hosted(workspace_id public.ulid, name text) returns jsonb
+-- team_id makes the hosted KB a team's KB. kb_create checks it: with no teams table yet (0024) it refuses any team,
+-- and once teams exist (0035) it takes a team of this workspace, whose members read the KB and whose leads manage it
+create or replace function public.kb_create_hosted(workspace_id public.ulid, name text, team_id public.ulid default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
 #variable_conflict use_column
 declare k public.ulid;
 begin
   if not public.is_admin(kb_create_hosted.workspace_id) then raise exception 'Only owners and admins can create a knowledge base'; end if;
   if not public.kb_plan_active(kb_create_hosted.workspace_id) then raise exception 'Knowledge bases hosted by Quorum are part of Quorum Cloud'; end if;
-  k := (public.kb_create(kb_create_hosted.workspace_id, kb_create_hosted.name, 'general', null)) ->> 'id';
+  k := (public.kb_create(kb_create_hosted.workspace_id, kb_create_hosted.name, 'general', kb_create_hosted.team_id)) ->> 'id';
   update public.knowledge_bases x set source = jsonb_build_object('kind', 'hosted', 'set_by', auth.uid(), 'created_at', now()) where x.id = k;
   return public.kb_shape(k);
 end $$;
@@ -534,7 +536,7 @@ create policy kb_files_objects_delete on storage.objects for delete to authentic
 -- grants --------------------------------------------------------------------------------------------------------------
 do $$ declare f text; begin
   foreach f in array array[
-    'can_edit_kb(public.ulid)', 'kb_shape(public.ulid)', 'kb_set_access(public.ulid, jsonb)', 'kb_create_hosted(public.ulid, text)', 'kb_source_set(public.ulid, jsonb)',
+    'can_edit_kb(public.ulid)', 'kb_shape(public.ulid)', 'kb_set_access(public.ulid, jsonb)', 'kb_create_hosted(public.ulid, text, public.ulid)', 'kb_source_set(public.ulid, jsonb)',
     'kb_hosted_note_save(public.ulid, public.ulid, public.ulid, text, text, text)', 'kb_hosted_note_move(public.ulid, public.ulid)', 'kb_hosted_note_delete(public.ulid, text)',
     'kb_folder_create(public.ulid, public.ulid, text, integer)', 'kb_folder_rename(public.ulid, text)', 'kb_folder_move(public.ulid, public.ulid, integer, boolean)', 'kb_folder_delete(public.ulid)',
     'kb_delete(public.ulid)', 'kb_files_usage(public.ulid)', 'kb_file_begin(public.ulid, text, text, bigint)', 'kb_file_done(public.ulid)', 'kb_file_remove(public.ulid)'] loop

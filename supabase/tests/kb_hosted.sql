@@ -63,6 +63,14 @@ end $$;
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000f1');
 select pg_temp.put('wiki', public.kb_create_hosted('01KF00000000000000000000WS', 'Wiki') ->> 'id');
 select pg_temp.put('docs', public.kb_create('01KF00000000000000000000WS', 'Docs') ->> 'id');
+-- a team's hosted KB: kb_create checks the team (refused before teams exist, 0035 takes one of this workspace)
+do $$ begin
+  if to_regclass('public.teams') is null then
+    perform pg_temp.expect_error($q$select public.kb_create_hosted('01KF00000000000000000000WS', 'Team wiki', '01KF0000000000000000000T01')$q$, 'Teams are not available yet');
+  else
+    perform pg_temp.expect_error($q$select public.kb_create_hosted('01KF00000000000000000000WS', 'Team wiki', '01KF0000000000000000000T01')$q$, 'not in this workspace');
+  end if;
+end $$;
 select pg_temp.check((select source ->> 'kind' from public.knowledge_bases where id = pg_temp.id('wiki')) = 'hosted', 'the new KB is hosted');
 select pg_temp.check((public.kb_shape(pg_temp.id('wiki')) ->> 'writable')::boolean, 'the owner may write it');
 select pg_temp.expect_error($$select public.kb_source_set(pg_temp.id('wiki'), '{"kind": "github", "url": "https://github.com/o/r"}')$$, 'written in Quorum');

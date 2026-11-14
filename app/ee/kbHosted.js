@@ -5,7 +5,7 @@
 //
 // IPC API (preload exposes each as window.quorum.<camelName>). Every handler resolves to { error } on a refusal.
 //
-//   kb-hosted-create      (name)                                        -> { kb }         owners and admins, paid plan
+//   kb-hosted-create      (name, teamId?)                               -> { kb }         owners and admins, paid plan
 //   kb-hosted-note        (noteId)                                      -> { note }
 //   kb-hosted-note-save   ({ kbId, noteId?, folderId, title, content, baseHash, baseContent })
 //                                                                       -> { note } | { conflict }
@@ -89,11 +89,12 @@ export function createKbHosted({ account, log = () => {}, pickFile = async () =>
   };
 
   const handlers = {
-    'kb-hosted-create': call(true, 'The knowledge base could not be created.', async (name) => {
+    // teamId makes it a team's KB (migration 0035); the server checks the team is in this workspace
+    'kb-hosted-create': call(true, 'The knowledge base could not be created.', async (name, teamId = null) => {
       const n = String(name ?? '').trim();
       if (!n) return { error: 'A knowledge base needs a name.' };
       if (n.length > 120) return { error: 'That name is too long.' };
-      return { kb: shapeKb(await rpc('kb_create_hosted', { workspace_id: ws(), name: n })) };
+      return { kb: shapeKb(await rpc('kb_create_hosted', { workspace_id: ws(), name: n, team_id: teamId || null })) };
     }),
     'kb-hosted-note': call(false, 'The note could not be opened.', async (noteId) => {
       const { data, error } = await account.client().from('notes').select('id, kb_id, folder_id, path, frontmatter, body, hash, updated_at')

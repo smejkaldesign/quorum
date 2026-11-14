@@ -550,7 +550,7 @@ declare global {
       kbAccessSet(kbId: string, access: KbAccessDraft[]): Promise<Result & { access?: KbAccess[] }>;
       kbNoteAssign(draft: { noteId?: string; path?: string; kbId: string | null; folderId?: string | null }): Promise<Result & { placement?: KbPlacement }>;
       kbNotes(kbId: string): Promise<Result & { notes?: KbNote[] }>;
-      kbHostedCreate(name: string): Promise<Result & { kb?: Kb }>;
+      kbHostedCreate(name: string, teamId?: string | null): Promise<Result & { kb?: Kb }>;
       kbHostedNote(noteId: string): Promise<Result & { note?: KbHostedNote }>;
       kbHostedNoteSave(draft: KbHostedSave): Promise<Result & { note?: KbHostedNote; conflict?: KbHostedConflict }>;
       kbHostedNoteMove(noteId: string, folderId: string | null): Promise<Result & { note?: KbHostedNote }>;

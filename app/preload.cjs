@@ -250,7 +250,7 @@ contextBridge.exposeInMainWorld('quorum', {
   kbNoteAssign: (draft) => ipcRenderer.invoke('kb-note-assign', draft),
   kbNotes: (kbId) => ipcRenderer.invoke('kb-notes', kbId),
   // knowledge bases hosted by Quorum: notes and attachments written in the Knowledge tab (hosted edition; ee/kbHosted.js)
-  kbHostedCreate: (name) => ipcRenderer.invoke('kb-hosted-create', name),
+  kbHostedCreate: (name, teamId) => ipcRenderer.invoke('kb-hosted-create', name, teamId),
   kbHostedNote: (noteId) => ipcRenderer.invoke('kb-hosted-note', noteId),
   kbHostedNoteSave: (draft) => ipcRenderer.invoke('kb-hosted-note-save', draft),
   kbHostedNoteMove: (noteId, folderId) => ipcRenderer.invoke('kb-hosted-note-move', noteId, folderId),
