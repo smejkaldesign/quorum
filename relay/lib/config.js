@@ -16,6 +16,16 @@ export const config = {
   // billing (billing.js): the Stripe secret, the webhook signing secret, the seat and pack price ids, where Checkout returns to
   // platform connections (connect.js): the Zoom app's client credentials for the token exchange and its webhook secret token
   connect: { zoom: { clientId: env('ZOOM_CLIENT_ID'), clientSecret: env('ZOOM_CLIENT_SECRET'), webhookSecret: env('ZOOM_WEBHOOK_SECRET') } },
+  // personal connectors (oauth.js): the client pairs of Quorum's own OAuth apps for the providers whose code exchange
+  // needs a secret, the address this relay answers on (its callback URLs are built from it), and any extra redirect
+  // URIs a self-hosted or development relay accepts, comma separated
+  oauth: {
+    notion: { clientId: env('NOTION_CLIENT_ID'), clientSecret: env('NOTION_CLIENT_SECRET') },
+    slack: { clientId: env('SLACK_CLIENT_ID'), clientSecret: env('SLACK_CLIENT_SECRET') },
+    github: { clientId: env('GITHUB_CLIENT_ID'), clientSecret: env('GITHUB_CLIENT_SECRET') },
+  },
+  publicUrl: env('RELAY_PUBLIC_URL', 'https://relay.quorum.watch').replace(/\/+$/, ''),
+  oauthExtraRedirects: env('OAUTH_EXTRA_REDIRECT_URIS', '').split(',').map((s) => s.trim()).filter(Boolean),
   stripe: { key: env('STRIPE_SECRET_KEY'), webhookSecret: env('STRIPE_WEBHOOK_SECRET'), seatPrice: env('STRIPE_SEAT_PRICE'), packPrice: env('STRIPE_PACK_PRICE'), returnUrl: env('BILLING_RETURN_URL', 'https://quorum.watch').replace(/\/+$/, '') },
   // beta access (platform.js): the browser origins allowed to call the request intake and the code email, the Resend key
   // and sender for that email, the owner's address for the new-signup notice, and the download link it carries
