@@ -750,6 +750,8 @@ ul { margin: 0; padding: 0; list-style: none; }
   .nav { gap: 16px; font-size: 14px; }
   .nav a:first-child { display: none; }
   .capture { flex-direction: column; }
+  /* stacked, flex: 1 would size the input along the column and override its 46px height */
+  .capture input { flex: none; }
   .actions .btn { width: 100%; }
 }
 
@@ -768,7 +770,6 @@ ul { margin: 0; padding: 0; list-style: none; }
 /* the beta signup in the hero: a label, the capture centered, and the download link for people who have a code */
 .cta-label { margin: 40px 0 10px; font-size: 15px; font-weight: 500; color: var(--text); }
 .capture-hero { max-width: 460px; margin: 0 auto; }
-.capture-hero input { flex: 1; }
 .cta-note { margin: 12px auto 0; max-width: 460px; }
 .cta-links { margin: 18px 0 0; font-size: 14px; color: var(--muted); }
 .cta-links a { color: var(--text-soft); text-decoration: underline; text-underline-offset: 3px; }
