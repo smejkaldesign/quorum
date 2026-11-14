@@ -302,8 +302,9 @@ export function folderLabel(kb: Kb, folderId: string | null | undefined): string
 }
 
 // the line after an add or a sync: how many files were written, and what was skipped
-export function driveSummary(verb: string, n: number, skipped: KbImportSkipped[]): { headline: string; skipped: KbImportSkipped[] } {
+export function driveSummary(verb: string, n: number, skipped: KbImportSkipped[], unchanged = 0): { headline: string; skipped: KbImportSkipped[] } {
   const parts = [`${verb} ${n} ${n === 1 ? 'file' : 'files'} from Google Drive`];
+  if (unchanged) parts.push(`${unchanged} unchanged since the last sync`);
   if (skipped.length) parts.push(`skipped ${skipped.length}`);
   return { headline: `${parts.join(', ')}.`, skipped };
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Kb, KbDriveFile, KbDriveResult, KbDriveStatus, KbImportSkipped } from '../../src/quorum';
 import { openConnectors } from '../../src/connectorsNav';
 import { IconDoc } from '../../src/icons';
@@ -25,6 +25,11 @@ export function DrivePanel({ kb, folderId, onChanged, onDone }: { kb: Kb; folder
   const [error, setError] = useState('');
   const [result, setResult] = useState<{ headline: string; skipped: KbImportSkipped[] } | null>(null);
   const [removing, setRemoving] = useState<KbDriveFile | null>(null);
+  // a picker still waiting in the browser when the panel closes (Done, Escape, the scrim) is ended, which frees its port
+  const waiting = useRef(false);
+  useEffect(() => () => { if (waiting.current) { waiting.current = false; window.quorum.kbDriveCancel?.().catch(() => {}); } }, []);
+  // after a change: the parent reloads when it says how, otherwise every KB view hears about it, never both
+  const changed = () => { if (onChanged) onChanged(); else announceKbChange(); };
 
   const load = useCallback(async () => {
     try { setStatus(await window.quorum.kbDriveStatus()); } catch { setStatus({ connected: false, available: false, account: null }); }
@@ -43,14 +48,15 @@ export function DrivePanel({ kb, folderId, onChanged, onDone }: { kb: Kb; folder
     if (r.error) { setError(r.error); return; }
     if (r.canceled) { setResult({ headline: 'Nothing was picked.', skipped: [] }); return; }
     if (r.files) setFiles(r.files);
-    setResult(driveSummary(verb, r.synced ?? 0, r.skipped ?? []));
-    announceKbChange();
-    onChanged?.();
+    setResult(driveSummary(verb, r.synced ?? 0, r.skipped ?? [], r.unchanged ?? 0));
+    changed();
   };
   const run = async (kind: string, fn: () => Promise<KbDriveResult> | undefined, verb: string, fallback: string) => {
     if (busy) return;
     setBusy(kind); setError(''); setResult(null);
+    waiting.current = kind === 'add';
     const r = await kbCall(fn, fallback);
+    waiting.current = false;
     setBusy(null);
     finish(r, verb);
   };
@@ -64,12 +70,10 @@ export function DrivePanel({ kb, folderId, onChanged, onDone }: { kb: Kb; folder
     setBusy(null);
     if (r.error) { setError(r.error); return; }
     setFiles(r.files ?? []);
-    announceKbChange();
-    onChanged?.();
+    changed();
   };
 
   const choices = folderChoices(kb);
-  const mine = (files ?? []).filter((f) => f.mine);
   return (
     <div className="kb-panel kb-drive">
       {status === null && <p className="set-hint">Loading…</p>}
@@ -91,7 +95,7 @@ export function DrivePanel({ kb, folderId, onChanged, onDone }: { kb: Kb; folder
             ) : <span className="muted">Into {folderLabel(kb, folderId)}</span>}
             <button className="pill primary" disabled={!!busy} onClick={add}>{busy === 'add' ? 'Waiting for Google Drive…' : 'Choose files in Google Drive'}</button>
           </div>
-          {busy === 'add' && <p className="kb-hint muted" role="status">Pick the files in the browser tab that opened, then come back here.</p>}
+          {busy === 'add' && <p className="kb-hint muted" role="status">Pick the files in the browser tab that opened, then come back here. Cancel ends the picker.</p>}
         </>
       )}
       {result && (
@@ -110,18 +114,18 @@ export function DrivePanel({ kb, folderId, onChanged, onDone }: { kb: Kb; folder
                 <IconDoc width={16} height={16} />
                 <span className="kb-drive-name">
                   {f.url ? <button className="link-btn" title="Open in Google Drive" onClick={() => window.quorum.openExternal(f.url!)}>{f.name}</button> : f.name}
-                  <em className="muted">{folderLabel(kb, f.folderId)} · {busy === f.fileId ? 'Syncing…' : `Synced ${syncedOn(f.syncedAt)}`}{f.mine ? '' : ' · attached by another admin'}</em>
+                  <em className="muted">{folderLabel(kb, f.folderId)} · {busy === f.fileId ? 'Syncing…' : `Synced ${syncedOn(f.syncedAt)}`}</em>
                 </span>
-                {f.mine && status?.connected && <button className="pill small" disabled={!!busy} onClick={() => syncOne(f)}>Sync now</button>}
-                {f.mine && <button className="pill small ghost" disabled={!!busy} onClick={() => setRemoving(f)}>Remove</button>}
+                {status?.connected && <button className="pill small" disabled={!!busy} onClick={() => syncOne(f)}>Sync now</button>}
+                <button className="pill small ghost" disabled={!!busy} onClick={() => setRemoving(f)}>Remove</button>
               </li>
             ))}
           </ul>
         </>
       )}
       <div className="kb-form-row">
-        {mine.length > 1 && status?.connected && <button className="pill" disabled={!!busy} onClick={syncAll}>{busy === 'sync' ? 'Syncing…' : 'Sync all now'}</button>}
-        <button className="pill ghost" disabled={busy === 'add' || busy === 'sync'} onClick={onDone}>Done</button>
+        {(files ?? []).length > 1 && status?.connected && <button className="pill" disabled={!!busy} onClick={syncAll}>{busy === 'sync' ? 'Syncing…' : 'Sync all now'}</button>}
+        <button className="pill ghost" disabled={!!busy && busy !== 'add'} onClick={onDone}>{busy === 'add' ? 'Cancel' : 'Done'}</button>
       </div>
       {removing && <KbConfirm title={`Remove ${removing.name}?`} body="Its note leaves the knowledge base and the readers' vaults. The file stays in Google Drive." action="Remove" onDone={(ok) => (ok ? remove(removing) : setRemoving(null))} />}
     </div>

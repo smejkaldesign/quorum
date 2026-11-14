@@ -191,10 +191,10 @@ export type Kb = { id: string; name: string; kind: KbKind; teamId: string | null
 export type KbImportSource = { kind: 'github'; url: string; branch?: string } | { kind: 'zip'; path: string };
 export type KbImportRequest = { kbId?: string; name?: string; source?: KbImportSource; folderId?: string };
 export type KbImportSkipped = { path: string; reason: string };
-// a Google Drive file attached to a KB folder (ee/kbDrive.js); mine says the caller attached it and so syncs it
-export type KbDriveFile = { fileId: string; noteId: string; name: string; folderId: string | null; url: string | null; syncedAt: string | null; modifiedAt: string | null; mine: boolean };
+// a Google Drive file attached to a KB folder (ee/kbDrive.js); any admin of the KB syncs or removes it
+export type KbDriveFile = { fileId: string; noteId: string; name: string; folderId: string | null; url: string | null; syncedAt: string | null; modifiedAt: string | null };
 export type KbDriveStatus = { connected: boolean; available: boolean; account: string | null };
-export type KbDriveResult = Result & { files?: KbDriveFile[]; synced?: number; skipped?: KbImportSkipped[]; canceled?: true };
+export type KbDriveResult = Result & { files?: KbDriveFile[]; synced?: number; unchanged?: number; skipped?: KbImportSkipped[]; canceled?: true };
 export type KbImportProgress = { kbId: string; phase: 'fetching' | 'reading' | 'writing' | 'done'; done: number; total: number };
 export type KbPlacement = { noteId: string; kbId: string | null; folderId: string | null; updatedAt: string | null };
 export type KbNote = { id: string; path: string; title: string; folderId: string | null; userId: string; updatedAt: string | null };
@@ -499,6 +499,7 @@ declare global {
       kbDriveStatus(): Promise<KbDriveStatus>;
       kbDriveFiles(kbId: string): Promise<Result & { files?: KbDriveFile[] }>;
       kbDriveAdd(req: { kbId: string; folderId?: string | null }): Promise<KbDriveResult>;
+      kbDriveCancel(): Promise<{ canceled: boolean }>;
       kbDriveSync(req: { kbId: string; fileId?: string }): Promise<KbDriveResult>;
       kbDriveRemove(req: { kbId: string; fileId: string }): Promise<Result & { files?: KbDriveFile[] }>;
       billingStatus(): Promise<Result & { billing?: Billing }>;

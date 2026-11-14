@@ -243,6 +243,7 @@ contextBridge.exposeInMainWorld('quorum', {
   kbDriveStatus: () => ipcRenderer.invoke('kb-drive-status'),
   kbDriveFiles: (kbId) => ipcRenderer.invoke('kb-drive-files', kbId),
   kbDriveAdd: (req) => ipcRenderer.invoke('kb-drive-add', req),
+  kbDriveCancel: () => ipcRenderer.invoke('kb-drive-cancel'),
   kbDriveSync: (req) => ipcRenderer.invoke('kb-drive-sync', req),
   kbDriveRemove: (req) => ipcRenderer.invoke('kb-drive-remove', req),
   billingStatus: () => ipcRenderer.invoke('billing-status'),
