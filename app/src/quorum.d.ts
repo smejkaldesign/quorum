@@ -41,6 +41,8 @@ export type GuardrailRule = { id: string; kind: GuardrailKind; label: string; va
 export type GuardrailsState = { rules: GuardrailRule[]; skipped: { name: string; reason: string }[]; scanned: { notes: number; at: number | null; truncated: boolean }; denials: { t: string; tool: string; path: string; reason: string }[]; summary: { on: number; toReview: number; denyDirs: number; terms: number } };
 // in-app updates (app/updater.js): off means this build has no feed (a development copy, or a Cloud build without one)
 export type UpdateState = { status: 'off' | 'idle' | 'checking' | 'downloading' | 'ready' | 'failed'; current: string; version: string | null; percent: number; notes: string | null; checkedAt: number | null; error: string | null };
+// a personal OAuth connector (sources/accounts.js); configured is false when this build has no client id for it
+export type OAuthAccount = { id: string; name: string; configured: boolean; connected: boolean; account: string | null; connectedAt: string | null; scope: string; manageUrl: string | null; error: string | null };
 export type GoogleCalendarStatus = { configured: boolean; connected: boolean; account: string | null; calendars: number; lastSyncAt: string | null; error: string | null };
 export type CalendarSettings = { source: 'mac'; days: number; enabled?: boolean; showAll?: boolean; hidden?: string[]; status?: 'granted' | 'notDetermined' | 'denied' | 'unavailable' | 'off'; google?: GoogleCalendarStatus | null };
 export type MemoryItem = { id: string; kind: string; label: string; path: string; detail: string; include: boolean | null; manual?: boolean };
@@ -368,7 +370,6 @@ declare global {
       calendarSet(next: { days?: number; enabled?: false; showAll?: boolean; hide?: string; unhideAll?: boolean }): Promise<CalendarSettings>;
       calendarPrivacy(): Promise<void>;
       calendarOpen(ev: CalendarEvent): Promise<void>;
-      gcalConnect(): Promise<GoogleCalendarStatus>;
       guardrailsGet(opts?: { fresh?: boolean }): Promise<GuardrailsState>;
       guardrailsSet(id: string, patch: { enabled?: boolean; label?: string }): Promise<Result>;
       guardrailsAdd(rule: { kind: string; value: string; label?: string }): Promise<Result & { id?: string }>;
@@ -380,7 +381,9 @@ declare global {
       updateCheck(): Promise<UpdateState>;
       updateInstall(): Promise<boolean>;
       onUpdate(cb: (s: UpdateState) => void): Unsub;
-      gcalDisconnect(): Promise<GoogleCalendarStatus>;
+      oauthAccounts(): Promise<OAuthAccount[]>;
+      oauthConnect(id: string): Promise<OAuthAccount | { error: string }>;
+      oauthDisconnect(id: string): Promise<OAuthAccount | { error: string }>;
       memoryRefreshCancel(): Promise<void>;
       memoryAdd(): Promise<Memory>;
       memoryInclude(id: string): Promise<Memory>;
