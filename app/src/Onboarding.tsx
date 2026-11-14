@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { AccountState, Brain, MeetingSourceInfo, OnboardingChecks, OnboardingStatus } from './quorum';
 import { ConnectHint } from './ConnectHint';
+import { McpPaths, useMcpOverlap } from './McpPaths';
+import { CONNECTORS, mcpPathsOf } from '../connectors/library';
 import { IconCalendar, IconCheck, IconFolder, IconFolderOpen, IconLock, IconMic, IconPerson, IconQuorum, IconShield, ProviderMark } from './icons';
 import { isCloud } from './edition';
 import { useNotetaker } from './flags';
@@ -129,6 +131,9 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain 
     if (r.error) setError(r.error); else { await loadGranola(); setNotes(await window.quorum.meetingsDir().catch(() => null)); }
     setConnecting(false);
   };
+  // the provider MCP servers the agent already has, shown before any import runs: Granola first, then the others
+  const { overlap } = useMcpOverlap({ key: brain?.root ?? '' });
+  const overlapping = brain && overlap ? CONNECTORS.filter((x) => x.status === 'available' && mcpPathsOf(x) && overlap.matches[x.id]?.length).sort((a, b) => Number(!!mcpPathsOf(b)?.ingest) - Number(!!mcpPathsOf(a)?.ingest)) : [];
   const foundText = notes ? [...notes.sources.map((x) => `${x.count} ${x.name} ${x.count === 1 ? 'note' : 'notes'}`), ...(notes.notes ? [`${notes.notes} Quorum ${notes.notes === 1 ? 'note' : 'notes'}`] : [])].join(' · ') || 'Quorum saves new meeting notes here' : '';
   return (
     <section className="onb-step">
@@ -164,6 +169,12 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain 
         </div>
       )}
       {error && <p className="set-error">{error}</p>}
+      {overlapping.length > 0 && (
+        <>
+          <div className="onb-or"><span>Already in your agent</span></div>
+          {overlapping.map((x) => <McpPaths key={x.id} connector={x} servers={overlap?.matches[x.id]} open={!!mcpPathsOf(x)?.ingest} />)}
+        </>
+      )}
       {brain && notes !== undefined && (
         <>
           <div className="onb-or"><span>Meeting notes</span></div>

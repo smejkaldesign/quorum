@@ -26,3 +26,11 @@ export function isConnected(connector: LibraryConnector, live: ConnectionLive, o
 export const NEW_NOTE_CATEGORIES: readonly string[];
 export function canNewNote(live: ConnectionLive, list?: readonly LibraryConnector[]): boolean;
 export const CONNECTORS_CHANGED: string;
+// what each path gives when the person's agent also has the provider's own MCP server
+export type McpPathRow = { id: string; label: string; connector: string; mcp: string };
+export type McpPaths = { title: string; ingest: boolean; rows: McpPathRow[]; explain: string; recommend: string; alone: string | null };
+export const MCP_PATH_ROWS: Record<string, string>;
+export const MCP_EXPLAIN_INGEST: string;
+export const MCP_RECOMMEND_INGEST: string;
+export const MCP_ALONE: string;
+export function mcpPathsOf(connector: LibraryConnector): McpPaths | null;

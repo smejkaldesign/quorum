@@ -17,3 +17,5 @@ site/app-preview/
 site/updates/cloud/*
 !site/updates/cloud/.gitkeep
 __pycache__/
+# context-mode writes this into the working folder; it is never part of the repo
+app/CLAUDE.md

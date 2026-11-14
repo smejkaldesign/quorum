@@ -1376,6 +1376,24 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .agent-import .src-status { margin: 0 0 8px; }
 .agent-tradeoffs { margin: 0 0 12px; padding-left: 18px; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .agent-tradeoffs li + li { margin-top: 4px; }
+
+/* the provider MCP the agent already has, beside the Quorum connector (McpPaths.tsx) */
+.mcp-paths { border: 1px solid var(--line-2); border-radius: 10px; padding: 10px 12px; font-size: 13px; line-height: 1.5; }
+.onb-step .mcp-paths + .mcp-paths { margin-top: 8px; }
+.mcp-paths-card { padding: 12px 14px; }
+.mcp-paths-card .mcp-paths { border: 0; padding: 0; }
+.mcp-paths-card .src-status { margin: 0; }
+.mcp-paths-check { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 10px; font-size: 12px; }
+.mcp-paths summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.mcp-paths summary strong { color: var(--text); font-weight: 500; }
+.mcp-paths summary span { color: var(--muted); font-size: 12px; }
+.mcp-paths p { margin: 8px 0 0; color: var(--muted); }
+.mcp-paths .mcp-paths-rec { color: var(--text); }
+.mcp-paths-table { width: 100%; margin-top: 10px; border-collapse: collapse; }
+.mcp-paths-table th, .mcp-paths-table td { text-align: left; vertical-align: top; padding: 6px 8px 6px 0; border-bottom: 1px solid var(--line-2); font-weight: 400; }
+.mcp-paths-table thead th { color: var(--muted); font-size: 12px; }
+.mcp-paths-table tbody th { color: var(--muted); width: 40%; }
+.mcp-paths-table tr:last-child > * { border-bottom: 0; }
 .agent-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .agent-schedule { display: flex; align-items: center; gap: 8px; margin-left: auto; color: var(--muted); font-size: 13px; }
 
