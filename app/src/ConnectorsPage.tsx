@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { AgentSchedule, Brain, CalendarSettings, MeetingSourceInfo, OAuthAccount, PlatformInfo, SourceJob } from './quorum';
+import type { AgentSchedule, Brain, CalendarSettings, McpOverlapServer, MeetingSourceInfo, OAuthAccount, PlatformInfo, SourceJob } from './quorum';
 import { TRADEOFFS } from '../sources/agent-import';
-import { CATEGORIES, CONNECTORS_CHANGED, aboutFor, connectorsFor, featuresFor, isConnected, type LibraryConnector } from '../connectors/library';
+import { CATEGORIES, CONNECTORS_CHANGED, aboutFor, connectorsFor, featuresFor, isConnected, mcpPathsOf, type LibraryConnector } from '../connectors/library';
 import { BLOCKED_SENTENCE, ORG_LABEL, ORG_SENTENCE, UNAPPROVED_LABEL, approvalOf, canConnect, hasLocalPart, hiddenFromList, isGoverned, type Approval } from '../connectors/approval';
 import { useConnectorPolicy } from './edition';
 import { useFlag } from './flags';
+import { McpAlone, McpPaths, useMcpOverlap } from './McpPaths';
 import { useMenu } from './controls';
 import { IconCheck, IconChevron, IconExternal, IconFolder, IconGrid, IconMore, IconReset } from './icons';
 
@@ -81,6 +82,8 @@ export function ConnectorsPage({ detail, onDetail, brain, onFolder, onNotes, foc
   // Cloud on a team with "approved connectors only" on: connectors the workspace did not enable are hidden unless
   // already connected (connectors/approval.js). null everywhere else, which leaves the page as it was
   const { policy, report } = useConnectorPolicy();
+  // the provider MCP servers the agent already has; a new pass each time the window gets focus
+  const overlap = useMcpOverlap({ refreshOnFocus: true, key: brain?.root ?? '' });
   const approval = (x: LibraryConnector): Approval => approvalOf(x, policy, accountConnected(x, live));
   const load = async () => {
     // the local edition has no platform handlers; the call fails and the list stays empty
@@ -107,7 +110,7 @@ export function ConnectorsPage({ detail, onDetail, brain, onFolder, onNotes, foc
     if (!focus || focus.cat === true || !loaded || detail) return;
     document.querySelector(`[data-conn-group="${focus.cat}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   }, [focus, loaded, detail]);
-  if (detail && byId[detail]) return <ConnectorDetail connector={byId[detail]} icon={icons[detail] ?? null} live={live} onChange={load} initialError={refused?.id === detail ? refused.error : ''} approval={approval(byId[detail])} />;
+  if (detail && byId[detail]) return <ConnectorDetail connector={byId[detail]} icon={icons[detail] ?? null} live={live} onChange={load} initialError={refused?.id === detail ? refused.error : ''} approval={approval(byId[detail])} mcp={overlap ? overlap.matches[detail] ?? [] : null} />;
   // what the library offers today (with meeting capture off, Meet and Teams are not built as imports yet), and
   // anything still connected whatever its status, so it can be disconnected
   const listed = (id: string) => !!byId[id] && (byId[id].status !== 'soon' || isConnected(byId[id], live)) && !hiddenFromList(byId[id], approval(byId[id]));
@@ -147,7 +150,7 @@ export function ConnectorsPage({ detail, onDetail, brain, onFolder, onNotes, foc
           <div key={g.title} className="conn-group" data-conn-group={g.cat}>
             <h4>{g.title}</h4>
             <div className="set-card conn-card">
-              {items.map((x) => <ConnectorRow key={x.id} connector={x} icon={icons[x.id] ?? null} live={live} approval={approval(x)} onChange={load} onOpen={() => onDetail(x.id)} onWrongAccount={(e) => openRefused(x.id, e)} />)}
+              {items.map((x) => <ConnectorRow key={x.id} connector={x} icon={icons[x.id] ?? null} live={live} approval={approval(x)} mcp={overlap?.matches[x.id]} onChange={load} onOpen={() => onDetail(x.id)} onWrongAccount={(e) => openRefused(x.id, e)} />)}
             </div>
           </div>
         );
@@ -228,7 +231,7 @@ function Actions({ connector: x, live, busy, act, compact }: { connector: Librar
   );
 }
 
-function ConnectorRow({ connector: x, icon, live, approval, onChange, onOpen, onWrongAccount }: { connector: LibraryConnector; icon: string | null; live: Live; approval: Approval; onChange: () => void; onOpen: () => void; onWrongAccount: (error: string) => void }) {
+function ConnectorRow({ connector: x, icon, live, approval, mcp, onChange, onOpen, onWrongAccount }: { connector: LibraryConnector; icon: string | null; live: Live; approval: Approval; mcp?: McpOverlapServer[]; onChange: () => void; onOpen: () => void; onWrongAccount: (error: string) => void }) {
   const [busy, error, act] = useAct(onChange);
   const src = sourceFor(x, live);
   const running = src?.job?.status === 'running';
@@ -256,12 +259,13 @@ function ConnectorRow({ connector: x, icon, live, approval, onChange, onOpen, on
         <IconChevron className="right conn-chev" width={14} height={14} />
       </div>
       {src?.job && <div className="conn-sub"><JobLine job={src.job} oneLine /></div>}
+      {!!mcp?.length && <div className="conn-sub"><McpPaths connector={x} servers={mcp} open={!!mcpPathsOf(x)?.ingest} /></div>}
       {error && <p className="set-error conn-sub one-line" title={error}>{error}</p>}
     </div>
   );
 }
 
-function ConnectorDetail({ connector: x, icon, live, onChange, initialError = '', approval = 'open' }: { connector: LibraryConnector; icon: string | null; live: Live; onChange: () => Promise<void>; initialError?: string; approval?: Approval }) {
+function ConnectorDetail({ connector: x, icon, live, onChange, initialError = '', approval = 'open', mcp = null }: { connector: LibraryConnector; icon: string | null; live: Live; onChange: () => Promise<void>; initialError?: string; approval?: Approval; mcp?: McpOverlapServer[] | null }) {
   const blocked = approval === 'blocked';
   // a personal connect or reconnect needs an open or approved connector; listening on this Mac is never governed
   const refusal = canConnect(approval) ? null : approval === 'org' ? ORG_SENTENCE(x.name) : BLOCKED_SENTENCE;
@@ -384,6 +388,12 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
         <div className="set-card conn-table">
           {rows.map(([k, v]) => <div key={k} className="conn-kv"><span>{k}</span><span>{v}</span></div>)}
         </div>
+      )}
+      {mcp && mcpPathsOf(x) && (mcp.length > 0 || mcpPathsOf(x)?.alone) && (
+        <>
+          <h4>Your agent's MCP</h4>
+          <div className="set-card conn-table mcp-paths-card">{mcp.length ? <McpPaths connector={x} servers={mcp} open /> : <McpAlone connector={x} />}</div>
+        </>
       )}
       {x.kind === 'mcp-source' && src?.agent && src.agent.runners.length > 0 && (!on || src.agent.schedule !== 'off') && <AgentImport source={src} busy={busy} act={act} />}
       <h4>Enables</h4>

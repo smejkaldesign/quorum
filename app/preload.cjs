@@ -116,6 +116,7 @@ contextBridge.exposeInMainWorld('quorum', {
   decisionsSet: (provider, key) => ipcRenderer.invoke('decisions-set', provider, key),
   decisionsRemove: () => ipcRenderer.invoke('decisions-remove'),
   mcpStatus: () => ipcRenderer.invoke('mcp-status'),
+  mcpOverlap: (opts) => ipcRenderer.invoke('mcp-overlap', opts),
   mcpAdd: () => ipcRenderer.invoke('mcp-add'),
   mcpRemove: () => ipcRenderer.invoke('mcp-remove'),
   cliStatus: () => ipcRenderer.invoke('cli-status'),

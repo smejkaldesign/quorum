@@ -186,3 +186,48 @@ export const canNewNote = (live, list = CONNECTORS) => list.some((x) => NEW_NOTE
 
 // the renderer event Settings › Connectors sends after a connect, disconnect or other action, so Up next reloads
 export const CONNECTORS_CHANGED = 'quorum:connectors-changed';
+
+// What each path gives when the person's agent also has the provider's own MCP server (connectors/mcpOverlap.js finds
+// it): the Quorum connector, and the provider MCP the agent calls. One row per thing a person weighs, with a plain
+// answer for each path. A connector that brings notes into the vault (ingest) gets the meeting-memory wording; an
+// account connector gets the wording for Quorum's own features. Shown on the connector's row and page in Settings >
+// Connections and in the Agent OS step of onboarding.
+export const MCP_PATH_ROWS = {
+  writes: 'Writes notes into the vault',
+  transcripts: 'Full transcripts',
+  linked: 'Linked to people, projects and daily notes',
+  optouts: 'Opted-out customers withheld',
+  home: 'Upcoming meetings on Home',
+  features: 'Quorum features',
+  live: 'Live lookups',
+};
+const MCP_PATHS = {
+  granola: { ingest: true, rows: { writes: ['Yes (summaries)', 'No'], transcripts: ['Off by default', 'Yes'], linked: ['Yes, by the keeper', 'No'], optouts: ['Yes', 'No'], live: ['No', 'Yes: search, participant filters, screenshots'] } },
+  zoom: { ingest: true, rows: { writes: ['Yes (cloud recordings, Quorum Cloud)', 'No'], transcripts: ['Yes', 'Yes'], linked: ['Yes, by the keeper', 'No'], optouts: ['Yes', 'No'], live: ['No', 'Yes'] } },
+  'google-calendar': { rows: { home: ['Yes', 'No'], features: ['Meeting titles and people on each note', 'None'], live: ['No', 'Yes'] } },
+  notion: { rows: { writes: ['No', 'No'], features: ['Soon: sends meeting notes to a Notion database', 'None'], live: ['No', 'Yes: search and read pages'] } },
+  slack: { rows: { writes: ['No', 'No'], features: ['Soon: shares meeting notes to a channel', 'None'], live: ['No', 'Yes: search and read messages'] } },
+  'google-drive': { rows: { writes: ['No', 'No'], features: ['Soon: saves meeting notes to Drive', 'None'], live: ['No', 'Yes: search and read files'] } },
+  github: { rows: { writes: ['Soon: repositories as knowledge bases', 'No'], features: ['Read-only access to the repositories you choose', 'None'], live: ['No', 'Yes: issues, pull requests and code'] } },
+  linear: { rows: { writes: ['No', 'No'], features: ['Soon: turns action items into issues', 'None'], live: ['No', 'Yes: search and change issues'] } },
+};
+export const MCP_EXPLAIN_INGEST = 'Quorum keeps your meeting memory local. It brings notes from each connector into your vault, then files, links and tidies them so your agent recalls quickly. Your agent uses the provider\'s MCP only when it needs a transcript or a live lookup. Switching note apps means signing in to the new one here; your vault and your agent stay the same.';
+export const MCP_RECOMMEND_INGEST = 'Recommended: keep the connector on for ingestion and upkeep, and keep the provider MCP for depth.';
+export const MCP_ALONE = 'With no provider MCP, the connector covers both.';
+const MCP_EXPLAIN_ACCOUNT = (n) => `Quorum uses its ${n} connection for its own features, with the token in this Mac's Keychain. Your agent uses ${n}'s MCP for live lookups.`;
+const MCP_RECOMMEND_ACCOUNT = 'Recommended: keep both. Each one does a separate job.';
+
+// the table and the copy for one connector, or null when Quorum has no comparison for it
+export function mcpPathsOf(x) {
+  const p = x && MCP_PATHS[x.id];
+  if (!p) return null;
+  const rows = Object.entries(p.rows).map(([id, [connector, mcp]]) => ({ id, label: MCP_PATH_ROWS[id], connector, mcp }));
+  return {
+    title: `Your agent also has ${x.name}'s MCP`,
+    ingest: !!p.ingest,
+    rows,
+    explain: p.ingest ? MCP_EXPLAIN_INGEST : MCP_EXPLAIN_ACCOUNT(x.name),
+    recommend: p.ingest ? MCP_RECOMMEND_INGEST : MCP_RECOMMEND_ACCOUNT,
+    alone: p.ingest ? MCP_ALONE : null,
+  };
+}

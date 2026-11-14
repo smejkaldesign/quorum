@@ -43,6 +43,10 @@ export type GuardrailsState = { rules: GuardrailRule[]; skipped: { name: string;
 export type UpdateState = { status: 'off' | 'idle' | 'checking' | 'downloading' | 'ready' | 'failed'; current: string; version: string | null; percent: number; notes: string | null; checkedAt: number | null; error: string | null };
 // a personal OAuth connector (sources/accounts.js); configured is false when this build has no client id for it
 export type OAuthAccount = { id: string; name: string; configured: boolean; connected: boolean; account: string | null; connectedAt: string | null; scope: string; manageUrl: string | null; error: string | null };
+// a provider MCP server the agent has (connectors/mcpOverlap.js), with secrets already replaced; where lists the
+// places it was found: claude-list (claude mcp list), claude-user, claude-project (~/.claude.json) and vault (.mcp.json)
+export type McpOverlapServer = { name: string; url: string | null; command: string | null; args: string[]; where: ('claude-list' | 'claude-user' | 'claude-project' | 'vault')[] };
+export type McpOverlap = { at: string; read: { claudeList: boolean; claudeConfig: boolean; vault: boolean }; matches: Record<string, McpOverlapServer[]> };
 export type GoogleCalendarStatus = { configured: boolean; connected: boolean; account: string | null; calendars: number; lastSyncAt: string | null; error: string | null };
 export type CalendarSettings = { source: 'mac'; days: number; enabled?: boolean; showAll?: boolean; hidden?: string[]; status?: 'granted' | 'notDetermined' | 'denied' | 'unavailable' | 'off'; google?: GoogleCalendarStatus | null };
 export type MemoryItem = { id: string; kind: string; label: string; path: string; detail: string; include: boolean | null; manual?: boolean };
@@ -375,6 +379,8 @@ declare global {
       decisionsSet(provider: DecisionProvider, key: string): Promise<{ ok?: boolean; error?: string }>;
       decisionsRemove(): Promise<void>;
       mcpStatus(): Promise<{ added: boolean; node: string; cli: string; command: string }>;
+      // the provider MCP servers the agent already has, by connector id; refresh asks for a new pass
+      mcpOverlap(opts?: { refresh?: boolean }): Promise<McpOverlap>;
       mcpAdd(): Promise<{ added: boolean; error?: string | null }>;
       mcpRemove(): Promise<{ added: boolean }>;
       cliStatus(): Promise<{ added: boolean; error?: string | null }>;
