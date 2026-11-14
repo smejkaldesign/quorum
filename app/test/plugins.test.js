@@ -137,13 +137,13 @@ describe('keeper with plugins', () => {
     put(dir, '08-meetings/2026-12-01-x.md', NOTE('X', '2026-09-01'));
     for (let i = 1; i <= CREATE_LIMIT + 1; i++) { const d = `2026-10-${String(i).padStart(2, '0')}`; put(dir, `08-meetings/${d}-m.md`, NOTE(`M${i}`, d)); }
     const calls = [];
-    const k = keeperFor(dir, undefined, { runText: async (p) => { calls.push(p); return '- a fact'; }, hasModel: () => true });
+    const k = keeperFor(dir, undefined, { runText: async (p) => { calls.push(p); return `- fact from ${p.match(/Meeting: (\S+)/)[1]}`; }, hasModel: () => true });
     const r = await k.run();
     expect(r.filed).toBe(1);
     expect(r.held.count).toBe(CREATE_LIMIT + 1);
     expect(readFileSync(path.join(dir, '01-daily', '2026-09-01.md'), 'utf8')).toContain('[[2026-12-01-x]]');
     expect(calls).toHaveLength(CREATE_LIMIT + 2);
-    expect(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8')).toContain('a fact ([[2026-10-01-m]], 2026-10-01)');
+    expect(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8')).toContain('fact from M1 ([[2026-10-01-m]], 2026-10-01)');
     // the held notes are not sent for facts a second time when they are filed
     await k.run({ allowCreate: true });
     expect(calls).toHaveLength(CREATE_LIMIT + 2);

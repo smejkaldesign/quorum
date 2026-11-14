@@ -131,17 +131,19 @@ let trayMenu;
 let quitting = false;
 // guardrails: one rule set for what the agent may read and say (app/guardrails.js); brain() is defined below and read lazily
 const guardrails = createGuardrails({ settings, saveSettings: () => store.settings.save(), brain: () => brain(), privateDirs, denialLog: path.join(DATA_DIR, 'guard-denials.jsonl'), log: (...a) => log(...a) });
+const KEEPER_ERRORS = path.join(DATA_DIR, 'keeper-errors.log');
 // the keeper maintains a Quorum-built Agent OS after each note (keeper.js); the person's own model source writes the facts
 const keeper = createKeeper({
   brain: () => brain(), settings, saveSettings: () => store.settings.save(), guards: () => guardrails.compiled(), wouldBlock,
   runText: (prompt, system) => runClaude(prompt, system, 'haiku'), hasModel: () => modelSource() !== 'none', owner: () => USER_NAME,
-  log: (...a) => log(...a), onChange: (r) => toUI('keeper', r), errorLog: path.join(DATA_DIR, 'keeper-errors.log'),
+  log: (...a) => log(...a), onChange: (r) => toUI('keeper', r), errorLog: KEEPER_ERRORS,
 });
 ipcMain.handle('keeper-status', () => keeper.status());
 ipcMain.handle('keeper-set', (_e, patch) => keeper.set(patch ?? {}));
 ipcMain.handle('keeper-run', (_e, opts) => keeper.run({ reason: 'manual', allowCreate: opts?.allowCreate === true }));
 ipcMain.handle('keeper-plugin', (_e, id, owner) => keeper.setPlugin(String(id), owner));
-ipcMain.handle('keeper-errors-open', () => { const f = keeper.status().errors.file; if (f && existsSync(f)) shell.openPath(f); });
+ipcMain.handle('keeper-errors-open', () => { if (existsSync(KEEPER_ERRORS)) shell.openPath(KEEPER_ERRORS); });
+ipcMain.handle('keeper-errors-clear', () => keeper.clearErrors());
 let helper;
 const asset = (name) => path.join(here, 'assets', name);
 // a meeting can have several capture segments (STOP, GO, STOP...); STOP deletes all of them
