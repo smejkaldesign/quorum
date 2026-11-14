@@ -1283,7 +1283,7 @@ function scanBrain(root, vault) {
 function agentContext() {
   const inc = memoryState().items.filter((i) => i.include === true && existsSync(i.path));
   // the vault's own search runs only while the Search plugin is left with the vault; handed to Quorum, she uses her own index
-  const search = keeper.plugins().find((p) => p.id === 'search')?.owner === 'quorum' ? null : inc.find((i) => i.kind === 'search')?.path ?? null;
+  const search = keeper.cachedPlugins().find((p) => p.id === 'search')?.owner === 'quorum' ? null : inc.find((i) => i.kind === 'search')?.path ?? null;
   const on = (k) => inc.find((i) => i.kind === k) ?? null;
   // the four that change how Claude Code itself runs (agent.js agentArgs)
   const powers = { instructions: on('instructions')?.path ?? null, skills: !!on('skills'), agents: !!on('agents'), mcp: on('mcp')?.path ?? null };

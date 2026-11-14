@@ -81,8 +81,10 @@ export const factsPrompt = ({ title, date, participants, body }) => [
 export const parseFacts = (out) => String(out ?? '').split('\n').map((l) => l.trim()).filter((l) => l.startsWith('- ')).map((l) => l.slice(2).trim()).filter((l) => l && !/^none\b/i.test(l)).slice(0, 3);
 
 export function createKeeper({ brain, settings, saveSettings = () => {}, guards = () => null, wouldBlock = () => null, runText = null, hasModel = () => false, owner = () => '', log = () => {}, onChange = () => {} }) {
-  const conf = () => ({ on: settings.keeper?.on ?? settings.brainMade === 'quorum', facts: settings.keeper?.facts ?? true });
+  const conf = () => ({ on: settings.keeper?.on ?? settings.brainMade === 'quorum' });
   let running = null;
+  let queued = null;
+  let lastRows = null;
   let timer = null;
   let lastRun = null;
 
@@ -90,13 +92,15 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
   const loadState = (vault) => { try { return JSON.parse(readFileSync(stateFile(vault), 'utf8')); } catch { return { done: {} }; } };
   const saveState = (vault, st) => { mkdirSync(path.dirname(stateFile(vault)), { recursive: true }); writeAtomic(stateFile(vault), JSON.stringify(st, null, 2) + '\n'); };
 
-  // the plugin rows for this vault, and the daily naming it uses. The older facts switch, when turned off, still
-  // reads as the vault owning facts until the user picks on the plugin row
+  // the plugin rows for this vault, and the daily naming it uses. The rows are the only record of whether facts are on;
+  // the older facts switch, saved as off before plugins existed, reads as the vault owning facts until the user picks
+  // on the plugin row, which clears it
   const registry = (b) => {
     const f = folders(b.vault);
     const ctx = scanContext(b.root, b.vault, f);
     let rows = resolvePlugins(detect(ctx), settings.plugins);
     if (settings.keeper?.facts === false && !settings.plugins?.facts) rows = rows.map((r) => (r.id === 'facts' ? { ...r, owner: 'vault', overridden: false, isNew: false } : r));
+    lastRows = rows;
     return { f, rows, daily: f.daily ? dailyPattern(ctx.daily).template : DAILY_DEFAULT };
   };
 
@@ -116,15 +120,16 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
   };
 
   // one note into the folder: index, daily, people, projects, facts, each only when Quorum owns that job; returns the
-  // list of files changed. A file whose first lines say it is generated is left alone and named in marked
-  async function file(vault, reg, rel, text, { facts, marked }) {
+  // list of files changed. A file whose first lines say it is generated is left alone and named in marked. With
+  // noCreate, only files that exist already are written
+  async function file(vault, reg, rel, text, { facts, marked, noCreate = false }) {
     const { f, rows, daily } = reg;
     const changed = [];
     const { props, base, title, date } = meta(rel, text);
     const people = (Array.isArray(props.participants) ? props.participants : []).map((p) => String(p).replace(/\s*\(recorder\)\s*$/i, '').trim()).filter((p) => p && p.toLowerCase() !== owner().toLowerCase());
     const link = `[[${base}]]`;
     const touch = (abs, next, cur) => {
-      if (next == null) return;
+      if (next == null || (cur == null && noCreate)) return;
       if (cur != null && isGenerated(cur)) {
         const r = path.relative(vault, abs).split(path.sep).join('/');
         if (!marked.includes(r)) marked.push(r);
@@ -191,23 +196,28 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     return changed;
   }
 
-  // the new files a set of notes would add: the index when missing, and each daily note that does not exist yet
-  const wouldCreate = (vault, reg, notes) => {
-    const out = new Set();
-    if (owns(reg.rows, 'index') && notes.length && !existsSync(path.join(vault, 'index.md'))) out.add('index.md');
+  // the new files one note would add: the index when missing, and its daily note when that does not exist yet
+  const createsFor = (vault, reg, n) => {
+    const out = [];
+    if (owns(reg.rows, 'index') && !existsSync(path.join(vault, 'index.md'))) out.push('index.md');
     if (reg.f.daily && owns(reg.rows, 'daily')) {
-      for (const n of notes) {
-        const r = `${reg.f.daily}/${dailyName(reg.daily, meta(n.rel, n.text).date)}`;
-        if (!existsSync(path.join(vault, r))) out.add(r);
-      }
+      const r = `${reg.f.daily}/${dailyName(reg.daily, meta(n.rel, n.text).date)}`;
+      if (!existsSync(path.join(vault, r))) out.push(r);
     }
-    return [...out].sort();
+    return out;
   };
 
-  // every meeting note not yet filed, or changed since; one pass. A pass that would create more than CREATE_LIMIT
-  // files writes nothing and reports them in held, until it is run again with allowCreate
+  // every meeting note not yet filed, or changed since; one pass. When the pass would create more than CREATE_LIMIT
+  // files, the notes that need a new file are held: their lines go into files that exist (links, facts, an existing
+  // index), the new files are listed in held, and the notes wait in partial for a run with allowCreate. Notes that
+  // need no new file are filed as usual. A partial note is never sent for facts twice. allowCreate asked for while a
+  // pass is running starts a second pass after it
   async function run({ reason = 'manual', allowCreate = false } = {}) {
-    if (running) return running;
+    if (running) {
+      if (!allowCreate) return running;
+      queued ??= running.then(() => { queued = null; return run({ reason, allowCreate: true }); });
+      return queued;
+    }
     running = (async () => {
       const b = brain();
       const c = conf();
@@ -229,19 +239,22 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
           const why = compiled ? wouldBlock(compiled, rel, text.slice(0, 2000)) : null;
           pending.push({ rel, text, h, why });
         }
-        const creates = wouldCreate(vault, reg, pending.filter((n) => !n.why));
-        if (creates.length > CREATE_LIMIT && !allowCreate) {
-          result.held = { count: creates.length, sample: creates.slice(0, 5) };
-          st.held = result.held;
-        } else {
-          delete st.held;
-          for (const n of pending) {
-            if (n.why) { st.done[n.rel] = n.h; result.skipped++; continue; }
-            const changed = await file(vault, reg, n.rel, n.text, { facts: c.facts, marked: result.marked });
-            st.done[n.rel] = n.h;
-            result.filed++;
-            result.changed += changed.length;
-          }
+        st.partial ??= {};
+        for (const n of pending) n.creates = n.why ? [] : createsFor(vault, reg, n);
+        const creates = [...new Set(pending.flatMap((n) => n.creates))].sort();
+        const hold = creates.length > CREATE_LIMIT && !allowCreate;
+        result.held = hold ? { count: creates.length, sample: creates.slice(0, 5) } : null;
+        if (hold) st.held = result.held; else delete st.held;
+        for (const n of pending) {
+          if (n.why) { st.done[n.rel] = n.h; result.skipped++; continue; }
+          const facts = st.partial[n.rel] !== n.h;
+          const waits = hold && n.creates.length > 0;
+          const changed = await file(vault, reg, n.rel, n.text, { facts, marked: result.marked, noCreate: waits });
+          result.changed += changed.length;
+          if (waits) { st.partial[n.rel] = n.h; continue; }
+          delete st.partial[n.rel];
+          st.done[n.rel] = n.h;
+          result.filed++;
         }
         st.lastRunAt = result.at;
         st.last = result;
@@ -263,25 +276,33 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
   const schedule = (reason = 'note') => { clearTimeout(timer); timer = setTimeout(() => { timer = null; run({ reason }).catch(() => {}); }, 2500); };
 
   const plugins = () => { const b = brain(); return b ? registry(b).rows : []; };
+  // the rows from the last scan, for callers on a hot path (each question asks about search); scans once if none yet
+  const cachedPlugins = () => lastRows ?? plugins();
   const status = () => {
     const b = brain();
     const c = conf();
     const st = b ? loadState(b.vault) : { done: {} };
-    return { on: c.on, facts: c.facts, running: !!running, lastRunAt: st.lastRunAt ?? null, filed: Object.keys(st.done ?? {}).length, last: st.last ?? lastRun, held: st.held ?? null, folders: b ? folders(b.vault) : {}, model: hasModel(), plugins: plugins() };
+    const reg = b ? registry(b) : null;
+    return { on: c.on, facts: reg ? owns(reg.rows, 'facts') : false, running: !!running, lastRunAt: st.lastRunAt ?? null, filed: Object.keys(st.done ?? {}).length, last: st.last ?? lastRun, held: st.held ?? null, folders: reg?.f ?? {}, model: hasModel(), plugins: reg?.rows ?? [] };
   };
+  // one plugin row handed to Quorum or to the vault. A held run planned with the old owners no longer applies, so it
+  // is cleared and a new pass is scheduled
+  const setPlugin = (id, to) => {
+    const b = brain();
+    settings.plugins = choose(settings.plugins, plugins(), id, to);
+    if (id === 'facts' && settings.keeper && 'facts' in settings.keeper) { settings.keeper = { ...settings.keeper }; delete settings.keeper.facts; }
+    saveSettings();
+    if (b) { const st = loadState(b.vault); if (st.held) { delete st.held; saveState(b.vault, st); } }
+    if (conf().on) schedule('settings');
+    return status();
+  };
+  // facts in a patch is the older switch; it now sets the facts plugin row
   const set = (patch = {}) => {
-    settings.keeper = { ...conf(), ...(typeof patch.on === 'boolean' ? { on: patch.on } : {}), ...(typeof patch.facts === 'boolean' ? { facts: patch.facts } : {}) };
+    if (typeof patch.facts === 'boolean') setPlugin('facts', patch.facts ? 'quorum' : 'vault');
+    settings.keeper = { ...settings.keeper, ...conf(), ...(typeof patch.on === 'boolean' ? { on: patch.on } : {}) };
     saveSettings();
     if (settings.keeper.on) schedule('settings');
     return status();
   };
-  // one plugin row handed to Quorum or to the vault; the facts row also keeps the older facts switch in step
-  const setPlugin = (id, to) => {
-    settings.plugins = choose(settings.plugins, plugins(), id, to);
-    if (id === 'facts' && (to === 'quorum' || to === 'vault')) settings.keeper = { ...conf(), facts: to === 'quorum' };
-    saveSettings();
-    if (to === 'quorum' && conf().on) schedule('settings');
-    return status();
-  };
-  return { run, schedule, status, set, setPlugin, plugins, conf };
+  return { run, schedule, status, set, setPlugin, plugins, cachedPlugins, conf };
 }
