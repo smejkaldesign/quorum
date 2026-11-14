@@ -172,7 +172,9 @@ export function readersSummary(access: KbAccess[] | null): string {
   if (!access) return 'Readers are visible to its admins';
   const people = access.filter((a) => a.principal === 'user');
   const admins = people.filter((a) => a.role === 'admin').length;
-  const readers = people.length - admins;
+  // any other role the server grants (0034's editor) counts as an editor
+  const editors = people.filter((a) => a.role !== 'admin' && a.role !== 'reader').length;
+  const readers = people.length - admins - editors;
   const teams = access.filter((a) => a.principal === 'team').length;
   const parts: string[] = [];
   const ws = access.find((a) => a.principal === 'workspace');
@@ -183,8 +185,13 @@ export function readersSummary(access: KbAccess[] | null): string {
     if (!teams && !readers) parts.push('Owners and admins only');
   }
   if (admins) parts.push(`${admins} KB ${admins === 1 ? 'admin' : 'admins'}`);
+  if (editors) parts.push(`${editors} ${editors === 1 ? 'editor' : 'editors'}`);
   return parts.join(' · ');
 }
+
+// a person or team row whose role is above reader (admin, 0034's editor, or any role the server adds): the readers
+// picker shows it as granted and sends it back unchanged
+export const isGrant = (a: Pick<KbAccess, 'role'>): boolean => a.role !== 'reader';
 
 export type ReadersMode = 'workspace' | 'people';
 // which way an access list reads, and the people and teams it names as readers
@@ -197,21 +204,21 @@ export function readersOf(access: KbAccess[] | null): { mode: ReadersMode; peopl
   };
 }
 
-// the whole list kb-access-set takes for a readers choice. KB admins already on the list (people or teams) stay
-// admins, and a person or team chosen who is also an admin stays an admin. A team-owned KB (ownerTeam) always keeps its
-// own team as a reader; the server adds it back too
+// the whole list kb-access-set takes for a readers choice. Every person or team row above reader (admin, editor, or a
+// role this app does not know yet) stays on the list with its role, and a person or team chosen who already holds one
+// keeps it. A team-owned KB (ownerTeam) always keeps its own team as a reader; the server adds it back too
 export function accessDraft(current: KbAccess[] | null, mode: ReadersMode, people: string[], teams: string[] = [], ownerTeam: string | null = null): KbAccessDraft[] {
   const list = current ?? [];
-  const admins = list.filter((a) => a.principal === 'user' && a.role === 'admin' && a.userId).map((a) => a.userId!);
-  const adminTeams = list.filter((a) => a.principal === 'team' && a.role === 'admin' && a.teamId).map((a) => a.teamId!);
+  const grants = list.filter((a) => isGrant(a) && ((a.principal === 'user' && a.userId) || (a.principal === 'team' && a.teamId)));
+  const grantedPeople = new Set(grants.filter((a) => a.principal === 'user').map((a) => a.userId!));
+  const grantedTeams = new Set(grants.filter((a) => a.principal === 'team').map((a) => a.teamId!));
   const out: KbAccessDraft[] = [];
   if (mode === 'workspace') out.push({ principal: 'workspace', role: list.find((a) => a.principal === 'workspace')?.role ?? 'reader' });
-  for (const id of admins) out.push({ principal: 'user', userId: id, role: 'admin' });
-  for (const id of adminTeams) out.push({ principal: 'team', teamId: id, role: 'admin' });
+  for (const a of grants) out.push(a.principal === 'user' ? { principal: 'user', userId: a.userId!, role: a.role } : { principal: 'team', teamId: a.teamId!, role: a.role });
   const readerTeams = new Set(mode === 'people' ? teams : []);
   if (ownerTeam) readerTeams.add(ownerTeam);
-  for (const id of readerTeams) if (!adminTeams.includes(id)) out.push({ principal: 'team', teamId: id, role: 'reader' });
-  if (mode === 'people') for (const id of [...new Set(people)]) if (!admins.includes(id)) out.push({ principal: 'user', userId: id, role: 'reader' });
+  for (const id of readerTeams) if (!grantedTeams.has(id)) out.push({ principal: 'team', teamId: id, role: 'reader' });
+  if (mode === 'people') for (const id of [...new Set(people)]) if (!grantedPeople.has(id)) out.push({ principal: 'user', userId: id, role: 'reader' });
   return out;
 }
 

@@ -190,6 +190,33 @@ describe('readers', () => {
       expect(accessDraft([design], 'people', [], ['eng'], 'design')).toEqual([{ principal: 'team', teamId: 'eng', role: 'reader' }, { principal: 'team', teamId: 'design', role: 'reader' }]);
     });
   });
+
+  describe('every role the server returns', () => {
+    const cy = { principal: 'user', userId: 'cy', teamId: null, role: 'editor', email: null, name: 'Cy' };
+    const eng = { principal: 'team', userId: null, teamId: 'eng', role: 'editor', email: null, name: null };
+    const odd = { principal: 'user', userId: 'di', teamId: null, role: 'owner', email: null, name: 'Di' };
+
+    it('keeps editor rows, and any role it does not know, with their role in either mode', () => {
+      expect(accessDraft([ws, ann, cy, eng], 'workspace', [], [])).toEqual([
+        { principal: 'workspace', role: 'reader' },
+        { principal: 'user', userId: 'ann', role: 'admin' },
+        { principal: 'user', userId: 'cy', role: 'editor' },
+        { principal: 'team', teamId: 'eng', role: 'editor' },
+      ]);
+      expect(accessDraft([cy, eng, odd], 'people', ['cy', 'bo'], ['eng'])).toEqual([
+        { principal: 'user', userId: 'cy', role: 'editor' },
+        { principal: 'team', teamId: 'eng', role: 'editor' },
+        { principal: 'user', userId: 'di', role: 'owner' },
+        { principal: 'user', userId: 'bo', role: 'reader' },
+      ]);
+    });
+
+    it('does not count editors as readers', () => {
+      expect(readersOf([cy, eng, bo])).toEqual({ mode: 'people', people: ['bo'], teams: [] });
+      expect(readersSummary([cy, bo])).toBe('1 person · 1 editor');
+      expect(readersSummary([ws, cy, { ...cy, userId: 'dd' }])).toBe('Whole workspace · 2 editors');
+    });
+  });
 });
 
 describe('import lines', () => {

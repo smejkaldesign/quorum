@@ -5,7 +5,7 @@ import { checkTeamName, createTeams, shapeTeam } from '../ee/teams.js';
 import { addableMembers, sortTeams, teamSummary } from '../ee/src/teamList';
 
 const ROW = {
-  id: 'T1', workspace_id: 'W', name: 'Design', my_role: 'lead', can_manage: true, meetings_kb_id: 'KB9',
+  id: 'T1', workspace_id: 'W', name: 'Design', my_role: 'lead', can_manage: true, can_manage_members: false, meetings_kb_id: 'KB9',
   members: [{ user_id: 'u1', role: 'lead', email: 'ana@example.com', name: 'Ana' }, { user_id: 'u2', role: 'odd', email: 'bo@example.com', name: null }],
 };
 
@@ -21,10 +21,10 @@ function fakeAccount({ answers = {}, signedIn = true, role = 'member' } = {}) {
 describe('what the renderer gets', () => {
   it('shapes a team row defensively', () => {
     expect(shapeTeam(ROW)).toEqual({
-      id: 'T1', name: 'Design', myRole: 'lead', canManage: true, meetingsKbId: 'KB9',
+      id: 'T1', name: 'Design', myRole: 'lead', canManage: true, canManageMembers: false, meetingsKbId: 'KB9',
       members: [{ userId: 'u1', role: 'lead', email: 'ana@example.com', name: 'Ana' }, { userId: 'u2', role: 'member', email: 'bo@example.com', name: null }],
     });
-    expect(shapeTeam({ id: 'T2', name: 'x', my_role: 'owner' })).toMatchObject({ myRole: null, canManage: false, meetingsKbId: null, members: [] });
+    expect(shapeTeam({ id: 'T2', name: 'x', my_role: 'owner' })).toMatchObject({ myRole: null, canManage: false, canManageMembers: false, meetingsKbId: null, members: [] });
   });
 
   it('checks names before the server sees them', () => {

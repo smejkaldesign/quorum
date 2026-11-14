@@ -50,7 +50,7 @@ function harness({ files = {}, rows = {}, isExcluded, isExcludedText, teamRoot }
   const read = (rel) => readFileSync(path.join(vault, rel), 'utf8');
   const has = (rel) => existsSync(path.join(vault, rel));
   const upserts = (table) => fake.calls.filter((c) => c.table === table && c.rows).flatMap((c) => c.rows);
-  return { vault, state, rows, sync, logs, calls: fake.calls, read, has, upserts, abs: (rel) => path.join(vault, rel) };
+  return { vault, state, rows, sync, logs, calls: fake.calls, client: fake.client, read, has, upserts, abs: (rel) => path.join(vault, rel) };
 }
 const noteRow = (over) => ({ id: id(1), path: 'notes/hello.md', frontmatter: { title: 'Hello' }, body: REMOTE, hash: '', mtime: T2, updated_at: T2, deleted_at: null, ...over });
 
@@ -284,5 +284,45 @@ describe('workspace vault', () => {
     const h = teamHarness({ notes: [noteRow()] });
     expect(await h.sync.pullNow()).toEqual({ written: 1, conflicts: 0, removed: 0, skipped: 0 });
     expect(h.has('notes/hello.md')).toBe(true);
+  });
+});
+
+describe('a resync request (migration 0035)', () => {
+  const noteReads = (h) => h.calls.filter((c) => c.table === 'notes' && !c.rows);
+  const since = (call) => call.ops.find(([o, col]) => o === 'gt' && col === 'updated_at')?.[2] ?? null;
+
+  it('pulls every note once after the person joined a team, then clears the request with its time', async () => {
+    const h = harness({ rows: { notes: [noteRow()] } });
+    await h.sync.pullNow();
+    const rpcs = [];
+    let pending = '2026-11-14T09:00:00.000Z';
+    h.client.rpc = async (name, args) => { rpcs.push([name, args]); if (name === 'kb_resync_done') pending = null; return { data: name === 'kb_resync_pending' ? pending : null, error: null }; };
+    const before = noteReads(h).length;
+    await h.sync.pullNow();
+    expect(noteReads(h).slice(before).map(since)).toEqual([null]);
+    expect(rpcs).toEqual([
+      ['kb_resync_pending', { workspace_id: h.state.workspace.id }],
+      ['kb_resync_done', { workspace_id: h.state.workspace.id, requested_at: '2026-11-14T09:00:00.000Z' }],
+    ]);
+    // the next pull is incremental again
+    const after = noteReads(h).length;
+    await h.sync.pullNow();
+    expect(noteReads(h).slice(after).map(since)).toEqual([T2]);
+  });
+
+  it('keeps the request when the pull fails, and reads as none on a server without 0035', async () => {
+    const h = harness({ rows: { notes: [noteRow()] } });
+    await h.sync.pullNow();
+    const before = noteReads(h).length;
+    h.client.rpc = async () => ({ data: null, error: { message: 'Could not find the function public.kb_resync_pending' } });
+    await h.sync.pullNow();
+    expect(noteReads(h).slice(before).map(since)).toEqual([T2]);
+    const rpcs = [];
+    h.client.rpc = async (name) => { rpcs.push(name); return { data: name === 'kb_resync_pending' ? '2026-11-14T09:00:00.000Z' : null, error: null }; };
+    const from = h.client.from;
+    h.client.from = () => { throw new Error('offline'); };
+    expect((await h.sync.pullNow()).error).toMatch(/could not pull/);
+    h.client.from = from;
+    expect(rpcs).toEqual(['kb_resync_pending']);
   });
 });

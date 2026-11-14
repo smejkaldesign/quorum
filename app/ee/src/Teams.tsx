@@ -48,8 +48,8 @@ export function TeamsPage({ company }: { company: ReactNode }) {
 type Open = { kind: 'people' | 'rename'; teamId: string } | null;
 
 // the teams inside the workspace, each with its people and leads. Owners and admins create, rename and delete teams;
-// they and a team's leads rename it and change its people. Each team gets a meetings knowledge base readable by the
-// team; its leads grant other teams read access in Admin › Knowledge
+// they decide who is in each team and who leads it, and a team's leads rename it. Each team gets a meetings
+// knowledge base readable by the team; its leads grant other teams read access in Admin › Knowledge
 function TeamList({ wsAdmin, me }: { wsAdmin: boolean; me: string | null }) {
   const [teams, setTeams] = useState<Team[] | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
@@ -162,7 +162,7 @@ function TeamPeople({ team, members, me, onChange }: { team: Team; members: Memb
       {team.members.map((m) => (
         <div key={m.userId} className="kb-form-row">
           <span className="wide">{label(m)}</span>
-          {team.canManage ? (
+          {team.canManageMembers ? (
             <>
               <select className="set-select" value={m.role} disabled={busy} aria-label={`Role of ${label(m)}`} onChange={(e) => run(() => window.quorum.teamMemberSet({ teamId: team.id, userId: m.userId, role: e.target.value as TeamRole }))}>
                 <option value="member">Member</option><option value="lead">Lead</option>
@@ -172,7 +172,7 @@ function TeamPeople({ team, members, me, onChange }: { team: Team; members: Memb
           ) : <em className="muted">{m.role === 'lead' ? 'Lead' : 'Member'}</em>}
         </div>
       ))}
-      {team.canManage && others.length > 0 && (
+      {team.canManageMembers && others.length > 0 && (
         <div className="kb-form-row">
           <select className="set-select" value={adding} disabled={busy} aria-label={`Add someone to ${team.name}`} onChange={(e) => setAdding(e.target.value)}>
             <option value="">Add someone…</option>
@@ -181,7 +181,7 @@ function TeamPeople({ team, members, me, onChange }: { team: Team; members: Memb
           <button className="pill primary small" disabled={busy || !adding} onClick={() => { const id = adding; setAdding(''); run(() => window.quorum.teamMemberSet({ teamId: team.id, userId: id })); }}>Add</button>
         </div>
       )}
-      {me && team.myRole && !team.canManage && <p><button className="pill ghost small" disabled={busy} onClick={() => run(() => window.quorum.teamMemberRemove({ teamId: team.id, userId: me }))}>Leave team</button></p>}
+      {me && team.myRole && !team.canManageMembers && <p><button className="pill ghost small" disabled={busy} onClick={() => run(() => window.quorum.teamMemberRemove({ teamId: team.id, userId: me }))}>Leave team</button></p>}
       {error && <p className="set-error" role="alert">{error}</p>}
     </div>
   );

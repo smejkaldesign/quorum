@@ -4,7 +4,7 @@ import { Row, useMenu } from '../../src/controls';
 import { IconMore, IconPlus, IconStack } from '../../src/icons';
 import { AccountCard, EE_MARKER, useAccount } from './Account';
 import { accountApi } from './accountMock';
-import { accessDraft, KIND_LABEL, readersOf, readersSummary, sourceLine, type ReadersMode } from './kbTree';
+import { accessDraft, isGrant, KIND_LABEL, readersOf, readersSummary, sourceLine, type ReadersMode } from './kbTree';
 import { DrivePanel, hasDrive } from './KbDrive';
 import { announceKbChange, EMPTY_SOURCE, hasImport, ImportStatus, kbCall, KbConfirm, SourceFields, sourceOf, useImport, type SourceDraft } from './kbUi';
 
@@ -115,8 +115,8 @@ function Rename({ kb, onDone }: { kb: Kb; onDone: (kb: Kb | null) => void }) {
   );
 }
 
-// who reads the KB: the whole workspace, or chosen teams and people. KB admins stay on the list as they are; workspace
-// owners and admins read every KB without a row, and a team's own KB always stays readable by that team
+// who reads the KB: the whole workspace, or chosen teams and people. KB admins and editors stay on the list as they
+// are; workspace owners and admins read every KB without a row, and a team's own KB always stays readable by its team
 function Readers({ kb, onDone }: { kb: Kb; onDone: (kb: Kb | null) => void }) {
   const start = readersOf(kb.access);
   const [mode, setMode] = useState<ReadersMode>(start.mode);
@@ -133,8 +133,9 @@ function Readers({ kb, onDone }: { kb: Kb; onDone: (kb: Kb | null) => void }) {
     kbCall(() => window.quorum.teamList(), 'The teams could not be read.').then((r) => { if (live && !r.error) setTeams(r.teams ?? []); });
     return () => { live = false; };
   }, []);
-  const adminTeams = new Set((kb.access ?? []).filter((a) => a.principal === 'team' && a.role === 'admin').map((a) => a.teamId));
-  const admins = new Set((kb.access ?? []).filter((a) => a.principal === 'user' && a.role === 'admin').map((a) => a.userId));
+  // a person or team holding a role above reader keeps it; the picker shows which
+  const grantOf = (principal: 'user' | 'team', id: string) => (kb.access ?? []).find((a) => a.principal === principal && (principal === 'user' ? a.userId : a.teamId) === id && isGrant(a));
+  const grantLabel = (role: string) => (role === 'admin' ? 'KB admin' : role === 'editor' ? 'Editor' : role);
   const save = async () => {
     setBusy(true); setError('');
     const r = await kbCall(() => window.quorum.kbAccessSet(kb.id, accessDraft(kb.access, mode, people, teamIds, kb.teamId)), 'Access could not be saved.');
@@ -154,23 +155,25 @@ function Readers({ kb, onDone }: { kb: Kb; onDone: (kb: Kb | null) => void }) {
           <legend className="muted">Owners and admins of the workspace read every knowledge base.</legend>
           {teams.map((t) => {
             const own = t.id === kb.teamId;
-            const admin = adminTeams.has(t.id);
+            const grant = grantOf('team', t.id);
+            const admin = !!grant;
             return (
               <label key={t.id} className="kb-person">
                 <input type="checkbox" checked={own || admin || teamIds.includes(t.id)} disabled={own || admin} onChange={(e) => toggleTeam(t.id, e.target.checked)} />
                 <span>{t.name}</span>
-                <em className="muted">{own ? 'Its team' : admin ? 'KB admin' : `Team · ${t.members.length} ${t.members.length === 1 ? 'person' : 'people'}`}</em>
+                <em className="muted">{own ? 'Its team' : grant ? grantLabel(grant.role) : `Team · ${t.members.length} ${t.members.length === 1 ? 'person' : 'people'}`}</em>
               </label>
             );
           })}
           {members === null && !error && <p className="set-hint">Loading members…</p>}
           {members?.map((m) => {
-            const admin = admins.has(m.userId);
+            const grant = grantOf('user', m.userId);
+            const admin = !!grant;
             return (
               <label key={m.userId} className="kb-person">
                 <input type="checkbox" checked={admin || people.includes(m.userId)} disabled={admin} onChange={(e) => toggle(m.userId, e.target.checked)} />
                 <span>{m.name || m.email}</span>
-                <em className="muted">{admin ? 'KB admin' : m.role === 'member' ? '' : m.role === 'owner' ? 'Owner' : 'Admin'}</em>
+                <em className="muted">{grant ? grantLabel(grant.role) : m.role === 'member' ? '' : m.role === 'owner' ? 'Owner' : 'Admin'}</em>
               </label>
             );
           })}

@@ -1,6 +1,6 @@
 // Teams inside a workspace (Cloud edition; migration 0035, docs/specs/workspace-knowledge.md "Access"). A workspace
-// member can be in many teams, as lead or member. Workspace owners and admins create, rename and delete teams; they
-// and the team's leads rename it and change its members; a member can leave a team. Each team has a meetings
+// member can be in many teams, as lead or member. Workspace owners and admins create, rename and delete teams and
+// decide who is in each and who leads it; a team's leads rename it; a member can leave a team. Each team has a meetings
 // knowledge base, readable by that team until its lead or a workspace admin grants other teams read access in
 // Admin > Knowledge. The server decides every right and refuses with a sentence the app shows as is.
 //
@@ -12,7 +12,9 @@
 //   team-member-set    ({ teamId, userId, role? })     -> { team: Team }      adds a person, or changes their role
 //   team-member-remove ({ teamId, userId })            -> { team: Team }
 //
-//   Team       { id, name, myRole: 'lead' | 'member' | null, canManage, meetingsKbId, members: TeamMember[] }
+//   Team       { id, name, myRole: 'lead' | 'member' | null, canManage, canManageMembers, meetingsKbId, members: TeamMember[] }
+//              canManage: may rename it (owners, admins, its leads); canManageMembers: may change who is in it and who
+//              leads it (owners and admins only, since the team's grants reach everyone in it)
 //   TeamMember { userId, role: 'lead' | 'member', email, name }
 import { kbSession } from './knowledgeBases.js';
 
@@ -26,7 +28,7 @@ export function checkTeamName(name) {
 }
 
 export const shapeTeam = (t) => ({
-  id: t.id, name: t.name, myRole: TEAM_ROLES.includes(t.my_role) ? t.my_role : null, canManage: t.can_manage === true, meetingsKbId: t.meetings_kb_id ?? null,
+  id: t.id, name: t.name, myRole: TEAM_ROLES.includes(t.my_role) ? t.my_role : null, canManage: t.can_manage === true, canManageMembers: t.can_manage_members === true, meetingsKbId: t.meetings_kb_id ?? null,
   members: (Array.isArray(t.members) ? t.members : []).map((m) => ({ userId: m.user_id, role: m.role === 'lead' ? 'lead' : 'member', email: m.email ?? null, name: m.name ?? null })),
 });
 
