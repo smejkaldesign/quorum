@@ -4,19 +4,26 @@
 // block in CLAUDE.md. Everything is append-only: no note body is rewritten, and a line already present is left alone.
 // Confidential notes, private folders and secret-looking files never enter the index, the links or the facts.
 // Progress is kept in .quorum/keeper.json by note hash, so a note changed later is filed again and an unchanged one
-// is skipped; a backlog left by days with the app closed runs in one pass at launch
+// is skipped; a backlog left by days with the app closed runs in one pass at launch.
+// Each job (index, daily, links, facts) is a plugin (plugins.js): the keeper writes only the jobs Quorum owns, never
+// touches a file whose first lines say it is generated, names daily notes the way the vault already does, and holds a
+// run that would create more than CREATE_LIMIT new files until the user says to go ahead
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { parseFrontmatter } from './linkparse.js';
 import { writeAtomic } from './relink.js';
 import { slug } from './starter.js';
+import { DAILY_DEFAULT, choose, dailyName, dailyPattern, detect, isGenerated, owns, resolvePlugins, scanContext } from './plugins.js';
 
 export const KEEPER_FILE = path.join('.quorum', 'keeper.json');
 export const CHANGELOG = path.join('.quorum', 'changelog.md');
 export const LEARNED_OPEN = '<!-- quorum:learned -->';
 export const LEARNED_CLOSE = '<!-- /quorum:learned -->';
 const LEARNED_CAP = 40;
+// a run that would add more new files than this to the vault waits for the user (a backlog of months of meetings
+// against a vault with its own daily naming once made 86)
+export const CREATE_LIMIT = 10;
 const sha = (t) => createHash('sha256').update(t).digest('hex').slice(0, 16);
 const today = (d = new Date()) => d.toISOString().slice(0, 10);
 
@@ -83,6 +90,16 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
   const loadState = (vault) => { try { return JSON.parse(readFileSync(stateFile(vault), 'utf8')); } catch { return { done: {} }; } };
   const saveState = (vault, st) => { mkdirSync(path.dirname(stateFile(vault)), { recursive: true }); writeAtomic(stateFile(vault), JSON.stringify(st, null, 2) + '\n'); };
 
+  // the plugin rows for this vault, and the daily naming it uses. The older facts switch, when turned off, still
+  // reads as the vault owning facts until the user picks on the plugin row
+  const registry = (b) => {
+    const f = folders(b.vault);
+    const ctx = scanContext(b.root, b.vault, f);
+    let rows = resolvePlugins(detect(ctx), settings.plugins);
+    if (settings.keeper?.facts === false && !settings.plugins?.facts) rows = rows.map((r) => (r.id === 'facts' ? { ...r, owner: 'vault', overridden: false, isNew: false } : r));
+    return { f, rows, daily: f.daily ? dailyPattern(ctx.daily).template : DAILY_DEFAULT };
+  };
+
   const meetingNotes = (vault, dir) => {
     const out = [];
     const walk = (d) => { for (const n of readdirSync(d).sort()) { const p = path.join(d, n); if (n.startsWith('.')) continue; if (isDir(p)) walk(p); else if (n.endsWith('.md') && n !== 'README.md' && n !== 'index.md') out.push(path.relative(vault, p).split(path.sep).join('/')); } };
@@ -90,36 +107,56 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     return out;
   };
 
-  // one note into the folder: index, daily, people, projects, facts; returns the list of files changed
-  async function file(vault, f, rel, text, { facts }) {
-    const changed = [];
+  const meta = (rel, text) => {
     const { props } = parseFrontmatter(text);
     const base = path.posix.basename(rel, '.md');
     const title = (typeof props.title === 'string' && props.title) || text.match(/^#\s+(.+)$/m)?.[1]?.trim() || base;
     const date = String(props.date ?? '').slice(0, 10) || base.match(/^\d{4}-\d{2}-\d{2}/)?.[0] || today();
+    return { props, base, title, date };
+  };
+
+  // one note into the folder: index, daily, people, projects, facts, each only when Quorum owns that job; returns the
+  // list of files changed. A file whose first lines say it is generated is left alone and named in marked
+  async function file(vault, reg, rel, text, { facts, marked }) {
+    const { f, rows, daily } = reg;
+    const changed = [];
+    const { props, base, title, date } = meta(rel, text);
     const people = (Array.isArray(props.participants) ? props.participants : []).map((p) => String(p).replace(/\s*\(recorder\)\s*$/i, '').trim()).filter((p) => p && p.toLowerCase() !== owner().toLowerCase());
     const link = `[[${base}]]`;
-    const touch = (abs, next) => { if (next == null) return; writeAtomic(abs, next); changed.push(path.relative(vault, abs)); };
+    const touch = (abs, next, cur) => {
+      if (next == null) return;
+      if (cur != null && isGenerated(cur)) {
+        const r = path.relative(vault, abs).split(path.sep).join('/');
+        if (!marked.includes(r)) marked.push(r);
+        return;
+      }
+      writeAtomic(abs, next);
+      changed.push(path.relative(vault, abs));
+    };
     // index: one line per note
-    const indexAbs = path.join(vault, 'index.md');
-    const index = read(indexAbs) ?? '# Index\n\nOne line per note. Quorum starts here when it looks for an answer.\n';
-    const indexLine = `- ${link} - meeting ${date}: ${title}`;
-    if (!index.includes(`${link} `) && !index.includes(`${link}]`) && !index.includes(`${link}\n`)) touch(indexAbs, index.replace(/\s*$/, '') + '\n' + indexLine + '\n');
-    // daily note
-    if (f.daily) {
-      const abs = path.join(vault, f.daily, `${date}.md`);
-      touch(abs, appendUnder(read(abs) ?? `# ${date}\n`, '## Meetings', `- ${link} ${title}`));
+    if (owns(rows, 'index')) {
+      const indexAbs = path.join(vault, 'index.md');
+      const cur = read(indexAbs);
+      const index = cur ?? '# Index\n\nOne line per note. Quorum starts here when it looks for an answer.\n';
+      const indexLine = `- ${link} - meeting ${date}: ${title}`;
+      if (!index.includes(`${link} `) && !index.includes(`${link}]`) && !index.includes(`${link}\n`)) touch(indexAbs, index.replace(/\s*$/, '') + '\n' + indexLine + '\n', cur);
+    }
+    // daily note, named the way the vault already names them
+    if (f.daily && owns(rows, 'daily')) {
+      const abs = path.join(vault, f.daily, dailyName(daily, date));
+      const cur = read(abs);
+      touch(abs, appendUnder(cur ?? `# ${date}\n`, '## Meetings', `- ${link} ${title}`), cur);
     }
     // people: a note per participant, matched by slug
-    if (f.people) {
+    if (f.people && owns(rows, 'links')) {
       for (const p of people) {
         const abs = path.join(vault, f.people, `${slug(p)}.md`);
         const cur = read(abs);
-        if (cur != null) touch(abs, appendUnder(cur, '## Meetings', `- ${date} ${link} ${title}`));
+        if (cur != null) touch(abs, appendUnder(cur, '## Meetings', `- ${date} ${link} ${title}`), cur);
       }
     }
     // projects: a note whose title appears in the meeting text
-    if (f.projects) {
+    if (f.projects && owns(rows, 'links')) {
       const body = text.toLowerCase();
       let names = [];
       try { names = readdirSync(path.join(vault, f.projects)).filter((n) => n.endsWith('.md') && n !== 'README.md'); } catch {}
@@ -130,17 +167,18 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
         const name = (parseFrontmatter(cur).props.title ?? cur.match(/^#\s+(.+)$/m)?.[1] ?? path.basename(n, '.md')).toString().trim();
         if (name.length < 3) continue;
         const hit = new RegExp(`(^|[^a-z0-9])${name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`, 'i').test(body);
-        if (hit) touch(abs, appendUnder(cur, '## Meetings', `- ${date} ${link} ${title}`));
+        if (hit) touch(abs, appendUnder(cur, '## Meetings', `- ${date} ${link} ${title}`), cur);
       }
     }
     // learned facts, with the person's own model source
-    if (facts && runText && hasModel()) {
+    if (facts && owns(rows, 'facts') && runText && hasModel()) {
       try {
         const out = await runText(factsPrompt({ title, date, participants: people, body: text.slice(parseFrontmatter(text).end) }), FACTS_SYSTEM);
         const got = parseFacts(out);
         if (got.length) {
           const abs = path.join(vault, 'CLAUDE.md');
-          touch(abs, addLearned(read(abs) ?? `# Agent OS\n`, got.map((g) => `${g} (${link}, ${date})`)));
+          const cur = read(abs);
+          touch(abs, addLearned(cur ?? `# Agent OS\n`, got.map((g) => `${g} (${link}, ${date})`)), cur);
         }
       } catch (e) { log('keeper facts failed', e?.message || e); }
     }
@@ -153,32 +191,57 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     return changed;
   }
 
-  // every meeting note not yet filed, or changed since; one pass
-  async function run({ reason = 'manual' } = {}) {
+  // the new files a set of notes would add: the index when missing, and each daily note that does not exist yet
+  const wouldCreate = (vault, reg, notes) => {
+    const out = new Set();
+    if (owns(reg.rows, 'index') && notes.length && !existsSync(path.join(vault, 'index.md'))) out.add('index.md');
+    if (reg.f.daily && owns(reg.rows, 'daily')) {
+      for (const n of notes) {
+        const r = `${reg.f.daily}/${dailyName(reg.daily, meta(n.rel, n.text).date)}`;
+        if (!existsSync(path.join(vault, r))) out.add(r);
+      }
+    }
+    return [...out].sort();
+  };
+
+  // every meeting note not yet filed, or changed since; one pass. A pass that would create more than CREATE_LIMIT
+  // files writes nothing and reports them in held, until it is run again with allowCreate
+  async function run({ reason = 'manual', allowCreate = false } = {}) {
     if (running) return running;
     running = (async () => {
       const b = brain();
       const c = conf();
-      const result = { filed: 0, skipped: 0, changed: 0, reason, at: new Date().toISOString(), error: null };
+      const result = { filed: 0, skipped: 0, changed: 0, reason, at: new Date().toISOString(), error: null, marked: [], held: null };
       if (!b || !c.on) return { ...result, off: true };
       const vault = b.vault;
-      const f = folders(vault);
-      if (!f.meetings) return result;
+      const reg = registry(b);
+      if (!reg.f.meetings) return result;
       try {
         const st = loadState(vault);
         st.done ??= {};
         const compiled = guards();
-        for (const rel of meetingNotes(vault, f.meetings)) {
+        const pending = [];
+        for (const rel of meetingNotes(vault, reg.f.meetings)) {
           const text = read(path.join(vault, rel));
           if (text == null) continue;
           const h = sha(text);
           if (st.done[rel] === h) continue;
           const why = compiled ? wouldBlock(compiled, rel, text.slice(0, 2000)) : null;
-          if (why) { st.done[rel] = h; result.skipped++; continue; }
-          const changed = await file(vault, f, rel, text, { facts: c.facts });
-          st.done[rel] = h;
-          result.filed++;
-          result.changed += changed.length;
+          pending.push({ rel, text, h, why });
+        }
+        const creates = wouldCreate(vault, reg, pending.filter((n) => !n.why));
+        if (creates.length > CREATE_LIMIT && !allowCreate) {
+          result.held = { count: creates.length, sample: creates.slice(0, 5) };
+          st.held = result.held;
+        } else {
+          delete st.held;
+          for (const n of pending) {
+            if (n.why) { st.done[n.rel] = n.h; result.skipped++; continue; }
+            const changed = await file(vault, reg, n.rel, n.text, { facts: c.facts, marked: result.marked });
+            st.done[n.rel] = n.h;
+            result.filed++;
+            result.changed += changed.length;
+          }
         }
         st.lastRunAt = result.at;
         st.last = result;
@@ -189,7 +252,8 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
       }
       lastRun = result;
       if (result.filed || result.skipped) log('keeper', `${reason}: ${result.filed} filed, ${result.changed} files changed, ${result.skipped} withheld`);
-      if (result.changed) onChange(result);
+      if (result.held) log('keeper', `${reason}: held, the run would create ${result.held.count} files`);
+      if (result.changed || result.held) onChange(result);
       return result;
     })().finally(() => { running = null; });
     return running;
@@ -198,11 +262,12 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
   // a note just written: filed shortly, once the burst of writes settles
   const schedule = (reason = 'note') => { clearTimeout(timer); timer = setTimeout(() => { timer = null; run({ reason }).catch(() => {}); }, 2500); };
 
+  const plugins = () => { const b = brain(); return b ? registry(b).rows : []; };
   const status = () => {
     const b = brain();
     const c = conf();
     const st = b ? loadState(b.vault) : { done: {} };
-    return { on: c.on, facts: c.facts, running: !!running, lastRunAt: st.lastRunAt ?? null, filed: Object.keys(st.done ?? {}).length, last: st.last ?? lastRun, folders: b ? folders(b.vault) : {}, model: hasModel() };
+    return { on: c.on, facts: c.facts, running: !!running, lastRunAt: st.lastRunAt ?? null, filed: Object.keys(st.done ?? {}).length, last: st.last ?? lastRun, held: st.held ?? null, folders: b ? folders(b.vault) : {}, model: hasModel(), plugins: plugins() };
   };
   const set = (patch = {}) => {
     settings.keeper = { ...conf(), ...(typeof patch.on === 'boolean' ? { on: patch.on } : {}), ...(typeof patch.facts === 'boolean' ? { facts: patch.facts } : {}) };
@@ -210,5 +275,13 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     if (settings.keeper.on) schedule('settings');
     return status();
   };
-  return { run, schedule, status, set, conf };
+  // one plugin row handed to Quorum or to the vault; the facts row also keeps the older facts switch in step
+  const setPlugin = (id, to) => {
+    settings.plugins = choose(settings.plugins, plugins(), id, to);
+    if (id === 'facts' && (to === 'quorum' || to === 'vault')) settings.keeper = { ...conf(), facts: to === 'quorum' };
+    saveSettings();
+    if (to === 'quorum' && conf().on) schedule('settings');
+    return status();
+  };
+  return { run, schedule, status, set, setPlugin, plugins, conf };
 }
