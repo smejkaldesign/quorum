@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { nextMenuIndex, updateBadge } from '../src/headerItems.ts';
-import { UP_NEXT_SHOWN, canNewNote, dayLabel, upNextRows } from '../src/upNextList.ts';
+import { UP_NEXT_SHOWN, dayLabel, upNextRows } from '../src/upNextList.ts';
+import { CONNECTOR_BY_ID, canNewNote, connectorsFor, isConnected } from '../connectors/library.js';
 
 const state = (patch) => ({ status: 'idle', current: '1.0.0', version: null, percent: 0, notes: null, checkedAt: null, error: null, ...patch });
 
@@ -59,22 +60,41 @@ describe('the Up next strip', () => {
 
 describe('+ New in Up next', () => {
   const none = { sources: [], providers: [], platforms: [] };
+  const zoomOn = { id: 'zoom', enabled: true, installed: true, access: true };
+  const lib = connectorsFor({ meetingCapture: true });
   it('stays away with nothing connected', () => {
-    expect(canNewNote(none)).toBe(false);
+    expect(canNewNote(none, lib)).toBe(false);
   });
-  it('appears for a connected meeting notes app', () => {
-    expect(canNewNote({ ...none, sources: [{ id: 'granola', connected: true }] })).toBe(true);
-    expect(canNewNote({ ...none, sources: [{ id: 'granola', connected: false }] })).toBe(false);
+  it('appears for a connected meeting notes source', () => {
+    expect(canNewNote({ ...none, sources: [{ id: 'granola', connected: true }] }, lib)).toBe(true);
+    expect(canNewNote({ ...none, sources: [{ id: 'granola', connected: false }] }, lib)).toBe(false);
   });
-  it('appears for a meeting app that listens on this Mac or has its cloud account connected', () => {
-    expect(canNewNote({ ...none, providers: [{ id: 'zoom', enabled: true, installed: true, access: true }] })).toBe(true);
-    expect(canNewNote({ ...none, providers: [{ id: 'zoom', enabled: true, installed: true, access: false }] })).toBe(false);
-    expect(canNewNote({ ...none, providers: [{ id: 'zoom', enabled: false, installed: true, access: true }] })).toBe(false);
-    expect(canNewNote({ ...none, platforms: [{ id: 'zoom', connected: true }] })).toBe(true);
+  it('does not count a meeting app that is only installed', () => {
+    expect(canNewNote({ ...none, providers: [zoomOn] }, lib)).toBe(false);
+    expect(canNewNote({ ...none, providers: [zoomOn], added: { zoom: { enabled: false } } }, lib)).toBe(false);
+  });
+  it('counts a meeting app the person turned on, or a connected cloud account', () => {
+    expect(canNewNote({ ...none, providers: [zoomOn], added: { zoom: { enabled: true } } }, lib)).toBe(true);
+    expect(canNewNote({ ...none, providers: [{ ...zoomOn, access: false }], added: { zoom: { enabled: true } } }, lib)).toBe(false);
+    expect(canNewNote({ ...none, platforms: [{ id: 'zoom', connected: true }] }, lib)).toBe(true);
+  });
+  it('with meeting capture off, counts a meeting app only by its cloud account', () => {
+    const off = connectorsFor({ meetingCapture: false });
+    expect(canNewNote({ ...none, providers: [zoomOn], added: { zoom: { enabled: true } } }, off)).toBe(false);
+    expect(canNewNote({ ...none, platforms: [{ id: 'zoom', connected: true }] }, off)).toBe(true);
   });
   it('counts only the Meetings and Meeting notes categories', () => {
-    const lib = [{ id: 'x', category: 'calendar', kind: 'mcp-source', source: 'cal' }, { id: 'w', category: 'meeting-notes', kind: 'mcp-source', source: 'wispr' }];
-    expect(canNewNote({ ...none, sources: [{ id: 'cal', connected: true }] }, lib)).toBe(false);
-    expect(canNewNote({ ...none, sources: [{ id: 'wispr', connected: true }] }, lib)).toBe(true);
+    expect(canNewNote({ ...none, cal: { enabled: true, status: 'granted' }, mcp: { added: true } }, lib)).toBe(false);
+  });
+});
+
+describe('the shared connected check', () => {
+  it('reads each kind the way Settings > Connectors shows it', () => {
+    expect(isConnected(CONNECTOR_BY_ID['apple-calendar'], { cal: { enabled: true, status: 'granted' } })).toBe(true);
+    expect(isConnected(CONNECTOR_BY_ID['apple-calendar'], { cal: { enabled: true, status: 'denied' } })).toBe(false);
+    expect(isConnected(CONNECTOR_BY_ID['google-calendar'], { cal: { google: { connected: true } } })).toBe(true);
+    expect(isConnected(CONNECTOR_BY_ID['claude-code'], { mcp: { added: true } })).toBe(true);
+    expect(isConnected(CONNECTOR_BY_ID.zoom, { providers: [{ id: 'zoom', enabled: true, installed: true, access: null }] })).toBe(true);
+    expect(isConnected(CONNECTOR_BY_ID.slack, {})).toBe(false);
   });
 });

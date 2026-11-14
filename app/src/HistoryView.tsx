@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Brain, ChatRow, MeetingRow, NoteDoc } from './quorum';
 import { NoteMenu, NoteReader, VisibilityPill } from './MeetingNote';
 import { quoteLink, useQuote } from './quotes';
@@ -7,6 +7,7 @@ import { ConnectHint } from './ConnectHint';
 import { openConnectors } from './connectorsNav';
 import { useSession } from './session';
 import { dayLabel } from './upNextList';
+import { useCalendarView } from './UpNext';
 import { IconCalendar, IconChat, IconClose, IconExternal, IconListCheck, IconMic, IconNewNote, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
 
 type Filter = 'all' | 'meetings' | 'notes' | 'chats';
@@ -34,30 +35,17 @@ function colorFor(s: string) {
   return AVATAR_COLORS[h % AVATAR_COLORS.length];
 }
 
-export function HistoryView({ brain, focusAsk, onAsk, onOpenChat }: { brain: Brain | null; focusAsk: number; onAsk: (q: string, files?: string[]) => void; onOpenChat: (id: string) => void }) {
+export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: { brain: Brain | null; focusAsk: number; onAsk: (q: string, files?: string[]) => void; onOpenChat: (id: string) => void; onFiltered?: (filtered: boolean) => void }) {
   const askRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { if (focusAsk) askRef.current?.focus(); }, [focusAsk]);
   const [data, setData] = useState<{ meetings: MeetingRow[]; chats: ChatRow[] }>({ meetings: [], chats: [] });
   const [filter, setFilter] = useState<Filter>('all');
-  // whether a calendar is connected, for the offer to connect one; the events themselves show in Up next (UpNext.tsx)
-  const [calView, setCalView] = useState<{ connected: boolean; showAll: boolean; hidden: number; status: string }>({ connected: false, showAll: false, hidden: 0, status: '' });
+  // whether a calendar is connected, for the offer to connect one; Up next loads it (UpNext.tsx)
+  const calView = useCalendarView();
   // the offer to connect a calendar stays away for the rest of this launch once closed
   const [calHintHidden, setCalHintHidden] = useSession('calHintHidden', false);
   const [icons, setIcons] = useState<Record<string, string | null>>({});
   useEffect(() => { window.quorum.sourceIcons().then(setIcons); }, []);
-  const calRetry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  // the helper can still be starting on launch, so a miss retries in 10s instead of waiting for the 5 minute refresh
-  const loadCal = useCallback(() => window.quorum.calendar().then((c) => {
-    setCalView({ connected: c.connected, showAll: c.showAll, hidden: c.hidden, status: c.status });
-    clearTimeout(calRetry.current);
-    if (c.status === 'unavailable') calRetry.current = setTimeout(loadCal, 10000);
-  }), []);
-  useEffect(() => {
-    loadCal();
-    const t = setInterval(loadCal, 5 * 60000);
-    const off = window.quorum.onSettings(loadCal);
-    return () => { clearInterval(t); clearTimeout(calRetry.current); off(); };
-  }, [loadCal]);
   const [picked, setPicked] = useState<string[]>([]);
   const [range, setRange] = useState<DateRange | null>(null);
   const [keyword, setKeyword] = useState('');
@@ -140,6 +128,9 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat }: { brain: Bra
 
   const refresh = () => window.quorum.history().then(setData);
   const filtered = filter === 'chats' || picked.length > 0 || !!range || !!keyword;
+  // Up next steps aside while the list is filtered, as it did when it lived here
+  useEffect(() => { onFiltered?.(filtered); }, [filtered, onFiltered]);
+  useEffect(() => () => onFiltered?.(false), [onFiltered]);
   if (note) return <NoteReader note={note} dayLabel={dayLabel} peopleLine={peopleLine} onBack={() => { setNote(null); refresh(); }} />;
 
   const ask = (q: string, files: string[] = []) => { if (q.trim()) { setDraft(''); onAsk(q.trim(), files); } };

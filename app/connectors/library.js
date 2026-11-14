@@ -149,3 +149,34 @@ export function connectorsFor({ meetingCapture = false } = {}) {
 }
 export const aboutFor = (x, { meetingCapture = false } = {}) => (x.kind === 'meeting-app' && !meetingCapture ? CLOUD_ABOUT(x.name) : aboutOf(x));
 export const featuresFor = (x, { meetingCapture = false } = {}) => (x.kind === 'meeting-app' && !meetingCapture ? (CLOUD_FEATURES[x.id] ?? ((n) => [`Soon: imports ${n} recordings and transcripts`]))(x.name) : featuresOf(x));
+
+// Whether a connector is connected, from what the main process reports: sources (sourcesList), the meeting apps on
+// this Mac (meetingProviders), cloud platform accounts (platformsList), the calendar settings and the quorum MCP
+// registration. Settings › Connectors and the Up next strip both read it. A meeting app counts as listening once it is
+// on, installed and readable; with explicit set it also has to have been turned on by the person (an app that is only
+// installed is on by default), and a copy with meeting capture off (listen: false) counts only its cloud account.
+export function isConnected(x, live, { explicit = false } = {}) {
+  if (x.kind === 'mcp-source') return !!x.source && !!live.sources?.find((s) => s.id === x.source)?.connected;
+  if (x.kind === 'meeting-app') {
+    if (!x.app) return false;
+    const cloud = !!live.platforms?.find((p) => p.id === x.app)?.connected;
+    if (x.listen === false) return cloud;
+    const p = live.providers?.find((q) => q.id === x.app);
+    const listening = !!p && p.enabled && p.installed && p.access !== false && (!explicit || live.added?.[x.app]?.enabled === true);
+    return listening || cloud;
+  }
+  if (x.id === 'apple-calendar') return !!live.cal?.enabled && live.cal.status === 'granted';
+  if (x.id === 'google-calendar') return !!live.cal?.google?.connected;
+  if (x.id === 'claude-code') return !!live.mcp?.added;
+  return false;
+}
+
+// the library categories that let you start a note: meeting apps (Zoom, Meet, Teams) and meeting notes apps (Granola,
+// Wispr Notetaker and the rest)
+export const NEW_NOTE_CATEGORIES = ['meetings', 'meeting-notes'];
+
+// + New in Up next: at least one of those connectors is signed in, added as a source, or turned on by the person
+export const canNewNote = (live, list = CONNECTORS) => list.some((x) => NEW_NOTE_CATEGORIES.includes(x.category) && isConnected(x, live, { explicit: true }));
+
+// the renderer event Settings › Connectors sends after a connect, disconnect or other action, so Up next reloads
+export const CONNECTORS_CHANGED = 'quorum:connectors-changed';

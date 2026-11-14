@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { AgentSchedule, Brain, CalendarSettings, MeetingSourceInfo, PlatformInfo, SourceJob } from './quorum';
 import { TRADEOFFS } from '../sources/agent-import';
-import { CATEGORIES, aboutFor, connectorsFor, featuresFor, type LibraryConnector } from '../connectors/library';
+import { CATEGORIES, CONNECTORS_CHANGED, aboutFor, connectorsFor, featuresFor, isConnected, type LibraryConnector } from '../connectors/library';
 import { useFlag } from './flags';
 import { useMenu } from './controls';
 import { IconCheck, IconChevron, IconExternal, IconFolder, IconGrid, IconMore, IconReset } from './icons';
@@ -32,8 +32,6 @@ function useLibrary() {
 }
 const appWhere = (x: LibraryConnector) => (x.app === 'zoom' ? 'the Zoom app' : x.app === 'teams' ? 'the Teams app or a browser' : 'the browser');
 const googleFor = (x: LibraryConnector, live: Live) => (x.id === 'google-calendar' ? live.cal?.google ?? null : null);
-const isConnected = (x: LibraryConnector, live: Live) =>
-  x.kind === 'mcp-source' ? !!sourceFor(x, live)?.connected : x.kind === 'meeting-app' ? listening(providerFor(x, live)) || !!platformFor(x, live)?.connected : x.id === 'apple-calendar' ? !!live.cal?.enabled && live.cal.status === 'granted' : x.id === 'google-calendar' ? !!googleFor(x, live)?.connected : x.id === 'claude-code' ? !!live.mcp?.added : false;
 const connectionType = (x: LibraryConnector) =>
   x.kind === 'mcp-source' ? `${x.name} account, over its MCP server (OAuth)` : x.kind === 'macos' ? 'Permission on this Mac' : cloudOnly(x) ? `${x.name} account, through Quorum Cloud` : x.kind === 'meeting-app' ? `Reads ${appWhere(x)} on this Mac; no account` : x.kind === 'quorum-mcp' ? `The quorum MCP server, registered in ${x.name}` : `${x.name} account (OAuth)`;
 
@@ -152,7 +150,8 @@ const needsCloud = (x: LibraryConnector, live: Live) => cloudOnly(x) && !platfor
 function useAct(onChange: () => void): [boolean, string, Act] {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const act: Act = async (fn) => { setBusy(true); setError(''); const r = (await fn()) as { error?: string } | null | undefined; setBusy(false); if (r && r.error) setError(r.error); else onChange(); };
+  // every action can connect or disconnect something, so Up next hears about it (UpNext.tsx)
+  const act: Act = async (fn) => { setBusy(true); setError(''); const r = (await fn()) as { error?: string } | null | undefined; setBusy(false); window.dispatchEvent(new Event(CONNECTORS_CHANGED)); if (r && r.error) setError(r.error); else onChange(); };
   return [busy, error, act];
 }
 

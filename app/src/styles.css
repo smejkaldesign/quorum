@@ -1527,9 +1527,10 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .conn-off { margin-left: 10px; font-size: 13px; color: var(--muted); }
 .conn-more { margin: 18px 2px 0; font-size: 13px; color: var(--muted); }
 
-/* Up next strip: above the top tabs on every tab (UpNext.tsx). The strip keeps the window draggable like the bar */
-.up-strip { flex: none; padding: 14px 22px 6px; border-bottom: 1px solid var(--line); -webkit-app-region: drag; }
-.up-strip button, .up-strip label, .up-strip .hist-row, .up-strip .menu { -webkit-app-region: no-drag; }
+/* Up next strip: under the header on every tab (UpNext.tsx). Its heading row drags the window like the bar; the list
+   and its scrollbar take clicks */
+.up-strip { flex: none; padding: 2px 22px 6px; border-bottom: 1px solid var(--line); -webkit-app-region: drag; }
+.up-strip button, .up-strip label, .up-strip .hist-row, .up-list { -webkit-app-region: no-drag; }
 .up-strip .up-head { margin-bottom: 4px; }
 .up-strip .up-head h4 { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; color: var(--muted); }
 .up-head-end { display: inline-flex; align-items: center; gap: 12px; }
