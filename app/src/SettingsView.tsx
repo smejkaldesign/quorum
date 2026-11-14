@@ -925,6 +925,7 @@ function KeeperCard({ brain }: { brain: Brain }) {
           <Row icon={<IconInfo width={18} height={18} />} title={`${k.errors.count} upkeep ${k.errors.count === 1 ? 'error' : 'errors'}`}
             desc={k.errors.last ? `Last: ${k.errors.last.where}, ${k.errors.last.message}` : 'Logged under Application Support'}>
             <button className="pill small-pill" onClick={() => window.quorum.keeperErrorsOpen()}>Open log</button>
+            <button className="pill small-pill" onClick={async () => setK(await window.quorum.keeperErrorsClear())}>Clear</button>
           </Row>
         )}
         {k.on && k.held && (
@@ -942,13 +943,20 @@ function KeeperCard({ brain }: { brain: Brain }) {
             {k.on && factsOn && k.learned && (
               <Row icon={<IconNotes width={18} height={18} />} title="Learned facts file"
                 desc={k.learned.target === 'learned' ? 'Claude Code does not load .quorum/learned.md on its own; CLAUDE.md points to it' : 'CLAUDE.md, loaded in every session that reads it. The oldest lines move to the changelog past the budget'}>
-                <select className="set-select" aria-label="Learned facts file" value={k.learned.target} onChange={async (e) => setK(await window.quorum.keeperSet({ factsTarget: e.target.value as 'claude' | 'learned' }))}>
+                <select className="set-select" aria-label="Learned facts file" value={k.learned.pick} onChange={async (e) => setK(await window.quorum.keeperSet({ factsTarget: e.target.value as 'claude' | 'learned' | 'auto' }))}>
+                  <option value="auto">Automatic ({k.learned.auto === 'learned' ? '.quorum/learned.md' : 'CLAUDE.md'})</option>
                   <option value="learned">.quorum/learned.md</option>
                   <option value="claude">CLAUDE.md</option>
                 </select>
                 <select className="set-select" aria-label="Budget" value={k.learned.budget} onChange={async (e) => setK(await window.quorum.keeperSet({ factsBudget: Number(e.target.value) }))}>
                   {[1000, 2000, 4000, 8000].map((n) => <option key={n} value={n}>{n.toLocaleString()} characters</option>)}
                 </select>
+              </Row>
+            )}
+            {k.on && factsOn && k.learned?.suggest && (
+              <Row icon={<IconInfo width={18} height={18} />} title={`Move learned facts to ${k.learned.suggest === 'learned' ? '.quorum/learned.md' : 'CLAUDE.md'}?`}
+                desc={k.learned.suggest === 'learned' ? 'Your Agent OS has its own memory now. Facts in .quorum/learned.md stay out of every session until a question needs them.' : 'Your Agent OS no longer has its own memory. CLAUDE.md is loaded in every session that reads it.'}>
+                <button className="pill small-pill" onClick={async () => setK(await window.quorum.keeperSet({ factsTarget: k.learned!.suggest! }))}>Move</button>
               </Row>
             )}
           </div>

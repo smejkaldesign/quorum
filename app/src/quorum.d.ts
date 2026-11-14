@@ -83,7 +83,9 @@ export type PluginOwner = 'quorum' | 'vault';
 export type KeeperPlugin = { id: string; title: string; does: string; always: boolean; evidence: { path: string; why: string }[]; owner: PluginOwner; overridden: boolean; isNew: boolean };
 export type KeeperStatus = { on: boolean; facts: boolean; running: boolean; lastRunAt: string | null; filed: number; last: KeeperRun | null; folders: Partial<Record<'people' | 'projects' | 'daily' | 'meetings', string>>; model: boolean; held: KeeperHeld | null; plugins: KeeperPlugin[]; learned: KeeperLearned | null; errors: KeeperErrors };
 // where learned facts go and how much of the budget they use; errors are upkeep failures logged under Application Support
-export type KeeperLearned = { target: 'claude' | 'learned'; file: string; budget: number; chars: number; fileChars: number };
+// pick is the select's value; auto is what Automatic settled on; suggest is the other file when the vault's memory changed since
+export type LearnedTarget = 'claude' | 'learned';
+export type KeeperLearned = { target: LearnedTarget; pick: LearnedTarget | 'auto'; auto: LearnedTarget; suggest: LearnedTarget | null; file: string; budget: number; chars: number; fileChars: number };
 export type KeeperErrors = { count: number; last: { at: string; where: string; message: string } | null; file: string | null };
 // screen context: on-screen text as spelling hints; granted is the Screen Recording permission, null when unknown
 export type ScreenContextStatus = { available?: boolean; on: boolean; granted: boolean | null };
@@ -360,10 +362,11 @@ declare global {
       screenContextStatus(): Promise<ScreenContextStatus>;
       screenContextSet(on: boolean): Promise<ScreenContextStatus>;
       screenContextPrivacy(): Promise<void>;
-      keeperSet(patch: { on?: boolean; facts?: boolean; factsBudget?: number; factsTarget?: 'claude' | 'learned' }): Promise<KeeperStatus>;
+      keeperSet(patch: { on?: boolean; facts?: boolean; factsBudget?: number; factsTarget?: 'claude' | 'learned' | 'auto' }): Promise<KeeperStatus>;
       keeperRun(opts?: { allowCreate?: boolean }): Promise<KeeperRun>;
       keeperPlugin(id: string, owner: PluginOwner): Promise<KeeperStatus>;
       keeperErrorsOpen(): Promise<void>;
+      keeperErrorsClear(): Promise<KeeperStatus>;
       onKeeper?(cb: (r: KeeperRun) => void): Unsub;
       onboardingOpenPermission(which: 'microphone' | 'audio' | 'accessibility' | 'calendar'): Promise<void>;
       onboardingRequestMicrophone(): Promise<boolean>;
