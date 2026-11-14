@@ -207,7 +207,7 @@ ul { margin: 0; padding: 0; list-style: none; }
   filter: none;
   will-change: background-position;
 }
-.glow-dark::before {
+.glow-dark::before, .stars::before {
   background:
     radial-gradient(1px 1px at 12px 18px, rgba(255, 255, 255, 0.5), transparent 100%),
     radial-gradient(1px 1px at 86px 54px, rgba(255, 255, 255, 0.35), transparent 100%),
@@ -217,7 +217,7 @@ ul { margin: 0; padding: 0; list-style: none; }
   background-size: 220px 220px;
   animation: stars-a 28s linear infinite;
 }
-.glow-dark::after {
+.glow-dark::after, .stars::after {
   background:
     radial-gradient(1px 1px at 60px 100px, rgba(255, 255, 255, 0.25), transparent 100%),
     radial-gradient(1px 1px at 130px 20px, rgba(255, 255, 255, 0.2), transparent 100%),
@@ -320,24 +320,32 @@ ul { margin: 0; padding: 0; list-style: none; }
 .section::after { right: -5px; }
 
 /* The app preview: the desktop renderer in a frame, laid out at the app's default window (1040 by 820) and scaled to
-   the space it has (script.js sets --s). The window rises 80px into the hero, and the section after it drops its
-   rule so the window and the next heading read as one block. */
-.app-shot { padding: 0; z-index: 1; }
+   the space it has (script.js sets --s on the section). The window rises 80px into the hero, and the 160px under it
+   ends at the next section's rule. */
+.app-shot { --s: 1; padding: 0 0 160px; z-index: 1; }
 .app-shot .app-window { position: relative; z-index: 1; }
-/* a second connector graphic (neural.js) sits behind the frame, far closer in than the hero's, and runs on past the
-   frame's bottom edge into the gap below, fading to nothing before the next section's heading */
-.app-shot .neural {
-  position: absolute; left: 0; top: 0;
+/* The starfield from the Custom plans block sits behind the frame. It starts at the window's vertical midpoint
+   (half of 820px at scale --s, less the 80px rise) and ends at the section's bottom edge, on the next section's rule.
+   The mask takes it from nothing at the top to full strength at the bottom. */
+.stars {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  top: calc(410px * var(--s) - 80px);
   z-index: 0;
+  overflow: hidden;
   pointer-events: none;
-  opacity: 0.4;
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 64%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 64%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 100%);
 }
-.app-shot + .section { border-top: 0; padding-top: calc(var(--section-y) + 160px); }
-.app-shot + .section::before, .app-shot + .section::after { content: none; }
+.stars::before, .stars::after {
+  content: "";
+  position: absolute; inset: 0;
+  will-change: background-position;
+}
+/* the streaks start in the lower two thirds, where the mask lets them show */
+.stars .shoot:nth-child(1) { top: 38%; left: 8%; }
+.stars .shoot:nth-child(2) { top: 52%; left: 56%; }
+.stars .shoot:nth-child(3) { top: 64%; left: 30%; }
 .app-window {
-  --s: 1;
   width: min(100%, 1040px);
   aspect-ratio: 1040 / 820;
   margin: -80px auto 0; /* matches .hero --shot-overlap */
@@ -691,7 +699,7 @@ ul { margin: 0; padding: 0; list-style: none; }
   .marquee { -webkit-mask-image: none; mask-image: none; }
   html { scroll-behavior: auto; }
   .btn { transition: none; }
-  .glow::before, .glow::after { animation: none; }
+  .glow::before, .glow::after, .stars::before, .stars::after { animation: none; }
   .shoot { display: none; }
 }
 

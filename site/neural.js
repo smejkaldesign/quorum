@@ -1,6 +1,6 @@
 // Faint connector graphics: a sparse set of nodes in a 3D volume, turning slowly, with lines between nodes that
-// sit near each other. Few nodes and a wide reach read as a very close view of a much larger network. Two mounts:
-// the hero, behind the copy, and the app frame, where a handful of large nodes drift behind and below the window.
+// sit near each other. Few nodes and a wide reach read as a very close view of a much larger network. One mount:
+// the hero, behind the copy.
 // The canvas keeps the CSS behind it visible; everything is drawn at low alpha. Nearby nodes ease toward the cursor,
 // and a node can be picked up, dragged and thrown; it then springs back to its place in the volume.
 (() => {
@@ -9,9 +9,6 @@
 
   const MOUNTS = [
     { sel: '.hero', count: 44, reach: 0.34, speed: 0.000045, depth: 1.9, radius: [1.1, 2.4], box: [1.25, 0.85, 0.7], extend: 0, center: 0.5 },
-    // far closer in: a few big nodes and long lines, centered a little above the frame's bottom edge and wider than
-    // the frame, so it shows beside the window and below it, running 320px past it into the gap
-    { sel: '.app-shot', count: 12, reach: 0.7, speed: 0.000028, depth: 2.4, radius: [3, 5.6], box: [1.55, 0.6, 0.6], extend: 320, center: 0.6 },
   ];
 
   const PULL_RADIUS = 220;   // px from the cursor where the pull starts
