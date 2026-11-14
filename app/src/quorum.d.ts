@@ -211,12 +211,20 @@ export type PopupEvent = { mode: PopupMode; durationMs: number; autoListen: bool
 export type SummaryState = { summary: string; decisions: Decision[]; actions: ActionItem[]; questions: Question[]; coveredUntil: number | null };
 export type SummaryEvent = { state: SummaryState; at: number; thinking: boolean };
 export type StateEvent =
-  | { phase: 'listening' | 'paused'; by?: string; go?: string; soft?: boolean }
+  | { phase: 'listening' | 'paused'; by?: string; go?: string; soft?: boolean; intoNote?: boolean }
   | { phase: 'blocked' }
   | { phase: 'summarizing'; meta?: MeetingMeta }
   | { phase: 'starting'; chatName?: string | null }
   | { phase: 'idle' }
   | { phase: 'review'; notes: Notes; meta?: MeetingMeta };
+
+// Record in the note view: what is running (audio is Transcription), and a screen read for the open note
+export type RecordState = { audio: boolean; screen: boolean };
+export type ScreenContextEvent = { app: string; title: string; text: string; at: number };
+// a note opened in the note view; hash is the file as read, so a save can tell it changed on disk
+export type HandNoteRef = { file: string; hash: string; rel: string; app: string; url: string };
+export type HandNote = HandNoteRef & { title: string; body: string; readOnly: boolean; date: string | null };
+export type HandNoteSave = HandNoteRef | { conflict: true } | { error: string };
 
 declare global {
   interface Window {
@@ -228,6 +236,16 @@ declare global {
       resume(): Promise<void>;
       ask(q: string, files?: string[]): Promise<{ text: string; sources: Source[]; steps: string[] }>;
       saveNotes(p: { notes: Notes; followups: { q: string; a: string }[] }): Promise<{ file: string; rel: string; app: string; url: string }>;
+      recordStart(opts: RecordState): Promise<RecordState | { error: string }>;
+      recordStop(): Promise<RecordState>;
+      recordStatus(): Promise<RecordState>;
+      recordScreenNow(): Promise<void>;
+      onRecord(cb: (s: RecordState) => void): Unsub;
+      onScreenContext(cb: (e: ScreenContextEvent) => void): Unsub;
+      onNewNote(cb: (d: { file?: string }) => void): Unsub;
+      handNoteOpen(file: string): Promise<HandNote | null>;
+      handNoteSave(p: { id: string; file: string | null; title: string; body: string; hash: string | null; fresh: boolean }): Promise<HandNoteSave>;
+      handNoteDone(file: string | null): Promise<void>;
       privateNotesSet(text: string): Promise<void>;
       discard(): Promise<void>;
       done(): Promise<void>;

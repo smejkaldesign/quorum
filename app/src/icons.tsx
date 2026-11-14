@@ -152,6 +152,13 @@ export const IconPlay = (p: SVGProps<SVGSVGElement>) => (
 export const IconStop = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
 );
+// Record: a dot in a ring; the button's color turns it red while a recording runs
+export const IconRecord = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none" /></svg>
+);
+export const IconScreen = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></svg>
+);
 
 // while listening the bars follow the loudness of the call; the styles are set directly so the header doesn't re-render ~12 times a second
 export function Wave({ live }: { live: boolean }) {

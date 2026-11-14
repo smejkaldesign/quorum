@@ -11,7 +11,14 @@ enum ScreenContext {
 
     // the front window of an app whose bundle id starts with one of the prefixes, else the frontmost app's front window
     static func terms(bundlePrefixes: [String]) async -> [String] {
-        guard CGPreflightScreenCaptureAccess() else { return [] }
+        guard let shot = await read(bundlePrefixes: bundlePrefixes) else { return [] }
+        return extract(shot.text)
+    }
+
+    // one screenshot of that window, recognized with Vision: the lines of text, the app's name and the window title.
+    // Record's Screen option adds these to the open note; nothing is stored here, and the image is dropped once read
+    static func read(bundlePrefixes: [String]) async -> (text: String, app: String, title: String)? {
+        guard CGPreflightScreenCaptureAccess() else { return nil }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
             let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
@@ -19,7 +26,7 @@ enum ScreenContext {
             let pick = wins.first { w in bundlePrefixes.contains { p in (w.owningApplication?.bundleIdentifier ?? "").hasPrefix(p) } }
                 ?? wins.first { $0.owningApplication?.processID == front }
                 ?? wins.first
-            guard let win = pick else { return [] }
+            guard let win = pick else { return nil }
             let config = SCStreamConfiguration()
             let scale = 2.0
             config.width = Int(win.frame.width * scale)
@@ -32,10 +39,10 @@ enum ScreenContext {
             request.usesLanguageCorrection = false
             try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
             let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
-            return extract(text)
+            return (text, win.owningApplication?.applicationName ?? "", win.title ?? "")
         } catch {
             Emit.log("screen context: \(error.localizedDescription)")
-            return []
+            return nil
         }
     }
 

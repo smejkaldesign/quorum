@@ -6,6 +6,7 @@ import { BetaGate } from './BetaGate';
 // the views a session may never open load on first use, so the window paints from a smaller bundle and the popup
 // window never parses them at all
 const EndView = lazy(() => import('./EndView').then((m) => ({ default: m.EndView })));
+const NoteView = lazy(() => import('./NoteView').then((m) => ({ default: m.NoteView })));
 const Onboarding = lazy(() => import('./Onboarding').then((m) => ({ default: m.Onboarding })));
 const KnowledgeView = lazy(() => import('./KnowledgeView').then((m) => ({ default: m.KnowledgeView })));
 const SettingsView = lazy(() => import('./SettingsView').then((m) => ({ default: m.SettingsView })));
@@ -23,7 +24,9 @@ import type { ConnectorsTarget, OpenSettingsDetail, SettingsPageId } from './con
 import { IconPen, PrivateNotes, usePrivateNotes } from './PrivateNotes';
 import { Avatar, SpeakerName, similarCounts, type SpeakerInfo } from './Speaker';
 import { useNotetaker } from './flags';
-import { IconFolderOpen, IconPerson, IconGear, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconBack, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, Wave } from './icons';
+import { RecordMenu } from './Record';
+import { recordChoices, type RecordChoice } from './noteRecord';
+import { IconFolderOpen, IconPerson, IconGear, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconBack, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, IconRecord, Wave } from './icons';
 
 // one speaker turn as main.js built it; a turn that grows arrives again with the same id and replace: true
 type Line = { id: number; channel: 'me' | 'them'; text: string; start: number } & Partial<SpeakerInfo>;
@@ -98,17 +101,25 @@ export function App() {
   // the notetaker flags (flags.ts): the main process refuses on its own; these keep the controls out of sight
   const nt = useNotetaker();
   const [phase, setPhase] = useState<Phase>('idle');
-  // why a Start did nothing (the main process refused it), shown for a few seconds under the header
-  const [notice, setNotice] = useState<string | null>(null);
-  const noticeTimer = useRef<number | null>(null);
-  const startListening = async () => {
-    const r = await window.quorum.start();
-    if (r?.error) {
-      setNotice(r.error);
-      if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
-      noticeTimer.current = window.setTimeout(() => setNotice(null), 6000);
-    }
-  };
+  // New note: the note view on a fresh Untitled note (file null) or an existing one, optionally recording from the start.
+  // Opened from the header's Record, the Home card, the tray, and a `quorum:new-note` window event ({ file? } detail)
+  const [note, setNote] = useState<{ file: string | null; record: RecordChoice | null; n: number } | null>(null);
+  const openNoteView = (file: string | null = null, record: RecordChoice | null = null) => setNote({ file, record, n: Date.now() });
+  useEffect(() => {
+    const onEvent = (e: Event) => { const f = (e as CustomEvent<{ file?: string } | undefined>).detail?.file; openNoteView(typeof f === 'string' ? f : null); };
+    window.addEventListener('quorum:new-note', onEvent);
+    const off = window.quorum.onNewNote?.((d) => openNoteView(typeof d?.file === 'string' ? d.file : null));
+    return () => { window.removeEventListener('quorum:new-note', onEvent); off?.(); };
+  }, []);
+  // the header's Record popover; Screen is offered only with the screen-context flag and its Preferences setting on
+  const [recordOpen, setRecordOpen] = useState(false);
+  const [recordChoice, setRecordChoice] = useState<RecordChoice>({ audio: true, screen: false });
+  useEffect(() => {
+    if (!recordOpen) return;
+    const shut = () => setRecordOpen(false);
+    window.addEventListener('click', shut);
+    return () => window.removeEventListener('click', shut);
+  }, [recordOpen]);
   // paused from the header keeps the call; STOP from the chat deletes it
   const [held, setHeld] = useState(false);
   const [tab, setTab] = useSession<Tab>('tab', 'home', keepTab(EDITION));
@@ -376,10 +387,12 @@ export function App() {
   const similar = useMemo(() => similarCounts(lines), [lines]);
   const pickSpeaker = useCallback((id: number, name: string | null, same: boolean) => setSpeaker(id, name, same), []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const screenOffered = nt.screenContext && settings.screenContext === true;
+  const startRecord = (c: RecordChoice) => { setRecordOpen(false); openNoteView(null, recordChoices(screenOffered, c)); };
   const status = {
-    idle: { label: 'Not listening', icon: <Wave live={false} /> },
+    idle: { label: 'Record', icon: <IconRecord width={17} height={17} /> },
     starting: { label: 'Starting…', icon: <Wave live={false} /> },
-    listening: { label: 'Listening', icon: <Wave live /> },
+    listening: { label: 'Recording', icon: <Wave live /> },
     paused: held ? { label: 'Paused', icon: <Wave live={false} /> } : { label: 'Stopped', icon: <IconStop width={14} height={14} /> },
     review: { label: 'Ended', icon: <span className="dot" /> },
     blocked: { label: 'Off for this call', icon: <Wave live={false} /> },
@@ -399,6 +412,11 @@ export function App() {
     const close = () => { setPhase('idle'); resetMeeting(); setTab('home'); };
     return <div className="panel"><LazyView name="your notes" onClose={close}><EndView notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing} transcript={lines.map((l) => ({ ...l, who: who(l) }))} participants={participants} onSpeaker={setSpeaker} me={me}
       privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={close} /></LazyView></div>;
+  }
+
+  if (note) {
+    const close = () => setNote(null);
+    return <div className="panel"><LazyView name="your note" onClose={close}><NoteView key={note.n} file={note.file} record={note.record} canRecord={nt.manualListen} screenOffered={screenOffered} onClose={close} /></LazyView></div>;
   }
 
   return (
@@ -429,13 +447,17 @@ export function App() {
             {phase === 'listening' && <button className="icon-btn call-btn" aria-label="Pause" data-tip="Pause" onClick={() => window.quorum.pause()}><IconPause /></button>}
             {phase === 'paused' && <button className="icon-btn call-btn" aria-label="Resume" data-tip="Resume" onClick={() => window.quorum.resume()}><IconPlay /></button>}
             {(phase === 'listening' || phase === 'paused') && <button className="icon-btn call-btn" aria-label="Stop and summarize" data-tip="Stop and summarize" onClick={() => window.quorum.end()}><IconStop /></button>}
-            {/* one button from idle to listening, so the label that slid out on hover is the one that turns green */}
+            {/* Record: one button from idle to recording, so the label that slid out on hover is the one that turns green.
+                With Screen on offer it opens the Record popover; otherwise it opens a new note that starts transcribing */}
             {(nt.manualListen || phase !== 'idle') && (
-            <button className={`status listen ${phase === 'blocked' ? 'off-call' : phase}`} onClick={phase === 'idle' ? startListening : undefined}
-              data-tip={phase === 'blocked' ? 'Someone on your never-listen list is in this call' : undefined} aria-label={phase === 'idle' ? 'Listen' : status.label}>
-              <span className="listen-hint">{phase === 'idle' ? 'Listen' : status.label}</span>{status.icon}
+            <button className={`status listen ${phase === 'blocked' ? 'off-call' : phase}`}
+              onClick={phase === 'idle' ? (e) => { e.stopPropagation(); if (screenOffered) setRecordOpen((o) => !o); else startRecord({ audio: true, screen: false }); } : undefined}
+              aria-haspopup={phase === 'idle' && screenOffered ? 'dialog' : undefined} aria-expanded={phase === 'idle' && screenOffered ? recordOpen : undefined}
+              data-tip={phase === 'blocked' ? 'Someone on your never-listen list is in this call' : undefined} aria-label={status.label}>
+              <span className="listen-hint">{status.label}</span>{status.icon}
             </button>
             )}
+            {recordOpen && phase === 'idle' && <RecordMenu choice={recordChoice} onChoice={setRecordChoice} onStart={startRecord} />}
           </div>
           <div className="status-wrap">
             <button className={`icon-btn brain ${view === 'settings' ? 'active' : ''}`} data-tip="Settings" aria-label="Settings and Agent OS"
@@ -459,7 +481,6 @@ export function App() {
           </div>
         </div>
       </header>
-      {notice && <p className="set-error start-notice" role="alert">{notice}</p>}
 
       {view === 'settings' ? (
         <div className="body wide flush">
@@ -495,13 +516,11 @@ export function App() {
             )}
             {phase === 'idle' && msgs.length === 0 && (
               <QuorumCard>
-                <p>{brain ? `Ask me anything from ${brain.name}. ` : 'Connect your Agent OS so I can answer from your notes. '}{nt.meetingCapture ? "When a call starts, I post a notice in the call's chat and listen on your Mac." : nt.manualListen ? 'Start listening to take a note of your own; I write it into your Agent OS.' : ''}</p>
-                {nt.manualListen && (
+                <p>{brain ? `Ask me anything from ${brain.name}. ` : 'Connect your Agent OS so I can answer from your notes. '}{nt.meetingCapture ? "When a call starts, I post a notice in the call's chat and listen on your Mac." : nt.manualListen ? 'Start a note of your own, by hand or with Record; I save it into your Agent OS.' : 'Start a note of your own; I save it into your Agent OS.'}</p>
                 <div className="row">
-                  <button className="pill primary" onClick={startListening}>Start listening</button>
+                  <button className="pill primary" onClick={() => openNoteView()}>New note</button>
                   {nt.meetingCapture && <span className="hint">{settings.autoListen ? <><span className="live-dot" aria-hidden="true" />Auto-listen is on</> : 'Or turn on auto-listen in Settings'}</span>}
                 </div>
-                )}
               </QuorumCard>
             )}
             {phase === 'starting' && <QuorumCard><p className="muted">{startingChat ? `Posting my notice in the ${startingChat}…` : 'Starting…'}</p></QuorumCard>}
