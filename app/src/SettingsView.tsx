@@ -928,7 +928,9 @@ function KeeperCard({ brain }: { brain: Brain }) {
       {k.plugins.length > 0 && (
         <>
           <h3>Plugins</h3>
-          <div className="set-card">{k.plugins.map(plugin)}</div>
+          <div className="set-card">
+            {k.on ? k.plugins.map(plugin) : <Row icon={<IconReset width={18} height={18} />} title="Upkeep is off" desc="Quorum does none of these jobs while Keep this folder current is off. Turn it on to choose which ones it does." />}
+          </div>
         </>
       )}
     </>
