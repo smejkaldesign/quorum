@@ -1,4 +1,5 @@
-import type { KbSyncAttachment } from '../../src/quorum';
+import type { KbSyncAttachment, KbSyncGrant } from '../../src/quorum';
+import { parseGithubUrl } from '../githubUrl';
 
 // What the synced-folders panel says about each attachment (ee/kbSync.js, migration 0032). Pure, so the sentences are
 // tested without a renderer.
@@ -54,10 +55,16 @@ export function syncActions(a: Pick<KbSyncAttachment, 'status' | 'connected' | '
   return { syncNow: !paused && a.connected && a.status !== 'needs_auth', pause: !paused, resume: paused && a.paused_by !== 'plan' };
 }
 
-// a GitHub address the relay can sync: https://github.com/owner/repo, with an optional /tree/<branch>/<folder>
+// a GitHub address the relay can sync, read by the parser the main process uses (ee/githubUrl.js)
 export function checkRepoUrl(url: string): string | null {
-  const s = url.trim();
-  if (!s) return 'Enter the repository address.';
-  if (!/^https:\/\/github\.com\/[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}(\.git)?(\/tree\/[^?#]+)?\/?$/.test(s)) return 'Enter a GitHub repository address, like https://github.com/owner/repository.';
-  return null;
+  const r = parseGithubUrl(url);
+  return r.error ?? null;
+}
+
+// a relay grant on Settings, Connections: its name, and one line on its account and the synced folders using it
+export const grantLabel = (g: Pick<KbSyncGrant, 'provider'>): string => `${providerName(g.provider)} (synced folders)`;
+export function grantLine(g: Pick<KbSyncGrant, 'account' | 'attachments'>): string {
+  const n = g.attachments.length;
+  const used = n === 0 ? 'No synced folder uses it' : n === 1 ? `Used by ${g.attachments[0].name}` : `Used by ${n} synced folders`;
+  return g.account ? `${g.account} · ${used}` : used;
 }

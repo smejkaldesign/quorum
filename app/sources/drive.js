@@ -41,11 +41,11 @@ const inScript = (v) => JSON.stringify(v).replace(/[<>&\u2028\u2029]/g, (c) => `
 export function pickerPage({ apiKey, appId, accessToken, nonce, folders = false }) {
   const cfg = inScript({ apiKey, appId, token: accessToken, done: `/picker/${nonce}/done`, alive: `/picker/${nonce}/alive`, mimeTypes: (folders ? [FOLDER, ...PICKABLE] : PICKABLE).join(','), max: folders ? 1 : MAX_PICKS, folders, title: folders ? 'Choose a folder or file to sync' : 'Choose files for Quorum' });
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="strict-origin-when-cross-origin"><title>Choose files for Quorum</title>
+<meta name="referrer" content="strict-origin-when-cross-origin"><title>${folders ? 'Choose a folder or file to sync' : 'Choose files for Quorum'}</title>
 <style>html,body{height:100%;margin:0}body{background:#0b0b0c;color:#f2f2f3;font:16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",Helvetica,Arial,sans-serif;display:grid;place-items:center;text-align:center}
 main{max-width:520px;padding:24px}h1{font:400 34px/1.15 "New York",ui-serif,Georgia,serif;margin:0 0 12px}p{margin:0;color:rgba(242,242,243,.85)}
 </style></head>
-<body><main><h1 id="title">Opening Google Drive</h1><p id="body">Pick the Google Docs, markdown or text files to add to the knowledge base.</p></main>
+<body><main><h1 id="title">Opening Google Drive</h1><p id="body">${folders ? 'Pick one folder, or one Google Doc, markdown or text file, for the knowledge base to keep in sync.' : 'Pick the Google Docs, markdown or text files to add to the knowledge base.'}</p></main>
 <script>
 const CFG = ${cfg};
 // the app gives up on a page that stops answering; while this tab is open it says it is still here

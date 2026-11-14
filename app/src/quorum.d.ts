@@ -218,11 +218,13 @@ export type KbSuggestion = { id: string; state: 'ready' | 'stale'; at: string | 
 // a remote folder or file the relay keeps in sync in a KB folder (ee/kbSync.js, migration 0032), as KB admins see it
 export type KbSyncAttachment = {
   id: string; kb_id: string; folder_id: string | null; provider: 'google-drive' | 'github' | string; remote_id: string; remote_kind: 'folder' | 'file';
-  options: { branch?: string; path?: string } | null; name: string; url: string | null;
+  options: { branch?: string; path?: string } | null; name: string; url: string | null; attach_id?: string | null;
   status: 'pending' | 'active' | 'paused' | 'error' | 'needs_auth'; paused_by?: 'admin' | 'plan' | null; error: string | null; note_count: number;
   last_synced_at: string | null; next_run_at: string | null; connected: boolean; account: string | null; attached_by: string | null; attached_by_email: string | null;
 };
 export type KbSyncResult = Result & { attachment?: KbSyncAttachment | null; canceled?: true };
+// a grant Quorum's relay holds for this person's synced folders (ee/kbSync.js, migration 0033); never a token
+export type KbSyncGrant = { provider: string; account: string | null; created_at: string; shared_with_mac: boolean; attachments: { id: string; name: string; kb_id: string; kb_name: string; status: string }[] };
 export type KbImportProgress = { kbId: string; phase: 'fetching' | 'reading' | 'writing' | 'done'; done: number; total: number };
 export type KbPlacement = { noteId: string; kbId: string | null; folderId: string | null; updatedAt: string | null };
 export type KbNote = { id: string; path: string; title: string; folderId: string | null; userId: string; updatedAt: string | null };
@@ -566,6 +568,8 @@ declare global {
       kbSyncPause(req: { id: string; paused: boolean }): Promise<KbSyncResult>;
       kbSyncNow(req: { id: string }): Promise<KbSyncResult>;
       kbSyncRemove(req: { id: string }): Promise<Result & { removed?: number }>;
+      kbSyncGrants(): Promise<Result & { grants?: KbSyncGrant[] }>;
+      kbSyncGrantDisconnect(req: { provider: string; mode: 'pause' | 'remove' }): Promise<Result & { paused?: number; removed?: number }>;
       billingStatus(): Promise<Result & { billing?: Billing }>;
       billingCheckout(seats?: number): Promise<Result>;
       billingPortal(): Promise<Result>;

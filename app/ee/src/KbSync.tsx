@@ -27,7 +27,10 @@ export function SyncPanel({ kb, folderId, source, onChanged, onDone }: { kb: Kb;
   const [branch, setBranch] = useState('');
   const [removing, setRemoving] = useState<KbSyncAttachment | null>(null);
   const [now, setNow] = useState<number | null>(null);
-  // a picker still waiting in the browser when the panel closes is ended, which frees its port
+  // the list's own read error, kept apart from an action's error so the next good read clears it
+  const [pollError, setPollError] = useState('');
+  // a Drive picker or a GitHub sign-in still waiting in the browser when the panel closes (Done, Escape, the scrim) is
+  // ended, which frees its port
   const waiting = useRef(false);
   useEffect(() => () => { if (waiting.current) { waiting.current = false; window.quorum.kbSyncCancel?.().catch(() => {}); } }, []);
   const changed = () => { if (onChanged) onChanged(); else announceKbChange(); };
@@ -35,7 +38,9 @@ export function SyncPanel({ kb, folderId, source, onChanged, onDone }: { kb: Kb;
   const load = useCallback(async () => {
     const r = await kbCall(() => window.quorum.kbSyncList(kb.id), 'The synced folders could not be read.');
     setNow(Date.now());
-    if (r.error) setError(r.error); else setList(r.attachments ?? []);
+    if (r.error) { setPollError(r.error); return; }
+    setPollError('');
+    setList(r.attachments ?? []);
   }, [kb.id]);
   useEffect(() => { load(); }, [load]);
   // the worker runs on the relay: while the panel is open the list is read again every half minute
@@ -43,7 +48,7 @@ export function SyncPanel({ kb, folderId, source, onChanged, onDone }: { kb: Kb;
 
   const attached = (r: KbSyncResult) => {
     if (r.error) { setError(r.error); return; }
-    if (r.canceled) { setNotice('Nothing was picked.'); return; }
+    if (r.canceled) { setNotice(source === 'github' ? 'The GitHub sign-in was cancelled.' : 'Nothing was picked.'); return; }
     setNotice(`${r.attachment?.name ?? 'It'} is attached. The first sync starts in a minute, and the notes reach every reader's Mac after it.`);
     setRepo(''); setBranch('');
     load();
@@ -52,7 +57,7 @@ export function SyncPanel({ kb, folderId, source, onChanged, onDone }: { kb: Kb;
   const run = async (key: string, fn: () => Promise<KbSyncResult>, fallback: string) => {
     if (busy) return;
     setBusy(key); setError(''); setNotice('');
-    waiting.current = key === 'drive';
+    waiting.current = key === 'drive' || key === 'github';
     const r = await kbCall(fn, fallback);
     waiting.current = false;
     setBusy(null);
@@ -60,6 +65,7 @@ export function SyncPanel({ kb, folderId, source, onChanged, onDone }: { kb: Kb;
   };
   const attachDrive = () => run('drive', () => window.quorum.kbSyncAttachDrive({ kbId: kb.id, folderId }), 'The Google Drive item could not be attached.');
   const repoError = repo ? checkRepoUrl(repo) : null;
+  const cancelWait = () => { window.quorum.kbSyncCancel?.().catch(() => {}); };
   const attachRepo = () => { if (checkRepoUrl(repo)) { setError(checkRepoUrl(repo)!); return; } run('github', () => window.quorum.kbSyncAttachGithub({ kbId: kb.id, folderId, url: repo.trim(), branch: branch.trim() || null }), 'The repository could not be attached.'); };
 
   const act = async (a: KbSyncAttachment, fn: () => Promise<KbSyncResult>, fallback: string) => {
@@ -99,12 +105,14 @@ export function SyncPanel({ kb, folderId, source, onChanged, onDone }: { kb: Kb;
             <span className="set-field wide"><input aria-label="Repository address" placeholder="https://github.com/owner/repository" value={repo} disabled={!!busy} onChange={(e) => setRepo(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') attachRepo(); }} /></span>
             <span className="set-field kb-branch"><input aria-label="Branch" placeholder="Branch (optional)" value={branch} disabled={!!busy} onChange={(e) => setBranch(e.target.value)} /></span>
             <button className="pill primary" disabled={!!busy || !repo.trim() || !!repoError} onClick={attachRepo}>{busy === 'github' ? 'Waiting for GitHub…' : 'Sign in and sync'}</button>
+            {busy === 'github' && <button className="pill ghost" onClick={cancelWait}>Cancel</button>}
           </div>
+          {busy === 'github' && <p className="kb-hint muted" role="status">Sign in to GitHub in the browser tab that opened, then come back here. Cancel ends the sign-in.</p>}
           {repoError && <p className="kb-hint muted">{repoError}</p>}
         </>
       )}
       {notice && <p className="kb-hint" role="status">{notice}</p>}
-      {error && <p className="set-error" role="alert">{error}</p>}
+      {(error || pollError) && <p className="set-error" role="alert">{error || pollError}</p>}
       {list && list.length > 0 && (
         <>
           <p className="kb-label">Synced into {kb.name}</p>
@@ -133,7 +141,7 @@ export function SyncPanel({ kb, folderId, source, onChanged, onDone }: { kb: Kb;
       )}
       {list && !list.length && <p className="kb-hint muted">Nothing is synced into {kb.name} yet.</p>}
       <div className="kb-form-row">
-        <button className="pill ghost" disabled={!!busy && busy !== 'drive'} onClick={onDone}>{busy === 'drive' ? 'Cancel' : 'Done'}</button>
+        <button className="pill ghost" disabled={!!busy && busy !== 'drive' && busy !== 'github'} onClick={onDone}>{busy === 'drive' || busy === 'github' ? 'Cancel' : 'Done'}</button>
       </div>
       {removing && <KbConfirm title={`Remove ${removing.name}?`} body={`Its notes leave the knowledge base and the readers' vaults, and the relay stops syncing it. Nothing changes in ${providerName(removing.provider)}.`} action="Remove" onDone={(ok) => (ok ? remove(removing) : setRemoving(null))} />}
     </div>

@@ -17,6 +17,7 @@ const CloudBilling = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/s
 const CloudTeams = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/Teams').then((m) => ({ default: m.TeamsPage }))) : null;
 const CloudKnowledge = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/Knowledge').then((m) => ({ default: m.KnowledgePage }))) : null;
 const CloudKnowledgeBases = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/KnowledgeBases').then((m) => ({ default: m.KnowledgeBasesPage }))) : null;
+const CloudSyncGrants = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/KbSyncGrants').then((m) => ({ default: m.KbSyncGrants }))) : null;
 const CloudKnowledgeTab = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/KnowledgeTab').then((m) => ({ default: m.KnowledgeTab }))) : null;
 
 // whether this build can reach a hosted account at runtime: the cloud edition without QUORUM_SUPABASE_URL and the anon key
@@ -42,6 +43,14 @@ export function AccountArea({ fallback = null, local, unconfigured = NOT_SET_UP 
   if (hosted === null) return <>{fallback}</>;
   if (!hosted) return <>{unconfigured}</>;
   return <Suspense fallback={null}><CloudAccount fallback={fallback} /></Suspense>;
+}
+
+// Settings, Connections: the sign-ins only Quorum's relay holds for synced folders (GitHub), each with Disconnect.
+// Nothing in the local edition, or without a hosted account
+export function SyncedFolderConnections() {
+  const hosted = useHostedAccounts();
+  if (!CloudSyncGrants || !hosted) return null;
+  return <Suspense fallback={null}><CloudSyncGrants /></Suspense>;
 }
 
 // the Members page; the local edition has no workspace, and an unconfigured cloud build has no account to list members for

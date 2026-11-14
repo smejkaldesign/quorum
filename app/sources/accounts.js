@@ -183,6 +183,13 @@ export function createAccounts({ tokens, clients, relayBase, relayFetch, open, l
       log('account disconnected', id, revoked ? 'revoked' : 'local only');
       return info(id);
     },
+    // the refresh token, for a feature that hands it to the relay once (KB folder sync, ee/kbSync.js); null when the
+    // account is not connected or signs in through its own module
+    async refreshToken(id) {
+      known(id);
+      if (delegateOf(id)) return null;
+      return (await tokens.get(tokenKey(id)))?.refreshToken ?? null;
+    },
     // a fresh access token for the features that use the account; refreshes a minute before expiry, one refresh per
     // provider at a time (a rotated refresh token works once, so a second concurrent refresh would fail)
     async accessToken(id) {

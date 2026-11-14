@@ -276,6 +276,8 @@ contextBridge.exposeInMainWorld('quorum', {
   kbSyncPause: (req) => ipcRenderer.invoke('kb-sync-pause', req),
   kbSyncNow: (req) => ipcRenderer.invoke('kb-sync-now', req),
   kbSyncRemove: (req) => ipcRenderer.invoke('kb-sync-remove', req),
+  kbSyncGrants: () => ipcRenderer.invoke('kb-sync-grants'),
+  kbSyncGrantDisconnect: (req) => ipcRenderer.invoke('kb-sync-grant-disconnect', req),
   billingStatus: () => ipcRenderer.invoke('billing-status'),
   billingCheckout: (seats) => ipcRenderer.invoke('billing-checkout', seats),
   billingPortal: () => ipcRenderer.invoke('billing-portal'),
