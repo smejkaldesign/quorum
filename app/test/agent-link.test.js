@@ -111,6 +111,15 @@ describe('quorum command', () => {
     await u.link.cli.remove();
     expect(existsSync(path.join(u.home, 'bin', 'quorum'))).toBe(true);
   });
+  it('adds an alias for new windows when another quorum comes first on PATH', async () => {
+    const t = setup({ pathDirs: ['/opt/homebrew/bin', '$HOME/.local/bin'] });
+    t.shellPath.quorum = '/opt/homebrew/bin/quorum';
+    const s = await t.link.cli.add();
+    expect(s).toMatchObject({ where: 'path', alias: true });
+    expect(readFileSync(path.join(t.home, '.zshrc'), 'utf8')).toContain(MARK);
+    await t.link.cli.remove();
+    expect(readFileSync(path.join(t.home, '.zshrc'), 'utf8')).not.toContain(MARK);
+  });
   it('says when the launcher left PATH or points at a Quorum that moved', async () => {
     const t = setup({ pathDirs: ['$HOME/.local/bin'] });
     await t.link.cli.add();

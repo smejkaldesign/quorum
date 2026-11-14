@@ -1286,9 +1286,7 @@ function DecisionsKey({ provider, info, onDone }: { provider: DecisionProvider; 
 // as a model provider is a row in PersonalConnectors above
 function ClaudeCard() {
   const agents = useAgents();
-  const check = useConnectionCheck();
-  // a check run reads the agents again too, so the rows above match what it found
-  const runCheck = async () => { await check.run(); await agents.refresh(); };
+  const check = useConnectionCheck(agents);
   return (
     <>
       <div className="set-head"><h3>Connect to AI tools</h3></div>
@@ -1297,10 +1295,10 @@ function ClaudeCard() {
         <McpRows agents={agents} />
       </div>
       <div className="conn-check-head">
-        <p className="mcp-lede">Check connection saves a test note where meeting notes go, checks your agent can find it, then removes it.</p>
-        <ConnectionCheckButton running={check.running} onRun={runCheck} />
+        <p className="mcp-lede">Check connection makes sure your agent can reach Quorum's meeting notes. It changes nothing in your Agent OS folder.</p>
+        <ConnectionCheckButton running={check.running} onRun={check.run} />
       </div>
-      {check.result && <ConnectionCheckList result={check.result} />}
+      {check.result && <ConnectionCheckList result={check.result} running={check.running} onAction={check.act} />}
     </>
   );
 }

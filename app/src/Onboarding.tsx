@@ -409,17 +409,19 @@ function ConnectStep({ onBack, onNext }: { onBack: () => void; onNext: () => voi
   );
 }
 
-// the last check before Open Quorum: runs on arrival, and Continue opens once it has run, passed or not
+// the last check before Open Quorum: runs on arrival, and Continue opens once it has run, passed or not. Each failure
+// has a button that fixes it
 function CheckStep({ onBack, onNext }: { onBack: () => void; onNext: () => void }) {
-  const check = useConnectionCheck();
+  const agents = useAgents();
+  const check = useConnectionCheck(agents);
   useEffect(() => { check.run(); }, []);
   const r = check.result;
   return (
     <section className="onb-step">
       <h1>Check connection</h1>
-      <p>Quorum saves a test note where meeting notes go, checks your agent can find it, checks the MCP server and the quorum command, then removes the note.</p>
-      {r ? <ConnectionCheckList result={r} /> : <p className="muted">Checking…</p>}
-      {r && !r.ok && <p className="muted">You can fix these later and check again in Settings &gt; AI settings.</p>}
+      <p>Quorum makes sure your agent can reach your meeting notes through Quorum's MCP server and the quorum command. It changes nothing in your Agent OS folder.</p>
+      {r ? <ConnectionCheckList result={r} running={check.running} onAction={check.act} /> : <p className="muted">Checking…</p>}
+      {r && !r.ok && <p className="muted">You can also fix these later in Settings &gt; AI settings.</p>}
       <Actions onBack={onBack} onNext={onNext} ready={!!r} busy={check.running} extra={r ? <ConnectionCheckButton running={check.running} onRun={check.run} label="Check again" /> : undefined} />
     </section>
   );

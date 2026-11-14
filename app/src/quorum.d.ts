@@ -15,10 +15,11 @@ export type HelperEvent =
   | { event: 'dictation'; state: 'on' | 'off' };
 
 // every generated line carries refs: the ids of the transcript turns it came from
-export type CliStatus = { added: boolean; where?: 'path' | 'alias'; path?: string; onPath?: boolean; resolves?: string; error?: string | null; command?: string };
+export type CliStatus = { added: boolean; where?: 'path' | 'alias'; path?: string; onPath?: boolean; alias?: boolean; resolves?: string; error?: string | null; command?: string };
 export type AgentStatus = { installed: boolean; added: boolean; via?: 'cli' | 'config'; error?: string | null };
 export type AgentsStatus = { claude: AgentStatus; codex: AgentStatus; cli: CliStatus };
-export type ConnectionCheckItem = { id: 'folder' | 'note' | 'search' | 'claude' | 'codex' | 'server' | 'cli'; label: string; state: 'ok' | 'fail' | 'warn' | 'skip'; fix: string | null; detail: string | null };
+export type ConnectionCheckItem = { id: 'folder' | 'note' | 'search' | 'claude' | 'codex' | 'server' | 'cli'; label: string; state: 'ok' | 'fail' | 'warn' | 'skip'; fix: string | null; action: ConnectionCheckAction | null; detail: string | null };
+export type ConnectionCheckAction = 'add-claude' | 'add-codex' | 'add-cli' | 'fix-cli' | 'connect-folder' | 'choose-meetings' | 'retry';
 export type ConnectionCheck = { ok: boolean; checks: ConnectionCheckItem[] };
 export type Bullet = { text: string; sub: string[]; refs: number[] };
 export type Decision = { text: string; status: 'confirmed' | 'suggested'; refs: number[] };

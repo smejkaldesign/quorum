@@ -114,6 +114,10 @@ export function createAgentLink({ runtime, cli, env = {}, home = homedir(), code
   const ours = (f) => (read(f) ?? '').split('\n')[1] === MARK;
   const unq = (s) => s.replace(/'\\''/g, "'");
   const launcherPaths = (text) => { const m = text.match(/exec '((?:[^']|'\\'')*)' '((?:[^']|'\\'')*)'/); return m ? [unq(m[1]), unq(m[2])] : []; };
+  const addAlias = () => {
+    const t = read(ZSHRC) ?? '';
+    writeFileSync(ZSHRC, `${t}${t && !t.endsWith('\n') ? '\n' : ''}alias quorum='${Object.entries(env).map(([k, v]) => `${k}=${v}`).join(' ')} "${runtime}" "${cli}"' ${MARK}\n`);
+  };
   const removeAlias = () => { const t = read(ZSHRC); if (t !== null && t.split('\n').some(isAlias)) writeFileSync(ZSHRC, t.split('\n').filter((l) => !isAlias(l)).join('\n')); };
   const command = `${Object.entries(env).map(([k, v]) => `${k}=${v}`).join(' ')} "${runtime}" "${cli}"`.trim();
   const cliApi = {
@@ -125,7 +129,8 @@ export function createAgentLink({ runtime, cli, env = {}, home = homedir(), code
         const f = path.join(dir, 'quorum');
         if (!existsSync(f) || !ours(f)) continue;
         const [rt, c] = launcherPaths(read(f));
-        return { added: true, where: 'path', path: f, onPath: dirs.includes(dir), resolves: s.quorum, error: movedError(rt, c), command };
+        const alias = (read(ZSHRC) ?? '').split('\n').some(isAlias);
+        return { added: true, where: 'path', path: f, onPath: dirs.includes(dir), alias, resolves: s.quorum, error: movedError(rt, c), command };
       }
       const line = (read(ZSHRC) ?? '').split('\n').find(isAlias);
       if (line) {
@@ -138,17 +143,16 @@ export function createAgentLink({ runtime, cli, env = {}, home = homedir(), code
       const s = await shell();
       const dirs = pathList(s.path, home);
       const dir = binDirs(home).find((d) => dirs.includes(d) && (!existsSync(path.join(d, 'quorum')) || ours(path.join(d, 'quorum'))));
+      removeAlias();
       if (dir) {
         const f = path.join(dir, 'quorum');
         mkdirSync(dir, { recursive: true });
         writeFileSync(f, launcher());
         chmodSync(f, 0o755);
-        removeAlias();
-      } else {
-        const t = read(ZSHRC) ?? '';
-        const kept = t.split('\n').filter((l) => !isAlias(l)).join('\n');
-        writeFileSync(ZSHRC, `${kept}${kept && !kept.endsWith('\n') ? '\n' : ''}alias quorum='${Object.entries(env).map(([k, v]) => `${k}=${v}`).join(' ')} "${runtime}" "${cli}"' ${MARK}\n`);
-      }
+        // another quorum earlier on PATH would win; an alias comes before PATH in zsh, so add one for new windows
+        const after = await shell();
+        if (after.quorum && after.quorum !== f) addAlias();
+      } else addAlias();
       return cliApi.status();
     },
     async remove() {

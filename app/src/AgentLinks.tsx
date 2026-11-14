@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import type { AgentsStatus, ConnectionCheck, ConnectionCheckItem } from './quorum';
+import type { AgentsStatus, ConnectionCheck, ConnectionCheckAction, ConnectionCheckItem } from './quorum';
 import { Row, useMenu } from './controls';
 import { IconCheck, IconClose, IconCode, IconInfo, IconMore, IconReset, ProviderMark } from './icons';
 
@@ -100,21 +100,37 @@ export function AgentRows({ agents, variant, manual }: { agents: Agents; variant
 const STATE_ICON: Record<ConnectionCheckItem['state'], ReactNode> = {
   ok: <IconCheck width={16} height={16} className="ok" />,
   fail: <IconClose width={16} height={16} className="err" />,
-  warn: <IconInfo width={16} height={16} className="err" />,
+  warn: <IconInfo width={16} height={16} />,
   skip: <IconInfo width={16} height={16} />,
 };
 
-// Check connection: runs connectionCheck.js and lists each check, with the fix under each failure
-export function useConnectionCheck() {
+const ACTION_LABEL: Record<ConnectionCheckAction, string> = {
+  'add-claude': 'Add to Claude Code', 'add-codex': 'Add to Codex', 'add-cli': 'Connect', 'fix-cli': 'Fix',
+  'connect-folder': 'Choose folder', 'choose-meetings': 'Choose folder', retry: 'Check again',
+};
+
+// Check connection: runs connectionCheck.js and lists each check. A failure carries one button, and the button does
+// the fix (adds or fixes a registration, opens a folder picker, or checks again), then checks again
+export function useConnectionCheck(agents: Agents) {
   const [result, setResult] = useState<ConnectionCheck | null>(null);
   const [running, setRunning] = useState(false);
   const run = async () => {
     setRunning(true);
     try { setResult(await window.quorum.connectionCheck()); } catch { setResult(null); } finally { setRunning(false); }
+    await agents.refresh();
   };
-  return { result, running, run };
+  const act = async (a: ConnectionCheckAction) => {
+    if (a === 'add-claude') await agents.addClaude();
+    else if (a === 'add-codex') await agents.addCodex();
+    else if (a === 'add-cli') await agents.addCli();
+    else if (a === 'fix-cli') await agents.fixCli();
+    else if (a === 'connect-folder') await window.quorum.connectBrain();
+    else if (a === 'choose-meetings') await window.quorum.pickMeetingsDir();
+    await run();
+  };
+  return { result, running, run, act };
 }
-export function ConnectionCheckList({ result }: { result: ConnectionCheck }) {
+export function ConnectionCheckList({ result, running, onAction }: { result: ConnectionCheck; running: boolean; onAction: (a: ConnectionCheckAction) => void }) {
   return (
     <ul className="conn-check" aria-live="polite">
       {result.checks.map((c) => (
@@ -123,8 +139,9 @@ export function ConnectionCheckList({ result }: { result: ConnectionCheck }) {
           <div>
             <strong>{c.label}</strong>
             {c.fix && <span className="conn-check-fix">{c.fix}</span>}
-            {!c.fix && c.detail && <span className="muted">{home(c.detail)}</span>}
+            {c.detail && <span className="muted">{home(c.detail)}</span>}
           </div>
+          {c.action ? <button className="pill small-pill" disabled={running} onClick={() => onAction(c.action as ConnectionCheckAction)}>{ACTION_LABEL[c.action]}</button> : <span />}
         </li>
       ))}
     </ul>

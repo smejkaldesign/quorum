@@ -1,10 +1,13 @@
-// Check connection: proves the hand-off between Quorum and the person's agent. It writes a test note where meeting
-// notes go, checks the agent's own search can see it, checks the quorum MCP server is set up in Claude Code and Codex
-// and answers, and checks the quorum command runs in a new shell. The test note is always removed. Detection is
-// generic: ignore files, hidden folders, Claude Code's Read deny rules and the exclude lists of search scripts in the
-// folder; nothing here knows any one vault's layout. Each failure carries one sentence naming the fix.
+// Check connection: proves the hand-off between Quorum and the person's agent. It saves a test note in Quorum's own
+// notes folder (only when that folder already exists) and removes it, checks whether the agent's own search would see
+// it, checks the quorum MCP server is set up in Claude Code and Codex and answers, and checks the quorum command runs in
+// a new shell. Quorum never asks anyone to change their Agent OS: when the agent's own search skips the notes, Quorum's
+// MCP search tools cover them, and that is reported as covered. Every failure names a fix Quorum does itself, as an
+// action the UI shows as a button: add or fix a registration, choose a folder, or check again. Detection is generic
+// (ignore files, hidden folders, Claude Code's Read deny rules, the exclude lists of search scripts); nothing here knows
+// any one vault's layout.
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
@@ -142,88 +145,97 @@ const gitCheckIgnore = (cwd, file) => new Promise((resolve) => {
   });
 });
 
-// every reason the agent's search would miss `file`, each as one sentence naming the fix
+// why the agent's own search would miss `file`, read only: hidden folders, ignore files (and git's own when the folder
+// is a work tree), Claude Code Read deny rules and search scripts that exclude the folder
 export async function searchProblems(root, file, { home = homedir(), git = gitCheckIgnore } = {}) {
-  const rel = path.relative(root, file);
-  const show = (p) => tilde(p, home);
-  const relRoot = (p) => (p.startsWith(root + path.sep) ? path.relative(root, p) : show(p));
-  const notesRel = path.dirname(rel);
   const out = [];
-  const hidden = rel.split(path.sep).slice(0, -1).find((s) => s.startsWith('.'));
-  if (hidden) out.push(`The folder "${hidden}" starts with a dot, so most search tools skip it. Choose a meetings folder without a dot in its path in Settings > Memory.`);
+  const hidden = path.relative(root, file).split(path.sep).slice(0, -1).find((seg) => seg.startsWith('.'));
+  if (hidden) out.push({ kind: 'hidden', name: hidden });
   let ig = ignoredBy(root, file);
   if (!ig) { const g = gitRoot(root); if (g) ig = await git(g, file); }
-  if (ig) out.push(`${relRoot(ig.file)} hides ${notesRel} from your agent's search. Remove the line "${ig.pattern}" from ${relRoot(ig.file)}.`);
+  if (ig) out.push({ kind: 'ignored', ...ig });
   const deny = deniedBy(root, file, home);
-  if (deny) out.push(`${relRoot(deny.file)} stops Claude Code from reading ${notesRel}. Remove "${deny.rule}" from its permissions.deny list.`);
-  for (const s of scriptExcludes(root, file)) out.push(`${relRoot(s.file)} skips "${s.name}" when it searches. Remove "${s.name}" from its exclude list so your agent finds meeting notes.`);
+  if (deny) out.push({ kind: 'denied', ...deny });
+  for (const sc of scriptExcludes(root, file)) out.push({ kind: 'script', ...sc });
   return out;
 }
 
 export const CHECK_NOTE = 'quorum-connection-check';
+export const COVERED = "Your agent finds these through Quorum's search tools";
 
-// runs every check; agent is createAgentLink's result. Returns { ok, checks: [{ id, label, state, fix?, detail? }] }
-// with state ok, fail, warn or skip
+// runs every check; agent is createAgentLink's result. Returns { ok, checks: [{ id, label, state, fix, action, detail }] }
+// with state ok, fail, warn or skip; action is what the fix button does: add-claude, add-codex, add-cli, fix-cli,
+// connect-folder, choose-meetings or retry
 export async function checkConnection({ root, notesDir, agent, home = homedir(), git, now = Date.now }) {
   const checks = [];
-  const add = (id, label, state, fix = null, detail = null) => checks.push({ id, label, state, fix, detail });
+  const add = (id, label, state, { fix = null, action = null, detail = null } = {}) => checks.push({ id, label, state, fix, action, detail });
   const L = {
-    folder: 'Quorum can write to your Agent OS folder',
+    folder: 'Quorum can save meeting notes',
     note: 'A test note saves where meeting notes go',
-    search: "Your agent's search can find meeting notes",
+    search: 'Your agent can find meeting notes',
     claude: 'Quorum MCP connected in Claude Code',
     codex: 'Quorum MCP connected in Codex',
     server: 'Quorum MCP server starts',
     cli: 'quorum command runs in Terminal',
   };
+  const [claude, codex] = await Promise.all([agent.claude.status(), agent.codex.status()]);
+  const mcpOn = claude.added || (codex.added && !codex.error);
 
-  if (!root) add('folder', L.folder, 'fail', 'Connect your Agent OS folder in Settings > Memory, then check again.');
-  else if (!notesDir) add('folder', L.folder, 'fail', 'Choose a meetings folder in Settings > Memory so Quorum knows where to save notes.');
-  else {
-    const made = !existsSync(notesDir);
+  let problems = null;
+  if (!root) add('folder', L.folder, 'fail', { fix: 'Quorum has no Agent OS folder yet. Press Choose folder to connect one.', action: 'connect-folder' });
+  else if (!notesDir) add('folder', L.folder, 'fail', { fix: 'Quorum has no meetings folder yet. Press Choose folder to pick one.', action: 'choose-meetings' });
+  else if (!existsSync(notesDir)) {
+    // Quorum's notes folder appears with the first meeting note; until then the check writes nothing and asks only
+    // whether Quorum could create it
+    let writable = false;
+    try { accessSync(path.dirname(notesDir), constants.W_OK); writable = true; } catch {}
+    if (!writable) add('folder', L.folder, 'fail', { fix: `Quorum cannot save notes in ${tilde(path.dirname(notesDir), home)}. Press Choose folder to pick another.`, action: 'choose-meetings' });
+    else {
+      add('folder', L.folder, 'ok');
+      add('note', L.note, 'skip', { detail: 'Quorum creates its notes folder with your first meeting note.' });
+      if (!path.relative(root, notesDir).startsWith('..')) problems = await searchProblems(root, path.join(notesDir, `${CHECK_NOTE}.md`), { home, ...(git ? { git } : {}) });
+      else problems = [{ kind: 'outside' }];
+    }
+  } else {
     const note = path.join(notesDir, `${CHECK_NOTE}-${now()}.md`);
+    let wrote = false;
     try {
-      let wrote = false;
       try {
-        mkdirSync(notesDir, { recursive: true });
-        writeFileSync(note, `---\ntitle: Quorum connection check\n---\n\nQuorum wrote this note to check the connection and removes it right away.\n`);
+        writeFileSync(note, `---\ntitle: Quorum connection check\n---\n\nQuorum wrote this note to check the connection and removes it right away.\n`, { flag: 'wx' });
         wrote = read(note)?.includes('Quorum connection check') === true;
       } catch {}
-      if (!wrote) {
-        add('folder', L.folder, 'fail', `Quorum cannot write to ${tilde(notesDir, home)}. Give your user account write access to that folder in Finder, then check again.`);
-      } else {
+      if (!wrote) add('folder', L.folder, 'fail', { fix: `Quorum cannot save notes in ${tilde(notesDir, home)}. Press Choose folder to pick another.`, action: 'choose-meetings' });
+      else {
         add('folder', L.folder, 'ok');
-        add('note', L.note, 'ok', null, tilde(notesDir, home));
-        if (path.relative(root, note).startsWith('..')) {
-          add('search', L.search, 'fail', `Meeting notes save to ${tilde(notesDir, home)}, outside your Agent OS folder. Choose a meetings folder inside ${tilde(root, home)} in Settings > Memory.`);
-        } else {
-          const problems = await searchProblems(root, note, { home, ...(git ? { git } : {}) });
-          add('search', L.search, problems.length ? 'fail' : 'ok', problems.length ? problems.join(' ') : null);
-        }
+        add('note', L.note, 'ok', { detail: tilde(notesDir, home) });
+        problems = path.relative(root, note).startsWith('..') ? [{ kind: 'outside' }] : await searchProblems(root, note, { home, ...(git ? { git } : {}) });
       }
     } finally {
-      try { unlinkSync(note); } catch {}
-      if (made) { try { rmdirSync(notesDir); } catch {} }
+      if (wrote || existsSync(note)) { try { unlinkSync(note); } catch {} }
     }
   }
+  if (problems) {
+    // the agent's own search is a bonus; Quorum's MCP search covers the notes either way
+    if (!problems.length) add('search', L.search, 'ok', { detail: "Your agent's own search sees them too." });
+    else if (mcpOn) add('search', L.search, 'ok', { detail: `${COVERED}.` });
+    else add('search', L.search, 'warn', { detail: `${COVERED} once Quorum's MCP is added below.` });
+  }
 
-  const [claude, codex] = await Promise.all([agent.claude.status(), agent.codex.status()]);
-  if (!claude.installed && !codex.installed) add('claude', L.claude, 'fail', 'Install Claude Code or Codex, then press Add next to it.');
-  else if (!claude.installed) add('claude', L.claude, 'skip', null, 'Claude Code is not installed on this Mac.');
-  else add('claude', L.claude, claude.added ? 'ok' : 'fail', claude.added ? null : 'Press Add next to Claude Code to connect Quorum to it.');
-  if (!codex.installed) add('codex', L.codex, 'skip', null, 'Codex is not installed on this Mac.');
-  else if (codex.added && codex.error) add('codex', L.codex, 'fail', `${codex.error}. Press Add next to Codex to set it up again.`);
-  else add('codex', L.codex, codex.added ? 'ok' : 'fail', codex.added ? null : 'Press Add next to Codex to connect Quorum to it.');
+  if (!claude.installed) add('claude', L.claude, 'skip', { detail: 'Claude Code is not installed on this Mac.' });
+  else add('claude', L.claude, claude.added ? 'ok' : 'fail', claude.added ? {} : { fix: 'Quorum is not added to Claude Code yet.', action: 'add-claude' });
+  if (!codex.installed) add('codex', L.codex, 'skip', { detail: 'Codex is not installed on this Mac.' });
+  else if (codex.added && codex.error) add('codex', L.codex, 'fail', { fix: `${codex.error}. Press Add to Codex to set it up again.`, action: 'add-codex' });
+  else add('codex', L.codex, codex.added ? 'ok' : 'fail', codex.added ? {} : { fix: 'Quorum is not added to Codex yet.', action: 'add-codex' });
 
   const [server, cli] = await Promise.all([agent.handshake(), agent.cli.status()]);
-  add('server', L.server, server.ok ? 'ok' : 'fail', server.ok ? null : "Quorum's MCP server did not answer. Quit and reopen Quorum, then check again.");
-  if (!cli.added) add('cli', L.cli, 'fail', 'Press Connect next to Quorum CLI to add the quorum command.');
-  else if (cli.error) add('cli', L.cli, 'fail', `${cli.error}. Choose Fix connection in the Quorum CLI menu.`);
-  else if (cli.where === 'path' && cli.resolves?.startsWith('alias ')) add('cli', L.cli, 'fail', 'A quorum alias in your shell setup comes before the installed command. Remove the quorum alias from your .zshrc, then check again.');
-  else if (cli.where === 'path' && cli.resolves && cli.resolves !== cli.path) add('cli', L.cli, 'fail', `Another quorum command at ${tilde(cli.resolves, home)} comes first on your PATH. Remove or rename it, then check again.`);
-  else if (cli.where === 'path' && !cli.onPath) add('cli', L.cli, 'fail', `${tilde(path.dirname(cli.path), home)} is no longer on your PATH. Choose Fix connection in the Quorum CLI menu.`);
-  else if (cli.where === 'alias') add('cli', L.cli, 'ok', null, 'Works in Terminal windows you open from now on.');
-  else add('cli', L.cli, 'ok', null, cli.path ? tilde(cli.path, home) : null);
+  add('server', L.server, server.ok ? 'ok' : 'fail', server.ok ? {} : { fix: "Quorum's MCP server did not answer. Press Check again to retry.", action: 'retry' });
+  const shadowed = cli.where === 'path' && cli.resolves && cli.resolves !== cli.path && !(cli.alias && cli.resolves.startsWith('alias '));
+  if (!cli.added) add('cli', L.cli, 'fail', { fix: 'The quorum command is not set up yet.', action: 'add-cli' });
+  else if (cli.error) add('cli', L.cli, 'fail', { fix: `${cli.error}. Press Fix to set the quorum command up again.`, action: 'fix-cli' });
+  else if (cli.where === 'path' && !cli.onPath) add('cli', L.cli, 'fail', { fix: `${tilde(path.dirname(cli.path), home)} is no longer on your PATH. Press Fix to set the quorum command up again.`, action: 'fix-cli' });
+  else if (shadowed) add('cli', L.cli, 'fail', { fix: 'Another quorum command comes first in Terminal. Press Fix to point quorum at this Quorum.', action: 'fix-cli' });
+  else if (cli.where === 'alias' || cli.alias) add('cli', L.cli, 'ok', { detail: 'Works in Terminal windows you open from now on.' });
+  else add('cli', L.cli, 'ok', { detail: cli.path ? tilde(cli.path, home) : null });
 
-  return { ok: checks.every((c) => c.state === 'ok' || c.state === 'skip'), checks };
+  return { ok: checks.every((c) => c.state !== 'fail'), checks };
 }
