@@ -167,6 +167,7 @@ describe('import lines', () => {
     expect('error' in checkGithubUrl('')).toBe(true);
     expect('error' in checkGithubUrl('https://gitlab.com/acme/handbook')).toBe(true);
     expect('error' in checkGithubUrl('https://github.com/acme')).toBe(true);
+    expect(checkGithubUrl('https://github.com/acme/handbook/tree/main/docs')).toEqual({ url: 'https://github.com/acme/handbook/tree/main/docs' });
   });
 
   it('says what an import is doing', () => {

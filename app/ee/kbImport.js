@@ -36,6 +36,7 @@ import { createRemote, ulid } from './store/remote.js';
 import { notes as localNotes } from '../store/local.js';
 import { parseFrontmatter } from './sync.js';
 import { listZip, MAX_BYTES, readEntry } from './zipRead.js';
+import { parseGithubUrl, resolveTree } from './githubUrl.js';
 
 const BATCH = 100;
 const FOLDER_CALLS = 8;
@@ -44,38 +45,8 @@ const PROGRESS_BYTES = 256 * 1024;
 const MARKDOWN = /\.(md|markdown)$/i;
 export const PRIVATE_REPO = 'That repository was not found, or it is private. Private repositories need the GitHub connector, which comes later.';
 export const RATE_LIMITED = 'GitHub is limiting requests from this network. Try again in an hour.';
-const ADDRESS = 'Enter a GitHub repository address, like https://github.com/owner/repository.';
-
-// https://github.com/<owner>/<repo>, with an optional .git, trailing slash or /tree/<branch>[/<folder>]. Which part of
-// the tree path is the branch is settled against the repository's branches (names can hold slashes) in fetchGithubZip
-const GITHUB = /^https:\/\/github\.com\/([A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38})\/([A-Za-z0-9._-]{1,100})(?:\/tree\/([^?#]+?))?\/?$/;
-export function checkBranch(b) {
-  const s = String(b ?? '').trim();
-  if (!s) return { branch: null };
-  if (s.length > 200 || !/^[A-Za-z0-9._/-]+$/.test(s) || s.startsWith('-') || s.startsWith('/') || s.endsWith('/') || s.endsWith('.lock') || s.includes('..') || s.includes('//')) return { error: 'That branch name is not valid.' };
-  return { branch: s };
-}
-// the /tree/ part of an address: plain path segments, none of them "." or ".."
-function checkTree(raw) {
-  let s;
-  try { s = decodeURIComponent(raw); } catch { return { error: ADDRESS }; }
-  const segs = s.split('/');
-  if (s.length > 500 || segs.some((p) => !p || p === '.' || p === '..' || /[\p{Cc}\\]/u.test(p))) return { error: ADDRESS };
-  return { tree: segs.join('/') };
-}
-export function parseGithubUrl(url, branch) {
-  const raw = String(url ?? '').trim();
-  if (!raw) return { error: 'Enter the repository address.' };
-  const m = raw.match(GITHUB);
-  if (!m) return { error: ADDRESS };
-  const repo = m[2].replace(/\.git$/i, '');
-  if (!repo || repo === '.' || repo === '..') return { error: ADDRESS };
-  const b = checkBranch(branch);
-  if (b.error) return b;
-  const t = m[3] ? checkTree(m[3]) : { tree: null };
-  if (t.error) return t;
-  return { owner: m[1], repo, branch: b.branch, tree: t.tree, url: `https://github.com/${m[1]}/${repo}` };
-}
+// the address checks are shared with folder sync and the renderer (ee/githubUrl.js)
+export { checkBranch, parseGithubUrl } from './githubUrl.js';
 
 class ImportError extends Error {
   constructor(message) { super(message); this.code = 'IMPORT'; }
@@ -122,18 +93,11 @@ export async function fetchGithubZip({ owner, repo, branch = null, tree = null }
 
   let ref = branch;
   let subpath = null;
-  if (tree && branch) {
-    if (tree !== branch && !tree.startsWith(`${branch}/`)) throw new ImportError('The branch does not match the branch in the address.');
-    subpath = tree === branch ? null : tree.slice(branch.length + 1);
-  } else if (tree) {
-    const first = tree.split('/')[0];
-    const refs = await reach(`https://api.github.com/repos/${owner}/${repo}/git/matching-refs/heads/${encodeURIComponent(first)}`, headers);
-    if (limited(refs)) throw new ImportError(RATE_LIMITED);
-    const names = refs.ok ? ((await refs.json().catch(() => [])) ?? []).map((r) => String(r?.ref ?? '').replace(/^refs\/heads\//, '')) : [];
-    const match = names.filter((n) => n && (tree === n || tree.startsWith(`${n}/`))).sort((a, b) => b.length - a.length)[0];
-    if (!match) throw new ImportError('The branch in that address was not found in the repository.');
-    ref = match;
-    subpath = tree === match ? null : tree.slice(match.length + 1);
+  if (tree) {
+    const t = await resolveTree({ owner, repo, tree, branch }, (url) => reach(url, headers));
+    if (t.error) throw new ImportError(t.code === 'limited' ? RATE_LIMITED : t.error);
+    ref = t.branch;
+    subpath = t.path;
   }
   ref ||= info?.default_branch || 'HEAD';
   const zip = await reach(`https://codeload.github.com/${owner}/${repo}/zip/${ref.split('/').map(encodeURIComponent).join('/')}`, { 'user-agent': 'Quorum' });

@@ -1,4 +1,5 @@
 import type { Kb, KbAccess, KbAccessDraft, KbFolder, KbFolderNode, KbImportProgress, KbImportSkipped, KbNote, KbSource } from '../../src/quorum';
+import { parseGithubUrl } from '../githubUrl';
 
 // what a finished kb-import answers; removed counts notes a refresh took out because the source no longer has them
 export type KbImportResult = { kb: Kb; imported: number; skipped: KbImportSkipped[]; removed: number; kept?: number; suggested?: number };
@@ -206,10 +207,12 @@ export function accessDraft(current: KbAccess[] | null, mode: ReadersMode, peopl
 export const KIND_LABEL: Record<Kb['kind'], string> = { general: 'General', meetings: 'Meetings' };
 
 // a GitHub repository address the import can take; the reason is the sentence to show
+// the import form's address check, with the same parser the import runs (ee/githubUrl.js); a /tree/<branch>/<folder>
+// address imports that folder
 export function checkGithubUrl(url: string): { url: string } | { error: string } {
   const u = url.trim();
   if (!u) return { error: 'Paste the repository address.' };
-  if (!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+(\.git)?\/?$/i.test(u)) return { error: 'Use an address like https://github.com/your-team/handbook.' };
+  if (parseGithubUrl(u).error) return { error: 'Use an address like https://github.com/your-team/handbook.' };
   return { url: u.replace(/\/$/, '') };
 }
 
