@@ -39,23 +39,35 @@ export function newWords(prev: string, next: string): string {
   return words.slice(lastShared + 1).join(' ');
 }
 
-export function appendTurn(body: string, w: Written, turn: Turn): { body: string; written: Written } {
-  if (!turn.text.trim()) return { body, written: w };
-  const line = lineFor(turn);
-  const prev = w.turns[turn.id];
-  const put = (full: string, tail: string, next: string) => ({ body: next, written: { last: turn.id, turns: { ...w.turns, [turn.id]: { full, tail } } } });
-  if (!prev) return put(line, line, joinEnd(body, line));
-  if (line === prev.full) return { body, written: w };
-  const trimmed = body.replace(/\s+$/, '');
-  const atEnd = w.last === turn.id && trimmed.endsWith(prev.tail);
-  const head = atEnd ? trimmed.slice(0, trimmed.length - prev.tail.length) : '';
-  if (atEnd && prev.tail === prev.full) return put(line, line, `${head}${line}`);
+// one turn against what was written for it before: insert a new paragraph at the end, replace the paragraph it wrote
+// (in place, only while it is untouched and still last), or nothing. The text is raw markdown, kept apart from what a
+// serializer would write, so a turn that grows is matched by what Record wrote rather than by the note's current text
+export type Plan = { op: 'insert' | 'replace' | 'none'; text: string; full: string; tail: string };
+export function planTurn(prev: { full: string; tail: string } | undefined, line: string, atEnd: boolean): Plan {
+  if (!prev) return { op: 'insert', text: line, full: line, tail: line };
+  if (line === prev.full) return { op: 'none', text: '', full: prev.full, tail: prev.tail };
+  if (atEnd && prev.tail === prev.full) return { op: 'replace', text: line, full: line, tail: line };
   const extra = newWords(prev.full, line);
-  if (!extra) return { body, written: { ...w, turns: { ...w.turns, [turn.id]: { ...prev, full: line } } } };
+  if (!extra) return { op: 'none', text: '', full: line, tail: prev.tail };
   if (atEnd) {
     const tail = line.startsWith(prev.full) ? `${prev.tail}${line.slice(prev.full.length)}` : `${prev.tail} ${extra}`;
-    return put(line, tail, `${head}${tail}`);
+    return { op: 'replace', text: tail, full: line, tail };
   }
   // something came after it (your typing, a screen read, another turn): the gained words get a paragraph of their own
-  return put(line, extra, joinEnd(body, extra));
+  return { op: 'insert', text: extra, full: line, tail: extra };
+}
+
+export const turnLine = (turn: Turn) => (turn.text.trim() ? lineFor(turn) : '');
+
+export function appendTurn(body: string, w: Written, turn: Turn): { body: string; written: Written } {
+  const line = turnLine(turn);
+  if (!line) return { body, written: w };
+  const prev = w.turns[turn.id];
+  const trimmed = body.replace(/\s+$/, '');
+  const atEnd = !!prev && w.last === turn.id && trimmed.endsWith(prev.tail);
+  const plan = planTurn(prev, line, atEnd);
+  const turns = { ...w.turns, [turn.id]: { full: plan.full, tail: plan.tail } };
+  if (plan.op === 'none') return { body, written: { ...w, turns } };
+  const next = plan.op === 'replace' ? `${trimmed.slice(0, trimmed.length - prev!.tail.length)}${plan.text}` : joinEnd(body, plan.text);
+  return { body: next, written: { last: turn.id, turns } };
 }
