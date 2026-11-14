@@ -1,4 +1,4 @@
--- The meetings knowledge base (migration 0028): one per workspace, made by the team switch, month folders for members,
+-- The meetings knowledge base (migration 0029): one per workspace, made by the team switch, month folders for members,
 -- members placing their own meeting notes, and keep private taking a note out. Needs a database with every migration
 -- applied (supabase start, or supabase db reset on a local stack). Everything runs in one transaction that is rolled
 -- back, so it leaves the database as it found it:

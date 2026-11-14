@@ -1,5 +1,5 @@
 // Meeting notes saved into the workspace's meetings knowledge base (Cloud edition with a team switched on; migration
-// 0028, docs/specs/workspace-knowledge.md "Meeting notes" and Decisions 4). A workspace has one meetings KB. Shared
+// 0029, docs/specs/workspace-knowledge.md "Meeting notes" and Decisions 4). A workspace has one meetings KB. Shared
 // meeting notes go into it through the push sync.js makes for every meeting note, one folder per month ("2026-11").
 // That push keeps every guardrail: a note in an excluded folder, with opted-out lines, confidential, or with a
 // denied frontmatter key is never pushed (sync.js noteRow with isExcluded and isExcludedText), and this module never
