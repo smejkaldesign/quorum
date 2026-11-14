@@ -150,13 +150,20 @@ select public.kb_sync_revoked((select grant_id from public.kb_sync_revocations(1
 select pg_temp.check(not exists (select 1 from public.kb_sync_grants where user_id = '00000000-0000-4000-8000-0000000000f2'), 'a revoked grant is deleted');
 select pg_temp.check((select grant_id is null from public.kb_attachments where id = pg_temp.id('gh')), 'the attachment no longer points at it');
 
--- 10. disconnect on the Mac ends the caller's grants and queues the revoke, even for a grant the Mac shares
+-- 10. disconnect on the Mac ends the caller's grants: a grant the Mac shares is deleted with its secret and left for
+-- the Mac to revoke; a grant of its own is queued for the relay's revoke
 select pg_temp.as_service();
 insert into ids select 'own', public.kb_sync_attach('00000000-0000-4000-8000-0000000000f1', pg_temp.id('kb'), null, 'google-drive', 'drive-file-9', 'file', '{}', 'Roadmap', null, 'rt-owner-1', 'quorum', true) ->> 'id';
-select pg_temp.as_user('00000000-0000-4000-8000-0000000000f1');
-select pg_temp.check(public.kb_sync_disconnect('01KF00000000000000000000WS', 'google-drive') = 1, 'disconnect ends one grant');
+select public.kb_sync_attach('00000000-0000-4000-8000-0000000000f1', pg_temp.id('kb'), null, 'github', 'octo/runbooks', 'folder', '{}', 'octo/runbooks', null, 'gh-owner-1', 'quorum', false);
 select pg_temp.as_admin_role();
-select pg_temp.check((select revoke_pending and ended_reason = 'disconnected' from public.kb_sync_grants where user_id = '00000000-0000-4000-8000-0000000000f1'), 'a disconnect queues the revoke');
+insert into ids select 'own-secret', secret_id::text from public.kb_sync_grants where user_id = '00000000-0000-4000-8000-0000000000f1' and provider = 'google-drive';
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000f1');
+select pg_temp.check(public.kb_sync_disconnect('01KF00000000000000000000WS', 'google-drive') = 1, 'disconnect ends the Drive grant');
+select pg_temp.check(public.kb_sync_disconnect('01KF00000000000000000000WS', 'github') = 1, 'disconnect ends the GitHub grant');
+select pg_temp.as_admin_role();
+select pg_temp.check(not exists (select 1 from public.kb_sync_grants where user_id = '00000000-0000-4000-8000-0000000000f1' and provider = 'google-drive'), 'the shared grant is deleted');
+select pg_temp.check(not exists (select 1 from vault.secrets where id = pg_temp.id('own-secret')::uuid), 'with its Vault secret');
+select pg_temp.check((select revoke_pending and ended_reason = 'disconnected' from public.kb_sync_grants where user_id = '00000000-0000-4000-8000-0000000000f1' and provider = 'github'), 'the GitHub grant waits for its revoke');
 select pg_temp.check((select status from public.kb_attachments where id = pg_temp.id('own')) = 'needs_auth', 'its attachments wait for a sign-in');
 
 -- 11. the per-workspace cap: with one run allowed, two due attachments in one workspace are claimed one at a time

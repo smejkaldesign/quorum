@@ -19,7 +19,8 @@
 -- must also be revoked with the provider waits in the table with revoke_pending until the worker revokes it
 -- (kb_sync_revocations, kb_sync_revoked); every other ended grant is deleted at once. Deleting a grant deletes its Vault
 -- secret. A grant that is the same grant the admin's Mac holds (Google issues one grant per person and client, so
--- revoking it signs the Mac out of Google Drive and Calendar too) is revoked only when the admin disconnects.
+-- revoking it signs the Mac out of Google Drive and Calendar too) is deleted without a revoke; the Mac's Disconnect
+-- revokes it with Google when nothing else on the Mac uses it.
 --
 -- Access. KB admins read their KB's attachments (every column but the worker's cursor and lease) and manage them through
 -- the RPCs below. Attaching goes through the relay (it carries the token), so kb_sync_attach is for the service role.
@@ -153,11 +154,12 @@ begin
 end $$;
 revoke all on function public.kb_sync_grant_end(public.ulid, text, boolean) from public, anon, authenticated;
 
--- whether ending a grant for this reason also revokes it: a grant of its own always; a grant the Mac shares only when
--- the admin disconnects (the Mac revokes it then as well)
+-- whether ending a grant also revokes it with the provider: a grant of its own always. A grant the Mac shares never:
+-- the Mac's own Disconnect revokes it, and only when no other Google connector on the Mac still uses it
+-- (sources/accounts.js), so the relay revoking it would sign the Mac out of Google Calendar as well
 create or replace function public.kb_sync_revokes(g public.kb_sync_grants, reason text) returns boolean
 language sql immutable set search_path = public as $$
-  select not g.shared_with_mac or reason = 'disconnected';
+  select not g.shared_with_mac and reason is not null;
 $$;
 revoke all on function public.kb_sync_revokes(public.kb_sync_grants, text) from public, anon, authenticated;
 
@@ -260,7 +262,7 @@ begin
   return n;
 end $$;
 
--- the caller disconnected the provider on their Mac: their grants for it end and are revoked
+-- the caller disconnected the provider on their Mac: their grants for it end, and a grant of its own is revoked
 create or replace function public.kb_sync_disconnect(workspace_id public.ulid, provider text) returns integer
 language plpgsql security definer set search_path = public as $$
 declare g public.kb_sync_grants; n integer := 0;
@@ -268,7 +270,7 @@ begin
   if auth.uid() is null or not public.is_member(kb_sync_disconnect.workspace_id) then raise exception 'You are not a member of that workspace'; end if;
   for g in select * from public.kb_sync_grants x where x.workspace_id = kb_sync_disconnect.workspace_id and x.user_id = auth.uid()
       and x.provider = kb_sync_disconnect.provider and x.ended_at is null loop
-    perform public.kb_sync_grant_end(g.id, 'disconnected', true);
+    perform public.kb_sync_grant_end(g.id, 'disconnected', public.kb_sync_revokes(g, 'disconnected'));
     n := n + 1;
   end loop;
   return n;
