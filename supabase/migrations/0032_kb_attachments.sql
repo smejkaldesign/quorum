@@ -102,6 +102,10 @@ create table public.kb_attachments (
 create unique index kb_attachments_remote on public.kb_attachments (kb_id, provider, remote_id, coalesce(options ->> 'branch', ''), coalesce(options ->> 'path', ''));
 create index kb_attachments_due on public.kb_attachments (next_run_at) where status in ('pending', 'active', 'error');
 create index kb_attachments_grant on public.kb_attachments (grant_id);
+-- notes an attachment wrote: by attachment (Remove, the stray cleanup for one attachment), and the recent ones for the
+-- worker's hourly sweep of strays (kb_sync_strays without an id), so neither reads the whole notes table
+create index notes_kb_attachment on public.notes ((frontmatter ->> 'kb_attachment')) where deleted_at is null and frontmatter ? 'kb_attachment';
+create index notes_kb_attachment_recent on public.notes (updated_at) where deleted_at is null and kb_id is not null and frontmatter ? 'kb_attachment';
 create trigger kb_attachments_updated_at before update on public.kb_attachments for each row execute function public.set_updated_at();
 alter table public.kb_attachments enable row level security;
 create policy kb_attachments_select on public.kb_attachments for select to authenticated using (public.can_admin_kb(kb_id));
@@ -309,7 +313,7 @@ language plpgsql security definer set search_path = public as $$
 declare a public.kb_attachments := public.kb_attachment_of(kb_attachment_remove.id); n integer;
 begin
   update public.notes x set deleted_at = now(), updated_at = now()
-    where x.kb_id = a.kb_id and x.deleted_at is null and x.frontmatter ->> 'kb_attachment' = a.id::text;
+    where x.kb_id = a.kb_id and x.deleted_at is null and x.frontmatter ? 'kb_attachment' and x.frontmatter ->> 'kb_attachment' = a.id::text;
   get diagnostics n = row_count;
   delete from public.kb_attachments x where x.id = a.id;
   return n;
@@ -589,7 +593,7 @@ begin
   if kb_sync_strays.attachment_id is not null then
     if exists (select 1 from public.kb_attachments a where a.id = kb_sync_strays.attachment_id) then return 0; end if;
     update public.notes x set deleted_at = now(), updated_at = now()
-      where x.deleted_at is null and x.kb_id is not null and x.frontmatter ->> 'kb_attachment' = kb_sync_strays.attachment_id::text;
+      where x.deleted_at is null and x.kb_id is not null and x.frontmatter ? 'kb_attachment' and x.frontmatter ->> 'kb_attachment' = kb_sync_strays.attachment_id::text;
   else
     update public.notes x set deleted_at = now(), updated_at = now()
       where x.deleted_at is null and x.kb_id is not null and x.updated_at > now() - interval '2 days' and x.frontmatter ? 'kb_attachment'
@@ -600,34 +604,86 @@ begin
 end $$;
 
 -- the 0031 writes for synced notes and their upstream rows (kb_synced_notes_write, kb_upstream_save), for the worker.
--- Those functions check that the caller is an admin of the KB, and the worker has no session, so these two run them as
--- the attachment's admin, after checking that person is still an admin of the KB. app/ee/kbUpstream.js plans the
--- notes on the relay the same way it does on the Mac, so an edit Quorum made to a synced note becomes a suggestion
-create or replace function public.kb_sync_as_attacher(attachment_id public.ulid) returns public.kb_attachments
+-- Those functions check the caller with auth.uid() (can_admin_kb), and the worker runs with the service role and no
+-- user. So each wrapper, in the one transaction of its API call:
+--   1. refuses any caller but the service role (kb_sync_service_only; EXECUTE is granted to service_role alone),
+--   2. locks the attachment row (for share, so a Remove waits for the write to finish), and checks that its admin is
+--      still an admin of its KB (can_admin_kb_as) and that every note in the batch is in that KB and is this
+--      attachment's note (kb_attachment in the note and in its new frontmatter, or an earlier note of the same admin
+--      with no attachment yet, which this write adopts),
+--   3. sets request.jwt.claims (and the older request.jwt.claim.sub) to the attaching admin for the inner call only,
+--      with is_local so it can never outlive the transaction, and
+--   4. puts the caller's own settings back before it returns, also when the inner call raises.
+-- The database role stays service_role throughout; only auth.uid() changes, to the person the KB checks expect.
+create or replace function public.kb_sync_attacher(attachment_id public.ulid, note_ids text[], next_attachment text[]) returns public.kb_attachments
 language plpgsql security definer set search_path = public as $$
 declare a public.kb_attachments;
 begin
   perform public.kb_sync_service_only();
-  select * into a from public.kb_attachments x where x.id = kb_sync_as_attacher.attachment_id;
-  if a.id is null or not public.can_admin_kb_as(a.kb_id, a.attached_by) then raise exception 'That synced folder no longer exists'; end if;
-  -- for the rest of this transaction (one API call) the 0031 checks see the attaching admin
-  perform set_config('request.jwt.claims', json_build_object('sub', a.attached_by::text, 'role', 'authenticated')::text, true);
+  select * into a from public.kb_attachments x where x.id = kb_sync_attacher.attachment_id for share;
+  if a.id is null then raise exception 'That synced folder no longer exists'; end if;
+  if a.attached_by is null or not public.can_admin_kb_as(a.kb_id, a.attached_by) then raise exception 'The admin who attached this is no longer an admin of the knowledge base'; end if;
+  if exists (
+    select 1 from unnest(coalesce(kb_sync_attacher.note_ids, array[]::text[])) as i(id)
+    left join public.notes n on n.id = i.id and n.deleted_at is null
+    where n.id is null or n.kb_id is distinct from a.kb_id
+      or not (coalesce(n.frontmatter ->> 'kb_attachment', '') = a.id::text or (coalesce(n.frontmatter ->> 'kb_attachment', '') = '' and n.user_id = a.attached_by))
+  ) then raise exception 'A note in this batch does not belong to this synced folder'; end if;
+  if exists (select 1 from unnest(coalesce(kb_sync_attacher.next_attachment, array[]::text[])) as v(k) where v.k is distinct from a.id::text) then
+    raise exception 'A note in this batch does not belong to this synced folder';
+  end if;
   return a;
 end $$;
-revoke all on function public.kb_sync_as_attacher(public.ulid) from public, anon, authenticated;
+revoke all on function public.kb_sync_attacher(public.ulid, text[], text[]) from public, anon, authenticated;
 
 create or replace function public.kb_sync_notes_write(attachment_id public.ulid, rows jsonb) returns setof public.ulid
 language plpgsql security definer set search_path = public as $$
-declare a public.kb_attachments := public.kb_sync_as_attacher(kb_sync_notes_write.attachment_id);
+declare
+  a public.kb_attachments;
+  was_claims text := current_setting('request.jwt.claims', true);
+  was_sub text := current_setting('request.jwt.claim.sub', true);
+  ids public.ulid[];
 begin
-  return query select * from public.kb_synced_notes_write(a.kb_id, kb_sync_notes_write.rows);
+  if jsonb_typeof(coalesce(kb_sync_notes_write.rows, '[]')) <> 'array' then raise exception 'The rows are not a list'; end if;
+  a := public.kb_sync_attacher(kb_sync_notes_write.attachment_id,
+    array(select r ->> 'note_id' from jsonb_array_elements(kb_sync_notes_write.rows) r),
+    array(select coalesce(r -> 'frontmatter' ->> 'kb_attachment', '') from jsonb_array_elements(kb_sync_notes_write.rows) r));
+  perform set_config('request.jwt.claims', json_build_object('sub', a.attached_by::text, 'role', 'authenticated')::text, true);
+  perform set_config('request.jwt.claim.sub', a.attached_by::text, true);
+  begin
+    ids := array(select public.kb_synced_notes_write(a.kb_id, kb_sync_notes_write.rows));
+  exception when others then
+    perform set_config('request.jwt.claims', coalesce(was_claims, ''), true);
+    perform set_config('request.jwt.claim.sub', coalesce(was_sub, ''), true);
+    raise;
+  end;
+  perform set_config('request.jwt.claims', coalesce(was_claims, ''), true);
+  perform set_config('request.jwt.claim.sub', coalesce(was_sub, ''), true);
+  return query select unnest(ids);
 end $$;
 
 create or replace function public.kb_sync_upstream_save(attachment_id public.ulid, rows jsonb) returns integer
 language plpgsql security definer set search_path = public as $$
-declare a public.kb_attachments := public.kb_sync_as_attacher(kb_sync_upstream_save.attachment_id);
+declare
+  a public.kb_attachments;
+  was_claims text := current_setting('request.jwt.claims', true);
+  was_sub text := current_setting('request.jwt.claim.sub', true);
+  n integer;
 begin
-  return public.kb_upstream_save(a.kb_id, kb_sync_upstream_save.rows);
+  if jsonb_typeof(coalesce(kb_sync_upstream_save.rows, '[]')) <> 'array' then raise exception 'The rows are not a list'; end if;
+  a := public.kb_sync_attacher(kb_sync_upstream_save.attachment_id, array(select r ->> 'note_id' from jsonb_array_elements(kb_sync_upstream_save.rows) r), null);
+  perform set_config('request.jwt.claims', json_build_object('sub', a.attached_by::text, 'role', 'authenticated')::text, true);
+  perform set_config('request.jwt.claim.sub', a.attached_by::text, true);
+  begin
+    n := public.kb_upstream_save(a.kb_id, kb_sync_upstream_save.rows);
+  exception when others then
+    perform set_config('request.jwt.claims', coalesce(was_claims, ''), true);
+    perform set_config('request.jwt.claim.sub', coalesce(was_sub, ''), true);
+    raise;
+  end;
+  perform set_config('request.jwt.claims', coalesce(was_claims, ''), true);
+  perform set_config('request.jwt.claim.sub', coalesce(was_sub, ''), true);
+  return n;
 end $$;
 
 -- ended grants waiting to be revoked with the provider, with their tokens; kb_sync_revoked deletes one after the revoke

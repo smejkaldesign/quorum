@@ -192,6 +192,30 @@ select pg_temp.check((select body = '# A v2' from public.notes where id = '01KF0
 select pg_temp.check((select jsonb_array_length(suggestions) = 1 and base_hash = 'h-a2' from public.kb_note_upstream where note_id = '01KF000000000000000000NT02'), 'the suggestion is kept');
 select pg_temp.as_service();
 select pg_temp.check(public.kb_sync_upstream_save(pg_temp.id('drv'), '[{"note_id": "01KF000000000000000000NT02", "base_hash": "h-a2", "base_norm": "n2", "base_body": "# A v2"}]') = 1, 'the worker records a base');
+-- the caller's own claims come back after the call: still the service role, with no user
+select pg_temp.check((current_setting('request.jwt.claims', true)::jsonb ->> 'role') = 'service_role' and auth.uid() is null, 'the wrapper puts the service claims back');
+select pg_temp.check(coalesce(current_setting('request.jwt.claim.sub', true), '') = '', 'and leaves no user id behind');
+-- a note of another attachment, or a write that would hand a note to another attachment, is refused
+select pg_temp.expect_error(format($$select public.kb_sync_upstream_save(%L, '[{"note_id": "01KF000000000000000000NT01", "base_hash": "h1"}]')$$, pg_temp.id('drv')), 'does not belong to this synced folder');
+select pg_temp.expect_error(format($$select public.kb_sync_notes_write(%L, jsonb_build_array(jsonb_build_object('note_id', '01KF000000000000000000NT02', 'body', 'x', 'hash', 'h', 'mtime', now(), 'frontmatter', '{"visibility": "public", "kb_source": "google-drive:drive-file-10", "kb_attachment": "01KF0000000000000000000OTH"}'::jsonb)))$$, pg_temp.id('drv')), 'does not belong to this synced folder');
+-- the claims are back after a refused call as well
+select pg_temp.check((current_setting('request.jwt.claims', true)::jsonb ->> 'role') = 'service_role', 'a refusal leaves the service claims in place');
+-- no authenticated user calls either wrapper, the attaching admin included
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000f1');
+select pg_temp.expect_error(format($$select public.kb_sync_upstream_save(%L, '[]')$$, pg_temp.id('drv')), 'permission denied|only the relay');
+select pg_temp.expect_error(format($$select public.kb_sync_attacher(%L, null, null)$$, pg_temp.id('drv')), 'permission denied');
+-- an attaching admin who is no longer a KB admin is refused: s3, made a KB admin, attaches; then loses the role
+select public.kb_set_access(pg_temp.id('kb'), '[{"principal": "user", "user_id": "00000000-0000-4000-8000-0000000000f3", "role": "admin"}]');
+select pg_temp.as_service();
+insert into ids select 'att-s3', public.kb_sync_attach('00000000-0000-4000-8000-0000000000f3', pg_temp.id('kb'), null, 'google-drive', 'drive-file-s3', 'file', '{}', 'S3', null, 'rt-s3-x', 'quorum', true) ->> 'id';
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000f1');
+select public.kb_set_access(pg_temp.id('kb'), '[{"principal": "user", "user_id": "00000000-0000-4000-8000-0000000000f3", "role": "reader"}]');
+select pg_temp.as_service();
+select pg_temp.expect_error(format($$select public.kb_sync_notes_write(%L, '[]')$$, pg_temp.id('att-s3')), 'no longer an admin');
+select pg_temp.expect_error(format($$select public.kb_sync_upstream_save(%L, '[]')$$, pg_temp.id('att-s3')), 'no longer an admin');
+select pg_temp.as_admin_role();
+delete from public.kb_attachments where id = pg_temp.id('att-s3');
+select pg_temp.as_service();
 
 -- 13. a plan that ends pauses the workspace's attachments; an admin cannot resume them; an active plan resumes only those
 select pg_temp.as_admin_role();

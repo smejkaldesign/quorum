@@ -48,8 +48,12 @@ const upstreamClient = (db, a) => ({
     return db.rpc(name, args);
   },
 });
-// the note's own text with the provider's new change marker, for a copy that is kept
-const withMarker = (text, f) => (f.sha ? setFrontmatterKey(text, 'kb_source_sha', fmValue(f.sha)) : f.modified ? setFrontmatterKey(text, 'kb_source_modified', fmValue(f.modified)) : text);
+// the note's own text with the provider's new change marker, for a copy that is kept; it also names the attachment, so
+// a note adopted from an earlier sync becomes this attachment's
+const withMarker = (text, f, attachmentId) => {
+  const t = setFrontmatterKey(text, 'kb_attachment', fmValue(attachmentId));
+  return f.sha ? setFrontmatterKey(t, 'kb_source_sha', fmValue(f.sha)) : f.modified ? setFrontmatterKey(t, 'kb_source_modified', fmValue(f.modified)) : t;
+};
 
 // guard() runs before every write and throws when the run lost its lease (the attachment was removed, paused or taken
 // over), so a run never writes for an attachment it no longer holds
@@ -160,7 +164,7 @@ export async function syncAttachment({ db, attachment: a, provider, token, fetch
         // Quorum's copy has edits and the file's text did not change: the copy stays, with the new change marker so
         // the file is not read again next time
         kept++;
-        if (!sameMarker && current != null) updates.push({ note: had, text: withMarker(current, f), keepUpstream: true, fresh: 0, from: f.name });
+        if (!sameMarker && current != null) updates.push({ note: had, text: withMarker(current, f, a.id), keepUpstream: true, fresh: 0, from: f.name });
         continue;
       }
       updates.push({ note: had, text, suggestions: plan.suggestions, fresh: plan.fresh, from: f.name });

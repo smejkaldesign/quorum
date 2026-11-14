@@ -65,6 +65,10 @@ jobs:
       - name: Relay
         run: npm ci && npm test
         working-directory: relay
+      # the image copies only what the root Dockerfile lists from app/; this imports the relay inside that same tree
+      - name: Relay image imports
+        run: npm run check:image
+        working-directory: relay
       - name: Admin app
         run: npm ci && npm run typecheck && npm test && npm run build
         working-directory: admin
