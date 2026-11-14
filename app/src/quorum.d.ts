@@ -84,14 +84,14 @@ export type KeeperRun = { filed: number; skipped: number; changed: number; reaso
 export type PluginOwner = 'quorum' | 'vault';
 // report: the plugin reads and shows a result, and writes nothing in the vault on its own; note: one line on what it reads
 export type KeeperPlugin = { id: string; title: string; does: string; always: boolean; report: boolean; note: string | null; evidence: { path: string; why: string }[]; owner: PluginOwner; overridden: boolean; isNew: boolean };
-export type KeeperStatus = { on: boolean; facts: boolean; running: boolean; lastRunAt: string | null; filed: number; last: KeeperRun | null; folders: Partial<Record<'people' | 'projects' | 'daily' | 'meetings', string>>; model: boolean; held: KeeperHeld | null; plugins: KeeperPlugin[]; learned: KeeperLearned | null; errors: KeeperErrors };
+export type KeeperStatus = { on: boolean; meetingsIndex: boolean; facts: boolean; running: boolean; lastRunAt: string | null; filed: number; last: KeeperRun | null; folders: Partial<Record<'people' | 'projects' | 'daily' | 'meetings', string>>; model: boolean; held: KeeperHeld | null; plugins: KeeperPlugin[]; learned: KeeperLearned | null; errors: KeeperErrors };
 // where learned facts go and how much of the budget they use; errors are upkeep failures logged under Application Support
 // pick is the select's value; auto is what Automatic settled on; suggest is the other file when the vault's memory changed since
 // note is a vault note (note holds its path; linked says index.md links to it). maxFacts caps the lines in CLAUDE.md by
 // default; budgetPick is the budget select's value
 export type LearnedTarget = 'claude' | 'learned' | 'note';
 export type LearnedAuto = 'claude' | 'learned';
-export type KeeperLearned = { target: LearnedTarget; pick: LearnedTarget | 'auto'; auto: LearnedAuto; suggest: LearnedAuto | null; file: string; note: string; linked: boolean; budget: number; maxFacts: number | null; budgetPick: number | 'auto'; chars: number; fileChars: number };
+export type KeeperLearned = { target: LearnedTarget; pick: LearnedTarget | 'auto'; auto: LearnedAuto; suggest: LearnedAuto | null; file: string; note: string; linked: boolean; indexGenerated: boolean; budget: number; maxFacts: number | null; budgetPick: number | 'auto' | 'kept'; defaultBudget: number; defaultFacts: number | null; defaultMoves: number; suggestSmall: boolean; small: { budget: number; facts: number }; large: number; chars: number; fileChars: number };
 export type KeeperErrors = { count: number; last: { at: string; where: string; message: string } | null; file: string | null };
 // the context budget plugin (app/context-budget.js). scope: user, project and memory load every session; nested loads
 // only when Claude works in that folder; paths only for matching files. importedBy names the file whose @import loads it. loaded is what Claude Code reads (MEMORY.md stops at 200 lines)
@@ -204,7 +204,11 @@ export type KbImportSkipped = { path: string; reason: string };
 // a Google Drive file attached to a KB folder (ee/kbDrive.js); any admin of the KB syncs or removes it
 export type KbDriveFile = { fileId: string; noteId: string; name: string; folderId: string | null; url: string | null; syncedAt: string | null; modifiedAt: string | null };
 export type KbDriveStatus = { connected: boolean; available: boolean; account: string | null };
-export type KbDriveResult = Result & { files?: KbDriveFile[]; synced?: number; unchanged?: number; skipped?: KbImportSkipped[]; canceled?: true };
+export type KbDriveResult = Result & { files?: KbDriveFile[]; synced?: number; unchanged?: number; kept?: number; suggested?: number; skipped?: KbImportSkipped[]; canceled?: true };
+// Quorum's edit to a synced KB note, kept as a suggestion after the source changed (ee/kbUpstream.js); KB admins only.
+// '~' stands for unchanged lines left out of the view, and its text counts them
+export type KbDiffLine = { op: ' ' | '+' | '-' | '~'; text: string };
+export type KbSuggestion = { id: string; state: 'ready' | 'stale'; at: string | null; lines: KbDiffLine[]; blocked?: string };
 export type KbImportProgress = { kbId: string; phase: 'fetching' | 'reading' | 'writing' | 'done'; done: number; total: number };
 export type KbPlacement = { noteId: string; kbId: string | null; folderId: string | null; updatedAt: string | null };
 export type KbNote = { id: string; path: string; title: string; folderId: string | null; userId: string; updatedAt: string | null };
@@ -444,7 +448,7 @@ declare global {
       screenContextStatus(): Promise<ScreenContextStatus>;
       screenContextSet(on: boolean): Promise<ScreenContextStatus>;
       screenContextPrivacy(): Promise<void>;
-      keeperSet(patch: { on?: boolean; facts?: boolean; factsBudget?: number | 'auto'; factsTarget?: LearnedTarget | 'auto'; factsNote?: string }): Promise<KeeperStatus>;
+      keeperSet(patch: { on?: boolean; facts?: boolean; factsBudget?: number | 'auto'; factsTarget?: LearnedTarget | 'auto'; factsNote?: string; meetingsIndex?: boolean }): Promise<KeeperStatus>;
       keeperRun(opts?: { allowCreate?: boolean }): Promise<KeeperRun>;
       keeperPlugin(id: string, owner: PluginOwner): Promise<KeeperStatus>;
       keeperErrorsOpen(): Promise<void>;
@@ -523,7 +527,11 @@ declare global {
       kbNotes(kbId: string): Promise<Result & { notes?: KbNote[] }>;
       onKbOpen(cb: (t: { kbId: string; noteId: string }) => void): Unsub;
       kbOpenReady(): Promise<void>;
-      kbImport(req: KbImportRequest): Promise<Result & { kb?: Kb; imported?: number; removed?: number; skipped?: KbImportSkipped[] }>;
+      kbSuggestion(noteId: string): Promise<Result & { edited?: boolean; noteHash?: string | null; suggestions?: KbSuggestion[] }>;
+      // noteHash is the note's hash as the page read it; changed says the note moved on and the page reads again
+      kbSuggestionApply(noteId: string, suggestionId: string, noteHash: string | null): Promise<Result & { ok?: true; title?: string | null; body?: string; changed?: true }>;
+      kbSuggestionDismiss(noteId: string, suggestionId: string): Promise<Result & { ok?: true }>;
+      kbImport(req: KbImportRequest): Promise<Result & { kb?: Kb; imported?: number; removed?: number; kept?: number; suggested?: number; skipped?: KbImportSkipped[] }>;
       kbImportPickZip(): Promise<{ path?: string; canceled?: true }>;
       onKbImportProgress(cb: (p: KbImportProgress) => void): Unsub;
       kbDriveStatus(): Promise<KbDriveStatus>;

@@ -246,6 +246,10 @@ contextBridge.exposeInMainWorld('quorum', {
   kbAccessSet: (kbId, access) => ipcRenderer.invoke('kb-access-set', kbId, access),
   kbNoteAssign: (draft) => ipcRenderer.invoke('kb-note-assign', draft),
   kbNotes: (kbId) => ipcRenderer.invoke('kb-notes', kbId),
+  // Quorum's edits to synced KB notes kept as suggestions (hosted edition; handlers and API in ee/kbUpstream.js)
+  kbSuggestion: (noteId) => ipcRenderer.invoke('kb-suggestion', noteId),
+  kbSuggestionApply: (noteId, suggestionId, noteHash) => ipcRenderer.invoke('kb-suggestion-apply', noteId, suggestionId, noteHash),
+  kbSuggestionDismiss: (noteId, suggestionId) => ipcRenderer.invoke('kb-suggestion-dismiss', noteId, suggestionId),
   // a quorum://kb link opened from outside the app (kb_search and kb_read in the CLI and MCP server return them)
   onKbOpen: on('kb-open'),
   // listening: main sends the links it held back until now

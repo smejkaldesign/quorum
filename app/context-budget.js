@@ -84,8 +84,9 @@ const scoped = (text) => {
 // every file in the budget with its size and scope (user, project, memory: every session; nested: only in that
 // folder; paths: only for matching files), the totals for one session, Quorum's own share, and plain warnings.
 // instructions is the file Quorum's own agent puts into its prompt, when it does; null when Claude Code loads the
-// instructions itself or Instructions is not included
-export function contextBudget({ root, vault = root, home = homedir(), instructions = null }) {
+// instructions itself or Instructions is not included. top is the highest folder the walk up from root reads; Claude
+// Code reads up to the filesystem root, so that is the default, and the tests stop at their own temp folder
+export function contextBudget({ root, vault = root, home = homedir(), instructions = null, top = null }) {
   const show = (abs) => (abs.startsWith(root + path.sep) ? path.relative(root, abs) : abs.startsWith(home + path.sep) ? `~/${path.relative(home, abs)}` : abs);
   const files = [];
   const add = (abs, scope, depth = 0) => {
@@ -113,7 +114,7 @@ export function contextBudget({ root, vault = root, home = homedir(), instructio
   for (let dir = path.resolve(root); ; dir = path.dirname(dir)) {
     add(path.join(dir, 'CLAUDE.md'), 'project');
     add(path.join(dir, 'CLAUDE.local.md'), 'project');
-    if (path.dirname(dir) === dir) break;
+    if (path.dirname(dir) === dir || (top && dir === path.resolve(top))) break;
   }
   add(path.join(root, '.claude', 'CLAUDE.md'), 'project');
   for (const n of listMd(path.join(root, '.claude', 'rules'))) {

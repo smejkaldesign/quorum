@@ -1,7 +1,7 @@
 import type { Kb, KbAccess, KbAccessDraft, KbFolder, KbFolderNode, KbImportProgress, KbImportSkipped, KbNote, KbSource } from '../../src/quorum';
 
 // what a finished kb-import answers; removed counts notes a refresh took out because the source no longer has them
-export type KbImportResult = { kb: Kb; imported: number; skipped: KbImportSkipped[]; removed: number };
+export type KbImportResult = { kb: Kb; imported: number; skipped: KbImportSkipped[]; removed: number; kept?: number; suggested?: number };
 
 // Pure helpers for the knowledge base screens: the folder tree, what a move may do, the rows the tree shows and how
 // the arrow keys walk them, the readers line, the access list the readers editor sends, and the import lines.
@@ -223,13 +223,24 @@ export function progressLabel(p: KbImportProgress | null): string {
 // the share done, 0 to 1, or null when the total is not known yet
 export const progressShare = (p: KbImportProgress | null): number | null => (p && p.total > 0 && p.phase !== 'fetching' ? Math.max(0, Math.min(1, p.done / p.total)) : null);
 
+// the parts of a sync result about notes edited in Quorum
+function editParts(kept: number, suggested: number, noun: 'note' | 'file'): string[] {
+  const out: string[] = [];
+  if (kept) out.push(`kept ${kept} edited ${kept === 1 ? `${noun} as it is` : `${noun}s as they are`}`);
+  if (suggested) out.push(`kept ${suggested} ${suggested === 1 ? 'edit' : 'edits'} as ${suggested === 1 ? 'a suggestion' : 'suggestions'} on the new text`);
+  return out;
+}
+
 // the result of an import as a headline and the skipped files to list (the first `limit`, then a count of the rest)
-export function importSummary(r: Pick<KbImportResult, 'imported' | 'skipped'> & { removed?: number }, limit = 20): { headline: string; skipped: KbImportSkipped[]; more: number } {
+// kept counts notes edited in Quorum that stayed as they were because the source had not changed; suggested counts
+// edits kept as suggestions because it had (ee/kbUpstream.js)
+export function importSummary(r: Pick<KbImportResult, 'imported' | 'skipped'> & { removed?: number; kept?: number; suggested?: number }, limit = 20): { headline: string; skipped: KbImportSkipped[]; more: number } {
   const n = r.imported ?? 0;
   const skipped = r.skipped ?? [];
   const removed = r.removed ?? 0;
   const parts = [`Imported ${n} ${n === 1 ? 'note' : 'notes'}`];
   if (removed) parts.push(`removed ${removed} ${removed === 1 ? 'note' : 'notes'} the source no longer has`);
+  parts.push(...editParts(r.kept ?? 0, r.suggested ?? 0, 'note'));
   if (skipped.length) parts.push(`skipped ${skipped.length} ${skipped.length === 1 ? 'file' : 'files'}`);
   return { headline: `${parts.join(', ')}.`, skipped: skipped.slice(0, limit), more: Math.max(0, skipped.length - limit) };
 }
@@ -302,9 +313,10 @@ export function folderLabel(kb: Kb, folderId: string | null | undefined): string
 }
 
 // the line after an add or a sync: how many files were written, and what was skipped
-export function driveSummary(verb: string, n: number, skipped: KbImportSkipped[], unchanged = 0): { headline: string; skipped: KbImportSkipped[] } {
+export function driveSummary(verb: string, n: number, skipped: KbImportSkipped[], unchanged = 0, kept = 0, suggested = 0): { headline: string; skipped: KbImportSkipped[] } {
   const parts = [`${verb} ${n} ${n === 1 ? 'file' : 'files'} from Google Drive`];
   if (unchanged) parts.push(`${unchanged} unchanged since the last sync`);
+  parts.push(...editParts(kept, suggested, 'file'));
   if (skipped.length) parts.push(`skipped ${skipped.length}`);
   return { headline: `${parts.join(', ')}.`, skipped };
 }

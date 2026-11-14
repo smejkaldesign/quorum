@@ -7,7 +7,7 @@
 //
 // IPC API (preload exposes each as window.quorum.<camelName>):
 //
-//   kb-import          ({ kbId?, name?, source?, folderId? })  -> { kb: Kb, imported, removed, skipped: Skipped[] } | { error, skipped? }
+//   kb-import          ({ kbId?, name?, source?, folderId? })  -> { kb: Kb, imported, removed, kept, suggested, skipped: Skipped[] } | { error, skipped? }
 //   kb-import-pick-zip ()                                      -> { path } | { canceled: true }
 //   kb-import-progress (event to the renderer)                   { kbId, phase: 'fetching' | 'reading' | 'writing' | 'done', done, total }
 //
@@ -20,7 +20,10 @@
 // cannot be read or nothing in it could be imported. folderId puts the import inside that folder of the KB.
 // Re-importing into a KB updates the notes an earlier import wrote (they carry kb_source) at the same place in the KB
 // (folder path and file name), adds none twice, and removes those from the same source that are gone from it (counted
-// in removed). A note written by hand at the same place is left alone, as is another member's note. Progress phases:
+// in removed). A note written by hand at the same place is left alone, as is another member's note. A note Quorum (or
+// the person) edited since the last import (ee/kbUpstream.js) stays as it is while the source has not changed (kept);
+// when the source changed, the source's text is written and Quorum's edit is kept as a suggestion (counted in suggested).
+// Nothing is ever written back to GitHub or the zip. Progress phases:
 // fetching counts bytes (total 0 when the size is unknown), reading counts archive entries, writing counts notes, done
 // repeats the imported count.
 import { createHash } from 'node:crypto';
@@ -28,6 +31,7 @@ import { readFile as fsReadFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { plain } from './account.js';
 import { checkName, kbSession, shapeKb } from './knowledgeBases.js';
+import { baseRow, syncUpstream } from './kbUpstream.js';
 import { createRemote, ulid } from './store/remote.js';
 import { notes as localNotes } from '../store/local.js';
 import { parseFrontmatter } from './sync.js';
@@ -356,7 +360,7 @@ export function createKbImport({ account, fetch: get = globalThis.fetch, readFil
       // member's note there stays as it is
       const existing = new Map();
       const placeKey = (n) => keyOf([...(n.folder_id ? segsOf(n.folder_id) : []), path.posix.basename(String(n.path ?? ''))]);
-      const inKb = await kbNotes(kbId);
+      const inKb = await kbNotes(kbId, 'id, path, folder_id, user_id, frontmatter, hash');
       for (const n of inKb) existing.set(placeKey(n), n);
       const owners = await ownerNames([...new Set(inKb.filter((n) => n.user_id !== me).map((n) => n.user_id))]);
       const prefix = `Knowledge bases/${safeSeg(kb.name)}`;
@@ -380,27 +384,60 @@ export function createKbImport({ account, fetch: get = globalThis.fetch, readFil
           continue;
         }
         if (had && !had.frontmatter?.kb_source) { skipped.push({ path: f.rel, reason: 'A note with this name already exists.' }); continue; }
-        rows.push({ id: had?.id ?? ulid(), rel: had?.path ?? `${prefix}/${kbSegs.join('/')}`, text, frontmatter, hash: sha256(text), mtime: new Date().toISOString(), kbId, folderId: folderAt.get(keyOf(kbSegs.slice(0, -1))) ?? null, from: f.rel });
+        rows.push({ id: had?.id ?? ulid(), rel: had?.path ?? `${prefix}/${kbSegs.join('/')}`, text, frontmatter, hash: sha256(text), mtime: new Date().toISOString(), kbId, folderId: folderAt.get(keyOf(kbSegs.slice(0, -1))) ?? null, from: f.rel, had: had ?? null });
+      }
+
+      // a note Quorum or the person edited since the last import (ee/kbUpstream.js): kept while the source is unchanged,
+      // else the source's text with the edit kept as a suggestion. A note already in the KB goes up together with its
+      // base in one call; a new note is pushed, then its base recorded. Without migration 0031 every note is pushed
+      const upstream = syncUpstream({ client: () => account.client(), ws: () => wsId, log, tag: 'kb-import' });
+      await upstream.prepare(rows.filter((r) => r.had).map((r) => ({ id: r.id, hash: r.had.hash })));
+      const plans = new Map();
+      let kept = 0;
+      for (const r of rows.splice(0)) {
+        const plan = r.had ? upstream.plan({ id: r.id }, r.text) : null;
+        if (plan && !plan.write) { kept++; continue; }
+        if (plan) plans.set(r.id, plan);
+        rows.push(r);
+      }
+
+      progress(kbId, 'writing', 0, rows.length);
+      let suggested = 0;
+      const synced = upstream.off ? [] : rows.filter((r) => r.had);
+      const pushes = upstream.off ? [...rows] : rows.filter((r) => !r.had);
+      if (synced.length) {
+        const res = await upstream.write(kbId, synced.map((r) => ({ note_id: r.id, body: r.text, frontmatter: r.frontmatter, hash: r.hash, mtime: r.mtime, upstream: baseRow(r.id, r.text, plans.get(r.id).suggestions) })));
+        if (!res) pushes.push(...synced);
+        else {
+          for (const r of synced) {
+            if (res.written.has(r.id)) { wrote++; suggested += plans.get(r.id).fresh; continue; }
+            const err = res.failed.get(r.id);
+            log('kb-import', r.from, err?.message ?? 'not written');
+            skipped.push({ path: r.from, reason: plain(err, 'The note could not be written.') });
+          }
+          progress(kbId, 'writing', wrote, rows.length);
+        }
       }
 
       const remote = createRemote({ client: account.client(), workspaceId: wsId, userId: me });
-      progress(kbId, 'writing', 0, rows.length);
+      const pushed = [];
       const clash = (e) => /duplicate key|notes_workspace_path/i.test(String(e?.message));
-      for (let i = 0; i < rows.length; i += BATCH) {
-        const batch = rows.slice(i, i + BATCH);
-        try { await remote.notes.pushMany(batch); wrote += batch.length; } catch (err) {
+      for (let i = 0; i < pushes.length; i += BATCH) {
+        const batch = pushes.slice(i, i + BATCH);
+        try { await remote.notes.pushMany(batch); wrote += batch.length; pushed.push(...batch); } catch (err) {
           if (!clash(err)) throw err;
           // a path another note already holds fails the whole batch; one at a time finds which
           for (const r of batch) {
-            try { await remote.notes.push(r); wrote++; } catch (e) {
+            try { await remote.notes.push(r); wrote++; pushed.push(r); } catch (e) {
               if (!clash(e)) throw e;
               skipped.push({ path: r.from, reason: 'Another note in the workspace already uses this path.' });
             }
           }
         }
-        progress(kbId, 'writing', Math.min(i + BATCH, rows.length), rows.length);
+        progress(kbId, 'writing', Math.min(wrote, rows.length), rows.length);
       }
       if (created && !wrote) { await dropCreated(); return { error: nothingImported(true, skipped), skipped }; }
+      await upstream.saveBases(kbId, pushed.map((r) => baseRow(r.id, r.text)));
 
       // notes an earlier import of this source wrote under the same folder that the source no longer has
       const rootKey = keyOf(rootSegs);
@@ -418,8 +455,8 @@ export function createKbImport({ account, fetch: get = globalThis.fetch, readFil
       try { shaped = await rpc('kb_source_set', { kb_id: kbId, source: stored }); } catch (err) { log('kb-import', 'source not stored', err?.message ?? err); }
       shaped ??= await findKb(kbId);
       progress(kbId, 'done', wrote, wrote);
-      log('kb-import', `${wrote} notes into ${kbId}, ${removed} removed, ${skipped.length} skipped`);
-      return { kb: shapeKb(shaped ?? kb), imported: wrote, removed, skipped };
+      log('kb-import', `${wrote} notes into ${kbId}, ${removed} removed, ${kept} kept, ${suggested} suggested, ${skipped.length} skipped`);
+      return { kb: shapeKb(shaped ?? kb), imported: wrote, removed, kept, suggested, skipped };
     } catch (err) {
       log('kb-import', err?.message ?? err);
       await dropCreated();
