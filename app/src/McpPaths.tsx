@@ -4,21 +4,26 @@ import { mcpPathsOf, type LibraryConnector } from '../connectors/library';
 
 // When the person's agent already has a provider's own MCP server, the connector's row says so and shows what each
 // path gives (connectors/library.js mcpPathsOf) and the recommended setup. Settings > Connections and the Agent OS
-// step in onboarding both render it. Detection runs in the main process (connectors/mcpOverlap.js), read only, and is
-// kept for the session; refreshOnFocus asks for a new pass whenever the window gets focus again.
+// step in onboarding both render it. Detection runs in the main process (connectors/mcpOverlap.js), read only: the
+// config files are read again on open and, with refreshOnFocus, on focus; `claude mcp list` runs once per session in
+// the background, and its answer arrives through onMcpOverlap. check runs it again for Check again
 export function useMcpOverlap({ refreshOnFocus = false, key = '' }: { refreshOnFocus?: boolean; key?: string } = {}) {
   const [overlap, setOverlap] = useState<McpOverlap | null>(null);
+  const [checking, setChecking] = useState(false);
   useEffect(() => {
     let live = true;
-    const get = (refresh: boolean) => window.quorum.mcpOverlap({ refresh }).then((r) => { if (live) setOverlap(r); return r; }).catch(() => null);
-    // a pass older than a minute is redone when the page opens, so a server added since shows up
-    get(false).then((r) => { if (refreshOnFocus && r && Date.now() - new Date(r.at).getTime() > 60000) get(true); });
-    if (!refreshOnFocus) return () => { live = false; };
-    const onFocus = () => { get(true); };
-    window.addEventListener('focus', onFocus);
-    return () => { live = false; window.removeEventListener('focus', onFocus); };
+    const get = (refresh: boolean) => { window.quorum.mcpOverlap({ refresh }).then((r) => { if (live) setOverlap(r); }).catch(() => {}); };
+    get(refreshOnFocus);
+    const off = window.quorum.onMcpOverlap(() => get(false));
+    const onFocus = () => get(true);
+    if (refreshOnFocus) window.addEventListener('focus', onFocus);
+    return () => { live = false; off(); window.removeEventListener('focus', onFocus); };
   }, [refreshOnFocus, key]);
-  return overlap;
+  const check = async () => {
+    setChecking(true);
+    try { setOverlap(await window.quorum.mcpOverlapCheck()); } catch { /* the last answer stays */ } finally { setChecking(false); }
+  };
+  return { overlap, checking, check };
 }
 
 const WHERE: Record<McpOverlapServer['where'][number], string> = {
@@ -49,9 +54,23 @@ export function McpPaths({ connector, servers, open = false }: { connector: Libr
   );
 }
 
-// the detail page's line when the agent has no MCP for this provider: the connector covers both jobs
-export function McpAlone({ connector }: { connector: LibraryConnector }) {
+// what the detail page says about the agent's MCP for this provider, with Check again to run `claude mcp list` anew
+export function McpStatus({ connector, overlap, checking, onCheck }: { connector: LibraryConnector; overlap: McpOverlap; checking: boolean; onCheck: () => void }) {
   const p = mcpPathsOf(connector);
-  if (!p?.alone) return null;
-  return <p className="src-status">Your agent has no {connector.name} MCP set up. {p.alone}</p>;
+  if (!p) return null;
+  const on = overlap.matches[connector.id];
+  const off = overlap.off[connector.id];
+  const unread = !overlap.read.claudeList && !overlap.read.claudeConfig && !overlap.read.vault && !overlap.listing;
+  const line = unread ? 'Quorum could not read your agent\'s MCP setup.'
+    : off?.length ? `Your agent has ${connector.name}'s MCP set up but turned off (${foundLine(off)}).${p.alone ? ` ${p.alone}` : ''}`
+    : `Your agent has no ${connector.name} MCP set up.${p.alone ? ` ${p.alone}` : ''}`;
+  return (
+    <>
+      {on?.length ? <McpPaths connector={connector} servers={on} open /> : <p className="src-status">{line}</p>}
+      <div className="mcp-paths-check">
+        {overlap.listing && !checking && <span className="muted">Checking Claude Code's servers…</span>}
+        <button className="pill small-pill" disabled={checking} onClick={onCheck}>{checking ? 'Checking…' : 'Check again'}</button>
+      </div>
+    </>
+  );
 }

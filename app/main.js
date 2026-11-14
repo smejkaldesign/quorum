@@ -4,7 +4,8 @@ import { NEEDS_SOURCE, NEEDS_TOOLS, SOURCES, modelLabel, runModel, sourceStatus 
 import { BY_ID, cleanConnectors, cleanProviders, needsKey, providerFor, providersFromSource, sourceFromProviders } from './connectors/catalog.js';
 import { connectorKey, removeConnectorKey, setConnectorKey, testSavedConnector } from './connectors/keys.js';
 import { createConnectGuard, guardIpc } from './connectors/connectGuard.js';
-import { createOverlapCache } from './connectors/mcpOverlap.js';
+import { createOverlap } from './connectors/mcpOverlap.js';
+import { claudeRun } from './claudeCli.js';
 import { openSpeech, SPEECH_ENGINES } from './speech/provider.js';
 import { createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTree } from './vault.js';
 import { createVaultIndex } from './vindex.js';
@@ -1182,21 +1183,14 @@ const RUNTIME = process.execPath;
 const RUNTIME_ENV = { ELECTRON_RUN_AS_NODE: '1', ...(isDevelopment ? { QUORUM_ENV: 'development' } : {}) };
 const runtimeEnvArgs = () => Object.entries(RUNTIME_ENV).flatMap(([k, v]) => ['--env', `${k}=${v}`]);
 const runtimeEnvShell = () => Object.entries(RUNTIME_ENV).map(([k, v]) => `${k}=${v}`).join(' ');
-const claudeRun = (args) => new Promise((resolve) => {
-  const env = { ...process.env };
-  delete env.ANTHROPIC_API_KEY;
-  const p = spawn('claude', args, { env });
-  let out = '';
-  p.stdout.on('data', (d) => { out += d; });
-  p.stderr.on('data', (d) => { out += d; });
-  p.on('error', () => resolve({ ok: false, out: 'Claude Code not found' }));
-  p.on('close', (code) => resolve({ ok: code === 0, out }));
-});
 ipcMain.handle('mcp-status', async () => ({ added: (await claudeRun(['mcp', 'get', 'quorum'])).ok, node: RUNTIME, cli: CLI, command: `"${RUNTIME}" "${CLI}" mcp` }));
-// the provider MCP servers the person's agent already has, per connector (connectors/mcpOverlap.js). Read only and
-// kept for the session; the Connections page asks for a fresh pass when it gets focus
-const mcpOverlap = createOverlapCache();
-ipcMain.handle('mcp-overlap', (_e, opts) => { const b = brain(); return mcpOverlap({ root: b?.root ?? null, vault: b?.vault ?? null }, { refresh: opts?.refresh === true }); });
+// the provider MCP servers the person's agent already has, per connector (connectors/mcpOverlap.js). Read only. The
+// config files are read again on refresh (the Connections page asks on open and focus); `claude mcp list` runs once
+// per session in the background and again only on Check again, since it starts every local server to check it
+const mcpOverlap = createOverlap({ onChange: () => toUI('mcp-overlap', null) });
+const overlapFolder = () => { const b = brain(); return { root: b?.root ?? null, vault: b?.vault ?? null }; };
+ipcMain.handle('mcp-overlap', (_e, opts) => mcpOverlap.get(overlapFolder(), { refresh: opts?.refresh === true }));
+ipcMain.handle('mcp-overlap-check', () => mcpOverlap.check(overlapFolder()));
 ipcMain.handle('mcp-add', async () => {
   // the server name goes before -e: Claude Code's -e takes values until the next flag, so a name after it is read as
   // one more env value; -- ends the list

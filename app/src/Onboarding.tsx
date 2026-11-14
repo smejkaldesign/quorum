@@ -132,7 +132,7 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain 
     setConnecting(false);
   };
   // the provider MCP servers the agent already has, shown before any import runs: Granola first, then the others
-  const overlap = useMcpOverlap({ key: brain?.root ?? '' });
+  const { overlap } = useMcpOverlap({ key: brain?.root ?? '' });
   const overlapping = brain && overlap ? CONNECTORS.filter((x) => x.status === 'available' && mcpPathsOf(x) && overlap.matches[x.id]?.length).sort((a, b) => Number(!!mcpPathsOf(b)?.ingest) - Number(!!mcpPathsOf(a)?.ingest)) : [];
   const foundText = notes ? [...notes.sources.map((x) => `${x.count} ${x.name} ${x.count === 1 ? 'note' : 'notes'}`), ...(notes.notes ? [`${notes.notes} Quorum ${notes.notes === 1 ? 'note' : 'notes'}`] : [])].join(' · ') || 'Quorum saves new meeting notes here' : '';
   return (

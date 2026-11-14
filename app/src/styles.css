@@ -1383,6 +1383,7 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .mcp-paths-card { padding: 12px 14px; }
 .mcp-paths-card .mcp-paths { border: 0; padding: 0; }
 .mcp-paths-card .src-status { margin: 0; }
+.mcp-paths-check { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 10px; font-size: 12px; }
 .mcp-paths summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
 .mcp-paths summary strong { color: var(--text); font-weight: 500; }
 .mcp-paths summary span { color: var(--muted); font-size: 12px; }

@@ -46,7 +46,9 @@ export type OAuthAccount = { id: string; name: string; configured: boolean; conn
 // a provider MCP server the agent has (connectors/mcpOverlap.js), with secrets already replaced; where lists the
 // places it was found: claude-list (claude mcp list), claude-user, claude-project (~/.claude.json) and vault (.mcp.json)
 export type McpOverlapServer = { name: string; url: string | null; command: string | null; args: string[]; where: ('claude-list' | 'claude-user' | 'claude-project' | 'vault')[] };
-export type McpOverlap = { at: string; read: { claudeList: boolean; claudeConfig: boolean; vault: boolean }; matches: Record<string, McpOverlapServer[]> };
+// matches count; off are set up but turned off in Claude Code. listing: `claude mcp list` is still running;
+// claudeMissing: the claude command is not on this Mac
+export type McpOverlap = { at: string; read: { claudeList: boolean; claudeConfig: boolean; vault: boolean }; listing: boolean; claudeMissing: boolean; matches: Record<string, McpOverlapServer[]>; off: Record<string, McpOverlapServer[]> };
 export type GoogleCalendarStatus = { configured: boolean; connected: boolean; account: string | null; calendars: number; lastSyncAt: string | null; error: string | null };
 export type CalendarSettings = { source: 'mac'; days: number; enabled?: boolean; showAll?: boolean; hidden?: string[]; status?: 'granted' | 'notDetermined' | 'denied' | 'unavailable' | 'off'; google?: GoogleCalendarStatus | null };
 export type MemoryItem = { id: string; kind: string; label: string; path: string; detail: string; include: boolean | null; manual?: boolean };
@@ -385,6 +387,9 @@ declare global {
       mcpStatus(): Promise<{ added: boolean; node: string; cli: string; command: string }>;
       // the provider MCP servers the agent already has, by connector id; refresh asks for a new pass
       mcpOverlap(opts?: { refresh?: boolean }): Promise<McpOverlap>;
+      // runs `claude mcp list` again and waits for it (Check again)
+      mcpOverlapCheck(): Promise<McpOverlap>;
+      onMcpOverlap(cb: () => void): () => void;
       mcpAdd(): Promise<{ added: boolean; error?: string | null }>;
       mcpRemove(): Promise<{ added: boolean }>;
       cliStatus(): Promise<{ added: boolean; error?: string | null }>;

@@ -117,6 +117,8 @@ contextBridge.exposeInMainWorld('quorum', {
   decisionsRemove: () => ipcRenderer.invoke('decisions-remove'),
   mcpStatus: () => ipcRenderer.invoke('mcp-status'),
   mcpOverlap: (opts) => ipcRenderer.invoke('mcp-overlap', opts),
+  mcpOverlapCheck: () => ipcRenderer.invoke('mcp-overlap-check'),
+  onMcpOverlap: (cb) => { const h = () => cb(); ipcRenderer.on('mcp-overlap', h); return () => ipcRenderer.removeListener('mcp-overlap', h); },
   mcpAdd: () => ipcRenderer.invoke('mcp-add'),
   mcpRemove: () => ipcRenderer.invoke('mcp-remove'),
   cliStatus: () => ipcRenderer.invoke('cli-status'),

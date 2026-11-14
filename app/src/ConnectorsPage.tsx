@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { AgentSchedule, Brain, CalendarSettings, McpOverlapServer, MeetingSourceInfo, OAuthAccount, PlatformInfo, SourceJob } from './quorum';
+import type { AgentSchedule, Brain, CalendarSettings, McpOverlap, McpOverlapServer, MeetingSourceInfo, OAuthAccount, PlatformInfo, SourceJob } from './quorum';
 import { TRADEOFFS } from '../sources/agent-import';
 import { CATEGORIES, CONNECTORS_CHANGED, aboutFor, connectorsFor, featuresFor, isConnected, mcpPathsOf, type LibraryConnector } from '../connectors/library';
 import { BLOCKED_SENTENCE, ORG_LABEL, ORG_SENTENCE, UNAPPROVED_LABEL, approvalOf, canConnect, hasLocalPart, hiddenFromList, isGoverned, type Approval } from '../connectors/approval';
 import { useConnectorPolicy } from './edition';
 import { useFlag } from './flags';
-import { McpAlone, McpPaths, useMcpOverlap } from './McpPaths';
+import { McpPaths, McpStatus, useMcpOverlap } from './McpPaths';
 import { useMenu } from './controls';
 import { IconCheck, IconChevron, IconExternal, IconFolder, IconGrid, IconMore, IconReset } from './icons';
 
@@ -83,7 +83,7 @@ export function ConnectorsPage({ detail, onDetail, brain, onFolder, onNotes, foc
   // already connected (connectors/approval.js). null everywhere else, which leaves the page as it was
   const { policy, report } = useConnectorPolicy();
   // the provider MCP servers the agent already has; a new pass each time the window gets focus
-  const overlap = useMcpOverlap({ refreshOnFocus: true, key: brain?.root ?? '' });
+  const { overlap, checking, check } = useMcpOverlap({ refreshOnFocus: true, key: brain?.root ?? '' });
   const approval = (x: LibraryConnector): Approval => approvalOf(x, policy, accountConnected(x, live));
   const load = async () => {
     // the local edition has no platform handlers; the call fails and the list stays empty
@@ -110,7 +110,7 @@ export function ConnectorsPage({ detail, onDetail, brain, onFolder, onNotes, foc
     if (!focus || focus.cat === true || !loaded || detail) return;
     document.querySelector(`[data-conn-group="${focus.cat}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   }, [focus, loaded, detail]);
-  if (detail && byId[detail]) return <ConnectorDetail connector={byId[detail]} icon={icons[detail] ?? null} live={live} onChange={load} initialError={refused?.id === detail ? refused.error : ''} approval={approval(byId[detail])} mcp={overlap ? overlap.matches[detail] ?? [] : null} />;
+  if (detail && byId[detail]) return <ConnectorDetail connector={byId[detail]} icon={icons[detail] ?? null} live={live} onChange={load} initialError={refused?.id === detail ? refused.error : ''} approval={approval(byId[detail])} overlap={overlap} checking={checking} onCheck={check} />;
   // what the library offers today (with meeting capture off, Meet and Teams are not built as imports yet), and
   // anything still connected whatever its status, so it can be disconnected
   const listed = (id: string) => !!byId[id] && (byId[id].status !== 'soon' || isConnected(byId[id], live)) && !hiddenFromList(byId[id], approval(byId[id]));
@@ -265,7 +265,7 @@ function ConnectorRow({ connector: x, icon, live, approval, mcp, onChange, onOpe
   );
 }
 
-function ConnectorDetail({ connector: x, icon, live, onChange, initialError = '', approval = 'open', mcp = null }: { connector: LibraryConnector; icon: string | null; live: Live; onChange: () => Promise<void>; initialError?: string; approval?: Approval; mcp?: McpOverlapServer[] | null }) {
+function ConnectorDetail({ connector: x, icon, live, onChange, initialError = '', approval = 'open', overlap = null, checking = false, onCheck = () => {} }: { connector: LibraryConnector; icon: string | null; live: Live; onChange: () => Promise<void>; initialError?: string; approval?: Approval; overlap?: McpOverlap | null; checking?: boolean; onCheck?: () => void }) {
   const blocked = approval === 'blocked';
   // a personal connect or reconnect needs an open or approved connector; listening on this Mac is never governed
   const refusal = canConnect(approval) ? null : approval === 'org' ? ORG_SENTENCE(x.name) : BLOCKED_SENTENCE;
@@ -389,10 +389,10 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
           {rows.map(([k, v]) => <div key={k} className="conn-kv"><span>{k}</span><span>{v}</span></div>)}
         </div>
       )}
-      {mcp && mcpPathsOf(x) && (mcp.length > 0 || mcpPathsOf(x)?.alone) && (
+      {overlap && mcpPathsOf(x) && (
         <>
           <h4>Your agent's MCP</h4>
-          <div className="set-card conn-table mcp-paths-card">{mcp.length ? <McpPaths connector={x} servers={mcp} open /> : <McpAlone connector={x} />}</div>
+          <div className="set-card conn-table mcp-paths-card"><McpStatus connector={x} overlap={overlap} checking={checking} onCheck={onCheck} /></div>
         </>
       )}
       {x.kind === 'mcp-source' && src?.agent && src.agent.runners.length > 0 && (!on || src.agent.schedule !== 'off') && <AgentImport source={src} busy={busy} act={act} />}

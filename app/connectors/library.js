@@ -214,8 +214,8 @@ const MCP_PATHS = {
 export const MCP_EXPLAIN_INGEST = 'Quorum keeps your meeting memory local. It brings notes from each connector into your vault, then files, links and tidies them so your agent recalls quickly. Your agent uses the provider\'s MCP only when it needs a transcript or a live lookup. Switching note apps means signing in to the new one here; your vault and your agent stay the same.';
 export const MCP_RECOMMEND_INGEST = 'Recommended: keep the connector on for ingestion and upkeep, and keep the provider MCP for depth.';
 export const MCP_ALONE = 'With no provider MCP, the connector covers both.';
-const MCP_EXPLAIN_ACCOUNT = (n) => `Quorum uses its ${n} connection for its own features, with the token in this Mac's Keychain. Your agent uses ${n}'s MCP for live lookups.`;
-const MCP_RECOMMEND_ACCOUNT = 'Recommended: keep both. Each one does a separate job.';
+const MCP_EXPLAIN_ACCOUNT = (n) => `Quorum's ${n} connection runs Quorum's own features; your agent uses ${n}'s MCP for live lookups.`;
+const MCP_RECOMMEND_ACCOUNT = 'Recommended: keep both on.';
 
 // the table and the copy for one connector, or null when Quorum has no comparison for it
 export function mcpPathsOf(x) {
