@@ -59,7 +59,10 @@ export function createRemote({ client, workspaceId, userId } = {}) {
   const NOTE_COLUMNS = 'id, user_id, path, frontmatter, body, hash, mtime, updated_at, deleted_at';
   const notesChangedBase = changedSince('notes', NOTE_COLUMNS);
   const notesChangedKb = changedSince('notes', `${NOTE_COLUMNS}, kb_id, folder_id`);
-  let kbColumns = true;
+  // after a missing-column answer the pull goes without the two columns for KB_RETRY_MS, then asks for them again,
+  // so a database that gains migration 0024 while the app runs is read in full again
+  const KB_RETRY_MS = 10 * 60 * 1000;
+  let kbColumnsOffUntil = 0;
 
   const notes = {
     // read and write take the vault-relative path the row stores; local.js takes an absolute path
@@ -81,12 +84,12 @@ export function createRemote({ client, workspaceId, userId } = {}) {
     setFrontmatterKey: localNotes.setFrontmatterKey,
     byId: async (id) => first(await run(client.from('notes').select('*').eq('workspace_id', workspaceId).eq('id', id).limit(1), 'notes read')),
     // kb_id and folder_id (migration 0024) say which knowledge base folder a note sits in; a database without them
-    // yet answers with a missing-column error, and the pull goes on without the two columns from then on
+    // yet answers with a missing-column error, and the pull goes on without the two columns for a while
     changedSince: async (since, opts) => {
-      if (!kbColumns) return notesChangedBase(since, opts);
+      if (Date.now() < kbColumnsOffUntil) return notesChangedBase(since, opts);
       try { return await notesChangedKb(since, opts); } catch (err) {
         if (!/kb_id|folder_id/.test(String(err?.message))) throw err;
-        kbColumns = false;
+        kbColumnsOffUntil = Date.now() + KB_RETRY_MS;
         return notesChangedBase(since, opts);
       }
     },

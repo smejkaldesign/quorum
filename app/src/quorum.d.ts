@@ -416,6 +416,7 @@ declare global {
       kbDelete(kbId: string): Promise<Result>;
       kbFolderCreate(draft: { kbId: string; parentId?: string | null; name: string; position?: number }): Promise<Result & { folder?: KbFolder }>;
       kbFolderRename(folderId: string, name: string): Promise<Result & { folder?: KbFolder }>;
+      // parentId left out keeps the current parent (a reorder); null moves the folder to the KB's top level
       kbFolderMove(draft: { folderId: string; parentId?: string | null; position?: number }): Promise<Result & { folder?: KbFolder }>;
       kbFolderDelete(folderId: string): Promise<Result>;
       kbAccessSet(kbId: string, access: KbAccessDraft[]): Promise<Result & { access?: KbAccess[] }>;

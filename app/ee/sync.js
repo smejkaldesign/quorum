@@ -51,7 +51,7 @@ export function withBond(body, bond) {
   const kept = m[1].split('\n').filter((l) => !BOND_KEYS.some((k) => l.startsWith(`${k}:`)));
   return `---\n${[...kept, ...lines].join('\n')}\n---${m[2]}${body.slice(m[0].length)}`;
 }
-export const bondOf = (text) => { const fm = parseFrontmatter(text); return fm.team_item ? { item: fm.team_item, version: fm.team_version ?? '', behind: fm.team_behind === 'true', kb: fm.team_kb ?? null, folder: fm.team_folder ?? null } : null; };
+export const bondOf = (text) => { const fm = parseFrontmatter(text); return fm.team_item ? { item: fm.team_item, version: fm.team_version ?? '', behind: fm.team_behind === 'true' } : null; };
 // the knowledge base and folder a pulled row sits in (migration 0024), kept on the id map entry and in a shared note's
 // bond; a note outside any knowledge base carries neither
 export const placeOf = (row) => (row?.kb_id ? { kb: row.kb_id, folder: row.folder_id ?? null } : { kb: undefined, folder: undefined });

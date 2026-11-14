@@ -12,11 +12,13 @@
 //   kb-delete        (kbId)                                      -> { ok: true }                owners and admins only
 //   kb-folder-create ({ kbId, parentId?, name, position? })      -> { folder: Folder }
 //   kb-folder-rename (folderId, name)                            -> { folder: Folder }
-//   kb-folder-move   ({ folderId, parentId?, position? })        -> { folder: Folder }         parentId null: top level
+//   kb-folder-move   ({ folderId, parentId?, position? })        -> { folder: Folder }         parentId left out: same
+//                                                                                               parent; null: top level
 //   kb-folder-delete (folderId)                                  -> { ok: true }                subfolders go too
 //   kb-access-set    (kbId, access: AccessDraft[])               -> { access: Access[] }       replaces the whole list
-//   kb-note-assign   ({ noteId? | path?, kbId, folderId? })       -> { placement: Placement }   kbId null takes it out
-//   kb-notes         (kbId)                                      -> { notes: KbNote[] }         readable notes in a KB
+//   kb-note-assign   ({ noteId? | path?, kbId, folderId? })       -> { placement: Placement }   kbId null takes it out;
+//                                                                                               path finds the caller's own note
+//   kb-notes         (kbId)                                      -> { notes: KbNote[] }         readable notes in a KB, all pages
 //
 //   Kb          { id, name, kind: 'general' | 'meetings', teamId, isDefault, source, role: 'admin' | 'reader',
 //                 createdAt, updatedAt, folders: FolderNode[], access: Access[] | null }
@@ -31,12 +33,16 @@
 //   KbNote      { id, path, title, folderId, userId, updatedAt }
 //
 // Rights: workspace owners and admins create and delete KBs and manage all of them; a KB admin (role admin in its
-// access list) renames it, manages its folders and readers, and adds notes to it; readers read. A note joins a KB only
-// through kb-note-assign; its author can always take it out, and marking it private takes it out too. Pull sync
-// (ee/sync.js) carries each note's kb_id and folder_id onto the local id map and into a shared note's bond.
+// access list) renames it, manages its folders and readers, and adds their own shared notes to it; moving another
+// member's note takes a workspace owner or admin; readers read. Only a note shared with the workspace (visibility
+// public, not confidential) sits in a KB: its author can always take it out, and a note that stops being shared, or
+// whose contribution is declined, leaves. With a team switched on, the workspace's default KB receives every note the
+// review queue includes. Pull sync (ee/sync.js) carries each note's kb_id and folder_id onto the local id map and
+// into a shared note's bond.
 import { plain } from './account.js';
 
 export const KB_KINDS = ['general', 'meetings'];
+const PAGE = 1000;
 const ROLES = ['admin', 'reader'];
 const PRINCIPALS = ['workspace', 'team', 'user'];
 
@@ -134,7 +140,8 @@ export function createKnowledgeBases({ account, log = () => {} }) {
     }),
     'kb-folder-move': call(false, 'The folder could not be moved.', async (draft = {}) => {
       if (draft.parentId && draft.parentId === draft.folderId) return { error: 'A folder cannot move inside itself.' };
-      return { folder: shapeFolder(await rpc('kb_folder_move', { folder_id: need(draft.folderId, 'folder'), parent_id: draft.parentId ?? null, position: Number.isInteger(draft.position) ? draft.position : null })) };
+      const reparent = Object.prototype.hasOwnProperty.call(draft, 'parentId') && draft.parentId !== undefined;
+      return { folder: shapeFolder(await rpc('kb_folder_move', { folder_id: need(draft.folderId, 'folder'), parent_id: reparent ? draft.parentId : null, position: Number.isInteger(draft.position) ? draft.position : null, reparent })) };
     }),
     'kb-folder-delete': call(false, 'The folder could not be deleted.', async (folderId) => { await rpc('kb_folder_delete', { folder_id: need(folderId, 'folder') }); return { ok: true }; }),
     'kb-access-set': call(false, 'Access could not be saved.', async (kbId, list) => {
@@ -145,7 +152,7 @@ export function createKnowledgeBases({ account, log = () => {} }) {
     'kb-note-assign': call(false, 'The note could not be moved.', async (draft = {}) => {
       let noteId = draft.noteId ?? null;
       if (!noteId && draft.path) {
-        const { data, error } = await account.client().from('notes').select('id').eq('workspace_id', ws()).eq('path', String(draft.path)).is('deleted_at', null).limit(1);
+        const { data, error } = await account.client().from('notes').select('id').eq('workspace_id', ws()).eq('user_id', account.state().userId).eq('path', String(draft.path)).is('deleted_at', null).limit(1);
         if (error) throw error;
         noteId = data?.[0]?.id ?? null;
         if (!noteId) return { error: 'That note has not synced yet. Turn on sync and try again.' };
@@ -153,11 +160,18 @@ export function createKnowledgeBases({ account, log = () => {} }) {
       const r = await rpc('kb_note_assign', { note_id: need(noteId, 'note'), kb_id: draft.kbId ?? null, folder_id: draft.kbId ? draft.folderId ?? null : null });
       return { placement: { noteId: r.note_id, kbId: r.kb_id ?? null, folderId: r.folder_id ?? null, updatedAt: r.updated_at ?? null } };
     }),
+    // page by page, as pull sync walks a table, so a KB larger than one PostgREST page comes back whole
     'kb-notes': call(false, 'The notes could not be read.', async (kbId) => {
-      const { data, error } = await account.client().from('notes').select('id, path, frontmatter, folder_id, user_id, updated_at')
-        .eq('workspace_id', ws()).eq('kb_id', need(kbId, 'knowledge base')).is('deleted_at', null).order('path');
-      if (error) throw error;
-      return { notes: (data ?? []).map((n) => ({ id: n.id, path: n.path, title: titleOf(n), folderId: n.folder_id ?? null, userId: n.user_id, updatedAt: n.updated_at ?? null })) };
+      const id = need(kbId, 'knowledge base');
+      const rows = [];
+      for (let offset = 0; ; offset += PAGE) {
+        const { data, error } = await account.client().from('notes').select('id, path, frontmatter, folder_id, user_id, updated_at')
+          .eq('workspace_id', ws()).eq('kb_id', id).is('deleted_at', null).order('path').order('id').range(offset, offset + PAGE - 1);
+        if (error) throw error;
+        rows.push(...(data ?? []));
+        if ((data ?? []).length < PAGE) break;
+      }
+      return { notes: rows.map((n) => ({ id: n.id, path: n.path, title: titleOf(n), folderId: n.folder_id ?? null, userId: n.user_id, updatedAt: n.updated_at ?? null })) };
     }),
   };
   return { handlers };

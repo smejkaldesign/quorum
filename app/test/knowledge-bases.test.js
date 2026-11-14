@@ -4,12 +4,12 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 
 const home = mkdtempSync(path.join(tmpdir(), 'quorum-kb-home-'));
 process.env.HOME = home;
 const { accessRows, checkName, createKnowledgeBases, folderTree, shapeKb } = await import('../ee/knowledgeBases.js');
-const { bondOf, createSync, placeOf } = await import('../ee/sync.js');
+const { bondOf, createSync, parseFrontmatter, placeOf } = await import('../ee/sync.js');
 const { createRemote } = await import('../ee/store/remote.js');
 
 const dirs = [home];
@@ -62,17 +62,18 @@ describe('what the renderer gets', () => {
 // a client whose rpc answers from a table of canned results and whose from() answers notes reads
 function fakeAccount({ role = 'admin', answers = {}, notes = [], signedIn = true } = {}) {
   const calls = [];
+  let reads = 0;
   const client = {
     rpc: async (name, args) => { calls.push([name, args]); const a = answers[name]; return a instanceof Error ? { data: null, error: { message: a.message, code: 'P0001' } } : { data: typeof a === 'function' ? a(args) : a ?? null, error: null }; },
     from: (table) => {
       const ops = [];
       const b = {};
-      for (const op of ['select', 'eq', 'is', 'order', 'limit']) b[op] = (...a) => { ops.push([op, ...a]); return b; };
-      b.then = (res, rej) => { calls.push([`from:${table}`, ops]); return Promise.resolve({ data: notes, error: null }).then(res, rej); };
+      for (const op of ['select', 'eq', 'is', 'order', 'limit', 'range']) b[op] = (...a) => { ops.push([op, ...a]); return b; };
+      b.then = (res, rej) => { calls.push([`from:${table}`, ops]); reads++; return Promise.resolve({ data: typeof notes === 'function' ? notes(reads - 1) : notes, error: null }).then(res, rej); };
       return b;
     },
   };
-  const state = { signedIn, workspace: { id: 'W', role } };
+  const state = { signedIn, userId: 'me', workspace: { id: 'W', role } };
   return { calls, account: { client: () => client, state: () => state } };
 }
 
@@ -100,6 +101,7 @@ describe('the IPC handlers', () => {
     expect((await h['kb-folder-create']({ kbId: KB, parentId: 'F1', name: 'New' })).folder).toEqual({ id: 'F9', kbId: KB, parentId: 'F1', name: 'New', position: 2 });
     await h['kb-folder-rename']('F9', 'New');
     await h['kb-folder-move']({ folderId: 'F9', parentId: null, position: 0 });
+    await h['kb-folder-move']({ folderId: 'F9', position: 3 });
     expect(await h['kb-folder-delete']('F9')).toEqual({ ok: true });
     expect((await h['kb-access-set'](KB, [{ principal: 'workspace' }])).access[0].principal).toBe('workspace');
     expect((await h['kb-note-assign']({ noteId: 'N1', kbId: KB, folderId: 'F2' })).placement).toEqual({ noteId: 'N1', kbId: KB, folderId: 'F2', updatedAt: 't2' });
@@ -110,7 +112,8 @@ describe('the IPC handlers', () => {
       ['kb_delete', { kb_id: KB }],
       ['kb_folder_create', { kb_id: KB, parent_id: 'F1', name: 'New', position: null }],
       ['kb_folder_rename', { folder_id: 'F9', name: 'New' }],
-      ['kb_folder_move', { folder_id: 'F9', parent_id: null, position: 0 }],
+      ['kb_folder_move', { folder_id: 'F9', parent_id: null, position: 0, reparent: true }],
+      ['kb_folder_move', { folder_id: 'F9', parent_id: null, position: 3, reparent: false }],
       ['kb_folder_delete', { folder_id: 'F9' }],
       ['kb_set_access', { kb_id: KB, access: [{ principal: 'workspace', role: 'reader' }] }],
       ['kb_note_assign', { note_id: 'N1', kb_id: KB, folder_id: 'F2' }],
@@ -125,8 +128,19 @@ describe('the IPC handlers', () => {
     expect((await h['kb-notes'](KB)).notes).toEqual([{ id: 'N7', path: 'a/plan.md', title: 'plan', folderId: 'F2', userId: 'u', updatedAt: 't' }]);
     const reads = f.calls.filter(([n]) => n === 'from:notes').map(([, ops]) => ops);
     expect(reads[0]).toContainEqual(['eq', 'path', 'a/plan.md']);
+    expect(reads[0]).toContainEqual(['eq', 'user_id', 'me']);
     expect(reads[1]).toContainEqual(['eq', 'kb_id', KB]);
     expect(f.calls.filter(([n]) => n === 'kb_note_assign').map(([, a]) => a.folder_id)).toEqual([null, null]);
+  });
+
+  it('reads a KB\'s notes page by page', async () => {
+    const page = Array.from({ length: 1000 }, (_, i) => ({ id: `N${i}`, path: `p${i}.md`, frontmatter: { title: `T${i}` }, folder_id: null, user_id: 'u', updated_at: 't' }));
+    const f = fakeAccount({ notes: (i) => (i === 0 ? page : [{ id: 'last', path: 'z.md', frontmatter: {}, folder_id: null, user_id: 'u', updated_at: 't' }]) });
+    const r = await createKnowledgeBases(f).handlers['kb-notes'](KB);
+    expect(r.notes).toHaveLength(1001);
+    expect(r.notes[0].title).toBe('T0');
+    const ranges = f.calls.filter(([n]) => n === 'from:notes').map(([, ops]) => ops.find(([o]) => o === 'range'));
+    expect(ranges).toEqual([['range', 0, 999], ['range', 1000, 1999]]);
   });
 
   it('passes the server\'s refusal through as the page\'s sentence', async () => {
@@ -153,8 +167,9 @@ describe('pull sync carries the KB placement', () => {
     expect(await remote.notes.changedSince(null)).toEqual([]);
     expect(selects.map((s) => s.includes('kb_id'))).toEqual([true, false, false]);
     missing = false;
-    const fresh = createRemote({ client, workspaceId: 'W', userId: 'u' });
-    await fresh.notes.changedSince(null);
+    const later = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 11 * 60 * 1000);
+    await remote.notes.changedSince(null);
+    later.mockRestore();
     expect(selects.at(-1)).toMatch(/kb_id, folder_id$/);
   });
 
@@ -177,11 +192,14 @@ describe('pull sync carries the KB placement', () => {
     const sync = createSync({ account, store: { notes: { write: (abs, text) => writeFileSync(abs, text) } }, brain: () => ({ vault }), idsFile: path.join(home, 'sync-ids-kb.json'), teamRoot: () => team });
     await sync.pullNow();
     const first = readFileSync(path.join(team, 'kb/plan.md'), 'utf8');
-    expect(bondOf(first)).toMatchObject({ item: 'N1', version: 'h1', kb: KB, folder: 'F2' });
+    expect(bondOf(first)).toMatchObject({ item: 'N1', version: 'h1' });
+    expect(parseFrontmatter(first)).toMatchObject({ team_kb: KB, team_folder: 'F2' });
     rows = [{ ...rows[0], folder_id: null, kb_id: KB, updated_at: '2026-11-13T11:00:00Z' }];
     await sync.pullNow();
     const moved = readFileSync(path.join(team, 'kb/plan.md'), 'utf8');
-    expect(bondOf(moved)).toMatchObject({ item: 'N1', kb: KB, folder: null });
+    expect(bondOf(moved)).toMatchObject({ item: 'N1' });
+    expect(parseFrontmatter(moved).team_kb).toBe(KB);
+    expect(parseFrontmatter(moved).team_folder).toBeUndefined();
     expect(moved.endsWith('# Plan\n')).toBe(true);
     expect(placeOf({ kb_id: null, folder_id: 'F2' })).toEqual({ kb: undefined, folder: undefined });
   });
