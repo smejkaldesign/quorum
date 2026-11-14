@@ -18,7 +18,7 @@ function setup({ pathDirs = [], codexHome } = {}) {
   const calls = [];
   const answers = [];
   const run = async (bin, args) => { calls.push([bin, ...args]); const a = answers.shift(); return typeof a === 'function' ? a(bin, args) : a ?? { ok: false, out: '', missing: true }; };
-  const shellPath = { path: pathDirs.map((d) => d.replace('$HOME', home)).join(':'), quorum: '' };
+  const shellPath = { path: pathDirs.map((d) => d.replace('$HOME', home)).join(':'), which: {} };
   const link = createAgentLink({ runtime, cli, env: ENV, home, codexHome: codexHome?.(home), run, shell: async () => shellPath });
   return { home, runtime, cli, calls, answers, link, shellPath };
 }
@@ -99,26 +99,40 @@ describe('quorum command', () => {
     expect(await t.link.cli.remove()).toEqual({ added: false });
     expect(existsSync(f)).toBe(false);
   });
-  it('falls back to the .zshrc alias without a user bin folder on PATH, or when another quorum is there', async () => {
+  it('falls back to the .zshrc alias without a user bin folder on PATH', async () => {
     const t = setup({ pathDirs: ['/usr/bin'] });
-    expect(await t.link.cli.add()).toMatchObject({ added: true, where: 'alias', error: null });
+    expect(await t.link.cli.add()).toMatchObject({ added: true, where: 'alias', name: 'quorum', error: null });
     expect(readFileSync(path.join(t.home, '.zshrc'), 'utf8')).toBe(`alias quorum='ELECTRON_RUN_AS_NODE=1 "${t.runtime}" "${t.cli}"' ${MARK}\n`);
+  });
+  it('takes the quorum-app name when another program answers to quorum, and never touches that program', async () => {
     const u = setup({ pathDirs: ['$HOME/bin'] });
     mkdirSync(path.join(u.home, 'bin'));
-    writeFileSync(path.join(u.home, 'bin', 'quorum'), '#!/bin/sh\necho mine\n');
-    expect(await u.link.cli.add()).toMatchObject({ where: 'alias' });
-    expect(readFileSync(path.join(u.home, 'bin', 'quorum'), 'utf8')).toBe('#!/bin/sh\necho mine\n');
+    const theirs = path.join(u.home, 'bin', 'quorum');
+    writeFileSync(theirs, '#!/bin/sh\necho mine\n');
+    writeFileSync(path.join(u.home, '.zshrc'), "alias other='x'\n");
+    u.shellPath.which = { quorum: theirs };
+    const s = await u.link.cli.add();
+    expect(s).toMatchObject({ added: true, where: 'path', name: 'quorum-app', path: path.join(u.home, 'bin', 'quorum-app'), shadowed: false });
+    expect(readFileSync(theirs, 'utf8')).toBe('#!/bin/sh\necho mine\n');
+    expect(readFileSync(path.join(u.home, '.zshrc'), 'utf8')).toBe("alias other='x'\n");
     await u.link.cli.remove();
-    expect(existsSync(path.join(u.home, 'bin', 'quorum'))).toBe(true);
+    expect(existsSync(theirs)).toBe(true);
+    expect(existsSync(path.join(u.home, 'bin', 'quorum-app'))).toBe(false);
   });
-  it('adds an alias for new windows when another quorum comes first on PATH', async () => {
-    const t = setup({ pathDirs: ['/opt/homebrew/bin', '$HOME/.local/bin'] });
-    t.shellPath.quorum = '/opt/homebrew/bin/quorum';
+  it('writes nothing when both names are taken, and offers the full path', async () => {
+    const t = setup({ pathDirs: ['$HOME/.local/bin'] });
+    t.shellPath.which = { quorum: '/opt/homebrew/bin/quorum', 'quorum-app': '/usr/local/bin/quorum-app' };
     const s = await t.link.cli.add();
-    expect(s).toMatchObject({ where: 'path', alias: true });
-    expect(readFileSync(path.join(t.home, '.zshrc'), 'utf8')).toContain(MARK);
-    await t.link.cli.remove();
-    expect(readFileSync(path.join(t.home, '.zshrc'), 'utf8')).not.toContain(MARK);
+    expect(s).toMatchObject({ added: false, command: `ELECTRON_RUN_AS_NODE=1 "${t.runtime}" "${t.cli}"` });
+    expect(s.error).toMatch(/full path/);
+    expect(existsSync(path.join(t.home, '.local', 'bin'))).toBe(false);
+    expect(existsSync(path.join(t.home, '.zshrc'))).toBe(false);
+  });
+  it('reports a launcher another program shadows', async () => {
+    const t = setup({ pathDirs: ['/opt/homebrew/bin', '$HOME/.local/bin'] });
+    await t.link.cli.add();
+    t.shellPath.which = { quorum: '/opt/homebrew/bin/quorum' };
+    expect(await t.link.cli.status()).toMatchObject({ name: 'quorum', shadowed: true });
   });
   it('says when the launcher left PATH or points at a Quorum that moved', async () => {
     const t = setup({ pathDirs: ['$HOME/.local/bin'] });
@@ -142,8 +156,8 @@ describe('MCP handshake and shell', () => {
     expect((await createAgentLink({ runtime: process.execPath, cli: bad, env: ENV, home: dir }).handshake()).ok).toBe(false);
   });
   it('reads PATH and quorum from between the markers, ignoring what .zshrc prints', async () => {
-    const exec = (_sh, args, _o, cb) => { expect(args[0]).toBe('-ilc'); cb(null, 'Welcome!\n\n__QUORUM__/a:/b__QUORUM__/b/quorum__QUORUM__\n'); };
-    expect(await readShell({ exec })).toEqual({ path: '/a:/b', quorum: '/b/quorum' });
+    const exec = (_sh, args, _o, cb) => { expect(args[0]).toBe('-ilc'); cb(null, 'Welcome!\n\n__QUORUM__/a:/b__QUORUM__/b/quorum__QUORUM____QUORUM__\n'); };
+    expect(await readShell({ exec })).toEqual({ path: '/a:/b', which: { quorum: '/b/quorum', 'quorum-app': '' } });
     expect((await readShell({ exec: (_s, _a, _o, cb) => cb(new Error('timeout'), '') })).unread).toBe(true);
   });
 });

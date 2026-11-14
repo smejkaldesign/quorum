@@ -56,6 +56,7 @@ contextBridge.exposeInMainWorld('quorum', {
   onNotesDelta: on('notes-delta'),
   onFocusComposer: on('focus-composer'),
   brain: () => ipcRenderer.invoke('brain'),
+  onBrainChanged: (cb) => { const h = (_e, b) => cb(b); ipcRenderer.on('brain-changed', h); return () => ipcRenderer.removeListener('brain-changed', h); },
   connectBrain: () => ipcRenderer.invoke('connect-brain'),
   revealBrain: () => ipcRenderer.invoke('reveal-brain'),
   disconnectBrain: () => ipcRenderer.invoke('disconnect-brain'),

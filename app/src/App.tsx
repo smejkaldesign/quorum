@@ -402,6 +402,7 @@ export function App() {
     window.quorum.axStatus();
     window.quorum.getSettings().then(setSettings);
     window.quorum.brain().then(setBrain);
+    offs.push(window.quorum.onBrainChanged(setBrain));
     return () => offs.forEach((off) => off());
   }, []);
 

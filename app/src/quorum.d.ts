@@ -15,7 +15,7 @@ export type HelperEvent =
   | { event: 'dictation'; state: 'on' | 'off' };
 
 // every generated line carries refs: the ids of the transcript turns it came from
-export type CliStatus = { added: boolean; where?: 'path' | 'alias'; path?: string; onPath?: boolean; alias?: boolean; resolves?: string; error?: string | null; command?: string };
+export type CliStatus = { added: boolean; where?: 'path' | 'alias'; name?: string; shadowed?: boolean; path?: string; onPath?: boolean; alias?: boolean; resolves?: string; error?: string | null; command?: string };
 export type AgentStatus = { installed: boolean; added: boolean; via?: 'cli' | 'config'; error?: string | null };
 export type AgentsStatus = { claude: AgentStatus; codex: AgentStatus; cli: CliStatus };
 export type ConnectionCheckItem = { id: 'folder' | 'note' | 'search' | 'claude' | 'codex' | 'server' | 'cli'; label: string; state: 'ok' | 'fail' | 'warn' | 'skip'; fix: string | null; action: ConnectionCheckAction | null; detail: string | null };
@@ -345,6 +345,7 @@ declare global {
       onNotesDelta(cb: (d: NotesDraft) => void): Unsub;
       onFocusComposer(cb: () => void): Unsub;
       brain(): Promise<Brain | null>;
+      onBrainChanged(cb: (b: Brain | null) => void): () => void;
       connectBrain(): Promise<Brain | null>;
       revealBrain(): Promise<void>;
       disconnectBrain(): Promise<null>;

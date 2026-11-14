@@ -237,6 +237,8 @@ const refreshGates = () => { baseGates = notetakerGates(flagsApi ? flagsApi.all(
 const gate = () => (meeting.armed && !meeting.solo ? callGates : baseGates);
 // windows can be gone mid-quit while the helper or agent is still reporting
 const toUI = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
+// the Agent OS folder or the meetings folder changed; every open view reads the folder again
+const brainChanged = () => toUI('brain-changed', brain());
 const helperSend = (cmd) => helper?.stdin.write(JSON.stringify(cmd) + '\n');
 // a note started outside a call has no chat to post in, and neither do Meet or Teams yet
 const chat = (text) => { if (!meeting.solo && gate().meetingCapture && provider().chat) helperSend({ cmd: 'chatSend', text }); };
@@ -2161,6 +2163,7 @@ ipcMain.handle('pick-meetings-dir', async () => {
   if (r.canceled || !r.filePaths[0]) return null;
   settings.meetingsDir = r.filePaths[0];
   saveSettings();
+  brainChanged();
   return true;
 });
 // the first-run wizard shares the connect step with Settings, so both end up in the same state
@@ -2204,12 +2207,13 @@ ipcMain.handle('connect-brain', async () => {
   log('connected Agent OS', b.root);
   suggester.reset();
   openIndex();
+  brainChanged();
   return b;
 });
 ipcMain.handle('reveal-brain', () => { if (settings.brainRoot) shell.openPath(settings.brainRoot); });
 // forgetting the Agent OS leaves every file where it is; Quorum stops reading it, and a meetings folder found inside it is no longer found
-ipcMain.handle('disconnect-brain', () => { Object.assign(settings, { brainRoot: null, vaultPath: null, brainMade: null }); store.settings.save(); log('disconnected Agent OS'); suggester.reset(); openIndex(); return null; });
-ipcMain.handle('clear-meetings-dir', () => { settings.meetingsDir = null; saveSettings(); return true; });
+ipcMain.handle('disconnect-brain', () => { Object.assign(settings, { brainRoot: null, vaultPath: null, brainMade: null }); store.settings.save(); log('disconnected Agent OS'); suggester.reset(); openIndex(); brainChanged(); return null; });
+ipcMain.handle('clear-meetings-dir', () => { settings.meetingsDir = null; saveSettings(); brainChanged(); return true; });
 
 ipcMain.handle('end', () => endMeeting());
 // pause keeps everything so far; nothing new is recorded until resume

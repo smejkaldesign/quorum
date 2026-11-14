@@ -80,7 +80,7 @@ describe('Claude Code deny rules and search scripts', () => {
 
 // every fix is a Quorum action and no sentence asks for an edit in the Agent OS folder
 const VAULT_EDIT = /\b(remove|edit|delete|rename|change)\b.*\b(line|\.gitignore|script|CLAUDE\.md|exclude)/i;
-const noVaultEdits = (r) => { for (const c of r.checks) { expect(c.fix ?? '').not.toMatch(VAULT_EDIT); if (c.state === 'fail') expect(c.action).toBeTruthy(); } };
+const noVaultEdits = (r) => { for (const c of r.checks) { expect(c.fix ?? '').not.toMatch(VAULT_EDIT); expect(c.detail ?? '').not.toMatch(VAULT_EDIT); if (c.state === 'fail') expect(c.action).toBeTruthy(); } };
 const snapshot = (dir) => readdirSync(dir, { recursive: true }).map(String).sort();
 
 describe('checkConnection', () => {
@@ -109,7 +109,7 @@ describe('checkConnection', () => {
     put(path.join(root, '.gitignore'), 'Meetings/\n');
     put(path.join(root, 'scripts', 'search.py'), 'EXCLUDE = ["Meetings"]\n');
     const covered = await checkConnection({ root, notesDir, agent: agent(), home: tmp(), git: noGit });
-    expect(byId(covered).search).toMatchObject({ state: 'ok', fix: null, detail: "Your agent finds these through Quorum's search tools." });
+    expect(byId(covered).search).toMatchObject({ state: 'ok', fix: null, action: null, detail: 'Your agent finds these through Quorum\'s search tools. Its own search skips them because of "Meetings/" in .gitignore.' });
     expect(covered.ok).toBe(true);
     noVaultEdits(covered);
     const noMcp = await checkConnection({ root, notesDir, agent: agent({ claude: { installed: true, added: false } }), home: tmp(), git: noGit });
@@ -143,10 +143,11 @@ describe('checkConnection', () => {
     noVaultEdits(none);
     const codex = await checkConnection({ root, notesDir, git: noGit, agent: agent({ codex: { installed: true, added: true, error: 'Turned off in Codex' } }) });
     expect(byId(codex).codex).toMatchObject({ state: 'fail', action: 'add-codex' });
-    const shadowed = await checkConnection({ root, notesDir, git: noGit, agent: agent({ cli: { added: true, where: 'path', path: '/h/.local/bin/quorum', onPath: true, resolves: '/opt/homebrew/bin/quorum', error: null } }) });
+    const shadowed = await checkConnection({ root, notesDir, git: noGit, agent: agent({ cli: { added: true, where: 'path', name: 'quorum', path: '/h/.local/bin/quorum', onPath: true, shadowed: true, error: null } }) });
     expect(byId(shadowed).cli).toMatchObject({ state: 'fail', action: 'fix-cli' });
-    const withAlias = await checkConnection({ root, notesDir, git: noGit, agent: agent({ cli: { added: true, where: 'path', path: '/h/.local/bin/quorum', onPath: true, alias: true, resolves: "alias quorum='x'", error: null } }) });
-    expect(byId(withAlias).cli).toMatchObject({ state: 'ok', detail: 'Works in Terminal windows you open from now on.' });
+    noVaultEdits(shadowed);
+    const renamed = await checkConnection({ root, notesDir, git: noGit, agent: agent({ cli: { added: true, where: 'alias', name: 'quorum-app', shadowed: false, error: null } }) });
+    expect(byId(renamed).cli).toMatchObject({ state: 'ok', detail: "Another quorum command is on this Mac, so Quorum's is called quorum-app. Type quorum-app in Terminal windows you open from now on." });
     const offPath = await checkConnection({ root, notesDir, git: noGit, agent: agent({ cli: { added: true, where: 'path', path: '/h/.local/bin/quorum', onPath: false, resolves: '', error: null } }) });
     expect(byId(offPath).cli.action).toBe('fix-cli');
   });

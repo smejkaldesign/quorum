@@ -16,15 +16,16 @@ const toml = (s) => JSON.stringify(String(s));
 // the folders a quorum launcher can go in, in order: user owned, and common on a Mac PATH
 export const binDirs = (home) => [path.join(home, '.local', 'bin'), path.join(home, 'bin')];
 
-// a fresh interactive login shell's PATH, and what `quorum` resolves to there: what a new Terminal window sees. The
-// markers keep anything .zshrc prints out of the answer
+// a fresh interactive login shell's PATH, and what each command name resolves to there: what a new Terminal window
+// sees. The markers keep anything .zshrc prints out of the answer
 const MARKER = '__QUORUM__';
+export const CLI_NAMES = ['quorum', 'quorum-app'];
 export function readShell({ exec = execFile, shell = process.env.SHELL || '/bin/zsh' } = {}) {
-  const script = `printf '\\n${MARKER}%s${MARKER}%s${MARKER}\\n' "$PATH" "$(command -v quorum 2>/dev/null)"`;
+  const script = `printf '\\n${MARKER}%s${MARKER}%s${MARKER}%s${MARKER}\\n' "$PATH" ${CLI_NAMES.map((n) => `"$(command -v ${n} 2>/dev/null)"`).join(' ')}`;
   return new Promise((resolve) => {
     exec(shell, ['-ilc', script], { timeout: 8000, encoding: 'utf8' }, (_err, out) => {
-      const m = String(out ?? '').match(new RegExp(`${MARKER}(.*?)${MARKER}(.*?)${MARKER}`));
-      resolve(m ? { path: m[1], quorum: m[2].trim() } : { path: process.env.PATH ?? '', quorum: '', unread: true });
+      const m = String(out ?? '').match(new RegExp(`${MARKER}(.*?)${MARKER}(.*?)${MARKER}(.*?)${MARKER}`));
+      resolve(m ? { path: m[1], which: { quorum: m[2].trim(), 'quorum-app': m[3].trim() } } : { path: process.env.PATH ?? '', which: {}, unread: true });
     });
   });
 }
@@ -107,57 +108,68 @@ export function createAgentLink({ runtime, cli, env = {}, home = homedir(), code
   };
 
   // the quorum command: a launcher script in a user bin folder that a new shell already has on PATH, so it works in
-  // every Terminal window at once; with no such folder, an alias in ~/.zshrc, which works in new windows
+  // every Terminal window at once; with no such folder, an alias in ~/.zshrc, which works in new windows. When another
+  // program already answers to quorum, Quorum takes the next free name (quorum-app) and says so; it never changes
+  // anything it did not write
   const ZSHRC = path.join(home, '.zshrc');
-  const isAlias = (l) => l.startsWith('alias quorum=') && l.endsWith(MARK);
+  const isAlias = (l, name) => l.startsWith(`alias ${name}=`) && l.endsWith(MARK);
+  const anyAlias = (l) => CLI_NAMES.some((n) => isAlias(l, n));
   const launcher = () => `#!/bin/sh\n${MARK}\n${envShell ? `${envShell} ` : ''}exec ${sh(runtime)} ${sh(cli)} "$@"\n`;
   const ours = (f) => (read(f) ?? '').split('\n')[1] === MARK;
   const unq = (s) => s.replace(/'\\''/g, "'");
   const launcherPaths = (text) => { const m = text.match(/exec '((?:[^']|'\\'')*)' '((?:[^']|'\\'')*)'/); return m ? [unq(m[1]), unq(m[2])] : []; };
-  const addAlias = () => {
+  const plainEnv = Object.entries(env).map(([k, v]) => `${k}=${v}`).join(' ');
+  const addAlias = (name) => {
     const t = read(ZSHRC) ?? '';
-    writeFileSync(ZSHRC, `${t}${t && !t.endsWith('\n') ? '\n' : ''}alias quorum='${Object.entries(env).map(([k, v]) => `${k}=${v}`).join(' ')} "${runtime}" "${cli}"' ${MARK}\n`);
+    writeFileSync(ZSHRC, `${t}${t && !t.endsWith('\n') ? '\n' : ''}alias ${name}='${plainEnv} "${runtime}" "${cli}"' ${MARK}\n`);
   };
-  const removeAlias = () => { const t = read(ZSHRC); if (t !== null && t.split('\n').some(isAlias)) writeFileSync(ZSHRC, t.split('\n').filter((l) => !isAlias(l)).join('\n')); };
-  const command = `${Object.entries(env).map(([k, v]) => `${k}=${v}`).join(' ')} "${runtime}" "${cli}"`.trim();
+  const removeAliases = () => { const t = read(ZSHRC); if (t !== null && t.split('\n').some(anyAlias)) writeFileSync(ZSHRC, t.split('\n').filter((l) => !anyAlias(l)).join('\n')); };
+  const removeLaunchers = () => { for (const dir of binDirs(home)) for (const n of CLI_NAMES) { const f = path.join(dir, n); if (existsSync(f) && ours(f)) unlinkSync(f); } };
+  const command = `${plainEnv} "${runtime}" "${cli}"`.trim();
+  // whether what a new shell runs for `name` is this Quorum: the launcher file, or the alias holding this CLI's path
+  const isOurs = (resolved, name, file) => (file ? resolved === file : resolved.startsWith(`alias ${name}=`) && resolved.includes(cli));
   const cliApi = {
     command,
     async status() {
       const s = await shell();
       const dirs = pathList(s.path, home);
-      for (const dir of binDirs(home)) {
-        const f = path.join(dir, 'quorum');
-        if (!existsSync(f) || !ours(f)) continue;
-        const [rt, c] = launcherPaths(read(f));
-        const alias = (read(ZSHRC) ?? '').split('\n').some(isAlias);
-        return { added: true, where: 'path', path: f, onPath: dirs.includes(dir), alias, resolves: s.quorum, error: movedError(rt, c), command };
+      for (const name of CLI_NAMES) {
+        for (const dir of binDirs(home)) {
+          const f = path.join(dir, name);
+          if (!existsSync(f) || !ours(f)) continue;
+          const [rt, c] = launcherPaths(read(f));
+          const resolves = s.which?.[name] ?? '';
+          return { added: true, where: 'path', name, path: f, onPath: dirs.includes(dir), resolves, shadowed: !!resolves && !isOurs(resolves, name, f), error: movedError(rt, c), command };
+        }
+        const line = (read(ZSHRC) ?? '').split('\n').find((l) => isAlias(l, name));
+        if (line) {
+          const [rt, c] = [...line.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+          const resolves = s.which?.[name] ?? '';
+          return { added: true, where: 'alias', name, resolves, shadowed: !!resolves && !isOurs(resolves, name, null), error: movedError(rt, c), command };
+        }
       }
-      const line = (read(ZSHRC) ?? '').split('\n').find(isAlias);
-      if (line) {
-        const [rt, c] = [...line.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-        return { added: true, where: 'alias', resolves: s.quorum, error: movedError(rt, c), command };
-      }
-      return { added: false, resolves: s.quorum, command };
+      return { added: false, command };
     },
     async add() {
+      removeLaunchers();
+      removeAliases();
       const s = await shell();
       const dirs = pathList(s.path, home);
-      const dir = binDirs(home).find((d) => dirs.includes(d) && (!existsSync(path.join(d, 'quorum')) || ours(path.join(d, 'quorum'))));
-      removeAlias();
+      // the first name nothing else answers to in a new shell
+      const name = CLI_NAMES.find((n) => !s.which?.[n]);
+      if (!name) return { ...(await cliApi.status()), error: 'Another program already uses the quorum and quorum-app names. Run Quorum with its full path below' };
+      const dir = binDirs(home).find((d) => dirs.includes(d) && !existsSync(path.join(d, name)));
       if (dir) {
-        const f = path.join(dir, 'quorum');
+        const f = path.join(dir, name);
         mkdirSync(dir, { recursive: true });
         writeFileSync(f, launcher());
         chmodSync(f, 0o755);
-        // another quorum earlier on PATH would win; an alias comes before PATH in zsh, so add one for new windows
-        const after = await shell();
-        if (after.quorum && after.quorum !== f) addAlias();
-      } else addAlias();
+      } else addAlias(name);
       return cliApi.status();
     },
     async remove() {
-      for (const dir of binDirs(home)) { const f = path.join(dir, 'quorum'); if (existsSync(f) && ours(f)) unlinkSync(f); }
-      removeAlias();
+      removeLaunchers();
+      removeAliases();
       return { added: false };
     },
   };

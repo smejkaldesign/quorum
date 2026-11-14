@@ -120,6 +120,7 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain 
   const [notes, setNotes] = useState<Awaited<ReturnType<typeof window.quorum.meetingsDir>> | undefined>(undefined);
   useEffect(() => { if (!brain) { setNotes(undefined); return; } let live = true; window.quorum.meetingsDir().then((r) => { if (live) setNotes(r); }).catch(() => { if (live) setNotes(null); }); return () => { live = false; }; }, [brain?.root]);
   const pickNotes = async () => { if (await window.quorum.pickMeetingsDir()) setNotes(await window.quorum.meetingsDir()); };
+  useEffect(() => window.quorum.onBrainChanged((b) => { if (b) window.quorum.meetingsDir().then(setNotes).catch(() => {}); else setNotes(undefined); }), []);
   // a notetaker connected through the library (Granola today); its notes import into this folder in the background
   const [granola, setGranola] = useState<MeetingSourceInfo | null>(null);
   const loadGranola = () => window.quorum.sourcesList().then((l) => setGranola(l.find((s) => s.id === 'granola') ?? null)).catch(() => setGranola(null));

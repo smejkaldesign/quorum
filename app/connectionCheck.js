@@ -160,6 +160,16 @@ export async function searchProblems(root, file, { home = homedir(), git = gitCh
   return out;
 }
 
+// what hides the notes from the agent's own search, as information only: Quorum never asks for a change there
+export function problemText(p, root, home) {
+  const at = (f) => (f.startsWith(root + path.sep) ? path.relative(root, f) : tilde(f, home));
+  if (p.kind === 'hidden') return `Its own search skips hidden folders such as "${p.name}".`;
+  if (p.kind === 'ignored') return `Its own search skips them because of "${p.pattern}" in ${at(p.file)}.`;
+  if (p.kind === 'denied') return `Claude Code's own file reads skip them because of ${p.rule} in ${at(p.file)}.`;
+  if (p.kind === 'script') return `${at(p.file)} leaves out "${p.name}".`;
+  return 'They are saved outside your Agent OS folder.';
+}
+
 export const CHECK_NOTE = 'quorum-connection-check';
 export const COVERED = "Your agent finds these through Quorum's search tools";
 
@@ -216,9 +226,10 @@ export async function checkConnection({ root, notesDir, agent, home = homedir(),
   }
   if (problems) {
     // the agent's own search is a bonus; Quorum's MCP search covers the notes either way
+    const why = problems.length ? ` ${problemText(problems[0], root, home)}` : '';
     if (!problems.length) add('search', L.search, 'ok', { detail: "Your agent's own search sees them too." });
-    else if (mcpOn) add('search', L.search, 'ok', { detail: `${COVERED}.` });
-    else add('search', L.search, 'warn', { detail: `${COVERED} once Quorum's MCP is added below.` });
+    else if (mcpOn) add('search', L.search, 'ok', { detail: `${COVERED}.${why}` });
+    else add('search', L.search, 'warn', { detail: `${COVERED} once Quorum's MCP is added below.${why}` });
   }
 
   if (!claude.installed) add('claude', L.claude, 'skip', { detail: 'Claude Code is not installed on this Mac.' });
@@ -229,13 +240,13 @@ export async function checkConnection({ root, notesDir, agent, home = homedir(),
 
   const [server, cli] = await Promise.all([agent.handshake(), agent.cli.status()]);
   add('server', L.server, server.ok ? 'ok' : 'fail', server.ok ? {} : { fix: "Quorum's MCP server did not answer. Press Check again to retry.", action: 'retry' });
-  const shadowed = cli.where === 'path' && cli.resolves && cli.resolves !== cli.path && !(cli.alias && cli.resolves.startsWith('alias '));
+  const named = cli.name && cli.name !== 'quorum' ? `Another quorum command is on this Mac, so Quorum's is called ${cli.name}.` : null;
   if (!cli.added) add('cli', L.cli, 'fail', { fix: 'The quorum command is not set up yet.', action: 'add-cli' });
   else if (cli.error) add('cli', L.cli, 'fail', { fix: `${cli.error}. Press Fix to set the quorum command up again.`, action: 'fix-cli' });
   else if (cli.where === 'path' && !cli.onPath) add('cli', L.cli, 'fail', { fix: `${tilde(path.dirname(cli.path), home)} is no longer on your PATH. Press Fix to set the quorum command up again.`, action: 'fix-cli' });
-  else if (shadowed) add('cli', L.cli, 'fail', { fix: 'Another quorum command comes first in Terminal. Press Fix to point quorum at this Quorum.', action: 'fix-cli' });
-  else if (cli.where === 'alias' || cli.alias) add('cli', L.cli, 'ok', { detail: 'Works in Terminal windows you open from now on.' });
-  else add('cli', L.cli, 'ok', { detail: cli.path ? tilde(cli.path, home) : null });
+  else if (cli.shadowed) add('cli', L.cli, 'fail', { fix: 'Another program answers to this name in Terminal. Press Fix and Quorum picks a name that works.', action: 'fix-cli' });
+  else if (cli.where === 'alias') add('cli', L.cli, 'ok', { detail: [named, `Type ${cli.name ?? 'quorum'} in Terminal windows you open from now on.`].filter(Boolean).join(' ') });
+  else add('cli', L.cli, 'ok', { detail: [named, cli.path ? tilde(cli.path, home) : null].filter(Boolean).join(' ') || null });
 
   return { ok: checks.every((c) => c.state !== 'fail'), checks };
 }

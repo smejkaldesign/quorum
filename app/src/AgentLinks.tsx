@@ -49,8 +49,11 @@ export function cliDesc(s: AgentsStatus | null) {
   if (!c) return 'Checking…';
   if (!c.added) return 'Adds the quorum command to Terminal on this Mac';
   if (c.error) return `${c.error}. Fix it from the menu`;
-  if (c.where === 'path') return c.onPath ? `Installed at ${home(c.path ?? '')}. Type quorum in any Terminal window` : `Installed at ${home(c.path ?? '')}, which is not on your PATH. Fix it from the menu`;
-  return 'Added to your .zshrc. Open a new Terminal window and type quorum';
+  const name = c.name ?? 'quorum';
+  const renamed = name !== 'quorum' ? `Another quorum command is on this Mac, so Quorum's is called ${name}. ` : '';
+  if (c.shadowed) return `Another program answers to ${name} in Terminal. Fix it from the menu`;
+  if (c.where === 'path') return c.onPath ? `${renamed}Installed at ${home(c.path ?? '')}. Type ${name} in any Terminal window` : `Installed at ${home(c.path ?? '')}, which is not on your PATH. Fix it from the menu`;
+  return `${renamed}Open a new Terminal window and type ${name}`;
 }
 
 // the three rows. Settings renders them as set rows; onboarding as its own choice lines
@@ -64,7 +67,7 @@ export function AgentRows({ agents, variant, manual }: { agents: Agents; variant
     ? <button className="pill" disabled={!!busy} onClick={agents.removeCodex}>{busy === 'codex' ? 'Removing…' : 'Remove'}</button>
     : <button className={`pill ${variant === 'onboarding' ? 'primary' : ''}`} disabled={!!busy || !s?.codex.installed} onClick={agents.addCodex}>{busy === 'codex' ? 'Adding…' : 'Add'}</button>;
   const cli = s?.cli;
-  const cliBroken = !!cli?.added && (!!cli.error || (cli.where === 'path' && !cli.onPath));
+  const cliBroken = !!cli?.added && (!!cli.error || !!cli.shadowed || (cli.where === 'path' && !cli.onPath));
   const cliBtn = cli?.added
     ? <span className="menu-wrap">
         <button className="icon-btn" aria-label="Terminal options" aria-haspopup="menu" aria-expanded={more} onClick={(e) => { e.stopPropagation(); setMore((o) => !o); }}><IconMore width={16} height={16} /></button>
@@ -90,7 +93,7 @@ export function AgentRows({ agents, variant, manual }: { agents: Agents; variant
             ? <Row icon={r.icon} title={r.title} desc={r.desc}>{r.ctrl}</Row>
             : <div className={`onb-choice line ${r.on ? 'on' : ''}`}>{r.icon}<div><strong>{r.title}</strong><em>{r.desc}</em></div>{r.ctrl}</div>}
           {msg[r.id] && <p className="set-note mcp-msg">{msg[r.id]}</p>}
-          {r.id === 'cli' && !cli?.added && cli?.command && manual?.(cli.command)}
+          {r.id === 'cli' && (!cli?.added || !!cli.error) && cli?.command && manual?.(cli.command)}
         </div>
       ))}
     </>

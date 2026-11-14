@@ -392,7 +392,7 @@ function MeetingsRow() {
   const [dir, setDir] = useState<Awaited<ReturnType<typeof window.quorum.meetingsDir>> | undefined>();
   const [confirm, setConfirm] = useState(false);
   const load = () => window.quorum.meetingsDir().then(setDir);
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); return window.quorum.onBrainChanged(() => { load(); }); }, []);
   const pick = async () => { if (await window.quorum.pickMeetingsDir()) load(); };
   if (dir === undefined) return null;
   if (!dir) return (
@@ -1312,8 +1312,8 @@ function McpRows({ agents }: { agents: Agents }) {
     <>
         <AgentRows agents={agents} variant="settings" manual={(command) => (
           <div className="row-extra">
-            <p className="copy-label">Or set it up yourself: paste this line at the end of your .zshrc file</p>
-            <CopyField value={`alias quorum='${command.replace(/"/g, '')}'`} />
+            <p className="copy-label">Or run Quorum in Terminal with its full path</p>
+            <CopyField value={command} />
           </div>
         )} />
         <Row icon={<IconLock width={18} height={18} />} title="Access" desc="Your workspace admin will set this later">
