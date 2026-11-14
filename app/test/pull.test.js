@@ -26,7 +26,7 @@ function fakeClient(rows = {}) {
     const call = { table, ops: [], rows: null };
     calls.push(call);
     const b = {};
-    for (const op of ['select', 'eq', 'neq', 'is', 'gt', 'in', 'like', 'order', 'range', 'limit', 'update']) b[op] = (...a) => { call.ops.push([op, ...a]); return b; };
+    for (const op of ['select', 'eq', 'neq', 'or', 'is', 'gt', 'in', 'like', 'order', 'range', 'limit', 'update']) b[op] = (...a) => { call.ops.push([op, ...a]); return b; };
     b.upsert = (data, opts) => { call.ops.push(['upsert', opts]); call.rows = data; return b; };
     b.then = (res, rej) => Promise.resolve({ data: call.ops.some(([o]) => o === 'upsert' || o === 'update') ? null : rows[table] ?? [], error: null }).then(res, rej);
     return b;
@@ -50,7 +50,7 @@ function harness({ files = {}, rows = {}, isExcluded, isExcludedText, teamRoot }
   const read = (rel) => readFileSync(path.join(vault, rel), 'utf8');
   const has = (rel) => existsSync(path.join(vault, rel));
   const upserts = (table) => fake.calls.filter((c) => c.table === table && c.rows).flatMap((c) => c.rows);
-  return { vault, state, rows, sync, logs, calls: fake.calls, read, has, upserts, abs: (rel) => path.join(vault, rel) };
+  return { vault, state, rows, sync, logs, calls: fake.calls, client: fake.client, read, has, upserts, abs: (rel) => path.join(vault, rel) };
 }
 const noteRow = (over) => ({ id: id(1), path: 'notes/hello.md', frontmatter: { title: 'Hello' }, body: REMOTE, hash: '', mtime: T2, updated_at: T2, deleted_at: null, ...over });
 
@@ -246,6 +246,18 @@ describe('workspace vault', () => {
     await h.sync.pullNow();
     expect(h.tread('knowledge/pricing.md')).toBe(before);
   });
+  it('writes a note of a KB hosted by Quorum to the workspace vault even when the person wrote it, and follows a rename', async () => {
+    const hosted = (over) => noteRow({ id: id(9), user_id: 'user-1', path: 'Knowledge bases/Wiki/Setup.md', frontmatter: { title: 'Setup', visibility: 'public', kb_hosted: 'KB1' }, body: TEAM, kb_id: 'KB1', folder_id: null, ...over });
+    const h = teamHarness({ notes: [hosted()] });
+    await h.sync.pullNow();
+    expect(h.has('Knowledge bases/Wiki/Setup.md')).toBe(false);
+    expect(h.tread('Knowledge bases/Wiki/Setup.md')).toContain('team_item: ' + id(9));
+    h.rows.notes = [hosted({ path: 'Knowledge bases/Wiki/Guides/Setup.md', folder_id: 'F1', hash: 'moved', updated_at: '2026-11-08T12:00:00.000Z' })];
+    await h.sync.pullNow();
+    expect(h.thas('Knowledge bases/Wiki/Setup.md')).toBe(false);
+    expect(h.tread('Knowledge bases/Wiki/Guides/Setup.md')).toContain('team_folder: F1');
+    expect(h.upserts('notes')).toEqual([]);
+  });
   it('replaces an untouched copy with the newer team version', async () => {
     const h = teamHarness({ notes: [shared()] });
     await h.sync.pullNow();
@@ -284,5 +296,45 @@ describe('workspace vault', () => {
     const h = teamHarness({ notes: [noteRow()] });
     expect(await h.sync.pullNow()).toEqual({ written: 1, conflicts: 0, removed: 0, skipped: 0 });
     expect(h.has('notes/hello.md')).toBe(true);
+  });
+});
+
+describe('a resync request (migration 0035)', () => {
+  const noteReads = (h) => h.calls.filter((c) => c.table === 'notes' && !c.rows);
+  const since = (call) => call.ops.find(([o, col]) => o === 'gt' && col === 'updated_at')?.[2] ?? null;
+
+  it('pulls every note once after the person joined a team, then clears the request with its time', async () => {
+    const h = harness({ rows: { notes: [noteRow()] } });
+    await h.sync.pullNow();
+    const rpcs = [];
+    let pending = '2026-11-14T09:00:00.000Z';
+    h.client.rpc = async (name, args) => { rpcs.push([name, args]); if (name === 'kb_resync_done') pending = null; return { data: name === 'kb_resync_pending' ? pending : null, error: null }; };
+    const before = noteReads(h).length;
+    await h.sync.pullNow();
+    expect(noteReads(h).slice(before).map(since)).toEqual([null]);
+    expect(rpcs).toEqual([
+      ['kb_resync_pending', { workspace_id: h.state.workspace.id }],
+      ['kb_resync_done', { workspace_id: h.state.workspace.id, requested_at: '2026-11-14T09:00:00.000Z' }],
+    ]);
+    // the next pull is incremental again
+    const after = noteReads(h).length;
+    await h.sync.pullNow();
+    expect(noteReads(h).slice(after).map(since)).toEqual([T2]);
+  });
+
+  it('keeps the request when the pull fails, and reads as none on a server without 0035', async () => {
+    const h = harness({ rows: { notes: [noteRow()] } });
+    await h.sync.pullNow();
+    const before = noteReads(h).length;
+    h.client.rpc = async () => ({ data: null, error: { message: 'Could not find the function public.kb_resync_pending' } });
+    await h.sync.pullNow();
+    expect(noteReads(h).slice(before).map(since)).toEqual([T2]);
+    const rpcs = [];
+    h.client.rpc = async (name) => { rpcs.push(name); return { data: name === 'kb_resync_pending' ? '2026-11-14T09:00:00.000Z' : null, error: null }; };
+    const from = h.client.from;
+    h.client.from = () => { throw new Error('offline'); };
+    expect((await h.sync.pullNow()).error).toMatch(/could not pull/);
+    h.client.from = from;
+    expect(rpcs).toEqual(['kb_resync_pending']);
   });
 });

@@ -198,14 +198,14 @@ export type TeamLocal = { kind: TeamSourceKind; root: string | null; exists: boo
 export type TeamHit = { rel: string; title: string; score: number; line: number; snippet: string };
 // knowledge bases (migrations 0024 and 0025; API notes in ee/knowledgeBases.js)
 export type KbKind = 'general' | 'meetings';
-export type KbRole = 'admin' | 'reader';
+export type KbRole = 'admin' | 'editor' | 'reader';
 export type KbFolder = { id: string; kbId: string; parentId: string | null; name: string; position: number };
 export type KbFolderNode = { id: string; parentId: string | null; name: string; position: number; children: KbFolderNode[] };
 export type KbAccess = { principal: 'workspace' | 'team' | 'user'; userId: string | null; teamId: string | null; role: KbRole; email: string | null; name: string | null };
 export type KbAccessDraft = { principal: 'workspace' | 'team' | 'user'; userId?: string; teamId?: string; role?: KbRole };
 // folder and git are Mac-side sources; github and zip record where kb-import last read the KB from
-export type KbSource = { kind: 'folder' | 'git' | 'github' | 'zip'; url: string | null; path: string | null; branch: string | null; subpath: string | null; name: string | null; importedAt: string | null };
-export type Kb = { id: string; name: string; kind: KbKind; teamId: string | null; isDefault: boolean; source: KbSource | null; role: KbRole; createdAt: string | null; updatedAt: string | null; folders: KbFolderNode[]; access: KbAccess[] | null };
+export type KbSource = { kind: 'folder' | 'git' | 'github' | 'zip' | 'hosted'; url: string | null; path: string | null; branch: string | null; subpath: string | null; name: string | null; importedAt: string | null };
+export type Kb = { id: string; name: string; kind: KbKind; teamId: string | null; isDefault: boolean; source: KbSource | null; role: KbRole; hosted?: boolean; writable?: boolean; createdAt: string | null; updatedAt: string | null; folders: KbFolderNode[]; access: KbAccess[] | null };
 export type KbImportSource = { kind: 'github'; url: string; branch?: string } | { kind: 'zip'; path: string };
 export type KbImportRequest = { kbId?: string; name?: string; source?: KbImportSource; folderId?: string };
 export type KbImportSkipped = { path: string; reason: string };
@@ -230,6 +230,10 @@ export type KbSyncGrant = { provider: string; account: string | null; created_at
 export type KbImportProgress = { kbId: string; phase: 'fetching' | 'reading' | 'writing' | 'done'; done: number; total: number };
 export type KbPlacement = { noteId: string; kbId: string | null; folderId: string | null; updatedAt: string | null };
 export type KbNote = { id: string; path: string; title: string; folderId: string | null; userId: string; updatedAt: string | null };
+export type KbHostedNote = { id: string; kbId: string | null; folderId: string | null; path: string; title: string; content: string; hash: string; updatedAt: string | null; editedBy: string | null };
+export type KbHostedConflict = { theirs: KbHostedNote | null; merged: string | null };
+export type KbHostedSave = { kbId: string; noteId?: string; folderId: string | null; title: string; content: string; baseHash?: string | null; baseContent?: string };
+export type KbFile = { id: string; noteId: string; name: string; mime: string; size: number; link: string; createdAt: string | null };
 export type ContributionMine = { noteId: string; path: string; status: 'pending' | 'included' | 'declined'; reviewedAt: string | null; createdAt: string };
 export type Billing = { plan: Plan; seats: number; seatsIncluded: number; hourPacks: number; members: number; status: string | null; periodEnd: string | null; subscribed: boolean };
 export type MemberInvite = { inviteId: string; email: string; role: Role; expiresAt: string };
@@ -274,7 +278,12 @@ export type MeetingShare = { available: boolean; keepPrivate: boolean; locked: b
 // the meeting-notes source accounts a team workspace has seen: the person's choice for each (null until asked and
 // answered) and how many past notes "Share past meeting notes" would share
 export type MeetingSource = { key: string; label: string; choice: 'share' | 'private' | null; past: number };
-export type MeetingSources = { available: boolean; sync?: boolean; workspaceName?: string | null; kbName?: string | null; sources: MeetingSource[] };
+export type MeetingTeam = { id: string; name: string };
+// teams lists the person's teams when they are in several; teamId is the one whose meetings KB receives their notes
+export type MeetingSources = { available: boolean; sync?: boolean; workspaceName?: string | null; kbName?: string | null; sources: MeetingSource[]; teams?: MeetingTeam[]; teamId?: string | null };
+export type TeamRole = 'lead' | 'member';
+export type TeamMember = { userId: string; role: TeamRole; email: string | null; name: string | null };
+export type Team = { id: string; name: string; myRole: TeamRole | null; canManage: boolean; canManageMembers: boolean; meetingsKbId: string | null; members: TeamMember[] };
 export type HandNoteRef = { file: string; hash: string; rel: string; app: string; url: string; frontmatter: string };
 export type HandNote = HandNoteRef & { title: string; body: string; readOnly: boolean; date: string | null };
 export type HandNoteSave = (HandNoteRef & { propsError?: string }) | { conflict: true } | { error: string };
@@ -352,6 +361,7 @@ declare global {
       meetingsSources(): Promise<MeetingSources>;
       meetingsSourceSet(key: string, choice: 'share' | 'private'): Promise<{ ok: true; choice: 'share' | 'private' } | { error: string }>;
       meetingsSourceSharePast(key: string): Promise<{ shared: number } | { error: string }>;
+      meetingsTeamSet(teamId: string | null): Promise<{ ok: true; teamId: string | null } | { error: string }>;
       onMeetingsSources(cb: () => void): Unsub;
       noteAsk(file: string, question: string, history: { q: string; a: string }[], files?: string[]): Promise<{ text: string; proposal: string | null }>;
       noteApply(file: string, body: string): Promise<boolean>;
@@ -537,6 +547,12 @@ declare global {
       teamResolve(target: string, from: string): Promise<Result & { rel?: string | null }>;
       onTeamChanged(cb: (rels: string[]) => void): Unsub;
       kbList(): Promise<Result & { kbs?: Kb[] }>;
+      teamList(): Promise<Result & { teams?: Team[] }>;
+      teamCreate(name: string): Promise<Result & { team?: Team }>;
+      teamRename(teamId: string, name: string): Promise<Result & { team?: Team }>;
+      teamDelete(teamId: string): Promise<Result & { ok?: true }>;
+      teamMemberSet(draft: { teamId: string; userId: string; role?: TeamRole }): Promise<Result & { team?: Team }>;
+      teamMemberRemove(draft: { teamId: string; userId: string }): Promise<Result & { team?: Team }>;
       kbCreate(draft: { name: string; kind?: KbKind }): Promise<Result & { kb?: Kb }>;
       kbRename(kbId: string, name: string): Promise<Result & { kb?: Kb }>;
       kbDelete(kbId: string): Promise<Result>;
@@ -548,6 +564,17 @@ declare global {
       kbAccessSet(kbId: string, access: KbAccessDraft[]): Promise<Result & { access?: KbAccess[] }>;
       kbNoteAssign(draft: { noteId?: string; path?: string; kbId: string | null; folderId?: string | null }): Promise<Result & { placement?: KbPlacement }>;
       kbNotes(kbId: string): Promise<Result & { notes?: KbNote[] }>;
+      kbHostedCreate(name: string, teamId?: string | null): Promise<Result & { kb?: Kb }>;
+      kbHostedNote(noteId: string): Promise<Result & { note?: KbHostedNote }>;
+      kbHostedNoteSave(draft: KbHostedSave): Promise<Result & { note?: KbHostedNote; conflict?: KbHostedConflict }>;
+      kbHostedNoteMove(noteId: string, folderId: string | null): Promise<Result & { note?: KbHostedNote }>;
+      kbHostedNoteDelete(noteId: string, baseHash: string | null): Promise<Result & { ok?: true; conflict?: KbHostedConflict }>;
+      kbFiles(noteId: string): Promise<Result & { files?: KbFile[] }>;
+      kbFileAttach(noteId: string): Promise<Result & { file?: KbFile; canceled?: true }>;
+      kbFileOpen(idOrLink: string): Promise<Result & { ok?: true }>;
+      kbFileData(idOrLink: string): Promise<Result & { name?: string; mime?: string; dataUrl?: string }>;
+      kbFileRemove(fileId: string): Promise<Result & { ok?: true }>;
+      kbFilesUsage(): Promise<Result & { used?: number; quota?: number }>;
       onKbOpen(cb: (t: { kbId: string; noteId: string }) => void): Unsub;
       kbOpenReady(): Promise<void>;
       kbSuggestion(noteId: string): Promise<Result & { edited?: boolean; noteHash?: string | null; suggestions?: KbSuggestion[] }>;

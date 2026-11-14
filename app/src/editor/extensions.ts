@@ -39,11 +39,48 @@ export const WikiLink = Node.create({
   renderMarkdown: (node) => `[[${node.attrs?.target ?? ''}${node.attrs?.alias ? `|${node.attrs.alias}` : ''}]]`,
 });
 
+// ![alt](src) as one inline atom written back character for character. The editor shows the alt text as a chip; a
+// note's preview (Markdown.tsx) shows the picture, including a quorum://kb-file attachment of a hosted knowledge base
+export const IMAGE = /^!\[([^\]\n]*)\]\(([^)\s]+)\)/;
+export const ImageRef = Node.create({
+  name: 'imageRef',
+  group: 'inline',
+  inline: true,
+  atom: true,
+  selectable: true,
+  addAttributes() {
+    return { alt: { default: '' }, src: { default: '' } };
+  },
+  parseHTML() {
+    return [{ tag: 'span[data-image]', getAttrs: (el) => ({ src: (el as HTMLElement).dataset.image ?? '', alt: (el as HTMLElement).dataset.alt ?? '' }) }];
+  },
+  renderHTML({ node, HTMLAttributes }) {
+    const { alt, src } = node.attrs as { alt: string; src: string };
+    return ['span', mergeAttributes(HTMLAttributes, { 'data-image': src, 'data-alt': alt, class: 'md-image-ref' }), alt || 'Image'];
+  },
+  renderText({ node }) {
+    const { alt, src } = node.attrs as { alt: string; src: string };
+    return `![${alt}](${src})`;
+  },
+  markdownTokenizer: {
+    name: 'imageRef',
+    level: 'inline',
+    start: (src: string) => src.indexOf('!['),
+    tokenize: (src: string) => {
+      const m = IMAGE.exec(src);
+      return m ? { type: 'imageRef', raw: m[0], alt: m[1], src: m[2] } : undefined;
+    },
+  },
+  parseMarkdown: (token) => ({ type: 'imageRef', attrs: { alt: String(token.alt ?? ''), src: String(token.src ?? '') } }),
+  renderMarkdown: (node) => `![${node.attrs?.alt ?? ''}](${node.attrs?.src ?? ''})`,
+});
+
 export function noteExtensions(): AnyExtension[] {
   return [
     StarterKit.configure({ link: { openOnClick: false, autolink: false } }),
     TaskList,
     TaskItem.configure({ nested: true }),
     WikiLink,
+    ImageRef,
   ];
 }

@@ -7,7 +7,7 @@
 // pull stay as the fallback for a dropped socket. Realtime needs migration 0005, which adds both tables to the
 // supabase_realtime publication.
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, watch, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, watch, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { DATA_DIR } from '../edition.js';
@@ -54,6 +54,9 @@ export function withBond(body, bond) {
 export const bondOf = (text) => { const fm = parseFrontmatter(text); return fm.team_item ? { item: fm.team_item, version: fm.team_version ?? '', behind: fm.team_behind === 'true' } : null; };
 // the knowledge base and folder a pulled row sits in (migration 0024), kept on the id map entry and in a shared note's
 // bond; a note outside any knowledge base carries neither
+// a note of a KB hosted by Quorum (migration 0034): it lives in Supabase, so it goes to the workspace folder like a
+// teammate's note even when the person wrote it, and never into the personal vault the watcher pushes from
+export const hostedRow = (row) => !!(row?.frontmatter && typeof row.frontmatter === 'object' && row.frontmatter.kb_hosted);
 export const placeOf = (row) => (row?.kb_id ? { kb: row.kb_id, folder: row.folder_id ?? null } : { kb: undefined, folder: undefined });
 const samePlace = (e, p) => (e?.kb ?? null) === (p.kb ?? null) && (e?.folder ?? null) === (p.folder ?? null);
 // the folder for a workspace's shared notes: outside the personal vault, so the watcher never pushes it back
@@ -100,6 +103,13 @@ export function createSync({ account, store, brain = () => null, log = () => {},
     const client = account.client();
     if (!s.sync || !s.signedIn || !s.workspace || !client) return null;
     return { remote: createRemote({ client, workspaceId: s.workspace.id, userId: s.userId }), ws: s.workspace.id, me: s.userId ?? null, vault: brain()?.vault ?? null, team: teamRoot(s.workspace) };
+  };
+  // the person's waiting resync request in the workspace (its time), or null; a server before 0035 has none
+  const resyncPending = async (ws) => {
+    try { const { data, error } = await account.client().rpc('kb_resync_pending', { workspace_id: ws }); return error ? null : data ?? null; } catch { return null; }
+  };
+  const resyncDone = async (ws, at) => {
+    try { const { error } = await account.client().rpc('kb_resync_done', { workspace_id: ws, requested_at: at }); if (error) log('sync', 'resync', error.message); } catch (err) { log('sync', 'resync', err?.message ?? err); }
   };
   const relOf = (vault, abs) => { const r = path.relative(vault, abs); return r && !r.startsWith('..') && !path.isAbsolute(r) ? r.split(path.sep).join('/') : null; };
   const fail = (what, err, verb = 'push') => { log('sync', what, err?.message ?? err); account.markSync({ syncError: `Sync could not ${verb} ${what}.` }); };
@@ -289,6 +299,16 @@ export function createSync({ account, store, brain = () => null, log = () => {},
   // a teammate's note (public, included, readable under the workspace policy) goes to the workspace vault, never the
   // personal one. The first pull writes it with its bond; a newer version replaces an untouched copy, and marks an
   // edited copy as behind, keeping the fresh text under .updates/ for the diff. A soft-deleted row renames the copy
+  // id -> team: key for one workspace's bucket, so a pull finds a note's earlier path without scanning the bucket
+  const teamIndex = (bucket) => new Map(Object.entries(bucket).filter(([k]) => k.startsWith('team:')).map(([k, v]) => [v.id, k]));
+  function dropOld(t, bucket, k) {
+    const v = bucket[k];
+    const oldRel = k.slice(5), oldAbs = path.join(t.team, oldRel);
+    let old = null;
+    try { old = readFileSync(oldAbs, 'utf8'); } catch {}
+    if (old !== null) { if (v && sha256(old) === v.written) unlinkSync(oldAbs); else renameSync(oldAbs, path.join(t.team, sibling(t.team, oldRel, 'removed'))); }
+    delete bucket[k];
+  }
   function applyShared(t, row, counts) {
     const rel = safeRel(row.path);
     if (!rel) { counts.skipped++; return; }
@@ -298,11 +318,20 @@ export function createSync({ account, store, brain = () => null, log = () => {},
     const abs = path.join(t.team, rel);
     let local = null;
     try { local = readFileSync(abs, 'utf8'); } catch {}
+    // the key the note sat under before, found through the id index built once per pull
+    const byId = t.teamById ??= teamIndex(bucket);
+    const prev = byId.get(row.id);
     if (row.deleted_at) {
       if (local !== null) { const to = sibling(t.team, rel, 'removed'); renameSync(abs, path.join(t.team, to)); counts.removed++; }
       delete bucket[key];
+      if (prev && prev !== key) dropOld(t, bucket, prev);
+      byId.delete(row.id);
       return;
     }
+    // a renamed or moved note (a hosted KB's notes change path with their title and folder): the copy at the old path
+    // goes when nobody edited it, and is kept as "(removed)" when someone did
+    if (prev && prev !== key) dropOld(t, bucket, prev);
+    byId.set(row.id, key);
     const body = String(row.body ?? '');
     const version = row.hash || sha256(body);
     const place = placeOf(row);
@@ -357,9 +386,12 @@ export function createSync({ account, store, brain = () => null, log = () => {},
       const counts = { written: 0, conflicts: 0, removed: 0, skipped: 0 };
       try {
         const since = pulls[t.ws]?.lastPullAt ?? null;
-        const [notes, meetings] = await Promise.all([changed(t.remote.notes.changedSince, since), changed(t.remote.meetings.changedSince, since)]);
+        // a resync request (migration 0035: this person joined a team) asks for every note once, since the notes they
+        // may now read did not change; it is cleared only after the pull went through
+        const resync = await resyncPending(t.ws);
+        const [notes, meetings] = await Promise.all([changed(t.remote.notes.changedSince, resync ? null : since), changed(t.remote.meetings.changedSince, since)]);
         const shared = { written: 0, behind: 0, removed: 0, skipped: 0 };
-        for (const row of notes) (row.user_id && t.me && row.user_id !== t.me ? applyShared(t, row, shared) : applyNote(t, row, counts));
+        for (const row of notes) (hostedRow(row) || (row.user_id && t.me && row.user_id !== t.me) ? applyShared(t, row, shared) : applyNote(t, row, counts));
         await reconcileShared(t, shared);
         if (shared.written || shared.behind || shared.removed) log('sync', `workspace vault: ${shared.written} written, ${shared.behind} behind, ${shared.removed} removed`);
         lastShared = shared;
@@ -371,6 +403,7 @@ export function createSync({ account, store, brain = () => null, log = () => {},
         const newest = [...notes, ...meetings].map((r) => r.updated_at).filter(Boolean).sort().at(-1);
         if (newest) { (pulls[t.ws] ??= {}).lastPullAt = newest; savePulls(); }
         saveIds();
+        if (resync) await resyncDone(t.ws, resync);
         lastPull = counts;
         if (notes.length || meetings.length) log('sync', `pulled ${notes.length} notes, ${meetings.length} meetings: ${counts.written} written, ${counts.conflicts} conflicts, ${counts.removed} removed, ${counts.skipped} withheld`);
         account.markSync({ lastPullAt: new Date().toISOString(), syncError: null });

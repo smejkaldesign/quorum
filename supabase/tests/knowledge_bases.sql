@@ -57,7 +57,7 @@ insert into ids select 'restricted', public.kb_create('01KB00000000000000000000W
 select pg_temp.expect_error($$ select public.kb_create('01KB00000000000000000000WA', 'handbook') $$, 'already exists');
 select pg_temp.expect_error($$ select public.kb_create('01KB00000000000000000000WA', '   ') $$, 'needs a name');
 select pg_temp.expect_error($$ select public.kb_create('01KB00000000000000000000WA', 'Ops', 'wiki') $$, 'general or meetings');
-select pg_temp.expect_error($$ select public.kb_create('01KB00000000000000000000WA', 'Ops', 'meetings', '01KB00000000000000000000T1') $$, 'Teams are not available');
+select pg_temp.expect_error($$ select public.kb_create('01KB00000000000000000000WA', 'Ops', 'meetings', '01KB00000000000000000000T1') $$, 'not in this workspace');
 do $$ begin
   assert public.kb_shape(pg_temp.kb('handbook')) ->> 'name' = 'Handbook', 'the name is trimmed';
   assert public.kb_shape(pg_temp.kb('handbook')) -> 'access' = '[{"principal": "workspace", "user_id": null, "team_id": null, "role": "reader", "email": null, "name": null}]'::jsonb, 'a new KB is readable by the workspace';
@@ -75,11 +75,11 @@ do $$ begin
   assert exists (select 1 from public.kb_access), 'a delete through the table removes nothing';
 end $$;
 
--- 3. access: Leadership becomes the reader's alone; teams are refused, outsiders too
-select pg_temp.expect_error($$ select public.kb_set_access(pg_temp.kb('restricted'), '[{"principal": "team", "team_id": "01KB00000000000000000000T1"}]') $$, 'Teams are not available');
+-- 3. access: Leadership becomes the reader's alone; teams from elsewhere are refused, outsiders too
+select pg_temp.expect_error($$ select public.kb_set_access(pg_temp.kb('restricted'), '[{"principal": "team", "team_id": "01KB00000000000000000000T1"}]') $$, 'not in this workspace');
 select pg_temp.expect_error($$ select public.kb_set_access(pg_temp.kb('restricted'), '[{"principal": "user", "user_id": "00000000-0000-4000-8000-0000000000a5"}]') $$, 'not a member');
 select pg_temp.expect_error($$ select public.kb_set_access(pg_temp.kb('restricted'), '[{"principal": "user", "user_id": "nope"}]') $$, 'not a member');
-select pg_temp.expect_error($$ select public.kb_set_access(pg_temp.kb('restricted'), '[{"principal": "workspace", "role": "owner"}]') $$, 'admin or reader');
+select pg_temp.expect_error($$ select public.kb_set_access(pg_temp.kb('restricted'), '[{"principal": "workspace", "role": "owner"}]') $$, 'admin, editor or reader');
 select public.kb_set_access(pg_temp.kb('restricted'), '[{"principal": "user", "user_id": "00000000-0000-4000-8000-0000000000a3", "role": "reader"}]');
 
 -- 4. folders: nested without limit, siblings named once, moves stay inside the KB and never into themselves
