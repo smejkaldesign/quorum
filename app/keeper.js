@@ -121,7 +121,8 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
 
   // one note into the folder: index, daily, people, projects, facts, each only when Quorum owns that job; returns the
   // list of files changed. A file whose first lines say it is generated is left alone and named in marked. With
-  // noCreate, only files that exist already are written
+  // noCreate, the index and the daily note are written only when they exist already; those are the files a held run
+  // counts
   async function file(vault, reg, rel, text, { facts, marked, noCreate = false }) {
     const { f, rows, daily } = reg;
     const changed = [];
@@ -129,7 +130,7 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     const people = (Array.isArray(props.participants) ? props.participants : []).map((p) => String(p).replace(/\s*\(recorder\)\s*$/i, '').trim()).filter((p) => p && p.toLowerCase() !== owner().toLowerCase());
     const link = `[[${base}]]`;
     const touch = (abs, next, cur) => {
-      if (next == null || (cur == null && noCreate)) return;
+      if (next == null) return;
       if (cur != null && isGenerated(cur)) {
         const r = path.relative(vault, abs).split(path.sep).join('/');
         if (!marked.includes(r)) marked.push(r);
@@ -139,7 +140,7 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
       changed.push(path.relative(vault, abs));
     };
     // index: one line per note
-    if (owns(rows, 'index')) {
+    if (owns(rows, 'index') && !(noCreate && !existsSync(path.join(vault, 'index.md')))) {
       const indexAbs = path.join(vault, 'index.md');
       const cur = read(indexAbs);
       const index = cur ?? '# Index\n\nOne line per note. Quorum starts here when it looks for an answer.\n';
@@ -150,7 +151,7 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     if (f.daily && owns(rows, 'daily')) {
       const abs = path.join(vault, f.daily, dailyName(daily, date));
       const cur = read(abs);
-      touch(abs, appendUnder(cur ?? `# ${date}\n`, '## Meetings', `- ${link} ${title}`), cur);
+      if (!(noCreate && cur == null)) touch(abs, appendUnder(cur ?? `# ${date}\n`, '## Meetings', `- ${link} ${title}`), cur);
     }
     // people: a note per participant, matched by slug
     if (f.people && owns(rows, 'links')) {
