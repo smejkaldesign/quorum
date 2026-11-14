@@ -221,6 +221,10 @@ contextBridge.exposeInMainWorld('quorum', {
   kbAccessSet: (kbId, access) => ipcRenderer.invoke('kb-access-set', kbId, access),
   kbNoteAssign: (draft) => ipcRenderer.invoke('kb-note-assign', draft),
   kbNotes: (kbId) => ipcRenderer.invoke('kb-notes', kbId),
+  // importing a KB from a GitHub repository or a zip (hosted edition; handlers and API in ee/kbImport.js)
+  kbImport: (req) => ipcRenderer.invoke('kb-import', req),
+  kbImportPickZip: () => ipcRenderer.invoke('kb-import-pick-zip'),
+  onKbImportProgress: on('kb-import-progress'),
   billingStatus: () => ipcRenderer.invoke('billing-status'),
   billingCheckout: (seats) => ipcRenderer.invoke('billing-checkout', seats),
   billingPortal: () => ipcRenderer.invoke('billing-portal'),
