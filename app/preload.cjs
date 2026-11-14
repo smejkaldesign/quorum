@@ -247,6 +247,8 @@ contextBridge.exposeInMainWorld('quorum', {
   keeperSet: (patch) => ipcRenderer.invoke('keeper-set', patch),
   keeperRun: (opts) => ipcRenderer.invoke('keeper-run', opts),
   keeperPlugin: (id, owner) => ipcRenderer.invoke('keeper-plugin', id, owner),
+  keeperErrorsOpen: () => ipcRenderer.invoke('keeper-errors-open'),
+  keeperErrorsClear: () => ipcRenderer.invoke('keeper-errors-clear'),
   onKeeper: (cb) => { const h = (_e, r) => cb(r); ipcRenderer.on('keeper', h); return () => ipcRenderer.removeListener('keeper', h); },
   onboardingOpenPermission: (which) => ipcRenderer.invoke('onboarding-open-permission', which),
   onboardingRequestMicrophone: () => ipcRenderer.invoke('onboarding-request-microphone'),
