@@ -183,7 +183,13 @@ export type KbFolder = { id: string; kbId: string; parentId: string | null; name
 export type KbFolderNode = { id: string; parentId: string | null; name: string; position: number; children: KbFolderNode[] };
 export type KbAccess = { principal: 'workspace' | 'team' | 'user'; userId: string | null; teamId: string | null; role: KbRole; email: string | null; name: string | null };
 export type KbAccessDraft = { principal: 'workspace' | 'team' | 'user'; userId?: string; teamId?: string; role?: KbRole };
-export type Kb = { id: string; name: string; kind: KbKind; teamId: string | null; isDefault: boolean; source: { kind: 'folder' | 'git'; url: string | null; path: string | null } | null; role: KbRole; createdAt: string | null; updatedAt: string | null; folders: KbFolderNode[]; access: KbAccess[] | null };
+// folder and git are Mac-side sources; github and zip record where kb-import last read the KB from
+export type KbSource = { kind: 'folder' | 'git' | 'github' | 'zip'; url: string | null; path: string | null; branch: string | null; subpath: string | null; name: string | null; importedAt: string | null };
+export type Kb = { id: string; name: string; kind: KbKind; teamId: string | null; isDefault: boolean; source: KbSource | null; role: KbRole; createdAt: string | null; updatedAt: string | null; folders: KbFolderNode[]; access: KbAccess[] | null };
+export type KbImportSource = { kind: 'github'; url: string; branch?: string } | { kind: 'zip'; path: string };
+export type KbImportRequest = { kbId?: string; name?: string; source?: KbImportSource; folderId?: string };
+export type KbImportSkipped = { path: string; reason: string };
+export type KbImportProgress = { kbId: string; phase: 'fetching' | 'reading' | 'writing' | 'done'; done: number; total: number };
 export type KbPlacement = { noteId: string; kbId: string | null; folderId: string | null; updatedAt: string | null };
 export type KbNote = { id: string; path: string; title: string; folderId: string | null; userId: string; updatedAt: string | null };
 export type ContributionMine = { noteId: string; path: string; status: 'pending' | 'included' | 'declined'; reviewedAt: string | null; createdAt: string };
@@ -460,6 +466,9 @@ declare global {
       kbAccessSet(kbId: string, access: KbAccessDraft[]): Promise<Result & { access?: KbAccess[] }>;
       kbNoteAssign(draft: { noteId?: string; path?: string; kbId: string | null; folderId?: string | null }): Promise<Result & { placement?: KbPlacement }>;
       kbNotes(kbId: string): Promise<Result & { notes?: KbNote[] }>;
+      kbImport(req: KbImportRequest): Promise<Result & { kb?: Kb; imported?: number; removed?: number; skipped?: KbImportSkipped[] }>;
+      kbImportPickZip(): Promise<{ path?: string; canceled?: true }>;
+      onKbImportProgress(cb: (p: KbImportProgress) => void): Unsub;
       billingStatus(): Promise<Result & { billing?: Billing }>;
       billingCheckout(seats?: number): Promise<Result>;
       billingPortal(): Promise<Result>;
