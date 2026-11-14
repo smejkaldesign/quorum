@@ -1,4 +1,4 @@
-import type { AccountState, TeamSource } from './quorum';
+import type { AccountState, TeamImport, TeamSource } from './quorum';
 
 // The top tabs. Home and Memory (the person's own Agent OS: folder tree, link graph, search) are in every build.
 // Knowledge, the workspace's team knowledge, exists only in the Cloud edition and only once the person is signed in to
@@ -38,7 +38,9 @@ export const teamGate = (account: AccountLike, hasService: boolean | null, teamE
 };
 
 // one line for the tab's head and the source card
-export const describeSource = (s: Pick<TeamSource, 'kind' | 'url' | 'path'> | null | undefined): string => {
+export const describeSource = (s: (Pick<TeamSource, 'kind' | 'url' | 'path'> & { imported?: TeamImport | null }) | null | undefined): string => {
+  if (s?.imported?.kind === 'github') return s.imported.url ? `Imported from ${s.imported.url.replace(/^https?:\/\//, '')}` : 'Imported from GitHub';
+  if (s?.imported?.kind === 'zip') return s.imported.name ? `Imported from ${s.imported.name}` : 'Imported from a zip';
   if (!s || s.kind === 'sync') return 'Notes members share through Quorum';
   if (s.kind === 'git') return s.url ? `Repository ${s.url.replace(/^https?:\/\//, '').replace(/\.git$/, '')}` : 'A git repository';
   return s.path ? `Folder ${s.path.replace(/^\/Users\/[^/]+/, '~')}` : 'A folder on each Mac';

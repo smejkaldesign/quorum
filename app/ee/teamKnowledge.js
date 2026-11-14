@@ -1,13 +1,15 @@
 // Team knowledge (Cloud edition): where a workspace's shared knowledge comes from, and a read-only index over it for
-// the Knowledge tab. An admin picks one source for the workspace (migration 0020): the notes Quorum sync pulls, a
-// folder every member has on their Mac (a shared drive, a checkout they keep), or a git repository each Mac clones.
-// The choice is one row every member reads; the folder or clone stays on each Mac, and nothing here writes to it.
+// the Knowledge tab. An admin picks one source for the workspace: the notes Quorum sync pulls, a folder every member
+// has on their Mac (a shared drive, a checkout they keep), or a git repository each Mac clones. The choice is the
+// source of the workspace's default knowledge base (migrations 0025 and 0036), which every member reads from its row;
+// the folder or clone stays on each Mac, and nothing here writes to it. A default KB imported from GitHub or a zip
+// keeps its import source, which the tab shows and Settings › Admin › Knowledge changes.
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { plain } from './account.js';
+import { kbSession } from './knowledgeBases.js';
 import { readTeamNote } from './knowledge.js';
 import { createVaultIndex } from '../vindex.js';
 import { vaultTree, walk } from '../vault.js';
@@ -35,9 +37,15 @@ export function validateSource(draft = {}) {
   return { source: { kind, url: null, path: p } };
 }
 
+// where kb-import (ee/kbImport.js) last read a KB from; on the default KB the tab reads it as Quorum sync and names it
+export const IMPORT_KINDS = ['github', 'zip'];
+
 export const shapeSource = (row) => {
-  if (!row || typeof row !== 'object' || !SOURCE_KINDS.includes(row.kind)) return { kind: 'sync', url: null, path: null, setAt: null };
-  return { kind: row.kind, url: row.url ?? null, path: row.path ?? null, setAt: row.set_at ?? null };
+  const none = { kind: 'sync', url: null, path: null, setAt: null, imported: null };
+  if (!row || typeof row !== 'object') return none;
+  if (IMPORT_KINDS.includes(row.kind)) return { ...none, imported: { kind: row.kind, url: row.url ?? null, name: row.name ?? null } };
+  if (!SOURCE_KINDS.includes(row.kind)) return none;
+  return { kind: row.kind, url: row.url ?? null, path: row.path ?? null, setAt: row.set_at ?? null, imported: null };
 };
 
 // each Mac clones a git source under Quorum's own data folder, one clone per workspace and address, so a changed
@@ -64,16 +72,15 @@ export const runGit = (args, cwd, timeout = 120000) => new Promise((resolve, rej
 });
 
 export function createTeamKnowledge({ account, settings = {}, saveSettings = () => {}, dataDir, log = () => {}, pickFolder = async () => null, git = runGit, makeIndex = createVaultIndex, onChange = () => {} }) {
-  const fail = (err, fallback) => { log('team', err?.message ?? err); return { error: err?.code === 'GIT' ? err.message : plain(err, fallback) }; };
-  const ready = (admin = false) => {
-    if (!account.client()) return { error: 'Hosted accounts are not set up in this build.' };
-    const s = account.state();
-    if (!s.signedIn) return { error: 'Sign in first.' };
-    if (!s.workspace) return { error: 'Pick a workspace first.' };
-    if (admin && s.workspace.role === 'member') return { error: 'Only owners and admins can change the knowledge source.' };
-    return null;
+  const session = kbSession({ account, log, tag: 'team' });
+  const { ws, rpc } = session;
+  // a git failure names itself; anything else passes through plain() like every KB call
+  const fail = (err, fallback) => {
+    if (err?.code !== 'GIT') return session.fail(err, fallback);
+    log('team', err.message);
+    return { error: err.message };
   };
-  const ws = () => account.state().workspace.id;
+  const ready = (admin = false) => session.ready(admin, 'Only owners and admins can change the knowledge source.');
   // per-Mac state for each workspace: the folder this person chose, the last pull, the last error, and which row
   // version the choice belongs to (an admin changing the source drops the per-Mac folder)
   const local = () => { settings.teamKnowledge ??= {}; return (settings.teamKnowledge[ws()] ??= {}); };
@@ -81,10 +88,19 @@ export function createTeamKnowledge({ account, settings = {}, saveSettings = () 
 
   let source = { kind: 'sync', url: null, path: null, setAt: null };
   let sourceFor = null;
-  const readSource = async () => {
+  // the 0020 column, for a workspace with no default KB on a database before migration 0037; once 0037 drops it
+  // (42703, no such column) the workspace reads Quorum sync
+  const columnSource = async () => {
     const { data, error } = await account.client().from('workspaces').select('team_source').eq('id', ws()).maybeSingle();
+    if (error?.code === '42703') return null;
     if (error) throw error;
-    source = shapeSource(data?.team_source);
+    return data?.team_source ?? null;
+  };
+  // the default KB's row as row level security lets this person read it; no row means no default KB they can read
+  const readSource = async () => {
+    const { data, error } = await account.client().from('knowledge_bases').select('source').eq('workspace_id', ws()).eq('is_default', true).maybeSingle();
+    if (error) throw error;
+    source = shapeSource(data ? data.source : await columnSource());
     sourceFor = ws();
     const l = local();
     if (l.setAt !== source.setAt) { l.path = undefined; l.lastError = null; l.lastPullAt = null; l.setAt = source.setAt; saveSettings(); }
@@ -165,9 +181,14 @@ export function createTeamKnowledge({ account, settings = {}, saveSettings = () 
       const v = validateSource(draft);
       if (v.error) return { error: v.error };
       try {
-        const { data, error } = await account.client().rpc('workspace_team_source_set', { workspace_id: ws(), source: v.source });
-        if (error) return fail(error, 'The knowledge source could not be saved.');
-        source = shapeSource(data); sourceFor = ws();
+        // a database before migration 0036 has only the 0020 RPC (PGRST202, no such function), which returns the source
+        let saved;
+        try { saved = (await rpc('kb_default_source_set', { workspace_id: ws(), source: v.source }))?.source; }
+        catch (err) {
+          if (err.code !== 'PGRST202') throw err;
+          saved = await rpc('workspace_team_source_set', { workspace_id: ws(), source: v.source });
+        }
+        source = shapeSource(saved); sourceFor = ws();
         dropIndex();
         const l = local(); l.path = undefined; l.lastError = null; l.lastPullAt = null; l.setAt = source.setAt; saveSettings();
         if (source.kind !== 'sync') await pull();
