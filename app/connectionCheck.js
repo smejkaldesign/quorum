@@ -7,6 +7,7 @@
 // (ignore files, hidden folders, Claude Code's Read deny rules, the exclude lists of search scripts); nothing here knows
 // any one vault's layout.
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -189,7 +190,7 @@ export async function checkConnection({ root, notesDir, agent, home = homedir(),
     cli: 'quorum command runs in Terminal',
   };
   const [claude, codex] = await Promise.all([agent.claude.status(), agent.codex.status()]);
-  const mcpOn = claude.added || (codex.added && !codex.error);
+  const mcpOn = (claude.added && !claude.error) || (codex.added && !codex.error);
 
   let problems = null;
   if (!root) add('folder', L.folder, 'fail', { fix: 'Quorum has no Agent OS folder yet. Press Choose folder to connect one.', action: 'connect-folder' });
@@ -207,11 +208,15 @@ export async function checkConnection({ root, notesDir, agent, home = homedir(),
       else problems = [{ kind: 'outside' }];
     }
   } else {
-    const note = path.join(notesDir, `${CHECK_NOTE}-${now()}.md`);
+    // a name no other run uses, created with wx so an existing file is never written over; only a note this run
+    // created is removed
+    const note = path.join(notesDir, `${CHECK_NOTE}-${now()}-${randomUUID().slice(0, 8)}.md`);
+    let created = false;
     let wrote = false;
     try {
       try {
         writeFileSync(note, `---\ntitle: Quorum connection check\n---\n\nQuorum wrote this note to check the connection and removes it right away.\n`, { flag: 'wx' });
+        created = true;
         wrote = read(note)?.includes('Quorum connection check') === true;
       } catch {}
       if (!wrote) add('folder', L.folder, 'fail', { fix: `Quorum cannot save notes in ${tilde(notesDir, home)}. Press Choose folder to pick another.`, action: 'choose-meetings' });
@@ -221,7 +226,7 @@ export async function checkConnection({ root, notesDir, agent, home = homedir(),
         problems = path.relative(root, note).startsWith('..') ? [{ kind: 'outside' }] : await searchProblems(root, note, { home, ...(git ? { git } : {}) });
       }
     } finally {
-      if (wrote || existsSync(note)) { try { unlinkSync(note); } catch {} }
+      if (created) { try { unlinkSync(note); } catch {} }
     }
   }
   if (problems) {
@@ -233,6 +238,7 @@ export async function checkConnection({ root, notesDir, agent, home = homedir(),
   }
 
   if (!claude.installed) add('claude', L.claude, 'skip', { detail: 'Claude Code is not installed on this Mac.' });
+  else if (claude.added && claude.error) add('claude', L.claude, 'fail', { fix: `${claude.error}. Press Add to Claude Code to set it up again.`, action: 'add-claude' });
   else add('claude', L.claude, claude.added ? 'ok' : 'fail', claude.added ? {} : { fix: 'Quorum is not added to Claude Code yet.', action: 'add-claude' });
   if (!codex.installed) add('codex', L.codex, 'skip', { detail: 'Codex is not installed on this Mac.' });
   else if (codex.added && codex.error) add('codex', L.codex, 'fail', { fix: `${codex.error}. Press Add to Codex to set it up again.`, action: 'add-codex' });
@@ -243,10 +249,11 @@ export async function checkConnection({ root, notesDir, agent, home = homedir(),
   const named = cli.name && cli.name !== 'quorum' ? `Another quorum command is on this Mac, so Quorum's is called ${cli.name}.` : null;
   if (!cli.added) add('cli', L.cli, 'fail', { fix: 'The quorum command is not set up yet.', action: 'add-cli' });
   else if (cli.error) add('cli', L.cli, 'fail', { fix: `${cli.error}. Press Fix to set the quorum command up again.`, action: 'fix-cli' });
-  else if (cli.where === 'path' && !cli.onPath) add('cli', L.cli, 'fail', { fix: `${tilde(path.dirname(cli.path), home)} is no longer on your PATH. Press Fix to set the quorum command up again.`, action: 'fix-cli' });
+  else if (cli.where === 'path' && cli.onPath === false) add('cli', L.cli, 'fail', { fix: `${tilde(path.dirname(cli.path), home)} is no longer on your PATH. Press Fix to set the quorum command up again.`, action: 'fix-cli' });
   else if (cli.shadowed) add('cli', L.cli, 'fail', { fix: 'Another program answers to this name in Terminal. Press Fix and Quorum picks a name that works.', action: 'fix-cli' });
   else if (cli.where === 'alias') add('cli', L.cli, 'ok', { detail: [named, `Type ${cli.name ?? 'quorum'} in Terminal windows you open from now on.`].filter(Boolean).join(' ') });
   else add('cli', L.cli, 'ok', { detail: [named, cli.path ? tilde(cli.path, home) : null].filter(Boolean).join(' ') || null });
 
-  return { ok: checks.every((c) => c.state !== 'fail'), checks };
+  // the statuses this run read, so the rows above the list update without reading them again
+  return { ok: checks.every((c) => c.state !== 'fail'), checks, agents: { claude, codex, cli } };
 }

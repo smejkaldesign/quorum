@@ -1187,7 +1187,7 @@ const RUNTIME = process.execPath;
 const RUNTIME_ENV = { ELECTRON_RUN_AS_NODE: '1', ...(isDevelopment ? { QUORUM_ENV: 'development' } : {}) };
 // Claude Code, Codex and the quorum command, set up and read back through agentLink.js
 const agents = createAgentLink({ runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV });
-ipcMain.handle('mcp-status', async () => ({ added: (await agents.claude.status()).added, node: RUNTIME, cli: CLI, command: `"${RUNTIME}" "${CLI}" mcp` }));
+ipcMain.handle('mcp-status', async () => ({ added: (await agents.claude.status()).added, node: RUNTIME, cli: CLI, command: agents.mcpCommand }));
 // the provider MCP servers the person's agent already has, per connector (connectors/mcpOverlap.js). Read only. The
 // config files are read again on refresh (the Connections page asks on open and focus); `claude mcp list` runs once
 // per session in the background and again only on Check again, since it starts every local server to check it
@@ -2168,7 +2168,7 @@ ipcMain.handle('pick-meetings-dir', async () => {
 });
 // the first-run wizard shares the connect step with Settings, so both end up in the same state
 // a connect starts the guardrails review of the folder in the background; the Guardrails page shows it when it lands
-const connectBrain = (b) => { Object.assign(settings, { brainRoot: b.root, vaultPath: b.vault, brainMade: null }); store.settings.save(); log('connected Agent OS', b.root); suggester.reset(); openIndex(); guardrails.scan().then(() => vindex?.rebuild()).catch(() => {}); return b; };
+const connectBrain = (b) => { Object.assign(settings, { brainRoot: b.root, vaultPath: b.vault, brainMade: null }); store.settings.save(); log('connected Agent OS', b.root); suggester.reset(); openIndex(); guardrails.scan().then(() => vindex?.rebuild()).catch(() => {}); brainChanged(); return b; };
 registerOnboarding({
   ipcMain, settings, saveSettings, inspectBrain, connect: connectBrain, systemPreferences, shell, helperAsk: (cmd) => calAsk({ cmd }), claudeStatus, modelStatus: () => modelStatus(null), log, hadSettings: store.settings.existed,
   runText: (prompt, system) => runClaude(prompt, system, 'haiku', { cwd: homedir() }), hasModel: () => modelSource() !== 'none', owner: () => OWNER, about: aboutMe,
@@ -2201,14 +2201,7 @@ ipcMain.handle('connect-brain', async () => {
     properties: ['openDirectory'],
   });
   if (r.canceled || !r.filePaths[0]) return brain();
-  const b = inspectBrain(r.filePaths[0]);
-  Object.assign(settings, { brainRoot: b.root, vaultPath: b.vault, brainMade: null });
-  store.settings.save();
-  log('connected Agent OS', b.root);
-  suggester.reset();
-  openIndex();
-  brainChanged();
-  return b;
+  return connectBrain(inspectBrain(r.filePaths[0]));
 });
 ipcMain.handle('reveal-brain', () => { if (settings.brainRoot) shell.openPath(settings.brainRoot); });
 // forgetting the Agent OS leaves every file where it is; Quorum stops reading it, and a meetings folder found inside it is no longer found

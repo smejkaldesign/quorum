@@ -4,8 +4,8 @@
 // command is not on PATH.
 import { spawn } from 'node:child_process';
 
-export const cliRun = (bin, args, { timeout = 0, spawnImpl = spawn, env: extra = {} } = {}) => new Promise((resolve) => {
-  const env = { ...process.env, ...extra };
+export const cliRun = (bin, args, { timeout = 0, spawnImpl = spawn } = {}) => new Promise((resolve) => {
+  const env = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
   const missing = { ok: false, out: `${bin} not found`, missing: true };
   let p;

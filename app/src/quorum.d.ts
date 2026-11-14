@@ -15,12 +15,12 @@ export type HelperEvent =
   | { event: 'dictation'; state: 'on' | 'off' };
 
 // every generated line carries refs: the ids of the transcript turns it came from
-export type CliStatus = { added: boolean; where?: 'path' | 'alias'; name?: string; shadowed?: boolean; path?: string; onPath?: boolean; alias?: boolean; resolves?: string; error?: string | null; command?: string };
-export type AgentStatus = { installed: boolean; added: boolean; via?: 'cli' | 'config'; error?: string | null };
+export type CliStatus = { added: boolean; where?: 'path' | 'alias'; name?: string; shadowed?: boolean | null; path?: string; onPath?: boolean | null; loaded?: boolean | null; file?: string; resolves?: string; error?: string | null; command?: string };
+export type AgentStatus = { installed: boolean; added: boolean; via?: 'cli' | 'config'; scope?: 'user' | 'project' | 'local' | null; ours?: boolean; error?: string | null };
 export type AgentsStatus = { claude: AgentStatus; codex: AgentStatus; cli: CliStatus };
 export type ConnectionCheckItem = { id: 'folder' | 'note' | 'search' | 'claude' | 'codex' | 'server' | 'cli'; label: string; state: 'ok' | 'fail' | 'warn' | 'skip'; fix: string | null; action: ConnectionCheckAction | null; detail: string | null };
 export type ConnectionCheckAction = 'add-claude' | 'add-codex' | 'add-cli' | 'fix-cli' | 'connect-folder' | 'choose-meetings' | 'retry';
-export type ConnectionCheck = { ok: boolean; checks: ConnectionCheckItem[] };
+export type ConnectionCheck = { ok: boolean; checks: ConnectionCheckItem[]; agents?: AgentsStatus };
 export type Bullet = { text: string; sub: string[]; refs: number[] };
 export type Decision = { text: string; status: 'confirmed' | 'suggested'; refs: number[] };
 export type ActionItem = { task: string; owner: string | null; due: string | null; refs: number[] };

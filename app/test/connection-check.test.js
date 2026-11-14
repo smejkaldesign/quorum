@@ -102,6 +102,25 @@ describe('checkConnection', () => {
     expect(byId(r).note).toMatchObject({ state: 'ok' });
     expect(snapshot(root)).toEqual(before);
   });
+  it('two runs at once each remove only their own note, and an older note stays', async () => {
+    const root = tmp();
+    const notesDir = path.join(root, 'Meetings', 'quorum');
+    put(path.join(notesDir, 'quorum-connection-check-1-aaaaaaaa.md'), 'someone else');
+    const before = snapshot(root);
+    const [a, b] = await Promise.all([1, 2].map(() => checkConnection({ root, notesDir, agent: agent(), home: tmp(), git: noGit, now: () => 1 })));
+    expect([byId(a).note.state, byId(b).note.state]).toEqual(['ok', 'ok']);
+    expect(snapshot(root)).toEqual(before);
+  });
+  it('returns the statuses it read, and fails a Claude entry that points at a moved Quorum', async () => {
+    const root = tmp();
+    const claude = { installed: true, added: true, scope: 'user', error: "Can't find Quorum where it used to be" };
+    const r = await checkConnection({ root, notesDir: path.join(root, 'M', 'quorum'), agent: agent({ claude }), git: noGit });
+    expect(r.agents.claude).toEqual(claude);
+    expect(r.agents.cli).toMatchObject({ added: true });
+    expect(byId(r).claude).toMatchObject({ state: 'fail', action: 'add-claude', fix: "Can't find Quorum where it used to be. Press Add to Claude Code to set it up again." });
+    const unknown = await checkConnection({ root, notesDir: path.join(root, 'M', 'quorum'), git: noGit, agent: agent({ cli: { added: true, where: 'path', name: 'quorum', path: '/h/.local/bin/quorum', onPath: null, shadowed: null, error: null } }) });
+    expect(byId(unknown).cli.state).toBe('ok');
+  });
   it('counts notes the agent search skips as covered by Quorum search, and never asks for a vault edit', async () => {
     const root = tmp();
     const notesDir = path.join(root, 'Meetings', 'quorum');

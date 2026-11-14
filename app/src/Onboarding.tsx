@@ -413,7 +413,7 @@ function ConnectStep({ onBack, onNext }: { onBack: () => void; onNext: () => voi
 // the last check before Open Quorum: runs on arrival, and Continue opens once it has run, passed or not. Each failure
 // has a button that fixes it
 function CheckStep({ onBack, onNext }: { onBack: () => void; onNext: () => void }) {
-  const agents = useAgents();
+  const agents = useAgents({ load: false });
   const check = useConnectionCheck(agents);
   useEffect(() => { check.run(); }, []);
   const r = check.result;
