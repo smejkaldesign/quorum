@@ -314,7 +314,7 @@ function SecondBrain({ brain, onConnect, onDisconnect, onBrain, onViewConnector 
         <div className="palette-scrim" onClick={() => setSetup(null)}>
           <div className="modal setup-modal" role="dialog" aria-label="Set up QuorumBrain again" onClick={(e) => e.stopPropagation()}>
             <h2>{creating ? 'Create your QuorumBrain' : 'Set up QuorumBrain again'}</h2>
-            <p>{creating ? 'A folder of markdown notes Quorum and your AI read and write, shaped around you. Every answer is optional.' : 'New folders and notes are added; nothing you wrote is changed. The generated section of CLAUDE.md is replaced.'}</p>
+            <p>{creating ? 'A folder of markdown notes Quorum and your AI read and write, shaped around you. Every answer is optional.' : 'Applying adds new folders and notes, replaces the section Quorum generated in CLAUDE.md, and adds missing lines to index.md. No other file you wrote changes.'}</p>
             {creating && (
               <div className="setup-form setup-where">
                 <label className="set-field wide onb-field"><span className="onb-label">Name</span><input value={newName} aria-label="Name of your Agent OS" onChange={(e) => setNewName(e.target.value)} /></label>
@@ -988,6 +988,12 @@ function KeeperCard({ brain }: { brain: Brain }) {
         <>
           <h3>Plugins</h3>
           <div className="set-card">
+            {k.on && (
+              <Row icon={<IconNotes width={18} height={18} />} title="Edit notes Quorum did not create"
+                desc={`Off by default. Quorum then writes only to files it made: its meeting notes, the meetings index, daily notes it started and .quorum. Turn this on to let it add meeting lines to your index.md, daily, people and project notes, and a learned facts note you picked.${!k.editVault && k.last?.left?.length ? ` The last run left ${k.last.left.length} ${k.last.left.length === 1 ? 'note' : 'notes'} as ${k.last.left.length === 1 ? 'it was' : 'they were'}.` : ''}`}>
+                <Toggle on={k.editVault} onChange={async (on) => setK(await window.quorum.keeperSet({ editVault: on }))} />
+              </Row>
+            )}
             {k.on ? writers.map(plugin) : <Row icon={<IconReset width={18} height={18} />} title="Upkeep is off" desc="Quorum writes nothing for these jobs while Keep this folder current is off. Turn it on to choose which ones it does. The reports below work either way." />}
             {k.on && k.folders.meetings && k.plugins.find((p) => p.id === 'index')?.owner === 'vault' && (
               <Row icon={<IconFork width={18} height={18} />} title={`Write meeting index lines to ${k.folders.meetings}/index.md`}
@@ -1011,14 +1017,18 @@ function KeeperCard({ brain }: { brain: Brain }) {
                 </select>
               </Row>
             )}
-            {k.on && factsOn && k.learned?.target === 'note' && (
+            {k.on && factsOn && k.learned?.noteHeld && (
+              <Row icon={<IconInfo width={18} height={18} />} title="Learned facts go to .quorum/learned.md for now"
+                desc={`Quorum did not create ${k.learned.note}, so it writes the facts to .quorum/learned.md until you turn on Edit notes Quorum did not create, or pick a note path that does not exist yet.`} />
+            )}
+            {k.on && factsOn && (k.learned?.target === 'note' || k.learned?.noteHeld) && (
               <Row icon={<IconNotes width={18} height={18} />} title="Learned facts note" desc="A path inside your Agent OS. Changing it moves the facts to the new note">
                 <NotePathField value={k.learned.note} onSave={async (p) => { const s = await window.quorum.keeperSet({ factsNote: p }); setK(s); return s.learned?.note ?? p; }} />
               </Row>
             )}
             {k.on && factsOn && k.learned && (
               <Row icon={<IconNotes width={18} height={18} />} title="Copy the newest facts into CLAUDE.md"
-                desc={`CLAUDE.md is loaded in every Claude Code session. When this is on, Quorum keeps the newest ${k.learned.claude.facts} facts there, up to ${k.learned.claude.budget.toLocaleString()} characters, and rewrites that block on each run. Off by default.`}>
+                desc={`CLAUDE.md is loaded in every Claude Code session. When this is on, Quorum keeps the newest ${k.learned.claude.facts} facts there, up to ${k.learned.claude.budget.toLocaleString()} characters, and rewrites that block on each run. Off by default.${k.learned.claude.editable ? '' : ' Quorum did not create CLAUDE.md, so this also needs Edit notes Quorum did not create.'}`}>
                 <Toggle on={k.learned.claude.on} onChange={async (on) => setK(await window.quorum.keeperSet({ factsInClaude: on }))} />
               </Row>
             )}
