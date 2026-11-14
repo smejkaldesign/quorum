@@ -1,7 +1,8 @@
 // Team knowledge (Cloud edition): where a workspace's shared knowledge comes from, and a read-only index over it for
-// the Knowledge tab. An admin picks one source for the workspace (migration 0020): the notes Quorum sync pulls, a
-// folder every member has on their Mac (a shared drive, a checkout they keep), or a git repository each Mac clones.
-// The choice is one row every member reads; the folder or clone stays on each Mac, and nothing here writes to it.
+// the Knowledge tab. An admin picks one source for the workspace: the notes Quorum sync pulls, a folder every member
+// has on their Mac (a shared drive, a checkout they keep), or a git repository each Mac clones. The choice is the
+// source of the workspace's default knowledge base (migrations 0025 and 0036), which every member reads through
+// kb_list; the folder or clone stays on each Mac, and nothing here writes to it.
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
@@ -81,10 +82,11 @@ export function createTeamKnowledge({ account, settings = {}, saveSettings = () 
 
   let source = { kind: 'sync', url: null, path: null, setAt: null };
   let sourceFor = null;
+  // the default KB carries the source; a workspace without one, or a member the KB's admins left out, reads sync
   const readSource = async () => {
-    const { data, error } = await account.client().from('workspaces').select('team_source').eq('id', ws()).maybeSingle();
+    const { data, error } = await account.client().rpc('kb_list', { workspace_id: ws() });
     if (error) throw error;
-    source = shapeSource(data?.team_source);
+    source = shapeSource((Array.isArray(data) ? data : []).find((k) => k?.is_default)?.source);
     sourceFor = ws();
     const l = local();
     if (l.setAt !== source.setAt) { l.path = undefined; l.lastError = null; l.lastPullAt = null; l.setAt = source.setAt; saveSettings(); }
@@ -165,9 +167,9 @@ export function createTeamKnowledge({ account, settings = {}, saveSettings = () 
       const v = validateSource(draft);
       if (v.error) return { error: v.error };
       try {
-        const { data, error } = await account.client().rpc('workspace_team_source_set', { workspace_id: ws(), source: v.source });
+        const { data, error } = await account.client().rpc('kb_default_source_set', { workspace_id: ws(), source: v.source });
         if (error) return fail(error, 'The knowledge source could not be saved.');
-        source = shapeSource(data); sourceFor = ws();
+        source = shapeSource(data?.source); sourceFor = ws();
         dropIndex();
         const l = local(); l.path = undefined; l.lastError = null; l.lastPullAt = null; l.setAt = source.setAt; saveSettings();
         if (source.kind !== 'sync') await pull();

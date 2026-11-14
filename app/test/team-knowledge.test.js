@@ -66,9 +66,15 @@ describe('the index over a team source', () => {
   afterAll(() => rmSync(dataDir, { recursive: true, force: true }));
   const rpcs = [];
   let row = { kind: 'folder', path: FIXTURE, set_at: 't1' };
+  // the default KB's source as kb_list returns it, next to a KB that is not the default; null means no default KB
   const client = {
-    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { team_source: row }, error: null }) }) }) }),
-    rpc: async (name, args) => { rpcs.push([name, args]); row = { ...args.source, set_at: 'now' }; return { data: row, error: null }; },
+    rpc: async (name, args) => {
+      rpcs.push([name, args]);
+      const other = { id: 'k2', is_default: false, source: { kind: 'github', url: 'https://github.com/example/other' } };
+      if (name === 'kb_list') return { data: row === null ? [other] : [{ id: 'k1', is_default: true, source: row }, other], error: null };
+      if (name === 'kb_default_source_set') { row = args.source.kind === 'sync' ? null : { ...args.source, set_at: 'now' }; return { data: { id: 'k1', is_default: true, source: row }, error: null }; }
+      return { data: null, error: { message: `Could not find the function public.${name}`, code: 'PGRST202' } };
+    },
   };
   const noGit = async () => { throw Object.assign(new Error('no git in tests'), { code: 'GIT' }); };
   const make = (role, extra = {}) => {
@@ -99,6 +105,27 @@ describe('the index over a team source', () => {
     t.stop();
   });
 
+  it('reads the source from the default KB and never from the 0020 column or RPC', async () => {
+    const before = rpcs.length;
+    const { t } = make('member');
+    expect((await t.handlers['team-source']()).source).toMatchObject({ kind: 'folder', path: FIXTURE, setAt: 't1' });
+    expect(rpcs.slice(before)).toEqual([['kb_list', { workspace_id: 'w1' }]]);
+    // a workspace with no default KB, or one whose default KB holds an import source, reads Quorum sync
+    row = null;
+    expect((await t.handlers['team-source']()).source).toEqual({ kind: 'sync', url: null, path: null, setAt: null });
+    row = { kind: 'github', url: 'https://github.com/example/handbook' };
+    expect((await t.handlers['team-source']()).source.kind).toBe('sync');
+    t.stop();
+    row = { kind: 'folder', path: FIXTURE, set_at: 't1' };
+  });
+
+  it('shows the server sentence when the database refuses the source', async () => {
+    const refusing = { rpc: async (name) => (name === 'kb_list' ? { data: [], error: null } : { data: null, error: { message: 'Switch the team on first. The knowledge source belongs to the workspace\'s default knowledge base', code: 'P0001' } }) };
+    const t = createTeamKnowledge({ account: { client: () => refusing, state: () => ({ signedIn: true, workspace: { id: 'w1', role: 'owner' } }) }, settings: {}, dataDir, git: noGit });
+    expect(await t.handlers['team-source-set']({ kind: 'git', url: 'https://x.example/kb.git' })).toEqual({ error: 'Switch the team on first. The knowledge source belongs to the workspace\'s default knowledge base.' });
+    t.stop();
+  });
+
   it('builds no index for the sync source', async () => {
     row = { kind: 'sync' };
     let built = 0;
@@ -119,7 +146,7 @@ describe('the index over a team source', () => {
     const admin = make('admin', { git: async (args) => { gitCalls++; if (args[0] === '--version' && gitCalls > 2) return 'git version 2.0'; throw Object.assign(new Error('no git'), { code: 'GIT' }); } });
     expect(await admin.t.handlers['team-source-set']({ kind: 'git', url: 'nope' })).toEqual({ error: 'Enter an https:// or git@ clone address.' });
     const r = await admin.t.handlers['team-source-set']({ kind: 'git', url: 'https://x.example/kb.git' });
-    expect(rpcs.at(-1)).toEqual(['workspace_team_source_set', { workspace_id: 'w1', source: { kind: 'git', url: 'https://x.example/kb.git', path: null } }]);
+    expect(rpcs.find(([n]) => n === 'kb_default_source_set')).toEqual(['kb_default_source_set', { workspace_id: 'w1', source: { kind: 'git', url: 'https://x.example/kb.git', path: null } }]);
     expect(r.source.kind).toBe('git');
     expect(r.local).toMatchObject({ exists: false, gitAvailable: false, notes: 0 });
     expect(r.local.lastError).toMatch(/git is not installed/);
@@ -146,7 +173,7 @@ describe('the index over a team source', () => {
     row = { kind: 'folder', path: '/Volumes/New/Knowledge', set_at: 't3' };
     expect((await t.handlers['team-source']()).local).toMatchObject({ root: '/Volumes/New/Knowledge', exists: false });
     expect(settings.teamKnowledge.w1.path).toBeUndefined();
-    expect(rpcs.filter(([n]) => n === 'workspace_team_source_set').length).toBe(1);
+    expect(rpcs.filter(([n]) => n === 'kb_default_source_set').length).toBe(1);
     t.stop();
     row = { kind: 'folder', path: FIXTURE, set_at: 't1' };
   });

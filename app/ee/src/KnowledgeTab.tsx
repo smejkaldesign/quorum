@@ -124,7 +124,8 @@ const KIND_COPY: Record<TeamSourceKind, { title: string; desc: string }> = {
   git: { title: 'A git repository', desc: 'Every Mac clones it and pulls on refresh. Private repositories need git access on each Mac (SSH keys or a credential helper).' },
 };
 
-// Settings for the source, inside the tab: three choices, one address or folder, and what happened on this Mac
+// Settings for the default KB's source, inside the tab: three choices, one address or folder, and what happened on
+// this Mac
 function SourceCard({ state, onChange, onClose }: { state: SourceState; onChange: (s: SourceState) => void; onClose: () => void }) {
   const [kind, setKind] = useState<TeamSourceKind>(state.source.kind);
   const [url, setUrl] = useState(state.source.url ?? '');
@@ -147,6 +148,7 @@ function SourceCard({ state, onChange, onClose }: { state: SourceState; onChange
     <div className="tk-setup">
       <div className="set-card tk-setup-card">
         <h3 className="tk-setup-title">Where the team keeps its knowledge</h3>
+        <p className="muted">This is the source of the workspace's default knowledge base, marked Default under Settings › Admin › Knowledge.</p>
         {(Object.keys(KIND_COPY) as TeamSourceKind[]).map((k) => (
           <label key={k} className={`tk-kind ${kind === k ? 'on' : ''}`}>
             <input type="radio" name="tk-kind" checked={kind === k} onChange={() => setKind(k)} />
