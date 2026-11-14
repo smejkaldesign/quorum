@@ -1,3 +1,4 @@
+import './startup-flags.js';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, screen, session, shell, systemPreferences, Tray } from 'electron';
 import { NEEDS_SOURCE, NEEDS_TOOLS, SOURCES, modelLabel, runModel, sourceStatus } from './models.js';
 import { BY_ID, cleanConnectors, cleanProviders, needsKey, providerFor, providersFromSource, sourceFromProviders } from './connectors/catalog.js';
@@ -2175,12 +2176,10 @@ ipcMain.handle('ax-status', () => {
   helperSend({ cmd: 'axStatus', prompt: firstAsk });
 });
 
-if (!singleInstance) {
-  app.whenReady().then(() => {
-    dialog.showMessageBoxSync({ type: 'info', message: 'Quorum is already running', detail: 'Another copy of Quorum (the installed app or the development copy) is open. Quit it from its menu bar owl, then open this one again.', buttons: ['OK'] });
-    app.quit();
-  });
-} else app.on('second-instance', () => openMain());
+// a second launch in the same environment hands over: the running copy gets 'second-instance' and opens its window,
+// and this one quits before it shows anything
+if (!singleInstance) app.quit();
+else app.on('second-instance', () => openMain());
 
 ipcMain.on('is-dev', (e) => { e.returnValue = !app.isPackaged; });
 // which environment this copy runs; the cloud edition's account.js answers these with the active Supabase config, the

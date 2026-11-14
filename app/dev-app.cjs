@@ -2,6 +2,14 @@
 const { execFileSync, spawn } = require('node:child_process');
 const { cpSync, existsSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
 const path = require('node:path');
+const { startupFlag, startupText } = require('./argv.cjs');
+
+// `node dev-app.cjs --version` answers and exits before the wrapper builds a copy or quits a running dev app
+const flag = startupFlag(process.argv);
+if (flag) {
+  require('node:fs').writeSync(1, startupText(flag, JSON.parse(readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version));
+  process.exit(0);
+}
 
 const src = path.join(__dirname, 'node_modules/electron/dist/Electron.app');
 const dest = path.join(__dirname, '.dev/Quorum Dev.app');
