@@ -92,12 +92,14 @@ describe('keeper run', () => {
     const k = keeperFor(dir, { runText: async (p) => { calls.push(p); return '- Ada owns the launch page\n- none'; }, hasModel: () => true });
     await k.run();
     expect(calls).toHaveLength(1);
-    expect(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8')).toContain('- Ada owns the launch page ([[2026-11-10-plan-01w]], 2026-11-10)');
+    expect(readFileSync(path.join(dir, '.quorum/learned.md'), 'utf8')).toContain('- Ada owns the launch page ([[2026-11-10-plan-01w]], 2026-11-10)');
+    expect(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8')).not.toContain(LEARNED_OPEN);
     const dir2 = vault();
     mkdirSync(path.dirname(path.join(dir2, rel)), { recursive: true });
     writeFileSync(path.join(dir2, rel), NOTE('Plan', [], 'x'));
     const k2 = keeperFor(dir2, { runText: async () => '- x', hasModel: () => true, settings: { brainMade: 'quorum', keeper: { on: true, facts: false } } });
     await k2.run();
+    expect(existsSync(path.join(dir2, '.quorum/learned.md'))).toBe(false);
     expect(readFileSync(path.join(dir2, 'CLAUDE.md'), 'utf8')).not.toContain(LEARNED_OPEN);
   });
   it('does nothing on a folder the person connected themselves until they turn it on', async () => {

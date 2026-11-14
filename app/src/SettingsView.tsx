@@ -922,6 +922,7 @@ function KeeperCard({ brain }: { brain: Brain }) {
   const [busy, setBusy] = useState(false);
   // picking Default when it would move lines out of the list asks first
   const [askDefault, setAskDefault] = useState(false);
+  const [askRemove, setAskRemove] = useState(false);
   const load = () => window.quorum.keeperStatus().then(setK).catch(() => setK(null));
   useEffect(() => { load(); return window.quorum.onKeeper?.(() => load()); }, [brain.root]);
   if (!k) return null;
@@ -996,22 +997,16 @@ function KeeperCard({ brain }: { brain: Brain }) {
             )}
             {k.on && factsOn && k.learned && (
               <Row icon={<IconNotes width={18} height={18} />} title="Learned facts file"
-                desc={k.learned.target === 'learned' ? 'Claude Code does not load .quorum/learned.md on its own; CLAUDE.md points to it'
-                  : k.learned.target === 'note' ? `A note in your Agent OS, which Claude Code does not load on its own. ${k.learned.linked ? 'index.md links to it' : k.learned.indexGenerated ? 'index.md is marked as generated, so Quorum adds no link to it' : 'index.md is kept by your Agent OS, so Quorum adds no link to it'}`
-                  : `CLAUDE.md, loaded in every session that reads it${k.learned.maxFacts ? `, so it keeps ${k.learned.maxFacts} facts by default` : ''}. The oldest lines move to the changelog past the budget`}>
-                <select className="set-select" aria-label="Learned facts file" value={k.learned.pick} onChange={async (e) => setK(await window.quorum.keeperSet({ factsTarget: e.target.value as LearnedTarget | 'auto' }))}>
-                  <option value="auto">Automatic ({k.learned.auto === 'learned' ? '.quorum/learned.md' : 'CLAUDE.md'})</option>
+                desc={`${k.learned.target === 'note' ? `A note in your Agent OS. ${k.learned.linked ? 'index.md links to it' : k.learned.indexGenerated ? 'index.md is marked as generated, so Quorum adds no link to it' : 'index.md is kept by your Agent OS, so Quorum adds no link to it'}. ` : ''}Claude Code does not load this file on its own. Agents read it through the Quorum MCP server. The oldest lines move to the changelog past the budget`}>
+                <select className="set-select" aria-label="Learned facts file" value={k.learned.target} onChange={async (e) => setK(await window.quorum.keeperSet({ factsTarget: e.target.value as LearnedTarget }))}>
                   <option value="learned">.quorum/learned.md</option>
                   <option value="note">A vault note</option>
-                  <option value="claude">CLAUDE.md</option>
                 </select>
                 <select className="set-select" aria-label="Budget" value={String(k.learned.budgetPick)} onChange={async (e) => {
-                  if (e.target.value === 'kept') return;
                   if (e.target.value === 'auto') { if (k.learned!.defaultMoves > 0) setAskDefault(true); else setK(await window.quorum.keeperSet({ factsBudget: 'auto' })); return; }
                   setK(await window.quorum.keeperSet({ factsBudget: Number(e.target.value) }));
                 }}>
-                  {k.learned.budgetPick === 'kept' && <option value="kept">{k.learned.large.toLocaleString()} characters (your list so far)</option>}
-                  <option value="auto">Default ({k.learned.defaultFacts ? `${k.learned.defaultFacts} facts or ${k.learned.defaultBudget.toLocaleString()} characters` : `${k.learned.defaultBudget.toLocaleString()} characters`})</option>
+                  <option value="auto">Default ({k.learned.defaultBudget.toLocaleString()} characters)</option>
                   {[1000, 2000, 4000, 8000].map((n) => <option key={n} value={n}>{n.toLocaleString()} characters</option>)}
                 </select>
               </Row>
@@ -1021,22 +1016,29 @@ function KeeperCard({ brain }: { brain: Brain }) {
                 <NotePathField value={k.learned.note} onSave={async (p) => { const s = await window.quorum.keeperSet({ factsNote: p }); setK(s); return s.learned?.note ?? p; }} />
               </Row>
             )}
-            {k.on && factsOn && k.learned?.suggestSmall && (
-              <Row icon={<IconInfo width={18} height={18} />} title={`Keep CLAUDE.md to ${k.learned.small.facts} facts?`}
-                desc={`CLAUDE.md is loaded in every session. New lists keep ${k.learned.small.facts} facts or ${k.learned.small.budget.toLocaleString()} characters; yours keeps ${k.learned.large.toLocaleString()} characters until you switch.`}>
-                <button className="pill small-pill" onClick={async () => { if (k.learned!.defaultMoves > 0) setAskDefault(true); else setK(await window.quorum.keeperSet({ factsBudget: 'auto' })); }}>Use the smaller default</button>
+            {k.on && factsOn && k.learned && (
+              <Row icon={<IconNotes width={18} height={18} />} title="Copy the newest facts into CLAUDE.md"
+                desc={`CLAUDE.md is loaded in every Claude Code session. When this is on, Quorum keeps the newest ${k.learned.claude.facts} facts there, up to ${k.learned.claude.budget.toLocaleString()} characters, and rewrites that block on each run. Off by default.`}>
+                <Toggle on={k.learned.claude.on} onChange={async (on) => setK(await window.quorum.keeperSet({ factsInClaude: on }))} />
               </Row>
             )}
             {askDefault && k.learned && (
-              <ConfirmModal title={`Use the default of ${k.learned.defaultFacts ? `${k.learned.defaultFacts} facts or ` : ''}${k.learned.defaultBudget.toLocaleString()} characters?`}
+              <ConfirmModal title={`Use the default of ${k.learned.defaultBudget.toLocaleString()} characters?`}
                 body={`${k.learned.defaultMoves} older ${k.learned.defaultMoves === 1 ? 'fact moves' : 'facts move'} from ${k.learned.file} to .quorum/changelog.md, where you can copy them back.`}
                 action="Use the default" onDone={async (ok) => { setAskDefault(false); if (ok) setK(await window.quorum.keeperSet({ factsBudget: 'auto' })); }} />
             )}
-            {k.on && factsOn && k.learned?.suggest && (
-              <Row icon={<IconInfo width={18} height={18} />} title={`Move learned facts to ${k.learned.suggest === 'learned' ? '.quorum/learned.md' : 'CLAUDE.md'}?`}
-                desc={k.learned.suggest === 'learned' ? 'Your Agent OS has its own memory now. Facts in .quorum/learned.md stay out of every session until a question needs them.' : 'Your Agent OS no longer has its own memory. CLAUDE.md is loaded in every session that reads it.'}>
-                <button className="pill small-pill" onClick={async () => setK(await window.quorum.keeperSet({ factsTarget: k.learned!.suggest! }))}>Move</button>
+            {k.learned?.claude.block && !k.learned.claude.on && !k.learned.claude.generated && (
+              <Row icon={<IconTrash width={18} height={18} />} title="Remove the learned facts block from CLAUDE.md"
+                desc={k.learned.claude.block === 'list'
+                  ? `CLAUDE.md has a block of ${k.learned.claude.lines} learned ${k.learned.claude.lines === 1 ? 'fact' : 'facts'}, and Quorum no longer updates it. Removing it moves the facts to ${k.learned.file} and deletes only the text between Quorum's markers.`
+                  : "CLAUDE.md has a learned facts block that Quorum no longer updates. Removing it deletes only the text between Quorum's markers."}>
+                <button className="pill small-pill" onClick={() => setAskRemove(true)}>Remove</button>
               </Row>
+            )}
+            {askRemove && k.learned && (
+              <ConfirmModal title="Remove the learned facts block from CLAUDE.md?"
+                body={k.learned.claude.block === 'list' ? `The facts move to ${k.learned.file}. The rest of CLAUDE.md stays as it is.` : 'The rest of CLAUDE.md stays as it is.'}
+                action="Remove" onDone={async (ok) => { setAskRemove(false); if (ok) setK(await window.quorum.keeperRemoveClaude()); }} />
             )}
             {reports.map(plugin)}
           </div>

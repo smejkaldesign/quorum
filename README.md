@@ -170,7 +170,7 @@ Connectors bring notes in and let agents out. Each note carries its source in fr
 | Zoom | Meeting apps | Cloud recordings and their transcripts, imported through Quorum Cloud into `08-meetings/zoom/`. |
 | Calendar app | Calendar | Reads the Mac's calendars so Home shows what is up next. |
 | Google Calendar | Calendar | Reads the calendars you have selected in Google Calendar with your own Google account (read-only scope, PKCE, tokens in Keychain). A build needs a Google OAuth client; `docs/self-hosting.md` says where it goes. |
-| Claude Code | AI | One click registers the `quorum` MCP server and CLI on Quorum's own Node runtime. Tools: `list_meetings`, `search_meetings`, `get_meeting`, `list_chats`, `get_chat`, `live_transcript`, `quorum_status`. |
+| Claude Code | AI | One click registers the `quorum` MCP server and CLI on Quorum's own Node runtime. Tools: `list_meetings`, `search_meetings`, `get_meeting`, `list_chats`, `get_chat`, `live_transcript`, `learned_facts`, `quorum_status`. |
 
 **Next**
 

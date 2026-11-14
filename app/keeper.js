@@ -1,11 +1,12 @@
 // the keeper: what maintains an Agent OS after Quorum writes into it. Each new meeting note gets an index line, a line
 // in the daily note, and a line under "## Meetings" in every people note and project note it concerns; a dated entry in
 // .quorum/changelog.md records each change. With a model source chosen, a few learned facts per note go into a marked
-// list: CLAUDE.md, .quorum/learned.md, or a vault note linked from index.md (Claude Code loads neither of the last two
-// on its own). The list stays under a budget in characters, smaller by default in CLAUDE.md: the oldest lines move to
+// list in .quorum/learned.md, or in a vault note linked from index.md. Claude Code loads neither on its own; the Quorum
+// MCP server reads them (learned_facts). The list stays under a budget in characters: the oldest lines move to
 // .quorum/changelog.md when it runs over, and a line marked #keep stays. A fact that only says a note is empty or holds
-// no decisions is left out. Everything else is append-only: no note body is rewritten, and a line already present is
-// left alone.
+// no decisions is left out. CLAUDE.md is written only when the user turns that on: it then holds a copy of the newest
+// facts, which each run rewrites. With it off, a block in CLAUDE.md is left as it is until the user removes it from
+// Settings. Everything else is append-only: no note body is rewritten, and a line already present is left alone.
 // Confidential notes, private folders and secret-looking files never enter the index, the links or the facts.
 // Progress is kept in .quorum/keeper.json by note hash, so a note changed later is filed again and an unchanged one
 // is skipped; a backlog left by days with the app closed runs in one pass at launch.
@@ -26,8 +27,8 @@ export const LEARNED_OPEN = '<!-- quorum:learned -->';
 export const LEARNED_CLOSE = '<!-- /quorum:learned -->';
 export const LEARNED_FILE = path.join('.quorum', 'learned.md');
 export const LEARNED_BUDGET = 2000;
-// CLAUDE.md is loaded in every session, so by default its list holds CLAUDE_FACTS lines or CLAUDE_BUDGET characters,
-// whichever is reached first. A budget the user picks applies to every file
+// CLAUDE.md is loaded in every session, so the copy there, when the user turns it on, holds the newest CLAUDE_FACTS
+// lines within CLAUDE_BUDGET characters
 export const CLAUDE_BUDGET = 800;
 export const CLAUDE_FACTS = 10;
 // the vault note target: in the vault's knowledge folder (05-knowledge or knowledge) when it has one, else at the root
@@ -172,13 +173,26 @@ export function addLearned(text, facts, { budget = LEARNED_BUDGET, maxLines = In
   return next === text ? null : { text: next, dropped };
 }
 
-// CLAUDE.md, when the facts live in .quorum/learned.md: its block becomes a pointer to that file. null when it already is
+// the block an earlier version wrote into CLAUDE.md while the facts lived in .quorum/learned.md
 export const LEARNED_POINTER = [LEARNED_OPEN, '## Learned from meetings', '', 'Quorum keeps facts from meeting notes in [.quorum/learned.md](.quorum/learned.md). That file is not loaded on its own; read it when a question needs them.', LEARNED_CLOSE].join('\n');
-export function pointLearned(text) {
-  const next = putBlock(text, LEARNED_POINTER);
-  return next === text ? null : next;
-}
 const isPointer = (text) => text != null && text.includes(LEARNED_POINTER);
+// the copy in CLAUDE.md: the newest lines of the list that say something, at most CLAUDE_FACTS lines and CLAUDE_BUDGET
+// characters, newest last, with no blank lines. A block holding COPY_NOTE is a copy, so its lines are never read back
+// into the list. null when no line qualifies
+export const COPY_NOTE = 'Quorum rewrites this block on each run';
+const isCopy = (text) => { const at = text == null ? null : blockAt(text); return !!at && text.slice(at[0], at[1]).includes(COPY_NOTE); };
+export function claudeCopy(lines, file) {
+  const out = [];
+  let chars = 0;
+  for (let i = lines.length - 1; i >= 0 && out.length < CLAUDE_FACTS; i--) {
+    const l = lines[i].trim();
+    if (!l.startsWith('- ') || !informative(l.slice(2))) continue;
+    if (chars + l.length + 1 > CLAUDE_BUDGET) break;
+    out.unshift(l);
+    chars += l.length + 1;
+  }
+  return out.length ? [LEARNED_OPEN, '## Learned from meetings', `The newest facts from ${file}. ${COPY_NOTE}, so edit the facts in that file.`, ...out, LEARNED_CLOSE].join('\n') : null;
+}
 // the top of .quorum/learned.md; true whether or not CLAUDE.md could take a pointer
 export const LEARNED_HEADER = '# Learned from meetings\n\nFacts Quorum keeps from meeting notes. Claude Code does not load this file on its own.\n';
 
@@ -225,20 +239,10 @@ export const parseFacts = (out) => String(out ?? '').split('\n').map((l) => l.tr
 export function createKeeper({ brain, settings, saveSettings = () => {}, guards = () => null, wouldBlock = () => null, runText = null, hasModel = () => false, owner = () => '', log = () => {}, onChange = () => {}, errorLog = null }) {
   // factsBudget and factsNote are null until the user picks one
   // meetingsIndex writes the meeting index lines to <meetings folder>/index.md while the vault owns the root index
-  const conf = () => ({ on: settings.keeper?.on ?? settings.brainMade === 'quorum', factsBudget: settings.keeper?.factsBudget ?? null, factsTarget: settings.keeper?.factsTarget ?? null, factsNote: settings.keeper?.factsNote ?? null, meetingsIndex: settings.keeper?.meetingsIndex === true });
-  // whether CLAUDE.md gets the smaller default, settled once in keeper.json: a vault that has a learned list already
-  // keeps LEARNED_BUDGET until the user picks Default, so no existing list is pruned by it; a vault with none starts small
-  const hasList = (vault, st) => ['CLAUDE.md', LEARNED_FILE, st.factsNoteAt].some((rel) => rel && learnedLines(read(path.join(vault, rel)) ?? '').length > 0);
-  // small is claudeSmall's answer, worked out once per caller since hasList reads up to three files
-  const claudeSmall = (vault, st) => st.claudeSmall ?? !hasList(vault, st);
-  const SMALL = { budget: CLAUDE_BUDGET, maxLines: CLAUDE_FACTS };
-  const LARGE = { budget: LEARNED_BUDGET, maxLines: Infinity };
-  const defaultBudget = (target, small) => (target === 'claude' && small ? SMALL : LARGE);
-  // the budget for a target: the user's pick for any file, else the default above
-  const budgetFor = (target, small) => {
-    const picked = conf().factsBudget;
-    return picked != null ? { budget: picked, maxLines: Infinity } : defaultBudget(target, small);
-  };
+  // factsInClaude turns on the copy in CLAUDE.md, off unless the user picks it
+  const conf = () => ({ on: settings.keeper?.on ?? settings.brainMade === 'quorum', factsInClaude: settings.keeper?.factsInClaude === true, factsBudget: settings.keeper?.factsBudget ?? null, factsTarget: settings.keeper?.factsTarget ?? null, factsNote: settings.keeper?.factsNote ?? null, meetingsIndex: settings.keeper?.meetingsIndex === true });
+  // the list's budget: the user's pick, else LEARNED_BUDGET
+  const budgetFor = () => ({ budget: conf().factsBudget ?? LEARNED_BUDGET, maxLines: Infinity });
   // the vault note's path: the user's, else the default settled in keeper.json at its first write, else the default.
   // factsNoteAt is where the list was written last, so a move knows where to take it from
   const noteFor = (vault, st) => conf().factsNote ?? st.factsNoteDefault ?? defaultNote(vault);
@@ -298,16 +302,9 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
   };
   const clearErrors = () => { if (errorLog) rmSync(errorLog, { force: true }); return status(); };
 
-  // where learned facts go. The user's pick wins. Otherwise the automatic choice, settled at the first write and kept in
-  // keeper.json so it never changes by itself: .quorum/learned.md when it exists already or when the vault has its own
-  // memory system (the facts plugin found one), else CLAUDE.md
-  const evidenceTarget = (reg) => (reg.rows.find((r) => r.id === 'facts')?.evidence.length ? 'learned' : 'claude');
-  const autoTarget = (vault, reg, st) => {
-    if (st.factsAuto) return st.factsAuto;
-    if (existsSync(path.join(vault, LEARNED_FILE))) return 'learned';
-    return evidenceTarget(reg);
-  };
-  const learnedTarget = (vault, reg, st) => conf().factsTarget ?? autoTarget(vault, reg, st);
+  // where learned facts go: the vault note when the user picked one, else .quorum/learned.md. A factsTarget of claude
+  // saved by an earlier version reads as .quorum/learned.md, and the list it left in CLAUDE.md stays there
+  const learnedTarget = () => (conf().factsTarget === 'note' ? 'note' : 'learned');
 
   // the vault note is linked from index.md only while Quorum owns the index job and index.md exists and is not marked
   // generated; an index the vault keeps itself is never written to. unlinkNote takes out only the line linkNote wrote
@@ -333,20 +330,22 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     changed.push('index.md');
   };
 
-  // the list into its target, with new facts, under the target's budget. When the target changed, the list moves with
-  // it: into .quorum/learned.md with a pointer in CLAUDE.md; into the vault note, with CLAUDE.md's block taken out and
-  // a CLAUDE.md without one left as it is; or back into CLAUDE.md, with learned.md removed. A note the list leaves
-  // loses its block, and is removed with its index line when nothing else is in it. A source is cleared only once the
-  // target holds the list; a file marked generated stops the move, changes nothing and is logged. dropped gets only
-  // lines that really left a written list
+  // the list into its target, with new facts, under the budget. When the target changed, the list moves with it, between
+  // .quorum/learned.md and the vault note or from one note path to another. A note the list leaves loses its block, and
+  // is removed with its index line when nothing else is in it. A source is cleared only once the target holds the list;
+  // a file marked generated stops the move, changes nothing and is logged. dropped gets only lines that really left a
+  // written list. With the CLAUDE.md copy off, CLAUDE.md is never read or written here. With it on, a list block in
+  // CLAUDE.md (from an earlier version, or written by hand) joins the list once and the block becomes the copy
   // A generated .quorum/learned.md is never read from or removed. With noCreate (a held run) a vault note that does not
   // exist yet is left uncreated; the run counts it in createsFor and asks for the facts again once it may create files
   const saveFacts = (vault, reg, st, target, facts, changed, dropped, { noCreate = false } = {}) => {
-    st.claudeSmall ??= !hasList(vault, st);
-    const opts = budgetFor(target, st.claudeSmall);
+    const opts = budgetFor();
+    const inClaude = conf().factsInClaude;
     const claudeAbs = path.join(vault, 'CLAUDE.md');
     const learnedAbs = path.join(vault, LEARNED_FILE);
-    const claude = read(claudeAbs);
+    const claude = inClaude ? read(claudeAbs) : null;
+    const cGen = claude != null && isGenerated(claude);
+    const fromClaude = claude != null && !cGen && !isPointer(claude) && !isCopy(claude) ? learnedLines(claude) : [];
     const learned = read(learnedAbs);
     const lGen = learned != null && isGenerated(learned);
     const fromLearned = learned != null && !lGen ? learnedLines(learned) : [];
@@ -367,23 +366,19 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
       changed.push(path.relative(vault, abs));
       unlinkNote(vault, reg, oldNote, changed);
     };
-    if (target === 'claude') {
-      const back = [...fromLearned, ...fromOld];
-      if (claude != null && isGenerated(claude)) { if (facts.length || back.length) fail('facts', 'CLAUDE.md is marked as generated, so learned facts were not written'); return; }
-      const r = addLearned(claude ?? '# Agent OS\n', [...back, ...facts], opts);
-      put(claudeAbs, r ? r.text : isPointer(claude) ? dropBlock(claude) : null);
-      if (r) dropped.push(...r.dropped);
-      dropLearned();
-      clearOld();
-      return;
-    }
-    const cGen = claude != null && isGenerated(claude);
+    // the copy in CLAUDE.md from the list as written; a CLAUDE.md marked generated is logged only when the list changed
+    const copy = (rel, text, wrote) => {
+      if (!inClaude) return;
+      if (cGen) { if (wrote) fail('facts', 'CLAUDE.md is marked as generated, so it has no copy of the learned facts'); return; }
+      const block = claudeCopy(learnedLines(text ?? ''), rel);
+      const next = block ? putBlock(claude ?? '# Agent OS\n', block) : isCopy(claude) ? dropBlock(claude) : null;
+      if (next !== claude) put(claudeAbs, next);
+    };
     if (target === 'note') {
       const noteAbs = path.join(vault, note);
       const cur = read(noteAbs);
       if (cur != null && isGenerated(cur)) { fail('facts', `${note} is marked as generated, so learned facts were not written`); return; }
       if (cur == null && noCreate) return;
-      const fromClaude = claude != null && !cGen && !isPointer(claude) ? learnedLines(claude) : [];
       const r = addLearned(cur ?? LEARNED_HEADER, [...fromClaude, ...fromLearned, ...fromOld, ...facts], opts);
       if (r) { put(noteAbs, r.text); dropped.push(...r.dropped); }
       if (!r && cur == null) return;
@@ -391,26 +386,18 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
       st.factsNoteAt = note;
       if (!conf().factsNote) st.factsNoteDefault = note;
       dropLearned();
-      if (claude != null && !cGen && blockAt(claude)) put(claudeAbs, dropBlock(claude));
+      copy(note, r ? r.text : cur, !!r);
       linkNote(vault, reg, note, changed);
       return;
     }
     if (lGen) { fail('facts', '.quorum/learned.md is marked as generated, so learned facts were not written'); return; }
-    const moved = claude != null && !cGen ? learnedLines(claude) : [];
-    const r = addLearned(learned ?? LEARNED_HEADER, [...moved, ...fromOld, ...facts], opts);
+    const r = addLearned(learned ?? LEARNED_HEADER, [...fromClaude, ...fromOld, ...facts], opts);
     if (r) { put(learnedAbs, r.text); dropped.push(...r.dropped); }
     if (!r && learned == null) return;
     clearOld();
-    if (cGen) { if (r) fail('facts', 'CLAUDE.md is marked as generated, so it has no pointer to .quorum/learned.md'); return; }
-    // with no CLAUDE.md yet, a short one is made to hold the pointer
-    put(claudeAbs, pointLearned(claude ?? '# Agent OS\n'));
+    copy(LEARNED_FILE.split(path.sep).join('/'), r ? r.text : learned, !!r);
   };
-  const placeFacts = (vault, reg, st, facts, changed, dropped, opts) => {
-    const target = learnedTarget(vault, reg, st);
-    const before = changed.length;
-    saveFacts(vault, reg, st, target, facts, changed, dropped, opts);
-    if (!conf().factsTarget && !st.factsAuto && changed.length > before) st.factsAuto = target;
-  };
+  const placeFacts = (vault, reg, st, facts, changed, dropped, opts) => saveFacts(vault, reg, st, learnedTarget(), facts, changed, dropped, opts);
   // one dated entry at the end of .quorum/changelog.md, which is made with its header when missing
   const appendChangelog = (vault, title, body) => {
     const abs = path.join(vault, CHANGELOG);
@@ -577,7 +564,7 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
   // whether a note's facts would go into a vault note that does not exist yet
   const factsCreate = (vault, reg, st, n) => {
     if (!owns(reg.rows, 'facts') || !runText || !hasModel() || st.partial?.[n.rel] === n.h) return null;
-    if (learnedTarget(vault, reg, st) !== 'note') return null;
+    if (learnedTarget() !== 'note') return null;
     const note = noteFor(vault, st);
     return existsSync(path.join(vault, note)) ? null : note;
   };
@@ -690,29 +677,56 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     const reg = b ? registry(b) : null;
     return { on: c.on, meetingsIndex: c.meetingsIndex, facts: reg ? owns(reg.rows, 'facts') : false, running: !!running, lastRunAt: st.lastRunAt ?? null, filed: Object.keys(st.done ?? {}).length, last: st.last ?? lastRun, held: st.held ?? null, folders: reg?.f ?? {}, model: hasModel(), plugins: reg?.rows ?? [], learned: reg ? learnedStatus(b.vault, reg, st) : null, errors: errors() };
   };
-  // the learned list's size against its budget and its share of the file it lives in; pick is the select's value, auto
-  // what Automatic resolves to, and suggest the other file when the vault's memory has changed since that was settled
+  // the learned list's size against its budget and its share of the file it lives in, and what CLAUDE.md holds: no
+  // block, the copy, a pointer or a list from an earlier version, or a list written by hand
   const learnedStatus = (vault, reg, st) => {
-    const target = learnedTarget(vault, reg, st);
-    const auto = autoTarget(vault, reg, st);
+    const target = learnedTarget();
     const note = noteFor(vault, st);
-    const file = target === 'learned' ? LEARNED_FILE.split(path.sep).join('/') : target === 'note' ? note : 'CLAUDE.md';
+    const file = target === 'note' ? note : LEARNED_FILE.split(path.sep).join('/');
     const text = read(path.join(vault, file)) ?? '';
-    const suggest = !conf().factsTarget && evidenceTarget(reg) !== auto ? evidenceTarget(reg) : null;
-    const small = claudeSmall(vault, st);
-    const { budget, maxLines } = budgetFor(target, small);
-    // what picking Default applies (for CLAUDE.md always the smaller default), and how many lines it would move to the
-    // changelog, for the confirm the settings page shows
-    const def = defaultBudget(target, true);
     const lines = learnedLines(text);
-    const defaultMoves = pruneLearned(lines, def.budget, def.maxLines).dropped.length;
-    // a CLAUDE.md list kept at LEARNED_BUDGET from before the smaller default: offered, never applied on its own
-    const suggestSmall = target === 'claude' && conf().factsBudget == null && !small;
+    // how many lines picking Default would move to the changelog, for the confirm the settings page shows
+    const defaultMoves = pruneLearned(lines, LEARNED_BUDGET).dropped.length;
     // the note is linked while Quorum owns the index job, also before index.md exists; indexGenerated says why not
     const index = read(path.join(vault, 'index.md'));
     const indexGenerated = owns(reg.rows, 'index') && index != null && isGenerated(index);
-    return { target, pick: conf().factsTarget ?? 'auto', auto, suggest, file, note, linked: owns(reg.rows, 'index') && !indexGenerated, indexGenerated, budget, maxFacts: Number.isFinite(maxLines) ? maxLines : null, budgetPick: conf().factsBudget ?? (suggestSmall ? 'kept' : 'auto'), defaultBudget: def.budget, defaultFacts: Number.isFinite(def.maxLines) ? def.maxLines : null, defaultMoves, suggestSmall, small: { budget: CLAUDE_BUDGET, facts: CLAUDE_FACTS }, large: LEARNED_BUDGET, chars: learnedChars(lines), fileChars: text.length };
+    const claude = read(path.join(vault, 'CLAUDE.md'));
+    const block = claude == null || !blockAt(claude) ? null : isCopy(claude) ? 'copy' : isPointer(claude) ? 'pointer' : 'list';
+    return {
+      target, file, note, linked: owns(reg.rows, 'index') && !indexGenerated, indexGenerated,
+      budget: budgetFor().budget, budgetPick: conf().factsBudget ?? 'auto', defaultBudget: LEARNED_BUDGET, defaultMoves, chars: learnedChars(lines), fileChars: text.length,
+      claude: { on: conf().factsInClaude, block, lines: block === 'list' ? learnedLines(claude).length : 0, generated: claude != null && isGenerated(claude), facts: CLAUDE_FACTS, budget: CLAUDE_BUDGET },
+    };
   };
+  // the block in CLAUDE.md taken out when the user asks from Settings: only the text between the quorum:learned
+  // markers goes. A list in it joins Quorum's own list first, so no fact is lost; when that list cannot take the lines
+  // (marked generated), CLAUDE.md stays as it was. The copy is turned off too, so no later run writes it again
+  async function removeClaude() {
+    if (running) await running.catch(() => {});
+    const b = brain();
+    if (!b) return status();
+    if (conf().factsInClaude) { settings.keeper = { ...settings.keeper, factsInClaude: false }; saveSettings(); }
+    const vault = b.vault;
+    const abs = path.join(vault, 'CLAUDE.md');
+    const cur = read(abs);
+    if (cur == null || isGenerated(cur) || !blockAt(cur)) return status();
+    const st = loadState(vault);
+    const changed = [];
+    const dropped = [];
+    const lines = isPointer(cur) || isCopy(cur) ? [] : learnedLines(cur);
+    if (lines.length) {
+      try { placeFacts(vault, registry(b), st, lines, changed, dropped); } catch (e) { fail('facts', e); return status(); }
+      const kept = learnedLines(read(path.join(vault, learnedTarget() === 'note' ? noteFor(vault, st) : LEARNED_FILE)) ?? '');
+      const have = new Set([...kept, ...dropped].map(factKey));
+      if (!lines.every((l) => have.has(factKey(l)))) { fail('facts', 'the learned facts in CLAUDE.md could not be moved, so CLAUDE.md was left as it was'); return status(); }
+    }
+    writeAtomic(abs, dropBlock(cur));
+    changed.push('CLAUDE.md');
+    logChange(vault, 'Learned facts removed from CLAUDE.md', changed, dropped);
+    saveState(vault, st);
+    onChange({ ...(lastRun ?? {}), changed: changed.length, reason: 'settings' });
+    return status();
+  }
   // one plugin row handed to Quorum or to the vault. A held run planned with the old owners no longer applies, so it
   // is cleared and a new pass is scheduled
   // a report plugin writes nothing in the vault, so its pick is saved and nothing else: no held run is cleared and no
@@ -737,14 +751,14 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     const next = { ...settings.keeper };
     if (typeof patch.on === 'boolean') next.on = patch.on;
     if (typeof patch.meetingsIndex === 'boolean') next.meetingsIndex = patch.meetingsIndex;
-    // picking Default is the one way a CLAUDE.md list kept from before the smaller default takes it; reset holds the
-    // keeper.json fields a pick settles. A cleared note path settles the default note, so the list moves there
+    if (typeof patch.factsInClaude === 'boolean') next.factsInClaude = patch.factsInClaude;
+    // reset holds the keeper.json fields a pick settles. A cleared note path settles the default note, so the list moves
+    // there
     const reset = {};
-    let pickedDefault = false;
     if (Number.isInteger(patch.factsBudget) && patch.factsBudget >= 500 && patch.factsBudget <= 20000) next.factsBudget = patch.factsBudget;
-    else if (patch.factsBudget === 'auto') { delete next.factsBudget; pickedDefault = true; }
-    if (patch.factsTarget === 'claude' || patch.factsTarget === 'learned' || patch.factsTarget === 'note') next.factsTarget = patch.factsTarget;
-    else if (patch.factsTarget === 'auto') delete next.factsTarget;
+    else if (patch.factsBudget === 'auto') delete next.factsBudget;
+    if (patch.factsTarget === 'note') next.factsTarget = 'note';
+    else if (patch.factsTarget === 'learned' || patch.factsTarget === 'auto') delete next.factsTarget;
     // a note path outside the meetings folder, which the keeper files as meetings; an empty one goes back to the default
     if (typeof patch.factsNote === 'string') {
       const rel = notePath(patch.factsNote);
@@ -755,16 +769,14 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     settings.keeper = next;
     saveSettings();
     const after = conf();
-    // Default settles the smaller CLAUDE.md budget only while the list lives in CLAUDE.md
-    if (b && pickedDefault && learnedTarget(b.vault, registry(b), loadState(b.vault)) === 'claude') reset.claudeSmall = true;
     // a running run saves its own copy of keeper.json, so the reset waits for it there; otherwise it is saved now
     let st = null;
     if (b && Object.keys(reset).length) {
       Object.assign(resets, reset);
       if (!running) { st = loadState(b.vault); applyResets(st); saveState(b.vault, st); }
     }
-    // another budget, file or note applies now, unless upkeep is off or a run is about to do it
-    const factsChanged = Object.keys(reset).length > 0 || ['factsBudget', 'factsTarget', 'factsNote'].some((key) => before[key] !== after[key]);
+    // another budget, file, note or CLAUDE.md copy applies now, unless upkeep is off or a run is about to do it
+    const factsChanged = Object.keys(reset).length > 0 || ['factsBudget', 'factsTarget', 'factsNote', 'factsInClaude'].some((key) => before[key] !== after[key]);
     if (b && after.on && !running && factsChanged) {
       st ??= loadState(b.vault);
       const changed = tidyFacts(b.vault, registry(b), st);
@@ -774,5 +786,5 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     if (after.on) schedule('settings');
     return status();
   };
-  return { run, schedule, status, set, setPlugin, plugins, cachedPlugins, conf, clearErrors, errorLog };
+  return { run, schedule, status, set, setPlugin, removeClaude, plugins, cachedPlugins, conf, clearErrors, errorLog };
 }

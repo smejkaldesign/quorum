@@ -167,8 +167,7 @@ describe('keeper with plugins', () => {
     expect(r.held.count).toBe(CREATE_LIMIT + 1);
     expect(readFileSync(path.join(dir, '01-daily', '2026-09-01.md'), 'utf8')).toContain('[[2026-12-01-x]]');
     expect(calls).toHaveLength(CREATE_LIMIT + 2);
-    // CLAUDE.md keeps the newest 10 facts by default
-    expect(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8')).toContain('fact from M11 ([[2026-10-11-m]], 2026-10-11)');
+    expect(readFileSync(path.join(dir, '.quorum', 'learned.md'), 'utf8')).toContain('fact from M11 ([[2026-10-11-m]], 2026-10-11)');
     // the held notes are not sent for facts a second time when they are filed
     await k.run({ allowCreate: true });
     expect(calls).toHaveLength(CREATE_LIMIT + 2);
@@ -203,7 +202,7 @@ describe('keeper with plugins', () => {
     rmSync(path.join(dir, 'MEMORY.md'));
     expect(k.status()).toMatchObject({ facts: true });
     await k.run();
-    expect(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8')).toContain('Ada leads design');
+    expect(readFileSync(path.join(dir, '.quorum', 'learned.md'), 'utf8')).toContain('Ada leads design');
   });
 });
 

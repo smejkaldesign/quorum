@@ -165,6 +165,7 @@ const keeper = createKeeper({
 });
 ipcMain.handle('keeper-status', () => keeper.status());
 ipcMain.handle('keeper-set', (_e, patch) => keeper.set(patch ?? {}));
+ipcMain.handle('keeper-remove-claude', () => keeper.removeClaude());
 ipcMain.handle('keeper-run', (_e, opts) => keeper.run({ reason: 'manual', allowCreate: opts?.allowCreate === true }));
 ipcMain.handle('keeper-plugin', (_e, id, owner) => keeper.setPlugin(String(id), owner));
 ipcMain.handle('keeper-errors-open', () => { if (existsSync(KEEPER_ERRORS)) shell.openPath(KEEPER_ERRORS); });
