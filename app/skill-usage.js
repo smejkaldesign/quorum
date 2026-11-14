@@ -54,14 +54,14 @@ export function namesIn(evt) {
   return out.filter((n) => typeof n === 'string' && n).map((n) => n.replace(/^\//, '').split(/\s/)[0]);
 }
 
-// one transcript file into { uses: { name: { runs, last } }, first }. A line that names no skill is never parsed
+// one transcript file into { uses: { name: { runs, last } }, first }. Lines are in time order, so first is the
+// timestamp of the first line that has one. A line that names no skill is never parsed
 async function scanFile(abs) {
   const uses = {};
   let first = null;
   const rl = createInterface({ input: createReadStream(abs, { encoding: 'utf8' }), crlfDelay: Infinity });
   for await (const line of rl) {
-    const ts = line.match(/"timestamp":"([^"]+)"/)?.[1] ?? null;
-    if (ts && (!first || ts < first)) first = ts;
+    if (!first) first = line.match(/"timestamp":"([^"]+)"/)?.[1] ?? null;
     if (!line.includes('"Skill"') && !line.includes('"SlashCommand"') && !line.includes('<command-name>')) continue;
     let evt;
     try { evt = JSON.parse(line); } catch { continue; }
@@ -75,10 +75,24 @@ async function scanFile(abs) {
   return { uses, first };
 }
 
+// the transcripts of a project: one .jsonl per session, and the subagent transcripts under <session>/subagents
+export function transcriptFiles(dir) {
+  let names;
+  try { names = readdirSync(dir, { withFileTypes: true }); } catch { return null; }
+  const out = [];
+  for (const d of names) {
+    if (d.isFile() && d.name.endsWith('.jsonl')) out.push(path.join(dir, d.name));
+    if (d.isDirectory()) {
+      try { for (const n of readdirSync(path.join(dir, d.name, 'subagents'))) if (n.endsWith('.jsonl')) out.push(path.join(dir, d.name, 'subagents', n)); } catch {}
+    }
+  }
+  return out.sort();
+}
+
 // every transcript for the project, reusing the counts of files unchanged since the last scan
 export async function scanTranscripts(dir, cache = new Map()) {
-  let files;
-  try { files = readdirSync(dir).filter((n) => n.endsWith('.jsonl')).map((n) => path.join(dir, n)); } catch { return { files: 0, first: null, uses: {} }; }
+  const files = transcriptFiles(dir);
+  if (!files) return { files: 0, first: null, uses: {} };
   const uses = {};
   let first = null;
   for (const abs of files) {

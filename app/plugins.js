@@ -127,7 +127,9 @@ export const PLUGINS = [
     detect: (ctx) => toolsMatching(ctx, /context[-_]?(?:budget|size|check|audit)|token[-_]?(?:budget|count)|claude[-_]?md[-_]?(?:size|lint|check|audit)|memory[-_]?(?:lint|size|budget)/i),
   },
   {
-    id: 'skills', title: 'Skill usage', does: 'Which skills ran lately, counted from the Claude Code transcripts on this Mac', report: true,
+    // starts off for everyone: it reads transcripts outside the vault
+    id: 'skills', title: 'Skill usage', does: 'Which skills ran lately, counted from the Claude Code transcripts on this Mac', report: true, off: true,
+    note: 'Reads skill names and dates from the Claude Code transcripts in ~/.claude/projects, on this Mac only.',
     detect: (ctx) => toolsMatching(ctx, /skill[-_]?(?:usage|telemetry|stats?|track(?:er|ing)?|audit|count)|(?:usage|telemetry)[-_]?(?:skill|track)|^telemetry/i),
   },
   {
@@ -163,7 +165,7 @@ export function resolvePlugins(found, saved = {}) {
     const chose = !!s && (s.owner === 'quorum' || s.owner === 'vault') && s.ack === key;
     const fallback = evidence.length || p.off ? 'vault' : 'quorum';
     const owner = chose ? s.owner : fallback;
-    return { id: p.id, title: p.title, does: p.does, always: !!p.always, report: !!p.report, evidence, owner, overridden: evidence.length > 0 && owner === 'quorum', isNew: evidence.length > 0 && !chose };
+    return { id: p.id, title: p.title, does: p.does, always: !!p.always, report: !!p.report, note: p.note ?? null, evidence, owner, overridden: evidence.length > 0 && owner === 'quorum', isNew: evidence.length > 0 && !chose };
   });
 }
 

@@ -80,6 +80,17 @@ describe('brain check', () => {
     expect(check.status(root).changed).toEqual(['the model', 'CLAUDE.md', 'MEMORY.md']);
     expect(changes(null, {})).toEqual([]);
   });
+  it('fingerprints the instructions file the run loads', () => {
+    const root = temp('check-vault');
+    put(root, 'CLAUDE.md', '# Rules\n');
+    put(root, 'AGENTS.md', '# Agents\n');
+    const agents = path.join(root, 'AGENTS.md');
+    const before = fingerprint({ model: 'm', root, instructions: agents, home: root });
+    put(root, 'CLAUDE.md', '# Rules changed\n');
+    expect(changes(before, fingerprint({ model: 'm', root, instructions: agents, home: root }))).toEqual([]);
+    put(root, 'AGENTS.md', '# Agents changed\n');
+    expect(changes(before, fingerprint({ model: 'm', root, instructions: agents, home: root }))).toEqual(['AGENTS.md']);
+  });
   it('stores checks per vault in its own data file, outside the vault', async () => {
     const { root, file, check } = setup({ Q: 'yes' });
     check.setChecks(root, [{ prompt: 'Q', expect: ['yes'] }]);

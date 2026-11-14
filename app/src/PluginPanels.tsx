@@ -3,7 +3,7 @@ import type { BrainCheckItem, BrainCheckResult, BrainCheckStatus, ContextBudget,
 
 // the result a report plugin shows under its row in Settings › Memory › Plugins, while the row is Quorum's
 const n = (v: number) => v.toLocaleString('en-US');
-const SCOPE: Record<ContextFile['scope'], string> = { user: 'every session, all projects', project: 'every session', memory: 'every session', nested: 'only when Claude works in that folder' };
+const SCOPE: Record<ContextFile['scope'], string> = { user: 'every session, all projects', project: 'every session', memory: 'every session', nested: 'only when Claude works in that folder', paths: 'only for the files its paths match' };
 
 export function ContextPanel() {
   const [c, setC] = useState<ContextBudget | null | undefined>(undefined);
@@ -22,7 +22,7 @@ export function ContextPanel() {
       {c.files.map((f) => (
         <div key={f.abs} className="plugin-item">
           <span className="plugin-path">{f.path}</span>
-          <span className="plugin-meta">{n(f.chars)} characters, {n(f.lines)} lines · {SCOPE[f.scope]}</span>
+          <span className="plugin-meta">{n(f.chars)} characters, {n(f.lines)} lines · {SCOPE[f.scope]}{f.importedBy ? ` · imported by ${f.importedBy}` : ''}</span>
           {f.warn && <span className="plugin-warn">{f.warn}</span>}
         </div>
       ))}
@@ -98,6 +98,8 @@ export function BrainCheckPanel() {
   const [s, setS] = useState<BrainCheckStatus | null | undefined>(undefined);
   const [draft, setDraft] = useState<{ id: string; prompt: string; terms: string }[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  // the draft is filled from the saved checks once; after that it is the user's, so a save or a finished run never
+  // resets it, and results are matched to rows by check id
   const fill = (st: BrainCheckStatus | null) => { setS(st); if (st) setDraft(st.checks.map((c) => ({ id: c.id, prompt: c.prompt, terms: c.expect.join(', ') }))); };
   useEffect(() => {
     window.quorum.brainCheckStatus().then(fill).catch(() => setS(null));
@@ -105,9 +107,10 @@ export function BrainCheckPanel() {
   }, []);
   if (!s) return null;
   const toItems = (d: typeof draft): BrainCheckItem[] => d.map((c) => ({ id: c.id, prompt: c.prompt, expect: c.terms.split(',').map((t) => t.trim()).filter(Boolean) }));
-  const save = async (d = draft) => { try { fill(await window.quorum.brainCheckSave(toItems(d))); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } };
+  // only rows with a question are saved; a blank row stays on screen until the user fills it or removes it
+  const save = async (d = draft) => { try { setS(await window.quorum.brainCheckSave(toItems(d.filter((c) => c.prompt.trim())))); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } };
   const edit = (i: number, k: 'prompt' | 'terms', v: string) => setDraft(draft.map((c, j) => (j === i ? { ...c, [k]: v } : c)));
-  const run = async () => { setErr(null); try { await save(); fill(await window.quorum.brainCheckRun()); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } };
+  const run = async () => { setErr(null); try { await save(); setS(await window.quorum.brainCheckRun()); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } };
   const now = (id: string) => s.last?.results.find((r) => r.id === id);
   const before = (id: string) => s.previous?.results.find((r) => r.id === id);
   const when = (iso: string) => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });

@@ -51,6 +51,15 @@ describe('skill usage', () => {
     // nothing from the transcripts beyond names and dates comes back
     expect(JSON.stringify(u)).not.toMatch(/private words|secret|Please plan/);
   });
+  it('reads subagent transcripts and dates coverage from the first timestamped line', async () => {
+    const { proj } = setup();
+    put(proj, 'sess-1/subagents/agent-a.jsonl', [JSON.stringify({ type: 'summary' }), toolUse('ship', ago(2)), toolUse('plan', ago(200))].join('\n') + '\n');
+    const t = await scanTranscripts(proj);
+    expect(t.files).toBe(3);
+    expect(t.uses.ship).toMatchObject({ runs: 2, last: ago(2) });
+    // the first timestamped line of each file sets its start, so the late line dated 200 days ago does not
+    expect(t.first).toBe(ago(120));
+  });
   it('reuses the counts of a transcript that has not changed', async () => {
     const { proj } = setup();
     const cache = new Map();
@@ -96,9 +105,11 @@ describe('skill usage', () => {
     expect(setStash('---\nname: a\n---\nbody\n', false)).toBe(null);
     expect(setStash('---\r\nname: a\r\n---\r\nbody\r\n', true)).toBe('---\r\nname: a\r\ndisable-model-invocation: true\r\n---\r\nbody\r\n');
   });
-  it('leaves the job to a vault that already tracks skill usage', () => {
+  it('starts off with a note on what it reads, and leaves the job to a vault that already tracks skill usage', () => {
     const { root } = setup();
-    expect(resolvePlugins(detect(scanContext(root, root, folders(root)))).find((r) => r.id === 'skills')).toMatchObject({ owner: 'quorum', report: true });
+    const row = resolvePlugins(detect(scanContext(root, root, folders(root)))).find((r) => r.id === 'skills');
+    expect(row).toMatchObject({ owner: 'vault', report: true, isNew: false, evidence: [] });
+    expect(row.note).toMatch(/transcripts in ~\/\.claude\/projects, on this Mac only/);
     put(root, 'scripts/skill-usage.py', 'print(1)\n');
     expect(resolvePlugins(detect(scanContext(root, root, folders(root)))).find((r) => r.id === 'skills')).toMatchObject({ owner: 'vault', evidence: [{ path: 'scripts/skill-usage.py', why: 'script' }] });
   });

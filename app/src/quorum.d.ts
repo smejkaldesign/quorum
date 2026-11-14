@@ -80,8 +80,8 @@ export type KeeperHeld = { count: number; sample: string[] };
 export type KeeperRun = { filed: number; skipped: number; changed: number; reason: string; at: string; error: string | null; off?: boolean; marked?: string[]; held?: KeeperHeld | null };
 // one upkeep job (app/plugins.js): owned by Quorum or by the vault, with the files that show the vault already does it
 export type PluginOwner = 'quorum' | 'vault';
-// report: the plugin reads and shows a result, and writes nothing in the vault on its own
-export type KeeperPlugin = { id: string; title: string; does: string; always: boolean; report: boolean; evidence: { path: string; why: string }[]; owner: PluginOwner; overridden: boolean; isNew: boolean };
+// report: the plugin reads and shows a result, and writes nothing in the vault on its own; note: one line on what it reads
+export type KeeperPlugin = { id: string; title: string; does: string; always: boolean; report: boolean; note: string | null; evidence: { path: string; why: string }[]; owner: PluginOwner; overridden: boolean; isNew: boolean };
 export type KeeperStatus = { on: boolean; facts: boolean; running: boolean; lastRunAt: string | null; filed: number; last: KeeperRun | null; folders: Partial<Record<'people' | 'projects' | 'daily' | 'meetings', string>>; model: boolean; held: KeeperHeld | null; plugins: KeeperPlugin[]; learned: KeeperLearned | null; errors: KeeperErrors };
 // where learned facts go and how much of the budget they use; errors are upkeep failures logged under Application Support
 // pick is the select's value; auto is what Automatic settled on; suggest is the other file when the vault's memory changed since
@@ -89,8 +89,8 @@ export type LearnedTarget = 'claude' | 'learned';
 export type KeeperLearned = { target: LearnedTarget; pick: LearnedTarget | 'auto'; auto: LearnedTarget; suggest: LearnedTarget | null; file: string; budget: number; chars: number; fileChars: number };
 export type KeeperErrors = { count: number; last: { at: string; where: string; message: string } | null; file: string | null };
 // the context budget plugin (app/context-budget.js). scope: user, project and memory load every session; nested loads
-// only when Claude works in that folder. loaded is what Claude Code reads (MEMORY.md stops at 200 lines)
-export type ContextFile = { path: string; abs: string; scope: 'user' | 'project' | 'memory' | 'nested'; chars: number; lines: number; tokens: number; loaded: number; warn: string | null; cut?: number; learnedChars: number };
+// only when Claude works in that folder; paths only for matching files. importedBy names the file whose @import loads it. loaded is what Claude Code reads (MEMORY.md stops at 200 lines)
+export type ContextFile = { path: string; abs: string; scope: 'user' | 'project' | 'memory' | 'nested' | 'paths'; chars: number; lines: number; tokens: number; loaded: number; warn: string | null; cut?: number; learnedChars: number; importedBy: string | null };
 export type ContextBudget = {
   files: ContextFile[]; total: { chars: number; tokens: number }; warnings: string[];
   quorum: { path: string; chars: number; everySession: boolean; share: number | null; aside: { path: string; chars: number } | null } | null;

@@ -52,13 +52,17 @@ export function grade(answer, expect) {
   return { pass: missing.length === 0, missing };
 }
 
-// what a run depends on: the model, and the text of CLAUDE.md and the auto-memory MEMORY.md
-export function fingerprint({ model, root, home = homedir() }) {
-  return { model: String(model ?? ''), claude: sha(read(path.join(root, 'CLAUDE.md'))), memory: sha(read(path.join(projectDir(root, home), 'memory', 'MEMORY.md'))) };
+// what a run depends on: the model, the text of the instructions file the run loads (CLAUDE.md, AGENTS.md or the one
+// included in Memory) and the auto-memory MEMORY.md
+export function fingerprint({ model, root, instructions = path.join(root, 'CLAUDE.md'), home = homedir() }) {
+  return {
+    model: String(model ?? ''), file: instructions ? path.basename(instructions) : 'CLAUDE.md', instructions: sha(instructions ? read(instructions) : null),
+    memory: sha(read(path.join(projectDir(root, home), 'memory', 'MEMORY.md'))),
+  };
 }
 export function changes(prev, cur) {
   if (!prev || !cur) return [];
-  return [prev.model !== cur.model && 'the model', prev.claude !== cur.claude && 'CLAUDE.md', prev.memory !== cur.memory && 'MEMORY.md'].filter(Boolean);
+  return [prev.model !== cur.model && 'the model', prev.instructions !== cur.instructions && (cur.file ?? 'CLAUDE.md'), prev.memory !== cur.memory && 'MEMORY.md'].filter(Boolean);
 }
 
 // ask(prompt) answers one question on the user's model source; print() is the current fingerprint

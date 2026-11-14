@@ -62,7 +62,9 @@ describe('context budget', () => {
     const facts = Array.from({ length: 10 }, (_, i) => `- Fact ${i} about the team ([[note-${i}]], 2026-11-0${i % 9 + 1})`).join('\n');
     const learned = `${LEARNED_OPEN}\n## Learned from meetings\n\n${facts}\n${LEARNED_CLOSE}\n`;
     const { home, root } = setup({ claude: `# Rules\n\n${'x'.repeat(17000)}\n\n${learned}` });
-    const c = contextBudget({ root, home });
+    // without the Instructions item in the agent's prompt, there is no agent cut to report
+    expect(contextBudget({ root, home }).agent).toBe(null);
+    const c = contextBudget({ root, home, instructions: path.join(root, 'CLAUDE.md') });
     expect(c.quorum).toMatchObject({ path: 'CLAUDE.md', chars: learned.length - 1, everySession: true });
     expect(c.quorum.share).toBeGreaterThan(0);
     expect(c.quorum.share).toBeLessThan(0.1);
@@ -77,6 +79,46 @@ describe('context budget', () => {
     const c = contextBudget({ root, home });
     expect(c.quorum).toMatchObject({ chars: pointer.length - 1, aside: { path: '.quorum/learned.md', chars: 34 } });
     expect(c.files.some((f) => f.path === '.quorum/learned.md')).toBe(false);
+  });
+  it('reports the cut for a custom instructions file the agent loads', () => {
+    const { home, root } = setup();
+    const custom = path.join(temp('ctx-custom'), 'RULES.md');
+    writeFileSync(custom, 'z'.repeat(16500));
+    const c = contextBudget({ root, home, instructions: custom });
+    expect(c.agent).toMatchObject({ path: custom, chars: 16500, cut: 500, learnedCut: false });
+    expect(c.warnings.at(-1)).toMatch(/^.*RULES\.md: Quorum's own agent reads the first 16,000 characters, so the last 500/);
+  });
+  it('follows .claude/CLAUDE.md, rules and @imports, once each and no deeper than five hops', () => {
+    const { home, root } = setup({ claude: '# Rules\n\nSee @docs/style.md and @~/shared.md. Mail ada@example.com.\n\n```\n@docs/not-this.md\n```\n' });
+    put(root, 'docs/style.md', 'Style. Also @../CLAUDE.md and @chain/1.md\n');
+    put(root, 'docs/not-this.md', 'skipped\n');
+    for (let i = 1; i <= 7; i++) put(root, `docs/chain/${i}.md`, `Hop ${i} @${i + 1}.md\n`);
+    put(home, 'shared.md', 'Shared rules\n');
+    put(root, '.claude/CLAUDE.md', '# Project rules\n');
+    put(root, '.claude/rules/always.md', '# Always\n');
+    put(root, '.claude/rules/tests.md', '---\npaths:\n  - "test/**"\n---\n# Tests\n');
+    const c = contextBudget({ root, home });
+    const by = Object.fromEntries(c.files.map((f) => [f.path, f]));
+    expect(by['docs/style.md']).toMatchObject({ scope: 'project', importedBy: 'CLAUDE.md' });
+    expect(by['~/shared.md']).toMatchObject({ scope: 'project', importedBy: 'CLAUDE.md' });
+    expect(by['docs/not-this.md']).toBeUndefined();
+    expect(Object.keys(by).some((p) => p.includes('example.com'))).toBe(false);
+    expect(by['.claude/CLAUDE.md'].scope).toBe('project');
+    expect(by['.claude/rules/always.md'].scope).toBe('project');
+    expect(by['.claude/rules/tests.md'].scope).toBe('paths');
+    // CLAUDE.md -> style -> 1 -> 2 -> 3 -> 4 is five hops; 5.md and beyond are not read
+    expect(Object.keys(by).filter((p) => p.startsWith('docs/chain/')).sort()).toEqual(['docs/chain/1.md', 'docs/chain/2.md', 'docs/chain/3.md', 'docs/chain/4.md']);
+    expect(c.files.filter((f) => f.path === 'CLAUDE.md')).toHaveLength(1);
+  });
+  it('finds the learned block in a vault deep under the root or in a dot folder', () => {
+    const learned = `${LEARNED_OPEN}\n- A fact\n${LEARNED_CLOSE}\n`;
+    for (const sub of ['.vault', 'a/b/c/d/e/vault']) {
+      const { home, root } = setup();
+      const vault = path.join(root, sub);
+      put(vault, 'CLAUDE.md', `# Vault\n\n${learned}`);
+      const c = contextBudget({ root, vault, home });
+      expect(c.quorum).toMatchObject({ path: `${sub}/CLAUDE.md`, everySession: false, share: null });
+    }
   });
   it('warns on a CLAUDE.md past the size Claude Code flags', () => {
     const { home, root } = setup({ claude: 'y'.repeat(LARGE_FILE + 1) });

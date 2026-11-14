@@ -912,9 +912,10 @@ function KeeperCard({ brain }: { brain: Brain }) {
       ? (on ? `Quorum does this. Your Agent OS also has ${found}` : `Used already in your Agent OS: ${found}. ${p.report ? 'Quorum leaves this to it.' : 'Quorum reads and links, and writes nothing for this.'}`)
       : on ? `${p.does}${p.id === 'facts' && !k.model ? '. Needs a model source in AI settings' : p.id === 'facts' && k.learned ? `. ${usage(k.learned)}` : ''}`
       : p.report ? `Off. ${p.does}.` : 'Off. Quorum writes nothing for this.';
+    const full = p.note ? `${pdesc}${/[.]$/.test(pdesc) ? '' : '.'} ${p.note}` : pdesc;
     return (
       <Fragment key={p.id}>
-        <Row icon={<Icon width={18} height={18} className={on ? 'ok' : undefined} />} title={p.title} desc={pdesc}>
+        <Row icon={<Icon width={18} height={18} className={on ? 'ok' : undefined} />} title={p.title} desc={full}>
           {p.isNew && <span className="new-badge">New</span>}
           {p.isNew && <button className="pill small-pill" onClick={() => pick(p, 'vault')}>Keep as is</button>}
           <Toggle on={on} disabled={p.always && !p.evidence.length} onChange={(v) => pick(p, v ? 'quorum' : 'vault')} />
