@@ -22,8 +22,9 @@
 //
 //   Kb          { id, name, kind: 'general' | 'meetings', teamId, isDefault, source, role: 'admin' | 'reader',
 //                 createdAt, updatedAt, folders: FolderNode[], access: Access[] | null }
-//               folders is the tree; access is null unless role is admin. source is a Mac-side source attached to
-//               the KB ({ kind: 'folder' | 'git', url, path }) or null; the default KB carries the 0020 team source.
+//               folders is the tree; access is null unless role is admin. source is { kind, url, path, branch,
+//               subpath, name, importedAt } or null: kind folder or git is a Mac-side source (the default KB carries the 0020
+//               team source); kind github or zip is where kb-import (ee/kbImport.js) last read the KB from.
 //   Folder      { id, kbId, parentId, name, position }
 //   FolderNode  { id, parentId, name, position, children: FolderNode[] }   siblings sorted by position, then name
 //   Access      { principal: 'workspace' | 'team' | 'user', userId, teamId, role: 'admin' | 'reader', email, name }
@@ -42,6 +43,8 @@
 import { plain } from './account.js';
 
 export const KB_KINDS = ['general', 'meetings'];
+// folder and git are Mac-side sources (0020, 0025); github and zip say where an import came from (0026, ee/kbImport.js)
+const SOURCE_KINDS = ['folder', 'git', 'github', 'zip'];
 const PAGE = 1000;
 const ROLES = ['admin', 'reader'];
 const PRINCIPALS = ['workspace', 'team', 'user'];
@@ -70,7 +73,9 @@ export const shapeAccess = (a) => ({ principal: a.principal, userId: a.user_id ?
 export const shapeFolder = (f) => (f ? { id: f.id, kbId: f.kb_id, parentId: f.parent_id ?? null, name: f.name, position: f.position ?? 0 } : null);
 export const shapeKb = (k) => ({
   id: k.id, name: k.name, kind: KB_KINDS.includes(k.kind) ? k.kind : 'general', teamId: k.team_id ?? null, isDefault: !!k.is_default,
-  source: k.source && typeof k.source === 'object' && ['folder', 'git'].includes(k.source.kind) ? { kind: k.source.kind, url: k.source.url ?? null, path: k.source.path ?? null } : null,
+  source: k.source && typeof k.source === 'object' && SOURCE_KINDS.includes(k.source.kind)
+    ? { kind: k.source.kind, url: k.source.url ?? null, path: k.source.path ?? null, branch: k.source.branch ?? null, subpath: k.source.subpath ?? null, name: k.source.name ?? null, importedAt: k.source.imported_at ?? null }
+    : null,
   role: k.role === 'admin' ? 'admin' : 'reader', createdAt: k.created_at ?? null, updatedAt: k.updated_at ?? null,
   folders: folderTree(Array.isArray(k.folders) ? k.folders : []),
   access: Array.isArray(k.access) ? k.access.map(shapeAccess) : null,

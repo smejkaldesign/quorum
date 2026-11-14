@@ -52,13 +52,15 @@ function readFrontmatter(text) {
   return fm;
 }
 
-// set one frontmatter key in place; everything else in the file stays byte-for-byte
+// set one frontmatter key in place; everything else in the file stays byte-for-byte. An empty block ("---" then
+// "---") is filled in, so the file never gets a second block in front of it
 function setFrontmatterKey(text, key, value) {
   const line = `${key}: ${value}`;
-  const m = text.match(/^---\n([\s\S]*?)\n---/);
+  const m = text.match(/^---\n(?:([\s\S]*?)\n)??---(?=[ \t]*(?:\n|$))/);
   if (!m) return `---\n${line}\n---\n${text}`;
+  const block = m[1] ?? '';
   const re = new RegExp(`^${key}:.*$`, 'm');
-  const fm = re.test(m[1]) ? m[1].replace(re, line) : `${m[1]}\n${line}`;
+  const fm = re.test(block) ? block.replace(re, () => line) : block ? `${block}\n${line}` : line;
   return `---\n${fm}\n---${text.slice(m[0].length)}`;
 }
 
