@@ -213,11 +213,15 @@ export const parseFacts = (out) => String(out ?? '').split('\n').map((l) => l.tr
 export function createKeeper({ brain, settings, saveSettings = () => {}, guards = () => null, wouldBlock = () => null, runText = null, hasModel = () => false, owner = () => '', log = () => {}, onChange = () => {}, errorLog = null }) {
   // factsBudget and factsNote are null until the user picks one
   const conf = () => ({ on: settings.keeper?.on ?? settings.brainMade === 'quorum', factsBudget: settings.keeper?.factsBudget ?? null, factsTarget: settings.keeper?.factsTarget ?? null, factsNote: settings.keeper?.factsNote ?? null });
-  // the budget for a target: the user's pick for any file, else the smaller CLAUDE.md default or LEARNED_BUDGET
-  const budgetFor = (target) => {
+  // whether CLAUDE.md gets the smaller default, settled once in keeper.json: a vault that has a learned list already
+  // keeps LEARNED_BUDGET until the user picks Default, so no existing list is pruned by it; a vault with none starts small
+  const hasList = (vault, st) => ['CLAUDE.md', LEARNED_FILE, st.factsNoteAt].some((rel) => rel && learnedLines(read(path.join(vault, rel)) ?? '').length > 0);
+  const claudeSmall = (vault, st) => st.claudeSmall ?? !hasList(vault, st);
+  const defaultBudget = (vault, st, target) => (target === 'claude' && claudeSmall(vault, st) ? { budget: CLAUDE_BUDGET, maxLines: CLAUDE_FACTS } : { budget: LEARNED_BUDGET, maxLines: Infinity });
+  // the budget for a target: the user's pick for any file, else the default above
+  const budgetFor = (vault, st, target) => {
     const picked = conf().factsBudget;
-    if (picked != null) return { budget: picked, maxLines: Infinity };
-    return target === 'claude' ? { budget: CLAUDE_BUDGET, maxLines: CLAUDE_FACTS } : { budget: LEARNED_BUDGET, maxLines: Infinity };
+    return picked != null ? { budget: picked, maxLines: Infinity } : defaultBudget(vault, st, target);
   };
   // the vault note's path: the user's, else the one written last (kept in keeper.json), else the default
   const noteFor = (vault, st) => conf().factsNote ?? st.factsNoteAt ?? defaultNote(vault);
@@ -305,7 +309,8 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
   // target holds the list; a file marked generated stops the move, changes nothing and is logged. dropped gets only
   // lines that really left a written list
   const saveFacts = (vault, reg, st, target, facts, changed, dropped) => {
-    const opts = budgetFor(target);
+    st.claudeSmall ??= !hasList(vault, st);
+    const opts = budgetFor(vault, st, target);
     const claudeAbs = path.join(vault, 'CLAUDE.md');
     const learnedAbs = path.join(vault, LEARNED_FILE);
     const claude = read(claudeAbs);
@@ -573,8 +578,11 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     const file = target === 'learned' ? LEARNED_FILE.split(path.sep).join('/') : target === 'note' ? note : 'CLAUDE.md';
     const text = read(path.join(vault, file)) ?? '';
     const suggest = !conf().factsTarget && evidenceTarget(reg) !== auto ? evidenceTarget(reg) : null;
-    const { budget, maxLines } = budgetFor(target);
-    return { target, pick: conf().factsTarget ?? 'auto', auto, suggest, file, note, linked: !!indexFor(vault, reg), budget, maxFacts: Number.isFinite(maxLines) ? maxLines : null, budgetPick: conf().factsBudget ?? 'auto', chars: learnedChars(learnedLines(text)), fileChars: text.length };
+    const { budget, maxLines } = budgetFor(vault, st, target);
+    const def = defaultBudget(vault, st, target);
+    // a CLAUDE.md list kept at LEARNED_BUDGET from before the smaller default: offered, never applied on its own
+    const suggestSmall = target === 'claude' && conf().factsBudget == null && !claudeSmall(vault, st);
+    return { target, pick: conf().factsTarget ?? 'auto', auto, suggest, file, note, linked: !!indexFor(vault, reg), budget, maxFacts: Number.isFinite(maxLines) ? maxLines : null, budgetPick: conf().factsBudget ?? 'auto', defaultBudget: def.budget, defaultFacts: Number.isFinite(def.maxLines) ? def.maxLines : null, suggestSmall, chars: learnedChars(learnedLines(text)), fileChars: text.length };
   };
   // one plugin row handed to Quorum or to the vault. A held run planned with the old owners no longer applies, so it
   // is cleared and a new pass is scheduled
@@ -599,8 +607,10 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     const before = conf();
     const next = { ...settings.keeper };
     if (typeof patch.on === 'boolean') next.on = patch.on;
+    // picking Default is the one way a CLAUDE.md list kept from before the smaller default takes it
+    let small = false;
     if (Number.isInteger(patch.factsBudget) && patch.factsBudget >= 500 && patch.factsBudget <= 20000) next.factsBudget = patch.factsBudget;
-    else if (patch.factsBudget === 'auto') delete next.factsBudget;
+    else if (patch.factsBudget === 'auto') { delete next.factsBudget; small = true; }
     if (patch.factsTarget === 'claude' || patch.factsTarget === 'learned' || patch.factsTarget === 'note') next.factsTarget = patch.factsTarget;
     else if (patch.factsTarget === 'auto') delete next.factsTarget;
     // a note path outside the meetings folder, which the keeper files as meetings; an empty one goes back to the default
@@ -613,10 +623,12 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     settings.keeper = next;
     saveSettings();
     const after = conf();
+    let st = null;
+    if (b && small) { st = loadState(b.vault); st.claudeSmall = true; saveState(b.vault, st); }
     // another budget, file or note applies now, unless upkeep is off or a run is about to do it
-    const factsChanged = ['factsBudget', 'factsTarget', 'factsNote'].some((key) => before[key] !== after[key]);
+    const factsChanged = small || ['factsBudget', 'factsTarget', 'factsNote'].some((key) => before[key] !== after[key]);
     if (b && after.on && !running && factsChanged) {
-      const st = loadState(b.vault);
+      st ??= loadState(b.vault);
       const changed = tidyFacts(b.vault, registry(b), st);
       saveState(b.vault, st);
       if (changed.length) onChange({ ...(lastRun ?? {}), changed: changed.length, reason: 'settings' });

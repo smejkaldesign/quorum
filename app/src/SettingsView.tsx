@@ -991,7 +991,7 @@ function KeeperCard({ brain }: { brain: Brain }) {
                   <option value="claude">CLAUDE.md</option>
                 </select>
                 <select className="set-select" aria-label="Budget" value={String(k.learned.budgetPick)} onChange={async (e) => setK(await window.quorum.keeperSet({ factsBudget: e.target.value === 'auto' ? 'auto' : Number(e.target.value) }))}>
-                  <option value="auto">Default ({k.learned.maxFacts ? `${k.learned.budget.toLocaleString()} characters or ${k.learned.maxFacts} facts` : `${k.learned.budget.toLocaleString()} characters`})</option>
+                  <option value="auto">Default ({k.learned.defaultFacts ? `${k.learned.defaultBudget.toLocaleString()} characters or ${k.learned.defaultFacts} facts` : `${k.learned.defaultBudget.toLocaleString()} characters`})</option>
                   {[1000, 2000, 4000, 8000].map((n) => <option key={n} value={n}>{n.toLocaleString()} characters</option>)}
                 </select>
               </Row>
@@ -999,6 +999,12 @@ function KeeperCard({ brain }: { brain: Brain }) {
             {k.on && factsOn && k.learned?.target === 'note' && (
               <Row icon={<IconNotes width={18} height={18} />} title="Learned facts note" desc="A path inside your Agent OS. Changing it moves the facts to the new note">
                 <NotePathField value={k.learned.note} onSave={async (p) => { const s = await window.quorum.keeperSet({ factsNote: p }); setK(s); return s.learned?.note ?? p; }} />
+              </Row>
+            )}
+            {k.on && factsOn && k.learned?.suggestSmall && (
+              <Row icon={<IconInfo width={18} height={18} />} title="Keep CLAUDE.md to 10 facts?"
+                desc="CLAUDE.md is loaded in every session. New lists keep 10 facts or 800 characters; yours keeps 2,000 characters until you switch. Lines past the new limit move to the changelog.">
+                <button className="pill small-pill" onClick={async () => setK(await window.quorum.keeperSet({ factsBudget: 'auto' }))}>Use the smaller default</button>
               </Row>
             )}
             {k.on && factsOn && k.learned?.suggest && (

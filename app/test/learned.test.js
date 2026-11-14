@@ -226,15 +226,17 @@ describe('facts that carry nothing', () => {
 
 describe('learned facts budget by target', () => {
   const many = (n) => Array.from({ length: n }, (_, i) => fact(`fact ${i} about the plan`, '2026-09-01'));
-  it('keeps CLAUDE.md to 10 facts or 800 characters by default, whichever is smaller', async () => {
+  it('keeps CLAUDE.md to 10 facts or 800 characters by default in a vault that had no list yet', async () => {
     const dir = vault();
-    put(dir, 'CLAUDE.md', addLearned('# Agent OS\n', many(20).map((l) => l.slice(2)), { budget: 10000 }).text);
     const { k } = keeperFor(dir);
     await k.run();
-    const lines = learnedLines(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'));
-    expect(lines).toHaveLength(CLAUDE_FACTS);
-    expect(lines.at(-1)).toContain('Ada owns the launch page');
-    expect(k.status().learned).toMatchObject({ target: 'claude', budget: CLAUDE_BUDGET, maxFacts: CLAUDE_FACTS, budgetPick: 'auto' });
+    expect(k.status().learned).toMatchObject({ target: 'claude', budget: CLAUDE_BUDGET, maxFacts: CLAUDE_FACTS, budgetPick: 'auto', defaultBudget: CLAUDE_BUDGET, defaultFacts: CLAUDE_FACTS, suggestSmall: false });
+    // the list grows past 10 lines; the next run trims it
+    const grown = addLearned(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'), many(20).map((l) => l.slice(2)), { budget: 10000 }).text;
+    put(dir, 'CLAUDE.md', grown);
+    put(dir, '08-meetings/2026-11-11-review.md', NOTE('Review', '2026-11-11'));
+    await k.run();
+    expect(learnedLines(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'))).toHaveLength(CLAUDE_FACTS);
     expect(readFileSync(path.join(dir, CHANGELOG), 'utf8')).toContain(many(20)[0]);
     // long lines reach the character limit before the line limit
     const long = Array.from({ length: 8 }, (_, i) => `fact ${i} ${'about the long planning session '.repeat(4)}`);
@@ -242,6 +244,27 @@ describe('learned facts budget by target', () => {
     expect(learnedLines(r.text).length).toBeLessThan(8);
     expect(learnedChars(learnedLines(r.text))).toBeLessThanOrEqual(CLAUDE_BUDGET);
     expect(r.text).toContain('stays under 800 characters and 10 lines');
+  });
+  it('never prunes a CLAUDE.md list from before the smaller default, and offers it instead', async () => {
+    const dir = vault();
+    const before = addLearned('# Agent OS\n', many(20).map((l) => l.slice(2)), { budget: 10000 }).text;
+    put(dir, 'CLAUDE.md', before);
+    const { k, settings } = keeperFor(dir);
+    await k.run();
+    const lines = learnedLines(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'));
+    expect(lines).toHaveLength(21);
+    expect(existsSync(path.join(dir, CHANGELOG)) && readFileSync(path.join(dir, CHANGELOG), 'utf8')).not.toContain('Moved out of the learned facts');
+    expect(k.status().learned).toMatchObject({ budget: LEARNED_BUDGET, maxFacts: null, budgetPick: 'auto', defaultBudget: LEARNED_BUDGET, defaultFacts: null, suggestSmall: true });
+    // a later run keeps it too
+    put(dir, '08-meetings/2026-11-11-review.md', NOTE('Review', '2026-11-11'));
+    await k.run();
+    expect(learnedLines(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'))).toHaveLength(21);
+    // picking Default applies the smaller one, with the pruned lines in the changelog
+    k.set({ factsBudget: 'auto' });
+    expect(learnedLines(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'))).toHaveLength(CLAUDE_FACTS);
+    expect(readFileSync(path.join(dir, CHANGELOG), 'utf8')).toContain(many(20)[0]);
+    expect(k.status().learned).toMatchObject({ budget: CLAUDE_BUDGET, defaultFacts: CLAUDE_FACTS, suggestSmall: false });
+    expect(settings.keeper).toEqual({ on: true });
   });
   it('keeps 2,000 characters in the other targets, and an explicit budget wins in CLAUDE.md', async () => {
     const dir = vault();
