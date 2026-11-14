@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Billing, KnowledgeDoc, KnowledgeNote, QueueItem, TeamHit, TeamLocal, TeamSource, TeamSourceKind, TreeItem } from '../../src/quorum';
 import type { GraphData } from '../../src/Graph';
 import { Graph } from '../../src/Graph';
@@ -8,6 +9,7 @@ import { IconBack, IconChevron, IconDoc, IconFolder, IconGraph, IconReset, IconS
 import { AccountCard, EE_MARKER, useAccount } from './Account';
 import { billingApi, knowledgeApi, teamApi } from './accountMock';
 import { BillingPage, hasService } from './Billing';
+import { KbBrowser, useTeamSide } from './KbBrowser';
 
 const api = knowledgeApi();
 const team = teamApi();
@@ -17,8 +19,9 @@ const onTime = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString(u
 
 // The Knowledge tab, Cloud: the workspace's team knowledge. Admins pick where it comes from (the notes members share
 // through Quorum, a folder every member has, or a git repository each Mac clones); members browse, search and read it;
-// contributions still go through the review queue. The gates come first: sign in, a plan with Cloud service, and a
-// team switched on in Settings › Admin › Teams.
+// contributions still go through the review queue. The knowledge bases the person can read sit in a tree on the left
+// (KbBrowser.tsx). The gates come first: sign in, a plan with Cloud service, and a team switched on in Settings › Admin
+// › Teams.
 export function KnowledgeTab() {
   const a = useAccount();
   // the plan decides whether team knowledge shows; unknown (loading, or the project did not answer) keeps the gate closed,
@@ -69,13 +72,13 @@ export function KnowledgeTab() {
       </div>
     );
   }
-  return <TeamKnowledge workspace={a.workspace.name} admin={a.workspace.role !== 'member'} />;
+  return <TeamKnowledge workspace={a.workspace.name} admin={a.workspace.role !== 'member'} me={a.userId} />;
 }
 
 type SourceState = { source: TeamSource; local: TeamLocal };
 
 // the source and its state on this Mac, loaded once per open and after every change
-function TeamKnowledge({ workspace, admin }: { workspace: string; admin: boolean }) {
+function TeamKnowledge({ workspace, admin, me }: { workspace: string; admin: boolean; me: string | null }) {
   const [state, setState] = useState<SourceState | null>(null);
   const [error, setError] = useState('');
   // the source card opens on its own for an admin whose source is not on this Mac yet, and closes when asked
@@ -88,23 +91,29 @@ function TeamKnowledge({ workspace, admin }: { workspace: string; admin: boolean
     const r = await team.teamPull();
     if (r.error) setError(r.error); else if (r.local) setState((s) => (s ? { ...s, local: r.local! } : s));
   };
-  if (!state) return <div className="tk" data-ee={EE_MARKER}>{error && <div className="tk-body"><p className="error">{error}</p></div>}</div>;
-  const kind = state.source.kind;
-  const showSetup = setup ?? (admin && kind !== 'sync' && !state.local.exists && !state.local.pulling);
+  // the knowledge bases do not wait for the team source: while it loads, or when it failed, the KB tree still shows
+  const kind = state?.source.kind ?? null;
+  const showSetup = !!state && (setup ?? (admin && kind !== 'sync' && !state.local.exists && !state.local.pulling));
   return (
     <div className="tk" data-ee={EE_MARKER}>
       <div className="tk-head">
         <h2>{workspace}</h2>
-        <span className="tk-source muted" title={state.local.root ?? undefined}>{describeSource(state.source)}</span>
+        {state && <span className="tk-source muted" title={state.local.root ?? undefined}>{describeSource(state.source)}</span>}
         <label className="kb-search"><IconSearch width={14} height={14} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={kind === 'sync' ? 'Search shared notes' : 'Search team knowledge'} aria-label="Search team knowledge" /></label>
-        <span className="tk-count muted">{kind === 'sync' ? '' : `${state.local.notes} ${state.local.notes === 1 ? 'note' : 'notes'}`}</span>
-        {kind !== 'sync' && <button className="tk-tool" onClick={pull} disabled={state.local.pulling} aria-label="Refresh team knowledge" data-tip="Refresh"><IconReset width={15} height={15} /></button>}
-        {admin && <button className={`tk-tool ${showSetup ? 'on' : ''}`} onClick={() => setSetup(!showSetup)} aria-label="Knowledge source" data-tip="Knowledge source"><IconSliders width={15} height={15} /></button>}
+        <span className="tk-count muted">{!state || kind === 'sync' ? '' : `${state.local.notes} ${state.local.notes === 1 ? 'note' : 'notes'}`}</span>
+        {state && kind !== 'sync' && <button className="tk-tool" onClick={pull} disabled={state.local.pulling} aria-label="Refresh team knowledge" data-tip="Refresh"><IconReset width={15} height={15} /></button>}
+        {state && admin && <button className={`tk-tool ${showSetup ? 'on' : ''}`} onClick={() => setSetup(!showSetup)} aria-label="Knowledge source" data-tip="Knowledge source"><IconSliders width={15} height={15} /></button>}
       </div>
       {error && <p className="error tk-error">{error}</p>}
-      {showSetup && admin && <SourceCard state={state} onChange={(s) => { setState(s); setSetup(false); }} onClose={() => setSetup(false)} />}
-      {!showSetup && kind !== 'sync' && !state.local.exists && <MissingFolder state={state} admin={admin} onChange={(s) => setState(s)} />}
-      {kind === 'sync' ? <Shared admin={admin} query={query} /> : state.local.exists && <Browser admin={admin} query={query} state={state} />}
+      {state && showSetup && admin && <SourceCard state={state} onChange={(s) => { setState(s); setSetup(false); }} onClose={() => setSetup(false)} />}
+      <KbBrowser me={me} query={query}>
+        {!state ? (error ? <div className="tk-body"><p className="tk-empty">Team knowledge did not load. The knowledge bases on the left still work.</p></div> : null) : (
+          <>
+            {!showSetup && kind !== 'sync' && !state.local.exists && <MissingFolder state={state} admin={admin} onChange={(s) => setState(s)} />}
+            {kind === 'sync' ? <Shared admin={admin} query={query} /> : state.local.exists && <Browser admin={admin} query={query} state={state} />}
+          </>
+        )}
+      </KbBrowser>
     </div>
   );
 }
@@ -328,26 +337,33 @@ function Browser({ admin, query, state }: { admin: boolean; query: string; state
     if (r.error) setError(r.error); else if (r.rel) read(r.rel);
   };
   const toggle = (p: string) => setOpenSet((s) => { const n = new Set(s); if (n.has(p)) n.delete(p); else n.add(p); return n; });
+  // inside the KB browser the file tree goes into the left column under "Team knowledge", so the tab keeps one column
+  // of trees; a file picked there brings the team view forward
+  const side = useTeamSide();
+  const pick = (rel: string) => { side?.showTeam(); read(rel); };
+  const files = hits ? (
+    <div className="tk-tree">
+      {hits.map((h) => (
+        <button key={h.rel} className={`tk-item ${doc?.rel === h.rel ? 'sel' : ''}`} onClick={() => pick(h.rel)}>
+          <IconDoc width={14} height={14} /><span className="tk-item-text"><span>{h.title}</span>{h.snippet && <em>{h.snippet}</em>}</span>
+        </button>
+      ))}
+      {!hits.length && <p className="tk-empty">No note matches "{query}".</p>}
+    </div>
+  ) : (
+    <div className="tk-tree" role="tree" aria-label="Team knowledge files">
+      <Tree items={tree} depth={side?.slot ? 1 : 0} open={openSet} selected={doc?.rel ?? ''} onToggle={toggle} onOpen={pick} />
+      {!tree.length && <p className="tk-empty">No notes in this folder yet.</p>}
+    </div>
+  );
   return (
-    <div className="tk-browser">
-      <aside className="tk-side">
-        {hits ? (
-          <div className="tk-tree">
-            {hits.map((h) => (
-              <button key={h.rel} className={`tk-item ${doc?.rel === h.rel ? 'sel' : ''}`} onClick={() => read(h.rel)}>
-                <IconDoc width={14} height={14} /><span className="tk-item-text"><span>{h.title}</span>{h.snippet && <em>{h.snippet}</em>}</span>
-              </button>
-            ))}
-            {!hits.length && <p className="tk-empty">No note matches "{query}".</p>}
-          </div>
-        ) : (
-          <div className="tk-tree" role="tree">
-            <Tree items={tree} depth={0} open={openSet} selected={doc?.rel ?? ''} onToggle={toggle} onOpen={read} />
-            {!tree.length && <p className="tk-empty">No notes in this folder yet.</p>}
-          </div>
-        )}
-        <p className="tk-side-foot muted">{admin ? 'Read-only here. Edits go through the source itself.' : 'Read-only. An admin sets the source.'}</p>
-      </aside>
+    <div className={`tk-browser ${side?.slot ? 'solo' : ''}`}>
+      {side?.slot ? createPortal(files, side.slot) : (
+        <aside className="tk-side">
+          {files}
+          <p className="tk-side-foot muted">{admin ? 'Read-only here. Edits go through the source itself.' : 'Read-only. An admin sets the source.'}</p>
+        </aside>
+      )}
       <section className="tk-main">
         {doc ? (
           <Reader doc={doc} teamText={false} onTeamText={() => {}} root={root} onBack={() => setDoc(null)} onWiki={follow} />

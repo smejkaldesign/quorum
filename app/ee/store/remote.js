@@ -50,8 +50,9 @@ export function createRemote({ client, workspaceId, userId } = {}) {
   };
   const softDelete = (table, ids) => (ids.length ? run(client.from(table).update({ deleted_at: now() }).in('id', ids), `${table} delete`) : Promise.resolve([]));
 
-  // one row per vault file; path is relative to the vault, body is the whole markdown file
-  const noteRow = ({ id, rel, text, frontmatter = {}, hash = '', mtime = null }) => ({ id, path: rel, frontmatter, body: text, hash, mtime });
+  // one row per vault file; path is relative to the vault, body is the whole markdown file. A note written straight
+  // into a knowledge base (ee/kbImport.js) also carries kbId and folderId; every other push leaves both columns alone
+  const noteRow = ({ id, rel, text, frontmatter = {}, hash = '', mtime = null, kbId, folderId = null }) => ({ id, path: rel, frontmatter, body: text, hash, mtime, ...(kbId ? { kb_id: kbId, folder_id: folderId } : {}) });
   const meetingRow = ({ id, title = '', startedAt = null, endedAt = null, participants = [], visibility = 'private', noteId = null }) => ({ id, title, started_at: startedAt, ended_at: endedAt, participants, visibility, note_id: noteId });
   const noteByPath = async (rel) => first(await run(live('notes').eq('path', rel).limit(1), 'notes read'));
   const noteBody = async (rel) => { const r = await noteByPath(rel); if (!r) throw new Error(`remote store: note not found: ${rel}`); return r.body; };

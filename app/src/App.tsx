@@ -18,6 +18,9 @@ import markDev from '../assets/quorum-mark-dev.png';
 const mark = window.quorum.isDev ? markDev : markProd;
 if (window.quorum.isDev) document.documentElement.dataset.dev = '';
 import { HistoryView } from './HistoryView';
+import { UpNext } from './UpNext';
+import { nextMenuIndex, updateBadge } from './headerItems';
+import { useExclusiveMenu } from './menuBus';
 import type { KbCommand } from './KnowledgeView';
 import { Composer } from './Composer';
 import type { ConnectorsTarget, OpenSettingsDetail, SettingsPageId } from './connectorsNav';
@@ -26,7 +29,7 @@ import { Avatar, SpeakerName, similarCounts, type SpeakerInfo } from './Speaker'
 import { useNotetaker } from './flags';
 import { RecordMenu } from './Record';
 import { recordChoices, type RecordChoice } from './noteRecord';
-import { IconFolderOpen, IconPerson, IconGear, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconBack, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, IconRecord, Wave } from './icons';
+import { IconFolderOpen, IconPerson, IconClose, IconMenu, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconBack, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, IconRecord, Wave } from './icons';
 
 // one speaker turn as main.js built it; a turn that grows arrives again with the same id and replace: true
 type Line = { id: number; channel: 'me' | 'them'; text: string; start: number } & Partial<SpeakerInfo>;
@@ -95,6 +98,75 @@ function CrashArt() {
   );
 }
 
+// the header's update item (headerItems.ts): nothing while idle, progress while a version downloads, then a button
+// that restarts Quorum into the new version
+function UpdateItem({ state }: { state: UpdateState | null }) {
+  const b = updateBadge(state);
+  if (b.kind === 'progress') return (
+    <span className="update-progress" role="progressbar" aria-label={b.label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={b.percent} data-tip={b.label}>
+      <IconDownload width={13} height={13} /><span className="update-track"><i style={{ width: `${b.percent}%` }} /></span>
+    </span>
+  );
+  if (b.kind === 'ready') return <button className="pill update-pill" data-tip={b.tip} onClick={() => window.quorum.updateInstall()}><IconDownload width={14} height={14} />{b.label}</button>;
+  return null;
+}
+
+// the header menu: the Agent OS and team vault, Settings, Hide (the whole app, as Cmd+H), and Quit last. Arrow keys, Home and End move between
+// items, Escape closes it and puts focus back on the menu button
+function AppMenu({ brain, active, onMemory, onSettings, next }: { brain: Brain | null; active: boolean; onMemory: () => void; onSettings: () => void; next: React.RefObject<HTMLButtonElement | null> }) {
+  const [open, setOpen] = useState(false);
+  const shut = useCallback(() => setOpen(false), []);
+  useExclusiveMenu('app', open, shut);
+  const button = useRef<HTMLButtonElement>(null);
+  const list = useRef<HTMLDivElement>(null);
+  const items = () => Array.from(list.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
+  useEffect(() => {
+    if (!open) return;
+    items().find((b) => !b.disabled)?.focus();
+    const close = () => setOpen(false);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [open]);
+  const close = () => { setOpen(false); button.current?.focus(); };
+  const run = (fn: () => void) => () => { setOpen(false); fn(); };
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+    // Tab leaves the menu for the control after it (the close button), Shift+Tab for the menu button
+    if (e.key === 'Tab') { e.preventDefault(); setOpen(false); (e.shiftKey ? button.current : next.current)?.focus(); return; }
+    const all = items();
+    const i = nextMenuIndex(all.indexOf(document.activeElement as HTMLButtonElement), e.key, all.map((b) => b.disabled));
+    if (i === null) return;
+    e.preventDefault();
+    all[i].focus();
+  };
+  return (
+    <div className="status-wrap">
+      <button ref={button} className={`icon-btn brain ${active ? 'active' : ''}`} data-tip="Menu" aria-label="Menu"
+        aria-haspopup="menu" aria-expanded={open}
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        onKeyDown={(e) => { if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !open) { e.preventDefault(); setOpen(true); } }}>
+        <IconMenu width={19} height={19} />
+      </button>
+      {open && (
+        <div ref={list} className="menu brain-menu" role="menu" aria-label="Quorum" onKeyDown={onKey} onClick={(e) => e.stopPropagation()}>
+          <button role="menuitem" className="brain-item" onClick={run(onMemory)}>
+            <IconFolder width={18} height={18} className={brain ? 'ok' : 'err'} />
+            <strong>{brain ? brain.name : 'No Agent OS'}</strong><em>{brain ? brain.root.replace(/^\/Users\/[^/]+/, '~') : 'Not connected'}</em>
+          </button>
+          <button role="menuitem" className="brain-item" disabled>
+            <IconFolderOpen width={18} height={18} /><strong>Team vault</strong><em className="soon">Coming soon</em>
+          </button>
+          <div className="menu-sep" role="separator" />
+          <button role="menuitem" onClick={run(onSettings)}>Settings</button>
+          <button role="menuitem" onClick={run(() => window.quorum.hideApp())}>Hide Quorum</button>
+          <div className="menu-sep" role="separator" />
+          <button role="menuitem" onClick={run(() => window.quorum.quit())}>Quit Quorum</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const SUGGESTIONS = ['Summarize so far', 'What did I commit to?', 'Any open questions?'];
 
 export function App() {
@@ -138,6 +210,9 @@ export function App() {
   useEffect(() => { if (tab === 'knowledge' && account && !showsKnowledge(EDITION, account)) setTab('home'); }, [tab, account, setTab]);
   // off a call, chat lives inside Home as a conversation opened from Ask anything or a saved chat
   const [convoOpen, setConvoOpen] = useState(false);
+  // History filters hide Up next while they are on (HistoryView reports them)
+  const [histFiltered, setHistFiltered] = useState(false);
+  const closeRef = useRef<HTMLButtonElement>(null);
   const [me, setMe] = useState<{ name: string; photo: string | null }>({ name: '', photo: null });
   const [focusAsk, setFocusAsk] = useState(0);
   const convoRef = useRef(false);
@@ -167,7 +242,6 @@ export function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [setView, setTab]);
-  const [menuOpen, setMenuOpen] = useState<null | 'status' | 'model' | 'brain'>(null);
   const [brain, setBrain] = useState<Brain | null>(null);
   const [startingChat, setStartingChat] = useState<string | null>(null);
   // a fresh install shows the wizard until onboarding-done; null until the main process answers
@@ -197,7 +271,7 @@ export function App() {
   const [notesDraft, setNotesDraft] = useState<NotesDraft | null>(null);
   const [meta, setMeta] = useState<MeetingMeta | null>(null);
   const [settings, setSettings] = useState<Settings>({ autoListen: false, model: 'sonnet', suggestions: true });
-  // a downloaded update shows as one button left of Listen; everything else about updates lives in Preferences
+  // an update shows left of Listen: its progress while it downloads, then Update to vX; the rest lives in Preferences
   const [update, setUpdate] = useState<UpdateState | null>(null);
   useEffect(() => { window.quorum.updateStatus().then((s) => setUpdate(s ?? null)).catch(() => {}); return window.quorum.onUpdate(setUpdate); }, []);
   const [themName, setThemName] = useState<string | null>(null);
@@ -207,7 +281,6 @@ export function App() {
   const [unread, setUnread] = useState(false);
   const tabRef = useRef<Tab>('chat');
   tabRef.current = tab;
-  const toggleMenu = (m: 'status' | 'model' | 'brain') => (e: React.MouseEvent) => { e.stopPropagation(); setMenuOpen((o) => (o === m ? null : m)); };
   const chatEnd = useRef<HTMLDivElement>(null);
   // a sent question is pinned to the top of the pane while its answer streams in below it; the spacer under the answer
   // gives the question room to reach the top and shrinks as the answer grows. Everything else scrolls to the end
@@ -321,12 +394,6 @@ export function App() {
   useEffect(() => { setTab(inCall(phase) ? 'chat' : 'home'); }, [inCall(phase)]);
   // History gets the big Granola-sized window; everything else is the docked panel
   useEffect(() => { notesEnd.current?.scrollIntoView({ block: 'end' }); }, [lines, partial]);
-  useEffect(() => {
-    if (!menuOpen) return;
-    const close = () => setMenuOpen(null);
-    window.addEventListener('click', close);
-    return () => window.removeEventListener('click', close);
-  }, [menuOpen]);
 
 
   async function send(text = draft, files: string[] = []) {
@@ -443,7 +510,7 @@ export function App() {
           </nav>
           )}
           <div className="status-wrap">
-            {update?.status === 'ready' && <button className="pill update-pill" data-tip={`Install Quorum ${update.version} and restart`} onClick={() => window.quorum.updateInstall()}><IconDownload width={14} height={14} />Update</button>}
+            <UpdateItem state={update} />
             {phase === 'listening' && <button className="icon-btn call-btn" aria-label="Pause" data-tip="Pause" onClick={() => window.quorum.pause()}><IconPause /></button>}
             {phase === 'paused' && <button className="icon-btn call-btn" aria-label="Resume" data-tip="Resume" onClick={() => window.quorum.resume()}><IconPlay /></button>}
             {(phase === 'listening' || phase === 'paused') && <button className="icon-btn call-btn" aria-label="Stop and summarize" data-tip="Stop and summarize" onClick={() => window.quorum.end()}><IconStop /></button>}
@@ -459,28 +526,13 @@ export function App() {
             )}
             {recordOpen && phase === 'idle' && <RecordMenu choice={recordChoice} onChoice={setRecordChoice} onStart={startRecord} />}
           </div>
-          <div className="status-wrap">
-            <button className={`icon-btn brain ${view === 'settings' ? 'active' : ''}`} data-tip="Settings" aria-label="Settings and Agent OS"
-              onClick={toggleMenu('brain')} aria-haspopup="menu" aria-expanded={menuOpen === 'brain'}>
-              <IconGear width={19} height={19} />
-            </button>
-            {menuOpen === 'brain' && (
-              <div className="menu brain-menu" role="menu">
-                <button role="menuitem" className="brain-item" onClick={() => { setMenuOpen(null); openSettings('memory'); }}>
-                  <IconFolder width={18} height={18} className={brain ? 'ok' : 'err'} />
-                  <strong>{brain ? brain.name : 'No Agent OS'}</strong><em>{brain ? brain.root.replace(/^\/Users\/[^/]+/, '~') : 'Not connected'}</em>
-                </button>
-                <button role="menuitem" className="brain-item" disabled>
-                  <IconFolderOpen width={18} height={18} /><strong>Team vault</strong><em className="soon">Coming soon</em>
-                </button>
-                <div className="menu-sep" />
-                <button role="menuitem" onClick={() => { setMenuOpen(null); openSettings('preferences'); }}>Settings</button>
-                <button role="menuitem" onClick={() => window.quorum.quit()}>Quit Quorum</button>
-              </div>
-            )}
-          </div>
+          <AppMenu brain={brain} active={view === 'settings'} onMemory={() => openSettings('memory')} onSettings={() => openSettings('preferences')} next={closeRef} />
+          <button ref={closeRef} className="icon-btn close-win" aria-label="Close window" data-tip="Close window. Quorum keeps running in the menu bar." data-tip-pos="left" onClick={() => window.quorum.hideWindow()}>
+            <IconClose width={17} height={17} />
+          </button>
         </div>
       </header>
+      {view === 'main' && <UpNext hidden={(inCall(phase) && (tab === 'chat' || tab === 'notes' || tab === 'mine')) || (tab === 'home' && !convoOpen && histFiltered)} />}
 
       {view === 'settings' ? (
         <div className="body wide flush">
@@ -489,7 +541,7 @@ export function App() {
       ) : <>
       {tab === 'home' && !convoOpen && (
         <div className="body wide">
-          <HistoryView brain={brain} focusAsk={focusAsk} onAsk={(q, f) => { setConvoOpen(true); send(q, f); }} onOpenChat={openChat} />
+          <HistoryView brain={brain} focusAsk={focusAsk} onAsk={(q, f) => { setConvoOpen(true); send(q, f); }} onOpenChat={openChat} onFiltered={setHistFiltered} />
         </div>
       )}
 
