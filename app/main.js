@@ -44,7 +44,10 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 // should watch a call, so a development copy leaves auto-listen off while the installed app is running (see below).
 app.setPath('userData', DATA_DIR);
 app.setPath('sessionData', DATA_DIR);
-const singleInstance = app.requestSingleInstanceLock();
+// a second launch in the same environment hands over: the running copy gets 'second-instance' and opens its window,
+// and this one exits here, before any start-up work and without the will-quit save that would overwrite the running
+// copy's state file
+if (!app.requestSingleInstanceLock()) process.exit(0);
 const installedCopyRunning = () => { try { return execFileSync('/usr/bin/pgrep', ['-f', '/Applications/Quorum.app/Contents/MacOS/Quorum'], { encoding: 'utf8' }).trim().length > 0; } catch { return false; } };
 const autoListenAllowed = () => { if (isDevelopment && installedCopyRunning()) { log('auto-listen left to the installed Quorum, which is running'); return false; } return true; };
 // the packaged app carries its own audio helper; in development it comes straight from the Swift build
@@ -2176,10 +2179,8 @@ ipcMain.handle('ax-status', () => {
   helperSend({ cmd: 'axStatus', prompt: firstAsk });
 });
 
-// a second launch in the same environment hands over: the running copy gets 'second-instance' and opens its window,
-// and this one quits before it shows anything
-if (!singleInstance) app.quit();
-else app.on('second-instance', () => openMain());
+// a launch that arrives before the window exists opens it once the app is ready and the window is made
+app.on('second-instance', () => { app.whenReady().then(openMain); });
 
 ipcMain.on('is-dev', (e) => { e.returnValue = !app.isPackaged; });
 // which environment this copy runs; the cloud edition's account.js answers these with the active Supabase config, the
@@ -2277,7 +2278,11 @@ async function control({ cmd, args = {} }) {
 // unix socket paths are capped at 104 bytes on macOS, so a deep home folder falls back to the temp dir
 const CONTROL_SOCK = (() => { const p = path.join(SESSIONS, '..', 'quorum.sock'); return p.length < 100 ? p : path.join(tmpdir(), `quorum-${process.getuid?.() ?? 'u'}.sock`); })();
 let stopControl = null;
-app.on('will-quit', () => { meeting.capturing = false; writeState(); stopControl?.(); });
+app.on('will-quit', () => {
+  // only the copy that holds the lock owns the state file
+  if (!app.hasSingleInstanceLock()) return;
+  meeting.capturing = false; writeState(); stopControl?.();
+});
 app.whenReady().then(() => {
   if (!app.hasSingleInstanceLock()) return;
   // installed builds check their feed on launch, every six hours and when the window comes back after an hour; the

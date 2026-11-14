@@ -3,9 +3,13 @@
 // dev-app.cjs wrapper can use it too
 const FLAGS = { '--version': 'version', '-v': 'version', '--help': 'help', '-h': 'help' };
 
-// argv[0] is the binary; in development argv[1] is the app folder, which never matches a flag
+// argv[0] is the binary; in development argv[1] is the app folder, which never matches a flag. A flag counts only as
+// a whole argument (--version=2 or --versions do not), and nothing after `--` counts, since that is passed through
 function startupFlag(argv) {
-  for (const arg of argv.slice(1)) if (Object.hasOwn(FLAGS, arg)) return FLAGS[arg];
+  for (const arg of argv.slice(1)) {
+    if (arg === '--') break;
+    if (Object.hasOwn(FLAGS, arg)) return FLAGS[arg];
+  }
   return null;
 }
 

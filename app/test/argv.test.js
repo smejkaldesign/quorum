@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import argv from '../argv.cjs';
 
 const { startupFlag, startupText } = argv;
@@ -21,6 +22,12 @@ describe('startupFlag', () => {
     expect(startupFlag(['/tmp/Quorum', '--inspect', 'constructor', 'toString'])).toBeNull();
     expect(startupFlag(['--version'])).toBeNull();
   });
+
+  it('reads only whole arguments before --', () => {
+    expect(startupFlag(['/tmp/Quorum', '--', '--version'])).toBeNull();
+    expect(startupFlag(['/tmp/Quorum', '--version=1', '--versions', '-vv', 'x--help'])).toBeNull();
+    expect(startupFlag(['/tmp/Quorum', '--inspect', '-v', '--', '--help'])).toBe('version');
+  });
 });
 
 describe('startupText', () => {
@@ -33,5 +40,13 @@ describe('startupText', () => {
     expect(help).toContain('Quorum 0.3.1');
     expect(help).toContain('--version');
     expect(help).toContain('--help');
+  });
+});
+
+describe('main.js', () => {
+  it('imports startup-flags.js first, so --version exits before any other module runs', () => {
+    const main = readFileSync(new URL('../main.js', import.meta.url), 'utf8');
+    const first = main.split('\n').find((line) => line.startsWith('import '));
+    expect(first).toBe("import './startup-flags.js';");
   });
 });
