@@ -43,7 +43,7 @@ describe('keeper pieces', () => {
     const more = addLearned(t, Array.from({ length: 50 }, (_, i) => `fact number ${i} about the launch plan`)).text;
     expect(learnedChars(learnedLines(more))).toBeLessThanOrEqual(LEARNED_BUDGET);
     expect(more).toContain('# Mine');
-    expect(parseFacts('- one\n- none\n\n- two\n- three\n- four')).toEqual(['one', 'two', 'three']);
+    expect(parseFacts('- Ada leads design\n- none\n\n- Ship in Q1\n- Bo owns pricing\n- Cy runs support')).toEqual(['Ada leads design', 'Ship in Q1', 'Bo owns pricing']);
   });
 });
 
