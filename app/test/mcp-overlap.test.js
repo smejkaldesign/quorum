@@ -119,10 +119,10 @@ describe('matcher order and packages', () => {
     expect(providerOf(srv('meetings', { command: 'granola-mcp' }))).toBe('granola');
   });
   it('reads package names, never folder paths', () => {
-    const fs = srv('files', { command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '/Users/me/Documents/Granola', '~/Documents/Granola'] });
+    const fs = srv('files', { command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '/tmp/home/Documents/Granola', '~/Documents/Granola'] });
     expect(packagesOf(fs)).toEqual(['@modelcontextprotocol/server-filesystem']);
     expect(providerOf(fs)).toBeNull();
-    expect(providerOf(srv('files', { command: '/Users/me/Documents/Granola/bin/serve', args: ['./Granola'] }))).toBeNull();
+    expect(providerOf(srv('files', { command: '/tmp/home/Documents/Granola/bin/serve', args: ['./Granola'] }))).toBeNull();
     expect(packagesOf(srv('x', { command: 'npx', args: ['-y', '@notionhq/notion-mcp-server@latest'] }))).toEqual(['@notionhq/notion-mcp-server']);
     expect(packagesOf(srv('x', { command: 'docker', args: ['run', '-i', '--rm', 'ghcr.io/github/github-mcp-server:latest'] }))).toContain('ghcr.io/github/github-mcp-server:latest');
     expect(packagesOf(srv('x', { command: 'uvx', args: ['granola-mcp-py'] }))).toEqual(['granola-mcp-py']);
