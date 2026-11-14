@@ -362,6 +362,10 @@ html.popup-root, html.popup-root body { background: transparent; }
 .md li { margin: 3px 0; }
 .md code { font: 13px ui-monospace, "SF Mono", Menlo, monospace; background: rgba(255, 255, 255, 0.07); padding: 1px 5px; border-radius: 5px; }
 .md-link { color: #b48cff; padding: 0; text-decoration: underline; text-underline-offset: 2px; font: inherit; }
+.md-img { display: block; max-width: 100%; max-height: 480px; border-radius: 8px; margin: 6px 0; }
+.md-image-alt { color: var(--muted); font-style: italic; }
+/* an image in the note editor: its alt text as a chip; the preview shows the picture */
+.md-image-ref { display: inline-block; padding: 0 6px; border-radius: 6px; background: var(--card-2); color: var(--muted); font-size: 0.92em; }
 
 /* long paths and words must wrap inside chat cards instead of widening them */
 .quorum-row { grid-template-columns: 30px minmax(0, 1fr); }
@@ -1681,6 +1685,15 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .kb-person { display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 10px; padding: 6px 4px; border-radius: 8px; font-size: 14px; cursor: pointer; }
 .kb-person:hover { background: rgba(255, 255, 255, 0.04); }
 .kb-person input { margin: 0; accent-color: var(--brand); }
+.kb-person:has(.kb-role) { grid-template-columns: 18px 1fr auto auto; }
+.kb-role { background: var(--card); color: var(--text); border: 1px solid var(--line-2); border-radius: 6px; padding: 2px 6px; font-size: 13px; }
+/* a note of a knowledge base hosted by Quorum (ee/src/KbHostedNote.tsx) */
+.kbh-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+.kbh-title { width: 100%; background: transparent; border: 0; outline: none; color: var(--text); font-size: 28px; font-weight: 700; padding: 0; margin: 0 0 12px; }
+.kbh-conflict { border: 1px solid var(--line-2); background: var(--card); border-radius: 10px; padding: 12px 14px; margin: 0 0 14px; display: grid; gap: 8px; }
+.kbh-theirs { max-height: 220px; overflow: auto; white-space: pre-wrap; background: var(--panel); border-radius: 8px; padding: 10px; margin: 0; font-size: 13px; }
+.kbh-files { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 10px; }
+.kbh-file { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
 .kb-person em { font-style: normal; font-size: 12px; }
 .kb-import { display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
 .kb-import progress { width: min(420px, 100%); height: 6px; accent-color: var(--brand); }

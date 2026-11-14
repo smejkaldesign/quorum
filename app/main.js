@@ -1743,6 +1743,8 @@ if (EDITION === 'cloud') (await loadEE('teamKnowledge.js')).registerTeamKnowledg
 if (EDITION === 'cloud') (await loadEE('knowledgeBases.js')).registerKnowledgeBases({ ipcMain, account, log });
 // teams inside a workspace: members, leads and each team's meetings knowledge base (ee/teams.js)
 if (EDITION === 'cloud') (await loadEE('teams.js')).registerTeams({ ipcMain, account, log });
+// knowledge bases hosted by Quorum: notes written in the Knowledge tab and their attachments (ee/kbHosted.js)
+if (EDITION === 'cloud') (await loadEE('kbHosted.js')).registerKbHosted({ ipcMain, account, log, cacheDir: path.join(DATA_DIR, 'kb-files'), openPath: (p) => shell.openPath(p), pickFile: async () => { const r = await dialog.showOpenDialog(win, { title: 'Attach a file', message: 'Choose an image or a PDF up to 25 MB.', properties: ['openFile'], filters: [{ name: 'Images and PDFs', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'pdf'] }] }); return r.canceled ? null : r.filePaths[0] ?? null; } });
 // knowledge base search for chat and for the quorum CLI and MCP server, as the signed-in person (ee/kbSearch.js)
 const kbModule = EDITION === 'cloud' ? await loadEE('kbSearch.js') : null;
 if (kbModule) kbSearch = kbModule.createKbSearch({ account, redact: (t) => suggester.redactLines(t), log });

@@ -94,9 +94,10 @@ export function createRemote({ client, workspaceId, userId } = {}) {
         return notesChangedBase(since, opts);
       }
     },
-    // the live notes other members share with this one (the read policy admits only public, included notes), ids and
-    // versions only, so a pull can drop the local copy of anything no longer shared
-    shared: ({ limit = PAGE, offset = 0 } = {}) => run(client.from('notes').select('id, hash').eq('workspace_id', workspaceId).neq('user_id', userId).is('deleted_at', null).order('id', { ascending: true }).range(offset, offset + limit - 1), 'notes shared'),
+    // the live notes other members share with this one (the read policy admits only public, included notes), and the
+    // notes of KBs hosted by Quorum, the person's own among them (migration 0034), ids and versions only, so a pull can
+    // drop the local copy of anything no longer shared
+    shared: ({ limit = PAGE, offset = 0 } = {}) => run(client.from('notes').select('id, hash').eq('workspace_id', workspaceId).or(`user_id.neq.${userId},frontmatter->>kb_hosted.not.is.null`).is('deleted_at', null).order('id', { ascending: true }).range(offset, offset + limit - 1), 'notes shared'),
     remove: (id) => softDelete('notes', [id]),
     push: (note) => upsert('notes', [noteRow(note)]),
     pushMany: (notes) => upsert('notes', notes.map(noteRow)),

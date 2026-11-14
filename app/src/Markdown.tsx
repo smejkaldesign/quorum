@@ -1,9 +1,11 @@
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 
 // in the Memory view, note links open inside Quorum instead of in another app
 const WikiOpen = createContext<((target: string) => void) | null>(null);
 
-// just enough Markdown for agent answers: paragraphs, nested bullets, **bold**, `code`, [links](url).
+// just enough Markdown for agent answers: paragraphs, nested bullets, **bold**, `code`, [links](url), and images. A
+// quorum://kb-file link (a file attached to a note of a knowledge base hosted by Quorum, Cloud edition) shows a picture
+// inline and opens a PDF through a short signed URL.
 // builds React nodes (never innerHTML), so model output can't inject markup
 export function Markdown({ text, root, headings, onWiki }: { text: string; root?: string; headings?: boolean; onWiki?: (target: string) => void }) {
   const blocks: ReactNode[] = [];
@@ -34,7 +36,7 @@ function BulletList({ items, root }: { items: { depth: number; text: string }[];
 
 function inline(text: string, root?: string): ReactNode[] {
   const out: ReactNode[] = [];
-  const re = /\*\*(.+?)\*\*|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|!?\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]/g;
+  const re = /\*\*(.+?)\*\*|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|!?\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]|!\[([^\][]*)\]\(([^)\s]+)\)/g;
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text))) {
@@ -42,6 +44,7 @@ function inline(text: string, root?: string): ReactNode[] {
     if (m[1]) out.push(<strong key={m.index}>{m[1]}</strong>);
     else if (m[2]) out.push(<code key={m.index}>{m[2]}</code>);
     else if (m[5]) out.push(<WikiLink key={m.index} target={m[5]} label={m[6] ?? m[5].replace(/#.*$/, '')} />);
+    else if (m[8]) out.push(<Image key={m.index} alt={m[7] ?? ''} src={m[8]} />);
     else out.push(<Link key={m.index} label={m[3]} href={m[4]} root={root} />);
     last = re.lastIndex;
   }
@@ -55,11 +58,33 @@ function WikiLink({ target, label }: { target: string; label: string }) {
   return <button className="md-link" onClick={() => onWiki(target.replace(/#.*$/, ''))}>{label}</button>;
 }
 
-// web links open in the browser; note links open in Quorum's Memory view when it's showing, else the user's knowledge app
+const KB_FILE_LINK = /^quorum:\/\/kb-file\/[0-9A-HJKMNP-TV-Z]{26}$/;
+const kbFiles = () => (window.quorum as Partial<Window['quorum']> | undefined);
+
+// a picture: a hosted KB file comes from the main process as a data URL (the content policy loads images from the app
+// only); any other source shows its alt text, since the page loads no outside images
+function Image({ alt, src }: { alt: string; src: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const hosted = KB_FILE_LINK.test(src) && typeof kbFiles()?.kbFileData === 'function';
+  useEffect(() => {
+    if (!hosted) return;
+    let live = true;
+    kbFiles()!.kbFileData!(src).then((r) => { if (!live) return; if (r?.dataUrl) setUrl(r.dataUrl); else setFailed(true); }).catch(() => { if (live) setFailed(true); });
+    return () => { live = false; };
+  }, [src, hosted]);
+  if (url) return <img className="md-img" src={url} alt={alt} />;
+  if (hosted) return <button className="md-link" onClick={() => kbFiles()?.kbFileOpen?.(src)}>{failed ? alt || 'Attached file' : `${alt || 'Picture'} (loading)`}</button>;
+  return <span className="md-image-alt">{alt || 'Image'}</span>;
+}
+
+// web links open in the browser; note links open in Quorum's Memory view when it's showing, else the user's knowledge
+// app; a hosted KB file (a PDF) downloads and opens in its own app
 function Link({ label, href, root }: { label: string; href: string; root?: string }) {
   const onWiki = useContext(WikiOpen);
   const open = () => {
-    if (/^https:\/\//.test(href)) window.quorum.openExternal(href);
+    if (KB_FILE_LINK.test(href)) kbFiles()?.kbFileOpen?.(href);
+    else if (/^https:\/\//.test(href)) window.quorum.openExternal(href);
     else if (href.endsWith('.md') && onWiki) { try { onWiki(decodeURIComponent(href)); } catch { onWiki(href); } }
     else if (href.endsWith('.md') && root) window.quorum.openNote(href.startsWith('/') ? href : `${root}/${href}`);
   };
