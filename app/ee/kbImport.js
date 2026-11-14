@@ -27,14 +27,13 @@ import { createHash } from 'node:crypto';
 import { readFile as fsReadFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { plain } from './account.js';
-import { checkName, shapeKb } from './knowledgeBases.js';
+import { checkName, kbSession, shapeKb } from './knowledgeBases.js';
 import { createRemote, ulid } from './store/remote.js';
 import { notes as localNotes } from '../store/local.js';
 import { parseFrontmatter } from './sync.js';
 import { listZip, MAX_BYTES, readEntry } from './zipRead.js';
 
 const BATCH = 100;
-const PAGE = 1000;
 const FOLDER_CALLS = 8;
 const MAX_NOTE_BYTES = 5 * 1024 * 1024;
 const PROGRESS_BYTES = 256 * 1024;
@@ -189,6 +188,20 @@ export function sharedText(text, sourceLine) {
   return localNotes.setFrontmatterKey(localNotes.setFrontmatterKey(body, 'visibility', 'public'), 'kb_source', fmValue(sourceLine));
 }
 
+// a confidential key marks a note that never leaves its author's vault. true, yes, 1 or any other label (a vault's
+// own tag, like a team name) is confidential, as the database reads it (note_shared, 0024); false, no, 0, off or an
+// empty value is not
+const NOT_CONFIDENTIAL = /^(false|no|0|off)?$/i;
+export const isConfidential = (fm) => { const v = fm?.confidential; return v !== undefined && v !== null && v !== false && !NOT_CONFIDENTIAL.test(String(v).trim()); };
+// the database treats any confidential value as confidential, so a note that says false loses the key before it goes
+// up; without this a shared note that says confidential: false would be refused by the KB
+export function dropFalseConfidential(text) {
+  const m = String(text).match(/^---\n([\s\S]*?)\n---/);
+  if (!m) return text;
+  const lines = m[1].split('\n');
+  const kept = lines.filter((l) => { const kv = l.match(/^confidential:\s*(.*?)\s*$/); return !kv || !NOT_CONFIDENTIAL.test(kv[1].replace(/^["']|["']$/g, '')); });
+  return kept.length === lines.length ? text : `---\n${kept.join('\n')}\n---${text.slice(m[0].length)}`;
+}
 export const safeSeg = (s) => String(s ?? '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Knowledge base';
 export const sha256 = (t) => createHash('sha256').update(t).digest('hex');
 export const keyOf = (segs) => segs.map((s) => s.trim().toLowerCase()).join('/');
@@ -204,20 +217,8 @@ function nothingImported(files, skipped) {
 }
 
 export function createKbImport({ account, fetch: get = globalThis.fetch, readFile = fsReadFile, statFile = stat, pickZip = async () => null, toUI = () => {}, log = () => {} }) {
-  const ready = (admin) => {
-    if (!account.client()) return { error: 'Hosted accounts are not set up in this build.' };
-    const s = account.state();
-    if (!s.signedIn) return { error: 'Sign in first.' };
-    if (!s.workspace) return { error: 'Pick a workspace first.' };
-    if (admin && s.workspace.role === 'member') return { error: 'Only owners and admins can create a knowledge base.' };
-    return null;
-  };
-  const rpc = async (name, args) => {
-    const { data, error } = await account.client().rpc(name, args);
-    if (error) throw Object.assign(new Error(error.message), { code: error.code ?? '' });
-    return data;
-  };
-  const findKb = async (wsId, kbId) => ((await rpc('kb_list', { workspace_id: wsId })) ?? []).find((k) => k.id === kbId) ?? null;
+  const { ready: sessionReady, rpc, findKb, kbNotes } = kbSession({ account, log, tag: 'kb-import' });
+  const ready = (admin) => sessionReady(admin, 'Only owners and admins can create a knowledge base.');
   // fetching reports at most once per 256 KB, whether or not the size is known, plus the first and last byte
   let lastBytes = 0;
   const progress = (kbId, phase, done, total) => {
@@ -229,17 +230,6 @@ export function createKbImport({ account, fetch: get = globalThis.fetch, readFil
     toUI('kb-import-progress', { kbId, phase, done, total });
   };
 
-  // every live note in the KB the person can read, page by page
-  const kbNotes = async (wsId, kbId) => {
-    const rows = [];
-    for (let offset = 0; ; offset += PAGE) {
-      const { data, error } = await account.client().from('notes').select('id, path, folder_id, user_id, frontmatter')
-        .eq('workspace_id', wsId).eq('kb_id', kbId).is('deleted_at', null).order('id').range(offset, offset + PAGE - 1);
-      if (error) throw error;
-      rows.push(...(data ?? []));
-      if ((data ?? []).length < PAGE) return rows;
-    }
-  };
   // who owns each of these notes, as a name for a skipped reason
   const ownerNames = async (ids) => {
     if (!ids.length) return new Map();
@@ -307,7 +297,7 @@ export function createKbImport({ account, fetch: get = globalThis.fetch, readFil
     try {
       let kb = null;
       if (kbId) {
-        kb = await findKb(wsId, kbId);
+        kb = await findKb(kbId);
         if (!kb) return { error: 'That knowledge base no longer exists.' };
         if (kb.role !== 'admin') return { error: 'Only the knowledge base\'s admins can import into it.' };
       }
@@ -366,7 +356,7 @@ export function createKbImport({ account, fetch: get = globalThis.fetch, readFil
       // member's note there stays as it is
       const existing = new Map();
       const placeKey = (n) => keyOf([...(n.folder_id ? segsOf(n.folder_id) : []), path.posix.basename(String(n.path ?? ''))]);
-      const inKb = await kbNotes(wsId, kbId);
+      const inKb = await kbNotes(kbId);
       for (const n of inKb) existing.set(placeKey(n), n);
       const owners = await ownerNames([...new Set(inKb.filter((n) => n.user_id !== me).map((n) => n.user_id))]);
       const prefix = `Knowledge bases/${safeSeg(kb.name)}`;
@@ -380,9 +370,9 @@ export function createKbImport({ account, fetch: get = globalThis.fetch, readFil
         const key = keyOf(kbSegs);
         if (seen.has(key)) { skipped.push({ path: f.rel, reason: 'Another file in the import has the same name in this folder.' }); continue; }
         seen.add(key);
-        const text = sharedText(f.text, sourceLine(src, f.rel));
+        const text = dropFalseConfidential(sharedText(f.text, sourceLine(src, f.rel)));
         const frontmatter = parseFrontmatter(text);
-        if (frontmatter.confidential) { skipped.push({ path: f.rel, reason: 'The note is marked confidential.' }); continue; }
+        if (isConfidential(frontmatter)) { skipped.push({ path: f.rel, reason: 'The note is marked confidential.' }); continue; }
         const had = existing.get(key);
         if (had && had.user_id !== me) {
           const who = owners.get(had.user_id);
@@ -426,7 +416,7 @@ export function createKbImport({ account, fetch: get = globalThis.fetch, readFil
       const stored = src.kind === 'github' ? { kind: 'github', url: src.gh.url, branch: src.asked, subpath: src.subpath, name: src.gh.repo } : { kind: 'zip', name: `${src.name}.zip` };
       let shaped = null;
       try { shaped = await rpc('kb_source_set', { kb_id: kbId, source: stored }); } catch (err) { log('kb-import', 'source not stored', err?.message ?? err); }
-      shaped ??= await findKb(wsId, kbId);
+      shaped ??= await findKb(kbId);
       progress(kbId, 'done', wrote, wrote);
       log('kb-import', `${wrote} notes into ${kbId}, ${removed} removed, ${skipped.length} skipped`);
       return { kb: shapeKb(shaped ?? kb), imported: wrote, removed, skipped };

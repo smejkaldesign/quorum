@@ -99,16 +99,18 @@ export function accessRows(list) {
 
 export const titleOf = (n) => n.frontmatter?.title || String(n.path ?? '').replace(/^.*\//, '').replace(/\.md$/, '');
 
-// what every KB call shares (this module and ee/kbSearch.js): the readiness check with its refusals, the workspace,
-// the RPC wrapper, and call(), which puts one handler behind the check and turns a failure into a sentence
+// what every KB call shares: the readiness check with its refusals, the workspace, the RPC wrapper, and call(), which
+// puts one handler behind the check and turns a failure into a sentence
+// (this module, ee/kbSearch.js, ee/kbImport.js and ee/kbDrive.js). findKb answers with the raw kb_list row (folders
+// flat, with parent_id); kbNotes reads every live note in a KB, page by page
 export function kbSession({ account, log = () => {}, tag = 'kb' }) {
   const fail = (err, fallback) => { log(tag, err?.message ?? err); return { error: plain(err, fallback) }; };
-  const ready = (admin = false) => {
+  const ready = (admin = false, adminRefusal = 'Only owners and admins can create or delete a knowledge base.') => {
     if (!account.client?.()) return { error: 'Hosted accounts are not set up in this build.' };
     const s = account.state();
     if (!s.signedIn) return { error: 'Sign in first.' };
     if (!s.workspace) return { error: 'Pick a workspace first.' };
-    if (admin && s.workspace.role === 'member') return { error: 'Only owners and admins can create or delete a knowledge base.' };
+    if (admin && s.workspace.role === 'member') return { error: adminRefusal };
     return null;
   };
   const ws = () => account.state().workspace.id;
@@ -123,7 +125,18 @@ export function kbSession({ account, log = () => {}, tag = 'kb' }) {
     try { return await fn(...args); } catch (err) { return fail(err, fallback); }
   };
   const listKbs = async () => ((await rpc('kb_list', { workspace_id: ws() })) ?? []).map(shapeKb);
-  return { fail, ready, ws, rpc, call, listKbs };
+  const findKb = async (kbId) => ((await rpc('kb_list', { workspace_id: ws() })) ?? []).find((k) => k.id === kbId) ?? null;
+  const kbNotes = async (kbId, columns = 'id, path, folder_id, user_id, frontmatter') => {
+    const rows = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const { data, error } = await account.client().from('notes').select(columns)
+        .eq('workspace_id', ws()).eq('kb_id', kbId).is('deleted_at', null).order('id').range(offset, offset + PAGE - 1);
+      if (error) throw error;
+      rows.push(...(data ?? []));
+      if ((data ?? []).length < PAGE) return rows;
+    }
+  };
+  return { fail, ready, ws, rpc, call, listKbs, findKb, kbNotes };
 }
 
 export function createKnowledgeBases({ account, log = () => {} }) {
