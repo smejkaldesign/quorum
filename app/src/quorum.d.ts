@@ -75,8 +75,13 @@ export type SetupAnswers = { template: SetupTemplate; role: string; goals: strin
 // what the form sends: the lists as typed, parsed in the main process
 export type SetupInput = Omit<SetupAnswers, 'projects' | 'people'> & { projects: string | string[]; people: string | string[] };
 // the keeper: what maintains a Quorum-built folder after each note (keeper.js)
-export type KeeperRun = { filed: number; skipped: number; changed: number; reason: string; at: string; error: string | null; off?: boolean };
-export type KeeperStatus = { on: boolean; facts: boolean; running: boolean; lastRunAt: string | null; filed: number; last: KeeperRun | null; folders: Partial<Record<'people' | 'projects' | 'daily' | 'meetings', string>>; model: boolean };
+// held: a run that would have created more new files than the keeper's limit, kept back until the user allows it
+export type KeeperHeld = { count: number; sample: string[] };
+export type KeeperRun = { filed: number; skipped: number; changed: number; reason: string; at: string; error: string | null; off?: boolean; marked?: string[]; held?: KeeperHeld | null };
+// one upkeep job (app/plugins.js): owned by Quorum or by the vault, with the files that show the vault already does it
+export type PluginOwner = 'quorum' | 'vault';
+export type KeeperPlugin = { id: string; title: string; does: string; always: boolean; evidence: { path: string; why: string }[]; owner: PluginOwner; overridden: boolean; isNew: boolean };
+export type KeeperStatus = { on: boolean; facts: boolean; running: boolean; lastRunAt: string | null; filed: number; last: KeeperRun | null; folders: Partial<Record<'people' | 'projects' | 'daily' | 'meetings', string>>; model: boolean; held: KeeperHeld | null; plugins: KeeperPlugin[] };
 // screen context: on-screen text as spelling hints; granted is the Screen Recording permission, null when unknown
 export type ScreenContextStatus = { available?: boolean; on: boolean; granted: boolean | null };
 export type SetupRecord = { version: number; name: string; answers: SetupAnswers; createdAt: string; updatedAt?: string };
@@ -353,7 +358,8 @@ declare global {
       screenContextSet(on: boolean): Promise<ScreenContextStatus>;
       screenContextPrivacy(): Promise<void>;
       keeperSet(patch: { on?: boolean; facts?: boolean }): Promise<KeeperStatus>;
-      keeperRun(): Promise<KeeperRun>;
+      keeperRun(opts?: { allowCreate?: boolean }): Promise<KeeperRun>;
+      keeperPlugin(id: string, owner: PluginOwner): Promise<KeeperStatus>;
       onKeeper?(cb: (r: KeeperRun) => void): Unsub;
       onboardingOpenPermission(which: 'microphone' | 'audio' | 'accessibility' | 'calendar'): Promise<void>;
       onboardingRequestMicrophone(): Promise<boolean>;

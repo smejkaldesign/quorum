@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { SetupForm, answersFrom, draftFrom, draftIsEmpty, emptyDraft, type SetupDraft } from './SetupForm';
-import type { AccountState, BetaState, Brain, CalendarSettings, ClaudeStatus, DecisionProvider, DecisionsStatus, KeeperStatus, Memory, MemoryItem, OptOut, Profile, ScreenContextStatus, Settings, TeamVault, Transcription, UpdateState, Voice, Workspace } from './quorum';
+import type { AccountState, BetaState, Brain, CalendarSettings, ClaudeStatus, DecisionProvider, DecisionsStatus, KeeperPlugin, KeeperStatus, Memory, MemoryItem, OptOut, Profile, ScreenContextStatus, Settings, TeamVault, Transcription, UpdateState, Voice, Workspace } from './quorum';
 import { PersonalConnectors } from './Connectors';
 import { ConnectorsPage } from './ConnectorsPage';
 import { GuardrailsPage } from './Guardrails';
@@ -875,8 +875,12 @@ function KnowledgePage() {
 }
 
 // upkeep: the keeper (keeper.js) files each new meeting note into the index, the daily note and the people and project
-// notes it concerns, and writes learned facts into CLAUDE.md with the person's own model source. On by default for a
-// folder Quorum built; a folder the person connected themselves turns it on here
+// notes it concerns, and writes learned facts with the person's own model source. On by default for a folder Quorum
+// built; a folder the person connected themselves turns it on here. Each job is a plugin row below: Quorum's by
+// default, and the vault's when the vault already does that job, with the files that show it
+const PLUGIN_ICON: Record<string, (p: { width?: number; height?: number; className?: string }) => ReactNode> = {
+  index: IconFork, daily: IconCalendar, links: IconPeople, facts: IconBrain, search: IconSearch,
+};
 function KeeperCard({ brain }: { brain: Brain }) {
   const [k, setK] = useState<KeeperStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -884,24 +888,51 @@ function KeeperCard({ brain }: { brain: Brain }) {
   useEffect(() => { load(); return window.quorum.onKeeper?.(() => load()); }, [brain.root]);
   if (!k) return null;
   const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : null);
-  const run = async () => { setBusy(true); try { await window.quorum.keeperRun(); } finally { setBusy(false); load(); } };
-  const last = k.last && !k.last.off ? `${k.last.filed} filed${k.last.skipped ? `, ${k.last.skipped} withheld` : ''}${k.last.error ? ` · ${k.last.error}` : ''}` : null;
+  const run = async (allowCreate = false) => { setBusy(true); try { await window.quorum.keeperRun(allowCreate ? { allowCreate } : undefined); } finally { setBusy(false); load(); } };
+  const marked = k.last?.marked?.length ?? 0;
+  const last = k.last && !k.last.off && !k.last.held ? `${k.last.filed} filed${k.last.skipped ? `, ${k.last.skipped} withheld` : ''}${marked ? `, ${marked} generated ${marked === 1 ? 'file' : 'files'} left alone` : ''}${k.last.error ? ` · ${k.last.error}` : ''}` : null;
   const desc = !k.on ? 'Off. Quorum writes meeting notes here and changes nothing else.'
     : k.lastRunAt ? `Last run ${when(k.lastRunAt)}${last ? `: ${last}` : ''}` : 'Index, daily note, people and project notes, after each meeting';
+  const pick = async (p: KeeperPlugin, owner: 'quorum' | 'vault') => setK(await window.quorum.keeperPlugin(p.id, owner));
+  const plugin = (p: KeeperPlugin) => {
+    const Icon = PLUGIN_ICON[p.id] ?? IconFolder;
+    const on = p.owner === 'quorum';
+    const found = p.evidence.map((e) => `${e.path} (${e.why})`).join(', ');
+    const pdesc = p.evidence.length
+      ? (on ? `Quorum does this. Your Agent OS also has ${found}` : `Used already in your Agent OS: ${found}. Quorum reads and links, and writes nothing for this.`)
+      : on ? `${p.does}${p.id === 'facts' && !k.model ? '. Needs a model source in AI settings' : ''}`
+      : 'Off. Quorum writes nothing for this.';
+    return (
+      <Row key={p.id} icon={<Icon width={18} height={18} className={on ? 'ok' : undefined} />} title={p.title} desc={pdesc}>
+        {p.isNew && <span className="new-badge">New</span>}
+        {p.isNew && <button className="pill small-pill" onClick={() => pick(p, 'vault')}>Keep as is</button>}
+        <Toggle on={on} disabled={p.always && !p.evidence.length} onChange={(v) => pick(p, v ? 'quorum' : 'vault')} />
+      </Row>
+    );
+  };
   return (
     <>
       <h3>Upkeep</h3>
       <div className="set-card">
         <Row icon={<IconReset width={18} height={18} className={k.on ? 'ok' : undefined} />} title="Keep this folder current" desc={desc}>
-          {k.on && <button className="pill small-pill" disabled={busy || k.running} onClick={run}>{busy || k.running ? 'Running…' : 'Run now'}</button>}
+          {k.on && <button className="pill small-pill" disabled={busy || k.running} onClick={() => run()}>{busy || k.running ? 'Running…' : 'Run now'}</button>}
           <Toggle on={k.on} onChange={async (on) => setK(await window.quorum.keeperSet({ on }))} />
         </Row>
-        {k.on && (
-          <Row icon={<IconBrain width={18} height={18} className={k.facts && k.model ? 'ok' : undefined} />} title="Learned facts" desc={k.model ? 'Up to three facts per meeting into CLAUDE.md, with your model source' : 'Needs a model source in AI settings; index and links work without one'}>
-            <Toggle on={k.facts} onChange={async (on) => setK(await window.quorum.keeperSet({ facts: on }))} />
+        {k.on && k.held && (
+          <Row icon={<IconInfo width={18} height={18} />} title={`Waiting to create ${k.held.count} new files`}
+            desc={`The last run would have added ${k.held.count} files, such as ${k.held.sample.slice(0, 3).join(', ')}. Nothing was written. Turn off a plugin below, or create them.`}>
+            <button className="pill small-pill" disabled={busy || k.running} onClick={() => run(true)}>Create them</button>
           </Row>
         )}
       </div>
+      {k.plugins.length > 0 && (
+        <>
+          <h3>Plugins</h3>
+          <div className="set-card">
+            {k.on ? k.plugins.map(plugin) : <Row icon={<IconReset width={18} height={18} />} title="Upkeep is off" desc="Quorum does none of these jobs while Keep this folder current is off. Turn it on to choose which ones it does." />}
+          </div>
+        </>
+      )}
     </>
   );
 }
