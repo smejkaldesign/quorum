@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { CHANGELOG, LEARNED_FILE, LEARNED_HEADER, LEARNED_OPEN, LEARNED_POINTER, addLearned, factKey, createKeeper, learnedChars, learnedLines, pointLearned, pruneLearned } from '../keeper.js';
+import { CHANGELOG, CLAUDE_BUDGET, CLAUDE_FACTS, LEARNED_BUDGET, LEARNED_FILE, LEARNED_HEADER, LEARNED_OPEN, LEARNED_POINTER, NOTE_LINK, addLearned, createKeeper, defaultNote, factKey, informative, learnedChars, learnedLines, notePath, parseFacts, pointLearned, pruneLearned } from '../keeper.js';
 
 const put = (dir, rel, text) => { mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); writeFileSync(path.join(dir, rel), text); };
 const NOTE = (title, date) => `---\ntitle: ${title}\ndate: ${date}T15:00:00-08:00\nparticipants:\n  - Ada Lovelace\nsource: quorum\n---\n\n# ${title}\n\nAda owns the launch page.\n`;
@@ -183,5 +183,183 @@ describe('learned facts, review round 2', () => {
     expect(readFileSync(errorLog, 'utf8').split('\n').filter(Boolean)).toHaveLength(200);
     expect(k.status().errors).toMatchObject({ count: 200, last: { message: 'model unavailable' } });
     expect(k.clearErrors().errors.count).toBe(0);
+  });
+});
+
+describe('facts that carry nothing', () => {
+  it('leaves out lines that only say a note is empty or holds no decisions', () => {
+    for (const f of [
+      'The note records no decisions, commitments, or summary.',
+      'The meeting note is empty.',
+      'This transcript appears to be blank',
+      'No decisions were made.',
+      'There were no action items',
+      'No clear next steps recorded',
+      'The meeting had no action items or decisions',
+      'Empty note',
+      'none',
+      'N/A',
+      'Nothing to note',
+      'See notes',
+      'TBD',
+    ]) expect(informative(f), f).toBe(false);
+  });
+  it('keeps facts that say something, in any script', () => {
+    for (const f of [
+      'Ada owns the launch page',
+      'Ship in Q1',
+      'No new hires until the March review, says Bo',
+      'Nothing ships before the security review is done',
+      'The pricing note moves to Friday',
+      '王芳负责设计',
+      'Анна ведёт дизайн',
+    ]) expect(informative(f), f).toBe(true);
+  });
+  it('filters before the list is deduplicated, so an empty fact never reaches the file', async () => {
+    expect(parseFacts('- The note records no decisions, commitments, or summary.\n- Ada owns the launch page\n- No action items')).toEqual(['Ada owns the launch page']);
+    const dir = vault();
+    const { k } = keeperFor(dir, { opts: { runText: async () => '- The note records no decisions, commitments, or summary.\n- The meeting note is empty.' } });
+    await k.run();
+    expect(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8')).toBe('# Agent OS\n\nRules.\n');
+  });
+});
+
+describe('learned facts budget by target', () => {
+  const many = (n) => Array.from({ length: n }, (_, i) => fact(`fact ${i} about the plan`, '2026-09-01'));
+  it('keeps CLAUDE.md to 10 facts or 800 characters by default, whichever is smaller', async () => {
+    const dir = vault();
+    put(dir, 'CLAUDE.md', addLearned('# Agent OS\n', many(20).map((l) => l.slice(2)), { budget: 10000 }).text);
+    const { k } = keeperFor(dir);
+    await k.run();
+    const lines = learnedLines(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'));
+    expect(lines).toHaveLength(CLAUDE_FACTS);
+    expect(lines.at(-1)).toContain('Ada owns the launch page');
+    expect(k.status().learned).toMatchObject({ target: 'claude', budget: CLAUDE_BUDGET, maxFacts: CLAUDE_FACTS, budgetPick: 'auto' });
+    expect(readFileSync(path.join(dir, CHANGELOG), 'utf8')).toContain(many(20)[0]);
+    // long lines reach the character limit before the line limit
+    const long = Array.from({ length: 8 }, (_, i) => `fact ${i} ${'about the long planning session '.repeat(4)}`);
+    const r = addLearned('# A\n', long, { budget: CLAUDE_BUDGET, maxLines: CLAUDE_FACTS });
+    expect(learnedLines(r.text).length).toBeLessThan(8);
+    expect(learnedChars(learnedLines(r.text))).toBeLessThanOrEqual(CLAUDE_BUDGET);
+    expect(r.text).toContain('stays under 800 characters and 10 lines');
+  });
+  it('keeps 2,000 characters in the other targets, and an explicit budget wins in CLAUDE.md', async () => {
+    const dir = vault();
+    put(dir, LEARNED_FILE, addLearned(LEARNED_HEADER, many(20).map((l) => l.slice(2)), { budget: 10000 }).text);
+    const { k } = keeperFor(dir, { keeper: { factsTarget: 'learned' } });
+    await k.run();
+    expect(learnedLines(readFileSync(path.join(dir, LEARNED_FILE), 'utf8'))).toHaveLength(21);
+    expect(k.status().learned).toMatchObject({ budget: LEARNED_BUDGET, maxFacts: null });
+    const dir2 = vault();
+    put(dir2, 'CLAUDE.md', addLearned('# Agent OS\n', many(20).map((l) => l.slice(2)), { budget: 10000 }).text);
+    const { k: k2 } = keeperFor(dir2, { keeper: { factsBudget: 2000 } });
+    await k2.run();
+    expect(learnedLines(readFileSync(path.join(dir2, 'CLAUDE.md'), 'utf8'))).toHaveLength(21);
+    expect(k2.status().learned).toMatchObject({ budget: 2000, maxFacts: null, budgetPick: 2000 });
+    k2.set({ factsBudget: 'auto' });
+    expect(learnedLines(readFileSync(path.join(dir2, 'CLAUDE.md'), 'utf8'))).toHaveLength(CLAUDE_FACTS);
+  });
+});
+
+describe('learned facts in a vault note', () => {
+  it('picks 05-knowledge when the folder exists, else the vault root, and checks typed paths', () => {
+    const dir = vault();
+    expect(defaultNote(dir)).toBe('quorum-learned.md');
+    mkdirSync(path.join(dir, '05-knowledge'));
+    expect(defaultNote(dir)).toBe('05-knowledge/quorum-learned.md');
+    expect(notePath('notes/facts')).toBe('notes/facts.md');
+    expect(notePath('./05-knowledge/facts.md')).toBe('05-knowledge/facts.md');
+    for (const bad of ['', '/etc/x.md', '../out.md', 'a/../../b.md', '.quorum/x.md', 'CLAUDE.md', 'index.md', 'C:\\x.md']) expect(notePath(bad), bad).toBeNull();
+  });
+  it('leaves CLAUDE.md unchanged, appends facts to the note, links it from index.md and writes the changelog entry', async () => {
+    const dir = vault();
+    mkdirSync(path.join(dir, '05-knowledge'));
+    const note = '05-knowledge/quorum-learned.md';
+    const { k } = keeperFor(dir, { keeper: { factsTarget: 'note' } });
+    await k.run();
+    expect(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8')).toBe('# Agent OS\n\nRules.\n');
+    expect(existsSync(path.join(dir, LEARNED_FILE))).toBe(false);
+    const text = readFileSync(path.join(dir, note), 'utf8');
+    expect(text.startsWith(LEARNED_HEADER)).toBe(true);
+    expect(learnedLines(text)).toEqual(['- Ada owns the launch page ([[2026-11-10-plan]], 2026-11-10)']);
+    expect(readFileSync(path.join(dir, 'index.md'), 'utf8')).toContain(`- [[quorum-learned]] - ${NOTE_LINK}`);
+    const log = readFileSync(path.join(dir, CHANGELOG), 'utf8');
+    expect(log).toMatch(/## \d{4}-\d{2}-\d{2} \d{2}:\d{2} Plan\n\n- index\.md\n- 05-knowledge\/quorum-learned\.md\n\n/);
+    expect(log).not.toContain('CLAUDE.md');
+    // a second meeting appends to the note, and the index link is not repeated
+    put(dir, '08-meetings/2026-11-11-review.md', NOTE('Review', '2026-11-11'));
+    const { k: k2 } = keeperFor(dir, { keeper: { factsTarget: 'note' }, opts: { runText: async () => '- Bo owns pricing from December' } });
+    await k2.run();
+    expect(learnedLines(readFileSync(path.join(dir, note), 'utf8'))).toHaveLength(2);
+    expect(readFileSync(path.join(dir, 'index.md'), 'utf8').match(/quorum-learned/g)).toHaveLength(1);
+    expect(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8')).toBe('# Agent OS\n\nRules.\n');
+    expect(k2.status().learned).toMatchObject({ target: 'note', file: note, note, linked: true, budget: LEARNED_BUDGET });
+  });
+  it('writes pruned lines into the changelog the same way', async () => {
+    const dir = vault();
+    const old = Array.from({ length: 30 }, (_, i) => fact(`older fact ${i} from a planning session`, '2026-09-01'));
+    put(dir, 'quorum-learned.md', addLearned(LEARNED_HEADER, old.map((l) => l.slice(2)), { budget: 10000 }).text);
+    const { k } = keeperFor(dir, { keeper: { factsTarget: 'note', factsBudget: 600 } });
+    await k.run();
+    const log = readFileSync(path.join(dir, CHANGELOG), 'utf8');
+    expect(log).toContain('Moved out of the learned facts to stay under the budget');
+    expect(log).toContain(old[0]);
+    expect(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8')).toBe('# Agent OS\n\nRules.\n');
+  });
+  it('never writes to an index the vault keeps or one marked generated', async () => {
+    const dir = vault();
+    put(dir, 'index.md', '<!-- generated by wiki-index -->\n# Index\n');
+    const { k } = keeperFor(dir, { keeper: { factsTarget: 'note' } });
+    await k.run();
+    expect(readFileSync(path.join(dir, 'index.md'), 'utf8')).toBe('<!-- generated by wiki-index -->\n# Index\n');
+    expect(learnedLines(readFileSync(path.join(dir, 'quorum-learned.md'), 'utf8'))).toHaveLength(1);
+    expect(k.status().learned.linked).toBe(false);
+    const dir2 = vault();
+    put(dir2, 'index.md', '# Index\n');
+    put(dir2, 'scripts/build-index.py', 'print(1)\n');
+    const { k: k2 } = keeperFor(dir2, { keeper: { factsTarget: 'note' } });
+    expect(k2.status().plugins.find((p) => p.id === 'index').owner).toBe('vault');
+    await k2.run();
+    expect(readFileSync(path.join(dir2, 'index.md'), 'utf8')).toBe('# Index\n');
+    expect(learnedLines(readFileSync(path.join(dir2, 'quorum-learned.md'), 'utf8'))).toHaveLength(1);
+  });
+  it('moves the facts between CLAUDE.md, the note and another note path', async () => {
+    const dir = vault();
+    put(dir, 'CLAUDE.md', addLearned('# Agent OS\n\nRules.\n', [fact('earlier fact about pricing', '2026-10-01').slice(2)]).text);
+    const { k, settings } = keeperFor(dir);
+    k.set({ factsTarget: 'note' });
+    expect(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8')).toBe('# Agent OS\n\nRules.\n');
+    expect(readFileSync(path.join(dir, 'quorum-learned.md'), 'utf8')).toContain('earlier fact about pricing');
+    await k.run();
+    expect(readFileSync(path.join(dir, 'index.md'), 'utf8')).toContain('[[quorum-learned]]');
+    // another path: the list moves, and the old note, which held only the list, goes with its index line
+    k.set({ factsNote: 'notes/facts' });
+    expect(settings.keeper.factsNote).toBe('notes/facts.md');
+    expect(existsSync(path.join(dir, 'quorum-learned.md'))).toBe(false);
+    const moved = learnedLines(readFileSync(path.join(dir, 'notes/facts.md'), 'utf8'));
+    expect(moved).toHaveLength(2);
+    const index = readFileSync(path.join(dir, 'index.md'), 'utf8');
+    expect(index).toContain('[[facts]]');
+    expect(index).not.toContain('[[quorum-learned]]');
+    // a path in the meetings folder is refused
+    k.set({ factsNote: '08-meetings/facts.md' });
+    expect(settings.keeper.factsNote).toBe('notes/facts.md');
+    // back into CLAUDE.md
+    k.set({ factsTarget: 'claude' });
+    expect(learnedLines(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'))).toEqual(moved);
+    expect(existsSync(path.join(dir, 'notes/facts.md'))).toBe(false);
+    expect(readFileSync(path.join(dir, 'index.md'), 'utf8')).not.toContain('[[facts]]');
+  });
+  it('keeps the text of a note the user writes in, and takes out only the list', async () => {
+    const dir = vault();
+    put(dir, 'mine.md', '# Mine\n\nMy own text.\n');
+    const { k } = keeperFor(dir, { keeper: { factsTarget: 'note', factsNote: 'mine.md' } });
+    await k.run();
+    expect(readFileSync(path.join(dir, 'mine.md'), 'utf8')).toContain('My own text.');
+    expect(learnedLines(readFileSync(path.join(dir, 'mine.md'), 'utf8'))).toHaveLength(1);
+    k.set({ factsTarget: 'learned' });
+    expect(readFileSync(path.join(dir, 'mine.md'), 'utf8')).toBe('# Mine\n\nMy own text.\n');
+    expect(learnedLines(readFileSync(path.join(dir, LEARNED_FILE), 'utf8'))).toHaveLength(1);
+    expect(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8')).toContain(LEARNED_POINTER);
   });
 });
