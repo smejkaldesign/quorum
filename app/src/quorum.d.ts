@@ -82,7 +82,7 @@ export type ProviderConnectors = Partial<Record<ConnectorId, { baseUrl?: string;
 export type RunnerStatus = { installed: boolean; version: string | null };
 export type ModelSourceStatus = { source: ModelSource; localModel: string; claude: ClaudeStatus | null; key: boolean; keys: Partial<Record<ConnectorId, boolean>>; ollama: { reachable: boolean; hasModel: boolean }; runners?: Partial<Record<'codex' | 'antigravity', RunnerStatus>>; providers: Providers; connectors: ProviderConnectors };
 // userName is how the main process names the recorder in notes; it falls back to the macOS account's full name, then the login
-export type Settings = { meetingProviders?: Record<string, { enabled: boolean }>; autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean; transcription?: boolean }; meetingsKb?: { autoSave?: boolean }; managedModels?: boolean; screenContext?: boolean; memoryAutoApprove?: boolean; memoryDotDays?: number; memoryHighlight?: boolean };
+export type Settings = { meetingProviders?: Record<string, { enabled: boolean }>; autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean; transcription?: boolean }; meetingsKb?: { autoSave?: boolean }; managedModels?: boolean; screenContext?: boolean; memoryAutoApprove?: boolean; memoryDotDays?: number; memoryHighlight?: boolean; notifications?: NotificationPrefs };
 export type OnboardingStatus = { firstRun: boolean; defaultVaultDir: string };
 export type OnboardingChecks = { permissions: { microphone: string; audio: string; accessibility: string; calendar: string }; claude: { installed: boolean; loggedIn?: boolean; email?: string; org?: string; plan?: string; version?: string; pending?: boolean }; model?: ModelSourceStatus | null };
 // the setup interview: a template plus a few answers that shape a Quorum-built Agent OS (starter.js)
@@ -253,6 +253,13 @@ export type Visibility = 'private' | 'public';
 // who has read a note: people in Quorum, agents through the read guard or the quorum MCP server
 export type NoteViews = { total: number; human: number; agent: number; tokens: number; lastHumanAt: string | null; lastAgentAt: string | null; agents: { via: string; count: number }[] };
 export type NoteActivity = { seenAt: string | null; reviewedAt: string | null; agentWritten: boolean; folder: string; filedBefore: boolean; on: boolean; pending: boolean; running: boolean; abs: string; rel: string; cluster: string | null; events: { at: string; kind: string; text: string; files?: { rel: string; abs: string; label: string }[] }[] };
+// the Notifications view (activityFeed.js): one row per event on a note or memory, the review items, and the bell's dot
+export type FeedKind = 'note-written' | 'note-updated' | 'filed' | 'referenced' | 'memory-created' | 'memory-updated' | 'imported' | 'you';
+export type FeedTab = 'review' | 'unread' | 'all';
+export type FeedRow = { id: string; at: number; kind: FeedKind; who: 'agent' | 'you'; text: string; target: { kind: 'note' | 'memory'; abs: string; rel: string; label: string; gone?: boolean }; files: { rel: string; abs: string; label: string }[]; unread: boolean; review?: { kind: 'note' | 'memory'; count?: number } };
+export type FeedQuery = { tab?: FeedTab; kinds?: FeedKind[]; q?: string; offset?: number; limit?: number };
+export type FeedPage = { items: FeedRow[]; total: number; more: boolean; counts: { review: number; unread: number; all: number }; dot: boolean };
+export type NotificationPrefs = { noteUpdates?: boolean; memoryChanges?: boolean; reviews?: boolean };
 export type NoteLinkTarget = { rel?: string; anchor: string | null; missing?: boolean; id?: string };
 export type NoteDoc = { hand?: boolean; parts?: { note: string; summary: string; split: boolean }; file: string; rel: string; title: string; date?: string; people: string[]; body: string; app: string; url: string; source?: string | null; views?: NoteViews; visibility: Visibility; withheld: boolean; link: string; summarizable?: boolean; transcript?: { id: number; channel: 'me' | 'them'; who: string; text: string }[]; platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null; sourceUrl?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; event?: EventRef | null };
 export type SavedChat = { id: string; title: string; turns: { q: string; a: string; sources?: Source[]; steps?: string[] }[] };
@@ -400,6 +407,9 @@ declare global {
       openNoteLink(url: string): Promise<NoteLinkTarget | null>;
       onNoteLink?(fn: (t: NoteLinkTarget) => void): () => void;
       noteReviewed(file: string): Promise<boolean>;
+      activityFeed(query: FeedQuery): Promise<FeedPage>;
+      activityRead(files: string[]): Promise<number>;
+      activityReview(items: { kind: 'note' | 'memory'; abs: string }[], verdict: 'approve' | 'reject'): Promise<{ done: string[]; failed: { abs: string; error: string }[] }>;
       vaultSearch(q: string, limit?: number): Promise<SearchHit[]>;
       vaultBacklinks(rel: string): Promise<Backlink[]>;
       vaultLinkHealth(fresh?: boolean): Promise<MissingLink[]>;

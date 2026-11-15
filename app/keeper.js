@@ -1002,5 +1002,11 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
     const runs = Array.isArray(t) ? t : t ? [t] : [];
     return { on: conf().on, running: !!running, filed: !!st.done?.[rel], runs };
   };
-  return { run, schedule, halt, status, set, setPlugin, removeClaude, plugins, cachedPlugins, conf, clearErrors, errorLog, noteTrail };
+  // every note's upkeep runs at once, keyed by its path in the vault, for the Notifications view
+  const trails = () => {
+    const b = brain();
+    const t = b ? loadState(b.vault).trail ?? {} : {};
+    return Object.fromEntries(Object.entries(t).map(([rel, r]) => [rel, Array.isArray(r) ? r : r ? [r] : []]));
+  };
+  return { run, schedule, halt, status, set, setPlugin, removeClaude, plugins, cachedPlugins, conf, clearErrors, errorLog, noteTrail, trails };
 }
