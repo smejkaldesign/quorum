@@ -1397,6 +1397,18 @@ ipcMain.handle('set-settings', (_e, next) => {
     settings.memoryHighlight = next.memoryHighlight;
     store.settings.save();
   }
+  // provider MCPs the person disconnected from Quorum, by connector id
+  if (Array.isArray(next.mcpIgnored)) {
+    settings.mcpIgnored = [...new Set(next.mcpIgnored.filter((x) => typeof x === 'string' && /^[a-z0-9-]{1,40}$/.test(x)))].slice(0, 100);
+    store.settings.save();
+  }
+  // which of Quorum's in-app notifications show in the bell; only the known kinds, as booleans
+  if (next.notifications && typeof next.notifications === 'object') {
+    const n = {};
+    for (const k of ['noteUpdates', 'memoryChanges', 'reviews', 'guardrails']) if (typeof next.notifications[k] === 'boolean') n[k] = next.notifications[k];
+    settings.notifications = { ...(settings.notifications ?? {}), ...n };
+    store.settings.save();
+  }
   if (Number.isInteger(next.memoryDotDays) && next.memoryDotDays >= 1 && next.memoryDotDays <= 365) {
     settings.memoryDotDays = next.memoryDotDays;
     store.settings.save();
