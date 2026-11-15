@@ -1887,3 +1887,6 @@ button.meta-pill.meta-app:hover { color: var(--text); }
    padding keeps the row highlight that reaches left of the list inside it */
 .up-strip .up-list.open { max-height: calc(100vh - 150px); overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; padding-left: 4px; margin-left: -4px; }
 .up-strip .up-all { height: 26px; padding: 0 12px; font-size: 12px; }
+/* while the Record menu is open, the button keeps its label out and its icon and text white */
+.status.listen.idle[aria-expanded="true"] { color: var(--text); background: rgba(255, 255, 255, 0.08); }
+.status.listen.idle[aria-expanded="true"] .listen-hint { max-width: 140px; opacity: 1; margin-right: 8px; color: var(--text); transition-delay: 0s; }
