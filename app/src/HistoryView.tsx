@@ -62,7 +62,16 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
   const [note, setNote] = useState<NoteDoc | null>(null);
   // a note opened from its chats link scrolls to its chat, with that chat's turns loaded
   const [noteChat, setNoteChat] = useState<string | null>(null);
-  const openNoteAt = (file: string, chat: string | null) => window.quorum.readNote(file).then((n) => { if (n) { setNoteChat(chat); setNote(n); } });
+  const openNoteAt = (file: string, chat: string | null) => window.quorum.readNote(file).then((n) => { if (n) { setFirstAsk(null); setNoteChat(chat); setNote(n); } });
+  // a question asked from Home starts a note: the note is made, opened, and the question asked in its chat
+  const [firstAsk, setFirstAsk] = useState<{ q: string; files: string[] } | null>(null);
+  const askAsNote = async (q: string, files: string[]) => {
+    const r = await window.quorum.handNoteSave({ id: `ask-${Date.now()}`, file: null, title: q.slice(0, 80), body: '', hash: null, fresh: true });
+    if ('error' in r || 'conflict' in r) { onAsk(q, files); return; }
+    const n = await window.quorum.readNote(r.file);
+    if (!n) { onAsk(q, files); return; }
+    setNoteChat(null); setFirstAsk({ q, files }); setNote(n);
+  };
   // an upcoming meeting's page, opened from Up next here or on another tab
   const [event, setEvent] = useState<CalendarEvent | null>(() => takeEvent());
   // a note or meeting page opens at its top: they share the list's scroll box, which would otherwise keep its place
@@ -163,9 +172,9 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
   useEffect(() => { onFiltered?.(filtered); }, [filtered, onFiltered]);
   useEffect(() => () => onFiltered?.(false), [onFiltered]);
   if (event) return <MeetingPage event={event} onBack={() => setEvent(null)} onOpenNote={(file) => window.quorum.readNote(file).then((n) => { if (n) { setEvent(null); setNote(n); } })} />;
-  if (note) return <NoteReader key={note.file} chat={noteChat} note={note} dayLabel={dayLabel} peopleLine={peopleLine} onBack={() => { setNote(null); refresh(); }} />;
+  if (note) return <NoteReader key={note.file} chat={noteChat} firstAsk={firstAsk} note={note} dayLabel={dayLabel} peopleLine={peopleLine} onBack={() => { setNote(null); setFirstAsk(null); refresh(); }} />;
 
-  const ask = (q: string, files: string[] = []) => { if (q.trim()) { setDraft(''); onAsk(q.trim(), files); } };
+  const ask = (q: string, files: string[] = []) => { if (q.trim()) { setDraft(''); askAsNote(q.trim(), files); } };
 
   // the row for a meeting, note or chat, with the chats about a meeting under it
   const renderRow = (r: Row) => {

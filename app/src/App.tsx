@@ -467,12 +467,6 @@ export function App() {
     setConvoOpen(true);
   }
 
-  async function newChat() {
-    await window.quorum.newChat();
-    anchored.current = false;
-    setMsgs([]);
-    setTimeout(() => composer.current?.focus(), 50);
-  }
 
   async function acceptSuggestion(id: string) {
     anchored.current = false;
@@ -656,7 +650,7 @@ export function App() {
             {!inCall(phase) && (
               <div className="row convo-bar">
                 <button className="pill primary small-pill" onClick={() => setConvoOpen(false)}><IconBack width={16} height={16} /> Back</button>
-                {msgs.length > 0 && <button className="pill small-pill" onClick={newChat}>New chat</button>}
+                {msgs.length > 0 && <button className="pill small-pill" onClick={() => { setConvoOpen(false); openNoteView(); }}>New note</button>}
               </div>
             )}
             {/* a new chat starts empty: one line until the first message; quick asks sit above the input */}

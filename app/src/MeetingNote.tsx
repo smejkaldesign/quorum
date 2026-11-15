@@ -137,8 +137,8 @@ export function splitChoices(raw: string) {
   return m ? { text: t.slice(0, m.index).trim(), choices: m[1].split('|').map((c) => c.trim()).filter(Boolean).slice(0, 4) } : { text: t, choices: [] as string[] };
 }
 
-export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat = null }: {
-  chat?: string | null; note: NoteDoc; dayLabel: (d: Date | null) => string; peopleLine: (p: string[], n: number) => string; onBack: () => void;
+export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat = null, firstAsk = null }: {
+  firstAsk?: { q: string; files: string[] } | null; chat?: string | null; note: NoteDoc; dayLabel: (d: Date | null) => string; peopleLine: (p: string[], n: number) => string; onBack: () => void;
 }) {
   const [note, setNote] = useState(initial);
   const [showing, setShowing] = useState<'summary' | 'transcript'>('summary');
@@ -154,15 +154,15 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
     ask([], DEBRIEF_SHOWN);
   }
   useEffect(() => { if (note.body.trim()) autoDebrief(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  // opened from a chats link: that chat's turns, and the page scrolled down to them
+  // the note's chat comes with it; opened at a chat (or from Home with a question), the page goes down to it
   useEffect(() => {
-    if (!chat) return;
-    window.quorum.readChat(chat).then((c) => {
-      if (!c) return;
+    if (firstAsk) { ask(firstAsk.files, firstAsk.q); return; }
+    (chat ? window.quorum.readChat(chat) : window.quorum.noteChat(note.file)).then((c) => {
+      if (!c?.turns.length) return;
       setTurns(c.turns.map((t) => ({ q: t.q, a: t.a, proposal: null })));
-      requestAnimationFrame(() => scroller.current?.querySelector('.note-thread')?.scrollIntoView({ block: 'start' }));
+      if (chat) requestAnimationFrame(() => scroller.current?.querySelector('.note-thread')?.scrollIntoView({ block: 'start' }));
     }).catch(() => {});
-  }, [chat]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [chat, note.file]); // eslint-disable-line react-hooks/exhaustive-deps
   const [summing, setSumming] = useState(false);
   const [sumError, setSumError] = useState<string | null>(null);
   async function summarize() {
@@ -203,7 +203,9 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
     box?.scrollBy({ top: box.clientHeight - dock, behavior: 'smooth' });
   };
   const slash = draft.startsWith('/') && !draft.includes(' ') ? SKILLS.filter((k) => `/${k.cmd}`.startsWith(draft.trim().toLowerCase())) : [];
-  const runSkill = (k: (typeof SKILLS)[number]) => { setDraft(''); ask([], k.ask); };
+  // a skill keeps the page at the bottom of the chat while its answer comes in
+  const pinBottom = useRef(false);
+  const runSkill = (k: (typeof SKILLS)[number]) => { setDraft(''); pinBottom.current = true; ask([], k.ask); };
   // Edit turns the summary on this page into an editor; Save updates writes it back to the note, the title line kept
   const [editing, setEditing] = useState(false);
   const [edited, setEdited] = useState<string | null>(null);
@@ -235,6 +237,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
     const box = scroller.current?.closest<HTMLElement>('.body');
     const q = scroller.current?.querySelector<HTMLElement>('.nt-turn:last-child .nt-q');
     if (!box || !q || !turns.length) return;
+    if (pinBottom.current) { box.scrollTo({ top: box.scrollHeight }); if (!turns.some((t) => t.pending)) pinBottom.current = false; return; }
     const top = box.scrollTop + q.getBoundingClientRect().top - box.getBoundingClientRect().top - 16;
     box.scrollTo({ top: Math.min(box.scrollHeight - box.clientHeight, top) });
   }, [turns, live, step]);
@@ -309,7 +312,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
               {sumError && <p className="set-error" role="alert">{sumError}</p>}
               <button className="pill who-go" disabled={summing} onClick={summarize}>Generate summary from transcript</button>
             </div>
-          ) : <p className="muted">No summary yet. Ask Quorum below to write one from the transcript.</p>}
+          ) : null}
       </article>
 
       {turns.length > 0 && <section className="note-thread" aria-label="Questions about this note">

@@ -33,6 +33,12 @@ function MeetingChat({ event }: { event: CalendarEvent }) {
     }).catch(() => {});
   }, [event.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const busy = turns.some((t) => t.pending);
+  // asking keeps the page at the bottom of the chat while the answer comes in
+  useLayoutEffect(() => {
+    if (!turns.length || !turns[turns.length - 1].pending) return;
+    const box = document.querySelector<HTMLElement>('.meeting-page')?.closest<HTMLElement>('.body');
+    box?.scrollTo({ top: box.scrollHeight });
+  }, [turns, live, step]);
   async function ask(said?: string) {
     const q = (said ?? draft).trim();
     if (!q || busy) return;

@@ -1668,7 +1668,29 @@ function folderAppOf(abs) {
   return folderApps().find((f) => r.startsWith(`${f.rel}/`))?.app ?? null;
 }
 
-ipcMain.handle('history', () => { matchMeetingApps(); return { meetings: meetingIndex(), chats: chatIndex() }; });
+ipcMain.handle('history', () => { matchMeetingApps(); attachLooseChats(); return { meetings: meetingIndex(), chats: chatIndex() }; });
+
+// A chat is never a thing of its own: it adds on to a note, a meeting or a memory file. A chat saved before that rule
+// (asked from Home with no parent) gets a note made for it once, with the chat attached below the note
+function attachLooseChats() {
+  if (!brain()) return;
+  for (const c of allChats()) {
+    if (c.meetingFile || c.eventId || c.meetingId || !c.turns?.length) continue;
+    const at = new Date(c.createdAt || Date.now());
+    const abs = path.join(handNoteDir(), noteFileName({ date: localIso(at).slice(0, 10), title: c.title, id: c.id }));
+    if (!existsSync(abs)) store.meetings.saveNote(abs, newNoteText({ id: c.id, title: c.title, body: '', date: localIso(at), owner: USER_NAME }));
+    c.meetingFile = abs;
+    c.meetingTitle = c.title;
+    writeChat(c);
+    log('chat attached to a note', path.basename(abs));
+  }
+}
+// the chat on a note, for its page
+ipcMain.handle('note-chat', (_e, file) => {
+  const abs = meetingFile(file);
+  const c = abs ? allChats().filter((x) => x.meetingFile === abs && !x.meetingId).sort((a, b) => String(b.updatedAt ?? b.createdAt).localeCompare(String(a.updatedAt ?? a.createdAt)))[0] : null;
+  return c ? { id: c.id, turns: c.turns.map((t) => ({ q: t.q, a: t.a })) } : null;
+});
 
 // The meeting app of notes whose notetaker does not record it (meetingPlatforms.js), matched against the Mac calendar
 // once per note. It runs when Home loads the list, at most once a minute, and tells Home when notes gained an app.
