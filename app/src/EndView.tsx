@@ -8,6 +8,7 @@ import { Markdown } from './Markdown';
 import { IconRecord, IconSound, IconStop, IconCalendar, IconClock, IconFolder, IconLogs, IconNotes, IconPeople } from './icons';
 import { NoteEditor } from './editor/NoteEditor';
 import { TypedTitle, useStuck } from './StickyBar';
+import { splitChoices } from './MeetingNote';
 import { Composer } from './Composer';
 
 type Followup = { q: string; a: string | null };
@@ -28,7 +29,15 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
   // Stop summarization turns the summary off for this note: Stop goes straight to Save note, the transcript stays
   const [autoSum, setAutoSum] = useState(true);
   const bar = useStuck();
-  const hasSummary = !ready && !!(notes || draft || summarizing || who);
+  const hasSummary = !ready && !!(notes || draft || summarizing);
+  // the summary works without names; a skill in the chat can ask who was who and what was missed, and a note saved
+  // before that is flagged for review
+  const gaps = transcript.some((t) => t.voice !== 'sound' && !t.speaker);
+  const [gapsAsked, setGapsAsked] = useState(false);
+  const fillGaps = () => {
+    setGapsAsked(true);
+    ask('Fill the gaps', 'Help me fill the gaps in this recording so the notes can say who said what. Ask me one short question at a time, three at most: who each unnamed speaker was (Person 1, Person 2, Unknown), then anything the transcript left unclear. End every question with a Choices line. After my last answer, list each speaker with their name and the corrections in two or three bullets.');
+  };
   // Stop turns the page to the summary as it is written
   useEffect(() => { if (summarizing || who) setShowing('summary'); }, [summarizing, who]);
   const [dropped, setDropped] = useState<Record<number, boolean>>({});
@@ -49,13 +58,14 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
   // a click on a bullet opens the transcript on its first turn
   useEffect(() => { if (showing === 'transcript' && hot.length) document.getElementById(`turn-${hot[0]}`)?.scrollIntoView({ block: 'center' }); }, [showing, hot]);
 
-  async function ask() {
-    const q = draftQ.trim();
-    if (!q) return;
-    setDraftQ('');
+  // said: what the page shows as your message; sent: what goes to the model (a skill sends its own instructions)
+  async function ask(said?: string, sent?: string) {
+    const q = (said ?? draftQ).trim();
+    if (!q || followups.some((f) => f.a === null)) return;
+    if (said === undefined) setDraftQ('');
     setFollowups((f) => [...f, { q, a: null }]);
     let a: string;
-    try { a = (await window.quorum.ask(q)).text; } catch (err) { a = `Couldn't answer: ${String(err).replace(/^Error:\s*/, '')}`; }
+    try { a = (await window.quorum.ask(sent ?? q)).text; } catch (err) { a = `Couldn't answer: ${String(err).replace(/^Error:\s*/, '')}`; }
     setFollowups((f) => f.map((x, i) => (i === f.length - 1 ? { ...x, a } : x)));
   }
 
@@ -68,6 +78,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
     try {
       const r = await window.quorum.saveNotes({
         notes: { ...base, title: title.trim() || base.title || 'Untitled note', actions: base.actions.filter((_, i) => !dropped[i]) },
+        ...(gaps && !gapsAsked ? { review: 'speakers' } : {}),
         followups: followups.filter((f): f is { q: string; a: string } => !!f.a),
       });
       setSaved(r);
@@ -118,9 +129,10 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
             // Record keeps the same recording going after Stop; then Summarize transcript; while it writes, Summarizing; once it is on the page (or with the
             // summary turned off), Save note
             <>{onContinue && <button className="act-pill" disabled={recordBusy && !live} onClick={onContinue}><IconRecord width={15} height={15} /> Record</button>}
-            {notes || !autoSum ? <button className="act-pill primary" disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save note'}</button>
-            : summarizing || streaming ? <button className="act-pill primary" disabled>Summarizing…</button>
-            : <button className="act-pill primary" disabled={!who || !onAnswer} onClick={() => onAnswer?.(null)}>Summarize transcript</button>}</>
+            {summarizing || streaming ? <button className="act-pill primary" disabled>Summarizing…</button> : <>
+              {!notes && who && onAnswer && <button className="act-pill" onClick={() => onAnswer(null)}>Summarize transcript</button>}
+              <button className="act-pill primary" disabled={saving || (!notes && autoSum && !who)} onClick={save}>{saving ? 'Saving…' : 'Save note'}</button>
+            </>}</>
           )}
           </>}
         </div>
@@ -139,8 +151,8 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
               {meta && meta.participants > 0 && <span className="meta-pill"><IconPeople width={16} height={16} />{meta.participants}</span>}
               {meta && <span className="meta-pill">{modelName(meta.model)}</span>}
               <div className={`view-toggle${live || streaming ? ' working' : ''}`} role="group" aria-label="Show">
-                <button className={showing === 'note' ? 'on' : ''} aria-pressed={showing === 'note'} aria-label="Note" data-tip="Note" onClick={() => setShowing('note')}><IconNotes width={16} height={16} /></button>
                 {hasSummary && <button className={showing === 'summary' ? 'on' : ''} aria-pressed={showing === 'summary'} aria-label="Summary" data-tip="Summary" onClick={() => setShowing('summary')}><IconLogs width={16} height={16} /></button>}
+                <button className={showing === 'note' ? 'on' : ''} aria-pressed={showing === 'note'} aria-label="Note" data-tip="Note" onClick={() => setShowing('note')}><IconNotes width={16} height={16} /></button>
                 <button className={showing === 'transcript' ? 'on' : ''} aria-pressed={showing === 'transcript'} aria-label="Transcript" data-tip="Transcript" onClick={() => setShowing('transcript')}><IconSound width={16} height={16} /></button>
               </div>
             </div>
@@ -150,8 +162,8 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
                 {/* while it records: the summary waits for Stop, and can be turned off for this note */}
                 {live && autoSum && (
                   <div className="sum-wait" role="status">
-                    <span className="sum-wait-text">Summarizes when the recording stops</span>
-                    <button className="act-pill" onClick={() => setAutoSum(false)}>Stop summarization</button>
+                    <span className="sum-wait-text"><span className="spinner tiny" aria-hidden="true" />Summarizes when the recording stops</span>
+                    <button className="act-pill" onClick={() => { setAutoSum(false); window.quorum.summaryOff(); }}>Cancel</button>
                   </div>
                 )}
                 {/* the note's own editor, formatting bar on top, typed inline with no box around it */}
@@ -175,7 +187,13 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
                 {live && partial && <p className="live-partial"><em className="partial">{partial}</em></p>}
               </section>
             ) : showing === 'summary' && <>
-            {who && onAnswer && autoSum && <WhoSpoke ask={who} onDone={onAnswer} />}
+            {/* nobody named in the transcript: the summary stands, and a few questions in the chat below can fill the gaps */}
+            {notes && !notes.empty && gaps && !gapsAsked && (
+              <div className="gap-warn" role="note">
+                <span>The speakers aren't named and parts of the transcript may be unclear, so the summary can't say who said what.</span>
+                <button className="act-pill" onClick={fillGaps}>Fill the gaps</button>
+              </div>
+            )}
             {view.empty && !ready && <p className="muted">Nothing was transcribed.</p>}
             {view.summary ? <p className={`summary${streaming && !view.sections.length ? ' typing' : ''}`}>{view.summary}</p>
               : streaming && <div className="sk-block" aria-label="Writing the summary"><span className="sk sk-line w90" /><span className="sk sk-line w75" /><span className="sk sk-line w60" /></div>}
@@ -230,7 +248,10 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
                     <div className="nt-who"><Avatar name={asker?.name || me?.name || 'You'} photo={asker?.photo ?? me?.photo ?? null} size={22} /><strong>{asker?.name || me?.name || 'You'}</strong></div>
                     <p className="nt-q">{f.q}</p>
                     <div className="nt-who quorum"><img src={mark} alt="" width={22} height={22} /><strong>Quorum</strong></div>
-                    {f.a === null ? <p className="nt-step shimmer">Thinking…</p> : <div className="nt-a"><Markdown text={f.a} /></div>}
+                    {f.a === null ? <p className="nt-step shimmer">Thinking…</p> : <div className="nt-a"><Markdown text={splitChoices(f.a).text} /></div>}
+                    {f.a !== null && i === followups.length - 1 && splitChoices(f.a).choices.length > 0 && (
+                      <div className="nt-choices">{splitChoices(f.a).choices.map((c) => <button key={c} className="pill small-pill" onClick={() => ask(c)}>{c}</button>)}</div>
+                    )}
                   </div>
                 ))}
               </section>

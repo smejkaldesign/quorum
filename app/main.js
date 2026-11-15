@@ -2585,6 +2585,8 @@ ipcMain.handle('pause', () => {
   updateTray();
 });
 ipcMain.handle('resume', () => { if (meeting.armed && !meeting.capturing && !callBlocked) resume(OWNER); });
+// Cancel on the summary bar: this recording waits for Summarize transcript instead of summarizing at Stop
+ipcMain.handle('summary-off', () => { meeting.summaryOff = true; meeting.askWho = true; });
 // Record again after Stop, before saving: the same session picks up where it left off, its transcript kept, and the
 // summary is written again at the next Stop
 ipcMain.handle('record-continue', () => {
@@ -2593,7 +2595,7 @@ ipcMain.handle('record-continue', () => {
   meeting.endedAt = null;
   meeting.notes = null;
   meeting.awaitingWho = null;
-  meeting.askWho = true;
+  meeting.askWho = !!meeting.summaryOff;
   writeState();
   resume(OWNER);
   return { ok: true };
@@ -2770,8 +2772,10 @@ ipcMain.handle('record-session', async () => {
   if (settings.notes?.transcription === false) return { error: 'Turn on Transcription in Settings > Notes to record.' };
   const r = await startListening(undefined, { screen: g.screenContext && !!settings.screenContext, running: false });
   if (r?.error) return r;
-  // at Stop it asks who spoke before writing anything
-  meeting.askWho = true;
+  // at Stop the summary is written straight away, from the transcript and your notes; Cancel on the page turns that
+  // off (summary-off) and the summary waits for Summarize transcript
+  meeting.askWho = false;
+  meeting.summaryOff = false;
   meeting.named = [];
   meeting.lead = null;
   return meeting.armed ? { ok: true } : { error: "The recording didn't start." };
@@ -2876,7 +2880,9 @@ function saveNotes(payload) {
   const file = path.join(dir, noteFileName({ date, title: notes.title, id: meeting.id }));
   // a speaker correction made after saving rewrites the same file from the turns
   meeting.saved = { file, payload: { notes, followups: payload.followups } };
-  store.meetings.saveNote(file, withShareChoice(file, noteMarkdown(meeting.saved.payload)));
+  // saved before anyone said who the speakers were: flagged so Memory health can bring it back for review
+  const body = withShareChoice(file, noteMarkdown(meeting.saved.payload));
+  store.meetings.saveNote(file, payload.review === 'speakers' ? setFrontmatterKey(body, 'review', yamlStr('speakers')) : body);
   log('saved note', file);
   // saved without a summary or a title: it gets a name the same way an untitled hand note does
   if (isUntitled(notes.title)) nameUntitled(file).catch((e) => log('note title', e?.message));

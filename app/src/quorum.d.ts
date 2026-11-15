@@ -314,7 +314,7 @@ declare global {
       pause(): Promise<void>;
       resume(): Promise<void>;
       ask(q: string, files?: string[]): Promise<{ text: string; sources: Source[]; steps: string[] }>;
-      saveNotes(p: { notes: Notes; followups: { q: string; a: string }[] }): Promise<{ file: string; rel: string; app: string; url: string }>;
+      saveNotes(p: { notes: Notes; followups: { q: string; a: string }[]; review?: string }): Promise<{ file: string; rel: string; app: string; url: string }>;
       recordStart(opts: RecordState): Promise<RecordState | { error: string }>;
       recordStop(): Promise<RecordState>;
       recordStatus(): Promise<RecordState>;
@@ -492,6 +492,7 @@ declare global {
       calendarOpen(ev: CalendarEvent): Promise<void>;
       meetingBrief(q: { title: string; generate?: boolean }): Promise<MeetingBrief>;
       noteChat(file: string): Promise<{ id: string; turns: { q: string; a: string }[] } | null>;
+      summaryOff(): Promise<void>;
       recordContinue(): Promise<{ ok: true } | { error: string }>;
       eventChat(id: string): Promise<{ id: string; turns: { q: string; a: string }[] } | null>;
       meetingAsk(ev: CalendarEvent, question: string, history: { q: string; a: string }[]): Promise<{ text: string }>;

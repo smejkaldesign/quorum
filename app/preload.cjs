@@ -189,6 +189,7 @@ contextBridge.exposeInMainWorld('quorum', {
   meetingAsk: (ev, question, history) => ipcRenderer.invoke('meeting-ask', ev, question, history),
   eventChat: (id) => ipcRenderer.invoke('event-chat', id),
   recordContinue: () => ipcRenderer.invoke('record-continue'),
+  summaryOff: () => ipcRenderer.invoke('summary-off'),
   noteChat: (file) => ipcRenderer.invoke('note-chat', file),
   recordSession: () => ipcRenderer.invoke('record-session'),
   sessionSummarize: (answers) => ipcRenderer.invoke('session-summarize', answers),
