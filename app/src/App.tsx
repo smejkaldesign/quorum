@@ -557,7 +557,7 @@ export function App() {
           </button>
         </div>
       </header>
-      {view === 'main' && <UpNext hidden={(inCall(phase) && (tab === 'chat' || tab === 'notes' || tab === 'mine')) || (tab === 'home' && !convoOpen && histFiltered)} />}
+      {view === 'main' && <UpNext hidden={(inCall(phase) && (tab === 'chat' || tab === 'notes' || tab === 'mine')) || (tab === 'home' && !convoOpen && histFiltered)} floating={tab === 'home' && !convoOpen} />}
 
       {view === 'settings' ? (
         <div className="body wide flush">

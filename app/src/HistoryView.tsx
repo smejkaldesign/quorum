@@ -8,7 +8,7 @@ import { ConnectHint } from './ConnectHint';
 import { openConnectors } from './connectorsNav';
 import { useSession } from './session';
 import { dayLabel } from './upNextList';
-import { useCalendarView } from './UpNext';
+import { UpNext, useCalendarView } from './UpNext';
 import { IconCalendar, IconChat, IconClose, IconExternal, IconListCheck, IconMic, IconNewNote, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
 
 type Filter = 'all' | 'meetings' | 'notes' | 'chats';
@@ -173,6 +173,8 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
           <button className="icon-btn" aria-label="Hide this" onClick={() => setCalHintHidden(true)}><IconClose width={14} height={14} /></button>
         </ConnectHint>
       )}
+
+      {!filtered && <UpNext inline />}
 
       {groups.length === 0 ? (
         picked.length || range || keyword ? <p className="hist-empty">Nothing matches these filters.</p>

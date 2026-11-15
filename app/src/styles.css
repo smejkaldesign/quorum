@@ -1770,3 +1770,14 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .conn-check-item.skip strong { color: var(--muted); }
 .conn-check-fix { display: block; margin-top: 2px; color: var(--danger); }
 .conn-check-item .muted { display: block; margin-top: 2px; }
+
+/* Up next on Home: the list's top group, and the header strip that slides down once that group's first row scrolls past */
+.up-inline .up-head h4 { margin: 0; color: var(--muted); font-size: 18px; font-weight: 500; }
+.up-inline .up-new { height: 28px; padding: 0 12px 0 10px; display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.up-float { position: relative; z-index: 5; height: 0; }
+.up-float-in { position: absolute; top: 0; left: 0; right: 0; overflow: hidden; pointer-events: none; }
+.up-float-in > .up-strip { background: var(--panel); transform: translateY(-100%); opacity: 0; transition: transform 220ms ease, opacity 180ms ease; }
+.up-float-in.shown { pointer-events: auto; }
+.up-float-in.shown > .up-strip { transform: none; opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .up-float-in > .up-strip { transition: none; } }
+.up-float-in:not(.shown) .up-strip, .up-float-in:not(.shown) .up-strip * { -webkit-app-region: no-drag; }

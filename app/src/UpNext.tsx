@@ -21,20 +21,36 @@ const setCalView = (v: CalView) => { calView = v; calSubs.forEach((f) => f()); }
 const subscribeCal = (f: () => void) => { calSubs.add(f); return () => { calSubs.delete(f); }; };
 export const useCalendarView = () => useSyncExternalStore(subscribeCal, () => calView, () => calView);
 
+// What the strip loads for the copy in the Home list (whether + New shows), and whether that copy's first row has
+// scrolled out of view, which slides the strip in on Home.
+type Shared = { canNew: boolean; passed: boolean };
+let shared: Shared = { canNew: false, passed: false };
+const sharedSubs = new Set<() => void>();
+const setShared = (v: Partial<Shared>) => {
+  if (Object.entries(v).every(([k, x]) => shared[k as keyof Shared] === x)) return;
+  shared = { ...shared, ...v }; sharedSubs.forEach((f) => f());
+};
+const subscribeShared = (f: () => void) => { sharedSubs.add(f); return () => { sharedSubs.delete(f); }; };
+const useShared = () => useSyncExternalStore(subscribeShared, () => shared, () => shared);
+
 // Up next, under the header on every tab: the next three events from the connected calendar, Show more for the rest
 // (open or closed for the rest of this launch), and + New once a meeting app or a meeting notes app is connected.
 // + New sends quorum:new-note, which the note editor handles. hidden keeps the loading going while the strip is out
 // of sight (a live call view, or History filters).
-export function UpNext({ hidden = false }: { hidden?: boolean }) {
+// On Home the same list sits at the top of the Home list (inline, which only reads what the strip loads), and the
+// strip is floating: out of sight until the inline copy's first row scrolls past the top, then it slides down.
+export function UpNext({ hidden = false, inline = false, floating = false }: { hidden?: boolean; inline?: boolean; floating?: boolean }) {
   const cal = useCalendarView();
+  const { canNew, passed } = useShared();
+  const setCanNew = useCallback((v: boolean) => setShared({ canNew: v }), []);
   const [open, setOpen] = useSession('upNextOpen', false);
   const [eventMenu, setEventMenu] = useState<string | null>(null);
-  const [canNew, setCanNew] = useState(false);
+  const section = useRef<HTMLElement>(null);
   const meetingCapture = useFlag('meeting-capture');
   const listId = useId();
   const retry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // the helper can still be starting on launch, so a miss retries in 10s instead of waiting for the 5 minute refresh
-  const loadCal = useCallback(function load() {
+  const loadCal = useCallback(function load(): Promise<void> {
     return window.quorum.calendar().then((c) => {
       setCalView({ events: c.connected ? c.events.filter((e) => new Date(e.end) > new Date()) : [], connected: c.connected, showAll: c.showAll, hidden: c.hidden, status: c.status });
       clearTimeout(retry.current);
@@ -50,15 +66,17 @@ export function UpNext({ hidden = false }: { hidden?: boolean }) {
       window.quorum.getSettings().catch(() => null),
     ]);
     setCanNew(canNewNote({ sources, providers, platforms, added: settings?.meetingProviders }, connectorsFor({ meetingCapture })));
-  }, [meetingCapture]);
+  }, [meetingCapture, setCanNew]);
   useEffect(() => {
+    if (inline) return;
     loadCal();
     const t = setInterval(loadCal, 5 * 60000);
     const off = window.quorum.onSettings(() => loadCal());
     return () => { clearInterval(t); clearTimeout(retry.current); off(); };
-  }, [loadCal]);
+  }, [loadCal, inline]);
   // connector state changes only when something connects or disconnects, or a source job finishes
   useEffect(() => {
+    if (inline) return;
     loadConnectors();
     const changed = () => { loadConnectors(); };
     window.addEventListener(CONNECTORS_CHANGED, changed);
@@ -66,13 +84,26 @@ export function UpNext({ hidden = false }: { hidden?: boolean }) {
     const offSource = window.quorum.onSourceJob(done);
     const offPlatform = window.quorum.onPlatformJob(done);
     return () => { window.removeEventListener(CONNECTORS_CHANGED, changed); offSource(); offPlatform(); };
-  }, [loadConnectors]);
+  }, [loadConnectors, inline]);
 
   const showCal = cal.connected && (cal.events.length > 0 || cal.hidden > 0);
-  if (hidden || (!showCal && !canNew)) return null;
+  const empty = hidden || (!showCal && !canNew);
+  // inline: watch the first row (the heading when there are none) against the scrolling body above it
+  useEffect(() => {
+    const el = section.current;
+    if (!inline || !el) return;
+    const target = el.querySelector('.hist-item') ?? el;
+    const root = el.closest('.body');
+    const io = new IntersectionObserver(([e]) => {
+      setShared({ passed: !e.isIntersecting && !!e.rootBounds && e.boundingClientRect.bottom <= e.rootBounds.top + 1 });
+    }, { root });
+    io.observe(target);
+    return () => { io.disconnect(); setShared({ passed: false }); };
+  }, [inline, empty, cal.events.length]);
+  if (empty) return null;
   const { rows, more } = upNextRows(cal.events, open);
-  return (
-    <section className="up-strip" aria-label="Up next">
+  const strip = (
+    <section ref={section} className={inline ? 'hist-group up-inline' : 'up-strip'} aria-label="Up next" aria-hidden={floating && !passed ? true : undefined}>
       <div className="up-head">
         <h4>Up next</h4>
         <span className="up-head-end">
@@ -115,6 +146,8 @@ export function UpNext({ hidden = false }: { hidden?: boolean }) {
       )}
     </section>
   );
+  if (!floating) return strip;
+  return <div className="up-float"><div className={`up-float-in ${passed ? 'shown' : ''}`} inert={!passed || undefined}>{strip}</div></div>;
 }
 
 // a row's More menu, drawn on the body at the button's position so the list's scroll area cannot clip it
