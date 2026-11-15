@@ -496,12 +496,35 @@ export function App() {
   const pickSpeaker = useCallback((id: number, name: string | null, same: boolean) => setSpeaker(id, name, same), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const screenOffered = nt.screenContext && settings.screenContext === true;
+  // Record after Stop: the same recording keeps going; the summary so far is dropped and written again at the next Stop
+  async function continueRecord() {
+    const r = await window.quorum.recordContinue().catch((err) => ({ error: String(err) }));
+    if ('error' in r) { setRecordError(r.error); setTimeout(() => setRecordError(null), 5000); return; }
+    setNotes(null); setNotesDraft(null); setAsk(null); setSummarizing(false);
+  }
+  const countdown = async () => { for (const n of [3, 2, 1]) { setCount(n); await new Promise((r) => setTimeout(r, 1000)); } setCount(null); };
+  // Record on a stopped note: the countdown offers New note under it; left alone, this note keeps recording
+  const newInstead = useRef(false);
+  const [offerNew, setOfferNew] = useState(false);
+  async function recordAgain() {
+    if (count !== null) return;
+    newInstead.current = false;
+    setOfferNew(true);
+    await countdown();
+    setOfferNew(false);
+    if (!newInstead.current) { setAnnounce(true); await continueRecord(); return; }
+    closeReview();
+    setDraftOpen(true);
+    await beginRecording();
+  }
   async function startRecord() {
     if (count !== null || phaseRef.current !== 'idle') return;
     setRecordError(null);
-    for (const n of [3, 2, 1]) { setCount(n); await new Promise((r) => setTimeout(r, 1000)); }
+    await countdown();
+    await beginRecording();
+  }
+  async function beginRecording() {
     setAnnounce(true);
-    setCount(null);
     const r = await window.quorum.recordSession().catch((err) => ({ error: String(err) }));
     if ('error' in r) { setAnnounce(false); setRecordError(r.error); setTimeout(() => setRecordError(null), 5000); return; }
     setNote((n) => (n && !n.leave ? { ...n, leave: Date.now(), next: null } : n));
@@ -524,7 +547,7 @@ export function App() {
     starting: { label: announce ? 'Recording' : 'Starting…', icon: <RecLevel live={false} /> },
     listening: { label: 'Recording', icon: <RecLevel live /> },
     paused: held ? { label: 'Paused', icon: <RecLevel live={false} /> } : { label: 'Stopped', icon: <IconStop width={14} height={14} /> },
-    review: { label: 'Ended', icon: <span className="dot" /> },
+    review: { label: count !== null ? String(count) : 'Record', icon: <IconRecord width={17} height={17} /> },
     blocked: { label: 'Off for this call', icon: <Wave live={false} /> },
   }[phase];
 
@@ -554,7 +577,7 @@ export function App() {
   const liveArea = (
     <div className="body wide flush live-body">
       <LazyView name="your notes" onClose={phase === 'review' ? closeReview : () => setLiveOpen(false)}>
-        <EndView embedded ready={drafting} onSaveDraft={saveDraft} onRecord={nt.manualListen ? () => { startRecord(); } : undefined} recordBusy={phase !== 'idle' || count !== null} live={inCall(phase)} paused={phase === 'paused'} who={ask} onAnswer={(a) => { setAsk(null); window.quorum.sessionSummarize(a ?? {}); }} notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing}
+        <EndView embedded ready={drafting} onSaveDraft={saveDraft} onContinue={nt.manualListen ? () => { recordAgain(); } : undefined} onRecord={nt.manualListen ? () => { startRecord(); } : undefined} recordBusy={phase !== 'idle' || count !== null} live={inCall(phase)} paused={phase === 'paused'} who={ask} onAnswer={(a) => { setAsk(null); window.quorum.sessionSummarize(a ?? {}); }} notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing}
           transcript={lines.map((l) => ({ ...l, who: who(l) }))} partial={liveWords ? [partial.me, partial.them].filter(Boolean).join(' ') : ''} participants={participants} onSpeaker={setSpeaker} me={nt.meetingCapture ? me : undefined}
           privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={phase === 'review' ? closeReview : drafting ? () => { mine.reset(); setDraftOpen(false); } : () => setLiveOpen(false)} />
       </LazyView>
@@ -604,11 +627,16 @@ export function App() {
             {/* Record: one button from idle to recording, so the label that slid out on hover is the one that turns green.
                 With Screen on offer it opens the Record popover; otherwise it opens a new note that starts transcribing */}
             {(nt.manualListen || phase !== 'idle') && (
-            <button className={`status listen ${phase === 'blocked' ? 'off-call' : phase}${count !== null ? ' counting' : ''}${announce ? ' announce' : ''}${recordError ? ' rec-error' : ''}`}
-              onClick={phase === 'idle' ? () => { startRecord(); } : phase === 'blocked' ? undefined : () => { closeNote(); setView('main'); setLiveOpen(true); }}
+            <button className={`status listen ${phase === 'blocked' ? 'off-call' : phase === 'review' ? 'idle' : phase}${count !== null ? ' counting' : ''}${announce ? ' announce' : ''}${recordError ? ' rec-error' : ''}`}
+              onClick={phase === 'idle' ? () => { startRecord(); } : phase === 'review' ? () => { closeNote(); setView('main'); setLiveOpen(true); recordAgain(); } : phase === 'blocked' ? undefined : () => { closeNote(); setView('main'); setLiveOpen(true); }}
               data-tip={phase === 'blocked' ? 'Someone on your never-listen list is in this call' : phase !== 'idle' ? 'Open the recording' : undefined} aria-label={status.label}>
               <span className="listen-hint" aria-live="polite">{status.label}</span>{status.icon}
             </button>
+            )}
+            {offerNew && (
+              <div className="menu rec-offer" role="menu">
+                <button role="menuitem" onClick={() => { newInstead.current = true; setOfferNew(false); }}><IconNotes width={15} height={15} /> New note</button>
+              </div>
             )}
             <span className="rec-sep" aria-hidden="true" />
           </div>

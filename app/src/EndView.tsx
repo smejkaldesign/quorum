@@ -7,6 +7,7 @@ import mark from '../assets/quorum-mark.png';
 import { Markdown } from './Markdown';
 import { IconRecord, IconStop, IconCalendar, IconClock, IconFolder, IconLogs, IconNotes, IconPeople } from './icons';
 import { NoteEditor } from './editor/NoteEditor';
+import { TypedTitle, useStuck } from './StickyBar';
 import { Composer } from './Composer';
 
 type Followup = { q: string; a: string | null };
@@ -19,12 +20,13 @@ export type Turn = SpeakerTurn & { who: string; voice?: number | 'mix' | 'sound'
 // live: the recording is running (or paused) and this is its page under the header; the transcript shows as it is
 // heard and the summary waits for Stop, which writes it into this same page. embedded drops the window chrome
 // ready: a new note before any recording; you can type in Your notes and Save, or press Record to transcribe into it
-export function EndView({ notes, draft, meta, summarizing, transcript, participants, onSpeaker, privateNotes, onPrivateNotes, flushPrivateNotes, onClose, me, live = false, paused = false, embedded = false, partial = '', who = null, onAnswer, ready = false, onSaveDraft, onRecord, recordBusy = false }: { onRecord?: () => void; recordBusy?: boolean; ready?: boolean; onSaveDraft?: (title: string) => Promise<void>; who?: WhoAsk | null; onAnswer?: (a: WhoAnswers | null) => void; live?: boolean; paused?: boolean; embedded?: boolean; partial?: string; me?: { name: string; photo: string | null }; notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; participants: string[]; onSpeaker: (id: number, name: string | null, similar: boolean) => Promise<void>; privateNotes: string; onPrivateNotes: (v: string) => void; flushPrivateNotes: () => void; onClose: () => void }) {
+export function EndView({ notes, draft, meta, summarizing, transcript, participants, onSpeaker, privateNotes, onPrivateNotes, flushPrivateNotes, onClose, me, live = false, paused = false, embedded = false, partial = '', who = null, onAnswer, ready = false, onSaveDraft, onRecord, onContinue, recordBusy = false }: { onContinue?: () => void; onRecord?: () => void; recordBusy?: boolean; ready?: boolean; onSaveDraft?: (title: string) => Promise<void>; who?: WhoAsk | null; onAnswer?: (a: WhoAnswers | null) => void; live?: boolean; paused?: boolean; embedded?: boolean; partial?: string; me?: { name: string; photo: string | null }; notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; participants: string[]; onSpeaker: (id: number, name: string | null, similar: boolean) => Promise<void>; privateNotes: string; onPrivateNotes: (v: string) => void; flushPrivateNotes: () => void; onClose: () => void }) {
   const [showing, setShowing] = useState<'summary' | 'transcript'>(live ? 'transcript' : 'summary');
   // a new note's title: empty reads New note in italics, and a click puts the cursor in it
   const [title, setTitle] = useState('');
   // Stop summarization turns the summary off for this note: Stop goes straight to Save note, the transcript stays
   const [autoSum, setAutoSum] = useState(true);
+  const bar = useStuck();
   // Stop turns the page to the summary as it is written
   useEffect(() => { if (summarizing || who) setShowing('summary'); }, [summarizing, who]);
   const [dropped, setDropped] = useState<Record<number, boolean>>({});
@@ -72,7 +74,8 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
 
   // consecutive turns from the same speaker share one heading
   const groups: { key: string; turns: Turn[] }[] = [];
-  for (const t of transcript) {
+  // a line with no words in it (a lone period) is left out
+  for (const t of transcript.filter((x) => x.voice === 'sound' || /[\p{L}\p{N}]/u.test(x.text))) {
     const key = `${t.channel}|${t.speaker ?? t.who}`;
     if (groups[groups.length - 1]?.key === key) groups[groups.length - 1].turns.push(t); else groups.push({ key, turns: [t] });
   }
@@ -90,9 +93,14 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
 
   return (
     <div className={embedded ? 'end embedded' : 'panel end'}>
-      <header className="end-bar">
-        {live || ready ? <BackButton onClick={onClose} />
+
+      {(
+        <div className="end-scroll">
+          <div ref={bar.sentinel} className="rb-sentinel" aria-hidden="true" />
+      <header className={`end-bar sticky-bar${bar.stuck ? ' stuck' : ''}`}>
+        <span className="rb-left">{live || ready ? <BackButton onClick={onClose} />
           : <button className="act-pill" onClick={async () => { await window.quorum.discard(); onClose(); }}>{saved ? 'Close' : 'Discard'}</button>}
+          <span className={[live && 'shimmer', !(title.trim() || shown?.title || meta?.title) && 'untitled'].filter(Boolean).join(' ') || undefined}><TypedTitle text={title.trim() || shown?.title || meta?.title || 'New note'} on={bar.stuck} /></span></span>
         <div className="end-actions">
           {ready ? <>
           {/* Record turns this page into the recording, the same as Record in the header */}
@@ -105,18 +113,16 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
               <button className="pill" onClick={() => window.quorum.openNote(saved.file)}><IconFolder width={15} height={15} /> Show in {saved.app}</button>
             </>
           ) : (
-            // after Stop: Summarize transcript; while it writes, Summarizing; once it is on the page (or with the
+            // Record keeps the same recording going after Stop; then Summarize transcript; while it writes, Summarizing; once it is on the page (or with the
             // summary turned off), Save note
-            notes || !autoSum ? <button className="act-pill primary" disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save note'}</button>
+            <>{onContinue && <button className="act-pill" disabled={recordBusy && !live} onClick={onContinue}><IconRecord width={15} height={15} /> Record</button>}
+            {notes || !autoSum ? <button className="act-pill primary" disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save note'}</button>
             : summarizing || streaming ? <button className="act-pill primary" disabled>Summarizing…</button>
-            : <button className="act-pill primary" disabled={!who || !onAnswer} onClick={() => onAnswer?.(null)}>Summarize transcript</button>
+            : <button className="act-pill primary" disabled={!who || !onAnswer} onClick={() => onAnswer?.(null)}>Summarize transcript</button>}</>
           )}
           </>}
         </div>
       </header>
-
-      {(
-        <div className="end-scroll">
           <article className={`doc${streaming ? ' streaming' : ''}`}>
             <h1>{ready || live || (!shown?.title && !streaming && !saved) || title ? (
               // the title is yours to type at any point; empty, it reads New note (shimmering while it records)
@@ -157,10 +163,10 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
                 {transcript.length ? groups.map((g) => (
                   // one speaker's run of turns: who it was on top, then each turn as its own paragraph
                   g.turns[0].voice === 'sound'
-                    ? <p key={g.turns[0].id} className="turn-sound">{[...new Set(g.turns.map((t) => t.text))].join(', ')}</p>
+                    ? <p key={g.turns[0].id} className="turn-sound">{[...new Set(g.turns.map((t) => soundLine(t.text)))].join(' ')}</p>
                     : <div key={g.turns[0].id} className={`turn-group ${g.turns[0].channel}`}>
                     <div className="spk">{speakerHead(g.turns[0])}</div>
-                    {g.turns.map((t) => <p key={t.id} id={`turn-${t.id}`} className={[hot.includes(t.id) && 'hot', t.unclear && 'unclear'].filter(Boolean).join(' ') || undefined} data-tip={t.unclear ? 'Hard to hear; Quorum may have some words wrong' : undefined}>{t.text}</p>)}
+                    {g.turns.map((t) => <p key={t.id} id={`turn-${t.id}`} className={hot.includes(t.id) ? 'hot' : undefined}>{t.text}</p>)}
                   </div>
                 )) : !partial && <p className="muted">{ready ? 'Press Record to transcribe into this note.' : live ? (paused ? 'Paused. Resume to keep transcribing.' : 'Listening…') : 'Nothing was transcribed.'}</p>}
                 {live && partial && <p className="live-partial"><em className="partial">{partial}</em></p>}
@@ -244,3 +250,6 @@ function modelName(m: string) {
   if (!m.startsWith('claude-')) return m;
   return `Claude ${m.slice(7).replace(/^\w/, (c) => c.toUpperCase()).replace(/-(\d+)-(\d+)$/, ' $1.$2')}`;
 }
+
+// a sound line: music between notes, anything else in brackets
+export const soundLine = (label: string) => (label === 'Music' ? `♪ ${label} ♪` : `[${label}]`);

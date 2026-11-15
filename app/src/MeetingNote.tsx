@@ -13,6 +13,7 @@ import { Composer } from './Composer';
 import { IconArrowDown, IconChevron, IconFolder, IconGlobe, IconLock, IconLogs, IconMore, IconNotes, IconTrash } from './icons';
 import { Avatar } from './Speaker';
 import { NoteEditor, type NoteEditorHandle } from './editor/NoteEditor';
+import { soundLine } from './EndView';
 
 type Turn = { q: string; a: string; proposal: string | null; state?: 'applied' | 'discarded'; pending?: boolean };
 
@@ -110,12 +111,12 @@ function SavedTranscript({ turns }: { turns: { id: number; channel: 'me' | 'them
   }
   return (
     <section className="transcript end-transcript">
-      {groups.map((g) => g.turns[0].sound ? <p key={g.turns[0].id} className="turn-sound">{[...new Set(g.turns.map((t) => t.text))].join(', ')}</p> : (
+      {groups.map((g) => g.turns[0].sound ? <p key={g.turns[0].id} className="turn-sound">{[...new Set(g.turns.map((t) => soundLine(t.text)))].join(' ')}</p> : (
         <div key={g.turns[0].id} className={`turn-group ${g.channel}`}>
           <div className="spk">{g.who === 'Unknown' || g.who === 'You' ? <span className="avatar-sm avatar-unknown" aria-label="Unknown speaker">?</span>
             : /^(Person|Speaker) \d+$|^Mixed discussion/.test(g.who) ? <><span className="avatar-sm avatar-unknown" aria-label="Unnamed speaker">?</span><span className="spk-anon">{g.who}</span></>
             : <><Avatar name={g.who} /><span>{g.who}</span></>}</div>
-          {g.turns.map((t) => <p key={t.id} className={t.unclear ? 'unclear' : undefined} data-tip={t.unclear ? 'Hard to hear; Quorum may have some words wrong' : undefined}>{t.text}</p>)}
+          {g.turns.map((t) => <p key={t.id}>{t.text}</p>)}
         </div>
       ))}
     </section>

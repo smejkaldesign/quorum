@@ -2088,8 +2088,6 @@ button.meta-pill.meta-icon:hover { background: rgba(255, 255, 255, 0.06); }
 /* voices Quorum told apart: an unnamed one keeps the ? with its label; laughter and crosstalk get a quiet line; hard-to-hear speech is dimmed */
 .spk-anon { color: var(--muted); }
 .turn-sound { color: var(--muted); font-style: italic; margin: 6px 0 14px; }
-.turn-sound::before { content: '['; } .turn-sound::after { content: ']'; }
-.turn-group p.unclear { color: var(--muted); }
 /* the note's action buttons (Edit, Cancel, Save updates, Private) are one control: same size, colors and hover */
 .act-pill, .keep-private { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 999px; background: var(--menu-bg); border: 1px solid var(--line-2); color: var(--text); font-size: 14px; font-weight: 500; transition: background 160ms ease, border-color 160ms ease; }
 .act-pill.vis-pill { padding: 0 10px 0 12px; }
@@ -2196,3 +2194,10 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .views-wrap .meta-pill
 .sum-wait-text { color: var(--muted); font-size: 14px; }
 @keyframes sum-wait { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 @media (prefers-reduced-motion: reduce) { .sum-wait { animation: none; } }
+.end-scroll .end-bar.sticky-bar { position: sticky; top: 0; z-index: 6; display: flex; justify-content: space-between; align-items: center; }
+.end-scroll .end-bar.sticky-bar.stuck { max-width: none; margin: 0; padding: 10px max(16px, calc((100% - 720px) / 2)); background: var(--panel); border-bottom: 1px solid var(--line-2); animation: bar-down 240ms ease; }
+.end-bar .untitled .rb-title { font-style: italic; }
+/* during the countdown on a stopped note: New note under Record */
+.status-wrap { position: relative; }
+.rec-offer { top: 44px; right: 0; min-width: 0; width: max-content; }
+.rec-offer button { display: flex; align-items: center; gap: 8px; padding-right: 18px; }

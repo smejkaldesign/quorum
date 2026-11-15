@@ -308,6 +308,8 @@ const fixWords = (text) => (settings.voice?.dictionary ?? []).reduce((t, d) => t
 
 // a final joins the transcript as part of a speaker turn; the UI gets the whole turn, replace: true when it grew
 function keep(evt) {
+  // a piece with no words in it (a lone period, a dash) is noise; it never becomes a line
+  if (!/[\p{L}\p{N}]/u.test(evt.text ?? '')) return;
   const act = keepActions(gate(), { solo: !!meeting.solo });
   if (act.optOut && mentionsOptOut(evt.text)) return blockCall('name');
   if (act.softStop) softStop(evt.text, evt.channel === 'me' ? OWNER : 'someone on the call', 0.85);
@@ -2583,6 +2585,19 @@ ipcMain.handle('pause', () => {
   updateTray();
 });
 ipcMain.handle('resume', () => { if (meeting.armed && !meeting.capturing && !callBlocked) resume(OWNER); });
+// Record again after Stop, before saving: the same session picks up where it left off, its transcript kept, and the
+// summary is written again at the next Stop
+ipcMain.handle('record-continue', () => {
+  if (meeting.armed || meeting.saved || !meeting.startedAt || !gate().manualListen) return { error: 'There is no stopped recording to continue.' };
+  meeting.armed = true;
+  meeting.endedAt = null;
+  meeting.notes = null;
+  meeting.awaitingWho = null;
+  meeting.askWho = true;
+  writeState();
+  resume(OWNER);
+  return { ok: true };
+});
 
 // your notes from the call and its review: the outline the notes prompt fills, kept verbatim in the saved note
 ipcMain.handle('private-notes-set', (_e, text) => { meeting.privateNotes = String(text ?? ''); writeState(); });
