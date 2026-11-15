@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import type { CalendarEvent } from './quorum';
 import { useExclusiveMenu } from './menuBus';
@@ -27,7 +27,6 @@ const passSubs = new Set<() => void>();
 const setPassed = (v: boolean) => { if (passedTop !== v) { passedTop = v; passSubs.forEach((f) => f()); } };
 const usePassed = () => useSyncExternalStore((f) => { passSubs.add(f); return () => { passSubs.delete(f); }; }, () => passedTop, () => passedTop);
 
-const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
 
 // Every Up next row opens its meeting page on Home (HistoryView). The event waits here when Home is not open yet; the
 // window event moves the app to Home.
@@ -43,7 +42,7 @@ export function takeEvent() { const e = pendingEvent; pendingEvent = null; retur
 // slides down. The inline group only reads what the strip loads. It is Today when today has anything, today's calls
 // first and then the rest of today's list (children); otherwise it is Up next, the next day with calls, its first
 // call and Show more for the rest of that day.
-export function UpNext({ hidden = false, inline = false, floating = false, today = false, children }: { hidden?: boolean; inline?: boolean; floating?: boolean; today?: boolean; children?: ReactNode }) {
+export function UpNext({ hidden = false, inline = false, floating = false }: { hidden?: boolean; inline?: boolean; floating?: boolean }) {
   const cal = useCalendarView();
   const passed = usePassed();
   const [open, setOpen] = useSession('upNextOpen', false);
@@ -68,13 +67,10 @@ export function UpNext({ hidden = false, inline = false, floating = false, today
     return () => { clearInterval(t); clearTimeout(retry.current); off(); };
   }, [loadCal, inline]);
 
-  const now = new Date();
-  const todays = cal.events.filter((e) => sameDay(new Date(e.start), now));
-  const isToday = inline && (today || todays.length > 0);
   // Up next: every call in the chosen days, the first one until Show more
   const dayEvents = cal.events;
   const showCal = cal.connected && (cal.events.length > 0 || cal.hidden > 0);
-  const empty = hidden || (inline ? !isToday && dayEvents.length === 0 && !showCal : !showCal);
+  const empty = hidden || (inline ? !cal.connected : !showCal);
   // inline: watch the first row (the heading when there are none) against the scrolling body above it
   useEffect(() => {
     const el = section.current;
@@ -86,24 +82,23 @@ export function UpNext({ hidden = false, inline = false, floating = false, today
     }, { root });
     io.observe(target);
     return () => { io.disconnect(); setPassed(false); };
-  }, [inline, empty, isToday, cal.events.length]);
+  }, [inline, empty, cal.events.length]);
   if (empty) return null;
 
   let rows: CalendarEvent[], more: boolean, moreOpen: boolean, toggle: () => void;
   if (!inline) ({ rows, more } = upNextRows(cal.events, open)), moreOpen = open, toggle = () => setOpen((o) => !o);
-  else if (isToday) rows = todays, more = false, moreOpen = false, toggle = () => {};
   else rows = dayOpen ? dayEvents : dayEvents.slice(0, 1), more = true, moreOpen = dayOpen, toggle = () => setDayOpen((o) => !o);
-  const label = isToday ? 'Today' : 'Up next';
-  const nothingMore = !isToday && inline && dayEvents.length <= 1;
+  const label = 'Up next';
+  const nothingMore = inline && dayEvents.length <= 1;
   const moreButton = more && (
     <button className="up-show-more" aria-expanded={moreOpen} aria-controls={listId} onClick={toggle} disabled={nothingMore && !moreOpen}>
       {moreOpen ? 'Show less' : 'Show more'}<IconChevron width={14} height={14} className={moreOpen ? 'up-chev open' : 'up-chev'} />
     </button>
   );
   const strip = (
-    <section ref={section} className={inline ? 'hist-group up-inline' : 'up-strip'} aria-label={label}>
+    <section ref={section} className={inline ? 'up-inline' : 'up-strip'} aria-label={label}>
       <div className="up-head">
-        {isToday ? <h4>{label}</h4> : <DaysMenu days={cal.days} onPick={(d) => window.quorum.calendarSet({ days: d }).then(loadCal)} />}
+        <DaysMenu days={cal.days} onPick={(d) => window.quorum.calendarSet({ days: d }).then(loadCal)} />
         <span className="up-head-end">
           {cal.connected && (
             <label className="up-switch">Non-meetings<Toggle on={cal.showAll} onChange={(v) => window.quorum.calendarSet({ showAll: v }).then(loadCal)} /></label>
@@ -111,7 +106,7 @@ export function UpNext({ hidden = false, inline = false, floating = false, today
           {inline && moreButton}
         </span>
       </div>
-      {!isToday && cal.events.length === 0 && <p className="up-empty">No calls in the {cal.days === 1 ? 'next day' : `next ${cal.days} days`}.</p>}
+      {cal.events.length === 0 && <p className="up-empty">No calls in the {cal.days === 1 ? 'next day' : `next ${cal.days} days`}.</p>}
       {rows.length > 0 && (
         <div className="up-list" id={listId}>
           {rows.map((e) => {
@@ -125,7 +120,7 @@ export function UpNext({ hidden = false, inline = false, floating = false, today
                   {e.calendar ? <span className="avatar-sq app"><AppLogo {...CALENDAR_APP[e.calendar]} /></span> : <span className="avatar-sq cal"><IconCalendar width={18} height={18} /></span>}
                   <span className="hist-text"><strong>{e.title}</strong>
                     <RowDetails who={peopleText(e)} onCalendar={e.item || e.link ? () => window.quorum.calendarOpen(e) : null} calendarName={e.calendar ? CALENDAR_APP[e.calendar].name : undefined}
-                      platform={e.platform} meetingUrl={e.join} after={!isToday && <span className="hist-sub-text up-when">{when}</span>} />
+                      platform={e.platform} meetingUrl={e.join} after={<span className="hist-sub-text up-when">{when}</span>} />
                   </span>
                   {!e.platform && <span className="up-badge">No meeting</span>}
                   <span className="hist-time">{time(at)}<small>{half(at)}</small></span>
@@ -139,7 +134,6 @@ export function UpNext({ hidden = false, inline = false, floating = false, today
           })}
         </div>
       )}
-      {isToday && children}
       {!inline && more && <div className="up-more-row">{moreButton}</div>}
     </section>
   );

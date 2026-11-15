@@ -189,9 +189,10 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
       </div>
     );
   };
-  // unfiltered, today's rows join today's calls in the group at the top (UpNext inline)
+  // unfiltered, Today always leads the list, with a day-off note when it is empty
   const todayGroup = !filtered && groups[0]?.label === 'Today' ? groups[0] : null;
   const restGroups = todayGroup ? groups.slice(1) : groups;
+  const todayCalls = calView.events.filter((e) => new Date(e.start).toDateString() === new Date().toDateString() && new Date(e.start) > new Date());
 
   return (
     <div className="history">
@@ -213,6 +214,8 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
 
       <hr className="hist-rule" />
 
+      <UpNext inline />
+
       <div className="hist-filters">
         <button className={`filter ${filter === 'all' ? 'on' : ''}`} onClick={() => setFilter('all')}>All</button>
         <button className={`filter ${filter === 'meetings' ? 'on' : ''}`} onClick={() => setFilter('meetings')}><IconNotes width={17} height={17} />Meetings</button>
@@ -231,7 +234,15 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
         </ConnectHint>
       )}
 
-      {!filtered && <UpNext inline today={!!todayGroup}>{todayGroup?.rows.map(renderRow)}</UpNext>}
+
+      {!filtered && (
+        <div className="hist-group">
+          <h4>Today</h4>
+          {todayGroup ? todayGroup.rows.map(renderRow)
+            : todayCalls.length ? <p className="hist-empty">Nothing yet today. Your next call is at {new Date(todayCalls[0].start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.</p>
+            : <DayOff />}
+        </div>
+      )}
 
       {groups.length === 0 ? (
         picked.length || range || keyword ? <p className="hist-empty">Nothing matches these filters.</p>
@@ -250,6 +261,25 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
           {g.rows.map(renderRow)}
         </div>
       ))}
+    </div>
+  );
+}
+
+// Today with nothing on it: a small drawing of a sun setting over still water, and a note to take the day
+function DayOff() {
+  return (
+    <div className="day-off">
+      <svg className="day-off-art" viewBox="0 0 120 72" aria-hidden="true">
+        <defs><clipPath id="day-off-sky"><rect x="0" y="0" width="120" height="46" /></clipPath></defs>
+        <circle cx="60" cy="44" r="18" className="day-off-sun" clipPath="url(#day-off-sky)" />
+        <path d="M14 46h92" className="day-off-line" />
+        <path d="M30 54h60M44 61h32" className="day-off-water" />
+        <path d="M60 12v6M38 22l4 4M82 22l-4 4" className="day-off-ray" />
+      </svg>
+      <div>
+        <p className="day-off-title">Nothing on today</p>
+        <p className="hist-empty">No meetings or notes yet. Take the day off and enjoy it.</p>
+      </div>
     </div>
   );
 }
