@@ -62,6 +62,11 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, on
   const [note, setNote] = useState<NoteDoc | null>(null);
   // an upcoming meeting's page, opened from Up next here or on another tab
   const [event, setEvent] = useState<CalendarEvent | null>(() => takeEvent());
+  // a note or meeting page opens at its top: they share the list's scroll box, which would otherwise keep its place
+  useLayoutEffect(() => {
+    if (!note && !event) return;
+    document.querySelector<HTMLElement>('.body.wide:not(.flush)')?.scrollTo({ top: 0 });
+  }, [note?.file, event?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const open = () => { const e = takeEvent(); if (e) { setNote(null); setEvent(e); } };
     window.addEventListener(OPEN_EVENT, open);
