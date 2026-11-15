@@ -738,12 +738,14 @@ em.stub { font-style: normal; font-size: 12px; font-weight: 500; padding: 1px 9p
 .note-menu button { display: flex; align-items: center; gap: 10px; }
 .note-menu .danger, .menu .danger { color: var(--danger); }
 .hist-row { position: relative; cursor: pointer; padding-right: 8px; }
-.hist-hover { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 4px; padding-left: 28px;
+.hist-hover { position: absolute; right: 8px; top: 50%; transform: translateY(-50%) translateX(16px); display: flex; align-items: center; gap: 4px; padding-left: 28px;
   background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--panel), white 3%) 24px);
-  opacity: 0; visibility: hidden; transition: opacity 160ms ease, visibility 0s linear 160ms; }
-.hist-time { transition: opacity 160ms ease; }
-.hist-row:hover .hist-hover, .hist-row:focus-within .hist-hover { opacity: 1; visibility: visible; transition: opacity 160ms ease, visibility 0s; }
-.hist-row:hover .hist-time, .hist-row:focus-within .hist-time { opacity: 0; }
+  opacity: 0; visibility: hidden; transition: opacity 250ms ease, transform 250ms ease, visibility 0s linear 250ms; }
+/* hover: the time slides out to the right, then the buttons slide in from the right; leaving runs it backwards */
+.hist-time { transition: opacity 250ms ease 250ms, transform 250ms ease 250ms; }
+.hist-row:hover .hist-hover, .hist-row:focus-within .hist-hover { opacity: 1; visibility: visible; transform: translateY(-50%);
+  transition: opacity 250ms ease 250ms, transform 250ms ease 250ms, visibility 0s linear 250ms; }
+.hist-row:hover .hist-time, .hist-row:focus-within .hist-time { opacity: 0; transform: translateX(16px); transition: opacity 250ms ease, transform 250ms ease; }
 @media (prefers-reduced-motion: reduce) { .hist-hover, .hist-time { transition: none; } }
 .row-more { width: 32px; height: 30px; }
 .blocked { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 12vh 24px; }
@@ -982,8 +984,8 @@ svg.err { color: var(--danger); }
 .up-empty { padding: 10px 12px 4px; font-size: 13px; color: var(--muted); }
 .up-more { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; color: var(--muted); }
 .up-more:hover, .menu-open .up-more { background: rgba(255, 255, 255, 0.08); color: var(--text); }
-.menu-open .hist-hover { opacity: 1; visibility: visible; transition: none; }
-.menu-open .hist-time { opacity: 0; }
+.menu-open .hist-hover { opacity: 1; visibility: visible; transform: translateY(-50%); transition: none; }
+.menu-open .hist-time { opacity: 0; transform: translateX(16px); transition: none; }
 .up-menu { top: 34px; min-width: 180px; }
 
 .conn-state { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
@@ -1808,11 +1810,6 @@ button.meta-pill { font: inherit; cursor: pointer; }
 /* details text that opens the item in its app: subdued, white on hover */
 .hist-text .app-link { color: var(--muted); text-decoration: none; cursor: pointer; transition: color 160ms ease; }
 .hist-text .app-link:hover, .hist-text .app-link:focus-visible { color: var(--text); }
-/* an upcoming call's Join button dissolves in and out over 500ms */
-.up-row .hist-hover { transition: opacity 500ms ease, visibility 0s linear 500ms; }
-.up-row:hover .hist-hover, .up-row:focus-within .hist-hover { transition: opacity 500ms ease, visibility 0s; }
-.up-row .hist-time, .up-row:hover .hist-time { transition: opacity 500ms ease; }
-.up-row.menu-open .hist-hover { transition: none; }
 .up-inline .up-head .up-show-more { margin: 0; }
 
 /* a row's hover background reaches past the list's left edge by as much as the row's top padding */
