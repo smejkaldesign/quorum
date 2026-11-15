@@ -1,6 +1,8 @@
 // Starfield behind the app frame: the same field the CSS draws on `.stars` (two layers drifting down and to the right,
 // solid white stars mixed with fainter ones), drawn on a canvas so each star can move. Stars within MAGNET_RADIUS of
-// the cursor for MAGNET_DELAY are pulled toward it, closer stars further, and ease back when the cursor moves away.
+// the cursor are pulled toward it over MAGNET_TIME, slowly at first and fastest at the end. The pull falls off with
+// the square of the distance, so a star next to the cursor ends on it and a star at the edge of the radius barely
+// moves. Stars ease back when the cursor moves away.
 // Once the canvas is up, `.stars-live` turns the CSS layers off. Without this script the CSS field still shows.
 // The mask on `.stars` fades the canvas like it fades the CSS layers. Under reduced motion it draws one still frame.
 (() => {
@@ -22,10 +24,11 @@
   // px per second, matching the CSS drifts: 440px by 220px in 28s, and 320px by 160px in 44s
   const LAYERS = [{ vx: 440 / 28, vy: 220 / 28 }, { vx: 320 / 44, vy: 160 / 44 }];
   const MAGNET_RADIUS = 220;   // px from the cursor where the pull starts
-  const MAGNET_PULL = 0.85;    // fraction of its distance to the cursor a star right next to it closes
-  const MAGNET_DELAY = 250;    // ms a star has to stay inside the radius before the pull starts
-  // share of the remaining offset a star covers per 60fps frame: slow on the way to the cursor, quicker on the way back
-  const EASE_IN = 0.03;
+  const MAGNET_TIME = 2000;    // ms from the cursor arriving to a star reaching the end of its pull
+  const MAGNET_RELEASE = 600;  // ms outside the radius before a star's next pull starts from rest again
+  // share of the remaining offset a star covers per 60fps frame: FOLLOW keeps a pulled star on its curve while the
+  // cursor moves, EASE_OUT takes it home
+  const FOLLOW = 0.25;
   const EASE_OUT = 0.1;
 
   let w = 1, h = 1, dpr = 1, stars = [];
@@ -39,7 +42,7 @@
       return {
         x: rand(-EDGE, w + EDGE), y: rand(-EDGE, h + EDGE),
         ox: 0, oy: 0, // offset from the drifting position, set by the cursor pull
-        near: 0,      // ms this star has been inside the cursor's radius
+        near: 0,      // ms of pull this star has built up, from 0 to MAGNET_TIME
         vx: layer.vx, vy: layer.vy,
         // a canvas dot has a hard edge, so these are a little larger than the CSS dots to read the same
         r: size < 0.68 ? 0.95 : size < 0.92 ? 1.25 : 1.65,
@@ -63,7 +66,7 @@
 
   function draw(dt) {
     const drift = dt / 1000;
-    const easeIn = 1 - Math.pow(1 - EASE_IN, dt / 16.7);
+    const follow = 1 - Math.pow(1 - FOLLOW, dt / 16.7);
     const easeOut = 1 - Math.pow(1 - EASE_OUT, dt / 16.7);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
@@ -78,15 +81,16 @@
         const d = Math.hypot(dx, dy);
         if (d < MAGNET_RADIUS) {
           inside = true;
-          s.near += dt;
-          if (s.near >= MAGNET_DELAY) {
-            const pull = MAGNET_PULL * (1 - d / MAGNET_RADIUS);
-            tx = dx * pull; ty = dy * pull;
-          }
+          s.near = Math.min(MAGNET_TIME, s.near + dt);
+          // share of the way to the cursor this star ends up: 1 next to it, 0 at the edge of the radius
+          const reach = (1 - d / MAGNET_RADIUS) ** 2;
+          // cubic ease-in over MAGNET_TIME: an eighth of the way at half time, all of it at the end
+          const progress = (s.near / MAGNET_TIME) ** 3;
+          tx = dx * reach * progress; ty = dy * reach * progress;
         }
       }
-      if (!inside) s.near = 0;
-      const ease = tx || ty ? easeIn : easeOut;
+      if (!inside) s.near = Math.max(0, s.near - dt * (MAGNET_TIME / MAGNET_RELEASE));
+      const ease = inside ? follow : easeOut;
       s.ox += (tx - s.ox) * ease; s.oy += (ty - s.oy) * ease;
       ctx.globalAlpha = s.a;
       ctx.beginPath();
