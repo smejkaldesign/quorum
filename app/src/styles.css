@@ -1652,7 +1652,7 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .up-strip .up-new { height: 26px; padding: 0 10px 0 8px; display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
 .up-strip .up-empty { padding: 4px 0 6px; }
 .up-list { max-height: 42vh; overflow-y: auto; }
-.up-strip .hist-row { padding: 4px 0; gap: 12px; }
+.up-strip .hist-row { --row-pad: 4px; padding: 4px 0 4px var(--row-pad); gap: 12px; }
 .up-strip .avatar-sq { width: 32px; height: 32px; }
 .up-strip .hist-text { gap: 2px; }
 .up-strip .hist-text strong, .up-strip .hist-text span, .up-strip .hist-time { font-size: 13px; }
@@ -1808,8 +1808,14 @@ button.meta-pill { font: inherit; cursor: pointer; }
 /* details text that opens the item in its app: subdued, white on hover */
 .hist-text .app-link { color: var(--muted); text-decoration: none; cursor: pointer; transition: color 160ms ease; }
 .hist-text .app-link:hover, .hist-text .app-link:focus-visible { color: var(--text); }
-/* an upcoming call's Join button waits 600ms of hover before it fades in, so passing over the list does not flash it */
-.up-row:hover .hist-hover { transition: opacity 160ms ease 600ms, visibility 0s linear 600ms; }
-.up-row:hover .hist-time { transition: opacity 160ms ease 600ms; }
+/* an upcoming call's Join button dissolves in and out over 500ms */
+.up-row .hist-hover { transition: opacity 500ms ease, visibility 0s linear 500ms; }
+.up-row:hover .hist-hover, .up-row:focus-within .hist-hover { transition: opacity 500ms ease, visibility 0s; }
+.up-row .hist-time, .up-row:hover .hist-time { transition: opacity 500ms ease; }
 .up-row.menu-open .hist-hover { transition: none; }
 .up-inline .up-head .up-show-more { margin: 0; }
+
+/* a row's hover background reaches past the list's left edge by as much as the row's top padding */
+.hist-row { --row-pad: 7px; margin-left: calc(-1 * var(--row-pad)); padding-left: var(--row-pad); width: calc(100% + var(--row-pad)); }
+.up-strip .hist-row { --row-pad: 4px; }
+.hist-row.hist-child { --row-pad: 4px; padding-left: calc(26px + var(--row-pad)); }
