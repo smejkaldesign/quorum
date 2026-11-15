@@ -1994,3 +1994,14 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .menu-open .hist-time { transform: none; }
 .no-summary { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 8px 0 24px; }
 .no-summary p { margin: 0; }
+/* the note chat: names and avatars above each side, the same text size as the note, room between question and answer */
+.note-thread { gap: 36px; padding-top: 32px; margin-top: 8px; }
+.note-thread .nt-turn { display: flex; flex-direction: column; gap: 10px; }
+.nt-who { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.nt-who strong { font-weight: 600; color: var(--text); }
+.nt-who img { border-radius: 50%; }
+.nt-who.quorum { margin-top: 22px; }
+.nt-q { align-self: stretch; max-width: none; margin: 0; padding: 0; border-radius: 0; background: none; font-size: inherit; line-height: 1.6; }
+.nt-a { font-size: inherit; }
+.nt-choices { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.nt-start { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }

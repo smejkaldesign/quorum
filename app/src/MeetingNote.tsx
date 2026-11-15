@@ -1,4 +1,5 @@
 import { NoteMeta } from './NoteMeta';
+import markProd from '../assets/quorum-mark.png';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CONNECTOR_BY_ID } from '../connectors/library';
 import { ViewsPill } from './ViewsPill';
@@ -116,6 +117,15 @@ function SavedTranscript({ turns }: { turns: { id: number; channel: 'me' | 'them
   );
 }
 
+// what the reader shows for the Debrief button's question; main gets the debrief marker instead
+const DEBRIEF_SHOWN = 'Debrief this meeting';
+// an answer's last line "Choices: A | B | C" becomes buttons; the rest is the text (an edit in progress is hidden)
+function splitChoices(raw: string) {
+  const t = raw.replace(/<updated-note>[\s\S]*$/, '').trim();
+  const m = t.match(/\n?Choices:\s*(.+)\s*$/);
+  return m ? { text: t.slice(0, m.index).trim(), choices: m[1].split('|').map((c) => c.trim()).filter(Boolean).slice(0, 4) } : { text: t, choices: [] as string[] };
+}
+
 export function NoteReader({ note: initial, dayLabel, peopleLine, onBack }: {
   note: NoteDoc; dayLabel: (d: Date | null) => string; peopleLine: (p: string[], n: number) => string; onBack: () => void;
 }) {
@@ -143,21 +153,34 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack }: {
   const busy = turns.some((t) => t.pending);
 
   useEffect(() => window.quorum.onAgentStep(({ text }) => setStep(text)), []);
+  // the answer as it streams in, and who is asking, for the names above each turn
+  const [live, setLive] = useState('');
+  useEffect(() => window.quorum.onNoteDelta(({ text }) => setLive(text)), []);
+  const [me, setMe] = useState<{ name: string; photo: string | null }>({ name: 'You', photo: null });
+  useEffect(() => { window.quorum.user().then((u) => { if (u) setMe({ name: u.name || 'You', photo: u.photo ?? null }); }).catch(() => {}); }, []);
   // the reader reuses the list's scroll box, so a note opens at its top rather than wherever the list was
   useLayoutEffect(() => { scroller.current?.scrollTo({ top: 0 }); }, [note.file]);
-  useEffect(() => { if (turns.length) scroller.current?.querySelector('.note-dock')?.scrollIntoView({ block: 'end', behavior: 'smooth' }); }, [turns]);
+  // while an answer comes in the page follows it down, until the question reaches the top; then it stays there
+  useLayoutEffect(() => {
+    const box = scroller.current?.closest<HTMLElement>('.body');
+    const q = scroller.current?.querySelector<HTMLElement>('.nt-turn:last-child .nt-q');
+    if (!box || !q || !turns.length) return;
+    const top = box.scrollTop + q.getBoundingClientRect().top - box.getBoundingClientRect().top - 16;
+    box.scrollTo({ top: Math.min(box.scrollHeight - box.clientHeight, top) });
+  }, [turns, live, step]);
 
   const reload = async () => { const n = await window.quorum.readNote(note.file); if (n) setNote(n); };
 
-  async function ask(files: string[] = []) {
-    const q = draft.trim();
+  async function ask(files: string[] = [], said?: string) {
+    const q = (said ?? draft).trim();
     if (!q || busy) return;
-    setDraft('');
+    if (said === undefined) setDraft('');
     setStep('');
+    setLive('');
     setTurns((t) => [...t, { q, a: '', proposal: null, pending: true }]);
     let next: Omit<Turn, 'q'>;
     try {
-      const r = await window.quorum.noteAsk(note.file, q, turns.filter((t) => !t.pending).map(({ q: tq, a }) => ({ q: tq, a })), files);
+      const r = await window.quorum.noteAsk(note.file, q === DEBRIEF_SHOWN ? '[debrief]' : q, turns.filter((t) => !t.pending).map(({ q: tq, a }) => ({ q: tq, a })), files);
       next = { a: r.text, proposal: r.proposal };
     } catch (err) { next = { a: `Couldn't answer: ${String(err).replace(/^.*Error:\s*/, '')}`, proposal: null }; }
     setTurns((t) => t.map((x, i) => (i === t.length - 1 ? { ...x, ...next, pending: false } : x)));
@@ -210,12 +233,24 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack }: {
           ) : <p className="muted">No summary yet. Ask Quorum below to write one from the transcript.</p>}
       </article>
 
-      {turns.length > 0 && (
-        <section className="note-thread" aria-label="Questions about this note">
-          {turns.map((t, i) => (
+      <section className="note-thread" aria-label="Questions about this note">
+          {turns.length === 0 && (
+            <div className="nt-start">
+              <button className="pill small-pill who-go" disabled={busy} onClick={() => ask([], DEBRIEF_SHOWN)}>Debrief this meeting</button>
+              <span className="muted">Quorum asks a few short questions, then proposes a clearer note.</span>
+            </div>
+          )}
+          {turns.map((t, i) => {
+            const { text, choices } = splitChoices(t.pending ? live : t.a);
+            return (
             <div key={i} className="nt-turn">
+              <div className="nt-who"><Avatar name={me.name} photo={me.photo} size={22} /><strong>{me.name}</strong></div>
               <p className="nt-q">{t.q}</p>
-              {t.pending ? <p className="nt-step shimmer">{step || 'Thinking…'}</p> : <div className="nt-a"><Markdown text={t.a} /></div>}
+              <div className="nt-who quorum"><img src={markProd} alt="" width={22} height={22} /><strong>Quorum</strong></div>
+              {t.pending && !text ? <p className="nt-step shimmer">{step || 'Thinking…'}</p> : <div className="nt-a"><Markdown text={text} /></div>}
+              {!t.pending && i === turns.length - 1 && choices.length > 0 && (
+                <div className="nt-choices">{choices.map((c) => <button key={c} className="pill small-pill" disabled={busy} onClick={() => ask([], c)}>{c}</button>)}</div>
+              )}
               {t.proposal && (
                 <div className={`nt-proposal ${t.state ?? ''}`}>
                   <div className="nt-proposal-head">
@@ -231,9 +266,9 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack }: {
                 </div>
               )}
             </div>
-          ))}
-        </section>
-      )}
+            );
+          })}
+      </section>
 
       <div className="note-dock">
       <Composer className="note-composer" value={draft} onChange={setDraft} onSubmit={(_q, f) => ask(f)} busy={busy} placeholder="Ask about this note, or ask Quorum to change it" />

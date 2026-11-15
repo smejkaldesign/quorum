@@ -1692,6 +1692,8 @@ ipcMain.handle('note-visibility', (_e, file, value) => {
 });
 
 // ask Quorum about the open meeting note; a change request comes back as a proposal the user applies or not
+// a note chat question that starts a debrief (the reader's Debrief button)
+const DEBRIEF = '[debrief]';
 ipcMain.handle('note-ask', async (_e, file, question, history, files) => {
   const abs = meetingFile(file);
   const b = brain();
@@ -1700,21 +1702,28 @@ ipcMain.handle('note-ask', async (_e, file, question, history, files) => {
   const prompt = [
     `You're helping with one meeting note at ${path.relative(b.root, abs)}. Its current body is between <note> tags.`,
     'Answer questions about it, using the rest of the Agent OS when that helps.',
+    'Keep answers brief and clear: lead with the answer in one or two sentences, then at most four short bullets if they help. Leave out background the person did not ask for. Plain, literal language.',
+    'When a short reply from the person would move things forward, end with one last line "Choices: A | B | C" (two to four options, under six words each). Quorum shows them as buttons.',
+    ...(String(question).startsWith(DEBRIEF) ? [
+      'This is a debrief right after the meeting. Ask the person one short question at a time, three at most across the debrief, to learn what the meeting was for, who mattered in it, what was decided or left open, and which project or people it belongs to. Always end a question with a Choices line.',
+      'After the last answer, propose the note updated with what you learned (a clearer title, a one-line purpose, decisions, follow-ups, and links to the related people and projects) inside <updated-note></updated-note>.',
+    ] : []),
     'If the user asks you to change the note, also return the complete updated body inside <updated-note></updated-note>, changing only what they asked for. Never include lines that say [withheld: opted-out customer] in an update.',
     `<note>\n${body}\n</note>`,
-    `Question: ${String(question)}`,
+    `Question: ${String(question).replace(DEBRIEF, 'Start the debrief.')}`,
   ].join('\n\n');
   const attached = stagedOnly(files);
   const source = modelSource();
   // the note body is in the prompt, so a provider without tools can still answer about it and propose edits; only Claude Code can read the rest of the Agent OS or attachments
   const r = roleProvider('agent') === 'claude-code'
-    ? await runModel({ source, providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question: prompt, transcript: '', root: b.root, extra: await agentExtra(String(question), b.root, { kb: false }), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached, history: (history ?? []).slice(-4), onStep: (text) => toUI('agent-step', { text }) }).finally(() => unstage(attached))
+    ? await runModel({ source, providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question: prompt, transcript: '', root: b.root, extra: await agentExtra(String(question), b.root, { kb: false }), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached, history: (history ?? []).slice(-6), onStep: (text) => toUI('agent-step', { text }), onDelta: (text) => toUI('note-delta', { text }) }).finally(() => unstage(attached))
     : await noteAskWithoutTools(prompt, history, attached);
   const m = r.text.match(/<updated-note>\n?([\s\S]*?)\n?<\/updated-note>/);
   const answer = r.text.replace(/<updated-note>[\s\S]*?<\/updated-note>/, '').trim();
   const fm = readFrontmatter(store.notes.read(abs).slice(0, 4000));
   const existing = allChats().find((c) => c.meetingFile === abs && !c.meetingId);
-  addTurn(existing ?? newConvo(String(question), { meetingFile: abs, meetingTitle: fm.title || path.basename(abs, '.md') }), String(question), answer || 'Proposed an edit to the note.', [], []);
+  const asked = String(question).startsWith(DEBRIEF) ? 'Debrief this meeting' : String(question);
+  addTurn(existing ?? newConvo(asked, { meetingFile: abs, meetingTitle: fm.title || path.basename(abs, '.md') }), asked, answer || 'Proposed an edit to the note.', [], []);
   return { text: r.text.replace(/<updated-note>[\s\S]*?<\/updated-note>/, '').trim() || (m ? 'Here is the updated note. Review it and apply it if it looks right.' : ''), proposal: m ? m[1] : null };
 });
 

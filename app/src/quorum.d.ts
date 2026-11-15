@@ -452,6 +452,7 @@ declare global {
       platformSync(id: string): Promise<Result>;
       onPlatformJob(cb: (job: SourceJob) => void): () => void;
       onSourceJob(cb: (job: SourceJob) => void): Unsub;
+      onNoteDelta(cb: (d: { text: string }) => void): Unsub;
       onHistoryChanged(cb: () => void): Unsub;
       claudeLogin(): Promise<void>;
       claudeStatus(): Promise<ClaudeStatus>;

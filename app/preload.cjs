@@ -150,6 +150,7 @@ contextBridge.exposeInMainWorld('quorum', {
   platformSync: (id) => ipcRenderer.invoke('platform-sync', id),
   onPlatformJob: on('platform-job'),
   onSourceJob: on('source-job'),
+  onNoteDelta: on('note-delta'),
   onHistoryChanged: on('history-changed'),
   claudeLogin: () => ipcRenderer.invoke('claude-login'),
   claudeStatus: () => ipcRenderer.invoke('claude-status'),
