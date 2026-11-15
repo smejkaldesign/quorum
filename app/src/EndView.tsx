@@ -93,7 +93,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
           {ready ? <>
           {/* Record turns this page into the recording, the same as Record in the header */}
           {onRecord && <span data-tip={recordBusy ? 'A recording is already running' : undefined}><button className="act-pill" disabled={recordBusy} onClick={onRecord}><IconRecord width={15} height={15} /> Record</button></span>}
-          <button className="act-pill" disabled={(!privateNotes.trim() && !title.trim()) || saving} onClick={async () => { setSaving(true); try { await onSaveDraft?.(title.trim()); } finally { setSaving(false); } }}>{saving ? 'Saving…' : 'Save'}</button>
+          <button className="act-pill primary" disabled={(!privateNotes.trim() && !title.trim()) || saving} onClick={async () => { setSaving(true); try { await onSaveDraft?.(title.trim()); } finally { setSaving(false); } }}>{saving ? 'Saving…' : 'Save'}</button>
           </> : live ? <span className="muted note-status" role="status">{paused ? 'Paused' : 'Recording'}</span> : <>
           {saved ? (
             <>
@@ -101,7 +101,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
               <button className="pill" onClick={() => window.quorum.openNote(saved.file)}><IconFolder width={15} height={15} /> Show in {saved.app}</button>
             </>
           ) : (
-            <button className="act-pill" disabled={!notes || saving} onClick={save}>{saving ? 'Saving…' : 'Keep'}</button>
+            <button className="act-pill primary" disabled={!notes || saving} onClick={save}>{saving ? 'Saving…' : 'Keep'}</button>
           )}
           </>}
         </div>

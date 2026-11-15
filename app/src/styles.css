@@ -2181,3 +2181,9 @@ button.np-outline:hover { background: rgba(255, 255, 255, 0.05); color: var(--te
 button.meta-pill, a.meta-pill { transition: background 160ms ease, border-color 160ms ease; }
 button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .views-wrap .meta-pill:hover { background: var(--card); border-color: rgba(255, 255, 255, 0.24); }
 .meta-pill.meta-app { color: var(--text); }
+/* the page's main action (Save, Keep): the same pill, white */
+.act-pill.primary { background: #f2f2f2; border-color: #f2f2f2; color: #111; }
+.act-pill.primary:hover:not(:disabled) { background: #fff; border-color: #fff; }
+/* the recording page's chat input at the page's width, like a note's */
+.end-dock { width: 100%; max-width: 720px; margin: 0 auto; padding: 24px 0 20px; box-sizing: border-box; }
+.end-dock .composer { margin-left: 0; margin-right: 0; }
