@@ -49,6 +49,7 @@ import { fileURLToPath } from 'node:url';
 import updater from 'electron-updater';
 import { createUpdater, feedFor } from './updater.js';
 import { createGuardrails } from './guardrails.js';
+import { createPlatformCache, matchPlatforms } from './meetingPlatforms.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // quorum://kb links (kb_search and kb_read return them) open the note in the Knowledge tab. A link can arrive before
@@ -1514,6 +1515,7 @@ const isSelf = (p) => /\((creator|recorder)\)/.test(p) || personName(p) === USER
 // Quorum's own notes sit in a quorum subfolder, next to the folders other apps fill (granola/ and so on)
 const quorumNotesDir = () => store.meetings.notesDir(brain()?.vault);
 const meetingSources = () => store.meetings.sources(brain()?.vault);
+const platformCache = createPlatformCache(path.join(DATA_DIR, 'meeting-platforms.json'));
 function meetingIndex() {
   const root = meetingsDir();
   if (!root) return [];
@@ -1532,13 +1534,14 @@ function meetingIndex() {
         const key = fm.granola_id || fm.quorum_id;
         if (key) { if (seen.has(key)) continue; seen.add(key); }
         out.push({
-          id: f, file, kind: fm.type === 'note' ? 'note' : 'meeting', source: fm.source || folder, title: fm.title || f.replace(/\.md$/, ''), date: fm.date || null,
+          id: f, file, cacheKey: key ?? file, kind: fm.type === 'note' ? 'note' : 'meeting', source: fm.source || folder, title: fm.title || f.replace(/\.md$/, ''), date: fm.date || null,
           people: fm.participants.filter((p) => !isSelf(p)).map(personName),
           orgs: fm.participants.map(orgOf).filter(Boolean),
           count: Number(fm.participant_count) || fm.participants.length,
           visibility: fm.visibility === 'public' ? 'public' : 'private',
           url: [fm.granola_url, fm.source_url].find((u) => /^https:\/\//.test(String(u ?? ''))) ?? null,
-          platform: /zoom/i.test(fm.platform ?? '') ? 'zoom' : /meet/i.test(fm.platform ?? '') ? 'meet' : /teams/i.test(fm.platform ?? '') ? 'teams' : null,
+          platform: /zoom/i.test(fm.platform ?? '') ? 'zoom' : /meet/i.test(fm.platform ?? '') ? 'meet' : /teams/i.test(fm.platform ?? '') ? 'teams' : platformCache.get(key ?? file)?.platform ?? null,
+          meetingUrl: [fm.meeting_url, platformCache.get(key ?? file)?.url].find((u) => /^https:\/\//.test(String(u ?? ''))) ?? null,
           app, rel: path.relative(brain()?.vault ?? root, file), link: `quorum://note/${encodeURIComponent(fm.granola_id || path.relative(brain()?.vault ?? root, file))}`,
         });
       } catch {}
@@ -1554,7 +1557,26 @@ function chatIndex() {
   })).sort((a, b2) => String(b2.date).localeCompare(String(a.date)));
 }
 
-ipcMain.handle('history', () => ({ meetings: meetingIndex(), chats: chatIndex() }));
+ipcMain.handle('history', () => { matchMeetingApps(); return { meetings: meetingIndex(), chats: chatIndex() }; });
+
+// The meeting app of notes whose notetaker does not record it (meetingPlatforms.js), matched against the Mac calendar
+// once per note. It runs when Home loads the list, at most once a minute, and tells Home when notes gained an app.
+let platformRun = { busy: false, at: 0 };
+async function matchMeetingApps() {
+  if (platformRun.busy || Date.now() - platformRun.at < 60000 || !calSettings().enabled) return;
+  platformRun = { busy: true, at: Date.now() };
+  try {
+    const now = Date.now(), oldest = now - 180 * 86400000;
+    const notes = meetingIndex().filter((m) => !m.platform && m.date && !platformCache.has(m.cacheKey))
+      .map((m) => ({ key: m.cacheKey, title: m.title, date: m.date })).filter((n) => { const t = new Date(n.date).getTime(); return t >= oldest && t <= now + 14 * 86400000; });
+    if (!notes.length) return;
+    const first = Math.min(...notes.map((n) => new Date(n.date).getTime()));
+    const back = Math.max(1, Math.ceil((now - first) / 86400000) + 1);
+    const r = await calAsk({ cmd: 'calEvents', days: 14, back });
+    if (r.status !== 'granted') return;
+    if (platformCache.merge(matchPlatforms(notes, r.events ?? [], callLink)) > 0) toUI('history-changed');
+  } catch (e) { log?.('meeting apps', e?.message); } finally { platformRun.busy = false; }
+}
 
 // the in-app reader only opens notes inside the connected Agent OS's meetings folder
 const meetingFile = (file) => {

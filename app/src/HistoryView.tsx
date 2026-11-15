@@ -9,7 +9,7 @@ import { openConnectors } from './connectorsNav';
 import { useSession } from './session';
 import { dayLabel } from './upNextList';
 import { UpNext, useCalendarView } from './UpNext';
-import { AppChip, AppLogo, PLATFORM_APP, sourceApp } from './AppChip';
+import { AppChip, AppLink, AppLogo, PLATFORM_APP, sourceApp } from './AppChip';
 import { IconCalendar, IconChat, IconClose, IconExternal, IconListCheck, IconMic, IconNewNote, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
 
 type Filter = 'all' | 'meetings' | 'notes' | 'chats';
@@ -78,6 +78,13 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
   }, [shown]);
 
   useEffect(() => { window.quorum.history().then(setData); }, [brain]);
+  // a finished import or a newly matched meeting app changes the list
+  useEffect(() => {
+    const load = () => { window.quorum.history().then(setData); };
+    const offHistory = window.quorum.onHistoryChanged(load);
+    const offSource = window.quorum.onSourceJob((j) => { if (j.status !== 'running') load(); });
+    return () => { offHistory(); offSource(); };
+  }, []);
 
   const people = useMemo(() => {
     const m = new Map<string, { n: number; last: string | null }>();
@@ -102,7 +109,9 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
     // a chat about a meeting always sits under that meeting, never on its own
     const byMeeting = new Map<string, ChatRow[]>();
     for (const c of data.chats) if (c.meetingFile) (byMeeting.get(c.meetingFile) ?? byMeeting.set(c.meetingFile, []).get(c.meetingFile)!).push(c);
-    const meetings: Row[] = data.meetings.filter((m) => (filter !== 'meetings' || m.kind !== 'note') && (filter !== 'notes' || m.kind === 'note')
+    // notes a notetaker makes ahead of a meeting (dated later than now) show once the meeting has happened
+    const now = Date.now();
+    const meetings: Row[] = data.meetings.filter((m) => (!m.date || new Date(m.date).getTime() <= now) && (filter !== 'meetings' || m.kind !== 'note') && (filter !== 'notes' || m.kind === 'note')
       && (!picked.length || picked.some((p) => m.people.includes(p))) && inRange(m.date)
       && (!kw || `${m.title} ${m.people.join(' ')}`.toLowerCase().includes(kw) || !!bodyHits?.has(m.rel))).map((m) => ({
       key: m.id, kind: m.kind, title: m.title, sub: m.kind === 'note' ? 'Note' : peopleLine(m.people, m.count),
@@ -134,6 +143,43 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
   if (note) return <NoteReader note={note} dayLabel={dayLabel} peopleLine={peopleLine} onBack={() => { setNote(null); refresh(); }} />;
 
   const ask = (q: string, files: string[] = []) => { if (q.trim()) { setDraft(''); onAsk(q.trim(), files); } };
+
+  // the row for a meeting, note or chat, with the chats about a meeting under it
+  const renderRow = (r: Row) => {
+    const platform = r.meeting?.platform ? PLATFORM_APP[r.meeting.platform] : null;
+    return (
+      <div key={r.key} className="hist-item">
+      <div className="hist-row" role="button" tabIndex={0} onClick={r.open} onKeyDown={(e) => { if (e.key === 'Enter') r.open(); }}>
+        {r.avatar === 'chat'
+          ? <span className="avatar-sq chat"><IconQuorum /></span>
+          : r.avatar === 'note' ? <span className="avatar-sq note"><IconMic width={20} height={20} /></span>
+          : platform ? <span className="avatar-sq app"><AppLogo {...platform} /></span>
+          : <span className="avatar-sq" style={{ background: colorFor(r.sub + r.title) }}>{r.avatar}</span>}
+        <span className="hist-text"><strong>{r.title}</strong><span className="hist-sub">
+          {platform && r.meeting?.meetingUrl ? <AppLink url={r.meeting.meetingUrl} name={platform.name}>{r.sub}</AppLink> : <span className="hist-sub-text">{r.sub}</span>}
+          {r.meeting && r.meeting.source !== 'quorum' && <AppChip {...sourceApp(r.meeting.source)} url={r.meeting.url} />}
+        </span></span>
+        <span className="hist-time">{r.date ? <>{r.date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?(AM|PM)/i, '')}<small>{r.date.getHours() < 12 ? 'AM' : 'PM'}</small></> : ''}</span>
+        {r.meeting && (
+          <span className="hist-hover">
+            <VisibilityPill compact value={r.meeting.visibility} onChange={async (v) => { await window.quorum.noteVisibility(r.meeting!.file, v); refresh(); }} />
+            <NoteMenu compact note={{ file: r.meeting.file, rel: r.meeting.rel, app: r.meeting.app, link: r.meeting.link }} onDeleted={refresh} />
+          </span>
+        )}
+      </div>
+      {r.children?.map((c) => (
+        <div key={c.key} className="hist-row hist-child" role="button" tabIndex={0} onClick={c.open} onKeyDown={(e) => { if (e.key === 'Enter') c.open(); }}>
+          <span className="hist-branch" aria-hidden="true" />
+          <span className="avatar-sq chat tiny"><IconQuorum /></span>
+          <span className="hist-text"><strong>{c.title}</strong><span>{c.sub}</span></span>
+        </div>
+      ))}
+      </div>
+    );
+  };
+  // unfiltered, today's rows join today's calls in the group at the top (UpNext inline)
+  const todayGroup = !filtered && groups[0]?.label === 'Today' ? groups[0] : null;
+  const restGroups = todayGroup ? groups.slice(1) : groups;
 
   return (
     <div className="history">
@@ -173,7 +219,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
         </ConnectHint>
       )}
 
-      {!filtered && <UpNext inline />}
+      {!filtered && <UpNext inline today={!!todayGroup}>{todayGroup?.rows.map(renderRow)}</UpNext>}
 
       {groups.length === 0 ? (
         picked.length || range || keyword ? <p className="hist-empty">Nothing matches these filters.</p>
@@ -186,40 +232,10 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
             </ConnectHint>
           </div>
         )
-      ) : groups.map((g) => (
+      ) : restGroups.map((g) => (
         <div key={g.label} className="hist-group">
           <h4>{g.label}</h4>
-          {g.rows.map((r) => (
-            <div key={r.key} className="hist-item">
-            <div className="hist-row" role="button" tabIndex={0} onClick={r.open} onKeyDown={(e) => { if (e.key === 'Enter') r.open(); }}>
-              {r.avatar === 'chat'
-                ? <span className="avatar-sq chat"><IconQuorum /></span>
-                : r.avatar === 'note' ? <span className="avatar-sq note"><IconMic width={20} height={20} /></span>
-                : <span className="avatar-sq" style={{ background: colorFor(r.sub + r.title) }}>{r.avatar}</span>}
-              <span className="hist-text"><strong>{r.title}</strong><span className="hist-sub">
-                <span className="hist-meet">
-                  {r.meeting?.platform && <AppLogo {...PLATFORM_APP[r.meeting.platform]} />}
-                  <span className="hist-sub-text">{r.sub}</span>
-                </span>
-                {r.meeting && r.meeting.source !== 'quorum' && <AppChip {...sourceApp(r.meeting.source)} url={r.meeting.url} />}
-              </span></span>
-              <span className="hist-time">{r.date ? <>{r.date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?(AM|PM)/i, '')}<small>{r.date.getHours() < 12 ? 'AM' : 'PM'}</small></> : ''}</span>
-              {r.meeting && (
-                <span className="hist-hover">
-                  <VisibilityPill compact value={r.meeting.visibility} onChange={async (v) => { await window.quorum.noteVisibility(r.meeting!.file, v); refresh(); }} />
-                  <NoteMenu compact note={{ file: r.meeting.file, rel: r.meeting.rel, app: r.meeting.app, link: r.meeting.link }} onDeleted={refresh} />
-                </span>
-              )}
-            </div>
-            {r.children?.map((c) => (
-              <div key={c.key} className="hist-row hist-child" role="button" tabIndex={0} onClick={c.open} onKeyDown={(e) => { if (e.key === 'Enter') c.open(); }}>
-                <span className="hist-branch" aria-hidden="true" />
-                <span className="avatar-sq chat tiny"><IconQuorum /></span>
-                <span className="hist-text"><strong>{c.title}</strong><span>{c.sub}</span></span>
-              </div>
-            ))}
-            </div>
-          ))}
+          {g.rows.map(renderRow)}
         </div>
       ))}
     </div>

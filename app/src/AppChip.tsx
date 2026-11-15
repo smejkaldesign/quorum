@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { type ReactNode, useEffect, useState, useSyncExternalStore } from 'react';
 import { CONNECTORS } from '../connectors/library';
 
 // The meeting apps a calendar event or a note can name, by the connector that carries the logo
@@ -45,6 +45,17 @@ export function AppChip({ id, name, url }: { id: string; name: string; url?: str
       onClick={(e) => { e.preventDefault(); e.stopPropagation(); window.quorum.openExternal(url); }}
       onKeyDown={(e) => e.stopPropagation()}>
       <AppLogo id={id} name={name} />{name}
+    </a>
+  );
+}
+
+// Details text that opens the item in its app: subdued, white on hover, without opening the row
+export function AppLink({ url, name, children }: { url: string; name: string; children: ReactNode }) {
+  return (
+    <a className="app-link hist-sub-text" href={url} data-tip={`Open in ${name}`}
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); window.quorum.openExternal(url); }}
+      onKeyDown={(e) => e.stopPropagation()}>
+      {children}
     </a>
   );
 }

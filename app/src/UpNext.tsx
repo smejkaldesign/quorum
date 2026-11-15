@@ -1,13 +1,11 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import type { CalendarEvent, PlatformInfo, SourceJob } from './quorum';
-import { CONNECTORS_CHANGED, canNewNote, connectorsFor } from '../connectors/library';
-import { useFlag } from './flags';
+import type { CalendarEvent } from './quorum';
 import { useExclusiveMenu } from './menuBus';
 import { useSession } from './session';
 import { dayLabel, upNextRows } from './upNextList';
-import { AppLogo, PLATFORM_APP, useAppIcons } from './AppChip';
-import { IconCalendar, IconChevron, IconMore, IconPlus } from './icons';
+import { AppLink, AppLogo, PLATFORM_APP, useAppIcons } from './AppChip';
+import { IconCalendar, IconChevron, IconMore } from './icons';
 
 const time = (d: Date) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?(AM|PM)/i, '');
 const half = (d: Date) => (d.getHours() < 12 ? 'AM' : 'PM');
@@ -21,32 +19,28 @@ const setCalView = (v: CalView) => { calView = v; calSubs.forEach((f) => f()); }
 const subscribeCal = (f: () => void) => { calSubs.add(f); return () => { calSubs.delete(f); }; };
 export const useCalendarView = () => useSyncExternalStore(subscribeCal, () => calView, () => calView);
 
-// What the strip loads for the copy in the Home list (whether + New shows), and whether that copy's first row has
-// scrolled out of view, which slides the strip in on Home.
-type Shared = { canNew: boolean; passed: boolean };
-let shared: Shared = { canNew: false, passed: false };
-const sharedSubs = new Set<() => void>();
-const setShared = (v: Partial<Shared>) => {
-  if (Object.entries(v).every(([k, x]) => shared[k as keyof Shared] === x)) return;
-  shared = { ...shared, ...v }; sharedSubs.forEach((f) => f());
-};
-const subscribeShared = (f: () => void) => { sharedSubs.add(f); return () => { sharedSubs.delete(f); }; };
-const useShared = () => useSyncExternalStore(subscribeShared, () => shared, () => shared);
+// Whether the Home list's top group has scrolled out of view, which slides the strip in on Home.
+let passedTop = false;
+const passSubs = new Set<() => void>();
+const setPassed = (v: boolean) => { if (passedTop !== v) { passedTop = v; passSubs.forEach((f) => f()); } };
+const usePassed = () => useSyncExternalStore((f) => { passSubs.add(f); return () => { passSubs.delete(f); }; }, () => passedTop, () => passedTop);
 
-// Up next, under the header on every tab: the next three events from the connected calendar, Show more for the rest
-// (open or closed for the rest of this launch), and + New once a meeting app or a meeting notes app is connected.
-// + New sends quorum:new-note, which the note editor handles. hidden keeps the loading going while the strip is out
-// of sight (a live call view, or History filters).
-// On Home the same list sits at the top of the Home list (inline, which only reads what the strip loads), and the
-// strip is floating: out of sight until the inline copy's first row scrolls past the top, then it slides down.
-export function UpNext({ hidden = false, inline = false, floating = false }: { hidden?: boolean; inline?: boolean; floating?: boolean }) {
+const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
+
+// Up next, under the header on every tab: the next three events from the connected calendar and Show more for the
+// rest (open or closed for the rest of this launch). hidden keeps the loading going while the strip is out of sight
+// (a live call view, or History filters).
+// On Home the strip is floating: out of sight until the Home list's top group (inline) scrolls past the top, then it
+// slides down. The inline group only reads what the strip loads. It is Today when today has anything, today's calls
+// first and then the rest of today's list (children); otherwise it is Up next, the next day with calls, its first
+// call and Show more for the rest of that day.
+export function UpNext({ hidden = false, inline = false, floating = false, today = false, children }: { hidden?: boolean; inline?: boolean; floating?: boolean; today?: boolean; children?: ReactNode }) {
   const cal = useCalendarView();
-  const { canNew, passed } = useShared();
-  const setCanNew = useCallback((v: boolean) => setShared({ canNew: v }), []);
+  const passed = usePassed();
   const [open, setOpen] = useSession('upNextOpen', false);
+  const [dayOpen, setDayOpen] = useSession('upNextDayOpen', false);
   const [eventMenu, setEventMenu] = useState<string | null>(null);
   const section = useRef<HTMLElement>(null);
-  const meetingCapture = useFlag('meeting-capture');
   const listId = useId();
   const retry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // the helper can still be starting on launch, so a miss retries in 10s instead of waiting for the 5 minute refresh
@@ -57,16 +51,6 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
       if (c.status === 'unavailable') retry.current = setTimeout(load, 10000);
     }).catch(() => {});
   }, []);
-  const loadConnectors = useCallback(async () => {
-    // the local edition has no platform handlers; that call fails and the list stays empty
-    const [sources, providers, platforms, settings] = await Promise.all([
-      window.quorum.sourcesList().catch(() => []),
-      window.quorum.meetingProviders().catch(() => []),
-      window.quorum.platformsList().catch(() => [] as PlatformInfo[]),
-      window.quorum.getSettings().catch(() => null),
-    ]);
-    setCanNew(canNewNote({ sources, providers, platforms, added: settings?.meetingProviders }, connectorsFor({ meetingCapture })));
-  }, [meetingCapture, setCanNew]);
   useEffect(() => {
     if (inline) return;
     loadCal();
@@ -74,20 +58,14 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
     const off = window.quorum.onSettings(() => loadCal());
     return () => { clearInterval(t); clearTimeout(retry.current); off(); };
   }, [loadCal, inline]);
-  // connector state changes only when something connects or disconnects, or a source job finishes
-  useEffect(() => {
-    if (inline) return;
-    loadConnectors();
-    const changed = () => { loadConnectors(); };
-    window.addEventListener(CONNECTORS_CHANGED, changed);
-    const done = (j: SourceJob) => { if (j.status !== 'running') loadConnectors(); };
-    const offSource = window.quorum.onSourceJob(done);
-    const offPlatform = window.quorum.onPlatformJob(done);
-    return () => { window.removeEventListener(CONNECTORS_CHANGED, changed); offSource(); offPlatform(); };
-  }, [loadConnectors, inline]);
 
+  const now = new Date();
+  const todays = cal.events.filter((e) => sameDay(new Date(e.start), now));
+  const isToday = inline && (today || todays.length > 0);
+  const nextDay = cal.events.find((e) => !sameDay(new Date(e.start), now));
+  const dayEvents = nextDay ? cal.events.filter((e) => sameDay(new Date(e.start), new Date(nextDay.start))) : [];
   const showCal = cal.connected && (cal.events.length > 0 || cal.hidden > 0);
-  const empty = hidden || (!showCal && !canNew);
+  const empty = hidden || (inline ? !isToday && dayEvents.length === 0 && !showCal : !showCal);
   // inline: watch the first row (the heading when there are none) against the scrolling body above it
   useEffect(() => {
     const el = section.current;
@@ -95,41 +73,49 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
     const target = el.querySelector('.hist-item') ?? el;
     const root = el.closest('.body');
     const io = new IntersectionObserver(([e]) => {
-      setShared({ passed: !e.isIntersecting && !!e.rootBounds && e.boundingClientRect.bottom <= e.rootBounds.top + 1 });
+      setPassed(!e.isIntersecting && !!e.rootBounds && e.boundingClientRect.bottom <= e.rootBounds.top + 1);
     }, { root });
     io.observe(target);
-    return () => { io.disconnect(); setShared({ passed: false }); };
-  }, [inline, empty, cal.events.length]);
+    return () => { io.disconnect(); setPassed(false); };
+  }, [inline, empty, isToday, cal.events.length]);
   if (empty) return null;
-  const { rows, more } = upNextRows(cal.events, open);
+
+  let rows: CalendarEvent[], more: boolean, moreOpen: boolean, toggle: () => void;
+  if (!inline) ({ rows, more } = upNextRows(cal.events, open)), moreOpen = open, toggle = () => setOpen((o) => !o);
+  else if (isToday) rows = todays, more = false, moreOpen = false, toggle = () => {};
+  else rows = dayOpen ? dayEvents : dayEvents.slice(0, 1), more = dayEvents.length > 1, moreOpen = dayOpen, toggle = () => setDayOpen((o) => !o);
+  const label = isToday ? 'Today' : 'Up next';
+  const moreButton = more && (
+    <button className="up-show-more" aria-expanded={moreOpen} aria-controls={listId} onClick={toggle}>
+      {moreOpen ? 'Show less' : 'Show more'}<IconChevron width={14} height={14} className={moreOpen ? 'up-chev open' : 'up-chev'} />
+    </button>
+  );
   const strip = (
-    <section ref={section} className={inline ? 'hist-group up-inline' : 'up-strip'} aria-label="Up next" aria-hidden={floating && !passed ? true : undefined}>
+    <section ref={section} className={inline ? 'hist-group up-inline' : 'up-strip'} aria-label={label}>
       <div className="up-head">
-        <h4>Up next</h4>
+        <h4>{label}</h4>
         <span className="up-head-end">
           {showCal && (cal.hidden > 0 || cal.showAll) && (
             <label className="up-toggle"><input type="checkbox" checked={cal.showAll} onChange={(ev) => window.quorum.calendarSet({ showAll: ev.target.checked }).then(loadCal)} />Show no meeting{!cal.showAll && cal.hidden > 0 ? ` (${cal.hidden})` : ''}</label>
           )}
-          {canNew && <button className="pill small-pill up-new" onClick={() => window.dispatchEvent(new CustomEvent('quorum:new-note'))}><IconPlus width={14} height={14} />New</button>}
+          {inline && moreButton}
         </span>
       </div>
-      {showCal && cal.events.length === 0 && <p className="up-empty">No calls on a connected platform in the next few days.</p>}
-      {!showCal && <p className="up-empty">{cal.connected ? 'No upcoming meetings.' : 'Connect a calendar in Settings to see your upcoming meetings here.'}</p>}
+      {!inline && cal.events.length === 0 && <p className="up-empty">No calls on a connected platform in the next few days.</p>}
+      {inline && !isToday && dayEvents.length === 0 && <p className="up-empty">No calls on a connected platform in the next few days.</p>}
       {rows.length > 0 && (
         <div className="up-list" id={listId}>
           {rows.map((e) => {
             const at = new Date(e.start), end = new Date(e.end);
             const platform = e.platform ? PLATFORM_APP[e.platform] : null;
             const menu = eventMenu === e.id;
+            const when = `${dayLabel(at)} · ${time(at)} – ${time(end)} ${half(end)}`;
             return (
               <div key={e.id} className="hist-item">
                 <div className={`hist-row up-row ${menu ? 'menu-open' : ''}`} onClick={() => e.item && window.quorum.calendarOpen(e)}>
-                  <span className="avatar-sq cal"><IconCalendar width={18} height={18} /></span>
+                  {platform ? <span className="avatar-sq app"><AppLogo {...platform} /></span> : <span className="avatar-sq cal"><IconCalendar width={18} height={18} /></span>}
                   <span className="hist-text"><strong>{e.title}</strong><span className="hist-sub">
-                    <span className="hist-meet">
-                    {platform && <AppLogo {...platform} />}
-                    <span className="hist-sub-text up-when">{dayLabel(at)} · {time(at)} – {time(end)} {half(end)}</span>
-                    </span>
+                    {platform && e.join ? <AppLink url={e.join} name={platform.name}>{when}</AppLink> : <span className="hist-sub-text">{when}</span>}
                   </span></span>
                   {!e.platform && <span className="up-badge">No meeting</span>}
                   <span className="hist-time">{time(at)}<small>{half(at)}</small></span>
@@ -143,13 +129,8 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
           })}
         </div>
       )}
-      {more && (
-        <div className="up-more-row">
-          <button className="up-show-more" aria-expanded={open} aria-controls={listId} onClick={() => setOpen((o) => !o)}>
-            {open ? 'Show less' : 'Show more'}<IconChevron width={14} height={14} className={open ? 'up-chev open' : 'up-chev'} />
-          </button>
-        </div>
-      )}
+      {isToday && children}
+      {!inline && more && <div className="up-more-row">{moreButton}</div>}
     </section>
   );
   if (!floating) return strip;

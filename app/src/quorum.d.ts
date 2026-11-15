@@ -242,7 +242,7 @@ export type KbFile = { id: string; noteId: string; name: string; mime: string; s
 export type ContributionMine = { noteId: string; path: string; status: 'pending' | 'included' | 'declined'; reviewedAt: string | null; createdAt: string };
 export type Billing = { plan: Plan; seats: number; seatsIncluded: number; hourPacks: number; members: number; status: string | null; periodEnd: string | null; subscribed: boolean };
 export type MemberInvite = { inviteId: string; email: string; role: Role; expiresAt: string };
-export type MeetingRow = { id: string; file: string; kind: 'meeting' | 'note'; source: string; title: string; date: string | null; people: string[]; count: number; visibility: Visibility; rel: string; link: string; app: string; url?: string | null; platform?: 'zoom' | 'meet' | 'teams' | null };
+export type MeetingRow = { id: string; file: string; kind: 'meeting' | 'note'; source: string; title: string; date: string | null; people: string[]; count: number; visibility: Visibility; rel: string; link: string; app: string; url?: string | null; platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null };
 export type ChatRow = { id: string; title: string; date: string; turns: number; meetingFile: string | null; meetingTitle: string | null };
 export type Visibility = 'private' | 'public';
 // who has read a note: people in Quorum, agents through the read guard or the quorum MCP server
@@ -446,6 +446,7 @@ declare global {
       platformSync(id: string): Promise<Result>;
       onPlatformJob(cb: (job: SourceJob) => void): () => void;
       onSourceJob(cb: (job: SourceJob) => void): Unsub;
+      onHistoryChanged(cb: () => void): Unsub;
       claudeLogin(): Promise<void>;
       claudeStatus(): Promise<ClaudeStatus>;
       modelSourceStatus(): Promise<ModelSourceStatus>;
