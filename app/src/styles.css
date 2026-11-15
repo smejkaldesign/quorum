@@ -1659,7 +1659,6 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .up-head-end { display: inline-flex; align-items: center; gap: 12px; }
 .up-strip .up-new { height: 26px; padding: 0 10px 0 8px; display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
 .up-strip .up-empty { padding: 4px 0 6px; }
-.up-list { max-height: 42vh; overflow-y: auto; }
 .up-strip .hist-row { --row-pad: 4px; padding: 4px 0 4px var(--row-pad); gap: 12px; }
 .up-strip .avatar-sq { width: 32px; height: 32px; }
 .up-strip .hist-text { gap: 2px; }
@@ -1822,9 +1821,9 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .up-inline .up-head .up-show-more { margin: 0; }
 
 /* a row's hover background reaches past the list's left edge by as much as the row's top padding */
-.hist-row { --row-pad: 7px; margin-left: calc(-1 * var(--row-pad)); padding-left: var(--row-pad); width: calc(100% + var(--row-pad)); }
+.hist-row { --row-pad: 9px; margin-left: calc(-1 * var(--row-pad)); padding-left: var(--row-pad); width: calc(100% + var(--row-pad)); }
 .up-strip .hist-row { --row-pad: 4px; }
-.hist-row.hist-child { --row-pad: 4px; padding-left: calc(26px + var(--row-pad)); }
+.hist-row.hist-child { --row-pad: 6px; padding-left: calc(26px + var(--row-pad)); }
 
 /* every menu and popover: darker than the panel's cards, a quiet border, a drop shadow */
 .menu, .model-menu, .record-menu, .brain-menu, .vis-menu, .note-menu, .people-pop, .date-pop { background: var(--menu-bg); border: 1px solid var(--menu-line); box-shadow: var(--menu-shadow); }
