@@ -25,6 +25,8 @@ import { registerFlags } from './flags.js';
 import { CALL_ACTIVE, DICTATION_OFF, keepActions, notetakerGates, recordDecision, screenReadsAllowed, sessionGates, startDecision, termsPlan } from './notetaker.js';
 import { hashText, newNoteText, noteFileName, noteForEditor, rewriteNote, screenRead, splitNote, validFrontmatter, yamlStr } from './handnote.js';
 import { createKeeper } from './keeper.js';
+import { createVersionStore } from './memoryVersions.js';
+import { lineDiff, noteBody } from './memoryReview.js';
 import { contextBudget } from './context-budget.js';
 import { skillUsage, stashSkill } from './skill-usage.js';
 import { createBrainCheck, fingerprint as checkPrint } from './brain-check.js';
@@ -161,11 +163,16 @@ let quitting = false;
 // guardrails: one rule set for what the agent may read and say (app/guardrails.js); brain() is defined below and read lazily
 const guardrails = createGuardrails({ settings, saveSettings: () => store.settings.save(), brain: () => brain(), privateDirs, denialLog: path.join(DATA_DIR, 'guard-denials.jsonl'), log: (...a) => log(...a) });
 const KEEPER_ERRORS = path.join(DATA_DIR, 'keeper-errors.log');
+// versions of the vault notes Quorum's agents change, and the updates the Memory tab shows for review (memoryVersions.js)
+const memoryVersions = createVersionStore({
+  dir: path.join(DATA_DIR, 'memory-versions'), autoApprove: () => settings.memoryAutoApprove !== false, dotDays: () => settings.memoryDotDays ?? 30,
+  onChange: (rels) => toUI('memory-updates', rels),
+});
 // the keeper maintains a Quorum-built Agent OS after each note (keeper.js); the person's own model source writes the facts
 const keeper = createKeeper({
   brain: () => brain(), settings, saveSettings: () => store.settings.save(), guards: () => guardrails.compiled(), wouldBlock,
   runText: (prompt, system) => runClaude(prompt, system, 'haiku'), hasModel: () => modelSource() !== 'none', owner: () => USER_NAME,
-  log: (...a) => log(...a), onChange: (r) => toUI('keeper', r), errorLog: KEEPER_ERRORS,
+  log: (...a) => log(...a), onChange: (r) => toUI('keeper', r), errorLog: KEEPER_ERRORS, versions: memoryVersions,
 });
 ipcMain.handle('keeper-status', () => keeper.status());
 ipcMain.handle('keeper-set', (_e, patch) => keeper.set(patch ?? {}));
@@ -200,10 +207,11 @@ async function brainAsk(question) {
   const ctx = agentContext();
   const instructions = brainInstructions(b.root);
   if (roleProvider('agent') === 'claude-code') {
-    const r = await runModel({
+    const hints = await searchHints(question, ctx, b.root);
+    const r = await watchAgent('Brain check question', () => runModel({
       source: modelSource(), providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question, transcript: '', root: b.root,
-      extra: { ...ctx, powers: { ...ctx.powers, instructions }, hints: await searchHints(question, ctx, b.root) }, model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: [], history: [], onStep: () => {},
-    });
+      extra: { ...ctx, powers: { ...ctx.powers, instructions }, hints }, model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: [], history: [], onStep: () => {},
+    }));
     return r.text;
   }
   let rules = '';
@@ -1298,6 +1306,15 @@ ipcMain.handle('set-settings', (_e, next) => {
     settings.screenContext = next.screenContext;
     store.settings.save();
   }
+  // Settings > Memory: whether agent changes to notes are approved when made, and how many days a blue dot shows
+  if (typeof next.memoryAutoApprove === 'boolean') {
+    settings.memoryAutoApprove = next.memoryAutoApprove;
+    store.settings.save();
+  }
+  if (Number.isInteger(next.memoryDotDays) && next.memoryDotDays >= 1 && next.memoryDotDays <= 365) {
+    settings.memoryDotDays = next.memoryDotDays;
+    store.settings.save();
+  }
   // Settings > Notes: whether Record from the header transcribes (Screen is screenContext, set on its own)
   if (next.notes && typeof next.notes === 'object' && typeof next.notes.transcription === 'boolean') settings.notes = { ...settings.notes, transcription: next.notes.transcription };
   if (typeof next.suggestions === 'boolean') {
@@ -1405,6 +1422,15 @@ function agentContext() {
   // the four that change how Claude Code itself runs (agent.js agentArgs)
   const powers = { instructions: on('instructions')?.path ?? null, skills: !!on('skills'), agents: !!on('agents'), mcp: on('mcp')?.path ?? null };
   return { index: on('index')?.path ?? null, dirs: inc.filter((i) => i.kind === 'folder').map((i) => i.path), search, graph: !!search && inc.some((i) => i.kind === 'graph'), powers };
+}
+// an agent run that may write vault notes with its own tools (the Skills, Agents or MCP power-ups; the base tools only
+// read) is watched, so each note it changes keeps a version and shows as an update in the Memory tab
+// (memoryVersions.js). Withheld folders are left out of the watch
+function watchAgent(reason, fn) {
+  const b = brain();
+  const p = agentContext().powers;
+  if (!b || !(p.skills || p.agents || p.mcp)) return fn();
+  return memoryVersions.watch(b.vault, { who: 'agent', reason, skip: (rel) => excludedPath(rel) }, fn);
 }
 // Cloud: the knowledge bases the person can read (ee/kbSearch.js), searched alongside the Agent OS; null in the local edition
 let kbSearch = null;
@@ -1699,7 +1725,7 @@ ipcMain.handle('note-ask', async (_e, file, question, history, files) => {
   const source = modelSource();
   // the note body is in the prompt, so a provider without tools can still answer about it and propose edits; only Claude Code can read the rest of the Agent OS or attachments
   const r = roleProvider('agent') === 'claude-code'
-    ? await runModel({ source, providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question: prompt, transcript: '', root: b.root, extra: await agentExtra(String(question), b.root, { kb: false }), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached, history: (history ?? []).slice(-4), onStep: (text) => toUI('agent-step', { text }) }).finally(() => unstage(attached))
+    ? await watchAgent('Question about a meeting note', async () => runModel({ source, providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question: prompt, transcript: '', root: b.root, extra: await agentExtra(String(question), b.root, { kb: false }), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached, history: (history ?? []).slice(-4), onStep: (text) => toUI('agent-step', { text }) }).finally(() => unstage(attached)))
     : await noteAskWithoutTools(prompt, history, attached);
   const m = r.text.match(/<updated-note>\n?([\s\S]*?)\n?<\/updated-note>/);
   const answer = r.text.replace(/<updated-note>[\s\S]*?<\/updated-note>/, '').trim();
@@ -1985,6 +2011,35 @@ ipcMain.handle('vault-note', (_e, rel) => {
   return { title: h1 ? h1[1].trim() : path.basename(n.abs, '.md'), body: h1 && body.startsWith(h1[0]) ? body.slice(h1[0].length).trim() : body, abs: n.abs, ...noteLink(n.abs), views: views.of(n.abs) };
 });
 
+// Memory tab review of agent changes (memoryVersions.js): the tree's dots, an open file's banner with its Before text
+// and the changed lines of the After text, accepting updates, and the versions in the side panel. Texts go out the way
+// vault-note sends them: withheld lines redacted, no frontmatter, no first heading
+const memoryNote = (rel) => { const b = brain(); const n = b && readVaultNote(b.vault, String(rel)); return n ? { vault: b.vault, rel: String(rel), text: n.text } : null; };
+ipcMain.handle('memory-dots', () => { const b = brain(); return b ? memoryVersions.dots(b.vault) : { files: {}, folders: {} }; });
+ipcMain.handle('memory-review', (_e, rel) => {
+  const n = memoryNote(rel);
+  const r = n && memoryVersions.review(n.vault, n.rel);
+  if (!r) return null;
+  const before = noteBody(suggester.redactLines(r.before));
+  const after = noteBody(suggester.redactLines(n.text));
+  return { dot: r.dot, count: r.count, at: r.at, changes: r.changes, before, changed: lineDiff(before, after).changed };
+});
+ipcMain.handle('memory-opened', (_e, rel) => { const n = memoryNote(rel); if (n) memoryVersions.opened(n.vault, n.rel); });
+ipcMain.handle('memory-accept', (_e, rel) => { const n = memoryNote(rel); return n ? memoryVersions.approve(n.vault, n.rel) : 0; });
+ipcMain.handle('memory-versions', (_e, rel) => { const b = brain(); return b ? memoryVersions.list(b.vault, String(rel)).map(({ id, at, who, reason, created, removed }) => ({ id, at, who, reason, created, removed })) : []; });
+ipcMain.handle('memory-version', (_e, rel, id) => {
+  const b = brain();
+  const text = b ? memoryVersions.read(b.vault, String(rel), String(id)) : null;
+  return text == null ? null : { body: noteBody(suggester.redactLines(text)) };
+});
+ipcMain.handle('memory-restore', (_e, rel, id) => {
+  const n = memoryNote(rel);
+  if (!n) throw new Error('Note not found');
+  if (memoryVersions.restore(n.vault, n.rel, String(id)) == null) throw new Error('That version can not be restored');
+  log('memory', 'restored a version of', n.rel);
+  return true;
+});
+
 ipcMain.handle('open-brain', (_e, what) => {
   const b = brain();
   if (!b) return;
@@ -2048,11 +2103,11 @@ ipcMain.handle('ask', async (_e, question, files) => {
     return { text, sources: [], steps: [] };
   }
   const extra = await agentExtra(String(question), b.root);
-  const r = await runModel({
+  const r = await watchAgent('Chat question', () => runModel({
     source, providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(),
     question, transcript, root: b.root, extra, model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached,
     history: chatHistory.slice(-4), onStep: (text) => { steps.push(text); toUI('agent-step', { text }); }, onDelta: (text) => toUI('agent-delta', { text }),
-  }).finally(() => unstage(attached));
+  }).finally(() => unstage(attached)));
   chatHistory.push({ q: question, a: r.text });
   const fileCards = r.files.map((abs, i) => ({ n: i + 1, abs, rel: path.relative(b.root, abs), title: noteTitle(abs), ...noteLink(abs) }));
   // knowledge base notes the answer cited open in the Knowledge tab
@@ -2739,6 +2794,13 @@ function cliNote(rel) {
   if (excludedPath(path.relative(b.vault, abs))) throw new Error('That note is withheld');
   return abs;
 }
+// a note the quorum command wrote (an agent in Terminal, or the MCP server) keeps its earlier text as a version and
+// shows as an update in the Memory tab
+function cliVersion(rel, before, reason) {
+  const b = brain();
+  if (b) memoryVersions.record({ vault: b.vault, rel: posixRel(rel), before, after: store.notes.read(path.join(b.vault, rel)), who: 'cli', reason });
+}
+const posixRel = (rel) => String(rel).split(path.sep).join('/');
 const NO_SESSION = 'No session is running. Start one in Quorum; quorum end closes it.';
 async function control({ cmd, args = {} }) {
   if (CONTROL_WRITES.has(cmd) && settings.access === 'read') throw new Error('Quorum is set to read only. Change it in Settings > Connectors.');
@@ -2789,12 +2851,14 @@ async function control({ cmd, args = {} }) {
       if (!b) throw new Error('Connect your Agent OS in Quorum first');
       const rel = createNote(b.vault, String(args.folder || '00-inbox'), String(args.title || 'Untitled'));
       if (args.text) store.notes.write(path.join(b.vault, rel), `# ${path.basename(rel, '.md')}\n\n${String(args.text).replace(/\n*$/, '\n')}`);
+      cliVersion(rel, null, 'Made this note');
       return { rel };
     }
     case 'note-append': {
       const abs = cliNote(args.rel);
       const text = store.notes.read(abs);
       store.notes.write(abs, `${text.replace(/\n*$/, '\n')}\n${String(args.text ?? '').replace(/\n*$/, '\n')}`);
+      cliVersion(path.relative(b.vault, abs), text, 'Added text to the end');
       return { rel: path.relative(b.vault, abs) };
     }
     case 'note-edit': {
@@ -2804,6 +2868,7 @@ async function control({ cmd, args = {} }) {
       if (suggester.redactLines(text) !== text) throw new Error('This note has withheld lines, so it can only be edited in the vault directly');
       const fm = text.match(/^---\n[\s\S]*?\n---\n/)?.[0] ?? '';
       store.notes.write(abs, `${fm}${String(args.text ?? '').replace(/^---\n[\s\S]*?\n---\n/, '').replace(/\n*$/, '\n')}`);
+      cliVersion(path.relative(b.vault, abs), text, 'Rewrote the note');
       return { rel: path.relative(b.vault, abs) };
     }
     case 'settings-get': return { model: settings.model, modelSource: modelSource(), providers: providers(), autoListen: !!settings.autoListen, suggestions: settings.suggestions !== false, access: settings.access ?? 'write' };

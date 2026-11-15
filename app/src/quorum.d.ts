@@ -80,7 +80,7 @@ export type ProviderConnectors = Partial<Record<ConnectorId, { baseUrl?: string;
 export type RunnerStatus = { installed: boolean; version: string | null };
 export type ModelSourceStatus = { source: ModelSource; localModel: string; claude: ClaudeStatus | null; key: boolean; keys: Partial<Record<ConnectorId, boolean>>; ollama: { reachable: boolean; hasModel: boolean }; runners?: Partial<Record<'codex' | 'antigravity', RunnerStatus>>; providers: Providers; connectors: ProviderConnectors };
 // userName is how the main process names the recorder in notes; it falls back to the macOS account's full name, then the login
-export type Settings = { meetingProviders?: Record<string, { enabled: boolean }>; autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean; transcription?: boolean }; meetingsKb?: { autoSave?: boolean }; managedModels?: boolean; screenContext?: boolean };
+export type Settings = { meetingProviders?: Record<string, { enabled: boolean }>; autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean; transcription?: boolean }; meetingsKb?: { autoSave?: boolean }; managedModels?: boolean; screenContext?: boolean; memoryAutoApprove?: boolean; memoryDotDays?: number };
 export type OnboardingStatus = { firstRun: boolean; defaultVaultDir: string };
 export type OnboardingChecks = { permissions: { microphone: string; audio: string; accessibility: string; calendar: string }; claude: { installed: boolean; loggedIn?: boolean; email?: string; org?: string; plan?: string; version?: string; pending?: boolean }; model?: ModelSourceStatus | null };
 // the setup interview: a template plus a few answers that shape a Quorum-built Agent OS (starter.js)
@@ -258,6 +258,11 @@ export type SearchHit = { rel: string; title: string; score: number; line: numbe
 export type Backlink = { rel: string; title: string; line: number; context: string };
 export type OutLink = { target: string; rel: string | null; title: string; anchor: string; embed: boolean };
 export type TreeItem = { name: string; path: string; dir: boolean; mtime?: number; ctime?: number; children?: TreeItem[] };
+// Memory tab review of agent changes (memoryVersions.js): green waits for approval, blue is approved and not opened yet
+export type MemoryDot = 'green' | 'blue';
+export type MemoryDots = { files: Record<string, MemoryDot>; folders: Record<string, MemoryDot> };
+export type MemoryReview = { dot: MemoryDot; count: number; at: number; changes: number; before: string; changed: number[] };
+export type MemoryVersion = { id: string; at: number; who: string; reason: string; created: boolean; removed: boolean };
 export type TreeSort = 'name-asc' | 'name-desc' | 'mtime-desc' | 'mtime-asc' | 'ctime-desc' | 'ctime-asc';
 export type Suggestion = { id: string; kind: 'question' | 'topic'; text: string; caption: string };
 // a knowledge base source (Cloud) has kb and no file: rel is where it sits ("Handbook / Policies"), and it opens in the Knowledge tab
@@ -385,6 +390,14 @@ declare global {
       vaultResolve(target: string, from: string): Promise<string | null>;
       onVaultChanged(cb: (rels: string[]) => void): Unsub;
       vaultNote(rel: string): Promise<{ title: string; body: string; abs: string; app: string; views?: NoteViews } | null>;
+      memoryDots(): Promise<MemoryDots>;
+      memoryReview(rel: string): Promise<MemoryReview | null>;
+      memoryOpened(rel: string): Promise<void>;
+      memoryAccept(rel: string): Promise<number>;
+      memoryVersions(rel: string): Promise<MemoryVersion[]>;
+      memoryVersion(rel: string, id: string): Promise<{ body: string } | null>;
+      memoryRestore(rel: string, id: string): Promise<boolean>;
+      onMemoryUpdates(cb: (rels: string[]) => void): Unsub;
       vaultNewNote(folder: string, name: string): Promise<string>;
       vaultNewFolder(parent: string, name: string): Promise<string>;
       vaultRename(rel: string, name: string): Promise<Relocated>;
