@@ -8,7 +8,7 @@ import mark from '../assets/quorum-mark.png';
 import { Markdown } from './Markdown';
 import { IconBell, IconRecord, IconSound, IconStop, IconCalendar, IconClock, IconFolder, IconLogs, IconNotes, IconPeople } from './icons';
 import { NoteEditor } from './editor/NoteEditor';
-import { TypedTitle, useStuck } from './StickyBar';
+import { TypedTitle, useStuck, useAtEnd } from './StickyBar';
 import { splitChoices } from './MeetingNote';
 import { ChatExit, ChatStrip, useChats } from './ChatStack';
 import { Composer } from './Composer';
@@ -46,6 +46,9 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
   const [dropped, setDropped] = useState<Record<number, boolean>>({});
   // the recording's chats: several can stack; the open one shows below, the rest collapse to one line each
   const cs = useChats<{ q: string; a: string; pending?: boolean }>();
+  // the composer's shadow is full only while content scrolls beneath it
+  const dockRef = useRef<HTMLDivElement>(null);
+  const dockEnd = useAtEnd(dockRef);
   const followups: Followup[] = cs.active?.turns.map((t) => ({ q: t.q, a: t.pending ? null : t.a })) ?? [];
   const asking = cs.chats.some((c) => c.turns.some((t) => t.pending));
   const [draftQ, setDraftQ] = useState('');
@@ -289,7 +292,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
         </div>
       )}
 
-      {!live && <div className="note-dock end-dock">
+      {!live && <div ref={dockRef} className={`note-dock end-dock${dockEnd ? ' at-end' : ''}`}>
 {!cs.active && <ChatStrip chats={cs.chats} onOpen={cs.setOpenId} me={{ name: asker?.name || me?.name || 'You', photo: asker?.photo ?? me?.photo ?? null }} />}
         <Composer className="note-composer" value={draftQ} onChange={setDraftQ} onSubmit={() => ask()} busy={asking || summarizing} onNewChat={cs.chats.length ? cs.newChat : undefined} placeholder="Ask about this note" />
       </div>}

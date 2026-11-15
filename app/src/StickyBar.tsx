@@ -65,3 +65,20 @@ export function useToolbarDock(sentinel: React.RefObject<HTMLDivElement | null>,
 export function toPageTop(sentinel: React.RefObject<HTMLDivElement | null>) {
   sentinel.current?.closest<HTMLElement>('.end-scroll, .body')?.scrollTo({ top: 0, behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
 }
+
+// true while the page is scrolled to its end, so nothing sits under the composer; read on scroll and on resize
+export function useAtEnd(el: React.RefObject<HTMLElement | null>) {
+  const [end, setEnd] = useState(true);
+  useEffect(() => {
+    const box = el.current?.closest<HTMLElement>('.end-scroll, .body');
+    if (!box) return;
+    const check = () => setEnd(box.scrollHeight - box.scrollTop - box.clientHeight < 8);
+    check();
+    box.addEventListener('scroll', check, { passive: true });
+    const ro = new ResizeObserver(check);
+    ro.observe(box);
+    for (const c of Array.from(box.children)) ro.observe(c);
+    return () => { box.removeEventListener('scroll', check); ro.disconnect(); };
+  }, [el]);
+  return end;
+}

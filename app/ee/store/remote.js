@@ -136,8 +136,10 @@ export function createRemote({ client, workspaceId, userId } = {}) {
   const turnRow = (chatId, t, id) => ({ id, chat_id: chatId, question: String(t.q ?? ''), answer: String(t.a ?? ''), sources: t.sources ?? [], steps: t.steps ?? [], created_at: t.at ?? now() });
   const needUlid = (id, what) => { if (!ULID.test(String(id))) throw new Error(`remote store: ${what} needs a ULID id, got ${id}`); return String(id); };
   const chats = {
-    list: async () => (await run(live('chats', '*, turns:chat_turns(*)').order('updated_at', { ascending: false }), 'chats list')).map(chatOut),
-    read: async (id) => { const c = first(await run(live('chats', '*, turns:chat_turns(*)').eq('id', id).limit(1), 'chats read')); return c ? chatOut(c) : null; },
+    // chats belong to the person who asked, on any note, public or not: only their own come back, whatever the
+    // database policies allow
+    list: async () => (await run(live('chats', '*, turns:chat_turns(*)').eq('user_id', userId).order('updated_at', { ascending: false }), 'chats list')).map(chatOut),
+    read: async (id) => { const c = first(await run(live('chats', '*, turns:chat_turns(*)').eq('id', id).eq('user_id', userId).limit(1), 'chats read')); return c ? chatOut(c) : null; },
     // the chat row is upserted; turns reuse the ids already stored for the chat in order, so writing twice keeps one row per turn
     write: async (c) => {
       const id = needUlid(c.id, 'chats.write');
