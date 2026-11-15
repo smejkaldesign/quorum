@@ -99,7 +99,9 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
   const strip = (
     <section ref={section} className={inline ? 'up-inline' : 'up-strip'} aria-label={label}>
       <div className="up-head">
-        <DaysMenu days={cal.days} onPick={(d) => window.quorum.calendarSet({ days: d }).then(loadCal)} />
+        {folded && !inline
+          ? <button className="up-days-btn" aria-controls={listId} aria-expanded={false} onClick={() => setFolded(false)}><h4>Upcoming events</h4><IconChevron width={16} height={16} className="up-days-chev" /></button>
+          : <DaysMenu days={cal.days} onPick={(d) => window.quorum.calendarSet({ days: d }).then(loadCal)} />}
         <span className="up-head-end">
           {!inline && <button className={`up-all ${folded ? 'on' : ''}`} aria-pressed={folded} aria-controls={listId} onClick={() => setFolded((f) => !f)}>{folded ? 'Show' : 'Hide'}</button>}
           {!(folded && !inline) && moreButton}
