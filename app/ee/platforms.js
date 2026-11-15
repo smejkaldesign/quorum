@@ -237,7 +237,8 @@ export function createPlatforms({ account, settings, saveSettings = () => {}, me
       const tokens = await relay(`/v1/connect/${id}/token`, { body: { grant: 'code', code: q.code, codeVerifier: verifier, redirectUri: p.redirectUri } });
       await store.tokens.set(key(id), tokens);
       const me = await (await api(id, '/users/me')).json();
-      await relay(`/v1/connect/${id}/account`, { body: { accountId: me.account_id, externalUserId: me.id } });
+      // the relay reads the account from Zoom with this token instead of trusting the ids; they stay for older relays
+      await relay(`/v1/connect/${id}/account`, { body: { accessToken: tokens.accessToken, accountId: me.account_id, externalUserId: me.id } });
       Object.assign(stateOf(id), { connected: true, account: me.email ?? null, accountId: me.account_id ?? null, name: [me.first_name, me.last_name].filter(Boolean).join(' ') || me.display_name || null, connectedAt: new Date(now()).toISOString(), since: null });
       saveSettings();
       tell({});
