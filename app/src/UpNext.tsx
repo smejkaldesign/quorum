@@ -214,6 +214,7 @@ function EventMenu({ event: e, open, onOpen, onChanged }: { event: CalendarEvent
         <div className="menu up-menu" style={{ position: 'fixed', top: at.top, right: at.right }} onMouseDown={(ev) => ev.stopPropagation()} onClick={(ev) => ev.stopPropagation()}>
           {e.item && <button onClick={run(() => window.quorum.calendarOpen(e))}>View in Calendar</button>}
           {e.join && <button onClick={run(() => window.quorum.openExternal(e.join!))}>Open call link</button>}
+          {e.join && <button onClick={run(() => window.quorum.copy(e.join!))}>Copy call link</button>}
           <button className="danger" onClick={run(() => setConfirm(true))}>Remove from list</button>
         </div>,
         document.body,
