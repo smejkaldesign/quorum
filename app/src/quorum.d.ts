@@ -364,6 +364,7 @@ declare global {
       readNote(file: string): Promise<NoteDoc | null>;
       newChat(): Promise<void>;
       loadChat(id: string): Promise<SavedChat | null>;
+      readChat(id: string): Promise<SavedChat | null>;
       vaultTree(): Promise<TreeItem[]>;
       vaultGraph(): Promise<import('./Graph').GraphData | null>;
       vaultClusterName(key: string, name: string): Promise<Record<string, string> | null>;

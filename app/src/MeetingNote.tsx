@@ -127,12 +127,21 @@ function splitChoices(raw: string) {
   return m ? { text: t.slice(0, m.index).trim(), choices: m[1].split('|').map((c) => c.trim()).filter(Boolean).slice(0, 4) } : { text: t, choices: [] as string[] };
 }
 
-export function NoteReader({ note: initial, dayLabel, peopleLine, onBack }: {
-  note: NoteDoc; dayLabel: (d: Date | null) => string; peopleLine: (p: string[], n: number) => string; onBack: () => void;
+export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat = null }: {
+  chat?: string | null; note: NoteDoc; dayLabel: (d: Date | null) => string; peopleLine: (p: string[], n: number) => string; onBack: () => void;
 }) {
   const [note, setNote] = useState(initial);
   const [showing, setShowing] = useState<'summary' | 'transcript'>('summary');
   const bar = useStuck();
+  // opened from a chats link: that chat's turns, and the page scrolled down to them
+  useEffect(() => {
+    if (!chat) return;
+    window.quorum.readChat(chat).then((c) => {
+      if (!c) return;
+      setTurns(c.turns.map((t) => ({ q: t.q, a: t.a, proposal: null })));
+      requestAnimationFrame(() => scroller.current?.querySelector('.note-thread')?.scrollIntoView({ block: 'start' }));
+    }).catch(() => {});
+  }, [chat]); // eslint-disable-line react-hooks/exhaustive-deps
   const [summing, setSumming] = useState(false);
   const [sumError, setSumError] = useState<string | null>(null);
   async function summarize() {

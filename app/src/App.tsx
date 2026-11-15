@@ -593,7 +593,7 @@ export function App() {
         </div>
       </header>
       {/* Up next sits over Home and the call views; the Memory graph and knowledge bases use the full height */}
-      {view === 'main' && <UpNext hidden={showLive || !!note || tab === 'memory' || knowledgeOpen || (inCall(phase) && (tab === 'chat' || tab === 'notes' || tab === 'mine')) || (tab === 'home' && !convoOpen && histFiltered)} floating={tab === 'home' && !convoOpen} />}
+      {view === 'main' && <UpNext hidden={showLive || !!note || tab !== 'home' || convoOpen || histFiltered} floating />}
 
       {/* a hand note stays mounted while Settings or a recording is in front, so its text is saved by its own Back */}
       {note && <div className="note-host" hidden={view !== 'main' || showLive}>{noteArea}</div>}

@@ -1846,6 +1846,8 @@ ipcMain.handle('meeting-brief', async (_e, q) => {
 });
 
 ipcMain.handle('new-chat', () => { convo = null; chatHistory = []; });
+// a saved chat read for a note's page, without making it the Home chat
+ipcMain.handle('read-chat', (_e, id) => store.chats.read(String(id ?? '')) ?? null);
 ipcMain.handle('load-chat', (_e, id) => {
   const c = store.chats.read(id);
   if (!c) return null;

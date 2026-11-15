@@ -11,6 +11,7 @@ import { dayLabel } from './upNextList';
 import { OPEN_EVENT, UpNext, takeEvent, useCalendarView } from './UpNext';
 import { AppLogo, CALENDAR_APP, RowDetails, peopleText } from './AppChip';
 import { MeetingPage } from './MeetingPage';
+import markProd from '../assets/quorum-mark.png';
 import { DayOff } from './DayOff';
 import { IconCalendar, IconChat, IconClose, IconPlus, IconExternal, IconListCheck, IconMic, IconNewNote, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
 
@@ -60,6 +61,9 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, on
     return () => { live = false; };
   }, [keyword]);
   const [note, setNote] = useState<NoteDoc | null>(null);
+  // a note opened from its chats link scrolls to its chat, with that chat's turns loaded
+  const [noteChat, setNoteChat] = useState<string | null>(null);
+  const openNoteAt = (file: string, chat: string | null) => window.quorum.readNote(file).then((n) => { if (n) { setNoteChat(chat); setNote(n); } });
   // an upcoming meeting's page, opened from Up next here or on another tab
   const [event, setEvent] = useState<CalendarEvent | null>(() => takeEvent());
   // a note or meeting page opens at its top: they share the list's scroll box, which would otherwise keep its place
@@ -130,7 +134,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, on
       && (!kw || `${m.title} ${m.people.join(' ')}`.toLowerCase().includes(kw) || !!bodyHits?.has(m.rel))).map((m) => ({
       key: m.id, kind: m.kind, title: m.title, sub: m.kind === 'note' ? 'Note' : peopleLine(m.people, m.count),
       date: m.date ? new Date(m.date) : null, avatar: m.kind === 'note' ? 'note' : (m.people[0] ?? m.title).trim()[0]?.toUpperCase() ?? '?',
-      open: () => window.quorum.readNote(m.file).then(setNote), meeting: m,
+      open: () => openNoteAt(m.file, null), meeting: m,
       children: (byMeeting.get(m.file) ?? []).map((c) => chatRow(c, true)),
     }));
     if (filter === 'meetings' || filter === 'notes' || picked.length) return meetings;
@@ -155,7 +159,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, on
   useEffect(() => { onFiltered?.(filtered); }, [filtered, onFiltered]);
   useEffect(() => () => onFiltered?.(false), [onFiltered]);
   if (event) return <MeetingPage event={event} onBack={() => setEvent(null)} onOpenNote={(file) => window.quorum.readNote(file).then((n) => { if (n) { setEvent(null); setNote(n); } })} />;
-  if (note) return <NoteReader note={note} dayLabel={dayLabel} peopleLine={peopleLine} onBack={() => { setNote(null); refresh(); }} />;
+  if (note) return <NoteReader key={note.file} chat={noteChat} note={note} dayLabel={dayLabel} peopleLine={peopleLine} onBack={() => { setNote(null); refresh(); }} />;
 
   const ask = (q: string, files: string[] = []) => { if (q.trim()) { setDraft(''); onAsk(q.trim(), files); } };
 
@@ -174,7 +178,8 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, on
           {m ? <RowDetails who={m.kind === 'note' && !ev ? 'Note' : peopleText(ev, m.people)}
               onCalendar={ev && (ev.item || ev.link) ? () => window.quorum.calendarOpen({ ...ev, id: ev.id ?? '', title: m.title, end: ev.start } as CalendarEvent) : null}
               calendarName={m.calendar ? CALENDAR_APP[m.calendar].name : undefined}
-              platform={m.platform} meetingUrl={m.meetingUrl} source={m.source} sourceUrl={m.url} />
+              platform={m.platform} meetingUrl={m.meetingUrl} source={m.source} sourceUrl={m.url}
+              after={r.children?.length ? <ChatsLink n={r.children.length} onOpen={() => openNoteAt(m.file, r.children![0].key)} /> : null} />
             : <span className="hist-sub"><span className="hist-sub-text">{r.sub}</span></span>}
         </span>
         <span className="hist-time">{r.date ? <>{r.date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?(AM|PM)/i, '')}<small>{r.date.getHours() < 12 ? 'AM' : 'PM'}</small></> : ''}</span>
@@ -185,13 +190,6 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, on
           </span>
         )}
       </div>
-      {r.children?.map((c) => (
-        <div key={c.key} className="hist-row hist-child" role="button" tabIndex={0} onClick={c.open} onKeyDown={(e) => { if (e.key === 'Enter') c.open(); }}>
-          <span className="hist-branch" aria-hidden="true" />
-          <span className="avatar-sq chat tiny"><IconQuorum /></span>
-          <span className="hist-text"><strong>{c.title}</strong><span>{c.sub}</span></span>
-        </div>
-      ))}
       </div>
     );
   };
@@ -269,6 +267,15 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, on
         </div>
       ))}
     </div>
+  );
+}
+
+// a meeting's chats in its row details: the Quorum mark and the count; opens the note at its chat
+function ChatsLink({ n, onOpen }: { n: number; onOpen: () => void }) {
+  return (
+    <a className="app-chip link" href="#" data-tip="Open the chat on this note" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpen(); }} onKeyDown={(e) => e.stopPropagation()}>
+      <img className="app-logo" src={markProd} alt="" />{n} {n === 1 ? 'chat' : 'chats'}
+    </a>
   );
 }
 
