@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import type { CalendarEvent } from './quorum';
+import type { CalendarEvent, ChatRow } from './quorum';
+import markProd from '../assets/quorum-mark.png';
 import { useExclusiveMenu } from './menuBus';
 import { useSession } from './session';
 import { ConfirmModal } from './ConfirmModal';
@@ -32,6 +33,14 @@ const usePassed = () => useSyncExternalStore((f) => { passSubs.add(f); return ()
 // window event moves the app to Home.
 let pendingEvent: CalendarEvent | null = null;
 export const OPEN_EVENT = 'quorum:open-event';
+// an upcoming meeting's notes (its chats) in its row details; opens its page at them
+function EventChatsLink({ n, onOpen }: { n: number; onOpen: () => void }) {
+  return (
+    <a className="app-chip link" href="#" data-tip="Open the notes on this meeting" onClick={(ev) => { ev.preventDefault(); ev.stopPropagation(); onOpen(); }} onKeyDown={(ev) => ev.stopPropagation()}>
+      <img className="app-logo" src={markProd} alt="" />{n} {n === 1 ? 'note' : 'notes'}
+    </a>
+  );
+}
 export function openEvent(e: CalendarEvent) { pendingEvent = e; window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: e })); }
 export function takeEvent() { const e = pendingEvent; pendingEvent = null; return e; }
 
@@ -42,7 +51,25 @@ export function takeEvent() { const e = pendingEvent; pendingEvent = null; retur
 // slides down. The inline group only reads what the strip loads. It is Today when today has anything, today's calls
 // first and then the rest of today's list (children); otherwise it is Up next, the next day with calls, its first
 // call and Show more for the rest of that day.
-export function UpNext({ hidden = false, inline = false, floating = false }: { hidden?: boolean; inline?: boolean; floating?: boolean }) {
+// chats about upcoming meetings by event id, for the strip (the Home list passes its own)
+function useEventChats(skip: boolean) {
+  const [m, setM] = useState<Map<string, ChatRow[]>>(new Map());
+  useEffect(() => {
+    if (skip) return;
+    const load = () => window.quorum.history().then((h) => {
+      const next = new Map<string, ChatRow[]>();
+      for (const c of h.chats) if (c.eventId && (!c.eventEnd || new Date(c.eventEnd).getTime() > Date.now())) next.set(c.eventId, [...(next.get(c.eventId) ?? []), c]);
+      setM(next);
+    }).catch(() => {});
+    load();
+    return window.quorum.onHistoryChanged(load);
+  }, [skip]);
+  return m;
+}
+
+export function UpNext({ hidden = false, inline = false, floating = false, chats: given }: { hidden?: boolean; inline?: boolean; floating?: boolean; chats?: Map<string, ChatRow[]> }) {
+  const own = useEventChats(!!given);
+  const chats = given ?? own;
   const cal = useCalendarView();
   const passed = usePassed();
   const [open, setOpen] = useSession('upNextOpen', false);
@@ -126,7 +153,8 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
                   {e.calendar ? <span className="avatar-sq app"><AppLogo {...CALENDAR_APP[e.calendar]} /></span> : <span className="avatar-sq cal"><IconCalendar width={18} height={18} /></span>}
                   <span className="hist-text"><strong>{e.title}</strong>
                     <RowDetails who={peopleText(e)} onCalendar={e.item || e.link ? () => window.quorum.calendarOpen(e) : null} calendarName={e.calendar ? CALENDAR_APP[e.calendar].name : undefined}
-                      platform={e.platform} meetingUrl={e.join} />
+                      platform={e.platform} meetingUrl={e.join}
+                      after={chats?.get(e.id)?.length ? <EventChatsLink n={chats.get(e.id)!.length} onOpen={() => openEvent({ ...e, openChat: true })} /> : null} />
                   </span>
                   {!e.platform && <span className="up-badge">No meeting</span>}
                   <span className="hist-time"><span className="up-day">{when}</span>{time(at)}<small>{half(at)}</small></span>
@@ -178,7 +206,7 @@ function DaysMenu({ days, onPick }: { days: number | 'week'; onPick: (d: number 
 }
 
 // the white Join button an upcoming call shows on hover, with its app's logo
-function JoinButton({ id, label, url }: { id: string; label: string; url: string }) {
+export function JoinButton({ id, label, url }: { id: string; label: string; url: string }) {
   const icons = useAppIcons();
   return (
     <button className="up-join" onClick={(ev) => { ev.stopPropagation(); window.quorum.openExternal(url); }}>

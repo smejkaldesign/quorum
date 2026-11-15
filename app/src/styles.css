@@ -2116,3 +2116,74 @@ button.meta-pill.meta-icon:hover { background: rgba(255, 255, 255, 0.06); }
 .more-below { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; margin: 0 auto 12px; border-radius: 999px; background: var(--menu-bg); border: 1px solid var(--line-2); color: var(--text); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4); animation: dock-in 200ms ease; }
 .more-below:hover { background: var(--card); border-color: rgba(255, 255, 255, 0.24); }
 @media (prefers-reduced-motion: reduce) { .note-dock .skill-pills, .more-below { animation: none; } }
+/* Memory: the path under the title, full width, cut at its start so the file name shows */
+.kb-preview .kb-path { max-width: none; margin: -4px 0 12px; direction: rtl; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #6e6e74; font-size: 13px; }
+.kb-preview .kb-path span { direction: ltr; unicode-bidi: bidi-override; }
+/* side panel: one line per link with an open icon on hover; outline entries jump to their heading */
+.np-link { flex-direction: row; align-items: center; gap: 8px; }
+.np-link strong { flex: 1; min-width: 0; }
+.np-link svg { flex: none; color: var(--muted); opacity: 0; width: 0; transition: opacity 120ms ease; }
+.np-link:hover svg { opacity: 1; width: 13px; }
+.np-prev { margin: 0 0 6px; }
+.np-prev svg { opacity: 1; width: 13px; }
+.np-prev .np-prev-label { flex: none; font-size: 12px; color: var(--muted); }
+.np-prev strong { color: var(--text); }
+button.np-outline { display: block; width: 100%; text-align: left; padding: 4px 8px; border-radius: 8px; }
+button.np-outline:hover { background: rgba(255, 255, 255, 0.05); color: var(--text); }
+/* menus as wide as their longest item */
+.brain-menu, .note-menu { min-width: 0; width: max-content; }
+.brain-menu button, .note-menu button { padding-right: 18px; }
+.skill-pills { margin-bottom: 14px; }
+/* a new chat's empty state */
+.chat-zero { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; text-align: center; padding: 40px 16px; }
+.chat-zero-art { width: 120px; height: 72px; margin-bottom: 8px; }
+.chat-zero-art .cz-bubble { fill: rgba(255, 255, 255, 0.04); stroke: var(--line-2); stroke-width: 1.5; stroke-linejoin: round; }
+.chat-zero-art .cz-bubble.back { fill: rgba(122, 222, 128, 0.08); stroke: rgba(122, 222, 128, 0.45); }
+.chat-zero-art .cz-line { stroke: var(--muted); stroke-width: 2; stroke-linecap: round; opacity: 0.6; }
+.chat-zero-title { margin: 0; font-size: 16px; font-weight: 600; color: var(--text); }
+.chat-zero .hist-empty { margin: 0; }
+.chat-skills { margin: 0 auto 12px; padding: 0 16px; }
+/* Home chat uses the note chat's layout, at the note page's width and text size */
+.chat-thread { width: 100%; max-width: 780px; margin: 0 auto; border-top: 0; padding-top: 8px; font-size: 15px; color: #d4d4d8; }
+.chat-thread .nt-turn + .nt-turn { margin-top: -14px; }
+.chat-thread .nt-a .source { margin-top: 10px; }
+/* Your notes on the recording page: the note editor inline, no box; its formatting bar sits on top */
+.my-notes-editor { margin-top: 4px; }
+.my-notes-editor .ProseMirror { min-height: 120px; padding: 0; border: 0; background: none; outline: none; }
+.end-dock { margin: 0; padding: 24px 32px 20px; position: relative; }
+/* code blocks look like code wherever the editor sits: a tinted panel, monospace, tight lines; blocks next to each
+   other read as one */
+.note-rich { --ed-code-bg: rgba(255, 255, 255, 0.06); }
+:root[data-theme="light"] .note-rich { --ed-code-bg: rgba(0, 0, 0, 0.05); }
+.note-rich pre { margin: 10px 0; padding: 12px 16px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--ed-code-bg); line-height: 1.55; white-space: pre; }
+.note-rich pre code { font: 13.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; color: #e4e4e7; }
+.note-rich pre + pre { margin-top: 0; border-top: 0; border-top-left-radius: 0; border-top-right-radius: 0; padding-top: 0; }
+.note-rich pre:has(+ pre) { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom: 0; padding-bottom: 0; margin-bottom: 0; }
+.tb-btn svg { display: block; margin: 0 auto; }
+.chat-zero { gap: 4px; }
+.chat-zero .hist-empty { padding: 0; }
+.my-notes-section { margin-top: 8px; }
+/* a new note's title: typed in place; empty, New note in italics */
+.end .doc h1 .title-input { width: 100%; padding: 0; border: 0; background: none; outline: none; color: var(--text); font: inherit; letter-spacing: inherit; }
+.end .doc h1 .title-input::placeholder { color: var(--muted); font-style: italic; opacity: 1; }
+/* the editor's empty-state text reads as a placeholder everywhere: subdued and italic */
+.note-rich { --ed-faint: #6e6e74; }
+.note-rich p.is-editor-empty:first-child::before { color: var(--ed-faint); font-style: italic; }
+/* the recording page's Back row sits at the page's width, aligned with the title, like a note's */
+.end.embedded .end-bar { width: 100%; max-width: 720px; margin: 0 auto; padding: 20px 0 0; box-sizing: border-box; }
+.back-btn { padding: 0 14px 0 10px; }
+/* the chat input sits at the page's width, the same as the text above it */
+.reader .note-dock, .meeting-page .note-dock { margin-left: 0; margin-right: 0; padding-left: 0; padding-right: 0; }
+.end-actions { display: flex; align-items: center; gap: 8px; }
+.reader .note-dock .composer, .meeting-page .note-dock .composer { margin-left: 0; margin-right: 0; }
+/* a note's details: white text; the ones you can click get the outlined button's hover */
+.meta-pill { color: var(--text); }
+button.meta-pill, a.meta-pill { transition: background 160ms ease, border-color 160ms ease; }
+button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .views-wrap .meta-pill:hover { background: var(--card); border-color: rgba(255, 255, 255, 0.24); }
+.meta-pill.meta-app { color: var(--text); }
+/* the page's main action (Save, Keep): the same pill, white */
+.act-pill.primary { background: #f2f2f2; border-color: #f2f2f2; color: #111; }
+.act-pill.primary:hover:not(:disabled) { background: #fff; border-color: #fff; }
+/* the recording page's chat input at the page's width, like a note's */
+.end-dock { width: 100%; max-width: 720px; margin: 0 auto; padding: 24px 0 20px; box-sizing: border-box; }
+.end-dock .composer { margin-left: 0; margin-right: 0; }

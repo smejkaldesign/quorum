@@ -1,11 +1,13 @@
+import { BackButton } from './BackButton';
 import { useEffect, useRef, useState } from 'react';
 import type { MeetingMeta, Notes, NotesDraft, WhoAsk } from './quorum';
 import { WhoSpoke, type WhoAnswers } from './WhoSpoke';
 import { Avatar, SpeakerName, similarCounts, type SpeakerTurn } from './Speaker';
 import mark from '../assets/quorum-mark.png';
 import { Markdown } from './Markdown';
-import { IconArrowUp, IconCalendar, IconClock, IconFolder, IconLogs, IconNotes, IconPeople } from './icons';
-import { PrivateNotes } from './PrivateNotes';
+import { IconRecord, IconCalendar, IconClock, IconFolder, IconLogs, IconNotes, IconPeople } from './icons';
+import { NoteEditor } from './editor/NoteEditor';
+import { Composer } from './Composer';
 
 type Followup = { q: string; a: string | null };
 
@@ -16,8 +18,11 @@ export type Turn = SpeakerTurn & { who: string; voice?: number | 'mix' | 'sound'
 // privateNotes is what you typed on the call; edits here reach the main process the same way, and flush runs before Save
 // live: the recording is running (or paused) and this is its page under the header; the transcript shows as it is
 // heard and the summary waits for Stop, which writes it into this same page. embedded drops the window chrome
-export function EndView({ notes, draft, meta, summarizing, transcript, participants, onSpeaker, privateNotes, onPrivateNotes, flushPrivateNotes, onClose, me, live = false, paused = false, embedded = false, partial = '', who = null, onAnswer }: { who?: WhoAsk | null; onAnswer?: (a: WhoAnswers | null) => void; live?: boolean; paused?: boolean; embedded?: boolean; partial?: string; me?: { name: string; photo: string | null }; notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; participants: string[]; onSpeaker: (id: number, name: string | null, similar: boolean) => Promise<void>; privateNotes: string; onPrivateNotes: (v: string) => void; flushPrivateNotes: () => void; onClose: () => void }) {
+// ready: a new note before any recording; you can type in Your notes and Save, or press Record to transcribe into it
+export function EndView({ notes, draft, meta, summarizing, transcript, participants, onSpeaker, privateNotes, onPrivateNotes, flushPrivateNotes, onClose, me, live = false, paused = false, embedded = false, partial = '', who = null, onAnswer, ready = false, onSaveDraft, onRecord, recordBusy = false }: { onRecord?: () => void; recordBusy?: boolean; ready?: boolean; onSaveDraft?: (title: string) => Promise<void>; who?: WhoAsk | null; onAnswer?: (a: WhoAnswers | null) => void; live?: boolean; paused?: boolean; embedded?: boolean; partial?: string; me?: { name: string; photo: string | null }; notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; participants: string[]; onSpeaker: (id: number, name: string | null, similar: boolean) => Promise<void>; privateNotes: string; onPrivateNotes: (v: string) => void; flushPrivateNotes: () => void; onClose: () => void }) {
   const [showing, setShowing] = useState<'summary' | 'transcript'>(live ? 'transcript' : 'summary');
+  // a new note's title: empty reads New note in italics, and a click puts the cursor in it
+  const [title, setTitle] = useState('');
   // Stop turns the page to the summary as it is written
   useEffect(() => { if (summarizing || who) setShowing('summary'); }, [summarizing, who]);
   const [dropped, setDropped] = useState<Record<number, boolean>>({});
@@ -82,17 +87,21 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
   return (
     <div className={embedded ? 'end embedded' : 'panel end'}>
       <header className="end-bar">
-        {live ? <button className="pill ghost" onClick={onClose}>Back</button>
-          : <button className="pill ghost" onClick={async () => { await window.quorum.discard(); onClose(); }}>{saved ? 'Close' : 'Discard'}</button>}
+        {live || ready ? <BackButton onClick={onClose} />
+          : <button className="act-pill" onClick={async () => { await window.quorum.discard(); onClose(); }}>{saved ? 'Close' : 'Discard'}</button>}
         <div className="end-actions">
-          {live ? <span className="muted note-status" role="status">{paused ? 'Paused' : 'Recording'}</span> : <>
+          {ready ? <>
+          {/* Record turns this page into the recording, the same as Record in the header */}
+          {onRecord && <span data-tip={recordBusy ? 'A recording is already running' : undefined}><button className="act-pill" disabled={recordBusy} onClick={onRecord}><IconRecord width={15} height={15} /> Record</button></span>}
+          <button className="act-pill primary" disabled={(!privateNotes.trim() && !title.trim()) || saving} onClick={async () => { setSaving(true); try { await onSaveDraft?.(title.trim()); } finally { setSaving(false); } }}>{saving ? 'Saving…' : 'Save'}</button>
+          </> : live ? <span className="muted note-status" role="status">{paused ? 'Paused' : 'Recording'}</span> : <>
           {saved ? (
             <>
               <span className="saved">Saved to {saved.rel.replace(/^MyBrain\//, '')}</span>
               <button className="pill" onClick={() => window.quorum.openNote(saved.file)}><IconFolder width={15} height={15} /> Show in {saved.app}</button>
             </>
           ) : (
-            <button className="pill primary" disabled={!notes || saving} onClick={save}>{saving ? 'Saving…' : 'Keep'}</button>
+            <button className="act-pill primary" disabled={!notes || saving} onClick={save}>{saving ? 'Saving…' : 'Keep'}</button>
           )}
           </>}
         </div>
@@ -101,7 +110,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
       {(
         <div className="end-scroll">
           <article className={`doc${streaming ? ' streaming' : ''}`}>
-            <h1>{live ? <span className="shimmer">New note</span> : shown?.title || (streaming ? <span className="shimmer">{meta?.title || 'Writing the title'}</span> : meta?.title || 'Untitled note')}</h1>
+            <h1>{ready ? <input className="title-input" value={title} placeholder="New note" aria-label="Title" onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (document.querySelector('.my-notes-editor .ProseMirror') as HTMLElement | null)?.focus(); } }} /> : live ? <span className="shimmer">New note</span> : shown?.title || (streaming ? <span className="shimmer">{meta?.title || 'Writing the title'}</span> : meta?.title || 'Untitled note')}</h1>
             <div className="meta-row">
               <span className="meta-pill"><IconCalendar width={16} height={16} />{when}{started ? ` · ${started.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}</span>
               {meta && meta.minutes > 0 && <span className="meta-pill"><IconClock width={16} height={16} />{meta.minutes} min</span>}
@@ -114,9 +123,11 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
             </div>
 
             {showing === 'summary' && (
-              <section className="doc-section">
-                <h2><span className="hash">#</span>Your notes</h2>
-                <PrivateNotes value={privateNotes} onChange={onPrivateNotes} onBlur={flushPrivateNotes} />
+              <section className="doc-section my-notes-section">
+                {/* the note's own editor, formatting bar on top, typed inline with no box around it */}
+                <div className="my-notes-editor" onBlur={flushPrivateNotes}>
+                  <NoteEditor value={privateNotes} onChange={onPrivateNotes} readOnly={false} placeholder="Type your notes" autoFocus={ready} />
+                </div>
               </section>
             )}
 
@@ -130,7 +141,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
                     <div className="spk">{speakerHead(g.turns[0])}</div>
                     {g.turns.map((t) => <p key={t.id} id={`turn-${t.id}`} className={[hot.includes(t.id) && 'hot', t.unclear && 'unclear'].filter(Boolean).join(' ') || undefined} data-tip={t.unclear ? 'Hard to hear; Quorum may have some words wrong' : undefined}>{t.text}</p>)}
                   </div>
-                )) : !partial && <p className="muted">{live ? (paused ? 'Paused. Resume to keep transcribing.' : 'Listening…') : 'Nothing was transcribed.'}</p>}
+                )) : !partial && <p className="muted">{ready ? 'Press Record to transcribe into this note.' : live ? (paused ? 'Paused. Resume to keep transcribing.' : 'Listening…') : 'Nothing was transcribed.'}</p>}
                 {live && partial && <p className="live-partial"><em className="partial">{partial}</em></p>}
               </section>
             ) : <>
@@ -141,7 +152,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
                 <div className="sk-block" aria-hidden="true"><span className="sk sk-line w90" /><span className="sk sk-line w75" /><span className="sk sk-line w60" /></div>
               </div>
             )}
-            {view.empty && <p className="muted">Nothing was transcribed.</p>}
+            {view.empty && !ready && <p className="muted">Nothing was transcribed.</p>}
             {view.summary ? <p className={`summary${streaming && !view.sections.length ? ' typing' : ''}`}>{view.summary}</p>
               : streaming && <div className="sk-block" aria-label="Writing the summary"><span className="sk sk-line w90" /><span className="sk sk-line w75" /><span className="sk sk-line w60" /></div>}
             {view.sections.map((sec, i) => (
@@ -187,16 +198,15 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
             {streaming && <p className="muted writing"><span className="spinner tiny" /> Writing notes…</p>}
             </>}
 
+            {/* the chat on this note, below a divider once it starts: the same layout as every other note */}
             {followups.length > 0 && (
-              <section className="doc-section">
-                <h2><span className="hash">#</span>Follow-ups</h2>
+              <section className="note-thread" aria-label="Questions about this note">
                 {followups.map((f, i) => (
-                  <div key={i} className="followup">
-                    <div className="user-msg">{f.q}</div>
-                    <div className="quorum-row">
-                      <img className="avatar" src={mark} alt="Quorum" />
-                      <div className="card">{f.a === null ? <p className="muted thinking">Thinking…</p> : <Markdown text={f.a} />}</div>
-                    </div>
+                  <div key={i} className="nt-turn">
+                    <div className="nt-who"><Avatar name={me?.name || 'You'} photo={me?.photo ?? null} size={22} /><strong>{me?.name || 'You'}</strong></div>
+                    <p className="nt-q">{f.q}</p>
+                    <div className="nt-who quorum"><img src={mark} alt="" width={22} height={22} /><strong>Quorum</strong></div>
+                    {f.a === null ? <p className="nt-step shimmer">Thinking…</p> : <div className="nt-a"><Markdown text={f.a} /></div>}
                   </div>
                 ))}
               </section>
@@ -206,12 +216,8 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
         </div>
       )}
 
-      {!live && <div className="end-composer-wrap">
-        <form className="end-composer" onSubmit={(e) => { e.preventDefault(); ask(); }}>
-          <input value={draftQ} placeholder="Any follow-ups?" disabled={!notes || summarizing} onChange={(e) => setDraftQ(e.target.value)} />
-          <button type="submit" className="send" aria-label="Ask" disabled={!draftQ.trim()}><IconArrowUp /></button>
-        </form>
-        <p className="disclaimer">Quorum uses AI and can make mistakes.</p>
+      {!live && <div className="note-dock end-dock">
+        <Composer className="note-composer" value={draftQ} onChange={setDraftQ} onSubmit={() => ask()} busy={followups.some((f) => f.a === null) || summarizing} placeholder="Ask about this note" />
       </div>}
     </div>
   );

@@ -1,10 +1,86 @@
+import { BackButton } from './BackButton';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { CalendarEvent, MeetingBrief } from './quorum';
-import { AppPill, CALENDAR_APP, PLATFORM_APP, peopleText } from './AppChip';
+import { AppPill, CALENDAR_APP, PLATFORM_APP } from './AppChip';
 import { Markdown } from './Markdown';
 import { dayLabel } from './upNextList';
-import { IconArrowRight, IconBack } from './icons';
+import { IconPeople } from './icons';
 import { TypedTitle, useStuck } from './StickyBar';
+import { JoinButton } from './UpNext';
+import { Composer } from './Composer';
+import { Avatar } from './Speaker';
+import { splitChoices } from './MeetingNote';
+import markProd from '../assets/quorum-mark.png';
+
+// one click each, above the chat input before the first question
+const PREP_ASKS = ['What is still open from last time?', 'What should I ask in this meeting?'];
+
+// questions about the meeting before it happens, answered from its prep notes, past notes and the rest of the Agent OS
+function MeetingChat({ event }: { event: CalendarEvent }) {
+  const [turns, setTurns] = useState<{ q: string; a: string; pending?: boolean }[]>([]);
+  const [draft, setDraft] = useState('');
+  const [live, setLive] = useState('');
+  const [step, setStep] = useState('');
+  const [me, setMe] = useState<{ name: string; photo: string | null }>({ name: 'You', photo: null });
+  useEffect(() => { window.quorum.user().then((u) => { if (u) setMe({ name: u.name || 'You', photo: u.photo ?? null }); }).catch(() => {}); }, []);
+  useEffect(() => window.quorum.onNoteDelta(({ text }) => setLive(text)), []);
+  useEffect(() => window.quorum.onAgentStep(({ text }) => setStep(text)), []);
+  // its saved chat comes back with the page; opened from the row's chats link, the page scrolls down to it
+  useEffect(() => {
+    window.quorum.eventChat(event.id).then((c) => {
+      if (!c?.turns.length) return;
+      setTurns(c.turns);
+      if (event.openChat) requestAnimationFrame(() => document.querySelector('.meeting-page .note-thread')?.scrollIntoView({ block: 'start' }));
+    }).catch(() => {});
+  }, [event.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const busy = turns.some((t) => t.pending);
+  // asking keeps the page at the bottom of the chat while the answer comes in
+  useLayoutEffect(() => {
+    if (!turns.length || !turns[turns.length - 1].pending) return;
+    const box = document.querySelector<HTMLElement>('.meeting-page')?.closest<HTMLElement>('.body');
+    box?.scrollTo({ top: box.scrollHeight });
+  }, [turns, live, step]);
+  async function ask(said?: string) {
+    const q = (said ?? draft).trim();
+    if (!q || busy) return;
+    setDraft(''); setLive(''); setStep('');
+    const history = turns.map(({ q: tq, a }) => ({ q: tq, a }));
+    setTurns((t) => [...t, { q, a: '', pending: true }]);
+    let a: string;
+    try { a = (await window.quorum.meetingAsk(event, q, history)).text; } catch (err) { a = `Couldn't answer: ${String(err).replace(/^.*Error:\s*/, '')}`; }
+    setTurns((t) => t.map((x, i) => (i === t.length - 1 ? { q: x.q, a } : x)));
+  }
+  return (
+    <>
+      {turns.length > 0 && (
+        <section className="note-thread" aria-label="Questions about this meeting">
+          {turns.map((t, i) => {
+            const { text, choices } = splitChoices(t.pending ? live : t.a);
+            return (
+              <div key={i} className="nt-turn">
+                <div className="nt-who"><Avatar name={me.name} photo={me.photo} size={22} /><strong>{me.name}</strong></div>
+                <p className="nt-q">{t.q}</p>
+                <div className="nt-who quorum"><img src={markProd} alt="" width={22} height={22} /><strong>Quorum</strong></div>
+                {t.pending && !text ? <p className="nt-step shimmer">{step || 'Thinking…'}</p> : <div className="nt-a"><Markdown text={text} /></div>}
+                {!t.pending && i === turns.length - 1 && choices.length > 0 && (
+                  <div className="nt-choices">{choices.map((c) => <button key={c} className="pill small-pill" disabled={busy} onClick={() => ask(c)}>{c}</button>)}</div>
+                )}
+              </div>
+            );
+          })}
+        </section>
+      )}
+      <div className="note-dock">
+        {turns.length === 0 && (
+          <div className="skill-pills" role="group" aria-label="Quick asks">
+            {PREP_ASKS.map((q) => <button key={q} className="skill-pill" disabled={busy} onClick={() => ask(q)}>{q}</button>)}
+          </div>
+        )}
+        <Composer className="note-composer" value={draft} onChange={setDraft} onSubmit={() => ask()} busy={busy} placeholder="Ask about this meeting" />
+      </div>
+    </>
+  );
+}
 
 const ABOUT = [['what', 'What it is'], ['who', 'Who attends'], ['how', 'How it runs']] as const;
 
@@ -66,16 +142,16 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
     <div className="history reader meeting-page" ref={top}>
       <div ref={bar.sentinel} className="rb-sentinel" aria-hidden="true" />
       <div className={`reader-bar sticky-bar${bar.stuck ? ' stuck' : ''}`}>
-        <span className="rb-left"><button className="pill primary small-pill" onClick={onBack}><IconBack width={16} height={16} /> Back</button><TypedTitle text={e.title} on={bar.stuck} /></span>
+        <span className="rb-left"><BackButton onClick={onBack} /><TypedTitle text={e.title} on={bar.stuck} /></span>
         <div className="reader-actions">
-          {platform && e.join && <button className="up-join" onClick={() => window.quorum.openExternal(e.join!)}>Join {platform.short}<IconArrowRight width={14} height={14} /></button>}
+          {platform && e.join && <JoinButton id={platform.id} label={`Join ${platform.short}`} url={e.join} />}
         </div>
       </div>
       <article className="doc">
         <h1>{e.title}</h1>
         <div className="meta-row">
           <span className="meta-pill">{dayLabel(at)} · {clock(at)} – {clock(end)}</span>
-          <span className="meta-pill">{peopleText(e)}</span>
+          {(e.count ?? 0) > 0 && <span className="meta-pill"><IconPeople width={16} height={16} />{e.count} {e.count === 1 ? 'person' : 'people'}</span>}
           {e.calendar && <AppPill id={CALENDAR_APP[e.calendar].id} name={CALENDAR_APP[e.calendar].name} onOpen={e.item || e.link ? () => window.quorum.calendarOpen(e) : null} />}
           {platform && <AppPill id={platform.id} name={platform.short} onOpen={e.join ? () => window.quorum.openExternal(e.join!) : null} />}
         </div>
@@ -112,6 +188,7 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
           </section>
         )}
       </article>
+      <MeetingChat key={e.id} event={e} />
     </div>
   );
 }

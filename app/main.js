@@ -23,6 +23,7 @@ import { registerOnboarding } from './onboarding.js';
 import { gateOn, registerBeta } from './beta.js';
 import { registerFlags } from './flags.js';
 import { CALL_ACTIVE, DICTATION_OFF, keepActions, notetakerGates, recordDecision, screenReadsAllowed, sessionGates, startDecision, termsPlan } from './notetaker.js';
+import { NAME_SYSTEM, isUntitled, parseName } from './noteName.js';
 import { hashText, newNoteText, noteFileName, noteForEditor, rewriteNote, screenRead, splitNote, validFrontmatter, yamlStr } from './handnote.js';
 import { createKeeper } from './keeper.js';
 import { createVersionStore } from './memoryVersions.js';
@@ -1642,7 +1643,7 @@ function meetingIndex() {
 function chatIndex() {
   return allChats().map((c) => ({
     id: c.id, title: c.title, date: c.updatedAt || c.createdAt, turns: c.turns.length,
-    meetingFile: c.meetingFile ?? null, meetingTitle: c.meetingTitle ?? null,
+    meetingFile: c.meetingFile ?? null, meetingTitle: c.meetingTitle ?? null, eventId: c.eventId ?? null, eventEnd: c.eventEnd ?? null,
   })).sort((a, b2) => String(b2.date).localeCompare(String(a.date)));
 }
 
@@ -1667,7 +1668,29 @@ function folderAppOf(abs) {
   return folderApps().find((f) => r.startsWith(`${f.rel}/`))?.app ?? null;
 }
 
-ipcMain.handle('history', () => { matchMeetingApps(); return { meetings: meetingIndex(), chats: chatIndex() }; });
+ipcMain.handle('history', () => { matchMeetingApps(); attachLooseChats(); return { meetings: meetingIndex(), chats: chatIndex() }; });
+
+// A chat is never a thing of its own: it adds on to a note, a meeting or a memory file. A chat saved before that rule
+// (asked from Home with no parent) gets a note made for it once, with the chat attached below the note
+function attachLooseChats() {
+  if (!brain()) return;
+  for (const c of allChats()) {
+    if (c.meetingFile || c.eventId || c.meetingId || !c.turns?.length) continue;
+    const at = new Date(c.createdAt || Date.now());
+    const abs = path.join(handNoteDir(), noteFileName({ date: localIso(at).slice(0, 10), title: c.title, id: c.id }));
+    if (!existsSync(abs)) store.meetings.saveNote(abs, newNoteText({ id: c.id, title: c.title, body: '', date: localIso(at), owner: USER_NAME }));
+    c.meetingFile = abs;
+    c.meetingTitle = c.title;
+    writeChat(c);
+    log('chat attached to a note', path.basename(abs));
+  }
+}
+// the chat on a note, for its page
+ipcMain.handle('note-chat', (_e, file) => {
+  const abs = meetingFile(file);
+  const c = abs ? allChats().filter((x) => x.meetingFile === abs && !x.meetingId).sort((a, b) => String(b.updatedAt ?? b.createdAt).localeCompare(String(a.updatedAt ?? a.createdAt)))[0] : null;
+  return c ? { id: c.id, turns: c.turns.map((t) => ({ q: t.q, a: t.a })) } : null;
+});
 
 // The meeting app of notes whose notetaker does not record it (meetingPlatforms.js), matched against the Mac calendar
 // once per note. It runs when Home loads the list, at most once a minute, and tells Home when notes gained an app.
@@ -1896,6 +1919,41 @@ ipcMain.handle('meeting-brief', async (_e, q) => {
     briefCache.set(key, stamp, brief);
     return { past: list, brief, status: 'ready' };
   } catch (e) { log('meeting brief', e?.message); return { past: list, brief: null, status: 'failed' }; }
+});
+
+// questions about an upcoming meeting, from its page: the event, its prep notes and the series' recent notes are in
+// the prompt, and Claude Code can read the rest of the Agent OS. The chat is saved under the meeting's event id
+ipcMain.handle('meeting-ask', async (_e, ev, question, history) => {
+  const b = brain();
+  if (!b) throw new Error('Connect your Agent OS first');
+  const title = String(ev?.title ?? '');
+  const past = title ? seriesOf(meetingIndex(), { title }).slice(0, 3) : [];
+  const kept = past.length ? briefCache.get(seriesKey(title), `${past[0].file}|${seriesOf(meetingIndex(), { title }).length}`) : null;
+  const people = (ev?.attendees ?? []).map((a) => a?.name || a?.email).filter(Boolean).slice(0, 30).join(', ');
+  const prompt = [
+    `You're helping ${OWNER} get ready for an upcoming meeting. Its details, prep notes and recent notes from the same series are below.`,
+    'Answer questions about it, using the rest of the Agent OS when that helps.',
+    'Keep answers brief and clear: lead with the answer in one or two sentences, then at most four short bullets if they help. Plain, literal language.',
+    'When a short reply from the person would move things forward, end with one last line "Choices: A | B | C" (two to four options, under six words each). Quorum shows them as buttons.',
+    `<meeting>\nTitle: ${title}\nWhen: ${ev?.start ?? ''} to ${ev?.end ?? ''}\nOrganizer: ${ev?.organizer ?? ''}\nInvited: ${people}\n${ev?.notes ? `Description: ${String(ev.notes).slice(0, 2000)}` : ''}\n</meeting>`,
+    ...(kept ? [`<prep>\n${[kept.prep, kept.what, kept.who, kept.how].filter(Boolean).join('\n\n')}\n</prep>`] : []),
+    ...past.map((m) => `<past-note title="${m.title}" date="${m.date ?? ''}">\n${suggester.redactLines(store.notes.read(m.file)).replace(/^---\n[\s\S]*?\n---\n/, '').slice(0, 4000)}\n</past-note>`),
+    `Question: ${String(question)}`,
+  ].join('\n\n');
+  const r = roleProvider('agent') === 'claude-code'
+    ? await watchAgent('Question about an upcoming meeting', async () => runModel({ source: modelSource(), providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question: suggester.redactLines(prompt), transcript: '', root: b.root, extra: await agentExtra(String(question), b.root, { kb: false }), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: [], history: (history ?? []).slice(-6), onStep: (text) => toUI('agent-step', { text }), onDelta: (text) => toUI('note-delta', { text }) }))
+    : await noteAskWithoutTools(suggester.redactLines(prompt), history, []);
+  // the chat belongs to its calendar event: it nests under the event's row on Home until the event is over
+  const id = String(ev?.id ?? '');
+  const existing = id ? allChats().find((c) => c.eventId === id) : null;
+  addTurn(existing ?? newConvo(String(question), { eventId: id, eventEnd: ev?.end ?? null, meetingTitle: title }), String(question), r.text, [], []);
+  toUI('history-changed');
+  return { text: r.text };
+});
+// an upcoming meeting's saved chat, for its page
+ipcMain.handle('event-chat', (_e, id) => {
+  const c = id ? allChats().find((x) => x.eventId === String(id)) : null;
+  return c ? { id: c.id, turns: c.turns.map((t) => ({ q: t.q, a: t.a })) } : null;
 });
 
 ipcMain.handle('new-chat', () => { convo = null; chatHistory = []; });
@@ -2768,7 +2826,34 @@ ipcMain.handle('hand-note-done', (_e, file) => {
   if (!abs) return;
   account.sync.pushMeetingNote(abs);
   keeper.schedule('note');
+  nameUntitled(abs).catch((e) => log('note title', e?.message));
 });
+
+// a note saved without a name gets one: a short title and a one-line summary from its text, written into the note
+// and its file name. One model call per note, only while it is still untitled; without a model it stays as it is
+async function nameUntitled(abs) {
+  const raw = store.notes.read(abs);
+  const { title, body } = splitNote(raw);
+  if (!isUntitled(title) || modelSource() === 'none' || suggester.isExcluded(raw)) return;
+  const text = suggester.redactLines(body).trim();
+  if (text.replace(/[^a-z0-9]/gi, '').length < 3) return;
+  const reply = await runClaude(`<note>\n${text.slice(0, 6000)}\n</note>`, NAME_SYSTEM, settings.model);
+  const named = parseName(reply);
+  if (!named) return;
+  const now = store.notes.read(abs);
+  if (now !== raw) return; // edited again while the title was being written; the next close tries again
+  let out = rewriteNote(now, { title: named.title, body: splitNote(now).body });
+  if (named.summary) out = setFrontmatterKey(out, 'summary', yamlStr(named.summary));
+  let target = abs;
+  if (/untitled/i.test(path.basename(abs))) {
+    const qid = now.match(/^quorum_id:\s*(.+)$/m)?.[1]?.trim() ?? path.basename(abs);
+    const next = path.join(path.dirname(abs), noteFileName({ date: path.basename(abs).slice(0, 10), title: named.title, id: qid }));
+    if (!existsSync(next)) { renameSync(abs, next); target = next; }
+  }
+  store.notes.write(target, out);
+  log('named note', path.basename(target));
+  toUI('history-changed');
+}
 function saveNotes(payload) {
   const notes = { ...meeting.notes, ...payload.notes };
   const dir = quorumNotesDir() ?? path.join(suggester.vault(), '08-meetings', 'quorum');

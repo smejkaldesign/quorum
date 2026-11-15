@@ -1,3 +1,4 @@
+import { BackButton } from './BackButton';
 import { Component, Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { AccountState, Brain, HelperEvent, MeetingMeta, Notes, NotesDraft, Settings, Source, SpeakersEvent, SummaryEvent, UpdateState, WhoAsk } from './quorum';
 import { Markdown } from './Markdown';
@@ -30,7 +31,7 @@ import { Avatar, SpeakerName, similarCounts, type SpeakerInfo } from './Speaker'
 import { useNotetaker } from './flags';
 import { type RecordChoice } from './noteRecord';
 import { RecLevel } from './RecLevel';
-import { IconFolderOpen, IconPerson, IconClose, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconBack, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, IconRecord, Wave } from './icons';
+import { IconFolderOpen, IconPerson, IconClose, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, IconRecord, Wave } from './icons';
 
 // one speaker turn as main.js built it; a turn that grows arrives again with the same id and replace: true
 type Line = { id: number; channel: 'me' | 'them'; text: string; start: number; voice?: number | 'mix' | 'sound'; unclear?: boolean; tone?: string } & Partial<SpeakerInfo>;
@@ -142,7 +143,7 @@ function AppMenu({ brain, me, active, onMemory, onSettings, next }: { brain: Bra
   };
   return (
     <div className="status-wrap">
-      <button ref={button} className={`icon-btn brain ${active ? 'active' : ''}`} data-tip="Menu" aria-label="Menu"
+      <button ref={button} className={`icon-btn brain ${active ? 'active' : ''}`} aria-label="Menu"
         aria-haspopup="menu" aria-expanded={open}
         onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
         onKeyDown={(e) => { if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !open) { e.preventDefault(); setOpen(true); } }}>
@@ -168,6 +169,7 @@ function AppMenu({ brain, me, active, onMemory, onSettings, next }: { brain: Bra
   );
 }
 
+const CHAT_ASKS = ['Write weekly recap', 'List recent todos', 'Current action items'];
 const SUGGESTIONS = ['Summarize so far', 'What did I commit to?', 'Any open questions?'];
 
 export function App() {
@@ -181,8 +183,11 @@ export function App() {
   type NoteOpen = { file: string | null; fresh: boolean; record: RecordChoice | null; n: number; leave: number; next?: { file: string | null; record: RecordChoice | null } | null };
   const [note, setNote] = useState<NoteOpen | null>(null);
   // never over a live call or its review: the call UI stays in view
+  // a new note opens the recording page, not recording yet; an existing note's file still opens the note view
+  const [draftOpen, setDraftOpen] = useState(false);
   const openNoteView = (file: string | null = null, record: RecordChoice | null = null) => {
     if (phaseRef.current !== 'idle') return;
+    if (!file && !record) { setNote(null); setView('main'); setDraftOpen(true); return; }
     setNote((n) => (n ? (n.leave ? n : { ...n, leave: Date.now(), next: { file, record } }) : { file, fresh: !file, record, n: Date.now(), leave: 0 }));
   };
   useEffect(() => {
@@ -463,12 +468,6 @@ export function App() {
     setConvoOpen(true);
   }
 
-  async function newChat() {
-    await window.quorum.newChat();
-    anchored.current = false;
-    setMsgs([]);
-    setTimeout(() => composer.current?.focus(), 50);
-  }
 
   async function acceptSuggestion(id: string) {
     anchored.current = false;
@@ -506,15 +505,19 @@ export function App() {
     const r = await window.quorum.recordSession().catch((err) => ({ error: String(err) }));
     if ('error' in r) { setAnnounce(false); setRecordError(r.error); setTimeout(() => setRecordError(null), 5000); return; }
     setNote((n) => (n && !n.leave ? { ...n, leave: Date.now(), next: null } : n));
+    // what was typed on the new note before Record carries into the recording
+    if (mine.text.trim()) window.quorum.privateNotesSet(mine.text);
+    setDraftOpen(false);
     setView('main');
     setLiveOpen(true);
   }
   useEffect(() => { if (!announce || phase !== 'listening') return; const t = setTimeout(() => setAnnounce(false), 1000); return () => clearTimeout(t); }, [announce, phase]);
   // a finished recording opens on its keep-or-discard page; nothing recording closes the live view
   useEffect(() => { if (phase === 'review') setLiveOpen(true); if (phase === 'idle') setLiveOpen(false); }, [phase]);
-  const showLive = view === 'main' && liveOpen && phase !== 'idle' && phase !== 'blocked';
+  const drafting = view === 'main' && draftOpen && phase === 'idle';
+  const showLive = (view === 'main' && liveOpen && phase !== 'idle' && phase !== 'blocked') || drafting;
   const closeNote = () => setNote((n) => (n && !n.leave ? { ...n, leave: Date.now(), next: null } : n));
-  const go = (fn: () => void) => () => { setLiveOpen(false); closeNote(); fn(); };
+  const go = (fn: () => void) => () => { setLiveOpen(false); setDraftOpen(false); closeNote(); fn(); };
   const status = {
     idle: { label: count !== null ? String(count) : recordError ?? 'Record', icon: <IconRecord width={17} height={17} /> },
     starting: { label: announce ? 'Recording' : 'Starting…', icon: <RecLevel live={false} /> },
@@ -535,13 +538,24 @@ export function App() {
   }
 
   // the recording's note and a hand note open under the header, so the tabs and Record stay in reach
+  // Save on a new note that was never recorded: the typed text becomes a note in the Agent OS
+  async function saveDraft(title = '') {
+    const body = mine.text.trim();
+    if (!body && !title) return;
+    // without a typed title it saves untitled; closing it hands it to the naming pass, which writes a title and a summary
+    const r = await window.quorum.handNoteSave({ id: `draft-${Date.now()}`, file: null, title, body, hash: null, fresh: true });
+    if ('error' in r || 'conflict' in r) return;
+    window.quorum.handNoteDone(r.file);
+    mine.reset();
+    setDraftOpen(false);
+  }
   const closeReview = () => { setPhase('idle'); resetMeeting(); setLiveOpen(false); setTab('home'); };
   const liveArea = (
     <div className="body wide flush live-body">
       <LazyView name="your notes" onClose={phase === 'review' ? closeReview : () => setLiveOpen(false)}>
-        <EndView embedded live={inCall(phase)} paused={phase === 'paused'} who={ask} onAnswer={(a) => { setAsk(null); window.quorum.sessionSummarize(a ?? {}); }} notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing}
+        <EndView embedded ready={drafting} onSaveDraft={saveDraft} onRecord={nt.manualListen ? () => { startRecord(); } : undefined} recordBusy={phase !== 'idle' || count !== null} live={inCall(phase)} paused={phase === 'paused'} who={ask} onAnswer={(a) => { setAsk(null); window.quorum.sessionSummarize(a ?? {}); }} notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing}
           transcript={lines.map((l) => ({ ...l, who: who(l) }))} partial={liveWords ? [partial.me, partial.them].filter(Boolean).join(' ') : ''} participants={participants} onSpeaker={setSpeaker} me={nt.meetingCapture ? me : undefined}
-          privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={phase === 'review' ? closeReview : () => setLiveOpen(false)} />
+          privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={phase === 'review' ? closeReview : drafting ? () => { mine.reset(); setDraftOpen(false); } : () => setLiveOpen(false)} />
       </LazyView>
     </div>
   );
@@ -598,7 +612,7 @@ export function App() {
             <span className="rec-sep" aria-hidden="true" />
           </div>
           <AppMenu brain={brain} me={me} active={view === 'settings'} onMemory={() => openSettings('memory')} onSettings={() => openSettings('preferences')} next={closeRef} />
-          <button ref={closeRef} className="icon-btn close-win" aria-label="Close window" data-tip="Close window. Quorum keeps running in the menu bar." data-tip-pos="left" onClick={() => window.quorum.hideWindow()}>
+          <button ref={closeRef} className="icon-btn close-win" aria-label="Close window" onClick={() => window.quorum.hideWindow()}>
             <IconClose width={17} height={17} />
           </button>
         </div>
@@ -615,7 +629,7 @@ export function App() {
       ) : showLive ? liveArea : note ? null : <>
       {tab === 'home' && !convoOpen && (
         <div className="body wide">
-          <HistoryView brain={brain} focusAsk={focusAsk} onAsk={(q, f) => { setConvoOpen(true); send(q, f); }} onOpenChat={openChat} onFiltered={setHistFiltered} onNewChat={() => { setConvoOpen(true); newChat(); }} />
+          <HistoryView brain={brain} focusAsk={focusAsk} onAsk={(q, f) => { setConvoOpen(true); send(q, f); }} onOpenChat={openChat} onFiltered={setHistFiltered} />
         </div>
       )}
 
@@ -636,18 +650,16 @@ export function App() {
           <div className="body" ref={bodyRef}>
             {!inCall(phase) && (
               <div className="row convo-bar">
-                <button className="pill primary small-pill" onClick={() => setConvoOpen(false)}><IconBack width={16} height={16} /> Back</button>
-                {msgs.length > 0 && <button className="pill small-pill" onClick={newChat}>New chat</button>}
+                <BackButton onClick={() => setConvoOpen(false)} />
+                {msgs.length > 0 && <button className="pill small-pill" onClick={() => { setConvoOpen(false); openNoteView(); }}>New note</button>}
               </div>
             )}
+            {/* a new chat starts empty: one line until the first message; quick asks sit above the input */}
             {phase === 'idle' && msgs.length === 0 && (
-              <QuorumCard>
-                <p>{brain ? `Ask me anything from ${brain.name}. ` : 'Connect your Agent OS so I can answer from your notes. '}{nt.meetingCapture ? "When a call starts, I post a notice in the call's chat and listen on your Mac." : nt.manualListen ? 'Start a note of your own, by hand or with Record; I save it into your Agent OS.' : 'Start a note of your own; I save it into your Agent OS.'}</p>
-                <div className="row">
-                  <button className="pill primary" onClick={() => openNoteView()}>New note</button>
-                  {nt.meetingCapture && <span className="hint">{settings.autoListen ? <><span className="live-dot" aria-hidden="true" />Auto-listen is on</> : 'Or turn on auto-listen in Settings'}</span>}
-                </div>
-              </QuorumCard>
+              <div className="chat-zero">
+                <p className="chat-zero-title">{brain ? `Ask anything from ${brain.name}` : 'Connect your Agent OS to start'}</p>
+                <p className="hist-empty">{brain ? 'Answers come from your notes, with a link to each one.' : 'Quorum answers from the notes in it.'}</p>
+              </div>
             )}
             {phase === 'starting' && <QuorumCard><p className="muted">{startingChat ? `Posting my notice in the ${startingChat}…` : 'Starting…'}</p></QuorumCard>}
             {phase === 'listening' && msgs.length === 0 && (
@@ -659,10 +671,13 @@ export function App() {
                 </div>
               </QuorumCard>
             )}
+            {/* the same chat layout as a note's: who is talking above each turn, no bubbles, the page's text size */}
+            {msgs.length > 0 && <section className="note-thread chat-thread" aria-label="Chat">
             {msgs.map((m, i) => m.kind === 'user' ? (
-              <div key={i} className="user-row" ref={i === lastUserIdx ? lastUser : undefined}>
-                <div className="user-msg">{m.files?.length ? <div className="user-files">{m.files.map((f) => <span key={f}>{f}</span>)}</div> : null}{m.text}</div>
-                <span className="user-avatar" aria-label="You">{me.photo ? <img src={me.photo} alt="" /> : me.name ? me.name[0].toUpperCase() : <IconPerson width={14} height={14} />}</span>
+              <div key={i} className="nt-turn" ref={i === lastUserIdx ? lastUser : undefined}>
+                <div className="nt-who"><Avatar name={me.name || 'You'} photo={me.photo} size={22} /><strong>{me.name || 'You'}</strong></div>
+                {m.files?.length ? <div className="user-files">{m.files.map((f) => <span key={f}>{f}</span>)}</div> : null}
+                <p className="nt-q">{m.text}</p>
               </div>
             ) : m.kind === 'suggest' ? (
               m.state === 'dismissed' || !nt.liveAssist ? null : (
@@ -682,9 +697,10 @@ export function App() {
             ) : m.kind === 'event' ? (
               <QuorumCard key={i}><p><span className="emoji">{m.tone === 'stop' ? '🛑' : '🏎️'}</span>{m.text}</p></QuorumCard>
             ) : (
-              <div key={i} className="turn">
+              <div key={i} className="nt-turn">
+                <div className="nt-who quorum"><img src={markProd} alt="" width={22} height={22} /><strong>Quorum</strong></div>
                 {(m.pending || (m.steps?.length ?? 0) > 0) && <Steps steps={m.steps ?? []} live={!!m.pending} />}
-                {(!m.pending || m.text) && <QuorumCard>
+                {(!m.pending || m.text) && <div className="nt-a">
                 <Markdown text={m.text} root={brain?.root} />
                 {m.sources?.map((src) => (
                   <div key={`${src.n}-${src.rel}`} className="source">
@@ -696,11 +712,17 @@ export function App() {
                     {src.abs && <button className="icon-btn" aria-label={`Show in ${src.app}`} data-tip={`Show in ${src.app}`} onClick={() => window.quorum.openNote(src.abs!)}><IconFolder /></button>}
                   </div>
                 ))}
-              </QuorumCard>}
+              </div>}
               </div>
             ))}
+            </section>}
             <div ref={chatEnd} style={{ flex: 'none', minHeight: spacer }} />
           </div>
+          {phase === 'idle' && msgs.length === 0 && brain && (
+            <div className="skill-pills chat-skills" role="group" aria-label="Quick asks">
+              {CHAT_ASKS.map((q) => <button key={q} className="skill-pill" onClick={() => send(q)}>{q}</button>)}
+            </div>
+          )}
           <Composer value={draft} onChange={setDraft} onSubmit={(q, f) => send(q, f)} inputRef={composer} disabled={!brain}
             placeholder={!brain ? 'Connect your Agent OS to start' : phase === 'listening' ? 'Message Quorum privately…' : `Ask ${brain.name} anything…`} />
         </>
