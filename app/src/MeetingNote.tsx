@@ -7,7 +7,7 @@ import { SourceAsk, useMeetingSources } from './MeetingSources';
 import type { CalendarEvent, MeetingShare, NoteDoc, Visibility } from './quorum';
 import { Markdown } from './Markdown';
 import { Composer } from './Composer';
-import { IconBack, IconChevron, IconCopy, IconFolder, IconGlobe, IconLock, IconLogs, IconMore, IconNotes, IconTrash } from './icons';
+import { IconBack, IconChevron, IconFolder, IconGlobe, IconLock, IconLogs, IconMore, IconNotes, IconTrash } from './icons';
 import { Avatar } from './Speaker';
 
 type Turn = { q: string; a: string; proposal: string | null; state?: 'applied' | 'discarded'; pending?: boolean };
@@ -58,7 +58,6 @@ export function NoteMenu({ note, onDeleted, compact }: { note: Pick<NoteDoc, 'fi
       </button>
       {open && (
         <div className="menu note-menu" role="menu">
-          <button role="menuitem" disabled><IconCopy width={15} height={15} /> Copy link <em className="soon">Coming soon</em></button>
           <button role="menuitem" onClick={run(() => window.quorum.vaultReveal(note.rel))}><IconFolder width={15} height={15} /> Show in {note.app}</button>
           <div className="menu-sep" />
           <button role="menuitem" className="danger" onClick={run(async () => { if (await window.quorum.vaultTrash(note.rel)) onDeleted(); })}><IconTrash width={15} height={15} /> Delete note</button>
