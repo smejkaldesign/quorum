@@ -219,7 +219,8 @@ let tray;
 let trayMenu;
 let quitting = false;
 // guardrails: one rule set for what the agent may read and say (app/guardrails.js); brain() is defined below and read lazily
-const guardrails = createGuardrails({ settings, saveSettings: () => store.settings.save(), brain: () => brain(), privateDirs, denialLog: path.join(DATA_DIR, 'guard-denials.jsonl'), log: (...a) => log(...a) });
+const DENIAL_LOG = path.join(DATA_DIR, 'guard-denials.jsonl');
+const guardrails = createGuardrails({ settings, saveSettings: () => store.settings.save(), brain: () => brain(), privateDirs, denialLog: DENIAL_LOG, log: (...a) => log(...a) });
 const KEEPER_ERRORS = path.join(DATA_DIR, 'keeper-errors.log');
 // versions of the vault notes Quorum's agents change, and the updates the Memory tab shows for review (memoryVersions.js)
 const memoryVersions = createVersionStore({
@@ -2025,7 +2026,13 @@ function feedSources() {
     const abs = path.join(b.vault, rel);
     return { abs, rel, note: !!meetingFile(abs), gone: !existsSync(abs), versions: rec.versions ?? [], updates: rec.updates ?? [], seenAt: seen[abs]?.seenAt ?? null };
   });
-  return { notes, memories };
+  return { notes, memories, guard: { file: DENIAL_LOG, seenAt: seen[DENIAL_LOG]?.seenAt ?? null, denials: recentDenials(200) } };
+}
+// the newest entries of the guardrail denial log, read only; a line that does not parse is left out
+function recentDenials(n) {
+  let text = '';
+  try { text = readFileSync(DENIAL_LOG, 'utf8'); } catch { return []; }
+  return text.trim().split('\n').slice(-n).flatMap((l) => { try { const d = JSON.parse(l); return d && d.t ? [d] : []; } catch { return []; } });
 }
 ipcMain.handle('activity-feed', (_e, query) => {
   const q = query ?? {};
@@ -2045,6 +2052,8 @@ ipcMain.handle('activity-read', (_e, files) => {
   const at = new Date().toISOString();
   let n = 0;
   for (const f of new Set(Array.isArray(files) ? files : [])) {
+    // the guardrail rows are read together, by the denial log's own mark
+    if (f === DENIAL_LOG) { seenSet(DENIAL_LOG, { seenAt: at }); n++; continue; }
     const t = feedFile(f);
     if (!t) continue;
     seenSet(t.abs, { seenAt: at });

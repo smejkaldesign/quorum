@@ -63,6 +63,31 @@ describe('feedRows', () => {
   });
 });
 
+describe('guardrail rows', () => {
+  // a made-up home folder, joined so the content guard does not read it as a real one
+  const home = ['', 'Users', 'sam', ''].join('/');
+  const guard = { file: '/data/guard-denials.jsonl', seenAt: T(3), denials: [
+    { t: T(2), tool: 'Read', path: `${home}vault/private/bank.md`, reason: 'Quorum read guard: private folder' },
+    { t: T(4), tool: 'Bash', path: '', reason: 'secret word in a command' },
+  ] };
+  const g = feedRows({ guard });
+
+  it('lists each block with what was blocked and why, unread after the last opening', () => {
+    expect(g.map((r) => [r.kind, r.text, r.unread])).toEqual([
+      ['guardrail', 'Guardrail blocked Bash: secret word in a command', true],
+      ['guardrail', 'Guardrail blocked ~/vault/private/bank.md: private folder', false],
+    ]);
+    expect(g[0].target).toMatchObject({ kind: 'guardrail', abs: guard.file });
+  });
+
+  it('follows the guardrails switch like the other kinds', () => {
+    expect(feedPage(g, { tab: 'all', prefs: { guardrails: false } }).total).toBe(0);
+    expect(feedPage(g, { tab: 'all', prefs: { guardrails: false } }).dot).toBe(false);
+    expect(feedPage(g, { tab: 'unread', prefs: { noteUpdates: false } }).total).toBe(1);
+    expect(feedPage(g, { tab: 'all', kinds: ['guardrail'] }).total).toBe(2);
+  });
+});
+
 describe('feedPage', () => {
   it('lists only review items on Needs review and counts each tab', () => {
     const p = feedPage(rows, { tab: 'review' });

@@ -8,7 +8,7 @@ const TABS: [FeedTab, string][] = [['review', 'Needs review'], ['unread', 'Unrea
 // the event types the filter offers, the same list as activityFeed.js
 const KINDS: [FeedKind, string][] = [
   ['note-written', 'Wrote a note'], ['note-updated', 'Updated a note'], ['filed', 'Filed and linked'], ['referenced', 'Referenced'],
-  ['memory-created', 'Created a memory'], ['memory-updated', 'Updated a memory'], ['imported', 'Imported'], ['you', 'Your changes'],
+  ['memory-created', 'Created a memory'], ['memory-updated', 'Updated a memory'], ['imported', 'Imported'], ['guardrail', 'Guardrail blocked'], ['you', 'Your changes'],
 ];
 const CHANGED = 'quorum:activity-changed';
 
@@ -54,8 +54,9 @@ export function NotificationBell({ active, onOpen }: { active: boolean; onOpen: 
 // Notifications: everything Quorum's agents did across the vault (notes they wrote, updated, filed and linked or
 // referenced, memories they created and updated, imports) and the person's own changes, newest first. Needs review
 // holds the notes Quorum wrote and the memory updates waiting for approval; each can be approved or disapproved, one
-// at a time or several at once. Opening a row's note or memory marks that file read
-export function NotificationsView({ onOpenNote }: { onOpenNote: (abs: string) => void }) {
+// at a time or several at once. Each time a guardrail blocks something it is listed too, and opens the Guardrails
+// page. Opening a row's note or memory marks that file read
+export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote: (abs: string) => void; onOpenGuardrails: () => void }) {
   const [tab, setTab] = useState<FeedTab>('review');
   const [kinds, setKinds] = useState<FeedKind[]>([]);
   const [q, setQ] = useState('');
@@ -98,6 +99,7 @@ export function NotificationsView({ onOpenNote }: { onOpenNote: (abs: string) =>
   const open = (r: FeedRow, abs = r.target.abs, kind = r.target.kind) => {
     markRead([r]);
     if (kind === 'note') onOpenNote(abs);
+    else if (kind === 'guardrail') onOpenGuardrails();
     else window.dispatchEvent(new CustomEvent('quorum:open-memory', { detail: abs }));
   };
   const decide = async (rows: FeedRow[], verdict: 'approve' | 'reject') => {

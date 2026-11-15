@@ -14,6 +14,7 @@ export const FEED_KINDS = [
   ['memory-created', 'Created a memory'],
   ['memory-updated', 'Updated a memory'],
   ['imported', 'Imported'],
+  ['guardrail', 'Guardrail blocked'],
   ['you', 'Your changes'],
 ];
 export const FEED_TABS = ['review', 'unread', 'all'];
@@ -45,15 +46,16 @@ const memoryText = (v, kind) => {
   if (kind === 'imported') return `Imported${why}`;
   return `Agent ${v.created ? 'created it' : v.removed ? 'removed it' : 'updated it'}${why}`;
 };
-// which Settings > Notifications switch covers a row: reviews for the review items, memory changes for memory pages,
-// note updates for everything on notes
-const prefOf = (row) => (row.review ? 'reviews' : row.target.kind === 'memory' ? 'memoryChanges' : 'noteUpdates');
+// which Settings > Notifications switch covers a row: reviews for the review items, guardrails for what a guard
+// blocked, memory changes for memory pages, note updates for everything on notes
+const prefOf = (row) => (row.review ? 'reviews' : row.kind === 'guardrail' ? 'guardrails' : row.target.kind === 'memory' ? 'memoryChanges' : 'noteUpdates');
 const prefOn = (prefs, key) => prefs?.[key] !== false;
 
 // every row from the raw records, newest first. notes: { abs, rel, label?, events, seenAt, reviewedAt, rejectedAt,
 // agentWritten, writtenAt }. memories: { abs, rel, label?, note?, gone?, versions, updates, seenAt }; note marks a
-// memory that is also a saved note, so it opens on the note page
-export function feedRows({ notes = [], memories = [] }) {
+// memory that is also a saved note, so it opens on the note page. guard: { file, seenAt, denials: { t, tool, path,
+// reason }[] } from the guardrail denial log; its rows open the Guardrails page and are read together
+export function feedRows({ notes = [], memories = [], guard = null }) {
   const rows = [];
   for (const n of notes) {
     const target = { kind: 'note', abs: n.abs, rel: n.rel, label: n.label ?? labelOf(n.rel) };
@@ -88,6 +90,16 @@ export function feedRows({ notes = [], memories = [] }) {
         review: { kind: 'memory', count: n },
       });
     }
+  }
+  if (guard) {
+    const target = { kind: 'guardrail', abs: guard.file, rel: 'Guardrails', label: 'Guardrails' };
+    const seen = time(guard.seenAt);
+    (guard.denials ?? []).forEach((d, i) => {
+      const at = time(d.t);
+      const what = String(d.path ?? '').replace(/^\/Users\/[^/]+/, '~') || d.tool || 'a request';
+      const why = String(d.reason ?? '').replace(/^Quorum read guard: /, '');
+      rows.push({ id: `g:${at}:${i}`, at, kind: 'guardrail', who: 'agent', text: `Guardrail blocked ${what}${why ? `: ${why}` : ''}`, target, files: [], unread: at > seen });
+    });
   }
   return rows.sort((a, b) => b.at - a.at || a.id.localeCompare(b.id));
 }

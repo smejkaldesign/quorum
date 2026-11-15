@@ -695,7 +695,7 @@ export function App() {
         </div>
       ) : view === 'notifications' ? (
         <div className="body wide">
-          <NotificationsView onOpenNote={(abs) => { setView('main'); openNoteView(abs); }} />
+          <NotificationsView onOpenNote={(abs) => { setView('main'); openNoteView(abs); }} onOpenGuardrails={() => openSettings('guardrails')} />
         </div>
       ) : showLive ? liveArea : note ? null : <>
       {tab === 'home' && !convoOpen && (
