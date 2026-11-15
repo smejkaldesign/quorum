@@ -161,7 +161,8 @@ export function createRemote({ client, workspaceId, userId } = {}) {
   // then get reads the cache the way local.js reads its in-memory object
   const cache = { user: null, workspace: null };
   const rowIds = { user: null, workspace: null };
-  const scopeRow = async (scope) => first(await run(live('settings').eq('scope', scope).limit(1), 'settings read'));
+  // a user row is read by its own user_id; the workspace row is the one shared row
+  const scopeRow = async (scope) => { let b = live('settings').eq('scope', scope); if (scope === 'user') b = b.eq('user_id', userId); return first(await run(b.limit(1), 'settings read')); };
   const settings = {
     existed: true,
     load: async (scope = 'user') => {
