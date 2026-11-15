@@ -276,7 +276,7 @@ function DayOff() {
         <path d="M30 54h60M44 61h32" className="day-off-water" />
         <path d="M60 12v6M38 22l4 4M82 22l-4 4" className="day-off-ray" />
       </svg>
-      <div>
+      <div className="day-off-text">
         <p className="day-off-title">Nothing on today</p>
         <p className="hist-empty">No meetings or notes yet. Take the day off and enjoy it.</p>
       </div>

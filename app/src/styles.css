@@ -1873,5 +1873,7 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .day-off-line { stroke: rgba(255, 255, 255, 0.28); stroke-width: 1.5; stroke-linecap: round; }
 .day-off-water { stroke: rgba(150, 190, 255, 0.35); stroke-width: 1.5; stroke-linecap: round; fill: none; }
 .day-off-ray { stroke: rgba(255, 196, 120, 0.5); stroke-width: 1.5; stroke-linecap: round; }
-.day-off-title { margin: 0 0 4px; font-size: 15px; font-weight: 600; color: var(--text); }
-.day-off .hist-empty { margin: 0; }
+/* the title and line sit like a row's title and details: 4px apart, 15px */
+.day-off-text { display: flex; flex-direction: column; gap: 4px; }
+.day-off-title { margin: 0; font-size: 15px; font-weight: 400; color: var(--text); }
+.day-off .hist-empty { margin: 0; padding: 0; text-align: left; font-size: 15px; }
