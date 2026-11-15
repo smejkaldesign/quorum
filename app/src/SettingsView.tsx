@@ -39,7 +39,7 @@ const ACCOUNT: Nav[] = [
 const WORKSPACE: Nav[] = [
   { id: 'general', label: 'General', icon: IconBuilding },
   { id: 'notifications', label: 'Notifications', icon: IconBell },
-  { id: 'developers', label: 'AI settings', icon: IconCode },
+  { id: 'developers', label: 'AI tools', icon: IconCode },
   { id: 'guardrails', label: 'Guardrails', icon: IconShield },
   { id: 'connectors', label: 'Connectors', icon: IconGrid },
   { id: 'teams', label: 'Teams', icon: IconPeople },
@@ -1170,7 +1170,7 @@ function AboutCard() {
 // every row is planned work: the controls are disabled on purpose and each line says what the notification will do
 function NotificationsPage({ settings, set }: { settings: Settings; set: (patch: Partial<Settings>) => void }) {
   // which of Quorum's own notifications show in the bell's list and count toward its dot; all on until turned off
-  const n = { noteUpdates: true, memoryChanges: true, reviews: true, ...(settings.notifications ?? {}) };
+  const n = { noteUpdates: true, memoryChanges: true, reviews: true, guardrails: true, ...(settings.notifications ?? {}) };
   const flip = (k: keyof typeof n) => (on: boolean) => set({ notifications: { ...n, [k]: on } });
   return (
     <>
@@ -1180,6 +1180,7 @@ function NotificationsPage({ settings, set }: { settings: Settings; set: (patch:
         <Row icon={<IconNotes width={18} height={18} />} title="Note updates" desc="Quorum updated, filed, linked or referenced one of your notes"><Toggle on={n.noteUpdates} onChange={flip('noteUpdates')} /></Row>
         <Row icon={<IconBrain width={18} height={18} />} title="Memory changes" desc="Quorum created or changed a memory page"><Toggle on={n.memoryChanges} onChange={flip('memoryChanges')} /></Row>
         <Row icon={<IconBell width={18} height={18} />} title="Needs your review" desc="A change Quorum made is waiting for your approval"><Toggle on={n.reviews} onChange={flip('reviews')} /></Row>
+        <Row icon={<IconShield width={18} height={18} />} title="Guardrail blocked something" desc="A built-in guardrail kept the agent from a file or a person"><Toggle on={n.guardrails} onChange={flip('guardrails')} /></Row>
       </div>
     </>
   );
