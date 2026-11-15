@@ -107,8 +107,10 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
           {!(folded && !inline) && moreButton}
         </span>
       </div>
-      {cal.events.length === 0 && !(folded && !inline) && (inline ? <DayOff title="No meetings" seed={1} /> : <p className="up-empty">No calls {cal.days === 'week' ? 'this week' : cal.days === 1 ? 'in the next day' : `in the next ${cal.days} days`}.</p>)}
-      {rows.length > 0 && !(folded && !inline) && (
+      {/* the strip's list folds up under its heading (Hide) and back down (Show); the Home list never folds */}
+      <div className={`up-fold${folded && !inline ? ' folded' : ''}`} inert={(folded && !inline) || undefined}><div className="up-fold-in">
+      {cal.events.length === 0 && (inline ? <DayOff title="No meetings" seed={1} /> : <p className="up-empty">No calls {cal.days === 'week' ? 'this week' : cal.days === 1 ? 'in the next day' : `in the next ${cal.days} days`}.</p>)}
+      {rows.length > 0 && (
         <div className={`up-list ${!inline && moreOpen ? 'open' : ''}`} id={listId}>
           {rows.map((e) => {
             const at = new Date(e.start);
@@ -135,6 +137,7 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
           })}
         </div>
       )}
+      </div></div>
     </section>
   );
   if (!floating) return strip;

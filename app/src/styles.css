@@ -1947,3 +1947,10 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .who-actions { display: flex; gap: 8px; margin-top: 16px; }
 .pill.who-go { background: transparent; border: 1px solid var(--line-2); color: var(--text); }
 .pill.who-go:hover { background: var(--card); border-color: rgba(255, 255, 255, 0.24); }
+/* Hide and Show on the Up next strip: the list slides up under the heading as its space closes, and back down */
+.up-fold { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 260ms ease; }
+.up-fold.folded { grid-template-rows: 0fr; }
+.up-fold-in { min-height: 0; overflow: hidden; transition: transform 260ms ease, opacity 200ms ease; }
+.up-fold.folded .up-fold-in { transform: translateY(-14px); opacity: 0; }
+.up-strip .up-head { position: relative; z-index: 1; }
+@media (prefers-reduced-motion: reduce) { .up-fold, .up-fold-in { transition: none; } }
