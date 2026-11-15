@@ -149,7 +149,7 @@
             <input class="visually-hidden" name="website" type="text" tabindex="-1" autocomplete="off" aria-hidden="true">
             <button type="submit" class="btn btn-primary">Sign up</button>
           </form>
-          <p class="plan-note" id="capture-free-note">Early beta signups. The open-source app needs an access code too for now; <a data-launch="download" href="https://github.com/smejkaldesign/quorum/releases/latest">download it here</a> once you have one.</p>
+          <p class="plan-note" id="capture-free-note">Have a code? <a data-launch="download" href="https://github.com/smejkaldesign/quorum/releases/latest">Download for Mac</a></p>
         </article>
 
         <article class="plan plan-cloud">
@@ -174,7 +174,7 @@
             <input class="visually-hidden" name="website" type="text" tabindex="-1" autocomplete="off" aria-hidden="true">
             <button type="submit" class="btn btn-primary">Sign up</button>
           </form>
-          <p class="plan-note" id="capture-note">Early beta signups. Your access code and the Cloud download arrive by email once you are approved.</p>
+          <p class="plan-note" id="capture-note">Your Cloud invite arrives by email.</p>
         </article>
 
         <aside class="enterprise">
@@ -194,31 +194,100 @@
         <p class="section-lede">Quorum reads the notes your meeting tools already write, your calendar and the folder where you keep your knowledge. It combines them into one memory and shares the parts you choose with your&nbsp;team.</p>
       </div>
       <div class="wrap">
-        <div class="apps-panel connects dotted">
-          <div class="connect-groups">
-            <div>
-              <h3 id="connects-now">Works today</h3>
-              <ul class="connect-list" aria-labelledby="connects-now">
-                <li>Granola<span>meeting notes</span></li>
-                <li>Zoom<span>cloud recordings, with Cloud</span></li>
-                <li>Google Calendar</li>
-                <li>Calendar app</li>
-                <li>Your notes folder<span>Obsidian vault or repo</span></li>
-                <li>Claude Code<span>and other MCP clients</span></li>
+        <!-- The categories and tools of the app's connector library (app/connectors/library.js), tools that work today
+             first. A "soon" item is one the library lists as planned. -->
+        <div class="apps-panel connects">
+          <div class="connect-table">
+            <div class="connect-col">
+              <h3 id="cx-notes">Meeting notes</h3>
+              <ul aria-labelledby="cx-notes">
+                <li class="live">Granola</li>
+                <li>Wispr Notetaker</li>
+                <li>Fireflies</li>
+                <li>Read AI</li>
+                <li>Otter</li>
+                <li>Fathom</li>
+                <li>tl;dv</li>
               </ul>
             </div>
-            <div>
-              <h3 id="connects-soon">Coming</h3>
-              <ul class="connect-list coming" aria-labelledby="connects-soon">
-                <li>Slack</li>
-                <li>Notion</li>
-                <li>Linear</li>
+            <div class="connect-col">
+              <h3 id="cx-calendar">Calendar</h3>
+              <ul aria-labelledby="cx-calendar">
+                <li class="live">Calendar app</li>
+                <li class="live">Google Calendar</li>
                 <li>Outlook</li>
-                <li>Otter</li>
-                <li>Fireflies</li>
+              </ul>
+            </div>
+            <div class="connect-col">
+              <h3 id="cx-meetings">Meeting apps</h3>
+              <ul aria-labelledby="cx-meetings">
+                <li class="live">Zoom</li>
+                <li class="live">Google Meet</li>
+                <li class="live">Microsoft Teams</li>
+              </ul>
+            </div>
+            <div class="connect-col">
+              <h3 id="cx-comms">Communication</h3>
+              <ul aria-labelledby="cx-comms">
+                <li class="live">Slack</li>
+                <li>Gmail</li>
+              </ul>
+            </div>
+            <div class="connect-col">
+              <h3 id="cx-crm">Customers</h3>
+              <ul aria-labelledby="cx-crm">
+                <li>Affinity</li>
+                <li>Attio</li>
+                <li>Gainsight</li>
+                <li>HubSpot</li>
+                <li>Mailchimp</li>
+                <li>Pipedrive</li>
+                <li>Salesforce</li>
+              </ul>
+            </div>
+            <div class="connect-col">
+              <h3 id="cx-tasks">Project management</h3>
+              <ul aria-labelledby="cx-tasks">
+                <li class="live">GitHub</li>
+                <li>Asana</li>
+                <li>ClickUp</li>
+                <li>Jira</li>
+                <li>Linear</li>
+                <li>monday.com</li>
+                <li>Trello</li>
+              </ul>
+            </div>
+            <div class="connect-col">
+              <h3 id="cx-docs">Docs and storage</h3>
+              <ul aria-labelledby="cx-docs">
+                <li class="live">Google Drive</li>
+                <li class="live">Notion</li>
+                <li>Google Docs</li>
+                <li>OneDrive</li>
+                <li>OneNote</li>
+              </ul>
+            </div>
+            <div class="connect-col">
+              <h3 id="cx-ai">AI and automation</h3>
+              <ul aria-labelledby="cx-ai">
+                <li class="live">Claude Code</li>
+                <li>Codex</li>
+                <li>Cursor</li>
+                <li>Claude</li>
+                <li>ChatGPT</li>
+                <li>Gemini</li>
+                <li>Microsoft 365 Copilot</li>
+                <li>Figma</li>
+                <li>Lovable</li>
+                <li>Manus</li>
+                <li>Replit</li>
+                <li>v0</li>
+                <li>Grok</li>
+                <li>Zapier</li>
               </ul>
             </div>
           </div>
+          <p class="connect-key">Names in white connect today. The rest are planned.</p>
         </div>
       </div>
     </section>
