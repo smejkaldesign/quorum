@@ -77,7 +77,7 @@ export function UpNext({ hidden = false }: { hidden?: boolean }) {
         <h4>Up next</h4>
         <span className="up-head-end">
           {showCal && (cal.hidden > 0 || cal.showAll) && (
-            <label className="up-toggle"><input type="checkbox" checked={cal.showAll} onChange={(ev) => window.quorum.calendarSet({ showAll: ev.target.checked }).then(loadCal)} />Show no meeting{!cal.showAll && cal.hidden > 0 ? ` (${cal.hidden})` : ''}</label>
+            <label className="up-toggle"><span className="switch"><input type="checkbox" role="switch" checked={cal.showAll} onChange={(ev) => window.quorum.calendarSet({ showAll: ev.target.checked }).then(loadCal)} /><span className="track"><span className="thumb" /></span></span>Show non-meetings{!cal.showAll && cal.hidden > 0 ? ` (${cal.hidden})` : ''}</label>
           )}
           {canNew && <button className="pill small-pill up-new" onClick={() => window.dispatchEvent(new CustomEvent('quorum:new-note'))}><IconPlus width={14} height={14} />New</button>}
         </span>
