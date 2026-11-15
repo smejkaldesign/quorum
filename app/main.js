@@ -2030,7 +2030,7 @@ function feedSources() {
 }
 // the newest entries of the guardrail denial log, read only; a line that does not parse is left out
 function recentDenials(n) {
-  let text = '';
+  let text;
   try { text = readFileSync(DENIAL_LOG, 'utf8'); } catch { return []; }
   return text.trim().split('\n').slice(-n).flatMap((l) => { try { const d = JSON.parse(l); return d && d.t ? [d] : []; } catch { return []; } });
 }
