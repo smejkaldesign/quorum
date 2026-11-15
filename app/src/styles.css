@@ -1876,3 +1876,4 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .day-off-text { display: flex; flex-direction: column; gap: 4px; }
 .day-off-title { margin: 0; font-size: 15px; font-weight: 400; color: var(--text); }
 .day-off .hist-empty { margin: 0; padding: 0; text-align: left; font-size: 15px; }
+.hist-time .up-day { margin-right: 8px; }

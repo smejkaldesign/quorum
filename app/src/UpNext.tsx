@@ -116,10 +116,10 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
                   {e.calendar ? <span className="avatar-sq app"><AppLogo {...CALENDAR_APP[e.calendar]} /></span> : <span className="avatar-sq cal"><IconCalendar width={18} height={18} /></span>}
                   <span className="hist-text"><strong>{e.title}</strong>
                     <RowDetails who={peopleText(e)} onCalendar={e.item || e.link ? () => window.quorum.calendarOpen(e) : null} calendarName={e.calendar ? CALENDAR_APP[e.calendar].name : undefined}
-                      platform={e.platform} meetingUrl={e.join} after={<span className="hist-sub-text up-when">{when}</span>} />
+                      platform={e.platform} meetingUrl={e.join} />
                   </span>
                   {!e.platform && <span className="up-badge">No meeting</span>}
-                  <span className="hist-time">{time(at)}<small>{half(at)}</small></span>
+                  <span className="hist-time"><span className="up-day">{when}</span>{time(at)}<small>{half(at)}</small></span>
                   <span className="hist-hover" onMouseDown={(ev) => ev.stopPropagation()}>
                     {platform && e.join && <JoinButton id={platform.id} label={`Join ${platform.short}`} url={e.join} />}
                     <EventMenu event={e} open={menu} onOpen={(o) => setEventMenu(o ? e.id : null)} onChanged={loadCal} />
