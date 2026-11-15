@@ -1,10 +1,11 @@
+import { BackButton } from './BackButton';
 import { useEffect, useRef, useState } from 'react';
 import type { MeetingMeta, Notes, NotesDraft, WhoAsk } from './quorum';
 import { WhoSpoke, type WhoAnswers } from './WhoSpoke';
 import { Avatar, SpeakerName, similarCounts, type SpeakerTurn } from './Speaker';
 import mark from '../assets/quorum-mark.png';
 import { Markdown } from './Markdown';
-import { IconCalendar, IconClock, IconFolder, IconLogs, IconNotes, IconPeople } from './icons';
+import { IconRecord, IconCalendar, IconClock, IconFolder, IconLogs, IconNotes, IconPeople } from './icons';
 import { NoteEditor } from './editor/NoteEditor';
 import { Composer } from './Composer';
 
@@ -18,7 +19,7 @@ export type Turn = SpeakerTurn & { who: string; voice?: number | 'mix' | 'sound'
 // live: the recording is running (or paused) and this is its page under the header; the transcript shows as it is
 // heard and the summary waits for Stop, which writes it into this same page. embedded drops the window chrome
 // ready: a new note before any recording; you can type in Your notes and Save, or press Record to transcribe into it
-export function EndView({ notes, draft, meta, summarizing, transcript, participants, onSpeaker, privateNotes, onPrivateNotes, flushPrivateNotes, onClose, me, live = false, paused = false, embedded = false, partial = '', who = null, onAnswer, ready = false, onSaveDraft }: { ready?: boolean; onSaveDraft?: (title: string) => Promise<void>; who?: WhoAsk | null; onAnswer?: (a: WhoAnswers | null) => void; live?: boolean; paused?: boolean; embedded?: boolean; partial?: string; me?: { name: string; photo: string | null }; notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; participants: string[]; onSpeaker: (id: number, name: string | null, similar: boolean) => Promise<void>; privateNotes: string; onPrivateNotes: (v: string) => void; flushPrivateNotes: () => void; onClose: () => void }) {
+export function EndView({ notes, draft, meta, summarizing, transcript, participants, onSpeaker, privateNotes, onPrivateNotes, flushPrivateNotes, onClose, me, live = false, paused = false, embedded = false, partial = '', who = null, onAnswer, ready = false, onSaveDraft, onRecord, recordBusy = false }: { onRecord?: () => void; recordBusy?: boolean; ready?: boolean; onSaveDraft?: (title: string) => Promise<void>; who?: WhoAsk | null; onAnswer?: (a: WhoAnswers | null) => void; live?: boolean; paused?: boolean; embedded?: boolean; partial?: string; me?: { name: string; photo: string | null }; notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; participants: string[]; onSpeaker: (id: number, name: string | null, similar: boolean) => Promise<void>; privateNotes: string; onPrivateNotes: (v: string) => void; flushPrivateNotes: () => void; onClose: () => void }) {
   const [showing, setShowing] = useState<'summary' | 'transcript'>(live ? 'transcript' : 'summary');
   // a new note's title: empty reads New note in italics, and a click puts the cursor in it
   const [title, setTitle] = useState('');
@@ -86,18 +87,21 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
   return (
     <div className={embedded ? 'end embedded' : 'panel end'}>
       <header className="end-bar">
-        {live || ready ? <button className="pill ghost" onClick={onClose}>Back</button>
-          : <button className="pill ghost" onClick={async () => { await window.quorum.discard(); onClose(); }}>{saved ? 'Close' : 'Discard'}</button>}
+        {live || ready ? <BackButton onClick={onClose} />
+          : <button className="act-pill" onClick={async () => { await window.quorum.discard(); onClose(); }}>{saved ? 'Close' : 'Discard'}</button>}
         <div className="end-actions">
-          {ready ? <button className="pill primary" disabled={(!privateNotes.trim() && !title.trim()) || saving} onClick={async () => { setSaving(true); try { await onSaveDraft?.(title.trim()); } finally { setSaving(false); } }}>{saving ? 'Saving…' : 'Save'}</button>
-          : live ? <span className="muted note-status" role="status">{paused ? 'Paused' : 'Recording'}</span> : <>
+          {ready ? <>
+          {/* Record turns this page into the recording, the same as Record in the header */}
+          {onRecord && <span data-tip={recordBusy ? 'A recording is already running' : undefined}><button className="act-pill" disabled={recordBusy} onClick={onRecord}><IconRecord width={15} height={15} /> Record</button></span>}
+          <button className="act-pill" disabled={(!privateNotes.trim() && !title.trim()) || saving} onClick={async () => { setSaving(true); try { await onSaveDraft?.(title.trim()); } finally { setSaving(false); } }}>{saving ? 'Saving…' : 'Save'}</button>
+          </> : live ? <span className="muted note-status" role="status">{paused ? 'Paused' : 'Recording'}</span> : <>
           {saved ? (
             <>
               <span className="saved">Saved to {saved.rel.replace(/^MyBrain\//, '')}</span>
               <button className="pill" onClick={() => window.quorum.openNote(saved.file)}><IconFolder width={15} height={15} /> Show in {saved.app}</button>
             </>
           ) : (
-            <button className="pill primary" disabled={!notes || saving} onClick={save}>{saving ? 'Saving…' : 'Keep'}</button>
+            <button className="act-pill" disabled={!notes || saving} onClick={save}>{saving ? 'Saving…' : 'Keep'}</button>
           )}
           </>}
         </div>

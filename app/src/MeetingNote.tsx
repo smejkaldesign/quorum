@@ -1,3 +1,4 @@
+import { BackButton } from './BackButton';
 import { NoteMeta } from './NoteMeta';
 import { TypedTitle, useStuck } from './StickyBar';
 import markProd from '../assets/quorum-mark.png';
@@ -9,7 +10,7 @@ import { SourceAsk, useMeetingSources } from './MeetingSources';
 import type { CalendarEvent, MeetingShare, NoteDoc, Visibility } from './quorum';
 import { Markdown } from './Markdown';
 import { Composer } from './Composer';
-import { IconArrowDown, IconBack, IconChevron, IconFolder, IconGlobe, IconLock, IconLogs, IconMore, IconNotes, IconTrash } from './icons';
+import { IconArrowDown, IconChevron, IconFolder, IconGlobe, IconLock, IconLogs, IconMore, IconNotes, IconTrash } from './icons';
 import { Avatar } from './Speaker';
 import { NoteEditor, type NoteEditorHandle } from './editor/NoteEditor';
 
@@ -87,7 +88,7 @@ export function PrivateBlocked({ onBack }: { onBack?: () => void }) {
       </svg>
       <h2>This note is private</h2>
       <p>Only its owner can open it. Ask them to share it with you or make it public.</p>
-      {onBack && <button className="pill primary small-pill" onClick={onBack}><IconBack width={16} height={16} /> Back</button>}
+      {onBack && <BackButton onClick={onBack} />}
     </div>
   );
 }
@@ -273,7 +274,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
     <div className="history reader" ref={scroller}>
       <div ref={bar.sentinel} className="rb-sentinel" aria-hidden="true" />
       <div className={`reader-bar sticky-bar${bar.stuck ? ' stuck' : ''}`}>
-        <span className="rb-left"><button className="pill primary small-pill" onClick={onBack}><IconBack width={16} height={16} /> Back</button><TypedTitle text={note.title || 'Untitled note'} on={bar.stuck} /></span>
+        <span className="rb-left"><BackButton onClick={onBack} /><TypedTitle text={note.title || 'Untitled note'} on={bar.stuck} /></span>
         <div className="reader-actions">
           {/* continue this note in the note view: write in it, or Record more into it */}
           {editing ? <>

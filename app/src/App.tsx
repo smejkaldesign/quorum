@@ -1,3 +1,4 @@
+import { BackButton } from './BackButton';
 import { Component, Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { AccountState, Brain, HelperEvent, MeetingMeta, Notes, NotesDraft, Settings, Source, SpeakersEvent, SummaryEvent, UpdateState, WhoAsk } from './quorum';
 import { Markdown } from './Markdown';
@@ -30,7 +31,7 @@ import { Avatar, SpeakerName, similarCounts, type SpeakerInfo } from './Speaker'
 import { useNotetaker } from './flags';
 import { type RecordChoice } from './noteRecord';
 import { RecLevel } from './RecLevel';
-import { IconFolderOpen, IconPerson, IconClose, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconBack, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, IconRecord, Wave } from './icons';
+import { IconFolderOpen, IconPerson, IconClose, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, IconRecord, Wave } from './icons';
 
 // one speaker turn as main.js built it; a turn that grows arrives again with the same id and replace: true
 type Line = { id: number; channel: 'me' | 'them'; text: string; start: number; voice?: number | 'mix' | 'sound'; unclear?: boolean; tone?: string } & Partial<SpeakerInfo>;
@@ -552,7 +553,7 @@ export function App() {
   const liveArea = (
     <div className="body wide flush live-body">
       <LazyView name="your notes" onClose={phase === 'review' ? closeReview : () => setLiveOpen(false)}>
-        <EndView embedded ready={drafting} onSaveDraft={saveDraft} live={inCall(phase)} paused={phase === 'paused'} who={ask} onAnswer={(a) => { setAsk(null); window.quorum.sessionSummarize(a ?? {}); }} notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing}
+        <EndView embedded ready={drafting} onSaveDraft={saveDraft} onRecord={nt.manualListen ? () => { startRecord(); } : undefined} recordBusy={phase !== 'idle' || count !== null} live={inCall(phase)} paused={phase === 'paused'} who={ask} onAnswer={(a) => { setAsk(null); window.quorum.sessionSummarize(a ?? {}); }} notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing}
           transcript={lines.map((l) => ({ ...l, who: who(l) }))} partial={liveWords ? [partial.me, partial.them].filter(Boolean).join(' ') : ''} participants={participants} onSpeaker={setSpeaker} me={nt.meetingCapture ? me : undefined}
           privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={phase === 'review' ? closeReview : drafting ? () => { mine.reset(); setDraftOpen(false); } : () => setLiveOpen(false)} />
       </LazyView>
@@ -649,7 +650,7 @@ export function App() {
           <div className="body" ref={bodyRef}>
             {!inCall(phase) && (
               <div className="row convo-bar">
-                <button className="pill primary small-pill" onClick={() => setConvoOpen(false)}><IconBack width={16} height={16} /> Back</button>
+                <BackButton onClick={() => setConvoOpen(false)} />
                 {msgs.length > 0 && <button className="pill small-pill" onClick={() => { setConvoOpen(false); openNoteView(); }}>New note</button>}
               </div>
             )}

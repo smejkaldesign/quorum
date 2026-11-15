@@ -1,7 +1,8 @@
+import { BackButton } from './BackButton';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { HandNoteRef, RecordState } from './quorum';
 import { Markdown } from './Markdown';
-import { IconBack, IconCalendar, IconFolder, IconNotes, IconRecord, IconStop } from './icons';
+import { IconCalendar, IconFolder, IconNotes, IconRecord, IconStop } from './icons';
 import { IconPen } from './PrivateNotes';
 import { RecordMenu } from './Record';
 import { appendTurn, emptyWritten, recordChoices, type RecordChoice, type Written } from './noteRecord';
@@ -262,7 +263,7 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
   return (
     <div className={`${embedded ? 'end embedded' : 'panel end'} note-view`}>
       <header className="end-bar">
-        <button className="pill ghost" onClick={() => close()}><IconBack width={16} height={16} /> Back</button>
+        <BackButton onClick={() => close()} />
         <div className="end-actions">
           {status === 'saving' && <span className="muted note-status">Saving…</span>}
           {status === 'saved' && ref && <span className="saved">Saved to {ref.rel.replace(/^MyBrain\//, '')}</span>}

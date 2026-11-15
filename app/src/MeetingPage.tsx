@@ -1,9 +1,10 @@
+import { BackButton } from './BackButton';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { CalendarEvent, MeetingBrief } from './quorum';
 import { AppPill, CALENDAR_APP, PLATFORM_APP } from './AppChip';
 import { Markdown } from './Markdown';
 import { dayLabel } from './upNextList';
-import { IconBack, IconPeople } from './icons';
+import { IconPeople } from './icons';
 import { TypedTitle, useStuck } from './StickyBar';
 import { JoinButton } from './UpNext';
 import { Composer } from './Composer';
@@ -141,7 +142,7 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
     <div className="history reader meeting-page" ref={top}>
       <div ref={bar.sentinel} className="rb-sentinel" aria-hidden="true" />
       <div className={`reader-bar sticky-bar${bar.stuck ? ' stuck' : ''}`}>
-        <span className="rb-left"><button className="pill primary small-pill" onClick={onBack}><IconBack width={16} height={16} /> Back</button><TypedTitle text={e.title} on={bar.stuck} /></span>
+        <span className="rb-left"><BackButton onClick={onBack} /><TypedTitle text={e.title} on={bar.stuck} /></span>
         <div className="reader-actions">
           {platform && e.join && <JoinButton id={platform.id} label={`Join ${platform.short}`} url={e.join} />}
         </div>

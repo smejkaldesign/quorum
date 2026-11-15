@@ -2169,3 +2169,15 @@ button.np-outline:hover { background: rgba(255, 255, 255, 0.05); color: var(--te
 /* the editor's empty-state text reads as a placeholder everywhere: subdued and italic */
 .note-rich { --ed-faint: #6e6e74; }
 .note-rich p.is-editor-empty:first-child::before { color: var(--ed-faint); font-style: italic; }
+/* the recording page's Back row sits at the page's width, aligned with the title, like a note's */
+.end.embedded .end-bar { width: 100%; max-width: 720px; margin: 0 auto; padding: 20px 0 0; box-sizing: border-box; }
+.back-btn { padding: 0 14px 0 10px; }
+/* the chat input sits at the page's width, the same as the text above it */
+.reader .note-dock, .meeting-page .note-dock { margin-left: 0; margin-right: 0; padding-left: 0; padding-right: 0; }
+.end-actions { display: flex; align-items: center; gap: 8px; }
+.reader .note-dock .composer, .meeting-page .note-dock .composer { margin-left: 0; margin-right: 0; }
+/* a note's details: white text; the ones you can click get the outlined button's hover */
+.meta-pill { color: var(--text); }
+button.meta-pill, a.meta-pill { transition: background 160ms ease, border-color 160ms ease; }
+button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .views-wrap .meta-pill:hover { background: var(--card); border-color: rgba(255, 255, 255, 0.24); }
+.meta-pill.meta-app { color: var(--text); }
