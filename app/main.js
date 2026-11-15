@@ -37,7 +37,7 @@ import { addFinal, isEcho, toJSON, toText } from './transcript.js';
 import { extractJson } from './json.js';
 import { emptyState, finalNotes, mergeState, notesFromState, notesMarkdown, notesPrompt, notesSystem, partialNotes, summaryBlock, summaryDue, summaryPrompt, newTurns } from './notes.js';
 import { buildTerms, orgOf, topNames } from './terms.js';
-import { applySpeakers, correctSpeaker, parseSpeakers, participantList, soloSpeakers, speakerView, speakersPrompt, speakersSystem } from './speakers.js';
+import { applySpeakers, correctSpeaker, speakerOf, parseSpeakers, participantList, soloSpeakers, speakerView, speakersPrompt, speakersSystem } from './speakers.js';
 import { startControl } from './control.js';
 import { PROVIDERS as DECISION_PROVIDERS, connectedProvider, decide as decideRaw, removeDecisionsKey, setDecisionsKey } from './decisions.js';
 import { execFile, execFileSync, spawn } from 'node:child_process';
@@ -1747,9 +1747,32 @@ ipcMain.handle('read-note', (_e, file) => {
     visibility: fm.visibility === 'public' ? 'public' : 'private', withheld: text !== original, link: `quorum://note/${encodeURIComponent(fm.granola_id || path.relative(b.vault, abs))}`, ...noteLink(abs),
     source: fm.source ? String(fm.source) : folderAppOf(abs),
     ...noteMeetingApps(fm, abs),
+    transcript: savedTranscript(fm),
     views: (views.record({ file: abs, who: 'human', via: 'quorum', bytes: Buffer.byteLength(original) }), views.of(abs)),
   };
 });
+
+// The transcript of a note Quorum recorded, from its session folder (quorum_id): every segment's turns in order, each
+// with the name it reads under. A solo note's microphone is Unknown, a call's is the person. Empty when there is none
+function savedTranscript(fm) {
+  const id = String(fm.quorum_id ?? '');
+  if (!/^[\w.:-]+$/.test(id)) return [];
+  const dir = path.join(store.meetings.root, id);
+  if (!existsSync(dir)) return [];
+  const label = { me: fm.type === 'note' ? 'Unknown' : OWNER, them: 'Others' };
+  const turns = [];
+  try {
+    for (const seg of readdirSync(dir).filter((d) => d.startsWith('segment-')).sort()) {
+      const f = path.join(dir, seg, 'transcript.json');
+      if (!existsSync(f)) continue;
+      for (const t of JSON.parse(readFileSync(f, 'utf8'))) {
+        if (!t?.text) continue;
+        turns.push({ id: turns.length + 1, channel: t.channel === 'them' ? 'them' : 'me', who: speakerOf(t, label), text: suggester.redactLines(String(t.text)) });
+      }
+    }
+  } catch { return []; }
+  return turns;
+}
 
 // the calendar event, meeting app and notetaker link of a note, for the reader's details line
 function noteMeetingApps(fm, abs) {

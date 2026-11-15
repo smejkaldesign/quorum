@@ -1978,3 +1978,6 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .bar .right .rec-ctl .rec-stop { color: var(--stop); }
 .bar .right .rec-ctl .rec-stop:hover { background: rgba(240, 74, 74, 0.12); }
 @media (prefers-reduced-motion: reduce) { .rec-ctl { transition: none; } }
+/* the recording's review page: the text column runs the chat box's full width, with the # marks hanging to its left */
+.end:not(.note-view) .end-scroll .doc { padding-left: 0; padding-right: 0; }
+.end-composer-wrap { padding-left: 32px; padding-right: 32px; }
