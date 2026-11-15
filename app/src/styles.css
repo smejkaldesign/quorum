@@ -2430,3 +2430,9 @@ input::placeholder, textarea::placeholder { font-style: italic; }
 .card h3, .conn-group h4, .conn-detail h4, .sofar-head, .sofar-group h4, .hist-group h4, .mp-about h3 { color: var(--text); }
 .conn-chev { transform: rotate(-90deg); }
 .conn-detail-cta .pill { white-space: nowrap; }
+
+/* the type-your-email sheet for deleting an account or a workspace */
+.type-confirm .type-confirm-ask { margin: 0 0 10px; color: var(--text); font-size: 14px; }
+.type-confirm .set-field + .set-field { margin-top: 10px; }
+/* a disabled button shows no tooltip of its own; the wrapper carries it */
+.guarded { display: inline-flex; }

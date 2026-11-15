@@ -156,6 +156,9 @@ export type AccountState = {
   sync: boolean; lastSyncAt: string | null; lastPullAt?: string | null; syncError: string | null;
 };
 export type Result = { ok?: boolean; error?: string };
+// what the danger zone reads before it offers a delete (migration 0039): the signed-in email, whether the account runs
+// Quorum itself, and the workspaces it owns
+export type AccountDeleteStatus = { email: string | null; platformOwner: boolean; owned: { id: string; name: string }[] };
 
 // Settings › Sources (sources/catalog.js, sources/jobs.js)
 export type SourceMethod = 'connect' | 'folder';
@@ -569,6 +572,12 @@ declare global {
       accountVerifyCode(email: string, code: string): Promise<Result>;
       accountSignOut(): Promise<void>;
       accountGoogle(): Promise<Result>;
+      accountDeleteStatus(): Promise<AccountDeleteStatus | { error: string }>;
+      accountDelete(typed: string): Promise<Result>;
+      orgDelete(workspaceId: string, typed: string): Promise<Result>;
+      exportNotes(): Promise<{ ok?: boolean; canceled?: boolean; error?: string; path?: string; files?: number; skipped?: number; bytes?: number }>;
+      exportReveal(file: string): Promise<void>;
+      onExportProgress(cb: (p: { done: number; total: number }) => void): Unsub;
       onAccountOAuth(cb: (r: Result) => void): Unsub;
       orgCreate(name: string, domain: string | null, domainJoin: boolean): Promise<Result>;
       orgJoin(target: { inviteId: string } | { workspaceId: string }): Promise<Result>;
