@@ -142,7 +142,7 @@ function AppMenu({ brain, me, active, onMemory, onSettings, next }: { brain: Bra
   };
   return (
     <div className="status-wrap">
-      <button ref={button} className={`icon-btn brain ${active ? 'active' : ''}`} data-tip="Menu" aria-label="Menu"
+      <button ref={button} className={`icon-btn brain ${active ? 'active' : ''}`} aria-label="Menu"
         aria-haspopup="menu" aria-expanded={open}
         onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
         onKeyDown={(e) => { if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !open) { e.preventDefault(); setOpen(true); } }}>
@@ -598,7 +598,7 @@ export function App() {
             <span className="rec-sep" aria-hidden="true" />
           </div>
           <AppMenu brain={brain} me={me} active={view === 'settings'} onMemory={() => openSettings('memory')} onSettings={() => openSettings('preferences')} next={closeRef} />
-          <button ref={closeRef} className="icon-btn close-win" aria-label="Close window" data-tip="Close window. Quorum keeps running in the menu bar." data-tip-pos="left" onClick={() => window.quorum.hideWindow()}>
+          <button ref={closeRef} className="icon-btn close-win" aria-label="Close window" onClick={() => window.quorum.hideWindow()}>
             <IconClose width={17} height={17} />
           </button>
         </div>

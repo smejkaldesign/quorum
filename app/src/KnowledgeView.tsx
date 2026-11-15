@@ -121,6 +121,11 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   // Claude (or anything else) edited the vault: refresh the tree and graph in place, and the open note if it changed
   const previewRel = useRef('');
   previewRel.current = preview?.rel ?? '';
+  // the note you came from when a link opened this one; its row in the side panel goes back to it
+  const [prev, setPrev] = useState<{ rel: string; title: string } | null>(null);
+  const viaLink = useRef(false);
+  const here = useRef<{ rel: string; title: string } | null>(null);
+  here.current = preview ? { rel: preview.rel, title: preview.title } : null;
   // a burst of writes (a sync pull, the keeper filing a meeting) reloads the tree and graph once, after it settles
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -178,6 +183,9 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     const [n, r, s] = await Promise.all([window.quorum.vaultNote(rel), window.quorum.memoryReview(rel).catch(() => null), window.quorum.getSettings().catch(() => null)]);
     const lit = s?.memoryHighlight !== false;
     if (!n) return;
+    const from = here.current;
+    setPrev(viaLink.current && from && from.rel !== rel ? from : null);
+    viaLink.current = false;
     setPreview({ rel, ...n });
     setReview(r);
     setMode('after');
@@ -276,7 +284,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   // [[links]] in an open note resolve the way the graph does, then open inside Quorum
   const openLink = useCallback(async (target: string) => {
     const rel = await window.quorum.vaultResolve(target, previewRel.current || '');
-    if (rel) openNote(rel);
+    if (rel) { viaLink.current = true; openNote(rel); }
     else flash(`No note named "${target}" yet`);
   }, [openNote]);
 
@@ -460,8 +468,8 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
                 <span className="kb-here">{preview.title}</span>
               </span>
               <div className="kb-actions">
-                <button className="pill ghost" onClick={() => { setFocus(preview.rel); setPreview(null); }}><IconGraph width={16} height={16} /> View in graph</button>
-                <button className="pill ghost" disabled={locked} data-tip={locked ? 'Locked until the update finishes' : undefined} onClick={() => window.quorum.openNote(preview.abs)}><IconFolder width={16} height={16} /> Open</button>
+                <button className="icon-btn" aria-label="View in graph" data-tip="View in graph" onClick={() => { setFocus(preview.rel); setPreview(null); }}><IconGraph /></button>
+                <button className="icon-btn" aria-label="Open in your editor" disabled={locked} data-tip={locked ? 'Locked until the update finishes' : 'Open in your editor'} onClick={() => window.quorum.openNote(preview.abs)}><IconFolder /></button>
                 <button className={`icon-btn ${side ? 'active' : ''}`} aria-label={side ? 'Hide links and outline' : 'Show links and outline'} aria-expanded={side}
                   data-tip={side ? 'Hide links and outline' : 'Show links and outline'} onClick={toggleSide}><IconSidebar /></button>
               </div>
@@ -512,8 +520,9 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
                       nav={mode === 'after' ? navOver(blocks.map((b) => b[0])) : undefined}
                       onAccept={review.dot === 'green' ? accept : undefined} acceptTip="Accept updates"
                       onReject={reject} rejectTip="Reject updates and restore the earlier text" />}
-              <p className="kb-path">{preview.rel}</p>
               <h1>{preview.title}</h1>
+              {/* the full path under the title; a long one loses its start, so the file name stays readable */}
+              <p className="kb-path" title={preview.rel}><span>{preview.rel}</span></p>
               {preview.meta ? <NoteMeta meta={{ ...preview.meta, title: preview.title }}>{preview.views?.total ? <ViewsPill views={preview.views} /> : null}</NoteMeta>
                 : preview.views?.total ? <div className="meta-row"><ViewsPill views={preview.views} /></div> : null}
               {/* After marks the lines the updates changed, green while they wait and blue once approved; Before and an
@@ -522,7 +531,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
                 <Markdown text={version ? version.body : review && mode === 'before' ? review.before : preview.body} headings root={brain?.root} onWiki={openLink} marks={marks} />
               </div>
             </article>
-            <NotePanel rel={preview.rel} body={preview.body} onOpen={openNote} onResolve={openLink}>
+            <NotePanel rel={preview.rel} body={preview.body} previous={prev} onOpen={(rel) => { viaLink.current = true; openNote(rel); }} onResolve={openLink}>
               <VersionList rel={preview.rel} stamp={stamp} viewing={version?.v.id ?? null} onView={viewVersion} />
             </NotePanel>
           </div>

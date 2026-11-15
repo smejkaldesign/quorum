@@ -1,11 +1,27 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Backlink, OutLink, SearchHit } from './quorum';
-import { IconChevron, IconSearch } from './icons';
+import { IconBack, IconChevron, IconExternal, IconSearch } from './icons';
 
 // Right-hand panel beside an open note: what links here, what it links to, and its headings; children (the note's
 // versions in the Memory tab) come last
-export function NotePanel({ rel, body, onOpen, onResolve, children }: {
-  rel: string; body: string; onOpen: (rel: string) => void; onResolve: (target: string) => void; children?: ReactNode;
+// one link per row, on one line; the open icon shows on hover and the text gives it room
+function LinkRow({ title, tip, className = '', onClick }: { title: string; tip?: string; className?: string; onClick: () => void }) {
+  return (
+    <button className={`np-item np-link ${className}`} onClick={onClick} data-tip={tip} data-tip-pos="left">
+      <strong>{title}</strong><IconExternal width={13} height={13} />
+    </button>
+  );
+}
+
+// an outline entry scrolls the note to its heading: the nth heading with that text in the open note
+function toHeading(text: string, nth: number) {
+  const plain = (s: string) => s.replace(/[*_`#[\]]/g, '').trim().toLowerCase();
+  const hits = [...document.querySelectorAll<HTMLElement>('.kb-preview .doc h1, .kb-preview .doc h2, .kb-preview .doc h3, .kb-preview .doc h4')].filter((h) => plain(h.textContent ?? '') === plain(text));
+  (hits[nth] ?? hits[0])?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+export function NotePanel({ rel, body, previous, onOpen, onResolve, children }: {
+  previous?: { rel: string; title: string } | null; rel: string; body: string; onOpen: (rel: string) => void; onResolve: (target: string) => void; children?: ReactNode;
 }) {
   const [back, setBack] = useState<Backlink[]>([]);
   const [out, setOut] = useState<OutLink[]>([]);
@@ -19,24 +35,25 @@ export function NotePanel({ rel, body, onOpen, onResolve, children }: {
 
   return (
     <aside className="note-panel" aria-label="Links and outline">
+      {previous && previous.rel !== rel && (
+        <button className="np-item np-link np-prev" onClick={() => onOpen(previous.rel)} data-tip={`Back to ${previous.title}`} data-tip-pos="left">
+          <IconBack width={13} height={13} /><span className="np-prev-label">Previous memory</span><strong>{previous.title}</strong>
+        </button>
+      )}
       <Section title="Backlinks" count={back.length}>
-        {back.length ? back.map((b, i) => (
-          <button key={`${b.rel}-${i}`} className="np-item" onClick={() => onOpen(b.rel)}>
-            <strong>{b.title}</strong>
-            {b.context && <span>{b.context.slice(0, 140)}</span>}
-          </button>
-        )) : <p className="np-empty">No notes link here yet.</p>}
+        {back.length ? back.map((b, i) => <LinkRow key={`${b.rel}-${i}`} title={b.title} tip={b.context ? b.context.slice(0, 140) : undefined} onClick={() => onOpen(b.rel)} />)
+          : <p className="np-empty">No notes link here yet.</p>}
       </Section>
       <Section title="Outgoing links" count={uniqueOut.length}>
         {uniqueOut.length ? uniqueOut.map((o) => (
-          <button key={o.rel ?? o.target} className={`np-item ${o.rel ? '' : 'unresolved'}`} onClick={() => (o.rel ? onOpen(o.rel) : onResolve(o.target))}
-            data-tip={o.rel ? undefined : 'No note with this name yet'} data-tip-pos="left">
-            <strong>{o.title}</strong>
-          </button>
+          <LinkRow key={o.rel ?? o.target} title={o.title} className={o.rel ? '' : 'unresolved'} tip={o.rel ? undefined : 'No note with this name yet'} onClick={() => (o.rel ? onOpen(o.rel) : onResolve(o.target))} />
         )) : <p className="np-empty">This note doesn't link anywhere.</p>}
       </Section>
       <Section title="Outline" count={outline.length}>
-        {outline.length ? outline.map((h, i) => <p key={i} className="np-outline" style={{ paddingLeft: (h.level - 1) * 12 }}>{h.text}</p>) : <p className="np-empty">No headings.</p>}
+        {outline.length ? outline.map((h, i) => {
+          const nth = outline.slice(0, i).filter((x) => x.text === h.text).length;
+          return <button key={i} className="np-outline" onClick={() => toHeading(h.text, nth)}>{h.text.replace(/[*_`]/g, '')}</button>;
+        }) : <p className="np-empty">No headings.</p>}
       </Section>
       {children}
     </aside>

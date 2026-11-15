@@ -2116,3 +2116,21 @@ button.meta-pill.meta-icon:hover { background: rgba(255, 255, 255, 0.06); }
 .more-below { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; margin: 0 auto 12px; border-radius: 999px; background: var(--menu-bg); border: 1px solid var(--line-2); color: var(--text); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4); animation: dock-in 200ms ease; }
 .more-below:hover { background: var(--card); border-color: rgba(255, 255, 255, 0.24); }
 @media (prefers-reduced-motion: reduce) { .note-dock .skill-pills, .more-below { animation: none; } }
+/* Memory: the path under the title, full width, cut at its start so the file name shows */
+.kb-preview .kb-path { max-width: none; margin: -4px 0 12px; direction: rtl; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #6e6e74; font-size: 13px; }
+.kb-preview .kb-path span { direction: ltr; unicode-bidi: bidi-override; }
+/* side panel: one line per link with an open icon on hover; outline entries jump to their heading */
+.np-link { flex-direction: row; align-items: center; gap: 8px; }
+.np-link strong { flex: 1; min-width: 0; }
+.np-link svg { flex: none; color: var(--muted); opacity: 0; width: 0; transition: opacity 120ms ease; }
+.np-link:hover svg { opacity: 1; width: 13px; }
+.np-prev { margin: 0 0 6px; }
+.np-prev svg { opacity: 1; width: 13px; }
+.np-prev .np-prev-label { flex: none; font-size: 12px; color: var(--muted); }
+.np-prev strong { color: var(--text); }
+button.np-outline { display: block; width: 100%; text-align: left; padding: 4px 8px; border-radius: 8px; }
+button.np-outline:hover { background: rgba(255, 255, 255, 0.05); color: var(--text); }
+/* menus as wide as their longest item */
+.brain-menu, .note-menu { min-width: 0; width: max-content; }
+.brain-menu button, .note-menu button { padding-right: 18px; }
+.skill-pills { margin-bottom: 14px; }
