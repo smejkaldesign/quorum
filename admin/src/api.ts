@@ -100,6 +100,7 @@ export const api = {
   relayHealth: async (): Promise<Result<{ engine: string; billing: boolean; mail: boolean; notes: boolean; zoom: boolean; flags: boolean }>> => {
     try {
       const res = await fetch(`${RELAY_URL}/healthz`);
+      if (!res.ok) return { ok: false, error: `The relay answered ${res.status}.` };
       const b = await res.json();
       return ok({ engine: String(b.engine ?? ''), billing: b.billing === true, mail: b.mail === true, notes: b.notes === true, zoom: b.connect?.zoom === true, flags: b.flags === true });
     } catch (err) { return no(err, 'The relay did not answer.'); }

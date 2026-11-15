@@ -1,0 +1,6 @@
+# keeps local secrets, installs and tests out of the relay image's build context (Dockerfile)
+**/.env
+**/.env.*
+**/node_modules
+**/test
+.git

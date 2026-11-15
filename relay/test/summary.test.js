@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { pickModel, streamAnthropic, streamOpenAI } from '../lib/models.js';
-import { buildPrompt, cleanNotesRequest } from '../summary.js';
+import { createLimiter } from '../platform.js';
+import { buildPrompt, cleanNotesRequest, handleNotes } from '../summary.js';
+import { baseTables, fakeAnon, fakeDb, relayConfig, TOKEN, USER, WS } from './helpers.js';
 
 const sseBody = (lines) => new Response(lines.map((l) => `${l}\n`).join('')).body;
 
@@ -67,5 +69,32 @@ describe('streamed replies', () => {
     assert.equal(text, 'Hello');
     assert.equal(calls[0].url, 'https://llm.example.com/v1/chat/completions');
     assert.equal(calls[0].init.headers.authorization, 'Bearer k');
+  });
+});
+
+describe('notes route limits', () => {
+  const anon = fakeAnon({ [TOKEN]: { id: USER, email: 'ana@example.com' } });
+  const fakeReq = (body) => {
+    const listeners = {};
+    const req = { method: 'POST', headers: { authorization: `Bearer ${TOKEN}` }, on: (ev, fn) => { listeners[ev] = fn; return req; }, destroy() {} };
+    setTimeout(() => { listeners.data?.(Buffer.from(body)); listeners.end?.(); }, 0);
+    return req;
+  };
+  const fakeRes = () => ({ status: 0, body: '', headersSent: false, writeHead(st) { this.status = st; this.headersSent = true; }, write() {}, end(b) { this.body = String(b ?? ''); } });
+  const deps = (over = {}) => ({ clients: { anon, db: fakeDb({ tables: baseTables() }) }, config: relayConfig(), log: () => {}, ...over });
+  const body = (over = {}) => JSON.stringify({ kind: 'summary', workspaceId: WS, turns: [{ id: 1, channel: 'them', text: 'Hello.' }], ...over });
+
+  it('refuses a caller over the per-user rate before any model call', async () => {
+    let called = false;
+    const res = fakeRes();
+    await handleNotes(fakeReq(body()), res, deps({ notesLimit: createLimiter({ max: 0 }), fetchImpl: async () => { called = true; throw new Error('no model call expected'); } }));
+    assert.equal(res.status, 429);
+    assert.equal(JSON.parse(res.body).code, 'rate_limit');
+    assert.equal(called, false);
+  });
+  it('refuses a body over 1 MB', async () => {
+    const res = fakeRes();
+    await handleNotes(fakeReq(body({ about: 'x'.repeat(1024 * 1024) })), res, deps());
+    assert.equal(res.status, 413);
   });
 });

@@ -5,7 +5,9 @@ export function fakeDb({ tables = {}, rpcs = {}, failInsert = () => null } = {})
   const inserted = [], updates = [], deleted = [];
   // timestamps compare as instants, the way Postgres does, whatever their text form
   const asTime = (v) => { const t = typeof v === 'string' ? Date.parse(v) : NaN; return Number.isNaN(t) ? null : t; };
-  const ops = { eq: (r, k, v) => r[k] === v, in: (r, k, v) => v.includes(r[k]), is: (r, k, v) => (v === null ? r[k] == null : r[k] === v), gte: (r, k, v) => (asTime(r[k]) != null && asTime(v) != null ? asTime(r[k]) >= asTime(v) : r[k] >= v) };
+  // a PostgREST JSON path key (payload->object->>host_id) reads into the row's nested objects
+  const get = (r, k) => (k.includes('->') ? k.split(/->>?/).reduce((o, part) => (o == null ? undefined : o[part]), r) : r[k]);
+  const ops = { eq: (r, k, v) => get(r, k) === v, in: (r, k, v) => v.includes(r[k]), is: (r, k, v) => (v === null ? r[k] == null : r[k] === v), gte: (r, k, v) => (asTime(r[k]) != null && asTime(v) != null ? asTime(r[k]) >= asTime(v) : r[k] >= v) };
   const from = (table) => {
     const filters = [];
     let mode = 'select', patch = null;

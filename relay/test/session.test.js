@@ -1,18 +1,18 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { CLOSE, handleConnection } from '../lib/session.js';
+import { CLOSE, createSessionLedger, handleConnection } from '../lib/session.js';
 import { baseTables, CONNECTOR, fakeAnon, fakeDb, fakeEngine, FakeSocket, frame, pcm, relayConfig, tick, TOKEN, USER, WS } from './helpers.js';
 
 const anon = fakeAnon({ [TOKEN]: { id: USER, email: 'ana@example.com' } });
 const hello = (over = {}) => ({ token: TOKEN, workspaceId: WS, meetingId: '2026-11-08T16-00-00-000Z', channels: ['me', 'them'], sampleRate: 16000, terms: ['Ana'], locale: 'en-US', ...over });
 
-function connect({ tables = baseTables(), config = relayConfig(), engines, rpcs, headers = {}, failInsert } = {}) {
+function connect({ tables = baseTables(), config = relayConfig(), engines, rpcs, headers = {}, failInsert, ledger = createSessionLedger() } = {}) {
   const ws = new FakeSocket();
   const db = fakeDb({ tables, rpcs, failInsert });
   const logs = [];
   engines ??= { assemblyai: fakeEngine(), deepgram: fakeEngine() };
-  handleConnection(ws, { headers }, { clients: { anon, db }, config, engines, log: (event, fields) => logs.push({ event, ...fields }) });
-  return { ws, db, engines, logs };
+  handleConnection(ws, { headers }, { clients: { anon, db }, config, engines, ledger, log: (event, fields) => logs.push({ event, ...fields }) });
+  return { ws, db, engines, logs, ledger };
 }
 
 describe('transcribe session', () => {
@@ -152,5 +152,33 @@ describe('transcribe session', () => {
     assert.equal(text.includes(TOKEN), false);
     assert.equal(text.includes('data'), false);
     assert.ok(logs.some((l) => l.event === 'session_end' && l.seconds === 1 && l.engine === 'assemblyai'));
+  });
+
+  it('caps managed sessions at two per user and one per seat, and frees the slot when a session ends', async () => {
+    const ledger = createSessionLedger();
+    const tables = baseTables({ seats: 5 });
+    const a = connect({ tables, ledger }), b = connect({ tables, ledger }), c = connect({ tables, ledger });
+    for (const x of [a, b, c]) x.ws.text(hello());
+    await tick(10);
+    assert.equal(a.ws.events('ready').length, 1);
+    assert.equal(b.ws.events('ready').length, 1);
+    assert.equal(c.ws.closedWith.code, CLOSE.cap);
+    assert.match(c.ws.events('error')[0].message, /2 managed transcription sessions/);
+    a.ws.text({ event: 'stop' });
+    await tick(10);
+    assert.deepEqual(ledger.live(USER, WS), { user: 1, workspace: 1 });
+    const d = connect({ tables, ledger });
+    d.ws.text(hello());
+    await tick(10);
+    assert.equal(d.ws.events('ready').length, 1);
+
+    const one = createSessionLedger();
+    const seatTables = baseTables({ seats: 1 });
+    const first = connect({ tables: seatTables, ledger: one });
+    first.ws.text(hello());
+    await tick(10);
+    one.claim({ userId: 'other-user', workspaceId: 'elsewhere', seats: 1 });
+    assert.throws(() => one.claim({ userId: 'other-user', workspaceId: WS, seats: 1 }), /Every seat/);
+    assert.equal(first.ws.events('ready').length, 1);
   });
 });

@@ -16,4 +16,6 @@ COPY app/store/local.js app/store/
 RUN ln -s /srv/relay/node_modules /srv/app/node_modules
 WORKDIR /srv/relay
 ENV NODE_ENV=production
+# the relay writes nothing to disk, so it runs as the image's unprivileged node user
+USER node
 CMD ["node", "server.js"]
