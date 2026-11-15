@@ -1957,3 +1957,11 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 /* a meeting notetaker's logo beside the folder it writes into, in the Memory tree */
 .kb-item .folder-app { display: inline-flex; margin-left: 8px; flex: none; }
 .kb-item .folder-app .app-logo { width: 16px; height: 16px; border-radius: 4px; }
+/* a note's people: the first name and +N, and a scrolling list of everyone on click */
+.people-pill .muted { margin-left: 4px; }
+.people-pop-list { top: 42px; min-width: 220px; max-width: 320px; padding: 6px; }
+.people-pop-list .people-pop-head { margin: 4px 8px 6px; font-size: 12px; color: var(--muted); }
+.people-pop-list ul { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; }
+.people-pop-list li { padding: 7px 8px; border-radius: 8px; font-size: 14px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.people-pop-list li:hover { background: rgba(255, 255, 255, 0.06); }
+.meta-pill .app-logo { width: 18px; height: 18px; border-radius: 5px; }

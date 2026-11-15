@@ -1,3 +1,4 @@
+import type { NoteMetaInfo } from './NoteMeta';
 // set by Vite's define from QUORUM_EDITION at build time (vite.config.ts); 'local' unless the cloud build asked otherwise
 declare global {
   const __QUORUM_EDITION__: 'local' | 'cloud';
@@ -384,7 +385,7 @@ declare global {
       vaultOutgoing(rel: string): Promise<OutLink[]>;
       vaultResolve(target: string, from: string): Promise<string | null>;
       onVaultChanged(cb: (rels: string[]) => void): Unsub;
-      vaultNote(rel: string): Promise<{ title: string; body: string; abs: string; app: string; views?: NoteViews } | null>;
+      vaultNote(rel: string): Promise<{ title: string; body: string; abs: string; app: string; views?: NoteViews; meta?: NoteMetaInfo | null } | null>;
       vaultNewNote(folder: string, name: string): Promise<string>;
       vaultNewFolder(parent: string, name: string): Promise<string>;
       vaultRename(rel: string, name: string): Promise<Relocated>;
