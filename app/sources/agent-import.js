@@ -46,6 +46,9 @@ export function runnerCommand(runnerId, { server, prompt, quorum, model = null }
         // the person's own servers stay (that is where the source and its sign-in live); quorum is added for this run
         '--mcp-config', JSON.stringify({ mcpServers: { quorum: quorumServer } }),
         '--allowedTools', `mcp__${server}__*`, 'mcp__quorum__*',
+        // meeting text from the source is untrusted: no shell, file or web tools, whatever the person's own settings allow
+        '--disallowedTools', 'Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Task',
+        '--permission-mode', 'default',
         '--no-session-persistence', '--disable-slash-commands',
       ],
       stdin: prompt,
@@ -57,7 +60,7 @@ export function runnerCommand(runnerId, { server, prompt, quorum, model = null }
     return {
       bin: 'codex',
       args: [
-        'exec', '--json', '--ephemeral', '--skip-git-repo-check', ...(model ? ['-m', model] : []),
+        'exec', '--json', '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only', ...(model ? ['-m', model] : []),
         '-c', `mcp_servers.quorum.command=${toml(quorumServer.command)}`,
         '-c', `mcp_servers.quorum.args=${toml(quorumServer.args)}`,
         ...(env ? ['-c', `mcp_servers.quorum.env={ ${env} }`] : []),

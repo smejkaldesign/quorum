@@ -210,6 +210,8 @@ function importMeeting({ source, id, title, date, participants = [], url = null,
   if (!/^[a-z0-9][a-z0-9-]{0,40}$/.test(src) || src === 'quorum') throw new Error('source must be the id of a connector, for example granola');
   const sid = String(id ?? '').trim();
   if (!sid || sid.length > 200) throw new Error('id is required: the meeting\'s id in the source app');
+  // one line each: a line break would add frontmatter keys of its own (keep_private, visibility)
+  if (/[\r\n]/.test(sid)) throw new Error('id must be one line');
   if (settings().access === 'read') throw new Error('Quorum is set to read only (Settings, Connectors), so nothing can be imported.');
   const root = meetingsDir();
   if (!root) throw new Error('Quorum has no meeting notes folder yet. Connect an Agent OS in Quorum first.');
@@ -221,10 +223,10 @@ function importMeeting({ source, id, title, date, participants = [], url = null,
     if (new RegExp(`^(?:source_id|${src.replace(/-/g, '_')}_id):\\s*"?${sid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"?\\s*$`, 'm').test(head)) return { skipped: true, file: path.relative(root, path.join(dir, f)) };
   }
   const when = date && !isNaN(Date.parse(date)) ? new Date(date).toISOString() : new Date().toISOString();
-  const people = (Array.isArray(participants) ? participants : []).map((p) => String(p?.name ?? p).trim()).filter(Boolean).slice(0, 50);
+  const people = (Array.isArray(participants) ? participants : []).map((p) => String(p?.name ?? p).replace(/[\r\n]+/g, ' ').trim()).filter(Boolean).slice(0, 50);
   const text = [
-    '---', `source_id: ${sid}`, `title: ${yamlStr(title || 'Untitled meeting')}`, `date: ${when}`,
-    'participants:', ...people.map((p) => `  - ${p}`), `participant_count: ${people.length}`,
+    '---', `source_id: ${yamlStr(sid)}`, `title: ${yamlStr(title || 'Untitled meeting')}`, `date: ${when}`,
+    'participants:', ...people.map((p) => `  - ${yamlStr(p)}`), `participant_count: ${people.length}`,
     `source: ${src}`, 'visibility: private', 'imported_by: agent', ...(url && /^https?:\/\//.test(String(url)) ? [`${src.replace(/-/g, '_')}_url: ${url}`] : []),
     '---', '', `# ${title || 'Untitled meeting'}`, '', String(body ?? '').slice(0, 200000).trim(), '',
   ].join('\n');

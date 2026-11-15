@@ -5,8 +5,12 @@ helper/.build/
 sessions/
 release/
 app/.dev/
+# every env file stays local in every folder; only the example is committed
 .env
-.env.development
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
 supabase/.temp/
 .claude/
 .claude/worktrees/

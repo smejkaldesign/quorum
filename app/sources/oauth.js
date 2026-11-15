@@ -89,6 +89,7 @@ export async function register(meta, { redirectUri = LOOPBACK_REDIRECT, clientNa
 // servers that do not know the parameter ignore it
 export function authorizeUrl(meta, { clientId, redirectUri, challenge, state, scopes = meta.scopes, prompt = 'select_account' }) {
   const u = new URL(meta.authorizationEndpoint);
+  if (u.protocol !== 'https:' && !/^(127\.0\.0\.1|localhost)$/.test(u.hostname)) throw new Error('The sign-in page must use https');
   u.searchParams.set('response_type', 'code');
   u.searchParams.set('client_id', clientId);
   u.searchParams.set('redirect_uri', redirectUri);
