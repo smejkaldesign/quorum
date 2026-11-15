@@ -1848,3 +1848,6 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 /* the row hover background fades in and out */
 .hist-row { transition: background-color 200ms ease; }
 @media (prefers-reduced-motion: reduce) { .hist-row { transition: none; } }
+/* everything in a row opens something, so all of it shows the pointer */
+.hist-row, .hist-row * { cursor: pointer; }
+.hist-row button:disabled { cursor: default; }
