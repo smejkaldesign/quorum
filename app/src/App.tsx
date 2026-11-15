@@ -567,9 +567,14 @@ export function App() {
           )}
           <div className="status-wrap">
             <UpdateItem state={update} />
-            {phase === 'listening' && <button className="icon-btn call-btn" aria-label="Pause" data-tip="Pause" onClick={() => window.quorum.pause()}><IconPause /></button>}
-            {phase === 'paused' && <button className="icon-btn call-btn" aria-label="Resume" data-tip="Resume" onClick={() => window.quorum.resume()}><IconPlay /></button>}
-            {(phase === 'listening' || phase === 'paused') && <button className="icon-btn call-btn" aria-label="Stop and summarize" data-tip="Stop and summarize" onClick={() => window.quorum.end()}><IconStop /></button>}
+            {/* while recording, Pause (white) and Stop (red) slide out from behind Record on hover and stay 3 seconds after */}
+            {(phase === 'listening' || phase === 'paused') && (
+              <span className="rec-ctl">
+                {phase === 'listening' && <button className="icon-btn call-btn rec-pause" aria-label="Pause" data-tip="Pause" onClick={() => window.quorum.pause()}><IconPause /></button>}
+                {phase === 'paused' && <button className="icon-btn call-btn rec-pause" aria-label="Resume" data-tip="Resume" onClick={() => window.quorum.resume()}><IconPlay /></button>}
+                <button className="icon-btn call-btn rec-stop" aria-label="Stop and summarize" data-tip="Stop and summarize" onClick={() => window.quorum.end()}><IconStop /></button>
+              </span>
+            )}
             {/* Record: one button from idle to recording, so the label that slid out on hover is the one that turns green.
                 With Screen on offer it opens the Record popover; otherwise it opens a new note that starts transcribing */}
             {(nt.manualListen || phase !== 'idle') && (

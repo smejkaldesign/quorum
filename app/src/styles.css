@@ -1970,3 +1970,11 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .bar .status-wrap { display: flex; align-items: center; gap: 2px; }
 /* Quorum's mark fills its square while app icons carry their own margin, so it draws smaller to look the same size */
 .kb-item .folder-app .app-logo.own { width: 13px; height: 13px; margin: 1.5px; border-radius: 50%; }
+/* Pause and Stop while recording: hidden behind Record, out to its left on hover, back 3 seconds after the pointer leaves */
+.rec-ctl { display: flex; align-items: center; gap: 2px; max-width: 0; overflow: hidden; opacity: 0; transform: translateX(14px); pointer-events: none;
+  transition: max-width 240ms ease 3000ms, opacity 200ms ease 3000ms, transform 240ms ease 3000ms; }
+.bar .status-wrap:hover .rec-ctl, .rec-ctl:focus-within { max-width: 80px; opacity: 1; transform: none; pointer-events: auto; transition-delay: 0s; }
+.bar .right .rec-ctl .rec-pause { color: var(--text); }
+.bar .right .rec-ctl .rec-stop { color: var(--stop); }
+.bar .right .rec-ctl .rec-stop:hover { background: rgba(240, 74, 74, 0.12); }
+@media (prefers-reduced-motion: reduce) { .rec-ctl { transition: none; } }
