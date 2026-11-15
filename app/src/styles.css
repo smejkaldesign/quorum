@@ -1891,3 +1891,6 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 /* while the Record menu is open, the button keeps its label out and its icon and text white */
 .status.listen.idle[aria-expanded="true"] { color: var(--text); background: rgba(255, 255, 255, 0.08); }
 .status.listen.idle[aria-expanded="true"] .listen-hint { max-width: 140px; opacity: 1; margin-right: 8px; color: var(--text); transition-delay: 0s; }
+/* Start recording: outlined, like Join */
+.pill.primary.record-go { background: transparent; border: 1px solid var(--line-2); color: var(--text); transition: background 160ms ease, border-color 160ms ease; }
+.pill.primary.record-go:not(:disabled):hover { background: var(--card); border-color: rgba(255, 255, 255, 0.24); }
