@@ -1823,3 +1823,6 @@ button.meta-pill { font: inherit; cursor: pointer; }
 
 /* every menu and popover: darker than the panel's cards, a quiet border, a drop shadow */
 .menu, .model-menu, .record-menu, .brain-menu, .vis-menu, .note-menu, .people-pop, .date-pop { background: var(--menu-bg); border: 1px solid var(--menu-line); box-shadow: var(--menu-shadow); }
+/* hover buttons wait 16px right of their row before they slide in; the list never scrolls sideways for them */
+.body { overflow-x: hidden; }
+.history, .up-strip { overflow-x: clip; }
