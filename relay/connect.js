@@ -8,7 +8,7 @@ import { bearer, RelayError, requireMember, requirePlan, verifyToken } from './l
 import { readJson } from './summary.js';
 
 export const PROVIDERS = {
-  zoom: { tokenUrl: 'https://zoom.us/oauth/token', events: ['recording.completed', 'recording.transcript_completed'] },
+  zoom: { tokenUrl: 'https://zoom.us/oauth/token', meUrl: 'https://api.zoom.us/v2/users/me', events: ['recording.completed', 'recording.transcript_completed'] },
 };
 export const LOOPBACK_PORT = 47832;
 const MAX_BODY = 512 * 1024;
@@ -101,24 +101,36 @@ export async function handleToken(req, res, deps) {
   } catch (err) { fail(res, err, log, 'connect_token'); }
 }
 
-// POST /v1/connect/<provider>/account { workspaceId, accountId, externalUserId } remembers the account; DELETE forgets it
+// the platform account behind an access token, asked of the platform itself. The ids a client sends are never used:
+// a caller who could name any account id would receive that account's recording events.
+export async function platformIdentity(p, accessToken, fetchImpl = fetch) {
+  if (!accessToken) throw new RelayError('bad_request', 'Connect the platform again: the relay needs the access token to confirm the account.', 400);
+  const r = await fetchImpl(p.meUrl, { headers: { authorization: `Bearer ${accessToken}` } });
+  const me = await r.json().catch(() => ({}));
+  if (!r.ok || !me?.id || !me?.account_id) throw new RelayError('connector', 'The platform did not confirm the account. Connect it again.', 400);
+  return { accountId: String(me.account_id), externalUserId: String(me.id) };
+}
+
+// POST /v1/connect/<provider>/account { workspaceId, accessToken } remembers the account the token belongs to; DELETE
+// { workspaceId, accountId } forgets the caller's own row for that account
 export async function handleAccount(req, res, deps) {
-  const { clients, log = () => {} } = deps;
+  const { clients, log = () => {}, fetchImpl = fetch } = deps;
   try {
     const provider = providerOf(new URL(req.url, 'http://relay').pathname);
-    requireProvider(provider);
+    const p = requireProvider(provider);
     if (req.method !== 'POST' && req.method !== 'DELETE') throw new RelayError('bad_request', 'POST or DELETE.', 405);
     const body = await readJson(req, MAX_BODY);
     const user = await caller(req, deps, body);
-    const accountId = String(body.accountId ?? '').trim();
-    if (!accountId) throw new RelayError('bad_request', 'The platform account id is missing.', 400);
     if (req.method === 'DELETE') {
+      const accountId = String(body.accountId ?? '').trim();
+      if (!accountId) throw new RelayError('bad_request', 'The platform account id is missing.', 400);
       const { error } = await clients.db.from('connect_accounts').delete().eq('user_id', user.userId).eq('provider', provider).eq('account_id', accountId);
       if (error) throw new RelayError('server', 'The connection could not be removed.', 500);
       log('connect_account_removed', { provider });
       return json(res, 200, { ok: true });
     }
-    const { error } = await clients.db.from('connect_accounts').insert({ user_id: user.userId, provider, account_id: accountId, external_user_id: body.externalUserId ? String(body.externalUserId) : null });
+    const { accountId, externalUserId } = await platformIdentity(p, String(body.accessToken ?? '').trim(), fetchImpl);
+    const { error } = await clients.db.from('connect_accounts').insert({ user_id: user.userId, provider, account_id: accountId, external_user_id: externalUserId });
     if (error && error.code !== '23505') throw new RelayError('server', 'The connection could not be saved.', 500);
     log('connect_account', { provider, existed: error?.code === '23505' });
     json(res, 200, { ok: true });
@@ -169,7 +181,9 @@ export async function handleZoomWebhook(req, res, deps) {
 }
 
 // GET /v1/connect/events?workspace=&provider=zoom: what the platforms sent for this user's accounts and the app has not
-// acknowledged; POST /v1/connect/events/ack { workspaceId, ids } once the app has acted on them
+// acknowledged; POST /v1/connect/events/ack { workspaceId, ids } once the app has acted on them. An account id names a
+// whole Zoom organization, so an event belongs to the caller only when its host is the Zoom user the relay verified.
+const HOST = 'payload->object->>host_id';
 export async function handleEvents(req, res, deps) {
   const { clients, log = () => {} } = deps;
   try {
@@ -180,21 +194,28 @@ export async function handleEvents(req, res, deps) {
     const user = await caller(req, deps, body);
     const provider = ack ? String(body.provider ?? 'zoom') : (url.searchParams.get('provider') ?? 'zoom');
     requireProvider(provider);
-    const accounts = await clients.db.from('connect_accounts').select('account_id').eq('user_id', user.userId).eq('provider', provider);
+    const accounts = await clients.db.from('connect_accounts').select('account_id, external_user_id').eq('user_id', user.userId).eq('provider', provider);
     if (accounts.error) throw new RelayError('server', 'The connections could not be read.', 500);
-    const ids = (accounts.data ?? []).map((a) => a.account_id);
+    const owned = (accounts.data ?? []).filter((a) => a.account_id && a.external_user_id);
     if (ack) {
       const wanted = Array.isArray(body.ids) ? body.ids.map(Number).filter(Number.isFinite) : [];
-      if (!wanted.length || !ids.length) return json(res, 200, { ok: true, acked: 0 });
-      const { error } = await clients.db.from('connect_events').update({ delivered_at: new Date().toISOString() }).in('id', wanted).in('account_id', ids).is('delivered_at', null);
-      if (error) throw new RelayError('server', 'The events could not be acknowledged.', 500);
+      if (!wanted.length || !owned.length) return json(res, 200, { ok: true, acked: 0 });
+      for (const a of owned) {
+        const { error } = await clients.db.from('connect_events').update({ delivered_at: new Date().toISOString() }).in('id', wanted).eq('provider', provider).eq('account_id', a.account_id).eq(HOST, a.external_user_id).is('delivered_at', null);
+        if (error) throw new RelayError('server', 'The events could not be acknowledged.', 500);
+      }
       log('connect_events_ack', { provider, count: wanted.length });
       return json(res, 200, { ok: true, acked: wanted.length });
     }
-    if (!ids.length) return json(res, 200, { events: [] });
-    const { data, error } = await clients.db.from('connect_events').select('id, event, external_id, payload, received_at').eq('provider', provider).in('account_id', ids).is('delivered_at', null).order('received_at');
-    if (error) throw new RelayError('server', 'The events could not be read.', 500);
-    json(res, 200, { events: data ?? [] });
+    if (!owned.length) return json(res, 200, { events: [] });
+    const events = [];
+    for (const a of owned) {
+      const { data, error } = await clients.db.from('connect_events').select('id, event, external_id, payload, received_at').eq('provider', provider).eq('account_id', a.account_id).eq(HOST, a.external_user_id).is('delivered_at', null).order('received_at');
+      if (error) throw new RelayError('server', 'The events could not be read.', 500);
+      events.push(...(data ?? []));
+    }
+    events.sort((x, y) => String(x.received_at).localeCompare(String(y.received_at)));
+    json(res, 200, { events });
   } catch (err) { fail(res, err, log, 'connect_events'); }
 }
 

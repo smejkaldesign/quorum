@@ -100,15 +100,34 @@ describe('token exchange', () => {
 });
 
 describe('accounts', () => {
-  it('remembers a platform account for the user and treats a repeat as fine', async () => {
+  const zoomMe = (calls = []) => async (url, init) => { calls.push({ url, init }); return init.headers.authorization === 'Bearer zoom-at' ? { ok: true, status: 200, json: async () => ({ id: 'zu1', account_id: 'acc1', email: 'me@example.com' }) } : { ok: false, status: 401, json: async () => ({ code: 124 }) }; };
+  it('remembers the platform account the access token belongs to and treats a repeat as fine', async () => {
     const db = fakeDb({ tables: baseTables(), failInsert: (row, inserted) => (inserted.some((r) => r.account_id === row.account_id) ? { code: '23505' } : null) });
+    const calls = [];
     for (let i = 0; i < 2; i++) {
       const res = fakeRes();
-      await handleAccount(fakeReq({ method: 'POST', url: '/v1/connect/zoom/account', headers: { authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ workspaceId: WS, accountId: 'acc1', externalUserId: 'zu1' }) }), res, deps({ clients: { anon, db } }));
+      await handleAccount(fakeReq({ method: 'POST', url: '/v1/connect/zoom/account', headers: { authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ workspaceId: WS, accessToken: 'zoom-at' }) }), res, deps({ clients: { anon, db }, fetchImpl: zoomMe(calls) }));
       assert.equal(res.status, 200, res.body);
     }
+    assert.equal(calls[0].url, 'https://api.zoom.us/v2/users/me');
     assert.equal(db.inserted.length, 1);
     assert.deepEqual(db.inserted[0], { user_id: USER, provider: 'zoom', account_id: 'acc1', external_user_id: 'zu1' });
+  });
+  it('ignores the account ids a client sends and saves the ones Zoom confirms', async () => {
+    const db = fakeDb({ tables: baseTables() });
+    const res = fakeRes();
+    await handleAccount(fakeReq({ method: 'POST', url: '/v1/connect/zoom/account', headers: { authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ workspaceId: WS, accessToken: 'zoom-at', accountId: 'victim-org', externalUserId: 'victim-user' }) }), res, deps({ clients: { anon, db }, fetchImpl: zoomMe() }));
+    assert.equal(res.status, 200, res.body);
+    assert.deepEqual(db.inserted[0], { user_id: USER, provider: 'zoom', account_id: 'acc1', external_user_id: 'zu1' });
+  });
+  it('refuses an account claim without a token Zoom accepts', async () => {
+    for (const body of [{ workspaceId: WS, accountId: 'victim-org', externalUserId: 'victim-user' }, { workspaceId: WS, accessToken: 'stolen-or-wrong' }]) {
+      const db = fakeDb({ tables: baseTables() });
+      const res = fakeRes();
+      await handleAccount(fakeReq({ method: 'POST', url: '/v1/connect/zoom/account', headers: { authorization: `Bearer ${TOKEN}` }, body: JSON.stringify(body) }), res, deps({ clients: { anon, db }, fetchImpl: zoomMe() }));
+      assert.equal(res.status, 400, res.body);
+      assert.equal(db.inserted.length, 0);
+    }
   });
   it('forgets an account on DELETE, only the caller\'s own', async () => {
     const db = fakeDb({ tables: { ...baseTables(), connect_accounts: [{ user_id: USER, provider: 'zoom', account_id: 'acc1' }, { user_id: 'someone-else', provider: 'zoom', account_id: 'acc1' }] } });
@@ -169,14 +188,15 @@ describe('zoom webhook', () => {
 describe('events feed', () => {
   const tables = () => ({
     ...baseTables(),
-    connect_accounts: [{ user_id: USER, provider: 'zoom', account_id: 'acc1' }],
+    connect_accounts: [{ user_id: USER, provider: 'zoom', account_id: 'acc1', external_user_id: 'zu1' }],
     connect_events: [
-      { id: 1, provider: 'zoom', account_id: 'acc1', event: 'recording.completed', external_id: 'u1', payload: { object: { uuid: 'u1' } }, received_at: '2026-11-09T20:00:00Z', delivered_at: null },
+      { id: 1, provider: 'zoom', account_id: 'acc1', event: 'recording.completed', external_id: 'u1', payload: { object: { uuid: 'u1', host_id: 'zu1' } }, received_at: '2026-11-09T20:00:00Z', delivered_at: null },
+      { id: 4, provider: 'zoom', account_id: 'acc1', event: 'recording.completed', external_id: 'u4', payload: { object: { uuid: 'u4', host_id: 'coworker' } }, received_at: '2026-11-09T20:02:00Z', delivered_at: null },
       { id: 2, provider: 'zoom', account_id: 'acc2', event: 'recording.completed', external_id: 'u2', payload: {}, received_at: '2026-11-09T20:01:00Z', delivered_at: null },
       { id: 3, provider: 'zoom', account_id: 'acc1', event: 'recording.completed', external_id: 'u3', payload: {}, received_at: '2026-11-09T19:00:00Z', delivered_at: '2026-11-09T19:30:00Z' },
     ],
   });
-  it('lists only undelivered events for the caller\'s accounts', async () => {
+  it('lists only undelivered events the caller hosted on their accounts', async () => {
     const res = fakeRes();
     await handleEvents(fakeReq({ method: 'GET', url: `/v1/connect/events?workspace=${WS}&provider=zoom`, headers: { authorization: `Bearer ${TOKEN}` } }), res, deps({ clients: { anon, db: fakeDb({ tables: tables() }) } }));
     assert.equal(res.status, 200, res.body);
@@ -185,7 +205,7 @@ describe('events feed', () => {
   it('acknowledges events, only the caller\'s own', async () => {
     const db = fakeDb({ tables: tables() });
     const res = fakeRes();
-    await handleEvents(fakeReq({ method: 'POST', url: '/v1/connect/events/ack', headers: { authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ workspaceId: WS, provider: 'zoom', ids: [1, 2] }) }), res, deps({ clients: { anon, db } }));
+    await handleEvents(fakeReq({ method: 'POST', url: '/v1/connect/events/ack', headers: { authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ workspaceId: WS, provider: 'zoom', ids: [1, 2, 4] }) }), res, deps({ clients: { anon, db } }));
     assert.equal(res.status, 200, res.body);
     assert.equal(db.updates.length, 1);
     assert.ok(db.updates[0].patch.delivered_at);
