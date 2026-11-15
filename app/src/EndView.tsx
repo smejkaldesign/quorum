@@ -5,7 +5,7 @@ import { WhoSpoke, type WhoAnswers } from './WhoSpoke';
 import { Avatar, SpeakerName, similarCounts, type SpeakerTurn } from './Speaker';
 import mark from '../assets/quorum-mark.png';
 import { Markdown } from './Markdown';
-import { IconRecord, IconCalendar, IconClock, IconFolder, IconLogs, IconNotes, IconPeople } from './icons';
+import { IconRecord, IconStop, IconCalendar, IconClock, IconFolder, IconLogs, IconNotes, IconPeople } from './icons';
 import { NoteEditor } from './editor/NoteEditor';
 import { Composer } from './Composer';
 
@@ -23,6 +23,8 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
   const [showing, setShowing] = useState<'summary' | 'transcript'>(live ? 'transcript' : 'summary');
   // a new note's title: empty reads New note in italics, and a click puts the cursor in it
   const [title, setTitle] = useState('');
+  // Stop summarization turns the summary off for this note: Stop goes straight to Save note, the transcript stays
+  const [autoSum, setAutoSum] = useState(true);
   // Stop turns the page to the summary as it is written
   useEffect(() => { if (summarizing || who) setShowing('summary'); }, [summarizing, who]);
   const [dropped, setDropped] = useState<Record<number, boolean>>({});
@@ -54,12 +56,14 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
   }
 
   async function save() {
-    if (!notes) return;
+    // without a summary the note keeps your notes and the transcript; untitled, it is named after saving
+    const base: Notes = notes ?? { title: '', summary: '', sections: [], decisions: [], actions: [], questions: [] };
+    if (!notes && autoSum) return;
     flushPrivateNotes();
     setSaving(true);
     try {
       const r = await window.quorum.saveNotes({
-        notes: { ...notes, actions: notes.actions.filter((_, i) => !dropped[i]) },
+        notes: { ...base, title: title.trim() || base.title || 'Untitled note', actions: base.actions.filter((_, i) => !dropped[i]) },
         followups: followups.filter((f): f is { q: string; a: string } => !!f.a),
       });
       setSaved(r);
@@ -94,14 +98,18 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
           {/* Record turns this page into the recording, the same as Record in the header */}
           {onRecord && <span data-tip={recordBusy ? 'A recording is already running' : undefined}><button className="act-pill" disabled={recordBusy} onClick={onRecord}><IconRecord width={15} height={15} /> Record</button></span>}
           <button className="act-pill primary" disabled={(!privateNotes.trim() && !title.trim()) || saving} onClick={async () => { setSaving(true); try { await onSaveDraft?.(title.trim()); } finally { setSaving(false); } }}>{saving ? 'Saving…' : 'Save'}</button>
-          </> : live ? <span className="muted note-status" role="status">{paused ? 'Paused' : 'Recording'}</span> : <>
+          </> : live ? <button className="act-pill primary" onClick={() => window.quorum.end()}><IconStop width={14} height={14} /> Stop recording</button> : <>
           {saved ? (
             <>
               <span className="saved">Saved to {saved.rel.replace(/^MyBrain\//, '')}</span>
               <button className="pill" onClick={() => window.quorum.openNote(saved.file)}><IconFolder width={15} height={15} /> Show in {saved.app}</button>
             </>
           ) : (
-            <button className="act-pill primary" disabled={!notes || saving} onClick={save}>{saving ? 'Saving…' : 'Keep'}</button>
+            // after Stop: Summarize transcript; while it writes, Summarizing; once it is on the page (or with the
+            // summary turned off), Save note
+            notes || !autoSum ? <button className="act-pill primary" disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save note'}</button>
+            : summarizing || streaming ? <button className="act-pill primary" disabled>Summarizing…</button>
+            : <button className="act-pill primary" disabled={!who || !onAnswer} onClick={() => onAnswer?.(null)}>Summarize transcript</button>
           )}
           </>}
         </div>
@@ -110,7 +118,13 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
       {(
         <div className="end-scroll">
           <article className={`doc${streaming ? ' streaming' : ''}`}>
-            <h1>{ready ? <input className="title-input" value={title} placeholder="New note" aria-label="Title" onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (document.querySelector('.my-notes-editor .ProseMirror') as HTMLElement | null)?.focus(); } }} /> : live ? <span className="shimmer">New note</span> : shown?.title || (streaming ? <span className="shimmer">{meta?.title || 'Writing the title'}</span> : meta?.title || 'Untitled note')}</h1>
+            <h1>{ready || live || (!shown?.title && !streaming && !saved) || title ? (
+              // the title is yours to type at any point; empty, it reads New note (shimmering while it records)
+              <span className="title-wrap">
+                {!title && live && <span className="shimmer title-ph" aria-hidden="true">New note</span>}
+                <input className="title-input" value={title} placeholder={live ? '' : 'New note'} aria-label="Title" onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (document.querySelector('.my-notes-editor .ProseMirror') as HTMLElement | null)?.focus(); } }} />
+              </span>
+            ) : shown?.title || (streaming ? <span className="shimmer">{meta?.title || 'Writing the title'}</span> : meta?.title || 'Untitled note')}</h1>
             <div className="meta-row">
               <span className="meta-pill"><IconCalendar width={16} height={16} />{when}{started ? ` · ${started.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}</span>
               {meta && meta.minutes > 0 && <span className="meta-pill"><IconClock width={16} height={16} />{meta.minutes} min</span>}
@@ -124,6 +138,13 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
 
             {showing === 'summary' && (
               <section className="doc-section my-notes-section">
+                {/* while it records: the summary waits for Stop, and can be turned off for this note */}
+                {live && autoSum && (
+                  <div className="sum-wait" role="status">
+                    <span className="sum-wait-text">Summarizes when the recording stops</span>
+                    <button className="act-pill" onClick={() => setAutoSum(false)}>Stop summarization</button>
+                  </div>
+                )}
                 {/* the note's own editor, formatting bar on top, typed inline with no box around it */}
                 <div className="my-notes-editor" onBlur={flushPrivateNotes}>
                   <NoteEditor value={privateNotes} onChange={onPrivateNotes} readOnly={false} placeholder="Type your notes" autoFocus={ready} />
@@ -145,13 +166,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
                 {live && partial && <p className="live-partial"><em className="partial">{partial}</em></p>}
               </section>
             ) : <>
-            {who && onAnswer && <WhoSpoke ask={who} onDone={onAnswer} />}
-            {live && (
-              <div className="live-wait">
-                <p className="shimmer">Waiting for the recording to stop to summarize</p>
-                <div className="sk-block" aria-hidden="true"><span className="sk sk-line w90" /><span className="sk sk-line w75" /><span className="sk sk-line w60" /></div>
-              </div>
-            )}
+            {who && onAnswer && autoSum && <WhoSpoke ask={who} onDone={onAnswer} />}
             {view.empty && !ready && <p className="muted">Nothing was transcribed.</p>}
             {view.summary ? <p className={`summary${streaming && !view.sections.length ? ' typing' : ''}`}>{view.summary}</p>
               : streaming && <div className="sk-block" aria-label="Writing the summary"><span className="sk sk-line w90" /><span className="sk sk-line w75" /><span className="sk sk-line w60" /></div>}

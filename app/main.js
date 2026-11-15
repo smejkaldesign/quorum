@@ -2863,6 +2863,8 @@ function saveNotes(payload) {
   meeting.saved = { file, payload: { notes, followups: payload.followups } };
   store.meetings.saveNote(file, withShareChoice(file, noteMarkdown(meeting.saved.payload)));
   log('saved note', file);
+  // saved without a summary or a title: it gets a name the same way an untitled hand note does
+  if (isUntitled(notes.title)) nameUntitled(file).catch((e) => log('note title', e?.message));
   account.sync.pushMeetingNote(file);
   keeper.schedule('note');
   // the call's chat now hangs off the saved note

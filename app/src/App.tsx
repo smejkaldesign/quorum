@@ -507,15 +507,16 @@ export function App() {
     setNote((n) => (n && !n.leave ? { ...n, leave: Date.now(), next: null } : n));
     // what was typed on the new note before Record carries into the recording
     if (mine.text.trim()) window.quorum.privateNotesSet(mine.text);
-    setDraftOpen(false);
     setView('main');
     setLiveOpen(true);
+    setDraftOpen(false);
   }
   useEffect(() => { if (!announce || phase !== 'listening') return; const t = setTimeout(() => setAnnounce(false), 1000); return () => clearTimeout(t); }, [announce, phase]);
   // a finished recording opens on its keep-or-discard page; nothing recording closes the live view
   useEffect(() => { if (phase === 'review') setLiveOpen(true); if (phase === 'idle') setLiveOpen(false); }, [phase]);
   const drafting = view === 'main' && draftOpen && phase === 'idle';
-  const showLive = (view === 'main' && liveOpen && phase !== 'idle' && phase !== 'blocked') || drafting;
+  // a new note stays on screen from Record through the countdown and the start, so nothing else shows in between
+  const showLive = view === 'main' && phase !== 'blocked' && ((liveOpen && phase !== 'idle') || draftOpen);
   const closeNote = () => setNote((n) => (n && !n.leave ? { ...n, leave: Date.now(), next: null } : n));
   const go = (fn: () => void) => () => { setLiveOpen(false); setDraftOpen(false); closeNote(); fn(); };
   const status = {

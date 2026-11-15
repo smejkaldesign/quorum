@@ -2187,3 +2187,12 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .views-wrap .meta-pill
 /* the recording page's chat input at the page's width, like a note's */
 .end-dock { width: 100%; max-width: 720px; margin: 0 auto; padding: 24px 0 20px; box-sizing: border-box; }
 .end-dock .composer { margin-left: 0; margin-right: 0; }
+/* the recording page: the title stays typeable, its empty state shimmers while it records */
+.title-wrap { position: relative; display: block; }
+.title-wrap .title-ph { position: absolute; left: 0; top: 0; pointer-events: none; font-style: italic; }
+/* the summary's wait while it records: a shimmering bar the page's width, with Stop summarization on its right */
+.sum-wait { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 16px; padding: 8px 8px 8px 16px; border-radius: 12px; overflow: hidden;
+  background: linear-gradient(90deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.03) 100%); background-size: 200% 100%; animation: sum-wait 1.8s ease-in-out infinite; }
+.sum-wait-text { color: var(--muted); font-size: 14px; }
+@keyframes sum-wait { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) { .sum-wait { animation: none; } }
