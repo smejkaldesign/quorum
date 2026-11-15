@@ -1786,18 +1786,18 @@ button.meta-pill { font: inherit; cursor: pointer; }
 @media (prefers-reduced-motion: reduce) { .up-float-in > .up-strip { transition: none; } }
 .up-float-in:not(.shown) .up-strip, .up-float-in:not(.shown) .up-strip * { -webkit-app-region: no-drag; }
 
-/* dates and times read in full white; the app chips sit before a row's details */
+/* dates and times read in full white. A row's details: the meeting app's logo before the attendees (or the time on
+   Up next), then the notetaker's logo and name, subdued until hovered */
 .hist-group h4, .hist-time, .up-when { color: var(--text); }
-.hist-sub { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.hist-sub { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.hist-meet { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .hist-text .hist-sub-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hist-text .app-chip { flex: none; display: inline-flex; align-items: center; gap: 6px; overflow: visible; color: var(--text); font-size: inherit; text-decoration: none; border-radius: 6px; }
-.app-chip img, .app-chip-letter { width: 16px; height: 16px; border-radius: 4px; flex: none; }
+.hist-text .app-chip { flex: none; display: inline-flex; align-items: center; gap: 6px; overflow: visible; color: var(--muted); font-size: inherit; text-decoration: none; transition: color 160ms ease; }
+.app-logo { width: 16px; height: 16px; border-radius: 4px; flex: none; }
 .hist-text .app-chip-letter { display: inline-grid; place-items: center; font-size: 10px; font-weight: 600; background: var(--line-2); color: var(--text); }
-.app-chip-ext { flex: none; width: 0; opacity: 0; margin-left: -6px; transition: opacity 160ms ease, width 160ms ease, margin-left 160ms ease; }
 .app-chip.link { cursor: pointer; }
-.app-chip.link { text-decoration: underline transparent; text-underline-offset: 3px; transition: text-decoration-color 160ms ease; }
-.app-chip.link:hover { text-decoration-color: currentColor; }
-.app-chip.link:hover .app-chip-ext, .app-chip.link:focus-visible .app-chip-ext { width: 12px; opacity: 1; margin-left: 0; }
+.hist-text .app-chip.link:hover, .hist-text .app-chip.link:focus-visible { color: var(--text); }
+@media (prefers-reduced-motion: reduce) { .hist-text .app-chip { transition: none; } }
 .up-join { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px 0 8px; border: 0; border-radius: 8px; background: #fff; color: #0a0a0b; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
 .up-join:hover { background: #e9e9ec; }
 .up-join img { width: 16px; height: 16px; border-radius: 4px; }

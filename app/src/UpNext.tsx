@@ -6,7 +6,7 @@ import { useFlag } from './flags';
 import { useExclusiveMenu } from './menuBus';
 import { useSession } from './session';
 import { dayLabel, upNextRows } from './upNextList';
-import { AppChip, PLATFORM_APP, useAppIcons } from './AppChip';
+import { AppLogo, PLATFORM_APP, useAppIcons } from './AppChip';
 import { IconCalendar, IconChevron, IconMore, IconPlus } from './icons';
 
 const time = (d: Date) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?(AM|PM)/i, '');
@@ -126,8 +126,10 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
                 <div className={`hist-row up-row ${menu ? 'menu-open' : ''}`} onClick={() => e.item && window.quorum.calendarOpen(e)}>
                   <span className="avatar-sq cal"><IconCalendar width={18} height={18} /></span>
                   <span className="hist-text"><strong>{e.title}</strong><span className="hist-sub">
-                    {platform && <AppChip {...platform} url={e.join} />}
+                    <span className="hist-meet">
+                    {platform && <AppLogo {...platform} />}
                     <span className="hist-sub-text up-when">{dayLabel(at)} · {time(at)} – {time(end)} {half(end)}</span>
+                    </span>
                   </span></span>
                   {!e.platform && <span className="up-badge">No meeting</span>}
                   <span className="hist-time">{time(at)}<small>{half(at)}</small></span>

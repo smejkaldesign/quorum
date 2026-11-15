@@ -9,7 +9,7 @@ import { openConnectors } from './connectorsNav';
 import { useSession } from './session';
 import { dayLabel } from './upNextList';
 import { UpNext, useCalendarView } from './UpNext';
-import { AppChip, PLATFORM_APP, sourceApp } from './AppChip';
+import { AppChip, AppLogo, PLATFORM_APP, sourceApp } from './AppChip';
 import { IconCalendar, IconChat, IconClose, IconExternal, IconListCheck, IconMic, IconNewNote, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
 
 type Filter = 'all' | 'meetings' | 'notes' | 'chats';
@@ -197,9 +197,11 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
                 : r.avatar === 'note' ? <span className="avatar-sq note"><IconMic width={20} height={20} /></span>
                 : <span className="avatar-sq" style={{ background: colorFor(r.sub + r.title) }}>{r.avatar}</span>}
               <span className="hist-text"><strong>{r.title}</strong><span className="hist-sub">
-                {r.meeting?.platform && <AppChip {...PLATFORM_APP[r.meeting.platform]} />}
+                <span className="hist-meet">
+                  {r.meeting?.platform && <AppLogo {...PLATFORM_APP[r.meeting.platform]} />}
+                  <span className="hist-sub-text">{r.sub}</span>
+                </span>
                 {r.meeting && r.meeting.source !== 'quorum' && <AppChip {...sourceApp(r.meeting.source)} url={r.meeting.url} />}
-                <span className="hist-sub-text">{r.sub}</span>
               </span></span>
               <span className="hist-time">{r.date ? <>{r.date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?(AM|PM)/i, '')}<small>{r.date.getHours() < 12 ? 'AM' : 'PM'}</small></> : ''}</span>
               {r.meeting && (
