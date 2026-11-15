@@ -2043,3 +2043,5 @@ button.meta-pill.meta-icon:hover { background: rgba(255, 255, 255, 0.06); }
 .status.listen.announce .listen-hint { max-width: 160px; opacity: 1; margin-right: 8px; color: var(--text); transition-delay: 0s; }
 .status.listen.listening .listen-hint { transition: max-width 0.3s ease 0.15s, opacity 0.4s ease, margin 0.3s ease 0.15s; }
 .bar .status-wrap:hover .status.listen.announce.listening .listen-hint { max-width: 0; opacity: 0; margin-right: 0; }
+/* quick asks sit centered over the chat input, 12px above it */
+.skill-pills { justify-content: center; margin: 0 0 12px; }
