@@ -1,4 +1,5 @@
 import { NoteMeta } from './NoteMeta';
+import { TypedTitle, useStuck } from './StickyBar';
 import markProd from '../assets/quorum-mark.png';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CONNECTOR_BY_ID } from '../connectors/library';
@@ -131,6 +132,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack }: {
 }) {
   const [note, setNote] = useState(initial);
   const [showing, setShowing] = useState<'summary' | 'transcript'>('summary');
+  const bar = useStuck();
   const [summing, setSumming] = useState(false);
   const [sumError, setSumError] = useState<string | null>(null);
   async function summarize() {
@@ -198,8 +200,9 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack }: {
 
   return (
     <div className="history reader" ref={scroller}>
-      <div className="reader-bar">
-        <button className="pill primary small-pill" onClick={onBack}><IconBack width={16} height={16} /> Back</button>
+      <div ref={bar.sentinel} className="rb-sentinel" aria-hidden="true" />
+      <div className={`reader-bar sticky-bar${bar.stuck ? ' stuck' : ''}`}>
+        <span className="rb-left"><button className="pill primary small-pill" onClick={onBack}><IconBack width={16} height={16} /> Back</button><TypedTitle text={note.title || 'Untitled note'} on={bar.stuck} /></span>
         <div className="reader-actions">
           {/* continue this note in the note view: write in it, or Record more into it */}
           <button className="pill small-pill" disabled={note.withheld} data-tip={note.withheld ? 'This note has withheld lines; edit it in the vault' : undefined}

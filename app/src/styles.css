@@ -2005,3 +2005,11 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .nt-a { font-size: inherit; }
 .nt-choices { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .nt-start { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+/* a page's Back row pins to the top once scrolled past: it slides down, then the page title types out beside Back */
+.rb-sentinel { flex: none; height: 1px; margin-bottom: -1px; }
+.sticky-bar { position: sticky; top: 0; z-index: 6; align-items: center; }
+.sticky-bar.stuck { margin-left: -40px; margin-right: -40px; padding: 10px 40px; background: var(--panel); border-bottom: 1px solid var(--line-2); animation: bar-down 240ms ease; }
+@keyframes bar-down { from { transform: translateY(-100%); opacity: 0; } to { transform: none; opacity: 1; } }
+.rb-left { display: inline-flex; align-items: center; gap: 14px; min-width: 0; }
+.rb-title { font-size: 15px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 420px; }
+@media (prefers-reduced-motion: reduce) { .sticky-bar.stuck { animation: none; } }
