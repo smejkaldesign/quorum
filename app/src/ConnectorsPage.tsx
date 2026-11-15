@@ -6,9 +6,9 @@ import { AREAS, CONNECTORS_CHANGED, CONNECTOR_BY_ID, aboutFor, areaOf, areaOfCat
 import { BLOCKED_SENTENCE, ORG_LABEL, ORG_SENTENCE, UNAPPROVED_LABEL, approvalOf, canConnect, hasLocalPart, hiddenFromList, isGoverned, type Approval } from '../connectors/approval';
 import { SyncedFolderConnections, useConnectorPolicy } from './edition';
 import { useFlag } from './flags';
-import { McpStatus, useMcpOverlap } from './McpPaths';
+import { useMcpOverlap } from './McpPaths';
 import { useMenu } from './controls';
-import { IconCheck, IconChevron, IconExternal, IconFolder, IconGrid, IconMore, IconPlus, IconReset } from './icons';
+import { IconCheck, IconChevron, IconExternal, IconGrid, IconMore, IconPlus, IconReset } from './icons';
 import { BRAND_LOGOS } from './brandLogos';
 
 // Settings › Connectors: the Agent OS folder, then the connectors this person connected, under their areas (meeting
@@ -63,6 +63,29 @@ const plural = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`;
 const PRICING = 'https://quorum.watch/#pricing';
 
 // detail is which connector's page is open; SettingsView owns it so the page title can turn into breadcrumbs
+// Quorum's app connector next to the provider's MCP: the explanation and the recommendation as the section's text, then
+// the table alone. On a connector's page with no MCP in the agent, one line says so
+function McpCompareSection({ connector: x, overlap, appOn }: { connector: LibraryConnector; overlap: McpOverlap; appOn: boolean }) {
+  const p = mcpPathsOf(x);
+  if (!p) return null;
+  const has = !!overlap.matches[x.id]?.length;
+  const off = !!overlap.off[x.id]?.length;
+  return (
+    <>
+      <h4>App connector and MCP</h4>
+      <p className="conn-lede conn-section-lede">{p.explain} {p.recommend}</p>
+      <div className="set-card conn-table mcp-paths-card">
+        {has || off ? (
+          <table className="mcp-paths-table">
+            <thead><tr><th /><th scope="col"><span className="mcp-col">App connector{appOn && <Dot on />}</span></th><th scope="col"><span className="mcp-col">{x.name} MCP{has && <Dot on tip="On in your agent" />}</span></th></tr></thead>
+            <tbody>{p.rows.map((r) => <tr key={r.id}><th scope="row">{r.label}</th><td>{r.connector}</td><td>{r.mcp}</td></tr>)}</tbody>
+          </table>
+        ) : <p className="src-status">Your agent has no {x.name} MCP set up.{p.alone ? ` ${p.alone}` : ''}</p>}
+      </div>
+    </>
+  );
+}
+
 // the breadcrumb name of a Connectors detail page: a connector, or a provider's MCP server (mcp:<connector id>)
 export const MCP_PAGE = 'mcp:';
 export function connectorDetailName(id: string): string | null {
@@ -70,7 +93,7 @@ export function connectorDetailName(id: string): string | null {
   return CONNECTOR_BY_ID[id]?.name ?? null;
 }
 
-export function ConnectorsPage({ detail, onDetail, library, onLibrary, brain, onFolder, onNotes, focus }: { detail: string | null; onDetail: (id: string | null) => void; library: boolean; onLibrary: (open: boolean) => void; brain: Brain | null; onFolder: () => void; onNotes: () => void; focus?: { cat: string | true; n: number } | null }) {
+export function ConnectorsPage({ detail, onDetail, library, onLibrary, brain, focus }: { detail: string | null; onDetail: (id: string | null) => void; library: boolean; onLibrary: (open: boolean) => void; brain: Brain | null; onFolder: () => void; onNotes: () => void; focus?: { cat: string | true; n: number } | null }) {
   const [live, setLive] = useState<Live>({ sources: [], cal: null, mcp: null, providers: [], platforms: [], accounts: [] });
   const { list: libraryList, byId } = useLibrary();
   // a connect refused for the wrong account opens the detail page, which offers signing in with another account
@@ -112,12 +135,20 @@ export function ConnectorsPage({ detail, onDetail, library, onLibrary, brain, on
     setBrowseArea(areaOfCategory(focus.cat));
   }, [focus]);
   // the MCP servers that count: on in the agent, and matching a connector Quorum offers today
-  const agentMcps = (overlap?.servers ?? []).filter((m) => m.on && m.provider && byId[m.provider]?.status === 'available');
+  // MCPs the person disconnected from Quorum stay out of the list; their page offers Connect again
+  const [ignored, setIgnored] = useState<string[]>([]);
+  useEffect(() => { window.quorum.getSettings().then((st) => setIgnored(st.mcpIgnored ?? [])).catch(() => {}); }, []);
+  const ignore = (id: string, on: boolean) => {
+    const next = on ? [...new Set([...ignored, id])] : ignored.filter((x) => x !== id);
+    setIgnored(next);
+    window.quorum.setSettings({ mcpIgnored: next }).catch(() => {});
+  };
+  const agentMcps = (overlap?.servers ?? []).filter((m) => m.on && m.provider && byId[m.provider]?.status === 'available' && !ignored.includes(m.provider));
   if (detail?.startsWith(MCP_PAGE) && byId[detail.slice(MCP_PAGE.length)]) {
     const x = byId[detail.slice(MCP_PAGE.length)];
-    return <McpDetail connector={x} icon={icons[x.id] ?? null} servers={overlap?.matches[x.id] ?? []} overlap={overlap} checking={checking} onCheck={check} onOpenConnector={() => onDetail(x.id)} />;
+    return <McpDetail connector={x} icon={icons[x.id] ?? null} servers={overlap?.matches[x.id] ?? []} overlap={overlap} checking={checking} onCheck={check} appOn={isConnected(x, live)} ignored={ignored.includes(x.id)} onIgnore={(on) => ignore(x.id, on)} onOpenConnector={() => onDetail(x.id)} />;
   }
-  if (detail && byId[detail]) return <ConnectorDetail connector={byId[detail]} icon={icons[detail] ?? null} live={live} onChange={load} initialError={refused?.id === detail ? refused.error : ''} approval={approval(byId[detail])} overlap={overlap} checking={checking} onCheck={check} />;
+  if (detail && byId[detail]) return <ConnectorDetail mcpIgnored={ignored.includes(detail)} connector={byId[detail]} icon={icons[detail] ?? null} live={live} onChange={load} initialError={refused?.id === detail ? refused.error : ''} approval={approval(byId[detail])} overlap={overlap} checking={checking} onCheck={check} />;
   // what the library offers today (with meeting capture off, Meet and Teams are not built as imports yet), and
   // anything still connected whatever its status, so it can be disconnected
   const openRefused = (id: string, error: string) => { setRefused({ id, error }); onDetail(id); };
@@ -138,27 +169,12 @@ export function ConnectorsPage({ detail, onDetail, library, onLibrary, brain, on
     <>
       {/* in the page title's row, at the right */}
       <TitleActions><button className="pill primary conn-add" onClick={() => { setBrowseArea(null); onLibrary(true); }}><IconPlus width={16} height={16} /> Add connector</button></TitleActions>
-      <div className="conn-group">
-        <h4>Your notes</h4>
-        <div className="set-card conn-card">
-          <div className="conn-row">
-            <div className="conn-line" role="button" tabIndex={0} onClick={onNotes} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onNotes(); } }}>
-              <span className="conn-logo blank" style={{ width: 28, height: 28 }}><IconFolder width={15} height={15} /></span>
-              <strong className="conn-title">Agent OS folder</strong>
-              <Dot on={!!brain} />
-              {brain && <span className="conn-meta" title={brain.vault || brain.root}>{home(brain.vault || brain.root)}</span>}
-              {!brain && <span className="conn-actions" onClick={(e) => e.stopPropagation()}><button className="pill primary" onClick={onFolder}>Choose folder</button></span>}
-              <IconChevron className="right conn-chev" width={14} height={14} />
-            </div>
-          </div>
-        </div>
-      </div>
       {areas.map((a) => (
         <div key={a.id} className="conn-group" data-conn-group={a.id}>
           <h4>{a.name}</h4>
           <div className="set-card conn-card">
             {a.items.map((x) => <ConnectorRow key={x.id} connector={x} icon={icons[x.id] ?? null} live={live} approval={approval(x)} mcp={overlap?.matches[x.id]} onChange={load} onOpen={() => onDetail(x.id)} onWrongAccount={(e) => openRefused(x.id, e)} />)}
-            {a.mcps.map((m) => <McpRow key={m.name} connector={byId[m.provider!]} icon={icons[m.provider!] ?? null} server={m} onOpen={() => onDetail(`${MCP_PAGE}${m.provider}`)} />)}
+            {a.mcps.map((m) => <McpRow key={m.name} connector={byId[m.provider!]} icon={icons[m.provider!] ?? null} server={m} onOpen={() => onDetail(`${MCP_PAGE}${m.provider}`)} onSync={check} onDisconnect={() => ignore(m.provider!, true)} />)}
           </div>
         </div>
       ))}
@@ -184,8 +200,9 @@ const POPULAR = ['zoom', 'google-calendar', 'slack', 'google-drive', 'notion', '
 const rank = (id: string) => { const i = POPULAR.indexOf(id); return i < 0 ? POPULAR.length : i; };
 
 // A provider's own MCP server in the person's agent, listed in its connector's area. Only servers that match a connector
-// Quorum offers are listed. Quorum does not call these servers: the agent does. The row opens the MCP's page
-function McpRow({ connector: x, icon, server, onOpen }: { connector: LibraryConnector; icon: string | null; server: McpInheritedServer; onOpen: () => void }) {
+// Quorum offers are listed, and not ones the person disconnected from Quorum. Quorum does not call these servers: the
+// agent does. The row opens the MCP's page; its menu has Sync and Disconnect like any connector
+function McpRow({ connector: x, icon, server, onOpen, onSync, onDisconnect }: { connector: LibraryConnector; icon: string | null; server: McpInheritedServer; onOpen: () => void; onSync: () => void; onDisconnect: () => void }) {
   return (
     <div className="conn-row">
       <div className="conn-line" role="button" tabIndex={0} onClick={onOpen} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}>
@@ -193,15 +210,37 @@ function McpRow({ connector: x, icon, server, onOpen }: { connector: LibraryConn
         <strong className="conn-title">{x.name} MCP</strong>
         <Dot on tip={`On in ${whereOf(server)}`} />
         <span className="conn-meta">{whereOf(server)}</span>
+        <McpMenu name={`${x.name} MCP`} onSync={onSync} onDisconnect={onDisconnect} />
         <IconChevron className="right conn-chev" width={14} height={14} />
       </div>
     </div>
   );
 }
 
-// A provider MCP's page: where the agent has it, what it reaches, and how it compares with Quorum's connector
-function McpDetail({ connector: x, icon, servers, overlap, checking, onCheck, onOpenConnector }: { connector: LibraryConnector; icon: string | null; servers: McpOverlapServer[]; overlap: McpOverlap | null; checking: boolean; onCheck: () => void; onOpenConnector: () => void }) {
-  const on = servers.length > 0;
+const MCP_DISCONNECT = (n: string) => `Quorum stops counting your agent's ${n} MCP: it leaves your Connectors and Quorum will not route requests to it once routing ships. Quorum does not read from this MCP today, so nothing else changes. Your agent keeps the server; your Claude Code settings stay as they are.`;
+function McpMenu({ name, onSync, onDisconnect, syncButton = false, syncing = false }: { name: string; onSync: () => void; onDisconnect: () => void; syncButton?: boolean; syncing?: boolean }) {
+  const [open, setOpen] = useMenu();
+  const [confirm, setConfirm] = useState(false);
+  return (
+    <span className="conn-actions" onClick={(e) => e.stopPropagation()}>
+      {syncButton && <button className="pill" disabled={syncing} onClick={onSync}>{syncing ? 'Syncing…' : 'Sync'}</button>}
+      <span className="menu-wrap">
+        <button className="icon-btn" aria-label={`${name} options`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o: boolean) => !o)}><IconMore width={16} height={16} /></button>
+        {open && (
+          <div className="menu" role="menu">
+            {!syncButton && <button role="menuitem" disabled={syncing} onClick={() => { setOpen(false); onSync(); }}><IconReset width={15} height={15} /> Sync</button>}
+            <button role="menuitem" className="danger" onClick={() => { setOpen(false); setConfirm(true); }}>Disconnect</button>
+          </div>
+        )}
+      </span>
+      {confirm && <ConfirmDisconnect name={name} text={MCP_DISCONNECT(name.replace(/ MCP$/, ''))} busy={false} onCancel={() => setConfirm(false)} onConfirm={() => { setConfirm(false); onDisconnect(); }} />}
+    </span>
+  );
+}
+
+// A provider MCP's page: where the agent has it, then how it compares with Quorum's app connector
+function McpDetail({ connector: x, icon, servers, overlap, checking, onCheck, appOn, ignored, onIgnore, onOpenConnector }: { connector: LibraryConnector; icon: string | null; servers: McpOverlapServer[]; overlap: McpOverlap | null; checking: boolean; onCheck: () => void; appOn: boolean; ignored: boolean; onIgnore: (on: boolean) => void; onOpenConnector: () => void }) {
+  const on = servers.length > 0 && !ignored;
   return (
     <div className="conn-detail">
       <div className="set-card conn-detail-card">
@@ -210,11 +249,16 @@ function McpDetail({ connector: x, icon, servers, overlap, checking, onCheck, on
           <h3>{x.name} MCP{on && <Dot on tip="On in your agent" />}</h3>
           <p>{x.name}'s own MCP server, set up in your agent. Your agent calls it when it needs {x.name} data. Quorum sees that it is there and does not read through it.</p>
         </div>
-        <div className="conn-detail-cta"><button className="pill" onClick={onOpenConnector}>Open connector</button></div>
+        <div className="conn-detail-cta">
+          {ignored ? <button className="pill primary" onClick={() => onIgnore(false)}>Connect</button>
+            : servers.length ? <McpMenu name={`${x.name} MCP`} syncButton syncing={checking} onSync={onCheck} onDisconnect={() => onIgnore(true)} />
+            : <button className="pill" disabled={checking} onClick={onCheck}>{checking ? 'Syncing…' : 'Sync'}</button>}
+        </div>
       </div>
+      {ignored && <div className="conn-alert" role="status"><strong>Disconnected from Quorum</strong><span>Quorum does not count this MCP. Your agent still has it. Connect counts it again.</span></div>}
       <h4>Details</h4>
       <div className="set-card conn-table">
-        {!on && <p className="src-status">Your agent does not have this MCP server right now.</p>}
+        {!servers.length && <p className="src-status">Your agent does not have this MCP server right now.</p>}
         {servers.map((m) => (
           <div key={m.name}>
             <div className="conn-kv"><span>Server</span><span>{m.name}</span></div>
@@ -222,13 +266,9 @@ function McpDetail({ connector: x, icon, servers, overlap, checking, onCheck, on
             <div className="conn-kv"><span>Address</span><span>{m.url ?? [m.command, ...m.args].filter(Boolean).join(' ')}</span></div>
           </div>
         ))}
+        <div className="conn-kv"><span>Connector</span><span><button className="link-btn plain" onClick={onOpenConnector}>{x.name}</button></span></div>
       </div>
-      {overlap && mcpPathsOf(x) && (
-        <>
-          <h4>Quorum's connector and the MCP</h4>
-          <div className="set-card conn-table mcp-paths-card"><McpStatus connector={x} overlap={overlap} checking={checking} onCheck={onCheck} /></div>
-        </>
-      )}
+      {overlap && <McpCompareSection connector={x} overlap={overlap} appOn={appOn} />}
     </div>
   );
 }
@@ -320,37 +360,74 @@ function Logo({ id, icon, size = 28 }: { id?: string; icon: string | null; size?
   return icon ? <img className="conn-logo" src={icon} alt="" style={{ width: size, height: size }} /> : <span className="conn-logo blank" style={{ width: size, height: size }}><IconGrid width={14} height={14} /></span>;
 }
 
-// what a connected connector offers: the row's far-right controls and the detail page's buttons
-function Actions({ connector: x, live, busy, act }: { connector: LibraryConnector; live: Live; busy: boolean; act: Act; compact?: boolean }) {
-  const [open, setOpen] = useMenu();
+// What Disconnect means for each kind of connector, said in the confirm before it runs
+function disconnectOf(x: LibraryConnector, live: Live): { text: string; run: () => Promise<unknown> } | null {
   const src = sourceFor(x, live);
-  const running = src?.job?.status === 'running';
+  if (x.kind === 'mcp-source' && src) return { text: `Quorum stops importing ${x.name} notes and signs out of ${x.name}. Notes already imported stay in your vault.`, run: () => window.quorum.sourceDisconnect(src.id) };
+  if (x.id === 'apple-calendar') return { text: 'Quorum stops reading the Calendar app. Upcoming meetings leave Home and new notes lose their meeting title and people.', run: () => window.quorum.calendarSet({ enabled: false }) };
+  if (x.account) return { text: `Quorum removes its ${x.name} sign-in from this Mac and revokes it with ${x.name}. The ${x.name} features stop until you connect again.`, run: () => window.quorum.oauthDisconnect(x.id) };
+  if (x.id === 'claude-code') return { text: 'Quorum removes its MCP server from Claude Code. Claude Code can no longer search your notes and meetings through Quorum.', run: () => window.quorum.mcpRemove() };
+  if (x.kind === 'meeting-app' && x.app && platformFor(x, live)?.connected) return { text: `Quorum stops importing ${x.name} cloud recordings and signs out of your ${x.name} account. Recordings already imported stay in your vault.`, run: () => window.quorum.platformDisconnect(x.app!) };
+  return null;
+}
+// Sync for a connector that brings things in: a meeting-notes source imports now, a meeting app imports its recordings
+function syncOf(x: LibraryConnector, live: Live): { run: () => Promise<unknown>; running: boolean } | null {
+  const src = sourceFor(x, live);
+  if (x.kind === 'mcp-source' && src) return { run: () => window.quorum.sourceSync(src.id), running: src.job?.status === 'running' };
+  const plat = platformFor(x, live);
+  if (x.kind === 'meeting-app' && x.app && plat?.connected) return { run: () => window.quorum.platformSync(x.app!), running: plat.job?.status === 'running' };
+  return null;
+}
+
+// A confirm before a Disconnect: what it changes, then Cancel and Disconnect
+export function ConfirmDisconnect({ name, text, busy, onCancel, onConfirm }: { name: string; text: string; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  return createPortal(
+    <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCancel(); }}>
+      <div className="modal" role="alertdialog" aria-modal="true" aria-labelledby="disc-title" onKeyDown={(e) => { if (e.key === 'Escape' && !busy) onCancel(); }}>
+        <h2 id="disc-title">Disconnect {name}?</h2>
+        <p>{text}</p>
+        <div className="modal-actions">
+          <span />
+          <span className="modal-actions-end">
+            <button className="pill" autoFocus disabled={busy} onClick={onCancel}>Cancel</button>
+            <button className="pill danger-pill" disabled={busy} onClick={onConfirm}>{busy ? 'Disconnecting…' : 'Disconnect'}</button>
+          </span>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// what a connected connector offers: Sync (in the menu on a row, as a button beside the menu on its page), the
+// connector's own items, and Disconnect behind a confirm
+function Actions({ connector: x, live, busy, act, syncButton = false, onSync }: { connector: LibraryConnector; live: Live; busy: boolean; act: Act; syncButton?: boolean; onSync?: () => void }) {
+  const [open, setOpen] = useMenu();
+  const [confirm, setConfirm] = useState(false);
+  const src = sourceFor(x, live);
+  const sync = syncOf(x, live);
+  const disc = disconnectOf(x, live);
+  const runSync = () => { onSync?.(); if (sync) act(sync.run); };
   return (
     <span className="conn-actions" onClick={(e) => e.stopPropagation()}>
+      {syncButton && (sync || onSync) && <button className="pill" disabled={busy || sync?.running} onClick={runSync}>{sync?.running ? 'Syncing…' : 'Sync'}</button>}
       <span className="menu-wrap">
         <button className="icon-btn" aria-label={`${x.name} options`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o: boolean) => !o)}><IconMore width={16} height={16} /></button>
         {open && (
           <div className="menu" role="menu">
-            {x.kind === 'mcp-source' && src && <button role="menuitem" disabled={busy || running} onClick={() => { setOpen(false); act(() => window.quorum.sourceSync(src.id)); }}><IconReset width={15} height={15} /> {running ? 'Syncing…' : 'Sync now'}</button>}
+            {!syncButton && sync && <button role="menuitem" disabled={busy || sync.running} onClick={() => { setOpen(false); runSync(); }}><IconReset width={15} height={15} /> {sync.running ? 'Syncing…' : 'Sync'}</button>}
             {src?.folderPath && <button role="menuitem" onClick={() => { setOpen(false); window.quorum.meetingSourceOpen(src.folderPath!); }}><IconExternal width={15} height={15} /> Show notes folder</button>}
-            {x.kind === 'mcp-source' && src && <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.sourceDisconnect(src.id)); }}>Disconnect</button>}
-            {x.id === 'apple-calendar' && <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.calendarSet({ enabled: false })); }}>Disconnect</button>}
             {accountFor(x, live)?.manageUrl && <button role="menuitem" onClick={() => { setOpen(false); window.quorum.openExternal(accountFor(x, live)!.manageUrl!); }}><IconExternal width={15} height={15} /> Choose repositories</button>}
-            {x.account && <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.oauthDisconnect(x.id)); }}>Disconnect</button>}
-            {x.id === 'claude-code' && <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.mcpRemove()); }}>Remove from Claude Code</button>}
-            {x.kind === 'meeting-app' && x.app && <>
-              {!cloudOnly(x) && <button role="menuitem" onClick={() => { setOpen(false); act(async () => { await window.quorum.meetingProviderCheck(); await new Promise((r) => setTimeout(r, 1500)); }); }}><IconReset width={15} height={15} /> Check again</button>}
-              {!cloudOnly(x) && <button role="menuitem" onClick={() => { setOpen(false); window.quorum.axSettingsOpen(); }}>Accessibility settings</button>}
-              {platformFor(x, live)?.connected && <>
-                <div className="menu-sep" />
-                <button role="menuitem" onClick={() => { setOpen(false); act(() => window.quorum.platformSync(x.app!)); }}><IconReset width={15} height={15} /> Import recordings now</button>
-                <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.platformDisconnect(x.app!)); }}>Disconnect {x.name} account</button>
-              </>}
-              {!cloudOnly(x) && <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.meetingProviderSet(x.app!, false)); }}>Stop listening</button>}
+            {x.kind === 'meeting-app' && x.app && !cloudOnly(x) && <>
+              <button role="menuitem" onClick={() => { setOpen(false); act(async () => { await window.quorum.meetingProviderCheck(); await new Promise((r) => setTimeout(r, 1500)); }); }}><IconReset width={15} height={15} /> Check again</button>
+              <button role="menuitem" onClick={() => { setOpen(false); window.quorum.axSettingsOpen(); }}>Accessibility settings</button>
+              <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.meetingProviderSet(x.app!, false)); }}>Stop listening</button>
             </>}
+            {disc && <button role="menuitem" className="danger" onClick={() => { setOpen(false); setConfirm(true); }}>Disconnect</button>}
           </div>
         )}
       </span>
+      {confirm && disc && <ConfirmDisconnect name={x.name} text={disc.text} busy={busy} onCancel={() => setConfirm(false)} onConfirm={() => act(async () => { await disc.run(); setConfirm(false); })} />}
     </span>
   );
 }
@@ -382,7 +459,7 @@ function ConnectorRow({ connector: x, icon, live, approval, mcp, onChange, onOpe
         {approval === 'approved' && <em className="soon grey">Workspace</em>}
         <span className="conn-fill" />
         {mcpOn && <em className="soon green" data-tip={`Your agent's ${x.name} MCP is connected`}>Agent has MCP</em>}
-        {on ? <Actions connector={x} live={live} busy={busy} act={act} compact />
+        {on ? <Actions connector={x} live={live} busy={busy} act={act}/>
           : <span className="conn-actions" onClick={(e) => e.stopPropagation()}>{cloud ? <button className="pill" onClick={() => window.quorum.openExternal(PRICING)}>See Cloud</button> : off || !personal ? null : <ConnectButton connector={x} live={live} busy={busy} act={act} onWrongAccount={onWrongAccount} />}</span>}
         <button className={`icon-btn conn-fold${open ? ' open' : ''}`} aria-expanded={open} aria-label={open ? `Hide ${x.name} details` : `Show ${x.name} details`} onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}><IconChevron width={14} height={14} /></button>
       </div>
@@ -399,7 +476,7 @@ function ConnectorRow({ connector: x, icon, live, approval, mcp, onChange, onOpe
   );
 }
 
-function ConnectorDetail({ connector: x, icon, live, onChange, initialError = '', approval = 'open', overlap = null, checking = false, onCheck = () => {} }: { connector: LibraryConnector; icon: string | null; live: Live; onChange: () => Promise<void>; initialError?: string; approval?: Approval; overlap?: McpOverlap | null; checking?: boolean; onCheck?: () => void }) {
+function ConnectorDetail({ connector: x, icon, live, onChange, initialError = '', approval = 'open', overlap = null, onCheck = () => {}, mcpIgnored = false }: { connector: LibraryConnector; icon: string | null; live: Live; onChange: () => Promise<void>; initialError?: string; approval?: Approval; overlap?: McpOverlap | null; checking?: boolean; onCheck?: () => void; mcpIgnored?: boolean }) {
   const blocked = approval === 'blocked';
   // a personal connect or reconnect needs an open or approved connector; listening on this Mac is never governed
   const refusal = canConnect(approval) ? null : approval === 'org' ? ORG_SENTENCE(x.name) : BLOCKED_SENTENCE;
@@ -478,7 +555,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
           <p>{aboutFor(x, capture(x))}</p>
         </div>
         <div className="conn-detail-cta">
-          {on ? <Actions connector={x} live={live} busy={busy} act={act} />
+          {on ? <Actions connector={x} live={live} busy={busy} act={act} syncButton onSync={onCheck} />
             : !soon && !off && personal && !(accountProblem && x.kind === 'mcp-source') ? <ConnectButton connector={x} live={live} busy={busy} act={act} />
             : <span data-tip={soon || off ? 'Coming soon' : refusal ?? 'Not available'}><button className="pill primary" disabled>Connect</button></span>}
         </div>
@@ -545,12 +622,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
           {rows.map(([k, v]) => <div key={k} className="conn-kv"><span>{k}</span><span>{v}</span></div>)}
         </div>
       )}
-      {overlap && mcpPathsOf(x) && (
-        <>
-          <h4>Your agent's MCP</h4>
-          <div className="set-card conn-table mcp-paths-card"><McpStatus connector={x} overlap={overlap} checking={checking} onCheck={onCheck} /></div>
-        </>
-      )}
+      {overlap && !mcpIgnored && <McpCompareSection connector={x} overlap={overlap} appOn={on} />}
       {x.id === 'github' && <SyncedFolderConnections />}
       {x.kind === 'mcp-source' && src?.agent && src.agent.runners.length > 0 && (!on || src.agent.schedule !== 'off') && <AgentImport source={src} busy={busy} act={act} />}
       <h4>Enables</h4>
