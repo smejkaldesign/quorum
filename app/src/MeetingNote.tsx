@@ -4,7 +4,6 @@ import { TypedTitle, toPageTop, useStuck, useToolbarDock } from './StickyBar';
 import markProd from '../assets/quorum-mark.png';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CONNECTOR_BY_ID } from '../connectors/library';
-import { ViewsPill } from './ViewsPill';
 import { KeepPrivate } from './KeepPrivate';
 import { SourceAsk, useMeetingSources } from './MeetingSources';
 import type { CalendarEvent, MeetingShare, NoteDoc, Visibility } from './quorum';
@@ -20,6 +19,7 @@ import { NoteMenu, VisibilityPill } from './NoteControls';
 export { NoteMenu, VisibilityPill };
 import { AgentRun, NoteNotifications, unseenOf, useNoteActivity } from './AgentActivity';
 import { soundLine } from './soundLine';
+import { HeadingLinks } from './HeadingLinks';
 
 type Turn = { q: string; a: string; proposal: string | null; state?: 'applied' | 'discarded'; pending?: boolean };
 
@@ -100,6 +100,8 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
   const bar = useStuck();
   useToolbarDock(bar.sentinel, bar.stuck);
   // a tab picked while the bar is pinned opens at the top of the page
+  // the editor's headings: hovering the # offers a link to that heading
+  const headRoot = useRef<HTMLDivElement>(null);
   const pick = (t: typeof showing) => { setShowing(t); if (bar.stuck) toPageTop(bar.sentinel); };
   // Notifications: the agent's events and the person's, with a dot on the tab for what is new. Opening the tab marks it
   // seen; rows that were new keep their dot while it stays open
@@ -274,7 +276,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
           </>}
           <KeepPrivate file={note.file} onState={setShare} onRef={() => reload()} reload={shareRead} />
           {!inMeetingsKb && <VisibilityPill value={note.visibility} onChange={async (v) => { await window.quorum.noteVisibility(note.file, v); reload(); }} />}
-          <NoteMenu note={note} onDeleted={onBack} />
+          <NoteMenu note={note} views={note.views} onDeleted={onBack} />
         </div>
       </div>
       <article className="doc">
@@ -285,7 +287,6 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
             <button className="meta-pill meta-icon" aria-label="Open in Memory" data-tip={`In your memory: ${note.rel.split('/').slice(0, -1).join('/') || 'top folder'}`}
               onClick={() => window.dispatchEvent(new CustomEvent('quorum:open-memory', { detail: note.file }))}><IconFolder width={17} height={17} /></button>
           )}
-          <ViewsPill views={note.views} />
           <div className="view-toggle" role="group" aria-label="Show">
             {parts.summary && <button className={showing === 'summary' ? 'on' : ''} aria-pressed={showing === 'summary'} aria-label="Summary" data-tip="Summary" onClick={() => pick('summary')}><IconLogs width={16} height={16} /></button>}
             <button className={showing === 'note' ? 'on' : ''} aria-pressed={showing === 'note'} aria-label="Note" data-tip="Note" onClick={() => pick('note')}><IconNotes width={16} height={16} /></button>
@@ -308,7 +309,8 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
         {(showing === 'note' || showing === 'summary') && note.withheld && <p className="muted withheld-note">This note has withheld lines, so edit it in your vault.</p>}
         {(showing === 'note' || showing === 'summary') && (
           // Note and Summary edit in place; a note with withheld lines stays read-only
-          <div className="reader-edit my-notes-editor" key={`${showing}-${editKey}`} onInput={() => { typed.current[showing as 'note' | 'summary'] = true; }}>
+          <div ref={headRoot} className="reader-edit my-notes-editor" key={`${showing}-${editKey}`} onInput={() => { typed.current[showing as 'note' | 'summary'] = true; }}>
+            <HeadingLinks root={headRoot} base={note.link ?? null} />
             <NoteEditor ref={showing === 'note' ? noteEd : sumEd} value={showing === 'note' ? edits.note ?? parts.note : edits.summary ?? parts.summary}
               onChange={onEdit(showing as 'note' | 'summary')} readOnly={note.withheld} placeholder={showing === 'note' ? 'Type your notes' : 'No summary yet'} />
           </div>

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { Backlink, OutLink, SearchHit } from './quorum';
-import { IconBack, IconChevron, IconExternal, IconSearch } from './icons';
+import type { Backlink, NoteViews, OutLink, SearchHit } from './quorum';
+import { slugsOf, useCopyLink } from './HeadingLinks';
+import { agentName } from './ViewsPill';
+import { IconBack, IconChevron, IconExternal, IconLink, IconSearch } from './icons';
 
 // Right-hand panel beside an open note: what links here, what it links to, and its headings; children (the note's
 // versions in the Memory tab) come last
@@ -20,8 +22,8 @@ function toHeading(text: string, nth: number) {
   (hits[nth] ?? hits[0])?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-export function NotePanel({ rel, body, previous, onOpen, onResolve, children }: {
-  previous?: { rel: string; title: string } | null; rel: string; body: string; onOpen: (rel: string) => void; onResolve: (target: string) => void; children?: ReactNode;
+export function NotePanel({ rel, body, previous, onOpen, onResolve, views = null, children }: {
+  previous?: { rel: string; title: string } | null; rel: string; body: string; onOpen: (rel: string) => void; onResolve: (target: string) => void; views?: NoteViews | null; children?: ReactNode;
 }) {
   const [back, setBack] = useState<Backlink[]>([]);
   const [out, setOut] = useState<OutLink[]>([]);
@@ -31,37 +33,55 @@ export function NotePanel({ rel, body, previous, onOpen, onResolve, children }: 
     return () => { live = false; };
   }, [rel, body]);
   const outline = useMemo(() => body.split('\n').map((l) => l.match(/^(#{1,4})\s+(.+)$/)).filter(Boolean).map((m) => ({ level: m![1].length, text: m![2] })), [body]);
+  const slugs = useMemo(() => slugsOf(outline.map((h) => h.text)), [outline]);
   const uniqueOut = useMemo(() => [...new Map(out.map((o) => [o.rel ?? `?${o.target}`, o])).values()], [out]);
+  const { copied, copy } = useCopyLink();
+  const base = `quorum://note/${encodeURIComponent(rel)}`;
 
   return (
-    <aside className="note-panel" aria-label="Links and outline">
+    <aside className="note-panel" aria-label="Outline, versions and links">
       {previous && previous.rel !== rel && (
         <button className="np-item np-link np-prev" onClick={() => onOpen(previous.rel)} data-tip={`Back to ${previous.title}`} data-tip-pos="left">
           <IconBack width={13} height={13} /><span className="np-prev-label">Previous memory</span><strong>{previous.title}</strong>
         </button>
       )}
-      <Section title="Backlinks" count={back.length}>
-        {back.length ? back.map((b, i) => <LinkRow key={`${b.rel}-${i}`} title={b.title} tip={b.context ? b.context.slice(0, 140) : undefined} onClick={() => onOpen(b.rel)} />)
-          : <p className="np-empty">No notes link here yet.</p>}
-      </Section>
-      <Section title="Outgoing links" count={uniqueOut.length}>
-        {uniqueOut.length ? uniqueOut.map((o) => (
-          <LinkRow key={o.rel ?? o.target} title={o.title} className={o.rel ? '' : 'unresolved'} tip={o.rel ? undefined : 'No note with this name yet'} onClick={() => (o.rel ? onOpen(o.rel) : onResolve(o.target))} />
-        )) : <p className="np-empty">This note doesn't link anywhere.</p>}
-      </Section>
       <Section title="Outline" count={outline.length}>
         {outline.length ? outline.map((h, i) => {
           const nth = outline.slice(0, i).filter((x) => x.text === h.text).length;
-          return <button key={i} className="np-outline" onClick={() => toHeading(h.text, nth)}>{h.text.replace(/[*_`]/g, '')}</button>;
+          const url = `${base}#${slugs[i]}`;
+          return (
+            <div key={i} className="np-outline-row">
+              <button className="np-outline" onClick={() => toHeading(h.text, nth)}>{h.text.replace(/[*_`]/g, '')}</button>
+              <button className="np-anchor" aria-label="Copy a link to this heading" data-tip={copied === url ? 'Link copied' : 'Copy link to this heading'} data-tip-pos="left" onClick={() => copy(url)}><IconLink width={13} height={13} /></button>
+            </div>
+          );
         }) : <p className="np-empty">No headings.</p>}
       </Section>
       {children}
+      {/* links between notes in this vault: notes that link here, and notes this one links to */}
+      <Section title="Linked from" count={back.length}>
+        {back.length ? back.map((b, i) => <LinkRow key={`${b.rel}-${i}`} title={b.title} tip={b.context ? b.context.slice(0, 140) : undefined} onClick={() => onOpen(b.rel)} />)
+          : <p className="np-empty">No notes link here yet.</p>}
+      </Section>
+      <Section title="Links to" count={uniqueOut.length}>
+        {uniqueOut.length ? uniqueOut.map((o) => (
+          <LinkRow key={o.rel ?? o.target} title={o.title} className={o.rel ? '' : 'unresolved'} tip={o.rel ? undefined : 'No note with this name yet'} onClick={() => (o.rel ? onOpen(o.rel) : onResolve(o.target))} />
+        )) : <p className="np-empty">This note links to no other notes.</p>}
+      </Section>
+      <Section title="Views" count={views?.total ?? 0}>
+        {views?.total ? <>
+          <div className="views-row"><span>People</span><strong>{views.human}</strong></div>
+          <div className="views-row"><span>Agents</span><strong>{views.agent}</strong></div>
+          {views.agents.map((a) => <div key={a.via} className="views-row sub"><span>{agentName(a.via)}</span><strong>{a.count}</strong></div>)}
+        </> : <p className="np-empty">Nobody has read it in Quorum yet.</p>}
+      </Section>
     </aside>
   );
 }
 
+// a section of the panel; one with nothing in it starts closed
 export function Section({ title, count, children }: { title: string; count: number; children: ReactNode }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(count > 0);
   return (
     <section className="np-section">
       <button className="np-head" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
