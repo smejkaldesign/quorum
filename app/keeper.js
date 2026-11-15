@@ -236,6 +236,31 @@ export function informative(fact) {
 // the model's lines, with facts that carry nothing left out before the list is deduplicated
 export const parseFacts = (out) => String(out ?? '').split('\n').map((l) => l.trim()).filter((l) => l.startsWith('- ')).map((l) => l.slice(2).trim()).filter((l) => l && informative(l)).slice(0, 3);
 
+// Links the first plain mention of each name in a note's body to the memory it was filed into: "Ana Ruiz" becomes
+// [[ana-ruiz|Ana Ruiz]]. Frontmatter, headings, code blocks and text already inside a link stay as they are, and a
+// name whose note the body already links to is left alone. Pure
+export function linkMentions(text, links) {
+  const fm = String(text).match(/^---\n[\s\S]*?\n---\n/)?.[0] ?? '';
+  let body = String(text).slice(fm.length);
+  for (const { name, target } of links) {
+    if (!name || name.length < 3 || body.includes(`[[${target}`)) continue;
+    const re = new RegExp(`(^|[^\\p{L}\\p{N}\\[|])(${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})(?=[^\\p{L}\\p{N}\\]|]|$)`, 'iu');
+    let fence = false, done = false;
+    body = body.split('\n').map((line) => {
+      if (/^\s*```/.test(line)) { fence = !fence; return line; }
+      if (done || fence || /^\s*#/.test(line)) return line;
+      // only outside existing [[links]]
+      const parts = line.split(/(\[\[[^\]]*\]\])/);
+      for (let i = 0; i < parts.length && !done; i += 2) {
+        const m = parts[i].match(re);
+        if (m) { parts[i] = parts[i].slice(0, m.index + m[1].length) + `[[${target}|${m[2]}]]` + parts[i].slice(m.index + m[0].length); done = true; }
+      }
+      return parts.join('');
+    }).join('\n');
+  }
+  return fm + body;
+}
+
 export function createKeeper({ onStep = () => {}, brain, settings, saveSettings = () => {}, guards = () => null, wouldBlock = () => null, runText = null, hasModel = () => false, owner = () => '', log = () => {}, onChange = () => {}, errorLog = null, versions = null, live = null }) {
   // factsBudget and factsNote are null until the user picks one
   // meetingsIndex writes the meeting index lines to <meetings folder>/index.md while the vault owns the root index
@@ -595,13 +620,15 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
       const cur = read(abs);
       if (!(noCreate && cur == null)) touch(abs, appendUnder(cur ?? `# ${date}\n`, '## Meetings', `- ${link} ${title}`), cur);
     }
+    // memories this note was filed into, linked inline in it once filing is done
+    const inline = [];
     // people: a note per participant, matched by slug
     if (f.people && owns(rows, 'links')) {
       if (people.length) step(`Checking notes for ${people.length} ${people.length === 1 ? 'person' : 'people'}`);
       for (const p of people) {
         const abs = path.join(vault, f.people, `${slug(p)}.md`);
         const cur = read(abs);
-        if (cur != null) touch(abs, appendUnder(cur, '## Meetings', `- ${date} ${link} ${title}`), cur);
+        if (cur != null) { touch(abs, appendUnder(cur, '## Meetings', `- ${date} ${link} ${title}`), cur); inline.push({ name: p, target: slug(p) }); }
       }
     }
     // projects: a note whose title appears in the meeting text
@@ -617,7 +644,18 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
         const name = (parseFrontmatter(cur).props.title ?? cur.match(/^#\s+(.+)$/m)?.[1] ?? path.basename(n, '.md')).toString().trim();
         if (name.length < 3) continue;
         const hit = new RegExp(`(^|[^a-z0-9])${name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`, 'i').test(body);
-        if (hit) touch(abs, appendUnder(cur, '## Meetings', `- ${date} ${link} ${title}`), cur);
+        if (hit) { touch(abs, appendUnder(cur, '## Meetings', `- ${date} ${link} ${title}`), cur); inline.push({ name, target: path.basename(n, '.md') }); }
+      }
+    }
+    // the same links inline in the meeting note: a name it mentions points at the memory it was filed into. Only in a
+    // note Quorum wrote or imported, or with Edit vault notes on; any other note is left as the person wrote it
+    if (inline.length) {
+      const own = /^source:\s*"?quorum(-dev)?"?\s*$/m.test(text) || /^imported_by:\s*"?agent"?\s*$/m.test(text);
+      const linked = linkMentions(text, inline);
+      if (linked !== text && (own || conf().editVault)) {
+        step('Linking the names it mentions to their memories');
+        writeNote(vault, path.join(vault, rel), linked);
+        changed.push(rel);
       }
     }
     // learned facts, with the person's own model source, into the learned list (saveFacts); lines pruned to fit the
@@ -767,6 +805,8 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
           const facts = st.partial[n.rel] !== n.h && !later;
           const left = [];
           const changed = await file(vault, reg, st, n.rel, n.text, { facts, marked: result.marked, left, noCreate: waits });
+          // a note whose mentions were linked just now counts as filed in its new form, so the next run leaves it alone
+          if (changed.includes(n.rel)) { const now = read(path.join(vault, n.rel)); if (now != null) n.h = sha(now); }
           result.changed += changed.length;
           // what this note was filed into, for the line above its editor (noteTrail)
           st.trail ??= {};

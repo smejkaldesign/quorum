@@ -9,6 +9,8 @@ type Turnish = { q: string; a: string; pending?: boolean };
 export function useChats<T extends Turnish>() {
   const [chats, setChats] = useState<ChatEntry<T>[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
+  // Exit chat plays the opening in reverse: the chat slides down and fades, then closes
+  const [closing, setClosing] = useState(false);
   const wantNew = useRef(false);
   const chatsRef = useRef(chats);
   chatsRef.current = chats;
@@ -35,29 +37,42 @@ export function useChats<T extends Turnish>() {
     setOpenId((o) => (o === tmp ? real : o));
   };
   const newChat = () => { wantNew.current = true; setOpenId(null); };
-  return { chats, setChats, openId, setOpenId, active, target, update, settle, newChat, exit: () => setOpenId(null) };
+  const exit = () => {
+    if (closing) return;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { setOpenId(null); return; }
+    setClosing(true);
+    window.setTimeout(() => { setOpenId(null); setClosing(false); }, 220);
+  };
+  return { chats, setChats, openId, setOpenId, active, target, update, settle, newChat, exit, closing };
 }
 
 type Me = { name: string; photo: string | null };
-// the collapsed chats, one line each: who asked, the first question cut to fit, and View at the right on hover. View
-// opens that chat alone
-export function ChatList<T extends Turnish>({ chats, onOpen, me }: { chats: ChatEntry<T>[]; onOpen: (id: string) => void; me: Me }) {
+// The chats on a page, floating above the composer the way the quick asks do: "N chats" beside the first chat (avatar,
+// name, its first question), and View (one chat) or View all chats at the right. View all opens the list below the
+// first row, five rows tall and scrolling past that; every row opens its chat. Opening one scrolls the page so the
+// chat starts at the top, or as high as it can go when it is short
+export function ChatStrip<T extends Turnish>({ chats, onOpen, me }: { chats: ChatEntry<T>[]; onOpen: (id: string) => void; me: Me }) {
+  const [all, setAll] = useState(false);
   if (!chats.length) return null;
+  const newest = [...chats].reverse();
+  const open = (id: string) => {
+    setAll(false);
+    onOpen(id);
+    requestAnimationFrame(() => requestAnimationFrame(() => document.querySelector('.note-thread.chat-open')?.scrollIntoView({ behavior: 'smooth', block: 'start' })));
+  };
+  const row = (c: ChatEntry<T>) => (
+    <button key={c.id} className="cs-row" onClick={() => open(c.id)} data-tip={c.turns[0]?.q}>
+      <Avatar name={me.name} photo={me.photo} size={20} /><strong>{me.name}</strong><span className="cs-q">{c.turns[0]?.q ?? 'New chat'}</span>
+    </button>
+  );
   return (
-    <section className="note-thread chat-list" aria-label="Chats">
-      <h2 className="chat-list-head">{chats.length} {chats.length === 1 ? 'chat' : 'chats'}</h2>
-      {chats.map((c) => {
-        const q = c.turns[0]?.q ?? 'New chat';
-        return (
-          <div key={c.id} className="chat-row">
-            <Avatar name={me.name} photo={me.photo} size={22} />
-            <strong className="chat-row-who">{me.name}</strong>
-            <span className="chat-row-q">{q}</span>
-            <button className="pill small-pill chat-btn" aria-label={`View chat: ${q}`} onClick={() => onOpen(c.id)}>View</button>
-          </div>
-        );
-      })}
-    </section>
+    <div className={`chat-strip${all ? ' all' : ''}`} role="group" aria-label="Chats on this page">
+      <span className="cs-count">{chats.length} {chats.length === 1 ? 'chat' : 'chats'}</span>
+      <div className="cs-list">{(all ? newest : newest.slice(0, 1)).map(row)}</div>
+      <button className="up-all cs-all" aria-expanded={chats.length > 1 ? all : undefined} onClick={() => (chats.length === 1 ? open(chats[0].id) : setAll((x) => !x))}>
+        {chats.length === 1 ? 'View' : all ? 'Hide' : 'View all chats'}
+      </button>
+    </div>
   );
 }
 

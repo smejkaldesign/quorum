@@ -10,7 +10,7 @@ import { IconBell, IconRecord, IconSound, IconStop, IconCalendar, IconClock, Ico
 import { NoteEditor } from './editor/NoteEditor';
 import { TypedTitle, useStuck } from './StickyBar';
 import { splitChoices } from './MeetingNote';
-import { ChatExit, ChatList, useChats } from './ChatStack';
+import { ChatExit, ChatStrip, useChats } from './ChatStack';
 import { Composer } from './Composer';
 import { AgentRun, NoteNotifications, unseenOf, useNoteActivity } from './AgentActivity';
 
@@ -268,9 +268,8 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
 
             {/* the chat on this note, below a divider once it starts: the same layout as every other note */}
             {saved && showing === 'activity' && <NoteNotifications act={act} seenBefore={seenBefore} onReviewed={reloadAct} />}
-            {!cs.active && <ChatList chats={cs.chats} onOpen={cs.setOpenId} me={{ name: asker?.name || me?.name || 'You', photo: asker?.photo ?? me?.photo ?? null }} />}
             {cs.active && (
-              <section className="note-thread" aria-label="Questions about this note">
+              <section className={`note-thread chat-open${cs.closing ? ' closing' : ''}`} aria-label="Questions about this note">
                 <ChatExit onExit={cs.exit} />
                 {followups.map((f, i) => (
                   <div key={i} className="nt-turn">
@@ -291,6 +290,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
       )}
 
       {!live && <div className="note-dock end-dock">
+{!cs.active && <ChatStrip chats={cs.chats} onOpen={cs.setOpenId} me={{ name: asker?.name || me?.name || 'You', photo: asker?.photo ?? me?.photo ?? null }} />}
         <Composer className="note-composer" value={draftQ} onChange={setDraftQ} onSubmit={() => ask()} busy={asking || summarizing} onNewChat={cs.chats.length ? cs.newChat : undefined} placeholder="Ask about this note" />
       </div>}
     </div>

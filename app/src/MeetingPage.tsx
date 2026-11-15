@@ -14,7 +14,7 @@ import { IconLogs, IconNotes, IconRecord, IconSound } from './icons';
 import { Composer } from './Composer';
 import { Avatar } from './Speaker';
 import { splitChoices } from './MeetingNote';
-import { ChatExit, ChatList, useChats, useComposerFocus } from './ChatStack';
+import { ChatExit, ChatStrip, useChats, useComposerFocus } from './ChatStack';
 import markProd from '../assets/quorum-mark.png';
 
 // one click each, above the chat input before the first question
@@ -60,9 +60,8 @@ function MeetingChat({ event }: { event: CalendarEvent }) {
   const inChat = useComposerFocus();
   return (
     <>
-      {!cs.active && <ChatList chats={cs.chats} onOpen={cs.setOpenId} me={me} />}
       {cs.active && (
-        <section className="note-thread" aria-label="Questions about this meeting">
+        <section className={`note-thread chat-open${cs.closing ? ' closing' : ''}`} aria-label="Questions about this meeting">
           <ChatExit onExit={cs.exit} />
           {turns.map((t, i) => {
             const { text, choices } = splitChoices(t.pending ? live : t.a);
@@ -86,6 +85,7 @@ function MeetingChat({ event }: { event: CalendarEvent }) {
             {PREP_ASKS.map((q) => <button key={q} className="skill-pill" disabled={busy} onClick={() => ask(q)}>{q}</button>)}
           </div>
         )}
+{!cs.active && <ChatStrip chats={cs.chats} onOpen={cs.setOpenId} me={me} />}
         <Composer className="note-composer" value={draft} onChange={setDraft} onSubmit={() => ask()} busy={busy} onNewChat={cs.chats.length ? cs.newChat : undefined} placeholder="Ask about this meeting" />
       </div>
     </>
@@ -250,7 +250,7 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
           // five at first; Show more adds up to ten more
           return (
             <section className="mp-section">
-              <h2>Related meetings</h2>
+              <div className="mp-head"><h2>Related meetings</h2>{rows.length > 5 && <button className="up-all" aria-expanded={relatedAll} onClick={() => setRelatedAll((x) => !x)}>{relatedAll ? 'Show less' : 'Show more'}</button>}</div>
               <div className="mp-past">
                 {rows.slice(0, relatedAll ? 15 : 5).map((p) => (
                   <button key={p.file} className="mp-past-row" onClick={() => onOpenNote(p.file)}>
@@ -258,7 +258,6 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
                   </button>
                 ))}
               </div>
-              {rows.length > 5 && !relatedAll && <button className="up-all mp-more" onClick={() => setRelatedAll(true)}>Show more</button>}
             </section>
           );
         })()}
