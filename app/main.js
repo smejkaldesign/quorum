@@ -26,6 +26,7 @@ import { CALL_ACTIVE, DICTATION_OFF, keepActions, notetakerGates, recordDecision
 import { hashText, newNoteText, noteFileName, noteForEditor, rewriteNote, screenRead, splitNote, validFrontmatter, yamlStr } from './handnote.js';
 import { createKeeper } from './keeper.js';
 import { createVersionStore } from './memoryVersions.js';
+import { createLiveRuns, stopAndRestore } from './liveRuns.js';
 import { lineDiff, noteBody } from './memoryReview.js';
 import { contextBudget } from './context-budget.js';
 import { skillUsage, stashSkill } from './skill-usage.js';
@@ -168,11 +169,13 @@ const memoryVersions = createVersionStore({
   dir: path.join(DATA_DIR, 'memory-versions'), autoApprove: () => settings.memoryAutoApprove !== false, dotDays: () => settings.memoryDotDays ?? 30,
   onChange: (rels) => toUI('memory-updates', rels),
 });
+// the agent runs writing vault notes right now, for the Memory tab's shimmer, lock and Stop (liveRuns.js)
+const liveRuns = createLiveRuns({ onChange: (s) => toUI('live-runs', s) });
 // the keeper maintains a Quorum-built Agent OS after each note (keeper.js); the person's own model source writes the facts
 const keeper = createKeeper({
   brain: () => brain(), settings, saveSettings: () => store.settings.save(), guards: () => guardrails.compiled(), wouldBlock,
   runText: (prompt, system) => runClaude(prompt, system, 'haiku'), hasModel: () => modelSource() !== 'none', owner: () => USER_NAME,
-  log: (...a) => log(...a), onChange: (r) => toUI('keeper', r), errorLog: KEEPER_ERRORS, versions: memoryVersions,
+  log: (...a) => log(...a), onChange: (r) => toUI('keeper', r), errorLog: KEEPER_ERRORS, versions: memoryVersions, live: liveRuns,
 });
 ipcMain.handle('keeper-status', () => keeper.status());
 ipcMain.handle('keeper-set', (_e, patch) => keeper.set(patch ?? {}));
@@ -1311,6 +1314,10 @@ ipcMain.handle('set-settings', (_e, next) => {
     settings.memoryAutoApprove = next.memoryAutoApprove;
     store.settings.save();
   }
+  if (typeof next.memoryHighlight === 'boolean') {
+    settings.memoryHighlight = next.memoryHighlight;
+    store.settings.save();
+  }
   if (Number.isInteger(next.memoryDotDays) && next.memoryDotDays >= 1 && next.memoryDotDays <= 365) {
     settings.memoryDotDays = next.memoryDotDays;
     store.settings.save();
@@ -1430,7 +1437,9 @@ function watchAgent(reason, fn) {
   const b = brain();
   const p = agentContext().powers;
   if (!b || !(p.skills || p.agents || p.mcp)) return fn();
-  return memoryVersions.watch(b.vault, { who: 'agent', reason, skip: (rel) => excludedPath(rel) }, fn);
+  // the run names no files until it ends, so the Memory tab shows it as working in the whole vault
+  const id = liveRuns.start({ who: 'agent', label: 'Agent', wholeVault: true });
+  return memoryVersions.watch(b.vault, { who: 'agent', reason, skip: (rel) => excludedPath(rel) }, fn).finally(() => liveRuns.end(id));
 }
 // Cloud: the knowledge bases the person can read (ee/kbSearch.js), searched alongside the Agent OS; null in the local edition
 let kbSearch = null;
@@ -1884,7 +1893,16 @@ function openFreshSignIn(url, name) {
   win.loadURL(url);
   return Promise.resolve();
 }
-const sourcesApi = registerSources({ ipcMain: connectIpc, settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), openFresh: openFreshSignIn, afterWrite: (file) => { account.sync.pushMeetingNote(file); keeper.schedule('import'); }, version: app.getVersion(), agentRuntime: { runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV } });
+// a meeting note an import wrote into the vault: shown live in the Memory tab while the import runs, and a note it
+// changed (a re-import of a note already there) keeps its earlier text as a version. New notes need no review
+function importWrite(file, prev, next) {
+  const b = brain();
+  const rel = b ? posixRel(path.relative(b.vault, file)) : '';
+  if (!rel || rel.startsWith('..')) return;
+  const r = prev != null ? memoryVersions.record({ vault: b.vault, rel, before: prev, after: next, who: 'import', reason: 'Imported the meeting again' }) : null;
+  liveRuns.pulse({ who: 'import', label: 'Import' }, rel, r?.version.id ?? null);
+}
+const sourcesApi = registerSources({ ipcMain: connectIpc, settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), openFresh: openFreshSignIn, afterWrite: (file) => { account.sync.pushMeetingNote(file); keeper.schedule('import'); }, onNoteWrite: importWrite, version: app.getVersion(), agentRuntime: { runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV } });
 // platform accounts for cloud recordings (Zoom first) go through the relay, so they exist in the hosted edition only
 if (EDITION === 'cloud') (await loadEE('platforms.js')).registerPlatforms({ ipcMain: connectIpc, account, settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file) });
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);
@@ -1903,7 +1921,8 @@ ipcMain.handle('vault-cluster-name', (_e, key, name) => {
   return Object.fromEntries(vindex.graph().nodes.filter((n) => n.cluster).map((n) => [n.id, n.cluster]));
 });
 ipcMain.handle('vault-search', (_e, q, limit) => vindex?.search(String(q), Math.min(Number(limit) || 30, 1000)) ?? []);
-ipcMain.handle('vault-link-health', () => vindex?.linkHealth() ?? []);
+// fresh reads the vault again first (the Refresh button in Memory health)
+ipcMain.handle('vault-link-health', (_e, fresh) => { if (fresh === true) vindex?.sync(); return vindex?.linkHealth() ?? []; });
 // fix a missing link by pointing it at a note that exists; refuses a target that isn't a real note in the vault
 ipcMain.handle('vault-fix-link', (_e, target, toRel) => {
   if (!vindex || !vindex.rels().includes(String(toRel))) throw new Error('That note no longer exists');
@@ -2031,6 +2050,27 @@ ipcMain.handle('memory-version', (_e, rel, id) => {
   const b = brain();
   const text = b ? memoryVersions.read(b.vault, String(rel), String(id)) : null;
   return text == null ? null : { body: noteBody(suggester.redactLines(text)) };
+});
+// the updates the banner shows are rejected: the note gets back its earlier text
+ipcMain.handle('memory-reject', (_e, rel) => { const n = memoryNote(rel); if (!n || memoryVersions.reject(n.vault, n.rel) == null) throw new Error('These updates can not be rejected'); return true; });
+// the runs writing notes right now; Stop ends a stoppable run and puts back the notes it changed
+ipcMain.handle('live-runs', () => liveRuns.state());
+ipcMain.handle('live-stop', async (_e, id) => {
+  const b = brain();
+  const restored = b ? await stopAndRestore(liveRuns, String(id), { store: memoryVersions, vault: b.vault }) : null;
+  if (restored == null) throw new Error('This run can not be stopped');
+  log('memory', `stopped ${id}, put back ${restored.length} notes`);
+  return restored;
+});
+// the missing links of one open note for the Memory health review, with lines counted the way the Memory tab shows
+// the note (no frontmatter, no first heading)
+ipcMain.handle('vault-file-issues', (_e, rel) => {
+  const n = memoryNote(rel);
+  if (!n || !vindex) return [];
+  const body = noteBody(n.text);
+  const at = body ? n.text.indexOf(body) : -1;
+  const offset = at < 0 ? 0 : n.text.slice(0, at).split('\n').length - 1;
+  return vindex.missingIn(n.rel).map((l) => ({ target: l.target, line: l.line - offset })).filter((l) => l.line >= 0);
 });
 ipcMain.handle('memory-restore', (_e, rel, id) => {
   const n = memoryNote(rel);
