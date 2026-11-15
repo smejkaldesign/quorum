@@ -168,6 +168,7 @@ function AppMenu({ brain, me, active, onMemory, onSettings, next }: { brain: Bra
   );
 }
 
+const CHAT_ASKS = ['Write weekly recap', 'List recent todos', 'Current action items'];
 const SUGGESTIONS = ['Summarize so far', 'What did I commit to?', 'Any open questions?'];
 
 export function App() {
@@ -640,14 +641,19 @@ export function App() {
                 {msgs.length > 0 && <button className="pill small-pill" onClick={newChat}>New chat</button>}
               </div>
             )}
+            {/* a new chat starts empty: a quiet picture and one line until the first message; quick asks sit above the input */}
             {phase === 'idle' && msgs.length === 0 && (
-              <QuorumCard>
-                <p>{brain ? `Ask me anything from ${brain.name}. ` : 'Connect your Agent OS so I can answer from your notes. '}{nt.meetingCapture ? "When a call starts, I post a notice in the call's chat and listen on your Mac." : nt.manualListen ? 'Start a note of your own, by hand or with Record; I save it into your Agent OS.' : 'Start a note of your own; I save it into your Agent OS.'}</p>
-                <div className="row">
-                  <button className="pill primary" onClick={() => openNoteView()}>New note</button>
-                  {nt.meetingCapture && <span className="hint">{settings.autoListen ? <><span className="live-dot" aria-hidden="true" />Auto-listen is on</> : 'Or turn on auto-listen in Settings'}</span>}
-                </div>
-              </QuorumCard>
+              <div className="chat-zero">
+                <svg className="chat-zero-art" viewBox="0 0 120 72" aria-hidden="true">
+                  <rect x="16" y="10" width="60" height="30" rx="12" className="cz-bubble" />
+                  <path d="M30 40l-4 9 12-9" className="cz-bubble" />
+                  <rect x="48" y="30" width="56" height="26" rx="11" className="cz-bubble back" />
+                  <path d="M92 56l4 8-11-8" className="cz-bubble back" />
+                  <path d="M28 21h36M28 29h22M60 41h32M60 47h18" className="cz-line" />
+                </svg>
+                <p className="chat-zero-title">{brain ? `Ask anything from ${brain.name}` : 'Connect your Agent OS to start'}</p>
+                <p className="hist-empty">{brain ? 'Answers come from your notes, with a link to each one.' : 'Quorum answers from the notes in it.'}</p>
+              </div>
             )}
             {phase === 'starting' && <QuorumCard><p className="muted">{startingChat ? `Posting my notice in the ${startingChat}…` : 'Starting…'}</p></QuorumCard>}
             {phase === 'listening' && msgs.length === 0 && (
@@ -701,6 +707,11 @@ export function App() {
             ))}
             <div ref={chatEnd} style={{ flex: 'none', minHeight: spacer }} />
           </div>
+          {phase === 'idle' && msgs.length === 0 && brain && (
+            <div className="skill-pills chat-skills" role="group" aria-label="Quick asks">
+              {CHAT_ASKS.map((q) => <button key={q} className="skill-pill" onClick={() => send(q)}>{q}</button>)}
+            </div>
+          )}
           <Composer value={draft} onChange={setDraft} onSubmit={(q, f) => send(q, f)} inputRef={composer} disabled={!brain}
             placeholder={!brain ? 'Connect your Agent OS to start' : phase === 'listening' ? 'Message Quorum privately…' : `Ask ${brain.name} anything…`} />
         </>

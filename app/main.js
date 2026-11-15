@@ -1642,7 +1642,7 @@ function meetingIndex() {
 function chatIndex() {
   return allChats().map((c) => ({
     id: c.id, title: c.title, date: c.updatedAt || c.createdAt, turns: c.turns.length,
-    meetingFile: c.meetingFile ?? null, meetingTitle: c.meetingTitle ?? null,
+    meetingFile: c.meetingFile ?? null, meetingTitle: c.meetingTitle ?? null, eventId: c.eventId ?? null, eventEnd: c.eventEnd ?? null,
   })).sort((a, b2) => String(b2.date).localeCompare(String(a.date)));
 }
 
@@ -1920,10 +1920,17 @@ ipcMain.handle('meeting-ask', async (_e, ev, question, history) => {
   const r = roleProvider('agent') === 'claude-code'
     ? await watchAgent('Question about an upcoming meeting', async () => runModel({ source: modelSource(), providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question: suggester.redactLines(prompt), transcript: '', root: b.root, extra: await agentExtra(String(question), b.root, { kb: false }), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: [], history: (history ?? []).slice(-6), onStep: (text) => toUI('agent-step', { text }), onDelta: (text) => toUI('note-delta', { text }) }))
     : await noteAskWithoutTools(suggester.redactLines(prompt), history, []);
+  // the chat belongs to its calendar event: it nests under the event's row on Home until the event is over
   const id = String(ev?.id ?? '');
-  const existing = id ? allChats().find((c) => c.meetingId === id) : null;
-  addTurn(existing ?? newConvo(String(question), { meetingId: id, meetingTitle: title }), String(question), r.text, [], []);
+  const existing = id ? allChats().find((c) => c.eventId === id) : null;
+  addTurn(existing ?? newConvo(String(question), { eventId: id, eventEnd: ev?.end ?? null, meetingTitle: title }), String(question), r.text, [], []);
+  toUI('history-changed');
   return { text: r.text };
+});
+// an upcoming meeting's saved chat, for its page
+ipcMain.handle('event-chat', (_e, id) => {
+  const c = id ? allChats().find((x) => x.eventId === String(id)) : null;
+  return c ? { id: c.id, turns: c.turns.map((t) => ({ q: t.q, a: t.a })) } : null;
 });
 
 ipcMain.handle('new-chat', () => { convo = null; chatHistory = []; });

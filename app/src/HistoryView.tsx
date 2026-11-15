@@ -139,7 +139,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, on
     }));
     if (filter === 'meetings' || filter === 'notes' || picked.length) return meetings;
     const known = new Set(data.meetings.map((m) => m.file));
-    const loose = data.chats.filter((c) => (!c.meetingFile || !known.has(c.meetingFile)) && chatFits(c)).map((c) => chatRow(c));
+    const loose = data.chats.filter((c) => (!c.meetingFile || !known.has(c.meetingFile)) && !upcoming(c) && chatFits(c)).map((c) => chatRow(c));
     return [...meetings, ...loose].sort((a, b) => (b.date?.getTime() ?? 0) - (a.date?.getTime() ?? 0));
   }, [data, filter, picked, range, keyword, bodyHits, onOpenChat]);
 
@@ -154,6 +154,12 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, on
   }, [rows]);
 
   const refresh = () => window.quorum.history().then(setData);
+  // chats about an upcoming meeting sit on that meeting's row, not in the list, until the meeting is over
+  const eventChats = useMemo(() => {
+    const m = new Map<string, ChatRow[]>();
+    for (const c of data.chats) if (upcoming(c)) (m.get(c.eventId!) ?? m.set(c.eventId!, []).get(c.eventId!)!).push(c);
+    return m;
+  }, [data.chats]);
   const filtered = filter === 'chats' || picked.length > 0 || !!range || !!keyword;
   // Up next steps aside while the list is filtered, as it did when it lived here
   useEffect(() => { onFiltered?.(filtered); }, [filtered, onFiltered]);
@@ -218,7 +224,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, on
 
       <hr className="hist-rule" />
 
-      <UpNext inline />
+      <UpNext inline chats={eventChats} />
 
       <div className="hist-filters">
         <button className={`filter ${filter === 'all' ? 'on' : ''}`} onClick={() => setFilter('all')}>All</button>
@@ -269,6 +275,9 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, on
     </div>
   );
 }
+
+// a chat tied to a calendar event that hasn't ended
+const upcoming = (c: ChatRow) => !!c.eventId && (!c.eventEnd || new Date(c.eventEnd).getTime() > Date.now());
 
 // a meeting's chats in its row details: the Quorum mark and the count; opens the note at its chat
 function ChatsLink({ n, onOpen }: { n: number; onOpen: () => void }) {

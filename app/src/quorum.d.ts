@@ -34,7 +34,7 @@ export type MeetingMeta = { title: string; startedAt?: string; minutes: number; 
 export type SpeakersEvent = { turns: { id: number; speaker: string | null; confidence: number; cluster: string | null; corrected: boolean }[]; participants: string[] };
 
 type Unsub = () => void;
-export type CalendarEvent = { id: string; title: string; start: string; end: string; item?: string | null; link?: string | null; recurring?: boolean; platform?: 'zoom' | 'meet' | 'teams' | null; join?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; organizer?: string; count?: number };
+export type CalendarEvent = { openChat?: boolean; id: string; title: string; start: string; end: string; item?: string | null; link?: string | null; recurring?: boolean; platform?: 'zoom' | 'meet' | 'teams' | null; join?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; organizer?: string; count?: number };
 // the Google Calendar connector: configured means the app has a Google client to sign in with
 // guardrails (app/guardrails.js): one list of what the agent may not read or say, from four sources
 export type GuardrailKind = 'path' | 'frontmatter' | 'secret' | 'term' | 'hook';
@@ -247,7 +247,7 @@ export type MemberInvite = { inviteId: string; email: string; role: Role; expire
 export type EventRef = { id: string | null; item: string | null; link: string | null; start: string; recurring: boolean; organizer: string; count: number };
 export type MeetingBrief = { past: { file: string; title: string; date: string | null; source: string; people: string[]; count: number }[]; brief: { prep: string; what: string; who: string; how: string } | null; status: 'few' | 'stale' | 'ready' | 'no-model' | 'failed' };
 export type MeetingRow = { id: string; file: string; kind: 'meeting' | 'note'; source: string; title: string; date: string | null; people: string[]; count: number; visibility: Visibility; rel: string; link: string; app: string; url?: string | null; platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; event?: EventRef | null };
-export type ChatRow = { id: string; title: string; date: string; turns: number; meetingFile: string | null; meetingTitle: string | null };
+export type ChatRow = { id: string; title: string; date: string; turns: number; meetingFile: string | null; meetingTitle: string | null; eventId?: string | null; eventEnd?: string | null };
 export type Visibility = 'private' | 'public';
 // who has read a note: people in Quorum, agents through the read guard or the quorum MCP server
 export type NoteViews = { total: number; human: number; agent: number; tokens: number; lastHumanAt: string | null; lastAgentAt: string | null; agents: { via: string; count: number }[] };
@@ -491,6 +491,7 @@ declare global {
       calendarPrivacy(): Promise<void>;
       calendarOpen(ev: CalendarEvent): Promise<void>;
       meetingBrief(q: { title: string; generate?: boolean }): Promise<MeetingBrief>;
+      eventChat(id: string): Promise<{ id: string; turns: { q: string; a: string }[] } | null>;
       meetingAsk(ev: CalendarEvent, question: string, history: { q: string; a: string }[]): Promise<{ text: string }>;
       recordSession(): Promise<{ ok: true } | { error: string }>;
       meetingFolderApps(): Promise<{ rel: string; app: string }[]>;

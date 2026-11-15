@@ -23,6 +23,14 @@ function MeetingChat({ event }: { event: CalendarEvent }) {
   useEffect(() => { window.quorum.user().then((u) => { if (u) setMe({ name: u.name || 'You', photo: u.photo ?? null }); }).catch(() => {}); }, []);
   useEffect(() => window.quorum.onNoteDelta(({ text }) => setLive(text)), []);
   useEffect(() => window.quorum.onAgentStep(({ text }) => setStep(text)), []);
+  // its saved chat comes back with the page; opened from the row's chats link, the page scrolls down to it
+  useEffect(() => {
+    window.quorum.eventChat(event.id).then((c) => {
+      if (!c?.turns.length) return;
+      setTurns(c.turns);
+      if (event.openChat) requestAnimationFrame(() => document.querySelector('.meeting-page .note-thread')?.scrollIntoView({ block: 'start' }));
+    }).catch(() => {});
+  }, [event.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const busy = turns.some((t) => t.pending);
   async function ask(said?: string) {
     const q = (said ?? draft).trim();
