@@ -2397,3 +2397,36 @@ input::placeholder, textarea::placeholder { font-style: italic; }
 .conn-back svg { transform: rotate(90deg); }
 .conn-hide { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text); cursor: pointer; }
 .conn-desc { flex: 1; min-width: 0; margin-left: 4px; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* connectors: the state is a dot beside the name; the MCP badge turns green when the agent's MCP is on */
+.conn-dot { flex: none; width: 8px; height: 8px; margin-left: -4px; border-radius: 50%; background: #5c5c62; }
+.conn-dot.on { background: var(--go); }
+.soon.green { background: rgba(60, 207, 110, 0.14); color: var(--go); }
+.conn-fill { flex: 1; }
+.conn-line .soon.green, .conn-line .soon.grey { flex: none; }
+.conn-fold { flex: none; width: 32px; height: 32px; color: var(--muted); }
+.conn-fold svg { transition: transform 200ms ease; }
+.conn-fold.open svg { transform: rotate(180deg); }
+.conn-fold-body { display: flex; flex-direction: column; gap: 4px; padding: 0 10px 12px 50px; color: var(--muted); font-size: 13px; }
+/* a connector's page opens on a card: logo, name and what it does on two thirds of the width, Connect at the top right */
+.conn-detail-card { display: flex; align-items: flex-start; gap: 16px; padding: 20px; }
+.conn-detail-card .conn-detail-title { flex: 2 1 0; }
+.conn-detail-card .conn-detail-title h3 { min-height: 0; margin-bottom: 8px; }
+.conn-detail-card .conn-detail-title p { max-width: none; }
+.conn-detail-cta { flex: 1 1 0; display: flex; justify-content: flex-end; align-items: center; gap: 6px; }
+.conn-detail-cta .conn-actions { margin-left: 0; }
+.conn-steps { display: flex; flex-direction: column; gap: 0; padding: 4px 18px; }
+.conn-step { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; }
+.conn-step + .conn-step { border-top: 1px solid var(--line-2); }
+.conn-step > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.conn-step strong { font-size: 14px; font-weight: 600; color: var(--text); }
+.conn-step > span > span { font-size: 13px; color: var(--muted); }
+/* breadcrumbs: a tighter gap, one row, and the first step gives way with an ellipsis when the row runs out */
+.set-col h1.crumbs { gap: 10px; flex-wrap: nowrap; min-width: 0; white-space: nowrap; }
+.set-col h1.crumbs .crumb-sep { white-space: normal; }
+.set-col h1.crumbs .crumb:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+.set-col h1.crumbs .crumb, .set-col h1.crumbs .crumb-here, .set-col h1.crumbs .crumb-sep { flex: none; }
+.set-col h1.crumbs .crumb:first-child { flex: 0 1 auto; }
+/* page section titles are white across the app */
+.card h3, .conn-group h4, .conn-detail h4, .sofar-head, .sofar-group h4, .hist-group h4, .mp-about h3 { color: var(--text); }
+.conn-chev { transform: rotate(-90deg); }
+.conn-detail-cta .pill { white-space: nowrap; }

@@ -3,7 +3,7 @@ import { Fragment, useEffect, useRef, useState, type KeyboardEvent as ReactKeybo
 import { SetupForm, answersFrom, draftFrom, draftIsEmpty, emptyDraft, type SetupDraft } from './SetupForm';
 import type { AccountState, BetaState, Brain, CalendarSettings, DecisionProvider, DecisionsStatus, KeeperPlugin, KeeperStatus, LearnedTarget, Memory, MemoryItem, OptOut, Profile, ScreenContextStatus, Settings, TeamVault, Transcription, UpdateState, Voice, Workspace } from './quorum';
 import { PersonalConnectors } from './Connectors';
-import { ConnectorsPage } from './ConnectorsPage';
+import { ConnectorsPage, connectorDetailName } from './ConnectorsPage';
 import { GuardrailsPage } from './Guardrails';
 import { CONNECTORS, CONNECTOR_BY_ID } from '../connectors/library';
 import { ConnectHint } from './ConnectHint';
@@ -65,11 +65,16 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   // the group a link from outside Settings pointed at (Home's hints, the Memory page); Connectors scrolls to it
   const [connectorsFocus, setConnectorsFocus] = useState<{ cat: string | true; n: number } | null>(null);
   const pending = useRef<string | null>(null);
-  useEffect(() => { setConnectorDetail(pending.current); pending.current = null; }, [saved]);
+  // the connector library (Add connector) is open; a connector opened from it keeps it as the middle breadcrumb
+  const [connLib, setConnLib] = useState(false);
+  const pendingLib = useRef(false);
+  useEffect(() => { setConnectorDetail(pending.current); pending.current = null; setConnLib(pendingLib.current); pendingLib.current = false; }, [saved]);
   const goConnector = (id: string) => { if (saved !== 'connectors') pending.current = id; setConnectorDetail(id); setPage('connectors'); };
   useEffect(() => {
     if (!open) return;
-    if (open.page !== saved) pending.current = open.connector ?? null; else setConnectorDetail(open.connector ?? null);
+    // a link naming a library category opens the library there
+    const lib = !!open.library && !open.connector;
+    if (open.page !== saved) { pending.current = open.connector ?? null; pendingLib.current = lib; } else { setConnectorDetail(open.connector ?? null); setConnLib(lib); }
     setPage(open.page);
     setConnectorsFocus(open.library ? { cat: open.library, n: open.n } : null);
   }, [open, setPage]);
@@ -145,15 +150,19 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
 
       <main className="set-main">
         <div className="set-col">
-          {page === 'connectors' && connectorDetail && CONNECTOR_BY_ID[connectorDetail]
-            ? <h1 className="set-title crumbs"><span className="crumb" role="link" tabIndex={0} onClick={() => setConnectorDetail(null)} onKeyDown={(e) => { if (e.key === 'Enter') setConnectorDetail(null); }}>Connectors</span><span className="crumb-sep" aria-hidden="true"> / </span><span>{CONNECTOR_BY_ID[connectorDetail].name}</span><span className="crumb-actions" id="conn-title-actions" /></h1>
+          {page === 'connectors' && ((connectorDetail && connectorDetailName(connectorDetail)) || connLib)
+            ? <h1 className="set-title crumbs">
+                <Crumb label="Connectors" onClick={() => { setConnectorDetail(null); setConnLib(false); }} />
+                {connLib && <>{CRUMB_SEP}{connectorDetail ? <Crumb label="Library" onClick={() => setConnectorDetail(null)} /> : <span className="crumb-here">Library</span>}</>}
+                {connectorDetail && <>{CRUMB_SEP}<span className="crumb-here">{connectorDetailName(connectorDetail)}</span></>}
+              </h1>
             : <h1 className={`set-title${page === 'connectors' ? ' crumbs' : ''}`}>{current.label}{current.soon && <Soon />}{page === 'connectors' && <span className="crumb-actions" id="conn-title-actions" />}</h1>}
           {page === 'preferences' && <p className="set-lede">Quorum works best knowing a little about you. Quorum uses this when it writes your meeting notes and answers questions.</p>}
           {page === 'knowledge' && <p className="set-lede">Company knowledge for your whole workspace, chosen by admins.</p>}
           {page === 'general' && <p className="set-lede">Settings for everyone in your workspace. Quorum gives this context to every meeting summary and answer, so it's the same for each person.</p>}
           {page === 'teams' && <p className="set-lede">A workspace starts as yours alone. Turn on a team to invite members and build knowledge together.</p>}
           {page === 'billing' && <p className="set-lede">Your plan, the card it charges, and this month's usage against the hours it includes.</p>}
-          {page === 'connectors' && !connectorDetail && <p className="set-lede">The tools Quorum is connected to. Meeting notes, calendars and AI tools, each tagged with where things came from.</p>}
+          {page === 'connectors' && !connectorDetail && !connLib && <p className="set-lede">The apps and MCP servers Quorum is connected to, by area.</p>}
           {page === 'developers' && <p className="set-lede">Model providers, Claude Code and Terminal access, and API keys for your own scripts.</p>}
           {page === 'preferences' ? (
             <ProfilePage settings={settings} email={showEmail ? email : ''} emailLabel={emailLabel} name={user?.name ?? ''} onSettings={onSettings}>
@@ -192,7 +201,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
             : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} onConnector={goConnector} teamMeetings={EDITION === 'cloud' && account?.workspace?.teamEnabled === true} />
             : page === 'developers' ? <DevelopersPage />
             : page === 'notifications' ? <NotificationsPage />
-            : page === 'connectors' ? <ConnectorsPage detail={connectorDetail} onDetail={setConnectorDetail} brain={brain} onFolder={onConnect} onNotes={() => go('memory')} focus={connectorsFocus} />
+            : page === 'connectors' ? <ConnectorsPage detail={connectorDetail} onDetail={setConnectorDetail} library={connLib} onLibrary={setConnLib} brain={brain} onFolder={onConnect} onNotes={() => go('memory')} focus={connectorsFocus} />
             : <VoicePage settings={settings} onSettings={onSettings} dictionaryOnly={voice === 'dictionary'} screenRow={nt.screenContext} />}
         </div>
       </main>
@@ -1627,4 +1636,10 @@ function VoicePage({ settings, onSettings, dictionaryOnly = false, screenRow = f
       </div>
     </>
   );
+}
+
+// a step back in the Connectors breadcrumbs; the first one gives way (ellipsis) when the row runs out of room
+const CRUMB_SEP = <span className="crumb-sep" aria-hidden="true">/</span>;
+function Crumb({ label, onClick }: { label: string; onClick: () => void }) {
+  return <span className="crumb" role="link" tabIndex={0} onClick={onClick} onKeyDown={(e) => { if (e.key === 'Enter') onClick(); }}>{label}</span>;
 }
