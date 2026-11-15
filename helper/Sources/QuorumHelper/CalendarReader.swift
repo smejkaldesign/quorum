@@ -18,22 +18,32 @@ enum CalendarReader {
         Emit.send(["event": "calResult", "id": id ?? "", "status": status()])
     }
 
-    static func events(days: Int, id: String?) {
+    static func events(days: Int, back: Int = 0, id: String?) {
         guard status() == "granted" else {
             Emit.send(["event": "calResult", "id": id ?? "", "status": status(), "events": []])
             return
         }
-        let start = Date()
-        let end = Calendar.current.date(byAdding: .day, value: max(1, days) + 1, to: Calendar.current.startOfDay(for: start))!
+        // back reaches into past days, for matching notes to the calls they came from
+        let now = Date()
+        let start = back > 0 ? Calendar.current.date(byAdding: .day, value: -back, to: Calendar.current.startOfDay(for: now))! : now
+        let end = Calendar.current.date(byAdding: .day, value: max(1, days) + 1, to: Calendar.current.startOfDay(for: now))!
         let iso = ISO8601DateFormatter()
         let found = store.events(matching: store.predicateForEvents(withStart: start, end: end, calendars: nil))
             .filter { !$0.isAllDay && $0.status != .canceled }
             .sorted { $0.startDate < $1.startDate }
-            .prefix(200)
+            .prefix(back > 0 ? 3000 : 200)
             .map { e -> [String: Any] in
-                ["id": e.eventIdentifier ?? UUID().uuidString, "title": e.title ?? "Untitled", "start": iso.string(from: e.startDate), "end": iso.string(from: e.endDate), "calendar": e.calendar.title, "attendees": attendees(e), "item": e.calendarItemIdentifier, "recurring": e.hasRecurrenceRules, "location": e.location ?? "", "url": e.url?.absoluteString ?? "", "notes": String((e.notes ?? "").prefix(1500))]
+                ["id": e.eventIdentifier ?? UUID().uuidString, "title": e.title ?? "Untitled", "start": iso.string(from: e.startDate), "end": iso.string(from: e.endDate), "calendar": e.calendar.title, "attendees": attendees(e), "organizer": organizer(e), "item": e.calendarItemIdentifier, "recurring": e.hasRecurrenceRules, "location": e.location ?? "", "url": e.url?.absoluteString ?? "", "notes": String((e.notes ?? "").prefix(1500))]
             }
         Emit.send(["event": "calResult", "id": id ?? "", "status": "granted", "events": Array(found)])
+    }
+
+    // the organizer's email, else their name; empty when the event has none
+    static func organizer(_ e: EKEvent) -> String {
+        guard let o = e.organizer else { return "" }
+        let url = o.url.absoluteString
+        if url.lowercased().hasPrefix("mailto:") { return String(url.dropFirst(7)).removingPercentEncoding ?? "" }
+        return o.name ?? ""
     }
 
     // name and email of each person on the invite, used only to check the never-listen list

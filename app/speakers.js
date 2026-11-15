@@ -119,7 +119,9 @@ export function correctSpeaker(turns, id, name, { similar = false } = {}) {
 }
 
 // what the transcript shows and the prompts read: the name when there is one, else the channel label
-export const speakerOf = (t, label) => t.speaker ?? label[t.channel] ?? t.channel;
+// a voice the engine told apart and nobody has named reads as Person N on the microphone, Speaker N on the Mac's sound
+export const voiceName = (t) => (t.voice == null ? null : `${t.channel === 'me' ? 'Person' : 'Speaker'} ${t.voice + 1}`);
+export const speakerOf = (t, label) => t.speaker ?? voiceName(t) ?? label[t.channel] ?? t.channel;
 
 // the per-turn fields the renderer merges into its lines
 export const speakerView = (turns) => turns.filter((t) => t.channel === 'them').map(({ id, speaker = null, confidence = 0, cluster = null, corrected = false }) => ({ id, speaker, confidence, cluster, corrected }));

@@ -94,6 +94,7 @@ export function mapEvent(e, calendarId, calendarName = '') {
     end: new Date(e.end.dateTime).toISOString(),
     calendar: calendarName,
     attendees: (e.attendees ?? []).filter((a) => !a.resource).map((a) => ({ name: a.displayName ?? '', email: a.email ?? '' })),
+    organizer: e.organizer?.email ?? e.organizer?.displayName ?? '',
     item: null,
     link: e.htmlLink ?? null,
     recurring: !!e.recurringEventId,

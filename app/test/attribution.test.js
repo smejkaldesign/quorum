@@ -5,8 +5,8 @@ import { labelFor, othersIn, speakerLabels, timedTurn } from '../src/attribution
 const turn = (id, channel, startMs, endMs, extra = {}) => ({ id, channel, startMs, endMs, ...extra });
 
 describe('speaker labels', () => {
-  it('labels the microphone You, always', () => {
-    expect(speakerLabels([turn(1, 'me', 0, 1000)], [{ at: 500, names: ['Ada'], active: ['Ada'] }])).toEqual({ 1: 'You' });
+  it('labels the microphone Unknown, always', () => {
+    expect(speakerLabels([turn(1, 'me', 0, 1000)], [{ at: 500, names: ['Ada'], active: ['Ada'] }])).toEqual({ 1: 'Unknown' });
   });
 
   it('names a turn after the speaker the call app showed while it was said', () => {

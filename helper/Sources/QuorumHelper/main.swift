@@ -121,7 +121,7 @@ func handle(_ line: String) async {
     case "calRequest":
         await CalendarReader.request(id: cmd["id"] as? String)
     case "calEvents":
-        CalendarReader.events(days: cmd["days"] as? Int ?? 3, id: cmd["id"] as? String)
+        CalendarReader.events(days: cmd["days"] as? Int ?? 3, back: cmd["back"] as? Int ?? 0, id: cmd["id"] as? String)
     case "quit":
         await dictation.stop()
         await session.stop()

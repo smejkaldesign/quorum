@@ -1,3 +1,4 @@
+import type { NoteMetaInfo } from './NoteMeta';
 // set by Vite's define from QUORUM_EDITION at build time (vite.config.ts); 'local' unless the cloud build asked otherwise
 declare global {
   const __QUORUM_EDITION__: 'local' | 'cloud';
@@ -33,7 +34,7 @@ export type MeetingMeta = { title: string; startedAt?: string; minutes: number; 
 export type SpeakersEvent = { turns: { id: number; speaker: string | null; confidence: number; cluster: string | null; corrected: boolean }[]; participants: string[] };
 
 type Unsub = () => void;
-export type CalendarEvent = { id: string; title: string; start: string; end: string; item?: string | null; link?: string | null; recurring?: boolean; platform?: 'zoom' | 'meet' | 'teams' | null; join?: string | null };
+export type CalendarEvent = { id: string; title: string; start: string; end: string; item?: string | null; link?: string | null; recurring?: boolean; platform?: 'zoom' | 'meet' | 'teams' | null; join?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; organizer?: string; count?: number };
 // the Google Calendar connector: configured means the app has a Google client to sign in with
 // guardrails (app/guardrails.js): one list of what the agent may not read or say, from four sources
 export type GuardrailKind = 'path' | 'frontmatter' | 'secret' | 'term' | 'hook';
@@ -56,7 +57,7 @@ export type McpOverlapServer = { name: string; url: string | null; command: stri
 // claudeMissing: the claude command is not on this Mac
 export type McpOverlap = { at: string; read: { claudeList: boolean; claudeConfig: boolean; vault: boolean }; listing: boolean; claudeMissing: boolean; matches: Record<string, McpOverlapServer[]>; off: Record<string, McpOverlapServer[]> };
 export type GoogleCalendarStatus = { configured: boolean; connected: boolean; account: string | null; calendars: number; lastSyncAt: string | null; error: string | null };
-export type CalendarSettings = { source: 'mac'; days: number; enabled?: boolean; showAll?: boolean; hidden?: string[]; status?: 'granted' | 'notDetermined' | 'denied' | 'unavailable' | 'off'; google?: GoogleCalendarStatus | null };
+export type CalendarSettings = { source: 'mac'; days: number | 'week'; enabled?: boolean; showAll?: boolean; hidden?: string[]; status?: 'granted' | 'notDetermined' | 'denied' | 'unavailable' | 'off'; google?: GoogleCalendarStatus | null };
 export type MemoryItem = { id: string; kind: string; label: string; path: string; detail: string; include: boolean | null; manual?: boolean };
 export type Memory = { items: MemoryItem[]; excluded: string[]; scannedAt?: string; added?: number; removed?: number; cancelled?: boolean };
 export type Profile = { name?: string; title?: string; linkedin?: string; photo?: string };
@@ -80,7 +81,7 @@ export type ProviderConnectors = Partial<Record<ConnectorId, { baseUrl?: string;
 export type RunnerStatus = { installed: boolean; version: string | null };
 export type ModelSourceStatus = { source: ModelSource; localModel: string; claude: ClaudeStatus | null; key: boolean; keys: Partial<Record<ConnectorId, boolean>>; ollama: { reachable: boolean; hasModel: boolean }; runners?: Partial<Record<'codex' | 'antigravity', RunnerStatus>>; providers: Providers; connectors: ProviderConnectors };
 // userName is how the main process names the recorder in notes; it falls back to the macOS account's full name, then the login
-export type Settings = { meetingProviders?: Record<string, { enabled: boolean }>; autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean }; meetingsKb?: { autoSave?: boolean }; managedModels?: boolean; screenContext?: boolean };
+export type Settings = { meetingProviders?: Record<string, { enabled: boolean }>; autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean; transcription?: boolean }; meetingsKb?: { autoSave?: boolean }; managedModels?: boolean; screenContext?: boolean };
 export type OnboardingStatus = { firstRun: boolean; defaultVaultDir: string };
 export type OnboardingChecks = { permissions: { microphone: string; audio: string; accessibility: string; calendar: string }; claude: { installed: boolean; loggedIn?: boolean; email?: string; org?: string; plan?: string; version?: string; pending?: boolean }; model?: ModelSourceStatus | null };
 // the setup interview: a template plus a few answers that shape a Quorum-built Agent OS (starter.js)
@@ -242,12 +243,15 @@ export type KbFile = { id: string; noteId: string; name: string; mime: string; s
 export type ContributionMine = { noteId: string; path: string; status: 'pending' | 'included' | 'declined'; reviewedAt: string | null; createdAt: string };
 export type Billing = { plan: Plan; seats: number; seatsIncluded: number; hourPacks: number; members: number; status: string | null; periodEnd: string | null; subscribed: boolean };
 export type MemberInvite = { inviteId: string; email: string; role: Role; expiresAt: string };
-export type MeetingRow = { id: string; file: string; kind: 'meeting' | 'note'; source: string; title: string; date: string | null; people: string[]; count: number; visibility: Visibility; rel: string; link: string; app: string };
+// the calendar event a note was matched to (meetingPlatforms.js eventRef)
+export type EventRef = { id: string | null; item: string | null; link: string | null; start: string; recurring: boolean; organizer: string; count: number };
+export type MeetingBrief = { past: { file: string; title: string; date: string | null; source: string; people: string[]; count: number }[]; brief: { prep: string; what: string; who: string; how: string } | null; status: 'few' | 'stale' | 'ready' | 'no-model' | 'failed' };
+export type MeetingRow = { id: string; file: string; kind: 'meeting' | 'note'; source: string; title: string; date: string | null; people: string[]; count: number; visibility: Visibility; rel: string; link: string; app: string; url?: string | null; platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; event?: EventRef | null };
 export type ChatRow = { id: string; title: string; date: string; turns: number; meetingFile: string | null; meetingTitle: string | null };
 export type Visibility = 'private' | 'public';
 // who has read a note: people in Quorum, agents through the read guard or the quorum MCP server
 export type NoteViews = { total: number; human: number; agent: number; tokens: number; lastHumanAt: string | null; lastAgentAt: string | null; agents: { via: string; count: number }[] };
-export type NoteDoc = { file: string; rel: string; title: string; date?: string; people: string[]; body: string; app: string; url: string; source?: string | null; views?: NoteViews; visibility: Visibility; withheld: boolean; link: string };
+export type NoteDoc = { file: string; rel: string; title: string; date?: string; people: string[]; body: string; app: string; url: string; source?: string | null; views?: NoteViews; visibility: Visibility; withheld: boolean; link: string; summarizable?: boolean; transcript?: { id: number; channel: 'me' | 'them'; who: string; text: string }[]; platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null; sourceUrl?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; event?: EventRef | null };
 export type SavedChat = { id: string; title: string; turns: { q: string; a: string; sources?: Source[]; steps?: string[] }[] };
 export type MissingLink = { target: string; sources: string[]; count: number; candidates: { rel: string; title: string; name: string | null; exact: boolean }[] };
 export type Relocated = { rel: string; files: number; links: number };
@@ -270,7 +274,9 @@ export type StateEvent =
   | { phase: 'summarizing'; meta?: MeetingMeta }
   | { phase: 'starting'; chatName?: string | null; intoNote?: boolean }
   | { phase: 'idle' }
-  | { phase: 'review'; notes: Notes; meta?: MeetingMeta };
+  | { phase: 'review'; notes: Notes | null; meta?: MeetingMeta; ask?: WhoAsk };
+// Who spoke, after a recording from the header: each voice (or the whole microphone) with a few of its lines
+export type WhoAsk = { voices: { key: string; channel: 'me' | 'them'; voice: number | null; lines: string[]; words: number }[] };
 
 // Record in the note view: what is running (audio is Transcription), and a screen read for the open note
 export type RecordState = { audio: boolean; screen: boolean; notice?: string };
@@ -358,6 +364,7 @@ declare global {
       readNote(file: string): Promise<NoteDoc | null>;
       newChat(): Promise<void>;
       loadChat(id: string): Promise<SavedChat | null>;
+      readChat(id: string): Promise<SavedChat | null>;
       vaultTree(): Promise<TreeItem[]>;
       vaultGraph(): Promise<import('./Graph').GraphData | null>;
       vaultClusterName(key: string, name: string): Promise<Record<string, string> | null>;
@@ -379,7 +386,7 @@ declare global {
       vaultOutgoing(rel: string): Promise<OutLink[]>;
       vaultResolve(target: string, from: string): Promise<string | null>;
       onVaultChanged(cb: (rels: string[]) => void): Unsub;
-      vaultNote(rel: string): Promise<{ title: string; body: string; abs: string; app: string; views?: NoteViews } | null>;
+      vaultNote(rel: string): Promise<{ title: string; body: string; abs: string; app: string; views?: NoteViews; meta?: NoteMetaInfo | null } | null>;
       vaultNewNote(folder: string, name: string): Promise<string>;
       vaultNewFolder(parent: string, name: string): Promise<string>;
       vaultRename(rel: string, name: string): Promise<Relocated>;
@@ -401,7 +408,7 @@ declare global {
       pickPhoto(): Promise<Settings>;
       memoryGet(): Promise<Memory>;
       memoryRefresh(): Promise<Memory>;
-      calendar(): Promise<{ connected: boolean; status: string; events: CalendarEvent[]; days: number; showAll: boolean; hidden: number }>;
+      calendar(): Promise<{ connected: boolean; status: string; events: CalendarEvent[]; days: number | 'week'; showAll: boolean; hidden: number }>;
       calendarStatus(): Promise<CalendarSettings>;
       sourceIcons(): Promise<Record<string, string | null>>;
       // chat: the STOP/GO notice can be posted in the app's chat (Zoom); running: the app or a browser window for it is open right now
@@ -446,6 +453,8 @@ declare global {
       platformSync(id: string): Promise<Result>;
       onPlatformJob(cb: (job: SourceJob) => void): () => void;
       onSourceJob(cb: (job: SourceJob) => void): Unsub;
+      onNoteDelta(cb: (d: { text: string }) => void): Unsub;
+      onHistoryChanged(cb: () => void): Unsub;
       claudeLogin(): Promise<void>;
       claudeStatus(): Promise<ClaudeStatus>;
       modelSourceStatus(): Promise<ModelSourceStatus>;
@@ -457,9 +466,14 @@ declare global {
       connectorKeyRemove(id: ConnectorId): Promise<void>;
       connectorKeyTest(id: ConnectorId, key?: string, baseUrl?: string): Promise<Result>;
       calendarConnect(): Promise<CalendarSettings>;
-      calendarSet(next: { days?: number; enabled?: false; showAll?: boolean; hide?: string; unhideAll?: boolean }): Promise<CalendarSettings>;
+      calendarSet(next: { days?: number | 'week'; enabled?: false; showAll?: boolean; hide?: string; unhideAll?: boolean }): Promise<CalendarSettings>;
       calendarPrivacy(): Promise<void>;
       calendarOpen(ev: CalendarEvent): Promise<void>;
+      meetingBrief(q: { title: string; generate?: boolean }): Promise<MeetingBrief>;
+      recordSession(): Promise<{ ok: true } | { error: string }>;
+      meetingFolderApps(): Promise<{ rel: string; app: string }[]>;
+      noteSummarize(file: string): Promise<{ ok: true } | { error: string }>;
+      sessionSummarize(answers: { names?: Record<string, string>; people?: string[]; me?: string | null; lead?: string | null }): Promise<unknown>;
       guardrailsGet(opts?: { fresh?: boolean }): Promise<GuardrailsState>;
       guardrailsSet(id: string, patch: { enabled?: boolean; label?: string }): Promise<Result>;
       guardrailsAdd(rule: { kind: string; value: string; label?: string }): Promise<Result & { id?: string }>;

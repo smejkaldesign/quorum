@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { SourceAskBanner } from './MeetingSources';
-import type { Brain, ChatRow, MeetingRow, NoteDoc } from './quorum';
+import type { Brain, CalendarEvent, ChatRow, MeetingRow, NoteDoc } from './quorum';
 import { NoteMenu, NoteReader, VisibilityPill } from './MeetingNote';
 import { quoteLink, useQuote } from './quotes';
 import { Composer } from './Composer';
@@ -8,8 +8,12 @@ import { ConnectHint } from './ConnectHint';
 import { openConnectors } from './connectorsNav';
 import { useSession } from './session';
 import { dayLabel } from './upNextList';
-import { useCalendarView } from './UpNext';
-import { IconCalendar, IconChat, IconClose, IconExternal, IconListCheck, IconMic, IconNewNote, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
+import { OPEN_EVENT, UpNext, takeEvent, useCalendarView } from './UpNext';
+import { AppLogo, CALENDAR_APP, RowDetails, peopleText } from './AppChip';
+import { MeetingPage } from './MeetingPage';
+import markProd from '../assets/quorum-mark.png';
+import { DayOff } from './DayOff';
+import { IconCalendar, IconChat, IconClose, IconPlus, IconExternal, IconListCheck, IconMic, IconNewNote, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
 
 type Filter = 'all' | 'meetings' | 'notes' | 'chats';
 type Row = { key: string; kind: 'meeting' | 'note' | 'chat'; title: string; sub: string; date: Date | null; avatar: string; open: () => void; meeting?: MeetingRow; children?: Row[] };
@@ -36,7 +40,7 @@ function colorFor(s: string) {
   return AVATAR_COLORS[h % AVATAR_COLORS.length];
 }
 
-export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: { brain: Brain | null; focusAsk: number; onAsk: (q: string, files?: string[]) => void; onOpenChat: (id: string) => void; onFiltered?: (filtered: boolean) => void }) {
+export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, onNewChat }: { brain: Brain | null; focusAsk: number; onAsk: (q: string, files?: string[]) => void; onOpenChat: (id: string) => void; onFiltered?: (filtered: boolean) => void; onNewChat?: () => void }) {
   const askRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { if (focusAsk) askRef.current?.focus(); }, [focusAsk]);
   const [data, setData] = useState<{ meetings: MeetingRow[]; chats: ChatRow[] }>({ meetings: [], chats: [] });
@@ -45,8 +49,6 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
   const calView = useCalendarView();
   // the offer to connect a calendar stays away for the rest of this launch once closed
   const [calHintHidden, setCalHintHidden] = useSession('calHintHidden', false);
-  const [icons, setIcons] = useState<Record<string, string | null>>({});
-  useEffect(() => { window.quorum.sourceIcons().then(setIcons); }, []);
   const [picked, setPicked] = useState<string[]>([]);
   const [range, setRange] = useState<DateRange | null>(null);
   const [keyword, setKeyword] = useState('');
@@ -59,6 +61,21 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
     return () => { live = false; };
   }, [keyword]);
   const [note, setNote] = useState<NoteDoc | null>(null);
+  // a note opened from its chats link scrolls to its chat, with that chat's turns loaded
+  const [noteChat, setNoteChat] = useState<string | null>(null);
+  const openNoteAt = (file: string, chat: string | null) => window.quorum.readNote(file).then((n) => { if (n) { setNoteChat(chat); setNote(n); } });
+  // an upcoming meeting's page, opened from Up next here or on another tab
+  const [event, setEvent] = useState<CalendarEvent | null>(() => takeEvent());
+  // a note or meeting page opens at its top: they share the list's scroll box, which would otherwise keep its place
+  useLayoutEffect(() => {
+    if (!note && !event) return;
+    document.querySelector<HTMLElement>('.body.wide:not(.flush)')?.scrollTo({ top: 0 });
+  }, [note?.file, event?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const open = () => { const e = takeEvent(); if (e) { setNote(null); setEvent(e); } };
+    window.addEventListener(OPEN_EVENT, open);
+    return () => window.removeEventListener(OPEN_EVENT, open);
+  }, []);
   const [draft, setDraft] = useState('');
   const { quote, shown, typing } = useQuote();
   // the quote stays on one line: in a window narrower than the default, the heading eases down to fit
@@ -79,6 +96,13 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
   }, [shown]);
 
   useEffect(() => { window.quorum.history().then(setData); }, [brain]);
+  // a finished import or a newly matched meeting app changes the list
+  useEffect(() => {
+    const load = () => { window.quorum.history().then(setData); };
+    const offHistory = window.quorum.onHistoryChanged(load);
+    const offSource = window.quorum.onSourceJob((j) => { if (j.status !== 'running') load(); });
+    return () => { offHistory(); offSource(); };
+  }, []);
 
   const people = useMemo(() => {
     const m = new Map<string, { n: number; last: string | null }>();
@@ -103,12 +127,14 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
     // a chat about a meeting always sits under that meeting, never on its own
     const byMeeting = new Map<string, ChatRow[]>();
     for (const c of data.chats) if (c.meetingFile) (byMeeting.get(c.meetingFile) ?? byMeeting.set(c.meetingFile, []).get(c.meetingFile)!).push(c);
-    const meetings: Row[] = data.meetings.filter((m) => (filter !== 'meetings' || m.kind !== 'note') && (filter !== 'notes' || m.kind === 'note')
+    // notes a notetaker makes ahead of a meeting (dated later than now) show once the meeting has happened
+    const now = Date.now();
+    const meetings: Row[] = data.meetings.filter((m) => (!m.date || new Date(m.date).getTime() <= now) && (filter !== 'meetings' || m.kind !== 'note') && (filter !== 'notes' || m.kind === 'note')
       && (!picked.length || picked.some((p) => m.people.includes(p))) && inRange(m.date)
       && (!kw || `${m.title} ${m.people.join(' ')}`.toLowerCase().includes(kw) || !!bodyHits?.has(m.rel))).map((m) => ({
       key: m.id, kind: m.kind, title: m.title, sub: m.kind === 'note' ? 'Note' : peopleLine(m.people, m.count),
       date: m.date ? new Date(m.date) : null, avatar: m.kind === 'note' ? 'note' : (m.people[0] ?? m.title).trim()[0]?.toUpperCase() ?? '?',
-      open: () => window.quorum.readNote(m.file).then(setNote), meeting: m,
+      open: () => openNoteAt(m.file, null), meeting: m,
       children: (byMeeting.get(m.file) ?? []).map((c) => chatRow(c, true)),
     }));
     if (filter === 'meetings' || filter === 'notes' || picked.length) return meetings;
@@ -132,9 +158,45 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
   // Up next steps aside while the list is filtered, as it did when it lived here
   useEffect(() => { onFiltered?.(filtered); }, [filtered, onFiltered]);
   useEffect(() => () => onFiltered?.(false), [onFiltered]);
-  if (note) return <NoteReader note={note} dayLabel={dayLabel} peopleLine={peopleLine} onBack={() => { setNote(null); refresh(); }} />;
+  if (event) return <MeetingPage event={event} onBack={() => setEvent(null)} onOpenNote={(file) => window.quorum.readNote(file).then((n) => { if (n) { setEvent(null); setNote(n); } })} />;
+  if (note) return <NoteReader key={note.file} chat={noteChat} note={note} dayLabel={dayLabel} peopleLine={peopleLine} onBack={() => { setNote(null); refresh(); }} />;
 
   const ask = (q: string, files: string[] = []) => { if (q.trim()) { setDraft(''); onAsk(q.trim(), files); } };
+
+  // the row for a meeting, note or chat, with the chats about a meeting under it
+  const renderRow = (r: Row) => {
+    const m = r.meeting;
+    // a meeting matched to a calendar event shows that calendar; one without (ad hoc, a phone call) is a note
+    const ev = m?.event ?? null;
+    return (
+      <div key={r.key} className="hist-item">
+      <div className="hist-row" role="button" tabIndex={0} onClick={r.open} onKeyDown={(e) => { if (e.key === 'Enter') r.open(); }}>
+        {r.avatar === 'chat' ? <span className="avatar-sq chat"><IconQuorum /></span>
+          : m?.calendar && ev ? <span className="avatar-sq app"><AppLogo {...CALENDAR_APP[m.calendar]} /></span>
+          : <span className="avatar-sq note"><IconMic width={20} height={20} /></span>}
+        <span className="hist-text"><strong>{r.title}</strong>
+          {m ? <RowDetails who={m.kind === 'note' && !ev ? 'Note' : peopleText(ev, m.people)}
+              onCalendar={ev && (ev.item || ev.link) ? () => window.quorum.calendarOpen({ ...ev, id: ev.id ?? '', title: m.title, end: ev.start } as CalendarEvent) : null}
+              calendarName={m.calendar ? CALENDAR_APP[m.calendar].name : undefined}
+              platform={m.platform} meetingUrl={m.meetingUrl} source={m.source} sourceUrl={m.url}
+              after={r.children?.length ? <ChatsLink n={r.children.length} onOpen={() => openNoteAt(m.file, r.children![0].key)} /> : null} />
+            : <span className="hist-sub"><span className="hist-sub-text">{r.sub}</span></span>}
+        </span>
+        <span className="hist-time">{r.date ? <>{r.date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?(AM|PM)/i, '')}<small>{r.date.getHours() < 12 ? 'AM' : 'PM'}</small></> : ''}</span>
+        {r.meeting && (
+          <span className="hist-hover">
+            <VisibilityPill compact value={r.meeting.visibility} onChange={async (v) => { await window.quorum.noteVisibility(r.meeting!.file, v); refresh(); }} />
+            <NoteMenu compact note={{ file: r.meeting.file, rel: r.meeting.rel, app: r.meeting.app, link: r.meeting.link }} onDeleted={refresh} />
+          </span>
+        )}
+      </div>
+      </div>
+    );
+  };
+  // unfiltered, Today always leads the list, with a day-off note when it is empty
+  const todayGroup = !filtered && groups[0]?.label === 'Today' ? groups[0] : null;
+  const restGroups = todayGroup ? groups.slice(1) : groups;
+  const todayCalls = calView.events.filter((e) => new Date(e.start).toDateString() === new Date().toDateString() && new Date(e.start) > new Date());
 
   return (
     <div className="history">
@@ -156,12 +218,15 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
 
       <hr className="hist-rule" />
 
+      <UpNext inline />
+
       <div className="hist-filters">
         <button className={`filter ${filter === 'all' ? 'on' : ''}`} onClick={() => setFilter('all')}>All</button>
         <button className={`filter ${filter === 'meetings' ? 'on' : ''}`} onClick={() => setFilter('meetings')}><IconNotes width={17} height={17} />Meetings</button>
         <button className={`filter ${filter === 'notes' ? 'on' : ''}`} onClick={() => setFilter('notes')}><IconMic width={17} height={17} />Notes</button>
         <button className={`filter ${filter === 'chats' ? 'on' : ''}`} onClick={() => setFilter('chats')}><IconChat width={17} height={17} />Chats</button>
         <span className="filter-spacer" />
+        <NewMenu onChat={onNewChat} />
         <PeopleFilter people={people} picked={picked} onChange={(p) => { setPicked(p); if (p.length && filter === 'chats') setFilter('all'); }} />
         <DateFilter value={range} onChange={setRange} />
         <KeywordFilter value={keyword} onChange={setKeyword} />
@@ -172,6 +237,16 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
           <button className="pill small-pill primary" onClick={() => openConnectors({ library: 'calendar' })}>Connect a calendar</button>
           <button className="icon-btn" aria-label="Hide this" onClick={() => setCalHintHidden(true)}><IconClose width={14} height={14} /></button>
         </ConnectHint>
+      )}
+
+
+      {!filtered && (
+        <div className="hist-group">
+          <h4>Today</h4>
+          {todayGroup ? todayGroup.rows.map(renderRow)
+            : todayCalls.length ? <p className="hist-empty">Nothing yet today. Your next call is at {new Date(todayCalls[0].start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.</p>
+            : <DayOff title="Nothing today" />}
+        </div>
       )}
 
       {groups.length === 0 ? (
@@ -185,42 +260,43 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
             </ConnectHint>
           </div>
         )
-      ) : groups.map((g) => (
+      ) : restGroups.map((g) => (
         <div key={g.label} className="hist-group">
           <h4>{g.label}</h4>
-          {g.rows.map((r) => (
-            <div key={r.key} className="hist-item">
-            <div className="hist-row" role="button" tabIndex={0} onClick={r.open} onKeyDown={(e) => { if (e.key === 'Enter') r.open(); }}>
-              {r.avatar === 'chat'
-                ? <span className="avatar-sq chat"><IconQuorum /></span>
-                : r.avatar === 'note' ? <span className="avatar-sq note"><IconMic width={20} height={20} /></span>
-                : <span className="avatar-sq" style={{ background: colorFor(r.sub + r.title) }}>{r.avatar}
-                    {r.meeting && r.meeting.source !== 'quorum' && (
-                      <span className="src-badge" data-tip={`From ${r.meeting.source[0].toUpperCase()}${r.meeting.source.slice(1)}`}>
-                        {icons[r.meeting.source] ? <img src={icons[r.meeting.source]!} alt={r.meeting.source} /> : r.meeting.source[0].toUpperCase()}
-                      </span>
-                    )}
-                  </span>}
-              <span className="hist-text"><strong>{r.title}</strong><span>{r.sub}</span></span>
-              <span className="hist-time">{r.date ? <>{r.date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?(AM|PM)/i, '')}<small>{r.date.getHours() < 12 ? 'AM' : 'PM'}</small></> : ''}</span>
-              {r.meeting && (
-                <span className="hist-hover">
-                  <VisibilityPill compact value={r.meeting.visibility} onChange={async (v) => { await window.quorum.noteVisibility(r.meeting!.file, v); refresh(); }} />
-                  <NoteMenu compact note={{ file: r.meeting.file, rel: r.meeting.rel, app: r.meeting.app, link: r.meeting.link }} onDeleted={refresh} />
-                </span>
-              )}
-            </div>
-            {r.children?.map((c) => (
-              <div key={c.key} className="hist-row hist-child" role="button" tabIndex={0} onClick={c.open} onKeyDown={(e) => { if (e.key === 'Enter') c.open(); }}>
-                <span className="hist-branch" aria-hidden="true" />
-                <span className="avatar-sq chat tiny"><IconQuorum /></span>
-                <span className="hist-text"><strong>{c.title}</strong><span>{c.sub}</span></span>
-              </div>
-            ))}
-            </div>
-          ))}
+          {g.rows.map(renderRow)}
         </div>
       ))}
+    </div>
+  );
+}
+
+// a meeting's chats in its row details: the Quorum mark and the count; opens the note at its chat
+function ChatsLink({ n, onOpen }: { n: number; onOpen: () => void }) {
+  return (
+    <a className="app-chip link" href="#" data-tip="Open the chat on this note" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpen(); }} onKeyDown={(e) => e.stopPropagation()}>
+      <img className="app-logo" src={markProd} alt="" />{n} {n === 1 ? 'chat' : 'chats'}
+    </a>
+  );
+}
+
+// + beside the filters: a new note (the note editor, quorum:new-note) or a new chat
+function NewMenu({ onChat }: { onChat?: () => void }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const shut = () => setOpen(false);
+    window.addEventListener('click', shut);
+    return () => window.removeEventListener('click', shut);
+  }, [open]);
+  return (
+    <div className="menu-wrap">
+      <button className={`filter icon-only ${open ? 'on' : ''}`} aria-label="New" data-tip="New" aria-haspopup="menu" aria-expanded={open} onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}><IconPlus width={18} height={18} /></button>
+      {open && (
+        <div className="menu plus-menu" role="menu">
+          <button role="menuitem" onClick={() => { setOpen(false); window.dispatchEvent(new CustomEvent('quorum:new-note')); }}><IconNotes width={15} height={15} /> Note</button>
+          {onChat && <button role="menuitem" onClick={() => { setOpen(false); onChat(); }}><IconChat width={15} height={15} /> Chat</button>}
+        </div>
+      )}
     </div>
   );
 }

@@ -37,7 +37,7 @@ import { addFinal, isEcho, toJSON, toText } from './transcript.js';
 import { extractJson } from './json.js';
 import { emptyState, finalNotes, mergeState, notesFromState, notesMarkdown, notesPrompt, notesSystem, partialNotes, summaryBlock, summaryDue, summaryPrompt, newTurns } from './notes.js';
 import { buildTerms, orgOf, topNames } from './terms.js';
-import { applySpeakers, correctSpeaker, parseSpeakers, participantList, soloSpeakers, speakerView, speakersPrompt, speakersSystem } from './speakers.js';
+import { applySpeakers, correctSpeaker, speakerOf, parseSpeakers, participantList, soloSpeakers, speakerView, speakersPrompt, speakersSystem } from './speakers.js';
 import { startControl } from './control.js';
 import { PROVIDERS as DECISION_PROVIDERS, connectedProvider, decide as decideRaw, removeDecisionsKey, setDecisionsKey } from './decisions.js';
 import { execFile, execFileSync, spawn } from 'node:child_process';
@@ -49,6 +49,10 @@ import { fileURLToPath } from 'node:url';
 import updater from 'electron-updater';
 import { createUpdater, feedFor } from './updater.js';
 import { createGuardrails } from './guardrails.js';
+import { createPlatformCache, eventRef, matchPlatforms } from './meetingPlatforms.js';
+import { calendarWindow, normalizeDays } from './calendarWindow.js';
+import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
+import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, seriesKey, seriesOf } from './meetingBrief.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // quorum://kb links (kb_search and kb_read return them) open the note in the Knowledge tab. A link can arrive before
@@ -294,7 +298,7 @@ function keep(evt) {
   const act = keepActions(gate(), { solo: !!meeting.solo });
   if (act.optOut && mentionsOptOut(evt.text)) return blockCall('name');
   if (act.softStop) softStop(evt.text, evt.channel === 'me' ? OWNER : 'someone on the call', 0.85);
-  const { turns, changed, replace } = addFinal(meeting.transcript, { channel: evt.channel, text: evt.text, start: evt.start, end: evt.end, at: Date.now() }, tx().gap, { clean: tx().clean });
+  const { turns, changed, replace } = addFinal(meeting.transcript, { channel: evt.channel, text: evt.text, start: evt.start, end: evt.end, at: Date.now(), ...(Number.isInteger(evt.voice) ? { voice: evt.voice } : {}) }, tx().gap, { clean: tx().clean });
   if (!changed) return;
   meeting.transcript = turns;
   writeStateSoon();
@@ -691,7 +695,8 @@ function resume(by) {
 }
 
 // every transcript that leaves for a model goes through the opted-out filter
-const speakerLabel = () => ({ me: OWNER, them: themName() ?? 'Others' });
+// a solo recording's microphone hears the room as well as you, and nothing proves who spoke, so its turns are Unknown
+const speakerLabel = () => ({ me: meeting.solo ? 'Unknown' : OWNER, them: themName() ?? 'Others' });
 function transcriptText() {
   return suggester.redactLines(toText(meeting.transcript, speakerLabel()));
 }
@@ -735,7 +740,7 @@ const speakersPayload = () => ({ turns: speakerView(meeting.transcript), partici
 
 // the running summary: Haiku folds the turns since the last run into the state, on a timer that never blocks capture.
 // A failed run is logged and the last good state stands; the local source uses its configured model whatever we ask for
-const notesContext = () => ({ platform: provider().name, solo: !!meeting.solo, title: meeting.title || '' });
+const notesContext = () => ({ platform: provider().name, solo: !!meeting.solo, title: meeting.title || '', people: meeting.named ?? [], lead: meeting.lead ?? null });
 let summaryTimer = null;
 let summaryBusy = false;
 // the running summary and the final notes on the relay (Cloud edition, POST /v1/notes) when the workspace or the user
@@ -845,7 +850,9 @@ const suggester = createSuggester({
 // intoNote: Record in the note view; a solo session whose words go into the open note, with no running summary and no
 // review at the end
 // still: for Record, whether the note view that asked is still waiting; a Back or a reload during the start cancels it
-async function startListening(by, { intoNote = false, screen = false, still = () => true } = {}) {
+// running: the summary that updates every 30 seconds while listening; Record from the header turns it off, so the
+// only model call is the note written at the end, after which the note can still be discarded
+async function startListening(by, { intoNote = false, screen = false, still = () => true, running = true } = {}) {
   // manual-listen off refuses; meeting-capture off makes every session a solo note (notetaker.js)
   // Record in a note refuses a noticed call outright, so it never skips the call's consent and guards
   const decision = intoNote ? { ...recordDecision(gate(), { meetingActive }), solo: true } : startDecision(gate(), { meetingActive });
@@ -856,6 +863,10 @@ async function startListening(by, { intoNote = false, screen = false, still = ()
   const solo = decision.solo;
   meeting.solo = solo;
   meeting.intoNote = intoNote;
+  meeting.askWho = false;
+  meeting.awaitingWho = null;
+  meeting.named = [];
+  meeting.lead = null;
   if (!solo) {
     await refreshGuard();
     if (namedHere()) { meeting.starting = false; return blockCall('name'); }
@@ -903,7 +914,7 @@ async function startListening(by, { intoNote = false, screen = false, still = ()
   meeting.privateNotes = '';
   meeting.saved = null;
   clearInterval(summaryTimer);
-  summaryTimer = intoNote ? null : setInterval(runSummary, 30000);
+  summaryTimer = intoNote || !running ? null : setInterval(runSummary, 30000);
   meeting.armed = true;
   beginSegment();
   if (!solo) helperSend({ cmd: 'chatWatch', on: true });
@@ -945,6 +956,31 @@ async function endMeeting() {
     toUI('state', { phase: 'review', notes: meeting.notes, meta: meetingMeta(meeting.notes.title) });
     return meeting.notes;
   }
+  // Record from the header asks who spoke before anything is written (session-summarize); a discard then costs nothing
+  if (meeting.askWho) {
+    meeting.awaitingWho = fallbackTitle;
+    toUI('state', { phase: 'review', notes: null, meta: meetingMeta(fallbackTitle), ask: whoAsk() });
+    return null;
+  }
+  return summarizeSession(fallbackTitle);
+}
+
+// what the Who spoke step shows: each voice the engine told apart with a few of its lines, or, with one microphone
+// and no voices told apart, the whole room as one
+function whoAsk() {
+  const groups = new Map();
+  for (const t of meeting.transcript) {
+    const key = t.voice != null ? `${t.channel}:${t.voice}` : t.channel;
+    const g = groups.get(key) ?? { key, channel: t.channel, voice: t.voice ?? null, lines: [], words: 0 };
+    g.words += t.text.split(/\s+/).length;
+    if (g.lines.length < 3) g.lines.push(suggester.redactLines(t.text).slice(0, 160));
+    groups.set(key, g);
+  }
+  return { voices: [...groups.values()].sort((a, b) => b.words - a.words) };
+}
+
+// the notes for a finished session, after any answers to Who spoke; streams into the review view
+async function summarizeSession(fallbackTitle) {
   toUI('state', { phase: 'summarizing', meta: meetingMeta(fallbackTitle) });
   await nameSpeakers();
   store.meetings.writeTranscript(meeting.dir, toJSON(meeting.transcript));
@@ -1263,6 +1299,8 @@ ipcMain.handle('set-settings', (_e, next) => {
     settings.screenContext = next.screenContext;
     store.settings.save();
   }
+  // Settings > Notes: whether Record from the header transcribes (Screen is screenContext, set on its own)
+  if (next.notes && typeof next.notes === 'object' && typeof next.notes.transcription === 'boolean') settings.notes = { ...settings.notes, transcription: next.notes.transcription };
   if (typeof next.suggestions === 'boolean') {
     settings.suggestions = next.suggestions;
     store.settings.save();
@@ -1514,6 +1552,7 @@ const isSelf = (p) => /\((creator|recorder)\)/.test(p) || personName(p) === USER
 // Quorum's own notes sit in a quorum subfolder, next to the folders other apps fill (granola/ and so on)
 const quorumNotesDir = () => store.meetings.notesDir(brain()?.vault);
 const meetingSources = () => store.meetings.sources(brain()?.vault);
+const platformCache = createPlatformCache(path.join(DATA_DIR, 'meeting-events.json'));
 function meetingIndex() {
   const root = meetingsDir();
   if (!root) return [];
@@ -1532,11 +1571,16 @@ function meetingIndex() {
         const key = fm.granola_id || fm.quorum_id;
         if (key) { if (seen.has(key)) continue; seen.add(key); }
         out.push({
-          id: f, file, kind: fm.type === 'note' ? 'note' : 'meeting', source: fm.source || folder, title: fm.title || f.replace(/\.md$/, ''), date: fm.date || null,
+          id: f, file, cacheKey: key ?? file, kind: fm.type === 'note' ? 'note' : 'meeting', source: fm.source || folder, title: fm.title || f.replace(/\.md$/, ''), date: fm.date || null,
           people: fm.participants.filter((p) => !isSelf(p)).map(personName),
           orgs: fm.participants.map(orgOf).filter(Boolean),
           count: Number(fm.participant_count) || fm.participants.length,
           visibility: fm.visibility === 'public' ? 'public' : 'private',
+          url: [fm.granola_url, fm.source_url].find((u) => /^https:\/\//.test(String(u ?? ''))) ?? null,
+          platform: /zoom/i.test(fm.platform ?? '') ? 'zoom' : /meet/i.test(fm.platform ?? '') ? 'meet' : /teams/i.test(fm.platform ?? '') ? 'teams' : platformCache.get(key ?? file)?.platform ?? null,
+          calendar: platformCache.get(key ?? file) ? platformCache.get(key ?? file).calendar ?? 'apple-calendar' : null,
+          event: platformCache.get(key ?? file)?.event ?? null,
+          meetingUrl: [fm.meeting_url, platformCache.get(key ?? file)?.url].find((u) => /^https:\/\//.test(String(u ?? ''))) ?? null,
           app, rel: path.relative(brain()?.vault ?? root, file), link: `quorum://note/${encodeURIComponent(fm.granola_id || path.relative(brain()?.vault ?? root, file))}`,
         });
       } catch {}
@@ -1552,7 +1596,47 @@ function chatIndex() {
   })).sort((a, b2) => String(b2.date).localeCompare(String(a.date)));
 }
 
-ipcMain.handle('history', () => ({ meetings: meetingIndex(), chats: chatIndex() }));
+// the vault folders meeting notetakers write into, for their logos in the Memory tree: Quorum's own notes folder (the
+// dev copy's is quorum-dev), and each source folder by its key (granola, zoom, ...)
+function folderApps() {
+  const vault = brain()?.vault;
+  if (!vault) return [];
+  const rel = (p) => path.relative(vault, p).split(path.sep).join('/');
+  const root = meetingsDir();
+  const own = [quorumNotesDir(), root && path.join(root, 'quorum'), root && path.join(root, 'quorum-dev')].filter((p) => p && existsSync(p));
+  const out = new Map(own.map((p) => [rel(p), /quorum-dev$/.test(p) ? 'quorum-dev' : 'quorum']));
+  for (const s of meetingSources()) if (!out.has(rel(s.path))) out.set(rel(s.path), s.key === 'quorum-dev' ? 'quorum-dev' : s.key);
+  return [...out.entries()].filter(([r]) => r && !r.startsWith('..')).map(([r, app]) => ({ rel: r, app }));
+}
+ipcMain.handle('meeting-folder-apps', () => folderApps());
+// the notetaker a vault file came from, by the meeting folder it sits in
+function folderAppOf(abs) {
+  const vault = brain()?.vault;
+  if (!vault) return null;
+  const r = path.relative(vault, abs).split(path.sep).join('/');
+  return folderApps().find((f) => r.startsWith(`${f.rel}/`))?.app ?? null;
+}
+
+ipcMain.handle('history', () => { matchMeetingApps(); return { meetings: meetingIndex(), chats: chatIndex() }; });
+
+// The meeting app of notes whose notetaker does not record it (meetingPlatforms.js), matched against the Mac calendar
+// once per note. It runs when Home loads the list, at most once a minute, and tells Home when notes gained an app.
+let platformRun = { busy: false, at: 0 };
+async function matchMeetingApps() {
+  if (platformRun.busy || Date.now() - platformRun.at < 60000 || !calSettings().enabled) return;
+  platformRun = { busy: true, at: Date.now() };
+  try {
+    const now = Date.now(), oldest = now - 180 * 86400000;
+    const notes = meetingIndex().filter((m) => m.date && !platformCache.has(m.cacheKey))
+      .map((m) => ({ key: m.cacheKey, title: m.title, date: m.date })).filter((n) => { const t = new Date(n.date).getTime(); return t >= oldest && t <= now + 14 * 86400000; });
+    if (!notes.length) return;
+    const first = Math.min(...notes.map((n) => new Date(n.date).getTime()));
+    const back = Math.max(1, Math.ceil((now - first) / 86400000) + 1);
+    const r = await calAsk({ cmd: 'calEvents', days: 14, back });
+    if (r.status !== 'granted') return;
+    if (platformCache.merge(matchPlatforms(notes, r.events ?? [], callLink)) > 0) toUI('history-changed');
+  } catch (e) { log?.('meeting apps', e?.message); } finally { platformRun.busy = false; }
+}
 
 // the in-app reader only opens notes inside the connected Agent OS's meetings folder
 const meetingFile = (file) => {
@@ -1608,6 +1692,8 @@ ipcMain.handle('note-visibility', (_e, file, value) => {
 });
 
 // ask Quorum about the open meeting note; a change request comes back as a proposal the user applies or not
+// a note chat question that starts a debrief (the reader's Debrief button)
+const DEBRIEF = '[debrief]';
 ipcMain.handle('note-ask', async (_e, file, question, history, files) => {
   const abs = meetingFile(file);
   const b = brain();
@@ -1616,21 +1702,28 @@ ipcMain.handle('note-ask', async (_e, file, question, history, files) => {
   const prompt = [
     `You're helping with one meeting note at ${path.relative(b.root, abs)}. Its current body is between <note> tags.`,
     'Answer questions about it, using the rest of the Agent OS when that helps.',
+    'Keep answers brief and clear: lead with the answer in one or two sentences, then at most four short bullets if they help. Leave out background the person did not ask for. Plain, literal language.',
+    'When a short reply from the person would move things forward, end with one last line "Choices: A | B | C" (two to four options, under six words each). Quorum shows them as buttons.',
+    ...(String(question).startsWith(DEBRIEF) ? [
+      'This is a debrief right after the meeting. Ask the person one short question at a time, three at most across the debrief, to learn what the meeting was for, who mattered in it, what was decided or left open, and which project or people it belongs to. Always end a question with a Choices line.',
+      'After the last answer, propose the note updated with what you learned (a clearer title, a one-line purpose, decisions, follow-ups, and links to the related people and projects) inside <updated-note></updated-note>.',
+    ] : []),
     'If the user asks you to change the note, also return the complete updated body inside <updated-note></updated-note>, changing only what they asked for. Never include lines that say [withheld: opted-out customer] in an update.',
     `<note>\n${body}\n</note>`,
-    `Question: ${String(question)}`,
+    `Question: ${String(question).replace(DEBRIEF, 'Start the debrief.')}`,
   ].join('\n\n');
   const attached = stagedOnly(files);
   const source = modelSource();
   // the note body is in the prompt, so a provider without tools can still answer about it and propose edits; only Claude Code can read the rest of the Agent OS or attachments
   const r = roleProvider('agent') === 'claude-code'
-    ? await runModel({ source, providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question: prompt, transcript: '', root: b.root, extra: await agentExtra(String(question), b.root, { kb: false }), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached, history: (history ?? []).slice(-4), onStep: (text) => toUI('agent-step', { text }) }).finally(() => unstage(attached))
+    ? await runModel({ source, providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question: prompt, transcript: '', root: b.root, extra: await agentExtra(String(question), b.root, { kb: false }), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached, history: (history ?? []).slice(-6), onStep: (text) => toUI('agent-step', { text }), onDelta: (text) => toUI('note-delta', { text }) }).finally(() => unstage(attached))
     : await noteAskWithoutTools(prompt, history, attached);
   const m = r.text.match(/<updated-note>\n?([\s\S]*?)\n?<\/updated-note>/);
   const answer = r.text.replace(/<updated-note>[\s\S]*?<\/updated-note>/, '').trim();
   const fm = readFrontmatter(store.notes.read(abs).slice(0, 4000));
   const existing = allChats().find((c) => c.meetingFile === abs && !c.meetingId);
-  addTurn(existing ?? newConvo(String(question), { meetingFile: abs, meetingTitle: fm.title || path.basename(abs, '.md') }), String(question), answer || 'Proposed an edit to the note.', [], []);
+  const asked = String(question).startsWith(DEBRIEF) ? 'Debrief this meeting' : String(question);
+  addTurn(existing ?? newConvo(asked, { meetingFile: abs, meetingTitle: fm.title || path.basename(abs, '.md') }), asked, answer || 'Proposed an edit to the note.', [], []);
   return { text: r.text.replace(/<updated-note>[\s\S]*?<\/updated-note>/, '').trim() || (m ? 'Here is the updated note. Review it and apply it if it looks right.' : ''), proposal: m ? m[1] : null };
 });
 
@@ -1659,15 +1752,102 @@ ipcMain.handle('read-note', (_e, file) => {
     .replace(/^##\s+Private notes\s*\n+None\s*\n/m, '')
     .replace(/^##\s+Summary\s*\n/m, '')
     .trim();
+  // a recorded note's transcript shows on its own tab; the rest is the summary (noteTranscript.js)
+  const split = splitRecorded(body, { recorded: fm.recorded === true || fm.recorded === 'true' });
+  const sessionTurns = savedTranscript(fm);
   return {
-    file: abs, rel: path.relative(b.vault, abs), title: fm.title, date: fm.date, people: fm.participants.filter((p) => !isSelf(p)).map(personName), body,
+    file: abs, rel: path.relative(b.vault, abs), title: fm.title, date: fm.date, people: fm.participants.filter((p) => !isSelf(p)).map(personName), body: split.summary,
+    summarizable: !!split.transcript && !split.summary,
     visibility: fm.visibility === 'public' ? 'public' : 'private', withheld: text !== original, link: `quorum://note/${encodeURIComponent(fm.granola_id || path.relative(b.vault, abs))}`, ...noteLink(abs),
-    source: fm.source && fm.source !== 'quorum' ? String(fm.source) : null,
+    source: fm.source ? String(fm.source) : folderAppOf(abs),
+    ...noteMeetingApps(fm, abs),
+    transcript: sessionTurns.length ? sessionTurns : split.transcript ? parseTurns(split.transcript) : [],
     views: (views.record({ file: abs, who: 'human', via: 'quorum', bytes: Buffer.byteLength(original) }), views.of(abs)),
   };
 });
 
+// The transcript of a note Quorum recorded, from its session folder (quorum_id): every segment's turns in order, each
+// with the name it reads under. A solo note's microphone is Unknown, a call's is the person. Empty when there is none
+function savedTranscript(fm) {
+  const id = String(fm.quorum_id ?? '');
+  if (!/^[\w.:-]+$/.test(id)) return [];
+  const dir = path.join(store.meetings.root, id);
+  if (!existsSync(dir)) return [];
+  const label = { me: fm.type === 'note' ? 'Unknown' : OWNER, them: 'Others' };
+  const turns = [];
+  try {
+    for (const seg of readdirSync(dir).filter((d) => d.startsWith('segment-')).sort()) {
+      const f = path.join(dir, seg, 'transcript.json');
+      if (!existsSync(f)) continue;
+      for (const t of JSON.parse(readFileSync(f, 'utf8'))) {
+        if (!t?.text) continue;
+        turns.push({ id: turns.length + 1, channel: t.channel === 'them' ? 'them' : 'me', who: speakerOf(t, label), text: suggester.redactLines(String(t.text)) });
+      }
+    }
+  } catch { return []; }
+  return turns;
+}
+
+// Generate summary, from the reader: a recorded note with only its transcript gets a title and a summary written by
+// the person's own model, above the transcript, which stays as it was. Only notes Quorum recorded are written
+ipcMain.handle('note-summarize', async (_e, file) => {
+  const abs = meetingFile(file);
+  if (!abs) return { error: 'That note is not in your meetings folder.' };
+  const original = store.notes.read(abs);
+  const fm = readFrontmatter(original);
+  const own = fm.source === 'quorum' || ['quorum', 'quorum-dev'].includes(folderAppOf(abs));
+  if (!own) return { error: 'Only notes Quorum recorded can be summarized here.' };
+  if (modelSource() === 'none') return { error: 'Choose a model in Settings to write a summary.' };
+  const fmBlock = original.match(/^---\n[\s\S]*?\n---\n/)?.[0] ?? '';
+  const rest = original.slice(fmBlock.length).trim().replace(/^#\s+.+\n/, '').trim();
+  const split = splitRecorded(rest, { recorded: true });
+  if (!split.transcript) return { error: 'This note has no transcript to summarize.' };
+  try {
+    const r = parseSummary(suggester.redactLines(await runClaude(suggester.redactLines(split.transcript).slice(0, 60000), SUMMARY_SYSTEM, settings.model)));
+    if (!r) return { error: 'The model did not return a summary. Try again.' };
+    const title = r.title || fm.title || 'Untitled note';
+    const head = fmBlock ? setFrontmatterKey(fmBlock, 'title', JSON.stringify(title)) : '';
+    store.notes.write(abs, `${head}${head.endsWith('\n') ? '' : '\n'}\n# ${title}\n\n${withSummary(r.body, split.transcript)}`);
+    keeper.schedule('note');
+    return { ok: true };
+  } catch (err) { log('note summary', err?.message); return { error: 'Quorum could not write the summary this time.' }; }
+});
+
+// the calendar event, meeting app and notetaker link of a note, for the reader's details line
+function noteMeetingApps(fm, abs) {
+  const m = platformCache.get(fm.granola_id || fm.quorum_id || abs);
+  const https = (u) => (/^https:\/\//.test(String(u ?? '')) ? String(u) : null);
+  const platform = /zoom/i.test(fm.platform ?? '') ? 'zoom' : /meet/i.test(fm.platform ?? '') ? 'meet' : /teams/i.test(fm.platform ?? '') ? 'teams' : m?.platform ?? null;
+  return { platform, meetingUrl: https(fm.meeting_url) ?? https(m?.url), sourceUrl: https(fm.granola_url) ?? https(fm.source_url), calendar: m ? m.calendar ?? 'apple-calendar' : null, event: m?.event ?? null };
+}
+
+// The meeting page (MeetingPage.tsx): a recurring meeting's past notes, and its prep notes and description once it
+// has met SERIES_MIN times. The first call answers from what is kept; { generate: true } writes a new brief with the
+// person's own model when the series has gained a note since.
+const briefCache = createBriefCache(path.join(DATA_DIR, 'meeting-briefs.json'));
+ipcMain.handle('meeting-brief', async (_e, q) => {
+  const title = String(q?.title ?? '');
+  if (!title || suggester.isExcluded(title)) return { past: [], brief: null, status: 'few' };
+  const past = seriesOf(meetingIndex(), { title });
+  const list = past.slice(0, 12).map((m) => ({ file: m.file, title: m.title, date: m.date, source: m.source, people: m.people, count: m.count }));
+  if (past.length < SERIES_MIN) return { past: list, brief: null, status: 'few' };
+  const key = seriesKey(title), stamp = `${past[0].file}|${past.length}`;
+  const kept = briefCache.get(key, stamp);
+  if (kept) return { past: list, brief: kept, status: 'ready' };
+  if (!q?.generate) return { past: list, brief: null, status: 'stale' };
+  if (modelSource() === 'none') return { past: list, brief: null, status: 'no-model' };
+  try {
+    const notes = past.slice(0, 5).map((m) => ({ title: m.title, date: m.date, text: suggester.redactLines(store.notes.read(m.file)) }));
+    const brief = parseBrief(suggester.redactLines(await runClaude(briefPrompt({ title, notes }), BRIEF_SYSTEM, settings.model)));
+    if (!brief) return { past: list, brief: null, status: 'failed' };
+    briefCache.set(key, stamp, brief);
+    return { past: list, brief, status: 'ready' };
+  } catch (e) { log('meeting brief', e?.message); return { past: list, brief: null, status: 'failed' }; }
+});
+
 ipcMain.handle('new-chat', () => { convo = null; chatHistory = []; });
+// a saved chat read for a note's page, without making it the Home chat
+ipcMain.handle('read-chat', (_e, id) => store.chats.read(String(id ?? '')) ?? null);
 ipcMain.handle('load-chat', (_e, id) => {
   const c = store.chats.read(id);
   if (!c) return null;
@@ -1874,7 +2054,13 @@ ipcMain.handle('vault-note', (_e, rel) => {
   const body = text.replace(/^---\n[\s\S]*?\n---\n/, '').trim();
   const h1 = body.match(/^#\s+(.+)$/m);
   views.record({ file: n.abs, who: 'human', via: 'quorum', bytes: Buffer.byteLength(n.text) });
-  return { title: h1 ? h1[1].trim() : path.basename(n.abs, '.md'), body: h1 && body.startsWith(h1[0]) ? body.slice(h1[0].length).trim() : body, abs: n.abs, ...noteLink(n.abs), views: views.of(n.abs) };
+  // a note with a date, people or a notetaker folder gets its details row (NoteMeta.tsx)
+  const fm = readFrontmatter(text);
+  const source = fm.source || folderAppOf(n.abs);
+  const meta = fm.date || fm.participants.length || source
+    ? { date: fm.date || null, people: fm.participants.filter((p) => !isSelf(p)).map(personName), source: source || null, ...noteMeetingApps(fm, n.abs) }
+    : null;
+  return { title: h1 ? h1[1].trim() : path.basename(n.abs, '.md'), body: h1 && body.startsWith(h1[0]) ? body.slice(h1[0].length).trim() : body, abs: n.abs, ...noteLink(n.abs), views: views.of(n.abs), meta };
 });
 
 ipcMain.handle('open-brain', (_e, what) => {
@@ -1959,7 +2145,8 @@ const noteTitle = store.notes.title;
 ipcMain.handle('brain', () => brain());
 // two calendar sources: the Calendar app on this Mac (settings.calendar.enabled, once access is granted) and a Google
 // account connected through the Google Calendar connector (settings.calendar.google, tokens in the Keychain)
-const calSettings = () => ({ source: 'mac', days: 3, showAll: false, hidden: [], ...settings.calendar });
+// Up next reaches 1 to 5 days ahead, or the work week ('week', calendarWindow.js); a saved 7 or 14 from before reads as 5
+const calSettings = () => { const c = { source: 'mac', days: 1, showAll: false, hidden: [], ...settings.calendar }; c.days = normalizeDays(c.days); return c; };
 // the app's own package.json, read once: the packaged build carries the edition, the update feed, the beta gate and the
 // OAuth client ids (quorumGoogle, quorumOAuth) there
 const packagedMeta = (() => { try { return JSON.parse(readFileSync(path.join(here, 'package.json'), 'utf8')); } catch { return {}; } })();
@@ -1973,7 +2160,8 @@ const gcal = createGoogleCalendar({
 async function calendarEvents(days) {
   const c = calSettings();
   const [mac, google] = await Promise.all([c.enabled ? calAsk({ cmd: 'calEvents', days }) : Promise.resolve({ status: 'off', events: [] }), gcal.events(days)]);
-  return { mac, google, events: mergeEvents(mac.events ?? [], google.events) };
+  const tag = (list, calendar) => (list ?? []).map((e) => ({ ...e, source: calendar }));
+  return { mac, google, events: mergeEvents(tag(mac.events, 'apple-calendar'), tag(google.events, 'google-calendar')) };
 }
 // which call platform an event points at, from its URL, location or invite text; null for a plain calendar entry
 const CALL_LINKS = [
@@ -2000,20 +2188,24 @@ ipcMain.handle('update-check', async () => (updates ? updates.check() : { status
 ipcMain.handle('update-install', () => !!updates?.install());
 ipcMain.handle('calendar', async () => {
   const c = calSettings();
-  const { mac, google, events: all } = await calendarEvents(c.days);
+  const win = calendarWindow(c.days);
+  // Google counts days from now, not from midnight; the week reads two more and keeps what ends by Friday
+  const { mac, google, events: fetched } = await calendarEvents(win.until ? win.days + 2 : win.days);
+  const all = fetched.filter((e) => (!win.from || new Date(e.start) >= win.from) && (!win.until || new Date(e.start) < win.until));
   const connected = (!!c.enabled && mac.status === 'granted') || google.connected;
   const status = c.enabled ? mac.status : google.connected ? 'granted' : 'off';
-  if (!connected) return { connected: false, status, events: [], days: c.days, showAll: c.showAll, hidden: 0 };
+  if (!connected) return { connected: false, status, events: [], days: c.days, showAll: false, hidden: 0 };
   const hiddenIds = new Set(c.hidden);
   let hidden = 0;
   // titles of meetings with opted-out customers never show; invite text stays in the main process
   const events = all.filter((e) => !suggester.isExcluded(e.title)).flatMap((e) => {
     const { platform, join } = callLink(e);
     // an event Quorum can do nothing with (no call, or a call on a platform that is off) only shows when asked for
-    if (hiddenIds.has(e.id) || (!c.showAll && !(platform && providerOn(platform)))) { hidden += 1; return []; }
-    return [{ id: e.id, title: e.title, start: e.start, end: e.end, item: e.item, link: e.link ?? null, recurring: e.recurring, platform, join }];
+    // Up next lists calls only; everything else is in the list below it
+    if (hiddenIds.has(e.id) || !(platform && providerOn(platform))) { hidden += 1; return []; }
+    return [{ id: e.id, title: e.title, start: e.start, end: e.end, item: e.item, link: e.link ?? null, recurring: e.recurring, platform, join, calendar: e.source ?? null, organizer: eventRef(e).organizer, count: eventRef(e).count }];
   });
-  return { connected: true, status, events, days: c.days, showAll: c.showAll, hidden };
+  return { connected: true, status, events, days: c.days, showAll: false, hidden };
 });
 ipcMain.handle('calendar-status', async () => ({ ...calSettings(), status: (await calAsk({ cmd: 'calStatus' })).status, google: gcal.status() }));
 // personal OAuth connectors (sources/accounts.js): Quorum's registered apps for Google Drive, Notion, Slack and GitHub
@@ -2066,9 +2258,8 @@ ipcMain.handle('calendar-open', (_e, ev) => {
 ipcMain.handle('calendar-privacy', () => shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars'));
 ipcMain.handle('calendar-set', (_e, next) => {
   const c = calSettings();
-  if ([1, 2, 3, 5, 7, 14].includes(next?.days)) c.days = next.days;
+  if ([1, 2, 3, 4, 5, 'week'].includes(next?.days)) c.days = next.days;
   if (next?.enabled === false) c.enabled = false;
-  if (typeof next?.showAll === 'boolean') c.showAll = next.showAll;
   if (typeof next?.hide === 'string' && next.hide && !c.hidden.includes(next.hide)) c.hidden = [...c.hidden, next.hide].slice(-500);
   if (next?.unhideAll) c.hidden = [];
   settings.calendar = c;
@@ -2086,7 +2277,7 @@ ipcMain.handle('meetings-dir', () => {
   return { path: quorum, rel: path.relative(path.dirname(brain()?.vault ?? dir), quorum), root: path.relative(brain()?.root ?? path.dirname(dir), dir) || path.basename(dir), notes, chosen: dir === settings.meetingsDir, sources };
 });
 // icons for notes made by other apps come from that app's own install on this Mac, so Quorum ships none of their artwork
-const SOURCE_APPS = { granola: '/Applications/Granola.app', zoom: '/Applications/zoom.us.app', teams: '/Applications/Microsoft Teams.app', meet: MEET_PWA };
+const SOURCE_APPS = { calendar: '/System/Applications/Calendar.app', granola: '/Applications/Granola.app', zoom: '/Applications/zoom.us.app', teams: '/Applications/Microsoft Teams.app', meet: MEET_PWA };
 const sourceIcons = {};
 const loadSourceIcons = () => {
   for (const [k, appPath] of Object.entries(SOURCE_APPS)) {
@@ -2114,7 +2305,9 @@ ipcMain.handle('library-icons', async () => {
   const out = {};
   mkdirSync(LIBRARY_ICON_DIR, { recursive: true });
   await Promise.all(CONNECTORS.map(async (c) => {
-    if (c.app && apps?.[c.app]) { out[c.id] = apps[c.app]; return; }
+    // the Calendar app connector reads the Mac's calendars, so it shows Calendar.app's icon
+    const appKey = c.id === 'apple-calendar' ? 'calendar' : c.app;
+    if (appKey && apps?.[appKey]) { out[c.id] = apps[appKey]; return; }
     const file = path.join(LIBRARY_ICON_DIR, `${c.id}.png`);
     try {
       if (!existsSync(file)) {
@@ -2351,6 +2544,41 @@ function recordStop() {
   return recordState();
 }
 ipcMain.handle('record-start', (_e, opts) => recordStart(opts));
+// Record from the header: a solo session that writes a summarized note, with pause, stop and a keep-or-discard review
+// at the end (startListening without intoNote). Transcription and Screen come from Settings > Notes
+// Who spoke, answered: names for the voices (or the room), which voice was the person, and who led it. The turns take
+// the names, then the notes are written. Skipping (no answers) writes them as they are
+ipcMain.handle('session-summarize', async (_e, a) => {
+  const title = meeting.awaitingWho;
+  if (!title) return null;
+  meeting.awaitingWho = null;
+  const names = a?.names && typeof a.names === 'object' ? a.names : {};
+  const clean = (v) => String(v ?? '').trim().slice(0, 80);
+  for (const t of meeting.transcript) {
+    const key = t.voice != null ? `${t.channel}:${t.voice}` : t.channel;
+    const name = key === a?.me ? OWNER : clean(names[key]);
+    if (name) { t.speaker = name; t.corrected = true; t.confidence = 1; }
+  }
+  const people = Array.isArray(a?.people) ? a.people.map(clean).filter(Boolean).slice(0, 30) : [];
+  meeting.named = [...new Set([...Object.entries(names).map(([k, v]) => (k === a?.me ? OWNER : clean(v))), ...people, ...(a?.me && !names[a.me] ? [OWNER] : [])].filter(Boolean))];
+  meeting.lead = a?.lead ? (a.lead === a?.me ? OWNER : clean(names[a.lead]) || null) : null;
+  writeState();
+  return summarizeSession(title);
+});
+
+ipcMain.handle('record-session', async () => {
+  const g = gate();
+  if (!g.manualListen) return { error: 'Recording is off in this build.' };
+  if (meeting.armed || meeting.starting || record.screen) return { error: 'A recording is already running. Stop it first.' };
+  if (settings.notes?.transcription === false) return { error: 'Turn on Transcription in Settings > Notes to record.' };
+  const r = await startListening(undefined, { screen: g.screenContext && !!settings.screenContext, running: false });
+  if (r?.error) return r;
+  // at Stop it asks who spoke before writing anything
+  meeting.askWho = true;
+  meeting.named = [];
+  meeting.lead = null;
+  return meeting.armed ? { ok: true } : { error: "The recording didn't start." };
+});
 ipcMain.handle('record-stop', () => recordStop());
 ipcMain.handle('record-status', () => recordState());
 // the note view owns a recording; a reload or a crashed renderer leaves nobody to write it into, so it stops

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { ViewsPill } from './ViewsPill';
+import { FolderApp } from './FolderApp';
+import { NoteMeta, type NoteMetaInfo } from './NoteMeta';
 import type { TreeSort, Brain, TreeItem, NoteViews } from './quorum';
 import { Graph, type GraphData, type GraphView } from './Graph';
 import { NotePanel, Palette, type PaletteItem, type PaletteMode } from './NoteTools';
@@ -9,7 +11,7 @@ import { useSession } from './session';
 import { IconChevron, IconClose, IconCollapse, IconExpand, IconFolder, IconGraph, IconNewFolder, IconNewNote, IconHistory, IconLink, IconMore, IconReset, IconSearch, IconSidebar, IconSliders, IconSort } from './icons';
 
 type Creating = { kind: 'note' | 'folder'; parent: string } | null;
-type Preview = { rel: string; title: string; body: string; abs: string; app: string; views?: NoteViews } | null;
+type Preview = { rel: string; title: string; body: string; abs: string; app: string; views?: NoteViews; meta?: NoteMetaInfo | null } | null;
 
 export type KbCommand = { kind: 'switcher' | 'search' | 'palette'; n: number } | { kind: 'open'; rel: string; n: number } | null;
 
@@ -343,7 +345,8 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
             <article className="doc">
               <p className="kb-path">{preview.rel}</p>
               <h1>{preview.title}</h1>
-              {preview.views?.total ? <div className="meta-row"><ViewsPill views={preview.views} /></div> : null}
+              {preview.meta ? <NoteMeta meta={{ ...preview.meta, title: preview.title }}>{preview.views?.total ? <ViewsPill views={preview.views} /> : null}</NoteMeta>
+                : preview.views?.total ? <div className="meta-row"><ViewsPill views={preview.views} /></div> : null}
               <Markdown text={preview.body} headings root={brain?.root} onWiki={openLink} />
             </article>
             <NotePanel rel={preview.rel} body={preview.body} onOpen={openNote} onResolve={openLink} />
@@ -473,6 +476,7 @@ function TreeLevel({ items, depth, ops }: { items: TreeItem[]; depth: number; op
                 onDrop={(e) => { e.preventDefault(); e.stopPropagation(); ops.onDrop(target); }}>
                 {it.dir ? <IconChevron className={isOpen ? '' : 'closed'} /> : <span className="kb-spacer" />}
                 <span>{it.name}</span>
+                {it.dir && <FolderApp rel={it.path} />}
               </button>
               <button className="kb-more" aria-label={`More options for ${it.name}`} data-tip="More options"
                 onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); ops.onMenu(it, { x: r.left, y: r.bottom + 4 }); }}>

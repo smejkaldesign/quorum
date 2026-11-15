@@ -4,6 +4,9 @@
   --card-2: #323234;
   --line: rgba(255, 255, 255, 0.08);
   --line-2: rgba(255, 255, 255, 0.14);
+  --menu-bg: #1f1f21;
+  --menu-line: rgba(255, 255, 255, 0.07);
+  --menu-shadow: 0 16px 40px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.35);
   /* grouped content containers (settings cards, transcript, logs, empty states) */
   --container-bg: #171718;
   --container-border: rgba(255, 255, 255, 0.06);
@@ -272,8 +275,9 @@ html.popup-root, html.popup-root body { background: transparent; }
 .record-opt { display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 10px; padding: 8px 6px; color: var(--muted); }
 .record-opt span { display: flex; flex-direction: column; gap: 2px; }
 .record-opt strong { color: var(--text); font-size: 14px; font-weight: 600; }
-.record-opt em { font-style: normal; font-size: 12px; line-height: 1.35; }
-.record-go { justify-content: center; margin: 4px 2px 2px; }
+.record-opt span { min-width: 0; }
+.record-opt em { font-style: normal; font-size: 12px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.record-go { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 4px 2px 2px; text-align: center; }
 
 /* the note view's rich editor: colors come from the app tokens, so a light palette on :root carries over */
 .note-view { --ed-text: #d4d4d8; --ed-faint: #5c5c62; --ed-code-bg: rgba(255, 255, 255, 0.06); --ed-quote: var(--line-2); }
@@ -431,7 +435,9 @@ html.popup-root, html.popup-root body { background: transparent; }
 .recipes { display: flex; gap: 18px; padding: 32px 22px 0; flex-wrap: wrap; justify-content: center; }
 .recipe { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 16px; }
 .recipe:hover { color: var(--text); }
-.hist-rule { border: 0; border-top: 1px solid rgba(255, 255, 255, 0.05); margin: 40px 0 48px; }
+.hist-rule { border: 0; border-top: 1px solid var(--line-2); margin: 40px 0; }
+/* the Next N days heading's line height and menu padding add about 4px above its text */
+.hist-rule + .up-inline { margin-top: -4px; }
 .hist-filters { display: flex; gap: 8px; margin-bottom: 32px; flex-wrap: wrap; }
 .filter { display: inline-flex; align-items: center; gap: 9px; height: 40px; padding: 0 18px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--muted); font-size: 16px; }
 .filter:hover { color: var(--text); }
@@ -718,7 +724,7 @@ em.stub { font-style: normal; font-size: 12px; font-weight: 500; padding: 1px 9p
 
 
 /* private / public */
-.vis-pill { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 12px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); color: var(--text); font-size: 14px; font-weight: 500; }
+.vis-pill { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 12px; border-radius: 999px; background: var(--menu-bg); border: 1px solid var(--line-2); color: var(--text); font-size: 14px; font-weight: 500; transition: background 160ms ease, border-color 160ms ease; }
 .keep-private { position: relative; display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px 0 12px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); color: var(--text); font-size: 14px; font-weight: 500; }
 .keep-private-error { position: absolute; top: calc(100% + 6px); right: 0; white-space: nowrap; font-size: 12px; }
 .keep-private.muted { color: var(--muted); font-weight: 400; }
@@ -727,7 +733,7 @@ em.stub { font-style: normal; font-size: 12px; font-weight: 500; padding: 1px 9p
 .source-ask p { margin: 0; flex: 1 1 260px; }
 .source-ask-actions { display: flex; gap: 8px; }
 .source-past { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0 16px 12px 52px; }
-.vis-pill:hover { background: rgba(255, 255, 255, 0.11); }
+.vis-pill:hover { background: var(--card); border-color: rgba(255, 255, 255, 0.24); }
 .vis-pill svg:last-child { color: var(--muted); }
 .vis-pill.compact { height: 30px; font-size: 13.5px; }
 .vis-menu { right: 0; left: auto; min-width: 260px; }
@@ -738,9 +744,15 @@ em.stub { font-style: normal; font-size: 12px; font-weight: 500; padding: 1px 9p
 .note-menu button { display: flex; align-items: center; gap: 10px; }
 .note-menu .danger, .menu .danger { color: var(--danger); }
 .hist-row { position: relative; cursor: pointer; padding-right: 8px; }
-.hist-hover { display: none; align-items: center; gap: 4px; margin-left: auto; }
-.hist-row:hover .hist-hover, .hist-row:focus-within .hist-hover { display: flex; }
-.hist-row:hover .hist-time, .hist-row:focus-within .hist-time { display: none; }
+.hist-hover { position: absolute; right: 8px; top: 50%; transform: translateY(-50%) translateX(16px); display: flex; align-items: center; gap: 4px; padding-left: 28px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--panel), white 3%) 24px);
+  opacity: 0; visibility: hidden; transition: opacity 250ms ease, transform 250ms ease, visibility 0s linear 250ms; }
+/* hover: the time slides out to the right, then the buttons slide in from the right; leaving runs it backwards */
+.hist-time { transition: opacity 250ms ease 250ms, transform 250ms ease 250ms; }
+.hist-row:hover .hist-hover, .hist-row:focus-within .hist-hover { opacity: 1; visibility: visible; transform: translateY(-50%);
+  transition: opacity 250ms ease 250ms, transform 250ms ease 250ms, visibility 0s linear 250ms; }
+.hist-row:hover .hist-time, .hist-row:focus-within .hist-time { opacity: 0; transform: translateX(16px); transition: opacity 250ms ease, transform 250ms ease; }
+@media (prefers-reduced-motion: reduce) { .hist-hover, .hist-time { transition: none; } }
 .row-more { width: 32px; height: 30px; }
 .blocked { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 12vh 24px; }
 .blocked-art { width: 160px; height: 120px; margin-bottom: 8px; }
@@ -982,8 +994,8 @@ svg.err { color: var(--danger); }
 .up-empty { padding: 10px 12px 4px; font-size: 13px; color: var(--muted); }
 .up-more { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; color: var(--muted); }
 .up-more:hover, .menu-open .up-more { background: rgba(255, 255, 255, 0.08); color: var(--text); }
-.menu-open .hist-hover { display: flex; }
-.menu-open .hist-time { display: none; }
+.menu-open .hist-hover { opacity: 1; visibility: visible; transform: translateY(-50%); transition: none; }
+.menu-open .hist-time { opacity: 0; transform: translateX(16px); transition: none; }
 .up-menu { top: 34px; min-width: 180px; }
 
 .conn-state { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
@@ -1647,12 +1659,11 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .up-strip { flex: none; padding: 2px 22px 6px; border-bottom: 1px solid var(--line); -webkit-app-region: drag; }
 .up-strip button, .up-strip label, .up-strip .hist-row, .up-list { -webkit-app-region: no-drag; }
 .up-strip .up-head { margin-bottom: 4px; }
-.up-strip .up-head h4 { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; color: var(--muted); }
+.up-strip .up-head h4 { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; color: var(--text); }
 .up-head-end { display: inline-flex; align-items: center; gap: 12px; }
 .up-strip .up-new { height: 26px; padding: 0 10px 0 8px; display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
 .up-strip .up-empty { padding: 4px 0 6px; }
-.up-list { max-height: 42vh; overflow-y: auto; }
-.up-strip .hist-row { padding: 4px 0; gap: 12px; }
+.up-strip .hist-row { --row-pad: 4px; padding: 4px 0 4px var(--row-pad); gap: 12px; }
 .up-strip .avatar-sq { width: 32px; height: 32px; }
 .up-strip .hist-text { gap: 2px; }
 .up-strip .hist-text strong, .up-strip .hist-text span, .up-strip .hist-time { font-size: 13px; }
@@ -1774,3 +1785,243 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .conn-check-item.skip strong { color: var(--muted); }
 .conn-check-fix { display: block; margin-top: 2px; color: var(--danger); }
 .conn-check-item .muted { display: block; margin-top: 2px; }
+
+/* Up next on Home: the list's top group, and the header strip that slides down once that group's first row scrolls past */
+.up-inline .up-head h4 { margin: 0; color: var(--text); font-size: 18px; font-weight: 500; }
+.up-float { position: relative; z-index: 5; height: 0; }
+.up-float-in { position: absolute; top: 0; left: 0; right: 0; overflow: hidden; pointer-events: none; }
+.up-float-in > .up-strip { background: var(--panel); transform: translateY(-100%); opacity: 0; transition: transform 220ms ease, opacity 180ms ease; }
+.up-float-in.shown { pointer-events: auto; }
+.up-float-in.shown > .up-strip { transform: none; opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .up-float-in > .up-strip { transition: none; } }
+.up-float-in:not(.shown) .up-strip, .up-float-in:not(.shown) .up-strip * { -webkit-app-region: no-drag; }
+
+/* dates and times read in full white. A row's details: the meeting app's logo before the attendees (or the time on
+   Up next), then the notetaker's logo and name, subdued until hovered */
+.hist-group h4, .hist-time { color: var(--text); }
+.hist-sub { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.hist-meet { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.hist-text .hist-sub-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-text .app-chip { flex: none; display: inline-flex; align-items: center; gap: 6px; overflow: visible; color: var(--muted); font-size: inherit; text-decoration: none; transition: color 160ms ease; }
+.app-logo { width: 16px; height: 16px; border-radius: 4px; flex: none; }
+.hist-text .app-chip-letter { display: inline-grid; place-items: center; font-size: 10px; font-weight: 600; background: var(--line-2); color: var(--text); }
+.app-chip.link { cursor: pointer; }
+.hist-text .app-chip.link:hover, .hist-text .app-chip.link:focus-visible { color: var(--text); }
+@media (prefers-reduced-motion: reduce) { .hist-text .app-chip { transition: none; } }
+.up-join { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px 0 8px; border: 1px solid var(--line-2); border-radius: 999px; background: var(--menu-bg); color: var(--text); font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: background 160ms ease, border-color 160ms ease; }
+.up-join:hover { background: var(--card); border-color: rgba(255, 255, 255, 0.24); }
+.up-join img { width: 16px; height: 16px; border-radius: 4px; }
+.up-join { padding-right: 10px; }
+.up-join svg { flex: none; color: var(--text); }
+
+/* a meeting with a known app shows the app's logo as its avatar */
+.avatar-sq.app { background: var(--line); }
+.avatar-sq.app .app-logo { width: 28px; height: 28px; border-radius: 7px; }
+.up-strip .avatar-sq.app .app-logo { width: 22px; height: 22px; }
+/* details text that opens the item in its app: subdued, white on hover */
+.hist-text .app-link { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); text-decoration: none; cursor: pointer; transition: color 160ms ease; }
+.hist-text .app-link-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; font-size: inherit; }
+.hist-text .app-link:hover, .hist-text .app-link:focus-visible { color: var(--text); }
+.up-inline .up-head .up-show-more { margin: 0; }
+
+/* a row's hover background reaches past the list's left edge by as much as the row's top padding */
+.hist-row { --row-pad: 9px; margin-left: calc(-1 * var(--row-pad)); padding-left: var(--row-pad); width: calc(100% + var(--row-pad)); }
+.up-strip .hist-row { --row-pad: 4px; }
+.hist-row.hist-child { --row-pad: 6px; padding-left: calc(26px + var(--row-pad)); }
+
+/* every menu and popover: darker than the panel's cards, a quiet border, a drop shadow */
+.menu, .model-menu, .record-menu, .brain-menu, .vis-menu, .note-menu, .people-pop, .date-pop { background: var(--menu-bg); border: 1px solid var(--menu-line); box-shadow: var(--menu-shadow); }
+/* hover buttons wait 16px right of their row before they slide in; the list never scrolls sideways for them */
+.body { overflow-x: hidden; }
+.history, .up-strip { overflow-x: clip; }
+/* a meeting page (MeetingPage.tsx): prep notes first, then what the meeting is, then its past notes */
+.meta-pill.meta-app { color: var(--muted); transition: color 160ms ease; }
+button.meta-pill.meta-app:hover { color: var(--text); }
+.mp-section { margin-top: 32px; }
+.mp-section h2 { margin: 0 0 10px; font-size: 18px; font-weight: 600; color: var(--text); }
+.mp-section p { margin: 0 0 8px; line-height: 1.55; }
+.mp-prep { padding-bottom: 28px; border-bottom: 1px solid var(--line-2); }
+.mp-about { margin-bottom: 16px; }
+.mp-about h3 { margin: 0 0 4px; font-size: 14px; font-weight: 600; color: var(--muted); }
+.mp-skel { display: flex; flex-direction: column; gap: 9px; padding: 4px 0 6px; }
+.mp-skel span { display: block; height: 12px; border-radius: 6px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.12) 50%, rgba(255, 255, 255, 0.05) 100%); background-size: 250% 100%;
+  animation: shimmer 1.4s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .mp-skel span { animation: none; } }
+.mp-empty { color: var(--muted); }
+.mp-past { display: flex; flex-direction: column; }
+.mp-past-row { display: flex; justify-content: space-between; gap: 16px; padding: 10px 7px; margin-left: -7px; border-radius: 10px; text-align: left; font-size: 15px; color: var(--text); }
+.mp-past-row:hover { background: rgba(255, 255, 255, 0.03); }
+.meeting-page .reader-actions .up-join { height: 32px; padding: 0 14px; }
+/* the row hover background fades in and out */
+.hist-row { transition: background-color 200ms ease; }
+@media (prefers-reduced-motion: reduce) { .hist-row { transition: none; } }
+/* everything in a row opens something, so all of it shows the pointer */
+.hist-row, .hist-row * { cursor: pointer; }
+.hist-row button:disabled { cursor: default; }
+/* Up next's header: "Next N days" opens a menu of 1 to 5 days; Non-meetings is a switch */
+.up-days-btn { display: inline-flex; align-items: center; gap: 6px; padding: 2px 6px; margin-left: -6px; border-radius: 8px; color: var(--text); }
+.up-days-btn:hover { background: rgba(255, 255, 255, 0.06); }
+.up-days-btn h4 { margin: 0; }
+.up-days-chev { color: var(--muted); }
+.up-days-menu { top: calc(100% + 6px); min-width: 160px; }
+.up-show-more:disabled { opacity: 0.4; cursor: default; }
+
+/* Next N days sits above the filters with a divider under it */
+/* 40px each side of the line, as under the recipes, measured from the last row's edge */
+.up-inline { padding-bottom: 40px; margin-bottom: 40px; border-bottom: 1px solid var(--line-2); }
+.up-inline .up-head { margin-bottom: 8px; }
+/* Today with nothing on it */
+.day-off { display: flex; align-items: center; gap: 20px; padding: 12px 0 4px; }
+.day-off-art { width: 120px; height: 72px; flex: none; }
+.day-off-sun { fill: rgba(255, 196, 120, 0.16); stroke: rgba(255, 196, 120, 0.7); stroke-width: 1.5; }
+.day-off-line { stroke: rgba(255, 255, 255, 0.28); stroke-width: 1.5; stroke-linecap: round; }
+.day-off-water { stroke: rgba(150, 190, 255, 0.35); stroke-width: 1.5; stroke-linecap: round; fill: none; }
+.day-off-ray { stroke: rgba(255, 196, 120, 0.5); stroke-width: 1.5; stroke-linecap: round; }
+/* the title and line sit like a row's title and details: 4px apart, 15px */
+.day-off-text { display: flex; flex-direction: column; gap: 4px; }
+.day-off-title { margin: 0; font-size: 15px; font-weight: 400; color: var(--text); }
+.day-off .hist-empty { margin: 0; padding: 0; text-align: left; font-size: 15px; }
+.hist-time .up-day { margin-right: 8px; }
+.up-all { display: inline-flex; align-items: center; height: 30px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--text); font-size: 13px; font-weight: 500; transition: background 160ms ease, border-color 160ms ease; }
+.up-all:hover { background: rgba(255, 255, 255, 0.05); }
+.up-all.on { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.3); }
+/* the strip opened past three calls stops at the window's height (less the header and its own heading) and scrolls */
+/* scrolls up and down only: the hover buttons waiting 16px to the right never make it scroll sideways, and 4px of
+   padding keeps the row highlight that reaches left of the list inside it */
+.up-strip .up-list.open { max-height: calc(100vh - 150px); overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; padding-left: 4px; margin-left: -4px; }
+.up-strip .up-all { height: 26px; padding: 0 12px; font-size: 12px; }
+/* while the Record menu is open, the button keeps its label out and its icon and text white */
+.status.listen.idle[aria-expanded="true"] { color: var(--text); background: rgba(255, 255, 255, 0.08); }
+.status.listen.idle[aria-expanded="true"] .listen-hint { max-width: 140px; opacity: 1; margin-right: 8px; color: var(--text); transition-delay: 0s; }
+/* Start recording: outlined, like Join */
+.pill.primary.record-go { display: flex; align-items: center; justify-content: center; gap: 8px; width: auto; text-align: center; background: transparent; border: 1px solid var(--line-2); color: var(--text); transition: background 160ms ease, border-color 160ms ease; }
+.pill.primary.record-go:not(:disabled):hover { background: var(--card); border-color: rgba(255, 255, 255, 0.24); }
+.pill.primary.record-go svg { flex: none; }
+
+/* Record from the header (App.tsx): 3, 2, 1 in the label, then a green ring that fills with the voice it hears. While
+   recording the label is gone and Pause and Stop sit to its left; a divider always follows it */
+.status.listen.listening .listen-hint, .status.listen.paused .listen-hint, .status.listen.starting .listen-hint { max-width: 0; opacity: 0; margin-right: 0; }
+.status.listen.idle.counting .listen-hint, .status.listen.idle.rec-error .listen-hint { max-width: 280px; opacity: 1; margin-right: 8px; color: var(--text); transition-delay: 0s; }
+.status.listen.idle.counting .listen-hint { font-variant-numeric: tabular-nums; min-width: 12px; text-align: center; }
+.status.listen.idle.rec-error .listen-hint { color: var(--danger); }
+.status.listen.paused { color: var(--go); }
+.rec-level-ring { stroke: var(--go); }
+.rec-level-fill { fill: var(--go); opacity: 0.9; transition: y 90ms linear, height 90ms linear; }
+.status.listen.paused .rec-level-ring { opacity: 0.6; }
+.rec-sep { display: block; width: 1px; height: 18px; margin: 0 6px; background: var(--line-2); flex: none; align-self: center; }
+.plus-menu { min-width: 150px; }
+.plus-menu button { display: flex; align-items: center; gap: 8px; }
+
+/* the recording's note and a hand note open under the header, inside the window */
+.live-body { display: flex; flex-direction: column; overflow: hidden; }
+.note-host { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.note-host[hidden] { display: none; }
+.end.embedded { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.end.embedded .end-bar { -webkit-app-region: no-drag; padding: 6px 16px; }
+/* while it records or writes, the Summary and Transcript icons shimmer */
+.view-toggle.working button svg { animation: working-pulse 1.4s ease-in-out infinite; }
+.view-toggle.working button:nth-child(2) svg { animation-delay: 0.35s; }
+@keyframes working-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+.live-wait { margin: 8px 0 24px; }
+.live-wait .shimmer { margin: 0 0 14px; }
+@media (prefers-reduced-motion: reduce) { .view-toggle.working button svg { animation: none; } .rec-level-fill { transition: none; } }
+/* a transcript row's speaker sits on its first line, not in the middle of a long turn */
+.transcript p > .spk { align-self: start; padding-top: 2px; }
+.avatar-sm.avatar-unknown { width: 20px; height: 20px; display: inline-grid; place-items: center; border-radius: 50%; background: var(--card-2); border: 1px solid var(--line-2); color: var(--muted); font-size: 11px; font-weight: 700; }
+.hist-filters .plus-menu { top: 46px; }
+/* the recording's transcript: each speaker's name above their run of turns */
+.end-transcript .turn-group { margin: 0 0 18px; }
+.end-transcript .turn-group > .spk { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.end-transcript .turn-group.them > .spk { color: #9db8ff; }
+.end-transcript .turn-group > p { display: block; margin: 0 0 6px; line-height: 1.55; }
+.end-transcript .live-partial { display: block; margin: 0; }
+.end-transcript .turn-group > p.hot { background: rgba(255, 200, 80, 0.14); border-radius: 6px; box-shadow: 0 0 0 6px rgba(255, 200, 80, 0.14); }
+/* Who spoke, after a recording and before its summary */
+.who-spoke { margin: 8px 0 28px; padding-bottom: 24px; border-bottom: 1px solid var(--line-2); }
+.who-spoke h2 { margin: 0 0 6px; font-size: 18px; font-weight: 600; }
+.who-spoke > .muted { margin: 0 0 16px; }
+.who-voice { padding: 12px 0; border-top: 1px solid var(--line); }
+.who-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.who-pick { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.who-lines { margin: 8px 0; padding: 0; list-style: none; color: var(--muted); font-size: 14px; font-style: italic; }
+.who-lines li { margin: 2px 0; }
+.who-input { width: 100%; max-width: 360px; height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--menu-bg); color: var(--text); font: inherit; font-size: 14px; }
+.who-spoke > .who-input { margin-top: 8px; max-width: 520px; }
+.who-actions { display: flex; gap: 8px; margin-top: 16px; }
+.pill.who-go { background: transparent; border: 1px solid var(--line-2); color: var(--text); }
+.pill.who-go:hover { background: var(--card); border-color: rgba(255, 255, 255, 0.24); }
+/* Hide and Show on the Up next strip: the list slides up under the heading as its space closes, and back down */
+.up-fold { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 260ms ease; }
+.up-fold.folded { grid-template-rows: 0fr; }
+.up-fold-in { min-height: 0; overflow: hidden; transition: transform 260ms ease, opacity 200ms ease; }
+.up-fold.folded .up-fold-in { transform: translateY(-14px); opacity: 0; }
+.up-strip .up-head { position: relative; z-index: 1; }
+@media (prefers-reduced-motion: reduce) { .up-fold, .up-fold-in { transition: none; } }
+/* a meeting notetaker's logo beside the folder it writes into, in the Memory tree */
+.kb-item .folder-apps { display: inline-flex; align-items: center; gap: 3px; margin-left: 5px; flex: none; }
+.kb-item .folder-app { display: inline-flex; }
+.kb-item .folder-app .app-logo { width: 16px; height: 16px; border-radius: 4px; }
+/* a note's people: the first name and +N, and a scrolling list of everyone on click */
+.people-pill .muted { margin-left: 4px; }
+.people-pop-list { top: 42px; min-width: 220px; max-width: 320px; padding: 6px; }
+.people-pop-list .people-pop-head { margin: 4px 8px 6px; font-size: 12px; color: var(--muted); }
+.people-pop-list ul { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; }
+.people-pop-list li { padding: 7px 8px; border-radius: 8px; font-size: 14px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.people-pop-list li:hover { background: rgba(255, 255, 255, 0.06); }
+.meta-pill .app-logo { width: 18px; height: 18px; border-radius: 5px; }
+/* the header's Record group sits in one row with its divider */
+.bar .status-wrap { display: flex; align-items: center; gap: 2px; }
+/* Quorum's mark fills its square while app icons carry their own margin, so it draws smaller to look the same size */
+.kb-item .folder-app .app-logo.own { width: 13px; height: 13px; margin: 1.5px; border-radius: 50%; }
+/* Pause and Stop while recording: hidden behind Record, out to its left on hover, back 3 seconds after the pointer leaves */
+.rec-ctl { display: flex; align-items: center; gap: 2px; max-width: 0; overflow: hidden; opacity: 0; transform: translateX(14px); pointer-events: none;
+  transition: max-width 240ms ease 3000ms, opacity 200ms ease 3000ms, transform 240ms ease 3000ms; }
+.bar .status-wrap:hover .rec-ctl, .rec-ctl:focus-within { max-width: 80px; opacity: 1; transform: none; pointer-events: auto; transition-delay: 0s; }
+.bar .right .rec-ctl .rec-pause { color: var(--text); }
+.bar .right .rec-ctl .rec-stop { color: var(--stop); }
+.bar .right .rec-ctl .rec-stop:hover { background: rgba(240, 74, 74, 0.12); }
+@media (prefers-reduced-motion: reduce) { .rec-ctl { transition: none; } }
+/* the recording's review page: the text column runs the chat box's full width, with the # marks hanging to its left */
+.end:not(.note-view) .end-scroll .doc { padding-left: 0; padding-right: 0; }
+.end-composer-wrap { padding-left: 32px; padding-right: 32px; }
+/* the fold only clips on the strip, where it hides the list; the Home list keeps its rows' highlight reaching left */
+.up-inline .up-fold-in { overflow: visible; }
+.up-strip .up-fold-in { padding-left: 4px; margin-left: -4px; }
+/* the highlight reaches past the right edge by the same amount as the left, so it sits even; text and buttons stay put */
+.hist-row { margin-right: calc(-1 * var(--row-pad)); padding-right: var(--row-pad); width: calc(100% + 2 * var(--row-pad)); }
+.hist-row .hist-hover { right: var(--row-pad); }
+.up-strip .up-fold-in { padding-right: 4px; margin-right: -4px; }
+/* the time only fades: quickly out on hover, back in once the buttons have slid away; the buttons keep their slide */
+.hist-row .hist-time { transform: none; transition: opacity 120ms ease 250ms; }
+.hist-row:hover .hist-time, .hist-row:focus-within .hist-time { opacity: 0; transform: none; transition: opacity 120ms ease; }
+.menu-open .hist-time { transform: none; }
+.no-summary { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 8px 0 24px; }
+.no-summary p { margin: 0; }
+/* the note chat: names and avatars above each side, the same text size as the note, room between question and answer */
+.note-thread { gap: 36px; padding-top: 32px; margin-top: 8px; }
+.note-thread .nt-turn { display: flex; flex-direction: column; gap: 10px; }
+.nt-who { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.nt-who strong { font-weight: 600; color: var(--text); }
+.nt-who img { border-radius: 50%; }
+.nt-who.quorum { margin-top: 22px; }
+.nt-q { align-self: stretch; max-width: none; margin: 0; padding: 0; border-radius: 0; background: none; font-size: inherit; line-height: 1.6; }
+.nt-a { font-size: inherit; }
+.nt-choices { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.nt-start { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+/* a page's Back row pins to the top once scrolled past: it slides down, then the page title types out beside Back */
+.rb-sentinel { flex: none; height: 1px; margin-bottom: -1px; }
+.sticky-bar { position: sticky; top: 0; z-index: 6; align-items: center; }
+.sticky-bar.stuck { margin-left: -40px; margin-right: -40px; padding: 10px 40px; background: var(--panel); border-bottom: 1px solid var(--line-2); animation: bar-down 240ms ease; }
+@keyframes bar-down { from { transform: translateY(-100%); opacity: 0; } to { transform: none; opacity: 1; } }
+.rb-left { display: inline-flex; align-items: center; gap: 14px; min-width: 0; }
+.rb-title { font-size: 15px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 420px; }
+@media (prefers-reduced-motion: reduce) { .sticky-bar.stuck { animation: none; } }
+/* a note's details: date, people, then its apps as icon buttons */
+.meta-pill.meta-icon { width: 36px; padding: 0; justify-content: center; }
+.meta-pill.meta-icon .app-logo { width: 18px; height: 18px; border-radius: 5px; }
+button.meta-pill.meta-icon:hover { background: rgba(255, 255, 255, 0.06); }
+/* quick asks above the note chat input */
+.skill-pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
+.skill-pill { height: 30px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--menu-bg); color: var(--text); font-size: 13px; font-weight: 500; transition: background 160ms ease, border-color 160ms ease; }
+.skill-pill:hover:not(:disabled) { background: var(--card); border-color: rgba(255, 255, 255, 0.24); }

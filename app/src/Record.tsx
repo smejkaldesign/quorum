@@ -1,5 +1,5 @@
 import { Toggle } from './controls';
-import { IconMic, IconScreen } from './icons';
+import { IconMic, IconRecord, IconScreen } from './icons';
 import { canStart, type RecordChoice } from './noteRecord';
 
 // the Record popover, in the header and in the note view: Transcription (on by default) and Screen (off by default).
@@ -10,15 +10,15 @@ export function RecordMenu({ choice, onChoice, onStart }: { choice: RecordChoice
     <div className="menu record-menu" role="dialog" aria-label="Record" onClick={(e) => e.stopPropagation()}>
       <div className="record-opt">
         <IconMic width={18} height={18} />
-        <span><strong>Transcription</strong><em>Your voice and your Mac's sound, written into the note</em></span>
+        <span><strong>Transcription</strong><em>Your voice and your Mac's sound</em></span>
         <Toggle on={choice.audio} onChange={(audio) => onChoice({ ...choice, audio })} />
       </div>
       <div className="record-opt">
         <IconScreen width={18} height={18} />
-        <span><strong>Screen</strong><em>Reads the call window while recording to put names on who spoke</em></span>
+        <span><strong>Screen</strong><em>Puts names on who spoke</em></span>
         <Toggle on={choice.screen} onChange={(screen) => onChoice({ ...choice, screen })} />
       </div>
-      <button className="pill primary record-go" disabled={!canStart(choice)} onClick={() => onStart(choice)}>Start recording</button>
+      <button className="pill primary record-go" disabled={!canStart(choice)} onClick={() => onStart(choice)}><IconRecord width={16} height={16} />Start recording</button>
     </div>
   );
 }

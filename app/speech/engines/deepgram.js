@@ -15,6 +15,8 @@ export function url({ sampleRate, terms, locale }) {
   u.searchParams.set('smart_format', 'true');
   u.searchParams.set('interim_results', 'true');
   u.searchParams.set('endpointing', '300');
+  // tells voices apart: each word carries a speaker number, and a result is labeled with the one most of its words have
+  u.searchParams.set('diarize', 'true');
   if (locale && !locale.startsWith('en')) u.searchParams.set('language', locale.split('-')[0]);
   for (const t of terms.slice(0, 100)) u.searchParams.append('keyterm', t);
   return u.href;
@@ -28,7 +30,10 @@ export function mapMessage(msg, channel) {
   const words = Array.isArray(alt.words) ? alt.words : [];
   const start = words.length ? words[0].start : Number(msg.start) || 0;
   const end = words.length ? words[words.length - 1].end : start + (Number(msg.duration) || 0);
-  return { event: 'transcript', channel, text, isFinal: msg.is_final === true, start, end };
+  const count = new Map();
+  for (const w of words) if (Number.isInteger(w.speaker)) count.set(w.speaker, (count.get(w.speaker) ?? 0) + 1);
+  const voice = [...count.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  return { event: 'transcript', channel, text, isFinal: msg.is_final === true, start, end, ...(voice != null ? { voice } : {}) };
 }
 
 export function open({ key, sampleRate, terms, locale, channel, onEvent, onError, onClose }) {

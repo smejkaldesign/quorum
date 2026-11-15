@@ -22,7 +22,7 @@ function play(state, turns, model = emptyTail()) {
 describe('Record into the rich editor', () => {
   it('writes into an empty note without a blank first paragraph, then appends', () => {
     const { state } = play(stateOf(''), [{ id: 1, channel: 'me', text: 'Hello' }, { id: 2, channel: 'them', text: 'Hi', label: 'Ada' }]);
-    expect(md(state)).toBe('**You:** Hello\n\n**Ada:** Hi');
+    expect(md(state)).toBe('**Unknown:** Hello\n\n**Ada:** Hi');
   });
 
   it('grows a turn in place even with markdown characters in the text and the name', () => {
@@ -43,7 +43,7 @@ describe('Record into the rich editor', () => {
     model = mapTail(model, tr.mapping);
     state = state.apply(tr);
     ({ state } = play(state, [{ id: 1, channel: 'me', text: 'call the bank', replace: true }], model));
-    expect(md(state)).toBe('**You:** call the\n\nmine\n\nbank');
+    expect(md(state)).toBe('**Unknown:** call the\n\nmine\n\nbank');
   });
 
   it('stops rewriting a paragraph you edited', () => {
@@ -52,7 +52,7 @@ describe('Record into the rich editor', () => {
     model = mapTail(model, tr.mapping);
     state = state.apply(tr);
     ({ state } = play(state, [{ id: 1, channel: 'me', text: 'call the bank', replace: true }], model));
-    expect(md(state)).toBe('**You:** call the!\n\nbank');
+    expect(md(state)).toBe('**Unknown:** call the!\n\nbank');
   });
 
   it('keeps the caret where it is, and follows the end only when the caret was there', () => {
@@ -71,6 +71,6 @@ describe('Record into the rich editor', () => {
     expect(recordTurn(s, emptyTail(), { id: 1, channel: 'me', text: '  ' })).toBeNull();
     const { state, model } = play(s, [{ id: 1, channel: 'me', text: 'same' }]);
     const again = recordTurn(state, model, { id: 1, channel: 'me', text: 'same', replace: true });
-    expect(md(state.apply(again.tr))).toBe('x\n\n**You:** same');
+    expect(md(state.apply(again.tr))).toBe('x\n\n**Unknown:** same');
   });
 });

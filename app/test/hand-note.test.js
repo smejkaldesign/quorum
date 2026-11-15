@@ -79,49 +79,49 @@ describe('Record choices', () => {
 describe('what Record appends to the note', () => {
   const run = (body, turns) => turns.reduce((r, t) => appendTurn(r.body, r.written, t), { body, written: emptyWritten() });
 
-  it('adds each final turn as a paragraph at the end, labeled You or Speaker 1 without a name', () => {
+  it('adds each final turn as a paragraph at the end, labeled Unknown or Speaker 1 without a name', () => {
     const r = run('My notes', [{ id: 1, channel: 'me', text: 'Call the bank' }, { id: 2, channel: 'them', text: 'Sure, Tuesday works' }]);
-    expect(r.body).toBe('My notes\n\n**You:** Call the bank\n\n**Speaker 1:** Sure, Tuesday works');
+    expect(r.body).toBe('My notes\n\n**Unknown:** Call the bank\n\n**Speaker 1:** Sure, Tuesday works');
   });
 
   it('starts an empty note without blank lines', () => {
-    expect(run('', [{ id: 1, channel: 'me', text: 'Hello' }]).body).toBe('**You:** Hello');
+    expect(run('', [{ id: 1, channel: 'me', text: 'Hello' }]).body).toBe('**Unknown:** Hello');
   });
 
   it('rewrites the last paragraph when its turn grows', () => {
     const r = run('', [{ id: 1, channel: 'me', text: 'Call the' }, { id: 1, channel: 'me', text: 'Call the bank today', replace: true }, { id: 1, channel: 'me', text: 'Call the bank today at noon', replace: true }]);
-    expect(r.body).toBe('**You:** Call the bank today at noon');
+    expect(r.body).toBe('**Unknown:** Call the bank today at noon');
   });
 
   it('adds only the gained words once something follows the turn', () => {
     let r = run('', [{ id: 1, channel: 'me', text: 'Call the' }]);
     r = appendTurn(`${r.body}\n\nmy own line`, r.written, { id: 1, channel: 'me', text: 'Call the bank', replace: true });
-    expect(r.body).toBe('**You:** Call the\n\nmy own line\n\nbank');
+    expect(r.body).toBe('**Unknown:** Call the\n\nmy own line\n\nbank');
     r = appendTurn(r.body, r.written, { id: 1, channel: 'me', text: 'Call the bank today', replace: true });
-    expect(r.body).toBe('**You:** Call the\n\nmy own line\n\nbank today');
+    expect(r.body).toBe('**Unknown:** Call the\n\nmy own line\n\nbank today');
   });
 
   it('keeps the new words of a cleanup rewrite that does not extend the earlier text', () => {
-    expect(newWords('**You:** um so call the bank', '**You:** So, call the bank today.')).toBe('today.');
+    expect(newWords('**Unknown:** um so call the bank', '**Unknown:** So, call the bank today.')).toBe('today.');
     let r = run('', [{ id: 1, channel: 'me', text: 'um so call the bank' }, { id: 2, channel: 'them', text: 'Okay' }]);
     r = appendTurn(r.body, r.written, { id: 1, channel: 'me', text: 'So, call the bank today.', replace: true });
-    expect(r.body).toBe('**You:** um so call the bank\n\n**Speaker 1:** Okay\n\ntoday.');
+    expect(r.body).toBe('**Unknown:** um so call the bank\n\n**Speaker 1:** Okay\n\ntoday.');
     // and a grown tail that was itself rewritten keeps its words too
     r = run('', [{ id: 1, channel: 'me', text: 'call the' }]);
     r = appendTurn(`${r.body}\n\nmine`, r.written, { id: 1, channel: 'me', text: 'call the bank', replace: true });
     r = appendTurn(r.body, r.written, { id: 1, channel: 'me', text: 'Call the bank, then email Sam', replace: true });
-    expect(r.body).toBe('**You:** call the\n\nmine\n\nbank then email Sam');
+    expect(r.body).toBe('**Unknown:** call the\n\nmine\n\nbank then email Sam');
   });
 
   it('rewrites the whole paragraph while it is still last, cleanup included', () => {
     const r = run('', [{ id: 1, channel: 'me', text: 'um so call the bank' }, { id: 1, channel: 'me', text: 'So, call the bank.', replace: true }]);
-    expect(r.body).toBe('**You:** So, call the bank.');
+    expect(r.body).toBe('**Unknown:** So, call the bank.');
   });
 
   it('writes a grown turn it never saw in full, and ignores empty text', () => {
-    expect(run('x', [{ id: 9, channel: 'me', text: 'late words', replace: true }]).body).toBe('x\n\n**You:** late words');
+    expect(run('x', [{ id: 9, channel: 'me', text: 'late words', replace: true }]).body).toBe('x\n\n**Unknown:** late words');
     expect(run('x', [{ id: 9, channel: 'me', text: '  ' }]).body).toBe('x');
-    expect(run('x', [{ id: 1, channel: 'me', text: 'same' }, { id: 1, channel: 'me', text: 'same', replace: true }]).body).toBe('x\n\n**You:** same');
+    expect(run('x', [{ id: 1, channel: 'me', text: 'same' }, { id: 1, channel: 'me', text: 'same', replace: true }]).body).toBe('x\n\n**Unknown:** same');
   });
 
   it('uses the label attribution gave the turn', () => {

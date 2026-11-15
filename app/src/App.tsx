@@ -1,5 +1,5 @@
 import { Component, Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { AccountState, Brain, HelperEvent, MeetingMeta, Notes, NotesDraft, Settings, Source, SpeakersEvent, SummaryEvent, UpdateState } from './quorum';
+import type { AccountState, Brain, HelperEvent, MeetingMeta, Notes, NotesDraft, Settings, Source, SpeakersEvent, SummaryEvent, UpdateState, WhoAsk } from './quorum';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
 import { BetaGate } from './BetaGate';
@@ -18,7 +18,7 @@ import markDev from '../assets/quorum-mark-dev.png';
 const mark = window.quorum.isDev ? markDev : markProd;
 if (window.quorum.isDev) document.documentElement.dataset.dev = '';
 import { HistoryView } from './HistoryView';
-import { UpNext } from './UpNext';
+import { OPEN_EVENT, UpNext } from './UpNext';
 import { nextMenuIndex, updateBadge } from './headerItems';
 import { useExclusiveMenu } from './menuBus';
 import type { KbCommand } from './KnowledgeView';
@@ -28,12 +28,12 @@ import type { ConnectorsTarget, OpenSettingsDetail, SettingsPageId } from './con
 import { IconPen, PrivateNotes, usePrivateNotes } from './PrivateNotes';
 import { Avatar, SpeakerName, similarCounts, type SpeakerInfo } from './Speaker';
 import { useNotetaker } from './flags';
-import { RecordMenu } from './Record';
-import { recordChoices, type RecordChoice } from './noteRecord';
+import { type RecordChoice } from './noteRecord';
+import { RecLevel } from './RecLevel';
 import { IconFolderOpen, IconPerson, IconClose, IconMenu, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconBack, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, IconRecord, Wave } from './icons';
 
 // one speaker turn as main.js built it; a turn that grows arrives again with the same id and replace: true
-type Line = { id: number; channel: 'me' | 'them'; text: string; start: number } & Partial<SpeakerInfo>;
+type Line = { id: number; channel: 'me' | 'them'; text: string; start: number; voice?: number } & Partial<SpeakerInfo>;
 type Phase = 'idle' | 'starting' | 'listening' | 'paused' | 'review' | 'blocked';
 type Tab = MainTab | 'chat' | 'notes' | 'mine';
 const inCall = (p: string) => p === 'listening' || p === 'paused' || p === 'starting';
@@ -191,15 +191,12 @@ export function App() {
     const off = window.quorum.onNewNote?.((d) => openNoteView(typeof d?.file === 'string' ? d.file : null));
     return () => { window.removeEventListener('quorum:new-note', onEvent); off?.(); };
   }, []);
-  // the header's Record popover; Screen is offered only with the screen-context flag and its Preferences setting on
-  const [recordOpen, setRecordOpen] = useState(false);
-  const [recordChoice, setRecordChoice] = useState<RecordChoice>({ audio: true, screen: false });
-  useEffect(() => {
-    if (!recordOpen) return;
-    const shut = () => setRecordOpen(false);
-    window.addEventListener('click', shut);
-    return () => window.removeEventListener('click', shut);
-  }, [recordOpen]);
+  // Record from the header: 3, 2, 1 in its label, then a solo session (Settings > Notes holds Transcription and Screen).
+  // liveOpen shows that session's note under the header (EndView, live while it records, then keep or discard); the
+  // rest of the app stays a click away and the green Record button comes back to it
+  const [count, setCount] = useState<number | null>(null);
+  const [recordError, setRecordError] = useState<string | null>(null);
+  const [liveOpen, setLiveOpen] = useState(false);
   // paused from the header keeps the call; STOP from the chat deletes it
   const [held, setHeld] = useState(false);
   const [tab, setTab] = useSession<Tab>('tab', 'home', keepTab(EDITION));
@@ -218,6 +215,12 @@ export function App() {
   useEffect(() => { if (tab === 'knowledge' && account && !showsKnowledge(EDITION, account)) setTab('home'); }, [tab, account, setTab]);
   // off a call, chat lives inside Home as a conversation opened from Ask anything or a saved chat
   const [convoOpen, setConvoOpen] = useState(false);
+  // a meeting page opens on Home, from Up next on any tab
+  useEffect(() => {
+    const go = () => { setView('main'); setTab('home'); setConvoOpen(false); };
+    window.addEventListener(OPEN_EVENT, go);
+    return () => window.removeEventListener(OPEN_EVENT, go);
+  }, []);
   // History filters hide Up next while they are on (HistoryView reports them)
   const [histFiltered, setHistFiltered] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -287,6 +290,8 @@ export function App() {
   const [log, setLog] = useState<string[]>([]);
   const [notes, setNotes] = useState<Notes | null>(null);
   const [summarizing, setSummarizing] = useState(false);
+  // Who spoke, asked at Stop before the notes are written (header recordings)
+  const [ask, setAsk] = useState<WhoAsk | null>(null);
   const [notesDraft, setNotesDraft] = useState<NotesDraft | null>(null);
   const [meta, setMeta] = useState<MeetingMeta | null>(null);
   const [settings, setSettings] = useState<Settings>({ autoListen: false, model: 'sonnet', suggestions: true });
@@ -345,7 +350,8 @@ export function App() {
           const text = typeof e.text === 'string' ? e.text : '';
           if (e.channel === 'them' && 'who' in e) setThemName(e.who ?? null);
           if (e.isFinal) {
-            const turn: Line = { id: e.id ?? 0, channel: e.channel as 'me' | 'them', text: text.trim(), start: e.start, ...(e.speaker !== undefined ? { speaker: e.speaker, confidence: e.confidence ?? 0, cluster: e.cluster ?? null, corrected: !!e.corrected } : {}) };
+            const voice = (e as { voice?: unknown }).voice;
+            const turn: Line = { id: e.id ?? 0, channel: e.channel as 'me' | 'them', text: text.trim(), start: e.start, ...(Number.isInteger(voice) ? { voice: voice as number } : {}), ...(e.speaker !== undefined ? { speaker: e.speaker, confidence: e.confidence ?? 0, cluster: e.cluster ?? null, corrected: !!e.corrected } : {}) };
             setLines((l) => {
               if (e.replace && l.some((x) => x.id === turn.id)) return l.map((x) => (x.id === turn.id ? { ...x, ...turn } : x));
               const i = l.findIndex((x) => x.start > turn.start);
@@ -367,8 +373,8 @@ export function App() {
         if ('intoNote' in s && s.intoNote) return;
         if (s.phase === 'starting') { setPhase('starting'); setStartingChat(s.chatName ?? null); addLog(s.chatName ? `posting Quorum's notice in the ${s.chatName}…` : 'starting…'); return; }
         if (s.phase === 'idle') { setPhase('idle'); return; }
-        if (s.phase === 'summarizing') { setPhase('review'); setSummarizing(true); setNotes(null); setNotesDraft(null); setMeta(s.meta ?? null); return; }
-        if (s.phase === 'review') { setPhase('review'); setSummarizing(false); setNotes(s.notes); setNotesDraft(null); setMeta(s.meta ?? null); return; }
+        if (s.phase === 'summarizing') { setAsk(null); setPhase('review'); setSummarizing(true); setNotes(null); setNotesDraft(null); setMeta(s.meta ?? null); return; }
+        if (s.phase === 'review') { setAsk(s.ask ?? null); setPhase('review'); setSummarizing(false); setNotes(s.notes); setNotesDraft(null); setMeta(s.meta ?? null); return; }
         setHeld('soft' in s && !!s.soft);
         if (s.phase === 'paused' && 'soft' in s && s.soft) {
           setPartial({ me: '', them: '' });
@@ -472,19 +478,37 @@ export function App() {
 
   const liveWords = settings.transcription?.live ?? true;
   const themLabel = themName ?? 'Them';
-  const who = (l: { channel: 'me' | 'them'; speaker?: string | null }) => (l.channel === 'me' ? 'You' : l.speaker ?? themLabel);
+  // without a noticed call every session is a solo recording, whose microphone hears the room too: Unknown, never You
+  const meLabel = nt.meetingCapture ? 'You' : 'Unknown';
+  // a voice the engine told apart reads as Person N (microphone) or Speaker N (the Mac's sound) until it is named
+  const who = (l: { channel: 'me' | 'them'; speaker?: string | null; voice?: number }) => l.speaker ?? (l.voice != null ? `${l.channel === 'me' ? 'Person' : 'Speaker'} ${l.voice + 1}` : l.channel === 'me' ? meLabel : themLabel);
   // the live transcript draws every row on each render; the similar-turn count comes from one pass, and the row's
   // callback stays the same object so the memoized rows skip the partial words that arrive several times a second
   const similar = useMemo(() => similarCounts(lines), [lines]);
   const pickSpeaker = useCallback((id: number, name: string | null, same: boolean) => setSpeaker(id, name, same), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const screenOffered = nt.screenContext && settings.screenContext === true;
-  const startRecord = (c: RecordChoice) => { setRecordOpen(false); openNoteView(null, recordChoices(screenOffered, c)); };
+  async function startRecord() {
+    if (count !== null || phaseRef.current !== 'idle') return;
+    setRecordError(null);
+    for (const n of [3, 2, 1]) { setCount(n); await new Promise((r) => setTimeout(r, 1000)); }
+    setCount(null);
+    const r = await window.quorum.recordSession().catch((err) => ({ error: String(err) }));
+    if ('error' in r) { setRecordError(r.error); setTimeout(() => setRecordError(null), 5000); return; }
+    setNote((n) => (n && !n.leave ? { ...n, leave: Date.now(), next: null } : n));
+    setView('main');
+    setLiveOpen(true);
+  }
+  // a finished recording opens on its keep-or-discard page; nothing recording closes the live view
+  useEffect(() => { if (phase === 'review') setLiveOpen(true); if (phase === 'idle') setLiveOpen(false); }, [phase]);
+  const showLive = view === 'main' && liveOpen && phase !== 'idle' && phase !== 'blocked';
+  const closeNote = () => setNote((n) => (n && !n.leave ? { ...n, leave: Date.now(), next: null } : n));
+  const go = (fn: () => void) => () => { setLiveOpen(false); closeNote(); fn(); };
   const status = {
-    idle: { label: 'Record', icon: <IconRecord width={17} height={17} /> },
-    starting: { label: 'Starting…', icon: <Wave live={false} /> },
-    listening: { label: 'Recording', icon: <Wave live /> },
-    paused: held ? { label: 'Paused', icon: <Wave live={false} /> } : { label: 'Stopped', icon: <IconStop width={14} height={14} /> },
+    idle: { label: count !== null ? String(count) : recordError ?? 'Record', icon: <IconRecord width={17} height={17} /> },
+    starting: { label: 'Starting…', icon: <RecLevel live={false} /> },
+    listening: { label: 'Recording', icon: <RecLevel live /> },
+    paused: held ? { label: 'Paused', icon: <RecLevel live={false} /> } : { label: 'Stopped', icon: <IconStop width={14} height={14} /> },
     review: { label: 'Ended', icon: <span className="dot" /> },
     blocked: { label: 'Off for this call', icon: <Wave live={false} /> },
   }[phase];
@@ -499,17 +523,24 @@ export function App() {
     return <div className="panel"><OnboardingShell brain={brain} onBrain={setBrain} onDone={() => setFirstRun(false)} /></div>;
   }
 
-  if (phase === 'review') {
-    const close = () => { setPhase('idle'); resetMeeting(); setTab('home'); };
-    return <div className="panel"><LazyView name="your notes" onClose={close}><EndView notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing} transcript={lines.map((l) => ({ ...l, who: who(l) }))} participants={participants} onSpeaker={setSpeaker} me={me}
-      privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={close} /></LazyView></div>;
-  }
-
-  if (note) {
-    const close = () => setNote((n) => (n?.next ? { file: n.next.file, fresh: !n.next.file, record: n.next.record, n: Date.now(), leave: 0 } : null));
-    return <div className="panel"><LazyView name="your note" onClose={close}><NoteView key={note.n} file={note.file} fresh={note.fresh} record={note.record} canRecord={nt.manualListen} screenOffered={screenOffered} leave={note.leave}
-      onSaved={(file) => setNote((n) => (n ? { ...n, file, record: null } : n))} onClose={close} /></LazyView></div>;
-  }
+  // the recording's note and a hand note open under the header, so the tabs and Record stay in reach
+  const closeReview = () => { setPhase('idle'); resetMeeting(); setLiveOpen(false); setTab('home'); };
+  const liveArea = (
+    <div className="body wide flush live-body">
+      <LazyView name="your notes" onClose={phase === 'review' ? closeReview : () => setLiveOpen(false)}>
+        <EndView embedded live={inCall(phase)} paused={phase === 'paused'} who={ask} onAnswer={(a) => { setAsk(null); window.quorum.sessionSummarize(a ?? {}); }} notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing}
+          transcript={lines.map((l) => ({ ...l, who: who(l) }))} partial={liveWords ? [partial.me, partial.them].filter(Boolean).join(' ') : ''} participants={participants} onSpeaker={setSpeaker} me={nt.meetingCapture ? me : undefined}
+          privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={phase === 'review' ? closeReview : () => setLiveOpen(false)} />
+      </LazyView>
+    </div>
+  );
+  const closeHandNote = () => setNote((n) => (n?.next ? { file: n.next.file, fresh: !n.next.file, record: n.next.record, n: Date.now(), leave: 0 } : null));
+  const noteArea = note && (
+    <div className="body wide flush live-body">
+      <LazyView name="your note" onClose={closeHandNote}><NoteView key={note.n} embedded file={note.file} fresh={note.fresh} record={note.record} canRecord={nt.manualListen} screenOffered={screenOffered} leave={note.leave}
+        onSaved={(file) => setNote((n) => (n ? { ...n, file, record: null } : n))} onClose={closeHandNote} /></LazyView>
+    </div>
+  );
 
   return (
     <div className={`panel ${view === 'main' && tab === 'home' && convoOpen ? 'convo-wide' : ''}`}>
@@ -517,14 +548,14 @@ export function App() {
         <div className="brand static"><img src={mark} alt={window.quorum.isDev ? 'Quorum Dev' : 'Quorum'} /></div>
         <nav className="tabs" aria-label="Views">
           {tabs.map((id) => { const Icon = MAIN_TAB_ICON[id]; const label = MAIN_TAB_LABEL[id]; return (
-            <button key={id} className={`tab ${view === 'main' && tab === id ? 'on' : ''}`} aria-label={label} data-tip={label}
-              onClick={() => { setView('main'); setTab(id); }}>
+            <button key={id} className={`tab ${view === 'main' && tab === id && !showLive && !note ? 'on' : ''}`} aria-label={label} data-tip={label}
+              onClick={go(() => { setView('main'); setTab(id); })}>
               <Icon />
             </button>
           ); })}
         </nav>
         <div className="right">
-          {inCall(phase) && (
+          {inCall(phase) && nt.meetingCapture && (
           <nav className="tabs call-tabs" aria-label="Call views">
             {CALL_TABS.map(([id, Icon, label]) => (
               <button key={id} className={`tab ${view === 'main' && tab === id ? 'on' : ''}`} aria-label={label} data-tip={label}
@@ -536,20 +567,24 @@ export function App() {
           )}
           <div className="status-wrap">
             <UpdateItem state={update} />
-            {phase === 'listening' && <button className="icon-btn call-btn" aria-label="Pause" data-tip="Pause" onClick={() => window.quorum.pause()}><IconPause /></button>}
-            {phase === 'paused' && <button className="icon-btn call-btn" aria-label="Resume" data-tip="Resume" onClick={() => window.quorum.resume()}><IconPlay /></button>}
-            {(phase === 'listening' || phase === 'paused') && <button className="icon-btn call-btn" aria-label="Stop and summarize" data-tip="Stop and summarize" onClick={() => window.quorum.end()}><IconStop /></button>}
+            {/* while recording, Pause (white) and Stop (red) slide out from behind Record on hover and stay 3 seconds after */}
+            {(phase === 'listening' || phase === 'paused') && (
+              <span className="rec-ctl">
+                {phase === 'listening' && <button className="icon-btn call-btn rec-pause" aria-label="Pause" data-tip="Pause" onClick={() => window.quorum.pause()}><IconPause /></button>}
+                {phase === 'paused' && <button className="icon-btn call-btn rec-pause" aria-label="Resume" data-tip="Resume" onClick={() => window.quorum.resume()}><IconPlay /></button>}
+                <button className="icon-btn call-btn rec-stop" aria-label="Stop and summarize" data-tip="Stop and summarize" onClick={() => window.quorum.end()}><IconStop /></button>
+              </span>
+            )}
             {/* Record: one button from idle to recording, so the label that slid out on hover is the one that turns green.
                 With Screen on offer it opens the Record popover; otherwise it opens a new note that starts transcribing */}
             {(nt.manualListen || phase !== 'idle') && (
-            <button className={`status listen ${phase === 'blocked' ? 'off-call' : phase}`}
-              onClick={phase === 'idle' ? (e) => { e.stopPropagation(); if (screenOffered) setRecordOpen((o) => !o); else startRecord({ audio: true, screen: false }); } : undefined}
-              aria-haspopup={phase === 'idle' && screenOffered ? 'dialog' : undefined} aria-expanded={phase === 'idle' && screenOffered ? recordOpen : undefined}
-              data-tip={phase === 'blocked' ? 'Someone on your never-listen list is in this call' : undefined} aria-label={status.label}>
-              <span className="listen-hint">{status.label}</span>{status.icon}
+            <button className={`status listen ${phase === 'blocked' ? 'off-call' : phase}${count !== null ? ' counting' : ''}${recordError ? ' rec-error' : ''}`}
+              onClick={phase === 'idle' ? () => { startRecord(); } : phase === 'blocked' ? undefined : () => { closeNote(); setView('main'); setLiveOpen(true); }}
+              data-tip={phase === 'blocked' ? 'Someone on your never-listen list is in this call' : phase !== 'idle' ? 'Open the recording' : undefined} aria-label={status.label}>
+              <span className="listen-hint" aria-live="polite">{status.label}</span>{status.icon}
             </button>
             )}
-            {recordOpen && phase === 'idle' && <RecordMenu choice={recordChoice} onChoice={setRecordChoice} onStart={startRecord} />}
+            <span className="rec-sep" aria-hidden="true" />
           </div>
           <AppMenu brain={brain} active={view === 'settings'} onMemory={() => openSettings('memory')} onSettings={() => openSettings('preferences')} next={closeRef} />
           <button ref={closeRef} className="icon-btn close-win" aria-label="Close window" data-tip="Close window. Quorum keeps running in the menu bar." data-tip-pos="left" onClick={() => window.quorum.hideWindow()}>
@@ -557,16 +592,19 @@ export function App() {
           </button>
         </div>
       </header>
-      {view === 'main' && <UpNext hidden={(inCall(phase) && (tab === 'chat' || tab === 'notes' || tab === 'mine')) || (tab === 'home' && !convoOpen && histFiltered)} />}
+      {/* Up next sits over Home and the call views; the Memory graph and knowledge bases use the full height */}
+      {view === 'main' && <UpNext hidden={showLive || !!note || tab !== 'home' || convoOpen || histFiltered} floating />}
 
+      {/* a hand note stays mounted while Settings or a recording is in front, so its text is saved by its own Back */}
+      {note && <div className="note-host" hidden={view !== 'main' || showLive}>{noteArea}</div>}
       {view === 'settings' ? (
         <div className="body wide flush">
           <Suspense fallback={null}><SettingsView open={settingsPage} brain={brain} settings={settings} onSettings={setSettings} onConnect={async () => setBrain(await window.quorum.connectBrain())} onDisconnect={async () => setBrain(await window.quorum.disconnectBrain())} onBrain={setBrain} onBack={() => setView('main')} /></Suspense>
         </div>
-      ) : <>
+      ) : showLive ? liveArea : note ? null : <>
       {tab === 'home' && !convoOpen && (
         <div className="body wide">
-          <HistoryView brain={brain} focusAsk={focusAsk} onAsk={(q, f) => { setConvoOpen(true); send(q, f); }} onOpenChat={openChat} onFiltered={setHistFiltered} />
+          <HistoryView brain={brain} focusAsk={focusAsk} onAsk={(q, f) => { setConvoOpen(true); send(q, f); }} onOpenChat={openChat} onFiltered={setHistFiltered} onNewChat={() => { setConvoOpen(true); newChat(); }} />
         </div>
       )}
 

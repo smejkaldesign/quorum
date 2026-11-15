@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import type { MeetingMeta, Notes, NotesDraft } from './quorum';
+import type { MeetingMeta, Notes, NotesDraft, WhoAsk } from './quorum';
+import { WhoSpoke, type WhoAnswers } from './WhoSpoke';
 import { Avatar, SpeakerName, similarCounts, type SpeakerTurn } from './Speaker';
 import mark from '../assets/quorum-mark.png';
 import { Markdown } from './Markdown';
@@ -13,8 +14,12 @@ type Followup = { q: string; a: string | null };
 export type Turn = SpeakerTurn & { who: string };
 
 // privateNotes is what you typed on the call; edits here reach the main process the same way, and flush runs before Save
-export function EndView({ notes, draft, meta, summarizing, transcript, participants, onSpeaker, privateNotes, onPrivateNotes, flushPrivateNotes, onClose, me }: { me?: { name: string; photo: string | null }; notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; participants: string[]; onSpeaker: (id: number, name: string | null, similar: boolean) => Promise<void>; privateNotes: string; onPrivateNotes: (v: string) => void; flushPrivateNotes: () => void; onClose: () => void }) {
-  const [showing, setShowing] = useState<'summary' | 'transcript'>('summary');
+// live: the recording is running (or paused) and this is its page under the header; the transcript shows as it is
+// heard and the summary waits for Stop, which writes it into this same page. embedded drops the window chrome
+export function EndView({ notes, draft, meta, summarizing, transcript, participants, onSpeaker, privateNotes, onPrivateNotes, flushPrivateNotes, onClose, me, live = false, paused = false, embedded = false, partial = '', who = null, onAnswer }: { who?: WhoAsk | null; onAnswer?: (a: WhoAnswers | null) => void; live?: boolean; paused?: boolean; embedded?: boolean; partial?: string; me?: { name: string; photo: string | null }; notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; participants: string[]; onSpeaker: (id: number, name: string | null, similar: boolean) => Promise<void>; privateNotes: string; onPrivateNotes: (v: string) => void; flushPrivateNotes: () => void; onClose: () => void }) {
+  const [showing, setShowing] = useState<'summary' | 'transcript'>(live ? 'transcript' : 'summary');
+  // Stop turns the page to the summary as it is written
+  useEffect(() => { if (summarizing || who) setShowing('summary'); }, [summarizing, who]);
   const [dropped, setDropped] = useState<Record<number, boolean>>({});
   const [followups, setFollowups] = useState<Followup[]>([]);
   const [draftQ, setDraftQ] = useState('');
@@ -56,6 +61,16 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
     } finally { setSaving(false); }
   }
 
+  // consecutive turns from the same speaker share one heading
+  const groups: { key: string; turns: Turn[] }[] = [];
+  for (const t of transcript) {
+    const key = `${t.channel}|${t.speaker ?? t.who}`;
+    if (groups[groups.length - 1]?.key === key) groups[groups.length - 1].turns.push(t); else groups.push({ key, turns: [t] });
+  }
+  // a solo recording's microphone with no voice told apart: a ? and no name, since nothing proves who spoke
+  const speakerHead = (t: Turn) => (t.channel === 'me' && !me && !t.speaker
+    ? <span className="avatar-sm avatar-unknown" aria-label="Unknown speaker" data-tip="Unknown speaker">?</span>
+    : <><Avatar name={t.channel === 'me' ? me?.name || t.speaker || t.who : t.speaker ?? t.who} photo={t.channel === 'me' && me ? me.photo ?? null : null} />{t.channel === 'them' ? <SpeakerName turn={t} fallback={t.who} participants={participants} similar={similar(t)} onPick={(name, similar) => onSpeaker(t.id, name, similar)} /> : <span>{t.speaker ?? t.who}</span>}</>);
   const turnById = new Map(transcript.map((t) => [t.id, t]));
   const tipFor = (refs: number[]) => { const t = refs.map((id) => turnById.get(id)).find(Boolean); return t ? `${t.who}: ${t.text.length > 180 ? `${t.text.slice(0, 180)}…` : t.text}` : undefined; };
   const refProps = (refs: number[]) => (refs?.length ? { className: 'ref', 'data-tip': tipFor(refs), 'data-tip-pos': 'top', onMouseEnter: () => setHot(refs), onMouseLeave: () => setHot([]), onClick: () => { if (refs.some((id) => turnById.has(id))) { setHot(refs); setShowing('transcript'); } } } : {});
@@ -64,31 +79,34 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
   const when = started ? (started.toDateString() === new Date().toDateString() ? 'Today' : started.toLocaleDateString()) : 'Today';
 
   return (
-    <div className="panel end">
+    <div className={embedded ? 'end embedded' : 'panel end'}>
       <header className="end-bar">
-        <button className="pill ghost" onClick={async () => { await window.quorum.discard(); onClose(); }}>{saved ? 'Close' : 'Discard'}</button>
+        {live ? <button className="pill ghost" onClick={onClose}>Back</button>
+          : <button className="pill ghost" onClick={async () => { await window.quorum.discard(); onClose(); }}>{saved ? 'Close' : 'Discard'}</button>}
         <div className="end-actions">
+          {live ? <span className="muted note-status" role="status">{paused ? 'Paused' : 'Recording'}</span> : <>
           {saved ? (
             <>
               <span className="saved">Saved to {saved.rel.replace(/^MyBrain\//, '')}</span>
               <button className="pill" onClick={() => window.quorum.openNote(saved.file)}><IconFolder width={15} height={15} /> Show in {saved.app}</button>
             </>
           ) : (
-            <button className="pill primary" disabled={!notes || saving} onClick={save}>{saving ? 'Saving…' : 'Save to vault'}</button>
+            <button className="pill primary" disabled={!notes || saving} onClick={save}>{saving ? 'Saving…' : 'Keep'}</button>
           )}
+          </>}
         </div>
       </header>
 
       {(
         <div className="end-scroll">
           <article className={`doc${streaming ? ' streaming' : ''}`}>
-            <h1>{shown?.title || meta?.title || (streaming ? <span className="sk sk-title" aria-label="Writing the title" /> : 'Untitled meeting')}</h1>
+            <h1>{live ? <span className="shimmer">New note</span> : shown?.title || (streaming ? <span className="shimmer">{meta?.title || 'Writing the title'}</span> : meta?.title || 'Untitled note')}</h1>
             <div className="meta-row">
               <span className="meta-pill"><IconCalendar width={16} height={16} />{when}{started ? ` · ${started.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}</span>
               {meta && meta.minutes > 0 && <span className="meta-pill"><IconClock width={16} height={16} />{meta.minutes} min</span>}
               {meta && meta.participants > 0 && <span className="meta-pill"><IconPeople width={16} height={16} />{meta.participants}</span>}
               {meta && <span className="meta-pill">{modelName(meta.model)}</span>}
-              <div className="view-toggle" role="group" aria-label="Show">
+              <div className={`view-toggle${live || streaming ? ' working' : ''}`} role="group" aria-label="Show">
                 <button className={showing === 'summary' ? 'on' : ''} aria-pressed={showing === 'summary'} aria-label="Summary" data-tip="Summary" onClick={() => setShowing('summary')}><IconNotes width={16} height={16} /></button>
                 <button className={showing === 'transcript' ? 'on' : ''} aria-pressed={showing === 'transcript'} aria-label="Transcript" data-tip="Transcript" onClick={() => setShowing('transcript')}><IconLogs width={16} height={16} /></button>
               </div>
@@ -103,15 +121,24 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
 
             {showing === 'transcript' ? (
               <section className="transcript end-transcript">
-                {transcript.length ? transcript.map((t) => (
-                  <p key={t.id} id={`turn-${t.id}`} className={`${t.channel}${hot.includes(t.id) ? ' hot' : ''}`}>
-                    <span className="spk"><Avatar name={t.channel === 'me' ? me?.name || 'You' : t.speaker ?? t.who} photo={t.channel === 'me' ? me?.photo ?? null : null} />{t.channel === 'them' ? <SpeakerName turn={t} fallback={t.who} participants={participants} similar={similar(t)} onPick={(name, similar) => onSpeaker(t.id, name, similar)} /> : <span>{t.who}</span>}</span>
-                    <div>{t.text}</div>
-                  </p>
-                )) : <p className="muted">Nothing was transcribed.</p>}
+                {transcript.length ? groups.map((g) => (
+                  // one speaker's run of turns: who it was on top, then each turn as its own paragraph
+                  <div key={g.turns[0].id} className={`turn-group ${g.turns[0].channel}`}>
+                    <div className="spk">{speakerHead(g.turns[0])}</div>
+                    {g.turns.map((t) => <p key={t.id} id={`turn-${t.id}`} className={hot.includes(t.id) ? 'hot' : undefined}>{t.text}</p>)}
+                  </div>
+                )) : !partial && <p className="muted">{live ? (paused ? 'Paused. Resume to keep transcribing.' : 'Listening…') : 'Nothing was transcribed.'}</p>}
+                {live && partial && <p className="live-partial"><em className="partial">{partial}</em></p>}
               </section>
             ) : <>
-            {view.empty && <p className="muted">Nothing was transcribed in this call.</p>}
+            {who && onAnswer && <WhoSpoke ask={who} onDone={onAnswer} />}
+            {live && (
+              <div className="live-wait">
+                <p className="shimmer">Waiting for the recording to stop to summarize</p>
+                <div className="sk-block" aria-hidden="true"><span className="sk sk-line w90" /><span className="sk sk-line w75" /><span className="sk sk-line w60" /></div>
+              </div>
+            )}
+            {view.empty && <p className="muted">Nothing was transcribed.</p>}
             {view.summary ? <p className={`summary${streaming && !view.sections.length ? ' typing' : ''}`}>{view.summary}</p>
               : streaming && <div className="sk-block" aria-label="Writing the summary"><span className="sk sk-line w90" /><span className="sk sk-line w75" /><span className="sk sk-line w60" /></div>}
             {view.sections.map((sec, i) => (
@@ -176,13 +203,13 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
         </div>
       )}
 
-      <div className="end-composer-wrap">
+      {!live && <div className="end-composer-wrap">
         <form className="end-composer" onSubmit={(e) => { e.preventDefault(); ask(); }}>
           <input value={draftQ} placeholder="Any follow-ups?" disabled={!notes || summarizing} onChange={(e) => setDraftQ(e.target.value)} />
           <button type="submit" className="send" aria-label="Ask" disabled={!draftQ.trim()}><IconArrowUp /></button>
         </form>
         <p className="disclaimer">Quorum uses AI and can make mistakes.</p>
-      </div>
+      </div>}
     </div>
   );
 }
