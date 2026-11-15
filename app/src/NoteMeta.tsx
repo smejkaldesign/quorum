@@ -53,7 +53,9 @@ export function NoteMeta({ meta, children }: { meta: NoteMetaInfo; children?: Re
   const ev = meta.event;
   return (
     <div className="meta-row">
-      {ok && <span className="meta-pill"><IconCalendar width={16} height={16} />{dayLabel(date)} · {date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>}
+      {/* the date pill is always there; a note without a readable date says so, subdued */}
+      {ok ? <span className="meta-pill"><IconCalendar width={16} height={16} />{dayLabel(date)} · {date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+        : <span className="meta-pill meta-missing" data-tip="This note has no date in its details"><IconCalendar width={16} height={16} />Date missing</span>}
       {/* a source logo shows only for a note tied to a connector; Quorum's own notes show none */}
       {meta.source && meta.source !== 'quorum' && meta.source !== 'quorum-dev' && <AppIcon {...sourceApp(meta.source)} onOpen={meta.sourceUrl ? () => window.quorum.openExternal(meta.sourceUrl!) : null} />}
       {meta.calendar && ev && <AppIcon {...CALENDAR_APP[meta.calendar]}

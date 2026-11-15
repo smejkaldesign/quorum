@@ -18,9 +18,10 @@ export function useCopyLink() {
   return { copied, copy };
 }
 
-// Over a note's headings: the # in the margin turns into a link button on hover, and a click copies a link to that
-// heading (quorum://note/<note>#<heading>), so someone can open the note at that step. root is the element holding the
-// headings; it must be position: relative. Nothing shows without a link for the note
+// Over a note's headings: the # in the margin turns into a link button while the pointer is on the # itself, and a
+// click copies a link to that heading (quorum://note/<note>#<heading>), so someone can open the note at that step. root
+// is the element holding the headings; it must be position: relative. The # sits outside the heading and lets the
+// pointer through, so it is found by position. Nothing shows without a link for the note
 export function HeadingLinks({ root, base }: { root: RefObject<HTMLElement | null>; base: string | null }) {
   const [at, setAt] = useState<{ top: number; left: number; slug: string } | null>(null);
   const { copied, copy } = useCopyLink();
@@ -28,28 +29,34 @@ export function HeadingLinks({ root, base }: { root: RefObject<HTMLElement | nul
     const el = root.current;
     if (!el || !base) return;
     const move = (e: MouseEvent) => {
-      const t = e.target as Element;
-      if (t.closest('.h-link')) return;
-      const h = t.closest<HTMLElement>(HEADINGS);
-      if (!h || !el.contains(h)) { setAt(null); return; }
+      if ((e.target as Element | null)?.closest?.('.h-link')) return;
+      const b = el.getBoundingClientRect();
+      // only the margin strip beside the text, within the note's height, can hold a #
+      if (e.clientY < b.top || e.clientY > b.bottom || e.clientX > b.left + 40) { setAt(null); return; }
       const all = [...el.querySelectorAll<HTMLElement>(HEADINGS)];
-      const slug = slugsOf(all.map((x) => x.textContent ?? ''))[all.indexOf(h)];
-      const r = h.getBoundingClientRect(), b = el.getBoundingClientRect();
-      // centered on the heading's first line, where the # sits
-      const line = parseFloat(getComputedStyle(h).lineHeight) || r.height;
-      setAt({ top: r.top - b.top + Math.min(r.height, line) / 2, left: r.left - b.left, slug });
+      for (let i = 0; i < all.length; i++) {
+        const r = all[i].getBoundingClientRect();
+        // centered on the heading's first line, 24px square, 30px left of the text: the same box as the # and the button
+        const line = parseFloat(getComputedStyle(all[i]).lineHeight) || r.height;
+        const mid = r.top + Math.min(r.height, line) / 2;
+        if (e.clientX >= r.left - 30 && e.clientX <= r.left - 6 && Math.abs(e.clientY - mid) <= 12) {
+          const slug = slugsOf(all.map((x) => x.textContent ?? ''))[i];
+          setAt((cur) => (cur?.slug === slug ? cur : { top: mid - b.top, left: r.left - b.left, slug }));
+          return;
+        }
+      }
+      setAt(null);
     };
-    const leave = (e: MouseEvent) => { if (!(e.relatedTarget as Element | null)?.closest?.('.h-link')) setAt(null); };
-    el.addEventListener('mousemove', move);
-    el.addEventListener('mouseleave', leave);
-    return () => { el.removeEventListener('mousemove', move); el.removeEventListener('mouseleave', leave); };
+    const hide = () => setAt(null);
+    window.addEventListener('mousemove', move, { passive: true });
+    window.addEventListener('scroll', hide, { capture: true, passive: true });
+    return () => { window.removeEventListener('mousemove', move); window.removeEventListener('scroll', hide, { capture: true }); };
   }, [root, base]);
   if (!base || !at) return null;
   const url = `${base}#${at.slug}`;
   return (
     <button className="h-link" style={{ top: at.top, left: at.left - 30 }} aria-label="Copy a link to this heading" data-tip={copied === url ? 'Link copied' : 'Copy link to this heading'}
-      onMouseLeave={(e) => { if (!(e.relatedTarget as Element | null)?.closest?.(HEADINGS)) setAt(null); }}
-      onMouseDown={(e) => e.preventDefault()} onClick={() => copy(url)}>
+      onMouseLeave={() => setAt(null)} onMouseDown={(e) => e.preventDefault()} onClick={() => copy(url)}>
       <IconLink width={14} height={14} />
     </button>
   );
