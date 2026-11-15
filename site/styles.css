@@ -618,6 +618,12 @@ ul { margin: 0; padding: 0; list-style: none; }
 .capture input::placeholder { color: var(--muted); }
 .capture input:disabled { opacity: 0.55; }
 .plan-note { color: var(--muted); font-size: 13px; margin-top: -10px; }
+/* The features list grows to push each card's form and note to the bottom, so the two forms line up only while
+   the notes are the same height. Side by side, each card's default note stays on one line. The script's
+   confirmation and error messages (.ok, .error) may wrap. */
+@media (min-width: 720px) {
+  .plan .plan-note:not(.ok):not(.error) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+}
 .plan-note.error { color: #ff8a8a; }
 .plan-note.ok { color: var(--brand-soft); }
 .capture input[aria-invalid="true"] { border-color: #ff8a8a; }
