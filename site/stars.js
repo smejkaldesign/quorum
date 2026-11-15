@@ -1,6 +1,6 @@
 // Starfield behind the app frame: the same field the CSS draws on `.stars` (two layers drifting down and to the right,
 // solid white stars mixed with fainter ones), drawn on a canvas so each star can move. Stars within MAGNET_RADIUS of
-// the cursor are pulled toward it, closer stars further, and ease back when the cursor moves away.
+// the cursor for MAGNET_DELAY are pulled toward it, closer stars further, and ease back when the cursor moves away.
 // Once the canvas is up, `.stars-live` turns the CSS layers off. Without this script the CSS field still shows.
 // The mask on `.stars` fades the canvas like it fades the CSS layers. Under reduced motion it draws one still frame.
 (() => {
@@ -23,7 +23,10 @@
   const LAYERS = [{ vx: 440 / 28, vy: 220 / 28 }, { vx: 320 / 44, vy: 160 / 44 }];
   const MAGNET_RADIUS = 220;   // px from the cursor where the pull starts
   const MAGNET_PULL = 0.85;    // fraction of its distance to the cursor a star right next to it closes
-  const EASE = 0.1;            // share of the remaining offset a star covers per 60fps frame
+  const MAGNET_DELAY = 250;    // ms a star has to stay inside the radius before the pull starts
+  // share of the remaining offset a star covers per 60fps frame: slow on the way to the cursor, quicker on the way back
+  const EASE_IN = 0.03;
+  const EASE_OUT = 0.1;
 
   let w = 1, h = 1, dpr = 1, stars = [];
   const cursor = { x: 0, y: 0, on: false };
@@ -36,6 +39,7 @@
       return {
         x: rand(-EDGE, w + EDGE), y: rand(-EDGE, h + EDGE),
         ox: 0, oy: 0, // offset from the drifting position, set by the cursor pull
+        near: 0,      // ms this star has been inside the cursor's radius
         vx: layer.vx, vy: layer.vy,
         // a canvas dot has a hard edge, so these are a little larger than the CSS dots to read the same
         r: size < 0.68 ? 0.95 : size < 0.92 ? 1.25 : 1.65,
@@ -59,7 +63,8 @@
 
   function draw(dt) {
     const drift = dt / 1000;
-    const ease = 1 - Math.pow(1 - EASE, dt / 16.7);
+    const easeIn = 1 - Math.pow(1 - EASE_IN, dt / 16.7);
+    const easeOut = 1 - Math.pow(1 - EASE_OUT, dt / 16.7);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = '#fff';
@@ -67,15 +72,21 @@
       s.x += s.vx * drift; s.y += s.vy * drift;
       if (s.x > w + EDGE) s.x -= w + EDGE * 2;
       if (s.y > h + EDGE) s.y -= h + EDGE * 2;
-      let tx = 0, ty = 0;
+      let tx = 0, ty = 0, inside = false;
       if (cursor.on) {
         const dx = cursor.x - s.x, dy = cursor.y - s.y;
         const d = Math.hypot(dx, dy);
         if (d < MAGNET_RADIUS) {
-          const pull = MAGNET_PULL * (1 - d / MAGNET_RADIUS);
-          tx = dx * pull; ty = dy * pull;
+          inside = true;
+          s.near += dt;
+          if (s.near >= MAGNET_DELAY) {
+            const pull = MAGNET_PULL * (1 - d / MAGNET_RADIUS);
+            tx = dx * pull; ty = dy * pull;
+          }
         }
       }
+      if (!inside) s.near = 0;
+      const ease = tx || ty ? easeIn : easeOut;
       s.ox += (tx - s.ox) * ease; s.oy += (ty - s.oy) * ease;
       ctx.globalAlpha = s.a;
       ctx.beginPath();
