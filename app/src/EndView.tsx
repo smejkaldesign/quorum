@@ -74,6 +74,8 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
     let a: string;
     try { a = (await window.quorum.ask(sent ?? q)).text; } catch (err) { a = `Couldn't answer: ${String(err).replace(/^Error:\s*/, '')}`; }
     cs.update(to.id, (t) => t.map((x, i) => (i === t.length - 1 ? { q: x.q, a } : x)));
+    // a new chat keeps its thread: later questions continue it instead of starting over
+    if (to.send === 'new') cs.settle(to.id, `chat-${to.id.slice(4)}`);
   }
 
   async function save() {
@@ -135,10 +137,10 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
           ) : (
             // Record keeps the same recording going after Stop; then Summarize transcript; while it writes, Summarizing; once it is on the page (or with the
             // summary turned off), Save note
-            <>{onContinue && <button className="act-pill" disabled={recordBusy && !live} onClick={onContinue}><IconRecord width={15} height={15} /> Record</button>}
+            <>{onContinue && <button className="act-pill" disabled={summarizing} onClick={onContinue}><IconRecord width={15} height={15} /> Record</button>}
             {summarizing || streaming ? <button className="act-pill primary" disabled>Summarizing…</button> : <>
               {!notes && who && onAnswer && <button className="act-pill" onClick={() => onAnswer(null)}>Summarize transcript</button>}
-              <button className="act-pill primary" disabled={saving || (!notes && autoSum && !who)} onClick={save}>{saving ? 'Saving…' : 'Save note'}</button>
+              <button className="act-pill primary" disabled={saving || (!notes && autoSum)} onClick={save}>{saving ? 'Saving…' : 'Save note'}</button>
             </>}</>
           )}
           </>}

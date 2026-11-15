@@ -24,6 +24,7 @@ import { gateOn, registerBeta } from './beta.js';
 import { registerFlags } from './flags.js';
 import { CALL_ACTIVE, DICTATION_OFF, keepActions, notetakerGates, recordDecision, screenReadsAllowed, sessionGates, startDecision, termsPlan } from './notetaker.js';
 import { NAME_SYSTEM, isUntitled, parseName } from './noteName.js';
+import { noteParts } from './noteParts.js';
 import { hashText, newNoteText, noteFileName, noteForEditor, rewriteNote, screenRead, splitNote, validFrontmatter, yamlStr } from './handnote.js';
 import { createKeeper } from './keeper.js';
 import { createVersionStore } from './memoryVersions.js';
@@ -940,6 +941,7 @@ async function startListening(by, { intoNote = false, screen = false, still = ()
   toUI('summary', { state: meeting.summary, at: 0, thinking: false });
   meeting.summaryAt = Date.now();
   meeting.privateNotes = '';
+  meeting.summaryOff = false;
   meeting.saved = null;
   clearInterval(summaryTimer);
   summaryTimer = intoNote || !running ? null : setInterval(runSummary, 30000);
@@ -1010,6 +1012,10 @@ function whoAsk() {
 
 // the notes for a finished session, after any answers to Who spoke; streams into the review view
 async function summarizeSession(fallbackTitle) {
+  meeting.summarizing = true;
+  try { return await summarizeSessionRun(fallbackTitle); } finally { meeting.summarizing = false; }
+}
+async function summarizeSessionRun(fallbackTitle) {
   toUI('state', { phase: 'summarizing', meta: meetingMeta(fallbackTitle) });
   await nameSpeakers();
   store.meetings.writeTranscript(meeting.dir, toJSON(meeting.transcript));
@@ -1690,7 +1696,7 @@ function attachLooseChats() {
 // every chat on a note, or on an upcoming meeting, oldest first, for its page
 const chatTurns = (c) => ({ id: c.id, turns: c.turns.map((t) => ({ q: t.q, a: t.a })) });
 const byStart = (a, b) => String(a.createdAt).localeCompare(String(b.createdAt));
-ipcMain.handle('note-chats', (_e, file) => { const abs = meetingFile(file); return abs ? allChats().filter((x) => x.meetingFile === abs && !x.meetingId && x.turns?.length).sort(byStart).map(chatTurns) : []; });
+ipcMain.handle('note-chats', (_e, file) => { const abs = meetingFile(file); return abs ? allChats().filter((x) => x.meetingFile === abs && x.turns?.length).sort(byStart).map(chatTurns) : []; });
 ipcMain.handle('event-chats', (_e, id) => (id ? allChats().filter((x) => x.eventId === String(id) && x.turns?.length).sort(byStart).map(chatTurns) : []));
 // the chat on a note, for its page
 ipcMain.handle('note-chat', (_e, file) => {
@@ -1802,7 +1808,7 @@ ipcMain.handle('note-ask', async (_e, file, question, history, files, chatId) =>
   const answer = r.text.replace(/<updated-note>[\s\S]*?<\/updated-note>/, '').trim();
   const fm = readFrontmatter(store.notes.read(abs).slice(0, 4000));
   // a note holds any number of chats: chatId names one, 'new' starts another, nothing continues the latest
-  const mine = allChats().filter((c) => c.meetingFile === abs && !c.meetingId);
+  const mine = allChats().filter((c) => c.meetingFile === abs);
   const existing = chatId === 'new' ? null : chatId ? mine.find((c) => c.id === chatId) : mine.sort((a, b) => String(b.updatedAt ?? b.createdAt).localeCompare(String(a.updatedAt ?? a.createdAt)))[0];
   const asked = String(question).startsWith(DEBRIEF) ? 'Debrief this meeting' : String(question);
   const saved = addTurn(existing ?? newConvo(asked, { meetingFile: abs, meetingTitle: fm.title || path.basename(abs, '.md') }), asked, answer || 'Proposed an edit to the note.', [], []);
@@ -1841,8 +1847,10 @@ ipcMain.handle('read-note', (_e, file) => {
   // a recorded note's transcript shows on its own tab; the rest is the summary (noteTranscript.js)
   const split = splitRecorded(body, { recorded: fm.recorded === true || fm.recorded === 'true' });
   const sessionTurns = savedTranscript(fm);
+  const hand = fm.type === 'note' && !split.transcript;
+  const whole = splitRecorded(text.replace(/^---\n[\s\S]*?\n---\n/, '').trim().replace(/^#\s+.+(\n|$)/, '').trim(), { recorded: fm.recorded === true || fm.recorded === 'true' });
   return {
-    hand: fm.type === 'note' && !split.transcript,
+    hand, parts: noteParts(whole.summary, hand),
     file: abs, rel: path.relative(b.vault, abs), title: fm.title, date: fm.date, people: fm.participants.filter((p) => !isSelf(p)).map(personName), body: split.summary,
     summarizable: !!split.transcript && !split.summary,
     visibility: fm.visibility === 'public' ? 'public' : 'private', withheld: text !== original, link: `quorum://note/${encodeURIComponent(fm.granola_id || path.relative(b.vault, abs))}`, ...noteLink(abs),
@@ -2596,11 +2604,12 @@ ipcMain.handle('pause', () => {
 });
 ipcMain.handle('resume', () => { if (meeting.armed && !meeting.capturing && !callBlocked) resume(OWNER); });
 // Cancel on the summary bar: this recording waits for Summarize transcript instead of summarizing at Stop
-ipcMain.handle('summary-off', () => { meeting.summaryOff = true; meeting.askWho = true; });
+ipcMain.handle('summary-off', () => { meeting.summaryOff = true; meeting.askWho = true; writeState(); });
 // Record again after Stop, before saving: the same session picks up where it left off, its transcript kept, and the
 // summary is written again at the next Stop
 ipcMain.handle('record-continue', () => {
   if (meeting.armed || meeting.saved || !meeting.startedAt || !gate().manualListen) return { error: 'There is no stopped recording to continue.' };
+  if (meeting.summarizing) return { error: 'The summary is still being written. Record again once it is done.' };
   meeting.armed = true;
   meeting.endedAt = null;
   meeting.notes = null;
@@ -2780,6 +2789,9 @@ ipcMain.handle('record-session', async () => {
   if (!g.manualListen) return { error: 'Recording is off in this build.' };
   if (meeting.armed || meeting.starting || record.screen) return { error: 'A recording is already running. Stop it first.' };
   if (settings.notes?.transcription === false) return { error: 'Turn on Transcription in Settings > Notes to record.' };
+  if (meeting.startedAt && !meeting.saved && !meeting.summarizing && meeting.transcript?.length) {
+    try { saveNotes({ notes: meeting.notes ?? { title: '', summary: '', sections: [], decisions: [], actions: [], questions: [] }, followups: [] }); } catch (e) { log('save before new recording', e?.message); }
+  }
   const r = await startListening(undefined, { screen: g.screenContext && !!settings.screenContext, running: false });
   if (r?.error) return r;
   // at Stop the summary is written straight away, from the transcript and your notes; Cancel on the page turns that
@@ -2883,7 +2895,12 @@ async function nameUntitled(abs, chat = null) {
     if (!existsSync(next)) { renameSync(abs, next); target = next; }
   }
   store.notes.write(target, out);
+  if (target !== abs) {
+    for (const c of allChats()) if (c.meetingFile === abs) { c.meetingFile = target; writeChat(c); }
+    if (meeting.saved?.file === abs) meeting.saved.file = target;
+  }
   log('named note', path.basename(target));
+  toUI('note-renamed', { from: abs, to: target });
   toUI('history-changed');
 }
 function saveNotes(payload) {

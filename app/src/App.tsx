@@ -197,12 +197,13 @@ export function App() {
     window.addEventListener('quorum:new-note', onEvent);
     // Record from a meeting's page: the recording page with that meeting's title and the notes typed for it
     const onRecordInto = (e: Event) => {
-      const d = (e as CustomEvent<{ title?: string; notes?: string }>).detail ?? {};
+      const d = (e as CustomEvent<{ title?: string; notes?: string; started?: () => void }>).detail ?? {};
       if (phaseRef.current !== 'idle') return;
+      d.started?.();
       setDraftTitle(d.title ?? '');
       if (d.notes?.trim()) myNotesRef.current.change(d.notes);
       setNote(null); setView('main'); setDraftOpen(true);
-      startRecordRef.current();
+      startRecordRef.current(d.notes);
     };
     window.addEventListener('quorum:record-into', onRecordInto);
     const off = window.quorum.onNewNote?.((d) => openNoteView(typeof d?.file === 'string' ? d.file : null));
@@ -344,8 +345,8 @@ export function App() {
   const mine = usePrivateNotes();
   const myNotesRef = useRef(mine);
   myNotesRef.current = mine;
-  const startRecordRef = useRef(() => {});
-  startRecordRef.current = () => { startRecord(); };
+  const startRecordRef = useRef((_notes?: string) => {});
+  startRecordRef.current = (notes?: string) => { startRecord(notes); };
   const mineRef = useRef<HTMLTextAreaElement>(null);
   // Cmd+Shift+N on a call opens Your notes and puts the cursor in it
   useEffect(() => {
@@ -534,19 +535,20 @@ export function App() {
     setDraftOpen(true);
     await beginRecording();
   }
-  async function startRecord() {
+  async function startRecord(notes?: string) {
     if (count !== null || phaseRef.current !== 'idle') return;
     setRecordError(null);
     await countdown();
-    await beginRecording();
+    await beginRecording(notes);
   }
-  async function beginRecording() {
+  async function beginRecording(notes?: string) {
     setAnnounce(true);
     const r = await window.quorum.recordSession().catch((err) => ({ error: String(err) }));
     if ('error' in r) { setAnnounce(false); setRecordError(r.error); setTimeout(() => setRecordError(null), 5000); return; }
     setNote((n) => (n && !n.leave ? { ...n, leave: Date.now(), next: null } : n));
     // what was typed on the new note before Record carries into the recording
-    if (mine.text.trim()) window.quorum.privateNotesSet(mine.text);
+    const typed = notes ?? myNotesRef.current.text;
+    if (typed.trim()) window.quorum.privateNotesSet(typed);
     setView('main');
     setLiveOpen(true);
     setDraftOpen(false);
@@ -646,7 +648,7 @@ export function App() {
             {(nt.manualListen || phase !== 'idle') && (
             <button className={`status listen ${phase === 'blocked' ? 'off-call' : phase === 'review' ? 'idle' : phase}${count !== null ? ' counting' : ''}${announce ? ' announce' : ''}${recordError ? ' rec-error' : ''}`}
               onClick={phase === 'idle' ? () => { startRecord(); } : phase === 'review' ? () => { closeNote(); setView('main'); setLiveOpen(true); recordAgain(); } : phase === 'blocked' ? undefined : () => { closeNote(); setView('main'); setLiveOpen(true); }}
-              data-tip={phase === 'blocked' ? 'Someone on your never-listen list is in this call' : phase !== 'idle' ? 'Open the recording' : undefined} aria-label={status.label}>
+              data-tip={phase === 'blocked' ? 'Someone on your never-listen list is in this call' : phase === 'review' ? 'Record more into this note' : phase !== 'idle' ? 'Open the recording' : undefined} aria-label={status.label}>
               <span className="listen-hint" aria-live="polite">{status.label}</span>{status.icon}
             </button>
             )}

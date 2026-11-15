@@ -15,6 +15,7 @@ import { Avatar } from './Speaker';
 import { NoteEditor, type NoteEditorHandle } from './editor/NoteEditor';
 import { ChatExit, ChatList, useChats, useComposerFocus } from './ChatStack';
 import { useMemo } from 'react';
+import { joinParts } from '../noteParts.js';
 import { soundLine } from './EndView';
 
 type Turn = { q: string; a: string; proposal: string | null; state?: 'applied' | 'discarded'; pending?: boolean };
@@ -146,8 +147,8 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
 }) {
   const [note, setNote] = useState(initial);
   // three tabs, like a new note: the Summary (when there is one, and the page opens on it), your Note, the Transcript
-  const parts = useMemo(() => partsOf(note.body, !!note.hand), [note.body, note.hand]);
-  const [showing, setShowing] = useState<'summary' | 'note' | 'transcript'>(() => (partsOf(initial.body, !!initial.hand).summary ? 'summary' : 'note'));
+  const parts = useMemo(() => note.parts ?? { note: note.hand ? note.body : '', summary: note.hand ? '' : note.body, split: false }, [note.parts, note.body, note.hand]);
+  const [showing, setShowing] = useState<'summary' | 'note' | 'transcript'>(() => ((initial.parts ? initial.parts.summary : !initial.hand && initial.body.trim()) ? 'summary' : 'note'));
   const bar = useStuck();
   // the debrief starts on its own when it matters most, once per note: right after a summary is written, or when a
   // recording from the last day has no people named and no chat yet. Its first question waits under the summary
@@ -228,7 +229,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
   const titleLine = note.body.match(/^# [^\n]*\n+/)?.[0] ?? '';
   const changed = (k: 'note' | 'summary') => edits[k] !== undefined && edits[k]!.trim() !== parts[k].trim();
   const dirty = changed('note') || changed('summary');
-  const undo = () => { setEdits({}); setEditKey((n) => n + 1); };
+  const undo = () => { typed.current = { note: false, summary: false }; setEdits({}); setEditKey((n) => n + 1); };
   async function saveEdits() {
     const n = noteEd.current?.flush() ?? edits.note ?? parts.note;
     const sm = sumEd.current?.flush() ?? edits.summary ?? parts.summary;
@@ -258,6 +259,8 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
   }, [turns, live, step]);
 
   const reload = async () => { const n = await window.quorum.readNote(note.file); if (n) setNote(n); };
+  // named after its first answer, the file can move: the reader follows it
+  useEffect(() => window.quorum.onNoteRenamed((d) => { if (d.from === note.file) window.quorum.readNote(d.to).then((n) => { if (n) setNote(n); }); }), [note.file]);
 
   async function ask(files: string[] = [], said?: string) {
     const q = (said ?? draft).trim();
@@ -329,6 +332,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
           )}
           {note.transcript?.length ? <SavedTranscript turns={note.transcript} /> : !note.summarizable && <p className="no-transcript">No transcript yet. Start recording now to create one.</p>}
         </>}
+        {showing !== 'transcript' && note.withheld && <p className="muted withheld-note">This note has withheld lines, so edit it in your vault.</p>}
         {showing !== 'transcript' && (
           // Note and Summary edit in place; a note with withheld lines stays read-only
           <div className="reader-edit my-notes-editor" key={`${showing}-${editKey}`} onInput={() => { typed.current[showing as 'note' | 'summary'] = true; }}>
@@ -388,19 +392,4 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
   );
 }
 
-// a saved note in two parts: what you wrote (Note) and what Quorum or a notetaker wrote (Summary). A recorded note keeps
-// yours under "## Private notes" ahead of "## Summary"; a hand note is all yours; an imported note is all summary
-export function partsOf(body: string, hand: boolean) {
-  const b = body.replace(/^# [^\n]*\n+/, '');
-  const m = b.match(/^## Private notes\n([\s\S]*?)\n(?=## )/);
-  if (m) {
-    const mine = m[1].trim();
-    return { note: mine === 'None' ? '' : mine, summary: b.slice(m[0].length).replace(/^## Summary\n+/, '').trim(), split: true };
-  }
-  return hand ? { note: b.trim(), summary: '', split: false } : { note: '', summary: b.trim(), split: false };
-}
-export function joinParts(note: string, summary: string, was: { split: boolean; summary: string }) {
-  const n = note.trim(), s = summary.trim();
-  if (was.split || (n && s)) return `## Private notes\n${n || 'None'}\n\n## Summary\n${s}`;
-  return n || s;
-}
+export { joinParts };

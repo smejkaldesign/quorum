@@ -129,16 +129,23 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
   const draftKey = `event-note:${e.id}`;
   const [mine, setMine] = useState(() => { try { return localStorage.getItem(draftKey) ?? ''; } catch { return ''; } });
   const [savedTo, setSavedTo] = useState<string | null>(null);
+  const [savingMine, setSavingMine] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const keep = (v: string) => { setMine(v); try { if (v.trim()) localStorage.setItem(draftKey, v); else localStorage.removeItem(draftKey); } catch { /* ignore */ } };
   async function saveMine() {
-    const r = await window.quorum.handNoteSave({ id: `event-${Date.now()}`, file: null, title: e.title, body: mine.trim(), hash: null, fresh: true });
-    if ('error' in r || 'conflict' in r) return;
-    window.quorum.handNoteDone(r.file);
-    setSavedTo(r.rel);
-    keep('');
+    if (savingMine) return;
+    setSavingMine(true); setSaveError('');
+    try {
+      const r = await window.quorum.handNoteSave({ id: `event-${Date.now()}`, file: null, title: e.title, body: mine.trim(), hash: null, fresh: true });
+      if ('error' in r || 'conflict' in r) { setSaveError("Couldn't save the note. Try again."); return; }
+      window.quorum.handNoteDone(r.file);
+      setSavedTo(r.rel);
+      keep('');
+    } finally { setSavingMine(false); }
   }
   // Record from here: the recording page opens with this meeting's title and your notes so far
-  const record = () => { window.dispatchEvent(new CustomEvent('quorum:record-into', { detail: { title: e.title, notes: mine } })); keep(''); };
+  // the notes here clear only once the recording has them; with a call already running, nothing changes
+  const record = () => { window.dispatchEvent(new CustomEvent('quorum:record-into', { detail: { title: e.title, notes: mine, started: () => keep('') } })); };
   useLayoutEffect(() => { top.current?.scrollIntoView({ block: 'start' }); }, [e.id]);
   useEffect(() => {
     let live = true;
@@ -169,6 +176,8 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
         <span className="rb-left"><BackButton onClick={onBack} /><TypedTitle text={e.title} on={bar.stuck} /></span>
         <div className="reader-actions">
           {platform && e.join && <JoinButton id={platform.id} label={`Join ${platform.short}`} url={e.join} />}
+          <button className="act-pill" onClick={record}><IconRecord width={15} height={15} /> Record</button>
+          {mine.trim() && <button className="act-pill primary" disabled={savingMine} onClick={saveMine}>{savingMine ? 'Saving…' : 'Save updates'}</button>}
         </div>
       </div>
       <article className="doc">
@@ -188,17 +197,12 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
         {tab === 'note' && (
           <section className="mp-mine">
             <div className="my-notes-editor"><NoteEditor value={mine} onChange={keep} readOnly={false} placeholder="Type your notes for this meeting" autoFocus /></div>
-            <div className="mp-mine-actions">
-              {savedTo && !mine.trim() ? <span className="muted">Saved to {savedTo.replace(/^MyBrain\//, '')}</span> : null}
-              <button className="act-pill" onClick={record}><IconRecord width={15} height={15} /> Record</button>
-              <button className="act-pill primary" disabled={!mine.trim()} onClick={saveMine}>Save note</button>
-            </div>
+            {saveError ? <p className="set-error" role="alert">{saveError}</p> : savedTo && !mine.trim() ? <p className="muted">Saved to {savedTo.replace(/^MyBrain\//, '')}</p> : null}
           </section>
         )}
         {tab === 'transcript' && (
           <section className="mp-mine">
             <p className="muted">Nothing recorded for this meeting yet. Record starts a transcript with this meeting's title, and your notes from the Note tab come with it.</p>
-            <div className="mp-mine-actions"><button className="act-pill primary" onClick={record}><IconRecord width={15} height={15} /> Record</button></div>
           </section>
         )}
 

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Avatar } from './Speaker';
 
 // The chats on one note, meeting or recording. A page can hold several: each shows collapsed to its first question
-// on one line, with its response count on hover; one opens at a time, and Exit chat goes back to the list.
+// on one line, with View on hover; one opens at a time, and Exit chat goes back to the list.
 export type ChatEntry<T> = { id: string; turns: T[] };
 type Turnish = { q: string; a: string; pending?: boolean };
 
@@ -39,19 +39,24 @@ export function useChats<T extends Turnish>() {
 }
 
 type Me = { name: string; photo: string | null };
-// the collapsed chats: who asked and the first question under it, with View on the right; View opens that chat alone
+// the collapsed chats, one line each: who asked, the first question cut to fit, and View at the right on hover. View
+// opens that chat alone
 export function ChatList<T extends Turnish>({ chats, onOpen, me }: { chats: ChatEntry<T>[]; onOpen: (id: string) => void; me: Me }) {
   if (!chats.length) return null;
   return (
     <section className="note-thread chat-list" aria-label="Chats">
-      <h3 className="chat-list-head">{chats.length} {chats.length === 1 ? 'chat' : 'chats'}</h3>
-      {chats.map((c) => (
-        <div key={c.id} className="chat-row">
-          <div className="nt-who"><Avatar name={me.name} photo={me.photo} size={22} /><strong>{me.name}</strong>
-            <button className="pill small-pill chat-btn" onClick={() => onOpen(c.id)}>View</button></div>
-          <p className="nt-q chat-row-q">{c.turns[0]?.q ?? 'New chat'}</p>
-        </div>
-      ))}
+      <h2 className="chat-list-head">{chats.length} {chats.length === 1 ? 'chat' : 'chats'}</h2>
+      {chats.map((c) => {
+        const q = c.turns[0]?.q ?? 'New chat';
+        return (
+          <div key={c.id} className="chat-row">
+            <Avatar name={me.name} photo={me.photo} size={22} />
+            <strong className="chat-row-who">{me.name}</strong>
+            <span className="chat-row-q">{q}</span>
+            <button className="pill small-pill chat-btn" aria-label={`View chat: ${q}`} onClick={() => onOpen(c.id)}>View</button>
+          </div>
+        );
+      })}
     </section>
   );
 }

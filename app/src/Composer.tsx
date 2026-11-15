@@ -176,9 +176,9 @@ export function Composer({ value, onChange, onSubmit, placeholder, disabled, bus
       {onNewChat ? (
         // with chats on the page, + offers a new chat beside adding files
         <span className="menu-wrap c-plus">
-          <button type="button" className="icon-btn c-attach" aria-label="More" aria-haspopup="menu" aria-expanded={plus} disabled={disabled} onClick={() => setPlus((o) => !o)}><IconPlus /></button>
+          <button type="button" className="icon-btn c-attach" aria-label="More" data-tip="More" data-tip-pos="top" aria-haspopup="menu" aria-expanded={plus} disabled={disabled} onClick={() => setPlus((o) => !o)} onKeyDown={(ev) => { if (ev.key === 'Escape') setPlus(false); }}><IconPlus /></button>
           {plus && (
-            <div className="menu c-plus-menu" role="menu" onMouseLeave={() => setPlus(false)}>
+            <div className="menu c-plus-menu" role="menu" onMouseLeave={() => setPlus(false)} onKeyDown={(ev) => { if (ev.key === 'Escape') { setPlus(false); input.current?.focus(); } }}>
               <button type="button" role="menuitem" onClick={() => { setPlus(false); onNewChat(); input.current?.focus(); }}><IconChat width={15} height={15} /> New chat</button>
               <button type="button" role="menuitem" onClick={() => { setPlus(false); attach(); }}><IconPlus width={15} height={15} /> Add files</button>
             </div>
