@@ -1,3 +1,4 @@
+import { useComposerFocus } from './ChatStack';
 import { BackButton } from './BackButton';
 import { Component, Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { AccountState, Brain, HelperEvent, MeetingMeta, Notes, NotesDraft, Settings, Source, SpeakersEvent, SummaryEvent, UpdateState, WhoAsk } from './quorum';
@@ -185,6 +186,7 @@ export function App() {
   // never over a live call or its review: the call UI stays in view
   // a new note opens the recording page, not recording yet; an existing note's file still opens the note view
   const [draftOpen, setDraftOpen] = useState(false);
+  const [draftTitle, setDraftTitle] = useState('');
   const openNoteView = (file: string | null = null, record: RecordChoice | null = null) => {
     if (phaseRef.current !== 'idle') return;
     if (!file && !record) { setNote(null); setView('main'); setDraftOpen(true); return; }
@@ -193,8 +195,19 @@ export function App() {
   useEffect(() => {
     const onEvent = (e: Event) => { const f = (e as CustomEvent<{ file?: string } | undefined>).detail?.file; openNoteView(typeof f === 'string' ? f : null); };
     window.addEventListener('quorum:new-note', onEvent);
+    // Record from a meeting's page: the recording page with that meeting's title and the notes typed for it
+    const onRecordInto = (e: Event) => {
+      const d = (e as CustomEvent<{ title?: string; notes?: string; started?: () => void }>).detail ?? {};
+      if (phaseRef.current !== 'idle') return;
+      d.started?.();
+      setDraftTitle(d.title ?? '');
+      if (d.notes?.trim()) myNotesRef.current.change(d.notes);
+      setNote(null); setView('main'); setDraftOpen(true);
+      startRecordRef.current(d.notes);
+    };
+    window.addEventListener('quorum:record-into', onRecordInto);
     const off = window.quorum.onNewNote?.((d) => openNoteView(typeof d?.file === 'string' ? d.file : null));
-    return () => { window.removeEventListener('quorum:new-note', onEvent); off?.(); };
+    return () => { window.removeEventListener('quorum:new-note', onEvent); window.removeEventListener('quorum:record-into', onRecordInto); off?.(); };
   }, []);
   // Record from the header: 3, 2, 1 in its label, then a solo session (Settings > Notes holds Transcription and Screen).
   // liveOpen shows that session's note under the header (EndView, live while it records, then keep or discard); the
@@ -294,6 +307,7 @@ export function App() {
     return () => window.removeEventListener('quorum-open-settings', open);
   }, []);
   const composer = useRef<HTMLTextAreaElement>(null);
+  const inChat = useComposerFocus();
   const [lines, setLines] = useState<Line[]>([]);
   const [partial, setPartial] = useState<{ me: string; them: string }>({ me: '', them: '' });
   const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -329,6 +343,10 @@ export function App() {
   const notesEnd = useRef<HTMLDivElement>(null);
   // your notes: typed on a call and in the review, read by the notes prompt as its outline
   const mine = usePrivateNotes();
+  const myNotesRef = useRef(mine);
+  myNotesRef.current = mine;
+  const startRecordRef = useRef((_notes?: string) => {});
+  startRecordRef.current = (notes?: string) => { startRecord(notes); };
   const mineRef = useRef<HTMLTextAreaElement>(null);
   // Cmd+Shift+N on a call opens Your notes and puts the cursor in it
   useEffect(() => {
@@ -496,26 +514,51 @@ export function App() {
   const pickSpeaker = useCallback((id: number, name: string | null, same: boolean) => setSpeaker(id, name, same), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const screenOffered = nt.screenContext && settings.screenContext === true;
-  async function startRecord() {
+  // Record after Stop: the same recording keeps going; the summary so far is dropped and written again at the next Stop
+  async function continueRecord() {
+    const r = await window.quorum.recordContinue().catch((err) => ({ error: String(err) }));
+    if ('error' in r) { setRecordError(r.error); setTimeout(() => setRecordError(null), 5000); return; }
+    setNotes(null); setNotesDraft(null); setAsk(null); setSummarizing(false);
+  }
+  const countdown = async () => { for (const n of [3, 2, 1]) { setCount(n); await new Promise((r) => setTimeout(r, 1000)); } setCount(null); };
+  // Record on a stopped note: the countdown offers New note under it; left alone, this note keeps recording
+  const newInstead = useRef(false);
+  const [offerNew, setOfferNew] = useState(false);
+  async function recordAgain() {
+    if (count !== null) return;
+    newInstead.current = false;
+    setOfferNew(true);
+    await countdown();
+    setOfferNew(false);
+    if (!newInstead.current) { setAnnounce(true); await continueRecord(); return; }
+    closeReview();
+    setDraftOpen(true);
+    await beginRecording();
+  }
+  async function startRecord(notes?: string) {
     if (count !== null || phaseRef.current !== 'idle') return;
     setRecordError(null);
-    for (const n of [3, 2, 1]) { setCount(n); await new Promise((r) => setTimeout(r, 1000)); }
+    await countdown();
+    await beginRecording(notes);
+  }
+  async function beginRecording(notes?: string) {
     setAnnounce(true);
-    setCount(null);
     const r = await window.quorum.recordSession().catch((err) => ({ error: String(err) }));
     if ('error' in r) { setAnnounce(false); setRecordError(r.error); setTimeout(() => setRecordError(null), 5000); return; }
     setNote((n) => (n && !n.leave ? { ...n, leave: Date.now(), next: null } : n));
     // what was typed on the new note before Record carries into the recording
-    if (mine.text.trim()) window.quorum.privateNotesSet(mine.text);
-    setDraftOpen(false);
+    const typed = notes ?? myNotesRef.current.text;
+    if (typed.trim()) window.quorum.privateNotesSet(typed);
     setView('main');
     setLiveOpen(true);
+    setDraftOpen(false);
   }
   useEffect(() => { if (!announce || phase !== 'listening') return; const t = setTimeout(() => setAnnounce(false), 1000); return () => clearTimeout(t); }, [announce, phase]);
   // a finished recording opens on its keep-or-discard page; nothing recording closes the live view
   useEffect(() => { if (phase === 'review') setLiveOpen(true); if (phase === 'idle') setLiveOpen(false); }, [phase]);
   const drafting = view === 'main' && draftOpen && phase === 'idle';
-  const showLive = (view === 'main' && liveOpen && phase !== 'idle' && phase !== 'blocked') || drafting;
+  // a new note stays on screen from Record through the countdown and the start, so nothing else shows in between
+  const showLive = view === 'main' && phase !== 'blocked' && ((liveOpen && phase !== 'idle') || draftOpen);
   const closeNote = () => setNote((n) => (n && !n.leave ? { ...n, leave: Date.now(), next: null } : n));
   const go = (fn: () => void) => () => { setLiveOpen(false); setDraftOpen(false); closeNote(); fn(); };
   const status = {
@@ -523,7 +566,7 @@ export function App() {
     starting: { label: announce ? 'Recording' : 'Starting…', icon: <RecLevel live={false} /> },
     listening: { label: 'Recording', icon: <RecLevel live /> },
     paused: held ? { label: 'Paused', icon: <RecLevel live={false} /> } : { label: 'Stopped', icon: <IconStop width={14} height={14} /> },
-    review: { label: 'Ended', icon: <span className="dot" /> },
+    review: { label: count !== null ? String(count) : 'Record', icon: <IconRecord width={17} height={17} /> },
     blocked: { label: 'Off for this call', icon: <Wave live={false} /> },
   }[phase];
 
@@ -549,13 +592,13 @@ export function App() {
     mine.reset();
     setDraftOpen(false);
   }
-  const closeReview = () => { setPhase('idle'); resetMeeting(); setLiveOpen(false); setTab('home'); };
+  const closeReview = () => { setDraftTitle(''); setPhase('idle'); resetMeeting(); setLiveOpen(false); setTab('home'); };
   const liveArea = (
     <div className="body wide flush live-body">
       <LazyView name="your notes" onClose={phase === 'review' ? closeReview : () => setLiveOpen(false)}>
-        <EndView embedded ready={drafting} onSaveDraft={saveDraft} onRecord={nt.manualListen ? () => { startRecord(); } : undefined} recordBusy={phase !== 'idle' || count !== null} live={inCall(phase)} paused={phase === 'paused'} who={ask} onAnswer={(a) => { setAsk(null); window.quorum.sessionSummarize(a ?? {}); }} notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing}
-          transcript={lines.map((l) => ({ ...l, who: who(l) }))} partial={liveWords ? [partial.me, partial.them].filter(Boolean).join(' ') : ''} participants={participants} onSpeaker={setSpeaker} me={nt.meetingCapture ? me : undefined}
-          privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={phase === 'review' ? closeReview : drafting ? () => { mine.reset(); setDraftOpen(false); } : () => setLiveOpen(false)} />
+        <EndView key={draftTitle || 'note'} initialTitle={draftTitle} embedded ready={drafting} onSaveDraft={saveDraft} onContinue={nt.manualListen ? () => { recordAgain(); } : undefined} onRecord={nt.manualListen ? () => { startRecord(); } : undefined} recordBusy={phase !== 'idle' || count !== null} live={inCall(phase)} paused={phase === 'paused'} who={ask} onAnswer={(a) => { setAsk(null); window.quorum.sessionSummarize(a ?? {}); }} notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing}
+          transcript={lines.map((l) => ({ ...l, who: who(l) }))} partial={liveWords ? [partial.me, partial.them].filter(Boolean).join(' ') : ''} participants={participants} onSpeaker={setSpeaker} me={nt.meetingCapture ? me : undefined} asker={me}
+          privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={phase === 'review' ? closeReview : drafting ? () => { mine.reset(); setDraftTitle(''); setDraftOpen(false); } : () => setLiveOpen(false)} />
       </LazyView>
     </div>
   );
@@ -603,11 +646,16 @@ export function App() {
             {/* Record: one button from idle to recording, so the label that slid out on hover is the one that turns green.
                 With Screen on offer it opens the Record popover; otherwise it opens a new note that starts transcribing */}
             {(nt.manualListen || phase !== 'idle') && (
-            <button className={`status listen ${phase === 'blocked' ? 'off-call' : phase}${count !== null ? ' counting' : ''}${announce ? ' announce' : ''}${recordError ? ' rec-error' : ''}`}
-              onClick={phase === 'idle' ? () => { startRecord(); } : phase === 'blocked' ? undefined : () => { closeNote(); setView('main'); setLiveOpen(true); }}
-              data-tip={phase === 'blocked' ? 'Someone on your never-listen list is in this call' : phase !== 'idle' ? 'Open the recording' : undefined} aria-label={status.label}>
+            <button className={`status listen ${phase === 'blocked' ? 'off-call' : phase === 'review' ? 'idle' : phase}${count !== null ? ' counting' : ''}${announce ? ' announce' : ''}${recordError ? ' rec-error' : ''}`}
+              onClick={phase === 'idle' ? () => { startRecord(); } : phase === 'review' ? () => { closeNote(); setView('main'); setLiveOpen(true); recordAgain(); } : phase === 'blocked' ? undefined : () => { closeNote(); setView('main'); setLiveOpen(true); }}
+              data-tip={phase === 'blocked' ? 'Someone on your never-listen list is in this call' : phase === 'review' ? 'Record more into this note' : phase !== 'idle' ? 'Open the recording' : undefined} aria-label={status.label}>
               <span className="listen-hint" aria-live="polite">{status.label}</span>{status.icon}
             </button>
+            )}
+            {offerNew && (
+              <div className="menu rec-offer" role="menu">
+                <button role="menuitem" onClick={() => { newInstead.current = true; setOfferNew(false); }}><IconNotes width={15} height={15} /> New note</button>
+              </div>
             )}
             <span className="rec-sep" aria-hidden="true" />
           </div>
@@ -718,7 +766,7 @@ export function App() {
             </section>}
             <div ref={chatEnd} style={{ flex: 'none', minHeight: spacer }} />
           </div>
-          {phase === 'idle' && msgs.length === 0 && brain && (
+          {phase === 'idle' && msgs.length === 0 && brain && inChat && (
             <div className="skill-pills chat-skills" role="group" aria-label="Quick asks">
               {CHAT_ASKS.map((q) => <button key={q} className="skill-pill" onClick={() => send(q)}>{q}</button>)}
             </div>

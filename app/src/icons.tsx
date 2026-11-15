@@ -35,6 +35,9 @@ export const IconArrowRight = (p: SVGProps<SVGSVGElement>) => (
 export const IconArrowUp = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base({ strokeWidth: 2, ...p })}><path d="M12 19V5M6 11l6-6 6 6" /></svg>
 );
+export const IconSound = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base({ strokeWidth: 2, ...p })}><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2" /></svg>
+);
 export const IconChevron = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base({ width: 12, height: 12, strokeWidth: 2, ...p })}><path d="m6 9 6 6 6-6" /></svg>
 );

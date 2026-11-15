@@ -69,6 +69,7 @@ export function notesSystem({ owner, about = '' }) {
     `An action item is agreed only with an owner and a date; when either is missing, leave that field null. Never guess an owner from the topic.`,
     `Never invent names, numbers, outcomes or intent that are not in the transcript. When the transcript is unclear, leave the point out.`,
     `Every bullet, decision, action and question carries "refs": the ids of the turns it came from, as numbers ([t12] is 12).`,
+    `When the transcript and ${owner}'s own notes hold nothing of substance (a test, chatter, media playing in the background, a few unclear lines), say that plainly in the summary in one or two sentences, recommend recording more or discarding the note, and leave the sections empty.`,
     `Return only JSON, no prose before or after. Final notes look like this example:`,
     EXAMPLE,
     about,

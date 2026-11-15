@@ -10,9 +10,13 @@ import { SourceAsk, useMeetingSources } from './MeetingSources';
 import type { CalendarEvent, MeetingShare, NoteDoc, Visibility } from './quorum';
 import { Markdown } from './Markdown';
 import { Composer } from './Composer';
-import { IconArrowDown, IconChevron, IconFolder, IconGlobe, IconLock, IconLogs, IconMore, IconNotes, IconTrash } from './icons';
+import { IconArrowDown, IconSound, IconChevron, IconFolder, IconGlobe, IconLock, IconLogs, IconMore, IconNotes, IconTrash } from './icons';
 import { Avatar } from './Speaker';
 import { NoteEditor, type NoteEditorHandle } from './editor/NoteEditor';
+import { ChatExit, ChatList, useChats, useComposerFocus } from './ChatStack';
+import { useMemo } from 'react';
+import { joinParts } from '../noteParts.js';
+import { soundLine } from './EndView';
 
 type Turn = { q: string; a: string; proposal: string | null; state?: 'applied' | 'discarded'; pending?: boolean };
 
@@ -110,12 +114,12 @@ function SavedTranscript({ turns }: { turns: { id: number; channel: 'me' | 'them
   }
   return (
     <section className="transcript end-transcript">
-      {groups.map((g) => g.turns[0].sound ? <p key={g.turns[0].id} className="turn-sound">{[...new Set(g.turns.map((t) => t.text))].join(', ')}</p> : (
+      {groups.map((g) => g.turns[0].sound ? <p key={g.turns[0].id} className="turn-sound">{[...new Set(g.turns.map((t) => soundLine(t.text)))].join(' ')}</p> : (
         <div key={g.turns[0].id} className={`turn-group ${g.channel}`}>
           <div className="spk">{g.who === 'Unknown' || g.who === 'You' ? <span className="avatar-sm avatar-unknown" aria-label="Unknown speaker">?</span>
             : /^(Person|Speaker) \d+$|^Mixed discussion/.test(g.who) ? <><span className="avatar-sm avatar-unknown" aria-label="Unnamed speaker">?</span><span className="spk-anon">{g.who}</span></>
             : <><Avatar name={g.who} /><span>{g.who}</span></>}</div>
-          {g.turns.map((t) => <p key={t.id} className={t.unclear ? 'unclear' : undefined} data-tip={t.unclear ? 'Hard to hear; Quorum may have some words wrong' : undefined}>{t.text}</p>)}
+          {g.turns.map((t) => <p key={t.id}>{t.text}</p>)}
         </div>
       ))}
     </section>
@@ -142,7 +146,9 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
   firstAsk?: { q: string; files: string[] } | null; chat?: string | null; note: NoteDoc; dayLabel: (d: Date | null) => string; peopleLine: (p: string[], n: number) => string; onBack: () => void;
 }) {
   const [note, setNote] = useState(initial);
-  const [showing, setShowing] = useState<'summary' | 'transcript'>('summary');
+  // three tabs, like a new note: the Summary (when there is one, and the page opens on it), your Note, the Transcript
+  const parts = useMemo(() => note.parts ?? { note: note.hand ? note.body : '', summary: note.hand ? '' : note.body, split: false }, [note.parts, note.body, note.hand]);
+  const [showing, setShowing] = useState<'summary' | 'note' | 'transcript'>(() => ((initial.parts ? initial.parts.summary : !initial.hand && initial.body.trim()) ? 'summary' : 'note'));
   const bar = useStuck();
   // the debrief starts on its own when it matters most, once per note: right after a summary is written, or when a
   // recording from the last day has no people named and no chat yet. Its first question waits under the summary
@@ -158,10 +164,13 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
   // the note's chat comes with it; opened at a chat (or from Home with a question), the page goes down to it
   useEffect(() => {
     if (firstAsk) { ask(firstAsk.files, firstAsk.q); return; }
-    (chat ? window.quorum.readChat(chat) : window.quorum.noteChat(note.file)).then((c) => {
-      if (!c?.turns.length) return;
-      setTurns(c.turns.map((t) => ({ q: t.q, a: t.a, proposal: null })));
-      if (chat) requestAnimationFrame(() => scroller.current?.querySelector('.note-thread')?.scrollIntoView({ block: 'start' }));
+    window.quorum.noteChats(note.file).then((list) => {
+      cs.setChats(list.map((c) => ({ id: c.id, turns: c.turns.map((t) => ({ q: t.q, a: t.a, proposal: null })) })));
+      // opened at a chat: that one is open; otherwise every chat starts collapsed
+      if (chat && list.some((c) => c.id === chat)) {
+        cs.setOpenId(chat);
+        requestAnimationFrame(() => scroller.current?.querySelector('.note-thread')?.scrollIntoView({ block: 'start' }));
+      }
     }).catch(() => {});
   }, [chat, note.file]); // eslint-disable-line react-hooks/exhaustive-deps
   const [summing, setSumming] = useState(false);
@@ -172,7 +181,10 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
     setSumming(false);
     if ('error' in r) setSumError(r.error); else { await reload(); autoDebrief(true); }
   }
-  const [turns, setTurns] = useState<Turn[]>([]);
+  // the note's chats: several can stack, each collapsed until opened; the open one is the thread below
+  const cs = useChats<Turn>();
+  const turns = cs.active?.turns ?? [];
+  const setTurns = (fn: (t: Turn[]) => Turn[]) => { if (cs.openId) cs.update(cs.openId, fn); };
   const [draft, setDraft] = useState('');
   const [step, setStep] = useState('');
   const [preview, setPreview] = useState(false);
@@ -183,7 +195,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
   const [sources, loadSources] = useMeetingSources();
   const scroller = useRef<HTMLDivElement>(null);
   const date = note.date ? new Date(note.date) : null;
-  const busy = turns.some((t) => t.pending);
+  const busy = cs.chats.some((c) => c.turns.some((t) => t.pending));
   // the skill pills go away once one has run in this chat; the /commands keep working
   // they show only at the bottom of the page and before the first message; above the bottom an arrow offers the rest
   const [atBottom, setAtBottom] = useState(false);
@@ -203,27 +215,30 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
     const dock = scroller.current?.querySelector<HTMLElement>('.note-dock')?.offsetHeight ?? 0;
     box?.scrollBy({ top: box.clientHeight - dock, behavior: 'smooth' });
   };
+  const inChat = useComposerFocus();
   const slash = draft.startsWith('/') && !draft.includes(' ') ? SKILLS.filter((k) => `/${k.cmd}`.startsWith(draft.trim().toLowerCase())) : [];
   // a skill keeps the page at the bottom of the chat while its answer comes in
   const pinBottom = useRef(false);
   const runSkill = (k: (typeof SKILLS)[number]) => { setDraft(''); pinBottom.current = true; ask([], k.ask); };
-  // Edit turns the summary on this page into an editor; Save updates writes it back to the note, the title line kept
-  const [editing, setEditing] = useState(false);
-  const [edited, setEdited] = useState<string | null>(null);
+  // Note and Summary are edited in place; a change brings up Undo and Save edits
+  const noteEd = useRef<NoteEditorHandle>(null);
+  const sumEd = useRef<NoteEditorHandle>(null);
+  const [edits, setEdits] = useState<{ note?: string; summary?: string }>({});
+  const [editKey, setEditKey] = useState(0);
   const [savingEdit, setSavingEdit] = useState(false);
-  const editor = useRef<NoteEditorHandle>(null);
   const titleLine = note.body.match(/^# [^\n]*\n+/)?.[0] ?? '';
-  const editable = note.body.slice(titleLine.length);
-  // the editor re-writes the markdown when it mounts, so only typing (or a paste, cut, undo) counts as a change
-  const [touched, setTouched] = useState(false);
-  const dirty = touched && edited !== null && edited.trim() !== editable.trim();
-  const cancelEdit = () => { setEditing(false); setEdited(null); setTouched(false); };
-  async function saveEdit() {
-    const md = editor.current?.flush() ?? edited;
-    if (md == null) return;
+  const changed = (k: 'note' | 'summary') => edits[k] !== undefined && edits[k]!.trim() !== parts[k].trim();
+  const dirty = changed('note') || changed('summary');
+  const undo = () => { typed.current = { note: false, summary: false }; setEdits({}); setEditKey((n) => n + 1); };
+  async function saveEdits() {
+    const n = noteEd.current?.flush() ?? edits.note ?? parts.note;
+    const sm = sumEd.current?.flush() ?? edits.summary ?? parts.summary;
     setSavingEdit(true);
-    try { await window.quorum.noteApply(note.file, `${titleLine}${md.trim()}\n`); await reload(); cancelEdit(); } finally { setSavingEdit(false); }
+    try { await window.quorum.noteApply(note.file, `${titleLine}${joinParts(n, sm, parts)}\n`); await reload(); setEdits({}); setEditKey((k) => k + 1); } finally { setSavingEdit(false); }
   }
+  // the editors write markdown when they mount, so only typing counts as an edit
+  const typed = useRef<{ note: boolean; summary: boolean }>({ note: false, summary: false });
+  const onEdit = (k: 'note' | 'summary') => (md: string) => { if (typed.current[k]) setEdits((e) => ({ ...e, [k]: md })); };
 
   useEffect(() => window.quorum.onAgentStep(({ text }) => setStep(text)), []);
   // the answer as it streams in, and who is asking, for the names above each turn
@@ -244,6 +259,8 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
   }, [turns, live, step]);
 
   const reload = async () => { const n = await window.quorum.readNote(note.file); if (n) setNote(n); };
+  // named after its first answer, the file can move: the reader follows it
+  useEffect(() => window.quorum.onNoteRenamed((d) => { if (d.from === note.file) window.quorum.readNote(d.to).then((n) => { if (n) setNote(n); }); }), [note.file]);
 
   async function ask(files: string[] = [], said?: string) {
     const q = (said ?? draft).trim();
@@ -251,13 +268,17 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
     if (said === undefined) setDraft('');
     setStep('');
     setLive('');
-    setTurns((t) => [...t, { q, a: '', proposal: null, pending: true }]);
+    const to = cs.target();
+    cs.update(to.id, (t) => [...t, { q, a: '', proposal: null, pending: true }]);
     let next: Omit<Turn, 'q'>;
+    let saved: string | undefined;
     try {
-      const r = await window.quorum.noteAsk(note.file, q === DEBRIEF_SHOWN ? '[debrief]' : q, turns.filter((t) => !t.pending).map(({ q: tq, a }) => ({ q: tq, a })), files);
+      const r = await window.quorum.noteAsk(note.file, q === DEBRIEF_SHOWN ? '[debrief]' : q, to.history, files, to.send);
       next = { a: r.text, proposal: r.proposal };
+      saved = r.chatId;
     } catch (err) { next = { a: `Couldn't answer: ${String(err).replace(/^.*Error:\s*/, '')}`, proposal: null }; }
-    setTurns((t) => t.map((x, i) => (i === t.length - 1 ? { ...x, ...next, pending: false } : x)));
+    cs.update(to.id, (t) => t.map((x, i) => (i === t.length - 1 ? { ...x, ...next, pending: false } : x)));
+    cs.settle(to.id, saved);
   }
 
   async function apply(i: number) {
@@ -276,12 +297,10 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
       <div className={`reader-bar sticky-bar${bar.stuck ? ' stuck' : ''}`}>
         <span className="rb-left"><BackButton onClick={onBack} /><TypedTitle text={note.title || 'Untitled note'} on={bar.stuck} /></span>
         <div className="reader-actions">
-          {/* continue this note in the note view: write in it, or Record more into it */}
-          {editing ? <>
-            <button className="act-pill" onClick={cancelEdit}>Cancel</button>
-            <button className="act-pill" disabled={!dirty || savingEdit} onClick={saveEdit}>{savingEdit ? 'Saving…' : 'Save updates'}</button>
-          </> : <button className="act-pill" disabled={note.withheld} data-tip={note.withheld ? 'This note has withheld lines; edit it in the vault' : undefined}
-            onClick={() => { setShowing('summary'); setEditing(true); }}>Edit</button>}
+          {dirty && <>
+            <button className="text-btn" onClick={undo}>Undo</button>
+            <button className="act-pill primary" disabled={savingEdit} onClick={saveEdits}>{savingEdit ? 'Saving…' : 'Save edits'}</button>
+          </>}
           <KeepPrivate file={note.file} onState={setShare} onRef={() => reload()} reload={shareRead} />
           {!inMeetingsKb && <VisibilityPill value={note.visibility} onChange={async (v) => { await window.quorum.noteVisibility(note.file, v); reload(); }} />}
           <NoteMenu note={note} onDeleted={onBack} />
@@ -295,28 +314,37 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
               onClick={() => window.dispatchEvent(new CustomEvent('quorum:open-memory', { detail: note.file }))}><IconFolder width={17} height={17} /></button>
           )}
           <ViewsPill views={note.views} />
-          {(!!note.transcript?.length || note.summarizable) && (
-            <div className="view-toggle" role="group" aria-label="Show">
-              <button className={showing === 'summary' ? 'on' : ''} aria-pressed={showing === 'summary'} aria-label="Summary" data-tip="Summary" onClick={() => setShowing('summary')}><IconNotes width={16} height={16} /></button>
-              <button className={showing === 'transcript' ? 'on' : ''} aria-pressed={showing === 'transcript'} aria-label="Transcript" data-tip="Transcript" onClick={() => setShowing('transcript')}><IconLogs width={16} height={16} /></button>
-            </div>
-          )}
+          <div className="view-toggle" role="group" aria-label="Show">
+            {parts.summary && <button className={showing === 'summary' ? 'on' : ''} aria-pressed={showing === 'summary'} aria-label="Summary" data-tip="Summary" onClick={() => setShowing('summary')}><IconLogs width={16} height={16} /></button>}
+            <button className={showing === 'note' ? 'on' : ''} aria-pressed={showing === 'note'} aria-label="Note" data-tip="Note" onClick={() => setShowing('note')}><IconNotes width={16} height={16} /></button>
+            {<button className={showing === 'transcript' ? 'on' : ''} aria-pressed={showing === 'transcript'} aria-label="Transcript" data-tip="Transcript" onClick={() => setShowing('transcript')}><IconSound width={16} height={16} /></button>}
+          </div>
         </NoteMeta>
         {share?.ask && <SourceAsk source={share.ask} data={sources} onDone={() => { loadSources(); setShareRead((n) => n + 1); }} />}
-        {showing === 'transcript' && note.transcript?.length ? <SavedTranscript turns={note.transcript} />
-          : editing ? <div className="reader-edit" onInput={() => setTouched(true)}><NoteEditor ref={editor} value={editable} onChange={setEdited} readOnly={false} placeholder="Write the note" autoFocus /></div>
-          : note.body.trim() ? <Markdown text={note.body} headings />
-          : note.transcript?.length ? (
-            // a recording with no summary yet: the same page, and a way to write one from the transcript
+        {showing === 'transcript' && <>
+          {/* a recording with no summary yet: a way to write one from the transcript */}
+          {!parts.summary && (note.summarizable || !!note.transcript?.length) && (
             <div className="no-summary">
-              {summing ? <p className="shimmer">Writing the summary from the transcript</p> : <p className="muted">No summary yet.</p>}
+              {summing ? <p className="shimmer">Writing the summary from the transcript</p> : null}
               {sumError && <p className="set-error" role="alert">{sumError}</p>}
-              <button className="pill who-go" disabled={summing} onClick={summarize}>Generate summary from transcript</button>
+              <button className="act-pill primary" disabled={summing} onClick={summarize}>Summarize transcript</button>
             </div>
-          ) : null}
+          )}
+          {note.transcript?.length ? <SavedTranscript turns={note.transcript} /> : !note.summarizable && <p className="no-transcript">No transcript yet. Start recording now to create one.</p>}
+        </>}
+        {showing !== 'transcript' && note.withheld && <p className="muted withheld-note">This note has withheld lines, so edit it in your vault.</p>}
+        {showing !== 'transcript' && (
+          // Note and Summary edit in place; a note with withheld lines stays read-only
+          <div className="reader-edit my-notes-editor" key={`${showing}-${editKey}`} onInput={() => { typed.current[showing as 'note' | 'summary'] = true; }}>
+            <NoteEditor ref={showing === 'note' ? noteEd : sumEd} value={showing === 'note' ? edits.note ?? parts.note : edits.summary ?? parts.summary}
+              onChange={onEdit(showing as 'note' | 'summary')} readOnly={note.withheld} placeholder={showing === 'note' ? 'Type your notes' : 'No summary yet'} />
+          </div>
+        )}
       </article>
 
-      {turns.length > 0 && <section className="note-thread" aria-label="Questions about this note">
+      {!cs.active && <ChatList chats={cs.chats} onOpen={cs.setOpenId} me={me} />}
+      {cs.active && <section className="note-thread" aria-label="Questions about this note">
+          <ChatExit onExit={cs.exit} />
           {turns.map((t, i) => {
             const { text, choices } = splitChoices(t.pending ? live : t.a);
             return (
@@ -353,13 +381,15 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
         <div className="slash-menu" role="listbox" aria-label="Commands">
           {slash.map((k) => <button key={k.cmd} role="option" aria-selected={false} disabled={busy} onClick={() => runSkill(k)}><strong>/{k.cmd}</strong><span>{k.label}</span></button>)}
         </div>
-      ) : turns.length === 0 && atBottom && (
+      ) : !cs.active && !cs.chats.length && atBottom && inChat && (
         <div className="skill-pills" role="group" aria-label="Quick asks">
           {SKILLS.map((k) => <button key={k.label} className="skill-pill" disabled={busy} onClick={() => runSkill(k)}>{k.label}</button>)}
         </div>
       )}
-      <Composer className="note-composer" value={draft} onChange={setDraft} onSubmit={(_q, f) => (slash.length ? runSkill(slash[0]) : ask(f))} busy={busy} placeholder="Ask about this note, or ask Quorum to change it" />
+      <Composer className="note-composer" value={draft} onChange={setDraft} onSubmit={(_q, f) => (slash.length ? runSkill(slash[0]) : ask(f))} busy={busy} onNewChat={cs.chats.length ? cs.newChat : undefined} placeholder={cs.active || !cs.chats.length ? 'Ask about this note, or ask Quorum to change it' : 'Ask in your latest chat, or + for a new one'} />
       </div>
     </div>
   );
 }
+
+export { joinParts };

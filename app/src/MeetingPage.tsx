@@ -7,9 +7,12 @@ import { dayLabel } from './upNextList';
 import { IconPeople } from './icons';
 import { TypedTitle, useStuck } from './StickyBar';
 import { JoinButton } from './UpNext';
+import { NoteEditor } from './editor/NoteEditor';
+import { IconLogs, IconNotes, IconRecord, IconSound } from './icons';
 import { Composer } from './Composer';
 import { Avatar } from './Speaker';
 import { splitChoices } from './MeetingNote';
+import { ChatExit, ChatList, useChats, useComposerFocus } from './ChatStack';
 import markProd from '../assets/quorum-mark.png';
 
 // one click each, above the chat input before the first question
@@ -17,7 +20,8 @@ const PREP_ASKS = ['What is still open from last time?', 'What should I ask in t
 
 // questions about the meeting before it happens, answered from its prep notes, past notes and the rest of the Agent OS
 function MeetingChat({ event }: { event: CalendarEvent }) {
-  const [turns, setTurns] = useState<{ q: string; a: string; pending?: boolean }[]>([]);
+  const cs = useChats<{ q: string; a: string; pending?: boolean }>();
+  const turns = cs.active?.turns ?? [];
   const [draft, setDraft] = useState('');
   const [live, setLive] = useState('');
   const [step, setStep] = useState('');
@@ -27,13 +31,12 @@ function MeetingChat({ event }: { event: CalendarEvent }) {
   useEffect(() => window.quorum.onAgentStep(({ text }) => setStep(text)), []);
   // its saved chat comes back with the page; opened from the row's chats link, the page scrolls down to it
   useEffect(() => {
-    window.quorum.eventChat(event.id).then((c) => {
-      if (!c?.turns.length) return;
-      setTurns(c.turns);
-      if (event.openChat) requestAnimationFrame(() => document.querySelector('.meeting-page .note-thread')?.scrollIntoView({ block: 'start' }));
+    window.quorum.eventChats(event.id).then((list) => {
+      cs.setChats(list);
+      if (event.openChat && list.length) requestAnimationFrame(() => document.querySelector('.meeting-page .note-thread')?.scrollIntoView({ block: 'start' }));
     }).catch(() => {});
   }, [event.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  const busy = turns.some((t) => t.pending);
+  const busy = cs.chats.some((c) => c.turns.some((t) => t.pending));
   // asking keeps the page at the bottom of the chat while the answer comes in
   useLayoutEffect(() => {
     if (!turns.length || !turns[turns.length - 1].pending) return;
@@ -44,16 +47,21 @@ function MeetingChat({ event }: { event: CalendarEvent }) {
     const q = (said ?? draft).trim();
     if (!q || busy) return;
     setDraft(''); setLive(''); setStep('');
-    const history = turns.map(({ q: tq, a }) => ({ q: tq, a }));
-    setTurns((t) => [...t, { q, a: '', pending: true }]);
+    const to = cs.target();
+    cs.update(to.id, (t) => [...t, { q, a: '', pending: true }]);
     let a: string;
-    try { a = (await window.quorum.meetingAsk(event, q, history)).text; } catch (err) { a = `Couldn't answer: ${String(err).replace(/^.*Error:\s*/, '')}`; }
-    setTurns((t) => t.map((x, i) => (i === t.length - 1 ? { q: x.q, a } : x)));
+    let saved: string | undefined;
+    try { const r = await window.quorum.meetingAsk(event, q, to.history, to.send); a = r.text; saved = r.chatId; } catch (err) { a = `Couldn't answer: ${String(err).replace(/^.*Error:\s*/, '')}`; }
+    cs.update(to.id, (t) => t.map((x, i) => (i === t.length - 1 ? { q: x.q, a } : x)));
+    cs.settle(to.id, saved);
   }
+  const inChat = useComposerFocus();
   return (
     <>
-      {turns.length > 0 && (
+      {!cs.active && <ChatList chats={cs.chats} onOpen={cs.setOpenId} me={me} />}
+      {cs.active && (
         <section className="note-thread" aria-label="Questions about this meeting">
+          <ChatExit onExit={cs.exit} />
           {turns.map((t, i) => {
             const { text, choices } = splitChoices(t.pending ? live : t.a);
             return (
@@ -71,12 +79,12 @@ function MeetingChat({ event }: { event: CalendarEvent }) {
         </section>
       )}
       <div className="note-dock">
-        {turns.length === 0 && (
+        {!cs.active && !cs.chats.length && inChat && (
           <div className="skill-pills" role="group" aria-label="Quick asks">
             {PREP_ASKS.map((q) => <button key={q} className="skill-pill" disabled={busy} onClick={() => ask(q)}>{q}</button>)}
           </div>
         )}
-        <Composer className="note-composer" value={draft} onChange={setDraft} onSubmit={() => ask()} busy={busy} placeholder="Ask about this meeting" />
+        <Composer className="note-composer" value={draft} onChange={setDraft} onSubmit={() => ask()} busy={busy} onNewChat={cs.chats.length ? cs.newChat : undefined} placeholder="Ask about this meeting" />
       </div>
     </>
   );
@@ -115,6 +123,29 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
   const [writing, setWriting] = useState(false);
   const bar = useStuck();
   const top = useRef<HTMLDivElement>(null);
+  // three tabs: the prep from past meetings, your own notes ahead of time, and a transcript you can start from here
+  const [tab, setTab] = useState<'prep' | 'note' | 'transcript'>('prep');
+  // your notes for an upcoming meeting stay on this Mac until you save them or record; they come back when you return
+  const draftKey = `event-note:${e.id}`;
+  const [mine, setMine] = useState(() => { try { return localStorage.getItem(draftKey) ?? ''; } catch { return ''; } });
+  const [savedTo, setSavedTo] = useState<string | null>(null);
+  const [savingMine, setSavingMine] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const keep = (v: string) => { setMine(v); try { if (v.trim()) localStorage.setItem(draftKey, v); else localStorage.removeItem(draftKey); } catch { /* ignore */ } };
+  async function saveMine() {
+    if (savingMine) return;
+    setSavingMine(true); setSaveError('');
+    try {
+      const r = await window.quorum.handNoteSave({ id: `event-${Date.now()}`, file: null, title: e.title, body: mine.trim(), hash: null, fresh: true });
+      if ('error' in r || 'conflict' in r) { setSaveError("Couldn't save the note. Try again."); return; }
+      window.quorum.handNoteDone(r.file);
+      setSavedTo(r.rel);
+      keep('');
+    } finally { setSavingMine(false); }
+  }
+  // Record from here: the recording page opens with this meeting's title and your notes so far
+  // the notes here clear only once the recording has them; with a call already running, nothing changes
+  const record = () => { window.dispatchEvent(new CustomEvent('quorum:record-into', { detail: { title: e.title, notes: mine, started: () => keep('') } })); };
   useLayoutEffect(() => { top.current?.scrollIntoView({ block: 'start' }); }, [e.id]);
   useEffect(() => {
     let live = true;
@@ -145,6 +176,8 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
         <span className="rb-left"><BackButton onClick={onBack} /><TypedTitle text={e.title} on={bar.stuck} /></span>
         <div className="reader-actions">
           {platform && e.join && <JoinButton id={platform.id} label={`Join ${platform.short}`} url={e.join} />}
+          <button className="act-pill" onClick={record}><IconRecord width={15} height={15} /> Record</button>
+          {mine.trim() && <button className="act-pill primary" disabled={savingMine} onClick={saveMine}>{savingMine ? 'Saving…' : 'Save updates'}</button>}
         </div>
       </div>
       <article className="doc">
@@ -154,8 +187,26 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
           {(e.count ?? 0) > 0 && <span className="meta-pill"><IconPeople width={16} height={16} />{e.count} {e.count === 1 ? 'person' : 'people'}</span>}
           {e.calendar && <AppPill id={CALENDAR_APP[e.calendar].id} name={CALENDAR_APP[e.calendar].name} onOpen={e.item || e.link ? () => window.quorum.calendarOpen(e) : null} />}
           {platform && <AppPill id={platform.id} name={platform.short} onOpen={e.join ? () => window.quorum.openExternal(e.join!) : null} />}
+          <div className="view-toggle mp-tabs" role="group" aria-label="Show">
+            <button className={tab === 'prep' ? 'on' : ''} aria-pressed={tab === 'prep'} aria-label="Prep" data-tip="Prep" onClick={() => setTab('prep')}><IconLogs width={16} height={16} /></button>
+            <button className={tab === 'note' ? 'on' : ''} aria-pressed={tab === 'note'} aria-label="Note" data-tip="Note" onClick={() => setTab('note')}><IconNotes width={16} height={16} /></button>
+            <button className={tab === 'transcript' ? 'on' : ''} aria-pressed={tab === 'transcript'} aria-label="Transcript" data-tip="Transcript" onClick={() => setTab('transcript')}><IconSound width={16} height={16} /></button>
+          </div>
         </div>
 
+        {tab === 'note' && (
+          <section className="mp-mine">
+            <div className="my-notes-editor"><NoteEditor value={mine} onChange={keep} readOnly={false} placeholder="Type your notes for this meeting" autoFocus /></div>
+            {saveError ? <p className="set-error" role="alert">{saveError}</p> : savedTo && !mine.trim() ? <p className="muted">Saved to {savedTo.replace(/^MyBrain\//, '')}</p> : null}
+          </section>
+        )}
+        {tab === 'transcript' && (
+          <section className="mp-mine">
+            <p className="muted">Nothing recorded for this meeting yet. Record starts a transcript with this meeting's title, and your notes from the Note tab come with it.</p>
+          </section>
+        )}
+
+        {tab === 'prep' && <>
         <section className="mp-section mp-prep">
           <h2>Meeting prep notes</h2>
           {loading ? <Skeleton lines={4} />
@@ -187,6 +238,7 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
             </div>
           </section>
         )}
+        </>}
       </article>
       <MeetingChat key={e.id} event={e} />
     </div>

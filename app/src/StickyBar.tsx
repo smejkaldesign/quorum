@@ -8,7 +8,7 @@ export function useStuck() {
   useEffect(() => {
     const el = sentinel.current;
     if (!el) return;
-    const box = el.closest<HTMLElement>('.body');
+    const box = el.closest<HTMLElement>('.end-scroll, .body');
     if (!box) return;
     // stuck once the sentinel has scrolled above the top of the scroll area
     const check = () => setStuck(el.getBoundingClientRect().top < box.getBoundingClientRect().top);

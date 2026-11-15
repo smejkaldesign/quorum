@@ -24,6 +24,7 @@ import { gateOn, registerBeta } from './beta.js';
 import { registerFlags } from './flags.js';
 import { CALL_ACTIVE, DICTATION_OFF, keepActions, notetakerGates, recordDecision, screenReadsAllowed, sessionGates, startDecision, termsPlan } from './notetaker.js';
 import { NAME_SYSTEM, isUntitled, parseName } from './noteName.js';
+import { noteParts } from './noteParts.js';
 import { hashText, newNoteText, noteFileName, noteForEditor, rewriteNote, screenRead, splitNote, validFrontmatter, yamlStr } from './handnote.js';
 import { createKeeper } from './keeper.js';
 import { createVersionStore } from './memoryVersions.js';
@@ -308,6 +309,8 @@ const fixWords = (text) => (settings.voice?.dictionary ?? []).reduce((t, d) => t
 
 // a final joins the transcript as part of a speaker turn; the UI gets the whole turn, replace: true when it grew
 function keep(evt) {
+  // a piece with no words in it (a lone period, a dash) is noise; it never becomes a line
+  if (!/[\p{L}\p{N}]/u.test(evt.text ?? '')) return;
   const act = keepActions(gate(), { solo: !!meeting.solo });
   if (act.optOut && mentionsOptOut(evt.text)) return blockCall('name');
   if (act.softStop) softStop(evt.text, evt.channel === 'me' ? OWNER : 'someone on the call', 0.85);
@@ -938,6 +941,7 @@ async function startListening(by, { intoNote = false, screen = false, still = ()
   toUI('summary', { state: meeting.summary, at: 0, thinking: false });
   meeting.summaryAt = Date.now();
   meeting.privateNotes = '';
+  meeting.summaryOff = false;
   meeting.saved = null;
   clearInterval(summaryTimer);
   summaryTimer = intoNote || !running ? null : setInterval(runSummary, 30000);
@@ -1008,6 +1012,10 @@ function whoAsk() {
 
 // the notes for a finished session, after any answers to Who spoke; streams into the review view
 async function summarizeSession(fallbackTitle) {
+  meeting.summarizing = true;
+  try { return await summarizeSessionRun(fallbackTitle); } finally { meeting.summarizing = false; }
+}
+async function summarizeSessionRun(fallbackTitle) {
   toUI('state', { phase: 'summarizing', meta: meetingMeta(fallbackTitle) });
   await nameSpeakers();
   store.meetings.writeTranscript(meeting.dir, toJSON(meeting.transcript));
@@ -1685,6 +1693,11 @@ function attachLooseChats() {
     log('chat attached to a note', path.basename(abs));
   }
 }
+// every chat on a note, or on an upcoming meeting, oldest first, for its page
+const chatTurns = (c) => ({ id: c.id, turns: c.turns.map((t) => ({ q: t.q, a: t.a })) });
+const byStart = (a, b) => String(a.createdAt).localeCompare(String(b.createdAt));
+ipcMain.handle('note-chats', (_e, file) => { const abs = meetingFile(file); return abs ? allChats().filter((x) => x.meetingFile === abs && x.turns?.length).sort(byStart).map(chatTurns) : []; });
+ipcMain.handle('event-chats', (_e, id) => (id ? allChats().filter((x) => x.eventId === String(id) && x.turns?.length).sort(byStart).map(chatTurns) : []));
 // the chat on a note, for its page
 ipcMain.handle('note-chat', (_e, file) => {
   const abs = meetingFile(file);
@@ -1767,7 +1780,7 @@ ipcMain.handle('note-visibility', (_e, file, value) => {
 // ask Quorum about the open meeting note; a change request comes back as a proposal the user applies or not
 // a note chat question that starts a debrief (the reader's Debrief button)
 const DEBRIEF = '[debrief]';
-ipcMain.handle('note-ask', async (_e, file, question, history, files) => {
+ipcMain.handle('note-ask', async (_e, file, question, history, files, chatId) => {
   const abs = meetingFile(file);
   const b = brain();
   if (!abs || !b) throw new Error('Note not found');
@@ -1794,10 +1807,13 @@ ipcMain.handle('note-ask', async (_e, file, question, history, files) => {
   const m = r.text.match(/<updated-note>\n?([\s\S]*?)\n?<\/updated-note>/);
   const answer = r.text.replace(/<updated-note>[\s\S]*?<\/updated-note>/, '').trim();
   const fm = readFrontmatter(store.notes.read(abs).slice(0, 4000));
-  const existing = allChats().find((c) => c.meetingFile === abs && !c.meetingId);
+  // a note holds any number of chats: chatId names one, 'new' starts another, nothing continues the latest
+  const mine = allChats().filter((c) => c.meetingFile === abs);
+  const existing = chatId === 'new' ? null : chatId ? mine.find((c) => c.id === chatId) : mine.sort((a, b) => String(b.updatedAt ?? b.createdAt).localeCompare(String(a.updatedAt ?? a.createdAt)))[0];
   const asked = String(question).startsWith(DEBRIEF) ? 'Debrief this meeting' : String(question);
-  addTurn(existing ?? newConvo(asked, { meetingFile: abs, meetingTitle: fm.title || path.basename(abs, '.md') }), asked, answer || 'Proposed an edit to the note.', [], []);
-  return { text: r.text.replace(/<updated-note>[\s\S]*?<\/updated-note>/, '').trim() || (m ? 'Here is the updated note. Review it and apply it if it looks right.' : ''), proposal: m ? m[1] : null };
+  const saved = addTurn(existing ?? newConvo(asked, { meetingFile: abs, meetingTitle: fm.title || path.basename(abs, '.md') }), asked, answer || 'Proposed an edit to the note.', [], []);
+  if (answer) nameUntitled(abs, { q: saved.turns[0].q, a: saved.turns[0].a }).catch((e) => log('note title', e?.message));
+  return { chatId: saved.id, text: r.text.replace(/<updated-note>[\s\S]*?<\/updated-note>/, '').trim() || (m ? 'Here is the updated note. Review it and apply it if it looks right.' : ''), proposal: m ? m[1] : null };
 });
 
 // apply an edit Quorum proposed; refused for notes with opted-out lines so a redacted copy never overwrites the original
@@ -1824,14 +1840,17 @@ ipcMain.handle('read-note', (_e, file) => {
   const fm = readFrontmatter(text);
   // the reader shows the notes, not the Granola wrapper: drop the repeated title, an empty Private notes, and the Summary heading
   const body = text.replace(/^---\n[\s\S]*?\n---\n/, '').trim()
-    .replace(/^#\s+.+\n/, '')
+    .replace(/^#\s+.+(\n|$)/, '')
     .replace(/^##\s+Private notes\s*\n+None\s*\n/m, '')
     .replace(/^##\s+Summary\s*\n/m, '')
     .trim();
   // a recorded note's transcript shows on its own tab; the rest is the summary (noteTranscript.js)
   const split = splitRecorded(body, { recorded: fm.recorded === true || fm.recorded === 'true' });
   const sessionTurns = savedTranscript(fm);
+  const hand = fm.type === 'note' && !split.transcript;
+  const whole = splitRecorded(text.replace(/^---\n[\s\S]*?\n---\n/, '').trim().replace(/^#\s+.+(\n|$)/, '').trim(), { recorded: fm.recorded === true || fm.recorded === 'true' });
   return {
+    hand, parts: noteParts(whole.summary, hand),
     file: abs, rel: path.relative(b.vault, abs), title: fm.title, date: fm.date, people: fm.participants.filter((p) => !isSelf(p)).map(personName), body: split.summary,
     summarizable: !!split.transcript && !split.summary,
     visibility: fm.visibility === 'public' ? 'public' : 'private', withheld: text !== original, link: `quorum://note/${encodeURIComponent(fm.granola_id || path.relative(b.vault, abs))}`, ...noteLink(abs),
@@ -1923,7 +1942,7 @@ ipcMain.handle('meeting-brief', async (_e, q) => {
 
 // questions about an upcoming meeting, from its page: the event, its prep notes and the series' recent notes are in
 // the prompt, and Claude Code can read the rest of the Agent OS. The chat is saved under the meeting's event id
-ipcMain.handle('meeting-ask', async (_e, ev, question, history) => {
+ipcMain.handle('meeting-ask', async (_e, ev, question, history, chatId) => {
   const b = brain();
   if (!b) throw new Error('Connect your Agent OS first');
   const title = String(ev?.title ?? '');
@@ -1945,10 +1964,11 @@ ipcMain.handle('meeting-ask', async (_e, ev, question, history) => {
     : await noteAskWithoutTools(suggester.redactLines(prompt), history, []);
   // the chat belongs to its calendar event: it nests under the event's row on Home until the event is over
   const id = String(ev?.id ?? '');
-  const existing = id ? allChats().find((c) => c.eventId === id) : null;
-  addTurn(existing ?? newConvo(String(question), { eventId: id, eventEnd: ev?.end ?? null, meetingTitle: title }), String(question), r.text, [], []);
+  const mine = id ? allChats().filter((c) => c.eventId === id) : [];
+  const existing = chatId === 'new' ? null : chatId ? mine.find((c) => c.id === chatId) : mine.at(-1);
+  const saved = addTurn(existing ?? newConvo(String(question), { eventId: id, eventEnd: ev?.end ?? null, meetingTitle: title }), String(question), r.text, [], []);
   toUI('history-changed');
-  return { text: r.text };
+  return { chatId: saved.id, text: r.text };
 });
 // an upcoming meeting's saved chat, for its page
 ipcMain.handle('event-chat', (_e, id) => {
@@ -2583,6 +2603,22 @@ ipcMain.handle('pause', () => {
   updateTray();
 });
 ipcMain.handle('resume', () => { if (meeting.armed && !meeting.capturing && !callBlocked) resume(OWNER); });
+// Cancel on the summary bar: this recording waits for Summarize transcript instead of summarizing at Stop
+ipcMain.handle('summary-off', () => { meeting.summaryOff = true; meeting.askWho = true; writeState(); });
+// Record again after Stop, before saving: the same session picks up where it left off, its transcript kept, and the
+// summary is written again at the next Stop
+ipcMain.handle('record-continue', () => {
+  if (meeting.armed || meeting.saved || !meeting.startedAt || !gate().manualListen) return { error: 'There is no stopped recording to continue.' };
+  if (meeting.summarizing) return { error: 'The summary is still being written. Record again once it is done.' };
+  meeting.armed = true;
+  meeting.endedAt = null;
+  meeting.notes = null;
+  meeting.awaitingWho = null;
+  meeting.askWho = !!meeting.summaryOff;
+  writeState();
+  resume(OWNER);
+  return { ok: true };
+});
 
 // your notes from the call and its review: the outline the notes prompt fills, kept verbatim in the saved note
 ipcMain.handle('private-notes-set', (_e, text) => { meeting.privateNotes = String(text ?? ''); writeState(); });
@@ -2753,10 +2789,15 @@ ipcMain.handle('record-session', async () => {
   if (!g.manualListen) return { error: 'Recording is off in this build.' };
   if (meeting.armed || meeting.starting || record.screen) return { error: 'A recording is already running. Stop it first.' };
   if (settings.notes?.transcription === false) return { error: 'Turn on Transcription in Settings > Notes to record.' };
+  if (meeting.startedAt && !meeting.saved && !meeting.summarizing && meeting.transcript?.length) {
+    try { saveNotes({ notes: meeting.notes ?? { title: '', summary: '', sections: [], decisions: [], actions: [], questions: [] }, followups: [] }); } catch (e) { log('save before new recording', e?.message); }
+  }
   const r = await startListening(undefined, { screen: g.screenContext && !!settings.screenContext, running: false });
   if (r?.error) return r;
-  // at Stop it asks who spoke before writing anything
-  meeting.askWho = true;
+  // at Stop the summary is written straight away, from the transcript and your notes; Cancel on the page turns that
+  // off (summary-off) and the summary waits for Summarize transcript
+  meeting.askWho = false;
+  meeting.summaryOff = false;
   meeting.named = [];
   meeting.lead = null;
   return meeting.armed ? { ok: true } : { error: "The recording didn't start." };
@@ -2831,11 +2872,14 @@ ipcMain.handle('hand-note-done', (_e, file) => {
 
 // a note saved without a name gets one: a short title and a one-line summary from its text, written into the note
 // and its file name. One model call per note, only while it is still untitled; without a model it stays as it is
-async function nameUntitled(abs) {
+// A note started from a question carries the question as its title until its first answer; then it is named the same
+// way, from the question and the answer
+async function nameUntitled(abs, chat = null) {
   const raw = store.notes.read(abs);
   const { title, body } = splitNote(raw);
-  if (!isUntitled(title) || modelSource() === 'none' || suggester.isExcluded(raw)) return;
-  const text = suggester.redactLines(body).trim();
+  const asked = chat && String(title ?? '').trim().toLowerCase() === String(chat.q).slice(0, 80).trim().toLowerCase();
+  if (!(isUntitled(title) || asked) || modelSource() === 'none' || suggester.isExcluded(raw)) return;
+  const text = [suggester.redactLines(body.replace(/^\s*#\s+.+(\n|$)/, '')).trim(), chat ? `Question: ${chat.q}\nAnswer: ${String(chat.a).slice(0, 2000)}` : ''].filter(Boolean).join('\n\n');
   if (text.replace(/[^a-z0-9]/gi, '').length < 3) return;
   const reply = await runClaude(`<note>\n${text.slice(0, 6000)}\n</note>`, NAME_SYSTEM, settings.model);
   const named = parseName(reply);
@@ -2851,7 +2895,12 @@ async function nameUntitled(abs) {
     if (!existsSync(next)) { renameSync(abs, next); target = next; }
   }
   store.notes.write(target, out);
+  if (target !== abs) {
+    for (const c of allChats()) if (c.meetingFile === abs) { c.meetingFile = target; writeChat(c); }
+    if (meeting.saved?.file === abs) meeting.saved.file = target;
+  }
   log('named note', path.basename(target));
+  toUI('note-renamed', { from: abs, to: target });
   toUI('history-changed');
 }
 function saveNotes(payload) {
@@ -2861,8 +2910,12 @@ function saveNotes(payload) {
   const file = path.join(dir, noteFileName({ date, title: notes.title, id: meeting.id }));
   // a speaker correction made after saving rewrites the same file from the turns
   meeting.saved = { file, payload: { notes, followups: payload.followups } };
-  store.meetings.saveNote(file, withShareChoice(file, noteMarkdown(meeting.saved.payload)));
+  // saved before anyone said who the speakers were: flagged so Memory health can bring it back for review
+  const body = withShareChoice(file, noteMarkdown(meeting.saved.payload));
+  store.meetings.saveNote(file, payload.review === 'speakers' ? setFrontmatterKey(body, 'review', yamlStr('speakers')) : body);
   log('saved note', file);
+  // saved without a summary or a title: it gets a name the same way an untitled hand note does
+  if (isUntitled(notes.title)) nameUntitled(file).catch((e) => log('note title', e?.message));
   account.sync.pushMeetingNote(file);
   keeper.schedule('note');
   // the call's chat now hangs off the saved note

@@ -251,7 +251,7 @@ export type ChatRow = { id: string; title: string; date: string; turns: number; 
 export type Visibility = 'private' | 'public';
 // who has read a note: people in Quorum, agents through the read guard or the quorum MCP server
 export type NoteViews = { total: number; human: number; agent: number; tokens: number; lastHumanAt: string | null; lastAgentAt: string | null; agents: { via: string; count: number }[] };
-export type NoteDoc = { file: string; rel: string; title: string; date?: string; people: string[]; body: string; app: string; url: string; source?: string | null; views?: NoteViews; visibility: Visibility; withheld: boolean; link: string; summarizable?: boolean; transcript?: { id: number; channel: 'me' | 'them'; who: string; text: string }[]; platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null; sourceUrl?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; event?: EventRef | null };
+export type NoteDoc = { hand?: boolean; parts?: { note: string; summary: string; split: boolean }; file: string; rel: string; title: string; date?: string; people: string[]; body: string; app: string; url: string; source?: string | null; views?: NoteViews; visibility: Visibility; withheld: boolean; link: string; summarizable?: boolean; transcript?: { id: number; channel: 'me' | 'them'; who: string; text: string }[]; platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null; sourceUrl?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; event?: EventRef | null };
 export type SavedChat = { id: string; title: string; turns: { q: string; a: string; sources?: Source[]; steps?: string[] }[] };
 export type MissingLink = { target: string; sources: string[]; count: number; links?: number; lastAt?: number | null; candidates: { rel: string; title: string; name: string | null; exact: boolean }[] };
 export type Relocated = { rel: string; files: number; links: number };
@@ -314,7 +314,7 @@ declare global {
       pause(): Promise<void>;
       resume(): Promise<void>;
       ask(q: string, files?: string[]): Promise<{ text: string; sources: Source[]; steps: string[] }>;
-      saveNotes(p: { notes: Notes; followups: { q: string; a: string }[] }): Promise<{ file: string; rel: string; app: string; url: string }>;
+      saveNotes(p: { notes: Notes; followups: { q: string; a: string }[]; review?: string }): Promise<{ file: string; rel: string; app: string; url: string }>;
       recordStart(opts: RecordState): Promise<RecordState | { error: string }>;
       recordStop(): Promise<RecordState>;
       recordStatus(): Promise<RecordState>;
@@ -370,6 +370,7 @@ declare global {
       neverListTemplate(): Promise<boolean>;
       history(): Promise<{ meetings: MeetingRow[]; chats: ChatRow[] }>;
       readNote(file: string): Promise<NoteDoc | null>;
+      onNoteRenamed(fn: (d: { from: string; to: string }) => void): () => void;
       newChat(): Promise<void>;
       loadChat(id: string): Promise<SavedChat | null>;
       readChat(id: string): Promise<SavedChat | null>;
@@ -384,7 +385,9 @@ declare global {
       meetingsSourceSharePast(key: string): Promise<{ shared: number } | { error: string }>;
       meetingsTeamSet(teamId: string | null): Promise<{ ok: true; teamId: string | null } | { error: string }>;
       onMeetingsSources(cb: () => void): Unsub;
-      noteAsk(file: string, question: string, history: { q: string; a: string }[], files?: string[]): Promise<{ text: string; proposal: string | null }>;
+      noteAsk(file: string, question: string, history: { q: string; a: string }[], files?: string[], chatId?: string): Promise<{ chatId: string; text: string; proposal: string | null }>;
+      noteChats(file: string): Promise<{ id: string; turns: { q: string; a: string }[] }[]>;
+      eventChats(id: string): Promise<{ id: string; turns: { q: string; a: string }[] }[]>;
       noteApply(file: string, body: string): Promise<boolean>;
       vaultSearch(q: string, limit?: number): Promise<SearchHit[]>;
       vaultBacklinks(rel: string): Promise<Backlink[]>;
@@ -492,8 +495,10 @@ declare global {
       calendarOpen(ev: CalendarEvent): Promise<void>;
       meetingBrief(q: { title: string; generate?: boolean }): Promise<MeetingBrief>;
       noteChat(file: string): Promise<{ id: string; turns: { q: string; a: string }[] } | null>;
+      summaryOff(): Promise<void>;
+      recordContinue(): Promise<{ ok: true } | { error: string }>;
       eventChat(id: string): Promise<{ id: string; turns: { q: string; a: string }[] } | null>;
-      meetingAsk(ev: CalendarEvent, question: string, history: { q: string; a: string }[]): Promise<{ text: string }>;
+      meetingAsk(ev: CalendarEvent, question: string, history: { q: string; a: string }[], chatId?: string): Promise<{ chatId: string; text: string }>;
       recordSession(): Promise<{ ok: true } | { error: string }>;
       meetingFolderApps(): Promise<{ rel: string; app: string }[]>;
       noteSummarize(file: string): Promise<{ ok: true } | { error: string }>;
