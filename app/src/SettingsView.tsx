@@ -32,16 +32,16 @@ const ACCOUNT: Nav[] = [
   { id: 'memory', label: 'Memory', icon: IconBrain },
   { id: 'calendar', label: 'Calendar', icon: IconCalendar },
   { id: 'meetings', label: 'Meetings', icon: IconMic },
-  { id: 'connectors', label: 'Connectors', icon: IconGrid },
   { id: 'voice', label: 'Voice typing', icon: IconKeyboard },
-  { id: 'developers', label: 'AI settings', icon: IconCode },
-  { id: 'guardrails', label: 'Guardrails', icon: IconShield },
 ];
 // the pages behind the Admin button; settingsNav.workspacePages decides which of them a build lists. The first two are
 // about the person; the rest sit under the Workspace heading
 const WORKSPACE: Nav[] = [
   { id: 'general', label: 'General', icon: IconBuilding },
-  { id: 'notifications', label: 'Notifications', icon: IconBell, soon: true },
+  { id: 'notifications', label: 'Notifications', icon: IconBell },
+  { id: 'developers', label: 'AI settings', icon: IconCode },
+  { id: 'guardrails', label: 'Guardrails', icon: IconShield },
+  { id: 'connectors', label: 'Connectors', icon: IconGrid },
   { id: 'teams', label: 'Teams', icon: IconPeople },
   { id: 'billing', label: 'Billing', icon: IconScale },
   { id: 'knowledge', label: 'Knowledge', icon: IconBrain },
@@ -88,7 +88,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   // a cloud build without hosted account config has no members to list, so the page leaves the nav; the team-level
   // pages come and go with the Teams page's switch
   const hosted = useHostedAccounts();
-  const listed = workspacePages(EDITION, hosted, account?.workspace?.teamEnabled === true);
+  const listed = workspacePages(EDITION, hosted, account?.workspace?.teamEnabled === true, account?.workspace?.role);
   const voice = voiceMode(nt.dictation, nt.manualListen);
   const hidden = flagHiddenPages(voice);
   const page = resolvePage(saved, admin, listed, hidden);
@@ -200,7 +200,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
             : page === 'calendar' ? <CalendarPage onConnector={goConnector} />
             : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} onConnector={goConnector} teamMeetings={EDITION === 'cloud' && account?.workspace?.teamEnabled === true} />
             : page === 'developers' ? <DevelopersPage />
-            : page === 'notifications' ? <NotificationsPage />
+            : page === 'notifications' ? <NotificationsPage settings={settings} set={set} />
             : page === 'connectors' ? <ConnectorsPage detail={connectorDetail} onDetail={setConnectorDetail} library={connLib} onLibrary={setConnLib} brain={brain} onFolder={onConnect} onNotes={() => go('memory')} focus={connectorsFocus} />
             : <VoicePage settings={settings} onSettings={onSettings} dictionaryOnly={voice === 'dictionary'} screenRow={nt.screenContext} />}
         </div>
@@ -1168,34 +1168,18 @@ function AboutCard() {
 }
 
 // every row is planned work: the controls are disabled on purpose and each line says what the notification will do
-function NotificationsPage() {
-  const channel = (v: string) => (
-    <select className="set-select" disabled defaultValue={v}><option value="notification">Notification</option><option value="email">Email</option><option value="off">Off</option></select>
-  );
+function NotificationsPage({ settings, set }: { settings: Settings; set: (patch: Partial<Settings>) => void }) {
+  // which of Quorum's own notifications show in the bell's list and count toward its dot; all on until turned off
+  const n = { noteUpdates: true, memoryChanges: true, reviews: true, ...(settings.notifications ?? {}) };
+  const flip = (k: keyof typeof n) => (on: boolean) => set({ notifications: { ...n, [k]: on } });
   return (
     <>
-      <p className="mcp-lede">Quorum sends no notifications yet. These rows show what each one will do, and the defaults it will start with.</p>
-      <h3>Meeting notifications</h3>
-      <div className="set-card">
-        <Row icon={<IconCalendar width={18} height={18} />} title={<>Scheduled meetings<Soon /></>} desc="Will notify you 1 minute before a meeting on your calendar starts"><Toggle on onChange={noop} disabled /></Row>
-        <Row icon={<Wave live={false} />} title={<>Detected meetings<Soon /></>} desc="Will notify you when Quorum sees a call start"><Toggle on onChange={noop} disabled /></Row>
-        <div className="set-nested">
-          <strong>Don't notify me when a call starts in these apps<Soon /></strong>
-          <select className="set-select full" disabled defaultValue=""><option value="">Select apps</option></select>
-        </div>
-      </div>
-
+      <p className="mcp-lede">What Quorum's agents did, in the bell at the top of the window. Turn off a kind to leave it out of the list and the dot.</p>
       <h3>From Quorum</h3>
       <div className="set-card">
-        <Row icon={<IconNotes width={18} height={18} />} title={<>Notes are ready<Soon /></>} desc="Will tell you right after a meeting ends">{channel('notification')}</Row>
-        <Row icon={<IconChat width={18} height={18} />} title={<>Suggested answers<Soon /></>} desc="Will tell you when someone asks you a question in a call">{channel('notification')}</Row>
-        <Row icon={<IconCalendar width={18} height={18} />} title={<>Follow-ups due<Soon /></>} desc="Will remind you the morning a follow-up is due">{channel('off')}</Row>
-      </div>
-
-      <h3>Sharing notifications</h3>
-      <div className="set-card">
-        <Row icon={<IconPeople width={18} height={18} />} title={<>Note shared with you<Soon /></>} desc="Will tell you when a teammate shares a note">{channel('email')}</Row>
-        <Row icon={<IconStack width={18} height={18} />} title={<>Company knowledge changes<Soon /></>} desc="Will tell you when an admin includes or removes something">{channel('off')}</Row>
+        <Row icon={<IconNotes width={18} height={18} />} title="Note updates" desc="Quorum updated, filed, linked or referenced one of your notes"><Toggle on={n.noteUpdates} onChange={flip('noteUpdates')} /></Row>
+        <Row icon={<IconBrain width={18} height={18} />} title="Memory changes" desc="Quorum created or changed a memory page"><Toggle on={n.memoryChanges} onChange={flip('memoryChanges')} /></Row>
+        <Row icon={<IconBell width={18} height={18} />} title="Needs your review" desc="A change Quorum made is waiting for your approval"><Toggle on={n.reviews} onChange={flip('reviews')} /></Row>
       </div>
     </>
   );
