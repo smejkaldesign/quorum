@@ -1,11 +1,13 @@
 import { BackButton } from './BackButton';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { CalendarEvent, MeetingBrief } from './quorum';
-import { AppPill, CALENDAR_APP, PLATFORM_APP } from './AppChip';
+import { CALENDAR_APP, PLATFORM_APP } from './AppChip';
 import { Markdown } from './Markdown';
 import { dayLabel } from './upNextList';
-import { IconPeople } from './icons';
-import { TypedTitle, useStuck } from './StickyBar';
+import { IconCalendar, IconPeople } from './icons';
+import { AgentRun } from './AgentActivity';
+import { AppIcon } from './NoteMeta';
+import { TypedTitle, toPageTop, useStuck, useToolbarDock } from './StickyBar';
 import { JoinButton } from './UpNext';
 import { NoteEditor } from './editor/NoteEditor';
 import { IconLogs, IconNotes, IconRecord, IconSound } from './icons';
@@ -122,6 +124,9 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
   const [data, setData] = useState<MeetingBrief | null>(null);
   const [writing, setWriting] = useState(false);
   const bar = useStuck();
+  useToolbarDock(bar.sentinel, bar.stuck);
+  // a tab picked while the bar is pinned opens at the top of the page
+  const pick = (t: typeof tab) => { setTab(t); if (bar.stuck) toPageTop(bar.sentinel); };
   const top = useRef<HTMLDivElement>(null);
   // three tabs: the prep from past meetings, your own notes ahead of time, and a transcript you can start from here
   const [tab, setTab] = useState<'prep' | 'note' | 'transcript'>('prep');
@@ -131,6 +136,7 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
   const [savedTo, setSavedTo] = useState<string | null>(null);
   const [savingMine, setSavingMine] = useState(false);
   const [saveError, setSaveError] = useState('');
+  const [run, setRun] = useState<{ file: string; since: number } | null>(null);
   const keep = (v: string) => { setMine(v); try { if (v.trim()) localStorage.setItem(draftKey, v); else localStorage.removeItem(draftKey); } catch { /* ignore */ } };
   async function saveMine() {
     if (savingMine) return;
@@ -139,6 +145,7 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
       const r = await window.quorum.handNoteSave({ id: `event-${Date.now()}`, file: null, title: e.title, body: mine.trim(), hash: null, fresh: true });
       if ('error' in r || 'conflict' in r) { setSaveError("Couldn't save the note. Try again."); return; }
       window.quorum.handNoteDone(r.file);
+      setRun({ file: r.file, since: Date.now() });
       setSavedTo(r.rel);
       keep('');
     } finally { setSavingMine(false); }
@@ -150,12 +157,12 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
   useEffect(() => {
     let live = true;
     setData(null);
-    window.quorum.meetingBrief({ title: e.title }).then((r) => {
+    window.quorum.meetingBrief({ title: e.title, organizer: e.organizer }).then((r) => {
       if (!live) return;
       setData(r);
       if (r.status !== 'stale') return;
       setWriting(true);
-      window.quorum.meetingBrief({ title: e.title, generate: true }).then((g) => { if (live) setData(g); }).finally(() => { if (live) setWriting(false); });
+      window.quorum.meetingBrief({ title: e.title, organizer: e.organizer, generate: true }).then((g) => { if (live) setData(g); }).finally(() => { if (live) setWriting(false); });
     }).catch(() => { if (live) setData({ past: [], brief: null, status: 'failed' }); });
     return () => { live = false; };
   }, [e.id, e.title]);
@@ -175,22 +182,28 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
       <div className={`reader-bar sticky-bar${bar.stuck ? ' stuck' : ''}`}>
         <span className="rb-left"><BackButton onClick={onBack} /><TypedTitle text={e.title} on={bar.stuck} /></span>
         <div className="reader-actions">
-          {platform && e.join && <JoinButton id={platform.id} label={`Join ${platform.short}`} url={e.join} />}
+          {bar.stuck && <div className="view-toggle rb-tabs mp-tabs" role="group" aria-label="Show">
+            <button className={tab === 'prep' ? 'on' : ''} aria-pressed={tab === 'prep'} aria-label="Prep" data-tip="Prep" onClick={() => pick('prep')}><IconLogs width={16} height={16} /></button>
+            <button className={tab === 'note' ? 'on' : ''} aria-pressed={tab === 'note'} aria-label="Note" data-tip="Note" onClick={() => pick('note')}><IconNotes width={16} height={16} /></button>
+            <button className={tab === 'transcript' ? 'on' : ''} aria-pressed={tab === 'transcript'} aria-label="Transcript" data-tip="Transcript" onClick={() => pick('transcript')}><IconSound width={16} height={16} /></button>
+          </div>}
+          {platform && e.join && <JoinButton id={platform.id} label="Join" name={platform.short} url={e.join} />}
           <button className="act-pill" onClick={record}><IconRecord width={15} height={15} /> Record</button>
           {mine.trim() && <button className="act-pill primary" disabled={savingMine} onClick={saveMine}>{savingMine ? 'Saving…' : 'Save updates'}</button>}
         </div>
       </div>
       <article className="doc">
+        {run && <AgentRun file={run.file} since={run.since} onDetails={() => onOpenNote(run.file)} onClose={() => setRun(null)} />}
         <h1>{e.title}</h1>
         <div className="meta-row">
-          <span className="meta-pill">{dayLabel(at)} · {clock(at)} – {clock(end)}</span>
+          <span className="meta-pill"><IconCalendar width={16} height={16} />{dayLabel(at)} · {clock(at)} – {clock(end)}</span>
           {(e.count ?? 0) > 0 && <span className="meta-pill"><IconPeople width={16} height={16} />{e.count} {e.count === 1 ? 'person' : 'people'}</span>}
-          {e.calendar && <AppPill id={CALENDAR_APP[e.calendar].id} name={CALENDAR_APP[e.calendar].name} onOpen={e.item || e.link ? () => window.quorum.calendarOpen(e) : null} />}
-          {platform && <AppPill id={platform.id} name={platform.short} onOpen={e.join ? () => window.quorum.openExternal(e.join!) : null} />}
+          {e.calendar && <AppIcon id={CALENDAR_APP[e.calendar].id} name={CALENDAR_APP[e.calendar].name} onOpen={e.item || e.link ? () => window.quorum.calendarOpen(e) : null} />}
+          {platform && <AppIcon id={platform.id} name={platform.short} onOpen={e.join ? () => window.quorum.openExternal(e.join!) : null} />}
           <div className="view-toggle mp-tabs" role="group" aria-label="Show">
-            <button className={tab === 'prep' ? 'on' : ''} aria-pressed={tab === 'prep'} aria-label="Prep" data-tip="Prep" onClick={() => setTab('prep')}><IconLogs width={16} height={16} /></button>
-            <button className={tab === 'note' ? 'on' : ''} aria-pressed={tab === 'note'} aria-label="Note" data-tip="Note" onClick={() => setTab('note')}><IconNotes width={16} height={16} /></button>
-            <button className={tab === 'transcript' ? 'on' : ''} aria-pressed={tab === 'transcript'} aria-label="Transcript" data-tip="Transcript" onClick={() => setTab('transcript')}><IconSound width={16} height={16} /></button>
+            <button className={tab === 'prep' ? 'on' : ''} aria-pressed={tab === 'prep'} aria-label="Prep" data-tip="Prep" onClick={() => pick('prep')}><IconLogs width={16} height={16} /></button>
+            <button className={tab === 'note' ? 'on' : ''} aria-pressed={tab === 'note'} aria-label="Note" data-tip="Note" onClick={() => pick('note')}><IconNotes width={16} height={16} /></button>
+            <button className={tab === 'transcript' ? 'on' : ''} aria-pressed={tab === 'transcript'} aria-label="Transcript" data-tip="Transcript" onClick={() => pick('transcript')}><IconSound width={16} height={16} /></button>
           </div>
         </div>
 
@@ -226,18 +239,26 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
           ))}
         </section>
 
-        {!!data?.past.length && (
-          <section className="mp-section">
-            <h2>Past meetings</h2>
-            <div className="mp-past">
-              {data.past.map((p) => (
-                <button key={p.file} className="mp-past-row" onClick={() => onOpenNote(p.file)}>
-                  <span>{p.title}</span><span className="muted">{p.date ? dayLabel(new Date(p.date)) : 'Undated'}</span>
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
+        {(() => {
+          // the series and the meetings its people also attend, newest first, each saying how it is connected
+          const rows = [
+            ...(data?.past ?? []).map((p) => ({ file: p.file, title: p.title, date: p.date, why: 'Repeats' })),
+            ...(data?.related ?? []).map((r) => ({ file: r.file, title: r.title, date: r.date, why: `With ${r.shared.slice(0, 2).join(', ')}${r.shared.length > 2 ? ` +${r.shared.length - 2}` : ''}` })),
+          ].sort((x, y) => String(y.date ?? '').localeCompare(String(x.date ?? '')));
+          if (!rows.length) return null;
+          return (
+            <section className="mp-section">
+              <h2>Related meetings</h2>
+              <div className="mp-past">
+                {rows.map((p) => (
+                  <button key={p.file} className="mp-past-row" onClick={() => onOpenNote(p.file)}>
+                    <span className="mp-past-title">{p.title}</span><span className="mp-why">{p.why}</span><span className="muted">{p.date ? dayLabel(new Date(p.date)) : 'Undated'}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          );
+        })()}
         </>}
       </article>
       <MeetingChat key={e.id} event={e} />

@@ -2072,7 +2072,7 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 /* a page's Back row pins to the top once scrolled past: it slides down, then the page title types out beside Back */
 .rb-sentinel { flex: none; height: 1px; margin-bottom: -1px; }
 .sticky-bar { position: sticky; top: 0; z-index: 6; align-items: center; }
-.sticky-bar.stuck { margin-left: -40px; margin-right: -40px; padding: 10px 40px; background: var(--panel); border-bottom: 1px solid var(--line-2); animation: bar-down 240ms ease; }
+.sticky-bar.stuck { margin-left: -40px; margin-right: -40px; padding: 10px 40px; background: var(--panel); animation: bar-down 240ms ease; }
 @keyframes bar-down { from { transform: translateY(-100%); opacity: 0; } to { transform: none; opacity: 1; } }
 .rb-left { display: inline-flex; align-items: center; gap: 14px; min-width: 0; }
 .rb-title { font-size: 15px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 420px; }
@@ -2244,3 +2244,40 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .views-wrap .meta-pill
 .chat-row .chat-btn { flex: none; display: none; }
 .chat-row:hover .chat-btn, .chat-row:focus-within .chat-btn { display: inline-flex; }
 .withheld-note { margin: 0 0 8px; font-size: 14px; }
+.keeper-link { padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--text); font-size: 12px; transition: background 160ms ease; }
+.keeper-link:hover { background: rgba(255, 255, 255, 0.06); }
+/* the pinned header spans the whole app: its background and the line under it run past the page column */
+.reader .sticky-bar.stuck { box-shadow: 0 0 0 100vmax var(--panel); clip-path: inset(0 -100vmax -1px); }
+.reader .sticky-bar.stuck::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px; background: var(--line-2); box-shadow: 0 0 0 100vmax var(--line-2); clip-path: inset(0 -100vmax); }
+/* the editor toolbar docks under the pinned header as plain icon buttons; the header line moves below it */
+.reader .note-toolbar { top: var(--bar-h, 60px); z-index: 5; }
+.reader.tb-docked .note-toolbar { border-color: transparent; border-radius: 0; padding-left: 0; padding-right: 0; box-shadow: 0 0 0 100vmax var(--panel); clip-path: inset(0 -100vmax -1px); }
+.reader.tb-docked .note-toolbar::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px; background: var(--line-2); box-shadow: 0 0 0 100vmax var(--line-2); clip-path: inset(0 -100vmax); }
+.reader.tb-docked .sticky-bar.stuck::after { display: none; }
+/* the tabs ride in the pinned header */
+.rb-tabs { animation: dock-in 200ms ease; }
+/* app pills match the other details: buttons otherwise take the page font size */
+button.meta-pill, a.meta-pill { font-size: 14px; }
+/* related meetings: title, how it connects, date */
+.mp-past-row { align-items: center; }
+.mp-past-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-why { flex: none; font-size: 12px; color: var(--muted); padding: 2px 8px; border: 1px solid var(--line-2); border-radius: 999px; }
+/* Agent activity: what Quorum did with a note, newest first, with its graph cluster */
+.agent-activity { margin-top: 40px; }
+.aa-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.aa-head h2 { margin: 0; }
+.aa-actions { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.aa-cluster { font-size: 12px; padding: 4px 10px; border-radius: 999px; background: rgba(255, 255, 255, 0.06); color: var(--text); }
+.aa-list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; }
+.aa-row { display: flex; align-items: baseline; gap: 12px; padding: 8px 0; font-size: 14px; color: var(--text); flex-wrap: wrap; }
+.aa-when { flex: none; width: 80px; color: var(--muted); font-size: 13px; }
+.aa-text { flex: none; }
+.aa-files { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.aa-off { font-size: 14px; }
+/* the run card after Save: steps shimmer under the title, then the result with Details */
+.agent-run { flex-direction: column; align-items: stretch; gap: 8px; margin: 0 0 24px; }
+.ar-top { display: flex; align-items: center; gap: 10px; }
+.ar-top img { border-radius: 4px; }
+.ar-actions { margin-left: auto; display: inline-flex; gap: 8px; align-items: center; }
+.ar-steps { list-style: none; margin: 0 0 0 28px; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.ar-result { margin: 0 0 0 28px; font-size: 14px; color: var(--text); }

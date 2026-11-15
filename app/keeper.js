@@ -236,7 +236,7 @@ export function informative(fact) {
 // the model's lines, with facts that carry nothing left out before the list is deduplicated
 export const parseFacts = (out) => String(out ?? '').split('\n').map((l) => l.trim()).filter((l) => l.startsWith('- ')).map((l) => l.slice(2).trim()).filter((l) => l && informative(l)).slice(0, 3);
 
-export function createKeeper({ brain, settings, saveSettings = () => {}, guards = () => null, wouldBlock = () => null, runText = null, hasModel = () => false, owner = () => '', log = () => {}, onChange = () => {}, errorLog = null, versions = null, live = null }) {
+export function createKeeper({ onStep = () => {}, brain, settings, saveSettings = () => {}, guards = () => null, wouldBlock = () => null, runText = null, hasModel = () => false, owner = () => '', log = () => {}, onChange = () => {}, errorLog = null, versions = null, live = null }) {
   // factsBudget and factsNote are null until the user picks one
   // meetingsIndex writes the meeting index lines to <meetings folder>/index.md while the vault owns the root index
   // editVault lets the keeper edit files Quorum did not make, and factsInClaude turns on the copy in CLAUDE.md; both are
@@ -560,6 +560,9 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     const changed = [];
     const { props, base, title, date } = meta(rel, text);
     why = { reason: `Filed the meeting ${title}`, agent: true };
+    // each step shows on the note's page while it runs
+    const step = (t) => { try { onStep(rel, t); } catch { /* the page is gone */ } };
+    step('Checking related notes and links');
     const people = (Array.isArray(props.participants) ? props.participants : []).map((p) => String(p).replace(/\s*\(recorder\)\s*$/i, '').trim()).filter((p) => p && p.toLowerCase() !== owner().toLowerCase());
     const link = `[[${base}]]`;
     // a file the person made is left as it is unless editVault is on, and named in left
@@ -574,9 +577,11 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
       if (cur == null) markMade(st, r);
       writeNote(vault, abs, next);
       changed.push(path.relative(vault, abs));
+      step(`Updated ${path.basename(abs, '.md')}`);
     };
     // index: one line per note, in the file indexFile names
     const ix = indexFile(reg, st);
+    if (ix) step('Adding it to the index');
     if (ix && !(noCreate && !existsSync(path.join(vault, ix.rel)))) {
       const indexAbs = path.join(vault, ix.rel);
       const cur = read(indexAbs);
@@ -585,12 +590,14 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     }
     // daily note, named the way the vault already names them
     if (f.daily && owns(rows, 'daily')) {
+      step('Linking it from the daily note');
       const abs = path.join(vault, f.daily, dailyName(daily, date));
       const cur = read(abs);
       if (!(noCreate && cur == null)) touch(abs, appendUnder(cur ?? `# ${date}\n`, '## Meetings', `- ${link} ${title}`), cur);
     }
     // people: a note per participant, matched by slug
     if (f.people && owns(rows, 'links')) {
+      if (people.length) step(`Checking notes for ${people.length} ${people.length === 1 ? 'person' : 'people'}`);
       for (const p of people) {
         const abs = path.join(vault, f.people, `${slug(p)}.md`);
         const cur = read(abs);
@@ -599,6 +606,7 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     }
     // projects: a note whose title appears in the meeting text
     if (f.projects && owns(rows, 'links')) {
+      step('Looking for projects it mentions');
       const body = text.toLowerCase();
       let names = [];
       try { names = readdirSync(path.join(vault, f.projects)).filter((n) => n.endsWith('.md') && n !== 'README.md'); } catch {}
@@ -616,6 +624,7 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     // budget are kept in the changelog entry
     const dropped = [];
     if (facts && owns(rows, 'facts') && runText && hasModel()) {
+      step('Learning facts from it');
       try {
         const out = await runText(factsPrompt({ title, date, participants: people, body: text.slice(parseFrontmatter(text).end) }), FACTS_SYSTEM);
         const got = parseFacts(out).map((g) => `${g} (${link}, ${date})`);
@@ -752,6 +761,10 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
           const left = [];
           const changed = await file(vault, reg, st, n.rel, n.text, { facts, marked: result.marked, left, noCreate: waits });
           result.changed += changed.length;
+          // what this note was filed into, for the line above its editor (noteTrail)
+          st.trail ??= {};
+          const runs = Array.isArray(st.trail[n.rel]) ? st.trail[n.rel] : st.trail[n.rel] ? [st.trail[n.rel]] : [];
+          st.trail[n.rel] = [{ at: new Date().toISOString(), files: [...new Set(changed.map((c) => c.split(path.sep).join('/')))] }, ...runs].slice(0, 10);
           for (const r of left) if (!result.left.includes(r)) result.left.push(r);
           st.left ??= {};
           if (left.length) st.left[n.rel] = n.h; else delete st.left[n.rel];
@@ -934,5 +947,13 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     if (after.on) schedule('settings');
     return status();
   };
-  return { run, schedule, halt, status, set, setPlugin, removeClaude, plugins, cachedPlugins, conf, clearErrors, errorLog };
+  // one note's upkeep: whether upkeep is on, whether it has filed the note, when, and the files it added it to
+  const noteTrail = (rel) => {
+    const b = brain();
+    const st = b ? loadState(b.vault) : { done: {} };
+    const t = st.trail?.[rel];
+    const runs = Array.isArray(t) ? t : t ? [t] : [];
+    return { on: conf().on, running: !!running, filed: !!st.done?.[rel], runs };
+  };
+  return { run, schedule, halt, status, set, setPlugin, removeClaude, plugins, cachedPlugins, conf, clearErrors, errorLog, noteTrail };
 }

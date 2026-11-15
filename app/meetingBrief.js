@@ -15,6 +15,22 @@ export function seriesOf(meetings, { title, before = Date.now() }) {
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
 
+// Other meetings connected to a series by its people: a meeting with a different title that shares people who attend
+// this one (two or more when the series has two or more). Most shared first, then newest. The series itself is left
+// out; seriesOf lists it
+export function relatedOf(meetings, { title, people, before = Date.now(), limit = 8 }) {
+  const want = new Map(people.map((p) => [String(p).trim().toLowerCase(), String(p).trim()]).filter(([k]) => k));
+  if (!want.size) return [];
+  const need = Math.min(2, want.size);
+  return meetings
+    .filter((m) => m.kind !== 'note' && m.date && new Date(m.date).getTime() <= before && !similarTitle(m.title, title))
+    .map((m) => ({ m, shared: [...new Set((m.people ?? []).map((p) => String(p).trim().toLowerCase()).filter((p) => want.has(p)))].map((k) => want.get(k)) }))
+    .filter((r) => r.shared.length >= need)
+    .sort((a, b) => b.shared.length - a.shared.length || String(b.m.date).localeCompare(String(a.m.date)))
+    .slice(0, limit)
+    .map(({ m, shared }) => ({ file: m.file, title: m.title, date: m.date, shared }));
+}
+
 export const BRIEF_SYSTEM = `You prepare one person for a recurring meeting from the notes of its past occurrences. Write plain, literal
 sentences. No figures of speech. Use only what the notes say; never invent names, numbers or decisions. Reply with JSON
 only: {"prep": string, "what": string, "who": string, "how": string}.

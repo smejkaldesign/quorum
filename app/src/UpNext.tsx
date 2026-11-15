@@ -159,7 +159,7 @@ export function UpNext({ hidden = false, inline = false, floating = false, chats
                   {!e.platform && <span className="up-badge">No meeting</span>}
                   <span className="hist-time"><span className="up-day">{when}</span>{time(at)}<small>{half(at)}</small></span>
                   <span className="hist-hover" onMouseDown={(ev) => ev.stopPropagation()}>
-                    {platform && e.join && <JoinButton id={platform.id} label={`Join ${platform.short}`} url={e.join} />}
+                    {platform && e.join && <JoinButton id={platform.id} label="Join" name={platform.short} url={e.join} />}
                     <EventMenu event={e} open={menu} onOpen={(o) => setEventMenu(o ? e.id : null)} onChanged={loadCal} />
                   </span>
                 </div>
@@ -206,10 +206,10 @@ function DaysMenu({ days, onPick }: { days: number | 'week'; onPick: (d: number 
 }
 
 // the white Join button an upcoming call shows on hover, with its app's logo
-export function JoinButton({ id, label, url }: { id: string; label: string; url: string }) {
+export function JoinButton({ id, label, url, name }: { id: string; label: string; url: string; name?: string }) {
   const icons = useAppIcons();
   return (
-    <button className="up-join" onClick={(ev) => { ev.stopPropagation(); window.quorum.openExternal(url); }}>
+    <button className="up-join" aria-label={name ? `Join on ${name}` : label} data-tip={name ? `Join on ${name}` : undefined} onClick={(ev) => { ev.stopPropagation(); window.quorum.openExternal(url); }}>
       {icons[id] ? <img src={icons[id]!} alt="" /> : null}{label}<IconArrowRight width={14} height={14} />
     </button>
   );
