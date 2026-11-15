@@ -15,6 +15,7 @@ const openGraph = (abs: string) => window.dispatchEvent(new CustomEvent('quorum:
 // a note's upkeep record, read again whenever upkeep finishes a run, and every few seconds while live is set
 export function useNoteActivity(file: string | null, live = false) {
   const [act, setAct] = useState<NoteActivity | null>(null);
+  const [n, setN] = useState(0);
   useEffect(() => {
     if (!file) { setAct(null); return; }
     let on = true;
@@ -23,39 +24,67 @@ export function useNoteActivity(file: string | null, live = false) {
     const off = window.quorum.onKeeper?.(() => load());
     const again = live ? window.setInterval(load, 2000) : 0;
     return () => { on = false; off?.(); if (again) window.clearInterval(again); };
-  }, [file, live]);
-  return act;
+  }, [file, live, n]);
+  return [act, () => setN((x) => x + 1)] as const;
 }
 
-// What Quorum's agent did with this note, newest first: saving it, writing its summary, naming it, and each upkeep run
-// with the notes it filed it into (index, daily note, people, projects, facts). Its cluster in the memory graph, and
-// links to open it in Memory or in the graph. For debugging and audit as much as for reading
-export function AgentActivity({ file }: { file: string }) {
-  const act = useNoteActivity(file);
+// what counts as new for the bell: the agent's events since the person last opened Notifications, and a note Quorum
+// wrote that nobody has reviewed. The person's own saves and edits never do
+const byYou = (e: NoteActivity['events'][number]) => e.text.startsWith('You');
+export function unseenOf(act: NoteActivity | null) {
+  if (!act) return 0;
+  const since = act.seenAt ? new Date(act.seenAt).getTime() : 0;
+  return act.events.filter((e) => !byYou(e) && new Date(e.at).getTime() > since).length + (act.agentWritten && !act.reviewedAt ? 1 : 0);
+}
+
+// A saved note's Notifications: what Quorum's agent did with it (wrote it, linked it to memories, referenced it in an
+// answer, updated it, named it) and what the person did, newest first. A note Quorum wrote waits at the top until it
+// is reviewed. Rows that arrived since the person last looked keep a dot while the tab is open. The cluster (or
+// folder) and the links to Memory and the graph sit above the list. Mentions and share requests from teammates
+// belong here too once a note is shared
+export function NoteNotifications({ act, seenBefore, onReviewed }: { act: NoteActivity | null; seenBefore: string | null; onReviewed: () => void }) {
   if (!act) return null;
+  const since = seenBefore ? new Date(seenBefore).getTime() : 0;
+  const fresh = (e: NoteActivity['events'][number]) => !byYou(e) && new Date(e.at).getTime() > since;
   return (
-    <section className="mp-section agent-activity" id="agent-activity" aria-label="Agent activity">
+    <section className="note-notifs" id="agent-activity" aria-label="Notifications">
       <div className="aa-head">
-        <h2>Agent activity</h2>
         <span className="aa-actions">
           {act.cluster ? <span className="aa-cluster" data-tip="The cluster this note belongs to in your memory graph">Cluster: {act.cluster}</span>
             : <span className="aa-cluster" data-tip="Not in a graph cluster yet; the folder it is filed in">Folder: {act.folder}</span>}
+        </span>
+        <span className="aa-actions">
           <button className="act-pill" onClick={() => openMemory(act.abs)}>Open in Memory</button>
           <button className="act-pill" onClick={() => openGraph(act.abs)}>View in graph</button>
         </span>
       </div>
-      {!act.on && <p className="muted aa-off">Upkeep is off, so Quorum does not file this note into your memory. Turn it on in Settings, Memory.</p>}
-      {act.pending && <p className="aa-row"><span className="aa-when">now</span><span className="shimmer">Filing this note: checking related notes, adding links, updating the index</span></p>}
-      {!act.events.length && !act.pending && <p className="muted">{act.filedBefore ? 'Filed into your memory before this log started. The next save shows each step here.' : 'Nothing yet. Quorum files this note into your memory after you save it.'}</p>}
-      <ol className="aa-list">
+      <ol className="nn-list">
+        {act.agentWritten && !act.reviewedAt && (
+          <li className="nn-row unread">
+            <span className="nn-who"><img src={markProd} alt="" width={22} height={22} /></span>
+            <span className="nn-body"><span className="nn-text">Quorum wrote this note. Review it before you rely on it or share it.</span></span>
+            <button className="act-pill primary" onClick={async () => { await window.quorum.noteReviewed(act.abs); onReviewed(); }}>Mark reviewed</button>
+          </li>
+        )}
+        {act.pending && (
+          <li className="nn-row">
+            <span className="nn-who"><img src={markProd} alt="" width={22} height={22} /></span>
+            <span className="nn-body"><span className="nn-text shimmer">Agent is filing this note: checking related notes, adding links, updating the index</span><span className="nn-when">now</span></span>
+          </li>
+        )}
         {act.events.map((e, i) => (
-          <li key={`${e.at}-${i}`} className="aa-row">
-            <span className="aa-when" title={new Date(e.at).toLocaleString()}>{ago(e.at)}</span>
-            <span className="aa-text">{e.text}</span>
-            {!!e.files?.length && <span className="aa-files">{e.files.map((f) => <button key={f.abs} className="keeper-link" data-tip={f.rel} onClick={() => openMemory(f.abs)}>{f.label}</button>)}</span>}
+          <li key={`${e.at}-${i}`} className={`nn-row${fresh(e) ? ' unread' : ''}`}>
+            <span className="nn-who">{byYou(e) ? <span className="nn-you" aria-label="You">You</span> : <img src={markProd} alt="Quorum" width={22} height={22} />}</span>
+            <span className="nn-body">
+              <span className="nn-text">{e.text}</span>
+              {!!e.files?.length && <span className="aa-files">{e.files.map((f) => <button key={f.abs} className="keeper-link" data-tip={f.rel} onClick={() => openMemory(f.abs)}>{f.label}</button>)}</span>}
+              <span className="nn-when" title={new Date(e.at).toLocaleString()}>{ago(e.at)}</span>
+            </span>
           </li>
         ))}
       </ol>
+      {!act.on && <p className="muted aa-off">Upkeep is off, so Quorum does not link this note into your memory. Turn it on in Settings, Memory.</p>}
+      {!act.events.length && !act.pending && <p className="muted">{act.filedBefore ? 'Filed into your memory before this log started. The next save lists each step here.' : 'Nothing yet. Quorum links this note into your memory after you save it.'}</p>}
     </section>
   );
 }
@@ -66,7 +95,7 @@ export function AgentRun({ file, since, onDetails, onClose }: { file: string; si
   const [steps, setSteps] = useState<string[]>([]);
   const [late, setLate] = useState(false);
   const [finished, setFinished] = useState(false);
-  const act = useNoteActivity(file, !finished);
+  const [act] = useNoteActivity(file, !finished);
   const run = act?.events.find((e) => e.kind === 'filed' && new Date(e.at).getTime() >= since - 1000) ?? null;
   const done = !!run || (act !== null && !act.on);
   useEffect(() => { if (done || late) setFinished(true); }, [done, late]);

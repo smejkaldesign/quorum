@@ -137,6 +137,7 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
   const [savingMine, setSavingMine] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [run, setRun] = useState<{ file: string; since: number } | null>(null);
+  const [relatedAll, setRelatedAll] = useState(false);
   const keep = (v: string) => { setMine(v); try { if (v.trim()) localStorage.setItem(draftKey, v); else localStorage.removeItem(draftKey); } catch { /* ignore */ } };
   async function saveMine() {
     if (savingMine) return;
@@ -246,16 +247,18 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
             ...(data?.related ?? []).map((r) => ({ file: r.file, title: r.title, date: r.date, why: `With ${r.shared.slice(0, 2).join(', ')}${r.shared.length > 2 ? ` +${r.shared.length - 2}` : ''}` })),
           ].sort((x, y) => String(y.date ?? '').localeCompare(String(x.date ?? '')));
           if (!rows.length) return null;
+          // five at first; Show more adds up to ten more
           return (
             <section className="mp-section">
               <h2>Related meetings</h2>
               <div className="mp-past">
-                {rows.map((p) => (
+                {rows.slice(0, relatedAll ? 15 : 5).map((p) => (
                   <button key={p.file} className="mp-past-row" onClick={() => onOpenNote(p.file)}>
                     <span className="mp-past-title">{p.title}</span><span className="mp-why">{p.why}</span><span className="muted">{p.date ? dayLabel(new Date(p.date)) : 'Undated'}</span>
                   </button>
                 ))}
               </div>
+              {rows.length > 5 && !relatedAll && <button className="up-all mp-more" onClick={() => setRelatedAll(true)}>Show more</button>}
             </section>
           );
         })()}

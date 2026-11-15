@@ -2281,3 +2281,20 @@ button.meta-pill, a.meta-pill { font-size: 14px; }
 .ar-actions { margin-left: auto; display: inline-flex; gap: 8px; align-items: center; }
 .ar-steps { list-style: none; margin: 0 0 0 28px; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 .ar-result { margin: 0 0 0 28px; font-size: 14px; color: var(--text); }
+/* Notifications: a bell tab with a blue dot for what is new, and the list of the note's events */
+.view-toggle .tab-bell { position: relative; }
+.tab-dot { position: absolute; top: 5px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: #3b82f6; box-shadow: 0 0 0 2px var(--panel); }
+.note-notifs { margin-top: 8px; }
+.note-notifs .aa-head { margin-bottom: 8px; }
+.nn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.nn-row { position: relative; display: flex; align-items: flex-start; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.nn-row:last-child { border-bottom: 0; }
+.nn-row.unread::before { content: ''; position: absolute; left: -16px; top: 22px; width: 7px; height: 7px; border-radius: 50%; background: #3b82f6; }
+.nn-who { flex: none; width: 22px; height: 22px; display: grid; place-items: center; }
+.nn-who img { border-radius: 6px; }
+.nn-you { width: 22px; height: 22px; border-radius: 50%; background: rgba(255, 255, 255, 0.1); color: var(--text); font-size: 8px; font-weight: 700; display: grid; place-items: center; }
+.nn-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.nn-text { font-size: 15px; color: var(--text); line-height: 1.45; }
+.nn-when { font-size: 12px; color: var(--muted); }
+.nn-row > .act-pill { flex: none; align-self: center; }
+.mp-more { margin-top: 8px; }

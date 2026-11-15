@@ -174,7 +174,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
   // Up next steps aside while the list is filtered, as it did when it lived here
   useEffect(() => { onFiltered?.(filtered); }, [filtered, onFiltered]);
   useEffect(() => () => onFiltered?.(false), [onFiltered]);
-  if (event) return <Suspense fallback={null}><MeetingPage event={event} onBack={() => setEvent(null)} onOpenNote={(file) => window.quorum.readNote(file).then((n) => { if (n) { setEvent(null); setNote(n); } })} /></Suspense>;
+  if (event) return <Suspense fallback={null}><MeetingPage key={event.id} event={event} onBack={() => setEvent(null)} onOpenNote={(file) => window.quorum.readNote(file).then((n) => { if (n) { setEvent(null); setNote(n); } })} /></Suspense>;
   if (note) return <Suspense fallback={null}><NoteReader key={note.file} chat={noteChat} firstAsk={firstAsk} note={note} dayLabel={dayLabel} peopleLine={peopleLine} onBack={() => { setNote(null); setFirstAsk(null); refresh(); }} /></Suspense>;
 
   const ask = (q: string, files: string[] = []) => { if (q.trim()) { setDraft(''); askAsNote(q.trim(), files); } };

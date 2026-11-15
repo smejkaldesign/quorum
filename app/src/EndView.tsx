@@ -6,13 +6,13 @@ import { type WhoAnswers } from './WhoSpoke';
 import { Avatar, SpeakerName, similarCounts, type SpeakerTurn } from './Speaker';
 import mark from '../assets/quorum-mark.png';
 import { Markdown } from './Markdown';
-import { IconRecord, IconSound, IconStop, IconCalendar, IconClock, IconFolder, IconLogs, IconNotes, IconPeople } from './icons';
+import { IconBell, IconRecord, IconSound, IconStop, IconCalendar, IconClock, IconFolder, IconLogs, IconNotes, IconPeople } from './icons';
 import { NoteEditor } from './editor/NoteEditor';
 import { TypedTitle, useStuck } from './StickyBar';
 import { splitChoices } from './MeetingNote';
 import { ChatExit, ChatList, useChats } from './ChatStack';
 import { Composer } from './Composer';
-import { AgentActivity, AgentRun } from './AgentActivity';
+import { AgentRun, NoteNotifications, unseenOf, useNoteActivity } from './AgentActivity';
 
 type Followup = { q: string; a: string | null };
 
@@ -26,7 +26,7 @@ export type Turn = SpeakerTurn & { who: string; voice?: number | 'mix' | 'sound'
 // ready: a new note before any recording; you can type in Your notes and Save, or press Record to transcribe into it
 export function EndView({ notes, draft, meta, summarizing, transcript, participants, onSpeaker, privateNotes, onPrivateNotes, flushPrivateNotes, onClose, me, live = false, paused = false, embedded = false, partial = '', who = null, onAnswer, ready = false, onSaveDraft, onRecord, onContinue, recordBusy = false, asker, initialTitle = '' }: { initialTitle?: string; asker?: { name: string; photo: string | null }; onContinue?: () => void; onRecord?: () => void; recordBusy?: boolean; ready?: boolean; onSaveDraft?: (title: string) => Promise<void>; who?: WhoAsk | null; onAnswer?: (a: WhoAnswers | null) => void; live?: boolean; paused?: boolean; embedded?: boolean; partial?: string; me?: { name: string; photo: string | null }; notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; participants: string[]; onSpeaker: (id: number, name: string | null, similar: boolean) => Promise<void>; privateNotes: string; onPrivateNotes: (v: string) => void; flushPrivateNotes: () => void; onClose: () => void }) {
   // three tabs on one note: your Note, the Summary (once there is one) and the Transcript; the note's one chat sits below
-  const [showing, setShowing] = useState<'note' | 'summary' | 'transcript'>(live ? 'transcript' : 'note');
+  const [showing, setShowing] = useState<'note' | 'summary' | 'transcript' | 'activity'>(live ? 'transcript' : 'note');
   // a new note's title: empty reads New note in italics, and a click puts the cursor in it
   const [title, setTitle] = useState(initialTitle);
   // Stop summarization turns the summary off for this note: Stop goes straight to Save note, the transcript stays
@@ -51,6 +51,15 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
   const [draftQ, setDraftQ] = useState('');
   const [saved, setSaved] = useState<{ file: string; rel: string; app: string } | null>(null);
   const [runSince, setRunSince] = useState<number | null>(null);
+  // Notifications once the note is saved: the same list and dot as a saved note's page
+  const [act, reloadAct] = useNoteActivity(saved?.file ?? null);
+  const unseen = saved ? unseenOf(act) : 0;
+  const [seenBefore, setSeenBefore] = useState<string | null>(null);
+  useEffect(() => {
+    if (showing !== 'activity' || !act || !saved || !unseen) return;
+    setSeenBefore(act.seenAt);
+    window.quorum.noteSeen(saved.file).then(reloadAct).catch(() => {});
+  }, [showing, unseen]); // eslint-disable-line react-hooks/exhaustive-deps
   // naming an untitled recording moves its file; the run card and the activity follow it
   useEffect(() => window.quorum.onNoteRenamed((d) => setSaved((s) => (s && s.file === d.from ? { ...s, file: d.to } : s))), []);
   const [saving, setSaving] = useState(false);
@@ -153,7 +162,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
         </div>
       </header>
           <article className={`doc${streaming ? ' streaming' : ''}`}>
-            {saved && runSince && <AgentRun key={runSince} file={saved.file} since={runSince} onDetails={() => { setShowing('summary'); requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById('agent-activity')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))); }} onClose={() => setRunSince(null)} />}
+            {saved && runSince && <AgentRun key={runSince} file={saved.file} since={runSince} onDetails={() => setShowing('activity')} onClose={() => setRunSince(null)} />}
             <h1>{ready || live || (!shown?.title && !streaming && !saved) || title ? (
               // the title is yours to type at any point; empty, it reads New note (shimmering while it records)
               <span className="title-wrap">
@@ -170,6 +179,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
                 {hasSummary && <button className={showing === 'summary' ? 'on' : ''} aria-pressed={showing === 'summary'} aria-label="Summary" data-tip="Summary" onClick={() => setShowing('summary')}><IconLogs width={16} height={16} /></button>}
                 <button className={showing === 'note' ? 'on' : ''} aria-pressed={showing === 'note'} aria-label="Note" data-tip="Note" onClick={() => setShowing('note')}><IconNotes width={16} height={16} /></button>
                 <button className={showing === 'transcript' ? 'on' : ''} aria-pressed={showing === 'transcript'} aria-label="Transcript" data-tip="Transcript" onClick={() => setShowing('transcript')}><IconSound width={16} height={16} /></button>
+                {saved && <button className={`tab-bell${showing === 'activity' ? ' on' : ''}`} aria-pressed={showing === 'activity'} aria-label={unseen ? `Notifications, ${unseen} new` : 'Notifications'} data-tip="Notifications" onClick={() => setShowing('activity')}><IconBell width={16} height={16} />{unseen > 0 && <i className="tab-dot" aria-hidden="true" />}</button>}
               </div>
             </div>
 
@@ -257,7 +267,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
             </>}
 
             {/* the chat on this note, below a divider once it starts: the same layout as every other note */}
-            {saved && showing === 'summary' && <AgentActivity file={saved.file} />}
+            {saved && showing === 'activity' && <NoteNotifications act={act} seenBefore={seenBefore} onReviewed={reloadAct} />}
             {!cs.active && <ChatList chats={cs.chats} onOpen={cs.setOpenId} me={{ name: asker?.name || me?.name || 'You', photo: asker?.photo ?? me?.photo ?? null }} />}
             {cs.active && (
               <section className="note-thread" aria-label="Questions about this note">
