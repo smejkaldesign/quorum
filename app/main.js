@@ -23,6 +23,7 @@ import { registerOnboarding } from './onboarding.js';
 import { gateOn, registerBeta } from './beta.js';
 import { registerFlags } from './flags.js';
 import { CALL_ACTIVE, DICTATION_OFF, keepActions, notetakerGates, recordDecision, screenReadsAllowed, sessionGates, startDecision, termsPlan } from './notetaker.js';
+import { NAME_SYSTEM, isUntitled, parseName } from './noteName.js';
 import { hashText, newNoteText, noteFileName, noteForEditor, rewriteNote, screenRead, splitNote, validFrontmatter, yamlStr } from './handnote.js';
 import { createKeeper } from './keeper.js';
 import { createVersionStore } from './memoryVersions.js';
@@ -2803,7 +2804,34 @@ ipcMain.handle('hand-note-done', (_e, file) => {
   if (!abs) return;
   account.sync.pushMeetingNote(abs);
   keeper.schedule('note');
+  nameUntitled(abs).catch((e) => log('note title', e?.message));
 });
+
+// a note saved without a name gets one: a short title and a one-line summary from its text, written into the note
+// and its file name. One model call per note, only while it is still untitled; without a model it stays as it is
+async function nameUntitled(abs) {
+  const raw = store.notes.read(abs);
+  const { title, body } = splitNote(raw);
+  if (!isUntitled(title) || modelSource() === 'none' || suggester.isExcluded(raw)) return;
+  const text = suggester.redactLines(body).trim();
+  if (text.replace(/[^a-z0-9]/gi, '').length < 3) return;
+  const reply = await runClaude(`<note>\n${text.slice(0, 6000)}\n</note>`, NAME_SYSTEM, settings.model);
+  const named = parseName(reply);
+  if (!named) return;
+  const now = store.notes.read(abs);
+  if (now !== raw) return; // edited again while the title was being written; the next close tries again
+  let out = rewriteNote(now, { title: named.title, body: splitNote(now).body });
+  if (named.summary) out = setFrontmatterKey(out, 'summary', yamlStr(named.summary));
+  let target = abs;
+  if (/untitled/i.test(path.basename(abs))) {
+    const qid = now.match(/^quorum_id:\s*(.+)$/m)?.[1]?.trim() ?? path.basename(abs);
+    const next = path.join(path.dirname(abs), noteFileName({ date: path.basename(abs).slice(0, 10), title: named.title, id: qid }));
+    if (!existsSync(next)) { renameSync(abs, next); target = next; }
+  }
+  store.notes.write(target, out);
+  log('named note', path.basename(target));
+  toUI('history-changed');
+}
 function saveNotes(payload) {
   const notes = { ...meeting.notes, ...payload.notes };
   const dir = quorumNotesDir() ?? path.join(suggester.vault(), '08-meetings', 'quorum');

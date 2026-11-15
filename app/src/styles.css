@@ -2160,3 +2160,5 @@ button.np-outline:hover { background: rgba(255, 255, 255, 0.05); color: var(--te
 .note-rich pre + pre { margin-top: 0; border-top: 0; border-top-left-radius: 0; border-top-right-radius: 0; padding-top: 0; }
 .note-rich pre:has(+ pre) { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom: 0; padding-bottom: 0; margin-bottom: 0; }
 .tb-btn svg { display: block; margin: 0 auto; }
+.chat-zero { gap: 4px; }
+.chat-zero .hist-empty { padding: 0; }

@@ -547,9 +547,10 @@ export function App() {
   async function saveDraft() {
     const body = mine.text.trim();
     if (!body) return;
-    const title = body.split('\n')[0].replace(/^#+\s*/, '').slice(0, 80) || 'Untitled';
-    const r = await window.quorum.handNoteSave({ id: `draft-${Date.now()}`, file: null, title, body, hash: null, fresh: true });
+    // saved untitled; closing it hands it to the naming pass, which writes a title and a one-line summary
+    const r = await window.quorum.handNoteSave({ id: `draft-${Date.now()}`, file: null, title: '', body, hash: null, fresh: true });
     if ('error' in r || 'conflict' in r) return;
+    window.quorum.handNoteDone(r.file);
     mine.reset();
     setDraftOpen(false);
   }
@@ -658,16 +659,9 @@ export function App() {
                 {msgs.length > 0 && <button className="pill small-pill" onClick={newChat}>New chat</button>}
               </div>
             )}
-            {/* a new chat starts empty: a quiet picture and one line until the first message; quick asks sit above the input */}
+            {/* a new chat starts empty: one line until the first message; quick asks sit above the input */}
             {phase === 'idle' && msgs.length === 0 && (
               <div className="chat-zero">
-                <svg className="chat-zero-art" viewBox="0 0 120 72" aria-hidden="true">
-                  <rect x="16" y="10" width="60" height="30" rx="12" className="cz-bubble" />
-                  <path d="M30 40l-4 9 12-9" className="cz-bubble" />
-                  <rect x="48" y="30" width="56" height="26" rx="11" className="cz-bubble back" />
-                  <path d="M92 56l4 8-11-8" className="cz-bubble back" />
-                  <path d="M28 21h36M28 29h22M60 41h32M60 47h18" className="cz-line" />
-                </svg>
                 <p className="chat-zero-title">{brain ? `Ask anything from ${brain.name}` : 'Connect your Agent OS to start'}</p>
                 <p className="hist-empty">{brain ? 'Answers come from your notes, with a link to each one.' : 'Quorum answers from the notes in it.'}</p>
               </div>
