@@ -563,7 +563,8 @@ export function App() {
           </button>
         </div>
       </header>
-      {view === 'main' && <UpNext hidden={(inCall(phase) && (tab === 'chat' || tab === 'notes' || tab === 'mine')) || (tab === 'home' && !convoOpen && histFiltered)} floating={tab === 'home' && !convoOpen} />}
+      {/* Up next sits over Home and the call views; the Memory graph and knowledge bases use the full height */}
+      {view === 'main' && <UpNext hidden={tab === 'memory' || knowledgeOpen || (inCall(phase) && (tab === 'chat' || tab === 'notes' || tab === 'mine')) || (tab === 'home' && !convoOpen && histFiltered)} floating={tab === 'home' && !convoOpen} />}
 
       {view === 'settings' ? (
         <div className="body wide flush">
