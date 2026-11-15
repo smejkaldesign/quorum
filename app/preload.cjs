@@ -166,6 +166,8 @@ contextBridge.exposeInMainWorld('quorum', {
   onSourceJob: on('source-job'),
   onNoteDelta: on('note-delta'),
   onNoteRenamed: on('note-renamed'),
+  noteActivity: (file) => ipcRenderer.invoke('note-activity', file),
+  onKeeperStep: on('keeper-step'),
   readChat: (id) => ipcRenderer.invoke('read-chat', id),
   onHistoryChanged: on('history-changed'),
   claudeLogin: () => ipcRenderer.invoke('claude-login'),

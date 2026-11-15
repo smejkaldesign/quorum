@@ -58,7 +58,7 @@ import { createGuardrails } from './guardrails.js';
 import { createPlatformCache, eventRef, matchPlatforms } from './meetingPlatforms.js';
 import { calendarWindow, normalizeDays } from './calendarWindow.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
-import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, seriesKey, seriesOf } from './meetingBrief.js';
+import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, relatedOf, seriesKey, seriesOf } from './meetingBrief.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // quorum://kb links (kb_search and kb_read return them) open the note in the Knowledge tab. A link can arrive before
@@ -177,6 +177,7 @@ const memoryVersions = createVersionStore({
 const liveRuns = createLiveRuns({ onChange: (s) => toUI('live-runs', s) });
 // the keeper maintains a Quorum-built Agent OS after each note (keeper.js); the person's own model source writes the facts
 const keeper = createKeeper({
+  onStep: (rel, text) => { const b = brain(); if (b) toUI('keeper-step', { file: path.join(b.vault, rel), text }); },
   brain: () => brain(), settings, saveSettings: () => store.settings.save(), guards: () => guardrails.compiled(), wouldBlock,
   runText: (prompt, system) => runClaude(prompt, system, 'haiku'), hasModel: () => modelSource() !== 'none', owner: () => USER_NAME,
   log: (...a) => log(...a), onChange: (r) => toUI('keeper', r), errorLog: KEEPER_ERRORS, versions: memoryVersions, live: liveRuns,
@@ -1827,10 +1828,64 @@ ipcMain.handle('note-apply', (_e, file, newBody) => {
   const { transcript } = splitRecorded(raw.slice(fm.length).trim(), { recorded: /\nrecorded: true\n/.test(fm) });
   const body = transcript ? withSummary(newBody, transcript) : String(newBody).replace(/\n*$/, '\n');
   store.notes.write(abs, `${fm}${body}`);
+  noteEvent(abs, 'edited', 'Saved your edits');
   account.sync.pushNote(abs);
+  // an edited note is filed again: index, daily note, people and projects pick up the change
+  keeper.schedule('note');
   return true;
 });
 
+// A note's Agent activity: what Quorum did with it (saved, summary, named, edits) from the activity log, and each
+// upkeep run with the files it filed the note into; its graph cluster; and whether a save is still being filed
+const activityFile = path.join(DATA_DIR, 'note-activity.json');
+let activityLog = null;
+const activityAll = () => { if (!activityLog) { try { activityLog = JSON.parse(readFileSync(activityFile, 'utf8')); } catch { activityLog = {}; } } return activityLog; };
+const activitySave = () => {
+  const all = activityAll();
+  for (const k of Object.keys(all)) if (!existsSync(k)) delete all[k];
+  try { writeFileSync(activityFile, JSON.stringify(all)); } catch (e) { log('note activity', e?.message); }
+};
+function noteEvent(abs, kind, text) {
+  const all = activityAll();
+  all[abs] = [{ at: new Date().toISOString(), kind, text }, ...(all[abs] ?? [])].slice(0, 30);
+  activitySave();
+}
+function moveNoteEvents(from, to) {
+  const all = activityAll();
+  if (!all[from]) return;
+  all[to] = [...(all[from] ?? []), ...(all[to] ?? [])].slice(0, 30);
+  delete all[from];
+  activitySave();
+}
+// the graph cluster of a note, from a map built at most once a minute: building the graph walks the whole vault
+let clusterMap = { at: 0, map: new Map() };
+function clusterOf(rel) {
+  if (Date.now() - clusterMap.at > 60000) {
+    try { clusterMap = { at: Date.now(), map: new Map((vindex?.graph?.().nodes ?? []).map((n) => [n.id, n.cluster ?? null])) }; } catch { clusterMap = { at: Date.now(), map: new Map() }; }
+  }
+  return clusterMap.map.get(rel) ?? null;
+}
+ipcMain.handle('note-activity', (_e, file) => {
+  const b = brain();
+  const abs = meetingFile(file);
+  if (!b || !abs) return null;
+  const rel = path.relative(b.vault, abs).split(path.sep).join('/');
+  const t = keeper.noteTrail(rel);
+  let changedAt = 0;
+  try { changedAt = statSync(abs).mtimeMs; } catch { /* gone */ }
+  const filedAt = t.runs[0] ? new Date(t.runs[0].at).getTime() : 0;
+  // a save within the last minute that upkeep has not caught up with yet
+  const pending = t.on && changedAt > filedAt + 1000 && Date.now() - changedAt < 60000;
+  const label = (r) => { const base = path.posix.basename(r, '.md'); return base === 'index' ? 'Index' : /^\d{4}-\d{2}-\d{2}$/.test(base) ? `Daily note ${base}` : base.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()); };
+  const runs = t.runs.map((r) => {
+    const files = r.files.filter((x) => x !== rel).map((x) => ({ rel: x, abs: path.join(b.vault, x), label: label(x) }));
+    if (r.skipped) return { at: r.at, kind: 'filed', text: `Left it as it is: ${r.skipped}`, files };
+    return { at: r.at, kind: 'filed', text: files.length ? `Filed it into ${files.length} ${files.length === 1 ? 'note' : 'notes'}` : 'Checked related notes and links; nothing needed an update', files };
+  });
+  const cluster = clusterOf(rel);
+  const events = [...runs, ...(activityAll()[abs] ?? [])].sort((x, y) => String(y.at).localeCompare(String(x.at)));
+  return { on: t.on, pending, running: t.running, abs, rel, cluster, folder: path.posix.dirname(rel), filedBefore: t.filed && !t.runs.length, events };
+});
 ipcMain.handle('read-note', (_e, file) => {
   const b = brain();
   const abs = meetingFile(file);
@@ -1922,9 +1977,17 @@ function noteMeetingApps(fm, abs) {
 const briefCache = createBriefCache(path.join(DATA_DIR, 'meeting-briefs.json'));
 ipcMain.handle('meeting-brief', async (_e, q) => {
   const title = String(q?.title ?? '');
-  if (!title || suggester.isExcluded(title)) return { past: [], brief: null, status: 'few' };
-  const past = seriesOf(meetingIndex(), { title });
+  if (!title || suggester.isExcluded(title)) return { past: [], related: [], brief: null, status: 'few' };
+  const all = meetingIndex();
+  const past = seriesOf(all, { title });
   const list = past.slice(0, 12).map((m) => ({ file: m.file, title: m.title, date: m.date, source: m.source, people: m.people, count: m.count }));
+  // meetings connected by the people who come to this one: from its past notes, and its organizer when named
+  const org = String(q?.organizer ?? '').trim();
+  const related = relatedOf(all, { title, people: [...new Set([...past.slice(0, 6).flatMap((m) => m.people ?? []), ...(org && !org.includes('@') && !isSelf(org) ? [org] : [])])] });
+  const res = await meetingBriefFor(q, title, past, list);
+  return { ...res, related };
+});
+async function meetingBriefFor(q, title, past, list) {
   if (past.length < SERIES_MIN) return { past: list, brief: null, status: 'few' };
   const key = seriesKey(title), stamp = `${past[0].file}|${past.length}`;
   const kept = briefCache.get(key, stamp);
@@ -1938,7 +2001,7 @@ ipcMain.handle('meeting-brief', async (_e, q) => {
     briefCache.set(key, stamp, brief);
     return { past: list, brief, status: 'ready' };
   } catch (e) { log('meeting brief', e?.message); return { past: list, brief: null, status: 'failed' }; }
-});
+}
 
 // questions about an upcoming meeting, from its page: the event, its prep notes and the series' recent notes are in
 // the prompt, and Claude Code can read the rest of the Agent OS. The chat is saved under the meeting's event id
@@ -2866,6 +2929,7 @@ ipcMain.handle('hand-note-done', (_e, file) => {
   const abs = file ? meetingFile(file) : null;
   if (!abs) return;
   account.sync.pushMeetingNote(abs);
+  noteEvent(abs, 'saved', 'Saved the note');
   keeper.schedule('note');
   nameUntitled(abs).catch((e) => log('note title', e?.message));
 });
@@ -2896,9 +2960,11 @@ async function nameUntitled(abs, chat = null) {
   }
   store.notes.write(target, out);
   if (target !== abs) {
+    moveNoteEvents(abs, target);
     for (const c of allChats()) if (c.meetingFile === abs) { c.meetingFile = target; writeChat(c); }
     if (meeting.saved?.file === abs) meeting.saved.file = target;
   }
+  noteEvent(target, 'named', `Named it "${named.title}"`);
   log('named note', path.basename(target));
   toUI('note-renamed', { from: abs, to: target });
   toUI('history-changed');
@@ -2914,6 +2980,7 @@ function saveNotes(payload) {
   const body = withShareChoice(file, noteMarkdown(meeting.saved.payload));
   store.meetings.saveNote(file, payload.review === 'speakers' ? setFrontmatterKey(body, 'review', yamlStr('speakers')) : body);
   log('saved note', file);
+  noteEvent(file, 'saved', notes.summary ? 'Saved the recording with its summary' : 'Saved the recording');
   // saved without a summary or a title: it gets a name the same way an untitled hand note does
   if (isUntitled(notes.title)) nameUntitled(file).catch((e) => log('note title', e?.message));
   account.sync.pushMeetingNote(file);

@@ -261,8 +261,16 @@ export function App() {
   // a note page's folder button opens that note in the Memory tab
   useEffect(() => {
     const open = (e: Event) => openInQuorum(String((e as CustomEvent).detail ?? ''));
+    // View in graph: the Memory tab with the graph zoomed to that note and its links
+    const graph = (e: Event) => {
+      const abs = String((e as CustomEvent).detail ?? '');
+      if (!brain || !abs.startsWith(`${brain.vault}/`)) return;
+      setView('main'); setTab('memory');
+      setKbCommand({ kind: 'graph', rel: abs.slice(brain.vault.length + 1), n: Date.now() });
+    };
     window.addEventListener('quorum:open-memory', open);
-    return () => window.removeEventListener('quorum:open-memory', open);
+    window.addEventListener('quorum:open-graph', graph);
+    return () => { window.removeEventListener('quorum:open-memory', open); window.removeEventListener('quorum:open-graph', graph); };
   });
   // a cited knowledge base note opens in the Knowledge tab
   const openKbNote = useCallback((t: KbOpenTarget) => {

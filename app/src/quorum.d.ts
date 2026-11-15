@@ -245,12 +245,13 @@ export type Billing = { plan: Plan; seats: number; seatsIncluded: number; hourPa
 export type MemberInvite = { inviteId: string; email: string; role: Role; expiresAt: string };
 // the calendar event a note was matched to (meetingPlatforms.js eventRef)
 export type EventRef = { id: string | null; item: string | null; link: string | null; start: string; recurring: boolean; organizer: string; count: number };
-export type MeetingBrief = { past: { file: string; title: string; date: string | null; source: string; people: string[]; count: number }[]; brief: { prep: string; what: string; who: string; how: string } | null; status: 'few' | 'stale' | 'ready' | 'no-model' | 'failed' };
+export type MeetingBrief = { related?: { file: string; title: string; date: string | null; shared: string[] }[]; past: { file: string; title: string; date: string | null; source: string; people: string[]; count: number }[]; brief: { prep: string; what: string; who: string; how: string } | null; status: 'few' | 'stale' | 'ready' | 'no-model' | 'failed' };
 export type MeetingRow = { id: string; file: string; kind: 'meeting' | 'note'; source: string; title: string; date: string | null; people: string[]; count: number; visibility: Visibility; rel: string; link: string; app: string; url?: string | null; platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; event?: EventRef | null };
 export type ChatRow = { id: string; title: string; date: string; turns: number; meetingFile: string | null; meetingTitle: string | null; eventId?: string | null; eventEnd?: string | null };
 export type Visibility = 'private' | 'public';
 // who has read a note: people in Quorum, agents through the read guard or the quorum MCP server
 export type NoteViews = { total: number; human: number; agent: number; tokens: number; lastHumanAt: string | null; lastAgentAt: string | null; agents: { via: string; count: number }[] };
+export type NoteActivity = { folder: string; filedBefore: boolean; on: boolean; pending: boolean; running: boolean; abs: string; rel: string; cluster: string | null; events: { at: string; kind: string; text: string; files?: { rel: string; abs: string; label: string }[] }[] };
 export type NoteDoc = { hand?: boolean; parts?: { note: string; summary: string; split: boolean }; file: string; rel: string; title: string; date?: string; people: string[]; body: string; app: string; url: string; source?: string | null; views?: NoteViews; visibility: Visibility; withheld: boolean; link: string; summarizable?: boolean; transcript?: { id: number; channel: 'me' | 'them'; who: string; text: string }[]; platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null; sourceUrl?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; event?: EventRef | null };
 export type SavedChat = { id: string; title: string; turns: { q: string; a: string; sources?: Source[]; steps?: string[] }[] };
 export type MissingLink = { target: string; sources: string[]; count: number; links?: number; lastAt?: number | null; candidates: { rel: string; title: string; name: string | null; exact: boolean }[] };
@@ -371,6 +372,8 @@ declare global {
       history(): Promise<{ meetings: MeetingRow[]; chats: ChatRow[] }>;
       readNote(file: string): Promise<NoteDoc | null>;
       onNoteRenamed(fn: (d: { from: string; to: string }) => void): () => void;
+      noteActivity(file: string): Promise<NoteActivity | null>;
+      onKeeperStep?(fn: (d: { file: string; text: string }) => void): () => void;
       newChat(): Promise<void>;
       loadChat(id: string): Promise<SavedChat | null>;
       readChat(id: string): Promise<SavedChat | null>;
@@ -493,7 +496,7 @@ declare global {
       calendarSet(next: { days?: number | 'week'; enabled?: false; showAll?: boolean; hide?: string; unhideAll?: boolean }): Promise<CalendarSettings>;
       calendarPrivacy(): Promise<void>;
       calendarOpen(ev: CalendarEvent): Promise<void>;
-      meetingBrief(q: { title: string; generate?: boolean }): Promise<MeetingBrief>;
+      meetingBrief(q: { title: string; organizer?: string; generate?: boolean }): Promise<MeetingBrief>;
       noteChat(file: string): Promise<{ id: string; turns: { q: string; a: string }[] } | null>;
       summaryOff(): Promise<void>;
       recordContinue(): Promise<{ ok: true } | { error: string }>;

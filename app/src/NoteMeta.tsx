@@ -11,7 +11,7 @@ export type NoteMetaInfo = {
 
 // an app a note is tied to, as an icon button: the connector it came from, its calendar
 // event or its meeting app; the name is in the tooltip, and a click opens the item in that app when there is a link
-function AppIcon({ id, name, logo, onOpen }: { id: string; name: string; logo?: React.ReactNode; onOpen?: (() => void) | null }) {
+export function AppIcon({ id, name, logo, onOpen }: { id: string; name: string; logo?: React.ReactNode; onOpen?: (() => void) | null }) {
   const art = logo ?? <AppLogo id={id} name={name} />;
   if (!onOpen) return <span className="meta-pill meta-icon" data-tip={name} aria-label={name}>{art}</span>;
   return <button className="meta-pill meta-icon" data-tip={`Open in ${name}`} aria-label={`Open in ${name}`} onClick={onOpen}>{art}</button>;

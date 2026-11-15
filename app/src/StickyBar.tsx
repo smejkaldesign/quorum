@@ -35,3 +35,33 @@ export function TypedTitle({ text, on }: { text: string; on: boolean }) {
   }, [on, text]);
   return <span className="rb-title" aria-hidden={!on}>{text.slice(0, n)}</span>;
 }
+
+// The note editor's toolbar docks under the pinned Back bar once it reaches it: the page gets tb-docked, the toolbar
+// drops its outline and the line under the header moves below it. --bar-h is the pinned bar's height, the toolbar's
+// sticky offset
+export function useToolbarDock(sentinel: React.RefObject<HTMLDivElement | null>, stuck: boolean) {
+  useEffect(() => {
+    const el = sentinel.current;
+    const page = el?.parentElement;
+    const box = el?.closest<HTMLElement>('.end-scroll, .body');
+    if (!page || !box) return;
+    const check = () => {
+      const bar = page.querySelector<HTMLElement>('.sticky-bar');
+      const tb = page.querySelector<HTMLElement>('.note-toolbar');
+      if (bar) page.style.setProperty('--bar-h', `${bar.offsetHeight}px`);
+      const docked = !!(bar?.classList.contains('stuck') && tb && tb.getBoundingClientRect().top <= bar.getBoundingClientRect().bottom + 1);
+      page.classList.toggle('tb-docked', docked);
+    };
+    // the bar's pinned layout lands a frame after the state flips
+    // and its slide-in moves its bottom edge for 240 ms, so look again once that settles
+    const frame = requestAnimationFrame(check);
+    const settle = window.setTimeout(check, 300);
+    box.addEventListener('scroll', check, { passive: true });
+    return () => { cancelAnimationFrame(frame); window.clearTimeout(settle); box.removeEventListener('scroll', check); page.classList.remove('tb-docked'); };
+  }, [sentinel, stuck]);
+}
+
+// a tab picked from the pinned bar opens at the top of the page; the smooth scroll lets the bar slide away
+export function toPageTop(sentinel: React.RefObject<HTMLDivElement | null>) {
+  sentinel.current?.closest<HTMLElement>('.end-scroll, .body')?.scrollTo({ top: 0, behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+}

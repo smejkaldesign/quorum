@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { briefPrompt, createBriefCache, parseBrief, seriesKey, seriesOf } from '../meetingBrief.js';
+import { briefPrompt, createBriefCache, parseBrief, relatedOf, seriesKey, seriesOf } from '../meetingBrief.js';
 
 const m = (title, date, kind = 'meeting') => ({ title, date, kind });
 
@@ -26,5 +26,28 @@ describe('meeting brief', () => {
     c.set(seriesKey('Sync!'), 'n1', { prep: 'p', what: '', who: '', how: '' });
     expect(c.get('sync', 'n1')?.prep).toBe('p');
     expect(c.get('sync', 'n2')).toBeNull();
+  });
+});
+
+describe('relatedOf', () => {
+  const day = (d) => `2026-${d}T10:00:00Z`;
+  const meetings = [
+    { file: 'a', title: 'Acme weekly', date: day('10-01'), people: ['Ana Ruiz', 'Ben Cho'] },
+    { file: 'b', title: 'Acme pricing review', date: day('09-20'), people: ['ana ruiz', 'Ben Cho', 'Cy Diaz'] },
+    { file: 'c', title: 'Globex intro', date: day('09-25'), people: ['Ana Ruiz'] },
+    { file: 'd', title: 'Budget sync', date: day('09-28'), people: ['Ben Cho', 'Ana Ruiz'] },
+    { file: 'e', title: 'Hand note', date: day('09-29'), people: ['Ana Ruiz', 'Ben Cho'], kind: 'note' },
+  ];
+  it('lists other meetings that share two of the series people, newest first among equals, without the series', () => {
+    const r = relatedOf(meetings, { title: 'Acme weekly', people: ['Ana Ruiz', 'Ben Cho'], before: Date.parse(day('11-01')) });
+    expect(r.map((x) => x.file)).toEqual(['d', 'b']);
+    expect(r[1].shared).toEqual(['Ana Ruiz', 'Ben Cho']);
+  });
+  it('needs one shared person when the series has one', () => {
+    const r = relatedOf(meetings, { title: 'Acme weekly', people: ['Ana Ruiz'], before: Date.parse(day('11-01')) });
+    expect(r.map((x) => x.file)).toEqual(['d', 'c', 'b']);
+  });
+  it('returns nothing without people', () => {
+    expect(relatedOf(meetings, { title: 'Acme weekly', people: [] })).toEqual([]);
   });
 });

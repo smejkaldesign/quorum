@@ -11,6 +11,7 @@ import { TypedTitle, useStuck } from './StickyBar';
 import { splitChoices } from './MeetingNote';
 import { ChatExit, ChatList, useChats } from './ChatStack';
 import { Composer } from './Composer';
+import { AgentActivity, AgentRun } from './AgentActivity';
 
 type Followup = { q: string; a: string | null };
 
@@ -48,6 +49,9 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
   const asking = cs.chats.some((c) => c.turns.some((t) => t.pending));
   const [draftQ, setDraftQ] = useState('');
   const [saved, setSaved] = useState<{ file: string; rel: string; app: string } | null>(null);
+  const [runSince, setRunSince] = useState<number | null>(null);
+  // naming an untitled recording moves its file; the run card and the activity follow it
+  useEffect(() => window.quorum.onNoteRenamed((d) => setSaved((s) => (s && s.file === d.from ? { ...s, file: d.to } : s))), []);
   const [saving, setSaving] = useState(false);
   const [hot, setHot] = useState<number[]>([]);
   const end = useRef<HTMLDivElement>(null);
@@ -91,6 +95,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
         followups: cs.chats.flatMap((c) => c.turns.filter((t) => !t.pending && t.a).map(({ q, a }) => ({ q, a }))),
       });
       setSaved(r);
+      setRunSince(Date.now());
     } finally { setSaving(false); }
   }
 
@@ -147,6 +152,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
         </div>
       </header>
           <article className={`doc${streaming ? ' streaming' : ''}`}>
+            {saved && runSince && <AgentRun key={runSince} file={saved.file} since={runSince} onDetails={() => { setShowing('summary'); requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById('agent-activity')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))); }} onClose={() => setRunSince(null)} />}
             <h1>{ready || live || (!shown?.title && !streaming && !saved) || title ? (
               // the title is yours to type at any point; empty, it reads New note (shimmering while it records)
               <span className="title-wrap">
@@ -250,6 +256,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
             </>}
 
             {/* the chat on this note, below a divider once it starts: the same layout as every other note */}
+            {saved && showing === 'summary' && <AgentActivity file={saved.file} />}
             {!cs.active && <ChatList chats={cs.chats} onOpen={cs.setOpenId} me={{ name: asker?.name || me?.name || 'You', photo: asker?.photo ?? me?.photo ?? null }} />}
             {cs.active && (
               <section className="note-thread" aria-label="Questions about this note">

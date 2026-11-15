@@ -17,7 +17,7 @@ import { IconChevron, IconClose, IconCollapse, IconExpand, IconFolder, IconGraph
 type Creating = { kind: 'note' | 'folder'; parent: string } | null;
 type Preview = { rel: string; title: string; body: string; abs: string; app: string; views?: NoteViews; meta?: NoteMetaInfo | null } | null;
 
-export type KbCommand = { kind: 'switcher' | 'search' | 'palette'; n: number } | { kind: 'open'; rel: string; n: number } | null;
+export type KbCommand = { kind: 'switcher' | 'search' | 'palette'; n: number } | { kind: 'open' | 'graph'; rel: string; n: number } | null;
 
 export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain | null; command?: KbCommand; extraCommands?: PaletteItem[] }) {
   const [tree, setTree] = useState<TreeItem[]>([]);
@@ -94,7 +94,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     window.quorum.vaultLinkHealth().then((h) => { const left = leftAsIs(); setIssues(h.filter((m) => !left.has(m.target.toLowerCase())).length); });
   }, []);
   useEffect(() => { countIssues(); }, [graph, countIssues]);
-  useEffect(() => { if (command?.kind === 'open') openNote(command.rel); else if (command) { setScope({}); setPalette(command.kind); } }, [command]);
+  useEffect(() => { if (command?.kind === 'open') openNote(command.rel); else if (command?.kind === 'graph') { setPreview(null); setSelected(command.rel); setFocus(command.rel); } else if (command) { setScope({}); setPalette(command.kind); } }, [command]);
 
   const load = useCallback(async () => {
     const [t, g] = await Promise.all([window.quorum.vaultTree(), window.quorum.vaultGraph()]);
