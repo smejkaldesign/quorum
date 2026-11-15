@@ -7,6 +7,8 @@ import { dayLabel } from './upNextList';
 import { IconPeople } from './icons';
 import { TypedTitle, useStuck } from './StickyBar';
 import { JoinButton } from './UpNext';
+import { NoteEditor } from './editor/NoteEditor';
+import { IconLogs, IconNotes, IconRecord, IconSound } from './icons';
 import { Composer } from './Composer';
 import { Avatar } from './Speaker';
 import { splitChoices } from './MeetingNote';
@@ -115,6 +117,22 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
   const [writing, setWriting] = useState(false);
   const bar = useStuck();
   const top = useRef<HTMLDivElement>(null);
+  // three tabs: the prep from past meetings, your own notes ahead of time, and a transcript you can start from here
+  const [tab, setTab] = useState<'prep' | 'note' | 'transcript'>('prep');
+  // your notes for an upcoming meeting stay on this Mac until you save them or record; they come back when you return
+  const draftKey = `event-note:${e.id}`;
+  const [mine, setMine] = useState(() => { try { return localStorage.getItem(draftKey) ?? ''; } catch { return ''; } });
+  const [savedTo, setSavedTo] = useState<string | null>(null);
+  const keep = (v: string) => { setMine(v); try { if (v.trim()) localStorage.setItem(draftKey, v); else localStorage.removeItem(draftKey); } catch { /* ignore */ } };
+  async function saveMine() {
+    const r = await window.quorum.handNoteSave({ id: `event-${Date.now()}`, file: null, title: e.title, body: mine.trim(), hash: null, fresh: true });
+    if ('error' in r || 'conflict' in r) return;
+    window.quorum.handNoteDone(r.file);
+    setSavedTo(r.rel);
+    keep('');
+  }
+  // Record from here: the recording page opens with this meeting's title and your notes so far
+  const record = () => { window.dispatchEvent(new CustomEvent('quorum:record-into', { detail: { title: e.title, notes: mine } })); keep(''); };
   useLayoutEffect(() => { top.current?.scrollIntoView({ block: 'start' }); }, [e.id]);
   useEffect(() => {
     let live = true;
@@ -154,8 +172,31 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
           {(e.count ?? 0) > 0 && <span className="meta-pill"><IconPeople width={16} height={16} />{e.count} {e.count === 1 ? 'person' : 'people'}</span>}
           {e.calendar && <AppPill id={CALENDAR_APP[e.calendar].id} name={CALENDAR_APP[e.calendar].name} onOpen={e.item || e.link ? () => window.quorum.calendarOpen(e) : null} />}
           {platform && <AppPill id={platform.id} name={platform.short} onOpen={e.join ? () => window.quorum.openExternal(e.join!) : null} />}
+          <div className="view-toggle mp-tabs" role="group" aria-label="Show">
+            <button className={tab === 'prep' ? 'on' : ''} aria-pressed={tab === 'prep'} aria-label="Prep" data-tip="Prep" onClick={() => setTab('prep')}><IconLogs width={16} height={16} /></button>
+            <button className={tab === 'note' ? 'on' : ''} aria-pressed={tab === 'note'} aria-label="Note" data-tip="Note" onClick={() => setTab('note')}><IconNotes width={16} height={16} /></button>
+            <button className={tab === 'transcript' ? 'on' : ''} aria-pressed={tab === 'transcript'} aria-label="Transcript" data-tip="Transcript" onClick={() => setTab('transcript')}><IconSound width={16} height={16} /></button>
+          </div>
         </div>
 
+        {tab === 'note' && (
+          <section className="mp-mine">
+            <div className="my-notes-editor"><NoteEditor value={mine} onChange={keep} readOnly={false} placeholder="Type your notes for this meeting" autoFocus /></div>
+            <div className="mp-mine-actions">
+              {savedTo && !mine.trim() ? <span className="muted">Saved to {savedTo.replace(/^MyBrain\//, '')}</span> : null}
+              <button className="act-pill" onClick={record}><IconRecord width={15} height={15} /> Record</button>
+              <button className="act-pill primary" disabled={!mine.trim()} onClick={saveMine}>Save note</button>
+            </div>
+          </section>
+        )}
+        {tab === 'transcript' && (
+          <section className="mp-mine">
+            <p className="muted">Nothing recorded for this meeting yet. Record starts a transcript with this meeting's title, and your notes from the Note tab come with it.</p>
+            <div className="mp-mine-actions"><button className="act-pill primary" onClick={record}><IconRecord width={15} height={15} /> Record</button></div>
+          </section>
+        )}
+
+        {tab === 'prep' && <>
         <section className="mp-section mp-prep">
           <h2>Meeting prep notes</h2>
           {loading ? <Skeleton lines={4} />
@@ -187,6 +228,7 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
             </div>
           </section>
         )}
+        </>}
       </article>
       <MeetingChat key={e.id} event={e} />
     </div>

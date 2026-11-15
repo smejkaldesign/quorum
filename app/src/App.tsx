@@ -185,6 +185,7 @@ export function App() {
   // never over a live call or its review: the call UI stays in view
   // a new note opens the recording page, not recording yet; an existing note's file still opens the note view
   const [draftOpen, setDraftOpen] = useState(false);
+  const [draftTitle, setDraftTitle] = useState('');
   const openNoteView = (file: string | null = null, record: RecordChoice | null = null) => {
     if (phaseRef.current !== 'idle') return;
     if (!file && !record) { setNote(null); setView('main'); setDraftOpen(true); return; }
@@ -193,8 +194,18 @@ export function App() {
   useEffect(() => {
     const onEvent = (e: Event) => { const f = (e as CustomEvent<{ file?: string } | undefined>).detail?.file; openNoteView(typeof f === 'string' ? f : null); };
     window.addEventListener('quorum:new-note', onEvent);
+    // Record from a meeting's page: the recording page with that meeting's title and the notes typed for it
+    const onRecordInto = (e: Event) => {
+      const d = (e as CustomEvent<{ title?: string; notes?: string }>).detail ?? {};
+      if (phaseRef.current !== 'idle') return;
+      setDraftTitle(d.title ?? '');
+      if (d.notes?.trim()) myNotesRef.current.change(d.notes);
+      setNote(null); setView('main'); setDraftOpen(true);
+      startRecordRef.current();
+    };
+    window.addEventListener('quorum:record-into', onRecordInto);
     const off = window.quorum.onNewNote?.((d) => openNoteView(typeof d?.file === 'string' ? d.file : null));
-    return () => { window.removeEventListener('quorum:new-note', onEvent); off?.(); };
+    return () => { window.removeEventListener('quorum:new-note', onEvent); window.removeEventListener('quorum:record-into', onRecordInto); off?.(); };
   }, []);
   // Record from the header: 3, 2, 1 in its label, then a solo session (Settings > Notes holds Transcription and Screen).
   // liveOpen shows that session's note under the header (EndView, live while it records, then keep or discard); the
@@ -329,6 +340,10 @@ export function App() {
   const notesEnd = useRef<HTMLDivElement>(null);
   // your notes: typed on a call and in the review, read by the notes prompt as its outline
   const mine = usePrivateNotes();
+  const myNotesRef = useRef(mine);
+  myNotesRef.current = mine;
+  const startRecordRef = useRef(() => {});
+  startRecordRef.current = () => { startRecord(); };
   const mineRef = useRef<HTMLTextAreaElement>(null);
   // Cmd+Shift+N on a call opens Your notes and puts the cursor in it
   useEffect(() => {
@@ -573,13 +588,13 @@ export function App() {
     mine.reset();
     setDraftOpen(false);
   }
-  const closeReview = () => { setPhase('idle'); resetMeeting(); setLiveOpen(false); setTab('home'); };
+  const closeReview = () => { setDraftTitle(''); setPhase('idle'); resetMeeting(); setLiveOpen(false); setTab('home'); };
   const liveArea = (
     <div className="body wide flush live-body">
       <LazyView name="your notes" onClose={phase === 'review' ? closeReview : () => setLiveOpen(false)}>
-        <EndView embedded ready={drafting} onSaveDraft={saveDraft} onContinue={nt.manualListen ? () => { recordAgain(); } : undefined} onRecord={nt.manualListen ? () => { startRecord(); } : undefined} recordBusy={phase !== 'idle' || count !== null} live={inCall(phase)} paused={phase === 'paused'} who={ask} onAnswer={(a) => { setAsk(null); window.quorum.sessionSummarize(a ?? {}); }} notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing}
+        <EndView key={draftTitle || 'note'} initialTitle={draftTitle} embedded ready={drafting} onSaveDraft={saveDraft} onContinue={nt.manualListen ? () => { recordAgain(); } : undefined} onRecord={nt.manualListen ? () => { startRecord(); } : undefined} recordBusy={phase !== 'idle' || count !== null} live={inCall(phase)} paused={phase === 'paused'} who={ask} onAnswer={(a) => { setAsk(null); window.quorum.sessionSummarize(a ?? {}); }} notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing}
           transcript={lines.map((l) => ({ ...l, who: who(l) }))} partial={liveWords ? [partial.me, partial.them].filter(Boolean).join(' ') : ''} participants={participants} onSpeaker={setSpeaker} me={nt.meetingCapture ? me : undefined} asker={me}
-          privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={phase === 'review' ? closeReview : drafting ? () => { mine.reset(); setDraftOpen(false); } : () => setLiveOpen(false)} />
+          privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={phase === 'review' ? closeReview : drafting ? () => { mine.reset(); setDraftTitle(''); setDraftOpen(false); } : () => setLiveOpen(false)} />
       </LazyView>
     </div>
   );
