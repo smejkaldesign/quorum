@@ -2229,3 +2229,22 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .views-wrap .meta-pill
 .text-btn { height: 32px; padding: 0 10px; border-radius: 999px; color: var(--muted); font-size: 14px; font-weight: 500; }
 .text-btn:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
 .reader .my-notes-editor .note-rich, .reader .my-notes-editor .note-rich p, .reader .my-notes-editor .note-rich li { font-size: 17px; line-height: 1.6; color: #d4d4d8; }
+/* the chats on a page: a count over the collapsed list */
+.chat-list-head { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--muted); }
+/* an empty note takes half the room a filled one starts with */
+.reader .reader-edit { min-height: 100px; }
+.reader .my-notes-editor .ProseMirror { min-height: 100px; }
+.no-transcript { margin: 8px 0 0; color: var(--muted); font-size: 15px; }
+/* a chat row: who asked, then the question; View (or Exit chat once open) on the right of the first line */
+.chat-list .chat-row { display: flex; flex-direction: column; gap: 10px; padding: 0; margin: 0; width: auto; border-radius: 0; background: none; }
+.chat-list .chat-row:hover { background: none; }
+.chat-list .chat-row + .chat-row { margin-top: 24px; }
+.chat-row-q { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-btn { margin-left: auto; }
+.note-thread { position: relative; }
+.note-thread > .chat-exit { position: absolute; right: 0; top: 32px; transform: translateY(calc(11px - 50%)); margin: 0; color: var(--text); font-size: 13px; }
+.note-thread > .chat-exit:hover { color: var(--text); }
+/* Join matches Show all beside it: 30px on Home, 26px in the strip */
+.up-join { height: 30px; }
+.up-strip .up-join { height: 26px; }
+.meeting-page .reader-actions .up-join { height: 32px; }

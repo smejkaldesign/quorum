@@ -1806,6 +1806,7 @@ ipcMain.handle('note-ask', async (_e, file, question, history, files, chatId) =>
   const existing = chatId === 'new' ? null : chatId ? mine.find((c) => c.id === chatId) : mine.sort((a, b) => String(b.updatedAt ?? b.createdAt).localeCompare(String(a.updatedAt ?? a.createdAt)))[0];
   const asked = String(question).startsWith(DEBRIEF) ? 'Debrief this meeting' : String(question);
   const saved = addTurn(existing ?? newConvo(asked, { meetingFile: abs, meetingTitle: fm.title || path.basename(abs, '.md') }), asked, answer || 'Proposed an edit to the note.', [], []);
+  if (answer) nameUntitled(abs, { q: saved.turns[0].q, a: saved.turns[0].a }).catch((e) => log('note title', e?.message));
   return { chatId: saved.id, text: r.text.replace(/<updated-note>[\s\S]*?<\/updated-note>/, '').trim() || (m ? 'Here is the updated note. Review it and apply it if it looks right.' : ''), proposal: m ? m[1] : null };
 });
 
@@ -1833,7 +1834,7 @@ ipcMain.handle('read-note', (_e, file) => {
   const fm = readFrontmatter(text);
   // the reader shows the notes, not the Granola wrapper: drop the repeated title, an empty Private notes, and the Summary heading
   const body = text.replace(/^---\n[\s\S]*?\n---\n/, '').trim()
-    .replace(/^#\s+.+\n/, '')
+    .replace(/^#\s+.+(\n|$)/, '')
     .replace(/^##\s+Private notes\s*\n+None\s*\n/m, '')
     .replace(/^##\s+Summary\s*\n/m, '')
     .trim();
@@ -2859,11 +2860,14 @@ ipcMain.handle('hand-note-done', (_e, file) => {
 
 // a note saved without a name gets one: a short title and a one-line summary from its text, written into the note
 // and its file name. One model call per note, only while it is still untitled; without a model it stays as it is
-async function nameUntitled(abs) {
+// A note started from a question carries the question as its title until its first answer; then it is named the same
+// way, from the question and the answer
+async function nameUntitled(abs, chat = null) {
   const raw = store.notes.read(abs);
   const { title, body } = splitNote(raw);
-  if (!isUntitled(title) || modelSource() === 'none' || suggester.isExcluded(raw)) return;
-  const text = suggester.redactLines(body).trim();
+  const asked = chat && String(title ?? '').trim().toLowerCase() === String(chat.q).slice(0, 80).trim().toLowerCase();
+  if (!(isUntitled(title) || asked) || modelSource() === 'none' || suggester.isExcluded(raw)) return;
+  const text = [suggester.redactLines(body.replace(/^\s*#\s+.+(\n|$)/, '')).trim(), chat ? `Question: ${chat.q}\nAnswer: ${String(chat.a).slice(0, 2000)}` : ''].filter(Boolean).join('\n\n');
   if (text.replace(/[^a-z0-9]/gi, '').length < 3) return;
   const reply = await runClaude(`<note>\n${text.slice(0, 6000)}\n</note>`, NAME_SYSTEM, settings.model);
   const named = parseName(reply);

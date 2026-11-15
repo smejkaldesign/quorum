@@ -248,7 +248,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
             </>}
 
             {/* the chat on this note, below a divider once it starts: the same layout as every other note */}
-            {!cs.active && <ChatList chats={cs.chats} onOpen={cs.setOpenId} />}
+            {!cs.active && <ChatList chats={cs.chats} onOpen={cs.setOpenId} me={{ name: asker?.name || me?.name || 'You', photo: asker?.photo ?? me?.photo ?? null }} />}
             {cs.active && (
               <section className="note-thread" aria-label="Questions about this note">
                 <ChatExit onExit={cs.exit} />

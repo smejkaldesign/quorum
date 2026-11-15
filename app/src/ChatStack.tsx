@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { IconBack } from './icons';
+import { useEffect, useRef, useState } from 'react';
+import { Avatar } from './Speaker';
 
 // The chats on one note, meeting or recording. A page can hold several: each shows collapsed to its first question
 // on one line, with its response count on hover; one opens at a time, and Exit chat goes back to the list.
@@ -38,24 +38,40 @@ export function useChats<T extends Turnish>() {
   return { chats, setChats, openId, setOpenId, active, target, update, settle, newChat, exit: () => setOpenId(null) };
 }
 
-// the collapsed chats: the first question on one line; the response count shows on hover, and a click opens it
-export function ChatList<T extends Turnish>({ chats, onOpen }: { chats: ChatEntry<T>[]; onOpen: (id: string) => void }) {
+type Me = { name: string; photo: string | null };
+// the collapsed chats: who asked and the first question under it, with View on the right; View opens that chat alone
+export function ChatList<T extends Turnish>({ chats, onOpen, me }: { chats: ChatEntry<T>[]; onOpen: (id: string) => void; me: Me }) {
   if (!chats.length) return null;
   return (
     <section className="note-thread chat-list" aria-label="Chats">
-      {chats.map((c) => {
-        const n = c.turns.filter((t) => !t.pending).length;
-        return (
-          <button key={c.id} className="chat-row" onClick={() => onOpen(c.id)}>
-            <span className="chat-row-q">{c.turns[0]?.q ?? 'New chat'}</span>
-            <span className="chat-row-n">{n} {n === 1 ? 'response' : 'responses'}</span>
-          </button>
-        );
-      })}
+      <h3 className="chat-list-head">{chats.length} {chats.length === 1 ? 'chat' : 'chats'}</h3>
+      {chats.map((c) => (
+        <div key={c.id} className="chat-row">
+          <div className="nt-who"><Avatar name={me.name} photo={me.photo} size={22} /><strong>{me.name}</strong>
+            <button className="pill small-pill chat-btn" onClick={() => onOpen(c.id)}>View</button></div>
+          <p className="nt-q chat-row-q">{c.turns[0]?.q ?? 'New chat'}</p>
+        </div>
+      ))}
     </section>
   );
 }
 
+// an open chat's Exit chat sits where its View button was, on the first line of the chat
 export function ChatExit({ onExit }: { onExit: () => void }) {
-  return <button className="chat-exit" onClick={onExit}><IconBack width={14} height={14} /> Exit chat</button>;
+  return <button className="pill small-pill chat-btn chat-exit" onClick={onExit}>Exit chat</button>;
+}
+
+// Quick asks show only while the person is in the chat input: true while focus is in a composer or on the asks
+// themselves, so a click on an ask still lands
+export function useComposerFocus() {
+  const inside = (el: EventTarget | null) => el instanceof Element && !!el.closest('.composer, .skill-pills');
+  const [on, setOn] = useState(() => inside(document.activeElement));
+  useEffect(() => {
+    const gain = (e: FocusEvent) => setOn(inside(e.target));
+    const lose = (e: FocusEvent) => { if (!inside(e.relatedTarget)) setOn(false); };
+    document.addEventListener('focusin', gain);
+    document.addEventListener('focusout', lose);
+    return () => { document.removeEventListener('focusin', gain); document.removeEventListener('focusout', lose); };
+  }, []);
+  return on;
 }

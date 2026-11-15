@@ -1,3 +1,4 @@
+import { useComposerFocus } from './ChatStack';
 import { BackButton } from './BackButton';
 import { Component, Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { AccountState, Brain, HelperEvent, MeetingMeta, Notes, NotesDraft, Settings, Source, SpeakersEvent, SummaryEvent, UpdateState, WhoAsk } from './quorum';
@@ -305,6 +306,7 @@ export function App() {
     return () => window.removeEventListener('quorum-open-settings', open);
   }, []);
   const composer = useRef<HTMLTextAreaElement>(null);
+  const inChat = useComposerFocus();
   const [lines, setLines] = useState<Line[]>([]);
   const [partial, setPartial] = useState<{ me: string; them: string }>({ me: '', them: '' });
   const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -762,7 +764,7 @@ export function App() {
             </section>}
             <div ref={chatEnd} style={{ flex: 'none', minHeight: spacer }} />
           </div>
-          {phase === 'idle' && msgs.length === 0 && brain && (
+          {phase === 'idle' && msgs.length === 0 && brain && inChat && (
             <div className="skill-pills chat-skills" role="group" aria-label="Quick asks">
               {CHAT_ASKS.map((q) => <button key={q} className="skill-pill" onClick={() => send(q)}>{q}</button>)}
             </div>

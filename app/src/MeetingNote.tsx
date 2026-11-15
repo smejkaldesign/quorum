@@ -13,7 +13,7 @@ import { Composer } from './Composer';
 import { IconArrowDown, IconSound, IconChevron, IconFolder, IconGlobe, IconLock, IconLogs, IconMore, IconNotes, IconTrash } from './icons';
 import { Avatar } from './Speaker';
 import { NoteEditor, type NoteEditorHandle } from './editor/NoteEditor';
-import { ChatExit, ChatList, useChats } from './ChatStack';
+import { ChatExit, ChatList, useChats, useComposerFocus } from './ChatStack';
 import { useMemo } from 'react';
 import { soundLine } from './EndView';
 
@@ -214,6 +214,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
     const dock = scroller.current?.querySelector<HTMLElement>('.note-dock')?.offsetHeight ?? 0;
     box?.scrollBy({ top: box.clientHeight - dock, behavior: 'smooth' });
   };
+  const inChat = useComposerFocus();
   const slash = draft.startsWith('/') && !draft.includes(' ') ? SKILLS.filter((k) => `/${k.cmd}`.startsWith(draft.trim().toLowerCase())) : [];
   // a skill keeps the page at the bottom of the chat while its answer comes in
   const pinBottom = useRef(false);
@@ -313,7 +314,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
           <div className="view-toggle" role="group" aria-label="Show">
             {parts.summary && <button className={showing === 'summary' ? 'on' : ''} aria-pressed={showing === 'summary'} aria-label="Summary" data-tip="Summary" onClick={() => setShowing('summary')}><IconLogs width={16} height={16} /></button>}
             <button className={showing === 'note' ? 'on' : ''} aria-pressed={showing === 'note'} aria-label="Note" data-tip="Note" onClick={() => setShowing('note')}><IconNotes width={16} height={16} /></button>
-            {(!!note.transcript?.length || note.summarizable) && <button className={showing === 'transcript' ? 'on' : ''} aria-pressed={showing === 'transcript'} aria-label="Transcript" data-tip="Transcript" onClick={() => setShowing('transcript')}><IconSound width={16} height={16} /></button>}
+            {<button className={showing === 'transcript' ? 'on' : ''} aria-pressed={showing === 'transcript'} aria-label="Transcript" data-tip="Transcript" onClick={() => setShowing('transcript')}><IconSound width={16} height={16} /></button>}
           </div>
         </NoteMeta>
         {share?.ask && <SourceAsk source={share.ask} data={sources} onDone={() => { loadSources(); setShareRead((n) => n + 1); }} />}
@@ -326,7 +327,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
               <button className="act-pill primary" disabled={summing} onClick={summarize}>Summarize transcript</button>
             </div>
           )}
-          {note.transcript?.length ? <SavedTranscript turns={note.transcript} /> : null}
+          {note.transcript?.length ? <SavedTranscript turns={note.transcript} /> : !note.summarizable && <p className="no-transcript">No transcript yet. Start recording now to create one.</p>}
         </>}
         {showing !== 'transcript' && (
           // Note and Summary edit in place; a note with withheld lines stays read-only
@@ -337,7 +338,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
         )}
       </article>
 
-      {!cs.active && <ChatList chats={cs.chats} onOpen={cs.setOpenId} />}
+      {!cs.active && <ChatList chats={cs.chats} onOpen={cs.setOpenId} me={me} />}
       {cs.active && <section className="note-thread" aria-label="Questions about this note">
           <ChatExit onExit={cs.exit} />
           {turns.map((t, i) => {
@@ -376,7 +377,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
         <div className="slash-menu" role="listbox" aria-label="Commands">
           {slash.map((k) => <button key={k.cmd} role="option" aria-selected={false} disabled={busy} onClick={() => runSkill(k)}><strong>/{k.cmd}</strong><span>{k.label}</span></button>)}
         </div>
-      ) : !cs.active && atBottom && (
+      ) : !cs.active && !cs.chats.length && atBottom && inChat && (
         <div className="skill-pills" role="group" aria-label="Quick asks">
           {SKILLS.map((k) => <button key={k.label} className="skill-pill" disabled={busy} onClick={() => runSkill(k)}>{k.label}</button>)}
         </div>

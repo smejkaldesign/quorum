@@ -12,7 +12,7 @@ import { IconLogs, IconNotes, IconRecord, IconSound } from './icons';
 import { Composer } from './Composer';
 import { Avatar } from './Speaker';
 import { splitChoices } from './MeetingNote';
-import { ChatExit, ChatList, useChats } from './ChatStack';
+import { ChatExit, ChatList, useChats, useComposerFocus } from './ChatStack';
 import markProd from '../assets/quorum-mark.png';
 
 // one click each, above the chat input before the first question
@@ -55,9 +55,10 @@ function MeetingChat({ event }: { event: CalendarEvent }) {
     cs.update(to.id, (t) => t.map((x, i) => (i === t.length - 1 ? { q: x.q, a } : x)));
     cs.settle(to.id, saved);
   }
+  const inChat = useComposerFocus();
   return (
     <>
-      {!cs.active && <ChatList chats={cs.chats} onOpen={cs.setOpenId} />}
+      {!cs.active && <ChatList chats={cs.chats} onOpen={cs.setOpenId} me={me} />}
       {cs.active && (
         <section className="note-thread" aria-label="Questions about this meeting">
           <ChatExit onExit={cs.exit} />
@@ -78,7 +79,7 @@ function MeetingChat({ event }: { event: CalendarEvent }) {
         </section>
       )}
       <div className="note-dock">
-        {!cs.active && (
+        {!cs.active && !cs.chats.length && inChat && (
           <div className="skill-pills" role="group" aria-label="Quick asks">
             {PREP_ASKS.map((q) => <button key={q} className="skill-pill" disabled={busy} onClick={() => ask(q)}>{q}</button>)}
           </div>
