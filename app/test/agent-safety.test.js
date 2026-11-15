@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { agentArgs, safetySettings } from '../agent.js';
@@ -16,19 +17,29 @@ describe('safetySettings', () => {
     });
     const guard = s.hooks.PreToolUse[0].hooks[0].command;
     expect(guard).toContain('read-guard.py');
-    expect(guard).toContain('--deny "02-personal" --deny "clients/acme"');
-    expect(guard).toContain('--frontmatter-key "confidential" --frontmatter-key "legal_hold"');
+    expect(guard).toContain("--deny '02-personal' --deny 'clients/acme'");
+    expect(guard).toContain("--frontmatter-key 'confidential' --frontmatter-key 'legal_hold'");
     expect(guard).toContain('--log-denied');
     expect(guard).not.toContain('--no-secrets');
     expect(s.hooks.PreToolUse).toHaveLength(2);
-    expect(s.hooks.PreToolUse[1].hooks[0].command).toBe(`python3 "${path.join(root, '.claude/hooks/opted-out-guard.py')}"`);
+    expect(s.hooks.PreToolUse[1].hooks[0].command).toBe(`python3 '${path.join(root, '.claude/hooks/opted-out-guard.py')}'`);
     expect(s.hooks.PostToolUse).toHaveLength(1);
-    expect(s.hooks.PostToolUse[0].hooks[0].command).toBe(`zsh "${path.join(root, '.claude/hooks/tripwire.sh')}"`);
+    expect(s.hooks.PostToolUse[0].hooks[0].command).toBe(`zsh '${path.join(root, '.claude/hooks/tripwire.sh')}'`);
+  });
+  it('keeps a folder name with shell syntax as plain text when the shell runs the hook', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'agent-safety-'));
+    const marker = path.join(root, 'ran');
+    const hostile = `private$(touch ${marker})\`touch ${marker}\`'x"y`;
+    const cmd = safetySettings(root, { denyDirs: [hostile] }).hooks.PreToolUse[0].hooks[0].command;
+    // the same command line with printf in place of the guard: the shell prints each argument as it receives it
+    const out = execSync(cmd.replace(/^python3 '[^']*'/, "printf '%s\\n'"), { shell: '/bin/sh' }).toString();
+    expect(out.split('\n')).toContain(hostile);
+    expect(existsSync(marker)).toBe(false);
   });
   it('turns the secret rule off or extends it when the rules say so, and runs with nothing but the built-in guard by default', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'agent-safety-'));
     expect(safetySettings(root, { secretsOff: true }).hooks.PreToolUse[0].hooks[0].command).toContain('--no-secrets');
-    expect(safetySettings(root, { secretPattern: String.raw`\.sqlite$` }).hooks.PreToolUse[0].hooks[0].command).toContain(String.raw`--secret-pattern "\.sqlite$"`);
+    expect(safetySettings(root, { secretPattern: String.raw`\.sqlite$` }).hooks.PreToolUse[0].hooks[0].command).toContain(String.raw`--secret-pattern '\.sqlite$'`);
     const plain = safetySettings(root);
     expect(plain.hooks.PreToolUse).toHaveLength(1);
     expect(plain.hooks.PostToolUse).toHaveLength(0);
