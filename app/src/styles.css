@@ -2163,3 +2163,6 @@ button.np-outline:hover { background: rgba(255, 255, 255, 0.05); color: var(--te
 .chat-zero { gap: 4px; }
 .chat-zero .hist-empty { padding: 0; }
 .my-notes-section { margin-top: 8px; }
+/* a new note's title: typed in place; empty, New note in italics */
+.end .doc h1 .title-input { width: 100%; padding: 0; border: 0; background: none; outline: none; color: var(--text); font: inherit; letter-spacing: inherit; }
+.end .doc h1 .title-input::placeholder { color: var(--muted); font-style: italic; opacity: 1; }

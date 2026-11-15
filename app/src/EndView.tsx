@@ -18,8 +18,10 @@ export type Turn = SpeakerTurn & { who: string; voice?: number | 'mix' | 'sound'
 // live: the recording is running (or paused) and this is its page under the header; the transcript shows as it is
 // heard and the summary waits for Stop, which writes it into this same page. embedded drops the window chrome
 // ready: a new note before any recording; you can type in Your notes and Save, or press Record to transcribe into it
-export function EndView({ notes, draft, meta, summarizing, transcript, participants, onSpeaker, privateNotes, onPrivateNotes, flushPrivateNotes, onClose, me, live = false, paused = false, embedded = false, partial = '', who = null, onAnswer, ready = false, onSaveDraft }: { ready?: boolean; onSaveDraft?: () => Promise<void>; who?: WhoAsk | null; onAnswer?: (a: WhoAnswers | null) => void; live?: boolean; paused?: boolean; embedded?: boolean; partial?: string; me?: { name: string; photo: string | null }; notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; participants: string[]; onSpeaker: (id: number, name: string | null, similar: boolean) => Promise<void>; privateNotes: string; onPrivateNotes: (v: string) => void; flushPrivateNotes: () => void; onClose: () => void }) {
+export function EndView({ notes, draft, meta, summarizing, transcript, participants, onSpeaker, privateNotes, onPrivateNotes, flushPrivateNotes, onClose, me, live = false, paused = false, embedded = false, partial = '', who = null, onAnswer, ready = false, onSaveDraft }: { ready?: boolean; onSaveDraft?: (title: string) => Promise<void>; who?: WhoAsk | null; onAnswer?: (a: WhoAnswers | null) => void; live?: boolean; paused?: boolean; embedded?: boolean; partial?: string; me?: { name: string; photo: string | null }; notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; participants: string[]; onSpeaker: (id: number, name: string | null, similar: boolean) => Promise<void>; privateNotes: string; onPrivateNotes: (v: string) => void; flushPrivateNotes: () => void; onClose: () => void }) {
   const [showing, setShowing] = useState<'summary' | 'transcript'>(live ? 'transcript' : 'summary');
+  // a new note's title: empty reads New note in italics, and a click puts the cursor in it
+  const [title, setTitle] = useState('');
   // Stop turns the page to the summary as it is written
   useEffect(() => { if (summarizing || who) setShowing('summary'); }, [summarizing, who]);
   const [dropped, setDropped] = useState<Record<number, boolean>>({});
@@ -87,7 +89,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
         {live || ready ? <button className="pill ghost" onClick={onClose}>Back</button>
           : <button className="pill ghost" onClick={async () => { await window.quorum.discard(); onClose(); }}>{saved ? 'Close' : 'Discard'}</button>}
         <div className="end-actions">
-          {ready ? <button className="pill primary" disabled={!privateNotes.trim() || saving} onClick={async () => { setSaving(true); try { await onSaveDraft?.(); } finally { setSaving(false); } }}>{saving ? 'Saving…' : 'Save'}</button>
+          {ready ? <button className="pill primary" disabled={(!privateNotes.trim() && !title.trim()) || saving} onClick={async () => { setSaving(true); try { await onSaveDraft?.(title.trim()); } finally { setSaving(false); } }}>{saving ? 'Saving…' : 'Save'}</button>
           : live ? <span className="muted note-status" role="status">{paused ? 'Paused' : 'Recording'}</span> : <>
           {saved ? (
             <>
@@ -104,7 +106,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
       {(
         <div className="end-scroll">
           <article className={`doc${streaming ? ' streaming' : ''}`}>
-            <h1>{ready ? <span className="muted">New note</span> : live ? <span className="shimmer">New note</span> : shown?.title || (streaming ? <span className="shimmer">{meta?.title || 'Writing the title'}</span> : meta?.title || 'Untitled note')}</h1>
+            <h1>{ready ? <input className="title-input" value={title} placeholder="New note" aria-label="Title" onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (document.querySelector('.my-notes-editor .ProseMirror') as HTMLElement | null)?.focus(); } }} /> : live ? <span className="shimmer">New note</span> : shown?.title || (streaming ? <span className="shimmer">{meta?.title || 'Writing the title'}</span> : meta?.title || 'Untitled note')}</h1>
             <div className="meta-row">
               <span className="meta-pill"><IconCalendar width={16} height={16} />{when}{started ? ` · ${started.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}</span>
               {meta && meta.minutes > 0 && <span className="meta-pill"><IconClock width={16} height={16} />{meta.minutes} min</span>}
