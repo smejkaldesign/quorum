@@ -324,26 +324,26 @@ ul { margin: 0; padding: 0; list-style: none; }
    ends at the next section's rule. */
 .app-shot { --s: 1; padding: 0 0 160px; z-index: 1; }
 .app-shot .app-window { position: relative; z-index: 1; }
-/* The starfield from the Custom plans block sits behind the frame. It starts at the window's vertical midpoint
-   (half of 820px at scale --s, less the 80px rise) and ends at the section's bottom edge, on the next section's rule.
-   The mask takes it from nothing at the top to full strength at the bottom. */
+/* The starfield from the Custom plans block sits behind the frame. It covers the lower 90% of the window: it starts
+   a tenth of the way down it (82px of 820px at scale --s, less the 80px rise) and ends at the section's bottom edge, on the next section's rule.
+   The mask takes it from nothing at the top to 50% at the bottom, so a solid white star peaks at half strength. */
 .stars {
   position: absolute; left: 0; right: 0; bottom: 0;
-  top: calc(410px * var(--s) - 80px);
+  top: calc(82px * var(--s) - 80px);
   z-index: 0;
   overflow: hidden;
   pointer-events: none;
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 100%);
-  mask-image: linear-gradient(to bottom, transparent 0%, #000 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, rgba(0, 0, 0, 0.5) 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, rgba(0, 0, 0, 0.5) 100%);
 }
 .stars::before, .stars::after {
   content: "";
   position: absolute; inset: 0;
   will-change: background-position;
 }
-/* Every dot here is solid white, so the mask on .stars is the only thing that sets how bright a star is. These two
-   sets replace the dimmer ones shared with the Custom plans block; tile size and drift stay the same. Dot size is
-   the only variation: 0.7px, 1px and 1.4px radius. */
+/* These two sets replace the ones shared with the Custom plans block; tile size and drift stay the same. Each set
+   lists its solid white dots first (0.7px, 1px and 1.4px radius), then smaller dots at 30% to 60% white, so the
+   field has bright and faint stars at every height. The mask on .stars then fades all of them toward the top. */
 .stars::before {
   background-image:
     radial-gradient(circle at 12px 18px, #fff 0 1px, transparent 1.5px),
@@ -359,7 +359,20 @@ ul { margin: 0; padding: 0; list-style: none; }
     radial-gradient(circle at 176px 162px, #fff 0 1px, transparent 1.5px),
     radial-gradient(circle at 96px 148px, #fff 0 0.7px, transparent 1.2px),
     radial-gradient(circle at 56px 208px, #fff 0 0.7px, transparent 1.2px),
-    radial-gradient(circle at 208px 204px, #fff 0 0.7px, transparent 1.2px);
+    radial-gradient(circle at 208px 204px, #fff 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 22px 44px, rgba(255, 255, 255, 0.5) 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 70px 24px, rgba(255, 255, 255, 0.35) 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 104px 82px, rgba(255, 255, 255, 0.6) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 166px 66px, rgba(255, 255, 255, 0.4) 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 210px 140px, rgba(255, 255, 255, 0.3) 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 140px 176px, rgba(255, 255, 255, 0.5) 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 78px 188px, rgba(255, 255, 255, 0.35) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 14px 140px, rgba(255, 255, 255, 0.6) 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 48px 128px, rgba(255, 255, 255, 0.4) 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 120px 48px, rgba(255, 255, 255, 0.3) 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 186px 110px, rgba(255, 255, 255, 0.5) 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 160px 206px, rgba(255, 255, 255, 0.35) 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 100px 10px, rgba(255, 255, 255, 0.45) 0 0.7px, transparent 1.2px);
 }
 .stars::after {
   background-image:
@@ -372,8 +385,21 @@ ul { margin: 0; padding: 0; list-style: none; }
     radial-gradient(circle at 146px 96px, #fff 0 1px, transparent 1.5px),
     radial-gradient(circle at 74px 138px, #fff 0 0.7px, transparent 1.2px),
     radial-gradient(circle at 18px 128px, #fff 0 0.7px, transparent 1.2px),
-    radial-gradient(circle at 150px 142px, #fff 0 0.7px, transparent 1.2px);
+    radial-gradient(circle at 150px 142px, #fff 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 8px 12px, rgba(255, 255, 255, 0.4) 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 52px 48px, rgba(255, 255, 255, 0.55) 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 114px 54px, rgba(255, 255, 255, 0.3) 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 140px 60px, rgba(255, 255, 255, 0.45) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 40px 150px, rgba(255, 255, 255, 0.35) 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 84px 104px, rgba(255, 255, 255, 0.6) 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 126px 118px, rgba(255, 255, 255, 0.3) 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 66px 16px, rgba(255, 255, 255, 0.5) 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 100px 24px, rgba(255, 255, 255, 0.35) 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 24px 104px, rgba(255, 255, 255, 0.45) 0 0.7px, transparent 1.2px);
 }
+/* stars.js draws the same field on a canvas, where the cursor can pull the stars, and turns these two layers off */
+.stars-live::before, .stars-live::after { content: none; }
+.stars canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .stars .shoot { background: linear-gradient(90deg, transparent, #fff); }
 /* the streaks start in the lower two thirds, where the mask lets them show */
 .stars .shoot:nth-child(1) { top: 38%; left: 8%; }
@@ -724,6 +750,8 @@ ul { margin: 0; padding: 0; list-style: none; }
   .nav { gap: 16px; font-size: 14px; }
   .nav a:first-child { display: none; }
   .capture { flex-direction: column; }
+  /* stacked, flex: 1 would size the input along the column and override its 46px height */
+  .capture input { flex: none; }
   .actions .btn { width: 100%; }
 }
 
@@ -742,7 +770,6 @@ ul { margin: 0; padding: 0; list-style: none; }
 /* the beta signup in the hero: a label, the capture centered, and the download link for people who have a code */
 .cta-label { margin: 40px 0 10px; font-size: 15px; font-weight: 500; color: var(--text); }
 .capture-hero { max-width: 460px; margin: 0 auto; }
-.capture-hero input { flex: 1; }
 .cta-note { margin: 12px auto 0; max-width: 460px; }
 .cta-links { margin: 18px 0 0; font-size: 14px; color: var(--muted); }
 .cta-links a { color: var(--text-soft); text-decoration: underline; text-underline-offset: 3px; }
