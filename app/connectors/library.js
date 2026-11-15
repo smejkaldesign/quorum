@@ -20,6 +20,22 @@ export const CATEGORIES = [
   { id: 'ai', name: 'AI and automation', blurb: 'Give your AI tools your meeting notes, and send notes anywhere with automations.' },
 ];
 
+// The areas Settings › Connectors groups connectors into, in order: the page lists the ones a person connected under
+// these headings, and the library (Add connector) lists every connector the same way
+export const AREAS = [
+  { id: 'meeting-notes', name: 'Meeting notes', blurb: 'Where your meetings are recorded and summarized.' },
+  { id: 'calendar', name: 'Calendar', blurb: 'Upcoming meetings, with the right title and people on every note.' },
+  { id: 'files', name: 'Files', blurb: 'Documents and repositories, for your memory and knowledge bases.' },
+  { id: 'work', name: 'Work', blurb: 'Where your team talks, tracks work and keeps customers.' },
+  { id: 'ai', name: 'AI', blurb: 'AI tools that read your notes through Quorum.' },
+];
+const AREA_OF_CATEGORY = { 'meeting-notes': 'meeting-notes', meetings: 'meeting-notes', calendar: 'calendar', docs: 'files', communication: 'work', crm: 'work', tasks: 'work', ai: 'ai' };
+// GitHub sits with files: Quorum reads repositories into knowledge bases
+const AREA_OVERRIDE = { github: 'files' };
+export const areaOf = (x) => AREA_OVERRIDE[x.id] ?? AREA_OF_CATEGORY[x.category] ?? 'work';
+// the area a library category belongs to, for links that name a category (openConnectors({ library }))
+export const areaOfCategory = (cat) => AREA_OF_CATEGORY[cat] ?? (AREAS.some((a) => a.id === cat) ? cat : null);
+
 const c = (id, name, category, domain, description, status = 'soon', kind = 'oauth', extra = {}) => ({ id, name, category, domain, description, status, kind, ...extra });
 
 export const CONNECTORS = [

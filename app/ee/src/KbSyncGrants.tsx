@@ -33,10 +33,11 @@ export function KbSyncGrants() {
     load();
   };
 
-  if (!grants?.length && !error) return null;
+  // nothing to show without a relay-held sign-in; a read error alone (signed out, no Cloud) shows nothing either
+  if (!grants?.length) return null;
   return (
     <div className="conn-group">
-      <h4>Synced folders</h4>
+      <h4>Sign-in for synced knowledge base folders</h4>
       <div className="set-card conn-card">
         {(grants ?? []).map((g) => (
           <div key={g.provider} className="conn-row">
