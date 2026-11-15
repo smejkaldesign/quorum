@@ -33,7 +33,7 @@ export function FolderApp({ rel }: { rel: string }) {
         const label = app === 'quorum' ? 'Quorum' : app === 'quorum-dev' ? 'Quorum Dev' : sourceApp(app).name;
         return (
           <span key={app} className="folder-app" data-tip={`Notes from ${label}`} aria-label={`Notes from ${label}`}>
-            {app === 'quorum' || app === 'quorum-dev' ? <img className="app-logo" src={app === 'quorum' ? markProd : markDev} alt="" /> : <AppLogo {...sourceApp(app)} />}
+            {app === 'quorum' || app === 'quorum-dev' ? <img className="app-logo own" src={app === 'quorum' ? markProd : markDev} alt="" /> : <AppLogo {...sourceApp(app)} />}
           </span>
         );
       })}

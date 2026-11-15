@@ -1968,3 +1968,5 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .meta-pill .app-logo { width: 18px; height: 18px; border-radius: 5px; }
 /* the header's Record group sits in one row with its divider */
 .bar .status-wrap { display: flex; align-items: center; gap: 2px; }
+/* Quorum's mark fills its square while app icons carry their own margin, so it draws smaller to look the same size */
+.kb-item .folder-app .app-logo.own { width: 13px; height: 13px; margin: 1.5px; border-radius: 50%; }
