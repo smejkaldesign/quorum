@@ -2026,3 +2026,20 @@ button.meta-pill.meta-icon:hover { background: rgba(255, 255, 255, 0.06); }
 .turn-sound { color: var(--muted); font-style: italic; margin: 6px 0 14px; }
 .turn-sound::before { content: '['; } .turn-sound::after { content: ']'; }
 .turn-group p.unclear { color: var(--muted); }
+/* the note's action buttons (Edit, Cancel, Save updates, Private) are one control: same size, colors and hover */
+.act-pill, .keep-private { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 999px; background: var(--menu-bg); border: 1px solid var(--line-2); color: var(--text); font-size: 14px; font-weight: 500; transition: background 160ms ease, border-color 160ms ease; }
+.act-pill.vis-pill { padding: 0 10px 0 12px; }
+.act-pill:hover:not(:disabled) { background: var(--card); border-color: rgba(255, 255, 255, 0.24); }
+.act-pill:disabled { opacity: 0.45; cursor: default; }
+.reader-edit { min-height: 200px; }
+/* /commands typed in the note chat */
+.slash-menu { display: flex; flex-direction: column; gap: 2px; margin: 0 0 8px; padding: 6px; border-radius: 14px; background: var(--menu-bg); border: 1px solid var(--line-2); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4); }
+.slash-menu button { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 8px; text-align: left; color: var(--text); font-size: 14px; }
+.slash-menu button:hover, .slash-menu button:first-child { background: rgba(255, 255, 255, 0.06); }
+.slash-menu span { color: var(--muted); }
+/* the reader is as tall as its content, so its pinned Back row stays pinned to the bottom of a long note */
+.body > .history.reader { flex-shrink: 0; }
+/* Recording shows for a second after the countdown, then fades; hovering shows Pause and Stop in its place */
+.status.listen.announce .listen-hint { max-width: 160px; opacity: 1; margin-right: 8px; color: var(--text); transition-delay: 0s; }
+.status.listen.listening .listen-hint { transition: max-width 0.3s ease 0.15s, opacity 0.4s ease, margin 0.3s ease 0.15s; }
+.bar .status-wrap:hover .status.listen.announce.listening .listen-hint { max-width: 0; opacity: 0; margin-right: 0; }

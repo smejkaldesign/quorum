@@ -114,7 +114,7 @@ function UpdateItem({ state }: { state: UpdateState | null }) {
 
 // the header menu: the Agent OS and team vault, Settings, Hide (the whole app, as Cmd+H), and Quit last. Arrow keys, Home and End move between
 // items, Escape closes it and puts focus back on the menu button
-function AppMenu({ brain, active, onMemory, onSettings, next }: { brain: Brain | null; active: boolean; onMemory: () => void; onSettings: () => void; next: React.RefObject<HTMLButtonElement | null> }) {
+function AppMenu({ brain, me, active, onMemory, onSettings, next }: { brain: Brain | null; me: { name: string; photo: string | null }; active: boolean; onMemory: () => void; onSettings: () => void; next: React.RefObject<HTMLButtonElement | null> }) {
   const [open, setOpen] = useState(false);
   const shut = useCallback(() => setOpen(false), []);
   useExclusiveMenu('app', open, shut);
@@ -146,16 +146,16 @@ function AppMenu({ brain, active, onMemory, onSettings, next }: { brain: Brain |
         aria-haspopup="menu" aria-expanded={open}
         onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
         onKeyDown={(e) => { if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !open) { e.preventDefault(); setOpen(true); } }}>
-        <IconMenu width={19} height={19} />
+        <Avatar name={me.name || 'You'} photo={me.photo} size={24} />
       </button>
       {open && (
         <div ref={list} className="menu brain-menu" role="menu" aria-label="Quorum" onKeyDown={onKey} onClick={(e) => e.stopPropagation()}>
           <button role="menuitem" className="brain-item" onClick={run(onMemory)}>
             <IconFolder width={18} height={18} className={brain ? 'ok' : 'err'} />
-            <strong>{brain ? brain.name : 'No Agent OS'}</strong><em>{brain ? brain.root.replace(/^\/Users\/[^/]+/, '~') : 'Not connected'}</em>
+            <strong>{brain ? brain.name : 'No Agent OS'}</strong>
           </button>
           <button role="menuitem" className="brain-item" disabled>
-            <IconFolderOpen width={18} height={18} /><strong>Team vault</strong><em className="soon">Coming soon</em>
+            <IconFolderOpen width={18} height={18} /><strong>Team vault</strong>
           </button>
           <div className="menu-sep" role="separator" />
           <button role="menuitem" onClick={run(onSettings)}>Settings</button>
@@ -195,6 +195,8 @@ export function App() {
   // liveOpen shows that session's note under the header (EndView, live while it records, then keep or discard); the
   // rest of the app stays a click away and the green Record button comes back to it
   const [count, setCount] = useState<number | null>(null);
+  // after 3 2 1 the button reads Recording for a second, then the word fades and only the level ring stays
+  const [announce, setAnnounce] = useState(false);
   const [recordError, setRecordError] = useState<string | null>(null);
   const [liveOpen, setLiveOpen] = useState(false);
   // paused from the header keeps the call; STOP from the chat deletes it
@@ -493,13 +495,15 @@ export function App() {
     if (count !== null || phaseRef.current !== 'idle') return;
     setRecordError(null);
     for (const n of [3, 2, 1]) { setCount(n); await new Promise((r) => setTimeout(r, 1000)); }
+    setAnnounce(true);
     setCount(null);
     const r = await window.quorum.recordSession().catch((err) => ({ error: String(err) }));
-    if ('error' in r) { setRecordError(r.error); setTimeout(() => setRecordError(null), 5000); return; }
+    if ('error' in r) { setAnnounce(false); setRecordError(r.error); setTimeout(() => setRecordError(null), 5000); return; }
     setNote((n) => (n && !n.leave ? { ...n, leave: Date.now(), next: null } : n));
     setView('main');
     setLiveOpen(true);
   }
+  useEffect(() => { if (!announce || phase !== 'listening') return; const t = setTimeout(() => setAnnounce(false), 1000); return () => clearTimeout(t); }, [announce, phase]);
   // a finished recording opens on its keep-or-discard page; nothing recording closes the live view
   useEffect(() => { if (phase === 'review') setLiveOpen(true); if (phase === 'idle') setLiveOpen(false); }, [phase]);
   const showLive = view === 'main' && liveOpen && phase !== 'idle' && phase !== 'blocked';
@@ -507,7 +511,7 @@ export function App() {
   const go = (fn: () => void) => () => { setLiveOpen(false); closeNote(); fn(); };
   const status = {
     idle: { label: count !== null ? String(count) : recordError ?? 'Record', icon: <IconRecord width={17} height={17} /> },
-    starting: { label: 'Starting…', icon: <RecLevel live={false} /> },
+    starting: { label: announce ? 'Recording' : 'Starting…', icon: <RecLevel live={false} /> },
     listening: { label: 'Recording', icon: <RecLevel live /> },
     paused: held ? { label: 'Paused', icon: <RecLevel live={false} /> } : { label: 'Stopped', icon: <IconStop width={14} height={14} /> },
     review: { label: 'Ended', icon: <span className="dot" /> },
@@ -579,7 +583,7 @@ export function App() {
             {/* Record: one button from idle to recording, so the label that slid out on hover is the one that turns green.
                 With Screen on offer it opens the Record popover; otherwise it opens a new note that starts transcribing */}
             {(nt.manualListen || phase !== 'idle') && (
-            <button className={`status listen ${phase === 'blocked' ? 'off-call' : phase}${count !== null ? ' counting' : ''}${recordError ? ' rec-error' : ''}`}
+            <button className={`status listen ${phase === 'blocked' ? 'off-call' : phase}${count !== null ? ' counting' : ''}${announce ? ' announce' : ''}${recordError ? ' rec-error' : ''}`}
               onClick={phase === 'idle' ? () => { startRecord(); } : phase === 'blocked' ? undefined : () => { closeNote(); setView('main'); setLiveOpen(true); }}
               data-tip={phase === 'blocked' ? 'Someone on your never-listen list is in this call' : phase !== 'idle' ? 'Open the recording' : undefined} aria-label={status.label}>
               <span className="listen-hint" aria-live="polite">{status.label}</span>{status.icon}
@@ -587,7 +591,7 @@ export function App() {
             )}
             <span className="rec-sep" aria-hidden="true" />
           </div>
-          <AppMenu brain={brain} active={view === 'settings'} onMemory={() => openSettings('memory')} onSettings={() => openSettings('preferences')} next={closeRef} />
+          <AppMenu brain={brain} me={me} active={view === 'settings'} onMemory={() => openSettings('memory')} onSettings={() => openSettings('preferences')} next={closeRef} />
           <button ref={closeRef} className="icon-btn close-win" aria-label="Close window" data-tip="Close window. Quorum keeps running in the menu bar." data-tip-pos="left" onClick={() => window.quorum.hideWindow()}>
             <IconClose width={17} height={17} />
           </button>

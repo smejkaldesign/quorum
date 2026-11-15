@@ -1749,7 +1749,10 @@ ipcMain.handle('note-apply', (_e, file, newBody) => {
   const raw = store.notes.read(abs);
   if (suggester.isExcluded(raw)) throw new Error('This note has withheld lines, so edit it in the vault directly');
   const fm = raw.match(/^---\n[\s\S]*?\n---\n/)?.[0] ?? '';
-  store.notes.write(abs, `${fm}${String(newBody).replace(/\n*$/, '\n')}`);
+  // the reader edits the summary; a recorded note's transcript section stays as it was
+  const { transcript } = splitRecorded(raw.slice(fm.length).trim(), { recorded: /\nrecorded: true\n/.test(fm) });
+  const body = transcript ? withSummary(newBody, transcript) : String(newBody).replace(/\n*$/, '\n');
+  store.notes.write(abs, `${fm}${body}`);
   account.sync.pushNote(abs);
   return true;
 });
