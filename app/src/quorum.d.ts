@@ -251,7 +251,7 @@ export type ChatRow = { id: string; title: string; date: string; turns: number; 
 export type Visibility = 'private' | 'public';
 // who has read a note: people in Quorum, agents through the read guard or the quorum MCP server
 export type NoteViews = { total: number; human: number; agent: number; tokens: number; lastHumanAt: string | null; lastAgentAt: string | null; agents: { via: string; count: number }[] };
-export type NoteDoc = { file: string; rel: string; title: string; date?: string; people: string[]; body: string; app: string; url: string; source?: string | null; views?: NoteViews; visibility: Visibility; withheld: boolean; link: string; transcript?: { id: number; channel: 'me' | 'them'; who: string; text: string }[]; platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null; sourceUrl?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; event?: EventRef | null };
+export type NoteDoc = { file: string; rel: string; title: string; date?: string; people: string[]; body: string; app: string; url: string; source?: string | null; views?: NoteViews; visibility: Visibility; withheld: boolean; link: string; summarizable?: boolean; transcript?: { id: number; channel: 'me' | 'them'; who: string; text: string }[]; platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null; sourceUrl?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; event?: EventRef | null };
 export type SavedChat = { id: string; title: string; turns: { q: string; a: string; sources?: Source[]; steps?: string[] }[] };
 export type MissingLink = { target: string; sources: string[]; count: number; links?: number; lastAt?: number | null; candidates: { rel: string; title: string; name: string | null; exact: boolean }[] };
 export type Relocated = { rel: string; files: number; links: number };
@@ -372,6 +372,7 @@ declare global {
       readNote(file: string): Promise<NoteDoc | null>;
       newChat(): Promise<void>;
       loadChat(id: string): Promise<SavedChat | null>;
+      readChat(id: string): Promise<SavedChat | null>;
       vaultTree(): Promise<TreeItem[]>;
       vaultGraph(): Promise<import('./Graph').GraphData | null>;
       vaultClusterName(key: string, name: string): Promise<Record<string, string> | null>;
@@ -473,6 +474,7 @@ declare global {
       platformSync(id: string): Promise<Result>;
       onPlatformJob(cb: (job: SourceJob) => void): () => void;
       onSourceJob(cb: (job: SourceJob) => void): Unsub;
+      onNoteDelta(cb: (d: { text: string }) => void): Unsub;
       onHistoryChanged(cb: () => void): Unsub;
       claudeLogin(): Promise<void>;
       claudeStatus(): Promise<ClaudeStatus>;
@@ -491,6 +493,7 @@ declare global {
       meetingBrief(q: { title: string; generate?: boolean }): Promise<MeetingBrief>;
       recordSession(): Promise<{ ok: true } | { error: string }>;
       meetingFolderApps(): Promise<{ rel: string; app: string }[]>;
+      noteSummarize(file: string): Promise<{ ok: true } | { error: string }>;
       sessionSummarize(answers: { names?: Record<string, string>; people?: string[]; me?: string | null; lead?: string | null }): Promise<unknown>;
       guardrailsGet(opts?: { fresh?: boolean }): Promise<GuardrailsState>;
       guardrailsSet(id: string, patch: { enabled?: boolean; label?: string }): Promise<Result>;

@@ -54,6 +54,7 @@ import { createUpdater, feedFor } from './updater.js';
 import { createGuardrails } from './guardrails.js';
 import { createPlatformCache, eventRef, matchPlatforms } from './meetingPlatforms.js';
 import { calendarWindow, normalizeDays } from './calendarWindow.js';
+import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
 import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, seriesKey, seriesOf } from './meetingBrief.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -1726,6 +1727,8 @@ ipcMain.handle('note-visibility', (_e, file, value) => {
 });
 
 // ask Quorum about the open meeting note; a change request comes back as a proposal the user applies or not
+// a note chat question that starts a debrief (the reader's Debrief button)
+const DEBRIEF = '[debrief]';
 ipcMain.handle('note-ask', async (_e, file, question, history, files) => {
   const abs = meetingFile(file);
   const b = brain();
@@ -1734,21 +1737,28 @@ ipcMain.handle('note-ask', async (_e, file, question, history, files) => {
   const prompt = [
     `You're helping with one meeting note at ${path.relative(b.root, abs)}. Its current body is between <note> tags.`,
     'Answer questions about it, using the rest of the Agent OS when that helps.',
+    'Keep answers brief and clear: lead with the answer in one or two sentences, then at most four short bullets if they help. Leave out background the person did not ask for. Plain, literal language.',
+    'When a short reply from the person would move things forward, end with one last line "Choices: A | B | C" (two to four options, under six words each). Quorum shows them as buttons.',
+    ...(String(question).startsWith(DEBRIEF) ? [
+      'This is a debrief right after the meeting. Ask the person one short question at a time, three at most across the debrief, to learn what the meeting was for, who mattered in it, what was decided or left open, and which project or people it belongs to. Always end a question with a Choices line.',
+      'After the last answer, propose the note updated with what you learned (a clearer title, a one-line purpose, decisions, follow-ups, and links to the related people and projects) inside <updated-note></updated-note>.',
+    ] : []),
     'If the user asks you to change the note, also return the complete updated body inside <updated-note></updated-note>, changing only what they asked for. Never include lines that say [withheld: opted-out customer] in an update.',
     `<note>\n${body}\n</note>`,
-    `Question: ${String(question)}`,
+    `Question: ${String(question).replace(DEBRIEF, 'Start the debrief.')}`,
   ].join('\n\n');
   const attached = stagedOnly(files);
   const source = modelSource();
   // the note body is in the prompt, so a provider without tools can still answer about it and propose edits; only Claude Code can read the rest of the Agent OS or attachments
   const r = roleProvider('agent') === 'claude-code'
-    ? await watchAgent('Question about a meeting note', async () => runModel({ source, providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question: prompt, transcript: '', root: b.root, extra: await agentExtra(String(question), b.root, { kb: false }), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached, history: (history ?? []).slice(-4), onStep: (text) => toUI('agent-step', { text }) }).finally(() => unstage(attached)))
+    ? await watchAgent('Question about a meeting note', async () => runModel({ source, providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question: prompt, transcript: '', root: b.root, extra: await agentExtra(String(question), b.root, { kb: false }), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached, history: (history ?? []).slice(-6), onStep: (text) => toUI('agent-step', { text }), onDelta: (text) => toUI('note-delta', { text }) }).finally(() => unstage(attached)))
     : await noteAskWithoutTools(prompt, history, attached);
   const m = r.text.match(/<updated-note>\n?([\s\S]*?)\n?<\/updated-note>/);
   const answer = r.text.replace(/<updated-note>[\s\S]*?<\/updated-note>/, '').trim();
   const fm = readFrontmatter(store.notes.read(abs).slice(0, 4000));
   const existing = allChats().find((c) => c.meetingFile === abs && !c.meetingId);
-  addTurn(existing ?? newConvo(String(question), { meetingFile: abs, meetingTitle: fm.title || path.basename(abs, '.md') }), String(question), answer || 'Proposed an edit to the note.', [], []);
+  const asked = String(question).startsWith(DEBRIEF) ? 'Debrief this meeting' : String(question);
+  addTurn(existing ?? newConvo(asked, { meetingFile: abs, meetingTitle: fm.title || path.basename(abs, '.md') }), asked, answer || 'Proposed an edit to the note.', [], []);
   return { text: r.text.replace(/<updated-note>[\s\S]*?<\/updated-note>/, '').trim() || (m ? 'Here is the updated note. Review it and apply it if it looks right.' : ''), proposal: m ? m[1] : null };
 });
 
@@ -1777,12 +1787,16 @@ ipcMain.handle('read-note', (_e, file) => {
     .replace(/^##\s+Private notes\s*\n+None\s*\n/m, '')
     .replace(/^##\s+Summary\s*\n/m, '')
     .trim();
+  // a recorded note's transcript shows on its own tab; the rest is the summary (noteTranscript.js)
+  const split = splitRecorded(body, { recorded: fm.recorded === true || fm.recorded === 'true' });
+  const sessionTurns = savedTranscript(fm);
   return {
-    file: abs, rel: path.relative(b.vault, abs), title: fm.title, date: fm.date, people: fm.participants.filter((p) => !isSelf(p)).map(personName), body,
+    file: abs, rel: path.relative(b.vault, abs), title: fm.title, date: fm.date, people: fm.participants.filter((p) => !isSelf(p)).map(personName), body: split.summary,
+    summarizable: !!split.transcript && !split.summary,
     visibility: fm.visibility === 'public' ? 'public' : 'private', withheld: text !== original, link: `quorum://note/${encodeURIComponent(fm.granola_id || path.relative(b.vault, abs))}`, ...noteLink(abs),
     source: fm.source ? String(fm.source) : folderAppOf(abs),
     ...noteMeetingApps(fm, abs),
-    transcript: savedTranscript(fm),
+    transcript: sessionTurns.length ? sessionTurns : split.transcript ? parseTurns(split.transcript) : [],
     views: (views.record({ file: abs, who: 'human', via: 'quorum', bytes: Buffer.byteLength(original) }), views.of(abs)),
   };
 });
@@ -1808,6 +1822,31 @@ function savedTranscript(fm) {
   } catch { return []; }
   return turns;
 }
+
+// Generate summary, from the reader: a recorded note with only its transcript gets a title and a summary written by
+// the person's own model, above the transcript, which stays as it was. Only notes Quorum recorded are written
+ipcMain.handle('note-summarize', async (_e, file) => {
+  const abs = meetingFile(file);
+  if (!abs) return { error: 'That note is not in your meetings folder.' };
+  const original = store.notes.read(abs);
+  const fm = readFrontmatter(original);
+  const own = fm.source === 'quorum' || ['quorum', 'quorum-dev'].includes(folderAppOf(abs));
+  if (!own) return { error: 'Only notes Quorum recorded can be summarized here.' };
+  if (modelSource() === 'none') return { error: 'Choose a model in Settings to write a summary.' };
+  const fmBlock = original.match(/^---\n[\s\S]*?\n---\n/)?.[0] ?? '';
+  const rest = original.slice(fmBlock.length).trim().replace(/^#\s+.+\n/, '').trim();
+  const split = splitRecorded(rest, { recorded: true });
+  if (!split.transcript) return { error: 'This note has no transcript to summarize.' };
+  try {
+    const r = parseSummary(suggester.redactLines(await runClaude(suggester.redactLines(split.transcript).slice(0, 60000), SUMMARY_SYSTEM, settings.model)));
+    if (!r) return { error: 'The model did not return a summary. Try again.' };
+    const title = r.title || fm.title || 'Untitled note';
+    const head = fmBlock ? setFrontmatterKey(fmBlock, 'title', JSON.stringify(title)) : '';
+    store.notes.write(abs, `${head}${head.endsWith('\n') ? '' : '\n'}\n# ${title}\n\n${withSummary(r.body, split.transcript)}`);
+    keeper.schedule('note');
+    return { ok: true };
+  } catch (err) { log('note summary', err?.message); return { error: 'Quorum could not write the summary this time.' }; }
+});
 
 // the calendar event, meeting app and notetaker link of a note, for the reader's details line
 function noteMeetingApps(fm, abs) {
@@ -1842,6 +1881,8 @@ ipcMain.handle('meeting-brief', async (_e, q) => {
 });
 
 ipcMain.handle('new-chat', () => { convo = null; chatHistory = []; });
+// a saved chat read for a note's page, without making it the Home chat
+ipcMain.handle('read-chat', (_e, id) => store.chats.read(String(id ?? '')) ?? null);
 ipcMain.handle('load-chat', (_e, id) => {
   const c = store.chats.read(id);
   if (!c) return null;

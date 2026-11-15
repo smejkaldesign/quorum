@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { CalendarEvent, EventRef } from './quorum';
 import markProd from '../assets/quorum-mark.png';
 import markDev from '../assets/quorum-mark-dev.png';
-import { AppLogo, AppPill, CALENDAR_APP, PLATFORM_APP, sourceApp } from './AppChip';
+import { AppLogo, CALENDAR_APP, PLATFORM_APP, sourceApp } from './AppChip';
 import { dayLabel } from './upNextList';
 import { IconCalendar, IconPeople } from './icons';
 
@@ -11,14 +11,12 @@ export type NoteMetaInfo = {
   platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; event?: EventRef | null;
 };
 
-// where a note came from: the notetaker's logo and name, opening the note in that app when it has a link. Quorum's own
-// notes show the Quorum mark (green in the dev copy)
-function SourcePill({ source, url }: { source: string; url?: string | null }) {
-  const own = source === 'quorum' || source === 'quorum-dev';
-  const app = own ? { id: source, name: source === 'quorum' ? 'Quorum' : 'Quorum Dev' } : sourceApp(source);
-  const logo = own ? <img className="app-logo" src={source === 'quorum' ? markProd : markDev} alt="" /> : <AppLogo {...app} />;
-  if (!url) return <span className="meta-pill meta-app" data-tip={`From ${app.name}`}>{logo}{app.name}</span>;
-  return <button className="meta-pill meta-app" data-tip={`Open in ${app.name}`} onClick={() => window.quorum.openExternal(url)}>{logo}{app.name}</button>;
+// an app a note is tied to, as an icon button: the notetaker (Quorum's own mark, green in the dev copy), its calendar
+// event or its meeting app; the name is in the tooltip, and a click opens the item in that app when there is a link
+function AppIcon({ id, name, logo, onOpen }: { id: string; name: string; logo?: React.ReactNode; onOpen?: (() => void) | null }) {
+  const art = logo ?? <AppLogo id={id} name={name} />;
+  if (!onOpen) return <span className="meta-pill meta-icon" data-tip={name} aria-label={name}>{art}</span>;
+  return <button className="meta-pill meta-icon" data-tip={`Open in ${name}`} aria-label={`Open in ${name}`} onClick={onOpen}>{art}</button>;
 }
 
 // the people in a note: the first name and +N; a click lists everyone in a scrolling popover
@@ -37,7 +35,7 @@ function PeoplePill({ people }: { people: string[] }) {
   return (
     <span className="menu-wrap people-pill" ref={wrap}>
       <button className="meta-pill" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        <IconPeople width={16} height={16} />{people[0]}{people.length > 1 && <span className="muted">+{people.length - 1}</span>}
+        <IconPeople width={16} height={16} />{people.length} {people.length === 1 ? 'person' : 'people'}
       </button>
       {open && (
         <div className="menu left people-pop-list" role="dialog" aria-label="People">
@@ -57,12 +55,16 @@ export function NoteMeta({ meta, children }: { meta: NoteMetaInfo; children?: Re
   const ev = meta.event;
   return (
     <div className="meta-row">
-      {meta.source && <SourcePill source={meta.source} url={meta.sourceUrl} />}
       {ok && <span className="meta-pill"><IconCalendar width={16} height={16} />{dayLabel(date)} · {date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>}
       <PeoplePill people={meta.people ?? []} />
-      {meta.calendar && ev && <AppPill id={CALENDAR_APP[meta.calendar].id} name={CALENDAR_APP[meta.calendar].name}
+      {meta.source && (() => {
+        const own = meta.source === 'quorum' || meta.source === 'quorum-dev';
+        const app = own ? { id: meta.source, name: meta.source === 'quorum' ? 'Quorum' : 'Quorum Dev' } : sourceApp(meta.source);
+        return <AppIcon {...app} logo={own ? <img className="app-logo" src={meta.source === 'quorum' ? markProd : markDev} alt="" /> : undefined} onOpen={meta.sourceUrl ? () => window.quorum.openExternal(meta.sourceUrl!) : null} />;
+      })()}
+      {meta.calendar && ev && <AppIcon {...CALENDAR_APP[meta.calendar]}
         onOpen={ev.item || ev.link ? () => window.quorum.calendarOpen({ ...ev, id: ev.id ?? '', title: meta.title ?? '', end: ev.start } as CalendarEvent) : null} />}
-      {meta.platform && <AppPill id={PLATFORM_APP[meta.platform].id} name={PLATFORM_APP[meta.platform].short} onOpen={meta.meetingUrl ? () => window.quorum.openExternal(meta.meetingUrl!) : null} />}
+      {meta.platform && <AppIcon id={PLATFORM_APP[meta.platform].id} name={PLATFORM_APP[meta.platform].name} onOpen={meta.meetingUrl ? () => window.quorum.openExternal(meta.meetingUrl!) : null} />}
       {children}
     </div>
   );

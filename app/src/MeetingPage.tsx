@@ -4,6 +4,7 @@ import { AppPill, CALENDAR_APP, PLATFORM_APP, peopleText } from './AppChip';
 import { Markdown } from './Markdown';
 import { dayLabel } from './upNextList';
 import { IconArrowRight, IconBack } from './icons';
+import { TypedTitle, useStuck } from './StickyBar';
 
 const ABOUT = [['what', 'What it is'], ['who', 'Who attends'], ['how', 'How it runs']] as const;
 
@@ -36,6 +37,7 @@ const clock = (d: Date) => d.toLocaleTimeString([], { hour: 'numeric', minute: '
 export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarEvent; onBack: () => void; onOpenNote: (file: string) => void }) {
   const [data, setData] = useState<MeetingBrief | null>(null);
   const [writing, setWriting] = useState(false);
+  const bar = useStuck();
   const top = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => { top.current?.scrollIntoView({ block: 'start' }); }, [e.id]);
   useEffect(() => {
@@ -62,8 +64,9 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
     : 'Quorum could not write prep notes this time. They are tried again the next time you open this meeting.';
   return (
     <div className="history reader meeting-page" ref={top}>
-      <div className="reader-bar">
-        <button className="pill primary small-pill" onClick={onBack}><IconBack width={16} height={16} /> Back</button>
+      <div ref={bar.sentinel} className="rb-sentinel" aria-hidden="true" />
+      <div className={`reader-bar sticky-bar${bar.stuck ? ' stuck' : ''}`}>
+        <span className="rb-left"><button className="pill primary small-pill" onClick={onBack}><IconBack width={16} height={16} /> Back</button><TypedTitle text={e.title} on={bar.stuck} /></span>
         <div className="reader-actions">
           {platform && e.join && <button className="up-join" onClick={() => window.quorum.openExternal(e.join!)}>Join {platform.short}<IconArrowRight width={14} height={14} /></button>}
         </div>
