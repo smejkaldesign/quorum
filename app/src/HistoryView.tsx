@@ -9,6 +9,7 @@ import { openConnectors } from './connectorsNav';
 import { useSession } from './session';
 import { dayLabel } from './upNextList';
 import { UpNext, useCalendarView } from './UpNext';
+import { AppChip, PLATFORM_APP, sourceApp } from './AppChip';
 import { IconCalendar, IconChat, IconClose, IconExternal, IconListCheck, IconMic, IconNewNote, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
 
 type Filter = 'all' | 'meetings' | 'notes' | 'chats';
@@ -45,8 +46,6 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
   const calView = useCalendarView();
   // the offer to connect a calendar stays away for the rest of this launch once closed
   const [calHintHidden, setCalHintHidden] = useSession('calHintHidden', false);
-  const [icons, setIcons] = useState<Record<string, string | null>>({});
-  useEffect(() => { window.quorum.sourceIcons().then(setIcons); }, []);
   const [picked, setPicked] = useState<string[]>([]);
   const [range, setRange] = useState<DateRange | null>(null);
   const [keyword, setKeyword] = useState('');
@@ -196,14 +195,12 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
               {r.avatar === 'chat'
                 ? <span className="avatar-sq chat"><IconQuorum /></span>
                 : r.avatar === 'note' ? <span className="avatar-sq note"><IconMic width={20} height={20} /></span>
-                : <span className="avatar-sq" style={{ background: colorFor(r.sub + r.title) }}>{r.avatar}
-                    {r.meeting && r.meeting.source !== 'quorum' && (
-                      <span className="src-badge" data-tip={`From ${r.meeting.source[0].toUpperCase()}${r.meeting.source.slice(1)}`}>
-                        {icons[r.meeting.source] ? <img src={icons[r.meeting.source]!} alt={r.meeting.source} /> : r.meeting.source[0].toUpperCase()}
-                      </span>
-                    )}
-                  </span>}
-              <span className="hist-text"><strong>{r.title}</strong><span>{r.sub}</span></span>
+                : <span className="avatar-sq" style={{ background: colorFor(r.sub + r.title) }}>{r.avatar}</span>}
+              <span className="hist-text"><strong>{r.title}</strong><span className="hist-sub">
+                {r.meeting?.platform && <AppChip {...PLATFORM_APP[r.meeting.platform]} />}
+                {r.meeting && r.meeting.source !== 'quorum' && <AppChip {...sourceApp(r.meeting.source)} url={r.meeting.url} />}
+                <span className="hist-sub-text">{r.sub}</span>
+              </span></span>
               <span className="hist-time">{r.date ? <>{r.date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?(AM|PM)/i, '')}<small>{r.date.getHours() < 12 ? 'AM' : 'PM'}</small></> : ''}</span>
               {r.meeting && (
                 <span className="hist-hover">

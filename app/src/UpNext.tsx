@@ -6,9 +6,9 @@ import { useFlag } from './flags';
 import { useExclusiveMenu } from './menuBus';
 import { useSession } from './session';
 import { dayLabel, upNextRows } from './upNextList';
+import { AppChip, PLATFORM_APP, useAppIcons } from './AppChip';
 import { IconCalendar, IconChevron, IconMore, IconPlus } from './icons';
 
-const PLATFORM = { zoom: 'Zoom', meet: 'Google Meet', teams: 'Microsoft Teams' } as const;
 const time = (d: Date) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?(AM|PM)/i, '');
 const half = (d: Date) => (d.getHours() < 12 ? 'AM' : 'PM');
 
@@ -119,16 +119,20 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
         <div className="up-list" id={listId}>
           {rows.map((e) => {
             const at = new Date(e.start), end = new Date(e.end);
-            const platform = e.platform ? PLATFORM[e.platform] : null;
+            const platform = e.platform ? PLATFORM_APP[e.platform] : null;
             const menu = eventMenu === e.id;
             return (
               <div key={e.id} className="hist-item">
                 <div className={`hist-row up-row ${menu ? 'menu-open' : ''}`} onClick={() => e.item && window.quorum.calendarOpen(e)}>
                   <span className="avatar-sq cal"><IconCalendar width={18} height={18} /></span>
-                  <span className="hist-text"><strong>{e.title}</strong><span>{dayLabel(at)} · {time(at)} – {time(end)} {half(end)}{platform ? ` · ${platform}` : ''}</span></span>
+                  <span className="hist-text"><strong>{e.title}</strong><span className="hist-sub">
+                    {platform && <AppChip {...platform} url={e.join} />}
+                    <span className="hist-sub-text up-when">{dayLabel(at)} · {time(at)} – {time(end)} {half(end)}</span>
+                  </span></span>
                   {!e.platform && <span className="up-badge">No meeting</span>}
                   <span className="hist-time">{time(at)}<small>{half(at)}</small></span>
                   <span className="hist-hover" onMouseDown={(ev) => ev.stopPropagation()}>
+                    {platform && e.join && <JoinButton id={platform.id} label={`Join ${platform.short}`} url={e.join} />}
                     <EventMenu event={e} open={menu} onOpen={(o) => setEventMenu(o ? e.id : null)} onChanged={loadCal} />
                   </span>
                 </div>
@@ -148,6 +152,16 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
   );
   if (!floating) return strip;
   return <div className="up-float"><div className={`up-float-in ${passed ? 'shown' : ''}`} inert={!passed || undefined}>{strip}</div></div>;
+}
+
+// the white Join button an upcoming call shows on hover, with its app's logo
+function JoinButton({ id, label, url }: { id: string; label: string; url: string }) {
+  const icons = useAppIcons();
+  return (
+    <button className="up-join" onClick={(ev) => { ev.stopPropagation(); window.quorum.openExternal(url); }}>
+      {icons[id] ? <img src={icons[id]!} alt="" /> : null}{label}
+    </button>
+  );
 }
 
 // a row's More menu, drawn on the body at the button's position so the list's scroll area cannot clip it

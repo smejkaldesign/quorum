@@ -1537,6 +1537,8 @@ function meetingIndex() {
           orgs: fm.participants.map(orgOf).filter(Boolean),
           count: Number(fm.participant_count) || fm.participants.length,
           visibility: fm.visibility === 'public' ? 'public' : 'private',
+          url: [fm.granola_url, fm.source_url].find((u) => /^https:\/\//.test(String(u ?? ''))) ?? null,
+          platform: /zoom/i.test(fm.platform ?? '') ? 'zoom' : /meet/i.test(fm.platform ?? '') ? 'meet' : /teams/i.test(fm.platform ?? '') ? 'teams' : null,
           app, rel: path.relative(brain()?.vault ?? root, file), link: `quorum://note/${encodeURIComponent(fm.granola_id || path.relative(brain()?.vault ?? root, file))}`,
         });
       } catch {}
