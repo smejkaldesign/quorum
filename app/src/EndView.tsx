@@ -16,7 +16,8 @@ export type Turn = SpeakerTurn & { who: string; voice?: number | 'mix' | 'sound'
 // privateNotes is what you typed on the call; edits here reach the main process the same way, and flush runs before Save
 // live: the recording is running (or paused) and this is its page under the header; the transcript shows as it is
 // heard and the summary waits for Stop, which writes it into this same page. embedded drops the window chrome
-export function EndView({ notes, draft, meta, summarizing, transcript, participants, onSpeaker, privateNotes, onPrivateNotes, flushPrivateNotes, onClose, me, live = false, paused = false, embedded = false, partial = '', who = null, onAnswer }: { who?: WhoAsk | null; onAnswer?: (a: WhoAnswers | null) => void; live?: boolean; paused?: boolean; embedded?: boolean; partial?: string; me?: { name: string; photo: string | null }; notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; participants: string[]; onSpeaker: (id: number, name: string | null, similar: boolean) => Promise<void>; privateNotes: string; onPrivateNotes: (v: string) => void; flushPrivateNotes: () => void; onClose: () => void }) {
+// ready: a new note before any recording; you can type in Your notes and Save, or press Record to transcribe into it
+export function EndView({ notes, draft, meta, summarizing, transcript, participants, onSpeaker, privateNotes, onPrivateNotes, flushPrivateNotes, onClose, me, live = false, paused = false, embedded = false, partial = '', who = null, onAnswer, ready = false, onSaveDraft }: { ready?: boolean; onSaveDraft?: () => Promise<void>; who?: WhoAsk | null; onAnswer?: (a: WhoAnswers | null) => void; live?: boolean; paused?: boolean; embedded?: boolean; partial?: string; me?: { name: string; photo: string | null }; notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; participants: string[]; onSpeaker: (id: number, name: string | null, similar: boolean) => Promise<void>; privateNotes: string; onPrivateNotes: (v: string) => void; flushPrivateNotes: () => void; onClose: () => void }) {
   const [showing, setShowing] = useState<'summary' | 'transcript'>(live ? 'transcript' : 'summary');
   // Stop turns the page to the summary as it is written
   useEffect(() => { if (summarizing || who) setShowing('summary'); }, [summarizing, who]);
@@ -82,10 +83,11 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
   return (
     <div className={embedded ? 'end embedded' : 'panel end'}>
       <header className="end-bar">
-        {live ? <button className="pill ghost" onClick={onClose}>Back</button>
+        {live || ready ? <button className="pill ghost" onClick={onClose}>Back</button>
           : <button className="pill ghost" onClick={async () => { await window.quorum.discard(); onClose(); }}>{saved ? 'Close' : 'Discard'}</button>}
         <div className="end-actions">
-          {live ? <span className="muted note-status" role="status">{paused ? 'Paused' : 'Recording'}</span> : <>
+          {ready ? <button className="pill primary" disabled={!privateNotes.trim() || saving} onClick={async () => { setSaving(true); try { await onSaveDraft?.(); } finally { setSaving(false); } }}>{saving ? 'Saving…' : 'Save'}</button>
+          : live ? <span className="muted note-status" role="status">{paused ? 'Paused' : 'Recording'}</span> : <>
           {saved ? (
             <>
               <span className="saved">Saved to {saved.rel.replace(/^MyBrain\//, '')}</span>
@@ -101,7 +103,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
       {(
         <div className="end-scroll">
           <article className={`doc${streaming ? ' streaming' : ''}`}>
-            <h1>{live ? <span className="shimmer">New note</span> : shown?.title || (streaming ? <span className="shimmer">{meta?.title || 'Writing the title'}</span> : meta?.title || 'Untitled note')}</h1>
+            <h1>{ready ? <span className="muted">New note</span> : live ? <span className="shimmer">New note</span> : shown?.title || (streaming ? <span className="shimmer">{meta?.title || 'Writing the title'}</span> : meta?.title || 'Untitled note')}</h1>
             <div className="meta-row">
               <span className="meta-pill"><IconCalendar width={16} height={16} />{when}{started ? ` · ${started.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}</span>
               {meta && meta.minutes > 0 && <span className="meta-pill"><IconClock width={16} height={16} />{meta.minutes} min</span>}
@@ -130,7 +132,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
                     <div className="spk">{speakerHead(g.turns[0])}</div>
                     {g.turns.map((t) => <p key={t.id} id={`turn-${t.id}`} className={[hot.includes(t.id) && 'hot', t.unclear && 'unclear'].filter(Boolean).join(' ') || undefined} data-tip={t.unclear ? 'Hard to hear; Quorum may have some words wrong' : undefined}>{t.text}</p>)}
                   </div>
-                )) : !partial && <p className="muted">{live ? (paused ? 'Paused. Resume to keep transcribing.' : 'Listening…') : 'Nothing was transcribed.'}</p>}
+                )) : !partial && <p className="muted">{ready ? 'Press Record to transcribe into this note.' : live ? (paused ? 'Paused. Resume to keep transcribing.' : 'Listening…') : 'Nothing was transcribed.'}</p>}
                 {live && partial && <p className="live-partial"><em className="partial">{partial}</em></p>}
               </section>
             ) : <>
@@ -141,7 +143,8 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
                 <div className="sk-block" aria-hidden="true"><span className="sk sk-line w90" /><span className="sk sk-line w75" /><span className="sk sk-line w60" /></div>
               </div>
             )}
-            {view.empty && <p className="muted">Nothing was transcribed.</p>}
+            {ready && <p className="muted ready-hint">Type your notes above, or press Record to transcribe into this note.</p>}
+            {view.empty && !ready && <p className="muted">Nothing was transcribed.</p>}
             {view.summary ? <p className={`summary${streaming && !view.sections.length ? ' typing' : ''}`}>{view.summary}</p>
               : streaming && <div className="sk-block" aria-label="Writing the summary"><span className="sk sk-line w90" /><span className="sk sk-line w75" /><span className="sk sk-line w60" /></div>}
             {view.sections.map((sec, i) => (

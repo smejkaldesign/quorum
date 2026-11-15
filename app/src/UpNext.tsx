@@ -206,7 +206,7 @@ function DaysMenu({ days, onPick }: { days: number | 'week'; onPick: (d: number 
 }
 
 // the white Join button an upcoming call shows on hover, with its app's logo
-function JoinButton({ id, label, url }: { id: string; label: string; url: string }) {
+export function JoinButton({ id, label, url }: { id: string; label: string; url: string }) {
   const icons = useAppIcons();
   return (
     <button className="up-join" onClick={(ev) => { ev.stopPropagation(); window.quorum.openExternal(url); }}>

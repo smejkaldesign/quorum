@@ -3,8 +3,9 @@ import type { CalendarEvent, MeetingBrief } from './quorum';
 import { AppPill, CALENDAR_APP, PLATFORM_APP, peopleText } from './AppChip';
 import { Markdown } from './Markdown';
 import { dayLabel } from './upNextList';
-import { IconArrowRight, IconBack } from './icons';
+import { IconBack } from './icons';
 import { TypedTitle, useStuck } from './StickyBar';
+import { JoinButton } from './UpNext';
 import { Composer } from './Composer';
 import { Avatar } from './Speaker';
 import { splitChoices } from './MeetingNote';
@@ -136,7 +137,7 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
       <div className={`reader-bar sticky-bar${bar.stuck ? ' stuck' : ''}`}>
         <span className="rb-left"><button className="pill primary small-pill" onClick={onBack}><IconBack width={16} height={16} /> Back</button><TypedTitle text={e.title} on={bar.stuck} /></span>
         <div className="reader-actions">
-          {platform && e.join && <button className="up-join" onClick={() => window.quorum.openExternal(e.join!)}>Join {platform.short}<IconArrowRight width={14} height={14} /></button>}
+          {platform && e.join && <JoinButton id={platform.id} label={`Join ${platform.short}`} url={e.join} />}
         </div>
       </div>
       <article className="doc">

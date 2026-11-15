@@ -182,8 +182,11 @@ export function App() {
   type NoteOpen = { file: string | null; fresh: boolean; record: RecordChoice | null; n: number; leave: number; next?: { file: string | null; record: RecordChoice | null } | null };
   const [note, setNote] = useState<NoteOpen | null>(null);
   // never over a live call or its review: the call UI stays in view
+  // a new note opens the recording page, not recording yet; an existing note's file still opens the note view
+  const [draftOpen, setDraftOpen] = useState(false);
   const openNoteView = (file: string | null = null, record: RecordChoice | null = null) => {
     if (phaseRef.current !== 'idle') return;
+    if (!file && !record) { setNote(null); setView('main'); setDraftOpen(true); return; }
     setNote((n) => (n ? (n.leave ? n : { ...n, leave: Date.now(), next: { file, record } }) : { file, fresh: !file, record, n: Date.now(), leave: 0 }));
   };
   useEffect(() => {
@@ -507,15 +510,19 @@ export function App() {
     const r = await window.quorum.recordSession().catch((err) => ({ error: String(err) }));
     if ('error' in r) { setAnnounce(false); setRecordError(r.error); setTimeout(() => setRecordError(null), 5000); return; }
     setNote((n) => (n && !n.leave ? { ...n, leave: Date.now(), next: null } : n));
+    // what was typed on the new note before Record carries into the recording
+    if (mine.text.trim()) window.quorum.privateNotesSet(mine.text);
+    setDraftOpen(false);
     setView('main');
     setLiveOpen(true);
   }
   useEffect(() => { if (!announce || phase !== 'listening') return; const t = setTimeout(() => setAnnounce(false), 1000); return () => clearTimeout(t); }, [announce, phase]);
   // a finished recording opens on its keep-or-discard page; nothing recording closes the live view
   useEffect(() => { if (phase === 'review') setLiveOpen(true); if (phase === 'idle') setLiveOpen(false); }, [phase]);
-  const showLive = view === 'main' && liveOpen && phase !== 'idle' && phase !== 'blocked';
+  const drafting = view === 'main' && draftOpen && phase === 'idle';
+  const showLive = (view === 'main' && liveOpen && phase !== 'idle' && phase !== 'blocked') || drafting;
   const closeNote = () => setNote((n) => (n && !n.leave ? { ...n, leave: Date.now(), next: null } : n));
-  const go = (fn: () => void) => () => { setLiveOpen(false); closeNote(); fn(); };
+  const go = (fn: () => void) => () => { setLiveOpen(false); setDraftOpen(false); closeNote(); fn(); };
   const status = {
     idle: { label: count !== null ? String(count) : recordError ?? 'Record', icon: <IconRecord width={17} height={17} /> },
     starting: { label: announce ? 'Recording' : 'Starting…', icon: <RecLevel live={false} /> },
@@ -536,13 +543,23 @@ export function App() {
   }
 
   // the recording's note and a hand note open under the header, so the tabs and Record stay in reach
+  // Save on a new note that was never recorded: the typed text becomes a note in the Agent OS
+  async function saveDraft() {
+    const body = mine.text.trim();
+    if (!body) return;
+    const title = body.split('\n')[0].replace(/^#+\s*/, '').slice(0, 80) || 'Untitled';
+    const r = await window.quorum.handNoteSave({ id: `draft-${Date.now()}`, file: null, title, body, hash: null, fresh: true });
+    if ('error' in r || 'conflict' in r) return;
+    mine.reset();
+    setDraftOpen(false);
+  }
   const closeReview = () => { setPhase('idle'); resetMeeting(); setLiveOpen(false); setTab('home'); };
   const liveArea = (
     <div className="body wide flush live-body">
       <LazyView name="your notes" onClose={phase === 'review' ? closeReview : () => setLiveOpen(false)}>
-        <EndView embedded live={inCall(phase)} paused={phase === 'paused'} who={ask} onAnswer={(a) => { setAsk(null); window.quorum.sessionSummarize(a ?? {}); }} notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing}
+        <EndView embedded ready={drafting} onSaveDraft={saveDraft} live={inCall(phase)} paused={phase === 'paused'} who={ask} onAnswer={(a) => { setAsk(null); window.quorum.sessionSummarize(a ?? {}); }} notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing}
           transcript={lines.map((l) => ({ ...l, who: who(l) }))} partial={liveWords ? [partial.me, partial.them].filter(Boolean).join(' ') : ''} participants={participants} onSpeaker={setSpeaker} me={nt.meetingCapture ? me : undefined}
-          privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={phase === 'review' ? closeReview : () => setLiveOpen(false)} />
+          privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={phase === 'review' ? closeReview : drafting ? () => { mine.reset(); setDraftOpen(false); } : () => setLiveOpen(false)} />
       </LazyView>
     </div>
   );
@@ -665,10 +682,13 @@ export function App() {
                 </div>
               </QuorumCard>
             )}
+            {/* the same chat layout as a note's: who is talking above each turn, no bubbles, the page's text size */}
+            {msgs.length > 0 && <section className="note-thread chat-thread" aria-label="Chat">
             {msgs.map((m, i) => m.kind === 'user' ? (
-              <div key={i} className="user-row" ref={i === lastUserIdx ? lastUser : undefined}>
-                <div className="user-msg">{m.files?.length ? <div className="user-files">{m.files.map((f) => <span key={f}>{f}</span>)}</div> : null}{m.text}</div>
-                <span className="user-avatar" aria-label="You">{me.photo ? <img src={me.photo} alt="" /> : me.name ? me.name[0].toUpperCase() : <IconPerson width={14} height={14} />}</span>
+              <div key={i} className="nt-turn" ref={i === lastUserIdx ? lastUser : undefined}>
+                <div className="nt-who"><Avatar name={me.name || 'You'} photo={me.photo} size={22} /><strong>{me.name || 'You'}</strong></div>
+                {m.files?.length ? <div className="user-files">{m.files.map((f) => <span key={f}>{f}</span>)}</div> : null}
+                <p className="nt-q">{m.text}</p>
               </div>
             ) : m.kind === 'suggest' ? (
               m.state === 'dismissed' || !nt.liveAssist ? null : (
@@ -688,9 +708,10 @@ export function App() {
             ) : m.kind === 'event' ? (
               <QuorumCard key={i}><p><span className="emoji">{m.tone === 'stop' ? '🛑' : '🏎️'}</span>{m.text}</p></QuorumCard>
             ) : (
-              <div key={i} className="turn">
+              <div key={i} className="nt-turn">
+                <div className="nt-who quorum"><img src={markProd} alt="" width={22} height={22} /><strong>Quorum</strong></div>
                 {(m.pending || (m.steps?.length ?? 0) > 0) && <Steps steps={m.steps ?? []} live={!!m.pending} />}
-                {(!m.pending || m.text) && <QuorumCard>
+                {(!m.pending || m.text) && <div className="nt-a">
                 <Markdown text={m.text} root={brain?.root} />
                 {m.sources?.map((src) => (
                   <div key={`${src.n}-${src.rel}`} className="source">
@@ -702,9 +723,10 @@ export function App() {
                     {src.abs && <button className="icon-btn" aria-label={`Show in ${src.app}`} data-tip={`Show in ${src.app}`} onClick={() => window.quorum.openNote(src.abs!)}><IconFolder /></button>}
                   </div>
                 ))}
-              </QuorumCard>}
+              </div>}
               </div>
             ))}
+            </section>}
             <div ref={chatEnd} style={{ flex: 'none', minHeight: spacer }} />
           </div>
           {phase === 'idle' && msgs.length === 0 && brain && (
