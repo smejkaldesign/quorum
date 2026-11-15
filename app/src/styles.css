@@ -2385,3 +2385,15 @@ input::placeholder, textarea::placeholder { font-style: italic; }
 .reader-bar.sticky-bar.stuck { margin: -12px -40px 6px; padding: 10px 40px; }
 /* the recording page's row draws its line as a shadow, which takes no space */
 .end-scroll .end-bar.sticky-bar.stuck { border-bottom: 0; box-shadow: 0 1px 0 var(--line-2); }
+/* Settings › Connectors: Add connector at the top, the connected list by area, Inherited MCPs, and the library */
+.conn-top { display: flex; justify-content: flex-end; margin: 0 0 18px; }
+.conn-add { height: 40px; padding: 0 18px; font-size: 15px; gap: 8px; }
+.conn-empty { margin: 0 0 24px; color: var(--muted); font-size: 14px; }
+.conn-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.conn-lede { margin: -4px 0 10px; color: var(--muted); font-size: 13px; }
+.conn-dim .conn-title, .conn-dim .conn-logo { opacity: 0.55; }
+.conn-lib-head { display: flex; align-items: center; justify-content: space-between; margin: 0 0 16px; }
+.conn-back { display: inline-flex; align-items: center; gap: 6px; }
+.conn-back svg { transform: rotate(90deg); }
+.conn-hide { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text); cursor: pointer; }
+.conn-desc { flex: 1; min-width: 0; margin-left: 4px; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -23,6 +23,33 @@ export const MCP_PROVIDERS = {
   github: { names: [word('github')], hosts: ['github.com', 'api.githubcopilot.com'], packages: [/server-github/i, /github-mcp-server/i] },
   zoom: { names: [word('zoom')], hosts: ['zoom.us'], packages: [/zoom-mcp/i] },
   linear: { names: [word('linear')], hosts: ['linear.app'], packages: [/linear-mcp/i] },
+  // meeting notes
+  fireflies: { names: [word('fireflies')], hosts: ['fireflies.ai'], packages: [/fireflies/i] },
+  otter: { names: [word('otter')], hosts: ['otter.ai'], packages: [/otter-mcp/i] },
+  fathom: { names: [word('fathom')], hosts: ['fathom.video'], packages: [/fathom-mcp/i] },
+  'read-ai': { names: [/read[-_ ]?ai/i], hosts: ['read.ai'], packages: [/read-ai/i] },
+  'google-meet': { names: [/google[-_ ]?meet/i], hosts: ['meet.google.com', 'meet.googleapis.com'], packages: [/google-meet-mcp/i] },
+  teams: { names: [/microsoft[-_ ]?teams/i, word('teams')], hosts: [], packages: [/teams-mcp/i] },
+  // calendar
+  outlook: { names: [word('outlook')], hosts: ['outlook.com', 'outlook.office.com'], packages: [/outlook-mcp/i] },
+  // files
+  'google-docs': { names: [/google[-_ ]?docs/i], hosts: ['docs.google.com', 'docs.googleapis.com'], packages: [/google-docs-mcp/i] },
+  onedrive: { names: [/one[-_ ]?drive/i], hosts: ['onedrive.live.com'], packages: [/onedrive/i] },
+  // work
+  gmail: { names: [word('gmail')], hosts: ['gmail.com', 'gmail.googleapis.com', 'mail.google.com'], packages: [/gmail/i] },
+  jira: { names: [word('jira'), word('atlassian'), word('confluence')], hosts: ['atlassian.com', 'atlassian.net'], packages: [/mcp-atlassian/i, /jira-mcp/i] },
+  hubspot: { names: [word('hubspot')], hosts: ['hubspot.com'], packages: [/hubspot/i] },
+  asana: { names: [word('asana')], hosts: ['asana.com'], packages: [/asana/i] },
+  clickup: { names: [word('clickup')], hosts: ['clickup.com'], packages: [/clickup/i] },
+  trello: { names: [word('trello')], hosts: ['trello.com'], packages: [/trello/i] },
+  monday: { names: [word('monday')], hosts: ['monday.com'], packages: [/monday/i] },
+  salesforce: { names: [word('salesforce')], hosts: ['salesforce.com', 'force.com'], packages: [/salesforce/i] },
+  attio: { names: [word('attio')], hosts: ['attio.com'], packages: [/attio/i] },
+  pipedrive: { names: [word('pipedrive')], hosts: ['pipedrive.com'], packages: [/pipedrive/i] },
+  affinity: { names: [word('affinity')], hosts: ['affinity.co'], packages: [/affinity/i] },
+  // ai and automation
+  zapier: { names: [word('zapier')], hosts: ['zapier.com'], packages: [/zapier/i] },
+  figma: { names: [word('figma')], hosts: ['figma.com'], packages: [/figma/i] },
 };
 
 // a flag whose value is a secret, and the token shapes providers hand out
@@ -205,6 +232,22 @@ export function readConfigs({ root = null, vault = null, home = homedir(), readF
   return { read, on: servers.filter((s) => isOn(s, sw)), off: servers.filter((s) => !isOn(s, sw)) };
 }
 
+// every MCP server the agent has, one entry per name: the connector it matches (null when none does), every place it
+// is set up, and whether it is on. Quorum's own server is left out. Settings › Connectors lists these as Inherited MCPs
+export function serverList(listed, files) {
+  const by = new Map();
+  const add = (s, on) => {
+    if (/^quorum$/i.test(s.name)) return;
+    const cur = by.get(s.name);
+    if (cur) { if (!cur.where.includes(s.where)) cur.where.push(s.where); cur.on = cur.on || on; return; }
+    by.set(s.name, { name: s.name, url: s.url, command: s.command, args: s.args, where: [s.where], provider: providerOf(s), on });
+  };
+  for (const s of listed ?? []) add(s, true);
+  for (const s of files.on) add(s, true);
+  for (const s of files.off) add(s, false);
+  return [...by.values()].sort((x, y) => Number(y.on) - Number(x.on) || Number(!!y.provider) - Number(!!x.provider) || x.name.localeCompare(y.name));
+}
+
 // files plus the last `claude mcp list` into one answer. A server the files turn off at every place they name it is
 // left out of the list's servers too, since the list does not know the folder's switches
 export function combine(files, list) {
@@ -221,6 +264,7 @@ export function combine(files, list) {
     claudeMissing: list?.status === 'missing',
     matches,
     off,
+    servers: serverList(listed, files),
   };
 }
 

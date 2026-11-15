@@ -2,8 +2,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { MCP_PROVIDERS, claudeConfigServers, combine, createOverlap, createPassCache, isOn, looksLikeToken, matchServers, mcpJsonServers, mcpListServers, packagesOf, providerOf, readConfigs, redactArgs, redactUrl, switchesOf } from '../connectors/mcpOverlap.js';
-import { CONNECTOR_BY_ID, MCP_ALONE, MCP_EXPLAIN_INGEST, MCP_RECOMMEND_INGEST, mcpPathsOf } from '../connectors/library.js';
+import { MCP_PROVIDERS, claudeConfigServers, combine, serverList, createOverlap, createPassCache, isOn, looksLikeToken, matchServers, mcpJsonServers, mcpListServers, packagesOf, providerOf, readConfigs, redactArgs, redactUrl, switchesOf } from '../connectors/mcpOverlap.js';
+import { AREAS, CONNECTOR_BY_ID, CONNECTORS, MCP_ALONE, areaOf, areaOfCategory, MCP_EXPLAIN_INGEST, MCP_RECOMMEND_INGEST, mcpPathsOf } from '../connectors/library.js';
 // token-shaped values for the redaction tests, built at run time so the file holds no string a secret scanner reads as a credential
 const fake = (prefix, n) => prefix + 'x7'.repeat(n).slice(0, n);
 
@@ -98,16 +98,16 @@ describe('provider matcher', () => {
   it('skips Quorum itself, unrelated servers and partial words', () => {
     expect(m('quorum', { url: 'https://mcp.granola.ai/mcp' })).toBeNull();
     expect(m('nonlinear-tools', { command: 'npx', args: ['nonlinear'] })).toBeNull();
-    expect(m('plugin:figma:figma', { url: 'https://mcp.figma.com/mcp' })).toBeNull();
+    expect(m('plane', { command: 'uvx', args: ['plane-mcp-server'] })).toBeNull();
     expect(m('evil', { url: 'https://granola.ai.example.com/mcp' })).toBeNull();
   });
   it('groups matches by connector and merges the places one server was found', () => {
     const r = matchServers([...mcpListServers(LIST), ...claudeConfigServers(CLAUDE('/v'), ['/v'])]);
-    expect(Object.keys(r).sort()).toEqual(['github', 'granola', 'linear', 'notion', 'slack', 'zoom']);
+    expect(Object.keys(r).sort()).toEqual(['figma', 'github', 'granola', 'linear', 'notion', 'slack', 'zoom']);
     expect(r.granola).toEqual([{ name: 'granola', url: 'https://mcp.granola.ai/mcp', command: null, args: [], where: ['claude-list', 'claude-user'] }]);
   });
-  it('maps every provider to a connector in the library with a paths table', () => {
-    for (const id of Object.keys(MCP_PROVIDERS)) { expect(CONNECTOR_BY_ID[id]).toBeTruthy(); expect(mcpPathsOf(CONNECTOR_BY_ID[id])).toBeTruthy(); }
+  it('has a paths table for the connectors Quorum compares with their MCP', () => {
+    for (const id of ['granola', 'notion', 'slack', 'google-drive', 'google-calendar', 'github', 'zoom', 'linear']) { expect(MCP_PROVIDERS[id]).toBeTruthy(); expect(mcpPathsOf(CONNECTOR_BY_ID[id])).toBeTruthy(); }
   });
 });
 
@@ -282,10 +282,53 @@ describe('what each path gives', () => {
     expect(n.alone).toBeNull();
     expect(n.explain).toBe("Quorum's Notion connection runs Quorum's own features; your agent uses Notion's MCP for live lookups.");
     expect(n.recommend).toBe('Recommended: keep both on.');
-    for (const id of Object.keys(MCP_PROVIDERS)) for (const r of mcpPathsOf(CONNECTOR_BY_ID[id]).rows) { expect(r.label).toBeTruthy(); expect(r.connector).toBeTruthy(); expect(r.mcp).toBeTruthy(); }
+    for (const id of Object.keys(MCP_PROVIDERS)) for (const r of mcpPathsOf(CONNECTOR_BY_ID[id])?.rows ?? []) { expect(r.label).toBeTruthy(); expect(r.connector).toBeTruthy(); expect(r.mcp).toBeTruthy(); }
   });
   it('has no table for a connector without a provider MCP', () => {
     expect(mcpPathsOf(CONNECTOR_BY_ID['apple-calendar'])).toBeNull();
     expect(mcpPathsOf(undefined)).toBeNull();
+  });
+});
+
+describe('recognizing MCP servers by connector and area', () => {
+  const s = (name, extra = {}) => ({ name, url: null, command: null, args: [], where: 'claude-user', ...extra });
+  it('every provider the recognizer knows is a library connector', () => {
+    for (const id of Object.keys(MCP_PROVIDERS)) expect(CONNECTOR_BY_ID[id], id).toBeTruthy();
+  });
+  it('names the claude.ai connectors by their service', () => {
+    const list = mcpListServers('claude.ai Gmail: https://gmail.mcp.claude.com/mcp - ✓ Connected\nclaude.ai Google Calendar: https://gcal.mcp.claude.com/mcp - ✓ Connected\nclaude.ai Slack: https://mcp.slack.com/mcp - ✓ Connected\n');
+    expect(list.map(providerOf)).toEqual(['gmail', 'google-calendar', 'slack']);
+  });
+  it('knows work, file and meeting tools by name, host and package', () => {
+    expect(providerOf(s('atlassian', { url: 'https://mcp.atlassian.com/v1/sse' }))).toBe('jira');
+    expect(providerOf(s('crm', { url: 'https://mcp.hubspot.com/' }))).toBe('hubspot');
+    expect(providerOf(s('figma-console', { command: 'npx', args: ['figma-console-mcp'] }))).toBe('figma');
+    expect(providerOf(s('fireflies'))).toBe('fireflies');
+    expect(providerOf(s('onedrive-files'))).toBe('onedrive');
+    expect(providerOf(s('mondays-off'))).toBe(null);
+    expect(providerOf(s('plane', { command: 'uvx', args: ['plane-mcp-server'] }))).toBe(null);
+  });
+  it('lists every server once, matched or not, on before off, without Quorum', () => {
+    const listed = [s('claude.ai Slack', { where: 'claude-list' })];
+    const files = { on: [s('granola', { url: 'https://mcp.granola.ai/mcp' }), s('plane'), s('quorum'), s('claude.ai Slack')], off: [s('snaptrade')] };
+    const out = serverList(listed, files);
+    expect(out.map((x) => [x.name, x.provider, x.on])).toEqual([['claude.ai Slack', 'slack', true], ['granola', 'granola', true], ['plane', null, true], ['snaptrade', null, false]]);
+    expect(out[0].where).toEqual(['claude-list', 'claude-user']);
+  });
+});
+
+describe('connector areas', () => {
+  it('puts every connector in one of the five areas', () => {
+    const ids = AREAS.map((a) => a.id);
+    for (const x of CONNECTORS) expect(ids, x.id).toContain(areaOf(x));
+  });
+  it('groups by what the tool is for', () => {
+    expect(areaOf(CONNECTOR_BY_ID.zoom)).toBe('meeting-notes');
+    expect(areaOf(CONNECTOR_BY_ID['google-drive'])).toBe('files');
+    expect(areaOf(CONNECTOR_BY_ID.github)).toBe('files');
+    expect(areaOf(CONNECTOR_BY_ID.slack)).toBe('work');
+    expect(areaOf(CONNECTOR_BY_ID.hubspot)).toBe('work');
+    expect(areaOfCategory('calendar')).toBe('calendar');
+    expect(areaOfCategory('crm')).toBe('work');
   });
 });

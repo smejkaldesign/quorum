@@ -55,7 +55,8 @@ export type OAuthAccount = { id: string; name: string; configured: boolean; conn
 export type McpOverlapServer = { name: string; url: string | null; command: string | null; args: string[]; where: ('claude-list' | 'claude-user' | 'claude-project' | 'vault')[] };
 // matches count; off are set up but turned off in Claude Code. listing: `claude mcp list` is still running;
 // claudeMissing: the claude command is not on this Mac
-export type McpOverlap = { at: string; read: { claudeList: boolean; claudeConfig: boolean; vault: boolean }; listing: boolean; claudeMissing: boolean; matches: Record<string, McpOverlapServer[]>; off: Record<string, McpOverlapServer[]> };
+export type McpOverlap = { at: string; read: { claudeList: boolean; claudeConfig: boolean; vault: boolean }; listing: boolean; claudeMissing: boolean; matches: Record<string, McpOverlapServer[]>; off: Record<string, McpOverlapServer[]>; servers?: McpInheritedServer[] };
+export type McpInheritedServer = McpOverlapServer & { provider: string | null; on: boolean };
 export type GoogleCalendarStatus = { configured: boolean; connected: boolean; account: string | null; calendars: number; lastSyncAt: string | null; error: string | null };
 export type CalendarSettings = { source: 'mac'; days: number | 'week'; enabled?: boolean; showAll?: boolean; hidden?: string[]; status?: 'granted' | 'notDetermined' | 'denied' | 'unavailable' | 'off'; google?: GoogleCalendarStatus | null };
 export type MemoryItem = { id: string; kind: string; label: string; path: string; detail: string; include: boolean | null; manual?: boolean };

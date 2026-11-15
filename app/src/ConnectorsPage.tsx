@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { AgentSchedule, Brain, CalendarSettings, McpOverlap, McpOverlapServer, MeetingSourceInfo, OAuthAccount, PlatformInfo, SourceJob } from './quorum';
+import type { AgentSchedule, Brain, CalendarSettings, McpInheritedServer, McpOverlap, McpOverlapServer, MeetingSourceInfo, OAuthAccount, PlatformInfo, SourceJob } from './quorum';
 import { TRADEOFFS } from '../sources/agent-import';
-import { CATEGORIES, CONNECTORS_CHANGED, aboutFor, connectorsFor, featuresFor, isConnected, mcpPathsOf, type LibraryConnector } from '../connectors/library';
+import { AREAS, CONNECTORS_CHANGED, aboutFor, areaOf, areaOfCategory, connectorsFor, featuresFor, isConnected, mcpPathsOf, type LibraryConnector } from '../connectors/library';
 import { BLOCKED_SENTENCE, ORG_LABEL, ORG_SENTENCE, UNAPPROVED_LABEL, approvalOf, canConnect, hasLocalPart, hiddenFromList, isGoverned, type Approval } from '../connectors/approval';
 import { SyncedFolderConnections, useConnectorPolicy } from './edition';
 import { useFlag } from './flags';
 import { McpPaths, McpStatus, useMcpOverlap } from './McpPaths';
 import { useMenu } from './controls';
-import { IconCheck, IconChevron, IconExternal, IconFolder, IconGrid, IconMore, IconReset } from './icons';
+import { IconCheck, IconChevron, IconExternal, IconFolder, IconGrid, IconMore, IconPlus, IconReset } from './icons';
+import { BRAND_LOGOS } from './brandLogos';
 
-// Settings › Connectors: four fixed groups (your notes, calendar, meeting notes, AI), each row saying whether it is
-// connected and offering one action, and a detail page per connector. Connectors not built yet are named on one line
-// at the bottom and offer nothing. Meeting-notes sources run through sources/index.js; Apple Calendar is the macOS
+// Settings › Connectors: the Agent OS folder, then the connectors this person connected, under their areas (meeting
+// notes, calendar, files, work, AI), and the MCP servers their agent already has (Inherited MCPs). Add connector opens
+// the library, every connector by area, with the ones not available to this person hidden by default. Each connector
+// has a detail page. Meeting-notes sources run through sources/index.js; Apple Calendar is the macOS
 // permission; Claude Code is the quorum MCP server registration; the Accounts group is the personal OAuth connectors
 // (sources/accounts.js), one sign-in each through Quorum's registered apps. The meeting apps that listen on this Mac appear only
 // with the meeting-capture flag on; with it off, Zoom stays as its cloud recordings import.
@@ -58,16 +60,6 @@ const ago = (iso: string | null) => {
 const elapsed = (from: number) => { const s = Math.max(0, Math.round((Date.now() - from) / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 const plural = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`;
 
-// the rows on the page, by group. `cat` is the library category a deep link names (openConnectors({ library }))
-const GROUPS: { title: string; cat: string; ids: string[] }[] = [
-  { title: 'Calendar', cat: 'calendar', ids: ['apple-calendar', 'google-calendar'] },
-  { title: 'Meeting notes', cat: 'meeting-notes', ids: ['granola', 'zoom', 'google-meet', 'teams'] },
-  { title: 'Accounts', cat: 'accounts', ids: ['google-drive', 'notion', 'slack', 'github'] },
-  { title: 'AI', cat: 'ai', ids: ['claude-code'] },
-];
-// the connectors not built yet named first on the More coming line, when they are still not built
-const MORE_FIRST = ['linear', 'gmail', 'fireflies', 'hubspot', 'jira'];
-const MORE_NAMED = 6;
 const PRICING = 'https://quorum.watch/#pricing';
 
 // detail is which connector's page is open; SettingsView owns it so the page title can turn into breadcrumbs
@@ -79,6 +71,9 @@ export function ConnectorsPage({ detail, onDetail, brain, onFolder, onNotes, foc
   const [icons, setIcons] = useState<Record<string, string | null>>({});
   // the first answer from the main process takes a moment (the Claude Code check shells out); until then a skeleton
   const [loaded, setLoaded] = useState(false);
+  // the library (Add connector) is open; it stays open behind a connector's page, so Back returns to it
+  const [browsing, setBrowsing] = useState(false);
+  const [browseArea, setBrowseArea] = useState<string | null>(null);
   // Cloud on a team with "approved connectors only" on: connectors the workspace did not enable are hidden unless
   // already connected (connectors/approval.js). null everywhere else, which leaves the page as it was
   const { policy, report } = useConnectorPolicy();
@@ -105,18 +100,15 @@ export function ConnectorsPage({ detail, onDetail, brain, onFolder, onNotes, foc
   }, [live.sources, live.platforms]);
   // the workspace counts which of its connectors this member has connected (migration 0030 member_integrations)
   useEffect(() => { if (loaded) report(libraryList.filter((x) => isGoverned(x) && accountConnected(x, live)).map((x) => x.id)); }, [loaded, live, libraryList, report]);
-  // a deep link naming a group scrolls to it once the rows are in
+  // a deep link naming a library category ("Connect a calendar") opens the library at that area
   useEffect(() => {
-    if (!focus || focus.cat === true || !loaded || detail) return;
-    document.querySelector(`[data-conn-group="${focus.cat}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-  }, [focus, loaded, detail]);
+    if (!focus || focus.cat === true) return;
+    setBrowseArea(areaOfCategory(focus.cat));
+    setBrowsing(true);
+  }, [focus]);
   if (detail && byId[detail]) return <ConnectorDetail connector={byId[detail]} icon={icons[detail] ?? null} live={live} onChange={load} initialError={refused?.id === detail ? refused.error : ''} approval={approval(byId[detail])} overlap={overlap} checking={checking} onCheck={check} />;
   // what the library offers today (with meeting capture off, Meet and Teams are not built as imports yet), and
   // anything still connected whatever its status, so it can be disconnected
-  const listed = (id: string) => !!byId[id] && (byId[id].status !== 'soon' || isConnected(byId[id], live)) && !hiddenFromList(byId[id], approval(byId[id]));
-  const soon = libraryList.filter((x) => x.status === 'soon');
-  const named = [...MORE_FIRST.map((id) => soon.find((x) => x.id === id)).filter((x): x is LibraryConnector => !!x), ...soon.filter((x) => !MORE_FIRST.includes(x.id))].slice(0, MORE_NAMED).map((x) => x.name);
-  const others = soon.length - named.length;
   const openRefused = (id: string, error: string) => { setRefused({ id, error }); onDetail(id); };
   if (!loaded) {
     return (
@@ -126,8 +118,14 @@ export function ConnectorsPage({ detail, onDetail, brain, onFolder, onNotes, foc
       </div>
     );
   }
+  if (browsing) return <ConnectorLibrary list={libraryList} icons={icons} live={live} approval={approval} overlap={overlap} focusArea={browseArea} onBack={() => setBrowsing(false)} onOpen={onDetail} />;
+  // the connectors this person connected, or that their workspace runs for them, by area
+  const shown = (x: LibraryConnector) => (accountConnected(x, live) || isConnected(x, live) || approval(x) === 'org') && !hiddenFromList(x, approval(x));
+  const areas = AREAS.map((a) => ({ ...a, items: libraryList.filter((x) => areaOf(x) === a.id && shown(x)) })).filter((a) => a.items.length);
   return (
     <>
+      {/* in the page title's row, at the right */}
+      <TitleActions><button className="pill primary conn-add" onClick={() => { setBrowseArea(null); setBrowsing(true); }}><IconPlus width={16} height={16} /> Add connector</button></TitleActions>
       <div className="conn-group">
         <h4>Your notes</h4>
         <div className="set-card conn-card">
@@ -143,21 +141,107 @@ export function ConnectorsPage({ detail, onDetail, brain, onFolder, onNotes, foc
           </div>
         </div>
       </div>
-      {GROUPS.map((g) => {
-        const items = g.ids.filter(listed).map((id) => byId[id]);
+      {areas.map((a) => (
+        <div key={a.id} className="conn-group" data-conn-group={a.id}>
+          <h4>{a.name}</h4>
+          <div className="set-card conn-card">
+            {a.items.map((x) => <ConnectorRow key={x.id} connector={x} icon={icons[x.id] ?? null} live={live} approval={approval(x)} mcp={overlap?.matches[x.id]} onChange={load} onOpen={() => onDetail(x.id)} onWrongAccount={(e) => openRefused(x.id, e)} />)}
+          </div>
+        </div>
+      ))}
+      {!areas.length && <p className="conn-empty">No connectors yet. Add one to bring in your meetings, calendar, files and work.</p>}
+      <InheritedMcps overlap={overlap} checking={checking} onCheck={check} byId={byId} icons={icons} onOpen={onDetail} />
+      {policy && <p className="conn-more">{policy.enabled.length ? 'Your workspace lists the connectors an admin approved.' : 'Your workspace allows only connectors an admin approved, and none are approved yet.'}</p>}
+    </>
+  );
+}
+
+const WHERE: Record<McpOverlapServer['where'][number], string> = { 'claude-list': 'Claude Code', 'claude-user': 'Claude Code', 'claude-project': 'Claude Code, this folder', vault: 'Agent OS folder' };
+const whereOf = (s: McpOverlapServer) => [...new Set(s.where.map((w) => WHERE[w]))].join(' · ');
+const areaName = (id: string) => AREAS.find((a) => a.id === id)?.name ?? '';
+
+// The MCP servers the person's agent already has (Claude Code and the Agent OS folder's .mcp.json), read without
+// changing anything. Each one names the connector and area it matches, when it matches one; Quorum's own server is
+// left out. A matched row opens that connector's page, which compares the two paths
+function InheritedMcps({ overlap, checking, onCheck, byId, icons, onOpen }: { overlap: McpOverlap | null; checking: boolean; onCheck: () => void; byId: Record<string, LibraryConnector>; icons: Record<string, string | null>; onOpen: (id: string) => void }) {
+  const servers: McpInheritedServer[] = overlap?.servers ?? [];
+  return (
+    <div className="conn-group" data-conn-group="inherited">
+      <div className="conn-head"><h4>Inherited MCPs</h4><button className="text-btn" disabled={checking} onClick={onCheck}>{checking ? 'Checking…' : 'Check again'}</button></div>
+      <p className="conn-lede">MCP servers your agent already has. Quorum reads their names from your Claude Code settings and never changes them.</p>
+      {servers.length > 0 && (
+        <div className="set-card conn-card">
+          {servers.map((s) => {
+            const x = s.provider ? byId[s.provider] : null;
+            const open = x ? () => onOpen(x.id) : undefined;
+            return (
+              <div key={s.name} className={`conn-row${s.on ? '' : ' conn-dim'}`}>
+                <div className="conn-line" role={open ? 'button' : undefined} tabIndex={open ? 0 : undefined} onClick={open} onKeyDown={open ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } } : undefined}>
+                  <Logo id={x?.id} icon={x ? icons[x.id] ?? null : null} />
+                  <strong className="conn-title">{s.name}</strong>
+                  {x ? <em className="soon grey">{x.name} · {areaName(areaOf(x))}</em> : <em className="soon grey">Other</em>}
+                  {!s.on && <span className="conn-off">Turned off</span>}
+                  <span className="conn-meta">{whereOf(s)}</span>
+                  {open && <IconChevron className="right conn-chev" width={14} height={14} />}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {!servers.length && <p className="conn-more">{!overlap || overlap.listing ? 'Looking for MCP servers…' : overlap.claudeMissing ? 'Claude Code is not installed, so there are no MCP servers to read.' : 'Your agent has no other MCP servers.'}</p>}
+    </div>
+  );
+}
+
+// Add connector: every connector by area. Hide unavailable (on by default) leaves out the connectors this person cannot
+// connect: not built yet, not in this build, Cloud only on the Local edition, or not approved by their workspace
+const HIDE_KEY = 'quorum:connectors-hide-unavailable';
+function ConnectorLibrary({ list, icons, live, approval, overlap, focusArea, onBack, onOpen }: { list: readonly LibraryConnector[]; icons: Record<string, string | null>; live: Live; approval: (x: LibraryConnector) => Approval; overlap: McpOverlap | null; focusArea: string | null; onBack: () => void; onOpen: (id: string) => void }) {
+  const [hide, setHide] = useState(() => { try { return localStorage.getItem(HIDE_KEY) !== 'off'; } catch { return true; } });
+  const toggle = () => setHide((h) => { try { localStorage.setItem(HIDE_KEY, h ? 'off' : 'on'); } catch {} return !h; });
+  const notAvailable = (x: LibraryConnector) => {
+    const ap = approval(x);
+    return x.status === 'soon' || unavailable(x, live) || needsCloud(x, live) || hiddenFromList(x, ap) || (!canConnect(ap) && !hasLocalPart(x) && ap !== 'org');
+  };
+  useEffect(() => { if (focusArea) document.querySelector(`[data-lib-area="${focusArea}"]`)?.scrollIntoView({ block: 'start' }); }, [focusArea]);
+  return (
+    <>
+      <div className="conn-lib-head">
+        <button className="text-btn conn-back" onClick={onBack}><IconChevron className="left" width={14} height={14} /> Connectors</button>
+        <label className="conn-hide"><input type="checkbox" checked={hide} onChange={toggle} /> Hide unavailable</label>
+      </div>
+      {AREAS.map((a) => {
+        const items = list.filter((x) => areaOf(x) === a.id && (!hide || isConnected(x, live) || !notAvailable(x)));
         if (!items.length) return null;
         return (
-          <div key={g.title} className="conn-group" data-conn-group={g.cat}>
-            <h4>{g.title}</h4>
+          <div key={a.id} className="conn-group" data-lib-area={a.id}>
+            <h4>{a.name}</h4>
+            <p className="conn-lede">{a.blurb}</p>
             <div className="set-card conn-card">
-              {items.map((x) => <ConnectorRow key={x.id} connector={x} icon={icons[x.id] ?? null} live={live} approval={approval(x)} mcp={overlap?.matches[x.id]} onChange={load} onOpen={() => onDetail(x.id)} onWrongAccount={(e) => openRefused(x.id, e)} />)}
+              {items.map((x) => {
+                const on = isConnected(x, live);
+                const ap = approval(x);
+                const mcp = !!overlap?.matches[x.id]?.length;
+                const state = on ? <Status on /> : x.status === 'soon' ? <em className="soon grey">Soon</em> : needsCloud(x, live) ? <em className="soon grey">Cloud</em>
+                  : unavailable(x, live) ? <span className="conn-off">Not available yet</span> : ap === 'unapproved' ? <span className="conn-off">{UNAPPROVED_LABEL}</span>
+                  : <span className="conn-actions"><button className="pill small-pill" onClick={(e) => { e.stopPropagation(); onOpen(x.id); }}>Add</button></span>;
+                return (
+                  <div key={x.id} className={`conn-row${notAvailable(x) && !on ? ' conn-dim' : ''}`}>
+                    <div className="conn-line" role="button" tabIndex={0} onClick={() => onOpen(x.id)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(x.id); } }}>
+                      <Logo id={x.id} icon={icons[x.id] ?? null} />
+                      <strong className="conn-title">{x.name}</strong>
+                      {mcp && <em className="soon grey" data-tip="Your agent already has this provider's MCP server">Agent has MCP</em>}
+                      <span className="conn-desc">{x.description}</span>
+                      {state}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         );
       })}
-      <SyncedFolderConnections />
-      {policy && <p className="conn-more">{policy.enabled.length ? 'Your workspace lists the connectors an admin approved.' : 'Your workspace allows only connectors an admin approved, and none are approved yet.'}</p>}
-      {named.length > 0 && <p className="conn-more">More coming: {others > 0 ? `${named.join(', ')} and ${others} more.` : `${named.slice(0, -1).join(', ')}${named.length > 1 ? ' and ' : ''}${named[named.length - 1]}.`}</p>}
     </>
   );
 }
@@ -191,7 +275,14 @@ const metaLine = (x: LibraryConnector, live: Live) => {
   return null;
 };
 
-function Logo({ icon, size = 28 }: { icon: string | null; size?: number }) {
+const APP_ICON_FIRST = new Set(['zoom']);
+// a brand mark as an image on a dark tile, so it lays out exactly like an app icon
+const brandSrc = (b: { d: string; fill: string }) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="-7 -7 38 38"><rect x="-7" y="-7" width="38" height="38" rx="9" fill="#2c2c2f"/><path d="${b.d}" fill="${b.fill}"/></svg>`)}`;
+// a connector's mark: its brand logo, drawn for a dark background, else the installed app's icon or the site icon
+function Logo({ id, icon, size = 28 }: { id?: string; icon: string | null; size?: number }) {
+  // Zoom's mark is a wordmark, too small at this size: its installed app icon reads better
+  const brand = id && !(APP_ICON_FIRST.has(id) && icon) ? BRAND_LOGOS[id] : undefined;
+  if (brand) icon = brandSrc(brand);
   return icon ? <img className="conn-logo" src={icon} alt="" style={{ width: size, height: size }} /> : <span className="conn-logo blank" style={{ width: size, height: size }}><IconGrid width={14} height={14} /></span>;
 }
 
@@ -249,7 +340,7 @@ function ConnectorRow({ connector: x, icon, live, approval, mcp, onChange, onOpe
   return (
     <div className="conn-row">
       <div className="conn-line" role="button" tabIndex={0} onClick={onOpen} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}>
-        <Logo icon={icon} />
+        <Logo id={x.id} icon={icon} />
         <strong className="conn-title">{x.name}</strong>
         {cloud && <em className="soon grey">Cloud</em>}
         {approval === 'approved' && <em className="soon grey">Workspace</em>}
@@ -281,7 +372,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
   const running = src?.job?.status === 'running';
   const [, tick] = useState(0);
   useEffect(() => { if (!running) return; const t = setInterval(() => tick((n) => n + 1), 1000); return () => clearInterval(t); }, [running]);
-  const cat = CATEGORIES.find((c) => c.id === x.category);
+  const area = AREAS.find((a) => a.id === areaOf(x));
   const google = googleFor(x, live);
   const acct = accountFor(x, live);
   const off = !on && unavailable(x, live);
@@ -292,7 +383,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
   const accountProblem = !!alert && /No \w+ account for|account for this sign-in|different account|Use the account your/i.test(alert);
   const rows: [string, ReactNode][] = [
     ...(on ? [] : [['Status', status] as [string, ReactNode]]),
-    ['Category', cat?.name ?? x.category],
+    ['Area', area?.name ?? x.category],
     ['Connection', connectionType(x)],
   ];
   if (x.kind === 'mcp-source' && src) {
@@ -333,7 +424,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
   return (
     <div className="conn-detail">
       <div className="conn-detail-head">
-        <Logo icon={icon} size={44} />
+        <Logo id={x.id} icon={icon} size={44} />
         <div className="conn-detail-title">
           <h3>{x.name}{soon && <em className="soon grey">Soon</em>}</h3>
           <p>{aboutFor(x, capture(x))}</p>
@@ -396,6 +487,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
           <div className="set-card conn-table mcp-paths-card"><McpStatus connector={x} overlap={overlap} checking={checking} onCheck={onCheck} /></div>
         </>
       )}
+      {x.id === 'github' && <SyncedFolderConnections />}
       {x.kind === 'mcp-source' && src?.agent && src.agent.runners.length > 0 && (!on || src.agent.schedule !== 'off') && <AgentImport source={src} busy={busy} act={act} />}
       <h4>Enables</h4>
       <div className="set-card conn-features">

@@ -4,6 +4,10 @@ export type ConnectorCategory = { id: string; name: string; blurb: string };
 // listen: false on a meeting app means the copy runs with meeting capture off, so only its cloud import is offered
 export type LibraryConnector = { id: string; name: string; category: string; domain: string; description: string; status: ConnectorStatus; kind: ConnectorKind; source?: string; app?: string; listen?: boolean; account?: boolean };
 export const CATEGORIES: readonly ConnectorCategory[];
+export type ConnectorArea = { id: 'meeting-notes' | 'calendar' | 'files' | 'work' | 'ai'; name: string; blurb: string };
+export const AREAS: readonly ConnectorArea[];
+export function areaOf(connector: LibraryConnector): ConnectorArea['id'];
+export function areaOfCategory(category: string): ConnectorArea['id'] | null;
 export const CONNECTORS: readonly LibraryConnector[];
 export const CONNECTOR_BY_ID: Record<string, LibraryConnector>;
 export function byCategory(categoryId: string): LibraryConnector[];
