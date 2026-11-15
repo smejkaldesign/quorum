@@ -198,9 +198,9 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
         <h1>{e.title}</h1>
         <div className="meta-row">
           <span className="meta-pill"><IconCalendar width={16} height={16} />{dayLabel(at)} · {clock(at)} – {clock(end)}</span>
-          {(e.count ?? 0) > 0 && <span className="meta-pill"><IconPeople width={16} height={16} />{e.count} {e.count === 1 ? 'person' : 'people'}</span>}
           {e.calendar && <AppIcon id={CALENDAR_APP[e.calendar].id} name={CALENDAR_APP[e.calendar].name} onOpen={e.item || e.link ? () => window.quorum.calendarOpen(e) : null} />}
           {platform && <AppIcon id={platform.id} name={platform.short} onOpen={e.join ? () => window.quorum.openExternal(e.join!) : null} />}
+          {(e.count ?? 0) > 0 && <span className="meta-pill" aria-label={`${e.count} ${e.count === 1 ? 'person' : 'people'}`} data-tip={`${e.count} ${e.count === 1 ? 'person' : 'people'}`}><IconPeople width={16} height={16} />{e.count}</span>}
           <div className="view-toggle mp-tabs" role="group" aria-label="Show">
             <button className={tab === 'prep' ? 'on' : ''} aria-pressed={tab === 'prep'} aria-label="Prep" data-tip="Prep" onClick={() => pick('prep')}><IconLogs width={16} height={16} /></button>
             <button className={tab === 'note' ? 'on' : ''} aria-pressed={tab === 'note'} aria-label="Note" data-tip="Note" onClick={() => pick('note')}><IconNotes width={16} height={16} /></button>

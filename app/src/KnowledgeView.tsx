@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { ViewsPill } from './ViewsPill';
+import { HeadingLinks, slugsOf } from './HeadingLinks';
+import { MemoryBell, MemoryNotifications } from './MemoryNotifications';
 import { FolderApp } from './FolderApp';
 import { NoteMeta, type NoteMetaInfo } from './NoteMeta';
 import type { TreeSort, Brain, TreeItem, NoteViews, MemoryDots, MemoryReview, MemoryVersion, LiveRun, LiveState } from './quorum';
@@ -17,7 +18,7 @@ import { IconChevron, IconClose, IconCollapse, IconExpand, IconFolder, IconGraph
 type Creating = { kind: 'note' | 'folder'; parent: string } | null;
 type Preview = { rel: string; title: string; body: string; abs: string; app: string; views?: NoteViews; meta?: NoteMetaInfo | null } | null;
 
-export type KbCommand = { kind: 'switcher' | 'search' | 'palette'; n: number } | { kind: 'open' | 'graph'; rel: string; n: number } | null;
+export type KbCommand = { kind: 'switcher' | 'search' | 'palette'; n: number } | { kind: 'open' | 'graph'; rel: string; anchor?: string | null; n: number } | { kind: 'missing'; id: string; n: number } | null;
 
 export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain | null; command?: KbCommand; extraCommands?: PaletteItem[] }) {
   const [tree, setTree] = useState<TreeItem[]>([]);
@@ -66,6 +67,22 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   const [live, setLive] = useState<LiveState>({ runs: [], files: {}, folders: [], vault: [] });
   const [confirmStop, setConfirmStop] = useState<LiveRun | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
+  // the open memory's Notifications, in place of its text while open; its headings' links
+  const [notifsOpen, setNotifsOpen] = useState(false);
+  // a link to a note that is not on this Mac or shared with this person
+  const [missing, setMissing] = useState<string | null>(null);
+  // a link's heading: the note's headings numbered the way links number them, then the one that matches
+  const scrollToAnchor = (anchor: string) => {
+    const tryIt = (left: number) => {
+      const hs = [...document.querySelectorAll<HTMLElement>('.kb-preview .mu-text h1, .kb-preview .mu-text h2, .kb-preview .mu-text h3, .kb-preview .mu-text h4')];
+      if (!hs.length && left > 0) { window.setTimeout(() => tryIt(left - 1), 120); return; }
+      const slugs = slugsOf(hs.map((h) => h.textContent ?? ''));
+      const i = slugs.indexOf(anchor) >= 0 ? slugs.indexOf(anchor) : slugs.findIndex((x) => x === anchor.replace(/-\d+$/, ''));
+      if (i >= 0) { hs[i].scrollIntoView({ behavior: 'smooth', block: 'start' }); hs[i].classList.add('h-target'); window.setTimeout(() => hs[i].classList.remove('h-target'), 1600); }
+    };
+    tryIt(15);
+  };
+  const memRoot = useRef<HTMLDivElement>(null);
   const [openRel, setOpenRel] = useSession<string>('note', '');
   const [renaming, setRenaming] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
@@ -94,7 +111,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     window.quorum.vaultLinkHealth().then((h) => { const left = leftAsIs(); setIssues(h.filter((m) => !left.has(m.target.toLowerCase())).length); });
   }, []);
   useEffect(() => { countIssues(); }, [graph, countIssues]);
-  useEffect(() => { if (command?.kind === 'open') openNote(command.rel); else if (command?.kind === 'graph') { setPreview(null); setSelected(command.rel); setFocus(command.rel); } else if (command) { setScope({}); setPalette(command.kind); } }, [command]);
+  useEffect(() => { if (command?.kind === 'open') { setMissing(null); openNote(command.rel).then(() => { if (command.anchor) scrollToAnchor(command.anchor); }); } else if (command?.kind === 'missing') { setPreview(null); setMissing(command.id); } else if (command?.kind === 'graph') { setPreview(null); setSelected(command.rel); setFocus(command.rel); } else if (command) { setScope({}); setPalette(command.kind); } }, [command]);
 
   const load = useCallback(async () => {
     const [t, g] = await Promise.all([window.quorum.vaultTree(), window.quorum.vaultGraph()]);
@@ -179,6 +196,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   };
   // the review is read before the note counts as opened, so a blue banner shows on the open that clears its dot
   const openNote = useCallback(async (rel: string) => {
+    setMissing(null);
     setSelected(rel);
     const [n, r, s] = await Promise.all([window.quorum.vaultNote(rel), window.quorum.memoryReview(rel).catch(() => null), window.quorum.getSettings().catch(() => null)]);
     const lit = s?.memoryHighlight !== false;
@@ -498,7 +516,14 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
             </>
           )}
         </div>
-        {preview ? (
+        {missing !== null ? (
+          // a link to a note that is not on this Mac, or not shared with this person yet
+          <div className="kb-missing">
+            <h2>This note isn't shared with you yet</h2>
+            <p>The link points to a note that is not on this Mac or not public. Ask its owner to share it with you.</p>
+            <button className="act-pill" onClick={() => setMissing(null)}>Back to Memory</button>
+          </div>
+        ) : preview ? (
           <div className={`kb-preview ${side ? "side-open" : ""}`}>
             <article className="doc">
               {openRun && <LiveBanner run={openRun} onStop={() => setConfirmStop(openRun)} />}
@@ -523,15 +548,17 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
               <h1>{preview.title}</h1>
               {/* the full path under the title; a long one loses its start, so the file name stays readable */}
               <p className="kb-path" title={preview.rel}><span>{preview.rel}</span></p>
-              {preview.meta ? <NoteMeta meta={{ ...preview.meta, title: preview.title }}>{preview.views?.total ? <ViewsPill views={preview.views} /> : null}</NoteMeta>
-                : preview.views?.total ? <div className="meta-row"><ViewsPill views={preview.views} /></div> : null}
+              {preview.meta ? <NoteMeta meta={{ ...preview.meta, title: preview.title }}><MemoryBell rel={preview.rel} open={notifsOpen} onToggle={() => setNotifsOpen((o) => !o)} /></NoteMeta>
+                : <div className="meta-row"><MemoryBell rel={preview.rel} open={notifsOpen} onToggle={() => setNotifsOpen((o) => !o)} /></div>}
+              {notifsOpen && <MemoryNotifications key={preview.rel} rel={preview.rel} abs={preview.abs} />}
               {/* After marks the lines the updates changed, green while they wait and blue once approved; Before and an
                   opened version show their saved text, dimmed */}
-              <div className={`mu-text ${version || (review && mode === 'before') ? 'mu-old' : review?.dot ?? ''} ${locked ? 'locked' : ''}`}>
+              <div ref={memRoot} hidden={notifsOpen} className={`mu-text ${version || (review && mode === 'before') ? 'mu-old' : review?.dot ?? ''} ${locked ? 'locked' : ''}`}>
+                <HeadingLinks root={memRoot} base={`quorum://note/${encodeURIComponent(preview.rel)}`} />
                 <Markdown text={version ? version.body : review && mode === 'before' ? review.before : preview.body} headings root={brain?.root} onWiki={openLink} marks={marks} />
               </div>
             </article>
-            <NotePanel rel={preview.rel} body={preview.body} previous={prev} onOpen={(rel) => { viaLink.current = true; openNote(rel); }} onResolve={openLink}>
+            <NotePanel rel={preview.rel} body={preview.body} views={preview.views ?? null} previous={prev} onOpen={(rel) => { viaLink.current = true; openNote(rel); }} onResolve={openLink}>
               <VersionList rel={preview.rel} stamp={stamp} viewing={version?.v.id ?? null} onView={viewVersion} />
             </NotePanel>
           </div>

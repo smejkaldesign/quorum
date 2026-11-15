@@ -89,6 +89,7 @@ function Link({ label, href, root }: { label: string; href: string; root?: strin
   const onWiki = useContext(WikiOpen);
   const open = () => {
     if (KB_FILE_LINK.test(href)) kbFiles()?.kbFileOpen?.(href);
+    else if (/^quorum:\/\/note\//.test(href)) window.quorum.openNoteLink(href).then((t) => { if (t) window.dispatchEvent(new CustomEvent('quorum:note-link', { detail: t })); }).catch(() => {});
     else if (/^https:\/\//.test(href)) window.quorum.openExternal(href);
     else if (href.endsWith('.md') && onWiki) { try { onWiki(decodeURIComponent(href)); } catch { onWiki(href); } }
     else if (href.endsWith('.md') && root) window.quorum.openNote(href.startsWith('/') ? href : `${root}/${href}`);

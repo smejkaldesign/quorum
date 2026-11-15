@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { NoteDoc, Visibility } from './quorum';
+import type { NoteDoc, NoteViews, Visibility } from './quorum';
 import { IconChevron, IconFolder, IconGlobe, IconLock, IconMore, IconTrash } from './icons';
 
 // A note's Private/Public pill and its More menu, shared by the Home list rows and the note page. Their own module so
@@ -34,7 +34,7 @@ export function VisibilityPill({ value, onChange, compact }: { value: Visibility
   );
 }
 
-export function NoteMenu({ note, onDeleted, compact }: { note: Pick<NoteDoc, 'file' | 'rel' | 'app' | 'link'>; onDeleted: () => void; compact?: boolean }) {
+export function NoteMenu({ note, onDeleted, compact, views }: { note: Pick<NoteDoc, 'file' | 'rel' | 'app' | 'link'>; onDeleted: () => void; compact?: boolean; views?: NoteViews | null }) {
   const [open, setOpen] = useState(false);
   useEffect(() => {
     if (!open) return;
@@ -50,6 +50,8 @@ export function NoteMenu({ note, onDeleted, compact }: { note: Pick<NoteDoc, 'fi
       </button>
       {open && (
         <div className="menu note-menu" role="menu">
+          {/* who has read the note, kept here instead of a pill on the page */}
+          {!!views?.total && <div className="menu-meta">{views.total} {views.total === 1 ? 'view' : 'views'} · {views.human} by people · {views.agent} by agents</div>}
           <button role="menuitem" onClick={run(() => window.quorum.vaultReveal(note.rel))}><IconFolder width={15} height={15} /> Show in {note.app}</button>
           <div className="menu-sep" />
           <button role="menuitem" className="danger" onClick={run(async () => { if (await window.quorum.vaultTrash(note.rel)) onDeleted(); })}><IconTrash width={15} height={15} /> Delete note</button>

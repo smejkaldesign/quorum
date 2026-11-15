@@ -32,8 +32,8 @@ function PeoplePill({ people }: { people: string[] }) {
   if (!people.length) return null;
   return (
     <span className="menu-wrap people-pill" ref={wrap}>
-      <button className="meta-pill" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        <IconPeople width={16} height={16} />{people.length} {people.length === 1 ? 'person' : 'people'}
+      <button className="meta-pill" aria-haspopup="dialog" aria-expanded={open} aria-label={`${people.length} ${people.length === 1 ? 'person' : 'people'}`} data-tip={`${people.length} ${people.length === 1 ? 'person' : 'people'}`} onClick={() => setOpen((o) => !o)}>
+        <IconPeople width={16} height={16} />{people.length}
       </button>
       {open && (
         <div className="menu left people-pop-list" role="dialog" aria-label="People">
@@ -54,12 +54,12 @@ export function NoteMeta({ meta, children }: { meta: NoteMetaInfo; children?: Re
   return (
     <div className="meta-row">
       {ok && <span className="meta-pill"><IconCalendar width={16} height={16} />{dayLabel(date)} · {date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>}
-      <PeoplePill people={meta.people ?? []} />
       {/* a source logo shows only for a note tied to a connector; Quorum's own notes show none */}
       {meta.source && meta.source !== 'quorum' && meta.source !== 'quorum-dev' && <AppIcon {...sourceApp(meta.source)} onOpen={meta.sourceUrl ? () => window.quorum.openExternal(meta.sourceUrl!) : null} />}
       {meta.calendar && ev && <AppIcon {...CALENDAR_APP[meta.calendar]}
         onOpen={ev.item || ev.link ? () => window.quorum.calendarOpen({ ...ev, id: ev.id ?? '', title: meta.title ?? '', end: ev.start } as CalendarEvent) : null} />}
       {meta.platform && <AppIcon id={PLATFORM_APP[meta.platform].id} name={PLATFORM_APP[meta.platform].name} onOpen={meta.meetingUrl ? () => window.quorum.openExternal(meta.meetingUrl!) : null} />}
+      <PeoplePill people={meta.people ?? []} />
       {children}
     </div>
   );

@@ -1,7 +1,7 @@
 import { useComposerFocus } from './ChatStack';
 import { BackButton } from './BackButton';
 import { Component, Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { AccountState, Brain, HelperEvent, MeetingMeta, Notes, NotesDraft, Settings, Source, SpeakersEvent, SummaryEvent, UpdateState, WhoAsk } from './quorum';
+import type { NoteLinkTarget, AccountState, Brain, HelperEvent, MeetingMeta, Notes, NotesDraft, Settings, Source, SpeakersEvent, SummaryEvent, UpdateState, WhoAsk } from './quorum';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
 import { BetaGate } from './BetaGate';
@@ -258,6 +258,12 @@ export function App() {
     setTab('memory');
     setKbCommand({ kind: 'open', rel: abs.slice(brain.vault.length + 1), n: Date.now() });
   };
+  // note links from the OS: the renderer says it is listening, then main hands over any that came first
+  useEffect(() => {
+    const off = window.quorum.onNoteLink?.((t) => window.dispatchEvent(new CustomEvent('quorum:note-link', { detail: t })));
+    window.quorum.noteLinksReady?.().catch(() => {});
+    return () => off?.();
+  }, []);
   // a note page's folder button opens that note in the Memory tab
   useEffect(() => {
     const open = (e: Event) => openInQuorum(String((e as CustomEvent).detail ?? ''));
@@ -270,7 +276,10 @@ export function App() {
     };
     window.addEventListener('quorum:open-memory', open);
     window.addEventListener('quorum:open-graph', graph);
-    return () => { window.removeEventListener('quorum:open-memory', open); window.removeEventListener('quorum:open-graph', graph); };
+    // quorum://note links, from the OS or from a link inside a note
+    const link = (e: Event) => { const t = (e as CustomEvent<NoteLinkTarget>).detail; setView('main'); setTab('memory'); setKbCommand(t.missing ? { kind: 'missing', id: t.id ?? '', n: Date.now() } : { kind: 'open', rel: t.rel!, anchor: t.anchor, n: Date.now() }); };
+    window.addEventListener('quorum:note-link', link);
+    return () => { window.removeEventListener('quorum:open-memory', open); window.removeEventListener('quorum:open-graph', graph); window.removeEventListener('quorum:note-link', link); };
   });
   // a cited knowledge base note opens in the Knowledge tab
   const openKbNote = useCallback((t: KbOpenTarget) => {

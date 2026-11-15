@@ -2298,3 +2298,31 @@ button.meta-pill, a.meta-pill { font-size: 14px; }
 .nn-when { font-size: 12px; color: var(--muted); }
 .nn-row > .act-pill { flex: none; align-self: center; }
 .mp-more { margin-top: 8px; }
+/* note headings: the title's typeface, and a # in the margin that turns into a link button on hover */
+.note-rich h1, .note-rich h2, .note-rich h3, .note-rich h4 { position: relative; font-family: "New York", ui-serif, Georgia, serif; font-weight: 500; letter-spacing: -0.01em; }
+.note-rich h1::before, .note-rich h2::before, .note-rich h3::before, .note-rich h4::before { content: '#'; position: absolute; left: -26px; color: #5c5c62; font: 400 0.8em/inherit ui-sans-serif, -apple-system, sans-serif; top: 0.02em; }
+.reader-edit, .mu-text { position: relative; }
+.h-link { position: absolute; z-index: 3; width: 24px; height: 24px; transform: translateY(-50%); display: grid; place-items: center; border-radius: 6px; color: var(--text); background: var(--panel); border: 1px solid var(--line-2); }
+.h-link:hover { background: rgba(255, 255, 255, 0.08); }
+/* the panel's outline rows: the heading, and a link button on hover */
+.np-outline-row { display: flex; align-items: center; gap: 4px; }
+.np-outline-row .np-outline { flex: 1; min-width: 0; }
+.np-anchor { flex: none; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); opacity: 0; transition: opacity 120ms ease; }
+.np-outline-row:hover .np-anchor, .np-anchor:focus-visible { opacity: 1; }
+.np-anchor:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
+/* an empty section's text stays on one line */
+.np-empty { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note-panel .views-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; color: var(--text); }
+.note-panel .views-row.sub { padding-left: 12px; color: var(--muted); }
+/* the ... menu's line about who has read the note */
+.menu-meta { padding: 6px 12px 8px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); margin-bottom: 4px; white-space: nowrap; }
+/* the floating Up next strip: 2px more room under its last row, and a shadow while it is out */
+.up-float-in > .up-strip { padding-bottom: 8px; }
+.up-float-in.shown > .up-strip { box-shadow: 0 14px 28px -10px rgba(0, 0, 0, 0.7); }
+/* a link to a note that is not here */
+.kb-missing { max-width: 520px; margin: 80px auto; padding: 0 24px; text-align: center; }
+.kb-missing h2 { font: 400 28px/1.2 "New York", ui-serif, Georgia, serif; margin: 0 0 10px; }
+.kb-missing p { color: var(--muted); margin: 0 0 20px; }
+/* the heading a link pointed to, for a moment */
+.h-target { animation: h-target 1.6s ease; }
+@keyframes h-target { 0%, 60% { background: rgba(59, 130, 246, 0.18); } 100% { background: transparent; } }

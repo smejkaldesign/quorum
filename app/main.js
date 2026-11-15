@@ -86,6 +86,38 @@ function lockToApp(contents) {
 // three are, then the main window comes forward with the note
 const kbLinks = { queue: [], parse: null, subscribed: false };
 app.on('open-url', (e, url) => { if (/^quorum:\/\/kb\//.test(url)) { e.preventDefault(); kbLinks.queue.push(url); flushKbLinks(); } });
+// quorum://note/<note>#<heading> links open that note in Memory at that heading. <note> is a path in the vault, or
+// the id a notetaker gave a meeting note. A note that is not on this Mac opens a page that says it is not shared yet.
+// Links that arrive before the renderer asks for them (a launch from a link) wait in noteLinks
+const noteLinks = { queue: [], ready: false };
+app.on('open-url', (e, url) => { if (/^quorum:\/\/note\//.test(url)) { e.preventDefault(); noteLinks.queue.push(url); flushNoteLinks(); } });
+function resolveNoteLink(url) {
+  const m = String(url).match(/^quorum:\/\/note\/([^#?]+)(?:#(.*))?$/);
+  if (!m) return null;
+  let id;
+  try { id = decodeURIComponent(m[1]); } catch { return null; }
+  const anchor = m[2] ? String(m[2]).replace(/[^a-z0-9-]/gi, '').slice(0, 120) : null;
+  const b = brain();
+  if (b) {
+    const abs = path.resolve(b.vault, id);
+    if (abs.startsWith(b.vault + path.sep) && abs.endsWith('.md') && existsSync(abs) && !excludedPath(path.relative(b.vault, abs))) return { rel: path.relative(b.vault, abs).split(path.sep).join('/'), anchor };
+    const hit = meetingIndex().find((x) => x.cacheKey === id);
+    if (hit) return { rel: path.relative(b.vault, hit.file).split(path.sep).join('/'), anchor };
+  }
+  return { missing: true, id: id.slice(0, 200), anchor };
+}
+function flushNoteLinks() {
+  if (!noteLinks.ready || !win || win.isDestroyed()) return;
+  for (const url of noteLinks.queue.splice(0)) {
+    const target = resolveNoteLink(url);
+    if (!target) continue;
+    openMain();
+    toUI('note-link', target);
+  }
+}
+// the renderer is listening: what came in before goes now; a link inside a note opens the same way
+ipcMain.handle('note-links-ready', () => { noteLinks.ready = true; flushNoteLinks(); });
+ipcMain.handle('open-note-link', (_e, url) => resolveNoteLink(url));
 function flushKbLinks() {
   if (!kbLinks.parse || !kbLinks.subscribed || !win || win.isDestroyed()) return;
   for (const url of kbLinks.queue.splice(0)) {
@@ -1900,6 +1932,15 @@ const seenSet = (abs, patch) => {
   try { writeFileSync(seenFile, JSON.stringify(all)); } catch (e) { log('note seen', e?.message); }
 };
 ipcMain.handle('note-seen', (_e, file) => { const abs = meetingFile(file); if (abs) seenSet(abs, { seenAt: new Date().toISOString() }); return true; });
+// a memory's Notifications: when they were last opened; mark sets it to now. Any note inside the vault
+ipcMain.handle('memory-seen', (_e, rel, mark) => {
+  const b = brain();
+  if (!b) return null;
+  const abs = path.resolve(b.vault, String(rel ?? ''));
+  if (!abs.startsWith(b.vault + path.sep) || !existsSync(abs)) return null;
+  if (mark) seenSet(abs, { seenAt: new Date().toISOString() });
+  return seenAll()[abs]?.seenAt ?? null;
+});
 ipcMain.handle('note-reviewed', (_e, file) => {
   const abs = meetingFile(file);
   if (!abs) return false;
