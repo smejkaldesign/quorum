@@ -2,7 +2,6 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useSy
 import { createPortal } from 'react-dom';
 import type { CalendarEvent } from './quorum';
 import { useExclusiveMenu } from './menuBus';
-import { Toggle } from './controls';
 import { useSession } from './session';
 import { ConfirmModal } from './ConfirmModal';
 import { dayLabel, upNextRows } from './upNextList';
@@ -100,9 +99,6 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
       <div className="up-head">
         <DaysMenu days={cal.days} onPick={(d) => window.quorum.calendarSet({ days: d }).then(loadCal)} />
         <span className="up-head-end">
-          {cal.connected && (
-            <label className="up-switch">Non-meetings<Toggle on={cal.showAll} onChange={(v) => window.quorum.calendarSet({ showAll: v }).then(loadCal)} /></label>
-          )}
           {inline && moreButton}
         </span>
       </div>

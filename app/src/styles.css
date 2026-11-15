@@ -1859,7 +1859,6 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .up-days-btn h4 { margin: 0; }
 .up-days-chev { color: var(--muted); }
 .up-days-menu { top: calc(100% + 6px); min-width: 160px; }
-.up-switch { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); cursor: pointer; }
 .up-show-more:disabled { opacity: 0.4; cursor: default; }
 
 /* Next N days sits above the filters with a divider under it */

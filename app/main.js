@@ -2065,17 +2065,18 @@ ipcMain.handle('calendar', async () => {
   const { mac, google, events: all } = await calendarEvents(c.days);
   const connected = (!!c.enabled && mac.status === 'granted') || google.connected;
   const status = c.enabled ? mac.status : google.connected ? 'granted' : 'off';
-  if (!connected) return { connected: false, status, events: [], days: c.days, showAll: c.showAll, hidden: 0 };
+  if (!connected) return { connected: false, status, events: [], days: c.days, showAll: false, hidden: 0 };
   const hiddenIds = new Set(c.hidden);
   let hidden = 0;
   // titles of meetings with opted-out customers never show; invite text stays in the main process
   const events = all.filter((e) => !suggester.isExcluded(e.title)).flatMap((e) => {
     const { platform, join } = callLink(e);
     // an event Quorum can do nothing with (no call, or a call on a platform that is off) only shows when asked for
-    if (hiddenIds.has(e.id) || (!c.showAll && !(platform && providerOn(platform)))) { hidden += 1; return []; }
+    // Up next lists calls only; everything else is in the list below it
+    if (hiddenIds.has(e.id) || !(platform && providerOn(platform))) { hidden += 1; return []; }
     return [{ id: e.id, title: e.title, start: e.start, end: e.end, item: e.item, link: e.link ?? null, recurring: e.recurring, platform, join, calendar: e.source ?? null, organizer: eventRef(e).organizer, count: eventRef(e).count }];
   });
-  return { connected: true, status, events, days: c.days, showAll: c.showAll, hidden };
+  return { connected: true, status, events, days: c.days, showAll: false, hidden };
 });
 ipcMain.handle('calendar-status', async () => ({ ...calSettings(), status: (await calAsk({ cmd: 'calStatus' })).status, google: gcal.status() }));
 // personal OAuth connectors (sources/accounts.js): Quorum's registered apps for Google Drive, Notion, Slack and GitHub
@@ -2130,7 +2131,6 @@ ipcMain.handle('calendar-set', (_e, next) => {
   const c = calSettings();
   if ([1, 2, 3, 4, 5].includes(next?.days)) c.days = next.days;
   if (next?.enabled === false) c.enabled = false;
-  if (typeof next?.showAll === 'boolean') c.showAll = next.showAll;
   if (typeof next?.hide === 'string' && next.hide && !c.hidden.includes(next.hide)) c.hidden = [...c.hidden, next.hide].slice(-500);
   if (next?.unhideAll) c.hidden = [];
   settings.calendar = c;
