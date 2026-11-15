@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { SourceAskBanner } from './MeetingSources';
-import type { Brain, ChatRow, MeetingRow, NoteDoc } from './quorum';
+import type { Brain, CalendarEvent, ChatRow, MeetingRow, NoteDoc } from './quorum';
 import { NoteMenu, NoteReader, VisibilityPill } from './MeetingNote';
 import { quoteLink, useQuote } from './quotes';
 import { Composer } from './Composer';
@@ -8,8 +8,9 @@ import { ConnectHint } from './ConnectHint';
 import { openConnectors } from './connectorsNav';
 import { useSession } from './session';
 import { dayLabel } from './upNextList';
-import { UpNext, useCalendarView } from './UpNext';
-import { AppChip, AppLink, AppLogo, CALENDAR_APP, PLATFORM_APP, sourceApp } from './AppChip';
+import { OPEN_EVENT, UpNext, takeEvent, useCalendarView } from './UpNext';
+import { AppLogo, CALENDAR_APP, RowDetails, peopleText } from './AppChip';
+import { MeetingPage } from './MeetingPage';
 import { IconCalendar, IconChat, IconClose, IconExternal, IconListCheck, IconMic, IconNewNote, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
 
 type Filter = 'all' | 'meetings' | 'notes' | 'chats';
@@ -58,6 +59,13 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
     return () => { live = false; };
   }, [keyword]);
   const [note, setNote] = useState<NoteDoc | null>(null);
+  // an upcoming meeting's page, opened from Up next here or on another tab
+  const [event, setEvent] = useState<CalendarEvent | null>(() => takeEvent());
+  useEffect(() => {
+    const open = () => { const e = takeEvent(); if (e) { setNote(null); setEvent(e); } };
+    window.addEventListener(OPEN_EVENT, open);
+    return () => window.removeEventListener(OPEN_EVENT, open);
+  }, []);
   const [draft, setDraft] = useState('');
   const { quote, shown, typing } = useQuote();
   // the quote stays on one line: in a window narrower than the default, the heading eases down to fit
@@ -140,26 +148,29 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
   // Up next steps aside while the list is filtered, as it did when it lived here
   useEffect(() => { onFiltered?.(filtered); }, [filtered, onFiltered]);
   useEffect(() => () => onFiltered?.(false), [onFiltered]);
+  if (event) return <MeetingPage event={event} onBack={() => setEvent(null)} onOpenNote={(file) => window.quorum.readNote(file).then((n) => { if (n) { setEvent(null); setNote(n); } })} />;
   if (note) return <NoteReader note={note} dayLabel={dayLabel} peopleLine={peopleLine} onBack={() => { setNote(null); refresh(); }} />;
 
   const ask = (q: string, files: string[] = []) => { if (q.trim()) { setDraft(''); onAsk(q.trim(), files); } };
 
   // the row for a meeting, note or chat, with the chats about a meeting under it
   const renderRow = (r: Row) => {
-    const platform = r.meeting?.platform ? PLATFORM_APP[r.meeting.platform] : null;
+    const m = r.meeting;
+    // a meeting matched to a calendar event shows that calendar; one without (ad hoc, a phone call) is a note
+    const ev = m?.event ?? null;
     return (
       <div key={r.key} className="hist-item">
       <div className="hist-row" role="button" tabIndex={0} onClick={r.open} onKeyDown={(e) => { if (e.key === 'Enter') r.open(); }}>
-        {r.avatar === 'chat'
-          ? <span className="avatar-sq chat"><IconQuorum /></span>
-          : r.avatar === 'note' ? <span className="avatar-sq note"><IconMic width={20} height={20} /></span>
-          : r.meeting?.calendar ? <span className="avatar-sq app"><AppLogo {...CALENDAR_APP[r.meeting.calendar]} /></span>
-          : <span className="avatar-sq" style={{ background: colorFor(r.sub + r.title) }}>{r.avatar}</span>}
-        <span className="hist-text"><strong>{r.title}</strong><span className="hist-sub">
-          {platform && r.meeting?.meetingUrl ? <AppLink url={r.meeting.meetingUrl} name={platform.name} logo={platform.id}>{r.sub}</AppLink>
-            : <span className="hist-meet">{platform && <AppLogo {...platform} />}<span className="hist-sub-text">{r.sub}</span></span>}
-          {r.meeting && r.meeting.source !== 'quorum' && <AppChip {...sourceApp(r.meeting.source)} url={r.meeting.url} />}
-        </span></span>
+        {r.avatar === 'chat' ? <span className="avatar-sq chat"><IconQuorum /></span>
+          : m?.calendar && ev ? <span className="avatar-sq app"><AppLogo {...CALENDAR_APP[m.calendar]} /></span>
+          : <span className="avatar-sq note"><IconMic width={20} height={20} /></span>}
+        <span className="hist-text"><strong>{r.title}</strong>
+          {m ? <RowDetails who={m.kind === 'note' && !ev ? 'Note' : peopleText(ev, m.people)}
+              onCalendar={ev && (ev.item || ev.link) ? () => window.quorum.calendarOpen({ ...ev, id: ev.id ?? '', title: m.title, end: ev.start } as CalendarEvent) : null}
+              calendarName={m.calendar ? CALENDAR_APP[m.calendar].name : undefined}
+              platform={m.platform} meetingUrl={m.meetingUrl} source={m.source} sourceUrl={m.url} />
+            : <span className="hist-sub"><span className="hist-sub-text">{r.sub}</span></span>}
+        </span>
         <span className="hist-time">{r.date ? <>{r.date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?(AM|PM)/i, '')}<small>{r.date.getHours() < 12 ? 'AM' : 'PM'}</small></> : ''}</span>
         {r.meeting && (
           <span className="hist-hover">

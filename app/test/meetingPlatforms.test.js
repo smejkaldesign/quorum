@@ -11,7 +11,7 @@ describe('meeting platform matching', () => {
   it('matches a similar title within 15 minutes', () => {
     const r = matchPlatforms([{ key: 'a', title: 'headways / habitat weekly check-in', date: '2026-11-09T14:04:00-08:00' }],
       [ev('Headways / Habitat weekly check-in', '2026-11-09T14:00:00-08:00')], link);
-    expect(r.a).toEqual({ platform: 'teams', url: 'https://teams.microsoft.com/l/meetup-join/x', calendar: 'apple-calendar' });
+    expect(r.a).toMatchObject({ platform: 'teams', url: 'https://teams.microsoft.com/l/meetup-join/x', calendar: 'apple-calendar', event: { start: '2026-11-09T14:00:00-08:00', count: 0 } });
   });
   it('matches any title only within 3 minutes', () => {
     const notes = [{ key: 'a', title: 'Call', date: '2026-11-09T14:02:00Z' }, { key: 'b', title: 'Call', date: '2026-11-09T14:10:00Z' }];
@@ -24,10 +24,12 @@ describe('meeting platform matching', () => {
       [ev('Standup', '2026-11-09T14:01:00Z', 'https://x/standup'), ev('Budget review', '2026-11-09T14:00:00Z', 'https://x/budget')], link);
     expect(r.a?.url).toBe('https://x/budget');
   });
-  it('records null for an event without a call and skips undated notes', () => {
-    const r = matchPlatforms([{ key: 'a', title: 'Lunch', date: '2026-11-09T12:00:00Z' }, { key: 'b', title: 'x', date: null }],
-      [ev('Lunch', '2026-11-09T12:00:00Z', '')], link);
-    expect(r).toEqual({ a: null });
+  it('keeps the event without a call, records null without an event, and skips undated notes', () => {
+    const notes = [{ key: 'a', title: 'Lunch', date: '2026-11-09T12:00:00Z' }, { key: 'b', title: 'x', date: null }, { key: 'c', title: 'Walk', date: '2026-11-10T08:00:00Z' }];
+    const r = matchPlatforms(notes, [{ ...ev('Lunch', '2026-11-09T12:00:00Z', ''), organizer: 'a@x.co', attendees: [{ email: 'a@x.co' }, { email: 'b@x.co' }] }], link);
+    expect(r.a).toMatchObject({ platform: null, url: null, event: { organizer: 'a@x.co', count: 2 } });
+    expect(r.c).toBeNull();
+    expect('b' in r).toBe(false);
   });
   it('compares titles by shared words', () => {
     expect(similarTitle('Eric <> MK recurring', 'eric / mk (recurring)')).toBe(true);

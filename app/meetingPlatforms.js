@@ -15,9 +15,16 @@ export function similarTitle(a, b) {
   return shared / Math.min(x.size, y.size) >= 0.6;
 }
 
+// The calendar event a match points at: enough to open it in its calendar and to name who was invited
+export const eventRef = (e) => ({
+  id: e.id ?? null, item: e.item ?? null, link: e.link ?? null, start: e.start, recurring: !!e.recurring,
+  organizer: e.organizer || e.attendees?.[0]?.email || e.attendees?.[0]?.name || '', count: (e.attendees ?? []).length,
+});
+
 // notes: [{ key, title, date }]; events: calendar events; callLink(event) -> { platform, join }.
-// Returns { key: { platform, url, calendar } | null } for every note with a date: null when no event with a call
-// matches. calendar is the connector the event came from (event.source), the Calendar app when unset.
+// Returns { key: { platform, url, calendar, event } | null } for every note with a date: null when no event matches,
+// platform and url null when the event has no call. calendar is the connector the event came from (event.source),
+// the Calendar app when unset.
 export function matchPlatforms(notes, events, callLink) {
   const evs = events.map((e) => ({ e, at: new Date(e.start).getTime() })).filter((x) => Number.isFinite(x.at));
   const out = {};
@@ -31,8 +38,9 @@ export function matchPlatforms(notes, events, callLink) {
       const score = d - (similarTitle(n.title, x.e.title) ? NEAR : 0);
       if (!best || score < best.score) best = { score, e: x.e };
     }
-    const link = best ? callLink(best.e) : null;
-    out[n.key] = link?.platform ? { platform: link.platform, url: link.join, calendar: best.e.source ?? 'apple-calendar' } : null;
+    if (!best) { out[n.key] = null; continue; }
+    const link = callLink(best.e);
+    out[n.key] = { platform: link?.platform ?? null, url: link?.join ?? null, calendar: best.e.source ?? 'apple-calendar', event: eventRef(best.e) };
   }
   return out;
 }

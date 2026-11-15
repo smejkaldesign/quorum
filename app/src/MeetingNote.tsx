@@ -1,9 +1,10 @@
+import { AppPill, CALENDAR_APP, PLATFORM_APP } from './AppChip';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CONNECTOR_BY_ID } from '../connectors/library';
 import { ViewsPill } from './ViewsPill';
 import { KeepPrivate } from './KeepPrivate';
 import { SourceAsk, useMeetingSources } from './MeetingSources';
-import type { MeetingShare, NoteDoc, Visibility } from './quorum';
+import type { CalendarEvent, MeetingShare, NoteDoc, Visibility } from './quorum';
 import { Markdown } from './Markdown';
 import { Composer } from './Composer';
 import { IconBack, IconChevron, IconCopy, IconFolder, IconGlobe, IconLock, IconMore, IconTrash } from './icons';
@@ -162,6 +163,9 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack }: {
         <div className="meta-row">
           {date && <span className="meta-pill">{dayLabel(date)} · {date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>}
           {note.people.length > 0 && <span className="meta-pill">{peopleLine(note.people, note.people.length)}</span>}
+          {note.calendar && note.event && <AppPill id={CALENDAR_APP[note.calendar].id} name={CALENDAR_APP[note.calendar].name}
+            onOpen={note.event.item || note.event.link ? () => window.quorum.calendarOpen({ ...note.event!, id: note.event!.id ?? '', title: note.title, end: note.event!.start } as CalendarEvent) : null} />}
+          {note.platform && <AppPill id={PLATFORM_APP[note.platform].id} name={PLATFORM_APP[note.platform].short} onOpen={note.meetingUrl ? () => window.quorum.openExternal(note.meetingUrl!) : null} />}
           {note.source && <SourcePill source={note.source} />}
           <ViewsPill views={note.views} />
         </div>

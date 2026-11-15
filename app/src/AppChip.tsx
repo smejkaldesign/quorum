@@ -52,13 +52,44 @@ export function AppChip({ id, name, url }: { id: string; name: string; url?: str
   );
 }
 
-// Details text that opens the item in its app: subdued, white on hover, without opening the row
-export function AppLink({ url, name, logo, children }: { url: string; name: string; logo?: string; children: ReactNode }) {
+// Details text that opens the item in its app (a link, or onOpen for the calendar): subdued, white on hover, without
+// opening the row
+export function AppLink({ url, onOpen, name, logo, children }: { url?: string | null; onOpen?: () => void; name: string; logo?: string; children: ReactNode }) {
   return (
-    <a className="app-link hist-sub-text" href={url} data-tip={`Open in ${name}`}
-      onClick={(e) => { e.preventDefault(); e.stopPropagation(); window.quorum.openExternal(url); }}
+    <a className="app-link hist-sub-text" href={url ?? '#'} data-tip={`Open in ${name}`}
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (onOpen) onOpen(); else if (url) window.quorum.openExternal(url); }}
       onKeyDown={(e) => e.stopPropagation()}>
       {logo && <AppLogo id={logo} name={name} />}<span className="app-link-text">{children}</span>
     </a>
   );
+}
+
+// who was in a meeting, in the row's few words: the calendar's organizer and how many others were invited, else the
+// people the notetaker heard, else Self
+export function peopleText(event: { organizer?: string; count?: number } | null | undefined, people: string[] = []) {
+  if (event?.organizer) return `${event.organizer}${(event.count ?? 0) > 1 ? `, +${(event.count ?? 0) - 1} more` : ''}`;
+  if (!people.length) return 'Self';
+  return `${people[0]}${people.length > 1 ? `, +${people.length - 1} more` : ''}`;
+}
+
+// A meeting's details on Home and in Up next: who (opening the calendar event when there is one), the meeting app (its
+// call link), and the notetaker (its note)
+export function RowDetails({ who, onCalendar, calendarName, platform, meetingUrl, source, sourceUrl, after }: {
+  who: string; onCalendar?: (() => void) | null; calendarName?: string; platform?: Platform | null; meetingUrl?: string | null;
+  source?: string | null; sourceUrl?: string | null; after?: ReactNode;
+}) {
+  return (
+    <span className="hist-sub">
+      {onCalendar ? <AppLink onOpen={onCalendar} name={calendarName ?? 'Calendar'}>{who}</AppLink> : <span className="hist-sub-text">{who}</span>}
+      {platform && <AppChip id={PLATFORM_APP[platform].id} name={PLATFORM_APP[platform].short} url={meetingUrl} />}
+      {source && source !== 'quorum' && <AppChip {...sourceApp(source)} url={sourceUrl} />}
+      {after}
+    </span>
+  );
+}
+
+// the same apps as pills in a page's details row
+export function AppPill({ id, name, onOpen }: { id: string; name: string; onOpen?: (() => void) | null }) {
+  if (!onOpen) return <span className="meta-pill meta-app"><AppLogo id={id} name={name} />{name}</span>;
+  return <button className="meta-pill meta-app" data-tip={`Open in ${name}`} onClick={onOpen}><AppLogo id={id} name={name} />{name}</button>;
 }

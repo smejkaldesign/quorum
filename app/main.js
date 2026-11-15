@@ -49,7 +49,8 @@ import { fileURLToPath } from 'node:url';
 import updater from 'electron-updater';
 import { createUpdater, feedFor } from './updater.js';
 import { createGuardrails } from './guardrails.js';
-import { createPlatformCache, matchPlatforms } from './meetingPlatforms.js';
+import { createPlatformCache, eventRef, matchPlatforms } from './meetingPlatforms.js';
+import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, seriesKey, seriesOf } from './meetingBrief.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // quorum://kb links (kb_search and kb_read return them) open the note in the Knowledge tab. A link can arrive before
@@ -1515,7 +1516,7 @@ const isSelf = (p) => /\((creator|recorder)\)/.test(p) || personName(p) === USER
 // Quorum's own notes sit in a quorum subfolder, next to the folders other apps fill (granola/ and so on)
 const quorumNotesDir = () => store.meetings.notesDir(brain()?.vault);
 const meetingSources = () => store.meetings.sources(brain()?.vault);
-const platformCache = createPlatformCache(path.join(DATA_DIR, 'meeting-platforms.json'));
+const platformCache = createPlatformCache(path.join(DATA_DIR, 'meeting-events.json'));
 function meetingIndex() {
   const root = meetingsDir();
   if (!root) return [];
@@ -1542,6 +1543,7 @@ function meetingIndex() {
           url: [fm.granola_url, fm.source_url].find((u) => /^https:\/\//.test(String(u ?? ''))) ?? null,
           platform: /zoom/i.test(fm.platform ?? '') ? 'zoom' : /meet/i.test(fm.platform ?? '') ? 'meet' : /teams/i.test(fm.platform ?? '') ? 'teams' : platformCache.get(key ?? file)?.platform ?? null,
           calendar: platformCache.get(key ?? file) ? platformCache.get(key ?? file).calendar ?? 'apple-calendar' : null,
+          event: platformCache.get(key ?? file)?.event ?? null,
           meetingUrl: [fm.meeting_url, platformCache.get(key ?? file)?.url].find((u) => /^https:\/\//.test(String(u ?? ''))) ?? null,
           app, rel: path.relative(brain()?.vault ?? root, file), link: `quorum://note/${encodeURIComponent(fm.granola_id || path.relative(brain()?.vault ?? root, file))}`,
         });
@@ -1568,7 +1570,7 @@ async function matchMeetingApps() {
   platformRun = { busy: true, at: Date.now() };
   try {
     const now = Date.now(), oldest = now - 180 * 86400000;
-    const notes = meetingIndex().filter((m) => !m.platform && m.date && !platformCache.has(m.cacheKey))
+    const notes = meetingIndex().filter((m) => m.date && !platformCache.has(m.cacheKey))
       .map((m) => ({ key: m.cacheKey, title: m.title, date: m.date })).filter((n) => { const t = new Date(n.date).getTime(); return t >= oldest && t <= now + 14 * 86400000; });
     if (!notes.length) return;
     const first = Math.min(...notes.map((n) => new Date(n.date).getTime()));
@@ -1688,8 +1690,41 @@ ipcMain.handle('read-note', (_e, file) => {
     file: abs, rel: path.relative(b.vault, abs), title: fm.title, date: fm.date, people: fm.participants.filter((p) => !isSelf(p)).map(personName), body,
     visibility: fm.visibility === 'public' ? 'public' : 'private', withheld: text !== original, link: `quorum://note/${encodeURIComponent(fm.granola_id || path.relative(b.vault, abs))}`, ...noteLink(abs),
     source: fm.source && fm.source !== 'quorum' ? String(fm.source) : null,
+    ...noteMeetingApps(fm, abs),
     views: (views.record({ file: abs, who: 'human', via: 'quorum', bytes: Buffer.byteLength(original) }), views.of(abs)),
   };
+});
+
+// the calendar event, meeting app and notetaker link of a note, for the reader's details line
+function noteMeetingApps(fm, abs) {
+  const m = platformCache.get(fm.granola_id || fm.quorum_id || abs);
+  const https = (u) => (/^https:\/\//.test(String(u ?? '')) ? String(u) : null);
+  const platform = /zoom/i.test(fm.platform ?? '') ? 'zoom' : /meet/i.test(fm.platform ?? '') ? 'meet' : /teams/i.test(fm.platform ?? '') ? 'teams' : m?.platform ?? null;
+  return { platform, meetingUrl: https(fm.meeting_url) ?? https(m?.url), sourceUrl: https(fm.granola_url) ?? https(fm.source_url), calendar: m ? m.calendar ?? 'apple-calendar' : null, event: m?.event ?? null };
+}
+
+// The meeting page (MeetingPage.tsx): a recurring meeting's past notes, and its prep notes and description once it
+// has met SERIES_MIN times. The first call answers from what is kept; { generate: true } writes a new brief with the
+// person's own model when the series has gained a note since.
+const briefCache = createBriefCache(path.join(DATA_DIR, 'meeting-briefs.json'));
+ipcMain.handle('meeting-brief', async (_e, q) => {
+  const title = String(q?.title ?? '');
+  if (!title || suggester.isExcluded(title)) return { past: [], brief: null, status: 'few' };
+  const past = seriesOf(meetingIndex(), { title });
+  const list = past.slice(0, 12).map((m) => ({ file: m.file, title: m.title, date: m.date, source: m.source, people: m.people, count: m.count }));
+  if (past.length < SERIES_MIN) return { past: list, brief: null, status: 'few' };
+  const key = seriesKey(title), stamp = `${past[0].file}|${past.length}`;
+  const kept = briefCache.get(key, stamp);
+  if (kept) return { past: list, brief: kept, status: 'ready' };
+  if (!q?.generate) return { past: list, brief: null, status: 'stale' };
+  if (modelSource() === 'none') return { past: list, brief: null, status: 'no-model' };
+  try {
+    const notes = past.slice(0, 5).map((m) => ({ title: m.title, date: m.date, text: suggester.redactLines(store.notes.read(m.file)) }));
+    const brief = parseBrief(suggester.redactLines(await runClaude(briefPrompt({ title, notes }), BRIEF_SYSTEM, settings.model)));
+    if (!brief) return { past: list, brief: null, status: 'failed' };
+    briefCache.set(key, stamp, brief);
+    return { past: list, brief, status: 'ready' };
+  } catch (e) { log('meeting brief', e?.message); return { past: list, brief: null, status: 'failed' }; }
 });
 
 ipcMain.handle('new-chat', () => { convo = null; chatHistory = []; });
@@ -2037,7 +2072,7 @@ ipcMain.handle('calendar', async () => {
     const { platform, join } = callLink(e);
     // an event Quorum can do nothing with (no call, or a call on a platform that is off) only shows when asked for
     if (hiddenIds.has(e.id) || (!c.showAll && !(platform && providerOn(platform)))) { hidden += 1; return []; }
-    return [{ id: e.id, title: e.title, start: e.start, end: e.end, item: e.item, link: e.link ?? null, recurring: e.recurring, platform, join, calendar: e.source ?? null }];
+    return [{ id: e.id, title: e.title, start: e.start, end: e.end, item: e.item, link: e.link ?? null, recurring: e.recurring, platform, join, calendar: e.source ?? null, organizer: eventRef(e).organizer, count: eventRef(e).count }];
   });
   return { connected: true, status, events, days: c.days, showAll: c.showAll, hidden };
 });

@@ -5,7 +5,7 @@ import { useExclusiveMenu } from './menuBus';
 import { useSession } from './session';
 import { ConfirmModal } from './ConfirmModal';
 import { dayLabel, upNextRows } from './upNextList';
-import { AppLink, AppLogo, CALENDAR_APP, PLATFORM_APP, useAppIcons } from './AppChip';
+import { AppLogo, CALENDAR_APP, PLATFORM_APP, RowDetails, peopleText, useAppIcons } from './AppChip';
 import { IconCalendar, IconChevron, IconMore } from './icons';
 
 const time = (d: Date) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?(AM|PM)/i, '');
@@ -27,6 +27,13 @@ const setPassed = (v: boolean) => { if (passedTop !== v) { passedTop = v; passSu
 const usePassed = () => useSyncExternalStore((f) => { passSubs.add(f); return () => { passSubs.delete(f); }; }, () => passedTop, () => passedTop);
 
 const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
+
+// Every Up next row opens its meeting page on Home (HistoryView). The event waits here when Home is not open yet; the
+// window event moves the app to Home.
+let pendingEvent: CalendarEvent | null = null;
+export const OPEN_EVENT = 'quorum:open-event';
+export function openEvent(e: CalendarEvent) { pendingEvent = e; window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: e })); }
+export function takeEvent() { const e = pendingEvent; pendingEvent = null; return e; }
 
 // Up next, under the header on every tab: the next three events from the connected calendar and Show more for the
 // rest (open or closed for the rest of this launch). hidden keeps the loading going while the strip is out of sight
@@ -107,18 +114,18 @@ export function UpNext({ hidden = false, inline = false, floating = false, today
       {rows.length > 0 && (
         <div className="up-list" id={listId}>
           {rows.map((e) => {
-            const at = new Date(e.start), end = new Date(e.end);
+            const at = new Date(e.start);
             const platform = e.platform ? PLATFORM_APP[e.platform] : null;
             const menu = eventMenu === e.id;
-            const when = `${dayLabel(at)} · ${time(at)} – ${time(end)} ${half(end)}`;
+            const when = dayLabel(at);
             return (
               <div key={e.id} className="hist-item">
-                <div className={`hist-row up-row ${menu ? 'menu-open' : ''}`} onClick={() => e.item && window.quorum.calendarOpen(e)}>
+                <div className={`hist-row up-row ${menu ? 'menu-open' : ''}`} role="button" tabIndex={0} onClick={() => openEvent(e)} onKeyDown={(ev) => { if (ev.key === 'Enter') openEvent(e); }}>
                   {e.calendar ? <span className="avatar-sq app"><AppLogo {...CALENDAR_APP[e.calendar]} /></span> : <span className="avatar-sq cal"><IconCalendar width={18} height={18} /></span>}
-                  <span className="hist-text"><strong>{e.title}</strong><span className="hist-sub">
-                    {platform && e.join ? <AppLink url={e.join} name={platform.name} logo={platform.id}>{when}</AppLink>
-                      : <span className="hist-meet">{platform && <AppLogo {...platform} />}<span className="hist-sub-text">{when}</span></span>}
-                  </span></span>
+                  <span className="hist-text"><strong>{e.title}</strong>
+                    <RowDetails who={peopleText(e)} onCalendar={e.item || e.link ? () => window.quorum.calendarOpen(e) : null} calendarName={e.calendar ? CALENDAR_APP[e.calendar].name : undefined}
+                      platform={e.platform} meetingUrl={e.join} after={!isToday && <span className="hist-sub-text up-when">{when}</span>} />
+                  </span>
                   {!e.platform && <span className="up-badge">No meeting</span>}
                   <span className="hist-time">{time(at)}<small>{half(at)}</small></span>
                   <span className="hist-hover" onMouseDown={(ev) => ev.stopPropagation()}>

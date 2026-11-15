@@ -1826,3 +1826,15 @@ button.meta-pill { font: inherit; cursor: pointer; }
 /* hover buttons wait 16px right of their row before they slide in; the list never scrolls sideways for them */
 .body { overflow-x: hidden; }
 .history, .up-strip { overflow-x: clip; }
+/* a meeting page (MeetingPage.tsx): prep notes first, then what the meeting is, then its past notes */
+.meta-pill.meta-app { color: var(--muted); transition: color 160ms ease; }
+button.meta-pill.meta-app:hover { color: var(--text); }
+.mp-section { margin-top: 32px; }
+.mp-section h2 { margin: 0 0 10px; font-size: 18px; font-weight: 600; color: var(--text); }
+.mp-section p { margin: 0 0 8px; line-height: 1.55; }
+.mp-prep { padding: 18px 20px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); }
+.mp-empty { color: var(--muted); }
+.mp-past { display: flex; flex-direction: column; }
+.mp-past-row { display: flex; justify-content: space-between; gap: 16px; padding: 10px 7px; margin-left: -7px; border-radius: 10px; text-align: left; font-size: 15px; color: var(--text); }
+.mp-past-row:hover { background: rgba(255, 255, 255, 0.03); }
+.meeting-page .reader-actions .up-join { height: 32px; padding: 0 14px; }

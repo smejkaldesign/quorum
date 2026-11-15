@@ -18,7 +18,7 @@ import markDev from '../assets/quorum-mark-dev.png';
 const mark = window.quorum.isDev ? markDev : markProd;
 if (window.quorum.isDev) document.documentElement.dataset.dev = '';
 import { HistoryView } from './HistoryView';
-import { UpNext } from './UpNext';
+import { OPEN_EVENT, UpNext } from './UpNext';
 import { nextMenuIndex, updateBadge } from './headerItems';
 import { useExclusiveMenu } from './menuBus';
 import type { KbCommand } from './KnowledgeView';
@@ -218,6 +218,12 @@ export function App() {
   useEffect(() => { if (tab === 'knowledge' && account && !showsKnowledge(EDITION, account)) setTab('home'); }, [tab, account, setTab]);
   // off a call, chat lives inside Home as a conversation opened from Ask anything or a saved chat
   const [convoOpen, setConvoOpen] = useState(false);
+  // a meeting page opens on Home, from Up next on any tab
+  useEffect(() => {
+    const go = () => { setView('main'); setTab('home'); setConvoOpen(false); };
+    window.addEventListener(OPEN_EVENT, go);
+    return () => window.removeEventListener(OPEN_EVENT, go);
+  }, []);
   // History filters hide Up next while they are on (HistoryView reports them)
   const [histFiltered, setHistFiltered] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
