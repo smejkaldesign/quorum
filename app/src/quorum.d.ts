@@ -273,7 +273,9 @@ export type StateEvent =
   | { phase: 'summarizing'; meta?: MeetingMeta }
   | { phase: 'starting'; chatName?: string | null; intoNote?: boolean }
   | { phase: 'idle' }
-  | { phase: 'review'; notes: Notes; meta?: MeetingMeta };
+  | { phase: 'review'; notes: Notes | null; meta?: MeetingMeta; ask?: WhoAsk };
+// Who spoke, after a recording from the header: each voice (or the whole microphone) with a few of its lines
+export type WhoAsk = { voices: { key: string; channel: 'me' | 'them'; voice: number | null; lines: string[]; words: number }[] };
 
 // Record in the note view: what is running (audio is Transcription), and a screen read for the open note
 export type RecordState = { audio: boolean; screen: boolean; notice?: string };
@@ -466,6 +468,7 @@ declare global {
       calendarOpen(ev: CalendarEvent): Promise<void>;
       meetingBrief(q: { title: string; generate?: boolean }): Promise<MeetingBrief>;
       recordSession(): Promise<{ ok: true } | { error: string }>;
+      sessionSummarize(answers: { names?: Record<string, string>; people?: string[]; me?: string | null; lead?: string | null }): Promise<unknown>;
       guardrailsGet(opts?: { fresh?: boolean }): Promise<GuardrailsState>;
       guardrailsSet(id: string, patch: { enabled?: boolean; label?: string }): Promise<Result>;
       guardrailsAdd(rule: { kind: string; value: string; label?: string }): Promise<Result & { id?: string }>;

@@ -1,5 +1,5 @@
 import { Component, Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { AccountState, Brain, HelperEvent, MeetingMeta, Notes, NotesDraft, Settings, Source, SpeakersEvent, SummaryEvent, UpdateState } from './quorum';
+import type { AccountState, Brain, HelperEvent, MeetingMeta, Notes, NotesDraft, Settings, Source, SpeakersEvent, SummaryEvent, UpdateState, WhoAsk } from './quorum';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
 import { BetaGate } from './BetaGate';
@@ -33,7 +33,7 @@ import { RecLevel } from './RecLevel';
 import { IconFolderOpen, IconPerson, IconClose, IconMenu, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconBack, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, IconRecord, Wave } from './icons';
 
 // one speaker turn as main.js built it; a turn that grows arrives again with the same id and replace: true
-type Line = { id: number; channel: 'me' | 'them'; text: string; start: number } & Partial<SpeakerInfo>;
+type Line = { id: number; channel: 'me' | 'them'; text: string; start: number; voice?: number } & Partial<SpeakerInfo>;
 type Phase = 'idle' | 'starting' | 'listening' | 'paused' | 'review' | 'blocked';
 type Tab = MainTab | 'chat' | 'notes' | 'mine';
 const inCall = (p: string) => p === 'listening' || p === 'paused' || p === 'starting';
@@ -290,6 +290,8 @@ export function App() {
   const [log, setLog] = useState<string[]>([]);
   const [notes, setNotes] = useState<Notes | null>(null);
   const [summarizing, setSummarizing] = useState(false);
+  // Who spoke, asked at Stop before the notes are written (header recordings)
+  const [ask, setAsk] = useState<WhoAsk | null>(null);
   const [notesDraft, setNotesDraft] = useState<NotesDraft | null>(null);
   const [meta, setMeta] = useState<MeetingMeta | null>(null);
   const [settings, setSettings] = useState<Settings>({ autoListen: false, model: 'sonnet', suggestions: true });
@@ -348,7 +350,8 @@ export function App() {
           const text = typeof e.text === 'string' ? e.text : '';
           if (e.channel === 'them' && 'who' in e) setThemName(e.who ?? null);
           if (e.isFinal) {
-            const turn: Line = { id: e.id ?? 0, channel: e.channel as 'me' | 'them', text: text.trim(), start: e.start, ...(e.speaker !== undefined ? { speaker: e.speaker, confidence: e.confidence ?? 0, cluster: e.cluster ?? null, corrected: !!e.corrected } : {}) };
+            const voice = (e as { voice?: unknown }).voice;
+            const turn: Line = { id: e.id ?? 0, channel: e.channel as 'me' | 'them', text: text.trim(), start: e.start, ...(Number.isInteger(voice) ? { voice: voice as number } : {}), ...(e.speaker !== undefined ? { speaker: e.speaker, confidence: e.confidence ?? 0, cluster: e.cluster ?? null, corrected: !!e.corrected } : {}) };
             setLines((l) => {
               if (e.replace && l.some((x) => x.id === turn.id)) return l.map((x) => (x.id === turn.id ? { ...x, ...turn } : x));
               const i = l.findIndex((x) => x.start > turn.start);
@@ -370,8 +373,8 @@ export function App() {
         if ('intoNote' in s && s.intoNote) return;
         if (s.phase === 'starting') { setPhase('starting'); setStartingChat(s.chatName ?? null); addLog(s.chatName ? `posting Quorum's notice in the ${s.chatName}…` : 'starting…'); return; }
         if (s.phase === 'idle') { setPhase('idle'); return; }
-        if (s.phase === 'summarizing') { setPhase('review'); setSummarizing(true); setNotes(null); setNotesDraft(null); setMeta(s.meta ?? null); return; }
-        if (s.phase === 'review') { setPhase('review'); setSummarizing(false); setNotes(s.notes); setNotesDraft(null); setMeta(s.meta ?? null); return; }
+        if (s.phase === 'summarizing') { setAsk(null); setPhase('review'); setSummarizing(true); setNotes(null); setNotesDraft(null); setMeta(s.meta ?? null); return; }
+        if (s.phase === 'review') { setAsk(s.ask ?? null); setPhase('review'); setSummarizing(false); setNotes(s.notes); setNotesDraft(null); setMeta(s.meta ?? null); return; }
         setHeld('soft' in s && !!s.soft);
         if (s.phase === 'paused' && 'soft' in s && s.soft) {
           setPartial({ me: '', them: '' });
@@ -477,7 +480,8 @@ export function App() {
   const themLabel = themName ?? 'Them';
   // without a noticed call every session is a solo recording, whose microphone hears the room too: Unknown, never You
   const meLabel = nt.meetingCapture ? 'You' : 'Unknown';
-  const who = (l: { channel: 'me' | 'them'; speaker?: string | null }) => (l.channel === 'me' ? meLabel : l.speaker ?? themLabel);
+  // a voice the engine told apart reads as Person N (microphone) or Speaker N (the Mac's sound) until it is named
+  const who = (l: { channel: 'me' | 'them'; speaker?: string | null; voice?: number }) => l.speaker ?? (l.voice != null ? `${l.channel === 'me' ? 'Person' : 'Speaker'} ${l.voice + 1}` : l.channel === 'me' ? meLabel : themLabel);
   // the live transcript draws every row on each render; the similar-turn count comes from one pass, and the row's
   // callback stays the same object so the memoized rows skip the partial words that arrive several times a second
   const similar = useMemo(() => similarCounts(lines), [lines]);
@@ -524,7 +528,7 @@ export function App() {
   const liveArea = (
     <div className="body wide flush live-body">
       <LazyView name="your notes" onClose={phase === 'review' ? closeReview : () => setLiveOpen(false)}>
-        <EndView embedded live={inCall(phase)} paused={phase === 'paused'} notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing}
+        <EndView embedded live={inCall(phase)} paused={phase === 'paused'} who={ask} onAnswer={(a) => { setAsk(null); window.quorum.sessionSummarize(a ?? {}); }} notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing}
           transcript={lines.map((l) => ({ ...l, who: who(l) }))} partial={liveWords ? [partial.me, partial.them].filter(Boolean).join(' ') : ''} participants={participants} onSpeaker={setSpeaker} me={nt.meetingCapture ? me : undefined}
           privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={phase === 'review' ? closeReview : () => setLiveOpen(false)} />
       </LazyView>

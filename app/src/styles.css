@@ -1926,3 +1926,24 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .transcript p > .spk { align-self: start; padding-top: 2px; }
 .avatar-sm.avatar-unknown { width: 20px; height: 20px; display: inline-grid; place-items: center; border-radius: 50%; background: var(--card-2); border: 1px solid var(--line-2); color: var(--muted); font-size: 11px; font-weight: 700; }
 .hist-filters .plus-menu { top: 46px; }
+/* the recording's transcript: each speaker's name above their run of turns */
+.end-transcript .turn-group { margin: 0 0 18px; }
+.end-transcript .turn-group > .spk { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.end-transcript .turn-group.them > .spk { color: #9db8ff; }
+.end-transcript .turn-group > p { display: block; margin: 0 0 6px; line-height: 1.55; }
+.end-transcript .live-partial { display: block; margin: 0; }
+.end-transcript .turn-group > p.hot { background: rgba(255, 200, 80, 0.14); border-radius: 6px; box-shadow: 0 0 0 6px rgba(255, 200, 80, 0.14); }
+/* Who spoke, after a recording and before its summary */
+.who-spoke { margin: 8px 0 28px; padding-bottom: 24px; border-bottom: 1px solid var(--line-2); }
+.who-spoke h2 { margin: 0 0 6px; font-size: 18px; font-weight: 600; }
+.who-spoke > .muted { margin: 0 0 16px; }
+.who-voice { padding: 12px 0; border-top: 1px solid var(--line); }
+.who-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.who-pick { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.who-lines { margin: 8px 0; padding: 0; list-style: none; color: var(--muted); font-size: 14px; font-style: italic; }
+.who-lines li { margin: 2px 0; }
+.who-input { width: 100%; max-width: 360px; height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--menu-bg); color: var(--text); font: inherit; font-size: 14px; }
+.who-spoke > .who-input { margin-top: 8px; max-width: 520px; }
+.who-actions { display: flex; gap: 8px; margin-top: 16px; }
+.pill.who-go { background: transparent; border: 1px solid var(--line-2); color: var(--text); }
+.pill.who-go:hover { background: var(--card); border-color: rgba(255, 255, 255, 0.24); }

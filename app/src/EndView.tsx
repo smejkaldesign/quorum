@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import type { MeetingMeta, Notes, NotesDraft } from './quorum';
+import type { MeetingMeta, Notes, NotesDraft, WhoAsk } from './quorum';
+import { WhoSpoke, type WhoAnswers } from './WhoSpoke';
 import { Avatar, SpeakerName, similarCounts, type SpeakerTurn } from './Speaker';
 import mark from '../assets/quorum-mark.png';
 import { Markdown } from './Markdown';
@@ -15,10 +16,10 @@ export type Turn = SpeakerTurn & { who: string };
 // privateNotes is what you typed on the call; edits here reach the main process the same way, and flush runs before Save
 // live: the recording is running (or paused) and this is its page under the header; the transcript shows as it is
 // heard and the summary waits for Stop, which writes it into this same page. embedded drops the window chrome
-export function EndView({ notes, draft, meta, summarizing, transcript, participants, onSpeaker, privateNotes, onPrivateNotes, flushPrivateNotes, onClose, me, live = false, paused = false, embedded = false, partial = '' }: { live?: boolean; paused?: boolean; embedded?: boolean; partial?: string; me?: { name: string; photo: string | null }; notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; participants: string[]; onSpeaker: (id: number, name: string | null, similar: boolean) => Promise<void>; privateNotes: string; onPrivateNotes: (v: string) => void; flushPrivateNotes: () => void; onClose: () => void }) {
+export function EndView({ notes, draft, meta, summarizing, transcript, participants, onSpeaker, privateNotes, onPrivateNotes, flushPrivateNotes, onClose, me, live = false, paused = false, embedded = false, partial = '', who = null, onAnswer }: { who?: WhoAsk | null; onAnswer?: (a: WhoAnswers | null) => void; live?: boolean; paused?: boolean; embedded?: boolean; partial?: string; me?: { name: string; photo: string | null }; notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; participants: string[]; onSpeaker: (id: number, name: string | null, similar: boolean) => Promise<void>; privateNotes: string; onPrivateNotes: (v: string) => void; flushPrivateNotes: () => void; onClose: () => void }) {
   const [showing, setShowing] = useState<'summary' | 'transcript'>(live ? 'transcript' : 'summary');
   // Stop turns the page to the summary as it is written
-  useEffect(() => { if (summarizing) setShowing('summary'); }, [summarizing]);
+  useEffect(() => { if (summarizing || who) setShowing('summary'); }, [summarizing, who]);
   const [dropped, setDropped] = useState<Record<number, boolean>>({});
   const [followups, setFollowups] = useState<Followup[]>([]);
   const [draftQ, setDraftQ] = useState('');
@@ -60,6 +61,16 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
     } finally { setSaving(false); }
   }
 
+  // consecutive turns from the same speaker share one heading
+  const groups: { key: string; turns: Turn[] }[] = [];
+  for (const t of transcript) {
+    const key = `${t.channel}|${t.speaker ?? t.who}`;
+    if (groups[groups.length - 1]?.key === key) groups[groups.length - 1].turns.push(t); else groups.push({ key, turns: [t] });
+  }
+  // a solo recording's microphone with no voice told apart: a ? and no name, since nothing proves who spoke
+  const speakerHead = (t: Turn) => (t.channel === 'me' && !me && !t.speaker
+    ? <span className="avatar-sm avatar-unknown" aria-label="Unknown speaker" data-tip="Unknown speaker">?</span>
+    : <><Avatar name={t.channel === 'me' ? me?.name || t.speaker || t.who : t.speaker ?? t.who} photo={t.channel === 'me' && me ? me.photo ?? null : null} />{t.channel === 'them' ? <SpeakerName turn={t} fallback={t.who} participants={participants} similar={similar(t)} onPick={(name, similar) => onSpeaker(t.id, name, similar)} /> : <span>{t.speaker ?? t.who}</span>}</>);
   const turnById = new Map(transcript.map((t) => [t.id, t]));
   const tipFor = (refs: number[]) => { const t = refs.map((id) => turnById.get(id)).find(Boolean); return t ? `${t.who}: ${t.text.length > 180 ? `${t.text.slice(0, 180)}…` : t.text}` : undefined; };
   const refProps = (refs: number[]) => (refs?.length ? { className: 'ref', 'data-tip': tipFor(refs), 'data-tip-pos': 'top', onMouseEnter: () => setHot(refs), onMouseLeave: () => setHot([]), onClick: () => { if (refs.some((id) => turnById.has(id))) { setHot(refs); setShowing('transcript'); } } } : {});
@@ -110,18 +121,17 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
 
             {showing === 'transcript' ? (
               <section className="transcript end-transcript">
-                {transcript.length ? transcript.map((t) => (
-                  <p key={t.id} id={`turn-${t.id}`} className={`${t.channel}${hot.includes(t.id) ? ' hot' : ''}`}>
-                    <span className="spk">{t.channel === 'me' && !me
-                      // a solo recording's microphone: nothing proves who spoke, so a ? and no name
-                      ? <span className="avatar-sm avatar-unknown" aria-label="Unknown speaker" data-tip="Unknown speaker">?</span>
-                      : <><Avatar name={t.channel === 'me' ? me?.name || t.who : t.speaker ?? t.who} photo={t.channel === 'me' ? me?.photo ?? null : null} />{t.channel === 'them' ? <SpeakerName turn={t} fallback={t.who} participants={participants} similar={similar(t)} onPick={(name, similar) => onSpeaker(t.id, name, similar)} /> : <span>{t.who}</span>}</>}</span>
-                    <div>{t.text}</div>
-                  </p>
+                {transcript.length ? groups.map((g) => (
+                  // one speaker's run of turns: who it was on top, then each turn as its own paragraph
+                  <div key={g.turns[0].id} className={`turn-group ${g.turns[0].channel}`}>
+                    <div className="spk">{speakerHead(g.turns[0])}</div>
+                    {g.turns.map((t) => <p key={t.id} id={`turn-${t.id}`} className={hot.includes(t.id) ? 'hot' : undefined}>{t.text}</p>)}
+                  </div>
                 )) : !partial && <p className="muted">{live ? (paused ? 'Paused. Resume to keep transcribing.' : 'Listening…') : 'Nothing was transcribed.'}</p>}
-                {live && partial && <p className="me live-partial"><span className="spk">{!me && <span className="avatar-sm avatar-unknown" aria-hidden="true">?</span>}</span><div><em className="partial">{partial}</em></div></p>}
+                {live && partial && <p className="live-partial"><em className="partial">{partial}</em></p>}
               </section>
             ) : <>
+            {who && onAnswer && <WhoSpoke ask={who} onDone={onAnswer} />}
             {live && (
               <div className="live-wait">
                 <p className="shimmer">Waiting for the recording to stop to summarize</p>

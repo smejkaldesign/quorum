@@ -29,7 +29,8 @@ export function joinText(a, b) {
   return /^[,.;:!?]/.test(t) ? `${a}${t}` : `${a} ${t}`;
 }
 
-// piece: {channel, text, start, end, at}. Returns the new turn list, the turn that changed, and whether it grew
+// piece: {channel, text, start, end, at, voice?}; voice is the engine's speaker number when it tells voices apart, and
+// pieces from different voices never join one turn. Returns the new turn list, the turn that changed, and whether it grew
 // (replace: true) or is new. A late piece that belongs just before a same-channel turn joins the front of it.
 // clean: false keeps every word as spoken (the casing rule still applies).
 export function addFinal(turns, piece, gap = 1.5, { clean = true } = {}) {
@@ -39,16 +40,17 @@ export function addFinal(turns, piece, gap = 1.5, { clean = true } = {}) {
   let i = turns.length;
   while (i > 0 && turns[i - 1].start > piece.start) i--;
   const prev = turns[i - 1], next = turns[i];
-  if (prev && prev.channel === piece.channel && piece.start - prev.end < gap) {
+  const same = (t) => t.channel === piece.channel && (t.voice ?? null) === (piece.voice ?? null);
+  if (prev && same(prev) && piece.start - prev.end < gap) {
     const changed = { ...prev, ...texts(joinText(prev.raw ?? prev.text, text)), end: Math.max(prev.end, piece.end) };
     return { turns: [...turns.slice(0, i - 1), changed, ...turns.slice(i)], changed, replace: true };
   }
-  if (next && next.channel === piece.channel && next.start - piece.end < gap) {
+  if (next && same(next) && next.start - piece.end < gap) {
     const changed = { ...next, ...texts(joinText(text, next.raw ?? next.text)), start: piece.start, at: Math.min(next.at, piece.at) };
     return { turns: [...turns.slice(0, i), changed, ...turns.slice(i + 1)], changed, replace: true };
   }
   const id = turns.reduce((m, t) => Math.max(m, t.id ?? 0), 0) + 1;
-  const changed = { id, channel: piece.channel, ...texts(text), start: piece.start, end: piece.end, at: piece.at };
+  const changed = { id, channel: piece.channel, ...texts(text), start: piece.start, end: piece.end, at: piece.at, ...(piece.voice != null ? { voice: piece.voice } : {}) };
   return { turns: [...turns.slice(0, i), changed, ...turns.slice(i)], changed, replace: false };
 }
 
@@ -67,7 +69,7 @@ export const toText = (turns, label) => turns.map((t) => `${speakerOf(t, label)}
 
 // raw is the verbatim record; text is what the notes and the transcript view show. speaker, confidence and cluster
 // come from the speaker pass or a correction and are present only on them turns that went through either
-export const toJSON = (turns) => turns.map(({ channel, text, raw, start, end, at, speaker, confidence, cluster, corrected }) => ({
-  channel, text, raw: raw ?? text, start, end, at,
+export const toJSON = (turns) => turns.map(({ channel, text, raw, start, end, at, speaker, confidence, cluster, corrected, voice }) => ({
+  channel, text, raw: raw ?? text, start, end, at, ...(voice != null ? { voice } : {}),
   ...(speaker !== undefined || cluster ? { speaker: speaker ?? null, confidence: confidence ?? 0, cluster: cluster ?? null, ...(corrected ? { corrected: true } : {}) } : {}),
 }));

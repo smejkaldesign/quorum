@@ -297,7 +297,7 @@ function keep(evt) {
   const act = keepActions(gate(), { solo: !!meeting.solo });
   if (act.optOut && mentionsOptOut(evt.text)) return blockCall('name');
   if (act.softStop) softStop(evt.text, evt.channel === 'me' ? OWNER : 'someone on the call', 0.85);
-  const { turns, changed, replace } = addFinal(meeting.transcript, { channel: evt.channel, text: evt.text, start: evt.start, end: evt.end, at: Date.now() }, tx().gap, { clean: tx().clean });
+  const { turns, changed, replace } = addFinal(meeting.transcript, { channel: evt.channel, text: evt.text, start: evt.start, end: evt.end, at: Date.now(), ...(Number.isInteger(evt.voice) ? { voice: evt.voice } : {}) }, tx().gap, { clean: tx().clean });
   if (!changed) return;
   meeting.transcript = turns;
   writeStateSoon();
@@ -739,7 +739,7 @@ const speakersPayload = () => ({ turns: speakerView(meeting.transcript), partici
 
 // the running summary: Haiku folds the turns since the last run into the state, on a timer that never blocks capture.
 // A failed run is logged and the last good state stands; the local source uses its configured model whatever we ask for
-const notesContext = () => ({ platform: provider().name, solo: !!meeting.solo, title: meeting.title || '' });
+const notesContext = () => ({ platform: provider().name, solo: !!meeting.solo, title: meeting.title || '', people: meeting.named ?? [], lead: meeting.lead ?? null });
 let summaryTimer = null;
 let summaryBusy = false;
 // the running summary and the final notes on the relay (Cloud edition, POST /v1/notes) when the workspace or the user
@@ -862,6 +862,10 @@ async function startListening(by, { intoNote = false, screen = false, still = ()
   const solo = decision.solo;
   meeting.solo = solo;
   meeting.intoNote = intoNote;
+  meeting.askWho = false;
+  meeting.awaitingWho = null;
+  meeting.named = [];
+  meeting.lead = null;
   if (!solo) {
     await refreshGuard();
     if (namedHere()) { meeting.starting = false; return blockCall('name'); }
@@ -951,6 +955,31 @@ async function endMeeting() {
     toUI('state', { phase: 'review', notes: meeting.notes, meta: meetingMeta(meeting.notes.title) });
     return meeting.notes;
   }
+  // Record from the header asks who spoke before anything is written (session-summarize); a discard then costs nothing
+  if (meeting.askWho) {
+    meeting.awaitingWho = fallbackTitle;
+    toUI('state', { phase: 'review', notes: null, meta: meetingMeta(fallbackTitle), ask: whoAsk() });
+    return null;
+  }
+  return summarizeSession(fallbackTitle);
+}
+
+// what the Who spoke step shows: each voice the engine told apart with a few of its lines, or, with one microphone
+// and no voices told apart, the whole room as one
+function whoAsk() {
+  const groups = new Map();
+  for (const t of meeting.transcript) {
+    const key = t.voice != null ? `${t.channel}:${t.voice}` : t.channel;
+    const g = groups.get(key) ?? { key, channel: t.channel, voice: t.voice ?? null, lines: [], words: 0 };
+    g.words += t.text.split(/\s+/).length;
+    if (g.lines.length < 3) g.lines.push(suggester.redactLines(t.text).slice(0, 160));
+    groups.set(key, g);
+  }
+  return { voices: [...groups.values()].sort((a, b) => b.words - a.words) };
+}
+
+// the notes for a finished session, after any answers to Who spoke; streams into the review view
+async function summarizeSession(fallbackTitle) {
   toUI('state', { phase: 'summarizing', meta: meetingMeta(fallbackTitle) });
   await nameSpeakers();
   store.meetings.writeTranscript(meeting.dir, toJSON(meeting.transcript));
@@ -2426,6 +2455,26 @@ function recordStop() {
 ipcMain.handle('record-start', (_e, opts) => recordStart(opts));
 // Record from the header: a solo session that writes a summarized note, with pause, stop and a keep-or-discard review
 // at the end (startListening without intoNote). Transcription and Screen come from Settings > Notes
+// Who spoke, answered: names for the voices (or the room), which voice was the person, and who led it. The turns take
+// the names, then the notes are written. Skipping (no answers) writes them as they are
+ipcMain.handle('session-summarize', async (_e, a) => {
+  const title = meeting.awaitingWho;
+  if (!title) return null;
+  meeting.awaitingWho = null;
+  const names = a?.names && typeof a.names === 'object' ? a.names : {};
+  const clean = (v) => String(v ?? '').trim().slice(0, 80);
+  for (const t of meeting.transcript) {
+    const key = t.voice != null ? `${t.channel}:${t.voice}` : t.channel;
+    const name = key === a?.me ? OWNER : clean(names[key]);
+    if (name) { t.speaker = name; t.corrected = true; t.confidence = 1; }
+  }
+  const people = Array.isArray(a?.people) ? a.people.map(clean).filter(Boolean).slice(0, 30) : [];
+  meeting.named = [...new Set([...Object.entries(names).map(([k, v]) => (k === a?.me ? OWNER : clean(v))), ...people, ...(a?.me && !names[a.me] ? [OWNER] : [])].filter(Boolean))];
+  meeting.lead = a?.lead ? (a.lead === a?.me ? OWNER : clean(names[a.lead]) || null) : null;
+  writeState();
+  return summarizeSession(title);
+});
+
 ipcMain.handle('record-session', async () => {
   const g = gate();
   if (!g.manualListen) return { error: 'Recording is off in this build.' };
@@ -2433,6 +2482,10 @@ ipcMain.handle('record-session', async () => {
   if (settings.notes?.transcription === false) return { error: 'Turn on Transcription in Settings > Notes to record.' };
   const r = await startListening(undefined, { screen: g.screenContext && !!settings.screenContext, running: false });
   if (r?.error) return r;
+  // at Stop it asks who spoke before writing anything
+  meeting.askWho = true;
+  meeting.named = [];
+  meeting.lead = null;
   return meeting.armed ? { ok: true } : { error: "The recording didn't start." };
 });
 ipcMain.handle('record-stop', () => recordStop());
