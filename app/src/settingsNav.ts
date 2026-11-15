@@ -39,13 +39,15 @@ export const modeOf = (page: string): NavMode => ((WORKSPACE_PAGES as readonly s
 // Language and Dictionary, which meeting transcripts use too, under the name Dictionary; with both off, no page
 export type VoiceMode = 'voice' | 'dictionary' | null;
 export const voiceMode = (dictation: boolean, manualListen: boolean): VoiceMode => (dictation ? 'voice' : manualListen ? 'dictionary' : null);
-// the pages a build's flags take out of the navs; resolvePage sends a remembered one elsewhere
-export const flagHiddenPages = (mode: VoiceMode): Page[] => (mode ? [] : ['voice']);
+// the pages a build's flags take out of the navs; resolvePage sends a remembered one elsewhere. The guardrails flag
+// hides only the Guardrails page; the built-in guards run either way
+export const flagHiddenPages = (mode: VoiceMode, guardrails = true): Page[] => [...(mode ? [] : ['voice' as const]), ...(guardrails ? [] : ['guardrails' as const])];
 
-// a remembered or requested page has to fit the nav allowed to show it; a page the flags hide lands on Preferences; Profile folded into Preferences some time ago,
+// a remembered or requested page has to fit the nav allowed to show it; a page the flags hide lands on the first page
+// of its own nav (Preferences, or General for an admin page); Profile folded into Preferences some time ago,
 // and the Platform page moved to the admin web app. A workspace page the build no longer lists lands on General
 export function resolvePage(page: string, admin: boolean, listed?: readonly WorkspacePage[], hidden: readonly Page[] = []): Page {
-  if ((hidden as readonly string[]).includes(page)) return 'preferences';
+  if ((hidden as readonly string[]).includes(page)) return admin && modeOf(page) === 'admin' ? 'general' : 'preferences';
   if (page === 'profile') return 'preferences';
   if (page === 'sources') return 'connectors';
   if (!(ACCOUNT_PAGES as readonly string[]).includes(page) && !(WORKSPACE_PAGES as readonly string[]).includes(page)) return 'preferences';

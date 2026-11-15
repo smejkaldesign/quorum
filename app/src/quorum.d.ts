@@ -45,7 +45,11 @@ export type GuardrailOrigin = 'hook' | 'terms' | 'claude-md' | 'frontmatter' | '
 // reach is what the rule touches once on, from the one table in app/guardrails.js; stale marks an included Agent OS
 // rule the Agent OS no longer offers, which keeps enforcing until the person leaves it out
 export type GuardrailRule = { id: string; kind: GuardrailKind; label: string; value: string; what?: string; path?: string | null; stage?: 'pre' | 'post'; mixed?: boolean; wired?: boolean; origin?: GuardrailOrigin; count?: number; reach?: string; stale?: boolean; source: 'built-in' | 'agent-os' | 'personal' | 'workspace'; scope: GuardrailScope; enabled: boolean; locked: boolean; decision?: 'included' | 'excluded' | null };
-export type GuardrailsState = { rules: GuardrailRule[]; skipped: { name: string; reason: string }[]; scanned: { notes: number; at: number | null; truncated: boolean }; denials: { t: string; tool: string; path: string; reason: string }[]; summary: { on: number; toReview: number; denyDirs: number; terms: number } };
+// one refusal from the denial log (app/guardrails.js): t is an ISO time; guard is the rule id (built-in:secrets,
+// built-in:private-folders, built-in:confidential, or another rule's id) and guardLabel its name; surface is where it
+// happened: agent (a read by the agent through the read guard) or keeper (a meeting note the keeper left out)
+export type GuardrailDenial = { id: string; t: string; path: string; tool: string; surface: 'agent' | 'keeper'; reason: string; guard: string; guardLabel: string };
+export type GuardrailsState = { rules: GuardrailRule[]; skipped: { name: string; reason: string }[]; scanned: { notes: number; at: number | null; truncated: boolean }; denials: GuardrailDenial[]; summary: { on: number; toReview: number; denyDirs: number; terms: number } };
 // in-app updates (app/updater.js): off means this build has no feed (a development copy, or a Cloud build without one)
 export type UpdateState = { status: 'off' | 'idle' | 'checking' | 'downloading' | 'ready' | 'failed'; current: string; version: string | null; percent: number; notes: string | null; checkedAt: number | null; error: string | null };
 // a personal OAuth connector (sources/accounts.js); configured is false when this build has no client id for it
@@ -521,6 +525,8 @@ declare global {
       guardrailsAdd(rule: { kind: string; value: string; label?: string }): Promise<Result & { id?: string }>;
       guardrailsRemove(id: string): Promise<Result>;
       guardrailsTest(rel: string): Promise<{ blocked: string | null }>;
+      // newest first; since is an ISO time or epoch ms (only later entries), limit defaults to and is capped at 200
+      guardrailDenials(opts?: { since?: string | number | null; limit?: number }): Promise<GuardrailDenial[]>;
       workspaceGuardrailsGet(): Promise<{ rules?: GuardrailRule[]; error?: string }>;
       workspaceGuardrailsSet(rules: Partial<GuardrailRule>[]): Promise<{ rules?: GuardrailRule[]; error?: string }>;
       updateStatus(): Promise<UpdateState>;
