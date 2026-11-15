@@ -1,97 +1,104 @@
 import { useEffect, useState } from 'react';
 import type { MissingLink } from './quorum';
-import { IconClose } from './icons';
+import { categoryCounts, countsLine, footerFacts, issueOf, type Issue } from '../memoryHealth.js';
+import { IconClose, IconReset } from './icons';
 
-// Links that point at a note that doesn't exist. Some are typos or renamed notes (fix them), some are notes worth
-// writing (create them), and some are fine as they are (leave them). Nothing changes without a click.
+// Memory health: links that point at a note that does not exist, one card per missing note. Each card says what is
+// wrong in one line, what Quorum suggests, and offers Accept recommendation, Reject (leave the links as they are) and
+// Review (open the note with the issue marked). Nothing changes without a click.
 export const LEFT_KEY = 'quorum.linksLeft';
 export const leftAsIs = (): Set<string> => { try { return new Set(JSON.parse(localStorage.getItem(LEFT_KEY) ?? '[]')); } catch { return new Set(); } };
+const setLeft = (key: string, on: boolean) => {
+  const s = leftAsIs();
+  if (on) s.add(key); else s.delete(key);
+  try { localStorage.setItem(LEFT_KEY, JSON.stringify([...s])); } catch {}
+  return s;
+};
 
-// the TL;DR: what's wrong in plain words, and the likely fix
-function summary(m: MissingLink) {
-  const who = m.count === 1 ? 'One note links to' : `${m.count} notes link to`;
-  const name = `“${m.target}”`;
-  if (/^(\.\.\/|\/)|(^|\/)\.claude\//.test(m.target)) return `${who} ${name}, which lives outside this vault, so Quorum can't follow it. Leave it if that's on purpose, or point it at a note inside the vault.`;
-  const c = m.candidates[0];
-  if (c?.exact) return `${who} ${name}, but no note goes by that name. It's almost certainly “${c.name ?? c.title}”: adding ${name} as one of its aliases fixes every link at once.`;
-  if (c) return `${who} ${name}, but no note has that name. “${c.name ?? c.title}” has a similar name and might be what was meant.`;
-  return `${who} ${name}, but nothing in the vault matches. Write the note if it's worth having, or leave the link as a placeholder.`;
+// Accept recommendation for one issue, shared with the review banner; answers with a line saying what changed. A new
+// note goes into folder
+export async function acceptIssue(issue: Issue, { folder }: { folder: string }): Promise<string> {
+  const c = issue.candidate;
+  if (issue.action === 'alias' && c) {
+    await window.quorum.vaultAddAlias(c.rel, issue.target);
+    return `Added “${issue.target}” as an alias of ${c.name ?? c.title}, so ${issue.links} ${issue.links === 1 ? 'link now works' : 'links now work'}`;
+  }
+  if (issue.action === 'relink' && c) {
+    const r = await window.quorum.vaultFixLink(issue.target, c.rel);
+    return `Fixed ${r.links} ${r.links === 1 ? 'link' : 'links'} in ${r.files} ${r.files === 1 ? 'note' : 'notes'}`;
+  }
+  if (issue.action === 'create') {
+    const rel = await window.quorum.vaultNewNote(folder, issue.target.split('/').pop()!);
+    return `Made the note ${rel}`;
+  }
+  setLeft(issue.key, true);
+  return 'Left the link as it is';
 }
+// Reject: the links stay as they are, and the issue moves to Left as is
+export function rejectIssue(issue: Issue) { setLeft(issue.key, true); return 'Left the link as it is'; }
 
-export function LinkHealth({ focus, onOpen, onCreate, onClose, onChanged }: {
-  focus: string | null; onOpen: (rel: string) => void; onCreate: (name: string) => void; onClose: () => void; onChanged: () => void;
+export function LinkHealth({ focus, folder, isLive, onReview, onClose, onChanged }: {
+  focus: string | null; folder: string; isLive: (rel: string) => boolean; onReview: (issue: Issue) => void; onClose: () => void; onChanged: () => void;
 }) {
   const [items, setItems] = useState<MissingLink[] | null>(null);
-  const [left, setLeft] = useState<Set<string>>(leftAsIs);
+  const [left, setLeftState] = useState<Set<string>>(leftAsIs);
   const [done, setDone] = useState('');
-  const load = () => window.quorum.vaultLinkHealth().then(setItems);
+  const [busy, setBusy] = useState(false);
+  const load = (fresh = false) => window.quorum.vaultLinkHealth(fresh).then(setItems);
   useEffect(() => { load(); }, []);
   useEffect(() => window.quorum.onVaultChanged(() => { load(); }), []);
   useEffect(() => { if (focus) document.getElementById(`lh-${focus.toLowerCase()}`)?.scrollIntoView({ block: 'center' }); }, [focus, items]);
 
-  const leave = (t: string) => setLeft((s) => {
-    const n = new Set(s);
-    if (n.has(t)) n.delete(t); else n.add(t);
-    try { localStorage.setItem(LEFT_KEY, JSON.stringify([...n])); } catch {}
-    setTimeout(onChanged, 0);
-    return n;
-  });
-  const alias = async (m: MissingLink, rel: string) => {
-    await window.quorum.vaultAddAlias(rel, m.target);
-    setDone(`Added “${m.target}” as an alias, so ${m.count} ${m.count === 1 ? 'link now works' : 'links now work'}`);
-    load();
-    onChanged();
-  };
-  const fix = async (m: MissingLink, rel: string) => {
-    const r = await window.quorum.vaultFixLink(m.target, rel);
-    setDone(`Fixed ${r.links} ${r.links === 1 ? 'link' : 'links'} in ${r.files} ${r.files === 1 ? 'note' : 'notes'}`);
-    load();
-    onChanged();
-  };
+  const refresh = async () => { setBusy(true); try { await load(true); } finally { setBusy(false); } };
+  const after = (msg: string) => { setDone(msg); setLeftState(leftAsIs()); load(); onChanged(); };
+  const accept = async (i: Issue) => { try { after(await acceptIssue(i, { folder })); } catch (e) { setDone(String(e).replace(/^.*Error:\s*/, '')); } };
+  const reject = (i: Issue) => after(rejectIssue(i));
+  const back = (i: Issue) => { setLeft(i.key, false); after('Moved back to review'); };
 
-  const open = (items ?? []).filter((m) => !left.has(m.target.toLowerCase()));
-  const kept = (items ?? []).filter((m) => left.has(m.target.toLowerCase()));
-  const fixable = open.filter((m) => m.candidates.length).length;
+  const all = items ?? [];
+  const open = all.filter((m) => !left.has(m.target.toLowerCase())).map(issueOf);
+  const kept = all.filter((m) => left.has(m.target.toLowerCase())).map(issueOf);
+  const counts = categoryCounts(all, left);
+  // a fix writes the linking notes or the matched note, so it waits while a run is writing any of them
+  const locked = (i: Issue) => [...(all.find((m) => m.target === i.target)?.sources ?? []), ...(i.candidate ? [i.candidate.rel] : [])].some(isLive);
 
-  const row = (m: MissingLink, isLeft: boolean) => (
-    <div key={m.target} id={`lh-${m.target.toLowerCase()}`} className={`lh-item ${focus?.toLowerCase() === m.target.toLowerCase() ? 'focus' : ''}`}>
-      <div className="lh-top">
-        <strong>[[{m.target}]]</strong>
-        <span>{m.count} {m.count === 1 ? 'note links' : 'notes link'} here</span>
-      </div>
-      <p className="lh-tldr">{summary(m)}</p>
-      <div className="lh-from">{m.sources.slice(0, 3).map((s) => <button key={s} onClick={() => onOpen(s)}>{s.split('/').pop()!.replace(/\.md$/, '')}</button>)}{m.sources.length > 3 && <em>+{m.sources.length - 3} more</em>}</div>
-      {!isLeft && m.candidates.length > 0 && (
-        <div className="lh-fixes">
-          {m.candidates.slice(0, 2).map((c, i) => (
-            <span key={c.rel} className="lh-fix">
-              <button className={`pill small-pill ${i === 0 ? 'primary' : ''}`} onClick={() => alias(m, c.rel)} data-tip={`Adds “${m.target}” to the aliases of ${c.rel}`}>Add as alias of {c.name ?? c.title}</button>
-              <button className="lh-alt" onClick={() => fix(m, c.rel)} data-tip={`Rewrites the ${m.count} ${m.count === 1 ? 'link' : 'links'} instead`}>or relink</button>
-            </span>
-          ))}
-        </div>
-      )}
-      <div className="lh-actions">
-        {!isLeft && <button onClick={() => onCreate(m.target.split('/').pop()!)}>Create note</button>}
-        <button onClick={() => leave(m.target.toLowerCase())}>{isLeft ? 'Move back to review' : 'Leave as is'}</button>
+  const card = (i: Issue, isLeft: boolean) => (
+    <div key={i.key} id={`lh-${i.key}`} className={`mh-card ${focus?.toLowerCase() === i.key ? 'focus' : ''}`}>
+      <p className="mh-path">{i.path}</p>
+      <strong className="mh-title">{i.title}</strong>
+      <p className="mh-fix">{isLeft ? 'Left as is. The links stay as they are.' : i.fix}</p>
+      <div className="mh-foot">
+        <span className="mh-facts">{footerFacts(i).map((f) => <span key={f}>{f}</span>)}</span>
+        <span className="mh-actions">
+          <button className="mh-plain" onClick={() => onReview(i)}>Review</button>
+          {isLeft
+            ? <button className="pill small-pill" onClick={() => back(i)}>Move back to review</button>
+            : <>
+                {i.action !== 'leave' && <button className="pill small-pill" onClick={() => reject(i)}>Reject</button>}
+                <button className="pill small-pill mh-accept" disabled={locked(i)} data-tip={locked(i) ? 'Waits until the run writing these notes finishes' : undefined} onClick={() => accept(i)}>Accept recommendation</button>
+              </>}
+        </span>
       </div>
     </div>
   );
 
   return (
-    <div className="link-health" role="region" aria-label="Link health">
+    <div className="link-health" role="region" aria-label="Memory health">
       <div className="lh-head">
-        <h2>Link health</h2>
-        <button className="icon-btn" aria-label="Close link health" data-tip="Back to graph" onClick={onClose}><IconClose width={16} height={16} /></button>
+        <h2>Memory health</h2>
+        <span className="mh-head-actions">
+          <button className={`icon-btn ${busy ? 'spinning' : ''}`} aria-label="Check again" data-tip="Check again" disabled={busy} onClick={refresh}><IconReset width={16} height={16} /></button>
+          <button className="icon-btn" aria-label="Close Memory health" data-tip="Back to graph" onClick={onClose}><IconClose width={16} height={16} /></button>
+        </span>
       </div>
       <p className="lh-sum">
-        {items === null ? 'Checking links…' : open.length === 0 ? 'Every link points at a note.' : `${open.length} missing ${open.length === 1 ? 'note' : 'notes'}${fixable ? ` · ${fixable} with a likely match` : ''}`}
+        {items === null ? 'Checking your notes…' : !counts.length ? 'Every link points at a note.' : countsLine(counts)}
         {done && <span className="lh-done">{done}</span>}
       </p>
       <div className="lh-list">
-        {open.map((m) => row(m, false))}
+        {open.map((i) => card(i, false))}
         {kept.length > 0 && <h5>Left as is ({kept.length})</h5>}
-        {kept.map((m) => row(m, true))}
+        {kept.map((i) => card(i, true))}
       </div>
     </div>
   );

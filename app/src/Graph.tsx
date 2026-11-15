@@ -28,10 +28,14 @@ let lastCam: { k: number; x: number; y: number; moved: boolean } | null = null;
 const radius = (deg: number, v: GraphView) => (1.8 + Math.sqrt(deg) * 1.0) * v.nodeSizeMultiplier;
 
 // Obsidian-style graph on a 2D canvas: one batched path for links, nodes batched by color
-export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapseEnd, onRenameCluster }: {
+// live holds the notes an agent run is writing right now: they, their links and a glow in their cluster color pulse
+// while the run goes, and hold still with reduced motion
+export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapseEnd, onRenameCluster, live }: {
   data: GraphData; view: GraphView; query: string; focus?: string | null; timelapse: number; onOpen: (id: string) => void; onTimelapseEnd: () => void;
-  onRenameCluster?: (key: string, name: string) => Promise<Record<string, string> | null>;
+  onRenameCluster?: (key: string, name: string) => Promise<Record<string, string> | null>; live?: ReadonlySet<string>;
 }) {
+  const liveRef = useRef(live);
+  liveRef.current = live;
   const focusRef = useRef(focus ?? null);
   focusRef.current = focus ?? null;
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -54,6 +58,7 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
   const api = useRef<Api | null>(null);
 
   useEffect(() => { kick.current(); }, [query]);
+  useEffect(() => { kick.current(); }, [live]);
   useEffect(() => { api.current?.refit(); }, [focus]);
   useEffect(() => { api.current?.configure(view); }, [view]);
   useEffect(() => { if (timelapse) api.current?.timelapse(); else api.current?.stop(); }, [timelapse]);
@@ -228,6 +233,32 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
         for (const i of idx) { const n = nodes[i]; ctx.moveTo(n.x + n.r, n.y); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2); }
         ctx.fill();
       }
+      // notes being written right now: their links in the note's color, a glow and a ring, pulsing unless reduced motion
+      const lv = liveRef.current;
+      if (lv && lv.size) {
+        const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const pulse = still ? 0.7 : 0.5 + 0.5 * Math.sin(performance.now() / 260);
+        const busy = nodes.map((n, i) => on[i] === 1 && lv.has(n.id));
+        ctx.lineWidth = (1.4 * v.lineSizeMultiplier) / cam.k;
+        for (const [a, b] of links) {
+          if (!on[a] || !on[b] || !(busy[a] || busy[b])) continue;
+          ctx.globalAlpha = 0.2 + 0.6 * pulse;
+          ctx.strokeStyle = nodes[busy[a] ? a : b].color;
+          ctx.beginPath(); ctx.moveTo(nodes[a].x, nodes[a].y); ctx.lineTo(nodes[b].x, nodes[b].y); ctx.stroke();
+        }
+        nodes.forEach((n, i) => {
+          if (!busy[i]) return;
+          ctx.fillStyle = n.color;
+          ctx.globalAlpha = 0.12 + 0.28 * pulse;
+          ctx.beginPath(); ctx.arc(n.x, n.y, n.r + (3 + 5 * pulse) / cam.k, 0, Math.PI * 2); ctx.fill();
+          ctx.globalAlpha = 1;
+          ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = n.color;
+          ctx.lineWidth = 1.5 / cam.k;
+          ctx.globalAlpha = 0.5 + 0.5 * pulse;
+          ctx.beginPath(); ctx.arc(n.x, n.y, n.r + 2.5 / cam.k, 0, Math.PI * 2); ctx.stroke();
+        });
+      }
       if (hl >= 0) {
         const n = nodes[hl];
         ctx.globalAlpha = 1;
@@ -283,6 +314,8 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
         dirty = true;
       }
       if (glideStep()) dirty = true;
+      // a run writing notes keeps the pulse moving; reduced motion draws it once per change
+      if (liveRef.current?.size && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) dirty = true;
       if (dirty) { draw(); dirty = false; }
       raf = requestAnimationFrame(loop);
     };
