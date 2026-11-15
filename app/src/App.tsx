@@ -30,7 +30,7 @@ import { Avatar, SpeakerName, similarCounts, type SpeakerInfo } from './Speaker'
 import { useNotetaker } from './flags';
 import { type RecordChoice } from './noteRecord';
 import { RecLevel } from './RecLevel';
-import { IconFolderOpen, IconPerson, IconClose, IconMenu, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconBack, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, IconPlus, IconRecord, Wave } from './icons';
+import { IconFolderOpen, IconPerson, IconClose, IconMenu, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconBack, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, IconRecord, Wave } from './icons';
 
 // one speaker turn as main.js built it; a turn that grows arrives again with the same id and replace: true
 type Line = { id: number; channel: 'me' | 'them'; text: string; start: number } & Partial<SpeakerInfo>;
@@ -197,13 +197,6 @@ export function App() {
   const [count, setCount] = useState<number | null>(null);
   const [recordError, setRecordError] = useState<string | null>(null);
   const [liveOpen, setLiveOpen] = useState(false);
-  const [plusOpen, setPlusOpen] = useState(false);
-  useEffect(() => {
-    if (!plusOpen) return;
-    const shut = () => setPlusOpen(false);
-    window.addEventListener('click', shut);
-    return () => window.removeEventListener('click', shut);
-  }, [plusOpen]);
   // paused from the header keeps the call; STOP from the chat deletes it
   const [held, setHeld] = useState(false);
   const [tab, setTab] = useSession<Tab>('tab', 'home', keepTab(EDITION));
@@ -482,7 +475,9 @@ export function App() {
 
   const liveWords = settings.transcription?.live ?? true;
   const themLabel = themName ?? 'Them';
-  const who = (l: { channel: 'me' | 'them'; speaker?: string | null }) => (l.channel === 'me' ? 'You' : l.speaker ?? themLabel);
+  // without a noticed call every session is a solo recording, whose microphone hears the room too: Unknown, never You
+  const meLabel = nt.meetingCapture ? 'You' : 'Unknown';
+  const who = (l: { channel: 'me' | 'them'; speaker?: string | null }) => (l.channel === 'me' ? meLabel : l.speaker ?? themLabel);
   // the live transcript draws every row on each render; the similar-turn count comes from one pass, and the row's
   // callback stays the same object so the memoized rows skip the partial words that arrive several times a second
   const similar = useMemo(() => similarCounts(lines), [lines]);
@@ -530,7 +525,7 @@ export function App() {
     <div className="body wide flush live-body">
       <LazyView name="your notes" onClose={phase === 'review' ? closeReview : () => setLiveOpen(false)}>
         <EndView embedded live={inCall(phase)} paused={phase === 'paused'} notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing}
-          transcript={lines.map((l) => ({ ...l, who: who(l) }))} partial={liveWords ? [partial.me, partial.them].filter(Boolean).join(' ') : ''} participants={participants} onSpeaker={setSpeaker} me={me}
+          transcript={lines.map((l) => ({ ...l, who: who(l) }))} partial={liveWords ? [partial.me, partial.them].filter(Boolean).join(' ') : ''} participants={participants} onSpeaker={setSpeaker} me={nt.meetingCapture ? me : undefined}
           privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={phase === 'review' ? closeReview : () => setLiveOpen(false)} />
       </LazyView>
     </div>
@@ -568,15 +563,6 @@ export function App() {
           )}
           <div className="status-wrap">
             <UpdateItem state={update} />
-            <div className="menu-wrap">
-              <button className={`icon-btn ${plusOpen ? 'active' : ''}`} aria-label="New" data-tip="New" aria-haspopup="menu" aria-expanded={plusOpen} onClick={(e) => { e.stopPropagation(); setPlusOpen((o) => !o); }}><IconPlus width={17} height={17} /></button>
-              {plusOpen && (
-                <div className="menu plus-menu" role="menu">
-                  <button role="menuitem" onClick={() => { setPlusOpen(false); setLiveOpen(false); openNoteView(); }}><IconNotes width={15} height={15} /> Note</button>
-                  <button role="menuitem" onClick={go(() => { setPlusOpen(false); setView('main'); setTab('home'); setConvoOpen(true); newChat(); })}><IconChat width={15} height={15} /> Chat</button>
-                </div>
-              )}
-            </div>
             {phase === 'listening' && <button className="icon-btn call-btn" aria-label="Pause" data-tip="Pause" onClick={() => window.quorum.pause()}><IconPause /></button>}
             {phase === 'paused' && <button className="icon-btn call-btn" aria-label="Resume" data-tip="Resume" onClick={() => window.quorum.resume()}><IconPlay /></button>}
             {(phase === 'listening' || phase === 'paused') && <button className="icon-btn call-btn" aria-label="Stop and summarize" data-tip="Stop and summarize" onClick={() => window.quorum.end()}><IconStop /></button>}
@@ -609,7 +595,7 @@ export function App() {
       ) : showLive ? liveArea : note ? null : <>
       {tab === 'home' && !convoOpen && (
         <div className="body wide">
-          <HistoryView brain={brain} focusAsk={focusAsk} onAsk={(q, f) => { setConvoOpen(true); send(q, f); }} onOpenChat={openChat} onFiltered={setHistFiltered} />
+          <HistoryView brain={brain} focusAsk={focusAsk} onAsk={(q, f) => { setConvoOpen(true); send(q, f); }} onOpenChat={openChat} onFiltered={setHistFiltered} onNewChat={() => { setConvoOpen(true); newChat(); }} />
         </div>
       )}
 

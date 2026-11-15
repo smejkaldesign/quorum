@@ -20,7 +20,8 @@ type Opts = { self?: string[]; slack?: number };
 // the label for one turn: only the reads inside its time window are looked at. prior is the turns before it, for the
 // Speaker N numbering; others is everyone named so far besides you
 export function labelFor(t: TimedTurn, prior: TimedTurn[], reads: SpeakerRead[], others: Set<string>, { self = [], slack = 2000 }: Opts = {}): string {
-  if (t.channel === 'me') return 'You';
+  // the microphone hears the room as well as you, and nothing proves who spoke, so its turns are Unknown
+  if (t.channel === 'me') return 'Unknown';
   if (t.speaker && t.speaker.trim()) return t.speaker.trim();
   const votes = new Map<string, number>();
   for (const r of reads) {

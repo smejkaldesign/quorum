@@ -1921,5 +1921,8 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 @keyframes working-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
 .live-wait { margin: 8px 0 24px; }
 .live-wait .shimmer { margin: 0 0 14px; }
-.live-partial .spk { visibility: hidden; }
 @media (prefers-reduced-motion: reduce) { .view-toggle.working button svg { animation: none; } .rec-level-fill { transition: none; } }
+/* a transcript row's speaker sits on its first line, not in the middle of a long turn */
+.transcript p > .spk { align-self: start; padding-top: 2px; }
+.avatar-sm.avatar-unknown { width: 20px; height: 20px; display: inline-grid; place-items: center; border-radius: 50%; background: var(--card-2); border: 1px solid var(--line-2); color: var(--muted); font-size: 11px; font-weight: 700; }
+.hist-filters .plus-menu { top: 46px; }

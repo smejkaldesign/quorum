@@ -19,7 +19,7 @@ export const recordChoices = (screenOffered: boolean, pick: Partial<RecordChoice
 });
 export const canStart = (c: RecordChoice) => c.audio || c.screen;
 
-const lineFor = (t: Turn) => `**${t.label ?? (t.channel === 'me' ? 'You' : 'Speaker 1')}:** ${t.text.trim()}`;
+const lineFor = (t: Turn) => `**${t.label ?? (t.channel === 'me' ? 'Unknown' : 'Speaker 1')}:** ${t.text.trim()}`;
 const joinEnd = (body: string, para: string) => (body.trim() ? `${body.replace(/\s+$/, '')}\n\n${para}` : para);
 const norm = (w: string) => w.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 

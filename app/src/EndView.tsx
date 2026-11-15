@@ -112,11 +112,14 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
               <section className="transcript end-transcript">
                 {transcript.length ? transcript.map((t) => (
                   <p key={t.id} id={`turn-${t.id}`} className={`${t.channel}${hot.includes(t.id) ? ' hot' : ''}`}>
-                    <span className="spk"><Avatar name={t.channel === 'me' ? me?.name || 'You' : t.speaker ?? t.who} photo={t.channel === 'me' ? me?.photo ?? null : null} />{t.channel === 'them' ? <SpeakerName turn={t} fallback={t.who} participants={participants} similar={similar(t)} onPick={(name, similar) => onSpeaker(t.id, name, similar)} /> : <span>{t.who}</span>}</span>
+                    <span className="spk">{t.channel === 'me' && !me
+                      // a solo recording's microphone: nothing proves who spoke, so a ? and no name
+                      ? <span className="avatar-sm avatar-unknown" aria-label="Unknown speaker" data-tip="Unknown speaker">?</span>
+                      : <><Avatar name={t.channel === 'me' ? me?.name || t.who : t.speaker ?? t.who} photo={t.channel === 'me' ? me?.photo ?? null : null} />{t.channel === 'them' ? <SpeakerName turn={t} fallback={t.who} participants={participants} similar={similar(t)} onPick={(name, similar) => onSpeaker(t.id, name, similar)} /> : <span>{t.who}</span>}</>}</span>
                     <div>{t.text}</div>
                   </p>
                 )) : !partial && <p className="muted">{live ? (paused ? 'Paused. Resume to keep transcribing.' : 'Listening…') : 'Nothing was transcribed.'}</p>}
-                {live && partial && <p className="me live-partial"><span className="spk"><span /></span><div><em className="partial">{partial}</em></div></p>}
+                {live && partial && <p className="me live-partial"><span className="spk">{!me && <span className="avatar-sm avatar-unknown" aria-hidden="true">?</span>}</span><div><em className="partial">{partial}</em></div></p>}
               </section>
             ) : <>
             {live && (

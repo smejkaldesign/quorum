@@ -12,7 +12,7 @@ import { OPEN_EVENT, UpNext, takeEvent, useCalendarView } from './UpNext';
 import { AppLogo, CALENDAR_APP, RowDetails, peopleText } from './AppChip';
 import { MeetingPage } from './MeetingPage';
 import { DayOff } from './DayOff';
-import { IconCalendar, IconChat, IconClose, IconExternal, IconListCheck, IconMic, IconNewNote, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
+import { IconCalendar, IconChat, IconClose, IconPlus, IconExternal, IconListCheck, IconMic, IconNewNote, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
 
 type Filter = 'all' | 'meetings' | 'notes' | 'chats';
 type Row = { key: string; kind: 'meeting' | 'note' | 'chat'; title: string; sub: string; date: Date | null; avatar: string; open: () => void; meeting?: MeetingRow; children?: Row[] };
@@ -39,7 +39,7 @@ function colorFor(s: string) {
   return AVATAR_COLORS[h % AVATAR_COLORS.length];
 }
 
-export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: { brain: Brain | null; focusAsk: number; onAsk: (q: string, files?: string[]) => void; onOpenChat: (id: string) => void; onFiltered?: (filtered: boolean) => void }) {
+export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, onNewChat }: { brain: Brain | null; focusAsk: number; onAsk: (q: string, files?: string[]) => void; onOpenChat: (id: string) => void; onFiltered?: (filtered: boolean) => void; onNewChat?: () => void }) {
   const askRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { if (focusAsk) askRef.current?.focus(); }, [focusAsk]);
   const [data, setData] = useState<{ meetings: MeetingRow[]; chats: ChatRow[] }>({ meetings: [], chats: [] });
@@ -223,6 +223,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
         <button className={`filter ${filter === 'notes' ? 'on' : ''}`} onClick={() => setFilter('notes')}><IconMic width={17} height={17} />Notes</button>
         <button className={`filter ${filter === 'chats' ? 'on' : ''}`} onClick={() => setFilter('chats')}><IconChat width={17} height={17} />Chats</button>
         <span className="filter-spacer" />
+        <NewMenu onChat={onNewChat} />
         <PeopleFilter people={people} picked={picked} onChange={(p) => { setPicked(p); if (p.length && filter === 'chats') setFilter('all'); }} />
         <DateFilter value={range} onChange={setRange} />
         <KeywordFilter value={keyword} onChange={setKeyword} />
@@ -262,6 +263,28 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
           {g.rows.map(renderRow)}
         </div>
       ))}
+    </div>
+  );
+}
+
+// + beside the filters: a new note (the note editor, quorum:new-note) or a new chat
+function NewMenu({ onChat }: { onChat?: () => void }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const shut = () => setOpen(false);
+    window.addEventListener('click', shut);
+    return () => window.removeEventListener('click', shut);
+  }, [open]);
+  return (
+    <div className="menu-wrap">
+      <button className={`filter icon-only ${open ? 'on' : ''}`} aria-label="New" data-tip="New" aria-haspopup="menu" aria-expanded={open} onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}><IconPlus width={18} height={18} /></button>
+      {open && (
+        <div className="menu plus-menu" role="menu">
+          <button role="menuitem" onClick={() => { setOpen(false); window.dispatchEvent(new CustomEvent('quorum:new-note')); }}><IconNotes width={15} height={15} /> Note</button>
+          {onChat && <button role="menuitem" onClick={() => { setOpen(false); onChat(); }}><IconChat width={15} height={15} /> Chat</button>}
+        </div>
+      )}
     </div>
   );
 }

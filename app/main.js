@@ -694,7 +694,8 @@ function resume(by) {
 }
 
 // every transcript that leaves for a model goes through the opted-out filter
-const speakerLabel = () => ({ me: OWNER, them: themName() ?? 'Others' });
+// a solo recording's microphone hears the room as well as you, and nothing proves who spoke, so its turns are Unknown
+const speakerLabel = () => ({ me: meeting.solo ? 'Unknown' : OWNER, them: themName() ?? 'Others' });
 function transcriptText() {
   return suggester.redactLines(toText(meeting.transcript, speakerLabel()));
 }
