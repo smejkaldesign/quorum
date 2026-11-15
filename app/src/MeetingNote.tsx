@@ -9,7 +9,7 @@ import { SourceAsk, useMeetingSources } from './MeetingSources';
 import type { CalendarEvent, MeetingShare, NoteDoc, Visibility } from './quorum';
 import { Markdown } from './Markdown';
 import { Composer } from './Composer';
-import { IconBack, IconChevron, IconFolder, IconGlobe, IconLock, IconLogs, IconMore, IconNotes, IconTrash } from './icons';
+import { IconArrowDown, IconBack, IconChevron, IconFolder, IconGlobe, IconLock, IconLogs, IconMore, IconNotes, IconTrash } from './icons';
 import { Avatar } from './Speaker';
 import { NoteEditor, type NoteEditorHandle } from './editor/NoteEditor';
 
@@ -184,7 +184,24 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
   const date = note.date ? new Date(note.date) : null;
   const busy = turns.some((t) => t.pending);
   // the skill pills go away once one has run in this chat; the /commands keep working
-  const skillUsed = turns.some((t) => SKILLS.some((k) => k.ask === t.q));
+  // they show only at the bottom of the page and before the first message; above the bottom an arrow offers the rest
+  const [atBottom, setAtBottom] = useState(false);
+  useEffect(() => {
+    const box = scroller.current?.closest<HTMLElement>('.body');
+    if (!box) return;
+    const check = () => setAtBottom(box.scrollHeight - box.scrollTop - box.clientHeight < 24);
+    check();
+    box.addEventListener('scroll', check, { passive: true });
+    const ro = new ResizeObserver(check);
+    ro.observe(scroller.current!);
+    return () => { box.removeEventListener('scroll', check); ro.disconnect(); };
+  }, []);
+  // one screen down: what is at the bottom of the view now lands at its top
+  const pageDown = () => {
+    const box = scroller.current?.closest<HTMLElement>('.body');
+    const dock = scroller.current?.querySelector<HTMLElement>('.note-dock')?.offsetHeight ?? 0;
+    box?.scrollBy({ top: box.clientHeight - dock, behavior: 'smooth' });
+  };
   const slash = draft.startsWith('/') && !draft.includes(' ') ? SKILLS.filter((k) => `/${k.cmd}`.startsWith(draft.trim().toLowerCase())) : [];
   const runSkill = (k: (typeof SKILLS)[number]) => { setDraft(''); ask([], k.ask); };
   // Edit turns the summary on this page into an editor; Save updates writes it back to the note, the title line kept
@@ -267,8 +284,12 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
         </div>
       </div>
       <article className="doc">
-        <h1>{note.title}</h1>
+        <h1 className={summing || savingEdit ? 'shimmer' : undefined}>{note.title}</h1>
         <NoteMeta meta={{ title: note.title, date: note.date ?? null, people: note.people, source: note.source ?? null, sourceUrl: note.sourceUrl, platform: note.platform, meetingUrl: note.meetingUrl, calendar: note.calendar, event: note.event }}>
+          {note.rel && !note.rel.startsWith('.') && (
+            <button className="meta-pill meta-icon" aria-label="Open in Memory" data-tip={`In your memory: ${note.rel.split('/').slice(0, -1).join('/') || 'top folder'}`}
+              onClick={() => window.dispatchEvent(new CustomEvent('quorum:open-memory', { detail: note.file }))}><IconFolder width={17} height={17} /></button>
+          )}
           <ViewsPill views={note.views} />
           {(!!note.transcript?.length || note.summarizable) && (
             <div className="view-toggle" role="group" aria-label="Show">
@@ -323,11 +344,12 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
       </section>}
 
       <div className="note-dock">
+      {!atBottom && <button className="more-below" aria-label="Show more" data-tip="More below" onClick={pageDown}><IconArrowDown width={18} height={18} /></button>}
       {slash.length > 0 ? (
         <div className="slash-menu" role="listbox" aria-label="Commands">
           {slash.map((k) => <button key={k.cmd} role="option" aria-selected={false} disabled={busy} onClick={() => runSkill(k)}><strong>/{k.cmd}</strong><span>{k.label}</span></button>)}
         </div>
-      ) : !skillUsed && (
+      ) : turns.length === 0 && atBottom && (
         <div className="skill-pills" role="group" aria-label="Quick asks">
           {SKILLS.map((k) => <button key={k.label} className="skill-pill" disabled={busy} onClick={() => runSkill(k)}>{k.label}</button>)}
         </div>

@@ -240,6 +240,12 @@ export function App() {
     setTab('memory');
     setKbCommand({ kind: 'open', rel: abs.slice(brain.vault.length + 1), n: Date.now() });
   };
+  // a note page's folder button opens that note in the Memory tab
+  useEffect(() => {
+    const open = (e: Event) => openInQuorum(String((e as CustomEvent).detail ?? ''));
+    window.addEventListener('quorum:open-memory', open);
+    return () => window.removeEventListener('quorum:open-memory', open);
+  });
   // a cited knowledge base note opens in the Knowledge tab
   const openKbNote = useCallback((t: KbOpenTarget) => {
     setView('main');
