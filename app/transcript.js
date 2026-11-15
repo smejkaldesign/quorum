@@ -42,7 +42,7 @@ export function addFinal(turns, piece, gap = 1.5, { clean = true } = {}) {
   const prev = turns[i - 1], next = turns[i];
   const same = (t) => t.channel === piece.channel && (t.voice ?? null) === (piece.voice ?? null);
   if (prev && same(prev) && piece.start - prev.end < gap) {
-    const changed = { ...prev, ...texts(joinText(prev.raw ?? prev.text, text)), end: Math.max(prev.end, piece.end) };
+    const changed = { ...prev, ...texts(joinText(prev.raw ?? prev.text, text)), end: Math.max(prev.end, piece.end), ...(prev.unclear && !piece.unclear ? { unclear: false } : {}) };
     return { turns: [...turns.slice(0, i - 1), changed, ...turns.slice(i)], changed, replace: true };
   }
   if (next && same(next) && next.start - piece.end < gap) {
@@ -50,7 +50,7 @@ export function addFinal(turns, piece, gap = 1.5, { clean = true } = {}) {
     return { turns: [...turns.slice(0, i), changed, ...turns.slice(i + 1)], changed, replace: true };
   }
   const id = turns.reduce((m, t) => Math.max(m, t.id ?? 0), 0) + 1;
-  const changed = { id, channel: piece.channel, ...texts(text), start: piece.start, end: piece.end, at: piece.at, ...(piece.voice != null ? { voice: piece.voice } : {}) };
+  const changed = { id, channel: piece.channel, ...texts(text), start: piece.start, end: piece.end, at: piece.at, ...(piece.voice != null ? { voice: piece.voice } : {}), ...(piece.unclear ? { unclear: true } : {}) };
   return { turns: [...turns.slice(0, i), changed, ...turns.slice(i)], changed, replace: false };
 }
 
@@ -69,7 +69,7 @@ export const toText = (turns, label) => turns.map((t) => `${speakerOf(t, label)}
 
 // raw is the verbatim record; text is what the notes and the transcript view show. speaker, confidence and cluster
 // come from the speaker pass or a correction and are present only on them turns that went through either
-export const toJSON = (turns) => turns.map(({ channel, text, raw, start, end, at, speaker, confidence, cluster, corrected, voice }) => ({
-  channel, text, raw: raw ?? text, start, end, at, ...(voice != null ? { voice } : {}),
+export const toJSON = (turns) => turns.map(({ channel, text, raw, start, end, at, speaker, confidence, cluster, corrected, voice, unclear, tone }) => ({
+  channel, text, raw: raw ?? text, start, end, at, ...(voice != null ? { voice } : {}), ...(unclear ? { unclear } : {}), ...(tone ? { tone } : {}),
   ...(speaker !== undefined || cluster ? { speaker: speaker ?? null, confidence: confidence ?? 0, cluster: cluster ?? null, ...(corrected ? { corrected: true } : {}) } : {}),
 }));

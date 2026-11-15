@@ -30,10 +30,10 @@ import { Avatar, SpeakerName, similarCounts, type SpeakerInfo } from './Speaker'
 import { useNotetaker } from './flags';
 import { type RecordChoice } from './noteRecord';
 import { RecLevel } from './RecLevel';
-import { IconFolderOpen, IconPerson, IconClose, IconMenu, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconBack, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, IconRecord, Wave } from './icons';
+import { IconFolderOpen, IconPerson, IconClose, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconBack, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, IconRecord, Wave } from './icons';
 
 // one speaker turn as main.js built it; a turn that grows arrives again with the same id and replace: true
-type Line = { id: number; channel: 'me' | 'them'; text: string; start: number; voice?: number } & Partial<SpeakerInfo>;
+type Line = { id: number; channel: 'me' | 'them'; text: string; start: number; voice?: number | 'mix' | 'sound'; unclear?: boolean; tone?: string } & Partial<SpeakerInfo>;
 type Phase = 'idle' | 'starting' | 'listening' | 'paused' | 'review' | 'blocked';
 type Tab = MainTab | 'chat' | 'notes' | 'mine';
 const inCall = (p: string) => p === 'listening' || p === 'paused' || p === 'starting';
@@ -114,7 +114,7 @@ function UpdateItem({ state }: { state: UpdateState | null }) {
 
 // the header menu: the Agent OS and team vault, Settings, Hide (the whole app, as Cmd+H), and Quit last. Arrow keys, Home and End move between
 // items, Escape closes it and puts focus back on the menu button
-function AppMenu({ brain, active, onMemory, onSettings, next }: { brain: Brain | null; active: boolean; onMemory: () => void; onSettings: () => void; next: React.RefObject<HTMLButtonElement | null> }) {
+function AppMenu({ brain, me, active, onMemory, onSettings, next }: { brain: Brain | null; me: { name: string; photo: string | null }; active: boolean; onMemory: () => void; onSettings: () => void; next: React.RefObject<HTMLButtonElement | null> }) {
   const [open, setOpen] = useState(false);
   const shut = useCallback(() => setOpen(false), []);
   useExclusiveMenu('app', open, shut);
@@ -146,16 +146,16 @@ function AppMenu({ brain, active, onMemory, onSettings, next }: { brain: Brain |
         aria-haspopup="menu" aria-expanded={open}
         onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
         onKeyDown={(e) => { if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !open) { e.preventDefault(); setOpen(true); } }}>
-        <IconMenu width={19} height={19} />
+        <Avatar name={me.name || 'You'} photo={me.photo} size={24} />
       </button>
       {open && (
         <div ref={list} className="menu brain-menu" role="menu" aria-label="Quorum" onKeyDown={onKey} onClick={(e) => e.stopPropagation()}>
           <button role="menuitem" className="brain-item" onClick={run(onMemory)}>
             <IconFolder width={18} height={18} className={brain ? 'ok' : 'err'} />
-            <strong>{brain ? brain.name : 'No Agent OS'}</strong><em>{brain ? brain.root.replace(/^\/Users\/[^/]+/, '~') : 'Not connected'}</em>
+            <strong>{brain ? brain.name : 'No Agent OS'}</strong>
           </button>
           <button role="menuitem" className="brain-item" disabled>
-            <IconFolderOpen width={18} height={18} /><strong>Team vault</strong><em className="soon">Coming soon</em>
+            <IconFolderOpen width={18} height={18} /><strong>Team vault</strong>
           </button>
           <div className="menu-sep" role="separator" />
           <button role="menuitem" onClick={run(onSettings)}>Settings</button>
@@ -195,6 +195,8 @@ export function App() {
   // liveOpen shows that session's note under the header (EndView, live while it records, then keep or discard); the
   // rest of the app stays a click away and the green Record button comes back to it
   const [count, setCount] = useState<number | null>(null);
+  // after 3 2 1 the button reads Recording for a second, then the word fades and only the level ring stays
+  const [announce, setAnnounce] = useState(false);
   const [recordError, setRecordError] = useState<string | null>(null);
   const [liveOpen, setLiveOpen] = useState(false);
   // paused from the header keeps the call; STOP from the chat deletes it
@@ -238,6 +240,12 @@ export function App() {
     setTab('memory');
     setKbCommand({ kind: 'open', rel: abs.slice(brain.vault.length + 1), n: Date.now() });
   };
+  // a note page's folder button opens that note in the Memory tab
+  useEffect(() => {
+    const open = (e: Event) => openInQuorum(String((e as CustomEvent).detail ?? ''));
+    window.addEventListener('quorum:open-memory', open);
+    return () => window.removeEventListener('quorum:open-memory', open);
+  });
   // a cited knowledge base note opens in the Knowledge tab
   const openKbNote = useCallback((t: KbOpenTarget) => {
     setView('main');
@@ -351,7 +359,7 @@ export function App() {
           if (e.channel === 'them' && 'who' in e) setThemName(e.who ?? null);
           if (e.isFinal) {
             const voice = (e as { voice?: unknown }).voice;
-            const turn: Line = { id: e.id ?? 0, channel: e.channel as 'me' | 'them', text: text.trim(), start: e.start, ...(Number.isInteger(voice) ? { voice: voice as number } : {}), ...(e.speaker !== undefined ? { speaker: e.speaker, confidence: e.confidence ?? 0, cluster: e.cluster ?? null, corrected: !!e.corrected } : {}) };
+            const turn: Line = { id: e.id ?? 0, channel: e.channel as 'me' | 'them', text: text.trim(), start: e.start, ...(Number.isInteger(voice) || voice === 'mix' || voice === 'sound' ? { voice: voice as Line['voice'] } : {}), ...((e as { unclear?: boolean }).unclear ? { unclear: true } : {}), ...(e.speaker !== undefined ? { speaker: e.speaker, confidence: e.confidence ?? 0, cluster: e.cluster ?? null, corrected: !!e.corrected } : {}) };
             setLines((l) => {
               if (e.replace && l.some((x) => x.id === turn.id)) return l.map((x) => (x.id === turn.id ? { ...x, ...turn } : x));
               const i = l.findIndex((x) => x.start > turn.start);
@@ -481,7 +489,8 @@ export function App() {
   // without a noticed call every session is a solo recording, whose microphone hears the room too: Unknown, never You
   const meLabel = nt.meetingCapture ? 'You' : 'Unknown';
   // a voice the engine told apart reads as Person N (microphone) or Speaker N (the Mac's sound) until it is named
-  const who = (l: { channel: 'me' | 'them'; speaker?: string | null; voice?: number }) => l.speaker ?? (l.voice != null ? `${l.channel === 'me' ? 'Person' : 'Speaker'} ${l.voice + 1}` : l.channel === 'me' ? meLabel : themLabel);
+  // several voices at once read as Mixed discussion; laughter and crosstalk lines read as Sound
+  const who = (l: { channel: 'me' | 'them'; speaker?: string | null; voice?: number | 'mix' | 'sound'; tone?: string }) => l.speaker ?? (l.voice === 'sound' ? 'Sound' : l.voice === 'mix' ? (l.tone ? `Mixed discussion, sounded like ${l.tone}` : 'Mixed discussion') : l.voice != null ? `${l.channel === 'me' ? 'Person' : 'Speaker'} ${l.voice + 1}` : l.channel === 'me' ? meLabel : themLabel);
   // the live transcript draws every row on each render; the similar-turn count comes from one pass, and the row's
   // callback stays the same object so the memoized rows skip the partial words that arrive several times a second
   const similar = useMemo(() => similarCounts(lines), [lines]);
@@ -492,13 +501,15 @@ export function App() {
     if (count !== null || phaseRef.current !== 'idle') return;
     setRecordError(null);
     for (const n of [3, 2, 1]) { setCount(n); await new Promise((r) => setTimeout(r, 1000)); }
+    setAnnounce(true);
     setCount(null);
     const r = await window.quorum.recordSession().catch((err) => ({ error: String(err) }));
-    if ('error' in r) { setRecordError(r.error); setTimeout(() => setRecordError(null), 5000); return; }
+    if ('error' in r) { setAnnounce(false); setRecordError(r.error); setTimeout(() => setRecordError(null), 5000); return; }
     setNote((n) => (n && !n.leave ? { ...n, leave: Date.now(), next: null } : n));
     setView('main');
     setLiveOpen(true);
   }
+  useEffect(() => { if (!announce || phase !== 'listening') return; const t = setTimeout(() => setAnnounce(false), 1000); return () => clearTimeout(t); }, [announce, phase]);
   // a finished recording opens on its keep-or-discard page; nothing recording closes the live view
   useEffect(() => { if (phase === 'review') setLiveOpen(true); if (phase === 'idle') setLiveOpen(false); }, [phase]);
   const showLive = view === 'main' && liveOpen && phase !== 'idle' && phase !== 'blocked';
@@ -506,7 +517,7 @@ export function App() {
   const go = (fn: () => void) => () => { setLiveOpen(false); closeNote(); fn(); };
   const status = {
     idle: { label: count !== null ? String(count) : recordError ?? 'Record', icon: <IconRecord width={17} height={17} /> },
-    starting: { label: 'Starting…', icon: <RecLevel live={false} /> },
+    starting: { label: announce ? 'Recording' : 'Starting…', icon: <RecLevel live={false} /> },
     listening: { label: 'Recording', icon: <RecLevel live /> },
     paused: held ? { label: 'Paused', icon: <RecLevel live={false} /> } : { label: 'Stopped', icon: <IconStop width={14} height={14} /> },
     review: { label: 'Ended', icon: <span className="dot" /> },
@@ -578,7 +589,7 @@ export function App() {
             {/* Record: one button from idle to recording, so the label that slid out on hover is the one that turns green.
                 With Screen on offer it opens the Record popover; otherwise it opens a new note that starts transcribing */}
             {(nt.manualListen || phase !== 'idle') && (
-            <button className={`status listen ${phase === 'blocked' ? 'off-call' : phase}${count !== null ? ' counting' : ''}${recordError ? ' rec-error' : ''}`}
+            <button className={`status listen ${phase === 'blocked' ? 'off-call' : phase}${count !== null ? ' counting' : ''}${announce ? ' announce' : ''}${recordError ? ' rec-error' : ''}`}
               onClick={phase === 'idle' ? () => { startRecord(); } : phase === 'blocked' ? undefined : () => { closeNote(); setView('main'); setLiveOpen(true); }}
               data-tip={phase === 'blocked' ? 'Someone on your never-listen list is in this call' : phase !== 'idle' ? 'Open the recording' : undefined} aria-label={status.label}>
               <span className="listen-hint" aria-live="polite">{status.label}</span>{status.icon}
@@ -586,7 +597,7 @@ export function App() {
             )}
             <span className="rec-sep" aria-hidden="true" />
           </div>
-          <AppMenu brain={brain} active={view === 'settings'} onMemory={() => openSettings('memory')} onSettings={() => openSettings('preferences')} next={closeRef} />
+          <AppMenu brain={brain} me={me} active={view === 'settings'} onMemory={() => openSettings('memory')} onSettings={() => openSettings('preferences')} next={closeRef} />
           <button ref={closeRef} className="icon-btn close-win" aria-label="Close window" data-tip="Close window. Quorum keeps running in the menu bar." data-tip-pos="left" onClick={() => window.quorum.hideWindow()}>
             <IconClose width={17} height={17} />
           </button>

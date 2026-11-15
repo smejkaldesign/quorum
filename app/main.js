@@ -40,6 +40,7 @@ import { addFinal, isEcho, toJSON, toText } from './transcript.js';
 import { extractJson } from './json.js';
 import { emptyState, finalNotes, mergeState, notesFromState, notesMarkdown, notesPrompt, notesSystem, partialNotes, summaryBlock, summaryDue, summaryPrompt, newTurns } from './notes.js';
 import { buildTerms, orgOf, topNames } from './terms.js';
+import { MIX, TONES, addSound, addVoices, pickTone, spansOf, splitPiece } from './voices.js';
 import { applySpeakers, correctSpeaker, speakerOf, parseSpeakers, participantList, soloSpeakers, speakerView, speakersPrompt, speakersSystem } from './speakers.js';
 import { startControl } from './control.js';
 import { PROVIDERS as DECISION_PROVIDERS, connectedProvider, decide as decideRaw, removeDecisionsKey, setDecisionsKey } from './decisions.js';
@@ -309,7 +310,7 @@ function keep(evt) {
   const act = keepActions(gate(), { solo: !!meeting.solo });
   if (act.optOut && mentionsOptOut(evt.text)) return blockCall('name');
   if (act.softStop) softStop(evt.text, evt.channel === 'me' ? OWNER : 'someone on the call', 0.85);
-  const { turns, changed, replace } = addFinal(meeting.transcript, { channel: evt.channel, text: evt.text, start: evt.start, end: evt.end, at: Date.now(), ...(Number.isInteger(evt.voice) ? { voice: evt.voice } : {}) }, tx().gap, { clean: tx().clean });
+  const { turns, changed, replace } = addFinal(meeting.transcript, { channel: evt.channel, text: evt.text, start: evt.start, end: evt.end, at: Date.now(), ...(Number.isInteger(evt.voice) || evt.voice === MIX ? { voice: evt.voice } : {}), ...(evt.unclear ? { unclear: true } : {}) }, tx().gap, { clean: tx().clean });
   if (!changed) return;
   meeting.transcript = turns;
   writeStateSoon();
@@ -451,6 +452,7 @@ function discardCall() {
   // a flag turned off during the call takes hold now that the session is over
   setImmediate(() => syncMeetingWatch());
   meeting.transcript = [];
+  meeting.voices = {};
   const id = meeting.id;
   setTimeout(() => { store.meetings.deleteSession(id); deleteCallChats(id); }, 1500);
   meeting.dirs = [];
@@ -508,6 +510,15 @@ function onHelperEvent(evt) {
     else if (meetingActive && !callBlocked && nameOnList(evt.names)) blockCall();
     return;
   }
+  // the on-device engine's voices: spans per channel, and laughter or crosstalk as their own lines
+  if (evt.event === 'voices') { meeting.voices = { ...meeting.voices, [evt.channel]: addVoices(meeting.voices?.[evt.channel], evt.segments) }; return; }
+  if (evt.event === 'sound') {
+    if (!meeting.capturing) return;
+    const { turns, changed, replace } = addSound(meeting.transcript, { ...evt, at: Date.now() });
+    meeting.transcript = turns;
+    writeStateSoon();
+    return toUI('helper-event', { event: 'transcript', isFinal: true, ...changed, replace });
+  }
   if (evt.event !== 'transcript' || evt.channel === 'dictation') return toUI('helper-event', evt);
   if (!meeting.capturing) return;
   evt = { ...evt, text: fixWords(evt.text), ...(evt.channel === 'them' ? { who: themName() } : {}) };
@@ -515,7 +526,8 @@ function onHelperEvent(evt) {
   if (!evt.isFinal) return toUI('helper-event', evt);
   // a dropped echo clears the dimmed partial with an empty non-final
   if (evt.channel === 'me' && echoFilterOn() && isEcho(meeting.transcript, evt, lastThemPartial)) return toUI('helper-event', { ...evt, isFinal: false, text: '' });
-  keep(evt);
+  // one final can hold several people; it splits wherever the voice changes
+  for (const piece of splitPiece(evt, spansOf(meeting.voices?.[evt.channel]))) keep(piece);
 }
 
 // only STOP and GO are read from the chat, and they never go through a model
@@ -681,6 +693,7 @@ function stopAndDelete(by) {
   log('STOP from', by);
   meeting.capturing = false;
   meeting.transcript = [];
+  meeting.voices = {};
   writeState();
   stopCapture();
   chat(MSG.stopped(by));
@@ -919,6 +932,7 @@ async function startListening(by, { intoNote = false, screen = false, still = ()
   meeting.terms = terms;
   meeting.dirs = [];
   meeting.transcript = [];
+  meeting.voices = {};
   meeting.summary = emptyState();
   toUI('summary', { state: meeting.summary, at: 0, thinking: false });
   meeting.summaryAt = Date.now();
@@ -981,6 +995,7 @@ async function endMeeting() {
 function whoAsk() {
   const groups = new Map();
   for (const t of meeting.transcript) {
+    if (t.voice === 'mix' || t.voice === 'sound') continue; // several people at once, or laughter: nobody to name
     const key = t.voice != null ? `${t.channel}:${t.voice}` : t.channel;
     const g = groups.get(key) ?? { key, channel: t.channel, voice: t.voice ?? null, lines: [], words: 0 };
     g.words += t.text.split(/\s+/).length;
@@ -1769,7 +1784,10 @@ ipcMain.handle('note-apply', (_e, file, newBody) => {
   const raw = store.notes.read(abs);
   if (suggester.isExcluded(raw)) throw new Error('This note has withheld lines, so edit it in the vault directly');
   const fm = raw.match(/^---\n[\s\S]*?\n---\n/)?.[0] ?? '';
-  store.notes.write(abs, `${fm}${String(newBody).replace(/\n*$/, '\n')}`);
+  // the reader edits the summary; a recorded note's transcript section stays as it was
+  const { transcript } = splitRecorded(raw.slice(fm.length).trim(), { recorded: /\nrecorded: true\n/.test(fm) });
+  const body = transcript ? withSummary(newBody, transcript) : String(newBody).replace(/\n*$/, '\n');
+  store.notes.write(abs, `${fm}${body}`);
   account.sync.pushNote(abs);
   return true;
 });
@@ -1816,7 +1834,7 @@ function savedTranscript(fm) {
       if (!existsSync(f)) continue;
       for (const t of JSON.parse(readFileSync(f, 'utf8'))) {
         if (!t?.text) continue;
-        turns.push({ id: turns.length + 1, channel: t.channel === 'them' ? 'them' : 'me', who: speakerOf(t, label), text: suggester.redactLines(String(t.text)) });
+        turns.push({ id: turns.length + 1, channel: t.channel === 'them' ? 'them' : 'me', who: speakerOf(t, label), text: suggester.redactLines(String(t.text)), ...(t.voice === 'sound' ? { sound: true } : {}), ...(t.unclear ? { unclear: true } : {}) });
       }
     }
   } catch { return []; }
@@ -2657,9 +2675,20 @@ ipcMain.handle('session-summarize', async (_e, a) => {
   const people = Array.isArray(a?.people) ? a.people.map(clean).filter(Boolean).slice(0, 30) : [];
   meeting.named = [...new Set([...Object.entries(names).map(([k, v]) => (k === a?.me ? OWNER : clean(v))), ...people, ...(a?.me && !names[a.me] ? [OWNER] : [])].filter(Boolean))];
   meeting.lead = a?.lead ? (a.lead === a?.me ? OWNER : clean(names[a.lead]) || null) : null;
+  await labelMixed();
   writeState();
   return summarizeSession(title);
 });
+
+// what each stretch of people talking at once sounded like (debating, joking), from the connected decision model; it
+// runs once at the end screen, at most eight stretches, and skips quietly without a provider
+async function labelMixed() {
+  const mixed = meeting.transcript.filter((t) => t.voice === MIX && !t.tone && t.text.split(/\s+/).length >= 4).slice(0, 8);
+  await Promise.all(mixed.map(async (t) => {
+    const near = meeting.transcript.filter((u) => u.voice !== 'sound' && u.end >= t.start - 20 && u.start <= t.end + 10).map((u) => u.text).join('\n');
+    try { const tone = pickTone(await decide(near, TONES.map(({ name, instructions }) => ({ type: 'predicate', name, instructions })), 4000)); if (tone) t.tone = tone; } catch { /* the line stays Mixed discussion */ }
+  }));
+}
 
 ipcMain.handle('record-session', async () => {
   const g = gate();

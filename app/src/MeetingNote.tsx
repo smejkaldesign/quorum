@@ -9,8 +9,9 @@ import { SourceAsk, useMeetingSources } from './MeetingSources';
 import type { CalendarEvent, MeetingShare, NoteDoc, Visibility } from './quorum';
 import { Markdown } from './Markdown';
 import { Composer } from './Composer';
-import { IconBack, IconChevron, IconFolder, IconGlobe, IconLock, IconLogs, IconMore, IconNotes, IconTrash } from './icons';
+import { IconArrowDown, IconBack, IconChevron, IconFolder, IconGlobe, IconLock, IconLogs, IconMore, IconNotes, IconTrash } from './icons';
 import { Avatar } from './Speaker';
+import { NoteEditor, type NoteEditorHandle } from './editor/NoteEditor';
 
 type Turn = { q: string; a: string; proposal: string | null; state?: 'applied' | 'discarded'; pending?: boolean };
 
@@ -26,7 +27,7 @@ export function VisibilityPill({ value, onChange, compact }: { value: Visibility
   const pick = (v: Visibility) => (e: React.MouseEvent) => { e.stopPropagation(); setOpen(false); if (v !== value) onChange(v); };
   return (
     <div className="menu-wrap" onClick={(e) => e.stopPropagation()}>
-      <button className={`vis-pill ${compact ? 'compact' : ''}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <button className={`act-pill vis-pill ${compact ? 'compact' : ''}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         {value === 'public' ? <IconGlobe width={14} height={14} /> : <IconLock width={14} height={14} />}
         {value === 'public' ? 'Public' : 'Private'}<IconChevron />
       </button>
@@ -100,7 +101,7 @@ function SourcePill({ source }: { source: string }) {
 }
 
 // a saved note's transcript: each speaker's name above their run of turns, like the recording's review
-function SavedTranscript({ turns }: { turns: { id: number; channel: 'me' | 'them'; who: string; text: string }[] }) {
+function SavedTranscript({ turns }: { turns: { id: number; channel: 'me' | 'them'; who: string; text: string; sound?: boolean; unclear?: boolean }[] }) {
   const groups: { key: string; who: string; channel: string; turns: typeof turns }[] = [];
   for (const t of turns) {
     const key = `${t.channel}|${t.who}`;
@@ -108,10 +109,12 @@ function SavedTranscript({ turns }: { turns: { id: number; channel: 'me' | 'them
   }
   return (
     <section className="transcript end-transcript">
-      {groups.map((g) => (
+      {groups.map((g) => g.turns[0].sound ? <p key={g.turns[0].id} className="turn-sound">{[...new Set(g.turns.map((t) => t.text))].join(', ')}</p> : (
         <div key={g.turns[0].id} className={`turn-group ${g.channel}`}>
-          <div className="spk">{g.who === 'Unknown' || g.who === 'You' ? <span className="avatar-sm avatar-unknown" aria-label="Unknown speaker">?</span> : <><Avatar name={g.who} /><span>{g.who}</span></>}</div>
-          {g.turns.map((t) => <p key={t.id}>{t.text}</p>)}
+          <div className="spk">{g.who === 'Unknown' || g.who === 'You' ? <span className="avatar-sm avatar-unknown" aria-label="Unknown speaker">?</span>
+            : /^(Person|Speaker) \d+$|^Mixed discussion/.test(g.who) ? <><span className="avatar-sm avatar-unknown" aria-label="Unnamed speaker">?</span><span className="spk-anon">{g.who}</span></>
+            : <><Avatar name={g.who} /><span>{g.who}</span></>}</div>
+          {g.turns.map((t) => <p key={t.id} className={t.unclear ? 'unclear' : undefined} data-tip={t.unclear ? 'Hard to hear; Quorum may have some words wrong' : undefined}>{t.text}</p>)}
         </div>
       ))}
     </section>
@@ -121,10 +124,11 @@ function SavedTranscript({ turns }: { turns: { id: number; channel: 'me' | 'them
 // what the reader shows for the Debrief question; main gets the debrief marker instead
 const DEBRIEF_SHOWN = 'Debrief this meeting';
 // post-meeting asks above the chat input, one click each
+// each one also runs from the chat input as /command
 const SKILLS = [
-  { label: 'Debrief', ask: DEBRIEF_SHOWN },
-  { label: 'Follow-up email', ask: 'Draft a short follow-up email to the people in this meeting: the decisions and the next steps with owners.' },
-  { label: 'Action items', ask: 'List the action items from this meeting, each with its owner and date when the note gives them.' },
+  { label: 'Debrief', cmd: 'debrief', ask: DEBRIEF_SHOWN },
+  { label: 'Follow-up email', cmd: 'follow-up-email', ask: 'Draft a short follow-up email to the people in this meeting: the decisions and the next steps with owners.' },
+  { label: 'Action items', cmd: 'action-items', ask: 'List the action items from this meeting, each with its owner and date when the note gives them.' },
 ];
 // an answer's last line "Choices: A | B | C" becomes buttons; the rest is the text (an edit in progress is hidden)
 function splitChoices(raw: string) {
@@ -179,6 +183,44 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
   const scroller = useRef<HTMLDivElement>(null);
   const date = note.date ? new Date(note.date) : null;
   const busy = turns.some((t) => t.pending);
+  // the skill pills go away once one has run in this chat; the /commands keep working
+  // they show only at the bottom of the page and before the first message; above the bottom an arrow offers the rest
+  const [atBottom, setAtBottom] = useState(false);
+  useEffect(() => {
+    const box = scroller.current?.closest<HTMLElement>('.body');
+    if (!box) return;
+    const check = () => setAtBottom(box.scrollHeight - box.scrollTop - box.clientHeight < 24);
+    check();
+    box.addEventListener('scroll', check, { passive: true });
+    const ro = new ResizeObserver(check);
+    ro.observe(scroller.current!);
+    return () => { box.removeEventListener('scroll', check); ro.disconnect(); };
+  }, []);
+  // one screen down: what is at the bottom of the view now lands at its top
+  const pageDown = () => {
+    const box = scroller.current?.closest<HTMLElement>('.body');
+    const dock = scroller.current?.querySelector<HTMLElement>('.note-dock')?.offsetHeight ?? 0;
+    box?.scrollBy({ top: box.clientHeight - dock, behavior: 'smooth' });
+  };
+  const slash = draft.startsWith('/') && !draft.includes(' ') ? SKILLS.filter((k) => `/${k.cmd}`.startsWith(draft.trim().toLowerCase())) : [];
+  const runSkill = (k: (typeof SKILLS)[number]) => { setDraft(''); ask([], k.ask); };
+  // Edit turns the summary on this page into an editor; Save updates writes it back to the note, the title line kept
+  const [editing, setEditing] = useState(false);
+  const [edited, setEdited] = useState<string | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const editor = useRef<NoteEditorHandle>(null);
+  const titleLine = note.body.match(/^# [^\n]*\n+/)?.[0] ?? '';
+  const editable = note.body.slice(titleLine.length);
+  // the editor re-writes the markdown when it mounts, so only typing (or a paste, cut, undo) counts as a change
+  const [touched, setTouched] = useState(false);
+  const dirty = touched && edited !== null && edited.trim() !== editable.trim();
+  const cancelEdit = () => { setEditing(false); setEdited(null); setTouched(false); };
+  async function saveEdit() {
+    const md = editor.current?.flush() ?? edited;
+    if (md == null) return;
+    setSavingEdit(true);
+    try { await window.quorum.noteApply(note.file, `${titleLine}${md.trim()}\n`); await reload(); cancelEdit(); } finally { setSavingEdit(false); }
+  }
 
   useEffect(() => window.quorum.onAgentStep(({ text }) => setStep(text)), []);
   // the answer as it streams in, and who is asking, for the names above each turn
@@ -231,16 +273,23 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
         <span className="rb-left"><button className="pill primary small-pill" onClick={onBack}><IconBack width={16} height={16} /> Back</button><TypedTitle text={note.title || 'Untitled note'} on={bar.stuck} /></span>
         <div className="reader-actions">
           {/* continue this note in the note view: write in it, or Record more into it */}
-          <button className="pill small-pill" disabled={note.withheld} data-tip={note.withheld ? 'This note has withheld lines; edit it in the vault' : undefined}
-            onClick={() => window.dispatchEvent(new CustomEvent('quorum:new-note', { detail: { file: note.file } }))}>Edit note</button>
+          {editing ? <>
+            <button className="act-pill" onClick={cancelEdit}>Cancel</button>
+            <button className="act-pill" disabled={!dirty || savingEdit} onClick={saveEdit}>{savingEdit ? 'Saving…' : 'Save updates'}</button>
+          </> : <button className="act-pill" disabled={note.withheld} data-tip={note.withheld ? 'This note has withheld lines; edit it in the vault' : undefined}
+            onClick={() => { setShowing('summary'); setEditing(true); }}>Edit</button>}
           <KeepPrivate file={note.file} onState={setShare} onRef={() => reload()} reload={shareRead} />
           {!inMeetingsKb && <VisibilityPill value={note.visibility} onChange={async (v) => { await window.quorum.noteVisibility(note.file, v); reload(); }} />}
           <NoteMenu note={note} onDeleted={onBack} />
         </div>
       </div>
       <article className="doc">
-        <h1>{note.title}</h1>
+        <h1 className={summing || savingEdit ? 'shimmer' : undefined}>{note.title}</h1>
         <NoteMeta meta={{ title: note.title, date: note.date ?? null, people: note.people, source: note.source ?? null, sourceUrl: note.sourceUrl, platform: note.platform, meetingUrl: note.meetingUrl, calendar: note.calendar, event: note.event }}>
+          {note.rel && !note.rel.startsWith('.') && (
+            <button className="meta-pill meta-icon" aria-label="Open in Memory" data-tip={`In your memory: ${note.rel.split('/').slice(0, -1).join('/') || 'top folder'}`}
+              onClick={() => window.dispatchEvent(new CustomEvent('quorum:open-memory', { detail: note.file }))}><IconFolder width={17} height={17} /></button>
+          )}
           <ViewsPill views={note.views} />
           {(!!note.transcript?.length || note.summarizable) && (
             <div className="view-toggle" role="group" aria-label="Show">
@@ -251,6 +300,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
         </NoteMeta>
         {share?.ask && <SourceAsk source={share.ask} data={sources} onDone={() => { loadSources(); setShareRead((n) => n + 1); }} />}
         {showing === 'transcript' && note.transcript?.length ? <SavedTranscript turns={note.transcript} />
+          : editing ? <div className="reader-edit" onInput={() => setTouched(true)}><NoteEditor ref={editor} value={editable} onChange={setEdited} readOnly={false} placeholder="Write the note" autoFocus /></div>
           : note.body.trim() ? <Markdown text={note.body} headings />
           : note.transcript?.length ? (
             // a recording with no summary yet: the same page, and a way to write one from the transcript
@@ -294,10 +344,17 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
       </section>}
 
       <div className="note-dock">
-      <div className="skill-pills" role="group" aria-label="Quick asks">
-        {SKILLS.map((k) => <button key={k.label} className="skill-pill" disabled={busy} onClick={() => ask([], k.ask)}>{k.label}</button>)}
-      </div>
-      <Composer className="note-composer" value={draft} onChange={setDraft} onSubmit={(_q, f) => ask(f)} busy={busy} placeholder="Ask about this note, or ask Quorum to change it" />
+      {!atBottom && <button className="more-below" aria-label="Show more" data-tip="More below" onClick={pageDown}><IconArrowDown width={18} height={18} /></button>}
+      {slash.length > 0 ? (
+        <div className="slash-menu" role="listbox" aria-label="Commands">
+          {slash.map((k) => <button key={k.cmd} role="option" aria-selected={false} disabled={busy} onClick={() => runSkill(k)}><strong>/{k.cmd}</strong><span>{k.label}</span></button>)}
+        </div>
+      ) : turns.length === 0 && atBottom && (
+        <div className="skill-pills" role="group" aria-label="Quick asks">
+          {SKILLS.map((k) => <button key={k.label} className="skill-pill" disabled={busy} onClick={() => runSkill(k)}>{k.label}</button>)}
+        </div>
+      )}
+      <Composer className="note-composer" value={draft} onChange={setDraft} onSubmit={(_q, f) => (slash.length ? runSkill(slash[0]) : ask(f))} busy={busy} placeholder="Ask about this note, or ask Quorum to change it" />
       </div>
     </div>
   );

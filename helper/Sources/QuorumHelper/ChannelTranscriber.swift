@@ -36,7 +36,7 @@ final class ChannelTranscriber {
             locale: locale,
             transcriptionOptions: [],
             reportingOptions: [.volatileResults],
-            attributeOptions: [.audioTimeRange]
+            attributeOptions: [.audioTimeRange, .transcriptionConfidence]
         )
         if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
             Emit.status("downloading on-device speech model")
@@ -68,7 +68,20 @@ final class ChannelTranscriber {
                 for try await result in transcriber.results {
                     let text = String(result.text.characters)
                     if text.trimmingCharacters(in: .whitespaces).isEmpty { continue }
+                    // each run is a word or two with its own audio time and Apple's confidence (0 to 1)
+                    var words: [[String: Any]] = []
+                    if result.isFinal {
+                        for run in result.text.runs {
+                            guard let r = run.audioTimeRange, r.start.seconds.isFinite else { continue }
+                            let w = String(result.text[run.range].characters)
+                            if w.trimmingCharacters(in: .whitespaces).isEmpty { continue }
+                            var item: [String: Any] = ["t": w, "s": r.start.seconds, "e": (r.start + r.duration).seconds]
+                            if let c = run.transcriptionConfidence { item["c"] = c }
+                            words.append(item)
+                        }
+                    }
                     Emit.send([
+                        "words": words,
                         "event": "transcript",
                         "channel": channel,
                         "text": text,
