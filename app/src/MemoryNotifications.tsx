@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import markProd from '../assets/quorum-mark.png';
-import { IconBell } from './icons';
+import { IconBell, IconNotes } from './icons';
 import type { MemoryVersion } from './quorum';
 
 const ago = (iso: string | number) => {
@@ -40,13 +40,17 @@ function useMemoryActivity(rel: string) {
   return { loaded, versions, seenAt, unseen, markSeen: () => window.quorum.memorySeen(rel, true).then((s) => { setSeenAt(s); window.dispatchEvent(new Event('quorum:memory-seen')); }).catch(() => {}) };
 }
 
-// the bell among a memory's details: a blue dot when Quorum changed it since Notifications were last opened
+// the switch among a memory's details, like the note page's tabs: the note itself, or its Notifications with a blue
+// dot when Quorum changed it since they were last opened
 export function MemoryBell({ rel, open, onToggle }: { rel: string; open: boolean; onToggle: () => void }) {
   const { unseen } = useMemoryActivity(rel);
   return (
-    <button className={`meta-pill meta-icon tab-bell${open ? ' on' : ''}`} aria-pressed={open} aria-label={unseen ? `Notifications, ${unseen} new` : 'Notifications'} data-tip="Notifications" onClick={onToggle}>
-      <IconBell width={17} height={17} />{unseen > 0 && <i className="tab-dot" aria-hidden="true" />}
-    </button>
+    <div className="view-toggle" role="group" aria-label="Show">
+      <button className={open ? '' : 'on'} aria-pressed={!open} aria-label="Note" data-tip="Note" onClick={() => { if (open) onToggle(); }}><IconNotes width={16} height={16} /></button>
+      <button className={`tab-bell${open ? ' on' : ''}`} aria-pressed={open} aria-label={unseen ? `Notifications, ${unseen} new` : 'Notifications'} data-tip="Notifications" onClick={() => { if (!open) onToggle(); }}>
+        <IconBell width={16} height={16} />{unseen > 0 && <i className="tab-dot" aria-hidden="true" />}
+      </button>
+    </div>
   );
 }
 

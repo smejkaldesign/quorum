@@ -2326,3 +2326,48 @@ button.meta-pill, a.meta-pill { font-size: 14px; }
 /* the heading a link pointed to, for a moment */
 .h-target { animation: h-target 1.6s ease; }
 @keyframes h-target { 0%, 60% { background: rgba(59, 130, 246, 0.18); } 100% { background: transparent; } }
+/* the editor fills its area, so a click anywhere in it reaches the note */
+.my-notes-editor { display: flex; flex-direction: column; }
+.my-notes-editor .note-rich-wrap { flex: 1; display: flex; flex-direction: column; cursor: text; }
+.my-notes-editor .note-rich-wrap > :last-child { flex: 1; }
+.my-notes-editor .note-toolbar { cursor: default; }
+/* the chats above the composer: N chats, the newest chat, and View all chats; its edges line up with the composer's
+   content (the + on the left, the send button on the right) */
+.chat-strip { pointer-events: auto; display: grid; grid-template-columns: auto 1fr auto; align-items: start; column-gap: 12px; margin: 0 3px 10px 5px; animation: dock-in 200ms ease; }
+.cs-count { font-size: 13px; font-weight: 600; color: var(--text); line-height: 30px; white-space: nowrap; }
+.cs-list { min-width: 0; display: flex; flex-direction: column; }
+.chat-strip.all .cs-list { max-height: 150px; overflow-y: auto; }
+.cs-row { display: flex; align-items: center; gap: 8px; min-width: 0; height: 30px; padding: 0 8px; margin-left: -8px; border-radius: 8px; text-align: left; color: var(--text); font-size: 14px; }
+.cs-row:hover { background: rgba(255, 255, 255, 0.06); }
+.cs-row img, .cs-row .avatar { flex: none; }
+.cs-row strong { flex: none; font-size: 13px; font-weight: 600; }
+.cs-q { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d4d4d8; }
+.cs-all { flex: none; }
+/* only an open chat draws the line above it, and it opens clear of the pinned header */
+.note-thread.chat-open { scroll-margin-top: 80px; }
+/* placeholders read as hints everywhere: italic, in inputs and text areas as in the editor */
+input::placeholder, textarea::placeholder { font-style: italic; }
+/* a heading's # and its link button are the same 24px box, 30px left of the heading and centered on its first line,
+   so the # turns into the link icon without moving; the # is a plain box that takes no clicks */
+.note-rich h1::before, .note-rich h2::before, .note-rich h3::before, .note-rich h4::before { left: -30px; top: 0.5lh; transform: translateY(-50%); width: 24px; height: 24px; display: grid; place-items: center; font: 400 15px/1 ui-sans-serif, -apple-system, sans-serif; color: #5c5c62; border: 1px solid transparent; border-radius: 6px; box-sizing: border-box; pointer-events: none; }
+.md-h { position: relative; }
+.md-h .hash { left: -30px; top: 0.5lh; transform: translateY(-50%); width: 24px; height: 24px; display: grid; place-items: center; font: 400 15px/1 ui-sans-serif, -apple-system, sans-serif; border: 1px solid transparent; border-radius: 6px; box-sizing: border-box; pointer-events: none; }
+.h-link { box-sizing: border-box; background: var(--panel); }
+.note-rich h2, .note-rich h3, .note-rich h4 { line-height: 1.3; }
+/* the # centers on the heading's line (headings are one line); 50% matches where the link button sits */
+.note-rich h1::before, .note-rich h2::before, .note-rich h3::before, .note-rich h4::before, .md-h .hash { top: 50%; }
+/* the dock stays above the page, heading marks included */
+.note-dock { z-index: 7; }
+/* the chat strip's edges line up with the composer's content: the + on the left, the send button on the right */
+.chat-strip { margin: 0 11px 10px 22px; }
+/* the dock's fade runs past the text column, so heading marks in the margin go under it with the text */
+.note-dock::before { content: ''; position: absolute; inset: 0 -40px; z-index: -1; background: inherit; pointer-events: none; }
+/* Related meetings: Show more at the right of the title */
+.mp-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.mp-head h2 { margin-bottom: 0; }
+/* an open chat rises into place, and Exit chat plays that in reverse before the chat list comes back */
+.note-thread.chat-open { animation: thread-in 220ms ease; }
+.note-thread.chat-open.closing { animation: thread-out 220ms ease forwards; }
+@keyframes thread-in { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+@keyframes thread-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(24px); } }
+@media (prefers-reduced-motion: reduce) { .note-thread.chat-open, .note-thread.chat-open.closing { animation: none; } }

@@ -12,7 +12,7 @@ import { Composer } from './Composer';
 import { IconArrowDown, IconBell, IconSound, IconChevron, IconFolder, IconGlobe, IconLock, IconLogs, IconMore, IconNotes, IconTrash } from './icons';
 import { Avatar } from './Speaker';
 import { NoteEditor, type NoteEditorHandle } from './editor/NoteEditor';
-import { ChatExit, ChatList, useChats, useComposerFocus } from './ChatStack';
+import { ChatExit, ChatStrip, useChats, useComposerFocus } from './ChatStack';
 import { useMemo } from 'react';
 import { joinParts } from '../noteParts.js';
 import { NoteMenu, VisibilityPill } from './NoteControls';
@@ -318,8 +318,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
         {showing === 'activity' && <NoteNotifications act={act} seenBefore={seenBefore} onReviewed={reloadAct} />}
       </article>
 
-      {!cs.active && <ChatList chats={cs.chats} onOpen={cs.setOpenId} me={me} />}
-      {cs.active && <section className="note-thread" aria-label="Questions about this note">
+      {cs.active && <section className={`note-thread chat-open${cs.closing ? ' closing' : ''}`} aria-label="Questions about this note">
           <ChatExit onExit={cs.exit} />
           {turns.map((t, i) => {
             const { text, choices } = splitChoices(t.pending ? live : t.a);
@@ -362,6 +361,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
           {SKILLS.map((k) => <button key={k.label} className="skill-pill" disabled={busy} onClick={() => runSkill(k)}>{k.label}</button>)}
         </div>
       )}
+{!cs.active && <ChatStrip chats={cs.chats} onOpen={cs.setOpenId} me={me} />}
       <Composer className="note-composer" value={draft} onChange={setDraft} onSubmit={(_q, f) => (slash.length ? runSkill(slash[0]) : ask(f))} busy={busy} onNewChat={cs.chats.length ? cs.newChat : undefined} placeholder={cs.active || !cs.chats.length ? 'Ask about this note, or ask Quorum to change it' : 'Ask in your latest chat, or + for a new one'} />
       </div>
     </div>

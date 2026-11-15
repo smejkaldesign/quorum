@@ -187,7 +187,13 @@ export const NoteEditor = forwardRef<NoteEditorHandle, { value: string; onChange
 
   if (!editor) return null;
   return (
-    <div className="note-rich-wrap">
+    <div className="note-rich-wrap" onMouseDown={(e) => {
+      // the whole area is the note: a click below the text (or beside it) focuses the end, the toolbar keeps its own clicks
+      const t = e.target as HTMLElement;
+      if (readOnly || t.closest('.ProseMirror, .note-toolbar, button, a, input')) return;
+      e.preventDefault();
+      editor.commands.focus('end');
+    }}>
       {!readOnly && (
         <div className="note-toolbar" role="toolbar" aria-label="Formatting">
           {MARKS.map((m) => (
