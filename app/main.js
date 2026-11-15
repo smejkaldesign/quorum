@@ -48,7 +48,7 @@ import { startControl } from './control.js';
 import { PROVIDERS as DECISION_PROVIDERS, connectedProvider, decide as decideRaw, removeDecisionsKey, setDecisionsKey } from './decisions.js';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -1633,9 +1633,25 @@ const isSelf = (p) => /\((creator|recorder)\)/.test(p) || personName(p) === USER
 const quorumNotesDir = () => store.meetings.notesDir(brain()?.vault);
 const meetingSources = () => store.meetings.sources(brain()?.vault);
 const platformCache = createPlatformCache(path.join(DATA_DIR, 'meeting-events.json'));
+// A meeting note's frontmatter, parsed from the first 16 KB, kept until the file's time or size changes: Home, meeting
+// pages and questions list the meetings often, and most notes never change between two of those
+const headCache = new Map();
+function noteHead(file) {
+  const st = statSync(file);
+  const kept = headCache.get(file);
+  if (kept && kept.mtimeMs === st.mtimeMs && kept.size === st.size) return kept.fm;
+  const buf = Buffer.alloc(Math.min(st.size, 16384));
+  const fd = openSync(file, 'r');
+  try { readSync(fd, buf, 0, buf.length, 0); } finally { closeSync(fd); }
+  const text = buf.toString('utf8');
+  const fm = readFrontmatter(text.slice(0, 4000));
+  headCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, fm });
+  return fm;
+}
 function meetingIndex() {
   const root = meetingsDir();
   if (!root) return [];
+  const vault = brain()?.vault ?? root;
   const out = [], seen = new Set();
   // notes saved before the quorum subfolder existed still sit at the top level
   const dirs = [{ path: quorumNotesDir(), key: 'quorum' }, { path: root, key: 'quorum' }, ...meetingSources()];
@@ -1645,7 +1661,7 @@ function meetingIndex() {
     for (const f of store.notes.list(dir)) {
       const file = path.join(dir, f);
       try {
-        const fm = readFrontmatter(store.notes.read(file).slice(0, 4000));
+        const fm = noteHead(file);
         if (suggester.isExcluded(`${fm.title} ${fm.participants.join(' ')}`)) continue;
         // a backfilled copy of a meeting Quorum already has shows once
         const key = fm.granola_id || fm.quorum_id;
@@ -1661,7 +1677,7 @@ function meetingIndex() {
           calendar: platformCache.get(key ?? file) ? platformCache.get(key ?? file).calendar ?? 'apple-calendar' : null,
           event: platformCache.get(key ?? file)?.event ?? null,
           meetingUrl: [fm.meeting_url, platformCache.get(key ?? file)?.url].find((u) => /^https:\/\//.test(String(u ?? ''))) ?? null,
-          app, rel: path.relative(brain()?.vault ?? root, file), link: `quorum://note/${encodeURIComponent(fm.granola_id || path.relative(brain()?.vault ?? root, file))}`,
+          app, rel: path.relative(vault, file), link: `quorum://note/${encodeURIComponent(fm.granola_id || path.relative(vault, file))}`,
         });
       } catch {}
     }

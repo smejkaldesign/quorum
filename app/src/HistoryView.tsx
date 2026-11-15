@@ -1,7 +1,10 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { SourceAskBanner } from './MeetingSources';
 import type { Brain, CalendarEvent, ChatRow, MeetingRow, NoteDoc } from './quorum';
-import { NoteMenu, NoteReader, VisibilityPill } from './MeetingNote';
+import { NoteMenu, VisibilityPill } from './NoteControls';
+// the note page and the meeting page carry the editor; they load the first time one opens
+const NoteReader = lazy(() => import('./MeetingNote').then((m) => ({ default: m.NoteReader })));
+const MeetingPage = lazy(() => import('./MeetingPage').then((m) => ({ default: m.MeetingPage })));
 import { quoteLink, useQuote } from './quotes';
 import { Composer } from './Composer';
 import { ConnectHint } from './ConnectHint';
@@ -10,7 +13,6 @@ import { useSession } from './session';
 import { dayLabel } from './upNextList';
 import { OPEN_EVENT, UpNext, takeEvent, useCalendarView } from './UpNext';
 import { AppLogo, CALENDAR_APP, RowDetails, peopleText } from './AppChip';
-import { MeetingPage } from './MeetingPage';
 import { DayOff } from './DayOff';
 import { IconCalendar, IconClose, IconPlus, IconExternal, IconListCheck, IconMic, IconNewNote, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
 
@@ -56,8 +58,9 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
   useEffect(() => {
     if (!keyword) { setBodyHits(null); return; }
     let live = true;
-    window.quorum.vaultSearch(keyword, 1000).then((h) => { if (live) setBodyHits(new Set(h.map((x) => x.rel))); });
-    return () => { live = false; };
+    // one search once typing pauses, the same wait the Memory search uses
+    const t = window.setTimeout(() => window.quorum.vaultSearch(keyword, 1000).then((h) => { if (live) setBodyHits(new Set(h.map((x) => x.rel))); }), 120);
+    return () => { live = false; window.clearTimeout(t); };
   }, [keyword]);
   const [note, setNote] = useState<NoteDoc | null>(null);
   // a note opened from its chats link scrolls to its chat, with that chat's turns loaded
@@ -171,8 +174,8 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
   // Up next steps aside while the list is filtered, as it did when it lived here
   useEffect(() => { onFiltered?.(filtered); }, [filtered, onFiltered]);
   useEffect(() => () => onFiltered?.(false), [onFiltered]);
-  if (event) return <MeetingPage event={event} onBack={() => setEvent(null)} onOpenNote={(file) => window.quorum.readNote(file).then((n) => { if (n) { setEvent(null); setNote(n); } })} />;
-  if (note) return <NoteReader key={note.file} chat={noteChat} firstAsk={firstAsk} note={note} dayLabel={dayLabel} peopleLine={peopleLine} onBack={() => { setNote(null); setFirstAsk(null); refresh(); }} />;
+  if (event) return <Suspense fallback={null}><MeetingPage event={event} onBack={() => setEvent(null)} onOpenNote={(file) => window.quorum.readNote(file).then((n) => { if (n) { setEvent(null); setNote(n); } })} /></Suspense>;
+  if (note) return <Suspense fallback={null}><NoteReader key={note.file} chat={noteChat} firstAsk={firstAsk} note={note} dayLabel={dayLabel} peopleLine={peopleLine} onBack={() => { setNote(null); setFirstAsk(null); refresh(); }} /></Suspense>;
 
   const ask = (q: string, files: string[] = []) => { if (q.trim()) { setDraft(''); askAsNote(q.trim(), files); } };
 
