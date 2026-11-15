@@ -1981,3 +1981,6 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 /* the recording's review page: the text column runs the chat box's full width, with the # marks hanging to its left */
 .end:not(.note-view) .end-scroll .doc { padding-left: 0; padding-right: 0; }
 .end-composer-wrap { padding-left: 32px; padding-right: 32px; }
+/* the fold only clips on the strip, where it hides the list; the Home list keeps its rows' highlight reaching left */
+.up-inline .up-fold-in { overflow: visible; }
+.up-strip .up-fold-in { padding-left: 4px; margin-left: -4px; }
