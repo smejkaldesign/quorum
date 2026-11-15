@@ -2147,3 +2147,7 @@ button.np-outline:hover { background: rgba(255, 255, 255, 0.05); color: var(--te
 .chat-thread { width: 100%; max-width: 780px; margin: 0 auto; border-top: 0; padding-top: 8px; font-size: 15px; color: #d4d4d8; }
 .chat-thread .nt-turn + .nt-turn { margin-top: -14px; }
 .chat-thread .nt-a .source { margin-top: 10px; }
+/* Your notes on the recording page: the note editor inline, no box; its formatting bar sits on top */
+.my-notes-editor { margin-top: 4px; }
+.my-notes-editor .ProseMirror { min-height: 120px; padding: 0; border: 0; background: none; outline: none; }
+.end-dock { margin: 0; padding: 24px 32px 20px; position: relative; }

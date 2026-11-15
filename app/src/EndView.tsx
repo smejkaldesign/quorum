@@ -4,8 +4,9 @@ import { WhoSpoke, type WhoAnswers } from './WhoSpoke';
 import { Avatar, SpeakerName, similarCounts, type SpeakerTurn } from './Speaker';
 import mark from '../assets/quorum-mark.png';
 import { Markdown } from './Markdown';
-import { IconArrowUp, IconCalendar, IconClock, IconFolder, IconLogs, IconNotes, IconPeople } from './icons';
-import { PrivateNotes } from './PrivateNotes';
+import { IconCalendar, IconClock, IconFolder, IconLogs, IconNotes, IconPeople } from './icons';
+import { NoteEditor } from './editor/NoteEditor';
+import { Composer } from './Composer';
 
 type Followup = { q: string; a: string | null };
 
@@ -118,7 +119,10 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
             {showing === 'summary' && (
               <section className="doc-section">
                 <h2><span className="hash">#</span>Your notes</h2>
-                <PrivateNotes value={privateNotes} onChange={onPrivateNotes} onBlur={flushPrivateNotes} />
+                {/* the note's own editor, formatting bar on top, typed inline with no box around it */}
+                <div className="my-notes-editor" onBlur={flushPrivateNotes}>
+                  <NoteEditor value={privateNotes} onChange={onPrivateNotes} readOnly={false} placeholder="Type your notes" />
+                </div>
               </section>
             )}
 
@@ -143,7 +147,6 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
                 <div className="sk-block" aria-hidden="true"><span className="sk sk-line w90" /><span className="sk sk-line w75" /><span className="sk sk-line w60" /></div>
               </div>
             )}
-            {ready && <p className="muted ready-hint">Type your notes above, or press Record to transcribe into this note.</p>}
             {view.empty && !ready && <p className="muted">Nothing was transcribed.</p>}
             {view.summary ? <p className={`summary${streaming && !view.sections.length ? ' typing' : ''}`}>{view.summary}</p>
               : streaming && <div className="sk-block" aria-label="Writing the summary"><span className="sk sk-line w90" /><span className="sk sk-line w75" /><span className="sk sk-line w60" /></div>}
@@ -190,16 +193,15 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
             {streaming && <p className="muted writing"><span className="spinner tiny" /> Writing notes…</p>}
             </>}
 
+            {/* the chat on this note, below a divider once it starts: the same layout as every other note */}
             {followups.length > 0 && (
-              <section className="doc-section">
-                <h2><span className="hash">#</span>Follow-ups</h2>
+              <section className="note-thread" aria-label="Questions about this note">
                 {followups.map((f, i) => (
-                  <div key={i} className="followup">
-                    <div className="user-msg">{f.q}</div>
-                    <div className="quorum-row">
-                      <img className="avatar" src={mark} alt="Quorum" />
-                      <div className="card">{f.a === null ? <p className="muted thinking">Thinking…</p> : <Markdown text={f.a} />}</div>
-                    </div>
+                  <div key={i} className="nt-turn">
+                    <div className="nt-who"><Avatar name={me?.name || 'You'} photo={me?.photo ?? null} size={22} /><strong>{me?.name || 'You'}</strong></div>
+                    <p className="nt-q">{f.q}</p>
+                    <div className="nt-who quorum"><img src={mark} alt="" width={22} height={22} /><strong>Quorum</strong></div>
+                    {f.a === null ? <p className="nt-step shimmer">Thinking…</p> : <div className="nt-a"><Markdown text={f.a} /></div>}
                   </div>
                 ))}
               </section>
@@ -209,12 +211,8 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
         </div>
       )}
 
-      {!live && <div className="end-composer-wrap">
-        <form className="end-composer" onSubmit={(e) => { e.preventDefault(); ask(); }}>
-          <input value={draftQ} placeholder="Any follow-ups?" disabled={!notes || summarizing} onChange={(e) => setDraftQ(e.target.value)} />
-          <button type="submit" className="send" aria-label="Ask" disabled={!draftQ.trim()}><IconArrowUp /></button>
-        </form>
-        <p className="disclaimer">Quorum uses AI and can make mistakes.</p>
+      {!live && <div className="note-dock end-dock">
+        <Composer className="note-composer" value={draftQ} onChange={setDraftQ} onSubmit={() => ask()} busy={followups.some((f) => f.a === null) || summarizing} placeholder="Ask about this note" />
       </div>}
     </div>
   );
