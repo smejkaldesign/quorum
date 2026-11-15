@@ -1845,3 +1845,6 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .mp-past-row { display: flex; justify-content: space-between; gap: 16px; padding: 10px 7px; margin-left: -7px; border-radius: 10px; text-align: left; font-size: 15px; color: var(--text); }
 .mp-past-row:hover { background: rgba(255, 255, 255, 0.03); }
 .meeting-page .reader-actions .up-join { height: 32px; padding: 0 14px; }
+/* the row hover background fades in and out */
+.hist-row { transition: background-color 200ms ease; }
+@media (prefers-reduced-motion: reduce) { .hist-row { transition: none; } }
