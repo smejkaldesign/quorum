@@ -50,6 +50,7 @@ import updater from 'electron-updater';
 import { createUpdater, feedFor } from './updater.js';
 import { createGuardrails } from './guardrails.js';
 import { createPlatformCache, eventRef, matchPlatforms } from './meetingPlatforms.js';
+import { calendarWindow, normalizeDays } from './calendarWindow.js';
 import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, seriesKey, seriesOf } from './meetingBrief.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -2019,8 +2020,8 @@ const noteTitle = store.notes.title;
 ipcMain.handle('brain', () => brain());
 // two calendar sources: the Calendar app on this Mac (settings.calendar.enabled, once access is granted) and a Google
 // account connected through the Google Calendar connector (settings.calendar.google, tokens in the Keychain)
-// Up next reaches 1 to 5 days ahead; a saved 7 or 14 from before reads as 5
-const calSettings = () => { const c = { source: 'mac', days: 1, showAll: false, hidden: [], ...settings.calendar }; c.days = Math.min(5, Math.max(1, Number(c.days) || 1)); return c; };
+// Up next reaches 1 to 5 days ahead, or the work week ('week', calendarWindow.js); a saved 7 or 14 from before reads as 5
+const calSettings = () => { const c = { source: 'mac', days: 1, showAll: false, hidden: [], ...settings.calendar }; c.days = normalizeDays(c.days); return c; };
 // the app's own package.json, read once: the packaged build carries the edition, the update feed, the beta gate and the
 // OAuth client ids (quorumGoogle, quorumOAuth) there
 const packagedMeta = (() => { try { return JSON.parse(readFileSync(path.join(here, 'package.json'), 'utf8')); } catch { return {}; } })();
@@ -2062,7 +2063,10 @@ ipcMain.handle('update-check', async () => (updates ? updates.check() : { status
 ipcMain.handle('update-install', () => !!updates?.install());
 ipcMain.handle('calendar', async () => {
   const c = calSettings();
-  const { mac, google, events: all } = await calendarEvents(c.days);
+  const win = calendarWindow(c.days);
+  // Google counts days from now, not from midnight; the week reads two more and keeps what ends by Friday
+  const { mac, google, events: fetched } = await calendarEvents(win.until ? win.days + 2 : win.days);
+  const all = fetched.filter((e) => (!win.from || new Date(e.start) >= win.from) && (!win.until || new Date(e.start) < win.until));
   const connected = (!!c.enabled && mac.status === 'granted') || google.connected;
   const status = c.enabled ? mac.status : google.connected ? 'granted' : 'off';
   if (!connected) return { connected: false, status, events: [], days: c.days, showAll: false, hidden: 0 };
@@ -2129,7 +2133,7 @@ ipcMain.handle('calendar-open', (_e, ev) => {
 ipcMain.handle('calendar-privacy', () => shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars'));
 ipcMain.handle('calendar-set', (_e, next) => {
   const c = calSettings();
-  if ([1, 2, 3, 4, 5].includes(next?.days)) c.days = next.days;
+  if ([1, 2, 3, 4, 5, 'week'].includes(next?.days)) c.days = next.days;
   if (next?.enabled === false) c.enabled = false;
   if (typeof next?.hide === 'string' && next.hide && !c.hidden.includes(next.hide)) c.hidden = [...c.hidden, next.hide].slice(-500);
   if (next?.unhideAll) c.hidden = [];

@@ -14,7 +14,7 @@ const half = (d: Date) => (d.getHours() < 12 ? 'AM' : 'PM');
 
 // The calendar as Up next loaded it. UpNext is the only reader of window.quorum.calendar(); Home reads this to decide
 // whether to offer connecting a calendar.
-type CalView = { events: CalendarEvent[]; connected: boolean; showAll: boolean; hidden: number; status: string; days: number };
+type CalView = { events: CalendarEvent[]; connected: boolean; showAll: boolean; hidden: number; status: string; days: number | 'week' };
 let calView: CalView = { events: [], connected: false, showAll: false, hidden: 0, status: '', days: 1 };
 const calSubs = new Set<() => void>();
 const setCalView = (v: CalView) => { calView = v; calSubs.forEach((f) => f()); };
@@ -103,7 +103,7 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
           {inline && moreButton}
         </span>
       </div>
-      {cal.events.length === 0 && (inline ? <DayOff title="No meetings" seed={1} /> : <p className="up-empty">No calls in the {cal.days === 1 ? 'next day' : `next ${cal.days} days`}.</p>)}
+      {cal.events.length === 0 && (inline ? <DayOff title="No meetings" seed={1} /> : <p className="up-empty">No calls {cal.days === 'week' ? 'this week' : cal.days === 1 ? 'in the next day' : `in the next ${cal.days} days`}.</p>)}
       {rows.length > 0 && (
         <div className="up-list" id={listId}>
           {rows.map((e) => {
@@ -138,8 +138,8 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
   return <div className="up-float"><div className={`up-float-in ${passed ? 'shown' : ''}`} inert={!passed || undefined}>{strip}</div></div>;
 }
 
-// "Next 3 days" and its chevron: a menu of how far ahead Up next reaches
-function DaysMenu({ days, onPick }: { days: number; onPick: (d: number) => void }) {
+// "Next 3 days" (or "Your week") and its chevron: a menu of how far ahead Up next reaches
+function DaysMenu({ days, onPick }: { days: number | 'week'; onPick: (d: number | 'week') => void }) {
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
   useExclusiveMenu('up-days', open, close);
@@ -148,7 +148,7 @@ function DaysMenu({ days, onPick }: { days: number; onPick: (d: number) => void 
     window.addEventListener('mousedown', close);
     return () => window.removeEventListener('mousedown', close);
   }, [open, close]);
-  const name = (d: number) => (d === 1 ? 'Next 1 day' : `Next ${d} days`);
+  const name = (d: number | 'week') => (d === 'week' ? 'Your week' : d === 1 ? 'Next 1 day' : `Next ${d} days`);
   return (
     <span className="menu-wrap up-days" onMouseDown={(ev) => ev.stopPropagation()}>
       <button className="up-days-btn" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
@@ -159,6 +159,9 @@ function DaysMenu({ days, onPick }: { days: number; onPick: (d: number) => void 
           {[1, 2, 3, 4, 5].map((d) => (
             <button key={d} role="menuitemradio" aria-checked={d === days} className={d === days ? 'checked' : ''} onClick={() => { setOpen(false); onPick(d); }}>{name(d)}</button>
           ))}
+          <div className="menu-sep" />
+          {/* the work week: this one Monday to Friday, the coming one on a weekend */}
+          <button role="menuitemradio" aria-checked={days === 'week'} className={days === 'week' ? 'checked' : ''} onClick={() => { setOpen(false); onPick('week'); }}>Weekly</button>
         </div>
       )}
     </span>
