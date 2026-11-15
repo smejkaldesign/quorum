@@ -1894,3 +1894,32 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .pill.primary.record-go { display: flex; align-items: center; justify-content: center; gap: 8px; width: auto; text-align: center; background: transparent; border: 1px solid var(--line-2); color: var(--text); transition: background 160ms ease, border-color 160ms ease; }
 .pill.primary.record-go:not(:disabled):hover { background: var(--card); border-color: rgba(255, 255, 255, 0.24); }
 .pill.primary.record-go svg { flex: none; }
+
+/* Record from the header (App.tsx): 3, 2, 1 in the label, then a green ring that fills with the voice it hears. While
+   recording the label is gone and Pause and Stop sit to its left; a divider always follows it */
+.status.listen.listening .listen-hint, .status.listen.paused .listen-hint, .status.listen.starting .listen-hint { max-width: 0; opacity: 0; margin-right: 0; }
+.status.listen.idle.counting .listen-hint, .status.listen.idle.rec-error .listen-hint { max-width: 280px; opacity: 1; margin-right: 8px; color: var(--text); transition-delay: 0s; }
+.status.listen.idle.counting .listen-hint { font-variant-numeric: tabular-nums; min-width: 12px; text-align: center; }
+.status.listen.idle.rec-error .listen-hint { color: var(--danger); }
+.status.listen.paused { color: var(--go); }
+.rec-level-ring { stroke: var(--go); }
+.rec-level-fill { fill: var(--go); opacity: 0.9; transition: y 90ms linear, height 90ms linear; }
+.status.listen.paused .rec-level-ring { opacity: 0.6; }
+.rec-sep { width: 1px; height: 18px; margin: 0 6px; background: var(--line-2); flex: none; align-self: center; }
+.plus-menu { min-width: 150px; }
+.plus-menu button { display: flex; align-items: center; gap: 8px; }
+
+/* the recording's note and a hand note open under the header, inside the window */
+.live-body { display: flex; flex-direction: column; overflow: hidden; }
+.note-host { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.note-host[hidden] { display: none; }
+.end.embedded { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.end.embedded .end-bar { -webkit-app-region: no-drag; padding: 6px 16px; }
+/* while it records or writes, the Summary and Transcript icons shimmer */
+.view-toggle.working button svg { animation: working-pulse 1.4s ease-in-out infinite; }
+.view-toggle.working button:nth-child(2) svg { animation-delay: 0.35s; }
+@keyframes working-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+.live-wait { margin: 8px 0 24px; }
+.live-wait .shimmer { margin: 0 0 14px; }
+.live-partial .spk { visibility: hidden; }
+@media (prefers-reduced-motion: reduce) { .view-toggle.working button svg { animation: none; } .rec-level-fill { transition: none; } }

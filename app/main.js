@@ -848,7 +848,9 @@ const suggester = createSuggester({
 // intoNote: Record in the note view; a solo session whose words go into the open note, with no running summary and no
 // review at the end
 // still: for Record, whether the note view that asked is still waiting; a Back or a reload during the start cancels it
-async function startListening(by, { intoNote = false, screen = false, still = () => true } = {}) {
+// running: the summary that updates every 30 seconds while listening; Record from the header turns it off, so the
+// only model call is the note written at the end, after which the note can still be discarded
+async function startListening(by, { intoNote = false, screen = false, still = () => true, running = true } = {}) {
   // manual-listen off refuses; meeting-capture off makes every session a solo note (notetaker.js)
   // Record in a note refuses a noticed call outright, so it never skips the call's consent and guards
   const decision = intoNote ? { ...recordDecision(gate(), { meetingActive }), solo: true } : startDecision(gate(), { meetingActive });
@@ -906,7 +908,7 @@ async function startListening(by, { intoNote = false, screen = false, still = ()
   meeting.privateNotes = '';
   meeting.saved = null;
   clearInterval(summaryTimer);
-  summaryTimer = intoNote ? null : setInterval(runSummary, 30000);
+  summaryTimer = intoNote || !running ? null : setInterval(runSummary, 30000);
   meeting.armed = true;
   beginSegment();
   if (!solo) helperSend({ cmd: 'chatWatch', on: true });
@@ -1266,6 +1268,8 @@ ipcMain.handle('set-settings', (_e, next) => {
     settings.screenContext = next.screenContext;
     store.settings.save();
   }
+  // Settings > Notes: whether Record from the header transcribes (Screen is screenContext, set on its own)
+  if (next.notes && typeof next.notes === 'object' && typeof next.notes.transcription === 'boolean') settings.notes = { ...settings.notes, transcription: next.notes.transcription };
   if (typeof next.suggestions === 'boolean') {
     settings.suggestions = next.suggestions;
     store.settings.save();
@@ -2419,6 +2423,17 @@ function recordStop() {
   return recordState();
 }
 ipcMain.handle('record-start', (_e, opts) => recordStart(opts));
+// Record from the header: a solo session that writes a summarized note, with pause, stop and a keep-or-discard review
+// at the end (startListening without intoNote). Transcription and Screen come from Settings > Notes
+ipcMain.handle('record-session', async () => {
+  const g = gate();
+  if (!g.manualListen) return { error: 'Recording is off in this build.' };
+  if (meeting.armed || meeting.starting || record.screen) return { error: 'A recording is already running. Stop it first.' };
+  if (settings.notes?.transcription === false) return { error: 'Turn on Transcription in Settings > Notes to record.' };
+  const r = await startListening(undefined, { screen: g.screenContext && !!settings.screenContext, running: false });
+  if (r?.error) return r;
+  return meeting.armed ? { ok: true } : { error: "The recording didn't start." };
+});
 ipcMain.handle('record-stop', () => recordStop());
 ipcMain.handle('record-status', () => recordState());
 // the note view owns a recording; a reload or a crashed renderer leaves nobody to write it into, so it stops

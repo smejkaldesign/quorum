@@ -20,8 +20,8 @@ type Status = 'idle' | 'saving' | 'saved' | 'conflict';
 // each paragraph (the screen reads themselves stay beside the recording, never in the note). canRecord follows the manual-listen flag; screenOffered is the screen-context flag plus its setting.
 // fresh marks a note this editor created, whose file name follows its title; onSaved reports the file after a save so
 // a remount reopens it. A change in leave closes the view the way Back does (a call started)
-export function NoteView({ file: initialFile, fresh, record: startWith, canRecord, screenOffered, leave, onSaved, onClose }: {
-  file: string | null; fresh: boolean; record: RecordChoice | null; canRecord: boolean; screenOffered: boolean; leave: number;
+export function NoteView({ file: initialFile, fresh, record: startWith, canRecord, screenOffered, leave, onSaved, onClose, embedded = false }: {
+  embedded?: boolean; file: string | null; fresh: boolean; record: RecordChoice | null; canRecord: boolean; screenOffered: boolean; leave: number;
   onSaved: (file: string) => void; onClose: () => void;
 }) {
   // the note's id: the time it was opened plus a random part, so two notes never share one
@@ -260,7 +260,7 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
   const day = date.toDateString() === new Date().toDateString() ? 'Today' : date.toLocaleDateString();
 
   return (
-    <div className="panel end note-view">
+    <div className={`${embedded ? 'end embedded' : 'panel end'} note-view`}>
       <header className="end-bar">
         <button className="pill ghost" onClick={() => close()}><IconBack width={16} height={16} /> Back</button>
         <div className="end-actions">

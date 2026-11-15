@@ -100,8 +100,8 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   }, [onBack]);
 
   const set = async (patch: Partial<Settings>) => onSettings(await window.quorum.setSettings(patch));
-  // with dictation off, the account Voice typing page is the Dictionary (settingsNav.voiceMode)
-  const named = (n: Nav): Nav => (n.id === 'voice' && voice === 'dictionary' ? { ...n, label: 'Dictionary' } : n);
+  // with dictation off, the account Voice typing page is Notes: what Record captures, then the Dictionary (settingsNav.voiceMode)
+  const named = (n: Nav): Nav => (n.id === 'voice' && voice === 'dictionary' ? { ...n, label: 'Notes' } : n);
   const accountNav = ACCOUNT.filter((n) => !hidden.includes(n.id)).map(named);
   const adminNav = WORKSPACE.filter((n) => (listed as Page[]).includes(n.id));
   const topNav = adminNav.filter((n) => (TOP_ADMIN_PAGES as Page[]).includes(n.id));
@@ -161,7 +161,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
                 {nt.liveAssist && <Row icon={<IconChat width={18} height={18} />} title="Suggest answers from my notes" desc="Offers your notes when someone asks you a question">
                   <Toggle on={settings.suggestions !== false} onChange={(v) => set({ suggestions: v })} />
                 </Row>}
-                {nt.screenContext && <ScreenContextRow />}
+                {nt.screenContext && voice !== 'dictionary' && <ScreenContextRow />}
                 <Row icon={<IconLock width={18} height={18} />} title="Data" desc="Transcribed on this Mac, answered by Claude Enterprise" />
               </div>
               <AboutCard />
@@ -191,7 +191,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
             : page === 'developers' ? <DevelopersPage />
             : page === 'notifications' ? <NotificationsPage />
             : page === 'connectors' ? <ConnectorsPage detail={connectorDetail} onDetail={setConnectorDetail} brain={brain} onFolder={onConnect} onNotes={() => go('memory')} focus={connectorsFocus} />
-            : <VoicePage settings={settings} onSettings={onSettings} dictionaryOnly={voice === 'dictionary'} />}
+            : <VoicePage settings={settings} onSettings={onSettings} dictionaryOnly={voice === 'dictionary'} screenRow={nt.screenContext} />}
         </div>
       </main>
     </div>
@@ -1538,7 +1538,7 @@ const LANGUAGES = [['en-US', 'English (US)'], ['en-GB', 'English (UK)'], ['en-AU
 
 // what works today applies to the dictate button in every Quorum composer; the eight Soon rows are system-wide voice typing.
 // With the dictation flag off the page is the Dictionary: the language and the word list, which listening uses too
-function VoicePage({ settings, onSettings, dictionaryOnly = false }: { settings: Settings; onSettings: (s: Settings) => void; dictionaryOnly?: boolean }) {
+function VoicePage({ settings, onSettings, dictionaryOnly = false, screenRow = false }: { settings: Settings; onSettings: (s: Settings) => void; dictionaryOnly?: boolean; screenRow?: boolean }) {
   const v = settings.voice ?? {};
   const save = async (patch: Partial<Voice>) => onSettings(await window.quorum.setSettings({ voice: patch }));
   const words = v.dictionary ?? [];
@@ -1572,7 +1572,20 @@ function VoicePage({ settings, onSettings, dictionaryOnly = false }: { settings:
       </div>
     </>
   );
-  if (dictionaryOnly) return <><div className="set-card">{language}</div>{dictionary}</>;
+  // Notes: what Record from the header captures, then the language and word list the transcript uses
+  if (dictionaryOnly) return (
+    <>
+      <h3>Recording</h3>
+      <div className="set-card">
+        <Row icon={<IconMic width={18} height={18} />} title="Transcription" desc="Your voice and your Mac's sound">
+          <Toggle on={settings.notes?.transcription !== false} onChange={async (on) => onSettings(await window.quorum.setSettings({ notes: { transcription: on } }))} />
+        </Row>
+        {screenRow && <ScreenContextRow />}
+      </div>
+      <div className="set-card">{language}</div>
+      {dictionary}
+    </>
+  );
   return (
     <>
       <div className="set-card">
