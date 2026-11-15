@@ -131,7 +131,7 @@ const SKILLS = [
   { label: 'Action items', cmd: 'action-items', ask: 'List the action items from this meeting, each with its owner and date when the note gives them.' },
 ];
 // an answer's last line "Choices: A | B | C" becomes buttons; the rest is the text (an edit in progress is hidden)
-function splitChoices(raw: string) {
+export function splitChoices(raw: string) {
   const t = raw.replace(/<updated-note>[\s\S]*$/, '').trim();
   const m = t.match(/\n?Choices:\s*(.+)\s*$/);
   return m ? { text: t.slice(0, m.index).trim(), choices: m[1].split('|').map((c) => c.trim()).filter(Boolean).slice(0, 4) } : { text: t, choices: [] as string[] };

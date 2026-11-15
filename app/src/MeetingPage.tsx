@@ -5,6 +5,66 @@ import { Markdown } from './Markdown';
 import { dayLabel } from './upNextList';
 import { IconArrowRight, IconBack } from './icons';
 import { TypedTitle, useStuck } from './StickyBar';
+import { Composer } from './Composer';
+import { Avatar } from './Speaker';
+import { splitChoices } from './MeetingNote';
+import markProd from '../assets/quorum-mark.png';
+
+// one click each, above the chat input before the first question
+const PREP_ASKS = ['What is still open from last time?', 'What should I ask in this meeting?'];
+
+// questions about the meeting before it happens, answered from its prep notes, past notes and the rest of the Agent OS
+function MeetingChat({ event }: { event: CalendarEvent }) {
+  const [turns, setTurns] = useState<{ q: string; a: string; pending?: boolean }[]>([]);
+  const [draft, setDraft] = useState('');
+  const [live, setLive] = useState('');
+  const [step, setStep] = useState('');
+  const [me, setMe] = useState<{ name: string; photo: string | null }>({ name: 'You', photo: null });
+  useEffect(() => { window.quorum.user().then((u) => { if (u) setMe({ name: u.name || 'You', photo: u.photo ?? null }); }).catch(() => {}); }, []);
+  useEffect(() => window.quorum.onNoteDelta(({ text }) => setLive(text)), []);
+  useEffect(() => window.quorum.onAgentStep(({ text }) => setStep(text)), []);
+  const busy = turns.some((t) => t.pending);
+  async function ask(said?: string) {
+    const q = (said ?? draft).trim();
+    if (!q || busy) return;
+    setDraft(''); setLive(''); setStep('');
+    const history = turns.map(({ q: tq, a }) => ({ q: tq, a }));
+    setTurns((t) => [...t, { q, a: '', pending: true }]);
+    let a: string;
+    try { a = (await window.quorum.meetingAsk(event, q, history)).text; } catch (err) { a = `Couldn't answer: ${String(err).replace(/^.*Error:\s*/, '')}`; }
+    setTurns((t) => t.map((x, i) => (i === t.length - 1 ? { q: x.q, a } : x)));
+  }
+  return (
+    <>
+      {turns.length > 0 && (
+        <section className="note-thread" aria-label="Questions about this meeting">
+          {turns.map((t, i) => {
+            const { text, choices } = splitChoices(t.pending ? live : t.a);
+            return (
+              <div key={i} className="nt-turn">
+                <div className="nt-who"><Avatar name={me.name} photo={me.photo} size={22} /><strong>{me.name}</strong></div>
+                <p className="nt-q">{t.q}</p>
+                <div className="nt-who quorum"><img src={markProd} alt="" width={22} height={22} /><strong>Quorum</strong></div>
+                {t.pending && !text ? <p className="nt-step shimmer">{step || 'Thinking…'}</p> : <div className="nt-a"><Markdown text={text} /></div>}
+                {!t.pending && i === turns.length - 1 && choices.length > 0 && (
+                  <div className="nt-choices">{choices.map((c) => <button key={c} className="pill small-pill" disabled={busy} onClick={() => ask(c)}>{c}</button>)}</div>
+                )}
+              </div>
+            );
+          })}
+        </section>
+      )}
+      <div className="note-dock">
+        {turns.length === 0 && (
+          <div className="skill-pills" role="group" aria-label="Quick asks">
+            {PREP_ASKS.map((q) => <button key={q} className="skill-pill" disabled={busy} onClick={() => ask(q)}>{q}</button>)}
+          </div>
+        )}
+        <Composer className="note-composer" value={draft} onChange={setDraft} onSubmit={() => ask()} busy={busy} placeholder="Ask about this meeting" />
+      </div>
+    </>
+  );
+}
 
 const ABOUT = [['what', 'What it is'], ['who', 'Who attends'], ['how', 'How it runs']] as const;
 
@@ -112,6 +172,7 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
           </section>
         )}
       </article>
+      <MeetingChat key={e.id} event={e} />
     </div>
   );
 }

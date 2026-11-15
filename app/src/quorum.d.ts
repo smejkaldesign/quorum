@@ -491,6 +491,7 @@ declare global {
       calendarPrivacy(): Promise<void>;
       calendarOpen(ev: CalendarEvent): Promise<void>;
       meetingBrief(q: { title: string; generate?: boolean }): Promise<MeetingBrief>;
+      meetingAsk(ev: CalendarEvent, question: string, history: { q: string; a: string }[]): Promise<{ text: string }>;
       recordSession(): Promise<{ ok: true } | { error: string }>;
       meetingFolderApps(): Promise<{ rel: string; app: string }[]>;
       noteSummarize(file: string): Promise<{ ok: true } | { error: string }>;

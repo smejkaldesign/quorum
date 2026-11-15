@@ -1898,6 +1898,34 @@ ipcMain.handle('meeting-brief', async (_e, q) => {
   } catch (e) { log('meeting brief', e?.message); return { past: list, brief: null, status: 'failed' }; }
 });
 
+// questions about an upcoming meeting, from its page: the event, its prep notes and the series' recent notes are in
+// the prompt, and Claude Code can read the rest of the Agent OS. The chat is saved under the meeting's event id
+ipcMain.handle('meeting-ask', async (_e, ev, question, history) => {
+  const b = brain();
+  if (!b) throw new Error('Connect your Agent OS first');
+  const title = String(ev?.title ?? '');
+  const past = title ? seriesOf(meetingIndex(), { title }).slice(0, 3) : [];
+  const kept = past.length ? briefCache.get(seriesKey(title), `${past[0].file}|${seriesOf(meetingIndex(), { title }).length}`) : null;
+  const people = (ev?.attendees ?? []).map((a) => a?.name || a?.email).filter(Boolean).slice(0, 30).join(', ');
+  const prompt = [
+    `You're helping ${OWNER} get ready for an upcoming meeting. Its details, prep notes and recent notes from the same series are below.`,
+    'Answer questions about it, using the rest of the Agent OS when that helps.',
+    'Keep answers brief and clear: lead with the answer in one or two sentences, then at most four short bullets if they help. Plain, literal language.',
+    'When a short reply from the person would move things forward, end with one last line "Choices: A | B | C" (two to four options, under six words each). Quorum shows them as buttons.',
+    `<meeting>\nTitle: ${title}\nWhen: ${ev?.start ?? ''} to ${ev?.end ?? ''}\nOrganizer: ${ev?.organizer ?? ''}\nInvited: ${people}\n${ev?.notes ? `Description: ${String(ev.notes).slice(0, 2000)}` : ''}\n</meeting>`,
+    ...(kept ? [`<prep>\n${[kept.prep, kept.what, kept.who, kept.how].filter(Boolean).join('\n\n')}\n</prep>`] : []),
+    ...past.map((m) => `<past-note title="${m.title}" date="${m.date ?? ''}">\n${suggester.redactLines(store.notes.read(m.file)).replace(/^---\n[\s\S]*?\n---\n/, '').slice(0, 4000)}\n</past-note>`),
+    `Question: ${String(question)}`,
+  ].join('\n\n');
+  const r = roleProvider('agent') === 'claude-code'
+    ? await watchAgent('Question about an upcoming meeting', async () => runModel({ source: modelSource(), providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question: suggester.redactLines(prompt), transcript: '', root: b.root, extra: await agentExtra(String(question), b.root, { kb: false }), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: [], history: (history ?? []).slice(-6), onStep: (text) => toUI('agent-step', { text }), onDelta: (text) => toUI('note-delta', { text }) }))
+    : await noteAskWithoutTools(suggester.redactLines(prompt), history, []);
+  const id = String(ev?.id ?? '');
+  const existing = id ? allChats().find((c) => c.meetingId === id) : null;
+  addTurn(existing ?? newConvo(String(question), { meetingId: id, meetingTitle: title }), String(question), r.text, [], []);
+  return { text: r.text };
+});
+
 ipcMain.handle('new-chat', () => { convo = null; chatHistory = []; });
 // a saved chat read for a note's page, without making it the Home chat
 ipcMain.handle('read-chat', (_e, id) => store.chats.read(String(id ?? '')) ?? null);
