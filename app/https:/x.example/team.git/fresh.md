@@ -1,3 +1,0 @@
-# Fresh
-
-New text.

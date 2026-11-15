@@ -18,7 +18,8 @@ export const INSTRUCTIONS_LIMIT = 16000;
 // frontmatter keys, the secret pattern); the Agent OS's own guard hooks run too, but only the ones the person included
 // on the Guardrails page. Memory, reindex and ping hooks never do, so asking Quorum a question never writes to the vault
 export function safetySettings(root, guards = {}) {
-  const q = (s) => `"${String(s).replace(/"/g, '\\"')}"`;
+  // single quotes: the shell expands nothing inside them; a quote in the value closes, escapes and reopens
+  const q = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
   const runner = (file) => (/\.(sh|zsh)$/.test(file) ? 'zsh' : /\.(mjs|js)$/.test(file) ? 'node' : 'python3');
   const flags = [
     `--root ${q(root)}`, `--log ${q(path.join(DATA_DIR, 'views.jsonl'))}`, `--log-denied ${q(path.join(DATA_DIR, 'guard-denials.jsonl'))}`,

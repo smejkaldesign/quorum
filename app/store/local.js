@@ -112,12 +112,13 @@ export const attachments = {
     mkdirSync(dir, { recursive: true });
     const to = path.join(dir, path.basename(from));
     // an APFS clone shares the original's storage, so attaching takes no extra disk space; Node can't clone on macOS, cp -c can
-    try { execFileSync('/bin/cp', ['-c', from, to]); } catch { copyFileSync(from, to); }
+    try { execFileSync('/bin/cp', ['-c', '--', from, to]); } catch { copyFileSync(from, to); }
     return to;
   },
   // a copy only lives until Quorum has answered; anything left from a closed composer goes at the next launch
   unstage: (files) => { for (const f of files) rmSync(path.dirname(f), { recursive: true, force: true }); },
-  stagedOnly: (files) => (Array.isArray(files) ? files.map(String).filter((f) => path.dirname(path.dirname(f)) === ATTACH && existsSync(f)) : []),
+  // a staged file is <ATTACH>/<uuid>/<name>, checked on the resolved path so '..' cannot climb out
+  stagedOnly: (files) => (Array.isArray(files) ? files.map((f) => path.resolve(String(f))).filter((f) => path.dirname(path.dirname(f)) === ATTACH && /^[0-9a-f-]{36}$/i.test(path.basename(path.dirname(f))) && existsSync(f)) : []),
   clear: () => rmSync(ATTACH, { recursive: true, force: true }),
 };
 

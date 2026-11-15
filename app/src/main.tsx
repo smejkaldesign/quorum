@@ -18,3 +18,7 @@ if (boot && !isPopup) {
   // timers, not animation frames: Chromium pauses frames for a window that's behind others
   setTimeout(() => { boot.classList.add('done'); setTimeout(() => boot.remove(), 350); }, 450);
 } else boot?.remove();
+
+// a file or link dropped anywhere but a drop zone does nothing; main also refuses navigation away from the app
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('drop', (e) => e.preventDefault());

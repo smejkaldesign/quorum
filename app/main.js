@@ -51,7 +51,7 @@ import { createInterface } from 'node:readline';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import updater from 'electron-updater';
 import { createUpdater, feedFor } from './updater.js';
 import { createGuardrails } from './guardrails.js';
@@ -61,6 +61,26 @@ import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, w
 import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, relatedOf, seriesKey, seriesOf } from './meetingBrief.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+// Every IPC call must come from Quorum's own page (dist/index.html, any hash). A page that got into a window some other
+// way (a dropped file, a link) is refused, so it never reaches the vault, settings or files through window.quorum
+const APP_PAGE = pathToFileURL(path.join(here, 'dist/index.html')).href;
+const fromApp = (e) => String(e?.senderFrame?.url ?? '').split(/[?#]/)[0] === APP_PAGE;
+for (const method of ['handle', 'handleOnce']) {
+  const register = ipcMain[method].bind(ipcMain);
+  ipcMain[method] = (channel, fn) => register(channel, (e, ...args) => {
+    if (!fromApp(e)) { console.log('[quorum] refused IPC from', String(e?.senderFrame?.url ?? 'unknown').slice(0, 120), channel); throw new Error('Refused'); }
+    return fn(e, ...args);
+  });
+}
+{
+  const listen = ipcMain.on.bind(ipcMain);
+  ipcMain.on = (channel, fn) => listen(channel, (e, ...args) => { if (fromApp(e)) return fn(e, ...args); e.returnValue = null; });
+}
+// Quorum's windows stay on its own page: navigation away is stopped, and new windows open in the browser when they are https
+function lockToApp(contents) {
+  contents.on('will-navigate', (e, url) => { if (String(url).split(/[?#]/)[0] !== APP_PAGE) e.preventDefault(); });
+  contents.setWindowOpenHandler(({ url }) => { if (/^https:\/\//i.test(String(url))) shell.openExternal(url); return { action: 'deny' }; });
+}
 // quorum://kb links (kb_search and kb_read return them) open the note in the Knowledge tab. A link can arrive before
 // the window, the knowledge base module or the renderer is ready (it can launch the app), so links wait here until all
 // three are, then the main window comes forward with the note
@@ -158,7 +178,7 @@ const goRe = () => new RegExp(`^\\s*${reWord(chatWords().go)}\\s*[.!]*\\s*$`, 'i
 
 // folders the built-in read guard keeps away from the agent: the user's list, else any folder named personal or private one or two levels down
 // the folders named personal or private, the default value of the built-in Private folders rule; a saved list wins
-const privateDirs = (root) => settings.privateDirs ?? (() => { try { return readdirSync(root, { withFileTypes: true }).flatMap((d) => (d.isDirectory() && /personal|private/i.test(d.name) ? [d.name] : d.isDirectory() && !d.name.startsWith('.') ? readdirSync(path.join(root, d.name), { withFileTypes: true }).filter((c) => c.isDirectory() && /personal|private/i.test(c.name)).map((c) => path.join(d.name, c.name)) : [])); } catch { return []; } })();
+const privateDirs = (root) => settings.privateDirs ?? (() => { try { return readdirSync(root, { withFileTypes: true }).flatMap((d) => (d.isDirectory() && /personal|private/i.test(d.name) && !/[$`"'\\;&|<>()\n\r]/.test(d.name) ? [d.name] : d.isDirectory() && !d.name.startsWith('.') ? readdirSync(path.join(root, d.name), { withFileTypes: true }).filter((c) => c.isDirectory() && /personal|private/i.test(c.name)).map((c) => path.join(d.name, c.name)) : [])); } catch { return []; } })();
 
 let win;
 let popup;
@@ -2082,7 +2102,7 @@ ipcMain.handle('vault-tree', () => (brain() ? vaultTree(brain().vault, excludedP
 // sync never pushes and the index never holds
 const { isPrivatePath, isSecretPath, isConfidentialText } = createPredicates({ guardrails, brain: () => brain() });
 const account = EDITION === 'cloud'
-  ? (await loadEE('account.js')).registerAccount({ ipcMain, settings, saveSettings, toUI, log, brain, meetingIndex, isExcluded: (rel) => excludedPath(rel) || isPrivatePath(rel), isExcludedText: (t) => suggester.isExcluded(t) || isConfidentialText(t), openExternal: (u) => shell.openExternal(u), oauthRedirect: () => (app.isPackaged ? 'quorum://auth/callback' : 'http://127.0.0.1:47831/auth/callback') })
+  ? (await loadEE('account.js')).registerAccount({ ipcMain, settings, saveSettings, toUI, log, brain, meetingIndex, isExcluded: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isExcludedText: (t) => suggester.isExcluded(t) || isConfidentialText(t), openExternal: (u) => shell.openExternal(u), oauthRedirect: () => (app.isPackaged ? 'quorum://auth/callback' : 'http://127.0.0.1:47831/auth/callback') })
   : { sync: { pushNote() {}, pushMeetingNote() {}, pullNow() {}, live() {} }, meetingsKb: null };
 // the installed app owns the quorum:// scheme (package.json build.protocols); Google sign-in comes back on it
 if (app.isPackaged) app.setAsDefaultProtocolClient('quorum');
@@ -3274,6 +3294,7 @@ app.whenReady().then(() => {
   win.on('close', (e) => { if (!quitting) { e.preventDefault(); win.hide(); } });
   for (const ev of ['focus', 'blur', 'show', 'hide']) win.on(ev, () => updateTray());
   win.on('focus', () => updates?.onFocus());
+  lockToApp(win.webContents);
   win.webContents.on('console-message', (e) => log('renderer', e.level, e.message));
   win.webContents.on('render-process-gone', (_e, d) => { log('renderer gone', JSON.stringify(d)); stopRecordingForRenderer('renderer gone'); });
   win.webContents.on('did-navigate', () => stopRecordingForRenderer('window reloaded'));
@@ -3289,6 +3310,7 @@ app.whenReady().then(() => {
   popup.setAlwaysOnTop(true, 'screen-saver');
   // skipTransformProcessType keeps Quorum in the Dock; without it Electron turns the app menu-bar-only
   popup.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+  lockToApp(popup.webContents);
   popup.webContents.on('console-message', (e) => log('popup', e.level, e.message));
   // hold helper events until the popup page can receive the startup "meeting detected"
   popup.webContents.once('did-finish-load', startHelper);
