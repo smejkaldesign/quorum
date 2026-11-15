@@ -99,6 +99,48 @@ export function createVersionStore({ dir, now = () => Date.now(), maxVersions = 
     return text;
   }
 
+  // a run's changes to one file taken back: the file gets the text it had before the oldest of the given versions (or
+  // is removed when that write made it), and those versions and their updates are deleted. Used when a run is stopped
+  function undo(vault, rel, ids) {
+    const r = posix(rel);
+    const rec = load(vault).files[r];
+    const mine = (rec?.versions ?? []).filter((v) => ids.includes(v.id)).sort((a, b) => a.at - b.at);
+    const root = path.resolve(vault);
+    const abs = path.resolve(root, r);
+    if (!mine.length || !abs.startsWith(root + path.sep)) return false;
+    const first = mine[0];
+    if (first.created) rmSync(abs, { force: true });
+    else { const text = read(textFile(vault, first.id)); if (text == null) return false; mkdirSync(path.dirname(abs), { recursive: true }); writeAtomic(abs, text); }
+    for (const v of mine) rmSync(textFile(vault, v.id), { force: true });
+    rec.versions = rec.versions.filter((v) => !ids.includes(v.id));
+    rec.updates = rec.updates.filter((u) => !ids.includes(u.id));
+    if (!rec.versions.length && !rec.updates.length) delete load(vault).files[r];
+    save(vault);
+    onChange([r]);
+    return true;
+  }
+  // the updates the banner shows are rejected: the file gets back the text from before the oldest of them, that text
+  // is kept as a version by you, and the rejected updates leave the review. Returns the restored text, or null
+  function reject(vault, rel) {
+    const r = posix(rel);
+    const rec = load(vault).files[r];
+    const g = rec ? reviewGroup(rec, { now: now(), days: dotDays() }) : null;
+    const root = path.resolve(vault);
+    const abs = path.resolve(root, r);
+    if (!g || !abs.startsWith(root + path.sep)) return null;
+    const ids = new Set((rec.updates ?? []).filter((u) => (g.dot === 'green' ? !u.approved : u.at >= g.first.at)).map((u) => u.id));
+    const base = rec.versions.find((v) => v.id === g.first.id);
+    const text = base && !base.created ? read(textFile(vault, base.id)) : null;
+    const cur = read(abs);
+    if (base?.created) rmSync(abs, { force: true });
+    else if (text != null) writeAtomic(abs, text);
+    else return null;
+    rec.updates = rec.updates.filter((u) => !ids.has(u.id));
+    rec.openedAt = stamp();
+    record({ vault, rel: r, before: cur, after: base?.created ? null : text, who: 'you', reason: 'Rejected the updates', agent: false });
+    return text ?? '';
+  }
+
   // every update of a file waiting for approval is approved now; the person has the file open, so it counts as opened
   function approve(vault, rel) {
     const rec = load(vault).files[posix(rel)];
@@ -150,7 +192,7 @@ export function createVersionStore({ dir, now = () => Date.now(), maxVersions = 
     }
   }
 
-  return { record, list, read: readVersion, restore, approve, opened, dots, review, watch, home };
+  return { record, list, read: readVersion, restore, undo, reject, approve, opened, dots, review, watch, home };
 }
 
 // the text of every markdown note in a vault, keyed by its path inside the vault. Notes over 2 MB are left out

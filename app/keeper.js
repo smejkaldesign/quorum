@@ -236,7 +236,7 @@ export function informative(fact) {
 // the model's lines, with facts that carry nothing left out before the list is deduplicated
 export const parseFacts = (out) => String(out ?? '').split('\n').map((l) => l.trim()).filter((l) => l.startsWith('- ')).map((l) => l.slice(2).trim()).filter((l) => l && informative(l)).slice(0, 3);
 
-export function createKeeper({ brain, settings, saveSettings = () => {}, guards = () => null, wouldBlock = () => null, runText = null, hasModel = () => false, owner = () => '', log = () => {}, onChange = () => {}, errorLog = null, versions = null }) {
+export function createKeeper({ brain, settings, saveSettings = () => {}, guards = () => null, wouldBlock = () => null, runText = null, hasModel = () => false, owner = () => '', log = () => {}, onChange = () => {}, errorLog = null, versions = null, live = null }) {
   // factsBudget and factsNote are null until the user picks one
   // meetingsIndex writes the meeting index lines to <meetings folder>/index.md while the vault owns the root index
   // editVault lets the keeper edit files Quorum did not make, and factsInClaude turns on the copy in CLAUDE.md; both are
@@ -272,15 +272,33 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
   // a vault note the keeper writes or removes keeps its earlier text as a version (memoryVersions.js); why is the
   // reason the version shows, set by each pass that writes. keeper.json and the changelog are not versioned
   let why = { reason: 'Upkeep', agent: true };
+  // the run in progress in the Memory tab (liveRuns.js): each note written is named to it with its version. stopping
+  // is set by halt; the next write then throws, the run ends, and the files it changed are put back from the versions
+  let liveRun = null;
+  let stopping = false;
+  const stopped = () => Object.assign(new Error('Stopped from the Memory tab'), { stopped: true });
   const writeNote = (vault, abs, next) => {
+    if (stopping) throw stopped();
     const before = versions ? read(abs) : null;
     writeAtomic(abs, next);
-    versions?.record({ vault, rel: posix(path.relative(vault, abs)), before, after: next, who: 'keeper', ...why });
+    const rel = posix(path.relative(vault, abs));
+    const r = versions?.record({ vault, rel, before, after: next, who: 'keeper', ...why });
+    if (liveRun) live?.touch(liveRun, rel, r?.version.id ?? null);
   };
   const removeNote = (vault, abs) => {
+    if (stopping) throw stopped();
     const before = versions ? read(abs) : null;
     rmSync(abs, { force: true });
-    if (before != null) versions.record({ vault, rel: posix(path.relative(vault, abs)), before, after: null, who: 'keeper', ...why });
+    const rel = posix(path.relative(vault, abs));
+    const r = before != null ? versions?.record({ vault, rel, before, after: null, who: 'keeper', ...why }) : null;
+    if (liveRun) live?.touch(liveRun, rel, r?.version.id ?? null);
+  };
+  // asks the running pass to stop and waits for it; a pass waiting to be scheduled is dropped too
+  const halt = async () => {
+    stopping = true;
+    clearTimeout(timer);
+    timer = null;
+    try { await running?.catch(() => {}); } finally { stopping = false; }
   };
   // a keeper.json from before factsNoteDefault existed gets it from where the list was last written, so an existing
   // list never moves on its own
@@ -345,7 +363,9 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
 
   // an upkeep error goes to the console and to a log file under Application Support, which the settings page counts.
   // Past ERR_MAX bytes the file is cut to its last ERR_KEEP lines, and status reads only that much from its end
+  // a stop from the Memory tab is passed on to the run, which ends without logging an error
   const fail = (where, e) => {
+    if (e?.stopped) throw e;
     const message = String(e?.message || e).slice(0, 300);
     log(`keeper ${where} failed`, message);
     if (!errorLog) return;
@@ -689,7 +709,11 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
       const vault = b.vault;
       const reg = registry(b);
       if (!reg.f.meetings) return result;
-      // the state is saved even when the run fails part way, so the files it made stay recorded as Quorum's
+      // the changelog is put back when the run is stopped, since its files are put back too
+      const changelogBefore = read(path.join(vault, CHANGELOG));
+      liveRun = live?.start({ who: 'keeper', label: 'Upkeep', stop: halt }) ?? null;
+      // the state is saved even when the run fails part way, so the files it made stay recorded as Quorum's. A stopped
+      // run saves nothing, so its notes are filed again on the next run
       let st = null;
       try {
         st = loadState(vault);
@@ -747,13 +771,18 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
         st.lastRunAt = result.at;
         st.last = result;
       } catch (e) {
-        result.error = String(e?.message || e);
-        fail('run', e);
+        if (e?.stopped) result.stopped = true;
+        else { result.error = String(e?.message || e); fail('run', e); }
       } finally {
-        if (st) {
+        if (result.stopped) {
+          const abs = path.join(vault, CHANGELOG);
+          if (changelogBefore == null) rmSync(abs, { force: true }); else writeAtomic(abs, changelogBefore);
+        } else if (st) {
           applyResets(st);
           try { saveState(vault, st); } catch (e) { fail('run', e); }
         }
+        if (liveRun) live?.end(liveRun);
+        liveRun = null;
       }
       lastRun = result;
       if (result.filed || result.skipped) log('keeper', `${reason}: ${result.filed} filed, ${result.changed} files changed, ${result.skipped} withheld`);
@@ -905,5 +934,5 @@ export function createKeeper({ brain, settings, saveSettings = () => {}, guards 
     if (after.on) schedule('settings');
     return status();
   };
-  return { run, schedule, status, set, setPlugin, removeClaude, plugins, cachedPlugins, conf, clearErrors, errorLog };
+  return { run, schedule, halt, status, set, setPlugin, removeClaude, plugins, cachedPlugins, conf, clearErrors, errorLog };
 }
