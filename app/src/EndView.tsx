@@ -11,7 +11,7 @@ type Followup = { q: string; a: string | null };
 
 // Granola-sized end-of-call note: title, meta pills, sectioned notes, follow-up composer. While the notes stream in,
 // whatever already parses is shown; a bullet with refs points back at the transcript turns it came from
-export type Turn = SpeakerTurn & { who: string };
+export type Turn = SpeakerTurn & { who: string; voice?: number | 'mix' | 'sound'; unclear?: boolean };
 
 // privateNotes is what you typed on the call; edits here reach the main process the same way, and flush runs before Save
 // live: the recording is running (or paused) and this is its page under the header; the transcript shows as it is
@@ -68,8 +68,9 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
     if (groups[groups.length - 1]?.key === key) groups[groups.length - 1].turns.push(t); else groups.push({ key, turns: [t] });
   }
   // a solo recording's microphone with no voice told apart: a ? and no name, since nothing proves who spoke
+  // a voice Quorum told apart but nobody named keeps the ? with its label beside it: Person 1, Mixed discussion
   const speakerHead = (t: Turn) => (t.channel === 'me' && !me && !t.speaker
-    ? <span className="avatar-sm avatar-unknown" aria-label="Unknown speaker" data-tip="Unknown speaker">?</span>
+    ? <><span className="avatar-sm avatar-unknown" aria-label="Unknown speaker" data-tip="Unknown speaker">?</span>{t.voice != null && <span className="spk-anon">{t.who}</span>}</>
     : <><Avatar name={t.channel === 'me' ? me?.name || t.speaker || t.who : t.speaker ?? t.who} photo={t.channel === 'me' && me ? me.photo ?? null : null} />{t.channel === 'them' ? <SpeakerName turn={t} fallback={t.who} participants={participants} similar={similar(t)} onPick={(name, similar) => onSpeaker(t.id, name, similar)} /> : <span>{t.speaker ?? t.who}</span>}</>);
   const turnById = new Map(transcript.map((t) => [t.id, t]));
   const tipFor = (refs: number[]) => { const t = refs.map((id) => turnById.get(id)).find(Boolean); return t ? `${t.who}: ${t.text.length > 180 ? `${t.text.slice(0, 180)}…` : t.text}` : undefined; };
@@ -123,9 +124,11 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
               <section className="transcript end-transcript">
                 {transcript.length ? groups.map((g) => (
                   // one speaker's run of turns: who it was on top, then each turn as its own paragraph
-                  <div key={g.turns[0].id} className={`turn-group ${g.turns[0].channel}`}>
+                  g.turns[0].voice === 'sound'
+                    ? <p key={g.turns[0].id} className="turn-sound">{[...new Set(g.turns.map((t) => t.text))].join(', ')}</p>
+                    : <div key={g.turns[0].id} className={`turn-group ${g.turns[0].channel}`}>
                     <div className="spk">{speakerHead(g.turns[0])}</div>
-                    {g.turns.map((t) => <p key={t.id} id={`turn-${t.id}`} className={hot.includes(t.id) ? 'hot' : undefined}>{t.text}</p>)}
+                    {g.turns.map((t) => <p key={t.id} id={`turn-${t.id}`} className={[hot.includes(t.id) && 'hot', t.unclear && 'unclear'].filter(Boolean).join(' ') || undefined} data-tip={t.unclear ? 'Hard to hear; Quorum may have some words wrong' : undefined}>{t.text}</p>)}
                   </div>
                 )) : !partial && <p className="muted">{live ? (paused ? 'Paused. Resume to keep transcribing.' : 'Listening…') : 'Nothing was transcribed.'}</p>}
                 {live && partial && <p className="live-partial"><em className="partial">{partial}</em></p>}

@@ -120,7 +120,13 @@ export function correctSpeaker(turns, id, name, { similar = false } = {}) {
 
 // what the transcript shows and the prompts read: the name when there is one, else the channel label
 // a voice the engine told apart and nobody has named reads as Person N on the microphone, Speaker N on the Mac's sound
-export const voiceName = (t) => (t.voice == null ? null : `${t.channel === 'me' ? 'Person' : 'Speaker'} ${t.voice + 1}`);
+// several voices at once read as a mixed discussion (with what it sounded like, once known); a sound line reads as Sound
+export const voiceName = (t) => {
+  if (t.voice == null) return null;
+  if (t.voice === 'sound') return 'Sound';
+  if (t.voice === 'mix') return t.tone ? `Mixed discussion, sounded like ${t.tone}` : 'Mixed discussion';
+  return `${t.channel === 'me' ? 'Person' : 'Speaker'} ${t.voice + 1}`;
+};
 export const speakerOf = (t, label) => t.speaker ?? voiceName(t) ?? label[t.channel] ?? t.channel;
 
 // the per-turn fields the renderer merges into its lines

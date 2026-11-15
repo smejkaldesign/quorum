@@ -2021,3 +2021,8 @@ button.meta-pill.meta-icon:hover { background: rgba(255, 255, 255, 0.06); }
 .skill-pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
 .skill-pill { height: 30px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--menu-bg); color: var(--text); font-size: 13px; font-weight: 500; transition: background 160ms ease, border-color 160ms ease; }
 .skill-pill:hover:not(:disabled) { background: var(--card); border-color: rgba(255, 255, 255, 0.24); }
+/* voices Quorum told apart: an unnamed one keeps the ? with its label; laughter and crosstalk get a quiet line; hard-to-hear speech is dimmed */
+.spk-anon { color: var(--muted); }
+.turn-sound { color: var(--muted); font-style: italic; margin: 6px 0 14px; }
+.turn-sound::before { content: '['; } .turn-sound::after { content: ']'; }
+.turn-group p.unclear { color: var(--muted); }

@@ -33,7 +33,7 @@ import { RecLevel } from './RecLevel';
 import { IconFolderOpen, IconPerson, IconClose, IconMenu, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconBack, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, IconRecord, Wave } from './icons';
 
 // one speaker turn as main.js built it; a turn that grows arrives again with the same id and replace: true
-type Line = { id: number; channel: 'me' | 'them'; text: string; start: number; voice?: number } & Partial<SpeakerInfo>;
+type Line = { id: number; channel: 'me' | 'them'; text: string; start: number; voice?: number | 'mix' | 'sound'; unclear?: boolean; tone?: string } & Partial<SpeakerInfo>;
 type Phase = 'idle' | 'starting' | 'listening' | 'paused' | 'review' | 'blocked';
 type Tab = MainTab | 'chat' | 'notes' | 'mine';
 const inCall = (p: string) => p === 'listening' || p === 'paused' || p === 'starting';
@@ -351,7 +351,7 @@ export function App() {
           if (e.channel === 'them' && 'who' in e) setThemName(e.who ?? null);
           if (e.isFinal) {
             const voice = (e as { voice?: unknown }).voice;
-            const turn: Line = { id: e.id ?? 0, channel: e.channel as 'me' | 'them', text: text.trim(), start: e.start, ...(Number.isInteger(voice) ? { voice: voice as number } : {}), ...(e.speaker !== undefined ? { speaker: e.speaker, confidence: e.confidence ?? 0, cluster: e.cluster ?? null, corrected: !!e.corrected } : {}) };
+            const turn: Line = { id: e.id ?? 0, channel: e.channel as 'me' | 'them', text: text.trim(), start: e.start, ...(Number.isInteger(voice) || voice === 'mix' || voice === 'sound' ? { voice: voice as Line['voice'] } : {}), ...((e as { unclear?: boolean }).unclear ? { unclear: true } : {}), ...(e.speaker !== undefined ? { speaker: e.speaker, confidence: e.confidence ?? 0, cluster: e.cluster ?? null, corrected: !!e.corrected } : {}) };
             setLines((l) => {
               if (e.replace && l.some((x) => x.id === turn.id)) return l.map((x) => (x.id === turn.id ? { ...x, ...turn } : x));
               const i = l.findIndex((x) => x.start > turn.start);
@@ -481,7 +481,8 @@ export function App() {
   // without a noticed call every session is a solo recording, whose microphone hears the room too: Unknown, never You
   const meLabel = nt.meetingCapture ? 'You' : 'Unknown';
   // a voice the engine told apart reads as Person N (microphone) or Speaker N (the Mac's sound) until it is named
-  const who = (l: { channel: 'me' | 'them'; speaker?: string | null; voice?: number }) => l.speaker ?? (l.voice != null ? `${l.channel === 'me' ? 'Person' : 'Speaker'} ${l.voice + 1}` : l.channel === 'me' ? meLabel : themLabel);
+  // several voices at once read as Mixed discussion; laughter and crosstalk lines read as Sound
+  const who = (l: { channel: 'me' | 'them'; speaker?: string | null; voice?: number | 'mix' | 'sound'; tone?: string }) => l.speaker ?? (l.voice === 'sound' ? 'Sound' : l.voice === 'mix' ? (l.tone ? `Mixed discussion, sounded like ${l.tone}` : 'Mixed discussion') : l.voice != null ? `${l.channel === 'me' ? 'Person' : 'Speaker'} ${l.voice + 1}` : l.channel === 'me' ? meLabel : themLabel);
   // the live transcript draws every row on each render; the similar-turn count comes from one pass, and the row's
   // callback stays the same object so the memoized rows skip the partial words that arrive several times a second
   const similar = useMemo(() => similarCounts(lines), [lines]);

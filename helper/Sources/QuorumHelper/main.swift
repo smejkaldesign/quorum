@@ -7,6 +7,10 @@ final class Session {
     private let me = ChannelTranscriber(channel: "me")
     private let them = ChannelTranscriber(channel: "them")
     private let meter = LevelMeter()
+    // who is talking, per channel, for the on-device engine; the cloud engines tell voices apart themselves
+    private let meVoices = VoiceTracker(channel: "me")
+    private let themVoices = VoiceTracker(channel: "them")
+    private var voicesOn = false
     private(set) var running = false
 
     // streamPcm: skip SpeechAnalyzer and emit 16 kHz PCM per channel instead; the app forwards it to the relay
@@ -27,10 +31,13 @@ final class Session {
             try await me.start(locale: locale, audioURL: dir?.appendingPathComponent("me.caf"), terms: terms)
             try await them.start(locale: locale, audioURL: dir?.appendingPathComponent("them.caf"), terms: terms)
         }
+        voicesOn = !streamPcm
+        if voicesOn { meVoices.start(); themVoices.start() }
         let me = self.me, them = self.them, meter = self.meter
-        try mic.start(echoCancel: echoCancel) { me.feed($0); meter.feed($0) }
+        let meVoices: VoiceTracker? = voicesOn ? self.meVoices : nil, themVoices: VoiceTracker? = voicesOn ? self.themVoices : nil
+        try mic.start(echoCancel: echoCancel) { me.feed($0); meVoices?.feed($0); meter.feed($0) }
         Emit.status("mic on, starting system audio tap")
-        try tap.start(bundles: tapBundles) { them.feed($0); meter.feed($0) }
+        try tap.start(bundles: tapBundles) { them.feed($0); themVoices?.feed($0); meter.feed($0) }
         running = true
         Emit.status("capturing")
     }
@@ -42,6 +49,7 @@ final class Session {
         tap.stop()
         await me.stop()
         await them.stop()
+        if voicesOn { await meVoices.stop(); await themVoices.stop() }
         Emit.send(["event": "stopped"])
     }
 
@@ -51,7 +59,11 @@ final class Session {
         let locale = Locale(identifier: id)
         try await me.start(locale: locale, audioURL: nil, terms: terms)
         if themURL != nil { try await them.start(locale: locale, audioURL: nil, terms: terms) }
-        for (transcriber, url) in [(me, meURL), (them, themURL)] {
+        meVoices.start()
+        if themURL != nil { themVoices.start() }
+        await meVoices.waitReady()
+        await themVoices.waitReady()
+        for (transcriber, voices, url) in [(me, meVoices, meURL), (them, themVoices, themURL)] {
             guard let url else { continue }
             let file = try AVAudioFile(forReading: url)
             while file.framePosition < file.length {
@@ -59,10 +71,13 @@ final class Session {
                 try file.read(into: buf)
                 if buf.frameLength == 0 { break }
                 transcriber.feed(buf)
+                voices.feed(buf)
             }
         }
         await me.stop()
         if themURL != nil { await them.stop() }
+        await meVoices.stop()
+        if themURL != nil { await themVoices.stop() }
         Emit.send(["event": "stopped"])
     }
 }

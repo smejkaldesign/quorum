@@ -100,7 +100,7 @@ function SourcePill({ source }: { source: string }) {
 }
 
 // a saved note's transcript: each speaker's name above their run of turns, like the recording's review
-function SavedTranscript({ turns }: { turns: { id: number; channel: 'me' | 'them'; who: string; text: string }[] }) {
+function SavedTranscript({ turns }: { turns: { id: number; channel: 'me' | 'them'; who: string; text: string; sound?: boolean; unclear?: boolean }[] }) {
   const groups: { key: string; who: string; channel: string; turns: typeof turns }[] = [];
   for (const t of turns) {
     const key = `${t.channel}|${t.who}`;
@@ -108,10 +108,12 @@ function SavedTranscript({ turns }: { turns: { id: number; channel: 'me' | 'them
   }
   return (
     <section className="transcript end-transcript">
-      {groups.map((g) => (
+      {groups.map((g) => g.turns[0].sound ? <p key={g.turns[0].id} className="turn-sound">{[...new Set(g.turns.map((t) => t.text))].join(', ')}</p> : (
         <div key={g.turns[0].id} className={`turn-group ${g.channel}`}>
-          <div className="spk">{g.who === 'Unknown' || g.who === 'You' ? <span className="avatar-sm avatar-unknown" aria-label="Unknown speaker">?</span> : <><Avatar name={g.who} /><span>{g.who}</span></>}</div>
-          {g.turns.map((t) => <p key={t.id}>{t.text}</p>)}
+          <div className="spk">{g.who === 'Unknown' || g.who === 'You' ? <span className="avatar-sm avatar-unknown" aria-label="Unknown speaker">?</span>
+            : /^(Person|Speaker) \d+$|^Mixed discussion/.test(g.who) ? <><span className="avatar-sm avatar-unknown" aria-label="Unnamed speaker">?</span><span className="spk-anon">{g.who}</span></>
+            : <><Avatar name={g.who} /><span>{g.who}</span></>}</div>
+          {g.turns.map((t) => <p key={t.id} className={t.unclear ? 'unclear' : undefined} data-tip={t.unclear ? 'Hard to hear; Quorum may have some words wrong' : undefined}>{t.text}</p>)}
         </div>
       ))}
     </section>
