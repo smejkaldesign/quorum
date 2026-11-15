@@ -2169,7 +2169,9 @@ function importWrite(file, prev, next) {
   const r = prev != null ? memoryVersions.record({ vault: b.vault, rel, before: prev, after: next, who: 'import', reason: 'Imported the meeting again' }) : null;
   liveRuns.pulse({ who: 'import', label: 'Import' }, rel, r?.version.id ?? null);
 }
-const sourcesApi = registerSources({ ipcMain: connectIpc, settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), openFresh: openFreshSignIn, afterWrite: (file) => { account.sync.pushMeetingNote(file); keeper.schedule('import'); }, onNoteWrite: importWrite, version: app.getVersion(), agentRuntime: { runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV } });
+// a vault with no meetings folder yet gets 08-meetings, the same folder a first recording makes, so a first import
+// from Granola has somewhere to go
+const sourcesApi = registerSources({ ipcMain: connectIpc, settings, saveSettings, toUI, log, meetingsDir: () => meetingsDir() ?? (brain()?.vault ? path.join(brain().vault, '08-meetings') : null), keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), openFresh: openFreshSignIn, afterWrite: (file) => { account.sync.pushMeetingNote(file); keeper.schedule('import'); }, onNoteWrite: importWrite, version: app.getVersion(), agentRuntime: { runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV } });
 // platform accounts for cloud recordings (Zoom first) go through the relay, so they exist in the hosted edition only
 if (EDITION === 'cloud') (await loadEE('platforms.js')).registerPlatforms({ ipcMain: connectIpc, account, settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file) });
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);

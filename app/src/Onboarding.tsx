@@ -38,13 +38,15 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
     try { const c = await window.quorum.onboardingPermissions(); setStatus((prev) => (prev ? { ...prev, ...c } : prev)); } catch {} finally { inflight.current = false; }
   };
   useEffect(() => { refresh(); }, [step]);
-  const i = ORDER.indexOf(step);
-  const next = () => setStep(ORDER[Math.min(i + 1, ORDER.length - 1)]);
-  const back = () => setStep(ORDER[Math.max(i - 1, 0)]);
+  // the open-source edition has no account to sign in to, so its wizard leaves that step out
+  const order = accountSlot ? ORDER : ORDER.filter((s) => s !== 'account');
+  const i = order.indexOf(step);
+  const next = () => setStep(order[Math.min(i + 1, order.length - 1)]);
+  const back = () => setStep(order[Math.max(i - 1, 0)]);
   return (
     <div className="onb">
       <div className="onb-card">
-        <div className="onb-progress" aria-hidden="true">{ORDER.map((s, n) => <i key={s} className={n <= i ? 'on' : ''} />)}</div>
+        <div className="onb-progress" aria-hidden="true">{order.map((s, n) => <i key={s} className={n <= i ? 'on' : ''} />)}</div>
         {step === 'welcome' && (
           <section className="onb-step">
             <img className="onb-mark" src={mark} alt="" />
@@ -182,13 +184,15 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain 
       {brain && notes !== undefined && (
         <>
           <div className="onb-or"><span>Meeting notes</span></div>
-          {notes ? (
+          {notes && (
             <div className="onb-choice on">
               <IconCheck width={18} height={18} className="ok" />
               <div><strong>{notes.root}{!notes.chosen && <span className="onb-badge">Found in {brain.name}</span>}</strong><em>{foundText}</em></div>
               <button className="pill" onClick={pickNotes}>Change…</button>
             </div>
-          ) : granola?.connected ? (
+          )}
+          {/* Granola is offered whether or not a meetings folder exists: its notes go into that folder, or 08-meetings */}
+          {granola?.connected ? (
             <div className="onb-choice on">
               <IconCheck width={18} height={18} className="ok" />
               <div><strong>Granola connected{granola.account && <span className="onb-badge">{granola.account}</span>}</strong><em>{granola.imported ? `${granola.imported} ${granola.imported === 1 ? 'note' : 'notes'} imported into this folder` : 'Importing your notes into this folder in the background'}</em></div>
@@ -196,7 +200,7 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain 
           ) : (
             <ConnectHint connector="granola" title={<>Connect your meeting notes app <span className="onb-opt">optional</span></>} desc="Granola today, more notetakers soon. Their notes land in this folder beside the ones Quorum writes, each tagged with its source. Or point Quorum at a folder of notes you already have.">
               <button className="pill primary" disabled={connecting} onClick={connectGranola}>{connecting ? 'Finish in your browser…' : 'Connect Granola'}</button>
-              <button className="pill" onClick={pickNotes}>Choose a folder…</button>
+              {!notes && <button className="pill" onClick={pickNotes}>Choose a folder…</button>}
             </ConnectHint>
           )}
         </>

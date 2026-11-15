@@ -11,5 +11,7 @@ Please do not file public issues or pull requests for vulnerabilities. Use email
 - The desktop app (`app/`), including the main process, renderer, CLI and MCP server
 - The helper (`helper/`): audio capture, transcription, Accessibility access
 - The Cloud schema and policies (`supabase/`)
+- The Cloud relay (`relay/`): managed transcription, connector sign-in and webhooks, billing routes
+- The admin app (`admin/`)
 
 Reports about third-party services the app connects to (Supabase, Claude Code, meeting providers) should go to those vendors.

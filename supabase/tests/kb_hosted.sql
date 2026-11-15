@@ -6,6 +6,10 @@
 -- On a database with 0034 applied, leave the migration out of that list. A failed check stops the script with the
 -- check's message; the last line printed on success is "kb hosted: ok".
 
+-- the whole script runs in one transaction that is rolled back, so `supabase test db` leaves no fixtures or stand-in gate
+-- behind for the files after it
+begin;
+
 -- fixtures. f1 owns the workspace (paid plan); f2 is made an editor of Wiki; f3 a reader of Wiki; f4 a member with no
 -- grant on Wiki; f5 owns a second workspace on the free plan and is not in the first
 create or replace function public.auth_user_gate() returns trigger language plpgsql as $$ begin return new; end $$;
@@ -324,3 +328,4 @@ select pg_temp.as_admin();
 select pg_temp.check((select bool_and(deleted_at is not null) from public.notes where id in (pg_temp.id('n1'), pg_temp.id('n3'))), 'the KB''s notes are soft deleted with it');
 
 select 'kb hosted: ok';
+rollback;
