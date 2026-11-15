@@ -158,7 +158,7 @@ const SNAP_MAX = 2 * 1024 * 1024;
 export function snapshot(vault, skip = () => false) {
   const out = new Map();
   const walk = (d) => {
-    let names = [];
+    let names;
     try { names = readdirSync(d); } catch { return; }
     for (const n of names) {
       if (n.startsWith('.') || n === 'node_modules') continue;
