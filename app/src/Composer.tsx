@@ -113,7 +113,8 @@ export function Composer({ value, onChange, onSubmit, placeholder, disabled, bus
     if (!f) return;
     const r = (sel: string) => f.querySelector(sel)!.getBoundingClientRect();
     lastRects.current = { form: f.getBoundingClientRect(), input: r('.c-input'), tools: r('.c-tools'), attach: r('.c-attach') };
-  });
+    // measured only when what sets the layout changes, so a parent's re-render (a live transcript line) costs no layout pass
+  }, [value, tall, files.length]);
 
   const submit = () => {
     const q = value.trim();

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, memo, useContext, useEffect, useState, type ReactNode } from 'react';
 
 // in the Memory view, note links open inside Quorum instead of in another app
 const WikiOpen = createContext<((target: string) => void) | null>(null);
@@ -9,7 +9,8 @@ const WikiOpen = createContext<((target: string) => void) | null>(null);
 // builds React nodes (never innerHTML), so model output can't inject markup
 // marks gives lines a class by index (Memory tab review: changed lines, issue lines, the current item). Every marked
 // line carries data-line, so the review can scroll to it
-export function Markdown({ text, root, headings, onWiki, marks }: { text: string; root?: string; headings?: boolean; onWiki?: (target: string) => void; marks?: ReadonlyMap<number, string> }) {
+// memoized: a chat answer re-parses only when its own text changes, not on every live transcript line
+export const Markdown = memo(function Markdown({ text, root, headings, onWiki, marks }: { text: string; root?: string; headings?: boolean; onWiki?: (target: string) => void; marks?: ReadonlyMap<number, string> }) {
   const blocks: ReactNode[] = [];
   let list: { depth: number; text: string; mark?: string; line: number }[] = [];
   const flush = () => {
@@ -28,7 +29,7 @@ export function Markdown({ text, root, headings, onWiki, marks }: { text: string
   });
   flush();
   return <WikiOpen.Provider value={onWiki ?? null}><div className="md">{blocks}</div></WikiOpen.Provider>;
-}
+});
 
 function BulletList({ items, root }: { items: { depth: number; text: string; mark?: string; line: number }[]; root?: string }) {
   return (

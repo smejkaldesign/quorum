@@ -40,9 +40,18 @@ export function createSuggester({ runClaude, toUI, log, getTranscript, getSettin
     return excluded;
   }
   // the included term lists and rules plus the customer names on Quorum's opt-out list (the built-in rule, unless off)
-  const allTerms = () => [...excludedTerms(), ...(getSettings().guardrails?.compiled?.optOutsOn === false ? [] : (getSettings().workspace?.optOuts ?? []).map((o) => String(o.name ?? '').trim().toLowerCase()).filter((n) => n.length >= 3))];
-  const isExcluded = (text) => allTerms().some((t) => text.toLowerCase().includes(t));
-  const redactLines = (text) => text.split('\n').map((l) => (isExcluded(l) ? '[withheld: opted-out customer]' : l)).join('\n');
+  // rebuilt only when the term files, the opt-out list or its switch change
+  let termsKey = null, terms = [];
+  const allTerms = () => {
+    const base = excludedTerms(), on = getSettings().guardrails?.compiled?.optOutsOn !== false, outs = getSettings().workspace?.optOuts;
+    if (termsKey && termsKey[0] === base && termsKey[1] === on && termsKey[2] === outs) return terms;
+    termsKey = [base, on, outs];
+    terms = [...base, ...(on ? (outs ?? []).map((o) => String(o.name ?? '').trim().toLowerCase()).filter((n) => n.length >= 3) : [])];
+    return terms;
+  };
+  const hit = (list, text) => { if (!list.length) return false; const lower = text.toLowerCase(); return list.some((t) => lower.includes(t)); };
+  const isExcluded = (text) => hit(allTerms(), text);
+  const redactLines = (text) => { const list = allTerms(); return text.split('\n').map((l) => (hit(list, l) ? '[withheld: opted-out customer]' : l)).join('\n'); };
 
   function transcriptForModel(lastN) {
     return redactLines(toText(getTranscript().slice(-lastN), { me: owner, them: 'Others' }));

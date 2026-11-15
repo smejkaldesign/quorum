@@ -37,7 +37,8 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     if (isDeniedText(raw)) { files.delete(rel); return; }
     const flagged = isExcludedText(raw);
     const text = flagged ? redact(raw) : raw;
-    files.set(rel, { mtime: st.mtimeMs, size: st.size, note: parseNote(rel, text), text, flagged, t: noteDate(vault, rel, text) });
+    // the lowercased path and text, kept for search so a query does not lowercase the whole vault again
+    files.set(rel, { mtime: st.mtimeMs, size: st.size, note: parseNote(rel, text), text, hay: `${rel.toLowerCase()}\n${text.toLowerCase()}`, flagged, t: noteDate(vault, rel, text) });
   }
 
   // a frontmatter name: counts as an alias, since auto-memory notes link to each other by that slug
@@ -255,7 +256,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     const hits = [];
     for (const [rel, f] of files) {
       const title = f.note.title.toLowerCase();
-      const hay = `${rel.toLowerCase()}\n${f.text.toLowerCase()}`;
+      const hay = f.hay ?? `${rel.toLowerCase()}\n${f.text.toLowerCase()}`;
       if (!words.every((w) => hay.includes(w) || title.includes(w))) continue;
       let score = 0;
       for (const w of words) { if (title.includes(w)) score += 10; if (rel.toLowerCase().includes(w)) score += 4; }

@@ -1,3 +1,4 @@
+import { soundLine } from './soundLine';
 import { BackButton } from './BackButton';
 import { useEffect, useRef, useState } from 'react';
 import type { MeetingMeta, Notes, NotesDraft, WhoAsk } from './quorum';
@@ -293,5 +294,3 @@ function modelName(m: string) {
   return `Claude ${m.slice(7).replace(/^\w/, (c) => c.toUpperCase()).replace(/-(\d+)-(\d+)$/, ' $1.$2')}`;
 }
 
-// a sound line: music between notes, anything else in brackets
-export const soundLine = (label: string) => (label === 'Music' ? `♪ ${label} ♪` : `[${label}]`);
