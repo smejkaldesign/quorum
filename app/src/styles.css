@@ -1984,3 +1984,7 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 /* the fold only clips on the strip, where it hides the list; the Home list keeps its rows' highlight reaching left */
 .up-inline .up-fold-in { overflow: visible; }
 .up-strip .up-fold-in { padding-left: 4px; margin-left: -4px; }
+/* the highlight reaches past the right edge by the same amount as the left, so it sits even; text and buttons stay put */
+.hist-row { margin-right: calc(-1 * var(--row-pad)); padding-right: var(--row-pad); width: calc(100% + 2 * var(--row-pad)); }
+.hist-row .hist-hover { right: var(--row-pad); }
+.up-strip .up-fold-in { padding-right: 4px; margin-right: -4px; }
