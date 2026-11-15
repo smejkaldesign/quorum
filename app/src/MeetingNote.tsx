@@ -9,7 +9,7 @@ import { SourceAsk, useMeetingSources } from './MeetingSources';
 import type { CalendarEvent, MeetingShare, NoteDoc, Visibility } from './quorum';
 import { Markdown } from './Markdown';
 import { Composer } from './Composer';
-import { IconArrowDown, IconBell, IconSound, IconChevron, IconFolder, IconGlobe, IconLock, IconLogs, IconMore, IconNotes, IconTrash } from './icons';
+import { IconBell, IconSound, IconChevron, IconFolder, IconGlobe, IconLock, IconLogs, IconMore, IconNotes, IconTrash } from './icons';
 import { Avatar } from './Speaker';
 import { NoteEditor, type NoteEditorHandle } from './editor/NoteEditor';
 import { ChatExit, ChatStrip, useChats, useComposerFocus } from './ChatStack';
@@ -176,12 +176,6 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
     ro.observe(scroller.current!);
     return () => { box.removeEventListener('scroll', check); ro.disconnect(); };
   }, []);
-  // one screen down: what is at the bottom of the view now lands at its top
-  const pageDown = () => {
-    const box = scroller.current?.closest<HTMLElement>('.body');
-    const dock = scroller.current?.querySelector<HTMLElement>('.note-dock')?.offsetHeight ?? 0;
-    box?.scrollBy({ top: box.clientHeight - dock, behavior: 'smooth' });
-  };
   const inChat = useComposerFocus();
   const slash = draft.startsWith('/') && !draft.includes(' ') ? SKILLS.filter((k) => `/${k.cmd}`.startsWith(draft.trim().toLowerCase())) : [];
   // a skill keeps the page at the bottom of the chat while its answer comes in
@@ -354,7 +348,6 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
       </section>}
 
       <div ref={dockRef} className={`note-dock${dockEnd ? ' at-end' : ''}`}>
-      {!atBottom && <button className="more-below" aria-label="Show more" data-tip="More below" onClick={pageDown}><IconArrowDown width={18} height={18} /></button>}
       {slash.length > 0 ? (
         <div className="slash-menu" role="listbox" aria-label="Commands">
           {slash.map((k) => <button key={k.cmd} role="option" aria-selected={false} disabled={busy} onClick={() => runSkill(k)}><strong>/{k.cmd}</strong><span>{k.label}</span></button>)}
