@@ -6,33 +6,31 @@ describe('the Admin button', () => {
     for (const role of ['owner', 'admin', 'member', null, undefined]) expect(canAdmin('local', role)).toBe(true);
   });
 
-  it('shows for owners and admins in Cloud, and before a workspace exists, and never for members', () => {
-    expect(canAdmin('cloud', 'owner')).toBe(true);
-    expect(canAdmin('cloud', 'admin')).toBe(true);
-    expect(canAdmin('cloud', null)).toBe(true);
-    expect(canAdmin('cloud', undefined)).toBe(true);
-    expect(canAdmin('cloud', 'member')).toBe(false);
+  it('shows for everyone in Cloud too, members included, since it holds their own AI settings and Connectors', () => {
+    for (const role of ['owner', 'admin', 'member', null, undefined]) expect(canAdmin('cloud', role)).toBe(true);
   });
 });
 
 describe('which nav shows', () => {
   it('follows from the page: workspace pages open the Admin nav, the rest the account nav', () => {
     for (const p of WORKSPACE_PAGES) expect(modeOf(p)).toBe('admin');
-    for (const p of ['preferences', 'memory', 'connectors', 'voice']) expect(modeOf(p)).toBe('account');
+    for (const p of ['preferences', 'memory', 'calendar', 'meetings', 'voice']) expect(modeOf(p)).toBe('account');
+    for (const p of ['developers', 'guardrails', 'connectors']) expect(modeOf(p)).toBe('admin');
   });
 
-  it('lists General and Notifications alone in the Local edition and in a Cloud build without a hosted account', () => {
-    expect(workspacePages('local', false)).toEqual(['general', 'notifications']);
-    expect(workspacePages('local', true, true)).toEqual(['general', 'notifications']);
-    expect(workspacePages('cloud', null)).toEqual(['general', 'notifications']);
-    expect(workspacePages('cloud', false)).toEqual(['general', 'notifications']);
-    expect(workspacePages('cloud', false, true)).toEqual(['general', 'notifications']);
+  it('lists the top pages alone in the Local edition, in a Cloud build without a hosted account, and for a member', () => {
+    expect(workspacePages('local', false)).toEqual(['general', 'notifications', 'developers', 'guardrails', 'connectors']);
+    expect(workspacePages('local', true, true)).toEqual(['general', 'notifications', 'developers', 'guardrails', 'connectors']);
+    expect(workspacePages('cloud', null)).toEqual(['general', 'notifications', 'developers', 'guardrails', 'connectors']);
+    expect(workspacePages('cloud', false)).toEqual(['general', 'notifications', 'developers', 'guardrails', 'connectors']);
+    expect(workspacePages('cloud', false, true)).toEqual(['general', 'notifications', 'developers', 'guardrails', 'connectors']);
+    expect(workspacePages('cloud', true, true, 'member')).toEqual(['general', 'notifications', 'developers', 'guardrails', 'connectors']);
   });
 
   it('adds Teams and Billing once a Cloud build reached a hosted account, and the team pages only with a team on', () => {
-    expect(workspacePages('cloud', true)).toEqual(['general', 'notifications', 'teams', 'billing']);
-    expect(workspacePages('cloud', true, false)).toEqual(['general', 'notifications', 'teams', 'billing']);
-    expect(workspacePages('cloud', true, true)).toEqual(['general', 'notifications', 'teams', 'billing', 'knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails']);
+    expect(workspacePages('cloud', true)).toEqual([...['general', 'notifications', 'developers', 'guardrails', 'connectors'], 'teams', 'billing']);
+    expect(workspacePages('cloud', true, false, 'admin')).toEqual([...['general', 'notifications', 'developers', 'guardrails', 'connectors'], 'teams', 'billing']);
+    expect(workspacePages('cloud', true, true, 'owner')).toEqual([...['general', 'notifications', 'developers', 'guardrails', 'connectors'], 'teams', 'billing', 'knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails']);
     for (const p of TEAM_PAGES) expect(workspacePages('cloud', true, false)).not.toContain(p);
   });
 });
@@ -54,6 +52,15 @@ describe('resolving a remembered page', () => {
     expect(resolvePage('org-voice', true, undefined, flagHiddenPages(null))).toBe('org-voice');
   });
 
+  it('hides the Guardrails page with the guardrails flag off and sends a remembered visit to General', () => {
+    expect(flagHiddenPages('voice')).toEqual([]);
+    expect(flagHiddenPages('voice', false)).toEqual(['guardrails']);
+    expect(flagHiddenPages(null, false)).toEqual(['voice', 'guardrails']);
+    expect(resolvePage('guardrails', true, undefined, flagHiddenPages('voice', false))).toBe('general');
+    expect(resolvePage('guardrails', true, undefined, flagHiddenPages('voice', true))).toBe('guardrails');
+    expect(resolvePage('org-guardrails', true, undefined, flagHiddenPages('voice', false))).toBe('org-guardrails');
+  });
+
   it('keeps a page the current nav may show', () => {
     expect(resolvePage('org-voice', true)).toBe('org-voice');
     expect(resolvePage('calendar', false)).toBe('calendar');
@@ -70,6 +77,7 @@ describe('resolving a remembered page', () => {
     expect(resolvePage('org-guardrails', true, ['general'])).toBe('general');
     expect(resolvePage('members', true, ['general', 'teams', 'billing', 'knowledge', 'members'])).toBe('members');
     expect(resolvePage('calendar', true, ['general'])).toBe('calendar');
+    expect(resolvePage('connectors', true, ['general', 'notifications', 'developers', 'guardrails', 'connectors'])).toBe('connectors');
   });
 
   it('maps the retired Profile and Platform pages and anything unknown to Preferences', () => {

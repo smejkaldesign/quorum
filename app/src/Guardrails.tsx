@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react';
 import type { GuardrailRule, GuardrailsState } from './quorum';
 import { Row, Toggle, useMenu } from './controls';
+import { useFlag } from './flags';
 import { IconCheck, IconClose, IconFolder, IconLock, IconMore, IconPlus, IconSearch, IconShield, IconTrash } from './icons';
 
 // Settings › Guardrails: what an agent may read from the Agent OS and say about it, as one list in two scopes. The
 // individual rules: built-in rules first, then what the connected Agent OS offers (its CLAUDE.md rules, frontmatter
 // conventions, Obsidian exclusions, guard hooks and opt-out lists, reviewed one by one and off until included), then
 // the person's own rules with an Add sheet and a live test. The organization or team rules an admin set, locked.
-// Then the recent denials so the guards are seen working. Every row says what it reaches once it is on.
+// Then the recent denials so the guards are seen working. Every row says what it reaches once it is on. With the
+// guardrails-custom flag off the page shows the built-in rules and the denials alone: every other rule, Your rules and
+// Try a path wait for that flag, and the person's own Agent OS holds any rule beyond the built-in ones meanwhile.
 const KIND_LABEL: Record<string, string> = { path: 'Folder', frontmatter: 'Frontmatter key', secret: 'File name pattern', term: 'Term', hook: 'Hook from your Agent OS' };
 const ORIGIN: Record<string, string> = { hook: 'Hook', terms: 'Opt-out list', 'claude-md': 'CLAUDE.md', frontmatter: 'Frontmatter', obsidian: 'Obsidian' };
 const KIND_HINT: Record<string, string> = {
@@ -22,6 +25,7 @@ export function GuardrailsPage() {
   const [st, setSt] = useState<GuardrailsState | null>(null);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState('');
+  const custom = useFlag('guardrails-custom');
   // opening the page scans the Agent OS again, so a rule added to CLAUDE.md or a newly tagged folder shows up here
   const refresh = (fresh = false) => window.quorum.guardrailsGet(fresh ? { fresh: true } : undefined).then((s) => { if (s) setSt(s); }).catch(() => {});
   useEffect(() => { refresh(true); }, []);
@@ -55,61 +59,66 @@ export function GuardrailsPage() {
 
   return (
     <>
-      <p className="set-lede">What Quorum's agent may read from your Agent OS and say about it. Every rule only ever denies, so the rules below add up. Individual rules are yours and work in both editions; organization or team rules come from your workspace admins. {st.summary.on} on{st.summary.toReview ? `, ${st.summary.toReview} to review` : ''}.</p>
+      {custom
+        ? <p className="set-lede">What Quorum's agent may read from your Agent OS and say about it. Every rule only ever denies, so the rules below add up. Individual rules are yours and work in both editions; organization or team rules come from your workspace admins. {st.summary.on} on{st.summary.toReview ? `, ${st.summary.toReview} to review` : ''}.</p>
+        : <p className="set-lede">What Quorum's agent may never read from your Agent OS or say about it. These rules are built in and work in both editions. {builtIns.filter((r) => r.enabled).length} on.</p>}
       {error && <p className="set-error">{error}</p>}
 
       <h3>Built in</h3>
       <div className="set-card">{builtIns.map(ruleRow)}</div>
 
-      {pending.length > 0 && (
+      {custom && (
         <>
-          <h3>Found in your Agent OS · {pending.length} to review</h3>
-          <p className="mcp-lede">{scanNote(st)} Include one and it applies on every read, sync and share Quorum makes; leave it out and nothing changes. Only rules that change what Quorum reads, writes, syncs, shares or lets an agent say are offered.</p>
-          <div className="set-card">{pending.map(ruleRow)}</div>
-        </>
-      )}
-      {decided.length > 0 && (
-        <>
-          <h3>From your Agent OS</h3>
-          {pending.length === 0 && <p className="mcp-lede">{scanNote(st)}</p>}
-          <div className="set-card">{decided.map(ruleRow)}</div>
-        </>
-      )}
-      {fromOs.length === 0 && (
-        <>
-          <h3>From your Agent OS</h3>
-          <p className="mcp-lede guard-note">{scanNote(st)} Nothing to offer beyond the built-in rules, which cover its private folders and confidential notes.</p>
-        </>
-      )}
-      {st.skipped.length > 0 && (
-        <details className="guard-skipped">
-          <summary>{st.skipped.length} {st.skipped.length === 1 ? 'thing' : 'things'} in your Agent OS looked at and left out</summary>
-          <ul>{st.skipped.map((s) => <li key={s.name}><strong>{s.name}</strong> {s.reason}</li>)}</ul>
-        </details>
-      )}
+          {pending.length > 0 && (
+            <>
+              <h3>Found in your Agent OS · {pending.length} to review</h3>
+              <p className="mcp-lede">{scanNote(st)} Include one and it applies on every read, sync and share Quorum makes; leave it out and nothing changes. Only rules that change what Quorum reads, writes, syncs, shares or lets an agent say are offered.</p>
+              <div className="set-card">{pending.map(ruleRow)}</div>
+            </>
+          )}
+          {decided.length > 0 && (
+            <>
+              <h3>From your Agent OS</h3>
+              {pending.length === 0 && <p className="mcp-lede">{scanNote(st)}</p>}
+              <div className="set-card">{decided.map(ruleRow)}</div>
+            </>
+          )}
+          {fromOs.length === 0 && (
+            <>
+              <h3>From your Agent OS</h3>
+              <p className="mcp-lede guard-note">{scanNote(st)} Nothing to offer beyond the built-in rules, which cover its private folders and confidential notes.</p>
+            </>
+          )}
+          {st.skipped.length > 0 && (
+            <details className="guard-skipped">
+              <summary>{st.skipped.length} {st.skipped.length === 1 ? 'thing' : 'things'} in your Agent OS looked at and left out</summary>
+              <ul>{st.skipped.map((s) => <li key={s.name}><strong>{s.name}</strong> {s.reason}</li>)}</ul>
+            </details>
+          )}
 
-      <div className="set-head">
-        <h3>Your rules</h3>
-        <span className="set-head-actions"><button className="pill small-pill with-icon" onClick={() => setAdding(true)}><IconPlus width={15} height={15} />Add rule</button></span>
-      </div>
-      {mine.length ? <div className="set-card">{mine.map(ruleRow)}</div> : <div className="set-card set-zero small"><p>No rules of your own yet. Add a folder, a frontmatter key, a file name pattern or a term.</p></div>}
+          <div className="set-head">
+            <h3>Your rules</h3>
+            <span className="set-head-actions"><button className="pill small-pill with-icon" onClick={() => setAdding(true)}><IconPlus width={15} height={15} />Add rule</button></span>
+          </div>
+          {mine.length ? <div className="set-card">{mine.map(ruleRow)}</div> : <div className="set-card set-zero small"><p>No rules of your own yet. Add a folder, a frontmatter key, a file name pattern or a term.</p></div>}
 
-      {workspace.length > 0 && (
-        <>
-          <h3>Organization or team</h3>
-          <p className="mcp-lede">Set by your workspace admins for everyone in the organization or team. They apply on every member's Mac and cannot be turned off here.</p>
-          <div className="set-card">{workspace.map(ruleRow)}</div>
+          {workspace.length > 0 && (
+            <>
+              <h3>Organization or team</h3>
+              <p className="mcp-lede">Set by your workspace admins for everyone in the organization or team. They apply on every member's Mac and cannot be turned off here.</p>
+              <div className="set-card">{workspace.map(ruleRow)}</div>
+            </>
+          )}
+          <Tester />
         </>
       )}
-
-      <Tester />
 
       <h3>Recent denials</h3>
       {st.denials.length ? (
         <div className="set-card guard-denials">
-          {st.denials.map((d, i) => <div key={`${d.t}-${i}`} className="guard-denial"><span className="guard-when">{new Date(d.t).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span><span className="guard-path">{(d.path || '').replace(/^\/Users\/[^/]+/, '~')}</span><span className="guard-why">{d.reason.replace(/^Quorum read guard: /, '')}</span></div>)}
+          {st.denials.map((d) => <div key={d.id} className="guard-denial"><span className="guard-when">{new Date(d.t).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span><span className="guard-path">{(d.path || '').replace(/^\/Users\/[^/]+/, '~')}</span><span className="guard-why">{d.guardLabel}: {d.reason.replace(/^Quorum read guard: /, '')}{d.surface === 'keeper' ? ' The memory keeper left this note out.' : ''}</span></div>)}
         </div>
-      ) : <div className="set-card set-zero small"><p>Nothing denied yet. Every read the guards refuse shows up here.</p></div>}
+      ) : <div className="set-card set-zero small"><p>Nothing denied yet. Every read the guards refuse shows up here, newest first.</p></div>}
 
       {adding && <AddRule onClose={() => setAdding(false)} onAdd={async (r) => { const out = await window.quorum.guardrailsAdd(r); if (out?.error) return out.error; setAdding(false); await refresh(); return null; }} />}
     </>

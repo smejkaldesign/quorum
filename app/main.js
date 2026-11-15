@@ -60,6 +60,7 @@ import { calendarWindow, normalizeDays } from './calendarWindow.js';
 import { feedPage, feedRows, labelOf } from './activityFeed.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
 import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, relatedOf, seriesKey, seriesOf } from './meetingBrief.js';
+import { collectExport, exportFileName, writeZip } from './exportNotes.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // Every IPC call must come from Quorum's own page (dist/index.html, any hash). A page that got into a window some other
@@ -235,6 +236,8 @@ const keeper = createKeeper({
   brain: () => brain(), settings, saveSettings: () => store.settings.save(), guards: () => guardrails.compiled(), wouldBlock,
   runText: (prompt, system) => runClaude(prompt, system, 'haiku'), hasModel: () => modelSource() !== 'none', owner: () => USER_NAME,
   log: (...a) => log(...a), onChange: (r) => toUI('keeper', r), errorLog: KEEPER_ERRORS, versions: memoryVersions, live: liveRuns,
+  // a meeting note the guardrails keep the keeper out of goes on the Recent denials list
+  onGuarded: (rel, why) => guardrails.recordDenial({ path: rel, reason: why, surface: 'keeper' }),
 });
 ipcMain.handle('keeper-status', () => keeper.status());
 ipcMain.handle('keeper-set', (_e, patch) => keeper.set(patch ?? {}));
@@ -1396,6 +1399,18 @@ ipcMain.handle('set-settings', (_e, next) => {
   }
   if (typeof next.memoryHighlight === 'boolean') {
     settings.memoryHighlight = next.memoryHighlight;
+    store.settings.save();
+  }
+  // provider MCPs the person disconnected from Quorum, by connector id
+  if (Array.isArray(next.mcpIgnored)) {
+    settings.mcpIgnored = [...new Set(next.mcpIgnored.filter((x) => typeof x === 'string' && /^[a-z0-9-]{1,40}$/.test(x)))].slice(0, 100);
+    store.settings.save();
+  }
+  // which of Quorum's in-app notifications show in the bell; only the known kinds, as booleans
+  if (next.notifications && typeof next.notifications === 'object') {
+    const n = {};
+    for (const k of ['noteUpdates', 'memoryChanges', 'reviews', 'guardrails']) if (typeof next.notifications[k] === 'boolean') n[k] = next.notifications[k];
+    settings.notifications = { ...(settings.notifications ?? {}), ...n };
     store.settings.save();
   }
   if (Number.isInteger(next.memoryDotDays) && next.memoryDotDays >= 1 && next.memoryDotDays <= 365) {
@@ -2644,6 +2659,8 @@ ipcMain.handle('guardrails-set', (_e, id, patch) => reindexed(guardrails.set(Str
 ipcMain.handle('guardrails-add', (_e, rule) => reindexed(guardrails.add(rule ?? {})));
 ipcMain.handle('guardrails-remove', (_e, id) => reindexed(guardrails.remove(String(id ?? ''))));
 ipcMain.handle('guardrails-test', (_e, rel) => guardrails.test(String(rel ?? '')));
+// the refusals the guardrails made, newest first, for the Guardrails page and the notification center
+ipcMain.handle('guardrail-denials', (_e, opts) => guardrails.denials({ since: opts?.since ?? null, limit: opts?.limit }));
 ipcMain.handle('update-status', () => updates?.state() ?? { status: 'off', current: app.getVersion(), version: null, percent: 0, notes: null, checkedAt: null, error: null });
 ipcMain.handle('update-check', async () => (updates ? updates.check() : { status: 'off' }));
 ipcMain.handle('update-install', () => !!updates?.install());
@@ -2861,6 +2878,28 @@ ipcMain.handle('reveal-brain', () => { if (settings.brainRoot) shell.openPath(se
 // forgetting the Agent OS leaves every file where it is; Quorum stops reading it, and a meetings folder found inside it is no longer found
 ipcMain.handle('disconnect-brain', () => { Object.assign(settings, { brainRoot: null, vaultPath: null, brainMade: null }); store.settings.save(); log('disconnected Agent OS'); suggester.reset(); openIndex(); brainChanged(); return null; });
 ipcMain.handle('clear-meetings-dir', () => { settings.meetingsDir = null; saveSettings(); brainChanged(); return true; });
+// Settings, Export your notes: the person picks where the zip goes; progress reaches the page as 'export-progress'
+let exporting = false;
+ipcMain.handle('export-notes', async () => {
+  if (exporting) return { error: 'An export is already running.' };
+  const r = await dialog.showSaveDialog(win, { title: 'Export your notes', defaultPath: path.join(app.getPath('downloads'), exportFileName()), filters: [{ name: 'Zip archive', extensions: ['zip'] }] });
+  if (r.canceled || !r.filePath) return { canceled: true };
+  exporting = true;
+  try {
+    const vault = brain()?.vault ?? null;
+    const entries = collectExport({ vault, meetingsDir: meetingsDir(), meetingSources: vault ? store.meetings.sources(vault) : [], chatsDir: store.chats.dir });
+    if (!entries.length) return { error: 'There are no notes or chats to export yet.' };
+    toUI('export-progress', { done: 0, total: entries.length });
+    let last = 0;
+    const out = await writeZip(entries, r.filePath, { onProgress: (p) => { const now = Date.now(); if (p.done === p.total || now - last > 150) { last = now; toUI('export-progress', p); } } });
+    log('export', `${out.files} files`, out.skipped ? `${out.skipped} skipped` : '');
+    return { ok: true, path: r.filePath, ...out };
+  } catch (err) {
+    log('export failed', err?.message ?? err);
+    return { error: err?.message && /archive can hold/.test(err.message) ? err.message : 'The export could not be written. Check that the folder is writable and try again.' };
+  } finally { exporting = false; }
+});
+ipcMain.handle('export-reveal', (_e, file) => { if (typeof file === 'string' && file.endsWith('.zip') && existsSync(file)) shell.showItemInFolder(file); });
 
 ipcMain.handle('end', () => endMeeting());
 // pause keeps everything so far; nothing new is recorded until resume

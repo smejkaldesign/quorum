@@ -12,12 +12,12 @@ import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
 import { BrainCheckPanel, ContextPanel, SkillsPanel } from './PluginPanels';
-import { AccountArea, BillingArea, EDITION, KnowledgeBasesArea, KnowledgeQueueArea, MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
+import { AccountArea, BillingArea, DeleteAccountArea, DeleteOrgArea, EDITION, KnowledgeBasesArea, KnowledgeQueueArea, MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { TOP_ADMIN_PAGES, canAdmin, flagHiddenPages, modeOf, resolvePage, voiceMode, workspacePages, type Page } from './settingsNav';
 import { EnvSwitch } from './EnvSwitch';
 import { AgentRows, ConnectionCheckButton, ConnectionCheckList, useAgents, useConnectionCheck, type Agents } from './AgentLinks';
 import { MeetingSourcesRows } from './MeetingSources';
-import { useFlags, useNotetaker } from './flags';
+import { useFlag, useFlags, useNotetaker } from './flags';
 import { MemoryUpdatesCard } from './MemoryUpdates';
 import {
   IconBell, IconBrain, IconBuilding, IconCalendar, IconChat, IconFolder, IconGrid, IconKeyboard, IconLock,
@@ -32,16 +32,16 @@ const ACCOUNT: Nav[] = [
   { id: 'memory', label: 'Memory', icon: IconBrain },
   { id: 'calendar', label: 'Calendar', icon: IconCalendar },
   { id: 'meetings', label: 'Meetings', icon: IconMic },
-  { id: 'connectors', label: 'Connectors', icon: IconGrid },
   { id: 'voice', label: 'Voice typing', icon: IconKeyboard },
-  { id: 'developers', label: 'AI settings', icon: IconCode },
-  { id: 'guardrails', label: 'Guardrails', icon: IconShield },
 ];
 // the pages behind the Admin button; settingsNav.workspacePages decides which of them a build lists. The first two are
 // about the person; the rest sit under the Workspace heading
 const WORKSPACE: Nav[] = [
   { id: 'general', label: 'General', icon: IconBuilding },
-  { id: 'notifications', label: 'Notifications', icon: IconBell, soon: true },
+  { id: 'notifications', label: 'Notifications', icon: IconBell },
+  { id: 'developers', label: 'AI tools', icon: IconCode },
+  { id: 'guardrails', label: 'Guardrails', icon: IconShield },
+  { id: 'connectors', label: 'Connectors', icon: IconGrid },
   { id: 'teams', label: 'Teams', icon: IconPeople },
   { id: 'billing', label: 'Billing', icon: IconScale },
   { id: 'knowledge', label: 'Knowledge', icon: IconBrain },
@@ -88,9 +88,10 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   // a cloud build without hosted account config has no members to list, so the page leaves the nav; the team-level
   // pages come and go with the Teams page's switch
   const hosted = useHostedAccounts();
-  const listed = workspacePages(EDITION, hosted, account?.workspace?.teamEnabled === true);
+  const listed = workspacePages(EDITION, hosted, account?.workspace?.teamEnabled === true, account?.workspace?.role);
   const voice = voiceMode(nt.dictation, nt.manualListen);
-  const hidden = flagHiddenPages(voice);
+  const guardrailsOn = useFlag('guardrails');
+  const hidden = flagHiddenPages(voice, guardrailsOn);
   const page = resolvePage(saved, admin, listed, hidden);
   const mode = modeOf(page);
   const quorumEmail = account?.signedIn ? account.email : null;
@@ -109,7 +110,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   // with dictation off, the account Voice typing page is Notes: what Record captures, then the Dictionary (settingsNav.voiceMode)
   const named = (n: Nav): Nav => (n.id === 'voice' && voice === 'dictionary' ? { ...n, label: 'Notes' } : n);
   const accountNav = ACCOUNT.filter((n) => !hidden.includes(n.id)).map(named);
-  const adminNav = WORKSPACE.filter((n) => (listed as Page[]).includes(n.id));
+  const adminNav = WORKSPACE.filter((n) => (listed as Page[]).includes(n.id) && !hidden.includes(n.id));
   const topNav = adminNav.filter((n) => (TOP_ADMIN_PAGES as Page[]).includes(n.id));
   const workspaceNav = adminNav.filter((n) => !(TOP_ADMIN_PAGES as Page[]).includes(n.id));
   const all = [...ACCOUNT, ...WORKSPACE].map(named);
@@ -200,7 +201,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
             : page === 'calendar' ? <CalendarPage onConnector={goConnector} />
             : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} onConnector={goConnector} teamMeetings={EDITION === 'cloud' && account?.workspace?.teamEnabled === true} />
             : page === 'developers' ? <DevelopersPage />
-            : page === 'notifications' ? <NotificationsPage />
+            : page === 'notifications' ? <NotificationsPage settings={settings} set={set} />
             : page === 'connectors' ? <ConnectorsPage detail={connectorDetail} onDetail={setConnectorDetail} library={connLib} onLibrary={setConnLib} brain={brain} onFolder={onConnect} onNotes={() => go('memory')} focus={connectorsFocus} />
             : <VoicePage settings={settings} onSettings={onSettings} dictionaryOnly={voice === 'dictionary'} screenRow={nt.screenContext} />}
         </div>
@@ -467,18 +468,37 @@ function ProfilePage({ settings, email, emailLabel, name, onSettings, children }
 
       <h3>Account management</h3>
       <div className="set-card form">
-        <Row icon={<IconStack width={18} height={18} />} title={<>Export your notes<Soon /></>} desc="Will save every note and meeting as one archive. They are already plain files in your Agent OS">
-          <button className="pill" disabled>Export</button>
-        </Row>
+        <ExportRow />
       </div>
 
-      <h3>Danger zone</h3>
-      <div className="set-card danger">
-        <Row icon={<IconPower width={18} height={18} />} title={<>Delete my account<Soon /></>} desc="Will remove a hosted account and everything synced to it. Files on this Mac stay">
-          <button className="pill danger-pill" disabled>Delete my account</button>
-        </Row>
-      </div>
+      <DeleteAccountArea />
     </>
+  );
+}
+
+// one zip of every note, meeting note and chat, saved where the person picks. The notes are already plain markdown
+// files in the vault; the archive also holds the chats, which only Quorum's own folder has
+type ExportState = { phase: 'idle' | 'running' | 'done' | 'error'; done?: number; total?: number; path?: string; files?: number; skipped?: number; error?: string };
+function ExportRow() {
+  const [state, setState] = useState<ExportState>({ phase: 'idle' });
+  useEffect(() => window.quorum.onExportProgress((p) => setState((s) => (s.phase === 'running' ? { ...s, done: p.done, total: p.total } : s))), []);
+  const run = async () => {
+    setState({ phase: 'running' });
+    const r = await window.quorum.exportNotes().catch(() => ({ error: 'The export could not be written. Try again.' }) as Awaited<ReturnType<Window['quorum']['exportNotes']>>);
+    if (r.canceled) setState({ phase: 'idle' });
+    else if (r.error) setState({ phase: 'error', error: r.error });
+    else setState({ phase: 'done', path: r.path, files: r.files, skipped: r.skipped });
+  };
+  const n = (v: number | undefined, word: string) => `${(v ?? 0).toLocaleString()} ${v === 1 ? word : `${word}s`}`;
+  const desc = state.phase === 'running' ? (state.total ? `Writing ${n(state.done, 'file')} of ${state.total.toLocaleString()}` : 'Gathering your notes')
+    : state.phase === 'done' ? `Saved ${n(state.files, 'file')}${state.skipped ? `; ${n(state.skipped, 'file')} could not be read` : ''}`
+    : state.phase === 'error' ? state.error ?? 'The export could not be written.'
+    : 'Saves every note, meeting note and chat as one zip archive. Your notes are also plain files in your Agent OS';
+  return (
+    <Row icon={<IconStack width={18} height={18} />} title="Export your notes" desc={desc}>
+      {state.phase === 'done' && state.path && <button className="pill" onClick={() => window.quorum.exportReveal(state.path!)}>Show in Finder</button>}
+      <button className="pill" disabled={state.phase === 'running'} onClick={run}>{state.phase === 'running' ? <><span className="spinner tiny" /> Exporting</> : 'Export'}</button>
+    </Row>
   );
 }
 
@@ -562,6 +582,8 @@ function WorkspacePage({ settings, onSettings, onGo, billing, company }: { setti
       </div>
       <CustomerBlacklist list={w.optOuts ?? (w.neverListen ?? []).map((domain) => ({ domain }))} onChange={(optOuts) => save({ optOuts })} />
       </>}
+
+      <DeleteOrgArea />
     </>
   );
 }
@@ -1168,34 +1190,19 @@ function AboutCard() {
 }
 
 // every row is planned work: the controls are disabled on purpose and each line says what the notification will do
-function NotificationsPage() {
-  const channel = (v: string) => (
-    <select className="set-select" disabled defaultValue={v}><option value="notification">Notification</option><option value="email">Email</option><option value="off">Off</option></select>
-  );
+function NotificationsPage({ settings, set }: { settings: Settings; set: (patch: Partial<Settings>) => void }) {
+  // which of Quorum's own notifications show in the bell's list and count toward its dot; all on until turned off
+  const n = { noteUpdates: true, memoryChanges: true, reviews: true, guardrails: true, ...(settings.notifications ?? {}) };
+  const flip = (k: keyof typeof n) => (on: boolean) => set({ notifications: { ...n, [k]: on } });
   return (
     <>
-      <p className="mcp-lede">Quorum sends no notifications yet. These rows show what each one will do, and the defaults it will start with.</p>
-      <h3>Meeting notifications</h3>
-      <div className="set-card">
-        <Row icon={<IconCalendar width={18} height={18} />} title={<>Scheduled meetings<Soon /></>} desc="Will notify you 1 minute before a meeting on your calendar starts"><Toggle on onChange={noop} disabled /></Row>
-        <Row icon={<Wave live={false} />} title={<>Detected meetings<Soon /></>} desc="Will notify you when Quorum sees a call start"><Toggle on onChange={noop} disabled /></Row>
-        <div className="set-nested">
-          <strong>Don't notify me when a call starts in these apps<Soon /></strong>
-          <select className="set-select full" disabled defaultValue=""><option value="">Select apps</option></select>
-        </div>
-      </div>
-
+      <p className="mcp-lede">What Quorum's agents did, in the bell at the top of the window. Turn off a kind to leave it out of the list and the dot.</p>
       <h3>From Quorum</h3>
       <div className="set-card">
-        <Row icon={<IconNotes width={18} height={18} />} title={<>Notes are ready<Soon /></>} desc="Will tell you right after a meeting ends">{channel('notification')}</Row>
-        <Row icon={<IconChat width={18} height={18} />} title={<>Suggested answers<Soon /></>} desc="Will tell you when someone asks you a question in a call">{channel('notification')}</Row>
-        <Row icon={<IconCalendar width={18} height={18} />} title={<>Follow-ups due<Soon /></>} desc="Will remind you the morning a follow-up is due">{channel('off')}</Row>
-      </div>
-
-      <h3>Sharing notifications</h3>
-      <div className="set-card">
-        <Row icon={<IconPeople width={18} height={18} />} title={<>Note shared with you<Soon /></>} desc="Will tell you when a teammate shares a note">{channel('email')}</Row>
-        <Row icon={<IconStack width={18} height={18} />} title={<>Company knowledge changes<Soon /></>} desc="Will tell you when an admin includes or removes something">{channel('off')}</Row>
+        <Row icon={<IconNotes width={18} height={18} />} title="Note updates" desc="Quorum updated, filed, linked or referenced one of your notes"><Toggle on={n.noteUpdates} onChange={flip('noteUpdates')} /></Row>
+        <Row icon={<IconBrain width={18} height={18} />} title="Memory changes" desc="Quorum created or changed a memory page"><Toggle on={n.memoryChanges} onChange={flip('memoryChanges')} /></Row>
+        <Row icon={<IconBell width={18} height={18} />} title="Needs your review" desc="A change Quorum made is waiting for your approval"><Toggle on={n.reviews} onChange={flip('reviews')} /></Row>
+        <Row icon={<IconShield width={18} height={18} />} title="Guardrail blocked something" desc="A built-in guardrail kept the agent from a file or a person"><Toggle on={n.guardrails} onChange={flip('guardrails')} /></Row>
       </div>
     </>
   );

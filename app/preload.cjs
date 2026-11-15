@@ -215,6 +215,7 @@ contextBridge.exposeInMainWorld('quorum', {
   guardrailsAdd: (rule) => ipcRenderer.invoke('guardrails-add', rule),
   guardrailsRemove: (id) => ipcRenderer.invoke('guardrails-remove', id),
   guardrailsTest: (rel) => ipcRenderer.invoke('guardrails-test', rel),
+  guardrailDenials: (opts) => ipcRenderer.invoke('guardrail-denials', opts),
   workspaceGuardrailsGet: () => ipcRenderer.invoke('workspace-guardrails-get'),
   workspaceGuardrailsSet: (rules) => ipcRenderer.invoke('workspace-guardrails-set', rules),
   updateStatus: () => ipcRenderer.invoke('update-status'),
@@ -231,12 +232,20 @@ contextBridge.exposeInMainWorld('quorum', {
   memoryExclude: (id) => ipcRenderer.invoke('memory-exclude', id),
   memoryOpen: (id) => ipcRenderer.invoke('memory-open', id),
   removePhoto: () => ipcRenderer.invoke('remove-photo'),
+  // Export your notes (exportNotes.js): a save dialog, then the zip, with progress while it is written
+  exportNotes: () => ipcRenderer.invoke('export-notes'),
+  exportReveal: (file) => ipcRenderer.invoke('export-reveal', file),
+  onExportProgress: on('export-progress'),
   // account (hosted edition): sign-in by email code, workspaces, members, sync. Handlers live in account.js
   accountStatus: () => ipcRenderer.invoke('account-status'),
   accountSendCode: (email, accessCode) => ipcRenderer.invoke('account-send-code', email, accessCode),
   accountVerifyCode: (email, code) => ipcRenderer.invoke('account-verify-code', email, code),
   accountSignOut: () => ipcRenderer.invoke('account-sign-out'),
   accountGoogle: () => ipcRenderer.invoke('account-google'),
+  // the danger zone (hosted edition; handlers in ee/account.js, migration 0039)
+  accountDeleteStatus: () => ipcRenderer.invoke('account-delete-status'),
+  accountDelete: (typed) => ipcRenderer.invoke('account-delete', typed),
+  orgDelete: (workspaceId, typed) => ipcRenderer.invoke('org-delete', workspaceId, typed),
   onAccountOAuth: on('account-oauth'),
   orgCreate: (name, domain, domainJoin) => ipcRenderer.invoke('org-create', name, domain, domainJoin),
   orgJoin: (how) => ipcRenderer.invoke('org-join', how),
