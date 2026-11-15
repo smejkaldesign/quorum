@@ -5,7 +5,7 @@ import { WhoSpoke, type WhoAnswers } from './WhoSpoke';
 import { Avatar, SpeakerName, similarCounts, type SpeakerTurn } from './Speaker';
 import mark from '../assets/quorum-mark.png';
 import { Markdown } from './Markdown';
-import { IconRecord, IconStop, IconCalendar, IconClock, IconFolder, IconLogs, IconNotes, IconPeople } from './icons';
+import { IconRecord, IconSound, IconStop, IconCalendar, IconClock, IconFolder, IconLogs, IconNotes, IconPeople } from './icons';
 import { NoteEditor } from './editor/NoteEditor';
 import { TypedTitle, useStuck } from './StickyBar';
 import { Composer } from './Composer';
@@ -21,12 +21,14 @@ export type Turn = SpeakerTurn & { who: string; voice?: number | 'mix' | 'sound'
 // heard and the summary waits for Stop, which writes it into this same page. embedded drops the window chrome
 // ready: a new note before any recording; you can type in Your notes and Save, or press Record to transcribe into it
 export function EndView({ notes, draft, meta, summarizing, transcript, participants, onSpeaker, privateNotes, onPrivateNotes, flushPrivateNotes, onClose, me, live = false, paused = false, embedded = false, partial = '', who = null, onAnswer, ready = false, onSaveDraft, onRecord, onContinue, recordBusy = false, asker }: { asker?: { name: string; photo: string | null }; onContinue?: () => void; onRecord?: () => void; recordBusy?: boolean; ready?: boolean; onSaveDraft?: (title: string) => Promise<void>; who?: WhoAsk | null; onAnswer?: (a: WhoAnswers | null) => void; live?: boolean; paused?: boolean; embedded?: boolean; partial?: string; me?: { name: string; photo: string | null }; notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; participants: string[]; onSpeaker: (id: number, name: string | null, similar: boolean) => Promise<void>; privateNotes: string; onPrivateNotes: (v: string) => void; flushPrivateNotes: () => void; onClose: () => void }) {
-  const [showing, setShowing] = useState<'summary' | 'transcript'>(live ? 'transcript' : 'summary');
+  // three tabs on one note: your Note, the Summary (once there is one) and the Transcript; the note's one chat sits below
+  const [showing, setShowing] = useState<'note' | 'summary' | 'transcript'>(live ? 'transcript' : 'note');
   // a new note's title: empty reads New note in italics, and a click puts the cursor in it
   const [title, setTitle] = useState('');
   // Stop summarization turns the summary off for this note: Stop goes straight to Save note, the transcript stays
   const [autoSum, setAutoSum] = useState(true);
   const bar = useStuck();
+  const hasSummary = !ready && !!(notes || draft || summarizing || who);
   // Stop turns the page to the summary as it is written
   useEffect(() => { if (summarizing || who) setShowing('summary'); }, [summarizing, who]);
   const [dropped, setDropped] = useState<Record<number, boolean>>({});
@@ -137,12 +139,13 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
               {meta && meta.participants > 0 && <span className="meta-pill"><IconPeople width={16} height={16} />{meta.participants}</span>}
               {meta && <span className="meta-pill">{modelName(meta.model)}</span>}
               <div className={`view-toggle${live || streaming ? ' working' : ''}`} role="group" aria-label="Show">
-                <button className={showing === 'summary' ? 'on' : ''} aria-pressed={showing === 'summary'} aria-label="Summary" data-tip="Summary" onClick={() => setShowing('summary')}><IconNotes width={16} height={16} /></button>
-                <button className={showing === 'transcript' ? 'on' : ''} aria-pressed={showing === 'transcript'} aria-label="Transcript" data-tip="Transcript" onClick={() => setShowing('transcript')}><IconLogs width={16} height={16} /></button>
+                <button className={showing === 'note' ? 'on' : ''} aria-pressed={showing === 'note'} aria-label="Note" data-tip="Note" onClick={() => setShowing('note')}><IconNotes width={16} height={16} /></button>
+                {hasSummary && <button className={showing === 'summary' ? 'on' : ''} aria-pressed={showing === 'summary'} aria-label="Summary" data-tip="Summary" onClick={() => setShowing('summary')}><IconLogs width={16} height={16} /></button>}
+                <button className={showing === 'transcript' ? 'on' : ''} aria-pressed={showing === 'transcript'} aria-label="Transcript" data-tip="Transcript" onClick={() => setShowing('transcript')}><IconSound width={16} height={16} /></button>
               </div>
             </div>
 
-            {showing === 'summary' && (
+            {showing === 'note' && (
               <section className="doc-section my-notes-section">
                 {/* while it records: the summary waits for Stop, and can be turned off for this note */}
                 {live && autoSum && (
@@ -171,7 +174,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
                 )) : !partial && <p className="muted">{ready ? 'Press Record to transcribe into this note.' : live ? (paused ? 'Paused. Resume to keep transcribing.' : 'Listening…') : 'Nothing was transcribed.'}</p>}
                 {live && partial && <p className="live-partial"><em className="partial">{partial}</em></p>}
               </section>
-            ) : <>
+            ) : showing === 'summary' && <>
             {who && onAnswer && autoSum && <WhoSpoke ask={who} onDone={onAnswer} />}
             {view.empty && !ready && <p className="muted">Nothing was transcribed.</p>}
             {view.summary ? <p className={`summary${streaming && !view.sections.length ? ' typing' : ''}`}>{view.summary}</p>

@@ -2207,5 +2207,5 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .views-wrap .meta-pill
 /* the recording page: your notes read at the summary's size and color, a divider sits between them and the summary,
    and the chat below reads at the same size */
 .end .my-notes-editor .note-rich, .end .my-notes-editor .note-rich p, .end .my-notes-editor .note-rich li { font-size: 17px; line-height: 1.6; color: #d4d4d8; }
-.end .my-notes-section { padding-bottom: 24px; margin-bottom: 26px; border-bottom: 1px solid var(--line); }
+.end .my-notes-section { padding-bottom: 12px; }
 .end .note-thread .nt-q, .end .note-thread .nt-a, .end .note-thread .nt-a .md p, .end .note-thread .nt-a .md li { font-size: 17px; line-height: 1.6; color: #d4d4d8; }
