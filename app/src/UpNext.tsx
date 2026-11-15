@@ -87,9 +87,12 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
   }, [inline, empty, cal.events.length]);
   if (empty) return null;
 
-  let rows: CalendarEvent[], more: boolean, moreOpen: boolean, toggle: () => void;
-  if (!inline) ({ rows, more } = upNextRows(cal.events, open)), moreOpen = open, toggle = () => setOpen((o) => !o);
-  else rows = dayOpen ? dayEvents : dayEvents.slice(0, 1), more = true, moreOpen = dayOpen, toggle = () => setDayOpen((o) => !o);
+  // the strip: three calls until Show all; the Home list: the first call until Show all
+  const stripRows = upNextRows(cal.events, open);
+  const rows: CalendarEvent[] = inline ? (dayOpen ? dayEvents : dayEvents.slice(0, 1)) : stripRows.rows;
+  const more = inline ? true : stripRows.more;
+  const moreOpen = inline ? dayOpen : open;
+  const toggle = inline ? () => setDayOpen((o) => !o) : () => setOpen((o) => !o);
   const label = 'Up next';
   // Show all, an outlined pill in the header that stays selected while open. The strip shows three calls until it is
   // opened and reads Show less while open; opened, its list stops at the window's height and scrolls.
