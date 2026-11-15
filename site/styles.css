@@ -326,15 +326,15 @@ ul { margin: 0; padding: 0; list-style: none; }
 .app-shot .app-window { position: relative; z-index: 1; }
 /* The starfield from the Custom plans block sits behind the frame. It covers the lower 90% of the window: it starts
    a tenth of the way down it (82px of 820px at scale --s, less the 80px rise) and ends at the section's bottom edge, on the next section's rule.
-   The mask takes it from nothing at the top to full strength at the bottom. */
+   The mask takes it from nothing at the top to 50% at the bottom, so a solid white star peaks at half strength. */
 .stars {
   position: absolute; left: 0; right: 0; bottom: 0;
   top: calc(82px * var(--s) - 80px);
   z-index: 0;
   overflow: hidden;
   pointer-events: none;
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 100%);
-  mask-image: linear-gradient(to bottom, transparent 0%, #000 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, rgba(0, 0, 0, 0.5) 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, rgba(0, 0, 0, 0.5) 100%);
 }
 .stars::before, .stars::after {
   content: "";
