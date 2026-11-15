@@ -108,7 +108,7 @@ function SavedTranscript({ turns }: { turns: { id: number; channel: 'me' | 'them
     <section className="transcript end-transcript">
       {groups.map((g) => (
         <div key={g.turns[0].id} className={`turn-group ${g.channel}`}>
-          <div className="spk">{g.who === 'Unknown' ? <span className="avatar-sm avatar-unknown" aria-label="Unknown speaker">?</span> : <><Avatar name={g.who} /><span>{g.who}</span></>}</div>
+          <div className="spk">{g.who === 'Unknown' || g.who === 'You' ? <span className="avatar-sm avatar-unknown" aria-label="Unknown speaker">?</span> : <><Avatar name={g.who} /><span>{g.who}</span></>}</div>
           {g.turns.map((t) => <p key={t.id}>{t.text}</p>)}
         </div>
       ))}
@@ -121,6 +121,14 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack }: {
 }) {
   const [note, setNote] = useState(initial);
   const [showing, setShowing] = useState<'summary' | 'transcript'>('summary');
+  const [summing, setSumming] = useState(false);
+  const [sumError, setSumError] = useState<string | null>(null);
+  async function summarize() {
+    setSumming(true); setSumError(null);
+    const r = await window.quorum.noteSummarize(note.file).catch((err) => ({ error: String(err) }));
+    setSumming(false);
+    if ('error' in r) setSumError(r.error); else await reload();
+  }
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState('');
   const [step, setStep] = useState('');
@@ -182,7 +190,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack }: {
         <h1>{note.title}</h1>
         <NoteMeta meta={{ title: note.title, date: note.date ?? null, people: note.people, source: note.source ?? null, sourceUrl: note.sourceUrl, platform: note.platform, meetingUrl: note.meetingUrl, calendar: note.calendar, event: note.event }}>
           <ViewsPill views={note.views} />
-          {!!note.transcript?.length && (
+          {(!!note.transcript?.length || note.summarizable) && (
             <div className="view-toggle" role="group" aria-label="Show">
               <button className={showing === 'summary' ? 'on' : ''} aria-pressed={showing === 'summary'} aria-label="Summary" data-tip="Summary" onClick={() => setShowing('summary')}><IconNotes width={16} height={16} /></button>
               <button className={showing === 'transcript' ? 'on' : ''} aria-pressed={showing === 'transcript'} aria-label="Transcript" data-tip="Transcript" onClick={() => setShowing('transcript')}><IconLogs width={16} height={16} /></button>
@@ -191,7 +199,15 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack }: {
         </NoteMeta>
         {share?.ask && <SourceAsk source={share.ask} data={sources} onDone={() => { loadSources(); setShareRead((n) => n + 1); }} />}
         {showing === 'transcript' && note.transcript?.length ? <SavedTranscript turns={note.transcript} />
-          : note.body.trim() ? <Markdown text={note.body} headings /> : <p className="muted">No summary yet. Ask Quorum below to write one from the transcript.</p>}
+          : note.body.trim() ? <Markdown text={note.body} headings />
+          : note.transcript?.length ? (
+            // a recording with no summary yet: the same page, and a way to write one from the transcript
+            <div className="no-summary">
+              {summing ? <p className="shimmer">Writing the summary from the transcript</p> : <p className="muted">No summary yet.</p>}
+              {sumError && <p className="set-error" role="alert">{sumError}</p>}
+              <button className="pill who-go" disabled={summing} onClick={summarize}>Generate summary from transcript</button>
+            </div>
+          ) : <p className="muted">No summary yet. Ask Quorum below to write one from the transcript.</p>}
       </article>
 
       {turns.length > 0 && (

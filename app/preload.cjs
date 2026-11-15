@@ -173,6 +173,7 @@ contextBridge.exposeInMainWorld('quorum', {
   recordSession: () => ipcRenderer.invoke('record-session'),
   sessionSummarize: (answers) => ipcRenderer.invoke('session-summarize', answers),
   meetingFolderApps: () => ipcRenderer.invoke('meeting-folder-apps'),
+  noteSummarize: (file) => ipcRenderer.invoke('note-summarize', file),
   guardrailsGet: (opts) => ipcRenderer.invoke('guardrails-get', opts),
   guardrailsSet: (id, patch) => ipcRenderer.invoke('guardrails-set', id, patch),
   guardrailsAdd: (rule) => ipcRenderer.invoke('guardrails-add', rule),

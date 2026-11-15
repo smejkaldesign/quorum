@@ -51,6 +51,7 @@ import { createUpdater, feedFor } from './updater.js';
 import { createGuardrails } from './guardrails.js';
 import { createPlatformCache, eventRef, matchPlatforms } from './meetingPlatforms.js';
 import { calendarWindow, normalizeDays } from './calendarWindow.js';
+import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
 import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, seriesKey, seriesOf } from './meetingBrief.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -1742,12 +1743,16 @@ ipcMain.handle('read-note', (_e, file) => {
     .replace(/^##\s+Private notes\s*\n+None\s*\n/m, '')
     .replace(/^##\s+Summary\s*\n/m, '')
     .trim();
+  // a recorded note's transcript shows on its own tab; the rest is the summary (noteTranscript.js)
+  const split = splitRecorded(body, { recorded: fm.recorded === true || fm.recorded === 'true' });
+  const sessionTurns = savedTranscript(fm);
   return {
-    file: abs, rel: path.relative(b.vault, abs), title: fm.title, date: fm.date, people: fm.participants.filter((p) => !isSelf(p)).map(personName), body,
+    file: abs, rel: path.relative(b.vault, abs), title: fm.title, date: fm.date, people: fm.participants.filter((p) => !isSelf(p)).map(personName), body: split.summary,
+    summarizable: !!split.transcript && !split.summary,
     visibility: fm.visibility === 'public' ? 'public' : 'private', withheld: text !== original, link: `quorum://note/${encodeURIComponent(fm.granola_id || path.relative(b.vault, abs))}`, ...noteLink(abs),
     source: fm.source ? String(fm.source) : folderAppOf(abs),
     ...noteMeetingApps(fm, abs),
-    transcript: savedTranscript(fm),
+    transcript: sessionTurns.length ? sessionTurns : split.transcript ? parseTurns(split.transcript) : [],
     views: (views.record({ file: abs, who: 'human', via: 'quorum', bytes: Buffer.byteLength(original) }), views.of(abs)),
   };
 });
@@ -1773,6 +1778,31 @@ function savedTranscript(fm) {
   } catch { return []; }
   return turns;
 }
+
+// Generate summary, from the reader: a recorded note with only its transcript gets a title and a summary written by
+// the person's own model, above the transcript, which stays as it was. Only notes Quorum recorded are written
+ipcMain.handle('note-summarize', async (_e, file) => {
+  const abs = meetingFile(file);
+  if (!abs) return { error: 'That note is not in your meetings folder.' };
+  const original = store.notes.read(abs);
+  const fm = readFrontmatter(original);
+  const own = fm.source === 'quorum' || ['quorum', 'quorum-dev'].includes(folderAppOf(abs));
+  if (!own) return { error: 'Only notes Quorum recorded can be summarized here.' };
+  if (modelSource() === 'none') return { error: 'Choose a model in Settings to write a summary.' };
+  const fmBlock = original.match(/^---\n[\s\S]*?\n---\n/)?.[0] ?? '';
+  const rest = original.slice(fmBlock.length).trim().replace(/^#\s+.+\n/, '').trim();
+  const split = splitRecorded(rest, { recorded: true });
+  if (!split.transcript) return { error: 'This note has no transcript to summarize.' };
+  try {
+    const r = parseSummary(suggester.redactLines(await runClaude(suggester.redactLines(split.transcript).slice(0, 60000), SUMMARY_SYSTEM, settings.model)));
+    if (!r) return { error: 'The model did not return a summary. Try again.' };
+    const title = r.title || fm.title || 'Untitled note';
+    const head = fmBlock ? setFrontmatterKey(fmBlock, 'title', JSON.stringify(title)) : '';
+    store.notes.write(abs, `${head}${head.endsWith('\n') ? '' : '\n'}\n# ${title}\n\n${withSummary(r.body, split.transcript)}`);
+    keeper.schedule('note');
+    return { ok: true };
+  } catch (err) { log('note summary', err?.message); return { error: 'Quorum could not write the summary this time.' }; }
+});
 
 // the calendar event, meeting app and notetaker link of a note, for the reader's details line
 function noteMeetingApps(fm, abs) {
