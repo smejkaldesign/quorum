@@ -1905,7 +1905,7 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .rec-level-ring { stroke: var(--go); }
 .rec-level-fill { fill: var(--go); opacity: 0.9; transition: y 90ms linear, height 90ms linear; }
 .status.listen.paused .rec-level-ring { opacity: 0.6; }
-.rec-sep { width: 1px; height: 18px; margin: 0 6px; background: var(--line-2); flex: none; align-self: center; }
+.rec-sep { display: block; width: 1px; height: 18px; margin: 0 6px; background: var(--line-2); flex: none; align-self: center; }
 .plus-menu { min-width: 150px; }
 .plus-menu button { display: flex; align-items: center; gap: 8px; }
 
@@ -1955,7 +1955,8 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .up-strip .up-head { position: relative; z-index: 1; }
 @media (prefers-reduced-motion: reduce) { .up-fold, .up-fold-in { transition: none; } }
 /* a meeting notetaker's logo beside the folder it writes into, in the Memory tree */
-.kb-item .folder-app { display: inline-flex; margin-left: 8px; flex: none; }
+.kb-item .folder-apps { display: inline-flex; align-items: center; gap: 3px; margin-left: 5px; flex: none; }
+.kb-item .folder-app { display: inline-flex; }
 .kb-item .folder-app .app-logo { width: 16px; height: 16px; border-radius: 4px; }
 /* a note's people: the first name and +N, and a scrolling list of everyone on click */
 .people-pill .muted { margin-left: 4px; }
@@ -1965,3 +1966,5 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .people-pop-list li { padding: 7px 8px; border-radius: 8px; font-size: 14px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .people-pop-list li:hover { background: rgba(255, 255, 255, 0.06); }
 .meta-pill .app-logo { width: 18px; height: 18px; border-radius: 5px; }
+/* the header's Record group sits in one row with its divider */
+.bar .status-wrap { display: flex; align-items: center; gap: 2px; }
