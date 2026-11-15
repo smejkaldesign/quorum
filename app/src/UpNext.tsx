@@ -103,7 +103,7 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
           {inline && moreButton}
         </span>
       </div>
-      {cal.events.length === 0 && (inline ? <DayOff title="No meetings" /> : <p className="up-empty">No calls in the {cal.days === 1 ? 'next day' : `next ${cal.days} days`}.</p>)}
+      {cal.events.length === 0 && (inline ? <DayOff title="No meetings" seed={1} /> : <p className="up-empty">No calls in the {cal.days === 1 ? 'next day' : `next ${cal.days} days`}.</p>)}
       {rows.length > 0 && (
         <div className="up-list" id={listId}>
           {rows.map((e) => {
