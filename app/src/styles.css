@@ -1788,7 +1788,7 @@ button.meta-pill { font: inherit; cursor: pointer; }
 
 /* dates and times read in full white. A row's details: the meeting app's logo before the attendees (or the time on
    Up next), then the notetaker's logo and name, subdued until hovered */
-.hist-group h4, .hist-time, .up-when { color: var(--text); }
+.hist-group h4, .hist-time, .hist-text .up-when { color: var(--text); }
 .hist-sub { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .hist-meet { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .hist-text .hist-sub-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
