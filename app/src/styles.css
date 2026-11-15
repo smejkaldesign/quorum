@@ -2201,3 +2201,6 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .views-wrap .meta-pill
 .status-wrap { position: relative; }
 .rec-offer { top: 44px; right: 0; min-width: 0; width: max-content; }
 .rec-offer button { display: flex; align-items: center; gap: 8px; padding-right: 18px; }
+/* the strip's rows line up with the Home list under it: the same 780px column, icons on its left edge, times on its right */
+.up-strip { padding-left: max(40px, calc((100% - 780px) / 2)); padding-right: max(40px, calc((100% - 780px) / 2)); }
+.up-strip .hist-row { padding-right: var(--row-pad); }
