@@ -40,7 +40,7 @@ import { addFinal, isEcho, toJSON, toText } from './transcript.js';
 import { extractJson } from './json.js';
 import { emptyState, finalNotes, mergeState, notesFromState, notesMarkdown, notesPrompt, notesSystem, partialNotes, summaryBlock, summaryDue, summaryPrompt, newTurns } from './notes.js';
 import { buildTerms, orgOf, topNames } from './terms.js';
-import { applySpeakers, correctSpeaker, parseSpeakers, participantList, soloSpeakers, speakerView, speakersPrompt, speakersSystem } from './speakers.js';
+import { applySpeakers, correctSpeaker, speakerOf, parseSpeakers, participantList, soloSpeakers, speakerView, speakersPrompt, speakersSystem } from './speakers.js';
 import { startControl } from './control.js';
 import { PROVIDERS as DECISION_PROVIDERS, connectedProvider, decide as decideRaw, removeDecisionsKey, setDecisionsKey } from './decisions.js';
 import { execFile, execFileSync, spawn } from 'node:child_process';
@@ -1632,7 +1632,7 @@ function chatIndex() {
 
 // the vault folders meeting notetakers write into, for their logos in the Memory tree: Quorum's own notes folder (the
 // dev copy's is quorum-dev), and each source folder by its key (granola, zoom, ...)
-ipcMain.handle('meeting-folder-apps', () => {
+function folderApps() {
   const vault = brain()?.vault;
   if (!vault) return [];
   const rel = (p) => path.relative(vault, p).split(path.sep).join('/');
@@ -1641,7 +1641,15 @@ ipcMain.handle('meeting-folder-apps', () => {
   const out = new Map(own.map((p) => [rel(p), /quorum-dev$/.test(p) ? 'quorum-dev' : 'quorum']));
   for (const s of meetingSources()) if (!out.has(rel(s.path))) out.set(rel(s.path), s.key === 'quorum-dev' ? 'quorum-dev' : s.key);
   return [...out.entries()].filter(([r]) => r && !r.startsWith('..')).map(([r, app]) => ({ rel: r, app }));
-});
+}
+ipcMain.handle('meeting-folder-apps', () => folderApps());
+// the notetaker a vault file came from, by the meeting folder it sits in
+function folderAppOf(abs) {
+  const vault = brain()?.vault;
+  if (!vault) return null;
+  const r = path.relative(vault, abs).split(path.sep).join('/');
+  return folderApps().find((f) => r.startsWith(`${f.rel}/`))?.app ?? null;
+}
 
 ipcMain.handle('history', () => { matchMeetingApps(); return { meetings: meetingIndex(), chats: chatIndex() }; });
 
@@ -1772,11 +1780,34 @@ ipcMain.handle('read-note', (_e, file) => {
   return {
     file: abs, rel: path.relative(b.vault, abs), title: fm.title, date: fm.date, people: fm.participants.filter((p) => !isSelf(p)).map(personName), body,
     visibility: fm.visibility === 'public' ? 'public' : 'private', withheld: text !== original, link: `quorum://note/${encodeURIComponent(fm.granola_id || path.relative(b.vault, abs))}`, ...noteLink(abs),
-    source: fm.source && fm.source !== 'quorum' ? String(fm.source) : null,
+    source: fm.source ? String(fm.source) : folderAppOf(abs),
     ...noteMeetingApps(fm, abs),
+    transcript: savedTranscript(fm),
     views: (views.record({ file: abs, who: 'human', via: 'quorum', bytes: Buffer.byteLength(original) }), views.of(abs)),
   };
 });
+
+// The transcript of a note Quorum recorded, from its session folder (quorum_id): every segment's turns in order, each
+// with the name it reads under. A solo note's microphone is Unknown, a call's is the person. Empty when there is none
+function savedTranscript(fm) {
+  const id = String(fm.quorum_id ?? '');
+  if (!/^[\w.:-]+$/.test(id)) return [];
+  const dir = path.join(store.meetings.root, id);
+  if (!existsSync(dir)) return [];
+  const label = { me: fm.type === 'note' ? 'Unknown' : OWNER, them: 'Others' };
+  const turns = [];
+  try {
+    for (const seg of readdirSync(dir).filter((d) => d.startsWith('segment-')).sort()) {
+      const f = path.join(dir, seg, 'transcript.json');
+      if (!existsSync(f)) continue;
+      for (const t of JSON.parse(readFileSync(f, 'utf8'))) {
+        if (!t?.text) continue;
+        turns.push({ id: turns.length + 1, channel: t.channel === 'them' ? 'them' : 'me', who: speakerOf(t, label), text: suggester.redactLines(String(t.text)) });
+      }
+    }
+  } catch { return []; }
+  return turns;
+}
 
 // the calendar event, meeting app and notetaker link of a note, for the reader's details line
 function noteMeetingApps(fm, abs) {
@@ -2027,7 +2058,13 @@ ipcMain.handle('vault-note', (_e, rel) => {
   const body = text.replace(/^---\n[\s\S]*?\n---\n/, '').trim();
   const h1 = body.match(/^#\s+(.+)$/m);
   views.record({ file: n.abs, who: 'human', via: 'quorum', bytes: Buffer.byteLength(n.text) });
-  return { title: h1 ? h1[1].trim() : path.basename(n.abs, '.md'), body: h1 && body.startsWith(h1[0]) ? body.slice(h1[0].length).trim() : body, abs: n.abs, ...noteLink(n.abs), views: views.of(n.abs) };
+  // a note with a date, people or a notetaker folder gets its details row (NoteMeta.tsx)
+  const fm = readFrontmatter(text);
+  const source = fm.source || folderAppOf(n.abs);
+  const meta = fm.date || fm.participants.length || source
+    ? { date: fm.date || null, people: fm.participants.filter((p) => !isSelf(p)).map(personName), source: source || null, ...noteMeetingApps(fm, n.abs) }
+    : null;
+  return { title: h1 ? h1[1].trim() : path.basename(n.abs, '.md'), body: h1 && body.startsWith(h1[0]) ? body.slice(h1[0].length).trim() : body, abs: n.abs, ...noteLink(n.abs), views: views.of(n.abs), meta };
 });
 
 // Memory tab review of agent changes (memoryVersions.js): the tree's dots, an open file's banner with its Before text

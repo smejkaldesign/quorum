@@ -1,4 +1,4 @@
-import { AppPill, CALENDAR_APP, PLATFORM_APP } from './AppChip';
+import { NoteMeta } from './NoteMeta';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CONNECTOR_BY_ID } from '../connectors/library';
 import { ViewsPill } from './ViewsPill';
@@ -7,7 +7,8 @@ import { SourceAsk, useMeetingSources } from './MeetingSources';
 import type { CalendarEvent, MeetingShare, NoteDoc, Visibility } from './quorum';
 import { Markdown } from './Markdown';
 import { Composer } from './Composer';
-import { IconBack, IconChevron, IconCopy, IconFolder, IconGlobe, IconLock, IconMore, IconTrash } from './icons';
+import { IconBack, IconChevron, IconCopy, IconFolder, IconGlobe, IconLock, IconLogs, IconMore, IconNotes, IconTrash } from './icons';
+import { Avatar } from './Speaker';
 
 type Turn = { q: string; a: string; proposal: string | null; state?: 'applied' | 'discarded'; pending?: boolean };
 
@@ -97,10 +98,30 @@ function SourcePill({ source }: { source: string }) {
   return <span className="meta-pill meta-source" title={`Imported from ${name}`}>{icon && <img src={icon} alt="" />}{name}</span>;
 }
 
+// a saved note's transcript: each speaker's name above their run of turns, like the recording's review
+function SavedTranscript({ turns }: { turns: { id: number; channel: 'me' | 'them'; who: string; text: string }[] }) {
+  const groups: { key: string; who: string; channel: string; turns: typeof turns }[] = [];
+  for (const t of turns) {
+    const key = `${t.channel}|${t.who}`;
+    if (groups[groups.length - 1]?.key === key) groups[groups.length - 1].turns.push(t); else groups.push({ key, who: t.who, channel: t.channel, turns: [t] });
+  }
+  return (
+    <section className="transcript end-transcript">
+      {groups.map((g) => (
+        <div key={g.turns[0].id} className={`turn-group ${g.channel}`}>
+          <div className="spk">{g.who === 'Unknown' ? <span className="avatar-sm avatar-unknown" aria-label="Unknown speaker">?</span> : <><Avatar name={g.who} /><span>{g.who}</span></>}</div>
+          {g.turns.map((t) => <p key={t.id}>{t.text}</p>)}
+        </div>
+      ))}
+    </section>
+  );
+}
+
 export function NoteReader({ note: initial, dayLabel, peopleLine, onBack }: {
   note: NoteDoc; dayLabel: (d: Date | null) => string; peopleLine: (p: string[], n: number) => string; onBack: () => void;
 }) {
   const [note, setNote] = useState(initial);
+  const [showing, setShowing] = useState<'summary' | 'transcript'>('summary');
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState('');
   const [step, setStep] = useState('');
@@ -160,17 +181,18 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack }: {
       </div>
       <article className="doc">
         <h1>{note.title}</h1>
-        <div className="meta-row">
-          {date && <span className="meta-pill">{dayLabel(date)} · {date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>}
-          {note.people.length > 0 && <span className="meta-pill">{peopleLine(note.people, note.people.length)}</span>}
-          {note.calendar && note.event && <AppPill id={CALENDAR_APP[note.calendar].id} name={CALENDAR_APP[note.calendar].name}
-            onOpen={note.event.item || note.event.link ? () => window.quorum.calendarOpen({ ...note.event!, id: note.event!.id ?? '', title: note.title, end: note.event!.start } as CalendarEvent) : null} />}
-          {note.platform && <AppPill id={PLATFORM_APP[note.platform].id} name={PLATFORM_APP[note.platform].short} onOpen={note.meetingUrl ? () => window.quorum.openExternal(note.meetingUrl!) : null} />}
-          {note.source && <SourcePill source={note.source} />}
+        <NoteMeta meta={{ title: note.title, date: note.date ?? null, people: note.people, source: note.source ?? null, sourceUrl: note.sourceUrl, platform: note.platform, meetingUrl: note.meetingUrl, calendar: note.calendar, event: note.event }}>
           <ViewsPill views={note.views} />
-        </div>
+          {!!note.transcript?.length && (
+            <div className="view-toggle" role="group" aria-label="Show">
+              <button className={showing === 'summary' ? 'on' : ''} aria-pressed={showing === 'summary'} aria-label="Summary" data-tip="Summary" onClick={() => setShowing('summary')}><IconNotes width={16} height={16} /></button>
+              <button className={showing === 'transcript' ? 'on' : ''} aria-pressed={showing === 'transcript'} aria-label="Transcript" data-tip="Transcript" onClick={() => setShowing('transcript')}><IconLogs width={16} height={16} /></button>
+            </div>
+          )}
+        </NoteMeta>
         {share?.ask && <SourceAsk source={share.ask} data={sources} onDone={() => { loadSources(); setShareRead((n) => n + 1); }} />}
-        {note.body.trim() ? <Markdown text={note.body} headings /> : <p className="muted">No summary yet. Ask Quorum below to write one from the transcript.</p>}
+        {showing === 'transcript' && note.transcript?.length ? <SavedTranscript turns={note.transcript} />
+          : note.body.trim() ? <Markdown text={note.body} headings /> : <p className="muted">No summary yet. Ask Quorum below to write one from the transcript.</p>}
       </article>
 
       {turns.length > 0 && (

@@ -1887,7 +1887,7 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .rec-level-ring { stroke: var(--go); }
 .rec-level-fill { fill: var(--go); opacity: 0.9; transition: y 90ms linear, height 90ms linear; }
 .status.listen.paused .rec-level-ring { opacity: 0.6; }
-.rec-sep { width: 1px; height: 18px; margin: 0 6px; background: var(--line-2); flex: none; align-self: center; }
+.rec-sep { display: block; width: 1px; height: 18px; margin: 0 6px; background: var(--line-2); flex: none; align-self: center; }
 .plus-menu { min-width: 150px; }
 .plus-menu button { display: flex; align-items: center; gap: 8px; }
 
@@ -1937,8 +1937,32 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .up-strip .up-head { position: relative; z-index: 1; }
 @media (prefers-reduced-motion: reduce) { .up-fold, .up-fold-in { transition: none; } }
 /* a meeting notetaker's logo beside the folder it writes into, in the Memory tree */
-.kb-item .folder-app { display: inline-flex; margin-left: 8px; flex: none; }
+.kb-item .folder-apps { display: inline-flex; align-items: center; gap: 3px; margin-left: 5px; flex: none; }
+.kb-item .folder-app { display: inline-flex; }
 .kb-item .folder-app .app-logo { width: 16px; height: 16px; border-radius: 4px; }
+/* a note's people: the first name and +N, and a scrolling list of everyone on click */
+.people-pill .muted { margin-left: 4px; }
+.people-pop-list { top: 42px; min-width: 220px; max-width: 320px; padding: 6px; }
+.people-pop-list .people-pop-head { margin: 4px 8px 6px; font-size: 12px; color: var(--muted); }
+.people-pop-list ul { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; }
+.people-pop-list li { padding: 7px 8px; border-radius: 8px; font-size: 14px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.people-pop-list li:hover { background: rgba(255, 255, 255, 0.06); }
+.meta-pill .app-logo { width: 18px; height: 18px; border-radius: 5px; }
+/* the header's Record group sits in one row with its divider */
+.bar .status-wrap { display: flex; align-items: center; gap: 2px; }
+/* Quorum's mark fills its square while app icons carry their own margin, so it draws smaller to look the same size */
+.kb-item .folder-app .app-logo.own { width: 13px; height: 13px; margin: 1.5px; border-radius: 50%; }
+/* Pause and Stop while recording: hidden behind Record, out to its left on hover, back 3 seconds after the pointer leaves */
+.rec-ctl { display: flex; align-items: center; gap: 2px; max-width: 0; overflow: hidden; opacity: 0; transform: translateX(14px); pointer-events: none;
+  transition: max-width 240ms ease 3000ms, opacity 200ms ease 3000ms, transform 240ms ease 3000ms; }
+.bar .status-wrap:hover .rec-ctl, .rec-ctl:focus-within { max-width: 80px; opacity: 1; transform: none; pointer-events: auto; transition-delay: 0s; }
+.bar .right .rec-ctl .rec-pause { color: var(--text); }
+.bar .right .rec-ctl .rec-stop { color: var(--stop); }
+.bar .right .rec-ctl .rec-stop:hover { background: rgba(240, 74, 74, 0.12); }
+@media (prefers-reduced-motion: reduce) { .rec-ctl { transition: none; } }
+/* the recording's review page: the text column runs the chat box's full width, with the # marks hanging to its left */
+.end:not(.note-view) .end-scroll .doc { padding-left: 0; padding-right: 0; }
+.end-composer-wrap { padding-left: 32px; padding-right: 32px; }
 
 /* Memory updates: dots in the Memory tree, the review banner over an open note, changed lines, and the versions list
    (MemoryUpdates.tsx, KnowledgeView.tsx). Green waits for approval, blue is approved and not opened yet */

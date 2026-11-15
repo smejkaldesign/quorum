@@ -22,14 +22,21 @@ function useFolderApps() {
   return useSyncExternalStore(subscribe, () => apps, () => apps);
 }
 
-// the notetaker's logo beside its folder in the Memory tree
+// the notetakers that write into a folder or any folder inside it, as logos beside it in the Memory tree
 export function FolderApp({ rel }: { rel: string }) {
-  const app = useFolderApps()[rel];
-  if (!app) return null;
-  const label = app === 'quorum' ? 'Quorum' : app === 'quorum-dev' ? 'Quorum Dev' : sourceApp(app).name;
+  const all = useFolderApps();
+  const here = [...new Set(Object.entries(all).filter(([r]) => r === rel || r.startsWith(`${rel}/`)).map(([, app]) => app))];
+  if (!here.length) return null;
   return (
-    <span className="folder-app" data-tip={`Notes from ${label}`} aria-label={`Notes from ${label}`}>
-      {app === 'quorum' || app === 'quorum-dev' ? <img className="app-logo" src={app === 'quorum' ? markProd : markDev} alt="" /> : <AppLogo {...sourceApp(app)} />}
+    <span className="folder-apps">
+      {here.map((app) => {
+        const label = app === 'quorum' ? 'Quorum' : app === 'quorum-dev' ? 'Quorum Dev' : sourceApp(app).name;
+        return (
+          <span key={app} className="folder-app" data-tip={`Notes from ${label}`} aria-label={`Notes from ${label}`}>
+            {app === 'quorum' || app === 'quorum-dev' ? <img className="app-logo own" src={app === 'quorum' ? markProd : markDev} alt="" /> : <AppLogo {...sourceApp(app)} />}
+          </span>
+        );
+      })}
     </span>
   );
 }
