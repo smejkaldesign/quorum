@@ -1882,3 +1882,6 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .up-all { display: inline-flex; align-items: center; height: 30px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--text); font-size: 13px; font-weight: 500; transition: background 160ms ease, border-color 160ms ease; }
 .up-all:hover { background: rgba(255, 255, 255, 0.05); }
 .up-all.on { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.3); }
+/* the strip opened past three calls stops at the window's height (less the header and its own heading) and scrolls */
+.up-strip .up-list.open { max-height: calc(100vh - 150px); overflow-y: auto; overscroll-behavior: contain; }
+.up-strip .up-all { height: 26px; padding: 0 12px; font-size: 12px; }

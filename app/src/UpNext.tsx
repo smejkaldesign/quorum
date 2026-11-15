@@ -89,23 +89,22 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
   if (!inline) ({ rows, more } = upNextRows(cal.events, open)), moreOpen = open, toggle = () => setOpen((o) => !o);
   else rows = dayOpen ? dayEvents : dayEvents.slice(0, 1), more = true, moreOpen = dayOpen, toggle = () => setDayOpen((o) => !o);
   const label = 'Up next';
-  // the strip keeps Show more under its rows; the Home list has Show all, an outlined pill that stays selected while open
-  const moreButton = more && (inline
-    ? <button className={`up-all ${moreOpen ? 'on' : ''}`} aria-pressed={moreOpen} aria-controls={listId} onClick={toggle}>Show all</button>
-    : <button className="up-show-more" aria-expanded={moreOpen} aria-controls={listId} onClick={toggle}>
-        {moreOpen ? 'Show less' : 'Show more'}<IconChevron width={14} height={14} className={moreOpen ? 'up-chev open' : 'up-chev'} />
-      </button>);
+  // Show all, an outlined pill in the header that stays selected while open. The strip shows three calls until it is
+  // opened and reads Show less while open; opened, its list stops at the window's height and scrolls.
+  const moreButton = more && (
+    <button className={`up-all ${moreOpen ? 'on' : ''}`} aria-pressed={moreOpen} aria-controls={listId} onClick={toggle}>{!inline && moreOpen ? 'Show less' : 'Show all'}</button>
+  );
   const strip = (
     <section ref={section} className={inline ? 'up-inline' : 'up-strip'} aria-label={label}>
       <div className="up-head">
         <DaysMenu days={cal.days} onPick={(d) => window.quorum.calendarSet({ days: d }).then(loadCal)} />
         <span className="up-head-end">
-          {inline && moreButton}
+          {moreButton}
         </span>
       </div>
       {cal.events.length === 0 && (inline ? <DayOff title="No meetings" seed={1} /> : <p className="up-empty">No calls {cal.days === 'week' ? 'this week' : cal.days === 1 ? 'in the next day' : `in the next ${cal.days} days`}.</p>)}
       {rows.length > 0 && (
-        <div className="up-list" id={listId}>
+        <div className={`up-list ${!inline && moreOpen ? 'open' : ''}`} id={listId}>
           {rows.map((e) => {
             const at = new Date(e.start);
             const platform = e.platform ? PLATFORM_APP[e.platform] : null;
@@ -131,7 +130,6 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
           })}
         </div>
       )}
-      {!inline && more && <div className="up-more-row">{moreButton}</div>}
     </section>
   );
   if (!floating) return strip;
