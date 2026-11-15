@@ -118,8 +118,14 @@ function SavedTranscript({ turns }: { turns: { id: number; channel: 'me' | 'them
   );
 }
 
-// what the reader shows for the Debrief button's question; main gets the debrief marker instead
+// what the reader shows for the Debrief question; main gets the debrief marker instead
 const DEBRIEF_SHOWN = 'Debrief this meeting';
+// post-meeting asks above the chat input, one click each
+const SKILLS = [
+  { label: 'Debrief', ask: DEBRIEF_SHOWN },
+  { label: 'Follow-up email', ask: 'Draft a short follow-up email to the people in this meeting: the decisions and the next steps with owners.' },
+  { label: 'Action items', ask: 'List the action items from this meeting, each with its owner and date when the note gives them.' },
+];
 // an answer's last line "Choices: A | B | C" becomes buttons; the rest is the text (an edit in progress is hidden)
 function splitChoices(raw: string) {
   const t = raw.replace(/<updated-note>[\s\S]*$/, '').trim();
@@ -133,6 +139,17 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
   const [note, setNote] = useState(initial);
   const [showing, setShowing] = useState<'summary' | 'transcript'>('summary');
   const bar = useStuck();
+  // the debrief starts on its own when it matters most, once per note: right after a summary is written, or when a
+  // recording from the last day has no people named and no chat yet. Its first question waits under the summary
+  function autoDebrief(force = false) {
+    const key = `debrief-auto:${note.file}`;
+    try { if (localStorage.getItem(key)) return; } catch { /* storage off: still runs once this view */ }
+    const fresh = note.date ? Date.now() - new Date(note.date).getTime() < 86400000 : false;
+    if (!force && !(fresh && note.source?.startsWith('quorum') && !note.people.length && !chat)) return;
+    try { localStorage.setItem(key, '1'); } catch { /* ignore */ }
+    ask([], DEBRIEF_SHOWN);
+  }
+  useEffect(() => { if (note.body.trim()) autoDebrief(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // opened from a chats link: that chat's turns, and the page scrolled down to them
   useEffect(() => {
     if (!chat) return;
@@ -148,7 +165,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
     setSumming(true); setSumError(null);
     const r = await window.quorum.noteSummarize(note.file).catch((err) => ({ error: String(err) }));
     setSumming(false);
-    if ('error' in r) setSumError(r.error); else await reload();
+    if ('error' in r) setSumError(r.error); else { await reload(); autoDebrief(true); }
   }
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState('');
@@ -245,13 +262,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
           ) : <p className="muted">No summary yet. Ask Quorum below to write one from the transcript.</p>}
       </article>
 
-      <section className="note-thread" aria-label="Questions about this note">
-          {turns.length === 0 && (
-            <div className="nt-start">
-              <button className="pill small-pill who-go" disabled={busy} onClick={() => ask([], DEBRIEF_SHOWN)}>Debrief this meeting</button>
-              <span className="muted">Quorum asks a few short questions, then proposes a clearer note.</span>
-            </div>
-          )}
+      {turns.length > 0 && <section className="note-thread" aria-label="Questions about this note">
           {turns.map((t, i) => {
             const { text, choices } = splitChoices(t.pending ? live : t.a);
             return (
@@ -280,9 +291,12 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
             </div>
             );
           })}
-      </section>
+      </section>}
 
       <div className="note-dock">
+      <div className="skill-pills" role="group" aria-label="Quick asks">
+        {SKILLS.map((k) => <button key={k.label} className="skill-pill" disabled={busy} onClick={() => ask([], k.ask)}>{k.label}</button>)}
+      </div>
       <Composer className="note-composer" value={draft} onChange={setDraft} onSubmit={(_q, f) => ask(f)} busy={busy} placeholder="Ask about this note, or ask Quorum to change it" />
       </div>
     </div>

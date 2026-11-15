@@ -2013,3 +2013,11 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .rb-left { display: inline-flex; align-items: center; gap: 14px; min-width: 0; }
 .rb-title { font-size: 15px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 420px; }
 @media (prefers-reduced-motion: reduce) { .sticky-bar.stuck { animation: none; } }
+/* a note's details: date, people, then its apps as icon buttons */
+.meta-pill.meta-icon { width: 36px; padding: 0; justify-content: center; }
+.meta-pill.meta-icon .app-logo { width: 18px; height: 18px; border-radius: 5px; }
+button.meta-pill.meta-icon:hover { background: rgba(255, 255, 255, 0.06); }
+/* quick asks above the note chat input */
+.skill-pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
+.skill-pill { height: 30px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--menu-bg); color: var(--text); font-size: 13px; font-weight: 500; transition: background 160ms ease, border-color 160ms ease; }
+.skill-pill:hover:not(:disabled) { background: var(--card); border-color: rgba(255, 255, 255, 0.24); }
