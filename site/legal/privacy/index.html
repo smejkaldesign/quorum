@@ -38,19 +38,26 @@
   <main id="main" class="page legal">
     <div class="wrap narrow">
       <h1>Privacy Policy</h1>
-      <p class="effective">Effective: November 13, 2026</p>
+      <p class="effective">Effective: November 16, 2026</p>
 
       <h2>Summary</h2>
-      <p>Quorum is a macOS app that transcribes meetings and writes notes into markdown files you own. In the free Local edition, everything stays on your Mac. In Quorum Cloud, we store your notes for sync and route call audio through our relay to a speech provider. We do not store call audio. We do not sell your data. We do not use your content to train models, and neither do our providers: Anthropic does not train on API inputs or outputs, every Deepgram request carries the model-training opt-out, and our AssemblyAI account is opted out of model training, which also gives zero retention of streaming audio and transcripts.</p>
+      <p>Quorum is a macOS app that transcribes meetings and writes notes into markdown files you own. In the free Local edition, your audio, transcripts and notes stay on your Mac. The app sends us only an access-code check, a daily install report and a feature check, none of which contain meeting content. In Quorum Cloud, we store your notes for sync and route call audio through our relay to a speech provider. We do not store call audio. We do not sell your data. We do not use your content to train models, and neither do our providers: Anthropic does not train on API inputs or outputs, every Deepgram request carries the model-training opt-out, and our AssemblyAI account is opted out of model training, which also gives zero retention of streaming audio and transcripts.</p>
       <p>This policy is published by Smejkal Design, a sole proprietorship based in Portland, Oregon, United States. Contact: <a href="mailto:eric@smejkal.design">eric@smejkal.design</a>.</p>
 
       <h2>The Local edition</h2>
-      <p>Audio, transcripts and notes stay on your Mac. Nothing leaves your Mac unless you take one of these two actions.</p>
+      <p>Audio, transcripts and notes stay on your Mac. They leave it only when you take one of these actions.</p>
       <ul>
         <li>You turn sync on. Sync requires a Quorum Cloud account and is covered below.</li>
         <li>You choose a cloud speech or model provider and enter your own key. Your audio or text then goes to that provider under that provider's terms and privacy policy. We never see it.</li>
+        <li>You connect Notion, Slack or GitHub. The one-time sign-in code passes through our relay, which adds our app's secret, returns the tokens to your Mac and stores nothing. The tokens stay in your Mac's Keychain.</li>
       </ul>
-      <p>Smejkal Design receives no data from the Local edition with sync off and no cloud provider set.</p>
+      <p>The app also makes these requests, which carry no audio, transcripts or notes:</p>
+      <ul>
+        <li>Access code. During the beta, the app checks your access code with our relay when you enter it. After that it reports once a day: the code, a random install id created on your Mac, the edition and the app version. We use this to count active installs. We keep each install's record for 12 months after its last report.</li>
+        <li>Features. Once an hour the app asks our relay which features are turned on. The request carries no code, install id or account.</li>
+        <li>Updates. The app checks GitHub Releases for new versions and downloads them from there. GitHub receives your IP address under GitHub's privacy statement.</li>
+      </ul>
+      <p>Our relay's host receives your IP address with each request. Relay logs are deleted within 30 days.</p>
 
       <h2>Quorum Cloud: sync</h2>
       <p>With sync on, we store your notes (path, frontmatter and body), links between notes, meeting records (title, start and end times, participants, visibility), transcript segments (text, speaker and timestamps), chat messages, and attachments you add on our servers for your workspace. Our database is hosted by Supabase in the United States.</p>

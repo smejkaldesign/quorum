@@ -51,7 +51,7 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
           <section className="onb-step">
             <img className="onb-mark" src={mark} alt="" />
             <h1>Welcome to Quorum</h1>
-            <p>Meetings and your notes, on your Mac. Quorum transcribes calls on this device, keeps notes as plain markdown, and answers questions from them with a model you choose. Nothing leaves this Mac unless you turn sync on.</p>
+            <p>Meetings and your notes, on your Mac. Quorum transcribes calls on this device, keeps notes as plain markdown, and answers questions from them with a model you choose. Your meetings and notes stay on this Mac unless you turn on sync or choose a cloud provider.</p>
             <div className="onb-actions"><span /><button className="pill primary" autoFocus onClick={next}>Get started</button></div>
           </section>
         )}

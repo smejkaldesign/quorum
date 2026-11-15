@@ -534,7 +534,7 @@ function WorkspacePage({ settings, onSettings, onGo, billing, company }: { setti
   const nt = useNotetaker();
   return (
     <>
-      <AccountArea local={<><h3>Account</h3><p className="muted">Local edition. Everything stays on this Mac.</p></>}
+      <AccountArea local={<><h3>Account</h3><p className="muted">Local edition. Your meetings and notes stay on this Mac.</p></>}
         unconfigured={<><h3>Account</h3><p className="muted">Hosted accounts are not set up in this build</p></>} />
       {billing && <p className="set-note">The plan, the card on file and this month's usage live under <button className="link-btn" onClick={() => onGo('billing')}>Billing</button>.</p>}
       <EnvSwitch />
