@@ -27,6 +27,20 @@ update public.knowledge_bases set source = '{"kind": "github", "url": "https://g
   where workspace_id = '01DS00000000000000000000WG' and is_default;
 
 -- 0036 runs here
+-- the backfill from 0036 (its section 3) once more, now that the fixtures exist: under `supabase test db` the migration
+-- ran on an empty database before this file. 0036 is safe to run again, so the sed command above still works
+-- 3. the default KB for a workspace whose folder or git source has none yet; kb_ensure_default (0025) copies the
+-- column into the new KB, and a KB that already exists is left as it is
+do $$
+declare w record; k public.ulid;
+begin
+  for w in select x.id, x.team_source from public.workspaces x
+           where x.deleted_at is null and x.team_source ->> 'kind' in ('folder', 'git')
+             and not exists (select 1 from public.knowledge_bases b where b.workspace_id = x.id and b.is_default) loop
+    k := public.kb_ensure_default(w.id);
+    update public.knowledge_bases b set source = w.team_source where b.id = k and b.source is null;
+  end loop;
+end $$;
 
 -- checks run as a signed-in person; pg_temp.expect_error runs a statement and requires a refusal matching a pattern
 create function pg_temp.as_user(u uuid) returns void language sql as $$

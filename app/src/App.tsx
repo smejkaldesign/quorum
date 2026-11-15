@@ -918,5 +918,5 @@ const TranscriptRow = memo(function TranscriptRow({ line, tail, name, meName, me
 // has no account and says so in the same slot
 function OnboardingShell({ brain, onBrain, onDone }: { brain: Brain | null; onBrain: (b: Brain | null) => void; onDone: () => void }) {
   const slot = <AccountArea fallback={<p className="onb-muted">Sign in from Settings › Workspace once you are in.</p>} local={<p className="onb-muted">Local edition. Everything stays on this Mac.</p>} />;
-  return <Suspense fallback={null}><Onboarding brain={brain} onBrain={onBrain} onDone={onDone} accountSlot={slot} /></Suspense>;
+  return <Suspense fallback={null}><Onboarding brain={brain} onBrain={onBrain} onDone={onDone} accountSlot={isCloud ? slot : undefined} /></Suspense>;
 }

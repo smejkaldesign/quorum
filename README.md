@@ -70,7 +70,7 @@ Quorum does not take meeting notes itself. Tools such as Granola already do that
     <td valign="top"><strong>Memory</strong><br>The folder tree, wikilinks, backlinks and a link graph of every note, with link health checks and relinking tools.</td>
   </tr>
   <tr>
-    <td valign="top"><strong>Listen and dictate</strong><br>For notes of your own, start listening in Quorum or dictate. Transcription runs on the Mac. Claude Code gets a <code>quorum</code> MCP server in one click.</td>
+    <td valign="top"><strong>Listen</strong><br>For notes of your own, start listening in Quorum. Transcription runs on the Mac. Claude Code gets a <code>quorum</code> MCP server in one click.</td>
     <td valign="top"><strong>Who read it</strong><br>Every note shows how many people and which agents have read it, counted by the read guard and the MCP server.</td>
     <td valign="top"><strong>Guardrails</strong><br>One list of what the agent may not read or say: built-in rules, guards found in your folder that you choose to include, your own rules, and your workspace's. Every rule only denies.</td>
   </tr>
@@ -83,7 +83,7 @@ One repository, two editions. The Local edition is the default build and costs n
 | | Local (open source) | Cloud |
 |---|---|---|
 | License and price | Apache-2.0, free | One paid plan, per seat |
-| Manual listening and dictation with on-device transcription | Yes | Yes |
+| Manual listening with on-device transcription | Yes | Yes |
 | Agent OS: connect a notes folder, the Memory graph, search, read guard, views | Yes | Yes |
 | Connectors: Granola, the Calendar app, Claude Code MCP | Yes | Yes |
 | Model access | Your Claude Code sign-in, or your own API key in Keychain | Same |
@@ -110,7 +110,7 @@ Quorum used to detect calls and take its own meeting notes. Those features are s
 
 ## Quickstart
 
-**Download.** Get the DMG from the [latest release](https://github.com/smejkaldesign/quorum/releases/latest), drag Quorum to Applications and open it. Quorum checks for updates on its own and shows an Update button when a new version is ready. On first launch Quorum asks for Microphone, Screen and System Audio Recording, Accessibility and Calendar access, then creates `~/Documents/Quorum` or connects a folder you already have.
+**Download.** Get the DMG from the [latest release](https://github.com/smejkaldesign/quorum/releases/latest): `Quorum-<version>-arm64.dmg` is the free, open-source edition, and `Quorum-Cloud-arm64.dmg` is Quorum Cloud. Drag Quorum to Applications and open it. Quorum checks for updates on its own and shows an Update button when a new version is ready. On first launch Quorum asks for Microphone, Screen and System Audio Recording, Accessibility and Calendar access, then creates `~/Documents/Quorum` or connects a folder you already have.
 
 **Build from source.** You need macOS 26 on Apple silicon, Node 22 or newer, Python 3, the Xcode command line tools, and Claude Code installed and signed in.
 
