@@ -47,6 +47,8 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
   const passed = usePassed();
   const [open, setOpen] = useSession('upNextOpen', false);
   const [dayOpen, setDayOpen] = useSession('upNextDayOpen', false);
+  // the strip can fold down to its header; it stays in view while scrolling either way
+  const [folded, setFolded] = useSession('upNextFolded', false);
   const [eventMenu, setEventMenu] = useState<string | null>(null);
   const section = useRef<HTMLElement>(null);
   const listId = useId();
@@ -99,11 +101,12 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
       <div className="up-head">
         <DaysMenu days={cal.days} onPick={(d) => window.quorum.calendarSet({ days: d }).then(loadCal)} />
         <span className="up-head-end">
-          {moreButton}
+          {!inline && <button className={`up-all ${folded ? 'on' : ''}`} aria-pressed={folded} aria-controls={listId} onClick={() => setFolded((f) => !f)}>{folded ? 'Show' : 'Hide'}</button>}
+          {!(folded && !inline) && moreButton}
         </span>
       </div>
-      {cal.events.length === 0 && (inline ? <DayOff title="No meetings" seed={1} /> : <p className="up-empty">No calls {cal.days === 'week' ? 'this week' : cal.days === 1 ? 'in the next day' : `in the next ${cal.days} days`}.</p>)}
-      {rows.length > 0 && (
+      {cal.events.length === 0 && !(folded && !inline) && (inline ? <DayOff title="No meetings" seed={1} /> : <p className="up-empty">No calls {cal.days === 'week' ? 'this week' : cal.days === 1 ? 'in the next day' : `in the next ${cal.days} days`}.</p>)}
+      {rows.length > 0 && !(folded && !inline) && (
         <div className={`up-list ${!inline && moreOpen ? 'open' : ''}`} id={listId}>
           {rows.map((e) => {
             const at = new Date(e.start);
