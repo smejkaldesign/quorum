@@ -11,6 +11,7 @@ import { dayLabel } from './upNextList';
 import { OPEN_EVENT, UpNext, takeEvent, useCalendarView } from './UpNext';
 import { AppLogo, CALENDAR_APP, RowDetails, peopleText } from './AppChip';
 import { MeetingPage } from './MeetingPage';
+import { DayOff } from './DayOff';
 import { IconCalendar, IconChat, IconClose, IconExternal, IconListCheck, IconMic, IconNewNote, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
 
 type Filter = 'all' | 'meetings' | 'notes' | 'chats';
@@ -240,7 +241,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
           <h4>Today</h4>
           {todayGroup ? todayGroup.rows.map(renderRow)
             : todayCalls.length ? <p className="hist-empty">Nothing yet today. Your next call is at {new Date(todayCalls[0].start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.</p>
-            : <DayOff />}
+            : <DayOff title="Nothing today" />}
         </div>
       )}
 
@@ -261,25 +262,6 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
           {g.rows.map(renderRow)}
         </div>
       ))}
-    </div>
-  );
-}
-
-// Today with nothing on it: a small drawing of a sun setting over still water, and a note to take the day
-function DayOff() {
-  return (
-    <div className="day-off">
-      <svg className="day-off-art" viewBox="0 0 120 72" aria-hidden="true">
-        <defs><clipPath id="day-off-sky"><rect x="0" y="0" width="120" height="46" /></clipPath></defs>
-        <circle cx="60" cy="44" r="18" className="day-off-sun" clipPath="url(#day-off-sky)" />
-        <path d="M14 46h92" className="day-off-line" />
-        <path d="M30 54h60M44 61h32" className="day-off-water" />
-        <path d="M60 12v6M38 22l4 4M82 22l-4 4" className="day-off-ray" />
-      </svg>
-      <div className="day-off-text">
-        <p className="day-off-title">Nothing on today</p>
-        <p className="hist-empty">No meetings or notes yet. Take the day off and enjoy it.</p>
-      </div>
     </div>
   );
 }

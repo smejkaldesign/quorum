@@ -4,6 +4,7 @@ import type { CalendarEvent } from './quorum';
 import { useExclusiveMenu } from './menuBus';
 import { useSession } from './session';
 import { ConfirmModal } from './ConfirmModal';
+import { DayOff } from './DayOff';
 import { dayLabel, upNextRows } from './upNextList';
 import { AppLogo, CALENDAR_APP, PLATFORM_APP, RowDetails, peopleText, useAppIcons } from './AppChip';
 import { IconArrowRight, IconCalendar, IconChevron, IconMore } from './icons';
@@ -102,7 +103,7 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
           {inline && moreButton}
         </span>
       </div>
-      {cal.events.length === 0 && <p className="up-empty">No calls in the {cal.days === 1 ? 'next day' : `next ${cal.days} days`}.</p>}
+      {cal.events.length === 0 && (inline ? <DayOff title="No meetings" /> : <p className="up-empty">No calls in the {cal.days === 1 ? 'next day' : `next ${cal.days} days`}.</p>)}
       {rows.length > 0 && (
         <div className="up-list" id={listId}>
           {rows.map((e) => {
