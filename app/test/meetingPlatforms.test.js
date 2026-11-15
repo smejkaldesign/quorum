@@ -9,8 +9,8 @@ const ev = (title, start, url = 'https://teams.microsoft.com/l/meetup-join/x') =
 
 describe('meeting platform matching', () => {
   it('matches a similar title within 15 minutes', () => {
-    const r = matchPlatforms([{ key: 'a', title: 'headways / habitat weekly check-in', date: '2026-11-09T14:04:00-08:00' }],
-      [ev('Headways / Habitat weekly check-in', '2026-11-09T14:00:00-08:00')], link);
+    const r = matchPlatforms([{ key: 'a', title: 'acme / globex weekly check-in', date: '2026-11-09T14:04:00-08:00' }],
+      [ev('Acme / Globex weekly check-in', '2026-11-09T14:00:00-08:00')], link);
     expect(r.a).toMatchObject({ platform: 'teams', url: 'https://teams.microsoft.com/l/meetup-join/x', calendar: 'apple-calendar', event: { start: '2026-11-09T14:00:00-08:00', count: 0 } });
   });
   it('matches any title only within 3 minutes', () => {
@@ -26,8 +26,8 @@ describe('meeting platform matching', () => {
   });
   it('keeps the event without a call, records null without an event, and skips undated notes', () => {
     const notes = [{ key: 'a', title: 'Lunch', date: '2026-11-09T12:00:00Z' }, { key: 'b', title: 'x', date: null }, { key: 'c', title: 'Walk', date: '2026-11-10T08:00:00Z' }];
-    const r = matchPlatforms(notes, [{ ...ev('Lunch', '2026-11-09T12:00:00Z', ''), organizer: 'a@x.co', attendees: [{ email: 'a@x.co' }, { email: 'b@x.co' }] }], link);
-    expect(r.a).toMatchObject({ platform: null, url: null, event: { organizer: 'a@x.co', count: 2 } });
+    const r = matchPlatforms(notes, [{ ...ev('Lunch', '2026-11-09T12:00:00Z', ''), organizer: 'a@acme.com', attendees: [{ email: 'a@acme.com' }, { email: 'b@acme.com' }] }], link);
+    expect(r.a).toMatchObject({ platform: null, url: null, event: { organizer: 'a@acme.com', count: 2 } });
     expect(r.c).toBeNull();
     expect('b' in r).toBe(false);
   });
