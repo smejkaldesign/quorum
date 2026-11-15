@@ -782,14 +782,41 @@ ul { margin: 0; padding: 0; list-style: none; }
 .cta-links a:hover { color: var(--text); }
 .plan-note a { color: var(--text-soft); text-decoration: underline; text-underline-offset: 3px; }
 
-/* the connectors section: what works today and what is coming, as plain labels */
-.apps-panel.connects { padding: clamp(32px, 5vw, 64px) var(--gutter); }
-.connect-groups { display: grid; gap: 40px; }
-.connect-groups h3 { margin: 0 0 16px; color: var(--muted); font-size: 14px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; }
-.connect-list { display: flex; flex-wrap: wrap; gap: 10px; margin: 0; padding: 0; list-style: none; }
-.connect-list li { padding: 10px 16px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255, 255, 255, 0.04); font-size: 16px; }
-.connect-list li span { margin-left: 8px; color: var(--muted); font-size: 14px; }
-.connect-list.coming li { color: var(--muted); }
-@media (min-width: 760px) { .connect-groups { grid-template-columns: 1fr 1fr; gap: 48px; } }
+/* The connectors section: a table with one column per category of the app's connector library. A column shows up
+   to 7 rows (--rows) of 40px; a list that long or longer is cut there and its last rows fade out, and a shorter one
+   ends after its last name. Tools that work today are white, planned ones grey. 2 columns on phones, 4 from 720px,
+   all 8 from 1200px. */
+.apps-panel.connects { --rows: 7; --row: 40px; padding: clamp(28px, 4vw, 48px) var(--gutter) clamp(20px, 3vw, 32px); }
+.connect-table { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 28px; }
+.connect-col { min-width: 0; padding: 0 16px; border-left: 1px solid var(--line); }
+.connect-col h3 {
+  display: flex; align-items: flex-end;
+  min-height: 2.6em;
+  margin: 0 0 6px;
+  font: 500 11px/1.3 var(--mono); letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--muted);
+}
+.connect-col ul { max-height: calc(var(--rows) * var(--row)); overflow: hidden; }
+.connect-col ul:has(li:nth-child(7)) {
+  -webkit-mask-image: linear-gradient(to bottom, #000 45%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 45%, transparent 100%);
+}
+.connect-col li {
+  height: var(--row);
+  display: flex; align-items: center;
+  border-bottom: 1px solid var(--rule);
+  font-size: 15px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.connect-col li.live { color: var(--text); }
+.connect-key { margin-top: 20px; font-size: 13px; color: var(--muted); }
+@media (min-width: 720px) {
+  .connect-table { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (min-width: 1200px) {
+  .connect-table { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+  .connect-col { padding: 0 12px; }
+  .connect-col li { font-size: 14px; }
+}
 
 #join { scroll-margin-top: calc(var(--header-h) + 48px); }
