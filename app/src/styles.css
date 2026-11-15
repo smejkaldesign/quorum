@@ -2367,7 +2367,12 @@ input::placeholder, textarea::placeholder { font-style: italic; }
 .mp-head h2 { margin-bottom: 0; }
 /* an open chat rises into place, and Exit chat plays that in reverse before the chat list comes back */
 .note-thread.chat-open { animation: thread-in 220ms ease; }
-.note-thread.chat-open.closing { animation: thread-out 220ms ease forwards; }
 @keyframes thread-in { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
 @keyframes thread-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(24px); } }
 @media (prefers-reduced-motion: reduce) { .note-thread.chat-open, .note-thread.chat-open.closing { animation: none; } }
+/* the composer's shadow is full only while content scrolls beneath it; at the end of the page it is a fifth as strong */
+.note-dock.at-end .note-composer { box-shadow: 0 -4px 18px rgba(0, 0, 0, 0.07), 0 10px 28px rgba(0, 0, 0, 0.06); }
+.note-dock.at-end .note-composer:focus-within { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.05), 0 -4px 18px rgba(0, 0, 0, 0.07), 0 10px 28px rgba(0, 0, 0, 0.06); }
+.note-dock .note-composer { transition: box-shadow 200ms ease; }
+/* the end of a note sits clear of the dock's fade: the dock no longer reaches up over the last lines */
+.reader .note-dock, .meeting-page .note-dock, .end .note-dock { margin-top: 0; }

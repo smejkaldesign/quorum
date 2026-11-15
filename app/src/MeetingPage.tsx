@@ -7,7 +7,7 @@ import { dayLabel } from './upNextList';
 import { IconCalendar, IconPeople } from './icons';
 import { AgentRun } from './AgentActivity';
 import { AppIcon } from './NoteMeta';
-import { TypedTitle, toPageTop, useStuck, useToolbarDock } from './StickyBar';
+import { TypedTitle, toPageTop, useStuck, useToolbarDock, useAtEnd } from './StickyBar';
 import { JoinButton } from './UpNext';
 import { NoteEditor } from './editor/NoteEditor';
 import { IconLogs, IconNotes, IconRecord, IconSound } from './icons';
@@ -23,6 +23,9 @@ const PREP_ASKS = ['What is still open from last time?', 'What should I ask in t
 // questions about the meeting before it happens, answered from its prep notes, past notes and the rest of the Agent OS
 function MeetingChat({ event }: { event: CalendarEvent }) {
   const cs = useChats<{ q: string; a: string; pending?: boolean }>();
+  // the composer's shadow is full only while content scrolls beneath it
+  const dockRef = useRef<HTMLDivElement>(null);
+  const dockEnd = useAtEnd(dockRef);
   const turns = cs.active?.turns ?? [];
   const [draft, setDraft] = useState('');
   const [live, setLive] = useState('');
@@ -79,7 +82,7 @@ function MeetingChat({ event }: { event: CalendarEvent }) {
           })}
         </section>
       )}
-      <div className="note-dock">
+      <div ref={dockRef} className={`note-dock${dockEnd ? ' at-end' : ''}`}>
         {!cs.active && !cs.chats.length && inChat && (
           <div className="skill-pills" role="group" aria-label="Quick asks">
             {PREP_ASKS.map((q) => <button key={q} className="skill-pill" disabled={busy} onClick={() => ask(q)}>{q}</button>)}

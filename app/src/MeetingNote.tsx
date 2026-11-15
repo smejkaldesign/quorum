@@ -1,6 +1,6 @@
 import { BackButton } from './BackButton';
 import { NoteMeta } from './NoteMeta';
-import { TypedTitle, toPageTop, useStuck, useToolbarDock } from './StickyBar';
+import { TypedTitle, toPageTop, useStuck, useToolbarDock, useAtEnd } from './StickyBar';
 import markProd from '../assets/quorum-mark.png';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CONNECTOR_BY_ID } from '../connectors/library';
@@ -147,6 +147,9 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
   }
   // the note's chats: several can stack, each collapsed until opened; the open one is the thread below
   const cs = useChats<Turn>();
+  // the composer's shadow is full only while content scrolls beneath it
+  const dockRef = useRef<HTMLDivElement>(null);
+  const dockEnd = useAtEnd(dockRef);
   const turns = cs.active?.turns ?? [];
   const setTurns = (fn: (t: Turn[]) => Turn[]) => { if (cs.openId) cs.update(cs.openId, fn); };
   const [draft, setDraft] = useState('');
@@ -350,7 +353,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
           })}
       </section>}
 
-      <div className="note-dock">
+      <div ref={dockRef} className={`note-dock${dockEnd ? ' at-end' : ''}`}>
       {!atBottom && <button className="more-below" aria-label="Show more" data-tip="More below" onClick={pageDown}><IconArrowDown width={18} height={18} /></button>}
       {slash.length > 0 ? (
         <div className="slash-menu" role="listbox" aria-label="Commands">

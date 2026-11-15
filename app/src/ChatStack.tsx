@@ -6,6 +6,9 @@ import { Avatar } from './Speaker';
 export type ChatEntry<T> = { id: string; turns: T[] };
 type Turnish = { q: string; a: string; pending?: boolean };
 
+// where the page was scrolled when a chat opened, so Exit chat can scroll back there
+const openedAt: { top: number | null } = { top: null };
+
 export function useChats<T extends Turnish>() {
   const [chats, setChats] = useState<ChatEntry<T>[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -39,9 +42,21 @@ export function useChats<T extends Turnish>() {
   const newChat = () => { wantNew.current = true; setOpenId(null); };
   const exit = () => {
     if (closing) return;
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { setOpenId(null); return; }
+    const el = document.querySelector<HTMLElement>('.note-thread.chat-open');
+    const box = el?.closest<HTMLElement>('.end-scroll, .body');
+    if (!el || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { setOpenId(null); if (box && openedAt.top !== null) box.scrollTop = openedAt.top; return; }
+    // the opening in reverse: the chat folds down to nothing while the page scrolls back to where it was when it opened
     setClosing(true);
-    window.setTimeout(() => { setOpenId(null); setClosing(false); }, 220);
+    el.style.height = `${el.offsetHeight}px`;
+    el.style.overflow = 'hidden';
+    void el.offsetHeight;
+    el.style.transition = 'height 280ms ease, opacity 220ms ease 60ms, padding 280ms ease, margin 280ms ease';
+    el.style.height = '0px';
+    el.style.opacity = '0';
+    el.style.paddingTop = '0px';
+    el.style.marginTop = '0px';
+    if (box && openedAt.top !== null) box.scrollTo({ top: openedAt.top, behavior: 'smooth' });
+    window.setTimeout(() => { setOpenId(null); setClosing(false); }, 290);
   };
   return { chats, setChats, openId, setOpenId, active, target, update, settle, newChat, exit, closing };
 }
@@ -57,6 +72,7 @@ export function ChatStrip<T extends Turnish>({ chats, onOpen, me }: { chats: Cha
   const newest = [...chats].reverse();
   const open = (id: string) => {
     setAll(false);
+    openedAt.top = document.querySelector<HTMLElement>('.chat-strip')?.closest<HTMLElement>('.end-scroll, .body')?.scrollTop ?? null;
     onOpen(id);
     requestAnimationFrame(() => requestAnimationFrame(() => document.querySelector('.note-thread.chat-open')?.scrollIntoView({ behavior: 'smooth', block: 'start' })));
   };
