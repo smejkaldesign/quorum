@@ -10,7 +10,7 @@ import { SourceAsk, useMeetingSources } from './MeetingSources';
 import type { CalendarEvent, MeetingShare, NoteDoc, Visibility } from './quorum';
 import { Markdown } from './Markdown';
 import { Composer } from './Composer';
-import { IconArrowDown, IconSound, IconChevron, IconFolder, IconGlobe, IconLock, IconLogs, IconMore, IconNotes, IconTrash } from './icons';
+import { IconArrowDown, IconBell, IconSound, IconChevron, IconFolder, IconGlobe, IconLock, IconLogs, IconMore, IconNotes, IconTrash } from './icons';
 import { Avatar } from './Speaker';
 import { NoteEditor, type NoteEditorHandle } from './editor/NoteEditor';
 import { ChatExit, ChatList, useChats, useComposerFocus } from './ChatStack';
@@ -18,7 +18,7 @@ import { useMemo } from 'react';
 import { joinParts } from '../noteParts.js';
 import { NoteMenu, VisibilityPill } from './NoteControls';
 export { NoteMenu, VisibilityPill };
-import { AgentActivity, AgentRun } from './AgentActivity';
+import { AgentRun, NoteNotifications, unseenOf, useNoteActivity } from './AgentActivity';
 import { soundLine } from './soundLine';
 
 type Turn = { q: string; a: string; proposal: string | null; state?: 'applied' | 'discarded'; pending?: boolean };
@@ -96,11 +96,22 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
   const [note, setNote] = useState(initial);
   // three tabs, like a new note: the Summary (when there is one, and the page opens on it), your Note, the Transcript
   const parts = useMemo(() => note.parts ?? { note: note.hand ? note.body : '', summary: note.hand ? '' : note.body, split: false }, [note.parts, note.body, note.hand]);
-  const [showing, setShowing] = useState<'summary' | 'note' | 'transcript'>(() => ((initial.parts ? initial.parts.summary : !initial.hand && initial.body.trim()) ? 'summary' : 'note'));
+  const [showing, setShowing] = useState<'summary' | 'note' | 'transcript' | 'activity'>(() => ((initial.parts ? initial.parts.summary : !initial.hand && initial.body.trim()) ? 'summary' : 'note'));
   const bar = useStuck();
   useToolbarDock(bar.sentinel, bar.stuck);
   // a tab picked while the bar is pinned opens at the top of the page
   const pick = (t: typeof showing) => { setShowing(t); if (bar.stuck) toPageTop(bar.sentinel); };
+  // Notifications: the agent's events and the person's, with a dot on the tab for what is new. Opening the tab marks it
+  // seen; rows that were new keep their dot while it stays open
+  const [act, reloadAct] = useNoteActivity(note.file);
+  const unseen = unseenOf(act);
+  const [seenBefore, setSeenBefore] = useState<string | null>(null);
+  useEffect(() => {
+    if (showing !== 'activity' || !act) return;
+    if (!unseen) return;
+    setSeenBefore(act.seenAt);
+    window.quorum.noteSeen(note.file).then(reloadAct).catch(() => {});
+  }, [showing, unseen]); // eslint-disable-line react-hooks/exhaustive-deps
   // the debrief starts on its own when it matters most, once per note: right after a summary is written, or when a
   // recording from the last day has no people named and no chat yet. Its first question waits under the summary
   function autoDebrief(force = false) {
@@ -183,8 +194,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
   const undo = () => { typed.current = { note: false, summary: false }; setEdits({}); setEditKey((n) => n + 1); };
   // after Save edits: the agent's run shows at the top of the page; Details opens its section
   const [runSince, setRunSince] = useState<number | null>(null);
-  const activityTab = parts.summary ? 'summary' : 'note';
-  const showActivity = () => { setShowing(activityTab); requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById('agent-activity')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))); };
+  const showActivity = () => { setShowing('activity'); toPageTop(bar.sentinel); };
   async function saveEdits() {
     const n = noteEd.current?.flush() ?? edits.note ?? parts.note;
     const sm = sumEd.current?.flush() ?? edits.summary ?? parts.summary;
@@ -238,7 +248,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
 
   async function apply(i: number) {
     try {
-      await window.quorum.noteApply(note.file, turns[i].proposal!);
+      await window.quorum.noteApply(note.file, turns[i].proposal!, 'agent');
       setTurns((t) => t.map((x, j) => (j === i ? { ...x, state: 'applied' } : x)));
       reload();
     } catch (err) { setTurns((t) => t.map((x, j) => (j === i ? { ...x, a: `${x.a}\n\nCouldn't apply: ${String(err).replace(/^.*Error:\s*/, '')}` } : x))); }
@@ -256,6 +266,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
             {parts.summary && <button className={showing === 'summary' ? 'on' : ''} aria-pressed={showing === 'summary'} aria-label="Summary" data-tip="Summary" onClick={() => pick('summary')}><IconLogs width={16} height={16} /></button>}
             <button className={showing === 'note' ? 'on' : ''} aria-pressed={showing === 'note'} aria-label="Note" data-tip="Note" onClick={() => pick('note')}><IconNotes width={16} height={16} /></button>
             {<button className={showing === 'transcript' ? 'on' : ''} aria-pressed={showing === 'transcript'} aria-label="Transcript" data-tip="Transcript" onClick={() => pick('transcript')}><IconSound width={16} height={16} /></button>}
+            {<button className={`tab-bell${showing === 'activity' ? ' on' : ''}`} aria-pressed={showing === 'activity'} aria-label={unseen ? `Notifications, ${unseen} new` : 'Notifications'} data-tip="Notifications" onClick={() => pick('activity')}><IconBell width={16} height={16} />{unseen > 0 && <i className="tab-dot" aria-hidden="true" />}</button>}
           </div>}
           {dirty && <>
             <button className="text-btn" onClick={undo}>Undo</button>
@@ -279,6 +290,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
             {parts.summary && <button className={showing === 'summary' ? 'on' : ''} aria-pressed={showing === 'summary'} aria-label="Summary" data-tip="Summary" onClick={() => pick('summary')}><IconLogs width={16} height={16} /></button>}
             <button className={showing === 'note' ? 'on' : ''} aria-pressed={showing === 'note'} aria-label="Note" data-tip="Note" onClick={() => pick('note')}><IconNotes width={16} height={16} /></button>
             {<button className={showing === 'transcript' ? 'on' : ''} aria-pressed={showing === 'transcript'} aria-label="Transcript" data-tip="Transcript" onClick={() => pick('transcript')}><IconSound width={16} height={16} /></button>}
+            {<button className={`tab-bell${showing === 'activity' ? ' on' : ''}`} aria-pressed={showing === 'activity'} aria-label={unseen ? `Notifications, ${unseen} new` : 'Notifications'} data-tip="Notifications" onClick={() => pick('activity')}><IconBell width={16} height={16} />{unseen > 0 && <i className="tab-dot" aria-hidden="true" />}</button>}
           </div>
         </NoteMeta>
         {share?.ask && <SourceAsk source={share.ask} data={sources} onDone={() => { loadSources(); setShareRead((n) => n + 1); }} />}
@@ -293,15 +305,15 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
           )}
           {note.transcript?.length ? <SavedTranscript turns={note.transcript} /> : !note.summarizable && <p className="no-transcript">No transcript yet. Start recording now to create one.</p>}
         </>}
-        {showing !== 'transcript' && note.withheld && <p className="muted withheld-note">This note has withheld lines, so edit it in your vault.</p>}
-        {showing !== 'transcript' && (
+        {(showing === 'note' || showing === 'summary') && note.withheld && <p className="muted withheld-note">This note has withheld lines, so edit it in your vault.</p>}
+        {(showing === 'note' || showing === 'summary') && (
           // Note and Summary edit in place; a note with withheld lines stays read-only
           <div className="reader-edit my-notes-editor" key={`${showing}-${editKey}`} onInput={() => { typed.current[showing as 'note' | 'summary'] = true; }}>
             <NoteEditor ref={showing === 'note' ? noteEd : sumEd} value={showing === 'note' ? edits.note ?? parts.note : edits.summary ?? parts.summary}
               onChange={onEdit(showing as 'note' | 'summary')} readOnly={note.withheld} placeholder={showing === 'note' ? 'Type your notes' : 'No summary yet'} />
           </div>
         )}
-        {showing === activityTab && <AgentActivity file={note.file} />}
+        {showing === 'activity' && <NoteNotifications act={act} seenBefore={seenBefore} onReviewed={reloadAct} />}
       </article>
 
       {!cs.active && <ChatList chats={cs.chats} onOpen={cs.setOpenId} me={me} />}

@@ -1856,7 +1856,7 @@ ipcMain.handle('note-ask', async (_e, file, question, history, files, chatId) =>
 });
 
 // apply an edit Quorum proposed; refused for notes with opted-out lines so a redacted copy never overwrites the original
-ipcMain.handle('note-apply', (_e, file, newBody) => {
+ipcMain.handle('note-apply', (_e, file, newBody, by) => {
   const abs = meetingFile(file);
   if (!abs) throw new Error('Note not found');
   const raw = store.notes.read(abs);
@@ -1866,7 +1866,8 @@ ipcMain.handle('note-apply', (_e, file, newBody) => {
   const { transcript } = splitRecorded(raw.slice(fm.length).trim(), { recorded: /\nrecorded: true\n/.test(fm) });
   const body = transcript ? withSummary(newBody, transcript) : String(newBody).replace(/\n*$/, '\n');
   store.notes.write(abs, `${fm}${body}`);
-  noteEvent(abs, 'edited', 'Saved your edits');
+  if (by === 'agent') noteEvent(abs, 'agent-edit', 'Agent updated this note with the change you approved');
+  else noteEvent(abs, 'edited', 'You saved edits');
   account.sync.pushNote(abs);
   // an edited note is filed again: index, daily note, people and projects pick up the change
   keeper.schedule('note');
@@ -1888,7 +1889,28 @@ function noteEvent(abs, kind, text) {
   all[abs] = [{ at: new Date().toISOString(), kind, text }, ...(all[abs] ?? [])].slice(0, 30);
   activitySave();
 }
+// when the person last opened a note's Notifications, and when they marked a note Quorum wrote as reviewed
+const seenFile = path.join(DATA_DIR, 'note-seen.json');
+let seenLog = null;
+const seenAll = () => { if (!seenLog) { try { seenLog = JSON.parse(readFileSync(seenFile, 'utf8')); } catch { seenLog = {}; } } return seenLog; };
+const seenSet = (abs, patch) => {
+  const all = seenAll();
+  all[abs] = { ...(all[abs] ?? {}), ...patch };
+  for (const k of Object.keys(all)) if (!existsSync(k)) delete all[k];
+  try { writeFileSync(seenFile, JSON.stringify(all)); } catch (e) { log('note seen', e?.message); }
+};
+ipcMain.handle('note-seen', (_e, file) => { const abs = meetingFile(file); if (abs) seenSet(abs, { seenAt: new Date().toISOString() }); return true; });
+ipcMain.handle('note-reviewed', (_e, file) => {
+  const abs = meetingFile(file);
+  if (!abs) return false;
+  const at = new Date().toISOString();
+  seenSet(abs, { reviewedAt: at, seenAt: at });
+  noteEvent(abs, 'reviewed', 'You reviewed it');
+  return true;
+});
 function moveNoteEvents(from, to) {
+  const seen = seenAll();
+  if (seen[from]) { seen[to] = seen[from]; delete seen[from]; try { writeFileSync(seenFile, JSON.stringify(seen)); } catch {} }
   const all = activityAll();
   if (!all[from]) return;
   all[to] = [...(all[from] ?? []), ...(all[to] ?? [])].slice(0, 30);
@@ -1918,11 +1940,17 @@ ipcMain.handle('note-activity', (_e, file) => {
   const runs = t.runs.map((r) => {
     const files = r.files.filter((x) => x !== rel).map((x) => ({ rel: x, abs: path.join(b.vault, x), label: label(x) }));
     if (r.skipped) return { at: r.at, kind: 'filed', text: `Left it as it is: ${r.skipped}`, files };
-    return { at: r.at, kind: 'filed', text: files.length ? `Filed it into ${files.length} ${files.length === 1 ? 'note' : 'notes'}` : 'Checked related notes and links; nothing needed an update', files };
+    return { at: r.at, kind: 'filed', text: files.length ? `Agent linked it to ${files.length} ${files.length === 1 ? 'memory' : 'memories'}` : 'Agent checked related notes and links; nothing needed an update', files };
   });
   const cluster = clusterOf(rel);
   const events = [...runs, ...(activityAll()[abs] ?? [])].sort((x, y) => String(y.at).localeCompare(String(x.at)));
-  return { on: t.on, pending, running: t.running, abs, rel, cluster, folder: path.posix.dirname(rel), filedBefore: t.filed && !t.runs.length, events };
+  // a note Quorum wrote (a recording's summary, an agent import) waits for the person to review it
+  let fm = {};
+  try { fm = readFrontmatter(store.notes.read(abs).slice(0, 4000)); } catch { /* unreadable */ }
+  const recorded = fm.recorded === true || fm.recorded === 'true';
+  const agentWritten = fm.imported_by === 'agent' || ((fm.source === 'quorum' || fm.source === 'quorum-dev') && (fm.type !== 'note' || recorded));
+  const seen = seenAll()[abs] ?? {};
+  return { on: t.on, pending, running: t.running, abs, rel, cluster, folder: path.posix.dirname(rel), filedBefore: t.filed && !t.runs.length, events, seenAt: seen.seenAt ?? null, reviewedAt: seen.reviewedAt ?? null, agentWritten };
 });
 ipcMain.handle('read-note', (_e, file) => {
   const b = brain();
@@ -2021,7 +2049,7 @@ ipcMain.handle('meeting-brief', async (_e, q) => {
   const list = past.slice(0, 12).map((m) => ({ file: m.file, title: m.title, date: m.date, source: m.source, people: m.people, count: m.count }));
   // meetings connected by the people who come to this one: from its past notes, and its organizer when named
   const org = String(q?.organizer ?? '').trim();
-  const related = relatedOf(all, { title, people: [...new Set([...past.slice(0, 6).flatMap((m) => m.people ?? []), ...(org && !org.includes('@') && !isSelf(org) ? [org] : [])])] });
+  const related = relatedOf(all, { limit: 15, title, people: [...new Set([...past.slice(0, 6).flatMap((m) => m.people ?? []), ...(org && !org.includes('@') && !isSelf(org) ? [org] : [])])] });
   const res = await meetingBriefFor(q, title, past, list);
   return { ...res, related };
 });
@@ -2431,6 +2459,7 @@ ipcMain.handle('ask', async (_e, question, files) => {
   const kbCards = extra.kb && kbSearch ? kbSearch.sources(r.kb ?? [], extra.kb.hits) : [];
   const sources = [...fileCards, ...kbCards.map((c, i) => ({ n: fileCards.length + i + 1, ...c }))];
   saveChat(question, r.text, sources, steps);
+  for (const abs of new Set(r.files)) { const f = meetingFile(abs); if (f) noteEvent(f, 'referenced', `Agent referenced it to answer "${String(question).slice(0, 80)}"`); }
   return { text: r.text, sources, steps };
 });
 
@@ -2969,7 +2998,7 @@ ipcMain.handle('hand-note-done', (_e, file) => {
   const abs = file ? meetingFile(file) : null;
   if (!abs) return;
   account.sync.pushMeetingNote(abs);
-  noteEvent(abs, 'saved', 'Saved the note');
+  noteEvent(abs, 'saved', 'You saved the note');
   keeper.schedule('note');
   nameUntitled(abs).catch((e) => log('note title', e?.message));
 });
@@ -3004,7 +3033,7 @@ async function nameUntitled(abs, chat = null) {
     for (const c of allChats()) if (c.meetingFile === abs) { c.meetingFile = target; writeChat(c); }
     if (meeting.saved?.file === abs) meeting.saved.file = target;
   }
-  noteEvent(target, 'named', `Named it "${named.title}"`);
+  noteEvent(target, 'named', `Agent named it "${named.title}"`);
   log('named note', path.basename(target));
   toUI('note-renamed', { from: abs, to: target });
   toUI('history-changed');
@@ -3020,7 +3049,7 @@ function saveNotes(payload) {
   const body = withShareChoice(file, noteMarkdown(meeting.saved.payload));
   store.meetings.saveNote(file, payload.review === 'speakers' ? setFrontmatterKey(body, 'review', yamlStr('speakers')) : body);
   log('saved note', file);
-  noteEvent(file, 'saved', notes.summary ? 'Saved the recording with its summary' : 'Saved the recording');
+  noteEvent(file, 'saved', notes.summary ? 'Agent wrote the summary and saved the recording' : 'You saved the recording');
   // saved without a summary or a title: it gets a name the same way an untitled hand note does
   if (isUntitled(notes.title)) nameUntitled(file).catch((e) => log('note title', e?.message));
   account.sync.pushMeetingNote(file);
