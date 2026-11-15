@@ -59,6 +59,7 @@ import { createPlatformCache, eventRef, matchPlatforms } from './meetingPlatform
 import { calendarWindow, normalizeDays } from './calendarWindow.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
 import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, relatedOf, seriesKey, seriesOf } from './meetingBrief.js';
+import { collectExport, exportFileName, writeZip } from './exportNotes.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // Every IPC call must come from Quorum's own page (dist/index.html, any hash). A page that got into a window some other
@@ -1398,10 +1399,15 @@ ipcMain.handle('set-settings', (_e, next) => {
     settings.memoryHighlight = next.memoryHighlight;
     store.settings.save();
   }
+  // provider MCPs the person disconnected from Quorum, by connector id
+  if (Array.isArray(next.mcpIgnored)) {
+    settings.mcpIgnored = [...new Set(next.mcpIgnored.filter((x) => typeof x === 'string' && /^[a-z0-9-]{1,40}$/.test(x)))].slice(0, 100);
+    store.settings.save();
+  }
   // which of Quorum's in-app notifications show in the bell; only the known kinds, as booleans
   if (next.notifications && typeof next.notifications === 'object') {
     const n = {};
-    for (const k of ['noteUpdates', 'memoryChanges', 'reviews']) if (typeof next.notifications[k] === 'boolean') n[k] = next.notifications[k];
+    for (const k of ['noteUpdates', 'memoryChanges', 'reviews', 'guardrails']) if (typeof next.notifications[k] === 'boolean') n[k] = next.notifications[k];
     settings.notifications = { ...(settings.notifications ?? {}), ...n };
     store.settings.save();
   }
@@ -2775,6 +2781,28 @@ ipcMain.handle('reveal-brain', () => { if (settings.brainRoot) shell.openPath(se
 // forgetting the Agent OS leaves every file where it is; Quorum stops reading it, and a meetings folder found inside it is no longer found
 ipcMain.handle('disconnect-brain', () => { Object.assign(settings, { brainRoot: null, vaultPath: null, brainMade: null }); store.settings.save(); log('disconnected Agent OS'); suggester.reset(); openIndex(); brainChanged(); return null; });
 ipcMain.handle('clear-meetings-dir', () => { settings.meetingsDir = null; saveSettings(); brainChanged(); return true; });
+// Settings, Export your notes: the person picks where the zip goes; progress reaches the page as 'export-progress'
+let exporting = false;
+ipcMain.handle('export-notes', async () => {
+  if (exporting) return { error: 'An export is already running.' };
+  const r = await dialog.showSaveDialog(win, { title: 'Export your notes', defaultPath: path.join(app.getPath('downloads'), exportFileName()), filters: [{ name: 'Zip archive', extensions: ['zip'] }] });
+  if (r.canceled || !r.filePath) return { canceled: true };
+  exporting = true;
+  try {
+    const vault = brain()?.vault ?? null;
+    const entries = collectExport({ vault, meetingsDir: meetingsDir(), meetingSources: vault ? store.meetings.sources(vault) : [], chatsDir: store.chats.dir });
+    if (!entries.length) return { error: 'There are no notes or chats to export yet.' };
+    toUI('export-progress', { done: 0, total: entries.length });
+    let last = 0;
+    const out = await writeZip(entries, r.filePath, { onProgress: (p) => { const now = Date.now(); if (p.done === p.total || now - last > 150) { last = now; toUI('export-progress', p); } } });
+    log('export', `${out.files} files`, out.skipped ? `${out.skipped} skipped` : '');
+    return { ok: true, path: r.filePath, ...out };
+  } catch (err) {
+    log('export failed', err?.message ?? err);
+    return { error: err?.message && /archive can hold/.test(err.message) ? err.message : 'The export could not be written. Check that the folder is writable and try again.' };
+  } finally { exporting = false; }
+});
+ipcMain.handle('export-reveal', (_e, file) => { if (typeof file === 'string' && file.endsWith('.zip') && existsSync(file)) shell.showItemInFolder(file); });
 
 ipcMain.handle('end', () => endMeeting());
 // pause keeps everything so far; nothing new is recorded until resume

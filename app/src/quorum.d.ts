@@ -88,7 +88,9 @@ export type ModelSourceStatus = { source: ModelSource; localModel: string; claud
 // userName is how the main process names the recorder in notes; it falls back to the macOS account's full name, then the login
 export type Settings = {
   // which of Quorum's in-app notifications show in the bell's list and dot; each is on when missing
-  notifications?: { noteUpdates?: boolean; memoryChanges?: boolean; reviews?: boolean }; meetingProviders?: Record<string, { enabled: boolean }>; autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean; transcription?: boolean }; meetingsKb?: { autoSave?: boolean }; managedModels?: boolean; screenContext?: boolean; memoryAutoApprove?: boolean; memoryDotDays?: number; memoryHighlight?: boolean };
+  notifications?: { noteUpdates?: boolean; memoryChanges?: boolean; reviews?: boolean; guardrails?: boolean };
+  // connector ids whose provider MCP the person disconnected from Quorum (Settings > Connectors)
+  mcpIgnored?: string[]; meetingProviders?: Record<string, { enabled: boolean }>; autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean; transcription?: boolean }; meetingsKb?: { autoSave?: boolean }; managedModels?: boolean; screenContext?: boolean; memoryAutoApprove?: boolean; memoryDotDays?: number; memoryHighlight?: boolean };
 export type OnboardingStatus = { firstRun: boolean; defaultVaultDir: string };
 export type OnboardingChecks = { permissions: { microphone: string; audio: string; accessibility: string; calendar: string }; claude: { installed: boolean; loggedIn?: boolean; email?: string; org?: string; plan?: string; version?: string; pending?: boolean }; model?: ModelSourceStatus | null };
 // the setup interview: a template plus a few answers that shape a Quorum-built Agent OS (starter.js)
@@ -162,6 +164,9 @@ export type AccountState = {
   sync: boolean; lastSyncAt: string | null; lastPullAt?: string | null; syncError: string | null;
 };
 export type Result = { ok?: boolean; error?: string };
+// what the danger zone reads before it offers a delete (migration 0039): the signed-in email, whether the account runs
+// Quorum itself, and the workspaces it owns
+export type AccountDeleteStatus = { email: string | null; platformOwner: boolean; owned: { id: string; name: string }[] };
 
 // Settings › Sources (sources/catalog.js, sources/jobs.js)
 export type SourceMethod = 'connect' | 'folder';
@@ -577,6 +582,12 @@ declare global {
       accountVerifyCode(email: string, code: string): Promise<Result>;
       accountSignOut(): Promise<void>;
       accountGoogle(): Promise<Result>;
+      accountDeleteStatus(): Promise<AccountDeleteStatus | { error: string }>;
+      accountDelete(typed: string): Promise<Result>;
+      orgDelete(workspaceId: string, typed: string): Promise<Result>;
+      exportNotes(): Promise<{ ok?: boolean; canceled?: boolean; error?: string; path?: string; files?: number; skipped?: number; bytes?: number }>;
+      exportReveal(file: string): Promise<void>;
+      onExportProgress(cb: (p: { done: number; total: number }) => void): Unsub;
       onAccountOAuth(cb: (r: Result) => void): Unsub;
       orgCreate(name: string, domain: string | null, domainJoin: boolean): Promise<Result>;
       orgJoin(target: { inviteId: string } | { workspaceId: string }): Promise<Result>;

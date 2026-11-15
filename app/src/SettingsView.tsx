@@ -12,7 +12,7 @@ import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
 import { Row, Toggle, useMenu } from './controls';
 import { BrainCheckPanel, ContextPanel, SkillsPanel } from './PluginPanels';
-import { AccountArea, BillingArea, EDITION, KnowledgeBasesArea, KnowledgeQueueArea, MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
+import { AccountArea, BillingArea, DeleteAccountArea, DeleteOrgArea, EDITION, KnowledgeBasesArea, KnowledgeQueueArea, MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { TOP_ADMIN_PAGES, canAdmin, flagHiddenPages, modeOf, resolvePage, voiceMode, workspacePages, type Page } from './settingsNav';
 import { EnvSwitch } from './EnvSwitch';
 import { AgentRows, ConnectionCheckButton, ConnectionCheckList, useAgents, useConnectionCheck, type Agents } from './AgentLinks';
@@ -39,7 +39,7 @@ const ACCOUNT: Nav[] = [
 const WORKSPACE: Nav[] = [
   { id: 'general', label: 'General', icon: IconBuilding },
   { id: 'notifications', label: 'Notifications', icon: IconBell },
-  { id: 'developers', label: 'AI settings', icon: IconCode },
+  { id: 'developers', label: 'AI tools', icon: IconCode },
   { id: 'guardrails', label: 'Guardrails', icon: IconShield },
   { id: 'connectors', label: 'Connectors', icon: IconGrid },
   { id: 'teams', label: 'Teams', icon: IconPeople },
@@ -468,18 +468,37 @@ function ProfilePage({ settings, email, emailLabel, name, onSettings, children }
 
       <h3>Account management</h3>
       <div className="set-card form">
-        <Row icon={<IconStack width={18} height={18} />} title={<>Export your notes<Soon /></>} desc="Will save every note and meeting as one archive. They are already plain files in your Agent OS">
-          <button className="pill" disabled>Export</button>
-        </Row>
+        <ExportRow />
       </div>
 
-      <h3>Danger zone</h3>
-      <div className="set-card danger">
-        <Row icon={<IconPower width={18} height={18} />} title={<>Delete my account<Soon /></>} desc="Will remove a hosted account and everything synced to it. Files on this Mac stay">
-          <button className="pill danger-pill" disabled>Delete my account</button>
-        </Row>
-      </div>
+      <DeleteAccountArea />
     </>
+  );
+}
+
+// one zip of every note, meeting note and chat, saved where the person picks. The notes are already plain markdown
+// files in the vault; the archive also holds the chats, which only Quorum's own folder has
+type ExportState = { phase: 'idle' | 'running' | 'done' | 'error'; done?: number; total?: number; path?: string; files?: number; skipped?: number; error?: string };
+function ExportRow() {
+  const [state, setState] = useState<ExportState>({ phase: 'idle' });
+  useEffect(() => window.quorum.onExportProgress((p) => setState((s) => (s.phase === 'running' ? { ...s, done: p.done, total: p.total } : s))), []);
+  const run = async () => {
+    setState({ phase: 'running' });
+    const r = await window.quorum.exportNotes().catch(() => ({ error: 'The export could not be written. Try again.' }) as Awaited<ReturnType<Window['quorum']['exportNotes']>>);
+    if (r.canceled) setState({ phase: 'idle' });
+    else if (r.error) setState({ phase: 'error', error: r.error });
+    else setState({ phase: 'done', path: r.path, files: r.files, skipped: r.skipped });
+  };
+  const n = (v: number | undefined, word: string) => `${(v ?? 0).toLocaleString()} ${v === 1 ? word : `${word}s`}`;
+  const desc = state.phase === 'running' ? (state.total ? `Writing ${n(state.done, 'file')} of ${state.total.toLocaleString()}` : 'Gathering your notes')
+    : state.phase === 'done' ? `Saved ${n(state.files, 'file')}${state.skipped ? `; ${n(state.skipped, 'file')} could not be read` : ''}`
+    : state.phase === 'error' ? state.error ?? 'The export could not be written.'
+    : 'Saves every note, meeting note and chat as one zip archive. Your notes are also plain files in your Agent OS';
+  return (
+    <Row icon={<IconStack width={18} height={18} />} title="Export your notes" desc={desc}>
+      {state.phase === 'done' && state.path && <button className="pill" onClick={() => window.quorum.exportReveal(state.path!)}>Show in Finder</button>}
+      <button className="pill" disabled={state.phase === 'running'} onClick={run}>{state.phase === 'running' ? <><span className="spinner tiny" /> Exporting</> : 'Export'}</button>
+    </Row>
   );
 }
 
@@ -563,6 +582,8 @@ function WorkspacePage({ settings, onSettings, onGo, billing, company }: { setti
       </div>
       <CustomerBlacklist list={w.optOuts ?? (w.neverListen ?? []).map((domain) => ({ domain }))} onChange={(optOuts) => save({ optOuts })} />
       </>}
+
+      <DeleteOrgArea />
     </>
   );
 }
@@ -1171,7 +1192,7 @@ function AboutCard() {
 // every row is planned work: the controls are disabled on purpose and each line says what the notification will do
 function NotificationsPage({ settings, set }: { settings: Settings; set: (patch: Partial<Settings>) => void }) {
   // which of Quorum's own notifications show in the bell's list and count toward its dot; all on until turned off
-  const n = { noteUpdates: true, memoryChanges: true, reviews: true, ...(settings.notifications ?? {}) };
+  const n = { noteUpdates: true, memoryChanges: true, reviews: true, guardrails: true, ...(settings.notifications ?? {}) };
   const flip = (k: keyof typeof n) => (on: boolean) => set({ notifications: { ...n, [k]: on } });
   return (
     <>
@@ -1181,6 +1202,7 @@ function NotificationsPage({ settings, set }: { settings: Settings; set: (patch:
         <Row icon={<IconNotes width={18} height={18} />} title="Note updates" desc="Quorum updated, filed, linked or referenced one of your notes"><Toggle on={n.noteUpdates} onChange={flip('noteUpdates')} /></Row>
         <Row icon={<IconBrain width={18} height={18} />} title="Memory changes" desc="Quorum created or changed a memory page"><Toggle on={n.memoryChanges} onChange={flip('memoryChanges')} /></Row>
         <Row icon={<IconBell width={18} height={18} />} title="Needs your review" desc="A change Quorum made is waiting for your approval"><Toggle on={n.reviews} onChange={flip('reviews')} /></Row>
+        <Row icon={<IconShield width={18} height={18} />} title="Guardrail blocked something" desc="A built-in guardrail kept the agent from a file or a person"><Toggle on={n.guardrails} onChange={flip('guardrails')} /></Row>
       </div>
     </>
   );

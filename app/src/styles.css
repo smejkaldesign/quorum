@@ -2430,3 +2430,16 @@ input::placeholder, textarea::placeholder { font-style: italic; }
 .card h3, .conn-group h4, .conn-detail h4, .sofar-head, .sofar-group h4, .hist-group h4, .mp-about h3 { color: var(--text); }
 .conn-chev { transform: rotate(-90deg); }
 .conn-detail-cta .pill { white-space: nowrap; }
+
+/* the type-your-email sheet for deleting an account or a workspace */
+.type-confirm .type-confirm-ask { margin: 0 0 10px; color: var(--text); font-size: 14px; }
+.type-confirm .set-field + .set-field { margin-top: 10px; }
+/* a disabled button shows no tooltip of its own; the wrapper carries it */
+.guarded { display: inline-flex; }
+/* a connector's page: twice the room between sections, the state dot clear of the name, and a section's own text */
+.conn-detail h4 { margin-top: 36px; }
+.conn-detail-title h3 .conn-dot { margin-left: 4px; }
+.conn-section-lede { margin: -2px 0 12px; line-height: 1.55; }
+.mcp-col { display: inline-flex; align-items: center; gap: 8px; }
+.mcp-col .conn-dot { margin-left: 0; }
+.conn-detail-cta .conn-actions { gap: 8px; }
