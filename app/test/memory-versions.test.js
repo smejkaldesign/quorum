@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { DAY, fileDot, folderDots, lineDiff, noteBody, prune, reviewGroup } from '../memoryReview.js';
+import { DAY, changeBlocks, fileDot, folderDots, lineDiff, noteBody, prune, reviewGroup } from '../memoryReview.js';
 import { createVersionStore, snapshot } from '../memoryVersions.js';
 import { createKeeper } from '../keeper.js';
 import { plan, writeStarter } from '../starter.js';
@@ -74,6 +74,14 @@ describe('dot rules', () => {
     const blue = { updates: [rec.updates[0], { ...rec.updates[1], approved: true, approvedAt: now - 2 * DAY }], openedAt: now - 2.5 * DAY };
     expect(reviewGroup(blue, { now, days: 30 })).toMatchObject({ dot: 'blue', count: 1, first: { id: 'b' } });
     expect(reviewGroup({ updates: [] }, { now, days: 30 })).toBeNull();
+  });
+});
+
+describe('changeBlocks', () => {
+  it('groups changed lines that sit together, across blank lines only', () => {
+    expect(changeBlocks([5, 1, 2, 9])).toEqual([[1, 2], [5], [9]]);
+    expect(changeBlocks([1, 3, 5], 'a\nb\n\nc\nd\ne')).toEqual([[1, 3], [5]]);
+    expect(changeBlocks([])).toEqual([]);
   });
 });
 

@@ -822,20 +822,6 @@ em.stub { font-style: normal; font-size: 12px; font-weight: 500; padding: 1px 9p
 .lh-done { color: var(--go); }
 .lh-list { display: flex; flex-direction: column; gap: 10px; }
 .lh-list h5 { margin: 10px 6px 2px; font-size: 12px; font-weight: 600; color: var(--muted); }
-.lh-item { border: 1px solid var(--container-border); border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; background: rgba(255, 255, 255, 0.02); }
-.lh-item.focus { border-color: rgba(var(--brand-rgb), 0.6); background: rgba(var(--brand-rgb), 0.08); }
-.lh-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.lh-top strong { font-size: 14px; font-weight: 600; color: #c9c9ce; overflow-wrap: anywhere; }
-.lh-top span { flex: none; font-size: 11.5px; color: var(--muted); }
-.lh-from { display: flex; flex-wrap: wrap; gap: 4px 8px; font-size: 12px; }
-.lh-from button { color: var(--brand-soft); }
-.lh-from button:hover { text-decoration: underline; }
-.lh-from em { font-style: normal; color: var(--muted); }
-.lh-fixes { display: flex; flex-wrap: wrap; gap: 6px; }
-.lh-fixes .pill { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lh-actions { display: flex; gap: 12px; font-size: 12px; }
-.lh-actions button { color: var(--muted); }
-.lh-actions button:hover { color: var(--text); }
 
 /* tree rows: ••• on hover opens the same menu as right-click */
 .kb-row { position: relative; }
@@ -844,12 +830,8 @@ em.stub { font-style: normal; font-size: 12px; font-weight: 500; padding: 1px 9p
 .kb-row:hover .kb-more, .kb-more:focus-visible { opacity: 1; }
 .kb-more:hover { color: var(--text); background: rgba(255, 255, 255, 0.08); }
 
-.lh-tldr { margin: 0; font-size: 14px; line-height: 1.5; color: #d4d4d8; }
 .lh-btn.alert { color: var(--stop); }
 .lh-btn.alert .lh-count { background: var(--stop); color: #fff; }
-.lh-fix { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; }
-.lh-alt { font-size: 12px; color: var(--muted); white-space: nowrap; }
-.lh-alt:hover { color: var(--text); text-decoration: underline; }
 
 /* Link health takes over the graph area: graph recedes, the panel rises in over it */
 .kb-stage { position: relative; flex: 1; min-height: 0; display: flex; }
@@ -1973,8 +1955,6 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .mu-banner .mu-actions { display: inline-flex; gap: 8px; }
 .mu-banner .pill { background: var(--menu-bg); border-color: var(--line-2); color: var(--text); }
 .mu-banner .pill:not(:disabled):hover { border-color: rgba(255, 255, 255, 0.24); }
-.mu-banner .mu-accept svg { color: var(--go); }
-.mu-banner .mu-approved { padding: 0 8px; font-size: 12px; color: var(--muted); }
 .mu-seg button { padding: 4px 12px; }
 .mu-text.green .md-chg { color: var(--go); }
 .mu-text.blue .md-chg { color: var(--brand-soft); }
@@ -1986,3 +1966,54 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .mu-days { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
 .mu-days input { width: 64px; height: 30px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--menu-bg); color: var(--text); font: inherit; font-size: 13px; text-align: right; }
 .mu-days input:focus { outline: none; border-color: var(--brand); }
+
+/* Memory review, live runs and Memory health: the banner's icon controls and arrows, the red issues banner, the live
+   banner and lock, shimmer on rows of notes a run is writing, and the Memory health cards (MemoryUpdates.tsx,
+   KnowledgeView.tsx, LinkHealth.tsx). Motion stops with reduced motion */
+.mu-banner .mu-icon { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--line-2); border-radius: 8px; background: var(--menu-bg); color: var(--text); }
+.mu-banner .mu-icon:not(:disabled):hover { border-color: rgba(255, 255, 255, 0.24); }
+.mu-banner .mu-icon:disabled { opacity: 0.45; cursor: default; }
+.mu-banner .mu-icon.active { color: var(--brand-soft); }
+.mu-banner.green .mu-icon.active { color: var(--go); }
+.mu-banner .mu-yes svg { color: var(--go); }
+.mu-banner .mu-no svg { color: var(--danger); }
+.mu-banner .mu-nav { display: inline-flex; align-items: center; gap: 6px; }
+.mu-banner .mu-pos { min-width: 48px; text-align: center; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.mu-banner .mu-sub { display: block; margin-top: 2px; font-size: 12px; font-weight: 400; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mu-banner.red { border-color: rgba(240, 74, 74, 0.35); }
+.mu-banner.red .mu-count { color: #ff8a8a; }
+.mu-banner.live { border-color: rgba(var(--brand-rgb), 0.35); }
+.mu-banner.live .mu-count { color: var(--text); font-weight: 400; }
+.mu-banner.live .pill svg { color: var(--danger); }
+.mu-live-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--brand); animation: mu-pulse 1.2s ease-in-out infinite; }
+.mu-text.red .md-issue, .mu-text .md-issue { color: #ff8a8a; text-decoration: underline wavy rgba(240, 74, 74, 0.6); text-underline-offset: 4px; }
+.mu-text .md-cur { border-radius: 6px; background: rgba(255, 255, 255, 0.06); box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.06); }
+.mu-text.locked { opacity: 0.85; }
+.kb-item.live { background-image: linear-gradient(100deg, transparent 20%, rgba(var(--brand-rgb), 0.18) 50%, transparent 80%); background-size: 220% 100%; animation: kb-shimmer 1.6s linear infinite; }
+.kb-live-note { color: var(--brand-soft); }
+@keyframes kb-shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+@keyframes mu-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) {
+  .kb-item.live { animation: none; background-image: none; background-color: rgba(var(--brand-rgb), 0.12); }
+  .mu-live-dot { animation: none; }
+}
+.mh-head-actions { display: inline-flex; gap: 4px; }
+.icon-btn.spinning svg { animation: mh-spin 0.9s linear infinite; }
+@keyframes mh-spin { to { transform: rotate(-360deg); } }
+@media (prefers-reduced-motion: reduce) { .icon-btn.spinning svg { animation: none; } }
+.mh-card { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border: 1px solid var(--container-border); border-radius: 14px; background: var(--container-bg); }
+.mh-card.focus { border-color: rgba(var(--brand-rgb), 0.6); background: rgba(var(--brand-rgb), 0.08); }
+.mh-path { margin: 0; font-size: 12px; color: #6e6e74; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mh-title { font-size: 15px; font-weight: 600; line-height: 1.4; color: var(--text); overflow-wrap: anywhere; }
+.mh-fix { margin: 0; font-size: 13px; line-height: 1.5; color: #b8b8be; }
+.mh-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
+.mh-facts { display: flex; flex-wrap: wrap; gap: 4px 0; font-size: 12px; color: var(--muted); }
+.mh-facts span + span::before { content: '·'; margin: 0 8px; }
+.mh-actions { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
+.mh-actions .pill { background: var(--menu-bg); border-color: var(--line-2); color: var(--text); }
+.mh-actions .pill:not(:disabled):hover { border-color: rgba(255, 255, 255, 0.24); }
+.mh-actions .pill.mh-accept { background: var(--brand); border-color: var(--brand); color: #fff; }
+.mh-actions .pill.mh-accept:not(:disabled):hover { background: var(--brand-grad-a); border-color: var(--brand-grad-a); }
+.mh-actions .pill:disabled { opacity: 0.5; cursor: default; }
+.mh-plain { padding: 0 6px; font-size: 13px; color: var(--muted); }
+.mh-plain:hover { color: var(--text); }

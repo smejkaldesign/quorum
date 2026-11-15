@@ -93,3 +93,18 @@ export function noteBody(text) {
   const h1 = body.match(/^#\s+(.+)$/m);
   return h1 && body.startsWith(h1[0]) ? body.slice(h1[0].length).trim() : body;
 }
+
+// the changed lines of a note grouped into the items the banner's arrows step through: runs of lines next to each
+// other, or with only blank lines between them
+export function changeBlocks(lines, text = null) {
+  const blank = text == null ? () => false : (() => { const all = String(text).split('\n'); return (i) => !all[i]?.trim(); })();
+  const out = [];
+  for (const l of [...lines].sort((a, b) => a - b)) {
+    const cur = out[out.length - 1];
+    const last = cur?.[cur.length - 1];
+    let joined = cur && l === last + 1;
+    if (cur && !joined && l > last) { joined = true; for (let i = last + 1; i < l; i++) if (!blank(i)) { joined = false; break; } }
+    if (joined) cur.push(l); else out.push([l]);
+  }
+  return out;
+}
