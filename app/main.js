@@ -1541,6 +1541,7 @@ function meetingIndex() {
           visibility: fm.visibility === 'public' ? 'public' : 'private',
           url: [fm.granola_url, fm.source_url].find((u) => /^https:\/\//.test(String(u ?? ''))) ?? null,
           platform: /zoom/i.test(fm.platform ?? '') ? 'zoom' : /meet/i.test(fm.platform ?? '') ? 'meet' : /teams/i.test(fm.platform ?? '') ? 'teams' : platformCache.get(key ?? file)?.platform ?? null,
+          calendar: platformCache.get(key ?? file) ? platformCache.get(key ?? file).calendar ?? 'apple-calendar' : null,
           meetingUrl: [fm.meeting_url, platformCache.get(key ?? file)?.url].find((u) => /^https:\/\//.test(String(u ?? ''))) ?? null,
           app, rel: path.relative(brain()?.vault ?? root, file), link: `quorum://note/${encodeURIComponent(fm.granola_id || path.relative(brain()?.vault ?? root, file))}`,
         });
@@ -1997,7 +1998,8 @@ const gcal = createGoogleCalendar({
 async function calendarEvents(days) {
   const c = calSettings();
   const [mac, google] = await Promise.all([c.enabled ? calAsk({ cmd: 'calEvents', days }) : Promise.resolve({ status: 'off', events: [] }), gcal.events(days)]);
-  return { mac, google, events: mergeEvents(mac.events ?? [], google.events) };
+  const tag = (list, calendar) => (list ?? []).map((e) => ({ ...e, source: calendar }));
+  return { mac, google, events: mergeEvents(tag(mac.events, 'apple-calendar'), tag(google.events, 'google-calendar')) };
 }
 // which call platform an event points at, from its URL, location or invite text; null for a plain calendar entry
 const CALL_LINKS = [
@@ -2035,7 +2037,7 @@ ipcMain.handle('calendar', async () => {
     const { platform, join } = callLink(e);
     // an event Quorum can do nothing with (no call, or a call on a platform that is off) only shows when asked for
     if (hiddenIds.has(e.id) || (!c.showAll && !(platform && providerOn(platform)))) { hidden += 1; return []; }
-    return [{ id: e.id, title: e.title, start: e.start, end: e.end, item: e.item, link: e.link ?? null, recurring: e.recurring, platform, join }];
+    return [{ id: e.id, title: e.title, start: e.start, end: e.end, item: e.item, link: e.link ?? null, recurring: e.recurring, platform, join, calendar: e.source ?? null }];
   });
   return { connected: true, status, events, days: c.days, showAll: c.showAll, hidden };
 });
@@ -2110,7 +2112,7 @@ ipcMain.handle('meetings-dir', () => {
   return { path: quorum, rel: path.relative(path.dirname(brain()?.vault ?? dir), quorum), root: path.relative(brain()?.root ?? path.dirname(dir), dir) || path.basename(dir), notes, chosen: dir === settings.meetingsDir, sources };
 });
 // icons for notes made by other apps come from that app's own install on this Mac, so Quorum ships none of their artwork
-const SOURCE_APPS = { granola: '/Applications/Granola.app', zoom: '/Applications/zoom.us.app', teams: '/Applications/Microsoft Teams.app', meet: MEET_PWA };
+const SOURCE_APPS = { calendar: '/System/Applications/Calendar.app', granola: '/Applications/Granola.app', zoom: '/Applications/zoom.us.app', teams: '/Applications/Microsoft Teams.app', meet: MEET_PWA };
 const sourceIcons = {};
 const loadSourceIcons = () => {
   for (const [k, appPath] of Object.entries(SOURCE_APPS)) {
@@ -2138,7 +2140,9 @@ ipcMain.handle('library-icons', async () => {
   const out = {};
   mkdirSync(LIBRARY_ICON_DIR, { recursive: true });
   await Promise.all(CONNECTORS.map(async (c) => {
-    if (c.app && apps?.[c.app]) { out[c.id] = apps[c.app]; return; }
+    // the Calendar app connector reads the Mac's calendars, so it shows Calendar.app's icon
+    const appKey = c.id === 'apple-calendar' ? 'calendar' : c.app;
+    if (appKey && apps?.[appKey]) { out[c.id] = apps[appKey]; return; }
     const file = path.join(LIBRARY_ICON_DIR, `${c.id}.png`);
     try {
       if (!existsSync(file)) {

@@ -11,7 +11,7 @@ describe('meeting platform matching', () => {
   it('matches a similar title within 15 minutes', () => {
     const r = matchPlatforms([{ key: 'a', title: 'headways / habitat weekly check-in', date: '2026-11-09T14:04:00-08:00' }],
       [ev('Headways / Habitat weekly check-in', '2026-11-09T14:00:00-08:00')], link);
-    expect(r.a).toEqual({ platform: 'teams', url: 'https://teams.microsoft.com/l/meetup-join/x' });
+    expect(r.a).toEqual({ platform: 'teams', url: 'https://teams.microsoft.com/l/meetup-join/x', calendar: 'apple-calendar' });
   });
   it('matches any title only within 3 minutes', () => {
     const notes = [{ key: 'a', title: 'Call', date: '2026-11-09T14:02:00Z' }, { key: 'b', title: 'Call', date: '2026-11-09T14:10:00Z' }];

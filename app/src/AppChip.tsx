@@ -9,6 +9,9 @@ export const PLATFORM_APP: Record<Platform, { id: string; name: string; short: s
   teams: { id: 'teams', name: 'Microsoft Teams', short: 'Teams' },
 };
 
+// the calendars an event or a matched note can come from
+export const CALENDAR_APP = { 'apple-calendar': { id: 'apple-calendar', name: 'Calendar' }, 'google-calendar': { id: 'google-calendar', name: 'Google Calendar' } } as const;
+
 // connector logos, loaded once per launch and shared by every row
 let icons: Record<string, string | null> = {};
 let loading = false;
@@ -50,12 +53,12 @@ export function AppChip({ id, name, url }: { id: string; name: string; url?: str
 }
 
 // Details text that opens the item in its app: subdued, white on hover, without opening the row
-export function AppLink({ url, name, children }: { url: string; name: string; children: ReactNode }) {
+export function AppLink({ url, name, logo, children }: { url: string; name: string; logo?: string; children: ReactNode }) {
   return (
     <a className="app-link hist-sub-text" href={url} data-tip={`Open in ${name}`}
       onClick={(e) => { e.preventDefault(); e.stopPropagation(); window.quorum.openExternal(url); }}
       onKeyDown={(e) => e.stopPropagation()}>
-      {children}
+      {logo && <AppLogo id={logo} name={name} />}<span className="app-link-text">{children}</span>
     </a>
   );
 }

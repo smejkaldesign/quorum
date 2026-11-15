@@ -1808,7 +1808,8 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .avatar-sq.app .app-logo { width: 28px; height: 28px; border-radius: 7px; }
 .up-strip .avatar-sq.app .app-logo { width: 22px; height: 22px; }
 /* details text that opens the item in its app: subdued, white on hover */
-.hist-text .app-link { color: var(--muted); text-decoration: none; cursor: pointer; transition: color 160ms ease; }
+.hist-text .app-link { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); text-decoration: none; cursor: pointer; transition: color 160ms ease; }
+.hist-text .app-link-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; font-size: inherit; }
 .hist-text .app-link:hover, .hist-text .app-link:focus-visible { color: var(--text); }
 .up-inline .up-head .up-show-more { margin: 0; }
 

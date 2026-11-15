@@ -16,7 +16,8 @@ export function similarTitle(a, b) {
 }
 
 // notes: [{ key, title, date }]; events: calendar events; callLink(event) -> { platform, join }.
-// Returns { key: { platform, url } | null } for every note with a date: null when no event with a call matches.
+// Returns { key: { platform, url, calendar } | null } for every note with a date: null when no event with a call
+// matches. calendar is the connector the event came from (event.source), the Calendar app when unset.
 export function matchPlatforms(notes, events, callLink) {
   const evs = events.map((e) => ({ e, at: new Date(e.start).getTime() })).filter((x) => Number.isFinite(x.at));
   const out = {};
@@ -31,7 +32,7 @@ export function matchPlatforms(notes, events, callLink) {
       if (!best || score < best.score) best = { score, e: x.e };
     }
     const link = best ? callLink(best.e) : null;
-    out[n.key] = link?.platform ? { platform: link.platform, url: link.join } : null;
+    out[n.key] = link?.platform ? { platform: link.platform, url: link.join, calendar: best.e.source ?? 'apple-calendar' } : null;
   }
   return out;
 }

@@ -9,7 +9,7 @@ import { openConnectors } from './connectorsNav';
 import { useSession } from './session';
 import { dayLabel } from './upNextList';
 import { UpNext, useCalendarView } from './UpNext';
-import { AppChip, AppLink, AppLogo, PLATFORM_APP, sourceApp } from './AppChip';
+import { AppChip, AppLink, AppLogo, CALENDAR_APP, PLATFORM_APP, sourceApp } from './AppChip';
 import { IconCalendar, IconChat, IconClose, IconExternal, IconListCheck, IconMic, IconNewNote, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
 
 type Filter = 'all' | 'meetings' | 'notes' | 'chats';
@@ -153,10 +153,11 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
         {r.avatar === 'chat'
           ? <span className="avatar-sq chat"><IconQuorum /></span>
           : r.avatar === 'note' ? <span className="avatar-sq note"><IconMic width={20} height={20} /></span>
-          : platform ? <span className="avatar-sq app"><AppLogo {...platform} /></span>
+          : r.meeting?.calendar ? <span className="avatar-sq app"><AppLogo {...CALENDAR_APP[r.meeting.calendar]} /></span>
           : <span className="avatar-sq" style={{ background: colorFor(r.sub + r.title) }}>{r.avatar}</span>}
         <span className="hist-text"><strong>{r.title}</strong><span className="hist-sub">
-          {platform && r.meeting?.meetingUrl ? <AppLink url={r.meeting.meetingUrl} name={platform.name}>{r.sub}</AppLink> : <span className="hist-sub-text">{r.sub}</span>}
+          {platform && r.meeting?.meetingUrl ? <AppLink url={r.meeting.meetingUrl} name={platform.name} logo={platform.id}>{r.sub}</AppLink>
+            : <span className="hist-meet">{platform && <AppLogo {...platform} />}<span className="hist-sub-text">{r.sub}</span></span>}
           {r.meeting && r.meeting.source !== 'quorum' && <AppChip {...sourceApp(r.meeting.source)} url={r.meeting.url} />}
         </span></span>
         <span className="hist-time">{r.date ? <>{r.date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?(AM|PM)/i, '')}<small>{r.date.getHours() < 12 ? 'AM' : 'PM'}</small></> : ''}</span>
