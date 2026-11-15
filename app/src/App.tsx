@@ -32,6 +32,7 @@ import { Avatar, SpeakerName, similarCounts, type SpeakerInfo } from './Speaker'
 import { useNotetaker } from './flags';
 import { type RecordChoice } from './noteRecord';
 import { RecLevel } from './RecLevel';
+import { NotificationBell, NotificationsView } from './NotificationsView';
 import { IconFolderOpen, IconPerson, IconClose, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, IconRecord, Wave } from './icons';
 
 // one speaker turn as main.js built it; a turn that grows arrives again with the same id and replace: true
@@ -249,7 +250,7 @@ export function App() {
   const convoRef = useRef(false);
   convoRef.current = convoOpen;
   const phaseRef = useRef<Phase>('idle');
-  const [view, setView] = useSession<'main' | 'settings'>('view', 'main');
+  const [view, setView] = useSession<'main' | 'settings' | 'notifications'>('view', 'main');
   const [kbCommand, setKbCommand] = useState<KbCommand>(null);
   // a cited note opens in Quorum's Memory view
   const openInQuorum = (abs: string) => {
@@ -676,6 +677,7 @@ export function App() {
             )}
             <span className="rec-sep" aria-hidden="true" />
           </div>
+          <NotificationBell active={view === 'notifications'} onOpen={() => setView('notifications')} />
           <AppMenu brain={brain} me={me} active={view === 'settings'} onMemory={() => openSettings('memory')} onSettings={() => openSettings('preferences')} next={closeRef} />
           <button ref={closeRef} className="icon-btn close-win" aria-label="Close window" onClick={() => window.quorum.hideWindow()}>
             <IconClose width={17} height={17} />
@@ -690,6 +692,10 @@ export function App() {
       {view === 'settings' ? (
         <div className="body wide flush">
           <Suspense fallback={null}><SettingsView open={settingsPage} brain={brain} settings={settings} onSettings={setSettings} onConnect={async () => setBrain(await window.quorum.connectBrain())} onDisconnect={async () => setBrain(await window.quorum.disconnectBrain())} onBrain={setBrain} onBack={() => setView('main')} /></Suspense>
+        </div>
+      ) : view === 'notifications' ? (
+        <div className="body wide">
+          <NotificationsView onOpenNote={(abs) => { setView('main'); openNoteView(abs); }} onOpenGuardrails={() => openSettings('guardrails')} />
         </div>
       ) : showLive ? liveArea : note ? null : <>
       {tab === 'home' && !convoOpen && (

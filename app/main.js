@@ -57,6 +57,7 @@ import { createUpdater, feedFor } from './updater.js';
 import { createGuardrails } from './guardrails.js';
 import { createPlatformCache, eventRef, matchPlatforms } from './meetingPlatforms.js';
 import { calendarWindow, normalizeDays } from './calendarWindow.js';
+import { feedPage, feedRows, labelOf } from './activityFeed.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
 import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, relatedOf, seriesKey, seriesOf } from './meetingBrief.js';
 import { collectExport, exportFileName, writeZip } from './exportNotes.js';
@@ -219,7 +220,8 @@ let tray;
 let trayMenu;
 let quitting = false;
 // guardrails: one rule set for what the agent may read and say (app/guardrails.js); brain() is defined below and read lazily
-const guardrails = createGuardrails({ settings, saveSettings: () => store.settings.save(), brain: () => brain(), privateDirs, denialLog: path.join(DATA_DIR, 'guard-denials.jsonl'), log: (...a) => log(...a) });
+const DENIAL_LOG = path.join(DATA_DIR, 'guard-denials.jsonl');
+const guardrails = createGuardrails({ settings, saveSettings: () => store.settings.save(), brain: () => brain(), privateDirs, denialLog: DENIAL_LOG, log: (...a) => log(...a) });
 const KEEPER_ERRORS = path.join(DATA_DIR, 'keeper-errors.log');
 // versions of the vault notes Quorum's agents change, and the updates the Memory tab shows for review (memoryVersions.js)
 const memoryVersions = createVersionStore({
@@ -1992,21 +1994,116 @@ ipcMain.handle('note-activity', (_e, file) => {
   const filedAt = t.runs[0] ? new Date(t.runs[0].at).getTime() : 0;
   // a save within the last minute that upkeep has not caught up with yet
   const pending = t.on && changedAt > filedAt + 1000 && Date.now() - changedAt < 60000;
-  const label = (r) => { const base = path.posix.basename(r, '.md'); return base === 'index' ? 'Index' : /^\d{4}-\d{2}-\d{2}$/.test(base) ? `Daily note ${base}` : base.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()); };
-  const runs = t.runs.map((r) => {
-    const files = r.files.filter((x) => x !== rel).map((x) => ({ rel: x, abs: path.join(b.vault, x), label: label(x) }));
+  const cluster = clusterOf(rel);
+  const events = [...runEvents(b.vault, rel, t.runs), ...(activityAll()[abs] ?? [])].sort((x, y) => String(y.at).localeCompare(String(x.at)));
+  // a note disapproved in Notifications no longer asks for review on its page
+  const seen = seenAll()[abs] ?? {};
+  return { on: t.on, pending, running: t.running, abs, rel, cluster, folder: path.posix.dirname(rel), filedBefore: t.filed && !t.runs.length, events, seenAt: seen.seenAt ?? null, reviewedAt: seen.reviewedAt ?? null, agentWritten: agentWrote(abs) && !seen.rejectedAt };
+});
+// each upkeep run on a note as a row of its activity, with the files it filed the note into
+function runEvents(vault, rel, runs) {
+  return runs.map((r) => {
+    const files = r.files.filter((x) => x !== rel).map((x) => ({ rel: x, abs: path.join(vault, x), label: labelOf(x) }));
     if (r.skipped) return { at: r.at, kind: 'filed', text: `Left it as it is: ${r.skipped}`, files };
     return { at: r.at, kind: 'filed', text: files.length ? `Agent linked it to ${files.length} ${files.length === 1 ? 'memory' : 'memories'}` : 'Agent checked related notes and links; nothing needed an update', files };
   });
-  const cluster = clusterOf(rel);
-  const events = [...runs, ...(activityAll()[abs] ?? [])].sort((x, y) => String(y.at).localeCompare(String(x.at)));
-  // a note Quorum wrote (a recording's summary, an agent import) waits for the person to review it
+}
+// a note Quorum wrote (a recording's summary, an agent import) waits for the person to review it
+function agentWrote(abs) {
   let fm = {};
   try { fm = readFrontmatter(store.notes.read(abs).slice(0, 4000)); } catch { /* unreadable */ }
   const recorded = fm.recorded === true || fm.recorded === 'true';
-  const agentWritten = fm.imported_by === 'agent' || ((fm.source === 'quorum' || fm.source === 'quorum-dev') && (fm.type !== 'note' || recorded));
-  const seen = seenAll()[abs] ?? {};
-  return { on: t.on, pending, running: t.running, abs, rel, cluster, folder: path.posix.dirname(rel), filedBefore: t.filed && !t.runs.length, events, seenAt: seen.seenAt ?? null, reviewedAt: seen.reviewedAt ?? null, agentWritten };
+  return fm.imported_by === 'agent' || ((fm.source === 'quorum' || fm.source === 'quorum-dev') && (fm.type !== 'note' || recorded));
+}
+
+// The Notifications view: the activity of every note (its log and upkeep runs) and every memory (its versions and the
+// updates waiting for approval) in one feed, paged and filtered in activityFeed.js. The switches in Settings >
+// Notifications decide what counts toward the bell and what Unread and All show
+function feedSources() {
+  const b = brain();
+  if (!b) return { notes: [], memories: [] };
+  const toRel = (abs) => path.relative(b.vault, abs).split(path.sep).join('/');
+  const trails = keeper.trails();
+  const logged = activityAll();
+  const seen = seenAll();
+  const noteAbs = new Set([...Object.keys(logged), ...Object.keys(trails).map((rel) => path.join(b.vault, rel))].map((f) => meetingFile(f)).filter(Boolean));
+  const notes = [...noteAbs].map((abs) => {
+    const rel = toRel(abs);
+    const own = logged[abs] ?? [];
+    const events = [...runEvents(b.vault, rel, trails[rel] ?? []), ...own];
+    const s = seen[abs] ?? {};
+    // when Quorum wrote it: its first logged step, else the file's own time
+    let writtenAt = own.length ? own[own.length - 1].at : null;
+    if (!writtenAt) { try { writtenAt = statSync(abs).mtimeMs; } catch { writtenAt = 0; } }
+    return { abs, rel, events, seenAt: s.seenAt ?? null, reviewedAt: s.reviewedAt ?? null, rejectedAt: s.rejectedAt ?? null, agentWritten: agentWrote(abs), writtenAt };
+  });
+  const memories = Object.entries(memoryVersions.files(b.vault)).map(([rel, rec]) => {
+    const abs = path.join(b.vault, rel);
+    return { abs, rel, note: !!meetingFile(abs), gone: !existsSync(abs), versions: rec.versions ?? [], updates: rec.updates ?? [], seenAt: seen[abs]?.seenAt ?? null };
+  });
+  return { notes, memories, guard: { file: DENIAL_LOG, seenAt: seen[DENIAL_LOG]?.seenAt ?? null, denials: recentDenials(200) } };
+}
+// the newest entries of the guardrail denial log, read only; a line that does not parse is left out
+function recentDenials(n) {
+  let text;
+  try { text = readFileSync(DENIAL_LOG, 'utf8'); } catch { return []; }
+  return text.trim().split('\n').slice(-n).flatMap((l) => { try { const d = JSON.parse(l); return d && d.t ? [d] : []; } catch { return []; } });
+}
+ipcMain.handle('activity-feed', (_e, query) => {
+  const q = query ?? {};
+  return feedPage(feedRows(feedSources()), { tab: q.tab, kinds: Array.isArray(q.kinds) ? q.kinds.map(String) : [], q: String(q.q ?? ''), offset: Number(q.offset) || 0, limit: Number(q.limit ?? 50), prefs: settings.notifications ?? {} });
+});
+// a file in the feed, by its path: a saved note, or a note inside the vault
+const feedFile = (abs) => {
+  const b = brain();
+  const f = path.resolve(String(abs ?? ''));
+  if (meetingFile(f)) return { abs: f, rel: b ? path.relative(b.vault, f).split(path.sep).join('/') : null };
+  if (b && f.startsWith(b.vault + path.sep)) return { abs: f, rel: path.relative(b.vault, f).split(path.sep).join('/') };
+  return null;
+};
+// rows marked read: each file's Notifications count as opened now, and a memory also counts as opened in the Memory tab
+ipcMain.handle('activity-read', (_e, files) => {
+  const b = brain();
+  const at = new Date().toISOString();
+  let n = 0;
+  for (const f of new Set(Array.isArray(files) ? files : [])) {
+    // the guardrail rows are read together, by the denial log's own mark
+    if (f === DENIAL_LOG) { seenSet(DENIAL_LOG, { seenAt: at }); n++; continue; }
+    const t = feedFile(f);
+    if (!t) continue;
+    seenSet(t.abs, { seenAt: at });
+    if (b && t.rel) memoryVersions.opened(b.vault, t.rel);
+    n++;
+  }
+  return n;
+});
+// the review items approved or disapproved. A memory's waiting updates are approved, or rejected so the file gets back
+// the text it had before them. A note Quorum wrote has no earlier text to go back to, so disapproving marks it
+// rejected and it leaves the review
+ipcMain.handle('activity-review', (_e, items, verdict) => {
+  const b = brain();
+  const ok = verdict === 'approve';
+  const done = [];
+  const failed = [];
+  for (const it of Array.isArray(items) ? items : []) {
+    const t = feedFile(it?.abs);
+    try {
+      if (!t) throw new Error('Not found');
+      const at = new Date().toISOString();
+      if (it.kind === 'note') {
+        if (!meetingFile(t.abs)) throw new Error('Not found');
+        seenSet(t.abs, ok ? { reviewedAt: at, seenAt: at } : { rejectedAt: at, seenAt: at });
+        noteEvent(t.abs, ok ? 'reviewed' : 'rejected', ok ? 'You reviewed it' : 'You disapproved it');
+      } else if (it.kind === 'memory' && b && t.rel) {
+        if (ok) memoryVersions.approve(b.vault, t.rel);
+        else if (memoryVersions.reject(b.vault, t.rel) == null) throw new Error('These updates can not be rejected');
+        seenSet(t.abs, { seenAt: at });
+      } else throw new Error('Not found');
+      done.push(t.abs);
+    } catch (e) { failed.push({ abs: String(it?.abs ?? ''), error: e?.message ?? String(e) }); }
+  }
+  if (failed.length) log('notifications', `review ${verdict}: ${failed.length} failed`);
+  return { done, failed };
 });
 ipcMain.handle('read-note', (_e, file) => {
   const b = brain();

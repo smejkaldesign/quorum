@@ -2430,6 +2430,31 @@ input::placeholder, textarea::placeholder { font-style: italic; }
 .card h3, .conn-group h4, .conn-detail h4, .sofar-head, .sofar-group h4, .hist-group h4, .mp-about h3 { color: var(--text); }
 .conn-chev { transform: rotate(-90deg); }
 .conn-detail-cta .pill { white-space: nowrap; }
+/* Notifications: the bell left of the avatar, and the full page list of agent activity with its tabs, filters and review actions */
+.bell-btn { position: relative; }
+.bell-btn.active { color: var(--text); background: rgba(255, 255, 255, 0.08); }
+.bell-btn .tab-dot { top: 4px; right: 7px; }
+.notif-page { max-width: 820px; }
+.nf-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.nf-count { margin-left: 6px; font-size: 12px; color: var(--muted); }
+.seg button.on .nf-count { color: var(--text); }
+.nf-search { flex: 1; min-width: 200px; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border: 1px solid var(--line-2); border-radius: 999px; color: var(--muted); }
+.nf-search input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 14px; outline: none; }
+.nf-search:focus-within { border-color: rgba(255, 255, 255, 0.24); }
+.nf-kinds { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }
+.nf-kind { height: 28px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--muted); font-size: 13px; }
+.nf-kind:hover { color: var(--text); }
+.nf-kind.on { color: var(--text); background: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.24); }
+.nf-bulk { display: flex; align-items: center; gap: 12px; padding: 8px 0 10px 16px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.nf-bulk-actions { margin-left: auto; display: flex; gap: 6px; }
+.nf-check { flex: none; display: grid; place-items: center; width: 18px; height: 22px; cursor: pointer; }
+.nf-check input { margin: 0; cursor: pointer; }
+.nf-list { padding-left: 16px; }
+.nf-row { align-items: flex-start; }
+.nf-actions { flex: none; display: flex; gap: 6px; }
+.nf-error { color: #ff6b6b; font-size: 14px; margin: 10px 0 0; }
+.nf-empty { padding: 30px 0; text-align: center; }
+.nf-more { margin: 16px auto 0; display: flex; }
 
 /* the type-your-email sheet for deleting an account or a workspace */
 .type-confirm .type-confirm-ask { margin: 0 0 10px; color: var(--text); font-size: 14px; }

@@ -88,6 +88,10 @@ contextBridge.exposeInMainWorld('quorum', {
   openNoteLink: (url) => ipcRenderer.invoke('open-note-link', url),
   onNoteLink: on('note-link'),
   noteReviewed: (file) => ipcRenderer.invoke('note-reviewed', file),
+  // the Notifications view: every note's and memory's activity in one feed, rows marked read, review items decided
+  activityFeed: (query) => ipcRenderer.invoke('activity-feed', query),
+  activityRead: (files) => ipcRenderer.invoke('activity-read', files),
+  activityReview: (items, verdict) => ipcRenderer.invoke('activity-review', items, verdict),
   vaultSearch: (q, limit) => ipcRenderer.invoke('vault-search', q, limit),
   vaultBacklinks: (rel) => ipcRenderer.invoke('vault-backlinks', rel),
   vaultLinkHealth: (fresh) => ipcRenderer.invoke('vault-link-health', fresh === true),
