@@ -1886,5 +1886,4 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 /* scrolls up and down only: the hover buttons waiting 16px to the right never make it scroll sideways, and 4px of
    padding keeps the row highlight that reaches left of the list inside it */
 .up-strip .up-list.open { max-height: calc(100vh - 150px); overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; padding-left: 4px; margin-left: -4px; }
-.up-list { overflow-x: clip; }
 .up-strip .up-all { height: 26px; padding: 0 12px; font-size: 12px; }
