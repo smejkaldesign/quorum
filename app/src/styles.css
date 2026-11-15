@@ -2151,3 +2151,12 @@ button.np-outline:hover { background: rgba(255, 255, 255, 0.05); color: var(--te
 .my-notes-editor { margin-top: 4px; }
 .my-notes-editor .ProseMirror { min-height: 120px; padding: 0; border: 0; background: none; outline: none; }
 .end-dock { margin: 0; padding: 24px 32px 20px; position: relative; }
+/* code blocks look like code wherever the editor sits: a tinted panel, monospace, tight lines; blocks next to each
+   other read as one */
+.note-rich { --ed-code-bg: rgba(255, 255, 255, 0.06); }
+:root[data-theme="light"] .note-rich { --ed-code-bg: rgba(0, 0, 0, 0.05); }
+.note-rich pre { margin: 10px 0; padding: 12px 16px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--ed-code-bg); line-height: 1.55; white-space: pre; }
+.note-rich pre code { font: 13.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; color: #e4e4e7; }
+.note-rich pre + pre { margin-top: 0; border-top: 0; border-top-left-radius: 0; border-top-right-radius: 0; padding-top: 0; }
+.note-rich pre:has(+ pre) { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom: 0; padding-bottom: 0; margin-bottom: 0; }
+.tb-btn svg { display: block; margin: 0 auto; }

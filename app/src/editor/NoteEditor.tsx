@@ -25,7 +25,7 @@ const COMMANDS: Command[] = [
   { id: 'ordered', label: 'Numbered list', keys: '⌘⇧7', run: (e) => e.chain().focus().toggleOrderedList().run() },
   { id: 'task', label: 'Checklist', keys: '⌘⇧9', run: (e) => e.chain().focus().toggleTaskList().run() },
   { id: 'quote', label: 'Quote', keys: '⌘⇧B', run: (e) => e.chain().focus().toggleBlockquote().run() },
-  { id: 'code', label: 'Code block', keys: '⌘⌥C', run: (e) => e.chain().focus().toggleCodeBlock().run() },
+  { id: 'code', label: 'Code block', keys: '⌘⌥C', run: (e) => codeBlock(e) },
   { id: 'rule', label: 'Divider', keys: '---', run: (e) => e.chain().focus().setHorizontalRule().run() },
 ];
 const MARKS = [
@@ -216,4 +216,23 @@ export const NoteEditor = forwardRef<NoteEditorHandle, { value: string; onChange
   );
 });
 
-const TB_LABEL: Record<string, string> = { h1: 'H1', h2: 'H2', h3: 'H3', bullet: '•', ordered: '1.', task: '☑', quote: '❝', code: '{ }' };
+// a list's button shows a list: three rows of dots or numbers with their lines
+const ListIcon = ({ numbered }: { numbered?: boolean }) => (
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+    <path d="M10 6h10M10 12h10M10 18h10" />
+    {numbered
+      ? <g strokeWidth="1.6"><path d="M4 4.5l1.3-.8V8" /><path d="M3.6 10.8c.3-.5.8-.8 1.4-.8.8 0 1.3.5 1.3 1.1 0 .9-1.6 1.8-2.6 2.9h2.7" /><path d="M3.7 16.3h2.4l-1.3 1.5c.8 0 1.4.4 1.4 1.1s-.6 1.1-1.4 1.1c-.5 0-.9-.2-1.2-.5" /></g>
+      : <g fill="currentColor" stroke="none"><circle cx="5" cy="6" r="1.5" /><circle cx="5" cy="12" r="1.5" /><circle cx="5" cy="18" r="1.5" /></g>}
+  </svg>
+);
+const TB_LABEL: Record<string, React.ReactNode> = { h1: 'H1', h2: 'H2', h3: 'H3', bullet: <ListIcon />, ordered: <ListIcon numbered />, task: '☑', quote: '❝', code: '{ }' };
+
+// lines selected across several paragraphs become one code block with a line each; otherwise the block toggles
+function codeBlock(e: Editor) {
+  const { from, to, empty } = e.state.selection;
+  const text = empty ? '' : e.state.doc.textBetween(from, to, '\n');
+  if (e.isActive('codeBlock') || !text.includes('\n')) return e.chain().focus().toggleCodeBlock().run();
+  const $from = e.state.doc.resolve(from), $to = e.state.doc.resolve(to);
+  return e.chain().focus().deleteRange({ from: $from.before($from.depth), to: $to.after($to.depth) })
+    .insertContentAt($from.before($from.depth), { type: 'codeBlock', content: [{ type: 'text', text }] }).run();
+}
