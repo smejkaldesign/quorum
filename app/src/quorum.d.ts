@@ -468,6 +468,7 @@ declare global {
       calendarOpen(ev: CalendarEvent): Promise<void>;
       meetingBrief(q: { title: string; generate?: boolean }): Promise<MeetingBrief>;
       recordSession(): Promise<{ ok: true } | { error: string }>;
+      meetingFolderApps(): Promise<{ rel: string; app: string }[]>;
       sessionSummarize(answers: { names?: Record<string, string>; people?: string[]; me?: string | null; lead?: string | null }): Promise<unknown>;
       guardrailsGet(opts?: { fresh?: boolean }): Promise<GuardrailsState>;
       guardrailsSet(id: string, patch: { enabled?: boolean; label?: string }): Promise<Result>;

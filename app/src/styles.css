@@ -1954,3 +1954,6 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .up-fold.folded .up-fold-in { transform: translateY(-14px); opacity: 0; }
 .up-strip .up-head { position: relative; z-index: 1; }
 @media (prefers-reduced-motion: reduce) { .up-fold, .up-fold-in { transition: none; } }
+/* a meeting notetaker's logo beside the folder it writes into, in the Memory tree */
+.kb-item .folder-app { display: inline-flex; margin-left: 8px; flex: none; }
+.kb-item .folder-app .app-logo { width: 16px; height: 16px; border-radius: 4px; }

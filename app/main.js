@@ -1595,6 +1595,19 @@ function chatIndex() {
   })).sort((a, b2) => String(b2.date).localeCompare(String(a.date)));
 }
 
+// the vault folders meeting notetakers write into, for their logos in the Memory tree: Quorum's own notes folder (the
+// dev copy's is quorum-dev), and each source folder by its key (granola, zoom, ...)
+ipcMain.handle('meeting-folder-apps', () => {
+  const vault = brain()?.vault;
+  if (!vault) return [];
+  const rel = (p) => path.relative(vault, p).split(path.sep).join('/');
+  const root = meetingsDir();
+  const own = [quorumNotesDir(), root && path.join(root, 'quorum'), root && path.join(root, 'quorum-dev')].filter((p) => p && existsSync(p));
+  const out = new Map(own.map((p) => [rel(p), /quorum-dev$/.test(p) ? 'quorum-dev' : 'quorum']));
+  for (const s of meetingSources()) if (!out.has(rel(s.path))) out.set(rel(s.path), s.key === 'quorum-dev' ? 'quorum-dev' : s.key);
+  return [...out.entries()].filter(([r]) => r && !r.startsWith('..')).map(([r, app]) => ({ rel: r, app }));
+});
+
 ipcMain.handle('history', () => { matchMeetingApps(); return { meetings: meetingIndex(), chats: chatIndex() }; });
 
 // The meeting app of notes whose notetaker does not record it (meetingPlatforms.js), matched against the Mac calendar
