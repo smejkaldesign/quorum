@@ -1687,6 +1687,11 @@ function attachLooseChats() {
     log('chat attached to a note', path.basename(abs));
   }
 }
+// every chat on a note, or on an upcoming meeting, oldest first, for its page
+const chatTurns = (c) => ({ id: c.id, turns: c.turns.map((t) => ({ q: t.q, a: t.a })) });
+const byStart = (a, b) => String(a.createdAt).localeCompare(String(b.createdAt));
+ipcMain.handle('note-chats', (_e, file) => { const abs = meetingFile(file); return abs ? allChats().filter((x) => x.meetingFile === abs && !x.meetingId && x.turns?.length).sort(byStart).map(chatTurns) : []; });
+ipcMain.handle('event-chats', (_e, id) => (id ? allChats().filter((x) => x.eventId === String(id) && x.turns?.length).sort(byStart).map(chatTurns) : []));
 // the chat on a note, for its page
 ipcMain.handle('note-chat', (_e, file) => {
   const abs = meetingFile(file);
@@ -1769,7 +1774,7 @@ ipcMain.handle('note-visibility', (_e, file, value) => {
 // ask Quorum about the open meeting note; a change request comes back as a proposal the user applies or not
 // a note chat question that starts a debrief (the reader's Debrief button)
 const DEBRIEF = '[debrief]';
-ipcMain.handle('note-ask', async (_e, file, question, history, files) => {
+ipcMain.handle('note-ask', async (_e, file, question, history, files, chatId) => {
   const abs = meetingFile(file);
   const b = brain();
   if (!abs || !b) throw new Error('Note not found');
@@ -1796,10 +1801,12 @@ ipcMain.handle('note-ask', async (_e, file, question, history, files) => {
   const m = r.text.match(/<updated-note>\n?([\s\S]*?)\n?<\/updated-note>/);
   const answer = r.text.replace(/<updated-note>[\s\S]*?<\/updated-note>/, '').trim();
   const fm = readFrontmatter(store.notes.read(abs).slice(0, 4000));
-  const existing = allChats().find((c) => c.meetingFile === abs && !c.meetingId);
+  // a note holds any number of chats: chatId names one, 'new' starts another, nothing continues the latest
+  const mine = allChats().filter((c) => c.meetingFile === abs && !c.meetingId);
+  const existing = chatId === 'new' ? null : chatId ? mine.find((c) => c.id === chatId) : mine.sort((a, b) => String(b.updatedAt ?? b.createdAt).localeCompare(String(a.updatedAt ?? a.createdAt)))[0];
   const asked = String(question).startsWith(DEBRIEF) ? 'Debrief this meeting' : String(question);
-  addTurn(existing ?? newConvo(asked, { meetingFile: abs, meetingTitle: fm.title || path.basename(abs, '.md') }), asked, answer || 'Proposed an edit to the note.', [], []);
-  return { text: r.text.replace(/<updated-note>[\s\S]*?<\/updated-note>/, '').trim() || (m ? 'Here is the updated note. Review it and apply it if it looks right.' : ''), proposal: m ? m[1] : null };
+  const saved = addTurn(existing ?? newConvo(asked, { meetingFile: abs, meetingTitle: fm.title || path.basename(abs, '.md') }), asked, answer || 'Proposed an edit to the note.', [], []);
+  return { chatId: saved.id, text: r.text.replace(/<updated-note>[\s\S]*?<\/updated-note>/, '').trim() || (m ? 'Here is the updated note. Review it and apply it if it looks right.' : ''), proposal: m ? m[1] : null };
 });
 
 // apply an edit Quorum proposed; refused for notes with opted-out lines so a redacted copy never overwrites the original
@@ -1834,6 +1841,7 @@ ipcMain.handle('read-note', (_e, file) => {
   const split = splitRecorded(body, { recorded: fm.recorded === true || fm.recorded === 'true' });
   const sessionTurns = savedTranscript(fm);
   return {
+    hand: fm.type === 'note' && !split.transcript,
     file: abs, rel: path.relative(b.vault, abs), title: fm.title, date: fm.date, people: fm.participants.filter((p) => !isSelf(p)).map(personName), body: split.summary,
     summarizable: !!split.transcript && !split.summary,
     visibility: fm.visibility === 'public' ? 'public' : 'private', withheld: text !== original, link: `quorum://note/${encodeURIComponent(fm.granola_id || path.relative(b.vault, abs))}`, ...noteLink(abs),
@@ -1925,7 +1933,7 @@ ipcMain.handle('meeting-brief', async (_e, q) => {
 
 // questions about an upcoming meeting, from its page: the event, its prep notes and the series' recent notes are in
 // the prompt, and Claude Code can read the rest of the Agent OS. The chat is saved under the meeting's event id
-ipcMain.handle('meeting-ask', async (_e, ev, question, history) => {
+ipcMain.handle('meeting-ask', async (_e, ev, question, history, chatId) => {
   const b = brain();
   if (!b) throw new Error('Connect your Agent OS first');
   const title = String(ev?.title ?? '');
@@ -1947,10 +1955,11 @@ ipcMain.handle('meeting-ask', async (_e, ev, question, history) => {
     : await noteAskWithoutTools(suggester.redactLines(prompt), history, []);
   // the chat belongs to its calendar event: it nests under the event's row on Home until the event is over
   const id = String(ev?.id ?? '');
-  const existing = id ? allChats().find((c) => c.eventId === id) : null;
-  addTurn(existing ?? newConvo(String(question), { eventId: id, eventEnd: ev?.end ?? null, meetingTitle: title }), String(question), r.text, [], []);
+  const mine = id ? allChats().filter((c) => c.eventId === id) : [];
+  const existing = chatId === 'new' ? null : chatId ? mine.find((c) => c.id === chatId) : mine.at(-1);
+  const saved = addTurn(existing ?? newConvo(String(question), { eventId: id, eventEnd: ev?.end ?? null, meetingTitle: title }), String(question), r.text, [], []);
   toUI('history-changed');
-  return { text: r.text };
+  return { chatId: saved.id, text: r.text };
 });
 // an upcoming meeting's saved chat, for its page
 ipcMain.handle('event-chat', (_e, id) => {

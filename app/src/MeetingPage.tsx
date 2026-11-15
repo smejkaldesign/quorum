@@ -12,6 +12,7 @@ import { IconLogs, IconNotes, IconRecord, IconSound } from './icons';
 import { Composer } from './Composer';
 import { Avatar } from './Speaker';
 import { splitChoices } from './MeetingNote';
+import { ChatExit, ChatList, useChats } from './ChatStack';
 import markProd from '../assets/quorum-mark.png';
 
 // one click each, above the chat input before the first question
@@ -19,7 +20,8 @@ const PREP_ASKS = ['What is still open from last time?', 'What should I ask in t
 
 // questions about the meeting before it happens, answered from its prep notes, past notes and the rest of the Agent OS
 function MeetingChat({ event }: { event: CalendarEvent }) {
-  const [turns, setTurns] = useState<{ q: string; a: string; pending?: boolean }[]>([]);
+  const cs = useChats<{ q: string; a: string; pending?: boolean }>();
+  const turns = cs.active?.turns ?? [];
   const [draft, setDraft] = useState('');
   const [live, setLive] = useState('');
   const [step, setStep] = useState('');
@@ -29,13 +31,12 @@ function MeetingChat({ event }: { event: CalendarEvent }) {
   useEffect(() => window.quorum.onAgentStep(({ text }) => setStep(text)), []);
   // its saved chat comes back with the page; opened from the row's chats link, the page scrolls down to it
   useEffect(() => {
-    window.quorum.eventChat(event.id).then((c) => {
-      if (!c?.turns.length) return;
-      setTurns(c.turns);
-      if (event.openChat) requestAnimationFrame(() => document.querySelector('.meeting-page .note-thread')?.scrollIntoView({ block: 'start' }));
+    window.quorum.eventChats(event.id).then((list) => {
+      cs.setChats(list);
+      if (event.openChat && list.length) requestAnimationFrame(() => document.querySelector('.meeting-page .note-thread')?.scrollIntoView({ block: 'start' }));
     }).catch(() => {});
   }, [event.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  const busy = turns.some((t) => t.pending);
+  const busy = cs.chats.some((c) => c.turns.some((t) => t.pending));
   // asking keeps the page at the bottom of the chat while the answer comes in
   useLayoutEffect(() => {
     if (!turns.length || !turns[turns.length - 1].pending) return;
@@ -46,16 +47,20 @@ function MeetingChat({ event }: { event: CalendarEvent }) {
     const q = (said ?? draft).trim();
     if (!q || busy) return;
     setDraft(''); setLive(''); setStep('');
-    const history = turns.map(({ q: tq, a }) => ({ q: tq, a }));
-    setTurns((t) => [...t, { q, a: '', pending: true }]);
+    const to = cs.target();
+    cs.update(to.id, (t) => [...t, { q, a: '', pending: true }]);
     let a: string;
-    try { a = (await window.quorum.meetingAsk(event, q, history)).text; } catch (err) { a = `Couldn't answer: ${String(err).replace(/^.*Error:\s*/, '')}`; }
-    setTurns((t) => t.map((x, i) => (i === t.length - 1 ? { q: x.q, a } : x)));
+    let saved: string | undefined;
+    try { const r = await window.quorum.meetingAsk(event, q, to.history, to.send); a = r.text; saved = r.chatId; } catch (err) { a = `Couldn't answer: ${String(err).replace(/^.*Error:\s*/, '')}`; }
+    cs.update(to.id, (t) => t.map((x, i) => (i === t.length - 1 ? { q: x.q, a } : x)));
+    cs.settle(to.id, saved);
   }
   return (
     <>
-      {turns.length > 0 && (
+      {!cs.active && <ChatList chats={cs.chats} onOpen={cs.setOpenId} />}
+      {cs.active && (
         <section className="note-thread" aria-label="Questions about this meeting">
+          <ChatExit onExit={cs.exit} />
           {turns.map((t, i) => {
             const { text, choices } = splitChoices(t.pending ? live : t.a);
             return (
@@ -73,12 +78,12 @@ function MeetingChat({ event }: { event: CalendarEvent }) {
         </section>
       )}
       <div className="note-dock">
-        {turns.length === 0 && (
+        {!cs.active && (
           <div className="skill-pills" role="group" aria-label="Quick asks">
             {PREP_ASKS.map((q) => <button key={q} className="skill-pill" disabled={busy} onClick={() => ask(q)}>{q}</button>)}
           </div>
         )}
-        <Composer className="note-composer" value={draft} onChange={setDraft} onSubmit={() => ask()} busy={busy} placeholder="Ask about this meeting" />
+        <Composer className="note-composer" value={draft} onChange={setDraft} onSubmit={() => ask()} busy={busy} onNewChat={cs.chats.length ? cs.newChat : undefined} placeholder="Ask about this meeting" />
       </div>
     </>
   );

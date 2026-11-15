@@ -2214,3 +2214,18 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .views-wrap .meta-pill
 .mp-tabs { margin-left: auto; }
 .mp-mine { margin-top: 8px; }
 .mp-mine-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+/* several chats on one page: each collapsed to its first question; the count shows on hover */
+.chat-list { gap: 2px; }
+.chat-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; margin: 0 -12px; box-sizing: content-box; border-radius: 10px; text-align: left; color: var(--text); font-size: 15px; transition: background 160ms ease; }
+.chat-row:hover { background: rgba(255, 255, 255, 0.05); }
+.chat-row-q { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-row-n { flex: none; color: var(--muted); font-size: 13px; opacity: 0; transition: opacity 160ms ease; }
+.chat-row:hover .chat-row-n, .chat-row:focus-visible .chat-row-n { opacity: 1; }
+.chat-exit { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; padding: 4px 8px; margin-left: -8px; border-radius: 8px; }
+.chat-exit:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
+.c-plus { position: relative; }
+.c-plus-menu { top: auto; bottom: calc(100% + 8px); left: 0; right: auto; width: max-content; }
+.c-plus-menu button { display: flex; align-items: center; gap: 8px; padding-right: 18px; }
+.text-btn { height: 32px; padding: 0 10px; border-radius: 999px; color: var(--muted); font-size: 14px; font-weight: 500; }
+.text-btn:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
+.reader .my-notes-editor .note-rich, .reader .my-notes-editor .note-rich p, .reader .my-notes-editor .note-rich li { font-size: 17px; line-height: 1.6; color: #d4d4d8; }

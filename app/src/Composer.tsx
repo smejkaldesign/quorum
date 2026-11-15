@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import type { Settings } from './quorum';
-import { ClaudeLogo, IconArrowUp, IconChevron, IconClose, IconCode, IconDoc, IconMic, IconPlus, ProviderMark } from './icons';
+import { ClaudeLogo, IconArrowUp, IconChat, IconChevron, IconClose, IconCode, IconDoc, IconMic, IconPlus, ProviderMark } from './icons';
 import { modelName, providerFor } from '../connectors/catalog';
 import { useFlag } from './flags';
 
@@ -16,8 +16,8 @@ export const MODELS: ModelOption[] = [
 // the one composer used on Home, in chat and on note pages
 type Attachment = { key: string; name: string; thumb: string | null; staged: string | null; error?: string };
 
-export function Composer({ value, onChange, onSubmit, placeholder, disabled, busy, inputRef, className = '' }: {
-  value: string; onChange: (v: string) => void; onSubmit: (text: string, files: string[]) => void; placeholder: string;
+export function Composer({ value, onChange, onSubmit, placeholder, disabled, busy, inputRef, className = '', onNewChat }: {
+  onNewChat?: () => void; value: string; onChange: (v: string) => void; onSubmit: (text: string, files: string[]) => void; placeholder: string;
   disabled?: boolean; busy?: boolean; inputRef?: RefObject<HTMLTextAreaElement | null>; className?: string;
 }) {
   const own = useRef<HTMLTextAreaElement>(null);
@@ -28,6 +28,7 @@ export function Composer({ value, onChange, onSubmit, placeholder, disabled, bus
   const lastRects = useRef<{ form: DOMRect; input: DOMRect; tools: DOMRect; attach: DOMRect } | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [menu, setMenu] = useState(false);
+  const [plus, setPlus] = useState(false);
   const [menuUp, setMenuUp] = useState(false);
   const [files, setFiles] = useState<Attachment[]>([]);
   const staging = files.some((f) => !f.staged && !f.error);
@@ -172,7 +173,18 @@ export function Composer({ value, onChange, onSubmit, placeholder, disabled, bus
         </div>
       )}
       {dictateError && <p className="set-error c-dictate-error" role="alert">{dictateError}</p>}
-      <button type="button" className="icon-btn c-attach" aria-label="Add files" data-tip="Add files" data-tip-pos="top" disabled={disabled} onClick={attach}><IconPlus /></button>
+      {onNewChat ? (
+        // with chats on the page, + offers a new chat beside adding files
+        <span className="menu-wrap c-plus">
+          <button type="button" className="icon-btn c-attach" aria-label="More" aria-haspopup="menu" aria-expanded={plus} disabled={disabled} onClick={() => setPlus((o) => !o)}><IconPlus /></button>
+          {plus && (
+            <div className="menu c-plus-menu" role="menu" onMouseLeave={() => setPlus(false)}>
+              <button type="button" role="menuitem" onClick={() => { setPlus(false); onNewChat(); input.current?.focus(); }}><IconChat width={15} height={15} /> New chat</button>
+              <button type="button" role="menuitem" onClick={() => { setPlus(false); attach(); }}><IconPlus width={15} height={15} /> Add files</button>
+            </div>
+          )}
+        </span>
+      ) : <button type="button" className="icon-btn c-attach" aria-label="Add files" data-tip="Add files" data-tip-pos="top" disabled={disabled} onClick={attach}><IconPlus /></button>}
       <textarea ref={input} className="c-input" value={value} rows={1} placeholder={placeholder} disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {

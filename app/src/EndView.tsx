@@ -1,7 +1,7 @@
 import { BackButton } from './BackButton';
 import { useEffect, useRef, useState } from 'react';
 import type { MeetingMeta, Notes, NotesDraft, WhoAsk } from './quorum';
-import { WhoSpoke, type WhoAnswers } from './WhoSpoke';
+import { type WhoAnswers } from './WhoSpoke';
 import { Avatar, SpeakerName, similarCounts, type SpeakerTurn } from './Speaker';
 import mark from '../assets/quorum-mark.png';
 import { Markdown } from './Markdown';
@@ -9,6 +9,7 @@ import { IconRecord, IconSound, IconStop, IconCalendar, IconClock, IconFolder, I
 import { NoteEditor } from './editor/NoteEditor';
 import { TypedTitle, useStuck } from './StickyBar';
 import { splitChoices } from './MeetingNote';
+import { ChatExit, ChatList, useChats } from './ChatStack';
 import { Composer } from './Composer';
 
 type Followup = { q: string; a: string | null };
@@ -41,7 +42,10 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
   // Stop turns the page to the summary as it is written
   useEffect(() => { if (summarizing || who) setShowing('summary'); }, [summarizing, who]);
   const [dropped, setDropped] = useState<Record<number, boolean>>({});
-  const [followups, setFollowups] = useState<Followup[]>([]);
+  // the recording's chats: several can stack; the open one shows below, the rest collapse to one line each
+  const cs = useChats<{ q: string; a: string; pending?: boolean }>();
+  const followups: Followup[] = cs.active?.turns.map((t) => ({ q: t.q, a: t.pending ? null : t.a })) ?? [];
+  const asking = cs.chats.some((c) => c.turns.some((t) => t.pending));
   const [draftQ, setDraftQ] = useState('');
   const [saved, setSaved] = useState<{ file: string; rel: string; app: string } | null>(null);
   const [saving, setSaving] = useState(false);
@@ -54,19 +58,22 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
   const view: Notes = shown ?? { title: '', summary: '', sections: [], decisions: [], actions: [], questions: [] };
   const lastSec = view.sections.length - 1;
 
-  useEffect(() => { end.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }); }, [followups]);
+  useEffect(() => { end.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }); }, [cs.chats]);
   // a click on a bullet opens the transcript on its first turn
   useEffect(() => { if (showing === 'transcript' && hot.length) document.getElementById(`turn-${hot[0]}`)?.scrollIntoView({ block: 'center' }); }, [showing, hot]);
 
   // said: what the page shows as your message; sent: what goes to the model (a skill sends its own instructions)
   async function ask(said?: string, sent?: string) {
     const q = (said ?? draftQ).trim();
-    if (!q || followups.some((f) => f.a === null)) return;
+    if (!q || asking) return;
     if (said === undefined) setDraftQ('');
-    setFollowups((f) => [...f, { q, a: null }]);
+    const to = cs.target();
+    // a new chat starts the conversation over, so it does not carry the last chat's answers
+    if (to.send === 'new') await window.quorum.newChat().catch(() => {});
+    cs.update(to.id, (t) => [...t, { q, a: '', pending: true }]);
     let a: string;
     try { a = (await window.quorum.ask(sent ?? q)).text; } catch (err) { a = `Couldn't answer: ${String(err).replace(/^Error:\s*/, '')}`; }
-    setFollowups((f) => f.map((x, i) => (i === f.length - 1 ? { ...x, a } : x)));
+    cs.update(to.id, (t) => t.map((x, i) => (i === t.length - 1 ? { q: x.q, a } : x)));
   }
 
   async function save() {
@@ -79,7 +86,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
       const r = await window.quorum.saveNotes({
         notes: { ...base, title: title.trim() || base.title || 'Untitled note', actions: base.actions.filter((_, i) => !dropped[i]) },
         ...(gaps && !gapsAsked ? { review: 'speakers' } : {}),
-        followups: followups.filter((f): f is { q: string; a: string } => !!f.a),
+        followups: cs.chats.flatMap((c) => c.turns.filter((t) => !t.pending && t.a).map(({ q, a }) => ({ q, a }))),
       });
       setSaved(r);
     } finally { setSaving(false); }
@@ -241,8 +248,10 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
             </>}
 
             {/* the chat on this note, below a divider once it starts: the same layout as every other note */}
-            {followups.length > 0 && (
+            {!cs.active && <ChatList chats={cs.chats} onOpen={cs.setOpenId} />}
+            {cs.active && (
               <section className="note-thread" aria-label="Questions about this note">
+                <ChatExit onExit={cs.exit} />
                 {followups.map((f, i) => (
                   <div key={i} className="nt-turn">
                     <div className="nt-who"><Avatar name={asker?.name || me?.name || 'You'} photo={asker?.photo ?? me?.photo ?? null} size={22} /><strong>{asker?.name || me?.name || 'You'}</strong></div>
@@ -262,7 +271,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
       )}
 
       {!live && <div className="note-dock end-dock">
-        <Composer className="note-composer" value={draftQ} onChange={setDraftQ} onSubmit={() => ask()} busy={followups.some((f) => f.a === null) || summarizing} placeholder="Ask about this note" />
+        <Composer className="note-composer" value={draftQ} onChange={setDraftQ} onSubmit={() => ask()} busy={asking || summarizing} onNewChat={cs.chats.length ? cs.newChat : undefined} placeholder="Ask about this note" />
       </div>}
     </div>
   );
