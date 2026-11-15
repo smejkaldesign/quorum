@@ -1957,3 +1957,32 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 /* a meeting notetaker's logo beside the folder it writes into, in the Memory tree */
 .kb-item .folder-app { display: inline-flex; margin-left: 8px; flex: none; }
 .kb-item .folder-app .app-logo { width: 16px; height: 16px; border-radius: 4px; }
+
+/* Memory updates: dots in the Memory tree, the review banner over an open note, changed lines, and the versions list
+   (MemoryUpdates.tsx, KnowledgeView.tsx). Green waits for approval, blue is approved and not opened yet */
+.kb-row.has-dot .kb-item { padding-right: 26px; }
+.kb-dot { position: absolute; right: 12px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; pointer-events: auto; transition: opacity 120ms ease; }
+.kb-dot.green { background: var(--go); }
+.kb-dot.blue { background: var(--brand); }
+.kb-row:hover .kb-dot { opacity: 0; }
+.mu-banner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 16px; padding: 8px 8px 8px 10px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--card); }
+.mu-banner .mu-count { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; }
+.mu-banner.green .mu-count { color: var(--go); }
+.mu-banner.blue .mu-count { color: var(--brand-soft); }
+.mu-banner.version .mu-count { color: var(--muted); font-weight: 400; }
+.mu-banner .mu-actions { display: inline-flex; gap: 8px; }
+.mu-banner .pill { background: var(--menu-bg); border-color: var(--line-2); color: var(--text); }
+.mu-banner .pill:not(:disabled):hover { border-color: rgba(255, 255, 255, 0.24); }
+.mu-banner .mu-accept svg { color: var(--go); }
+.mu-banner .mu-approved { padding: 0 8px; font-size: 12px; color: var(--muted); }
+.mu-seg button { padding: 4px 12px; }
+.mu-text.green .md-chg { color: var(--go); }
+.mu-text.blue .md-chg { color: var(--brand-soft); }
+.mu-text.mu-old .md p, .mu-text.mu-old .md li, .mu-text.mu-old .md-h { color: rgba(236, 236, 238, 0.62); }
+.np-item.mu-version:disabled { cursor: default; opacity: 0.6; }
+.np-item.mu-version:disabled:hover { background: none; }
+.np-item.mu-version strong { color: var(--text); }
+.np-item.mu-version.on { background: rgba(255, 255, 255, 0.09); }
+.mu-days { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.mu-days input { width: 64px; height: 30px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--menu-bg); color: var(--text); font: inherit; font-size: 13px; text-align: right; }
+.mu-days input:focus { outline: none; border-color: var(--brand); }

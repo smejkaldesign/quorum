@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { ViewsPill } from './ViewsPill';
 import { FolderApp } from './FolderApp';
-import type { TreeSort, Brain, TreeItem, NoteViews } from './quorum';
+import type { TreeSort, Brain, TreeItem, NoteViews, MemoryDots, MemoryReview, MemoryVersion } from './quorum';
+import { UpdateBanner, VersionBar, VersionList, type ReviewMode } from './MemoryUpdates';
 import { Graph, type GraphData, type GraphView } from './Graph';
 import { NotePanel, Palette, type PaletteItem, type PaletteMode } from './NoteTools';
 import { LinkHealth, leftAsIs } from './LinkHealth';
@@ -43,6 +44,15 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState<Creating>(null);
   const [preview, setPreview] = useState<Preview>(null);
+  // review of agent changes (memoryVersions.js): the tree's dots, the open note's banner and Before or After, and a
+  // version opened read-only from the side panel. stamp refreshes the versions list after a change
+  const [dots, setDots] = useState<MemoryDots>({ files: {}, folders: {} });
+  const [review, setReview] = useState<MemoryReview | null>(null);
+  const [mode, setMode] = useState<ReviewMode>('after');
+  const [version, setVersion] = useState<{ v: MemoryVersion; body: string } | null>(null);
+  const [stamp, setStamp] = useState(0);
+  const [restoring, setRestoring] = useState(false);
+  const changedLines = useMemo(() => new Set(review?.changed ?? []), [review]);
   const [focus, setFocus] = useState<string | null>(null);
   const [openRel, setOpenRel] = useSession<string>('note', '');
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -77,6 +87,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   const load = useCallback(async () => {
     const [t, g] = await Promise.all([window.quorum.vaultTree(), window.quorum.vaultGraph()]);
     setTree(t);
+    window.quorum.memoryDots().then(setDots).catch(() => {});
     setGraph(g);
     // your own tweaks win over the vault's graph.json until you reset them
     let saved: Partial<GraphView> = {};
@@ -111,11 +122,22 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
         const open = previewRel.current;
         const openChanged = !!open && touched.has(open);
         touched.clear();
-        if (openChanged) window.quorum.vaultNote(open).then((n) => { if (n) setPreview((pv) => (pv?.rel === open ? { rel: open, ...n } : pv)); else setPreview(null); });
+        if (openChanged) Promise.all([window.quorum.vaultNote(open), window.quorum.memoryReview(open)]).then(([n, r]) => {
+          if (!n) { setPreview(null); return; }
+          if (previewRel.current !== open) return;
+          setPreview({ rel: open, ...n });
+          setReview(r);
+          if (r) window.quorum.memoryOpened(open);
+        });
       }, 400);
     });
     return () => { off(); if (timer) clearTimeout(timer); };
   }, [load]);
+  // a note's versions or updates changed: new dots, and a fresh versions list for the open note
+  useEffect(() => window.quorum.onMemoryUpdates((rels) => {
+    window.quorum.memoryDots().then(setDots).catch(() => {});
+    if (rels.includes(previewRel.current)) setStamp((n) => n + 1);
+  }), []);
   // reopen the note that was showing before a reload, then keep tracking whichever one is open
   useEffect(() => { if (openRel) openNote(openRel); }, []);
   useEffect(() => { setOpenRel(preview?.rel ?? ''); }, [preview?.rel, setOpenRel]);
@@ -128,11 +150,40 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     return () => clearTimeout(t);
   }, [preview?.rel]);
 
+  // the review is read before the note counts as opened, so a blue banner shows on the open that clears its dot
   const openNote = useCallback(async (rel: string) => {
     setSelected(rel);
-    const n = await window.quorum.vaultNote(rel);
-    if (n) setPreview({ rel, ...n });
+    const [n, r] = await Promise.all([window.quorum.vaultNote(rel), window.quorum.memoryReview(rel).catch(() => null)]);
+    if (!n) return;
+    setPreview({ rel, ...n });
+    setReview(r);
+    setMode('after');
+    setVersion(null);
+    window.quorum.memoryOpened(rel);
   }, []);
+  const accept = async () => {
+    if (!preview) return;
+    await window.quorum.memoryAccept(preview.rel);
+    setReview(null);
+  };
+  const viewVersion = async (v: MemoryVersion) => {
+    if (!preview) return;
+    if (version?.v.id === v.id) { setVersion(null); return; }
+    const r = await window.quorum.memoryVersion(preview.rel, v.id);
+    if (r) setVersion({ v, body: r.body });
+  };
+  const restore = async () => {
+    if (!preview || !version) return;
+    setRestoring(true);
+    try {
+      await window.quorum.memoryRestore(preview.rel, version.v.id);
+      const n = await window.quorum.vaultNote(preview.rel);
+      if (n) setPreview({ rel: preview.rel, ...n });
+      setVersion(null);
+      setStamp((x) => x + 1);
+      flash('Restored. The text it replaced is kept as a version.');
+    } catch (e) { flash(errText(e)); } finally { setRestoring(false); }
+  };
 
   // clicking a note in the graph zooms to it and its links; the title in the header opens it
   // a ghost node is a link to a missing note: open Link health on it instead
@@ -265,7 +316,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   };
 
   const ops: TreeOps = {
-    open: null, selected, creating, renaming, dropTarget,
+    open: null, selected, creating, renaming, dropTarget, dots,
     onToggle: (p) => { setSelected(p); setOpen((o) => { const n = new Set(o); if (n.has(p)) n.delete(p); else n.add(p); return n; }); },
     onOpen: openNote, onCreate: create, onRename: rename, onMenu: menu,
     onDragStart: (p) => { dragging.current = p; }, onDragOver: setDropTarget, onDrop: drop,
@@ -342,12 +393,22 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
         {preview ? (
           <div className={`kb-preview ${side ? "side-open" : ""}`}>
             <article className="doc">
+              {version
+                ? <VersionBar version={version.v} busy={restoring} onRestore={restore} onClose={() => setVersion(null)} />
+                : review && <UpdateBanner review={review} mode={mode} onMode={setMode} onAccept={accept} />}
               <p className="kb-path">{preview.rel}</p>
               <h1>{preview.title}</h1>
               {preview.views?.total ? <div className="meta-row"><ViewsPill views={preview.views} /></div> : null}
-              <Markdown text={preview.body} headings root={brain?.root} onWiki={openLink} />
+              {/* After marks the lines the updates changed, green while they wait and blue once approved; Before and an
+                  opened version show their saved text, dimmed */}
+              <div className={version ? 'mu-text mu-old' : review ? `mu-text ${mode === 'before' ? 'mu-old' : review.dot}` : undefined}>
+                <Markdown text={version ? version.body : review && mode === 'before' ? review.before : preview.body} headings root={brain?.root} onWiki={openLink}
+                  changed={!version && review && mode === 'after' ? changedLines : undefined} />
+              </div>
             </article>
-            <NotePanel rel={preview.rel} body={preview.body} onOpen={openNote} onResolve={openLink} />
+            <NotePanel rel={preview.rel} body={preview.body} onOpen={openNote} onResolve={openLink}>
+              <VersionList rel={preview.rel} stamp={stamp} viewing={version?.v.id ?? null} onView={viewVersion} />
+            </NotePanel>
           </div>
         ) : graph ? (
           <>
@@ -445,7 +506,7 @@ function GraphPanel({ view, groups, onChange, onReset, onClose }: {
 }
 
 type TreeOps = {
-  open: Set<string> | null; selected: string; creating: Creating; renaming: string | null; dropTarget: string | null;
+  open: Set<string> | null; selected: string; creating: Creating; renaming: string | null; dropTarget: string | null; dots: MemoryDots;
   onToggle: (p: string) => void; onOpen: (p: string) => void; onCreate: (name: string) => void;
   onRename: (it: TreeItem, name: string) => void; onMenu: (it: TreeItem, at?: { x: number; y: number }) => void;
   onDragStart: (p: string) => void; onDragOver: (p: string | null) => void; onDrop: (folder: string) => void;
@@ -458,12 +519,13 @@ function TreeLevel({ items, depth, ops }: { items: TreeItem[]; depth: number; op
         const isOpen = ops.open === null || ops.open.has(it.path);
         // drops onto a note land in that note's folder
         const target = it.dir ? it.path : it.path.split('/').slice(0, -1).join('/');
+        const dot = it.dir ? ops.dots.folders[it.path] : ops.dots.files[it.path];
         return (
           <div key={it.path}>
             {ops.renaming === it.path ? (
               <RenameRow item={it} depth={depth} onDone={(name) => ops.onRename(it, name)} />
             ) : (
-              <div className="kb-row">
+              <div className={`kb-row ${dot ? 'has-dot' : ''}`}>
               <button role="treeitem" aria-expanded={it.dir ? isOpen : undefined} draggable
                 className={`kb-item ${ops.selected === it.path ? 'sel' : ''} ${it.dir ? 'dir' : ''} ${it.dir && ops.dropTarget === it.path ? 'drop' : ''}`}
                 style={{ paddingLeft: 10 + depth * 16 }}
@@ -480,6 +542,7 @@ function TreeLevel({ items, depth, ops }: { items: TreeItem[]; depth: number; op
                 onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); ops.onMenu(it, { x: r.left, y: r.bottom + 4 }); }}>
                 <IconMore width={16} height={16} />
               </button>
+              {dot && <span className={`kb-dot ${dot}`} role="img" aria-label={dot === 'green' ? 'Updates to review' : 'Updated since you last opened it'} data-tip={dot === 'green' ? 'Updates to review' : 'Updated since you last opened it'} />}
               </div>
             )}
             {it.dir && isOpen && (

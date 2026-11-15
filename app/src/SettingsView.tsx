@@ -18,6 +18,7 @@ import { EnvSwitch } from './EnvSwitch';
 import { AgentRows, ConnectionCheckButton, ConnectionCheckList, useAgents, useConnectionCheck, type Agents } from './AgentLinks';
 import { MeetingSourcesRows } from './MeetingSources';
 import { useFlags, useNotetaker } from './flags';
+import { MemoryUpdatesCard } from './MemoryUpdates';
 import {
   IconBell, IconBrain, IconBuilding, IconCalendar, IconChat, IconFolder, IconGrid, IconKeyboard, IconLock,
   IconChevron, IconCode, IconExternal, IconGlobe, ProviderMark, IconMic, IconMore, IconNotes, IconPeople, IconPerson, IconPlus, IconPower, IconReset, IconSliders, IconStack, IconCheck, IconCopy, IconFolderFill, IconFork, IconShield, IconGraph, IconSearch, IconClose, Wave,
@@ -179,6 +180,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
             <>
               <SecondBrain brain={brain} onConnect={onConnect} onDisconnect={onDisconnect} onBrain={onBrain} onViewConnector={goConnector} />
               {brain && <KeeperCard brain={brain} />}
+              {brain && <MemoryUpdatesCard settings={settings} onSettings={onSettings} />}
               {brain && <MemoryScan />}
             </>
           ) : page === 'members' ? <MembersArea />
