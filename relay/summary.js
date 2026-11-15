@@ -5,8 +5,11 @@ import { notesPrompt, notesSystem, summaryPrompt } from '../app/notes.js';
 import { allowance, authorize, bearer, connectorSecret, RelayError } from './lib/auth.js';
 import { pickModel, streamAnthropic, streamOpenAI } from './lib/models.js';
 import { usageEvent, writeUsage } from './lib/usage.js';
+import { createLimiter } from './platform.js';
 
-const MAX_BODY = 4 * 1024 * 1024;
+const MAX_BODY = 1024 * 1024;
+// model calls are not metered against the hour allowance, so each user gets at most 30 a minute on this instance
+const notesLimiter = createLimiter({ max: 30, windowMs: 60 * 1000 });
 const STEPS = new Set(['summary', 'notes']);
 
 export function readJson(req, limit = MAX_BODY) {
@@ -38,7 +41,7 @@ export function buildPrompt(r) {
 
 const sse = (res, obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
 
-export async function handleNotes(req, res, { clients, config, log = () => {}, fetchImpl = fetch }) {
+export async function handleNotes(req, res, { clients, config, log = () => {}, fetchImpl = fetch, notesLimit = notesLimiter }) {
   const t0 = Date.now();
   let r, model;
   try {
@@ -47,6 +50,7 @@ export async function handleNotes(req, res, { clients, config, log = () => {}, f
     if (!r.kind) throw new RelayError('bad_request', 'kind must be summary or notes.', 400);
     if (!r.turns.length) throw new RelayError('bad_request', 'Send at least one turn.', 400);
     const user = await authorize(clients, { token: bearer(req.headers.authorization), workspaceId: r.workspaceId });
+    if (!notesLimit.allow(user.userId)) throw new RelayError('rate_limit', 'Too many notes requests in the last minute. Try again shortly.', 429);
     const connector = user.voice[r.kind] ? await connectorSecret(clients.db, user.voice[r.kind], r.kind) : null;
     try { model = pickModel({ step: r.kind, connector, quorumKey: config.keys.anthropic, openaiModel: config.openaiModel }); }
     catch (err) { throw new RelayError('connector', err.message, 400); }

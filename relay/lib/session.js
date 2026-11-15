@@ -8,9 +8,28 @@ import { usageEvent, writeUsage } from './usage.js';
 export const CLOSE = { client: 1000, idle: 4000, unauthorized: 4001, forbidden: 4001, allowance: 4002, cap: 4003, engine: 4004, connector: 4004, bad_request: 4005, server: 4006 };
 const codeFor = (code) => CLOSE[code] ?? CLOSE.server;
 
-export function handleConnection(ws, req, { clients, config, engines, log = () => {}, now = () => Date.now() }) {
+// live managed sessions on this relay instance, counted by user and by workspace. The hour allowance is read once when
+// a session starts, so without a cap many parallel sockets could each spend the whole remaining pool. A user may hold
+// perUser sessions at once and a workspace one per seat. The count is in memory, so each relay instance keeps its own.
+export function createSessionLedger() {
+  const byUser = new Map(), byWorkspace = new Map();
+  const bump = (m, k, d) => { const n = (m.get(k) ?? 0) + d; if (n > 0) m.set(k, n); else m.delete(k); };
+  return {
+    claim({ userId, workspaceId, seats, perUser = 2 }) {
+      if ((byUser.get(userId) ?? 0) >= perUser) throw new RelayError('cap', `You already have ${perUser} managed transcription sessions running. Stop one to start another.`, 429);
+      if ((byWorkspace.get(workspaceId) ?? 0) >= Math.max(1, Number(seats) || 1)) throw new RelayError('cap', 'Every seat in this workspace already has a managed transcription session running.', 429);
+      bump(byUser, userId, 1); bump(byWorkspace, workspaceId, 1);
+      let released = false;
+      return () => { if (released) return; released = true; bump(byUser, userId, -1); bump(byWorkspace, workspaceId, -1); };
+    },
+    live: (userId, workspaceId) => ({ user: byUser.get(userId) ?? 0, workspace: byWorkspace.get(workspaceId) ?? 0 }),
+  };
+}
+export const sharedLedger = createSessionLedger();
+
+export function handleConnection(ws, req, { clients, config, engines, log = () => {}, now = () => Date.now(), ledger = sharedLedger }) {
   const headerToken = bearer(req.headers?.authorization);
-  const s = { phase: 'hello', hello: null, user: null, engine: null, engineName: null, connectorId: null, counted: true, budget: 0, sessions: new Map(), bytes: {}, startedAt: now(), closed: false, reason: null };
+  const s = { phase: 'hello', hello: null, user: null, engine: null, engineName: null, connectorId: null, counted: true, budget: 0, sessions: new Map(), bytes: {}, startedAt: now(), closed: false, reason: null, release: null };
   const timers = { hello: null, idle: null };
   const send = (obj) => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj)); };
   const seconds = () => Math.max(0, ...Object.values(s.bytes).map((b) => pcmSeconds(b, s.hello?.sampleRate ?? 16000)));
@@ -48,6 +67,7 @@ export function handleConnection(ws, req, { clients, config, engines, log = () =
     }
     const a = await allowance(clients.db, hello.workspaceId, new Date(now()));
     if (s.counted && a.remaining <= 0) throw new RelayError('allowance', 'This workspace has used its managed transcription hours for the month.', 402);
+    if (s.counted) s.release = ledger.claim({ userId: user.userId, workspaceId: hello.workspaceId, seats: a.seats, perUser: config.maxSessionsPerUser ?? 2 });
     s.budget = sessionBudget({ counted: s.counted, remaining: a.remaining, maxSessionSeconds: config.maxSessionSeconds });
     s.engine = engines[s.engineName];
     for (const channel of hello.channels) {
@@ -74,6 +94,7 @@ export function handleConnection(ws, req, { clients, config, engines, log = () =
   async function finish() {
     if (s.closed) return;
     s.closed = true;
+    s.release?.();
     clearTimeout(timers.hello); clearTimeout(timers.idle);
     for (const es of s.sessions.values()) { try { es.close(); } catch {} }
     const secs = seconds();
