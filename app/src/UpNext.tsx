@@ -33,11 +33,11 @@ const usePassed = () => useSyncExternalStore((f) => { passSubs.add(f); return ()
 // window event moves the app to Home.
 let pendingEvent: CalendarEvent | null = null;
 export const OPEN_EVENT = 'quorum:open-event';
-// an upcoming meeting's chats in its row details; opens its page at the chat
+// an upcoming meeting's notes (its chats) in its row details; opens its page at them
 function EventChatsLink({ n, onOpen }: { n: number; onOpen: () => void }) {
   return (
-    <a className="app-chip link" href="#" data-tip="Open the chat about this meeting" onClick={(ev) => { ev.preventDefault(); ev.stopPropagation(); onOpen(); }} onKeyDown={(ev) => ev.stopPropagation()}>
-      <img className="app-logo" src={markProd} alt="" />{n} {n === 1 ? 'chat' : 'chats'}
+    <a className="app-chip link" href="#" data-tip="Open the notes on this meeting" onClick={(ev) => { ev.preventDefault(); ev.stopPropagation(); onOpen(); }} onKeyDown={(ev) => ev.stopPropagation()}>
+      <img className="app-logo" src={markProd} alt="" />{n} {n === 1 ? 'note' : 'notes'}
     </a>
   );
 }

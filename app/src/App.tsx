@@ -634,7 +634,7 @@ export function App() {
       ) : showLive ? liveArea : note ? null : <>
       {tab === 'home' && !convoOpen && (
         <div className="body wide">
-          <HistoryView brain={brain} focusAsk={focusAsk} onAsk={(q, f) => { setConvoOpen(true); send(q, f); }} onOpenChat={openChat} onFiltered={setHistFiltered} onNewChat={() => { setConvoOpen(true); newChat(); }} />
+          <HistoryView brain={brain} focusAsk={focusAsk} onAsk={(q, f) => { setConvoOpen(true); send(q, f); }} onOpenChat={openChat} onFiltered={setHistFiltered} />
         </div>
       )}
 

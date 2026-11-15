@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { CalendarEvent, MeetingBrief } from './quorum';
-import { AppPill, CALENDAR_APP, PLATFORM_APP, peopleText } from './AppChip';
+import { AppPill, CALENDAR_APP, PLATFORM_APP } from './AppChip';
 import { Markdown } from './Markdown';
 import { dayLabel } from './upNextList';
-import { IconBack } from './icons';
+import { IconBack, IconPeople } from './icons';
 import { TypedTitle, useStuck } from './StickyBar';
 import { JoinButton } from './UpNext';
 import { Composer } from './Composer';
@@ -144,7 +144,7 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
         <h1>{e.title}</h1>
         <div className="meta-row">
           <span className="meta-pill">{dayLabel(at)} · {clock(at)} – {clock(end)}</span>
-          <span className="meta-pill">{peopleText(e)}</span>
+          {(e.count ?? 0) > 0 && <span className="meta-pill"><IconPeople width={16} height={16} />{e.count} {e.count === 1 ? 'person' : 'people'}</span>}
           {e.calendar && <AppPill id={CALENDAR_APP[e.calendar].id} name={CALENDAR_APP[e.calendar].name} onOpen={e.item || e.link ? () => window.quorum.calendarOpen(e) : null} />}
           {platform && <AppPill id={platform.id} name={platform.short} onOpen={e.join ? () => window.quorum.openExternal(e.join!) : null} />}
         </div>

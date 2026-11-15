@@ -11,11 +11,10 @@ import { dayLabel } from './upNextList';
 import { OPEN_EVENT, UpNext, takeEvent, useCalendarView } from './UpNext';
 import { AppLogo, CALENDAR_APP, RowDetails, peopleText } from './AppChip';
 import { MeetingPage } from './MeetingPage';
-import markProd from '../assets/quorum-mark.png';
 import { DayOff } from './DayOff';
-import { IconCalendar, IconChat, IconClose, IconPlus, IconExternal, IconListCheck, IconMic, IconNewNote, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
+import { IconCalendar, IconClose, IconPlus, IconExternal, IconListCheck, IconMic, IconNewNote, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
 
-type Filter = 'all' | 'meetings' | 'notes' | 'chats';
+type Filter = 'all' | 'meetings' | 'notes';
 type Row = { key: string; kind: 'meeting' | 'note' | 'chat'; title: string; sub: string; date: Date | null; avatar: string; open: () => void; meeting?: MeetingRow; children?: Row[] };
 
 const RECIPES = [
@@ -40,7 +39,7 @@ function colorFor(s: string) {
   return AVATAR_COLORS[h % AVATAR_COLORS.length];
 }
 
-export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, onNewChat }: { brain: Brain | null; focusAsk: number; onAsk: (q: string, files?: string[]) => void; onOpenChat: (id: string) => void; onFiltered?: (filtered: boolean) => void; onNewChat?: () => void }) {
+export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: { brain: Brain | null; focusAsk: number; onAsk: (q: string, files?: string[]) => void; onOpenChat: (id: string) => void; onFiltered?: (filtered: boolean) => void }) {
   const askRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { if (focusAsk) askRef.current?.focus(); }, [focusAsk]);
   const [data, setData] = useState<{ meetings: MeetingRow[]; chats: ChatRow[] }>({ meetings: [], chats: [] });
@@ -116,13 +115,12 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, on
   const rows: Row[] = useMemo(() => {
     const inRange = (d: string | null) => !range || (!!d && new Date(d) >= range.from && new Date(d) < range.to);
     const kw = keyword.toLowerCase();
-    const turns = (c: ChatRow) => `Chat · ${c.turns} ${c.turns === 1 ? 'question' : 'questions'}`;
+    // chats and notes are one thing now: a saved chat shows as a note, and a note's own chat is part of it
     const chatRow = (c: ChatRow, nested = false): Row => ({
-      key: c.id, kind: 'chat', title: c.title, sub: !nested && c.meetingTitle ? `About ${c.meetingTitle} · ${turns(c)}` : turns(c),
-      date: c.date ? new Date(c.date) : null, avatar: 'chat', open: () => onOpenChat(c.id),
+      key: c.id, kind: 'chat', title: c.title, sub: !nested && c.meetingTitle ? `Note · about ${c.meetingTitle}` : 'Note',
+      date: c.date ? new Date(c.date) : null, avatar: 'note', open: () => onOpenChat(c.id),
     });
     const chatFits = (c: ChatRow) => inRange(c.date) && (!kw || c.title.toLowerCase().includes(kw));
-    if (filter === 'chats') return picked.length ? [] : data.chats.filter(chatFits).map((c) => chatRow(c));
 
     // a chat about a meeting always sits under that meeting, never on its own
     const byMeeting = new Map<string, ChatRow[]>();
@@ -137,7 +135,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, on
       open: () => openNoteAt(m.file, null), meeting: m,
       children: (byMeeting.get(m.file) ?? []).map((c) => chatRow(c, true)),
     }));
-    if (filter === 'meetings' || filter === 'notes' || picked.length) return meetings;
+    if (filter === 'meetings' || picked.length) return meetings;
     const known = new Set(data.meetings.map((m) => m.file));
     const loose = data.chats.filter((c) => (!c.meetingFile || !known.has(c.meetingFile)) && !upcoming(c) && chatFits(c)).map((c) => chatRow(c));
     return [...meetings, ...loose].sort((a, b) => (b.date?.getTime() ?? 0) - (a.date?.getTime() ?? 0));
@@ -160,7 +158,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, on
     for (const c of data.chats) if (upcoming(c)) (m.get(c.eventId!) ?? m.set(c.eventId!, []).get(c.eventId!)!).push(c);
     return m;
   }, [data.chats]);
-  const filtered = filter === 'chats' || picked.length > 0 || !!range || !!keyword;
+  const filtered = picked.length > 0 || !!range || !!keyword;
   // Up next steps aside while the list is filtered, as it did when it lived here
   useEffect(() => { onFiltered?.(filtered); }, [filtered, onFiltered]);
   useEffect(() => () => onFiltered?.(false), [onFiltered]);
@@ -185,7 +183,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, on
               onCalendar={ev && (ev.item || ev.link) ? () => window.quorum.calendarOpen({ ...ev, id: ev.id ?? '', title: m.title, end: ev.start } as CalendarEvent) : null}
               calendarName={m.calendar ? CALENDAR_APP[m.calendar].name : undefined}
               platform={m.platform} meetingUrl={m.meetingUrl} source={m.source} sourceUrl={m.url}
-              after={r.children?.length ? <ChatsLink n={r.children.length} onOpen={() => openNoteAt(m.file, r.children![0].key)} /> : null} />
+              />
             : <span className="hist-sub"><span className="hist-sub-text">{r.sub}</span></span>}
         </span>
         <span className="hist-time">{r.date ? <>{r.date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?(AM|PM)/i, '')}<small>{r.date.getHours() < 12 ? 'AM' : 'PM'}</small></> : ''}</span>
@@ -230,10 +228,9 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, on
         <button className={`filter ${filter === 'all' ? 'on' : ''}`} onClick={() => setFilter('all')}>All</button>
         <button className={`filter ${filter === 'meetings' ? 'on' : ''}`} onClick={() => setFilter('meetings')}><IconNotes width={17} height={17} />Meetings</button>
         <button className={`filter ${filter === 'notes' ? 'on' : ''}`} onClick={() => setFilter('notes')}><IconMic width={17} height={17} />Notes</button>
-        <button className={`filter ${filter === 'chats' ? 'on' : ''}`} onClick={() => setFilter('chats')}><IconChat width={17} height={17} />Chats</button>
         <span className="filter-spacer" />
-        <NewMenu onChat={onNewChat} />
-        <PeopleFilter people={people} picked={picked} onChange={(p) => { setPicked(p); if (p.length && filter === 'chats') setFilter('all'); }} />
+        <NewMenu />
+        <PeopleFilter people={people} picked={picked} onChange={setPicked} />
         <DateFilter value={range} onChange={setRange} />
         <KeywordFilter value={keyword} onChange={setKeyword} />
       </div>
@@ -257,7 +254,6 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, on
 
       {groups.length === 0 ? (
         picked.length || range || keyword ? <p className="hist-empty">Nothing matches these filters.</p>
-        : filter === 'chats' ? <p className="hist-empty">No chats yet. Ask anything above to start one.</p>
         : (
           <div className="hist-empty-card">
             <p className="hist-empty">No meetings or chats yet. Quorum writes a note here after each call it listens to.</p>
@@ -279,34 +275,10 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, on
 // a chat tied to a calendar event that hasn't ended
 const upcoming = (c: ChatRow) => !!c.eventId && (!c.eventEnd || new Date(c.eventEnd).getTime() > Date.now());
 
-// a meeting's chats in its row details: the Quorum mark and the count; opens the note at its chat
-function ChatsLink({ n, onOpen }: { n: number; onOpen: () => void }) {
+// + beside the filters: a new note, with its chat below it
+function NewMenu() {
   return (
-    <a className="app-chip link" href="#" data-tip="Open the chat on this note" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpen(); }} onKeyDown={(e) => e.stopPropagation()}>
-      <img className="app-logo" src={markProd} alt="" />{n} {n === 1 ? 'chat' : 'chats'}
-    </a>
-  );
-}
-
-// + beside the filters: a new note (the note editor, quorum:new-note) or a new chat
-function NewMenu({ onChat }: { onChat?: () => void }) {
-  const [open, setOpen] = useState(false);
-  useEffect(() => {
-    if (!open) return;
-    const shut = () => setOpen(false);
-    window.addEventListener('click', shut);
-    return () => window.removeEventListener('click', shut);
-  }, [open]);
-  return (
-    <div className="menu-wrap">
-      <button className={`filter icon-only ${open ? 'on' : ''}`} aria-label="New" data-tip="New" aria-haspopup="menu" aria-expanded={open} onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}><IconPlus width={18} height={18} /></button>
-      {open && (
-        <div className="menu plus-menu" role="menu">
-          <button role="menuitem" onClick={() => { setOpen(false); window.dispatchEvent(new CustomEvent('quorum:new-note')); }}><IconNotes width={15} height={15} /> Note</button>
-          {onChat && <button role="menuitem" onClick={() => { setOpen(false); onChat(); }}><IconChat width={15} height={15} /> Chat</button>}
-        </div>
-      )}
-    </div>
+    <button className="filter icon-only" aria-label="New note" data-tip="New note" onClick={() => window.dispatchEvent(new CustomEvent('quorum:new-note'))}><IconPlus width={18} height={18} /></button>
   );
 }
 
