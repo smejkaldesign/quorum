@@ -1853,3 +1853,11 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 /* everything in a row opens something, so all of it shows the pointer */
 .hist-row, .hist-row * { cursor: pointer; }
 .hist-row button:disabled { cursor: default; }
+/* Up next's header: "Next N days" opens a menu of 1 to 5 days; Non-meetings is a switch */
+.up-days-btn { display: inline-flex; align-items: center; gap: 6px; padding: 2px 6px; margin-left: -6px; border-radius: 8px; color: var(--text); }
+.up-days-btn:hover { background: rgba(255, 255, 255, 0.06); }
+.up-days-btn h4 { margin: 0; }
+.up-days-chev { color: var(--muted); }
+.up-days-menu { top: calc(100% + 6px); min-width: 160px; }
+.up-switch { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.up-show-more:disabled { opacity: 0.4; cursor: default; }

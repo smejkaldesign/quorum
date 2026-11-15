@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useRef,
 import { createPortal } from 'react-dom';
 import type { CalendarEvent } from './quorum';
 import { useExclusiveMenu } from './menuBus';
+import { Toggle } from './controls';
 import { useSession } from './session';
 import { ConfirmModal } from './ConfirmModal';
 import { dayLabel, upNextRows } from './upNextList';
@@ -13,8 +14,8 @@ const half = (d: Date) => (d.getHours() < 12 ? 'AM' : 'PM');
 
 // The calendar as Up next loaded it. UpNext is the only reader of window.quorum.calendar(); Home reads this to decide
 // whether to offer connecting a calendar.
-type CalView = { events: CalendarEvent[]; connected: boolean; showAll: boolean; hidden: number; status: string };
-let calView: CalView = { events: [], connected: false, showAll: false, hidden: 0, status: '' };
+type CalView = { events: CalendarEvent[]; connected: boolean; showAll: boolean; hidden: number; status: string; days: number };
+let calView: CalView = { events: [], connected: false, showAll: false, hidden: 0, status: '', days: 1 };
 const calSubs = new Set<() => void>();
 const setCalView = (v: CalView) => { calView = v; calSubs.forEach((f) => f()); };
 const subscribeCal = (f: () => void) => { calSubs.add(f); return () => { calSubs.delete(f); }; };
@@ -54,7 +55,7 @@ export function UpNext({ hidden = false, inline = false, floating = false, today
   // the helper can still be starting on launch, so a miss retries in 10s instead of waiting for the 5 minute refresh
   const loadCal = useCallback(function load(): Promise<void> {
     return window.quorum.calendar().then((c) => {
-      setCalView({ events: c.connected ? c.events.filter((e) => new Date(e.end) > new Date()) : [], connected: c.connected, showAll: c.showAll, hidden: c.hidden, status: c.status });
+      setCalView({ events: c.connected ? c.events.filter((e) => new Date(e.end) > new Date()) : [], connected: c.connected, showAll: c.showAll, hidden: c.hidden, status: c.status, days: c.days });
       clearTimeout(retry.current);
       if (c.status === 'unavailable') retry.current = setTimeout(load, 10000);
     }).catch(() => {});
@@ -70,8 +71,8 @@ export function UpNext({ hidden = false, inline = false, floating = false, today
   const now = new Date();
   const todays = cal.events.filter((e) => sameDay(new Date(e.start), now));
   const isToday = inline && (today || todays.length > 0);
-  const nextDay = cal.events.find((e) => !sameDay(new Date(e.start), now));
-  const dayEvents = nextDay ? cal.events.filter((e) => sameDay(new Date(e.start), new Date(nextDay.start))) : [];
+  // Up next: every call in the chosen days, the first one until Show more
+  const dayEvents = cal.events;
   const showCal = cal.connected && (cal.events.length > 0 || cal.hidden > 0);
   const empty = hidden || (inline ? !isToday && dayEvents.length === 0 && !showCal : !showCal);
   // inline: watch the first row (the heading when there are none) against the scrolling body above it
@@ -91,26 +92,26 @@ export function UpNext({ hidden = false, inline = false, floating = false, today
   let rows: CalendarEvent[], more: boolean, moreOpen: boolean, toggle: () => void;
   if (!inline) ({ rows, more } = upNextRows(cal.events, open)), moreOpen = open, toggle = () => setOpen((o) => !o);
   else if (isToday) rows = todays, more = false, moreOpen = false, toggle = () => {};
-  else rows = dayOpen ? dayEvents : dayEvents.slice(0, 1), more = dayEvents.length > 1, moreOpen = dayOpen, toggle = () => setDayOpen((o) => !o);
+  else rows = dayOpen ? dayEvents : dayEvents.slice(0, 1), more = true, moreOpen = dayOpen, toggle = () => setDayOpen((o) => !o);
   const label = isToday ? 'Today' : 'Up next';
+  const nothingMore = !isToday && inline && dayEvents.length <= 1;
   const moreButton = more && (
-    <button className="up-show-more" aria-expanded={moreOpen} aria-controls={listId} onClick={toggle}>
+    <button className="up-show-more" aria-expanded={moreOpen} aria-controls={listId} onClick={toggle} disabled={nothingMore && !moreOpen}>
       {moreOpen ? 'Show less' : 'Show more'}<IconChevron width={14} height={14} className={moreOpen ? 'up-chev open' : 'up-chev'} />
     </button>
   );
   const strip = (
     <section ref={section} className={inline ? 'hist-group up-inline' : 'up-strip'} aria-label={label}>
       <div className="up-head">
-        <h4>{label}</h4>
+        {isToday ? <h4>{label}</h4> : <DaysMenu days={cal.days} onPick={(d) => window.quorum.calendarSet({ days: d }).then(loadCal)} />}
         <span className="up-head-end">
-          {showCal && (cal.hidden > 0 || cal.showAll) && (
-            <label className="up-toggle"><input type="checkbox" checked={cal.showAll} onChange={(ev) => window.quorum.calendarSet({ showAll: ev.target.checked }).then(loadCal)} />Show no meeting{!cal.showAll && cal.hidden > 0 ? ` (${cal.hidden})` : ''}</label>
+          {cal.connected && (
+            <label className="up-switch">Non-meetings<Toggle on={cal.showAll} onChange={(v) => window.quorum.calendarSet({ showAll: v }).then(loadCal)} /></label>
           )}
           {inline && moreButton}
         </span>
       </div>
-      {!inline && cal.events.length === 0 && <p className="up-empty">No calls on a connected platform in the next few days.</p>}
-      {inline && !isToday && dayEvents.length === 0 && <p className="up-empty">No calls on a connected platform in the next few days.</p>}
+      {!isToday && cal.events.length === 0 && <p className="up-empty">No calls in the {cal.days === 1 ? 'next day' : `next ${cal.days} days`}.</p>}
       {rows.length > 0 && (
         <div className="up-list" id={listId}>
           {rows.map((e) => {
@@ -144,6 +145,33 @@ export function UpNext({ hidden = false, inline = false, floating = false, today
   );
   if (!floating) return strip;
   return <div className="up-float"><div className={`up-float-in ${passed ? 'shown' : ''}`} inert={!passed || undefined}>{strip}</div></div>;
+}
+
+// "Next 3 days" and its chevron: a menu of how far ahead Up next reaches
+function DaysMenu({ days, onPick }: { days: number; onPick: (d: number) => void }) {
+  const [open, setOpen] = useState(false);
+  const close = useCallback(() => setOpen(false), []);
+  useExclusiveMenu('up-days', open, close);
+  useEffect(() => {
+    if (!open) return;
+    window.addEventListener('mousedown', close);
+    return () => window.removeEventListener('mousedown', close);
+  }, [open, close]);
+  const name = (d: number) => (d === 1 ? 'Next 1 day' : `Next ${d} days`);
+  return (
+    <span className="menu-wrap up-days" onMouseDown={(ev) => ev.stopPropagation()}>
+      <button className="up-days-btn" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <h4>{name(days)}</h4><IconChevron width={16} height={16} className="up-days-chev" />
+      </button>
+      {open && (
+        <div className="menu left up-days-menu" role="menu">
+          {[1, 2, 3, 4, 5].map((d) => (
+            <button key={d} role="menuitemradio" aria-checked={d === days} className={d === days ? 'checked' : ''} onClick={() => { setOpen(false); onPick(d); }}>{name(d)}</button>
+          ))}
+        </div>
+      )}
+    </span>
+  );
 }
 
 // the white Join button an upcoming call shows on hover, with its app's logo

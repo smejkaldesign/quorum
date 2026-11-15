@@ -1109,7 +1109,7 @@ function CalendarPage({ onConnector }: { onConnector: (id: string) => void }) {
       <div className="set-card">
         <Row icon={<IconCalendar width={18} height={18} />} title="Up next" desc="How far ahead Home shows your meetings">
           <select className="set-select" disabled={!on} value={cal.days} onChange={async (e) => setCal({ ...(await window.quorum.calendarSet({ days: Number(e.target.value) })), status: cal.status })}>
-            {[1, 2, 3, 5, 7, 14].map((d) => <option key={d} value={d}>{d === 1 ? 'Next 1 day' : `Next ${d} days`}</option>)}
+            {[1, 2, 3, 4, 5].map((d) => <option key={d} value={d}>{d === 1 ? 'Next 1 day' : `Next ${d} days`}</option>)}
           </select>
         </Row>
       </div>

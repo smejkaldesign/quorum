@@ -2019,7 +2019,8 @@ const noteTitle = store.notes.title;
 ipcMain.handle('brain', () => brain());
 // two calendar sources: the Calendar app on this Mac (settings.calendar.enabled, once access is granted) and a Google
 // account connected through the Google Calendar connector (settings.calendar.google, tokens in the Keychain)
-const calSettings = () => ({ source: 'mac', days: 3, showAll: false, hidden: [], ...settings.calendar });
+// Up next reaches 1 to 5 days ahead; a saved 7 or 14 from before reads as 5
+const calSettings = () => { const c = { source: 'mac', days: 1, showAll: false, hidden: [], ...settings.calendar }; c.days = Math.min(5, Math.max(1, Number(c.days) || 1)); return c; };
 // the app's own package.json, read once: the packaged build carries the edition, the update feed, the beta gate and the
 // OAuth client ids (quorumGoogle, quorumOAuth) there
 const packagedMeta = (() => { try { return JSON.parse(readFileSync(path.join(here, 'package.json'), 'utf8')); } catch { return {}; } })();
@@ -2127,7 +2128,7 @@ ipcMain.handle('calendar-open', (_e, ev) => {
 ipcMain.handle('calendar-privacy', () => shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars'));
 ipcMain.handle('calendar-set', (_e, next) => {
   const c = calSettings();
-  if ([1, 2, 3, 5, 7, 14].includes(next?.days)) c.days = next.days;
+  if ([1, 2, 3, 4, 5].includes(next?.days)) c.days = next.days;
   if (next?.enabled === false) c.enabled = false;
   if (typeof next?.showAll === 'boolean') c.showAll = next.showAll;
   if (typeof next?.hide === 'string' && next.hide && !c.hidden.includes(next.hide)) c.hidden = [...c.hidden, next.hide].slice(-500);
