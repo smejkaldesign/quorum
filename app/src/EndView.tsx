@@ -117,11 +117,10 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
             </div>
 
             {showing === 'summary' && (
-              <section className="doc-section">
-                <h2><span className="hash">#</span>Your notes</h2>
+              <section className="doc-section my-notes-section">
                 {/* the note's own editor, formatting bar on top, typed inline with no box around it */}
                 <div className="my-notes-editor" onBlur={flushPrivateNotes}>
-                  <NoteEditor value={privateNotes} onChange={onPrivateNotes} readOnly={false} placeholder="Type your notes" />
+                  <NoteEditor value={privateNotes} onChange={onPrivateNotes} readOnly={false} placeholder="Type your notes" autoFocus={ready} />
                 </div>
               </section>
             )}
