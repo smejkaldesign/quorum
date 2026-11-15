@@ -234,6 +234,8 @@ const keeper = createKeeper({
   brain: () => brain(), settings, saveSettings: () => store.settings.save(), guards: () => guardrails.compiled(), wouldBlock,
   runText: (prompt, system) => runClaude(prompt, system, 'haiku'), hasModel: () => modelSource() !== 'none', owner: () => USER_NAME,
   log: (...a) => log(...a), onChange: (r) => toUI('keeper', r), errorLog: KEEPER_ERRORS, versions: memoryVersions, live: liveRuns,
+  // a meeting note the guardrails keep the keeper out of goes on the Recent denials list
+  onGuarded: (rel, why) => guardrails.recordDenial({ path: rel, reason: why, surface: 'keeper' }),
 });
 ipcMain.handle('keeper-status', () => keeper.status());
 ipcMain.handle('keeper-set', (_e, patch) => keeper.set(patch ?? {}));
@@ -2560,6 +2562,8 @@ ipcMain.handle('guardrails-set', (_e, id, patch) => reindexed(guardrails.set(Str
 ipcMain.handle('guardrails-add', (_e, rule) => reindexed(guardrails.add(rule ?? {})));
 ipcMain.handle('guardrails-remove', (_e, id) => reindexed(guardrails.remove(String(id ?? ''))));
 ipcMain.handle('guardrails-test', (_e, rel) => guardrails.test(String(rel ?? '')));
+// the refusals the guardrails made, newest first, for the Guardrails page and the notification center
+ipcMain.handle('guardrail-denials', (_e, opts) => guardrails.denials({ since: opts?.since ?? null, limit: opts?.limit }));
 ipcMain.handle('update-status', () => updates?.state() ?? { status: 'off', current: app.getVersion(), version: null, percent: 0, notes: null, checkedAt: null, error: null });
 ipcMain.handle('update-check', async () => (updates ? updates.check() : { status: 'off' }));
 ipcMain.handle('update-install', () => !!updates?.install());

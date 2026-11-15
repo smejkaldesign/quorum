@@ -28,11 +28,13 @@ ALWAYS_DENY_DIRS = (".git", "node_modules")
 DENIED_LOG = None
 
 
-def deny(reason, tool="", target=""):
+# kind and match name the rule that refused (a folder, the secret pattern, a frontmatter key), so the app can show which
+# guardrail it was without parsing the reason
+def deny(reason, tool="", target="", kind="", match=""):
     if DENIED_LOG:
         try:
             with open(DENIED_LOG, "a", encoding="utf-8") as f:
-                f.write(json.dumps({"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "tool": tool, "path": target, "reason": reason}) + "\n")
+                f.write(json.dumps({"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "tool": tool, "path": target, "reason": reason, "kind": kind, "match": match, "surface": "agent"}) + "\n")
         except OSError:
             pass
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}))
@@ -122,21 +124,21 @@ def main():
         rel = "."
     for d in ALWAYS_DENY_DIRS + tuple(deny_dirs):
         if in_dir(rel, d):
-            deny(f"Quorum read guard: {d}/ is private to this Agent OS.", tool, rel)
+            deny(f"Quorum read guard: {d}/ is private to this Agent OS.", tool, rel, "path", d)
     if secret_re is not None and secret_re.search(rel):
-        deny("Quorum read guard: that file looks like a secret or credential.", tool, rel)
+        deny("Quorum read guard: that file looks like a secret or credential.", tool, rel, "secret")
     if tool == "Read":
         abs_path = target if os.path.isabs(target) else os.path.join(root, target)
         hit = frontmatter_key(abs_path, keys)
         if hit:
-            deny(f"Quorum read guard: this note is marked {hit} in its frontmatter.", tool, rel)
+            deny(f"Quorum read guard: this note is marked {hit} in its frontmatter.", tool, rel, "frontmatter", hit)
         log_read(log, abs_path)
     # a Grep or Glob rooted above a private folder would still match files inside it, so the pattern must not name one
     if tool in ("Grep", "Glob"):
         pat = str(inp.get("pattern") or "") + " " + str(inp.get("glob") or "")
         for d in deny_dirs:
             if d.lower() in pat.lower():
-                deny(f"Quorum read guard: {d}/ is private to this Agent OS.", tool, rel)
+                deny(f"Quorum read guard: {d}/ is private to this Agent OS.", tool, rel, "path", d)
     sys.exit(0)
 
 

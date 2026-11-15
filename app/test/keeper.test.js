@@ -77,8 +77,10 @@ describe('keeper run', () => {
     for (const rel of [a, b]) mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
     writeFileSync(path.join(dir, a), NOTE('Board prep', ['Ada Lovelace'], 'Numbers.', 'confidential: finance\n'));
     writeFileSync(path.join(dir, b), NOTE('Hidden', ['Ada Lovelace'], 'Quorum things.'));
-    const r = await keeperFor(dir).run();
+    const guarded = [];
+    const r = await keeperFor(dir, { onGuarded: (rel, why) => guarded.push([rel, why]) }).run();
     expect(r).toMatchObject({ filed: 0, skipped: 2 });
+    expect(guarded.sort()).toEqual([[b, '08-meetings/private/ is private'], [a, 'looks like a secret or credential']]);
     expect(readFileSync(path.join(dir, 'index.md'), 'utf8')).not.toContain('secret-01y');
     expect(readFileSync(path.join(dir, '02-people', 'ada-lovelace.md'), 'utf8')).not.toContain('[[');
     expect(existsSync(path.join(dir, '01-daily', '2026-11-10.md'))).toBe(false);

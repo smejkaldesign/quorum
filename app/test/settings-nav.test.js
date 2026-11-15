@@ -52,6 +52,15 @@ describe('resolving a remembered page', () => {
     expect(resolvePage('org-voice', true, undefined, flagHiddenPages(null))).toBe('org-voice');
   });
 
+  it('hides the Guardrails page with the guardrails flag off and sends a remembered visit to General', () => {
+    expect(flagHiddenPages('voice')).toEqual([]);
+    expect(flagHiddenPages('voice', false)).toEqual(['guardrails']);
+    expect(flagHiddenPages(null, false)).toEqual(['voice', 'guardrails']);
+    expect(resolvePage('guardrails', true, undefined, flagHiddenPages('voice', false))).toBe('general');
+    expect(resolvePage('guardrails', true, undefined, flagHiddenPages('voice', true))).toBe('guardrails');
+    expect(resolvePage('org-guardrails', true, undefined, flagHiddenPages('voice', false))).toBe('org-guardrails');
+  });
+
   it('keeps a page the current nav may show', () => {
     expect(resolvePage('org-voice', true)).toBe('org-voice');
     expect(resolvePage('calendar', false)).toBe('calendar');

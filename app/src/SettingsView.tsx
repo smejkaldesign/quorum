@@ -17,7 +17,7 @@ import { TOP_ADMIN_PAGES, canAdmin, flagHiddenPages, modeOf, resolvePage, voiceM
 import { EnvSwitch } from './EnvSwitch';
 import { AgentRows, ConnectionCheckButton, ConnectionCheckList, useAgents, useConnectionCheck, type Agents } from './AgentLinks';
 import { MeetingSourcesRows } from './MeetingSources';
-import { useFlags, useNotetaker } from './flags';
+import { useFlag, useFlags, useNotetaker } from './flags';
 import { MemoryUpdatesCard } from './MemoryUpdates';
 import {
   IconBell, IconBrain, IconBuilding, IconCalendar, IconChat, IconFolder, IconGrid, IconKeyboard, IconLock,
@@ -90,7 +90,8 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   const hosted = useHostedAccounts();
   const listed = workspacePages(EDITION, hosted, account?.workspace?.teamEnabled === true, account?.workspace?.role);
   const voice = voiceMode(nt.dictation, nt.manualListen);
-  const hidden = flagHiddenPages(voice);
+  const guardrailsOn = useFlag('guardrails');
+  const hidden = flagHiddenPages(voice, guardrailsOn);
   const page = resolvePage(saved, admin, listed, hidden);
   const mode = modeOf(page);
   const quorumEmail = account?.signedIn ? account.email : null;
@@ -109,7 +110,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   // with dictation off, the account Voice typing page is Notes: what Record captures, then the Dictionary (settingsNav.voiceMode)
   const named = (n: Nav): Nav => (n.id === 'voice' && voice === 'dictionary' ? { ...n, label: 'Notes' } : n);
   const accountNav = ACCOUNT.filter((n) => !hidden.includes(n.id)).map(named);
-  const adminNav = WORKSPACE.filter((n) => (listed as Page[]).includes(n.id));
+  const adminNav = WORKSPACE.filter((n) => (listed as Page[]).includes(n.id) && !hidden.includes(n.id));
   const topNav = adminNav.filter((n) => (TOP_ADMIN_PAGES as Page[]).includes(n.id));
   const workspaceNav = adminNav.filter((n) => !(TOP_ADMIN_PAGES as Page[]).includes(n.id));
   const all = [...ACCOUNT, ...WORKSPACE].map(named);

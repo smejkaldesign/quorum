@@ -261,7 +261,7 @@ export function linkMentions(text, links) {
   return fm + body;
 }
 
-export function createKeeper({ onStep = () => {}, brain, settings, saveSettings = () => {}, guards = () => null, wouldBlock = () => null, runText = null, hasModel = () => false, owner = () => '', log = () => {}, onChange = () => {}, errorLog = null, versions = null, live = null }) {
+export function createKeeper({ onStep = () => {}, brain, settings, saveSettings = () => {}, guards = () => null, wouldBlock = () => null, runText = null, hasModel = () => false, owner = () => '', log = () => {}, onChange = () => {}, errorLog = null, versions = null, live = null, onGuarded = () => {} }) {
   // factsBudget and factsNote are null until the user picks one
   // meetingsIndex writes the meeting index lines to <meetings folder>/index.md while the vault owns the root index
   // editVault lets the keeper edit files Quorum did not make, and factsInClaude turns on the copy in CLAUDE.md; both are
@@ -792,6 +792,7 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
         for (const n of pending) {
           if (n.why) {
             st.done[n.rel] = n.h; result.skipped++;
+            try { onGuarded(n.rel, String(n.why)); } catch {}
             st.trail ??= {};
           if (!result.trailPruned) { for (const k of Object.keys(st.trail)) if (!existsSync(path.join(vault, k))) delete st.trail[k]; result.trailPruned = true; }
             const before = Array.isArray(st.trail[n.rel]) ? st.trail[n.rel] : [];

@@ -211,6 +211,7 @@ contextBridge.exposeInMainWorld('quorum', {
   guardrailsAdd: (rule) => ipcRenderer.invoke('guardrails-add', rule),
   guardrailsRemove: (id) => ipcRenderer.invoke('guardrails-remove', id),
   guardrailsTest: (rel) => ipcRenderer.invoke('guardrails-test', rel),
+  guardrailDenials: (opts) => ipcRenderer.invoke('guardrail-denials', opts),
   workspaceGuardrailsGet: () => ipcRenderer.invoke('workspace-guardrails-get'),
   workspaceGuardrailsSet: (rules) => ipcRenderer.invoke('workspace-guardrails-set', rules),
   updateStatus: () => ipcRenderer.invoke('update-status'),

@@ -7,7 +7,8 @@
 // (workspace rules, set by admins for the organization or team). compile() turns the effective list into what each
 // enforcement point consumes: the read guard's flags and hook list, the deny folders, and the term filter the
 // suggester, the transcript redactor and the MCP server share. Pure Node; the app passes in settings and the root.
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { appendFileSync, existsSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { open, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -339,7 +340,52 @@ export function wouldBlock(compiled, rel, head = '') {
   return null;
 }
 
-const readDenials = (file, n = 30) => { try { return readFileSync(file, 'utf8').trim().split('\n').slice(-n).map((l) => JSON.parse(l)).reverse(); } catch { return []; } };
+// the denial log: one JSON line per refused read, appended by the read guard hook (guards/read-guard.py, a separate
+// process) and by the app itself (recordDenial). The list keeps the newest DENIALS_CAP entries; the file is cut back
+// to that when it grows past it by a margin, so a busy agent does not rewrite it on every read
+export const DENIALS_CAP = 200;
+const DENIALS_SLACK = 50;
+
+// what the reason text says, for lines written before the hook named the rule kind and the matched value
+export function denialKindOf(entry) {
+  if (entry.kind && entry.kind !== 'unknown') return { kind: entry.kind, match: entry.match ?? null };
+  const r = String(entry.reason ?? '');
+  let m;
+  if ((m = r.match(/marked (\S+?):? in its frontmatter/))) return { kind: 'frontmatter', match: m[1].replace(/:$/, '') };
+  if (/secret or credential/.test(r)) return { kind: 'secret', match: null };
+  if ((m = r.match(/(\S+)\/ is private/))) return { kind: 'path', match: m[1] };
+  return { kind: 'unknown', match: null };
+}
+
+// each line on its own, so one torn or foreign line drops only itself
+export function parseDenialLines(text) {
+  const out = [];
+  for (const line of String(text ?? '').split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const e = JSON.parse(line);
+      if (e && typeof e === 'object' && typeof e.t === 'string') out.push({ ...e, id: createHash('sha1').update(line).digest('hex').slice(0, 16) });
+    } catch {}
+  }
+  return out;
+}
+
+const splitList = (v) => String(v ?? '').split(/[\n,]/).map((s) => s.trim().replace(/^\/+|\/+$/g, '').replace(/:$/, '').toLowerCase()).filter(Boolean);
+const testPattern = (pattern, rel) => { try { return new RegExp(pattern, 'i').test(rel); } catch { return false; } };
+
+// which rule refused: a built-in one when it covers the match, else the first other rule of that kind that does
+export function guardOf(entry, rules, { privateDirs = [] } = {}) {
+  const { kind, match } = denialKindOf(entry);
+  const on = rules.filter((r) => r.enabled && r.kind === kind);
+  const builtIn = (id) => on.find((r) => r.id === id);
+  const m = String(match ?? '').toLowerCase();
+  let rule = null;
+  if (kind === 'path') rule = (['.git', 'node_modules', ...privateDirs.map((d) => d.toLowerCase())].includes(m) && builtIn('built-in:private-folders')) || on.find((r) => r.id !== 'built-in:private-folders' && splitList(r.value).includes(m)) || builtIn('built-in:private-folders');
+  else if (kind === 'secret') rule = (testPattern(SECRET_NAMES, entry.path ?? '') && builtIn('built-in:secrets')) || on.find((r) => r.id !== 'built-in:secrets' && testPattern(r.value, entry.path ?? '')) || builtIn('built-in:secrets');
+  else if (kind === 'frontmatter') rule = on.find((r) => splitList(r.value).includes(m)) ?? null;
+  const fallback = BUILT_IN.find((b) => b.kind === kind);
+  return { guard: rule?.id ?? fallback?.id ?? 'unknown', guardLabel: rule?.label ?? fallback?.label ?? 'Guardrail' };
+}
 
 // the app's handle: state in settings.guardrails, discovery cached per root, the compiled set cached until something changes
 export function createGuardrails({ settings, saveSettings = () => {}, brain = () => null, privateDirs = () => [], denialLog = null, log = () => {} }) {
@@ -387,6 +433,34 @@ export function createGuardrails({ settings, saveSettings = () => {}, brain = ()
     return value;
   };
   const save = () => { compiledCache = { key: '', value: null }; saveSettings(); };
+  const readLog = () => { try { return parseDenialLines(readFileSync(denialLog, 'utf8')); } catch { return []; } };
+  // newest first, each with the rule that refused it and where it happened; trims the file back to the cap
+  const denials = ({ since = null, limit = DENIALS_CAP } = {}) => {
+    if (!denialLog) return [];
+    const all = readLog();
+    if (all.length > DENIALS_CAP + DENIALS_SLACK) {
+      try { const tmp = `${denialLog}.tmp`; writeFileSync(tmp, all.slice(-DENIALS_CAP).map(({ id, ...e }) => JSON.stringify(e)).join('\n') + '\n'); renameSync(tmp, denialLog); } catch (e) { log('guardrails denials trim', e?.message ?? e); }
+    }
+    const b = brain();
+    const list = rules();
+    const dirs = b ? privateDirs(b.root) : [];
+    const after = since == null ? null : typeof since === 'number' ? since : Date.parse(String(since));
+    const n = Math.max(1, Math.min(DENIALS_CAP, Number(limit) || DENIALS_CAP));
+    // reversed first so entries written in the same second keep newest first through the stable sort
+    return all.slice(-DENIALS_CAP).reverse()
+      .filter((e) => after == null || Number.isNaN(after) || Date.parse(e.t) > after)
+      .sort((x, y) => Date.parse(y.t) - Date.parse(x.t))
+      .slice(0, n)
+      .map((e) => ({ id: e.id, t: e.t, path: String(e.path ?? ''), tool: String(e.tool ?? ''), surface: String(e.surface ?? 'agent'), reason: String(e.reason ?? ''), ...guardOf(e, list, { privateDirs: dirs }) }));
+  };
+  // a refusal made inside the app (the keeper leaving a note out). The same path, rule and surface already in the log
+  // is not written twice, so a note that stays confidential shows once
+  const recordDenial = ({ path: rel, reason, surface, tool = '' }) => {
+    if (!denialLog || !rel || !reason) return false;
+    const { kind, match } = denialKindOf({ reason });
+    if (readLog().some((e) => e.path === rel && e.surface === surface && e.reason === reason)) return false;
+    try { appendFileSync(denialLog, JSON.stringify({ t: new Date().toISOString(), tool, path: rel, reason, kind, match, surface }) + '\n'); return true; } catch (e) { log('guardrails denial', e?.message ?? e); return false; }
+  };
   // the page's payload; a first call after a connect scans the vault, and the page asks for a fresh scan when it opens
   const get = async ({ fresh = false } = {}) => {
     if (remote) { try { const r = await remote(); if (Array.isArray(r)) { state().workspace = r; } } catch (e) { log('guardrails workspace', e?.message ?? e); } }
@@ -399,12 +473,12 @@ export function createGuardrails({ settings, saveSettings = () => {}, brain = ()
       rules: list.map(({ decision, ...r }) => ({ ...r, decision: decision ?? null })),
       skipped: d.skipped,
       scanned: { notes: d.notes ?? 0, at: d.at ?? null, truncated: d.truncated === true },
-      denials: denialLog ? readDenials(denialLog) : [],
+      denials: denials({ limit: 50 }),
       summary: { on: list.filter((r) => r.enabled).length, toReview: list.filter((r) => r.source === 'agent-os' && r.decision === null).length, denyDirs: c.denyDirs.length, terms: c.allTerms().length },
     };
   };
   return {
-    get, compiled, rules, discovery, scan,
+    get, compiled, rules, discovery, scan, denials, recordDenial,
     setRemote: (fn) => { remote = fn; },
     set: (id, patch) => {
       const s = state();
