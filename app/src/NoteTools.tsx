@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Backlink, OutLink, SearchHit } from './quorum';
 import { IconChevron, IconSearch } from './icons';
 
-// Right-hand panel beside an open note: what links here, what it links to, and its headings
-export function NotePanel({ rel, body, onOpen, onResolve }: {
-  rel: string; body: string; onOpen: (rel: string) => void; onResolve: (target: string) => void;
+// Right-hand panel beside an open note: what links here, what it links to, and its headings; children (the note's
+// versions in the Memory tab) come last
+export function NotePanel({ rel, body, onOpen, onResolve, children }: {
+  rel: string; body: string; onOpen: (rel: string) => void; onResolve: (target: string) => void; children?: ReactNode;
 }) {
   const [back, setBack] = useState<Backlink[]>([]);
   const [out, setOut] = useState<OutLink[]>([]);
@@ -37,11 +38,12 @@ export function NotePanel({ rel, body, onOpen, onResolve }: {
       <Section title="Outline" count={outline.length}>
         {outline.length ? outline.map((h, i) => <p key={i} className="np-outline" style={{ paddingLeft: (h.level - 1) * 12 }}>{h.text}</p>) : <p className="np-empty">No headings.</p>}
       </Section>
+      {children}
     </aside>
   );
 }
 
-function Section({ title, count, children }: { title: string; count: number; children: ReactNode }) {
+export function Section({ title, count, children }: { title: string; count: number; children: ReactNode }) {
   const [open, setOpen] = useState(true);
   return (
     <section className="np-section">
