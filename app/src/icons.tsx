@@ -26,6 +26,10 @@ export const IconBack = (p: SVGProps<SVGSVGElement>) => (
 export const IconPlus = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M12 5v14M5 12h14" /></svg>
 );
+// a quill: a note written by hand
+export const IconQuill = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M20 3c-7 1-12 6-13 13l-1 3 3-1c7-1 12-6 13-13z" /><path d="M15 8 4 21" /></svg>
+);
 export const IconMic = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><rect x="9" y="3" width="6" height="12" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
 );
