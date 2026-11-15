@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import type { CalendarEvent } from './quorum';
 import { useExclusiveMenu } from './menuBus';
 import { useSession } from './session';
+import { ConfirmModal } from './ConfirmModal';
 import { dayLabel, upNextRows } from './upNextList';
 import { AppLink, AppLogo, CALENDAR_APP, PLATFORM_APP, useAppIcons } from './AppChip';
 import { IconCalendar, IconChevron, IconMore } from './icons';
@@ -152,6 +153,7 @@ function JoinButton({ id, label, url }: { id: string; label: string; url: string
 function EventMenu({ event: e, open, onOpen, onChanged }: { event: CalendarEvent; open: boolean; onOpen: (open: boolean) => void; onChanged: () => void }) {
   const button = useRef<HTMLButtonElement>(null);
   const [at, setAt] = useState<{ top: number; right: number } | null>(null);
+  const [confirm, setConfirm] = useState(false);
   const close = useCallback(() => onOpen(false), [onOpen]);
   useExclusiveMenu(`up-${e.id}`, open, close);
   useLayoutEffect(() => {
@@ -174,8 +176,14 @@ function EventMenu({ event: e, open, onOpen, onChanged }: { event: CalendarEvent
         <div className="menu up-menu" style={{ position: 'fixed', top: at.top, right: at.right }} onMouseDown={(ev) => ev.stopPropagation()} onClick={(ev) => ev.stopPropagation()}>
           {e.item && <button onClick={run(() => window.quorum.calendarOpen(e))}>View in Calendar</button>}
           {e.join && <button onClick={run(() => window.quorum.openExternal(e.join!))}>Open call link</button>}
-          <button onClick={run(() => window.quorum.calendarSet({ hide: e.id }).then(onChanged))}>Remove from list</button>
+          <button className="danger" onClick={run(() => setConfirm(true))}>Remove from list</button>
         </div>,
+        document.body,
+      )}
+      {confirm && createPortal(
+        <ConfirmModal title="Remove this meeting from Up next?" action="Remove"
+          body={`${e.title} stops showing in Up next and on Home. It stays in your calendar. This action cannot be undone.`}
+          onDone={(ok) => { setConfirm(false); if (ok) window.quorum.calendarSet({ hide: e.id }).then(onChanged); }} />,
         document.body,
       )}
     </>

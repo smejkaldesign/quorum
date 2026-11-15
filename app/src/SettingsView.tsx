@@ -1,3 +1,4 @@
+import { ConfirmModal } from './ConfirmModal';
 import { Fragment, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { SetupForm, answersFrom, draftFrom, draftIsEmpty, emptyDraft, type SetupDraft } from './SetupForm';
 import type { AccountState, BetaState, Brain, CalendarSettings, DecisionProvider, DecisionsStatus, KeeperPlugin, KeeperStatus, LearnedTarget, Memory, MemoryItem, OptOut, Profile, ScreenContextStatus, Settings, TeamVault, Transcription, UpdateState, Voice, Workspace } from './quorum';
@@ -346,26 +347,6 @@ function RowMenu({ label, items }: { label: string; items: MenuItem[] }) {
       <button className="icon-btn" aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}><IconMore width={16} height={16} /></button>
       {open && <div className="menu" role="menu">{items.map((it) => <button key={it.label} role="menuitem" className={it.danger ? 'danger' : undefined} onClick={() => { setOpen(false); it.onPick(); }}>{it.icon} {it.label}</button>)}</div>}
     </span>
-  );
-}
-
-// a yes-or-no sheet for the steps that cannot be undone from Quorum
-function ConfirmModal({ title, body, action, onDone }: { title: string; body: string; action: string; onDone: (ok: boolean) => void }) {
-  return (
-    <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onDone(false); }}
-      onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onDone(false); } }}>
-      <div className="modal" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title">
-        <h2 id="confirm-title">{title}</h2>
-        <p>{body}</p>
-        <div className="modal-actions">
-          <span />
-          <span className="modal-actions-end">
-            <button className="pill" autoFocus onClick={() => onDone(false)}>Cancel</button>
-            <button className="pill danger-pill" onClick={() => onDone(true)}>{action}</button>
-          </span>
-        </div>
-      </div>
-    </div>
   );
 }
 
