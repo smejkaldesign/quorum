@@ -256,3 +256,10 @@ export const IconCheck = (p: SVGProps<SVGSVGElement>) => (
 export const IconCode = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="m8 7-5 5 5 5M16 7l5 5-5 5M14 4l-4 16" /></svg>
 );
+// the highlighter for turning changed-text marks on and off (Memory tab)
+export const IconHighlight = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="m9 15 6.5-6.5a2.1 2.1 0 0 0-3-3L6 12l-1 4 4-1Z" /><path d="m11 7 3 3M4 21h9" /></svg>
+);
+export const IconArrowDown = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base({ strokeWidth: 2, ...p })}><path d="M12 5v14M6 13l6 6 6-6" /></svg>
+);

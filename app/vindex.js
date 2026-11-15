@@ -216,19 +216,22 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
       const name = link.target.replace(/\.md$/i, '').trim();
       if (!name) continue;
       const key = name.toLowerCase();
-      const e = byName.get(key) ?? byName.set(key, { target: name, sources: new Set() }).get(key);
+      const e = byName.get(key) ?? byName.set(key, { target: name, sources: new Set(), links: 0 }).get(key);
       e.sources.add(rel);
+      e.links++;
     }
     // compare names loosely: no date prefix, no Claude memory type prefix (feedback_, reference_...), no punctuation
     const norm = (x) => x.toLowerCase().replace(/\.md$/, '').replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/^(feedback|reference|project|user)_/, '').replace(/[^a-z0-9]+/g, '');
     const index = [...files.keys()].map((rel) => ({ rel, key: norm(path.basename(rel)), alias: aliasesOf(rel).map(norm), title: norm(files.get(rel).note.title) }));
-    return [...byName.values()].map(({ target, sources }) => {
+    // links counts every link to the target, lastAt is the newest change among the notes that hold them
+    return [...byName.values()].map(({ target, sources, links }) => {
       const k = norm(target.split('/').pop());
       const candidates = k.length < 3 ? [] : index
         .map((n) => ({ rel: n.rel, score: n.key === k || n.alias.includes(k) || n.title === k ? 3 : n.key.includes(k) || k.includes(n.key) ? (Math.min(k.length, n.key.length) / Math.max(k.length, n.key.length) > 0.6 ? 2 : 0) : 0 }))
         .filter((c) => c.score > 0).sort((a, b) => b.score - a.score || a.rel.length - b.rel.length).slice(0, 3)
         .map((c) => ({ rel: c.rel, title: titleOf(c.rel), name: typeof files.get(c.rel).note.props.name === 'string' ? files.get(c.rel).note.props.name : null, exact: c.score === 3 }));
-      return { target, sources: [...sources], count: sources.size, candidates };
+      const lastAt = Math.max(0, ...[...sources].map((r) => files.get(r)?.mtime ?? 0)) || null;
+      return { target, sources: [...sources], count: sources.size, links, lastAt, candidates };
     }).sort((a, b) => b.count - a.count || a.target.localeCompare(b.target));
   }
 
@@ -274,6 +277,8 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     aliasesOf,
     flagged: () => [...files].filter(([, f]) => f.flagged).map(([rel]) => rel),
     unresolved: (rel) => (unresolved.get(rel) ?? []).map((l) => l.target),
+    // the missing links of one note with the line each is on (0-based), for the Memory health review
+    missingIn: (rel) => (unresolved.get(rel) ?? []).map((l) => ({ target: l.target.replace(/\.md$/i, '').trim(), line: l.line })),
     size: () => files.size,
     rels: () => [...files.keys()],
   };

@@ -2,10 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { ViewsPill } from './ViewsPill';
 import { FolderApp } from './FolderApp';
 import { NoteMeta, type NoteMetaInfo } from './NoteMeta';
-import type { TreeSort, Brain, TreeItem, NoteViews } from './quorum';
+import type { TreeSort, Brain, TreeItem, NoteViews, MemoryDots, MemoryReview, MemoryVersion, LiveRun, LiveState } from './quorum';
+import { LiveBanner, ReviewBanner, VersionBar, VersionList, when, type ReviewMode } from './MemoryUpdates';
+import { ConfirmModal } from './ConfirmModal';
+import { changeBlocks } from '../memoryReview.js';
+import { fileIssues, type Issue } from '../memoryHealth.js';
 import { Graph, type GraphData, type GraphView } from './Graph';
 import { NotePanel, Palette, type PaletteItem, type PaletteMode } from './NoteTools';
-import { LinkHealth, leftAsIs } from './LinkHealth';
+import { LinkHealth, acceptIssue, leftAsIs, rejectIssue } from './LinkHealth';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
 import { IconChevron, IconClose, IconCollapse, IconExpand, IconFolder, IconGraph, IconNewFolder, IconNewNote, IconHistory, IconLink, IconMore, IconReset, IconSearch, IconSidebar, IconSliders, IconSort } from './icons';
@@ -44,6 +48,23 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState<Creating>(null);
   const [preview, setPreview] = useState<Preview>(null);
+  // review of agent changes (memoryVersions.js): the tree's dots, the open note's banner and Before or After, and a
+  // version opened read-only from the side panel. stamp refreshes the versions list after a change
+  const [dots, setDots] = useState<MemoryDots>({ files: {}, folders: {} });
+  const [review, setReview] = useState<MemoryReview | null>(null);
+  const [mode, setMode] = useState<ReviewMode>('after');
+  const [version, setVersion] = useState<{ v: MemoryVersion; body: string } | null>(null);
+  const [stamp, setStamp] = useState(0);
+  const [restoring, setRestoring] = useState(false);
+  // highlight starts from Settings > Memory on each open; the banner's button changes it for this view only
+  const [highlight, setHighlight] = useState(true);
+  // Memory health review of one note: its issues in line order. cursor is the item the arrows are on, in whichever
+  // banner shows
+  const [issueReview, setIssueReview] = useState<{ line: number; issue: Issue }[] | null>(null);
+  const [cursor, setCursor] = useState(-1);
+  // runs writing notes right now (liveRuns.js): shimmer in the tree and the graph, and a lock with Stop on an open note
+  const [live, setLive] = useState<LiveState>({ runs: [], files: {}, folders: [], vault: [] });
+  const [confirmStop, setConfirmStop] = useState<LiveRun | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
   const [openRel, setOpenRel] = useSession<string>('note', '');
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -60,7 +81,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   const [palette, setPalette] = useState<PaletteMode | null>(null);
   const [scope, setScope] = useState<{ search?: string; moving?: string }>({});
   const [health, setHealth] = useState<{ focus: string | null } | null>(null);
-  // Link health is a takeover laid over the graph: the graph fades back as it fades in, and the reverse on close
+  // Memory health is a takeover laid over the graph: the graph fades back as it fades in, and the reverse on close
   const [healthShown, setHealthShown] = useState<{ focus: string | null } | null>(null);
   useEffect(() => {
     if (health) { setHealthShown(health); return; }
@@ -78,6 +99,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   const load = useCallback(async () => {
     const [t, g] = await Promise.all([window.quorum.vaultTree(), window.quorum.vaultGraph()]);
     setTree(t);
+    window.quorum.memoryDots().then(setDots).catch(() => {});
     setGraph(g);
     // your own tweaks win over the vault's graph.json until you reset them
     let saved: Partial<GraphView> = {};
@@ -112,11 +134,23 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
         const open = previewRel.current;
         const openChanged = !!open && touched.has(open);
         touched.clear();
-        if (openChanged) window.quorum.vaultNote(open).then((n) => { if (n) setPreview((pv) => (pv?.rel === open ? { rel: open, ...n } : pv)); else setPreview(null); });
+        if (openChanged) Promise.all([window.quorum.vaultNote(open), window.quorum.memoryReview(open)]).then(([n, r]) => {
+          if (!n) { setPreview(null); return; }
+          if (previewRel.current !== open) return;
+          setPreview({ rel: open, ...n });
+          setReview(r);
+          if (r) window.quorum.memoryOpened(open);
+        });
       }, 400);
     });
     return () => { off(); if (timer) clearTimeout(timer); };
   }, [load]);
+  useEffect(() => { window.quorum.liveRuns().then(setLive).catch(() => {}); return window.quorum.onLiveRuns(setLive); }, []);
+  // a note's versions or updates changed: new dots, and a fresh versions list for the open note
+  useEffect(() => window.quorum.onMemoryUpdates((rels) => {
+    window.quorum.memoryDots().then(setDots).catch(() => {});
+    if (rels.includes(previewRel.current)) setStamp((n) => n + 1);
+  }), []);
   // reopen the note that was showing before a reload, then keep tracking whichever one is open
   useEffect(() => { if (openRel) openNote(openRel); }, []);
   useEffect(() => { setOpenRel(preview?.rel ?? ''); }, [preview?.rel, setOpenRel]);
@@ -129,14 +163,109 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     return () => clearTimeout(t);
   }, [preview?.rel]);
 
+  const flash = (msg: string) => { setNotice(msg); setTimeout(() => setNotice(''), 4000); };
+  const linksMsg = (r: { files: number; links: number }) => `Updated ${r.links} ${r.links === 1 ? 'link' : 'links'} in ${r.files} ${r.files === 1 ? 'note' : 'notes'}`;
+  const errText = (e: unknown) => String(e).replace(/^.*Error:\s*/, '');
+  // the arrows: the item becomes current and scrolls into view
+  const jump = (at: number, line: number) => {
+    setCursor(at);
+    const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    requestAnimationFrame(() => document.querySelector(`.mu-text [data-line="${line}"]`)?.scrollIntoView({ block: 'center', behavior: smooth ? 'smooth' : 'auto' }));
+  };
+  // the review is read before the note counts as opened, so a blue banner shows on the open that clears its dot
   const openNote = useCallback(async (rel: string) => {
     setSelected(rel);
-    const n = await window.quorum.vaultNote(rel);
-    if (n) setPreview({ rel, ...n });
+    const [n, r, s] = await Promise.all([window.quorum.vaultNote(rel), window.quorum.memoryReview(rel).catch(() => null), window.quorum.getSettings().catch(() => null)]);
+    const lit = s?.memoryHighlight !== false;
+    if (!n) return;
+    setPreview({ rel, ...n });
+    setReview(r);
+    setMode('after');
+    setVersion(null);
+    setIssueReview(null);
+    setCursor(-1);
+    setHighlight(lit);
+    window.quorum.memoryOpened(rel);
   }, []);
+  const reloadOpen = async (rel: string) => {
+    const [n, r] = await Promise.all([window.quorum.vaultNote(rel), window.quorum.memoryReview(rel).catch(() => null)]);
+    if (n) setPreview({ rel, ...n });
+    setReview(r);
+    setStamp((x) => x + 1);
+  };
+  const accept = async () => {
+    if (!preview) return;
+    await window.quorum.memoryAccept(preview.rel);
+    setReview(null);
+    setCursor(-1);
+  };
+  // Reject puts back the text from before the updates
+  const reject = async () => {
+    if (!preview) return;
+    try {
+      await window.quorum.memoryReject(preview.rel);
+      await reloadOpen(preview.rel);
+      setCursor(-1);
+      flash('Rejected. The earlier text is back, and the text it replaced is kept as a version.');
+    } catch (e) { flash(errText(e)); }
+  };
+  // the open note's issues, from Memory health
+  const loadIssues = async (rel: string) => {
+    const [lines, items] = await Promise.all([window.quorum.vaultFileIssues(rel), window.quorum.vaultLinkHealth()]);
+    return fileIssues(lines, items, leftAsIs());
+  };
+  // Review from a Memory health card: the note opens with its issues marked, on the one the card is about
+  const reviewIssue = async (issue: Issue) => {
+    setHealth(null);
+    await openNote(issue.path);
+    const items = await loadIssues(issue.path);
+    setIssueReview(items);
+    const at = Math.max(0, items.findIndex((x) => x.issue.key === issue.key));
+    if (items.length) jump(at, items[at].line);
+  };
+  const decideIssue = async (yes: boolean) => {
+    if (!preview || !issueReview) return;
+    const item = issueReview[cursor] ?? issueReview[0];
+    if (!item) return;
+    try {
+      flash(yes ? await acceptIssue(item.issue, { folder: inboxFolder() }) : rejectIssue(item.issue));
+      await reloadOpen(preview.rel);
+      const items = await loadIssues(preview.rel);
+      countIssues();
+      if (!items.length) { setIssueReview(null); setCursor(-1); return; }
+      setIssueReview(items);
+      const at = Math.min(Math.max(cursor, 0), items.length - 1);
+      jump(at, items[at].line);
+    } catch (e) { flash(errText(e)); }
+  };
+  const stopRun = async (run: LiveRun) => {
+    try {
+      const restored = await window.quorum.liveStop(run.id);
+      flash(`Stopped. ${restored.length} ${restored.length === 1 ? 'note is' : 'notes are'} back as they were before the run.`);
+      if (preview) await reloadOpen(preview.rel);
+    } catch (e) { flash(errText(e)); }
+  };
+  const viewVersion = async (v: MemoryVersion) => {
+    if (!preview) return;
+    if (version?.v.id === v.id) { setVersion(null); return; }
+    const r = await window.quorum.memoryVersion(preview.rel, v.id);
+    if (r) setVersion({ v, body: r.body });
+  };
+  const restore = async () => {
+    if (!preview || !version) return;
+    setRestoring(true);
+    try {
+      await window.quorum.memoryRestore(preview.rel, version.v.id);
+      const n = await window.quorum.vaultNote(preview.rel);
+      if (n) setPreview({ rel: preview.rel, ...n });
+      setVersion(null);
+      setStamp((x) => x + 1);
+      flash('Restored. The text it replaced is kept as a version.');
+    } catch (e) { flash(errText(e)); } finally { setRestoring(false); }
+  };
 
   // clicking a note in the graph zooms to it and its links; the title in the header opens it
-  // a ghost node is a link to a missing note: open Link health on it instead
+  // a ghost node is a link to a missing note: open Memory health on it instead
   const openGraphNode = useCallback((id: string) => {
     if (id.startsWith('?')) { setPanel(false); setHealth({ focus: id.slice(1) }); } else setFocus(id);
   }, []);
@@ -151,9 +280,10 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     else flash(`No note named "${target}" yet`);
   }, [openNote]);
 
+  // where a note made from here goes: the inbox when the vault has one
+  const inboxFolder = () => (tree.some((t) => t.dir && t.path === '00-inbox') ? '00-inbox' : '');
   async function quickCreate(name: string) {
-    const folder = tree.some((t) => t.dir && t.path === '00-inbox') ? '00-inbox' : '';
-    const rel = await window.quorum.vaultNewNote(folder, name);
+    const rel = await window.quorum.vaultNewNote(inboxFolder(), name);
     await load();
     openNote(rel);
   }
@@ -166,7 +296,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     { id: 'search', label: 'Search inside notes', hint: '⌘⇧F', run: () => setTimeout(() => setPalette('search'), 0) },
     { id: 'graph', label: 'Show graph view', run: () => setPreview(null) },
     { id: 'graph-settings', label: 'Graph settings', run: () => { setPreview(null); setPanel(true); } },
-    { id: 'link-health', label: 'Link health: fix missing links', run: () => { setPreview(null); setPanel(false); setHealth({ focus: null }); } },
+    { id: 'link-health', label: 'Memory health: fix missing links', run: () => { setPreview(null); setPanel(false); setHealth({ focus: null }); } },
     { id: 'timelapse', label: 'Start timelapse animation', run: () => { setPreview(null); setLapse(Date.now()); } },
     { id: 'collapse', label: 'Collapse all folders', run: () => { if (!collapsed) toggleCollapse(); } },
     ...(preview ? [
@@ -201,9 +331,6 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     setCreating({ kind, parent });
   };
 
-  const flash = (msg: string) => { setNotice(msg); setTimeout(() => setNotice(''), 4000); };
-  const linksMsg = (r: { files: number; links: number }) => `Updated ${r.links} ${r.links === 1 ? 'link' : 'links'} in ${r.files} ${r.files === 1 ? 'note' : 'notes'}`;
-  const errText = (e: unknown) => String(e).replace(/^.*Error:\s*/, '');
 
   // keep open folders, the selection and the open preview pointing at the same things after a rename or move
   const followMove = (from: string, to: string) => {
@@ -265,8 +392,31 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     if (e.key === 'Backspace' && e.metaKey) { e.preventDefault(); trash(selected); }
   };
 
+  // the open note's run, items for the arrows, and the class of each marked line. After marks the changed lines
+  // (while highlight is on) and the issues; Before shows the earlier text with nothing marked
+  const openRun = preview ? live.runs.find((r) => r.id === live.files[preview.rel]) ?? null : null;
+  const locked = !!openRun;
+  const openBody = preview?.body ?? null;
+  const blocks = useMemo(() => (review ? changeBlocks(review.changed, openBody) : []), [review, openBody]);
+  const marks = useMemo(() => {
+    const m = new Map<number, string>();
+    if (version || mode !== 'after') return m;
+    if (review && highlight) for (const l of review.changed) m.set(l, 'md-chg');
+    if (issueReview) issueReview.forEach((it, i) => m.set(it.line, `${m.get(it.line) ?? ''} md-issue${i === cursor ? ' md-cur' : ''}`.trim()));
+    else if (cursor >= 0) for (const l of blocks[cursor] ?? []) m.set(l, `${m.get(l) ?? ''} md-cur`.trim());
+    return m;
+  }, [version, mode, review, highlight, issueReview, cursor, blocks]);
+  const navOver = (lines: number[]) => ({
+    at: cursor, total: lines.length,
+    onPrev: () => { const i = cursor <= 0 ? lines.length - 1 : cursor - 1; jump(i, lines[i]); },
+    onNext: () => { const i = cursor < 0 || cursor >= lines.length - 1 ? 0 : cursor + 1; jump(i, lines[i]); },
+  });
+  const liveFiles = useMemo(() => new Set(Object.keys(live.files)), [live]);
+  const liveFolders = useMemo(() => new Set(live.folders), [live]);
+  const vaultRun = live.runs.find((r) => r.wholeVault) ?? null;
+
   const ops: TreeOps = {
-    open: null, selected, creating, renaming, dropTarget,
+    open: null, selected, creating, renaming, dropTarget, dots, liveFiles, liveFolders,
     onToggle: (p) => { setSelected(p); setOpen((o) => { const n = new Set(o); if (n.has(p)) n.delete(p); else n.add(p); return n; }); },
     onOpen: openNote, onCreate: create, onRename: rename, onMenu: menu,
     onDragStart: (p) => { dragging.current = p; }, onDragOver: setDropTarget, onDrop: drop,
@@ -297,7 +447,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
           {creating && creating.parent === '' && <NewItemRow kind={creating.kind} depth={0} onDone={create} />}
           <TreeLevel items={filtered} depth={0} ops={{ ...ops, open: q ? null : open }} />
         </div>
-        <p className="kb-soon" role="status">{notice || 'Right-click to rename or delete · Drag to move'}</p>
+        <p className={`kb-soon ${!notice && vaultRun ? 'kb-live-note' : ''}`} role="status">{notice || (vaultRun ? `${vaultRun.label} is working in your vault. The notes it changes show when it finishes.` : 'Right-click to rename or delete · Drag to move')}</p>
       </aside>
 
       <section className="kb-main">
@@ -311,7 +461,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
               </span>
               <div className="kb-actions">
                 <button className="pill ghost" onClick={() => { setFocus(preview.rel); setPreview(null); }}><IconGraph width={16} height={16} /> View in graph</button>
-                <button className="pill ghost" onClick={() => window.quorum.openNote(preview.abs)}><IconFolder width={16} height={16} /> Open</button>
+                <button className="pill ghost" disabled={locked} data-tip={locked ? 'Locked until the update finishes' : undefined} onClick={() => window.quorum.openNote(preview.abs)}><IconFolder width={16} height={16} /> Open</button>
                 <button className={`icon-btn ${side ? 'active' : ''}`} aria-label={side ? 'Hide links and outline' : 'Show links and outline'} aria-expanded={side}
                   data-tip={side ? 'Hide links and outline' : 'Show links and outline'} onClick={toggleSide}><IconSidebar /></button>
               </div>
@@ -329,8 +479,8 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
                 <span className="kb-title"><IconGraph width={16} height={16} /> Graph</span>
               )}
               <div className="kb-actions">
-                <button className={`icon-btn lh-btn ${health ? 'active' : ''} ${issues ? 'alert' : ''}`} aria-label={issues ? `Link health, ${issues} to review` : 'Link health'} aria-pressed={!!health}
-                  data-tip={issues ? `Link health · ${issues} to review` : 'Link health'} onClick={() => { setPanel(false); setLapse(0); setHealth((h) => (h ? null : { focus: null })); }}>
+                <button className={`icon-btn lh-btn ${health ? 'active' : ''} ${issues ? 'alert' : ''}`} aria-label={issues ? `Memory health, ${issues} to review` : 'Memory health'} aria-pressed={!!health}
+                  data-tip={issues ? `Memory health · ${issues} to review` : 'Memory health'} onClick={() => { setPanel(false); setLapse(0); setHealth((h) => (h ? null : { focus: null })); }}>
                   <IconLink />{issues > 0 && <span className="lh-count">{issues}</span>}
                 </button>
                 <button className={`icon-btn ${panel ? 'active' : ''}`} aria-label="Graph settings" aria-expanded={panel} data-tip="Graph settings" onClick={() => { setHealth(null); setPanel((o) => !o); }}><IconSliders /></button>
@@ -343,21 +493,46 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
         {preview ? (
           <div className={`kb-preview ${side ? "side-open" : ""}`}>
             <article className="doc">
+              {openRun && <LiveBanner run={openRun} onStop={() => setConfirmStop(openRun)} />}
+              {/* one review banner at a time: a version opened read-only, else the issues from Memory health in red (with
+                  the updates' Before and After when there are updates), else the updates in green or blue */}
+              {version
+                ? <VersionBar version={version.v} busy={restoring} locked={locked} onRestore={restore} onClose={() => setVersion(null)} />
+                : issueReview
+                  ? <ReviewBanner tone="red" locked={locked}
+                      label={<>{issueReview.length} {issueReview.length === 1 ? 'issue' : 'issues'}{issueReview[cursor] && <span className="mu-sub">{issueReview[cursor].issue.title}</span>}</>}
+                      mode={review ? mode : undefined} onMode={review ? setMode : undefined}
+                      highlight={review ? highlight : undefined} onHighlight={review ? () => setHighlight((h) => !h) : undefined}
+                      nav={mode === 'after' ? navOver(issueReview.map((x) => x.line)) : undefined}
+                      onAccept={() => decideIssue(true)} onReject={() => decideIssue(false)} acceptTip="Accept recommendation" rejectTip="Reject, leave the link as it is"
+                      onClose={() => { setIssueReview(null); setCursor(-1); }} />
+                  : review && <ReviewBanner tone={review.dot} locked={locked}
+                      label={`${review.count} ${review.count === 1 ? 'update' : 'updates'} on ${when(review.at)}`}
+                      mode={mode} onMode={(m) => { setMode(m); setCursor(-1); }} highlight={highlight} onHighlight={() => setHighlight((h) => !h)}
+                      nav={mode === 'after' ? navOver(blocks.map((b) => b[0])) : undefined}
+                      onAccept={review.dot === 'green' ? accept : undefined} acceptTip="Accept updates"
+                      onReject={reject} rejectTip="Reject updates and restore the earlier text" />}
               <p className="kb-path">{preview.rel}</p>
               <h1>{preview.title}</h1>
               {preview.meta ? <NoteMeta meta={{ ...preview.meta, title: preview.title }}>{preview.views?.total ? <ViewsPill views={preview.views} /> : null}</NoteMeta>
                 : preview.views?.total ? <div className="meta-row"><ViewsPill views={preview.views} /></div> : null}
-              <Markdown text={preview.body} headings root={brain?.root} onWiki={openLink} />
+              {/* After marks the lines the updates changed, green while they wait and blue once approved; Before and an
+                  opened version show their saved text, dimmed */}
+              <div className={`mu-text ${version || (review && mode === 'before') ? 'mu-old' : review?.dot ?? ''} ${locked ? 'locked' : ''}`}>
+                <Markdown text={version ? version.body : review && mode === 'before' ? review.before : preview.body} headings root={brain?.root} onWiki={openLink} marks={marks} />
+              </div>
             </article>
-            <NotePanel rel={preview.rel} body={preview.body} onOpen={openNote} onResolve={openLink} />
+            <NotePanel rel={preview.rel} body={preview.body} onOpen={openNote} onResolve={openLink}>
+              <VersionList rel={preview.rel} stamp={stamp} viewing={version?.v.id ?? null} onView={viewVersion} />
+            </NotePanel>
           </div>
         ) : graph ? (
           <>
             <div className={`kb-stage ${health ? 'taken-over' : ''}`}>
-              {view && <Graph data={graph} view={view} query={query} focus={focus} timelapse={lapse} onOpen={openGraphNode} onTimelapseEnd={endLapse} onRenameCluster={renameCluster} />}
+              {view && <Graph data={graph} view={view} query={query} focus={focus} timelapse={lapse} onOpen={openGraphNode} onTimelapseEnd={endLapse} onRenameCluster={renameCluster} live={liveFiles} />}
               {healthShown && (
                 <div className={`kb-takeover ${health ? 'in' : 'out'}`}>
-                  <LinkHealth focus={healthShown.focus} onOpen={openNote} onCreate={(name) => { quickCreate(name); }} onClose={() => setHealth(null)} onChanged={() => { load(); countIssues(); }} />
+                  <LinkHealth focus={healthShown.focus} folder={inboxFolder()} isLive={(rel) => !!live.files[rel]} onReview={reviewIssue} onClose={() => setHealth(null)} onChanged={() => { load(); countIssues(); }} />
                 </div>
               )}
             </div>
@@ -365,6 +540,11 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
           </>
         ) : <div className="end-loading"><span className="spinner big" /><p>Building graph…</p></div>}
       </section>
+      {confirmStop && (
+        <ConfirmModal title={`Stop ${confirmStop.label}?`} action="Stop and delete updates"
+          body="The updates from this run will be deleted and cannot be recovered. The notes it changed go back to how they were before the run."
+          onDone={(ok) => { const run = confirmStop; setConfirmStop(null); if (ok) stopRun(run); }} />
+      )}
       {palette && <Palette mode={palette} notes={noteRels} commands={commands} onOpen={openNote} onCreate={quickCreate} onClose={() => { setPalette(null); setScope({}); }}
         scope={palette === 'search' ? scope.search : undefined} folders={folderRels(tree).filter((f) => f !== scope.moving && !f.startsWith(`${scope.moving}/`))} onMove={moveTo} />}
     </div>
@@ -447,7 +627,7 @@ function GraphPanel({ view, groups, onChange, onReset, onClose }: {
 }
 
 type TreeOps = {
-  open: Set<string> | null; selected: string; creating: Creating; renaming: string | null; dropTarget: string | null;
+  open: Set<string> | null; selected: string; creating: Creating; renaming: string | null; dropTarget: string | null; dots: MemoryDots; liveFiles: Set<string>; liveFolders: Set<string>;
   onToggle: (p: string) => void; onOpen: (p: string) => void; onCreate: (name: string) => void;
   onRename: (it: TreeItem, name: string) => void; onMenu: (it: TreeItem, at?: { x: number; y: number }) => void;
   onDragStart: (p: string) => void; onDragOver: (p: string | null) => void; onDrop: (folder: string) => void;
@@ -460,14 +640,17 @@ function TreeLevel({ items, depth, ops }: { items: TreeItem[]; depth: number; op
         const isOpen = ops.open === null || ops.open.has(it.path);
         // drops onto a note land in that note's folder
         const target = it.dir ? it.path : it.path.split('/').slice(0, -1).join('/');
+        const dot = it.dir ? ops.dots.folders[it.path] : ops.dots.files[it.path];
+        const busy = it.dir ? ops.liveFolders.has(it.path) : ops.liveFiles.has(it.path);
         return (
           <div key={it.path}>
             {ops.renaming === it.path ? (
               <RenameRow item={it} depth={depth} onDone={(name) => ops.onRename(it, name)} />
             ) : (
-              <div className="kb-row">
+              <div className={`kb-row ${dot ? 'has-dot' : ''}`}>
               <button role="treeitem" aria-expanded={it.dir ? isOpen : undefined} draggable
-                className={`kb-item ${ops.selected === it.path ? 'sel' : ''} ${it.dir ? 'dir' : ''} ${it.dir && ops.dropTarget === it.path ? 'drop' : ''}`}
+                className={`kb-item ${ops.selected === it.path ? 'sel' : ''} ${it.dir ? 'dir' : ''} ${it.dir && ops.dropTarget === it.path ? 'drop' : ''} ${busy ? 'live' : ''}`}
+                aria-busy={busy || undefined}
                 style={{ paddingLeft: 10 + depth * 16 }}
                 onClick={() => (it.dir ? ops.onToggle(it.path) : ops.onOpen(it.path))}
                 onContextMenu={(e) => { e.preventDefault(); ops.onMenu(it); }}
@@ -482,6 +665,7 @@ function TreeLevel({ items, depth, ops }: { items: TreeItem[]; depth: number; op
                 onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); ops.onMenu(it, { x: r.left, y: r.bottom + 4 }); }}>
                 <IconMore width={16} height={16} />
               </button>
+              {dot && <span className={`kb-dot ${dot}`} role="img" aria-label={dot === 'green' ? 'Updates to review' : 'Updated since you last opened it'} data-tip={dot === 'green' ? 'Updates to review' : 'Updated since you last opened it'} />}
               </div>
             )}
             {it.dir && isOpen && (
