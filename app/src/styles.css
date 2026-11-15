@@ -1988,3 +1988,7 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .hist-row { margin-right: calc(-1 * var(--row-pad)); padding-right: var(--row-pad); width: calc(100% + 2 * var(--row-pad)); }
 .hist-row .hist-hover { right: var(--row-pad); }
 .up-strip .up-fold-in { padding-right: 4px; margin-right: -4px; }
+/* the time only fades: quickly out on hover, back in once the buttons have slid away; the buttons keep their slide */
+.hist-row .hist-time { transform: none; transition: opacity 120ms ease 250ms; }
+.hist-row:hover .hist-time, .hist-row:focus-within .hist-time { opacity: 0; transform: none; transition: opacity 120ms ease; }
+.menu-open .hist-time { transform: none; }
