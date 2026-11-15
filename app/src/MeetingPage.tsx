@@ -193,7 +193,7 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
         </div>
       </div>
       <article className="doc">
-        {run && <AgentRun file={run.file} since={run.since} onDetails={() => onOpenNote(run.file)} onClose={() => setRun(null)} />}
+        {run && <AgentRun key={run.since} file={run.file} since={run.since} onDetails={() => onOpenNote(run.file)} onClose={() => setRun(null)} />}
         <h1>{e.title}</h1>
         <div className="meta-row">
           <span className="meta-pill"><IconCalendar width={16} height={16} />{dayLabel(at)} · {clock(at)} – {clock(end)}</span>

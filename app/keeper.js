@@ -752,7 +752,14 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
         if (hold) st.held = result.held; else delete st.held;
         let indexed = 0;
         for (const n of pending) {
-          if (n.why) { st.done[n.rel] = n.h; result.skipped++; continue; }
+          if (n.why) {
+            st.done[n.rel] = n.h; result.skipped++;
+            st.trail ??= {};
+          if (!result.trailPruned) { for (const k of Object.keys(st.trail)) if (!existsSync(path.join(vault, k))) delete st.trail[k]; result.trailPruned = true; }
+            const before = Array.isArray(st.trail[n.rel]) ? st.trail[n.rel] : [];
+            st.trail[n.rel] = [{ at: new Date().toISOString(), files: [], skipped: String(n.why) }, ...before].slice(0, 10);
+            continue;
+          }
           const waits = hold && n.creates.length > 0;
           // a held note whose facts need a new vault note waits for its facts too, so they are asked for once it may
           // create files

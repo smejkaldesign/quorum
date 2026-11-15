@@ -320,7 +320,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
         </div>
       </div>
       <article className="doc">
-        {runSince && <AgentRun file={note.file} since={runSince} onDetails={showActivity} onClose={() => setRunSince(null)} />}
+        {runSince && <AgentRun key={runSince} file={note.file} since={runSince} onDetails={showActivity} onClose={() => setRunSince(null)} />}
         <h1 className={summing || savingEdit ? 'shimmer' : undefined}>{note.title}</h1>
         <NoteMeta meta={{ title: note.title, date: note.date ?? null, people: note.people, source: note.source ?? null, sourceUrl: note.sourceUrl, platform: note.platform, meetingUrl: note.meetingUrl, calendar: note.calendar, event: note.event }}>
           {note.rel && !note.rel.startsWith('.') && (

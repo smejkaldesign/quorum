@@ -50,6 +50,8 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
   const [draftQ, setDraftQ] = useState('');
   const [saved, setSaved] = useState<{ file: string; rel: string; app: string } | null>(null);
   const [runSince, setRunSince] = useState<number | null>(null);
+  // naming an untitled recording moves its file; the run card and the activity follow it
+  useEffect(() => window.quorum.onNoteRenamed((d) => setSaved((s) => (s && s.file === d.from ? { ...s, file: d.to } : s))), []);
   const [saving, setSaving] = useState(false);
   const [hot, setHot] = useState<number[]>([]);
   const end = useRef<HTMLDivElement>(null);
@@ -150,7 +152,7 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
         </div>
       </header>
           <article className={`doc${streaming ? ' streaming' : ''}`}>
-            {saved && runSince && <AgentRun file={saved.file} since={runSince} onDetails={() => { setShowing('summary'); requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById('agent-activity')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))); }} onClose={() => setRunSince(null)} />}
+            {saved && runSince && <AgentRun key={runSince} file={saved.file} since={runSince} onDetails={() => { setShowing('summary'); requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById('agent-activity')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))); }} onClose={() => setRunSince(null)} />}
             <h1>{ready || live || (!shown?.title && !streaming && !saved) || title ? (
               // the title is yours to type at any point; empty, it reads New note (shimmering while it records)
               <span className="title-wrap">

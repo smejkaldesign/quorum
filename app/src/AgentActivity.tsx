@@ -65,9 +65,11 @@ export function AgentActivity({ file }: { file: string }) {
 export function AgentRun({ file, since, onDetails, onClose }: { file: string; since: number; onDetails: () => void; onClose: () => void }) {
   const [steps, setSteps] = useState<string[]>([]);
   const [late, setLate] = useState(false);
-  const act = useNoteActivity(file, true);
+  const [finished, setFinished] = useState(false);
+  const act = useNoteActivity(file, !finished);
   const run = act?.events.find((e) => e.kind === 'filed' && new Date(e.at).getTime() >= since - 1000) ?? null;
   const done = !!run || (act !== null && !act.on);
+  useEffect(() => { if (done || late) setFinished(true); }, [done, late]);
   const fileRef = useRef(file);
   fileRef.current = file;
   useEffect(() => window.quorum.onKeeperStep?.((d) => { if (d.file === fileRef.current) setSteps((s) => [...s, d.text].slice(-4)); }), []);

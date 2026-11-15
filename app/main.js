@@ -1840,7 +1840,11 @@ ipcMain.handle('note-apply', (_e, file, newBody) => {
 const activityFile = path.join(DATA_DIR, 'note-activity.json');
 let activityLog = null;
 const activityAll = () => { if (!activityLog) { try { activityLog = JSON.parse(readFileSync(activityFile, 'utf8')); } catch { activityLog = {}; } } return activityLog; };
-const activitySave = () => { try { writeFileSync(activityFile, JSON.stringify(activityAll())); } catch (e) { log('note activity', e?.message); } };
+const activitySave = () => {
+  const all = activityAll();
+  for (const k of Object.keys(all)) if (!existsSync(k)) delete all[k];
+  try { writeFileSync(activityFile, JSON.stringify(all)); } catch (e) { log('note activity', e?.message); }
+};
 function noteEvent(abs, kind, text) {
   const all = activityAll();
   all[abs] = [{ at: new Date().toISOString(), kind, text }, ...(all[abs] ?? [])].slice(0, 30);
@@ -1852,6 +1856,14 @@ function moveNoteEvents(from, to) {
   all[to] = [...(all[from] ?? []), ...(all[to] ?? [])].slice(0, 30);
   delete all[from];
   activitySave();
+}
+// the graph cluster of a note, from a map built at most once a minute: building the graph walks the whole vault
+let clusterMap = { at: 0, map: new Map() };
+function clusterOf(rel) {
+  if (Date.now() - clusterMap.at > 60000) {
+    try { clusterMap = { at: Date.now(), map: new Map((vindex?.graph?.().nodes ?? []).map((n) => [n.id, n.cluster ?? null])) }; } catch { clusterMap = { at: Date.now(), map: new Map() }; }
+  }
+  return clusterMap.map.get(rel) ?? null;
 }
 ipcMain.handle('note-activity', (_e, file) => {
   const b = brain();
@@ -1867,10 +1879,10 @@ ipcMain.handle('note-activity', (_e, file) => {
   const label = (r) => { const base = path.posix.basename(r, '.md'); return base === 'index' ? 'Index' : /^\d{4}-\d{2}-\d{2}$/.test(base) ? `Daily note ${base}` : base.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()); };
   const runs = t.runs.map((r) => {
     const files = r.files.filter((x) => x !== rel).map((x) => ({ rel: x, abs: path.join(b.vault, x), label: label(x) }));
+    if (r.skipped) return { at: r.at, kind: 'filed', text: `Left it as it is: ${r.skipped}`, files };
     return { at: r.at, kind: 'filed', text: files.length ? `Filed it into ${files.length} ${files.length === 1 ? 'note' : 'notes'}` : 'Checked related notes and links; nothing needed an update', files };
   });
-  let cluster = null;
-  try { cluster = vindex?.graph?.().nodes.find((n) => n.id === rel)?.cluster ?? null; } catch { /* index not built yet */ }
+  const cluster = clusterOf(rel);
   const events = [...runs, ...(activityAll()[abs] ?? [])].sort((x, y) => String(y.at).localeCompare(String(x.at)));
   return { on: t.on, pending, running: t.running, abs, rel, cluster, folder: path.posix.dirname(rel), filedBefore: t.filed && !t.runs.length, events };
 });
@@ -1971,7 +1983,7 @@ ipcMain.handle('meeting-brief', async (_e, q) => {
   const list = past.slice(0, 12).map((m) => ({ file: m.file, title: m.title, date: m.date, source: m.source, people: m.people, count: m.count }));
   // meetings connected by the people who come to this one: from its past notes, and its organizer when named
   const org = String(q?.organizer ?? '').trim();
-  const related = relatedOf(all, { title, people: [...new Set([...past.slice(0, 6).flatMap((m) => m.people ?? []), ...(org && !org.includes('@') ? [org] : [])])] });
+  const related = relatedOf(all, { title, people: [...new Set([...past.slice(0, 6).flatMap((m) => m.people ?? []), ...(org && !org.includes('@') && !isSelf(org) ? [org] : [])])] });
   const res = await meetingBriefFor(q, title, past, list);
   return { ...res, related };
 });
