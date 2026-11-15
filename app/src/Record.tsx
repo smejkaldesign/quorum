@@ -15,7 +15,7 @@ export function RecordMenu({ choice, onChoice, onStart }: { choice: RecordChoice
       </div>
       <div className="record-opt">
         <IconScreen width={18} height={18} />
-        <span><strong>Screen</strong><em>Names who spoke from the call window</em></span>
+        <span><strong>Screen</strong><em>Puts names on who spoke</em></span>
         <Toggle on={choice.screen} onChange={(screen) => onChoice({ ...choice, screen })} />
       </div>
       <button className="pill primary record-go" disabled={!canStart(choice)} onClick={() => onStart(choice)}><IconRecord width={16} height={16} />Start recording</button>

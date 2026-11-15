@@ -435,7 +435,7 @@ html.popup-root, html.popup-root body { background: transparent; }
 .recipes { display: flex; gap: 18px; padding: 32px 22px 0; flex-wrap: wrap; justify-content: center; }
 .recipe { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 16px; }
 .recipe:hover { color: var(--text); }
-.hist-rule { border: 0; border-top: 1px solid rgba(255, 255, 255, 0.05); margin: 40px 0; }
+.hist-rule { border: 0; border-top: 1px solid var(--line-2); margin: 40px 0; }
 /* the Next N days heading's line height and menu padding add about 4px above its text */
 .hist-rule + .up-inline { margin-top: -4px; }
 .hist-filters { display: flex; gap: 8px; margin-bottom: 32px; flex-wrap: wrap; }
@@ -1866,7 +1866,7 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 
 /* Next N days sits above the filters with a divider under it */
 /* 40px each side of the line, as under the recipes, measured from the last row's edge */
-.up-inline { padding-bottom: 40px; margin-bottom: 40px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
+.up-inline { padding-bottom: 40px; margin-bottom: 40px; border-bottom: 1px solid var(--line-2); }
 .up-inline .up-head { margin-bottom: 8px; }
 /* Today with nothing on it */
 .day-off { display: flex; align-items: center; gap: 20px; padding: 12px 0 4px; }
@@ -1892,5 +1892,6 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .status.listen.idle[aria-expanded="true"] { color: var(--text); background: rgba(255, 255, 255, 0.08); }
 .status.listen.idle[aria-expanded="true"] .listen-hint { max-width: 140px; opacity: 1; margin-right: 8px; color: var(--text); transition-delay: 0s; }
 /* Start recording: outlined, like Join */
-.pill.primary.record-go { background: transparent; border: 1px solid var(--line-2); color: var(--text); transition: background 160ms ease, border-color 160ms ease; }
+.pill.primary.record-go { display: flex; align-items: center; justify-content: center; gap: 8px; width: auto; text-align: center; background: transparent; border: 1px solid var(--line-2); color: var(--text); transition: background 160ms ease, border-color 160ms ease; }
 .pill.primary.record-go:not(:disabled):hover { background: var(--card); border-color: rgba(255, 255, 255, 0.24); }
+.pill.primary.record-go svg { flex: none; }
