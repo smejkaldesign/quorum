@@ -10,7 +10,7 @@ function fakeDb({ trash = [], failRemove = () => false } = {}) {
     calls,
     rpc: async (name, args) => {
       calls.push(['rpc', name, args]);
-      if (name === 'kb_files_cleanup') return { data: trash.map((p) => ({ object_path: p })), error: null };
+      if (name === 'kb_files_cleanup') return { data: trash.map((p) => (typeof p === 'string' ? { object_path: p } : p)), error: null };
       if (name === 'kb_files_trash_done') return { data: args.paths.length, error: null };
       return { data: null, error: { message: 'unknown' } };
     },
@@ -40,4 +40,10 @@ test('an empty trash makes no Storage call', async () => {
   const db = fakeDb();
   assert.deepEqual(await createKbFilesCleanup({ db }).once(), { cleared: 0, failed: 0 });
   assert.equal(db.calls.filter((c) => c[0] === 'remove').length, 0);
+});
+
+test('removes each object from the bucket its row names', async () => {
+  const db = fakeDb({ trash: ['W/K/N/a.png', { object_path: 'W/x/b.png', bucket: 'attachments' }, { object_path: 'W/K/N/c.pdf', bucket: 'kb-files' }] });
+  assert.deepEqual(await createKbFilesCleanup({ db }).once(), { cleared: 3, failed: 0 });
+  assert.deepEqual(db.calls.filter((c) => c[0] === 'remove'), [['remove', 'kb-files', 2], ['remove', 'attachments', 1]]);
 });

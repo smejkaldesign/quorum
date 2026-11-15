@@ -19,6 +19,8 @@ const CloudKnowledge = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee
 const CloudKnowledgeBases = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/KnowledgeBases').then((m) => ({ default: m.KnowledgeBasesPage }))) : null;
 const CloudSyncGrants = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/KbSyncGrants').then((m) => ({ default: m.KbSyncGrants }))) : null;
 const CloudKnowledgeTab = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/KnowledgeTab').then((m) => ({ default: m.KnowledgeTab }))) : null;
+const CloudDeleteAccount = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/AccountDelete').then((m) => ({ default: m.DeleteAccountZone }))) : null;
+const CloudDeleteOrg = __QUORUM_EDITION__ === 'cloud' ? lazy(() => import('../ee/src/AccountDelete').then((m) => ({ default: m.DeleteOrgCard }))) : null;
 
 // whether this build can reach a hosted account at runtime: the cloud edition without QUORUM_SUPABASE_URL and the anon key
 // reports configured: false from account-status. Local is always false; null while the cloud answer is on its way
@@ -67,6 +69,20 @@ function CloudPage({ Page, local }: { Page: ReturnType<typeof lazy> | null; loca
   if (hosted === null) return null;
   if (!hosted) return NOT_SET_UP;
   return <Suspense fallback={null}><Page /></Suspense>;
+}
+
+// Settings › Preferences, Danger zone: deleting the hosted account (migration 0039). The Local edition has no hosted
+// account, and a cloud build shows it only once signed in
+export function DeleteAccountArea() {
+  const hosted = useHostedAccounts();
+  if (!CloudDeleteAccount || !hosted) return null;
+  return <Suspense fallback={null}><CloudDeleteAccount /></Suspense>;
+}
+// Settings › Admin › General: deleting the workspace, for its owner only
+export function DeleteOrgArea() {
+  const hosted = useHostedAccounts();
+  if (!CloudDeleteOrg || !hosted) return null;
+  return <Suspense fallback={null}><CloudDeleteOrg /></Suspense>;
 }
 
 // Settings › Admin › Billing: the plan, seats, hours, the card and the upgrade; the Local edition has nothing to bill
