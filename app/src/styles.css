@@ -1879,3 +1879,6 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .day-off-title { margin: 0; font-size: 15px; font-weight: 400; color: var(--text); }
 .day-off .hist-empty { margin: 0; padding: 0; text-align: left; font-size: 15px; }
 .hist-time .up-day { margin-right: 8px; }
+.up-all { display: inline-flex; align-items: center; height: 30px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--text); font-size: 13px; font-weight: 500; transition: background 160ms ease, border-color 160ms ease; }
+.up-all:hover { background: rgba(255, 255, 255, 0.05); }
+.up-all.on { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.3); }

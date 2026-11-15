@@ -88,12 +88,12 @@ export function UpNext({ hidden = false, inline = false, floating = false }: { h
   if (!inline) ({ rows, more } = upNextRows(cal.events, open)), moreOpen = open, toggle = () => setOpen((o) => !o);
   else rows = dayOpen ? dayEvents : dayEvents.slice(0, 1), more = true, moreOpen = dayOpen, toggle = () => setDayOpen((o) => !o);
   const label = 'Up next';
-  const nothingMore = inline && dayEvents.length <= 1;
-  const moreButton = more && (
-    <button className="up-show-more" aria-expanded={moreOpen} aria-controls={listId} onClick={toggle} disabled={nothingMore && !moreOpen}>
-      {moreOpen ? 'Show less' : 'Show more'}<IconChevron width={14} height={14} className={moreOpen ? 'up-chev open' : 'up-chev'} />
-    </button>
-  );
+  // the strip keeps Show more under its rows; the Home list has Show all, an outlined pill that stays selected while open
+  const moreButton = more && (inline
+    ? <button className={`up-all ${moreOpen ? 'on' : ''}`} aria-pressed={moreOpen} aria-controls={listId} onClick={toggle}>Show all</button>
+    : <button className="up-show-more" aria-expanded={moreOpen} aria-controls={listId} onClick={toggle}>
+        {moreOpen ? 'Show less' : 'Show more'}<IconChevron width={14} height={14} className={moreOpen ? 'up-chev open' : 'up-chev'} />
+      </button>);
   const strip = (
     <section ref={section} className={inline ? 'up-inline' : 'up-strip'} aria-label={label}>
       <div className="up-head">
