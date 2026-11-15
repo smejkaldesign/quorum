@@ -487,7 +487,6 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
               </span>
               <div className="kb-actions">
                 <button className="icon-btn" aria-label="View in graph" data-tip="View in graph" onClick={() => { setFocus(preview.rel); setPreview(null); }}><IconGraph /></button>
-                <button className="icon-btn" aria-label="Open in your editor" disabled={locked} data-tip={locked ? 'Locked until the update finishes' : 'Open in your editor'} onClick={() => window.quorum.openNote(preview.abs)}><IconFolder /></button>
                 <button className={`icon-btn ${side ? 'active' : ''}`} aria-label={side ? 'Hide links and outline' : 'Show links and outline'} aria-expanded={side}
                   data-tip={side ? 'Hide links and outline' : 'Show links and outline'} onClick={toggleSide}><IconSidebar /></button>
               </div>
@@ -547,9 +546,11 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
                       onReject={reject} rejectTip="Reject updates and restore the earlier text" />}
               <h1>{preview.title}</h1>
               {/* the full path under the title; a long one loses its start, so the file name stays readable */}
-              <p className="kb-path" title={preview.rel}><span>{preview.rel}</span></p>
-              {preview.meta ? <NoteMeta meta={{ ...preview.meta, title: preview.title }}><MemoryBell rel={preview.rel} open={notifsOpen} onToggle={() => setNotifsOpen((o) => !o)} /></NoteMeta>
-                : <div className="meta-row"><MemoryBell rel={preview.rel} open={notifsOpen} onToggle={() => setNotifsOpen((o) => !o)} /></div>}
+              {/* the details row: date, apps, people, then the file in its folder (the path is in the tooltip) */}
+              <NoteMeta meta={{ ...(preview.meta ?? {}), title: preview.title }}>
+                <button className="meta-pill meta-icon" aria-label="Open in your editor" disabled={locked} data-tip={locked ? 'Locked until the update finishes' : `Open in your editor: ${preview.rel}`} onClick={() => window.quorum.openNote(preview.abs)}><IconFolder width={17} height={17} /></button>
+                <MemoryBell rel={preview.rel} open={notifsOpen} onToggle={() => setNotifsOpen((o) => !o)} />
+              </NoteMeta>
               {notifsOpen && <MemoryNotifications key={preview.rel} rel={preview.rel} abs={preview.abs} />}
               {/* After marks the lines the updates changed, green while they wait and blue once approved; Before and an
                   opened version show their saved text, dimmed */}

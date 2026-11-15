@@ -9,7 +9,7 @@ import { SourceAsk, useMeetingSources } from './MeetingSources';
 import type { CalendarEvent, MeetingShare, NoteDoc, Visibility } from './quorum';
 import { Markdown } from './Markdown';
 import { Composer } from './Composer';
-import { IconBell, IconSound, IconChevron, IconFolder, IconGlobe, IconLock, IconLogs, IconMore, IconNotes, IconTrash } from './icons';
+import { IconBell, IconSound, IconChevron, IconGlobe, IconGraph, IconLock, IconLogs, IconMore, IconNotes, IconTrash } from './icons';
 import { Avatar } from './Speaker';
 import { NoteEditor, type NoteEditorHandle } from './editor/NoteEditor';
 import { ChatExit, ChatStrip, useChats, useComposerFocus } from './ChatStack';
@@ -282,7 +282,7 @@ export function NoteReader({ note: initial, dayLabel, peopleLine, onBack, chat =
         <NoteMeta meta={{ title: note.title, date: note.date ?? null, people: note.people, source: note.source ?? null, sourceUrl: note.sourceUrl, platform: note.platform, meetingUrl: note.meetingUrl, calendar: note.calendar, event: note.event }}>
           {note.rel && !note.rel.startsWith('.') && (
             <button className="meta-pill meta-icon" aria-label="Open in Memory" data-tip={`In your memory: ${note.rel.split('/').slice(0, -1).join('/') || 'top folder'}`}
-              onClick={() => window.dispatchEvent(new CustomEvent('quorum:open-memory', { detail: note.file }))}><IconFolder width={17} height={17} /></button>
+              onClick={() => window.dispatchEvent(new CustomEvent('quorum:open-memory', { detail: note.file }))}><IconGraph width={17} height={17} /></button>
           )}
           <div className="view-toggle" role="group" aria-label="Show">
             {parts.summary && <button className={showing === 'summary' ? 'on' : ''} aria-pressed={showing === 'summary'} aria-label="Summary" data-tip="Summary" onClick={() => pick('summary')}><IconLogs width={16} height={16} /></button>}

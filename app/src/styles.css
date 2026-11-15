@@ -2374,3 +2374,14 @@ input::placeholder, textarea::placeholder { font-style: italic; }
 .note-dock .note-composer { transition: box-shadow 200ms ease; }
 /* the end of a note sits clear of the dock's fade: the dock no longer reaches up over the last lines */
 .reader .note-dock, .meeting-page .note-dock, .end .note-dock { margin-top: 0; }
+/* a note without a date still shows the date pill, in the subdued text color */
+.meta-pill.meta-missing { color: var(--muted); }
+.meta-pill.meta-missing svg { color: #5c5c62; }
+/* the pinned header keeps one size whether pinned or not, so nothing below it moves as it pins and unpins: the row
+   always has its pinned padding and the tabs' height, and negative margins keep it where it sat; the sentinel moves up
+   with it so the row is marked pinned the moment it reaches the top */
+.rb-sentinel:has(+ .reader-bar) { margin-top: -12px; margin-bottom: 11px; }
+.reader-bar.sticky-bar { box-sizing: border-box; height: 56px; padding: 10px 40px; margin: -12px -40px 6px; }
+.reader-bar.sticky-bar.stuck { margin: -12px -40px 6px; padding: 10px 40px; }
+/* the recording page's row draws its line as a shadow, which takes no space */
+.end-scroll .end-bar.sticky-bar.stuck { border-bottom: 0; box-shadow: 0 1px 0 var(--line-2); }
