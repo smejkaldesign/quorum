@@ -1667,6 +1667,8 @@ function meetingIndex() {
         const key = fm.granola_id || fm.quorum_id;
         if (key) { if (seen.has(key)) continue; seen.add(key); }
         out.push({
+          // written: a note typed by hand, with nothing recorded into it; a recording or a notetaker's note is transcribed
+          written: fm.type === 'note' && !(fm.recorded === true || fm.recorded === 'true'),
           id: f, file, cacheKey: key ?? file, kind: fm.type === 'note' ? 'note' : 'meeting', source: fm.source || folder, title: fm.title || f.replace(/\.md$/, ''), date: fm.date || null,
           people: fm.participants.filter((p) => !isSelf(p)).map(personName),
           orgs: fm.participants.map(orgOf).filter(Boolean),

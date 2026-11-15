@@ -14,7 +14,7 @@ import { dayLabel } from './upNextList';
 import { OPEN_EVENT, UpNext, takeEvent, useCalendarView } from './UpNext';
 import { AppLogo, CALENDAR_APP, RowDetails, peopleText } from './AppChip';
 import { DayOff } from './DayOff';
-import { IconCalendar, IconClose, IconPlus, IconExternal, IconListCheck, IconMic, IconNewNote, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
+import { IconCalendar, IconClose, IconPlus, IconExternal, IconListCheck, IconMic, IconNewNote, IconQuill, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
 
 type Filter = 'all' | 'meetings' | 'notes';
 type Row = { key: string; kind: 'meeting' | 'note' | 'chat'; title: string; sub: string; date: Date | null; avatar: string; open: () => void; meeting?: MeetingRow; children?: Row[] };
@@ -189,7 +189,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
       <div className="hist-row" role="button" tabIndex={0} onClick={r.open} onKeyDown={(e) => { if (e.key === 'Enter') r.open(); }}>
         {r.avatar === 'chat' ? <span className="avatar-sq chat"><IconQuorum /></span>
           : m?.calendar && ev ? <span className="avatar-sq app"><AppLogo {...CALENDAR_APP[m.calendar]} /></span>
-          : <span className="avatar-sq note"><IconMic width={20} height={20} /></span>}
+          : <span className="avatar-sq note" aria-label={m?.written ? 'Written note' : 'Transcribed note'}>{m?.written ? <IconQuill width={20} height={20} /> : <IconMic width={20} height={20} />}</span>}
         <span className="hist-text"><strong>{r.title}</strong>
           {m ? <RowDetails who={m.kind === 'note' && !ev ? 'Note' : peopleText(ev, m.people)}
               onCalendar={ev && (ev.item || ev.link) ? () => window.quorum.calendarOpen({ ...ev, id: ev.id ?? '', title: m.title, end: ev.start } as CalendarEvent) : null}
