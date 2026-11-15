@@ -1805,6 +1805,8 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .up-join { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px 0 8px; border: 1px solid var(--line-2); border-radius: 999px; background: var(--menu-bg); color: var(--text); font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: background 160ms ease, border-color 160ms ease; }
 .up-join:hover { background: var(--card); border-color: rgba(255, 255, 255, 0.24); }
 .up-join img { width: 16px; height: 16px; border-radius: 4px; }
+.up-join { padding-right: 10px; }
+.up-join svg { flex: none; color: var(--text); }
 
 /* a meeting with a known app shows the app's logo as its avatar */
 .avatar-sq.app { background: var(--line); }

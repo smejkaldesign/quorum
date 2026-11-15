@@ -3,7 +3,7 @@ import type { CalendarEvent, MeetingBrief } from './quorum';
 import { AppPill, CALENDAR_APP, PLATFORM_APP, peopleText } from './AppChip';
 import { Markdown } from './Markdown';
 import { dayLabel } from './upNextList';
-import { IconBack } from './icons';
+import { IconArrowRight, IconBack } from './icons';
 
 const ABOUT = [['what', 'What it is'], ['who', 'Who attends'], ['how', 'How it runs']] as const;
 
@@ -65,7 +65,7 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
       <div className="reader-bar">
         <button className="pill primary small-pill" onClick={onBack}><IconBack width={16} height={16} /> Back</button>
         <div className="reader-actions">
-          {platform && e.join && <button className="up-join" onClick={() => window.quorum.openExternal(e.join!)}>Join {platform.short}</button>}
+          {platform && e.join && <button className="up-join" onClick={() => window.quorum.openExternal(e.join!)}>Join {platform.short}<IconArrowRight width={14} height={14} /></button>}
         </div>
       </div>
       <article className="doc">

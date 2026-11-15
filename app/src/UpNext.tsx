@@ -6,7 +6,7 @@ import { useSession } from './session';
 import { ConfirmModal } from './ConfirmModal';
 import { dayLabel, upNextRows } from './upNextList';
 import { AppLogo, CALENDAR_APP, PLATFORM_APP, RowDetails, peopleText, useAppIcons } from './AppChip';
-import { IconCalendar, IconChevron, IconMore } from './icons';
+import { IconArrowRight, IconCalendar, IconChevron, IconMore } from './icons';
 
 const time = (d: Date) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?(AM|PM)/i, '');
 const half = (d: Date) => (d.getHours() < 12 ? 'AM' : 'PM');
@@ -151,7 +151,7 @@ function JoinButton({ id, label, url }: { id: string; label: string; url: string
   const icons = useAppIcons();
   return (
     <button className="up-join" onClick={(ev) => { ev.stopPropagation(); window.quorum.openExternal(url); }}>
-      {icons[id] ? <img src={icons[id]!} alt="" /> : null}{label}
+      {icons[id] ? <img src={icons[id]!} alt="" /> : null}{label}<IconArrowRight width={14} height={14} />
     </button>
   );
 }
