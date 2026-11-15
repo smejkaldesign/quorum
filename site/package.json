@@ -9,6 +9,6 @@
     "deploy": "npm run -s preview && npm run -s stamp && railway up --service site --detach --no-gitignore"
   },
   "dependencies": {
-    "serve": "14.2.4"
+    "serve": "14.2.8"
   }
 }
