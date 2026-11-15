@@ -5,6 +5,29 @@ import { Markdown } from './Markdown';
 import { dayLabel } from './upNextList';
 import { IconBack } from './icons';
 
+const ABOUT = [['what', 'What it is'], ['who', 'Who attends'], ['how', 'How it runs']] as const;
+
+// a section's loading placeholder: grey lines that shimmer
+function Skeleton({ lines }: { lines: number }) {
+  return <div className="mp-skel" aria-label="Loading">{Array.from({ length: lines }, (_, i) => <span key={i} style={{ width: `${i === lines - 1 ? 60 : 100}%` }} />)}</div>;
+}
+
+// Text that types in: reveal(text) returns as much of each text as the shared clock has reached, so every section
+// starts and finishes together whatever its length. Reduced motion shows it all at once.
+function useReveal(total: number, key: unknown) {
+  const [p, setP] = useState(1);
+  useEffect(() => {
+    if (!total || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { setP(1); return; }
+    setP(0);
+    const start = performance.now(), ms = 550;
+    let raf = 0;
+    const tick = (t: number) => { const x = Math.min(1, (t - start) / ms); setP(x); if (x < 1) raf = requestAnimationFrame(tick); };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [total, key]);
+  return (text: string) => (p >= 1 ? text : text.slice(0, Math.ceil(text.length * p)));
+}
+
 const clock = (d: Date) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
 // The page an upcoming meeting opens to from Home or Up next: when it is, who is invited, its calendar and meeting
@@ -31,6 +54,12 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
   const at = new Date(e.start), end = new Date(e.end);
   const platform = e.platform ? PLATFORM_APP[e.platform] : null;
   const brief = data?.brief;
+  const loading = !data || writing;
+  // once the brief arrives, every section types itself in together over about half a second
+  const reveal = useReveal(brief ? [brief.prep, brief.what, brief.who, brief.how].join('').length : 0, brief);
+  const emptyText = data?.status === 'few' ? 'Not recurring yet. After 3 or more meetings, Quorum starts showing a summary and prep notes for this meeting, specific to you.'
+    : data?.status === 'no-model' ? "Choose a model in Settings and Quorum writes prep notes from this meeting's past notes."
+    : 'Quorum could not write prep notes this time. They are tried again the next time you open this meeting.';
   return (
     <div className="history reader meeting-page" ref={top}>
       <div className="reader-bar">
@@ -50,22 +79,22 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
 
         <section className="mp-section mp-prep">
           <h2>Meeting prep notes</h2>
-          {!data ? <p className="nt-step shimmer">Reading past meetings…</p>
-            : brief?.prep ? <Markdown text={brief.prep} />
-            : writing ? <p className="nt-step shimmer">Writing prep notes from {data.past.length} past meetings…</p>
-            : data.status === 'few' ? <p className="mp-empty">Not recurring yet. After 3 or more meetings, Quorum starts showing a summary and prep notes for this meeting, specific to you.</p>
-            : data.status === 'no-model' ? <p className="mp-empty">Choose a model in Settings and Quorum writes prep notes from this meeting's past notes.</p>
-            : <p className="mp-empty">Quorum could not write prep notes this time. They are tried again the next time you open this meeting.</p>}
+          {loading ? <Skeleton lines={4} />
+            : brief?.prep ? <Markdown text={reveal(brief.prep)} />
+            : <p className="mp-empty">{emptyText}</p>}
         </section>
 
-        {brief && (brief.what || brief.who || brief.how) && (
-          <section className="mp-section">
-            <h2>About this meeting</h2>
-            {brief.what && <p><strong>What it is.</strong> {brief.what}</p>}
-            {brief.who && <p><strong>Who attends.</strong> {brief.who}</p>}
-            {brief.how && <p><strong>How it runs.</strong> {brief.how}</p>}
-          </section>
-        )}
+        <section className="mp-section">
+          <h2>About this meeting</h2>
+          {ABOUT.map(([key, label]) => (
+            <div key={key} className="mp-about">
+              <h3>{label}</h3>
+              {loading ? <Skeleton lines={2} />
+                : brief?.[key] ? <p>{reveal(brief[key])}</p>
+                : <p className="mp-empty">{data?.status === 'few' ? 'Shows after 3 meetings.' : 'Not written yet.'}</p>}
+            </div>
+          ))}
+        </section>
 
         {!!data?.past.length && (
           <section className="mp-section">
