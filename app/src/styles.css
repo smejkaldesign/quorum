@@ -434,7 +434,7 @@ html.popup-root, html.popup-root body { background: transparent; }
 .recipes { display: flex; gap: 18px; padding: 32px 22px 0; flex-wrap: wrap; justify-content: center; }
 .recipe { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 16px; }
 .recipe:hover { color: var(--text); }
-.hist-rule { border: 0; border-top: 1px solid rgba(255, 255, 255, 0.05); margin: 40px 0 48px; }
+.hist-rule { border: 0; border-top: 1px solid rgba(255, 255, 255, 0.05); margin: 40px 0; }
 .hist-filters { display: flex; gap: 8px; margin-bottom: 32px; flex-wrap: wrap; }
 .filter { display: inline-flex; align-items: center; gap: 9px; height: 40px; padding: 0 18px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--muted); font-size: 16px; }
 .filter:hover { color: var(--text); }
@@ -1863,7 +1863,8 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .up-show-more:disabled { opacity: 0.4; cursor: default; }
 
 /* Next N days sits above the filters with a divider under it */
-.up-inline { padding-bottom: 28px; margin-bottom: 28px; border-bottom: 1px solid var(--line); }
+/* 40px each side of the line, as under the recipes; the last row's own 7px padding counts toward the gap above */
+.up-inline { padding-bottom: 33px; margin-bottom: 40px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
 .up-inline .up-head { margin-bottom: 8px; }
 /* Today with nothing on it */
 .day-off { display: flex; align-items: center; gap: 20px; padding: 12px 0 4px; }
