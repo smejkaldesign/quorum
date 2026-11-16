@@ -8,7 +8,7 @@ import { appendFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { sha } from './fixUndo.js';
 import { writeAtomic } from './relink.js';
-import { vaultPath } from './vault.js';
+import { vaultPath, vaultTarget } from './vault.js';
 
 const safe = (id) => String(id).replace(/[^a-z0-9_-]/gi, '_').slice(0, 200);
 
@@ -56,7 +56,7 @@ export function fixCheck({ before, after, stillMissing = false, targetGone = fal
   return null;
 }
 
-// puts back the notes a run wrote, from its undo record (files: { rel, before, after }). A note whose text no longer
+// puts back the notes a run wrote, from its undo record (files: { rel, before, after, gone }). A note whose text no longer
 // matches what the fix wrote (when the record has that hash) is left alone, so later edits are never lost. trash(abs)
 // removes a note the run made. Answers the notes put back and the ones left alone
 export async function rollback(vault, files, trash) {
@@ -68,6 +68,8 @@ export async function rollback(vault, files, trash) {
     if (now === f.before) continue;
     if (f.after && (now == null ? null : sha(now)) !== f.after) { skipped.push(f.rel); continue; }
     if (f.before == null) { if (now != null) { await trash(abs); restored.push(f.rel); } }
+    // a note the fix removed or moved away (gone) comes back at its path
+    else if (f.gone && now == null && vaultTarget(vault, f.rel)) { const to = vaultTarget(vault, f.rel); mkdirSync(path.dirname(to), { recursive: true }); writeAtomic(to, f.before); restored.push(f.rel); }
     // a note deleted after the fix wrote it is a later change: it stays deleted, and the rest still go back
     else if (now == null || !abs) skipped.push(f.rel);
     else { writeAtomic(abs, f.before); restored.push(f.rel); }

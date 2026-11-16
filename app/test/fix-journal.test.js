@@ -91,6 +91,14 @@ describe('rollback and recovery', () => {
     expect(existsSync(path.join(vault, 'a.md'))).toBe(false);
     expect(get('b.md')).toBe('two');
   });
+  it('writes back a note the run removed or moved away', async () => {
+    fresh();
+    put('vault/moved.md', '# Moved');
+    const res = await rollback(vault, [{ rel: 'loose/moved.md', before: '# Moved', after: null, gone: true }, { rel: 'vault/moved.md', before: null, after: null }], trash);
+    expect(res).toEqual({ restored: ['loose/moved.md', 'vault/moved.md'], skipped: [] });
+    expect(get('loose/moved.md')).toBe('# Moved');
+    expect(existsSync(path.join(vault, 'vault/moved.md'))).toBe(false);
+  });
   it('does nothing for a run that never wrote', async () => {
     fresh();
     put('a.md', 'one');

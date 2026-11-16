@@ -23,6 +23,20 @@ describe('fix undo', () => {
     expect(trashed).toEqual(['p/Roadmap.md']);
     expect(existsSync(path.join(vault, 'p/Roadmap.md'))).toBe(false);
   });
+  it('brings back a note the fix moved away, and refuses when a note is at that path again', async () => {
+    vault = mkdtempSync(path.join(tmpdir(), 'qundo-'));
+    put('loose/x.md', '# X');
+    const kept = [{ rel: 'loose/x.md', before: get('loose/x.md'), gone: true }, { rel: 'deals/x.md', before: null }];
+    rmSync(path.join(vault, 'loose/x.md'));
+    put('deals/x.md', '---\nconfidential: deal\n---\n# X');
+    const files = undoRecord(vault, kept);
+    expect(files.map((f) => [f.rel, f.after == null])).toEqual([['loose/x.md', true], ['deals/x.md', false]]);
+    expect(await applyUndo(vault, files, async (abs) => rmSync(abs))).toBe(2);
+    expect(get('loose/x.md')).toBe('# X');
+    expect(existsSync(path.join(vault, 'deals/x.md'))).toBe(false);
+    put('deals/x.md', '---\nconfidential: deal\n---\n# X');
+    await expect(applyUndo(vault, files, async (abs) => rmSync(abs))).rejects.toThrow(/again since the fix/);
+  });
   it('refuses when a note changed after the fix, and changes nothing', async () => {
     vault = mkdtempSync(path.join(tmpdir(), 'qundo-'));
     put('a.md', 'one');
