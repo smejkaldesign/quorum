@@ -186,7 +186,7 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext, catchup, onCatchu
       {brain && (
         <div className={`onb-choice ${catchup ? 'on' : ''}`}>
           <div><strong>Check my whole memory now</strong><em>{catchupCost(estimate)} It starts when you open Quorum, writes nothing to your notes, and what it finds waits in Memory health.{estimate && !estimate.drafting ? ` ${DRAFTS_NEEDED}` : ''}</em></div>
-          <Toggle on={catchup} onChange={onCatchup} />
+          <Toggle on={catchup} onChange={onCatchup} label="Check my whole memory now" />
         </div>
       )}
       {!brain && mode === 'create' && (
