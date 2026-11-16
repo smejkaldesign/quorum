@@ -270,7 +270,7 @@ export type FeedTab = 'all' | 'unread' | 'archived';
 export type FeedSort = 'unread' | 'recent' | 'az';
 export type FeedSummary = { line: string; sub: string | null; ask?: { question: string; suggest: 'approve' | 'reject'; why: string; problem: string; solution: string; value: string; recommendation: string }; problem?: string; solution?: string; value?: string; recommendation?: string };
 export type FixStep = { label: string; at: number; endedAt: number | null };
-export type FixRun = { id: string; key: string; target: string; title: string; rel: string; status: 'queued' | 'running' | 'success' | 'error'; queuedAt: number; startedAt: number | null; endedAt: number | null; steps: FixStep[]; outcome: string | null; error: string | null; dismissedAt: number | null; problem?: string; solution?: string; value?: string; recommendation?: string; meta?: [string, string][]; showBanner?: boolean };
+export type FixRun = { id: string; key: string; target: string; title: string; rel: string; status: 'queued' | 'running' | 'success' | 'error'; queuedAt: number; startedAt: number | null; endedAt: number | null; steps: FixStep[]; outcome: string | null; error: string | null; dismissedAt: number | null; undoable?: boolean; undoneAt?: number | null; problem?: string; solution?: string; value?: string; recommendation?: string; meta?: [string, string][]; showBanner?: boolean };
 export type FeedRow = { id: string; at: number; kind: FeedKind; event: string; who: 'agent' | 'you'; target: { kind: 'note' | 'memory' | 'guardrail' | 'link'; abs: string; rel: string; title: string; gone?: boolean }; files: { rel: string; abs: string; label: string; title?: string }[]; unread: boolean; backfill: boolean; archived?: boolean; review?: { kind: 'note' | 'memory' | 'junk-note' | 'link'; count?: number; key?: string }; run?: FixRun; fixRun?: FixRun; summary: FeedSummary; details: [string, string][] };
 export type FeedQuery = { tab?: FeedTab; review?: boolean; kinds?: FeedKind[]; q?: string; sort?: FeedSort; offset?: number; limit?: number };
 export type FeedPage = { items: FeedRow[]; total: number; more: boolean; counts: { review: number; unread: number; all: number; archived?: number }; dot: boolean };
@@ -437,6 +437,7 @@ declare global {
       fixStart(keys: string[]): Promise<FixRun[]>;
       fixRuns(): Promise<FixRun[]>;
       fixDismiss(ids: string[]): Promise<number>;
+      fixUndo(id: string): Promise<string>;
       onFixRun(cb: (run: FixRun) => void): () => void;
       vaultFixLink(target: string, toRel: string): Promise<{ files: number; links: number }>;
       vaultAddAlias(rel: string, alias: string): Promise<boolean>;

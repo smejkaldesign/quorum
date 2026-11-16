@@ -10,6 +10,7 @@ import { checkConnection } from './connectionCheck.js';
 import { openSpeech, SPEECH_ENGINES } from './speech/provider.js';
 import { createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTree } from './vault.js';
 import { createVaultIndex } from './vindex.js';
+import { applyUndo, undoRecord } from './fixUndo.js';
 import { addAlias, retargetLinks, rewriteLinks, unlinkTarget, writeAtomic } from './relink.js';
 import store from './store/index.js';
 import { registerSources } from './sources/index.js';
@@ -2553,7 +2554,8 @@ function contextNote(issue) {
 // the links at the closest note, make the missing note in the inbox folder, or leave a link outside the vault as it is.
 // Decline leaves the links as they are. A fix waits while a run is writing any note it would change. Answers with a
 // line saying what changed
-async function decideLink(key, verdict, step = async () => {}) {
+// keep(rel, created) records a note's text before a fix changes it (or that the fix made it), so Undo can put it back
+async function decideLink(key, verdict, step = async () => {}, keep = () => {}) {
   const b = brain();
   if (!b || !vindex) throw new Error('No vault connected');
   const entry = linkIssues().find((h) => h.target.toLowerCase() === String(key ?? '').toLowerCase());
@@ -2569,6 +2571,7 @@ async function decideLink(key, verdict, step = async () => {}) {
     const abs = vindex.rels().includes(c.rel) ? vaultPath(b.vault, c.rel) : null;
     if (!abs) throw new Error('That note no longer exists');
     await step(`Adding “${issue.target}” as an alias of ${c.name ?? c.title}`);
+    keep(c.rel);
     addAlias(abs, issue.target);
     await step('Updating the vault index');
     vindex.sync();
@@ -2579,6 +2582,7 @@ async function decideLink(key, verdict, step = async () => {}) {
     if (!vindex.rels().includes(c.rel)) throw new Error('That note no longer exists');
     const name = vindex.note(c.rel)?.props.name;
     await step(`Pointing the ${issue.links === 1 ? 'link' : `${issue.links} links`} at ${c.name ?? c.title}`);
+    for (const r of entry.sources) keep(r);
     const done = retargetLinks({ vault: b.vault, sources: entry.sources, target: entry.target, toRel: c.rel, toName: typeof name === 'string' ? name : null, allRels: vindex.rels() });
     await step('Updating the vault index');
     vindex.sync();
@@ -2587,6 +2591,7 @@ async function decideLink(key, verdict, step = async () => {}) {
   }
   if (issue.action === 'unlink') {
     await step(`Removing the dead ${issue.links === 1 ? 'link' : `${issue.links} links`}`);
+    for (const r of entry.sources) keep(r);
     const done = unlinkTarget({ vault: b.vault, sources: entry.sources, target: entry.target });
     await step('Updating the vault index');
     vindex.sync();
@@ -2602,6 +2607,7 @@ async function decideLink(key, verdict, step = async () => {}) {
   if (onDisk(name)) throw new Error('A note with that name is already in the vault, so Quorum did not write another one');
   await step(`Writing ${folder ? `${folder}/` : ''}${name}.md from what the linking notes say`);
   const rel = createNote(b.vault, folder, name);
+  keep(rel, true);
   writeAtomic(path.join(b.vault, rel), contextNote(issue));
   await step('Updating the vault index');
   vindex.sync();
@@ -2664,9 +2670,16 @@ async function pumpFixes() {
       fixEmit(run);
       await tick();
     };
+    // the text of every note the fix changes, before it changes it; saved beside the runs so Undo can restore it
+    const kept = [];
+    const keep = (rel, created = false) => {
+      if (kept.some((k) => k.rel === rel)) return;
+      try { kept.push({ rel, before: created ? null : readFileSync(vaultPath(run.vault, rel), 'utf8') }); } catch {}
+    };
     try {
-      run.outcome = await decideLink(run.key, 'approve', step);
+      run.outcome = await decideLink(run.key, 'approve', step, keep);
       run.status = 'success';
+      run.undoable = saveUndo(run, kept);
     } catch (e) {
       run.status = 'error';
       run.error = e?.message ?? String(e);
@@ -2682,6 +2695,36 @@ async function pumpFixes() {
   fixWorking = false;
 }
 ipcMain.handle('fix-start', (_e, keys) => startFixes(Array.isArray(keys) ? keys : []));
+// Undo for a fix: the notes it changed go back to how they were, and a note it wrote goes to the Trash, so the issue is
+// back in Needs review. It refuses when a note changed after the fix, so it never throws away later edits
+const fixUndoDir = path.join(DATA_DIR, 'fix-undo');
+const undoFile = (id) => path.join(fixUndoDir, `${String(id).replace(/[^a-z0-9_-]/gi, '_').slice(0, 200)}.json`);
+function saveUndo(run, kept) {
+  try {
+    const files = undoRecord(run.vault, kept);
+    if (!files.length) return false;
+    mkdirSync(fixUndoDir, { recursive: true });
+    writeFileSync(undoFile(run.id), JSON.stringify({ vault: run.vault, files }));
+    return true;
+  } catch (e) { log('fix undo save', e?.message); return false; }
+}
+ipcMain.handle('fix-undo', async (_e, id) => {
+  const run = fixRunList().find((r) => r.id === String(id));
+  if (!run || run.status !== 'success' || run.undoneAt) throw new Error('There is nothing to undo on that fix');
+  if (run.vault !== brain()?.vault) throw new Error('That fix was made in another vault');
+  let saved;
+  try { saved = JSON.parse(readFileSync(undoFile(run.id), 'utf8')); } catch { throw new Error('Quorum has no record of what this fix changed, so it cannot undo it'); }
+  const n = await applyUndo(run.vault, saved.files ?? [], (abs) => shell.trashItem(abs));
+  vindex?.sync();
+  diskNamesCache.at = 0;
+  setLinksLeft([run.key], false);
+  run.undoneAt = Date.now();
+  fixRunsSave();
+  fixEmit(run);
+  toUI('memory-updates', null);
+  log('fix undo', run.key, `${n} notes`);
+  return `Undid the fix. “${run.target}” is back in Needs review`;
+});
 // the runs of this vault from the last week, newest first
 ipcMain.handle('fix-runs', () => { const v = brain()?.vault; const week = Date.now() - 7 * 86400000; return fixRunList().filter((r) => r.vault === v && (r.endedAt ?? r.queuedAt) > week).map(withBanner); });
 ipcMain.handle('fix-dismiss', (_e, ids) => {

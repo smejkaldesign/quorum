@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import markProd from '../assets/quorum-mark.png';
 
-import { IconArchive, IconBell, IconCheck, IconChevron, IconClose } from './icons';
+import { IconArchive, IconBell, IconCheck, IconChevron, IconClose, IconMore, IconReset } from './icons';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
 import { Avatar } from './Speaker';
 import { toast } from './Toasts';
@@ -19,11 +19,11 @@ const KIND_LABEL = Object.fromEntries(KINDS) as Record<FeedKind, string>;
 const SORTS: [FeedSort, string][] = [['unread', 'Unread first'], ['recent', 'Recent'], ['az', 'A to Z']];
 const CHANGED = 'quorum:activity-changed';
 
-const ago = (at: number) => {
+export const ago = (at: number) => {
   const s = Math.max(0, (Date.now() - at) / 1000);
   if (s < 60) return 'just now';
-  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return new Date(at).toLocaleDateString([], { month: 'short', day: 'numeric' });
 };
 
@@ -78,17 +78,20 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
         {/* waiting for a decision shows the orange mark, Quorum's color for anything in review */}
         <span className="nf-who">{row.who === 'you' ? <span className="nf-you-avatar" aria-label="You" data-tip={me.name}><Avatar name={me.name} photo={me.photo} size={32} /></span> : <img src={markProd} alt={row.review ? 'Quorum, needs review' : 'Quorum'} width={32} height={32} />}</span>
         <span className="nf-main">
-          <span className="nf-head"><strong className="conn-title nf-title">{row.summary.line}</strong>{!(row.run && (row.run.status === 'success' || row.run.status === 'error')) && row.unread && <i className="nf-dot" role="img" aria-label="Unread" data-tip="Unread" />}</span>
+          <span className="nf-head"><strong className="conn-title nf-title" data-tip={row.review || row.run ? row.summary.line : undefined}>{row.summary.line}</strong>{!row.review && !row.run && row.unread && <i className="nf-dot" role="img" aria-label="Unread" data-tip="Unread" />}</span>
+          {(row.review || row.run) && <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span></span>}
           {!row.review && !row.run && <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>{row.summary.sub && <> <span className="nf-sep" aria-hidden="true">•</span> {row.summary.sub}</>}</span>}
         </span>
         <span className={`nf-side${row.review || row.run ? ' mh-side' : ''}`}>
-          {row.run && (row.run.status === 'success' || row.run.status === 'error') && <StatusBadge status={row.run.status === 'success' ? 'accepted' : 'failed'} />}
-          {row.run && <span className="mh-swap mh-still"><span className="mh-when">{ago(row.at)}</span></span>}
-          {/* a row waiting for a decision reads like a Memory health row: the date on the right, and on hover its
-              answers slide in as icons */}
+          {/* the item's state on the right; on hover its actions slide in over it */}
+          {row.run && (
+            <StatusSwap status={runStatus(row.run)}>
+              {row.run.status === 'success' && <UndoMenu run={row.run} />}
+            </StatusSwap>
+          )}
           {row.review && (
             <span className="mh-swap" onClick={stop} onKeyDown={stop}>
-              <span className="mh-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>
+              <span className="mh-when"><StatusBadge status={row.fixRun?.status === 'queued' ? 'waiting' : 'review'} /></span>
               <span className="mh-hover">
                 <button className="icon-btn mh-icon mh-no" disabled={busy} aria-label="Dismiss" data-tip="Dismiss: mark it reviewed and change nothing" onClick={() => onDecide('dismiss')}><IconClose width={15} height={15} /></button>
                 {working
@@ -274,10 +277,11 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
           <span className="muted">{sel.length ? `${sel.length} selected` : 'Select all'}</span>
           {/* the actions appear once something is picked; the bar keeps its height either way */}
           <span className={`nf-bulk-actions${sel.length ? '' : ' hidden'}`} aria-hidden={!sel.length}>
-            <button className="act-pill primary" disabled={busy || !selReview.length} onClick={() => decide(selReview, 'approve')}>Approve</button>
-            <button className="act-pill" disabled={busy || !selReview.length} data-tip="Mark them reviewed and change nothing" onClick={() => decide(selReview, 'dismiss')}>Dismiss</button>
+            {/* left to right: Archive, Mark read, Dismiss, and Approve as the primary action on the far right */}
+            <button className="icon-btn mh-icon" disabled={busy} aria-label={tab === 'archived' ? 'Unarchive' : 'Archive'} data-tip={tab === 'archived' ? 'Unarchive' : 'Archive'} onClick={async () => { await archive(sel, tab !== 'archived'); setPicked(new Set()); }}><IconArchive width={16} height={16} /></button>
             <button className="act-pill" disabled={busy || !sel.some((r) => r.unread)} onClick={async () => { await mark(sel); setPicked(new Set()); }}>Mark read</button>
-            <button className="act-pill" disabled={busy} onClick={async () => { await archive(sel, tab !== 'archived'); setPicked(new Set()); }}>{tab === 'archived' ? 'Unarchive' : 'Archive'}</button>
+            <button className="act-pill" disabled={busy || !selReview.length} data-tip="Mark them reviewed and change nothing" onClick={() => decide(selReview, 'dismiss')}>Dismiss</button>
+            <button className="act-pill primary" disabled={busy || !selReview.length} onClick={() => decide(selReview, 'approve')}>Approve</button>
           </span>
         </div>
       )}
@@ -331,7 +335,7 @@ export function RunBanner({ run }: { run: FixRun }) {
     <div className={`run-banner ${live ? 'live' : run.status}`} role="status" aria-live="polite" onClick={(e) => e.stopPropagation()}>
       <div className="run-head">
         <span className="run-icon" aria-hidden="true">{live ? <i className="run-spin" /> : run.status === 'success' ? <IconCheck width={18} height={18} /> : <IconClose width={17} height={17} />}</span>
-        <span className={`run-text${live ? ' shimmer' : ''}`}>{live ? (run.status === 'queued' ? 'Waiting for the run before it' : current?.label ?? 'Starting') : run.status === 'success' ? run.outcome : run.error}</span>
+        {(() => { const t = live ? (run.status === 'queued' ? 'Waiting for the run before it' : current?.label ?? 'Starting') : run.status === 'success' ? run.outcome : run.error; return <span className={`run-text${live ? ' shimmer' : ''}`} data-tip={t ?? undefined}>{t}</span>; })()}
         <span className="run-time">{took(elapsed)}</span>
         {run.steps.length > 0 && <button className={`icon-btn conn-fold${steps ? ' open' : ''}`} aria-expanded={steps} aria-label={steps ? 'Hide steps' : 'Show steps'} onClick={() => setSteps((o) => !o)}><IconChevron width={14} height={14} /></button>}
         {!live && run.showBanner && <button className="act-pill run-dismiss" onClick={dismiss}>Dismiss</button>}
@@ -341,7 +345,7 @@ export function RunBanner({ run }: { run: FixRun }) {
           <ol className="run-steps">
             {run.steps.map((st, i) => {
               const done = !!st.endedAt || !live || i < run.steps.length - 1;
-              return <li key={`${st.at}-${i}`} className={done ? 'done' : 'now'}><span>{st.label}</span><span className="run-time">{st.endedAt ? took(st.endedAt - st.at) : ''}</span></li>;
+              return <li key={`${st.at}-${i}`} className={done ? 'done' : 'now'}><span data-tip={st.label}>{st.label}</span><span className="run-time">{st.endedAt ? took(st.endedAt - st.at) : ''}</span></li>;
             })}
           </ol>
         </div>
@@ -360,7 +364,55 @@ export async function dismissRun(run: FixRun) {
 
 // the answer an item got: Accepted (green) when its fix ran, Failed (red) when the fix did not work, Declined (red) when
 // it was dismissed
-export function StatusBadge({ status }: { status: 'accepted' | 'failed' | 'declined' }) {
-  const text = status === 'accepted' ? 'Accepted' : status === 'failed' ? 'Failed' : 'Declined';
-  return <span className={`nf-status ${status}`}>{text}</span>;
+export type ItemStatus = 'review' | 'waiting' | 'accepted' | 'failed' | 'dismissed';
+const STATUS_TEXT: Record<ItemStatus, string> = { review: 'Needs review', waiting: 'Waiting', accepted: 'Accepted', failed: 'Failed', dismissed: 'Dismissed' };
+export function StatusBadge({ status }: { status: ItemStatus }) {
+  return <span className={`nf-status ${status}`}>{STATUS_TEXT[status]}</span>;
+}
+export const runStatus = (r: FixRun): ItemStatus => (r.status === 'success' ? 'accepted' : r.status === 'error' ? 'failed' : 'waiting');
+
+// a row's state badge on the right; when the row has actions, hovering slides the badge out and the actions in
+export function StatusSwap({ status, children }: { status: ItemStatus; children?: React.ReactNode }) {
+  const has = !!children && (!Array.isArray(children) || children.some(Boolean));
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
+  return (
+    <span className={`mh-swap${has ? '' : ' mh-still'}`} onClick={stop} onKeyDown={stop}>
+      <span className="mh-when"><StatusBadge status={status} /></span>
+      {has && <span className="mh-hover">{children}</span>}
+    </span>
+  );
+}
+
+// the ⋯ menu on an answered item: Undo takes it back to Needs review. For a fix, the notes the agent changed go back to
+// how they were and a note it wrote goes to the Trash; for a dismissed item, it simply returns to review
+export function RowMenu({ label, tip, onPick }: { label: string; tip?: string; onPick: () => Promise<void> | void }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const off = (e: MouseEvent) => { if (!wrap.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('mousedown', off);
+    window.addEventListener('keydown', esc);
+    return () => { window.removeEventListener('mousedown', off); window.removeEventListener('keydown', esc); };
+  }, [open]);
+  return (
+    <span ref={wrap} className={`menu-wrap mh-menu${open ? ' open' : ''}`}>
+      <button className="icon-btn mh-icon" aria-label="More" aria-haspopup="menu" aria-expanded={open} data-tip="More" onClick={() => setOpen((o) => !o)}><IconMore width={16} height={16} /></button>
+      {open && (
+        <div className="menu end" role="menu">
+          <button role="menuitem" disabled={!!tip} data-tip={tip} onClick={async () => { setOpen(false); await onPick(); }}><IconReset width={15} height={15} /> {label}</button>
+        </div>
+      )}
+    </span>
+  );
+}
+export function UndoMenu({ run }: { run: FixRun }) {
+  return (
+    <RowMenu label="Undo and move back to review" tip={run.undoable ? undefined : 'This fix ran before Quorum kept a copy of the notes it changed, so it cannot be undone here'}
+      onPick={async () => {
+        try { toast(await window.quorum.fixUndo(run.id)); } catch (e) { toast(String(e).replace(/^.*Error:\s*/, ''), 'error'); }
+        window.dispatchEvent(new Event(CHANGED));
+      }} />
+  );
 }

@@ -5,7 +5,7 @@ import markReview from '../assets/quorum-mark.png';
 import { CATEGORIES, HEALTH_SORTS, categoryCounts, countsLine, healthList, issueMeta, type HealthCategory, type HealthSort, type Issue } from '../memoryHealth.js';
 import { IconCheck, IconChevron, IconClose, IconReset } from './icons';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
-import { IssueParts, ReviewDetails, RunBanner, StatusBadge, dismissRun, took } from './NotificationsView';
+import { IssueParts, ReviewDetails, RowMenu, RunBanner, StatusBadge, StatusSwap, UndoMenu, ago, dismissRun, runStatus, took } from './NotificationsView';
 import type { FixRun } from './quorum';
 import { toast } from './Toasts';
 
@@ -82,7 +82,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const openKeys = new Set(all.map((i) => i.target.toLowerCase()));
   const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const ended = cats.length ? [] : runs
-    .filter((r) => (r.endedAt || !openKeys.has(r.key)) && words.every((w) => r.target.toLowerCase().includes(w)))
+    .filter((r) => !r.undoneAt && (r.endedAt || !openKeys.has(r.key)) && words.every((w) => r.target.toLowerCase().includes(w)))
     .sort((a, b) => (b.endedAt ?? b.queuedAt) - (a.endedAt ?? a.queuedAt));
   type Entry = { issue: Issue } | { run: FixRun };
   // All: the items to decide, then the fixes, newest first; a fixed item leaves its place without pushing the list.
@@ -149,16 +149,16 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
         <label className="nf-check" onClick={stop}><input type="checkbox" checked={picked.has(i.key)} aria-label="Select" onChange={() => toggle(i.key)} /></label>
         <span className="nf-who"><img src={markReview} alt="Quorum, needs review" width={32} height={32} /></span>
         <span className="nf-main">
-          <span className="nf-head"><strong className="conn-title nf-title">{i.title}</strong></span>
+          <span className="nf-head"><strong className="conn-title nf-title" data-tip={i.title}>{i.title}</strong></span>
+          <span className="nf-sub"><span className="nf-when" title={i.lastAt ? new Date(i.lastAt).toLocaleString() : undefined}>{i.lastAt ? ago(i.lastAt) : ''}</span></span>
         </span>
         <span className="nf-side mh-side">
-          {tab === 'left' && <StatusBadge status="declined" />}
           {/* the date sits on the right; on hover it slides out and the actions slide in, the way Home's rows do */}
           <span className="mh-swap" onClick={stop} onKeyDown={stop}>
-            <span className="mh-when" title={i.lastAt ? new Date(i.lastAt).toLocaleString() : undefined}>{waiting ? 'Waiting' : i.lastAt ? new Date(i.lastAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) : ''}</span>
+            <span className="mh-when"><StatusBadge status={tab === 'left' ? 'dismissed' : waiting ? 'waiting' : 'review'} /></span>
             <span className="mh-hover">
               {tab === 'left'
-                ? <button className="act-pill" disabled={busy} onClick={() => back([i])}>Move back to review</button>
+                ? <RowMenu label="Undo and move back to review" onPick={() => back([i])} />
                 : <>
                     <button className="icon-btn mh-icon mh-no" disabled={busy || working} aria-label="Dismiss" data-tip="Dismiss: mark it reviewed and change nothing" onClick={() => decide([i], 'dismiss')}><IconClose width={15} height={15} /></button>
                     {working
@@ -301,10 +301,12 @@ function RunRow({ run, picked, onPick }: { run: FixRun; picked: boolean; onPick:
       <div className="conn-line nf-line">
         <label className="nf-check"><input type="checkbox" checked={picked} aria-label="Select" onChange={onPick} /></label>
         <span className="nf-who"><img src={markReview} alt="" width={32} height={32} /></span>
-        <span className="nf-main"><span className="nf-head"><strong className="conn-title nf-title">{line}</strong></span></span>
+        <span className="nf-main">
+          <span className="nf-head"><strong className="conn-title nf-title" data-tip={line}>{line}</strong></span>
+          <span className="nf-sub"><span className="nf-when" title={new Date(run.endedAt ?? run.queuedAt).toLocaleString()}>{ago(run.endedAt ?? run.queuedAt)}</span></span>
+        </span>
         <span className="nf-side mh-side">
-          {!live && <StatusBadge status={run.status === 'success' ? 'accepted' : 'failed'} />}
-          <span className="mh-swap mh-still"><span className="mh-when">{new Date(run.endedAt ?? run.queuedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span></span>
+          <StatusSwap status={runStatus(run)}>{run.status === 'success' && <UndoMenu run={run} />}</StatusSwap>
           <span className="nf-tools"><button className={`icon-btn conn-fold${open ? ' open' : ''}`} aria-expanded={open} aria-label={open ? 'Hide details' : 'Show details'} onClick={() => setOpen((o) => !o)}><IconChevron width={14} height={14} /></button></span>
         </span>
       </div>
@@ -342,7 +344,7 @@ function BatchBanner({ batch, runs, onDismiss }: { batch: { keys: string[]; titl
     <div className={`run-banner mh-batch ${live ? 'live' : bad && !ok ? 'error' : 'success'}`} role="status" aria-live="polite">
       <div className="run-head">
         <span className="run-icon" aria-hidden="true">{live ? <i className="run-spin" /> : bad && !ok ? <IconClose width={17} height={17} /> : <IconCheck width={18} height={18} />}</span>
-        <span className={`run-text${live ? ' shimmer' : ''}`}>{text}</span>
+        <span className={`run-text${live ? ' shimmer' : ''}`} data-tip={text}>{text}</span>
         <span className="run-time">{took(Math.max(0, elapsed))}</span>
         <button className={`icon-btn conn-fold${open ? ' open' : ''}`} aria-expanded={open} aria-label={open ? 'Hide items' : 'Show items'} onClick={() => setOpen((o) => !o)}><IconChevron width={14} height={14} /></button>
         {!live && <button className="act-pill run-dismiss" onClick={onDismiss}>Dismiss</button>}
@@ -353,7 +355,7 @@ function BatchBanner({ batch, runs, onDismiss }: { batch: { keys: string[]; titl
           <ol className="run-steps mh-batch-list">
             {items.map((x) => {
               const st = x.run?.status;
-              return <li key={x.k} className={st === 'running' ? 'now' : st === 'success' || st === 'error' ? 'done' : ''}><span className={st === 'running' ? 'shimmer' : ''}>{x.title}</span><span className="run-time">{st === 'success' ? 'Fixed' : st === 'error' ? 'Could not fix' : st === 'running' ? 'Fixing' : 'Waiting'}</span></li>;
+              return <li key={x.k} className={st === 'running' ? 'now' : st === 'success' || st === 'error' ? 'done' : ''}><span className={st === 'running' ? 'shimmer' : ''} data-tip={x.title}>{x.title}</span><span className="run-time">{st === 'success' ? 'Fixed' : st === 'error' ? 'Could not fix' : st === 'running' ? 'Fixing' : 'Waiting'}</span></li>;
             })}
           </ol>
         </div>

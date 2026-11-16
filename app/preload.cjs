@@ -103,6 +103,7 @@ contextBridge.exposeInMainWorld('quorum', {
   fixStart: (keys) => ipcRenderer.invoke('fix-start', keys),
   fixRuns: () => ipcRenderer.invoke('fix-runs'),
   fixDismiss: (ids) => ipcRenderer.invoke('fix-dismiss', ids),
+  fixUndo: (id) => ipcRenderer.invoke('fix-undo', id),
   onFixRun: on('fix-run'),
   vaultFixLink: (target, toRel) => ipcRenderer.invoke('vault-fix-link', target, toRel),
   vaultAddAlias: (rel, alias) => ipcRenderer.invoke('vault-add-alias', rel, alias),

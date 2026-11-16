@@ -134,7 +134,7 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], l
     }, null);
   }
   // each fix run Quorum carried out on an approved Memory health issue: its row shows it working, then its outcome
-  for (const run of runs) {
+  for (const run of runs.filter((x) => !x.undoneAt)) {
     const at = time(run.endedAt ?? run.startedAt ?? run.queuedAt);
     push({
       id: `f:${run.id}`, at, kind: 'memory-health', event: 'fix', who: 'agent', target: { kind: 'link', abs: '', rel: run.rel ?? '', title: run.target }, files: [],
