@@ -83,6 +83,9 @@ import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, re
 import { collectExport, exportFileName, writeZip } from './exportNotes.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+// the app's own package.json, read once: the packaged build carries the edition, the update feed, the beta gate and the
+// OAuth client ids (quorumGoogle, quorumOAuth) there
+const packagedMeta = (() => { try { return JSON.parse(readFileSync(path.join(here, 'package.json'), 'utf8')); } catch { return {}; } })();
 // Every IPC call must come from Quorum's own page (dist/index.html, any hash). A page that got into a window some other
 // way (a dropped file, a link) is refused, so it never reaches the vault, settings or files through window.quorum
 const APP_PAGE = pathToFileURL(path.join(here, 'dist/index.html')).href;
@@ -2622,7 +2625,7 @@ function importWrite(file, prev, next) {
 // from Granola has somewhere to go
 const sourcesApi = registerSources({ ipcMain: connectIpc, settings, saveSettings, toUI, log, meetingsDir: () => meetingsDir() ?? (brain()?.vault ? path.join(brain().vault, '08-meetings') : null), keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), openFresh: openFreshSignIn, afterWrite: (file) => { account.sync.pushMeetingNote(file); keeper.schedule('import'); }, onNoteWrite: importWrite, version: app.getVersion(), agentRuntime: { runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV } });
 // platform accounts for cloud recordings (Zoom first) go through the relay, so they exist in the hosted edition only
-if (EDITION === 'cloud') (await loadEE('platforms.js')).registerPlatforms({ ipcMain: connectIpc, account, settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file) });
+if (EDITION === 'cloud') { const ee = await loadEE('platforms.js'); ee.registerPlatforms({ ipcMain: connectIpc, account, clients: ee.platformClients({ packaged: packagedMeta, dev: !app.isPackaged }), settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file) }); }
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);
 // the person's own name for a graph cluster, kept per vault in settings so it survives a restart and a re-index; an
 // empty name goes back to the generated one. Answers with every note's cluster name after the change (a rename can
@@ -4018,9 +4021,6 @@ ipcMain.handle('brain', () => brain());
 // account connected through the Google Calendar connector (settings.calendar.google, tokens in the Keychain)
 // Up next reaches 1 to 5 days ahead, or the work week ('week', calendarWindow.js); a saved 7 or 14 from before reads as 5
 const calSettings = () => { const c = { source: 'mac', days: 1, showAll: false, hidden: [], ...settings.calendar }; c.days = normalizeDays(c.days); return c; };
-// the app's own package.json, read once: the packaged build carries the edition, the update feed, the beta gate and the
-// OAuth client ids (quorumGoogle, quorumOAuth) there
-const packagedMeta = (() => { try { return JSON.parse(readFileSync(path.join(here, 'package.json'), 'utf8')); } catch { return {}; } })();
 const oauthApps = oauthClients({ root: repoRoot(), packaged: packagedMeta });
 const gcal = createGoogleCalendar({
   tokens: createTokenStore().tokens, client: oauthApps.google, open: (u) => shell.openExternal(u), log,

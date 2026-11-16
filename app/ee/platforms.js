@@ -16,16 +16,26 @@ import { httpUrl, relayUrls, unreachable } from './relay.js';
 import { plain } from './account.js';
 import { oneLine, setFrontmatterKey } from '../frontmatter.js';
 
-// The Zoom app's public client id and the redirect URI registered for it. Development credentials pair with the
-// railway.app redirect and serve the developer's own account until the app is published; both move to the
-// production pair then. An environment variable overrides either for a build.
+// Where each platform signs in and reads from. The client id and redirect URI come from platformClients().
 export const PLATFORMS = {
-  zoom: {
-    name: 'Zoom', folder: 'zoom', authorize: 'https://zoom.us/oauth/authorize', api: 'https://api.zoom.us/v2',
-    clientId: process.env.QUORUM_ZOOM_CLIENT_ID || 'zy7lKyxyQSmPXc6rsNMzOQ',
-    redirectUri: process.env.QUORUM_ZOOM_REDIRECT_URI || 'https://relay-production-e257.up.railway.app/v1/connect/zoom/callback',
-  },
+  zoom: { name: 'Zoom', folder: 'zoom', authorize: 'https://zoom.us/oauth/authorize', api: 'https://api.zoom.us/v2' },
 };
+// The development Zoom app pairs with the railway.app redirect and serves the developer's own account; only a build
+// run from source uses it. A packaged build reads the production pair the release workflow writes into its
+// package.json (quorumOAuth.zoom), and its redirect defaults to the relay's own address.
+export const ZOOM_DEV = { clientId: 'zy7lKyxyQSmPXc6rsNMzOQ', redirectUri: 'https://relay-production-e257.up.railway.app/v1/connect/zoom/callback' };
+export const ZOOM_REDIRECT = 'https://relay.quorum.watch/v1/connect/zoom/callback';
+// the shell first (QUORUM_ZOOM_CLIENT_ID, QUORUM_ZOOM_REDIRECT_URI), then the packaged package.json, then the
+// development pair for a build from source. A packaged build without a client id shows Zoom as not available
+export function platformClients({ env = process.env, packaged = null, dev = false } = {}) {
+  const from = packaged?.quorumOAuth?.zoom ?? {};
+  return {
+    zoom: {
+      clientId: env.QUORUM_ZOOM_CLIENT_ID || from.clientId || (dev ? ZOOM_DEV.clientId : null),
+      redirectUri: env.QUORUM_ZOOM_REDIRECT_URI || from.redirectUri || (dev ? ZOOM_DEV.redirectUri : ZOOM_REDIRECT),
+    },
+  };
+}
 const DAY = 86400000;
 const LOOKBACK_DAYS = 30;
 const day = (d) => new Date(d).toISOString().slice(0, 10);
@@ -82,7 +92,7 @@ export function recordingNote(m, { transcriptRel = null, host = null } = {}) {
 export const fileNameFor = (m) => `${String(m.start_time ?? '').slice(0, 10) || 'undated'}-${slug(m.topic || 'zoom-meeting')}.md`;
 export const transcriptFile = (m) => (m.recording_files ?? []).find((f) => f.file_type === 'TRANSCRIPT' && (f.status ?? 'completed') === 'completed' && f.download_url) ?? null;
 
-export function createPlatforms({ account, settings, saveSettings = () => {}, meetingsDir, afterWrite = () => {}, keepKeys = (_prev, next) => next, log = () => {}, toUI = () => {}, openExternal = async () => {}, fetchImpl = globalThis.fetch, store = createTokenStore(), loopback = awaitLoopback, now = () => Date.now() }) {
+export function createPlatforms({ account, clients = {}, settings, saveSettings = () => {}, meetingsDir, afterWrite = () => {}, keepKeys = (_prev, next) => next, log = () => {}, toUI = () => {}, openExternal = async () => {}, fetchImpl = globalThis.fetch, store = createTokenStore(), loopback = awaitLoopback, now = () => Date.now() }) {
   const conf = () => (settings.platforms ??= {});
   const stateOf = (id) => (conf()[id] ??= { connected: false, account: null, accountId: null, name: null, connectedAt: null, lastSyncAt: null, imported: 0, since: null });
   const jobs = createJobs({ emit: (job) => toUI('platform-job', job), now });
@@ -210,8 +220,10 @@ export function createPlatforms({ account, settings, saveSettings = () => {}, me
     return { listed: meetings.length, imported, skipped: meetings.length - todo.length, waiting: waiting.length, failed };
   });
 
+  const app = (id) => (PLATFORMS[id] ? { ...PLATFORMS[id], clientId: null, redirectUri: null, ...clients[id] } : null);
+
   const connect = async (id) => {
-    const p = PLATFORMS[id];
+    const p = app(id);
     if (!p) return { error: 'Unknown platform.' };
     const no = ready();
     if (no) return { error: no };
@@ -261,7 +273,8 @@ export function createPlatforms({ account, settings, saveSettings = () => {}, me
     return { ok: true };
   };
 
-  const list = () => Object.entries(PLATFORMS).map(([id, p]) => {
+  const list = () => Object.keys(PLATFORMS).map((id) => {
+    const p = app(id);
     const s = stateOf(id);
     const dir = folderFor(id);
     return { id, name: p.name, available: !!p.clientId, connected: !!s.connected, account: s.account, accountName: s.name, lastSyncAt: s.lastSyncAt, imported: s.imported ?? 0, notes: dir ? countNotes(dir) : 0, folderPath: dir, job: jobs.snapshot(id) };

@@ -104,9 +104,11 @@ The client ids are public. They go into the build; the secrets for Notion, Slack
 | `QUORUM_GITHUB_APP_SLUG` | repository variable; shell or repo `.env` for a dev build | the Choose repositories link |
 | `QUORUM_GOOGLE_PICKER_API_KEY` | repository secret; shell or repo `.env` for a dev build | the Google Picker behind Add from Google Drive |
 | `QUORUM_GOOGLE_PICKER_APP_ID` | optional repository variable; shell or repo `.env` for a dev build | the Picker's app id when it is not the client id's project number |
+| `QUORUM_ZOOM_CLIENT_ID` | repository variable; shell for a dev build | Zoom cloud recordings (Cloud edition). The production Zoom app's client id; a build from source falls back to the development app, a packaged build never does |
+| `QUORUM_ZOOM_REDIRECT_URI` | optional repository variable; shell for a dev build | the redirect registered on that Zoom app; the default is `https://relay.quorum.watch/v1/connect/zoom/callback` in a packaged build |
 | `QUORUM_RELAY_URL` | optional; shell for a dev build | a relay other than `wss://relay.quorum.watch` |
 
-The release workflow writes the new ids into the packaged `package.json` as `quorumOAuth.<provider>.clientId` (and `quorumOAuth.github.slug`, and `quorumOAuth.googlePicker.apiKey` and `.appId`), the same way it writes `quorumGoogle`.
+The release workflow writes the new ids into the packaged `package.json` as `quorumOAuth.<provider>.clientId` (and `quorumOAuth.github.slug`, `quorumOAuth.zoom.redirectUri`, and `quorumOAuth.googlePicker.apiKey` and `.appId`), the same way it writes `quorumGoogle`.
 
 ### Relay (Railway, service relay)
 
