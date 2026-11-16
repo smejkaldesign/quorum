@@ -1,6 +1,6 @@
 # Memory agent
 
-Status: the local agent is built through Sprint 4 (past-fix re-check) and Sprint 3A (bulk plans, corrective past fixes, confidential marks, Apply memory fixes on its own). Team vault mode is a spec only. Related: [team-knowledge.md](team-knowledge.md), [workspace-knowledge.md](workspace-knowledge.md), [research](../research/memory-agent.md).
+Status: the local agent is built through Sprint 4 (past-fix re-check), Sprint 3A (bulk plans, corrective past fixes, confidential marks, Apply memory fixes on its own) and Sprint 3B (agent-drafted fixes, near-duplicates, rule records, ignore rules). Team vault mode is a spec only. Related: [team-knowledge.md](team-knowledge.md), [workspace-knowledge.md](workspace-knowledge.md), [research](../research/memory-agent.md).
 
 The memory agent keeps a vault's links and notes in good shape. It finds problems, proposes a fix for each, and changes a note only after a person approves. Every fix can be traced and undone.
 
@@ -94,16 +94,40 @@ Fixes that ran before the current rules can be wrong. Quorum checks every finish
 - An incremental sweep runs every 3 to 4 hours.
 - A full sweep runs once a day while the Mac is idle.
 
-### Earned auto-apply (Sprint 3)
+### Near-duplicates (`app/rules/nearDuplicates.js`)
 
-Auto-apply is off for every rule. A rule can earn it from its own record:
+The rule `note.near-duplicate` (version 1, review-only) finds two notes whose bodies share most of their text without being equal. Equal bodies stay with `note.duplicate`.
 
-- 30 or more decisions.
-- 95% or more approved.
-- No undo in the last 30 days.
-- Its fix is reversible.
+- Each body is read without its frontmatter, without heading lines that repeat in two or more notes of its folder, and without lines that repeat in three or more notes of its folder (template text). Wiki links count as their words.
+- The rest becomes runs of three words. A MinHash signature of 32 values with 16 bands of 2 picks candidate pairs; each candidate is compared exactly by Jaccard similarity.
+- A pair is a finding at a similarity of 0.5 or more. Bodies under 40 shingles are left out, and so are pairs between two folders that share five or more pairs (a mirror) and pairs of two notes named by their date (daily logs and recurring reports).
+- The fix is "link these notes": a `Related: [[path]]` line in the first note. When the notes already link each other there is no automatic fix. With drafting on, the agent drafts a merge or a rewrite instead.
 
-The person turns it on per rule in Settings. One in 20 auto-applied fixes still goes to review. An auto-applied fix is recorded with the decision `auto`.
+How the threshold was set: on a synthetic vault, copies with 2% to 5% of their words changed scored 0.58 to 0.86, copies with 10% scored 0.47 to 0.55, and unrelated notes scored 0.29 at most. Read-only on a real vault of 1,938 notes, 0.5 gives 55 pairs after the mirror filter and 16 after the dated-note filter. The first run takes about 0.85 s for 1,938 notes; later runs reuse each note's signature while its text and its folder's template lines are the same and take about 50 ms.
+
+### Agent-drafted fixes (`app/memoryDraft.js`)
+
+Settings > Memory has "Let the agent draft fixes", off by default. For the items the rules cannot decide, the agent drafts the fix:
+
+- A missing note to write (a link fix whose action is write): the agent writes the note from the linking notes.
+- A weak relink or alias (a review-only link fix): the agent says whether the links mean the note Quorum picked. When it says no, the item is held back with that reason.
+- Two notes that repeat each other: the agent writes one merged note, or, when the notes disagree on a fact, rewrites the one that is out of date.
+
+Rules for every draft:
+
+- The model runs through the person's own Claude Code sign-in (`claude -p` with `--tools ''`, no API key). It has no tools; it reads only the numbered note text Quorum puts in the prompt and writes nothing.
+- A note the read guard blocks is never sent. A note marked confidential (its frontmatter, the guardrails' keys, or a marked folder) is sent only when the person turns on "Let the agent read confidential notes". An item that needs a note the agent may not read gets no draft.
+- Each draft carries quotes (note path, line number, text) and a confidence (high, medium, low). Quorum checks every quote against the line it names, character for character, and drops the draft when any quote fails. The draft is kept with a hash of its notes and dropped when a note changes.
+- The draft shows in the row's details in Notifications and Memory health, and in the bulk plan. A drafted fix lists under "Check these first" unless its confidence is high and every quote checks. A drafted fix never applies on its own.
+- Approve runs it through the batch planner and the journal like any fix. A merge writes the kept note (its own frontmatter, the merged body, and the other note's name added as an alias so its links keep working) and moves the other note to the Trash.
+- At most 40 drafts a day by default (a setting). One draft runs at a time, once a minute at most, and never while a recording or a fix runs or while the person used the Mac in the last 2 minutes.
+- The model call is injected, so tests run a fake model.
+
+### Rule records and ignore rules (`app/ruleRecords.js`)
+
+Settings > Memory lists each rule with its open findings and its decisions from the decision log: approved, archived, undone and applied on its own, with what it does now (review only, waits for review, or applies its automatic fixes on its own). The records are information. The one switch is "Apply memory fixes on its own" (Decisions from Eric, 2026-11-16).
+
+When one rule's findings are archived three or more times (once per finding and evidence) with a shared folder, frontmatter key or target, Needs review shows one item proposing an ignore rule ("Stop flagging notes nothing links to in the folder drafts"). A folder or key proposal needs findings on two or more notes. Approve stores the rule in Quorum's settings per vault, never in the vault, and the rule's findings that match it stop showing. Archive turns the proposal down. Settings > Memory lists the ignore rules, each with Remove.
 
 ## Team vault mode
 

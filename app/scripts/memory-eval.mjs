@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Local eval of the Memory health link-fix proposer. Reads a vault and a labels file, runs the proposer READ-ONLY and
+// Local eval of the Memory health link-fix proposer, the review rules and near-duplicates. Reads a vault and a labels file, runs the proposer READ-ONLY and
 // prints how often its fix matches the labeled fix for the broken-link categories. It never writes to the vault or
 // anywhere else: it builds the index in memory and reads git refs.
 //
@@ -139,4 +139,24 @@ if (existsSync(path.join(appDir, 'rules', 'index.js'))) {
   for (const f of findings) per[f.ruleId] = (per[f.ruleId] ?? 0) + 1;
   console.log(`findings in the vault: ${findings.length} (${Object.entries(per).map(([id, n]) => `${RULE_LABELS[id] ?? id} ${n}`).join(', ')})`);
   console.log(`rules took ${took} ms (${Object.entries(ms).map(([id, t]) => `${id} ${t}`).join(', ')})`);
+
+  // Near-duplicates (rules/nearDuplicates.js), when the checkout has the rule: a duplicate or contradiction label with
+  // two or more files is a hit when one near-duplicate finding names two of them. Numbers only
+  const near = findings.filter((f) => f.ruleId === 'note.near-duplicate');
+  if (existsSync(path.join(appDir, 'rules', 'nearDuplicates.js'))) {
+    const { THRESHOLD } = await load('rules/nearDuplicates.js');
+    const pairLabels = labels.filter((l) => ['duplicate', 'contradiction'].includes(l.category) && (l.files ?? []).length >= 2);
+    const s = { tp: 0, fp: 0, fn: 0, tn: 0 };
+    const nearLines = [];
+    for (const label of pairLabels) {
+      const hit = near.some((f) => (label.files ?? []).filter((file) => names(f, file)).length >= 2);
+      const k = label.negative ? (hit ? 'fp' : 'tn') : hit ? 'tp' : 'fn';
+      s[k]++;
+      nearLines.push(`${label.id}\t${label.category}\t${label.negative ? 'negative' : 'positive'}\t${k.toUpperCase()}`);
+    }
+    if (!quiet) console.log(`\n${nearLines.join('\n')}`);
+    const sameDir = near.filter((f) => path.dirname(f.notes[0]) === path.dirname(f.notes[1])).length;
+    console.log(`\nnear-duplicates (threshold ${THRESHOLD}): ${near.length} pairs in the vault (${sameDir} in one folder, ${near.length - sameDir} across folders), ${near.filter((f) => f.fix).length} with a link fix`);
+    console.log(`near-duplicates on pair labels: precision ${pct(s.tp, s.tp + s.fp)} (${s.tp} TP, ${s.fp} FP), recall ${pct(s.tp, s.tp + s.fn)} (${s.fn} missed), negatives left alone ${s.tn}/${s.tn + s.fp}`);
+  }
 }
