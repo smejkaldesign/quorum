@@ -585,7 +585,7 @@ declare global {
       eventChat(id: string): Promise<{ id: string; turns: { q: string; a: string }[] } | null>;
       meetingAsk(ev: CalendarEvent, question: string, history: { q: string; a: string }[], chatId?: string): Promise<{ chatId: string; text: string }>;
       recordSession(): Promise<{ ok: true } | { error: string }>;
-      meetingFolderApps(): Promise<{ rel: string; app: string }[]>;
+      syncedFolders(): Promise<import('./syncedFolders').SyncedFolder[]>;
       noteSummarize(file: string): Promise<{ ok: true } | { error: string }>;
       sessionSummarize(answers: { names?: Record<string, string>; people?: string[]; me?: string | null; lead?: string | null }): Promise<unknown>;
       guardrailsGet(opts?: { fresh?: boolean }): Promise<GuardrailsState>;
