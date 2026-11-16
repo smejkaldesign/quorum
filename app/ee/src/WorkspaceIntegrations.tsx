@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { AccountState, ConnectorPolicyInfo, IntegrationConfig, IntegrationDraft, IntegrationMode, Member, WorkspaceIntegration } from '../../src/quorum';
-import { Row, Toggle } from '../../src/controls';
+import { Modal, Row, Toggle } from '../../src/controls';
 import { IconGrid, IconPlus, IconTrash } from '../../src/icons';
 import { connectorsFor, type LibraryConnector } from '../../connectors/library';
 import { POLICY_CHANGED, workspaceStateOf } from '../../connectors/approval';
@@ -201,73 +201,69 @@ export function IntegrationForm({ connector: x, row, members, onDone }: { connec
   };
   const secretLabel = auth === 'oauth_client' ? 'Client secret' : 'API key';
   return (
-    <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onDone(false); }}
-      onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onDone(false); } }}>
-      <div className="modal conn-sheet wsi-form" role="dialog" aria-modal="true" aria-labelledby="wsi-title">
-        <h2 id="wsi-title">{row ? `Edit ${x.name}` : `Enable ${x.name}`}</h2>
-        <div className="wsi-modes" role="radiogroup" aria-label="Identity">
-          <label className={`wsi-mode${mode === 'org' ? ' on' : ''}`}><input type="radio" name="wsi-mode" checked={mode === 'org'} onChange={() => setMode('org')} />
-            <strong>Org shared identity</strong><span>One identity your organization provisions. Quorum uses it on the organization's behalf; members never see or authorize it.</span></label>
-          <label className={`wsi-mode${mode === 'personal' ? ' on' : ''}`}><input type="radio" name="wsi-mode" checked={mode === 'personal'} onChange={() => { setMode('personal'); setSecret(''); }} />
-            <strong>Personal</strong><span>Each member authorizes their own {x.name} account. Quorum acts as that member, with only the access they granted.</span></label>
-        </div>
-        {mode === 'org' ? <>
-          <div className="set-line">
-            <div className="set-label"><strong>Auth method</strong></div>
-            <select className="set-select" aria-label="Auth method" value={auth} onChange={(e) => setAuth(e.target.value as IntegrationConfig['auth'])}>
-              <option value="api_key">API key</option>
-              <option value="oauth_client">OAuth client</option>
-            </select>
-          </div>
-          {auth === 'oauth_client' && (
-            <div className="set-line">
-              <div className="set-label"><strong>Client id</strong><span>Your organization's OAuth app</span></div>
-              <label className="set-field wide"><input aria-label="Client id" value={clientId} onChange={(e) => setClientId(e.target.value)} /></label>
-            </div>
-          )}
-          <div className="set-line stacked">
-            <div className="set-label"><strong>{secretLabel}</strong><span>Stored in the server vault and never returned to this app.</span></div>
-            <label className="set-field wide"><input type="password" autoComplete="off" aria-label={secretLabel} placeholder={keeps ? `•••••••• ${row?.secretLast4 ?? ''}`.trim() : `Paste the ${secretLabel.toLowerCase()}`} value={secret} onChange={(e) => { setSecret(e.target.value); setNote(''); }} /></label>
-            {keeps && <span className="muted wsi-hint">Saved. Enter a new value to replace it, or leave it blank to keep it.</span>}
-            {stored && !keeps && <span className="muted wsi-hint">The stored secret belongs to the other auth method. Paste a new one to switch.</span>}
-          </div>
-        </> : (
-          <div className="set-card conn-table wsi-personal">
-            <div className="conn-kv"><span>Auth method</span><span>{authOf(x, 'personal', null)}</span></div>
-            <div className="conn-kv"><span>Connections</span><span>{row?.mode === 'personal' ? `${row.connections} active` : 'None yet'}</span></div>
-            <div className="conn-kv"><span>Quorum MCP endpoint</span><span><code>{QUORUM_MCP}</code> on each member's Mac</span></div>
-            {stored && <p className="muted wsi-hint">Switching to personal deletes the stored org secret.</p>}
-          </div>
-        )}
+    <Modal titleId="wsi-title" title={row ? `Edit ${x.name}` : `Enable ${x.name}`} className="conn-sheet wsi-form" onClose={() => onDone(false)}>
+      <div className="wsi-modes" role="radiogroup" aria-label="Identity">
+        <label className={`wsi-mode${mode === 'org' ? ' on' : ''}`}><input type="radio" name="wsi-mode" checked={mode === 'org'} onChange={() => setMode('org')} />
+          <strong>Org shared identity</strong><span>One identity your organization provisions. Quorum uses it on the organization's behalf; members never see or authorize it.</span></label>
+        <label className={`wsi-mode${mode === 'personal' ? ' on' : ''}`}><input type="radio" name="wsi-mode" checked={mode === 'personal'} onChange={() => { setMode('personal'); setSecret(''); }} />
+          <strong>Personal</strong><span>Each member authorizes their own {x.name} account. Quorum acts as that member, with only the access they granted.</span></label>
+      </div>
+      {mode === 'org' ? <>
         <div className="set-line">
-          <div className="set-label"><strong>Accountable owner</strong><span>The member who answers for this connector</span></div>
-          <select className="set-select" aria-label="Accountable owner" value={ownerId} onChange={(e) => setOwnerId(e.target.value)}>
-            <option value="">No one yet</option>
-            {members.map((m) => <option key={m.userId} value={m.userId}>{m.name || m.email}</option>)}
+          <div className="set-label"><strong>Auth method</strong></div>
+          <select className="set-select" aria-label="Auth method" value={auth} onChange={(e) => setAuth(e.target.value as IntegrationConfig['auth'])}>
+            <option value="api_key">API key</option>
+            <option value="oauth_client">OAuth client</option>
           </select>
         </div>
-        <div className="set-line stacked">
-          <div className="wsi-switch-line">
-            <div className="set-label"><strong>Custom scopes</strong><span>Ask {x.name} for these scopes instead of Quorum's defaults</span></div>
-            <Toggle on={customScopes} onChange={setCustomScopes} />
+        {auth === 'oauth_client' && (
+          <div className="set-line">
+            <div className="set-label"><strong>Client id</strong><span>Your organization's OAuth app</span></div>
+            <label className="set-field wide"><input aria-label="Client id" value={clientId} onChange={(e) => setClientId(e.target.value)} /></label>
           </div>
-          {customScopes && <>
-            {scopes.length > 0 && <div className="wsi-chips">{scopes.map((s) => <button key={s} className="wsi-chip" aria-label={`Remove ${s}`} onClick={() => setScopes(scopes.filter((y) => y !== s))}><code>{s}</code> ×</button>)}</div>}
-            <div className="wsi-scope-add">
-              <label className="set-field wide"><input aria-label="Add a scope" placeholder="Add a scope (for example chat:write)" value={scopeText} onChange={(e) => setScopeText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addScope(); } }} /></label>
-              <button className="icon-btn" aria-label="Add scope" onClick={addScope}><IconPlus width={15} height={15} /></button>
-            </div>
-          </>}
+        )}
+        <div className="set-line stacked">
+          <div className="set-label"><strong>{secretLabel}</strong><span>Stored in the server vault and never returned to this app.</span></div>
+          <label className="set-field wide"><input type="password" autoComplete="off" aria-label={secretLabel} placeholder={keeps ? `•••••••• ${row?.secretLast4 ?? ''}`.trim() : `Paste the ${secretLabel.toLowerCase()}`} value={secret} onChange={(e) => { setSecret(e.target.value); setNote(''); }} /></label>
+          {keeps && <span className="muted wsi-hint">Saved. Enter a new value to replace it, or leave it blank to keep it.</span>}
+          {stored && !keeps && <span className="muted wsi-hint">The stored secret belongs to the other auth method. Paste a new one to switch.</span>}
         </div>
-        {note && <p className="set-error">{note}</p>}
-        <div className="modal-actions">
-          <span />
-          <span className="modal-actions-end">
-            <button className="pill" onClick={() => onDone(false)}>Cancel</button>
-            <button className="pill primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : row ? 'Save' : 'Enable'}</button>
-          </span>
+      </> : (
+        <div className="set-card conn-table wsi-personal">
+          <div className="conn-kv"><span>Auth method</span><span>{authOf(x, 'personal', null)}</span></div>
+          <div className="conn-kv"><span>Connections</span><span>{row?.mode === 'personal' ? `${row.connections} active` : 'None yet'}</span></div>
+          <div className="conn-kv"><span>Quorum MCP endpoint</span><span><code>{QUORUM_MCP}</code> on each member's Mac</span></div>
+          {stored && <p className="muted wsi-hint">Switching to personal deletes the stored org secret.</p>}
         </div>
+      )}
+      <div className="set-line">
+        <div className="set-label"><strong>Accountable owner</strong><span>The member who answers for this connector</span></div>
+        <select className="set-select" aria-label="Accountable owner" value={ownerId} onChange={(e) => setOwnerId(e.target.value)}>
+          <option value="">No one yet</option>
+          {members.map((m) => <option key={m.userId} value={m.userId}>{m.name || m.email}</option>)}
+        </select>
       </div>
-    </div>
+      <div className="set-line stacked">
+        <div className="wsi-switch-line">
+          <div className="set-label"><strong>Custom scopes</strong><span>Ask {x.name} for these scopes instead of Quorum's defaults</span></div>
+          <Toggle on={customScopes} onChange={setCustomScopes} />
+        </div>
+        {customScopes && <>
+          {scopes.length > 0 && <div className="wsi-chips">{scopes.map((s) => <button key={s} className="wsi-chip" aria-label={`Remove ${s}`} onClick={() => setScopes(scopes.filter((y) => y !== s))}><code>{s}</code> ×</button>)}</div>}
+          <div className="wsi-scope-add">
+            <label className="set-field wide"><input aria-label="Add a scope" placeholder="Add a scope (for example chat:write)" value={scopeText} onChange={(e) => setScopeText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addScope(); } }} /></label>
+            <button className="icon-btn" aria-label="Add scope" onClick={addScope}><IconPlus width={15} height={15} /></button>
+          </div>
+        </>}
+      </div>
+      {note && <p className="set-error">{note}</p>}
+      <div className="modal-actions">
+        <span />
+        <span className="modal-actions-end">
+          <button className="pill" onClick={() => onDone(false)}>Cancel</button>
+          <button className="pill primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : row ? 'Save' : 'Enable'}</button>
+        </span>
+      </div>
+    </Modal>
   );
 }

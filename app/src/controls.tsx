@@ -30,3 +30,20 @@ export function useMenu() {
   }, [open]);
   return [open, setOpen] as const;
 }
+
+// a centered sheet over a dimmed scrim. A press on the scrim or Escape calls onClose; locked ignores both while work runs.
+// escape={false} is for sheets that listen for Escape on the window themselves
+export function Modal({ titleId, title, className, role = 'dialog', describedBy, onClose, escape = true, locked, children }: {
+  titleId: string; title: ReactNode; className?: string; role?: 'dialog' | 'alertdialog'; describedBy?: string;
+  onClose?: () => void; escape?: boolean; locked?: boolean; children?: ReactNode;
+}) {
+  return (
+    <div className="palette-scrim" onMouseDown={onClose && ((e) => { if (e.target === e.currentTarget && !locked) onClose(); })}
+      onKeyDown={onClose && escape ? (e) => { if (e.key === 'Escape' && !locked) { e.stopPropagation(); onClose(); } } : undefined}>
+      <div className={className ? `modal ${className}` : 'modal'} role={role} aria-modal="true" aria-labelledby={titleId} aria-describedby={describedBy}>
+        <h2 id={titleId}>{title}</h2>
+        {children}
+      </div>
+    </div>
+  );
+}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ConnectorId, ConnectorRole, ModelSourceStatus, Providers, Settings } from './quorum';
-import { Row, useMenu } from './controls';
+import { Modal, Row, useMenu } from './controls';
 import { BY_ID, CATALOG, MODEL_ROLES, ROLES, ROLE_LABEL, canServe, modelName, needsBaseUrl, needsKey, rolesFor, type ConnectorManifest } from '../connectors/catalog';
 import { MODELS } from './Composer';
 import { IconChat, IconCheck, IconCode, IconExternal, IconGrid, IconMic, IconMore, IconNotes, IconPerson, IconPlus, IconReset, IconTrash, ProviderMark, Wave } from './icons';
@@ -200,10 +200,7 @@ function ProviderRow({ p, st, settings, defaults, note, onDefault, onTest, onEdi
 
 function Scrim({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
-    <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
-      onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}>
-      <div className="modal conn-sheet" role="dialog" aria-modal="true" aria-labelledby="conn-title"><h2 id="conn-title">{title}</h2>{children}</div>
-    </div>
+    <Modal titleId="conn-title" title={title} className="conn-sheet" onClose={onClose}>{children}</Modal>
   );
 }
 
