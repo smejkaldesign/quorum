@@ -10,7 +10,7 @@ import { AUTHORITY, datesIn, frontmatterEnd, indexNote, modalityOf } from './con
 
 export const MODALITY = ['decided', 'proposed', 'considering', 'rejected', 'stated'];
 export const MAX_CLAIMS = 30;
-const MAX_NOTE = 12000;
+export const MAX_NOTE = 12000;
 const MAX_FIELD = 160;
 // frontmatter keys that describe the note itself and never state a fact about its subject
 const META_KEYS = new Set(['title', 'aliases', 'alias', 'tags', 'tag', 'created', 'updated', 'modified', 'date', 'decided', 'type', 'confidential', 'last_verified', 'source', 'sources', 'related', 'id', 'cssclass', 'cssclasses', 'publish', 'permalink', 'summary', 'description', 'author', 'authors', 'url', 'links', 'category', 'categories', 'kind', 'template', 'superseded_by', 'supersededby', 'replaced_by', 'attendees', 'participants']);
@@ -63,17 +63,18 @@ export const SYSTEM = [
 ].join('\n');
 
 // the prompt that asks for one note's claims
-export function claimPrompt(n) {
+export function claimPrompt(notes) {
+  const list = Array.isArray(notes) ? notes : [notes];
   const ask = [
-    `List the claims the note ${n.rel} makes about the state of things: decisions, choices of tools or vendors, prices, plans, owners, statuses, counts, dates and deadlines.`,
+    `List the claims ${list.length === 1 ? `the note ${list[0].rel} makes` : `each of the ${list.length} notes below makes`} about the state of things: decisions, choices of tools or vendors, prices, plans, owners, statuses, counts, dates and deadlines.`,
     'Skip opinions, questions, open tasks and claims about the note itself.',
     'subject: the thing the claim is about, as the note names it (the wiki link target when the line links it). attribute: what about it, in two or three words. value: what the note says, short.',
     'polarity: "-" when the line says the value does not hold, else "+". modality: decided, proposed, considering, rejected or stated.',
     'date: the YYYY-MM-DD date the quoted lines give for this claim, or null. scope: the project, environment, team or person the claim is limited to, or null.',
-    `At most ${MAX_CLAIMS} claims.`,
-    'Answer: { "claims": [{ "subject": "", "attribute": "", "value": "", "polarity": "+" | "-", "modality": "", "date": null, "scope": null, "quote": "<exact text>", "line": <first line number>, "line_end": <last line number> }] }',
+    `At most ${MAX_CLAIMS} claims per note. path is the path of the note the quote comes from, and line numbers count within that note.`,
+    'Answer: { "claims": [{ "path": "<note path>", "subject": "", "attribute": "", "value": "", "polarity": "+" | "-", "modality": "", "date": null, "scope": null, "quote": "<exact text>", "line": <first line number>, "line_end": <last line number> }] }',
   ];
-  return { system: SYSTEM, prompt: `${ask.join('\n')}\n\n<note path="${n.rel}">\n${numbered(n.text)}\n</note>` };
+  return { system: SYSTEM, prompt: `${ask.join('\n')}\n\n${list.map((n) => `<note path="${n.rel}">\n${numbered(n.text)}\n</note>`).join('\n\n')}` };
 }
 
 // the first JSON object in a reply, or null
@@ -97,9 +98,21 @@ export function quoteMatches(text, line, lineEnd, quote) {
 
 // a model reply as claims: each claim with a quote that matches its lines and every field it needs; the rest dropped.
 // Answers { claims, dropped }
+// a reply for several notes checked note by note: each claim goes to the note its path names, and its quote is checked
+// against that note only. Answers { byRel: Map(rel -> { claims, dropped }), stray } or { why } when there is no answer
+export function checkClaimsBatch(notes, reply, model = 'claude') {
+  const j = parseJson(reply);
+  if (!Array.isArray(j?.claims)) return { why: 'The agent did not answer with claims' };
+  const one = notes.length === 1;
+  const byRel = new Map();
+  for (const n of notes) byRel.set(n.rel, checkClaims(n, j.claims.filter((c) => c?.path === n.rel || (one && c?.path == null)), model));
+  const stray = j.claims.filter((c) => !notes.some((n) => c?.path === n.rel) && !(one && c?.path == null)).length;
+  return { byRel, stray };
+}
+
 export function checkClaims(n, reply, model = 'claude') {
   const ix = indexNote(n);
-  const j = parseJson(reply);
+  const j = Array.isArray(reply) ? { claims: reply } : parseJson(reply);
   const list = Array.isArray(j?.claims) ? j.claims.slice(0, MAX_CLAIMS) : null;
   if (!list) return { claims: [], dropped: 0, why: 'The agent did not answer with claims' };
   const lines = String(n.text ?? '').split('\n');

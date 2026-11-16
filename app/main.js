@@ -3459,7 +3459,8 @@ const drafter = createDrafter({
 // the minute only when the drafter has nothing to do. A note it read or a pair it judged is checked again at once
 const contradictionAgent = createContradictionAgent({
   file: path.join(DATA_DIR, 'memory-contradictions.json'),
-  model: (prompt, system) => claudeText({ prompt, system, model: 'sonnet', cwd: tmpdir(), timeoutMs: 180000 }),
+  // one call reads up to 20 notes, so it gets more time than a draft
+  model: (prompt, system) => claudeText({ prompt, system, model: 'sonnet', cwd: tmpdir(), timeoutMs: 300000 }),
   modelId: 'sonnet',
   enabled: () => settings.memoryDrafts === true && !sweepPaused() && !!brain() && !!vindex,
   cap: () => Math.max(0, (settings.memoryDraftCap ?? DAILY_CAP) - drafter.status().used),

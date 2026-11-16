@@ -99,10 +99,12 @@ export function indexNote(n) {
     decisions, supersededLines: superseded, replaces: [...replaces], dates, links: [...new Set((n.note?.links ?? []).map((l) => l.target))],
     date, dateSource: source, authority: authorityOf(n.rel, props), fmEnd,
   };
-  // a note goes on to claim extraction when its body has a sentence to read; priority (below) puts decision records,
-  // notes with decision phrases and dated notes first
+  // a note goes on to claim extraction when it has a decision phrase, a date (frontmatter, file name or body), a status
+  // field, a superseded marker, or is a decision record (the rule also sends a note that links to one of those). It needs a sentence to
+  // read. priority (below) puts decision records, notes with decision phrases and dated notes first
   const body = lines.slice(fmEnd).filter((l) => l.trim() && !/^\s*#/.test(l)).join(' ');
-  out.worth = body.replace(/\s+/g, ' ').trim().length >= 12;
+  out.readable = body.replace(/\s+/g, ' ').trim().length >= 12;
+  out.worth = out.readable && (out.decisions.length > 0 || out.date != null || out.dates.length > 0 || out.status != null || out.superseded || out.supersededLines.length > 0 || out.authority === AUTHORITY.decision);
   out.priority = (out.authority === AUTHORITY.decision ? 0 : 10) + (out.decisions.length ? 0 : 5) + (out.date || out.dates.length ? 0 : 3) + out.authority;
   cache.set(n.rel, out);
   return out;

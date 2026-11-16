@@ -39,9 +39,14 @@ export function analyze(ctx) {
   const byRel = new Map(live.map((n) => [n.rel, n]));
   provider?.begin();
   const index = new Map(live.map((n) => [n.rel, indexNote(n)]));
-  const claims = live.flatMap((n) => [...claimsOf(n), ...(provider ? provider.claimsOf(n) : [])]);
+  const resolve = ctx.resolve ?? (() => null);
+  // stage 1 sends a note on when it has a decision phrase, a body date, a status or a marker; a note without one goes
+  // too when it links to a note that goes, since it may speak of the same subject
+  const read = new Set([...index.values()].filter((x) => x.worth).map((x) => x.rel));
+  const linked = new Set(live.filter((n) => !read.has(n.rel) && index.get(n.rel).readable && (n.note?.links ?? []).some((l) => read.has(resolve(l.target, n.rel)))).map((n) => n.rel));
+  const claims = live.flatMap((n) => [...claimsOf(n), ...(provider ? provider.claimsOf(n, { worth: read.has(n.rel) || linked.has(n.rel) }) : [])]);
   const sx = subjectIndex(live.map((n) => ({ rel: n.rel, title: n.note?.title, aliases: n.note?.aliases })));
-  const { pairs, groups } = pairClaims(claims, sx, ctx.resolve ?? (() => null));
+  const { pairs, groups } = pairClaims(claims, sx, resolve);
   const ix = (rel) => index.get(rel) ?? null;
   const lineOf = (rel, n) => { const t = byRel.get(rel)?.text; return t == null ? null : (t.split('\n')[n - 1] ?? null)?.replace(/\r$/, '') ?? null; };
   const results = pairs.map((p) => {
@@ -53,7 +58,7 @@ export function analyze(ctx) {
     return { p, res };
   });
   provider?.end([...byRel.keys()], pairs.map((p) => p.key));
-  return { notes: live.length, worth: [...index.values()].filter((x) => x.worth).length, claims, pairs, groups, results, byRel };
+  return { notes: live.length, worth: read.size, linked: linked.size, toRead: live.filter((n) => read.has(n.rel) || linked.has(n.rel)).map((n) => ({ rel: n.rel, text: n.text, rank: index.get(n.rel).priority + (read.has(n.rel) ? 0 : 20) })), claims, pairs, groups, results, byRel };
 }
 
 export function run(ctx) {

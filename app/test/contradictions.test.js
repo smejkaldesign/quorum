@@ -13,10 +13,10 @@ import { createResolver, parseNote } from '../linkparse.js';
 import { buildPlan, checkFirst, effects } from '../batchPlan.js';
 import { findingItem, itemLine } from '../reviewItems.js';
 import { authorityOf, indexNote, modalityOf, noteDate } from '../contradictionIndex.js';
-import { checkClaims, claimPrompt, quoteMatches, structuredClaims } from '../contradictionClaims.js';
+import { checkClaims, checkClaimsBatch, claimPrompt, quoteMatches, structuredClaims } from '../contradictionClaims.js';
 import { acronymOf, attributeKey, normKey, pairClaims, resolveSubject, sameValue, subjectIndex } from '../contradictionPairs.js';
 import { annotateLine, autoCriteria, checkJudge, resolvePair, ruleBar, unannotateLine, wilson } from '../contradictionResolve.js';
-import { createContradictionAgent } from '../contradictionAgent.js';
+import { BATCH_CHARS, createContradictionAgent, packBatches } from '../contradictionAgent.js';
 import { analyze, run } from '../rules/contradictions.js';
 
 const DIR = path.join(path.dirname(new URL(import.meta.url).pathname), 'fixtures/contradictions');
@@ -45,13 +45,16 @@ async function fakeModel(prompt) {
     const label = JUDGE[[ra, rb].sort().join('|')] ?? 'same';
     return JSON.stringify({ label, quotes: [{ path: ra, line: +la, text: qa }, { path: rb, line: +lb, text: qb }], reason: 'test' });
   }
-  const rel = prompt.match(/<note path="([^"]+)">/)[1];
-  const lines = prompt.split('<note')[1].split('\n').slice(1);
-  const claims = (CLAIMS[rel] ?? []).map((c) => {
-    const hit = lines.find((l) => l.includes(c.quote));
-    const line = hit ? Number(hit.split(':')[0]) : 1;
-    return { ...c, line, line_end: line };
-  });
+  const claims = [];
+  for (const block of prompt.split('<note path="').slice(1)) {
+    const rel = block.slice(0, block.indexOf('"'));
+    const lines = block.split('\n').slice(1);
+    for (const c of CLAIMS[rel] ?? []) {
+      const hit = lines.find((l) => l.includes(c.quote));
+      const line = hit ? Number(hit.split(':')[0]) : 1;
+      claims.push({ path: rel, ...c, line, line_end: line });
+    }
+  }
   return `Here are the claims.\n${JSON.stringify({ claims })}`;
 }
 
@@ -93,6 +96,9 @@ describe('stage 1 index', () => {
     expect(ix.replaces).toEqual(['golf-v0']);
     expect(ix.worth).toBe(true);
     expect(indexNote(note('notes/plain.md', '# Plain\n\nOk.\n')).worth).toBe(false);
+    // a sentence with no decision phrase, date, status or marker stays out; a frontmatter date brings it in
+    expect(indexNote(note('notes/plain2.md', '# Plain\n\nThe team likes tea in the morning.\n')).worth).toBe(false);
+    expect(indexNote(note('notes/plain3.md', '---\ndate: 2026-01-01\n---\nThe team likes tea in the morning.\n')).worth).toBe(true);
   });
 });
 
@@ -106,6 +112,36 @@ describe('stage 2 claims', () => {
     ]);
     expect(c[2]).toMatchObject({ date: '2026-05-03', dateSource: 'text' });
     expect(c[1]).toMatchObject({ date: '2026-05-01', dateSource: 'name', subjectLink: true });
+  });
+
+  it('reads several notes in one call and checks each claim against the note its path names', () => {
+    const a = note('projects/a.md', '# A\n\nA runs on SQLite.\n');
+    const b = note('projects/b.md', '# B\n\nB runs on Postgres.\n');
+    const p = claimPrompt([a, b]).prompt;
+    expect(p).toContain('<note path="projects/a.md">\n1: # A');
+    expect(p).toContain('<note path="projects/b.md">\n1: # B');
+    const reply = JSON.stringify({ claims: [
+      { path: 'projects/a.md', subject: 'A', attribute: 'database', value: 'SQLite', quote: 'A runs on SQLite.', line: 3 },
+      { path: 'projects/b.md', subject: 'B', attribute: 'database', value: 'Postgres', quote: 'B runs on Postgres.', line: 3 },
+      { path: 'projects/b.md', subject: 'A', attribute: 'database', value: 'SQLite', quote: 'A runs on SQLite.', line: 3 },
+      { path: 'projects/c.md', subject: 'C', attribute: 'database', value: 'x', quote: 'C runs on x here.', line: 1 },
+    ] });
+    const r = checkClaimsBatch([a, b], reply, 'sonnet');
+    expect(r.byRel.get('projects/a.md').claims.map((c) => c.value)).toEqual(['SQLite']);
+    expect(r.byRel.get('projects/b.md')).toMatchObject({ dropped: 1 });
+    expect(r.byRel.get('projects/b.md').claims.map((c) => c.value)).toEqual(['Postgres']);
+    expect(r.stray).toBe(1);
+    expect(checkClaimsBatch([a, b], 'nothing').why).toMatch(/did not answer/);
+  });
+
+  it('packs notes into calls by priority up to the budget', () => {
+    const e = (rel, rank, n) => ({ rel, rank, text: 'x'.repeat(n) });
+    const batches = packBatches([e('c', 3, 12000), e('a', 1, 12000), e('b', 2, 30000), e('d', 4, 12000), e('e', 5, 100)]);
+    expect(batches.map((b) => b.map((x) => x.rel))).toEqual([['a', 'b', 'c'], ['d', 'e']]);
+    // a note over the budget is cut to 12,000 characters and still gets its own call
+    expect(packBatches([e('big', 1, 90000)]).length).toBe(1);
+    expect(packBatches(Array.from({ length: 45 }, (_, i) => e(`n${i}`, 1, 10))).length).toBe(3);
+    expect(BATCH_CHARS).toBeLessThanOrEqual(48000);
   });
 
   it('keeps model claims whose quotes match their lines and drops the rest', () => {
@@ -237,8 +273,14 @@ describe('the pipeline on the synthetic vault', () => {
     const got = Object.fromEntries(found.map((f) => [pairName(f), { rule: f.facts[0].slice(5), auto: f.autoFix }]));
     expect(Object.keys(got).sort()).toEqual(Object.keys(EXPECTED).sort());
     for (const [k, v] of Object.entries(EXPECTED)) expect(got[k], k).toEqual({ rule: v.rule, auto: v.auto });
-    // the confidential note never reached the model
+    // the confidential note never reached the model, and the notes went in calls of at most 20
     expect(sent.some((s) => s.includes('projects/kilo.md'))).toBe(false);
+    const calls = sent.filter((s) => s.includes('<note path='));
+    const read = calls.reduce((n, s) => n + s.split('<note path=').length - 1, 0);
+    expect(calls.length).toBe(Math.ceil(read / 20));
+    // projects/india.md has no date, decision or status; it is read because it links to a note that is
+    expect(sent.some((s) => s.includes('<note path="projects/india.md">'))).toBe(true);
+    expect(sent.some((s) => s.includes('<note path="products/nimbus-cloud-edition.md">'))).toBe(true);
     // both quotes show on the item
     const beacon = found.find((f) => f.notes[0] === 'projects/beacon.md');
     expect(beacon.evidence[0]).toBe('Older: projects/beacon.md line 7 (2026-02-01): “Beacon stores its data in Postgres.”');
