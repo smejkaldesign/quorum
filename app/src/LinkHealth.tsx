@@ -171,3 +171,42 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
     </div>
   );
 }
+
+// The drawer for one Memory health issue in an open note: everything the Needs review notification has (the issue, its
+// facts, the problem, what fixing it does, the recommendation, where the links come from), with Decline and Approve
+export function IssueDrawer({ issue, at, total, locked, busy, onOpen, onDecide, onClose }: {
+  issue: Issue; at: number; total: number; locked: boolean; busy: boolean; onOpen: (rel: string) => void; onDecide: (yes: boolean) => void; onClose: () => void;
+}) {
+  const shown = issue.sources.slice(0, 8);
+  const c = issue.candidate;
+  return (
+    <aside className="mh-drawer" role="dialog" aria-label="Memory health issue" onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}>
+      <header className="mh-drawer-head">
+        <img src={markReview} alt="" width={24} height={24} />
+        <span className="mh-drawer-kind">Needs review · {at + 1} of {total}</span>
+        <button className="icon-btn" aria-label="Close" data-tip="Close" onClick={onClose}><IconClose width={16} height={16} /></button>
+      </header>
+      <div className="mh-drawer-body">
+        <h3>{issue.title}</h3>
+        <p className="nf-sub">{footerFacts(issue).join(' • ')}</p>
+        <IssueParts parts={[['Problem', issue.problem], ['If fixed', issue.effect], ['Recommended', issue.recommend]]} />
+        <dl className="mh-parts mh-facts">
+          <div><dt>Missing note</dt><dd>{issue.target}</dd></div>
+          {c && <div><dt>Closest note</dt><dd><button className="keeper-link" onClick={() => onOpen(c.rel)}>{c.name ?? c.title}</button></dd></div>}
+          <div>
+            <dt>Linked from</dt>
+            <dd className="mh-sources">
+              {shown.map((rel) => <button key={rel} className="keeper-link" data-tip={rel} onClick={() => onOpen(rel)}>{rel.split('/').pop()!.replace(/\.md$/i, '')}</button>)}
+              {issue.sources.length > shown.length && <span className="muted">and {issue.sources.length - shown.length} more</span>}
+            </dd>
+          </div>
+          <div><dt>If you decline</dt><dd>The links stay as they are, and the issue moves to Left as is in Memory health.</dd></div>
+        </dl>
+      </div>
+      <footer className="mh-drawer-foot">
+        {issue.action !== 'leave' && <button className="act-pill" disabled={busy || locked} onClick={() => onDecide(false)}>Decline</button>}
+        <button className="act-pill primary" disabled={busy || locked} data-tip={locked ? 'Waits until the run writing this note finishes' : undefined} onClick={() => onDecide(true)}>Approve</button>
+      </footer>
+    </aside>
+  );
+}

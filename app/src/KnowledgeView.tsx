@@ -11,7 +11,7 @@ import { fileIssues, healthMarks, issueOf, type Issue } from '../memoryHealth.js
 import { Graph, type GraphData, type GraphView } from './Graph';
 import { NotePanel, Palette, type PaletteItem, type PaletteMode } from './NoteTools';
 import { reportMemoryNote } from './navHistory';
-import { LinkHealth, acceptIssue, leftOf, migrateLeft, rejectIssue } from './LinkHealth';
+import { IssueDrawer, LinkHealth, acceptIssue, leftOf, migrateLeft, rejectIssue } from './LinkHealth';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
 import { IconChevron, IconClose, IconCollapse, IconExpand, IconFolder, IconGraph, IconNewFolder, IconNewNote, IconHistory, IconLink, IconMore, IconReset, IconSearch, IconSidebar, IconSliders, IconSort } from './icons';
@@ -64,6 +64,13 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   // banner shows
   const [issueReview, setIssueReview] = useState<{ line: number; issue: Issue }[] | null>(null);
   const [cursor, setCursor] = useState(-1);
+  // the drawer for the issue under the cursor: the arrows, a click on an issue line, and View from Notifications open it
+  const [issueOpen, setIssueOpen] = useState(false);
+  const [deciding, setDeciding] = useState(false);
+  // the review banner follows the note down: once it scrolls out of sight a copy slides down from under the title row
+  const docRef = useRef<HTMLElement>(null);
+  const bannerRef = useRef<HTMLDivElement>(null);
+  const [stuck, setStuck] = useState(false);
   // runs writing notes right now (liveRuns.js): shimmer in the tree and the graph, and a lock with Stop on an open note
   const [live, setLive] = useState<LiveState>({ runs: [], files: {}, folders: [], vault: [] });
   const [confirmStop, setConfirmStop] = useState<LiveRun | null>(null);
@@ -210,6 +217,14 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     requestAnimationFrame(() => document.querySelector(`.mu-text [data-line="${line}"]`)?.scrollIntoView({ block: 'center', behavior: smooth ? 'smooth' : 'auto' }));
   };
   // the review is read before the note counts as opened, so a blue banner shows on the open that clears its dot
+  useEffect(() => {
+    const root = docRef.current;
+    const el = bannerRef.current;
+    if (!root || !el) { setStuck(false); return; }
+    const io = new IntersectionObserver(([e]) => setStuck(!e.isIntersecting && e.boundingClientRect.top < (e.rootBounds?.top ?? 0)), { root, threshold: 0 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [preview?.rel, issueReview, review, version]);
   // counts note opens, so the issues of a note opened earlier never land on the one open now
   const opening = useRef(0);
   const openNote = useCallback(async (rel: string) => {
@@ -226,6 +241,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     setMode('after');
     setVersion(null);
     setIssueReview(null);
+    setIssueOpen(false);
     setCursor(-1);
     setHighlight(lit);
     window.quorum.memoryOpened(rel);
@@ -271,7 +287,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     const items = await loadIssues(issue.path);
     setIssueReview(items);
     const at = Math.max(0, items.findIndex((x) => x.issue.key === issue.key));
-    if (items.length) jump(at, items[at].line);
+    if (items.length) { jump(at, items[at].line); setIssueOpen(true); }
   };
   // View from a Memory health row in Notifications: the same review, found by the issue's key
   const reviewKey = async (key: string) => {
@@ -279,20 +295,38 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     if (m) await reviewIssue(issueOf(m));
   };
   const decideIssue = async (yes: boolean) => {
-    if (!preview || !issueReview) return;
+    if (!preview || !issueReview || deciding) return;
     const item = issueReview[cursor] ?? issueReview[0];
     if (!item) return;
+    setDeciding(true);
     try {
       flash(yes ? await acceptIssue(item.issue) : await rejectIssue(item.issue));
       countIssues();
       await reloadOpen(preview.rel);
       const items = await loadIssues(preview.rel);
       countIssues();
-      if (!items.length) { setIssueReview(null); setCursor(-1); return; }
+      if (!items.length) { setIssueReview(null); setIssueOpen(false); setCursor(-1); return; }
       setIssueReview(items);
       const at = Math.min(Math.max(cursor, 0), items.length - 1);
       jump(at, items[at].line);
-    } catch (e) { flash(errText(e)); }
+    } catch (e) { flash(errText(e)); } finally { setDeciding(false); }
+  };
+  // a click on an issue line opens its drawer; a link on that line to a note that exists still opens the note
+  const clickIssue = (e: React.MouseEvent) => {
+    if (!issueReview || mode !== 'after' || version) return;
+    const block = (e.target as HTMLElement).closest<HTMLElement>('.md-issue[data-line]');
+    if (!block) return;
+    const line = Number(block.dataset.line);
+    const here = issueReview.map((x, i) => ({ ...x, i })).filter((x) => x.line === line);
+    if (!here.length) return;
+    const link = (e.target as HTMLElement).closest('.md-link, a');
+    const text = link?.textContent?.trim().toLowerCase();
+    const hit = link ? here.find((x) => x.issue.target.toLowerCase() === text || x.issue.target.toLowerCase().split('/').pop() === text) : here[0];
+    if (!hit) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setCursor(hit.i);
+    setIssueOpen(true);
   };
   const stopRun = async (run: LiveRun) => {
     try {
@@ -554,26 +588,34 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
           </div>
         ) : preview ? (
           <div className={`kb-preview ${side ? "side-open" : ""}`}>
-            <article className="doc">
+            <article className="doc" ref={docRef}>
               {openRun && <LiveBanner run={openRun} onStop={() => setConfirmStop(openRun)} />}
               {/* one review banner at a time: a version opened read-only, else the issues from Memory health in red (with
                   the updates' Before and After when there are updates), else the updates in green or blue */}
-              {version
+              {(() => {
+                const banner = version
                 ? <VersionBar version={version.v} busy={restoring} locked={locked} onRestore={restore} onClose={() => setVersion(null)} />
                 : issueReview
-                  ? <ReviewBanner tone="red" locked={locked}
-                      label={<>{issueReview.length} {issueReview.length === 1 ? 'issue' : 'issues'}{issueReview[cursor] && <span className="mu-sub">{issueReview[cursor].issue.title}</span>}</>}
+                  ? <ReviewBanner tone="orange" locked={locked}
+                      label={`${issueReview.length} ${issueReview.length === 1 ? 'item needs' : 'items need'} review`}
                       mode={review ? mode : undefined} onMode={review ? setMode : undefined}
                       highlight={review ? highlight : undefined} onHighlight={review ? () => setHighlight((h) => !h) : undefined}
-                      nav={mode === 'after' ? navOver(issueReview.map((x) => x.line)) : undefined}
-                      onAccept={() => decideIssue(true)} onReject={() => decideIssue(false)} acceptTip="Approve the recommendation" rejectTip="Decline, leave the link as it is"
-                      onClose={() => { setIssueReview(null); setCursor(-1); }} />
+                      nav={mode === 'after' ? (() => { const n = navOver(issueReview.map((x) => x.line)); return { ...n, onPrev: () => { n.onPrev(); setIssueOpen(true); }, onNext: () => { n.onNext(); setIssueOpen(true); } }; })() : undefined}
+                      onAccept={() => decideIssue(true)} onReject={() => decideIssue(false)} acceptTip="Approve the recommendation" rejectTip="Decline, leave the link as it is" />
                   : review && <ReviewBanner tone={review.dot} locked={locked}
                       label={`${review.count} ${review.count === 1 ? 'update' : 'updates'} on ${when(review.at)}`}
                       mode={mode} onMode={(m) => { setMode(m); setCursor(-1); }} highlight={highlight} onHighlight={() => setHighlight((h) => !h)}
                       nav={mode === 'after' ? navOver(blocks.map((b) => b[0])) : undefined}
                       onAccept={review.dot === 'green' ? accept : undefined} acceptTip="Accept updates"
-                      onReject={reject} rejectTip="Reject updates and restore the earlier text" />}
+                      onReject={reject} rejectTip="Reject updates and restore the earlier text" />;
+                if (!banner) return null;
+                return (
+                  <>
+                    <div className={`mu-float${stuck ? ' in' : ''}`} aria-hidden={!stuck}>{stuck && banner}</div>
+                    <div ref={bannerRef}>{banner}</div>
+                  </>
+                );
+              })()}
               <h1>{preview.title}</h1>
               {/* the full path under the title; a long one loses its start, so the file name stays readable */}
               {/* the details row: date, apps, people, then the file in its folder (the path is in the tooltip) */}
@@ -584,11 +626,15 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
               {notifsOpen && <MemoryNotifications key={preview.rel} rel={preview.rel} abs={preview.abs} />}
               {/* After marks the lines the updates changed, green while they wait and blue once approved; Before and an
                   opened version show their saved text, dimmed */}
-              <div ref={memRoot} hidden={notifsOpen} className={`mu-text ${version || (review && mode === 'before') ? 'mu-old' : review?.dot ?? ''} ${locked ? 'locked' : ''}`}>
+              <div ref={memRoot} hidden={notifsOpen} onClickCapture={clickIssue} className={`mu-text ${version || (review && mode === 'before') ? 'mu-old' : review?.dot ?? ''} ${locked ? 'locked' : ''}`}>
                 <HeadingLinks root={memRoot} base={`quorum://note/${encodeURIComponent(preview.rel)}`} />
                 <Markdown text={version ? version.body : review && mode === 'before' ? review.before : preview.body} headings root={brain?.root} onWiki={openLink} marks={marks} />
               </div>
             </article>
+            {issueReview && issueOpen && issueReview[cursor] && (
+              <IssueDrawer issue={issueReview[cursor].issue} at={cursor} total={issueReview.length} locked={locked} busy={deciding}
+                onOpen={(rel) => openNote(rel)} onDecide={decideIssue} onClose={() => setIssueOpen(false)} />
+            )}
             <NotePanel rel={preview.rel} body={preview.body} views={preview.views ?? null} previous={prev} onOpen={(rel) => { viaLink.current = true; openNote(rel); }} onResolve={openLink}>
               <VersionList rel={preview.rel} stamp={stamp} viewing={version?.v.id ?? null} onView={viewVersion} />
             </NotePanel>

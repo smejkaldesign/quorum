@@ -75,3 +75,11 @@ describe('memory health write-up, tree marks and list', () => {
     expect(healthList(items, { tab: 'left', left: new Set(['b']) }).map((i) => i.target)).toEqual(['b']);
   });
 });
+
+describe('memory health write-up for a single link', () => {
+  it('reads in the singular', () => {
+    const i = issueOf(link('Roadmap', ['a.md']));
+    expect(i.problem).toBe('The link opens nothing. The agent can not follow it, so it can not bring together what this note says about “Roadmap”.');
+    expect(i.effect).toBe('The link opens the new note, and the graph connects it to this note.');
+  });
+});

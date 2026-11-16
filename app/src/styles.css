@@ -2617,7 +2617,7 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 /* the hover tools take no room while hidden: they float left of the row's buttons over a fade of the row color */
 .nf-tools { position: relative; }
 .nf-hover { position: absolute; right: 100%; top: 50%; margin-top: -16px; height: 32px; padding: 0 6px 0 28px;
-  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--bg), white 5%) 24px); }
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--panel), white 5%) 24px); }
 .nf-tools:not(:has(> :not(.nf-hover))) .nf-hover { padding-right: 0; }
 .mh-parts > div { grid-template-columns: 112px 1fr; }
 .nf-main .mh-parts > div { grid-template-columns: 112px 1fr; }
@@ -2639,3 +2639,43 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 /* the Memory note is its own scroll area, so it fills its column and centers the text with equal padding on both
    sides, at the shared page width */
 .kb-preview > .doc { width: auto; padding-left: max(40px, calc((100% - var(--page-w)) / 2)); padding-right: max(40px, calc((100% - var(--page-w)) / 2)); }
+
+/* ---------- In review orange, everywhere Memory health shows. --review is the mark and text color; --review-badge is
+   the darker fill behind white text (4.7:1, passes AA for small text) */
+:root { --review-badge: #bd5500; --review-rgb: 255, 159, 10; }
+.nf-count.review, .kb-issues, .lh-btn.alert .lh-count { background: var(--review-badge); color: #fff; }
+.lh-btn.alert { color: var(--review); }
+.kb-dot.red { background: var(--review); }
+.mu-banner.orange { border-color: rgba(var(--review-rgb), 0.4); background: rgba(var(--review-rgb), 0.08); }
+.mu-banner.orange .mu-count { color: var(--review); }
+/* the issue lines in a note: orange, a transparent orange fill on hover and on the current one, and a click opens the
+   drawer */
+.mu-text .md-issue { color: inherit; text-decoration: none; cursor: pointer; border-radius: 6px; box-shadow: 0 0 0 4px transparent; transition: background-color 160ms ease, box-shadow 160ms ease; }
+.mu-text .md-issue .md-link, .mu-text .md-issue .md-wiki { text-decoration-color: rgba(var(--review-rgb), 0.7); }
+.mu-text .md-issue:hover { background: rgba(var(--review-rgb), 0.08); box-shadow: 0 0 0 4px rgba(var(--review-rgb), 0.08); }
+.mu-text .md-issue.md-cur, .mu-text .md-issue.md-cur:hover { background: rgba(var(--review-rgb), 0.14); box-shadow: 0 0 0 4px rgba(var(--review-rgb), 0.14); }
+
+/* the banner's copy that slides down from under the title row once the banner has scrolled away */
+.mu-float { position: sticky; top: 0; z-index: 6; height: 0; }
+.mu-float > .mu-banner { position: absolute; left: 0; right: 0; top: 0; margin: 0; transform: translateY(-120%); opacity: 0; transition: transform 240ms cubic-bezier(0.2, 0, 0, 1), opacity 160ms ease; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); }
+.mu-float > .mu-banner.orange { background: color-mix(in srgb, var(--panel), rgb(var(--review-rgb)) 8%); }
+.mu-float > .mu-banner:not(.orange) { background: var(--card); }
+.mu-float.in > .mu-banner { transform: translateY(8px); opacity: 1; animation: mu-slide 240ms cubic-bezier(0.2, 0, 0, 1); }
+@keyframes mu-slide { from { transform: translateY(-120%); opacity: 0; } to { transform: translateY(8px); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .mu-float > .mu-banner, .mu-float.in > .mu-banner { transition: none; animation: none; } }
+
+/* the issue drawer, over the right side of the note */
+.kb-preview { position: relative; }
+.mh-drawer { position: absolute; top: 0; right: 0; bottom: 0; z-index: 8; width: min(420px, 90%); display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--line-2); box-shadow: -16px 0 40px rgba(0, 0, 0, 0.35); animation: mh-drawer-in 240ms cubic-bezier(0.2, 0, 0, 1); }
+@keyframes mh-drawer-in { from { transform: translateX(100%); } to { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .mh-drawer { animation: none; } }
+.mh-drawer-head { display: flex; align-items: center; gap: 10px; padding: 14px 14px 10px 20px; }
+.mh-drawer-kind { flex: 1; font-size: 13px; color: var(--review); font-weight: 500; }
+.mh-drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 20px 20px; }
+.mh-drawer-body h3 { margin: 0 0 6px; font-size: 17px; line-height: 1.35; font-weight: 600; }
+.mh-drawer-body .nf-sub { -webkit-line-clamp: unset; font-size: 13px; }
+.mh-drawer .mh-parts > div { grid-template-columns: 104px 1fr; }
+.mh-drawer .mh-facts { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.mh-sources { display: flex; flex-wrap: wrap; gap: 6px; }
+.mh-drawer-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
+.mu-float { top: -14px; }

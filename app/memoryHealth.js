@@ -54,18 +54,20 @@ export function issueOf(m) {
   const action = { missing: 'create', alias: 'alias', similar: 'relink', outside: 'leave' }[category];
   // the longer write-up Memory health and Notifications show: the problem the issue causes, what fixing it does for
   // the memory, and the recommended action Approve takes
-  const linkWord = (m.links ?? m.count) === 1 ? 'link' : 'links';
+  const one = (m.links ?? m.count) === 1;
+  const links = one ? 'The link opens' : 'The links open';
+  const them = one ? 'it' : 'them';
   const noteWord = m.count === 1 ? 'note' : `${m.count} notes`;
   const problem = {
-    missing: `The ${linkWord} open nothing. The agent can not follow them, so it can not bring together what ${m.count === 1 ? 'this note says' : 'these notes say'} about ${name}.`,
-    alias: `The ${linkWord} open nothing, because the note is named ${match}. The agent treats ${name} as a separate topic with no note.`,
-    similar: `The ${linkWord} open nothing. The closest note is ${match}, which may be the note they mean.`,
+    missing: `${links} nothing. The agent can not follow ${them}, so it can not bring together what ${m.count === 1 ? 'this note says' : 'these notes say'} about ${name}.`,
+    alias: `${links} nothing, because the note is named ${match}. The agent treats ${name} as a separate topic with no note.`,
+    similar: `${links} nothing. The closest note is ${match}, which may be the note they mean.`,
     outside: `The link points at a file outside this vault. Quorum and the agent only follow links inside the vault.`,
   }[category];
   const effect = {
-    missing: `Every link opens the new note, and the graph connects the ${noteWord} through it.`,
-    alias: `Every link opens ${match}, and the agent counts them as links to that note. No note text changes.`,
-    similar: `The links open ${match}, and the agent sees the ${noteWord} as related to it.`,
+    missing: m.count === 1 ? `${one ? 'The link opens' : 'Every link opens'} the new note, and the graph connects it to this note.` : `Every link opens the new note, and the graph connects the ${noteWord} through it.`,
+    alias: `${one ? 'The link opens' : 'Every link opens'} ${match}, and the agent counts ${them} as links to that note. No note text changes.`,
+    similar: `${one ? 'The link opens' : 'The links open'} ${match}, and the agent sees the ${noteWord} as related to it.`,
     outside: 'Nothing in your memory changes. The issue stops showing here.',
   }[category];
   const recommend = {
