@@ -9,7 +9,7 @@ export function ViewButton({ disabled, onView }: { disabled?: boolean; onView: (
   return <button className="icon-btn mh-icon mh-view" disabled={disabled} aria-label="View" data-tip="View the note" onClick={(e) => { e.stopPropagation(); onView(); }}><IconExternal width={16} height={16} /></button>;
 }
 export function DismissButton({ disabled, onDismiss }: { disabled?: boolean; onDismiss: () => void }) {
-  return <button className="icon-btn mh-icon" disabled={disabled} aria-label="Dismiss" data-tip="Dismiss: Archive and keep as is" onClick={onDismiss}><IconClose width={16} height={16} /></button>;
+  return <button className="icon-btn mh-icon mh-no" disabled={disabled} aria-label="Dismiss" data-tip="Dismiss: Archive and keep as is" onClick={onDismiss}><IconClose width={16} height={16} /></button>;
 }
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
 import { Avatar } from './Speaker';
