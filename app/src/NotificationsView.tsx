@@ -104,14 +104,14 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
             </StatusSwap>
           )}
           {/* every review row: View opens the note, left of Dismiss and Approve */}
-          {row.review && <span onClick={stop} onKeyDown={stop}><ViewButton disabled={!!row.target.gone} onView={go} /></span>}
           {row.review && row.archived && (
-            <StatusSwap status={row.done ? 'accepted' : 'dismissed'}><RowMenu label="Move back to review" onPick={() => onArchive(false)} /></StatusSwap>
+            <StatusSwap status={row.done ? 'accepted' : 'dismissed'}><span onClick={stop} onKeyDown={stop}><ViewButton disabled={!!row.target.gone} onView={go} /></span><RowMenu label="Move back to review" onPick={() => onArchive(false)} /></StatusSwap>
           )}
           {row.review && !row.archived && (
             <span className="mh-swap" onClick={stop} onKeyDown={stop}>
               <span className="mh-when"><StatusBadge status={row.fixRun?.status === 'queued' ? 'waiting' : 'review'} /></span>
               <span className="mh-hover">
+                <ViewButton disabled={!!row.target.gone} onView={go} />
                 <DismissButton disabled={busy || working} onDismiss={() => onArchive(true)} />
                 {working
                   ? <span className="icon-btn mh-icon mh-busy" role="img" aria-label="Working"><i className="run-spin" /></span>
