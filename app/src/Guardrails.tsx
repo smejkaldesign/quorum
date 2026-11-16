@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { GuardrailRule, GuardrailsState } from './quorum';
-import { Modal, Row, Toggle, useMenu } from './controls';
+import { Modal, ModalActions, Row, Toggle, useMenu } from './controls';
 import { useFlag } from './flags';
 import { IconCheck, IconClose, IconFolder, IconLock, IconMore, IconPlus, IconSearch, IconShield, IconTrash } from './icons';
 
@@ -182,7 +182,7 @@ function AddRule({ onClose, onAdd }: { onClose: () => void; onAdd: (r: { kind: s
       <label className="set-field wide"><span>{KIND_LABEL[kind]}</span><input autoFocus value={value} onChange={(e) => setValue(e.target.value)} placeholder={kind === 'path' ? 'clients/acme' : kind === 'frontmatter' ? 'legal_hold' : kind === 'term' ? 'Project Falcon, Northwind' : String.raw`\.sqlite$`} onKeyDown={(e) => { if (e.key === 'Enter') submit(); }} /></label>
       <label className="set-field wide"><span>Name (optional)</span><input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="What this protects" /></label>
       {error && <p className="set-error">{error}</p>}
-      <div className="modal-actions"><span /><span className="modal-actions-end"><button className="pill" onClick={onClose}>Cancel</button><button className="pill primary" disabled={busy || !value.trim()} onClick={submit}>Add</button></span></div>
+      <ModalActions><button className="pill" onClick={onClose}>Cancel</button><button className="pill primary" disabled={busy || !value.trim()} onClick={submit}>Add</button></ModalActions>
     </Modal>
   );
 }

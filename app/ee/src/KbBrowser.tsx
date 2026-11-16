@@ -10,7 +10,7 @@ import { hasKbSync, SyncPanel, type SyncSource } from './KbSync';
 import { KbSuggestionBanner } from './KbSuggestion';
 import { KB_OPEN, takeKbOpen, type KbOpenTarget } from '../../src/kbOpen';
 import { KbHostedNote } from './KbHostedNote';
-import { Modal } from '../../src/controls';
+import { Modal, ModalActions } from '../../src/controls';
 
 // The knowledge bases in the Knowledge tab: one left column with the team knowledge entry (and, for a folder or git
 // source, that source's own file tree, which the team view portals into the slot below it) and one top-level row per
@@ -457,7 +457,7 @@ function MoveDialog({ kb, folderId, onDone }: { kb: Kb; folderId: string; onDone
         ))}
         {!targets.length && <p className="tk-empty">There is nowhere else to move it.</p>}
       </div>
-      <div className="modal-actions"><span /><span className="modal-actions-end"><button className="pill" autoFocus={!targets.length} onClick={() => onDone(undefined)}>Cancel</button></span></div>
+      <ModalActions><button className="pill" autoFocus={!targets.length} onClick={() => onDone(undefined)}>Cancel</button></ModalActions>
     </Modal>
   );
 }

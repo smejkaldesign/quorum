@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AccountState, ConnectorDraft, ConnectorProvider, ConnectorRole, WorkspaceConnector } from '../../src/quorum';
-import { Row } from '../../src/controls';
+import { ModalActions, Row } from '../../src/controls';
 import { IconGrid, IconPlus, IconReset, IconTrash, ProviderMark } from '../../src/icons';
 import { AccountCard, EE_MARKER, useAccount } from './Account';
 import { connectorsApi } from './accountMock';
@@ -144,13 +144,10 @@ function ConnectorSheet({ existing, onDone }: { existing: WorkspaceConnector | n
           </div>
         </div>
         {note && <p className={note.ok ? 'set-ok' : 'set-error'}>{note.text}</p>}
-        <div className="modal-actions">
-          <button className="pill with-icon" disabled={!draft.secret || busy !== null || (needsBaseUrl(provider) && !draft.baseUrl)} onClick={test}><IconReset width={15} height={15} />{busy === 'test' ? 'Testing…' : 'Test'}</button>
-          <span className="modal-actions-end">
-            <button className="pill" onClick={() => onDone(false)}>Cancel</button>
-            <button className="pill primary" disabled={!ready || busy !== null} onClick={save}>{busy === 'save' ? 'Saving…' : existing ? 'Replace key' : 'Add'}</button>
-          </span>
-        </div>
+        <ModalActions start={<button className="pill with-icon" disabled={!draft.secret || busy !== null || (needsBaseUrl(provider) && !draft.baseUrl)} onClick={test}><IconReset width={15} height={15} />{busy === 'test' ? 'Testing…' : 'Test'}</button>}>
+          <button className="pill" onClick={() => onDone(false)}>Cancel</button>
+          <button className="pill primary" disabled={!ready || busy !== null} onClick={save}>{busy === 'save' ? 'Saving…' : existing ? 'Replace key' : 'Add'}</button>
+        </ModalActions>
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AccountDeleteStatus, AccountState } from '../../src/quorum';
-import { Modal, Row } from '../../src/controls';
+import { Modal, ModalActions, Row } from '../../src/controls';
 import { IconBuilding, IconCheck, IconCopy, IconPower } from '../../src/icons';
 
 // the tooltips on a delete that is not offered; the server decides both cases (account_delete_status, migration 0039)
@@ -72,13 +72,10 @@ function TypeEmailConfirm({ title, body, action, email, onConfirm, onClose }: { 
           onChange={(e) => setTyped(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') go(); }} />
       </label>
       {error && <p className="set-error" role="alert">{error}</p>}
-      <div className="modal-actions">
-        <span />
-        <span className="modal-actions-end">
-          <button className="pill" disabled={busy} onClick={onClose}>Cancel</button>
-          <button className="pill danger-pill" disabled={!ok || busy} onClick={go}>{busy ? 'Deleting…' : action}</button>
-        </span>
-      </div>
+      <ModalActions>
+        <button className="pill" disabled={busy} onClick={onClose}>Cancel</button>
+        <button className="pill danger-pill" disabled={!ok || busy} onClick={go}>{busy ? 'Deleting…' : action}</button>
+      </ModalActions>
     </Modal>
   );
 }

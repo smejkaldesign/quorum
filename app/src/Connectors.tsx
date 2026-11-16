@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ConnectorId, ConnectorRole, ModelSourceStatus, Providers, Settings } from './quorum';
-import { Modal, Row, useMenu } from './controls';
+import { Modal, ModalActions, Row, useMenu } from './controls';
 import { BY_ID, CATALOG, MODEL_ROLES, ROLES, ROLE_LABEL, canServe, modelName, needsBaseUrl, needsKey, rolesFor, type ConnectorManifest } from '../connectors/catalog';
 import { MODELS } from './Composer';
 import { IconChat, IconCheck, IconCode, IconExternal, IconGrid, IconMic, IconMore, IconNotes, IconPerson, IconPlus, IconReset, IconTrash, ProviderMark, Wave } from './icons';
@@ -221,13 +221,10 @@ function DefaultSheet({ p, st, onDone }: { p: ConnectorManifest; st: ModelSource
       <div className="conn-roles-pick">
         {roles.map((r) => <label key={r} className="conn-role"><input type="checkbox" checked={picked.includes(r)} onChange={() => toggle(r)} />{ROLE_LABEL[r]}<span className="muted"> · {ROLE_DESC[r]}</span></label>)}
       </div>
-      <div className="modal-actions">
-        <span />
-        <span className="modal-actions-end">
-          <button className="pill" onClick={() => onDone(false)}>Cancel</button>
-          <button className="pill primary" onClick={save}>Save</button>
-        </span>
-      </div>
+      <ModalActions>
+        <button className="pill" onClick={() => onDone(false)}>Cancel</button>
+        <button className="pill primary" onClick={save}>Save</button>
+      </ModalActions>
     </Scrim>
   );
 }
@@ -258,7 +255,7 @@ function ProviderSheet({ id, st, settings, onPick, onRefresh, onDone }: {
             );
           })}
         </div>
-        <div className="modal-actions"><span /><span className="modal-actions-end"><button className="pill" onClick={() => onDone(false)}>Cancel</button></span></div>
+        <ModalActions><button className="pill" onClick={() => onDone(false)}>Cancel</button></ModalActions>
       </Scrim>
     );
   }
@@ -347,18 +344,17 @@ function ProviderFields({ p, st, settings, existing, onRefresh, onDone }: { p: C
       )}
       {p.models && !claudeModel && <p className="set-note conn-note">Runs {p.models.sonnet}; the running summary uses {p.models.haiku}.</p>}
       {msg && <p className={msg.ok ? 'set-ok' : 'set-error'}>{msg.text}</p>}
-      <div className="modal-actions">
+      <ModalActions start={
         <span>
           {p.test && <button className="pill with-icon" disabled={!canTest || busy !== null} onClick={test}><IconReset width={15} height={15} />{busy === 'test' ? 'Testing…' : 'Test'}</button>}
           {p.id === 'claude-code' && <button className="pill with-icon" disabled={busy !== null} onClick={test}><IconReset width={15} height={15} />Check again</button>}
           <button className="link-btn" onClick={() => window.quorum.openExternal(p.docs)}>Docs</button>
           {p.pricing && <button className="link-btn" onClick={() => window.quorum.openExternal(p.pricing!)}>Pricing</button>}
         </span>
-        <span className="modal-actions-end">
-          <button className="pill" onClick={() => onDone(false)}>Cancel</button>
-          <button className="pill primary" disabled={!ready || busy !== null} onClick={save}>{busy === 'save' ? 'Checking…' : existing ? 'Save' : 'Add'}</button>
-        </span>
-      </div>
+      }>
+        <button className="pill" onClick={() => onDone(false)}>Cancel</button>
+        <button className="pill primary" disabled={!ready || busy !== null} onClick={save}>{busy === 'save' ? 'Checking…' : existing ? 'Save' : 'Add'}</button>
+      </ModalActions>
     </>
   );
 }

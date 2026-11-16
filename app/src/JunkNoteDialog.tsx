@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Modal } from './controls';
+import { Modal, ModalActions } from './controls';
 
 // asked before a note with no recording and almost no real words is saved (noteJunk.js). There are only the two
 // answers, so the note is never saved or dropped without the person choosing. Discard moves a saved file to the Trash
@@ -10,13 +10,10 @@ export function JunkNoteDialog({ reason, onDiscard, onSave }: { reason: string; 
   return createPortal(
     <Modal titleId="junk-title" title="This note looks empty" role="alertdialog" describedBy="junk-reason">
       <p id="junk-reason">{reason}</p>
-      <div className="modal-actions">
-        <span />
-        <span className="modal-actions-end">
-          <button className="pill danger-pill" disabled={busy} onClick={run(onDiscard)}>Discard</button>
-          <button className="pill primary" autoFocus disabled={busy} onClick={run(onSave)}>Save anyway</button>
-        </span>
-      </div>
+      <ModalActions>
+        <button className="pill danger-pill" disabled={busy} onClick={run(onDiscard)}>Discard</button>
+        <button className="pill primary" autoFocus disabled={busy} onClick={run(onSave)}>Save anyway</button>
+      </ModalActions>
     </Modal>,
     document.body,
   );

@@ -10,7 +10,7 @@ import { ConnectHint } from './ConnectHint';
 import { openConnectors, type ConnectorsTarget } from './connectorsNav';
 import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
-import { Modal, Row, Toggle, useMenu } from './controls';
+import { Modal, ModalActions, Row, Toggle, useMenu } from './controls';
 import { BrainCheckPanel, ContextPanel, SkillsPanel } from './PluginPanels';
 import { AccountArea, BillingArea, DeleteAccountArea, DeleteOrgArea, EDITION, KnowledgeBasesArea, KnowledgeQueueArea, MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { TOP_ADMIN_PAGES, canAdmin, flagHiddenPages, modeOf, resolvePage, voiceMode, workspacePages, type Page } from './settingsNav';
@@ -657,13 +657,10 @@ function UploadCustomers({ list, onAdd, onClose }: { list: OptOut[]; onAdd: (mor
         <span>{file ? [`${n} to add`, file.already && `${file.already} already on the list`, file.skipped && `${file.skipped} skipped`].filter(Boolean).join(' · ') : 'or click to choose one'}</span>
         <input type="file" accept=".csv,text/csv" autoFocus onChange={(e) => read(e.target.files?.[0])} />
       </label>
-      <div className="modal-actions">
-        <button className="link-btn" onClick={() => window.quorum.neverListTemplate()}>Download CSV template</button>
-        <span className="modal-actions-end">
-          <button className="pill" onClick={onClose}>Cancel</button>
-          <button className="pill primary" disabled={!n} onClick={() => { onAdd(file!.add); onClose(); }}>{n ? `Add ${n}` : 'Add'}</button>
-        </span>
-      </div>
+      <ModalActions start={<button className="link-btn" onClick={() => window.quorum.neverListTemplate()}>Download CSV template</button>}>
+        <button className="pill" onClick={onClose}>Cancel</button>
+        <button className="pill primary" disabled={!n} onClick={() => { onAdd(file!.add); onClose(); }}>{n ? `Add ${n}` : 'Add'}</button>
+      </ModalActions>
     </Modal>
   );
 }
@@ -733,13 +730,10 @@ function AboutCapability({ it, onClose }: { it: MemoryItem; onClose: () => void 
         <dt>Location</dt><dd>{it.path.replace(/^\/Users\/[^/]+/, '~')}</dd>
       </dl>
       {it.kind !== 'guards' && <p className="about-note">Deleting it takes it out of Quorum. The files stay in your Agent OS.</p>}
-      <div className="modal-actions">
-        <span />
-        <span className="modal-actions-end">
-          <button className="pill" onClick={() => window.quorum.memoryOpen(it.id)}>View</button>
-          <button className="pill primary" autoFocus onClick={onClose}>Done</button>
-        </span>
-      </div>
+      <ModalActions>
+        <button className="pill" onClick={() => window.quorum.memoryOpen(it.id)}>View</button>
+        <button className="pill primary" autoFocus onClick={onClose}>Done</button>
+      </ModalActions>
     </Modal>
   );
 }
@@ -1260,13 +1254,10 @@ function DecisionsKey({ provider, info, onDone }: { provider: DecisionProvider; 
       <p>Paste your {info.keyHint}. Quorum keeps it in your Mac's Keychain.</p>
       <label className="set-field wide"><input type="password" autoFocus aria-label={info.keyHint} placeholder={info.placeholder} value={key} onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && key.trim()) save(); }} /></label>
       {error && <p className="set-error">{error}</p>}
-      <div className="modal-actions">
-        <span />
-        <span className="modal-actions-end">
-          <button className="pill" onClick={() => onDone(false)}>Cancel</button>
-          <button className="pill primary" disabled={!key.trim() || busy} onClick={save}>{busy ? 'Checking…' : 'Connect'}</button>
-        </span>
-      </div>
+      <ModalActions>
+        <button className="pill" onClick={() => onDone(false)}>Cancel</button>
+        <button className="pill primary" disabled={!key.trim() || busy} onClick={save}>{busy ? 'Checking…' : 'Connect'}</button>
+      </ModalActions>
     </Modal>
   );
 }
@@ -1527,10 +1518,7 @@ function MeetingProviders({ onConnector }: { onConnector: (id: string) => void }
             <dt>Reads</dt><dd>{details.chat ? "Meeting title, participant names, chat, and the app's audio" : 'Window title, participant count when the browser exposes it, and the audio it plays'}</dd>
             <dt>Posts</dt><dd>{details.chat ? "Quorum's notice when it starts, and replies to STOP and GO" : 'Nothing yet. The notice shows on this Mac and the saved note records that none was posted in the call'}</dd>
           </dl>
-          <div className="modal-actions">
-            <span />
-            <span className="modal-actions-end"><button className="pill primary" autoFocus onClick={() => setDetails(null)}>Done</button></span>
-          </div>
+          <ModalActions><button className="pill primary" autoFocus onClick={() => setDetails(null)}>Done</button></ModalActions>
         </Modal>
       )}
     </>

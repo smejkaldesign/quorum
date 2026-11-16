@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { AccountState, ConnectorPolicyInfo, IntegrationConfig, IntegrationDraft, IntegrationMode, Member, WorkspaceIntegration } from '../../src/quorum';
-import { Modal, Row, Toggle } from '../../src/controls';
+import { Modal, ModalActions, Row, Toggle } from '../../src/controls';
 import { IconGrid, IconPlus, IconTrash } from '../../src/icons';
 import { connectorsFor, type LibraryConnector } from '../../connectors/library';
 import { POLICY_CHANGED, workspaceStateOf } from '../../connectors/approval';
@@ -257,13 +257,10 @@ export function IntegrationForm({ connector: x, row, members, onDone }: { connec
         </>}
       </div>
       {note && <p className="set-error">{note}</p>}
-      <div className="modal-actions">
-        <span />
-        <span className="modal-actions-end">
-          <button className="pill" onClick={() => onDone(false)}>Cancel</button>
-          <button className="pill primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : row ? 'Save' : 'Enable'}</button>
-        </span>
-      </div>
+      <ModalActions>
+        <button className="pill" onClick={() => onDone(false)}>Cancel</button>
+        <button className="pill primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : row ? 'Save' : 'Enable'}</button>
+      </ModalActions>
     </Modal>
   );
 }

@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { HandNoteRef, RecordState } from './quorum';
 import { Markdown } from './Markdown';
 import { IconCalendar, IconFolder, IconMore, IconNotes, IconRecord, IconStop } from './icons';
-import { useMenu } from './controls';
+import { ModalActions, useMenu } from './controls';
 import { IconPen } from './PrivateNotes';
 import { RecordMenu } from './Record';
 import { appendTurn, emptyWritten, recordChoices, type RecordChoice, type Written } from './noteRecord';
@@ -291,7 +291,7 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
             <h2 id="props-title">Properties</h2>
             <p>The fields saved at the top of this note's file. Quorum and the apps that made the note read them, so a change here can change how the note is matched, dated or shared.</p>
             <Properties inModal value={frontmatter} readOnly={readOnly || status === 'conflict'} error={propsError} onChange={editProps} />
-            <div className="modal-actions"><span /><span className="modal-actions-end"><button className="pill" autoFocus onClick={() => setPropsOpen(false)}>Done</button></span></div>
+            <ModalActions><button className="pill" autoFocus onClick={() => setPropsOpen(false)}>Done</button></ModalActions>
           </div>
         </div>
       )}

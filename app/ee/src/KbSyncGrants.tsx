@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { KbSyncGrant } from '../../src/quorum';
 import { kbCall } from './kbUi';
 import { grantLabel, grantLine } from './kbSyncUi';
+import { ModalActions } from '../../src/controls';
 
 // The connections only Quorum's relay holds for synced folders (ee/kbSync.js, migration 0033), on Settings,
 // Connections. A GitHub sign-in made for a synced repository is a grant the Mac never keeps, so it is listed here as
@@ -57,14 +58,11 @@ export function KbSyncGrants() {
             <h2 id="kbsg-title">Disconnect {grantLabel(confirm)}?</h2>
             <p>Quorum's relay stops using this sign-in and revokes it with {confirm.provider === 'github' ? 'GitHub' : 'the provider'}. {confirm.attachments.length ? `${confirm.attachments.length === 1 ? 'One synced folder uses' : `${confirm.attachments.length} synced folders use`} it: ${confirm.attachments.map((a) => `${a.name} in ${a.kb_name}`).join(', ')}.` : 'No synced folder uses it.'}</p>
             {confirm.attachments.length > 0 && <p className="muted">Pause keeps their notes and stops syncing; attach them again to resume. Remove takes their notes out of the knowledge bases.</p>}
-            <div className="modal-actions">
-              <span />
-              <span className="modal-actions-end">
-                <button className="pill" autoFocus disabled={busy} onClick={() => setConfirm(null)}>Cancel</button>
-                {confirm.attachments.length > 0 && <button className="pill danger-pill" disabled={busy} onClick={() => disconnect(confirm, 'remove')}>Disconnect and remove</button>}
-                <button className="pill primary" disabled={busy} onClick={() => disconnect(confirm, 'pause')}>{confirm.attachments.length ? 'Disconnect and pause' : 'Disconnect'}</button>
-              </span>
-            </div>
+            <ModalActions>
+              <button className="pill" autoFocus disabled={busy} onClick={() => setConfirm(null)}>Cancel</button>
+              {confirm.attachments.length > 0 && <button className="pill danger-pill" disabled={busy} onClick={() => disconnect(confirm, 'remove')}>Disconnect and remove</button>}
+              <button className="pill primary" disabled={busy} onClick={() => disconnect(confirm, 'pause')}>{confirm.attachments.length ? 'Disconnect and pause' : 'Disconnect'}</button>
+            </ModalActions>
           </div>
         </div>
       )}

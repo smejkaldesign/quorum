@@ -47,3 +47,8 @@ export function Modal({ titleId, title, className, role = 'dialog', describedBy,
     </div>
   );
 }
+
+// the button row under a Modal: an optional start slot (a link or a destructive action) and the main actions at the end
+export function ModalActions({ start, children }: { start?: ReactNode; children: ReactNode }) {
+  return <div className="modal-actions">{start ?? <span />}<span className="modal-actions-end">{children}</span></div>;
+}

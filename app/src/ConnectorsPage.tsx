@@ -7,7 +7,7 @@ import { BLOCKED_SENTENCE, ORG_LABEL, ORG_SENTENCE, UNAPPROVED_LABEL, approvalOf
 import { SyncedFolderConnections, useConnectorPolicy } from './edition';
 import { useFlag } from './flags';
 import { useMcpOverlap } from './McpPaths';
-import { useMenu } from './controls';
+import { ModalActions, useMenu } from './controls';
 import { IconCheck, IconChevron, IconExternal, IconGrid, IconMore, IconPlus, IconReset } from './icons';
 import { BRAND_LOGOS } from './brandLogos';
 
@@ -386,13 +386,10 @@ export function ConfirmDisconnect({ name, text, busy, onCancel, onConfirm }: { n
       <div className="modal" role="alertdialog" aria-modal="true" aria-labelledby="disc-title" onKeyDown={(e) => { if (e.key === 'Escape' && !busy) onCancel(); }}>
         <h2 id="disc-title">Disconnect {name}?</h2>
         <p>{text}</p>
-        <div className="modal-actions">
-          <span />
-          <span className="modal-actions-end">
-            <button className="pill" autoFocus disabled={busy} onClick={onCancel}>Cancel</button>
-            <button className="pill danger-pill" disabled={busy} onClick={onConfirm}>{busy ? 'Disconnecting…' : 'Disconnect'}</button>
-          </span>
-        </div>
+        <ModalActions>
+          <button className="pill" autoFocus disabled={busy} onClick={onCancel}>Cancel</button>
+          <button className="pill danger-pill" disabled={busy} onClick={onConfirm}>{busy ? 'Disconnecting…' : 'Disconnect'}</button>
+        </ModalActions>
       </div>
     </div>,
     document.body,
