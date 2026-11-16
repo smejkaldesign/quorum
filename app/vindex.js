@@ -16,6 +16,9 @@ const BATCH = 200;
 // graph clusters, by cluster key; forget(keys) is told which of them no longer match a cluster
 export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => false, isExcludedText, redact, onChange, renamed = () => ({}), forget = () => {}, log = () => {} }) {
   const files = new Map(); // rel -> { mtime, size, note, text, flagged, t }
+  // linkHealth's answer: the missing links scored against every note, worked out again only after the index changed,
+  // since Notifications and Memory health ask for it on every refresh. Callers read it and never change it
+  let health = null;
   let resolve = () => null;
   let forward = new Map(); // rel -> [{ to, link }]
   let backward = new Map(); // rel -> [{ from, link }]
@@ -32,6 +35,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   // opted-out text never enters the index: lines that name one are replaced before parsing,
   // and the note is flagged so the redaction queue can find it
   function load(rel, st) {
+    health = null;
     let raw;
     try { raw = readFileSync(path.join(vault, rel), 'utf8'); } catch { files.delete(rel); return; }
     if (isDeniedText(raw)) { files.delete(rel); return; }
@@ -49,6 +53,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   }
 
   function relink() {
+    health = null;
     const rels = [...files.keys()];
     resolve = createResolver(rels, aliasesOf);
     forward = new Map();
@@ -96,12 +101,12 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
       try { st = statSync(path.join(vault, rel)); } catch {}
       if (st?.isDirectory()) { everything = true; break; }
       if (!st) {
-        if (rel.endsWith('.md')) { if (files.delete(rel)) changed.push(rel); }
+        if (rel.endsWith('.md')) { if (files.delete(rel)) { health = null; changed.push(rel); } }
         else if (dirs.has(rel)) { everything = true; break; }
         continue;
       }
       if (!rel.endsWith('.md')) continue;
-      if (isExcludedPath(rel)) { if (files.delete(rel)) changed.push(rel); continue; }
+      if (isExcludedPath(rel)) { if (files.delete(rel)) { health = null; changed.push(rel); } continue; }
       const f = files.get(rel);
       if (!f || f.mtime !== st.mtimeMs || f.size !== st.size) { load(rel, st); changed.push(rel); }
     }
@@ -214,6 +219,10 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   // each link. Memory health (memoryHealth.js) picks a fix from these: point the link at a note that is clearly the one
   // meant, write the missing note when the linking notes say enough about it, or take the dead link out
   function linkHealth() {
+    health ??= scoreLinks();
+    return health;
+  }
+  function scoreLinks() {
     const byName = new Map();
     for (const [rel, missing] of unresolved) for (const link of missing) {
       const name = link.target.replace(/\.md$/i, '').trim();
@@ -306,7 +315,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   }
 
   // after a rule change: forget everything and read the folder again, so a note that is now denied drops out
-  function rebuild() { files.clear(); forward = new Map(); backward = new Map(); unresolved = new Map(); const changed = sync(); if (changed.length) onChange?.(changed); return changed; }
+  function rebuild() { health = null; files.clear(); forward = new Map(); backward = new Map(); unresolved = new Map(); const changed = sync(); if (changed.length) onChange?.(changed); return changed; }
 
   return {
     start, stop, sync, syncPaths, rebuild, graph, backlinks, outgoing, search, resolve: (target, from) => resolve(target, from),
