@@ -5,12 +5,13 @@ import markReview from '../assets/quorum-mark.png';
 import { CATEGORIES, HEALTH_SORTS, categoryCounts, countsLine, healthList, issueMeta, type HealthCategory, type HealthSort, type Issue } from '../memoryHealth.js';
 import { IconArchive, IconCheck, IconChevron, IconClose, IconReset } from './icons';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
-import { BulkPick, DismissButton, IssueParts, ReviewDetails, RowMenu, RunBanner, StatusBadge, StatusSwap, UndoMenu, ViewButton, ago, runStatus, took } from './NotificationsView';
+import { BulkPick, DismissButton, IssueParts, ReviewDetails, RowMenu, RunBanner, StatusBadge, StatusSwap, UndoMenu, ViewButton, ago, runStatus } from './NotificationsView';
 import type { FixRun, GateHold, MemoryDraft, MemoryFinding } from './quorum';
 import { MemoryFindings } from './MemoryFindings';
 import { toast } from './Toasts';
 import { Segmented } from './controls';
 import { BulkPlan } from './BulkPlan';
+import { AgentActivityBanner, WorkBanner } from './WorkBanner';
 import { NO_SELECTION, bulkView, dropAcross, selectedIds, toggleAcross, toggleOne, togglePage, type BulkSel } from './bulkSelect';
 
 // Memory health: links that point at a note that does not exist, one row per missing note, in the same list pattern
@@ -303,6 +304,8 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
           </span>
         </div>
       )}
+      {/* long agent work on the memory (the first check, a full sweep, a batch, drafting), the same banner as on Home */}
+      <AgentActivityBanner />
       {(() => {
         const last = runs.filter((r) => r.batch).sort((a, b) => b.queuedAt - a.queuedAt)[0]?.batch;
         if (!last || last === hiddenBatch) return null;
@@ -434,25 +437,19 @@ function BatchBanner({ runs, error, onDismiss }: { runs: FixRun[]; error?: strin
   const finished = ok + bad;
   const now = items.find((x) => x.run.status === 'running');
   const live = finished < items.length;
-  const at = Math.min(...items.map((x) => x.run.queuedAt));
-  const [tick, setTick] = useState(() => Date.now());
-  useEffect(() => { if (!live) return; const t = window.setInterval(() => setTick(Date.now()), 500); return () => window.clearInterval(t); }, [live]);
-  const elapsed = (live ? tick : Math.max(...items.map((x) => x.run.endedAt ?? 0))) - at;
   const text = live
     ? `Fixing ${finished + 1} of ${items.length}${now ? `: “${now.title}”${now.run.steps.length ? `, ${now.run.steps[now.run.steps.length - 1].label.toLowerCase()}` : ''}` : ''}`
     : `Fixed ${ok} of ${items.length}${bad ? `. ${bad} could not be fixed` : ''}`;
   return (
-    <div className={`run-banner mh-batch ${live ? 'live' : bad && !ok ? 'error' : 'success'}`} role="status" aria-live="polite">
-      <div className="run-head">
-        <span className="run-icon" aria-hidden="true">{live ? <i className="run-spin" /> : bad && !ok ? <IconClose width={17} height={17} /> : <IconCheck width={18} height={18} />}</span>
-        <span className={`run-text${live ? ' shimmer' : ''}`} data-tip={text}>{text}</span>
-        <span className="run-time">{took(Math.max(0, elapsed))}</span>
+    <WorkBanner
+      state={live ? 'live' : bad && !ok ? 'error' : 'success'} text={text} startedAt={Math.min(...items.map((x) => x.run.queuedAt))} endedAt={Math.max(...items.map((x) => x.run.endedAt ?? 0))}
+      progress={finished / items.length}
+      note={live ? 'This can take a few minutes. You can leave this page; Quorum keeps fixing in the background and each item updates as it finishes.' : error}
+      actions={<>
         <button className={`icon-btn conn-fold${open ? ' open' : ''}`} aria-expanded={open} aria-label={open ? 'Hide items' : 'Show items'} onClick={() => setOpen((o) => !o)}><IconChevron width={14} height={14} /></button>
         {!live && <button className="act-pill run-dismiss" onClick={onDismiss}>Dismiss</button>}
-      </div>
-      <div className="mh-batch-bar" aria-hidden="true"><i style={{ width: `${(finished / items.length) * 100}%` }} /></div>
-      {live && <p className="mh-batch-note">This can take a few minutes. You can leave this page; Quorum keeps fixing in the background and each item updates as it finishes.</p>}
-      {!live && error && <p className="mh-batch-note">{error}</p>}
+      </>}
+    >
       <div className={`fold-anim${open ? ' open' : ''}`}>
         <div className="fold-inner">
           <ol className="run-steps mh-batch-list">
@@ -463,6 +460,6 @@ function BatchBanner({ runs, error, onDismiss }: { runs: FixRun[]; error?: strin
           </ol>
         </div>
       </div>
-    </div>
+    </WorkBanner>
   );
 }

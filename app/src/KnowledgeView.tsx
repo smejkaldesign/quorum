@@ -136,7 +136,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   useEffect(() => { countIssues(); }, [graph, countIssues]);
   // an issue decided anywhere else (Notifications) moves the counts here too
   useEffect(() => { const go = () => { countIssues(); }; window.addEventListener('quorum:activity-changed', go); return () => window.removeEventListener('quorum:activity-changed', go); }, [countIssues]);
-  useEffect(() => { if (command?.kind === 'open') { setMissing(null); openNote(command.rel).then(() => { if (command.anchor) scrollToAnchor(command.anchor); }); } else if (command?.kind === 'missing') { setPreview(null); setMissing(command.id); } else if (command?.kind === 'health') { reviewKey(command.key); } else if (command?.kind === 'graph') { setPreview(null); setSelected(command.rel); setFocus(command.rel); } else if (command) { setScope({}); setPalette(command.kind); } }, [command]);
+  useEffect(() => { if (command?.kind === 'open') { setMissing(null); openNote(command.rel).then(() => { if (command.anchor) scrollToAnchor(command.anchor); }); } else if (command?.kind === 'missing') { setPreview(null); setMissing(command.id); } else if (command?.kind === 'health' && !command.key) { setPreview(null); setPanel(false); setHealth({ focus: null }); } else if (command?.kind === 'health') { reviewKey(command.key); } else if (command?.kind === 'graph') { setPreview(null); setSelected(command.rel); setFocus(command.rel); } else if (command) { setScope({}); setPalette(command.kind); } }, [command]);
 
   const load = useCallback(async () => {
     const [t, g] = await Promise.all([window.quorum.vaultTree(), window.quorum.vaultGraph()]);
