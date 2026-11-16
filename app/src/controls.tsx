@@ -72,8 +72,8 @@ export function Segmented<T extends string>({ options, value, onChange, kind, la
     <Wrap className={className ? `seg ${className}` : 'seg'} role={role} aria-label={label}>
       {options.map((o) => {
         const on = o.id === value;
-        const state = kind === 'tabs' ? { role: 'tab', 'aria-selected': on } : kind === 'radio' ? { type: 'button' as const, role: 'radio', 'aria-checked': on } : { 'aria-pressed': on };
-        return <button key={o.id} {...state} disabled={disabled} aria-label={o.ariaLabel} data-tip={o.tip} className={on ? 'on' : ''} onClick={() => onChange(o.id)}>{o.label}</button>;
+        const state = kind === 'tabs' ? { role: 'tab', 'aria-selected': on } : kind === 'radio' ? { role: 'radio', 'aria-checked': on } : { 'aria-pressed': on };
+        return <button key={o.id} type="button" {...state} disabled={disabled} aria-label={o.ariaLabel} data-tip={o.tip} className={on ? 'on' : ''} onClick={() => onChange(o.id)}>{o.label}</button>;
       })}
     </Wrap>
   );
