@@ -94,6 +94,15 @@ grep '^QUORUM_SUPABASE_ANON_KEY=' .env | cut -d= -f2- | gh variable set QUORUM_S
 
 Without them the Cloud job of the workflow is skipped and the release carries the Local edition only.
 
+Zoom cloud recordings in the Cloud edition need the production Zoom app's client id as a repository variable. It is public; the secret stays on the relay (`ZOOM_CLIENT_SECRET`). The redirect defaults to `https://relay.quorum.watch/v1/connect/zoom/callback`, which must be registered on the Zoom app; set `QUORUM_ZOOM_REDIRECT_URI` only for a different one.
+
+```sh
+gh variable set QUORUM_ZOOM_CLIENT_ID --repo smejkaldesign/quorum --body "<production Zoom client id>"
+gh variable set QUORUM_ZOOM_REDIRECT_URI --repo smejkaldesign/quorum --body "https://relay.quorum.watch/v1/connect/zoom/callback"   # optional
+```
+
+Without `QUORUM_ZOOM_CLIENT_ID` the workflow warns and the Cloud edition shows Zoom as not available. Packaged builds never use the development Zoom app.
+
 ### 6. First tag
 
 ```sh
