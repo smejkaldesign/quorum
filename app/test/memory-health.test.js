@@ -111,7 +111,7 @@ describe('memory health write-up for a single link', () => {
 
 describe('where a written note goes', () => {
   it('goes to the folder its linking notes share, leaving out notes at the vault root', () => {
-    expect(issueOf(link('X', ['index.md', 'memory/drift.md', '05-knowledge/notable/a.md', '05-knowledge/notable/b.md'])).createIn).toBe('05-knowledge/notable');
+    expect(issueOf(link('X', ['index.md', 'memory/drift.md', 'knowledge/orbit/a.md', 'knowledge/orbit/b.md'])).createIn).toBe('knowledge/orbit');
     expect(issueOf(link('Y', ['index.md'])).createIn).toBe('');
   });
 });
