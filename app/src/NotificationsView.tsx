@@ -79,7 +79,7 @@ function Row({ row, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide, 
             {row.review && (
               <>
                 <button className={`act-pill${row.summary.ask?.suggest === 'approve' ? ' primary' : ''}`} disabled={busy} onClick={() => onDecide('approve')}>Approve</button>
-                <button className={`act-pill${row.summary.ask?.suggest === 'reject' ? ' primary' : ''}`} disabled={busy} data-tip={row.review.kind === 'memory' ? 'Put back the text from before these updates' : 'Mark this note rejected'} onClick={() => onDecide('reject')}>Disapprove</button>
+                <button className={`act-pill${row.summary.ask?.suggest === 'reject' ? ' primary' : ''}`} disabled={busy} data-tip={row.review.kind === 'memory' ? 'Put back the text from before these updates' : row.review.kind === 'junk-note' ? 'Keep this note' : 'Mark this note rejected'} onClick={() => onDecide('reject')}>Disapprove</button>
               </>
             )}
             <button className={`icon-btn conn-fold${open ? ' open' : ''}`} aria-expanded={open} aria-label={open ? 'Hide details' : 'Show details'} onClick={() => setOpen((o) => !o)}><IconChevron width={14} height={14} /></button>

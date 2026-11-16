@@ -2096,7 +2096,7 @@ function feedSources() {
     const abs = path.join(b.vault, rel);
     return { abs, rel, title: fileTitle(abs, rel), note: !!meetingFile(abs), gone: !existsSync(abs), versions: rec.versions ?? [], updates: rec.updates ?? [], seenAt: seen[abs]?.seenAt ?? null };
   });
-  return { notes, memories, denials, state, guardFile: DENIAL_LOG };
+  return { notes, memories, denials, junk: keeper.junk(), state, guardFile: DENIAL_LOG };
 }
 ipcMain.handle('activity-feed', (_e, query) => {
   const q = query ?? {};
@@ -2148,8 +2148,9 @@ ipcMain.handle('activity-mark', (_e, rows, unread) => {
 });
 // the review items approved or disapproved. A memory's waiting updates are approved, or rejected so the file gets back
 // the text it had before them. A note Quorum wrote has no earlier text to go back to, so disapproving marks it
-// rejected and it leaves the review
-ipcMain.handle('activity-review', (_e, items, verdict) => {
+// rejected and it leaves the review. A junk note approved goes to the macOS Trash, where it can be put back;
+// disapproved, it is kept and upkeep never asks about it again
+ipcMain.handle('activity-review', async (_e, items, verdict) => {
   const b = brain();
   const ok = verdict === 'approve';
   const done = [];
@@ -2163,6 +2164,17 @@ ipcMain.handle('activity-review', (_e, items, verdict) => {
         if (!meetingFile(t.abs)) throw new Error('Not found');
         seenSet(t.abs, ok ? { reviewedAt: at, seenAt: at } : { rejectedAt: at, seenAt: at });
         noteEvent(t.abs, ok ? 'reviewed' : 'rejected', ok ? 'You reviewed it' : 'You disapproved it');
+      } else if (it.kind === 'junk-note') {
+        if (!meetingFile(t.abs) || !t.rel) throw new Error('Not found');
+        if (ok) {
+          const title = fileTitle(t.abs, t.rel);
+          await shell.trashItem(t.abs);
+          keeper.trashedJunk(t.rel, title);
+          log('notifications', 'moved a note that looked empty to the Trash', t.rel);
+        } else {
+          keeper.keepJunk(t.rel);
+          seenSet(t.abs, { seenAt: at });
+        }
       } else if (it.kind === 'memory' && b && t.rel) {
         if (ok) memoryVersions.approve(b.vault, t.rel);
         else if (memoryVersions.reject(b.vault, t.rel) == null) throw new Error('These updates can not be rejected');
@@ -3202,6 +3214,27 @@ ipcMain.handle('hand-note-open', (_e, file) => {
   return { ...handNoteRef(abs, raw), ...view };
 });
 ipcMain.handle('hand-note-save', (_e, payload) => saveHandNote(payload ?? {}));
+// the save dialog for a note that looks empty (noteJunk.js). Discard moves the note Quorum made to the macOS Trash,
+// so it can be put back; Save anyway keeps it, and upkeep does not flag it later
+const ownNote = (file) => {
+  const abs = file ? meetingFile(file) : null;
+  if (!abs) return null;
+  const fm = readFrontmatter(store.notes.read(abs).slice(0, 4000));
+  return /^quorum(-dev)?$/.test(String(fm.source ?? '')) ? abs : null;
+};
+ipcMain.handle('note-discard', async (_e, file) => {
+  const abs = ownNote(file);
+  if (!abs) return false;
+  await shell.trashItem(abs);
+  log('note discarded to the Trash', abs);
+  return true;
+});
+ipcMain.handle('note-keep', (_e, file) => {
+  const abs = ownNote(file);
+  const b = brain();
+  if (!abs || !b) return false;
+  return keeper.keepJunk(path.relative(b.vault, abs).split(path.sep).join('/'));
+});
 // frontmatter, when given, replaces the note's frontmatter (the Properties panel); its title line still follows the title
 function saveHandNote({ id, file, title, body, hash, fresh, frontmatter }) {
   if (!brain()) return { error: 'Connect your Agent OS to save notes.' };

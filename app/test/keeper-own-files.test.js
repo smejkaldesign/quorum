@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { CHANGELOG, INDEX_HEADER, LEARNED_FILE, LEARNED_OPEN, MEETINGS_HEADER, createKeeper, learnedFileIn, learnedLines } from '../keeper.js';
@@ -190,5 +190,51 @@ describe('keeper review fixes', () => {
     expect(k.status().learned).toMatchObject({ pick: 'note', target: 'note', noteHeld: false });
     expect(learnedFileIn(state(dir))).toBe('notes/facts.md');
     expect(learnedLines(text(dir, learnedFileIn(state(dir))))).toHaveLength(1);
+  });
+});
+
+describe('junk notes', () => {
+  const HAND = (title, body, extra = '') => `---\nquorum_id: q-${title}\ntype: note\ntitle: ${title}\ndate: 2026-11-15T10:00:00-08:00\nparticipants:\n  - Rick Bot (recorder)\nsource: quorum\n${extra}---\n\n# ${title}\n\n${body}\n`;
+  const vault = () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'junk-'));
+    put(dir, '08-meetings/2026-11-15-kjhkjhkjh-q1.md', HAND('kjhkjhkjh', 'twesrtykjhlkij'));
+    put(dir, '08-meetings/2026-11-15-pricing-q2.md', HAND('Pricing', 'call Ana re pricing'));
+    put(dir, '08-meetings/2026-11-15-voice-q3.md', HAND('asdf', '', 'recorded: true\n'));
+    put(dir, '08-meetings/2026-11-15-granola.md', '---\ntitle: asdf\nsource: granola\ntype: note\n---\n\n# asdf\n');
+    return dir;
+  };
+
+  it('flags only a note Quorum made with no recording and no real words, and does not file it', async () => {
+    const dir = vault();
+    const { k } = keeperFor(dir, {}, QUORUM);
+    const r = await k.run();
+    expect(r.junk).toBe(1);
+    expect(k.junk().map((j) => j.rel)).toEqual(['08-meetings/2026-11-15-kjhkjhkjh-q1.md']);
+    expect(k.junk()[0].reason).toContain('does not read as words');
+    expect(state(dir).done['08-meetings/2026-11-15-kjhkjhkjh-q1.md']).toBeUndefined();
+    expect(state(dir).done['08-meetings/2026-11-15-pricing-q2.md']).toBeDefined();
+  });
+
+  it('never flags a kept note again, and files it on the next run', async () => {
+    const dir = vault();
+    const { k } = keeperFor(dir, {}, QUORUM);
+    await k.run();
+    k.keepJunk('08-meetings/2026-11-15-kjhkjhkjh-q1.md');
+    await k.halt();
+    expect(k.junk()).toEqual([]);
+    const r = await k.run();
+    expect(r.junk).toBeUndefined();
+    expect(state(dir).done['08-meetings/2026-11-15-kjhkjhkjh-q1.md']).toBeDefined();
+    expect(JSON.parse(text(dir, '.quorum/kept-notes.json'))['q-kjhkjhkjh']).toBeTruthy();
+  });
+
+  it('drops a note that is gone from the list and logs the move to the Trash', async () => {
+    const dir = vault();
+    const { k } = keeperFor(dir, {}, QUORUM);
+    await k.run();
+    k.trashedJunk('08-meetings/2026-11-15-kjhkjhkjh-q1.md', 'kjhkjhkjh');
+    rmSync(path.join(dir, '08-meetings/2026-11-15-kjhkjhkjh-q1.md'));
+    expect(k.junk()).toEqual([]);
+    expect(text(dir, CHANGELOG)).toContain('Moved to the Trash');
   });
 });

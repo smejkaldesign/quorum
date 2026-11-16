@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('quorum', {
   handNoteOpen: (file) => ipcRenderer.invoke('hand-note-open', file),
   handNoteSave: (payload) => ipcRenderer.invoke('hand-note-save', payload),
   handNoteDone: (file) => ipcRenderer.invoke('hand-note-done', file),
+  noteDiscard: (file) => ipcRenderer.invoke('note-discard', file),
+  noteKeep: (file) => ipcRenderer.invoke('note-keep', file),
   privateNotesSet: (text) => ipcRenderer.invoke('private-notes-set', text),
   discard: () => ipcRenderer.invoke('discard'),
   done: () => ipcRenderer.invoke('done'),
