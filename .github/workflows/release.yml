@@ -24,6 +24,11 @@ name: Release
 #   QUORUM_GITHUB_APP_CLIENT_ID,          into the packaged package.json as quorumOAuth. A connector without its id
 #   QUORUM_GITHUB_APP_SLUG                shows Not available yet. The secrets live on the relay, never in the app.
 #   QUORUM_GOOGLE_PICKER_APP_ID           Optional. The Google Cloud project number; the default is the number in the Google client id.
+#   QUORUM_ZOOM_CLIENT_ID                 The production Zoom app's public client id, written into the packaged package.json as
+#                                         quorumOAuth.zoom. Without it the Cloud edition shows Zoom as not available; the
+#                                         development app is used only in builds from source. The secret lives on the relay.
+#   QUORUM_ZOOM_REDIRECT_URI              Optional. The redirect registered on that Zoom app; the default is
+#                                         https://relay.quorum.watch/v1/connect/zoom/callback.
 on:
   push:
     tags: ['v*']
@@ -57,6 +62,8 @@ jobs:
       GITHUB_APP_SLUG: ${{ vars.QUORUM_GITHUB_APP_SLUG }}
       GOOGLE_PICKER_API_KEY: ${{ secrets.QUORUM_GOOGLE_PICKER_API_KEY }}
       GOOGLE_PICKER_APP_ID: ${{ vars.QUORUM_GOOGLE_PICKER_APP_ID }}
+      ZOOM_CLIENT_ID: ${{ vars.QUORUM_ZOOM_CLIENT_ID }}
+      ZOOM_REDIRECT_URI: ${{ vars.QUORUM_ZOOM_REDIRECT_URI }}
     steps:
       - name: Cloud edition needs its Supabase project
         if: matrix.edition == 'cloud' && (env.QUORUM_SUPABASE_URL == '' || env.QUORUM_SUPABASE_ANON_KEY == '')
@@ -122,8 +129,8 @@ jobs:
         run: node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.quorumGoogle={clientId:process.env.GOOGLE_CLIENT_ID||undefined,clientSecret:process.env.GOOGLE_CLIENT_SECRET};fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');console.log('quorumGoogle set')"
         working-directory: app
       - name: Add the personal connector client ids
-        if: env.SKIP != '1' && (env.NOTION_CLIENT_ID != '' || env.SLACK_CLIENT_ID != '' || env.GITHUB_APP_CLIENT_ID != '' || env.GOOGLE_PICKER_API_KEY != '')
-        run: node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));const id=(v)=>v?{clientId:v}:undefined;p.quorumOAuth={notion:id(process.env.NOTION_CLIENT_ID),slack:id(process.env.SLACK_CLIENT_ID),github:process.env.GITHUB_APP_CLIENT_ID?{clientId:process.env.GITHUB_APP_CLIENT_ID,slug:process.env.GITHUB_APP_SLUG||undefined}:undefined,googlePicker:process.env.GOOGLE_PICKER_API_KEY?{apiKey:process.env.GOOGLE_PICKER_API_KEY,appId:process.env.GOOGLE_PICKER_APP_ID||undefined}:undefined};fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');console.log('quorumOAuth set')"
+        if: env.SKIP != '1' && (env.NOTION_CLIENT_ID != '' || env.SLACK_CLIENT_ID != '' || env.GITHUB_APP_CLIENT_ID != '' || env.GOOGLE_PICKER_API_KEY != '' || env.ZOOM_CLIENT_ID != '')
+        run: node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));const id=(v)=>v?{clientId:v}:undefined;p.quorumOAuth={notion:id(process.env.NOTION_CLIENT_ID),slack:id(process.env.SLACK_CLIENT_ID),github:process.env.GITHUB_APP_CLIENT_ID?{clientId:process.env.GITHUB_APP_CLIENT_ID,slug:process.env.GITHUB_APP_SLUG||undefined}:undefined,zoom:process.env.ZOOM_CLIENT_ID?{clientId:process.env.ZOOM_CLIENT_ID,redirectUri:process.env.ZOOM_REDIRECT_URI||undefined}:undefined,googlePicker:process.env.GOOGLE_PICKER_API_KEY?{apiKey:process.env.GOOGLE_PICKER_API_KEY,appId:process.env.GOOGLE_PICKER_APP_ID||undefined}:undefined};fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');console.log('quorumOAuth set')"
         working-directory: app
       - name: Package the Local edition
         if: env.SKIP != '1' && matrix.edition == 'local'
@@ -133,6 +140,9 @@ jobs:
           QUORUM_EDITION: local
           # with no certificate electron-builder must not go looking for one in the runner's keychain
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
+      - name: Check the Zoom client id
+        if: env.SKIP != '1' && matrix.edition == 'cloud' && env.ZOOM_CLIENT_ID == ''
+        run: echo "::warning::QUORUM_ZOOM_CLIENT_ID is not set as a repository variable; the Cloud edition shows Zoom as not available."
       - name: Package the Cloud edition
         if: env.SKIP != '1' && matrix.edition == 'cloud'
         run: npm run package:cloud
