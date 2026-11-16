@@ -11,7 +11,7 @@ import { fileIssues, healthMarks, issueOf, type Issue } from '../memoryHealth.js
 import { Graph, type GraphData, type GraphView } from './Graph';
 import { NotePanel, Palette, type PaletteItem, type PaletteMode } from './NoteTools';
 import { reportMemoryNote } from './navHistory';
-import { IssueDrawer, LinkHealth, acceptIssue, ignoreIssue, leftOf, migrateLeft, rejectIssue } from './LinkHealth';
+import { IssueDrawer, LinkHealth, acceptIssue, dismissIssue, leftOf, migrateLeft } from './LinkHealth';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
 import { IconChevron, IconClose, IconCollapse, IconExpand, IconFolder, IconGraph, IconNewFolder, IconNewNote, IconHistory, IconLink, IconMore, IconReset, IconSearch, IconSidebar, IconSliders, IconSort } from './icons';
@@ -282,13 +282,13 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     const m = (await window.quorum.vaultLinkHealth()).find((x) => x.target.toLowerCase() === key.toLowerCase());
     if (m) await reviewIssue(issueOf(m));
   };
-  const decideIssue = async (verdict: boolean | 'ignore') => {
+  const decideIssue = async (approve: boolean) => {
     if (!preview || !issueReview || deciding) return;
     const item = issueReview[cursor] ?? issueReview[0];
     if (!item) return;
     setDeciding(true);
     try {
-      flash(verdict === 'ignore' ? await ignoreIssue(item.issue) : verdict ? await acceptIssue(item.issue) : await rejectIssue(item.issue));
+      flash(approve ? await acceptIssue(item.issue) : await dismissIssue(item.issue));
       countIssues();
       await reloadOpen(preview.rel);
       const items = await loadIssues(preview.rel);
@@ -587,7 +587,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
                     mode={review ? mode : undefined} onMode={review ? setMode : undefined}
                     highlight={review ? highlight : undefined} onHighlight={review ? () => setHighlight((h) => !h) : undefined}
                     nav={mode === 'after' ? (() => { const n = navOver(issueReview.map((x) => x.line)); return { ...n, onPrev: () => { n.onPrev(); setIssueOpen(true); }, onNext: () => { n.onNext(); setIssueOpen(true); } }; })() : undefined}
-                    onAccept={() => decideIssue(true)} onReject={() => decideIssue(false)} onIgnore={() => decideIssue('ignore')} acceptTip="Take the recommended fix" rejectTip="Quorum suggests the next fix instead" />
+                    onAccept={() => decideIssue(true)} onReject={() => decideIssue(false)} words acceptTip="Take the recommended fix" rejectTip="Mark it reviewed and change nothing" />
                 : review && <ReviewBanner tone={review.dot} locked={locked}
                     label={`${review.count} ${review.count === 1 ? 'update' : 'updates'} on ${when(review.at)}`}
                     mode={mode} onMode={(m) => { setMode(m); setCursor(-1); }} highlight={highlight} onHighlight={() => setHighlight((h) => !h)}

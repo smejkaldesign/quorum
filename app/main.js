@@ -2099,7 +2099,7 @@ function feedSources() {
   });
   const left = linksLeft();
   const declined = linksDeclined();
-  const links = (vindex?.linkHealth() ?? []).filter((m) => !left.has(m.target.toLowerCase())).map((m) => ({ ...withMarks(m, left, declined), abs: path.join(b.vault, m.sources?.[0] ?? '') }));
+  const links = linkIssues().filter((m) => !left.has(m.target.toLowerCase())).map((m) => ({ ...withMarks(m, left, declined), abs: path.join(b.vault, m.sources?.[0] ?? '') }));
   return { notes, memories, denials, junk: keeper.junk(), links, state, guardFile: DENIAL_LOG };
 }
 ipcMain.handle('activity-feed', (_e, query) => {
@@ -2150,13 +2150,16 @@ ipcMain.handle('activity-mark', (_e, rows, unread) => {
   feedStateSave();
   return n;
 });
-// the review items approved or disapproved. A memory's waiting updates are approved, or rejected so the file gets back
+// the review items answered. approve takes the recommendation; revert puts back a memory's text from before the agent's
+// updates (the recommendation for a large rewrite); dismiss marks the item reviewed and changes nothing.
+// Older notes on this handler: A memory's waiting updates are approved, or rejected so the file gets back
 // the text it had before them. A note Quorum wrote has no earlier text to go back to, so disapproving marks it
 // rejected and it leaves the review. A junk note approved goes to the macOS Trash, where it can be put back;
 // disapproved, it is kept and upkeep never asks about it again
 ipcMain.handle('activity-review', async (_e, items, verdict) => {
   const b = brain();
   const ok = verdict === 'approve';
+  const dismiss = verdict !== 'approve' && verdict !== 'revert';
   const done = [];
   const failed = [];
   for (const it of Array.isArray(items) ? items : []) {
@@ -2166,10 +2169,10 @@ ipcMain.handle('activity-review', async (_e, items, verdict) => {
       const at = new Date().toISOString();
       if (it.kind === 'note') {
         if (!meetingFile(t.abs)) throw new Error('Not found');
-        seenSet(t.abs, ok ? { reviewedAt: at, seenAt: at } : { rejectedAt: at, seenAt: at });
-        noteEvent(t.abs, ok ? 'reviewed' : 'rejected', ok ? 'You reviewed it' : 'You declined it');
+        seenSet(t.abs, { reviewedAt: at, seenAt: at });
+        noteEvent(t.abs, 'reviewed', ok ? 'You approved it' : 'You reviewed it');
       } else if (it.kind === 'link') {
-        decideLink(it.key, verdict === 'ignore' ? 'ignore' : ok ? 'approve' : 'reject');
+        decideLink(it.key, ok ? 'approve' : 'dismiss');
       } else if (it.kind === 'junk-note') {
         if (!meetingFile(t.abs) || !t.rel) throw new Error('Not found');
         if (ok) {
@@ -2182,8 +2185,9 @@ ipcMain.handle('activity-review', async (_e, items, verdict) => {
           seenSet(t.abs, { seenAt: at });
         }
       } else if (it.kind === 'memory' && b && t.rel) {
-        if (ok) memoryVersions.approve(b.vault, t.rel);
-        else if (memoryVersions.reject(b.vault, t.rel) == null) throw new Error('These updates can not be rejected');
+        // dismiss keeps the page as it is now, so the updates count as approved
+        if (ok || dismiss) memoryVersions.approve(b.vault, t.rel);
+        else if (memoryVersions.reject(b.vault, t.rel) == null) throw new Error('These updates can not be put back');
         seenSet(t.abs, { seenAt: at });
       } else throw new Error('Not found');
       done.push(t.abs);
@@ -2461,12 +2465,43 @@ ipcMain.handle('vault-cluster-name', (_e, key, name) => {
 });
 ipcMain.handle('vault-search', (_e, q, limit) => vindex?.search(String(q), Math.min(Number(limit) || 30, 1000)) ?? []);
 // fresh reads the vault again first (the Refresh button in Memory health)
+// every note name on disk in the vault, lowercased, including the notes Quorum may not read (a guardrail or an
+// exclusion keeps them out of the index). A link to one of them is not a missing note, and Memory health must never
+// write a second note with that name. Read again at most every 30 seconds
+let diskNamesCache = { at: 0, vault: '', names: new Set() };
+function diskNoteNames() {
+  const v = brain()?.vault;
+  if (!v) return new Set();
+  if (diskNamesCache.vault === v && Date.now() - diskNamesCache.at < 30000) return diskNamesCache.names;
+  const names = new Set();
+  const walk = (dir, depth) => {
+    if (depth > 12) return;
+    let entries = [];
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.name.startsWith('.') || e.name === 'node_modules') continue;
+      if (e.isDirectory()) walk(path.join(dir, e.name), depth + 1);
+      else if (/\.md$/i.test(e.name)) {
+        const base = e.name.replace(/\.md$/i, '').toLowerCase();
+        names.add(base);
+        names.add(path.relative(v, path.join(dir, base)).split(path.sep).join('/').toLowerCase());
+      }
+    }
+  };
+  walk(v, 0);
+  diskNamesCache = { at: Date.now(), vault: v, names };
+  return names;
+}
+// a missing link whose note is on disk but hidden from Quorum
+const onDisk = (target) => { const t = String(target).toLowerCase().replace(/\.md$/, ''); const names = diskNoteNames(); return names.has(t) || names.has(t.split('/').pop()); };
+// the missing links Memory health reports: the ones whose note is truly not in the vault
+const linkIssues = () => (vindex?.linkHealth() ?? []).filter((m) => !onDisk(m.target));
 // each missing link carries left: true when the person declined it (left it as is)
 ipcMain.handle('vault-link-health', (_e, fresh) => {
   if (fresh === true) vindex?.sync();
   const left = linksLeft();
   const declined = linksDeclined();
-  return (vindex?.linkHealth() ?? []).map((m) => withMarks(m, left, declined));
+  return linkIssues().map((m) => withMarks(m, left, declined));
 });
 // the missing links the person declined, per vault, so Memory health, the Memory tree and Notifications all leave them
 // out. Kept in Quorum's data folder; older versions kept them in the window's storage, which the window hands over once
@@ -2493,14 +2528,6 @@ let linksDeclinedCache = null;
 const declinedAll = () => { if (!linksDeclinedCache) { try { linksDeclinedCache = JSON.parse(readFileSync(linksDeclinedFile, 'utf8')); } catch { linksDeclinedCache = {}; } } return linksDeclinedCache; };
 const declinedSave = () => { try { writeFileSync(linksDeclinedFile, JSON.stringify(linksDeclinedCache)); } catch (e) { log('links declined', e?.message); } };
 const linksDeclined = () => declinedAll()[brain()?.vault] ?? {};
-function declineFix(key, action) {
-  const v = brain()?.vault;
-  if (!v) return;
-  const all = declinedAll();
-  const mine = all[v] ?? (all[v] = {});
-  mine[key] = [...new Set([...(mine[key] ?? []), action])];
-  declinedSave();
-}
 function clearDeclined(keys) {
   const mine = declinedAll()[brain()?.vault];
   if (!mine) return;
@@ -2524,15 +2551,11 @@ function contextNote(issue) {
 function decideLink(key, verdict) {
   const b = brain();
   if (!b || !vindex) throw new Error('No vault connected');
-  const entry = vindex.linkHealth().find((h) => h.target.toLowerCase() === String(key ?? '').toLowerCase());
+  const entry = linkIssues().find((h) => h.target.toLowerCase() === String(key ?? '').toLowerCase());
   if (!entry) throw new Error('That link is already fixed');
   const issue = issueOf(withMarks(entry));
-  if (verdict === 'ignore' || issue.action === 'leave') { setLinksLeft([issue.key], true); return 'Left the link as it is'; }
-  if (verdict !== 'approve') {
-    declineFix(issue.key, issue.action);
-    if (!issue.next) { setLinksLeft([issue.key], true); return 'No other fix left, so the link stays as it is'; }
-    return 'Declined. Quorum suggests the next fix';
-  }
+  // Dismiss marks it reviewed and changes nothing: the link stays and the issue moves to Dismissed
+  if (verdict !== 'approve' || issue.action === 'leave') { setLinksLeft([issue.key], true); return 'Dismissed. The link stays as it is'; }
   const c = issue.candidate;
   const busy = liveRuns.state().files ?? {};
   if ([...entry.sources, ...(c ? [c.rel] : [])].some((r) => busy[r])) throw new Error('Waits until the run writing these notes finishes');
@@ -2561,13 +2584,16 @@ function decideLink(key, verdict) {
   // a new note goes where most of its links come from, else the inbox; it starts with what the linking notes say
   const inbox = existsSync(path.join(b.vault, '00-inbox')) ? '00-inbox' : '';
   const folder = issue.createIn && existsSync(path.join(b.vault, issue.createIn)) ? issue.createIn : inbox;
-  const rel = createNote(b.vault, folder, issue.target.split('/').pop());
+  const name = issue.target.split('/').pop();
+  diskNamesCache.at = 0;
+  if (onDisk(name)) throw new Error('A note with that name is already in the vault, so Quorum did not write another one');
+  const rel = createNote(b.vault, folder, name);
   writeAtomic(path.join(b.vault, rel), contextNote(issue));
   vindex.sync();
   log('memory health', 'wrote the missing note', rel);
   return `Wrote the note ${rel} from what the linking notes say`;
 }
-ipcMain.handle('vault-link-decide', (_e, key, verdict) => decideLink(key, ['approve', 'ignore'].includes(verdict) ? verdict : 'reject'));
+ipcMain.handle('vault-link-decide', (_e, key, verdict) => decideLink(key, verdict === 'approve' ? 'approve' : 'dismiss'));
 // fix a missing link by pointing it at a note that exists; refuses a target that isn't a real note in the vault
 ipcMain.handle('vault-fix-link', (_e, target, toRel) => {
   if (!vindex || !vindex.rels().includes(String(toRel))) throw new Error('That note no longer exists');
@@ -2721,7 +2747,7 @@ ipcMain.handle('vault-file-issues', (_e, rel) => {
   const body = noteBody(n.text);
   const at = body ? n.text.indexOf(body) : -1;
   const offset = at < 0 ? 0 : n.text.slice(0, at).split('\n').length - 1;
-  return vindex.missingIn(n.rel).map((l) => ({ target: l.target, line: l.line - offset })).filter((l) => l.line >= 0);
+  return vindex.missingIn(n.rel).filter((l) => !onDisk(l.target)).map((l) => ({ target: l.target, line: l.line - offset })).filter((l) => l.line >= 0);
 });
 ipcMain.handle('memory-restore', (_e, rel, id) => {
   const n = memoryNote(rel);

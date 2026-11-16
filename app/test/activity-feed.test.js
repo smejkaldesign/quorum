@@ -171,7 +171,9 @@ describe('memory health issues', () => {
     const r = rows[0];
     expect(r).toMatchObject({ id: 'r:link:roadmap', kind: 'memory-health', review: { kind: 'link', key: 'roadmap' }, unread: false, target: { kind: 'link', rel: 'p/a.md', title: 'Roadmap' } });
     expect(r.summary.line).toBe('2 notes link to “Roadmap”, a note that does not exist');
-    expect(r.summary.parts.map(([k]) => k)).toEqual(['Problem', 'If fixed', 'Approving this (Recommended)', 'Declining this']);
+    expect(r.summary).toMatchObject({ recommendation: 'Make a note named “Roadmap” in p from what the 2 linking notes say about it.' });
+    expect(r.summary.solution).toMatch(/^Quorum writes a note named “Roadmap”/);
+    expect(feedPage(rows, { review: true }).items[0].details.map(([k]) => k)).toEqual(expect.arrayContaining(['Missing note', 'First linked from', 'Links', 'Most from']));
     const p = feedPage(rows, { review: true });
     expect(p.counts.review).toBe(1);
     expect(feedPage(rows, { kinds: ['memory-health'] }).items).toHaveLength(1);

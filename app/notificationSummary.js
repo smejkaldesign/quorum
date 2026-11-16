@@ -46,25 +46,29 @@ const BIG_CHANGE = 20;
 // the Trash keeps it recoverable
 function askOf(row) {
   const t = row.target.title;
-  // a Memory health issue: the issue is the question, its recommended action the suggestion (memoryHealth.js)
-  if (row.review.kind === 'link') return { question: row.detail?.title ?? `Links to ${q(t)} open nothing`, suggest: 'approve', why: row.detail?.recommend ?? '' };
+  const d = row.detail ?? {};
+  // a Memory health issue: the issue is the question, its recommended fix the recommendation (memoryHealth.js)
+  if (row.review.kind === 'link') return { question: d.title ?? `Links to ${q(t)} open nothing`, suggest: 'approve', problem: d.problem ?? '', solution: d.solution ?? '', value: d.value ?? '', recommendation: d.recommend ?? '', why: d.recommend ?? '' };
   if (row.review.kind === 'junk-note') {
-    return { question: `Remove ${q(t)}?`, suggest: 'approve', why: `${sentence(row.detail?.reason) || 'It looks empty.'} Approve moves it to the Trash, where you can put it back.` };
+    return { question: `Remove ${q(t)}?`, suggest: 'approve', problem: sentence(d.reason) || 'It has no recording and almost no real words.', solution: 'Quorum moves the note to the Trash, where you can put it back.', value: 'Empty notes stop showing up in search and in the agent\'s answers.', recommendation: 'Move it to the Trash.', why: 'It looks empty.' };
   }
   if (row.review.kind === 'note') {
-    const d = row.detail ?? {};
     const why = d.editedAfter ? 'You already edited it after Quorum wrote it, so it has your changes in it.'
       : d.writtenFrom === 'recording' ? 'Quorum wrote it from your own recording, and the transcript stays with it to check against.'
         : d.writtenFrom === 'import' ? 'An agent imported it from a connected app and kept the source text.'
           : 'Quorum wrote it and nothing has changed it since.';
-    return { question: `Keep ${q(t)} as Quorum wrote it?`, suggest: 'approve', why };
+    return { question: `Keep ${q(t)} as Quorum wrote it?`, suggest: 'approve', problem: `Quorum wrote this note and nobody has checked it yet. ${why}`, solution: 'Quorum marks the note reviewed and keeps its text.', value: 'The note stops waiting for a check, and the agent can rely on it as checked memory.', recommendation: 'Keep it as Quorum wrote it.', why };
   }
   const n = row.review.count ?? 1;
-  const blocks = row.detail?.changes ?? 0;
-  const reason = row.detail?.reason ? ` when it ${String(row.detail.reason).replace(/^./, (c) => c.toLowerCase()).replace(/\.$/, '')}` : '';
+  const blocks = d.changes ?? 0;
+  const reason = d.reason ? ` when it ${String(d.reason).replace(/^./, (c) => c.toLowerCase()).replace(/\.$/, '')}` : '';
   const question = `Keep the agent's ${plural(n, 'update')} to ${q(t)}?`;
-  if (blocks > BIG_CHANGE) return { question, suggest: 'reject', why: `It rewrites a large part of the page (${plural(blocks, 'changed block')}). Open it and check before you keep it.` };
-  return { question, suggest: 'approve', why: `A small change (${plural(blocks, 'changed block')}) the agent made${reason}.` };
+  if (blocks > BIG_CHANGE) {
+    const why = `It rewrites a large part of the page (${plural(blocks, 'changed block')}).`;
+    return { question, suggest: 'reject', problem: `The agent changed ${q(t)} and the change waits for a check. ${why}`, solution: 'Quorum puts back the text from before these updates. The updates stay in the page\'s history.', value: 'A large rewrite stays out of memory until you have checked it.', recommendation: 'Put back the text from before these updates.', why };
+  }
+  const why = `A small change (${plural(blocks, 'changed block')}) the agent made${reason}.`;
+  return { question, suggest: 'approve', problem: `The agent changed ${q(t)} and the change waits for a check. ${why}`, solution: 'Quorum keeps the updated text as the current version.', value: 'The page stays current with what the agent filed.', recommendation: `Keep the agent's ${plural(n, 'update')}.`, why };
 }
 
 // the summary of one row: line is the first line, sub an optional second; ask is set when the row needs a decision
@@ -83,9 +87,9 @@ export function summaryOf(row) {
   const d = row.detail ?? {};
   if (row.review) {
     const ask = askOf(row);
-    // a Memory health issue shows its problem, what fixing it does and the recommendation as their own lines
-    if (row.review.kind === 'link') return { line: ask.question, sub: d.problem ?? null, ask, parts: [['Problem', d.problem], ['If fixed', d.effect], ['Approving this (Recommended)', d.recommend], ['Declining this', d.decline]].filter(([, v]) => v) };
-    return { line: ask.question, sub: `Suggested: ${ask.suggest === 'approve' ? 'approve' : 'decline'}. ${ask.why}`, ask };
+    // the decision part of a review: what is wrong and what Quorum recommends. Approve takes the recommendation;
+    // Dismiss marks it reviewed and changes nothing
+    return { line: ask.question, sub: null, ask, problem: ask.problem, solution: ask.solution, value: ask.value, recommendation: ask.recommendation };
   }
   if (row.kind === 'guardrail') {
     const who = d.surface === 'keeper' ? 'Upkeep' : 'The agent';
@@ -148,16 +152,11 @@ export function detailsOf(row, { locale } = {}) {
     add('Path', home(d.path));
     add('Reason', d.reason);
   } else if (row.review?.kind === 'link') {
-    add('Missing note', row.target.title);
-    add('First linked from', row.target.rel);
-    add('Links', d.links);
-    if (d.folder != null) add('Most from', d.folder || 'The vault root');
-    add('Ignoring this', 'The links stay as they are, and the issue moves to Left as is in Memory health');
+    for (const [k, v] of d.meta ?? []) add(k, v);
   } else {
     add(row.target.kind === 'memory' ? 'Memory' : 'Note', row.target.rel);
     add('By', row.who === 'you' ? 'You' : WHO[d.who] ?? 'Quorum agent');
     add('Reason', d.reason);
-    if (row.review?.kind === 'junk-note') add('If you approve', 'It moves to the Trash. Decline keeps it, and upkeep does not ask again');
     add('Source', d.sourceName);
     if (d.changes) add('Changes', plural(d.changes, 'changed block'));
     if (d.approved != null && !row.review) add('Approval', d.auto ? 'Approved automatically' : d.approved ? 'Approved' : 'Waiting for approval');

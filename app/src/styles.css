@@ -2732,3 +2732,15 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .mh-row:has(.mh-parts) .nf-line, .nf-row.mh-row .nf-line { align-items: center; }
 .mh-row:has(.mh-parts) .nf-side { align-self: center; padding-top: 0; }
 .mh-icon { border-radius: 10px; }
+
+/* one review block: the Recommendation card (2px larger than the rest), then Problem, Solution and Value, then a
+   divider and the facts */
+.rv-details { display: grid; gap: 14px; font-size: 14px; }
+.rv-card { padding: 12px 14px; border: 1px solid rgba(var(--review-rgb), 0.35); border-radius: 12px; background: rgba(var(--review-rgb), 0.07); }
+.rv-card p { margin: 0; font-size: 16px; line-height: 1.45; color: var(--text); }
+.rv-card strong { font-weight: 600; }
+.rv-details .mh-parts { margin: 0; }
+.rv-details .rv-meta { padding-top: 14px; border-top: 1px solid var(--line); }
+.mh-drawer .rv-details .mh-parts > div { display: grid; grid-template-columns: 112px 1fr; gap: 12px; }
+.mh-drawer .rv-details .mh-parts dt { color: var(--muted); font-weight: 400; }
+.mh-drawer .rv-details .mh-parts dd { color: var(--text); }

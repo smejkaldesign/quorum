@@ -9,7 +9,7 @@
 // History: the rows that come from records kept before Notifications started (older versions, upkeep runs and
 // imports) are marked backfill and start out read, so the first opening lists the past without lighting the bell.
 import { detailsOf, summaryOf, titleOf } from './notificationSummary.js';
-import { issueOf } from './memoryHealth.js';
+import { issueMeta, issueOf } from './memoryHealth.js';
 
 // the event types the Type filter offers, in the order it shows them
 export const FEED_KINDS = [
@@ -128,7 +128,7 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], l
     push({
       id: `r:link:${i.key}`, at: time(m.lastAt), kind: 'memory-health', event: 'review', who: 'agent',
       target: { kind: 'link', abs: m.abs ?? '', rel: i.path, title: i.target }, files: [],
-      detail: { title: i.title, problem: i.problem, effect: i.effect, recommend: i.recommend, decline: i.decline, category: i.category, links: i.links, notes: i.notes, folder: i.folder?.folder ?? null },
+      detail: { title: i.title, problem: i.problem, solution: i.solution, value: i.value, recommend: i.recommend, meta: issueMeta(i), category: i.category, links: i.links, notes: i.notes, folder: i.folder?.folder ?? null },
       review: { kind: 'link', key: i.key },
     }, null);
   }

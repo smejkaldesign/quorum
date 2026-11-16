@@ -22,9 +22,9 @@ describe('memory health categories', () => {
     expect(counts).toEqual([
       { id: 'alias', label: 'Likely matches', count: 1 },
       { id: 'unlink', label: 'Dead links', count: 2 },
-      { id: 'left', label: 'Left as is', count: 1 },
+      { id: 'left', label: 'Dismissed', count: 1 },
     ]);
-    expect(countsLine(counts)).toBe('Likely matches 1 · Dead links 2 · Left as is 1');
+    expect(countsLine(counts)).toBe('Likely matches 1 · Dead links 2 · Dismissed 1');
     expect(categoryCounts([])).toEqual([]);
   });
 });

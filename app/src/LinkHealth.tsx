@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MissingLink } from './quorum';
 import markReview from '../assets/quorum-mark-review.png';
-import { CATEGORIES, HEALTH_SORTS, categoryCounts, countsLine, footerFacts, healthList, type HealthCategory, type HealthSort, type Issue } from '../memoryHealth.js';
-import { IconArchive, IconCheck, IconChevron, IconClose, IconReset } from './icons';
+import { CATEGORIES, HEALTH_SORTS, categoryCounts, countsLine, healthList, issueMeta, type HealthCategory, type HealthSort, type Issue } from '../memoryHealth.js';
+import { IconCheck, IconChevron, IconClose, IconReset } from './icons';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
-import { IssueParts } from './NotificationsView';
+import { IssueParts, ReviewDetails } from './NotificationsView';
 
 // Memory health: links that point at a note that does not exist, one row per missing note, in the same list pattern
 // as Notifications. Each row states the issue, the problem it causes, what fixing it does and the recommended action,
@@ -26,8 +26,8 @@ export const leftOf = (items: MissingLink[]) => new Set(items.filter((m) => m.le
 
 // Approve or Decline one issue, shared with the review banner and Notifications; answers with a line saying what changed
 export const acceptIssue = (issue: Issue) => window.quorum.vaultLinkDecide(issue.key, 'approve');
-export const rejectIssue = (issue: Issue) => window.quorum.vaultLinkDecide(issue.key, 'reject');
-export const ignoreIssue = (issue: Issue) => window.quorum.vaultLinkDecide(issue.key, 'ignore');
+// Dismiss: marked reviewed, nothing changes, and the issue moves to Dismissed
+export const dismissIssue = (issue: Issue) => window.quorum.vaultLinkDecide(issue.key, 'dismiss');
 const CHANGED = 'quorum:activity-changed';
 
 type Tab = 'open' | 'left';
@@ -48,6 +48,8 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const load = (fresh = false) => window.quorum.vaultLinkHealth(fresh).then(setItems);
   useEffect(() => { migrateLeft().finally(() => load()); }, []);
   useEffect(() => window.quorum.onVaultChanged(() => { load(); }), []);
+  // an issue answered in Notifications leaves this list too: both read the same issues
+  useEffect(() => { const go = () => { load(); }; window.addEventListener(CHANGED, go); return () => window.removeEventListener(CHANGED, go); }, []);
   useEffect(() => { if (focus) document.getElementById(`lh-${focus.toLowerCase()}`)?.scrollIntoView({ block: 'center' }); }, [focus, items]);
   useEffect(() => { setPicked(new Set()); }, [tab, cats, q, sort]);
 
@@ -68,17 +70,17 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
     window.dispatchEvent(new Event(CHANGED));
   };
   // one or many issues decided; the list, the tree, the button count and Notifications all read again
-  const decide = async (issues: Issue[], verdict: 'approve' | 'reject' | 'ignore') => {
+  const decide = async (issues: Issue[], verdict: 'approve' | 'dismiss') => {
     setBusy(true);
     const lines: string[] = [];
     let firstError = '';
     for (const i of issues) {
-      try { lines.push(verdict === 'approve' ? await acceptIssue(i) : verdict === 'ignore' ? await ignoreIssue(i) : await rejectIssue(i)); }
+      try { lines.push(verdict === 'approve' ? await acceptIssue(i) : await dismissIssue(i)); }
       catch (e) { firstError ||= String(e).replace(/^.*Error:\s*/, ''); }
     }
     setBusy(false);
     const failed = issues.length - lines.length;
-    await after(issues.length === 1 ? (lines[0] ?? firstError) : `${verdict === 'approve' ? 'Approved' : verdict === 'ignore' ? 'Ignored' : 'Declined'} ${lines.length} of ${issues.length}${failed ? `. ${firstError}` : ''}`);
+    await after(issues.length === 1 ? (lines[0] ?? firstError) : `${verdict === 'approve' ? 'Approved' : 'Dismissed'} ${lines.length} of ${issues.length}${failed ? `. ${firstError}` : ''}`);
   };
   const back = async (issues: Issue[]) => {
     await window.quorum.vaultLinksLeft(issues.map((i) => i.key), false);
@@ -110,8 +112,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
               {tab === 'left'
                 ? <button className="act-pill" disabled={busy} onClick={() => back([i])}>Move back to review</button>
                 : <>
-                    <button className="icon-btn mh-icon" disabled={busy} aria-label="Ignore" data-tip="Ignore: leave the link as it is and stop flagging it" onClick={() => decide([i], 'ignore')}><IconArchive width={16} height={16} /></button>
-                    {i.action !== 'leave' && <button className="icon-btn mh-icon mh-no" disabled={busy} aria-label="Decline" data-tip={`Decline: ${i.decline}`} onClick={() => decide([i], 'reject')}><IconClose width={15} height={15} /></button>}
+                    <button className="icon-btn mh-icon mh-no" disabled={busy} aria-label="Dismiss" data-tip="Dismiss: mark it reviewed and change nothing" onClick={() => decide([i], 'dismiss')}><IconClose width={15} height={15} /></button>
                     <button className="icon-btn mh-icon mh-yes" disabled={busy || locked(i)} aria-label="Approve" data-tip={locked(i) ? 'Waits until the run writing these notes finishes' : `Approve: ${i.recommend}`} onClick={() => decide([i], 'approve')}><IconCheck width={16} height={16} /></button>
                   </>}
             </span>
@@ -123,10 +124,9 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
       </div>
       {unfolded.has(i.key) && (
         <div className="conn-sub conn-fold-body nf-details mh-fold">
-          <p className="mh-fold-facts">{footerFacts(i).join(' • ')}</p>
           {tab === 'left'
-            ? <IssueParts parts={[['Left as is', 'The links stay as they are. Move it back to review to fix it later.']]} />
-            : <IssueParts parts={[['Problem', i.problem], ['If fixed', i.effect], ['Approving this (Recommended)', i.recommend], ['Declining this', i.decline]]} />}
+            ? <><IssueParts parts={[['Dismissed', 'The links stay as they are. Move it back to review to fix it later.']]} /><ReviewDetails meta={issueMeta(i)} /></>
+            : <ReviewDetails recommendation={i.recommend} problem={i.problem} solution={i.solution} value={i.value} meta={issueMeta(i)} />}
         </div>
       )}
     </div>
@@ -135,7 +135,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const filtered = !!(q || cats.length);
   const empty = items === null ? 'Checking your notes…'
     : filtered ? 'No issues match these filters.'
-      : tab === 'left' ? 'Nothing left as is. Issues you decline stay here, out of review.'
+      : tab === 'left' ? 'Nothing dismissed. Issues you dismiss stay here, out of review.'
         : 'Every link points at a note.';
 
   return (
@@ -154,7 +154,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
       <div className="nf-bar">
         <div className="seg" role="tablist" aria-label="Show">
           <button role="tab" aria-selected={tab === 'open'} className={tab === 'open' ? 'on' : ''} onClick={() => setTab('open')}>Needs review{openN ? <span className="nf-count review">{openN}</span> : null}</button>
-          <button role="tab" aria-selected={tab === 'left'} className={tab === 'left' ? 'on' : ''} onClick={() => setTab('left')}>Left as is</button>
+          <button role="tab" aria-selected={tab === 'left'} className={tab === 'left' ? 'on' : ''} onClick={() => setTab('left')}>Dismissed</button>
         </div>
         <span className="nf-fill" />
         <SearchButton open={searching || !!q} label="Search Memory health" onToggle={() => { if (searching || q) { setQ(''); setSearching(false); } else { setSearching(true); window.setTimeout(() => searchRef.current?.focus(), 60); } }} />
@@ -176,8 +176,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
             {tab === 'left'
               ? <button className="act-pill" disabled={busy} onClick={() => back(sel)}>Move back to review</button>
               : <>
-                  <button className="mh-plain" disabled={busy} onClick={() => decide(sel, 'ignore')}>Ignore</button>
-                  <button className="act-pill" disabled={busy} onClick={() => decide(sel, 'reject')}>Decline</button>
+                  <button className="act-pill" disabled={busy} data-tip="Mark them reviewed and change nothing" onClick={() => decide(sel, 'dismiss')}>Dismiss</button>
                   <button className="act-pill primary" disabled={busy || sel.some(locked)} onClick={() => decide(sel, 'approve')}>Approve</button>
                 </>}
           </span>
@@ -192,7 +191,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
 // The drawer for one Memory health issue in an open note: everything the Needs review notification has (the issue, its
 // facts, the problem, what fixing it does, the recommendation, where the links come from), with Decline and Approve
 export function IssueDrawer({ issue, at, total, locked, busy, onOpen, onDecide, onClose }: {
-  issue: Issue; at: number; total: number; locked: boolean; busy: boolean; onOpen: (rel: string) => void; onDecide: (verdict: boolean | 'ignore') => void; onClose: () => void;
+  issue: Issue; at: number; total: number; locked: boolean; busy: boolean; onOpen: (rel: string) => void; onDecide: (approve: boolean) => void; onClose: () => void;
 }) {
   const shown = issue.sources.slice(0, 8);
   const c = issue.candidate;
@@ -205,8 +204,7 @@ export function IssueDrawer({ issue, at, total, locked, busy, onOpen, onDecide, 
       </header>
       <div className="mh-drawer-body">
         <h3>{issue.title}</h3>
-        <p className="nf-sub">{footerFacts(issue).join(' • ')}</p>
-        <IssueParts parts={[['Problem', issue.problem], ['If fixed', issue.effect], ['Approving this (Recommended)', issue.recommend], ['Declining this', issue.decline]]} />
+        <ReviewDetails recommendation={issue.recommend} problem={issue.problem} solution={issue.solution} value={issue.value} meta={issueMeta(issue)} />
         <dl className="mh-parts mh-facts">
           <div><dt>Missing note</dt><dd>{issue.target}</dd></div>
           {c && <div><dt>Closest note</dt><dd><button className="keeper-link" onClick={() => onOpen(c.rel)}>{c.name ?? c.title}</button></dd></div>}
@@ -226,8 +224,7 @@ export function IssueDrawer({ issue, at, total, locked, busy, onOpen, onDecide, 
         </dl>
       </div>
       <footer className="mh-drawer-foot">
-        <button className="mh-plain" disabled={busy || locked} data-tip="Leave the link as it is and stop flagging it" onClick={() => onDecide('ignore')}>Ignore</button>
-        {issue.action !== 'leave' && <button className="act-pill" disabled={busy || locked} onClick={() => onDecide(false)}>Decline</button>}
+        <button className="act-pill" disabled={busy || locked} data-tip="Mark it reviewed and change nothing" onClick={() => onDecide(false)}>Dismiss</button>
         <button className="act-pill primary" disabled={busy || locked} data-tip={locked ? 'Waits until the run writing this note finishes' : undefined} onClick={() => onDecide(true)}>Approve</button>
       </footer>
     </aside>

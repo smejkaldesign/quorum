@@ -60,7 +60,7 @@ export function NotificationBell({ active, onOpen }: { active: boolean; onOpen: 
 // the row's ⋯ menu: Open, Mark read or unread, and Approve and Disapprove on a row waiting for a decision. It closes on
 // a click anywhere else or Escape
 function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide, onArchive }: {
-  row: FeedRow; me: { name: string; photo: string | null }; picked: boolean; busy: boolean; onPick: () => void; onOpen: () => void; onOpenFile: (abs: string) => void; onMark: (unread: boolean) => void; onDecide: (v: 'approve' | 'reject' | 'ignore') => void; onArchive: (on: boolean) => void;
+  row: FeedRow; me: { name: string; photo: string | null }; picked: boolean; busy: boolean; onPick: () => void; onOpen: () => void; onOpenFile: (abs: string) => void; onMark: (unread: boolean) => void; onDecide: (v: 'approve' | 'dismiss') => void; onArchive: (on: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
@@ -73,7 +73,7 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
         <span className="nf-who">{row.who === 'you' ? <span className="nf-you-avatar" aria-label="You" data-tip={me.name}><Avatar name={me.name} photo={me.photo} size={32} /></span> : <img src={row.review ? markReview : markProd} alt={row.review ? 'Quorum, needs review' : 'Quorum'} width={32} height={32} />}</span>
         <span className="nf-main">
           <span className="nf-head"><strong className="conn-title nf-title">{row.summary.line}</strong>{row.unread && <i className="nf-dot" role="img" aria-label="Unread" data-tip="Unread" />}</span>
-          {!row.review && <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>{row.summary.sub && !row.summary.parts && <> <span className="nf-sep" aria-hidden="true">•</span> {row.summary.sub}</>}</span>}
+          {!row.review && <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>{row.summary.sub && <> <span className="nf-sep" aria-hidden="true">•</span> {row.summary.sub}</>}</span>}
         </span>
         <span className={`nf-side${row.review ? ' mh-side' : ''}`}>
           {/* a row waiting for a decision reads like a Memory health row: the date on the right, and on hover its
@@ -82,9 +82,8 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
             <span className="mh-swap" onClick={stop} onKeyDown={stop}>
               <span className="mh-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>
               <span className="mh-hover">
-                {row.review.kind === 'link' && <button className="icon-btn mh-icon" disabled={busy} aria-label="Ignore" data-tip="Ignore: leave the link as it is and stop flagging it" onClick={() => onDecide('ignore')}><IconArchive width={16} height={16} /></button>}
-                <button className="icon-btn mh-icon mh-no" disabled={busy} aria-label="Decline" data-tip={`Decline: ${row.review.kind === 'link' ? row.summary.parts?.find(([k]) => k === 'Declining this')?.[1] ?? 'leave the links as they are' : row.review.kind === 'memory' ? 'put back the text from before these updates' : row.review.kind === 'junk-note' ? 'keep this note' : 'mark this note rejected'}`} onClick={() => onDecide('reject')}><IconClose width={15} height={15} /></button>
-                <button className="icon-btn mh-icon mh-yes" disabled={busy} aria-label="Approve" data-tip={`Approve: ${row.review.kind === 'link' ? row.summary.parts?.find(([k]) => k.startsWith('Approving'))?.[1] ?? row.summary.ask?.why ?? '' : row.summary.ask?.why ?? ''}`} onClick={() => onDecide('approve')}><IconCheck width={16} height={16} /></button>
+                <button className="icon-btn mh-icon mh-no" disabled={busy} aria-label="Dismiss" data-tip="Dismiss: mark it reviewed and change nothing" onClick={() => onDecide('dismiss')}><IconClose width={15} height={15} /></button>
+                <button className="icon-btn mh-icon mh-yes" disabled={busy} aria-label="Approve" data-tip={`Approve: ${row.summary.recommendation ?? ''}`} onClick={() => onDecide('approve')}><IconCheck width={16} height={16} /></button>
               </span>
             </span>
           )}
@@ -102,13 +101,17 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
       </div>
       {open && (
         <div className="conn-sub conn-fold-body nf-details">
-          {row.summary.parts && <IssueParts parts={row.summary.parts} />}
+          {row.review ? (
+            <ReviewDetails recommendation={row.summary.recommendation} problem={row.summary.problem} solution={row.summary.solution} value={row.summary.value}
+              meta={row.review.kind === 'link' ? row.details.filter(([k]) => k !== 'What' && k !== 'When' && k !== 'History') : row.details.filter(([k]) => k !== 'History')} />
+          ) : (
           <dl>
             {row.details.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
             {row.files.length > 0 && (
               <div><dt>Linked memories</dt><dd className="aa-files">{row.files.map((f) => <button key={f.abs} className="keeper-link" data-tip={f.rel} onClick={() => onOpenFile(f.abs)}>{f.title ?? f.label}</button>)}</dd></div>
             )}
           </dl>
+          )}
         </div>
       )}
     </div>
@@ -171,14 +174,23 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
     else if (r.target.kind === 'note') onOpenNote(r.target.abs);
     else window.dispatchEvent(new CustomEvent('quorum:open-memory', { detail: r.target.abs }));
   };
-  const decide = async (rows: FeedRow[], verdict: 'approve' | 'reject' | 'ignore') => {
-    const list = rows.filter((r) => r.review).map((r) => ({ kind: r.review!.kind, abs: r.target.abs, key: r.review!.key }));
-    if (!list.length) return;
+  // Approve takes each row's recommendation (for a large memory rewrite that is putting back the earlier text);
+  // Dismiss marks rows reviewed and changes nothing
+  const decide = async (rows: FeedRow[], verdict: 'approve' | 'dismiss') => {
+    const picked = rows.filter((r) => r.review);
+    if (!picked.length) return;
+    const groups = new Map<'approve' | 'revert' | 'dismiss', { kind: NonNullable<FeedRow['review']>['kind']; abs: string; key?: string }[]>();
+    for (const r of picked) {
+      const v = verdict === 'dismiss' ? 'dismiss' : r.summary.ask?.suggest === 'reject' ? 'revert' : 'approve';
+      groups.set(v, [...(groups.get(v) ?? []), { kind: r.review!.kind, abs: r.target.abs, key: r.review!.key }]);
+    }
+    const list = picked;
     setBusy(true);
     setError(null);
     try {
-      const r = await window.quorum.activityReview(list, verdict);
-      if (r.failed.length) setError(`${r.failed.length} of ${list.length} could not be ${verdict === 'approve' ? 'approved' : verdict === 'ignore' ? 'ignored' : 'declined'}: ${r.failed[0].error}`);
+      const failed: { abs: string; error: string }[] = [];
+      for (const [v, items] of groups) failed.push(...(await window.quorum.activityReview(items, v)).failed);
+      if (failed.length) setError(`${failed.length} of ${list.length} could not be ${verdict === 'approve' ? 'approved' : 'dismissed'}: ${failed[0].error}`);
     } catch (e) { setError((e as Error).message); }
     setBusy(false);
     setPicked(new Set());
@@ -236,7 +248,7 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
           {/* the actions appear once something is picked; the bar keeps its height either way */}
           <span className={`nf-bulk-actions${sel.length ? '' : ' hidden'}`} aria-hidden={!sel.length}>
             <button className="act-pill primary" disabled={busy || !selReview.length} onClick={() => decide(selReview, 'approve')}>Approve</button>
-            <button className="act-pill" disabled={busy || !selReview.length} data-tip="Memory updates go back to the text from before them, a note Quorum wrote is marked rejected, and missing links stay as they are" onClick={() => decide(selReview, 'reject')}>Decline</button>
+            <button className="act-pill" disabled={busy || !selReview.length} data-tip="Mark them reviewed and change nothing" onClick={() => decide(selReview, 'dismiss')}>Dismiss</button>
             <button className="act-pill" disabled={busy || !sel.some((r) => r.unread)} onClick={async () => { await mark(sel); setPicked(new Set()); }}>Mark read</button>
             <button className="act-pill" disabled={busy} onClick={async () => { await archive(sel, tab !== 'archived'); setPicked(new Set()); }}>{tab === 'archived' ? 'Unarchive' : 'Archive'}</button>
           </span>
@@ -256,8 +268,20 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
   );
 }
 
-// a Memory health issue's write-up under its title: the problem, what fixing it does, and the recommended action, with
-// the labels lined up with the summary text
+// One review, the same block in Notifications, Memory health and the note's drawer: the recommendation in its own card,
+// then the problem, solution and value that explain it, then a divider and the facts
+export function ReviewDetails({ recommendation, problem, solution, value, meta }: { recommendation?: string; problem?: string; solution?: string; value?: string; meta?: [string, string][] }) {
+  const why: [string, string][] = ([['Problem', problem], ['Solution', solution], ['Value', value]] as [string, string | undefined][]).filter((x): x is [string, string] => !!x[1]);
+  return (
+    <div className="rv-details">
+      {recommendation && <div className="rv-card"><p><strong>Recommendation:</strong> {recommendation}</p></div>}
+      {why.length > 0 && <IssueParts parts={why} />}
+      {meta && meta.length > 0 && <dl className="mh-parts rv-meta">{meta.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>}
+    </div>
+  );
+}
+
+// label and text pairs, the labels lined up with the summary text
 export function IssueParts({ parts }: { parts: [string, string][] }) {
   return <dl className="mh-parts">{parts.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>;
 }

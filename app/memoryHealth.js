@@ -20,7 +20,7 @@ export const CATEGORIES = [
   { id: 'unlink', label: 'Dead links' },
   { id: 'outside', label: 'Outside the vault' },
 ];
-export const LEFT_LABEL = 'Left as is';
+export const LEFT_LABEL = 'Dismissed';
 
 const OUTSIDE_RE = /^(\.\.\/|\/)|(^|\/)\.claude\//;
 const CATEGORY_OF = { alias: 'alias', relink: 'similar', create: 'missing', unlink: 'unlink', leave: 'outside' };
@@ -124,6 +124,21 @@ export function issueOf(m) {
     unlink: `Remove the ${linkWord} and keep ${name} as plain text.`,
     leave: 'Leave the link as it is.',
   }[action];
+  // the solution (what Quorum does on Approve) and the value (what it does for the memory and the agent)
+  const solution = {
+    alias: `Quorum adds ${name} to the aliases of ${match}. No note text changes.`,
+    relink: `Quorum rewrites the ${linkWord} in ${linking} to point at ${match}.`,
+    create: `Quorum writes a note named ${name}${createIn ? ` in ${createIn}` : ''} that quotes what ${linking} ${m.count === 1 ? 'says' : 'say'} about it, with a link back to each.`,
+    unlink: `Quorum removes the ${linkWord} and keeps ${name} as plain text.`,
+    leave: 'Nothing changes.',
+  }[action];
+  const value = {
+    alias: `${one ? 'The link opens' : 'Every link opens'} ${match}, and the agent counts ${them} as links to that note.`,
+    relink: `The agent can follow ${them} to the note ${one ? 'it most likely means' : 'they most likely mean'}.`,
+    create: `The agent reads the topic in one place, and the graph connects ${m.count === 1 ? 'the note' : `the ${m.count} notes`} through it.`,
+    unlink: `The agent stops following ${them} to nothing, and the graph drops the empty node.`,
+    leave: 'The issue stops showing here.',
+  }[action];
   const nextText = {
     alias: `add ${name} as an alias of ${match}`,
     relink: `point the ${linkWord} at ${match}`,
@@ -132,7 +147,7 @@ export function issueOf(m) {
   };
   const decline = next ? `Quorum suggests the next fix instead: ${nextText[next]}.` : 'The links stay as they are, and the issue moves to Left as is.';
   return {
-    key: m.target.toLowerCase(), target: m.target, category, title, fix: recommend, problem, effect, recommend, decline, action, next, candidate: c, sources: m.sources ?? [],
+    key: m.target.toLowerCase(), target: m.target, category, title, fix: recommend, problem, effect, recommend, solution, value, decline, action, next, candidate: c, sources: m.sources ?? [],
     contexts: m.contexts ?? [], createIn, path: m.sources?.[0] ?? '', links: m.links ?? m.count, notes: m.count, folder: top, lastAt: m.lastAt ?? null,
   };
 }
@@ -209,4 +224,12 @@ export function healthList(items, { tab = 'open', categories = [], q = '', sort 
     .filter((i) => !cats.size || cats.has(i.category))
     .filter((i) => { const hay = `${i.target} ${i.title} ${i.sources.join(' ')} ${i.candidate?.name ?? i.candidate?.title ?? ''}`.toLowerCase(); return words.every((w) => hay.includes(w)); })
     .sort(BY[sort] ?? BY.links);
+}
+
+// the facts of an issue, the same list in Memory health, the note's drawer and Notifications
+export function issueMeta(issue, { date = (t) => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) } = {}) {
+  const out = [['Missing note', issue.target], ['First linked from', issue.path], ['Links', String(issue.links)]];
+  if (issue.folder) out.push(['Most from', issue.folder.folder || 'The vault root']);
+  if (issue.lastAt) out.push(['Changed', date(issue.lastAt)]);
+  return out;
 }
