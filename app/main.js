@@ -3012,9 +3012,17 @@ async function undoPastFix(id) {
   if (!plan?.ok) throw new Error(plan?.why ?? 'There is nothing to undo on that fix');
   const nowText = (rel) => { try { return readFileSync(vaultPath(b.vault, rel), 'utf8'); } catch { return null; } };
   const was = plan.files.map((f) => ({ rel: f.rel, text: nowText(f.rel) }));
-  await applyPlan(b.vault, plan, (abs) => shell.trashItem(abs));
-  // the undo is a version of its own, so the fixed text can be brought back from the history
-  for (const w of was) { try { memoryVersions.record({ vault: b.vault, rel: w.rel, before: w.text, after: nowText(w.rel), who: 'you', reason: `Undid the Memory health fix on “${run.target}”`, agent: false }); } catch (e) { log('fix versions', e?.message); } }
+  // the undo is a version of its own, so the fixed text can be brought back from the history; a note changed before a
+  // later write failed is recorded too
+  try {
+    await applyPlan(b.vault, plan, (abs) => shell.trashItem(abs));
+  } finally {
+    for (const w of was) {
+      const after = nowText(w.rel);
+      if (after === w.text) continue;
+      try { memoryVersions.record({ vault: b.vault, rel: w.rel, before: w.text, after, who: 'you', reason: `Undid the Memory health fix on “${run.target}”`, agent: false }); } catch (e) { log('fix versions', e?.message); }
+    }
+  }
   vindex?.sync();
   diskNamesCache.at = 0;
   setLinksLeft([run.key], false);
