@@ -65,12 +65,11 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
 }) {
   // a fix run opens its details, so its progress and outcome are in view
   const [open, setOpen] = useState(!!row.run?.showBanner);
-  // Approve pressed: the button turns into a spinner and the title shimmers until the row is answered
+  // Approve pressed: the button turns into a spinner and the title shimmers until the fix starts; the run's own state
+  // takes over from there, so a fix that fails or never starts does not leave the spinner on
   const [pressed, setWorking] = useState(false);
   // the row stays where it is, its buttons showing and the spinner on, until the fix ends
   const working = pressed || !!row.fixRun;
-  // the run takes over the spinner once it is attached; a fix that never starts or fails clears it too
-  useEffect(() => { if (row.fixRun) setWorking(false); }, [row.fixRun]);
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const go = () => { if (!row.target.gone) onOpen(); };
   return (
