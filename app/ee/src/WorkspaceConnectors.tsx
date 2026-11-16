@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AccountState, ConnectorDraft, ConnectorProvider, ConnectorRole, WorkspaceConnector } from '../../src/quorum';
-import { Row } from '../../src/controls';
+import { EmptyState, ModalActions, Row } from '../../src/controls';
 import { IconGrid, IconPlus, IconReset, IconTrash, ProviderMark } from '../../src/icons';
 import { AccountCard, EE_MARKER, useAccount } from './Account';
 import { connectorsApi } from './accountMock';
@@ -55,12 +55,10 @@ function Connectors({ account }: { account: AccountState }) {
       </div>
       <p className="mcp-lede">Provider keys for the whole workspace. Quorum keeps each key in the server vault and uses it only for the roles you pick; no one can read it back, not even here.</p>
       {list && !list.length ? (
-        <div className="set-card set-zero">
-          <span className="set-zero-icon"><IconGrid width={22} height={22} /></span>
-          <strong>No connectors yet</strong>
+        <EmptyState icon={<IconGrid width={22} height={22} />} title="No connectors yet">
           <p>{canManage ? 'Add a speech, model or voice provider once and every seat in the workspace uses it.' : 'An owner or admin adds speech, model and voice providers here for everyone.'}</p>
           {canManage && <button className="pill" onClick={() => setEditing('new')}>Add a connector</button>}
-        </div>
+        </EmptyState>
       ) : (
         <div className="set-card">
           {list?.map((c) => (
@@ -144,13 +142,10 @@ function ConnectorSheet({ existing, onDone }: { existing: WorkspaceConnector | n
           </div>
         </div>
         {note && <p className={note.ok ? 'set-ok' : 'set-error'}>{note.text}</p>}
-        <div className="modal-actions">
-          <button className="pill with-icon" disabled={!draft.secret || busy !== null || (needsBaseUrl(provider) && !draft.baseUrl)} onClick={test}><IconReset width={15} height={15} />{busy === 'test' ? 'Testing…' : 'Test'}</button>
-          <span className="modal-actions-end">
-            <button className="pill" onClick={() => onDone(false)}>Cancel</button>
-            <button className="pill primary" disabled={!ready || busy !== null} onClick={save}>{busy === 'save' ? 'Saving…' : existing ? 'Replace key' : 'Add'}</button>
-          </span>
-        </div>
+        <ModalActions start={<button className="pill with-icon" disabled={!draft.secret || busy !== null || (needsBaseUrl(provider) && !draft.baseUrl)} onClick={test}><IconReset width={15} height={15} />{busy === 'test' ? 'Testing…' : 'Test'}</button>}>
+          <button className="pill" onClick={() => onDone(false)}>Cancel</button>
+          <button className="pill primary" disabled={!ready || busy !== null} onClick={save}>{busy === 'save' ? 'Saving…' : existing ? 'Replace key' : 'Add'}</button>
+        </ModalActions>
       </div>
     </div>
   );

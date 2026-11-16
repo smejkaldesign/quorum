@@ -1,4 +1,5 @@
 import type { SetupAnswers, SetupInput, SetupTemplate } from './quorum';
+import { Segmented } from './controls';
 
 // the setup interview: a template and five short answers that shape a Quorum-built Agent OS. Shared by onboarding
 // (first creation) and Settings, Memory (run again). Lists are typed as comma-separated text and split on save
@@ -35,10 +36,8 @@ export function SetupForm({ draft, onChange, note, lockOrganize = false }: { dra
       <label className="set-field wide onb-field"><span className="onb-label">People</span><input value={draft.people} placeholder="Who you work with, separated by commas" onChange={(e) => set('people', e.target.value)} /></label>
       <div className="onb-row setup-organize">
         <span className="onb-label">Folders</span>
-        <span className="seg" role="radiogroup" aria-label="Folder names">
-          <button type="button" role="radio" disabled={lockOrganize} aria-checked={draft.organize === 'areas'} className={draft.organize === 'areas' ? 'on' : ''} onClick={() => set('organize', 'areas')}>Numbered areas</button>
-          <button type="button" role="radio" disabled={lockOrganize} aria-checked={draft.organize === 'plain'} className={draft.organize === 'plain' ? 'on' : ''} onClick={() => set('organize', 'plain')}>Plain names</button>
-        </span>
+        <Segmented kind="radio" inline label="Folder names" disabled={lockOrganize} value={draft.organize} onChange={(v) => set('organize', v)}
+          options={[{ id: 'areas', label: 'Numbered areas' }, { id: 'plain', label: 'Plain names' }]} />
         <code className="setup-example">{lockOrganize ? 'kept as the folder was built' : draft.organize === 'areas' ? '02-people/, 03-projects/' : 'people/, projects/'}</code>
       </div>
       <p className="setup-privacy">Each project and person gets a note, and the answers are written into the folder's CLAUDE.md and <code>.quorum/setup.json</code> on this Mac. The prefill asks your chosen model source once, with your name and profile line.</p>

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { KbImportProgress, KbImportSource, Result } from '../../src/quorum';
 import { IconFolder } from '../../src/icons';
 import { checkGithubUrl, importSummary, progressLabel, progressShare, type KbImportResult } from './kbTree';
+import { ModalActions } from '../../src/controls';
 
 // Shared pieces of the knowledge base screens: a call that never rejects, the import (which another change adds to
 // the main process, so the screens check for it before offering it), and the delete confirmation.
@@ -148,13 +149,10 @@ export function KbConfirm({ title, body, action, onDone }: { title: string; body
       <div className="modal" role="alertdialog" aria-modal="true" aria-labelledby="kb-confirm-title" aria-describedby="kb-confirm-body">
         <h2 id="kb-confirm-title">{title}</h2>
         <p id="kb-confirm-body">{body}</p>
-        <div className="modal-actions">
-          <span />
-          <span className="modal-actions-end">
-            <button className="pill" autoFocus onClick={() => onDone(false)}>Cancel</button>
-            <button className="pill danger-pill" onClick={() => onDone(true)}>{action}</button>
-          </span>
-        </div>
+        <ModalActions>
+          <button className="pill" autoFocus onClick={() => onDone(false)}>Cancel</button>
+          <button className="pill danger-pill" onClick={() => onDone(true)}>{action}</button>
+        </ModalActions>
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { LiveRun, MemoryVersion, Settings } from './quorum';
-import { Row, Toggle } from './controls';
+import { Row, Segmented, Toggle } from './controls';
 import { Section } from './NoteTools';
 import { IconArrowDown, IconArrowUp, IconCheck, IconClock, IconClose, IconHighlight, IconListCheck, IconStop } from './icons';
 
@@ -29,10 +29,8 @@ export function ReviewBanner({ tone, label, mode, onMode, highlight, onHighlight
   return (
     <div className={`mu-banner ${tone}`} role="status">
       {onMode && mode && (
-        <div className="seg mu-seg" role="group" aria-label="Show the note before or after the updates">
-          <button className={mode === 'before' ? 'on' : ''} aria-pressed={mode === 'before'} onClick={() => onMode('before')}>Before</button>
-          <button className={mode === 'after' ? 'on' : ''} aria-pressed={mode === 'after'} onClick={() => onMode('after')}>After</button>
-        </div>
+        <Segmented kind="pressed" className="mu-seg" label="Show the note before or after the updates" value={mode} onChange={onMode}
+          options={[{ id: 'before', label: 'Before' }, { id: 'after', label: 'After' }]} />
       )}
       {onHighlight && (
         <button className={`icon-btn mu-icon ${highlight ? 'active' : ''}`} aria-pressed={!!highlight} aria-label={highlight ? 'Hide highlights' : 'Show highlights'}

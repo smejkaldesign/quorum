@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AccountDeleteStatus, AccountState } from '../../src/quorum';
-import { Row } from '../../src/controls';
+import { Modal, ModalActions, Row } from '../../src/controls';
 import { IconBuilding, IconCheck, IconCopy, IconPower } from '../../src/icons';
 
 // the tooltips on a delete that is not offered; the server decides both cases (account_delete_status, migration 0039)
@@ -57,33 +57,26 @@ function TypeEmailConfirm({ title, body, action, email, onConfirm, onClose }: { 
     if (err) { setError(err); setBusy(false); }
   };
   return (
-    <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}
-      onKeyDown={(e) => { if (e.key === 'Escape' && !busy) { e.stopPropagation(); onClose(); } }}>
-      <div className="modal type-confirm" role="alertdialog" aria-modal="true" aria-labelledby="type-confirm-title">
-        <h2 id="type-confirm-title">{title}</h2>
-        <p>{body}</p>
-        <p className="type-confirm-ask">Type your email address to confirm.</p>
-        <label className="set-field wide copy-field">
-          <input readOnly value={email} onFocus={(e) => e.target.select()} aria-label="Your email address" />
-          <button type="button" className={`icon-btn copy-btn ${copied ? 'copied' : ''}`} aria-label={copied ? 'Copied' : 'Copy email address'} data-tip={copied ? 'Copied' : 'Copy'} data-tip-pos="left"
-            onClick={() => { navigator.clipboard.writeText(email); setCopied(true); }}>
-            <IconCopy className="ic-copy" width={16} height={16} /><IconCheck className="ic-check" width={16} height={16} />
-          </button>
-        </label>
-        <label className="set-field wide">
-          <input autoFocus value={typed} placeholder={email} aria-label="Type your email address" disabled={busy} spellCheck={false} autoCapitalize="off"
-            onChange={(e) => setTyped(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') go(); }} />
-        </label>
-        {error && <p className="set-error" role="alert">{error}</p>}
-        <div className="modal-actions">
-          <span />
-          <span className="modal-actions-end">
-            <button className="pill" disabled={busy} onClick={onClose}>Cancel</button>
-            <button className="pill danger-pill" disabled={!ok || busy} onClick={go}>{busy ? 'Deleting…' : action}</button>
-          </span>
-        </div>
-      </div>
-    </div>
+    <Modal titleId="type-confirm-title" title={title} className="type-confirm" role="alertdialog" onClose={onClose} locked={busy}>
+      <p>{body}</p>
+      <p className="type-confirm-ask">Type your email address to confirm.</p>
+      <label className="set-field wide copy-field">
+        <input readOnly value={email} onFocus={(e) => e.target.select()} aria-label="Your email address" />
+        <button type="button" className={`icon-btn copy-btn ${copied ? 'copied' : ''}`} aria-label={copied ? 'Copied' : 'Copy email address'} data-tip={copied ? 'Copied' : 'Copy'} data-tip-pos="left"
+          onClick={() => { navigator.clipboard.writeText(email); setCopied(true); }}>
+          <IconCopy className="ic-copy" width={16} height={16} /><IconCheck className="ic-check" width={16} height={16} />
+        </button>
+      </label>
+      <label className="set-field wide">
+        <input autoFocus value={typed} placeholder={email} aria-label="Type your email address" disabled={busy} spellCheck={false} autoCapitalize="off"
+          onChange={(e) => setTyped(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') go(); }} />
+      </label>
+      {error && <p className="set-error" role="alert">{error}</p>}
+      <ModalActions>
+        <button className="pill" disabled={busy} onClick={onClose}>Cancel</button>
+        <button className="pill danger-pill" disabled={!ok || busy} onClick={go}>{busy ? 'Deleting…' : action}</button>
+      </ModalActions>
+    </Modal>
   );
 }
 
