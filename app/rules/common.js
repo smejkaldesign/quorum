@@ -11,7 +11,13 @@ export const dateIn = (s) => { const m = String(s ?? '').match(DATE_RE); if (!m)
 // a value that switches a tag off: confidential: false, none, no
 export const OFF_RE = /^(false|no|none|off|public|)$/i;
 export const isOff = (v) => v == null || v === false || (Array.isArray(v) ? !v.length : OFF_RE.test(String(v).trim()));
-export const skipped = (n) => isGenerated(n.rel, n.note?.props ?? {});
+// a template: a note in a templates folder, or one whose frontmatter still holds template syntax ({{date}}, <% %>).
+// Its status and dates are placeholders, so no rule reads it as a note
+const TEMPLATE_FOLDER = /(^|\/)_?templates?\//i;
+const TEMPLATE_SYNTAX = /\{\{[^}]*\}\}|<%[\s\S]*?%>/;
+export const isTemplate = (rel, props = {}) => TEMPLATE_FOLDER.test(rel) || Object.values(props).some((v) => (Array.isArray(v) ? v : [v]).some((x) => TEMPLATE_SYNTAX.test(String(x ?? ''))));
+// generated reports and templates: no rule reads them
+export const skipped = (n) => isGenerated(n.rel, n.note?.props ?? {}) || isTemplate(n.rel, n.note?.props ?? {});
 export const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 export const quote = (t) => `“${t}”`;
 // a note that opens a folder or the vault (index, README, CLAUDE): it lists other notes and follows no folder schema

@@ -32,6 +32,11 @@ describe('every rule', () => {
     const report = note('ops/drift-report.md', `${fm({ status: 'draft', updated: '2026-01-01' })}# Drift`, { inbound: 0, outbound: 0 });
     expect(runRules(ctx([report])).findings).toEqual([]);
   });
+  it('skips templates: notes in a templates folder and notes whose frontmatter holds template syntax', () => {
+    const inFolder = note('Templates/project.md', `${fm({ status: 'draft', updated: '2026-01-01' })}# Project`);
+    const syntax = note('a/plan.md', `${fm({ status: 'planned', date: '{{date}}' })}# Plan`, { mtime: NOW - 400 * DAY });
+    expect(runRules(ctx([inFolder, syntax])).findings).toEqual([]);
+  });
   it('keeps the findings on other notes when it runs for some notes only', () => {
     const prev = [{ key: 'a', notes: ['a.md'] }, { key: 'b', notes: ['b.md'] }];
     expect(mergeFindings(prev, [{ key: 'b2', notes: ['b.md'] }], ['b.md']).map((f) => f.key)).toEqual(['a', 'b2']);
