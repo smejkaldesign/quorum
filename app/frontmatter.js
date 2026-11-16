@@ -11,6 +11,9 @@ export function yamlValue(raw) {
   return v;
 }
 
+// a value written unquoted after `key: `; a line break in it would start keys of its own (visibility, keep_private)
+export const oneLine = (v) => String(v ?? '').replace(/[\r\n\u2028\u2029]+/g, ' ').trim();
+
 // the frontmatter block at the top of a note, with its closing line, or '' when there is none
 export const FRONT = /^---\r?\n(?:[\s\S]*?\r?\n)?---[ \t]*(?:\r?\n|$)/;
 export const frontBlock = (text) => String(text ?? '').match(FRONT)?.[0] ?? '';

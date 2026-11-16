@@ -14,7 +14,7 @@ import { slug } from '../sources/granola.js';
 import { SUBFOLDER, transcriptMarkdown } from '../sources/transcripts.js';
 import { httpUrl, relayUrls, unreachable } from './relay.js';
 import { plain } from './account.js';
-import { setFrontmatterKey } from '../frontmatter.js';
+import { oneLine, setFrontmatterKey } from '../frontmatter.js';
 
 // The Zoom app's public client id and the redirect URI registered for it. Development credentials pair with the
 // railway.app redirect and serve the developer's own account until the app is published; both move to the
@@ -62,17 +62,17 @@ export function recordingNote(m, { transcriptRel = null, host = null } = {}) {
   const title = m.topic || 'Zoom meeting';
   return [
     '---',
-    `source_id: ${m.uuid}`,
+    `source_id: ${oneLine(m.uuid)}`,
     `title: ${JSON.stringify(title)}`,
-    `date: ${m.start_time ?? new Date().toISOString()}`,
+    `date: ${oneLine(m.start_time ?? new Date().toISOString())}`,
     'participants:',
-    ...(host ? [`  - ${host} (recorder)`] : []),
+    ...(host ? [`  - ${oneLine(host)} (recorder)`] : []),
     `participant_count: ${host ? 1 : 0}`,
     'source: zoom',
     'visibility: private',
-    ...(m.share_url ? [`zoom_url: ${m.share_url}`] : []),
-    ...(m.duration ? [`duration_minutes: ${m.duration}`] : []),
-    ...(transcriptRel ? [`transcript: ${transcriptRel}`] : []),
+    ...(m.share_url ? [`zoom_url: ${oneLine(m.share_url)}`] : []),
+    ...(m.duration ? [`duration_minutes: ${oneLine(m.duration)}`] : []),
+    ...(transcriptRel ? [`transcript: ${oneLine(transcriptRel)}`] : []),
     '---',
     '',
     `# ${title}`,

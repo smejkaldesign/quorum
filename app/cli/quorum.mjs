@@ -224,10 +224,12 @@ function importMeeting({ source, id, title, date, participants = [], url = null,
   }
   const when = date && !isNaN(Date.parse(date)) ? new Date(date).toISOString() : new Date().toISOString();
   const people = (Array.isArray(participants) ? participants : []).map((p) => String(p?.name ?? p).replace(/[\r\n]+/g, ' ').trim()).filter(Boolean).slice(0, 50);
+  // the link is written unquoted, so it must be one line: a line break would add keys such as visibility: public
+  const link = url && /^https?:\/\/\S+$/.test(String(url)) ? String(url) : null;
   const text = [
     '---', `source_id: ${yamlStr(sid)}`, `title: ${yamlStr(title || 'Untitled meeting')}`, `date: ${when}`,
     'participants:', ...people.map((p) => `  - ${yamlStr(p)}`), `participant_count: ${people.length}`,
-    `source: ${src}`, 'visibility: private', 'imported_by: agent', ...(url && /^https?:\/\//.test(String(url)) ? [`${src.replace(/-/g, '_')}_url: ${url}`] : []),
+    `source: ${src}`, 'visibility: private', 'imported_by: agent', ...(link ? [`${src.replace(/-/g, '_')}_url: ${link}`] : []),
     '---', '', `# ${title || 'Untitled meeting'}`, '', String(body ?? '').slice(0, 200000).trim(), '',
   ].join('\n');
   let file = path.join(dir, `${when.slice(0, 10)}-${slug(title || 'meeting')}.md`);
