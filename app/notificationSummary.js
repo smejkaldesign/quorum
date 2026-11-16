@@ -91,6 +91,14 @@ export function summaryOf(row) {
     // Dismiss marks it reviewed and changes nothing
     return { line: ask.question, sub: null, ask, problem: ask.problem, solution: ask.solution, value: ask.value, recommendation: ask.recommendation };
   }
+  if (row.event === 'fix' && row.run) {
+    const r = row.run;
+    const name = q(r.target);
+    if (r.status === 'queued') return { line: `Waiting to fix ${name}`, sub: null };
+    if (r.status === 'running') return { line: `Fixing ${name}`, sub: null };
+    if (r.status === 'error') return { line: `Could not fix ${name}`, sub: sentence(r.error) || null };
+    return { line: `Fixed ${name}`, sub: sentence(r.outcome) || null };
+  }
   if (row.kind === 'guardrail') {
     const who = d.surface === 'keeper' ? 'Upkeep' : 'The agent';
     const what = base(d.path) || (String(d.tool ?? '').toLowerCase() === 'bash' ? 'a command' : 'a request');

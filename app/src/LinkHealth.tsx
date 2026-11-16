@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MissingLink } from './quorum';
 import markReview from '../assets/quorum-mark-review.png';
 import { CATEGORIES, HEALTH_SORTS, categoryCounts, countsLine, healthList, issueMeta, type HealthCategory, type HealthSort, type Issue } from '../memoryHealth.js';
 import { IconCheck, IconChevron, IconClose, IconReset } from './icons';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
-import { IssueParts, ReviewDetails } from './NotificationsView';
+import { IssueParts, ReviewDetails, RunBanner } from './NotificationsView';
+import type { FixRun } from './quorum';
 
 // Memory health: links that point at a note that does not exist, one row per missing note, in the same list pattern
 // as Notifications. Each row states the issue, the problem it causes, what fixing it does and the recommended action,
@@ -25,7 +26,14 @@ export async function migrateLeft() {
 export const leftOf = (items: MissingLink[]) => new Set(items.filter((m) => m.left).map((m) => m.target.toLowerCase()));
 
 // Approve or Decline one issue, shared with the review banner and Notifications; answers with a line saying what changed
-export const acceptIssue = (issue: Issue) => window.quorum.vaultLinkDecide(issue.key, 'approve');
+// Approve starts the fix as a run (main.js startFixes); the answer says it started. waitFix resolves with the run once
+// it has finished
+export const acceptIssue = async (issue: Issue) => { await window.quorum.fixStart([issue.key]); return `Fixing “${issue.target}”`; };
+export function waitFix(key: string): Promise<FixRun> {
+  return new Promise((resolve) => {
+    const off = window.quorum.onFixRun((r) => { if (r.key === key.toLowerCase() && (r.status === 'success' || r.status === 'error')) { off(); resolve(r); } });
+  });
+}
 // Dismiss: marked reviewed, nothing changes, and the issue moves to Dismissed
 export const dismissIssue = (issue: Issue) => window.quorum.vaultLinkDecide(issue.key, 'dismiss');
 const CHANGED = 'quorum:activity-changed';
@@ -45,18 +53,25 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [done, setDone] = useState('');
   const [busy, setBusy] = useState(false);
-  const load = (fresh = false) => window.quorum.vaultLinkHealth(fresh).then(setItems);
-  useEffect(() => { migrateLeft().finally(() => load()); }, []);
-  useEffect(() => window.quorum.onVaultChanged(() => { load(); }), []);
+  const [runs, setRuns] = useState<FixRun[]>([]);
+  const load = useCallback((fresh = false) => { window.quorum.fixRuns().then(setRuns).catch(() => {}); return window.quorum.vaultLinkHealth(fresh).then(setItems); }, []);
+  useEffect(() => { migrateLeft().finally(() => load()); }, [load]);
+  useEffect(() => window.quorum.onVaultChanged(() => { load(); }), [load]);
+  // a run's progress, and the list again once it ends
+  useEffect(() => window.quorum.onFixRun((r) => { setRuns((xs) => [r, ...xs.filter((x) => x.id !== r.id)]); if (r.status === 'success' || r.status === 'error') load(); }), [load]);
   // an issue answered in Notifications leaves this list too: both read the same issues
-  useEffect(() => { const go = () => { load(); }; window.addEventListener(CHANGED, go); return () => window.removeEventListener(CHANGED, go); }, []);
+  useEffect(() => { const go = () => { load(); }; window.addEventListener(CHANGED, go); return () => window.removeEventListener(CHANGED, go); }, [load]);
   useEffect(() => { if (focus) document.getElementById(`lh-${focus.toLowerCase()}`)?.scrollIntoView({ block: 'center' }); }, [focus, items]);
   useEffect(() => { setPicked(new Set()); }, [tab, cats, q, sort]);
 
   const all = items ?? [];
   const left = leftOf(all);
   const counts = categoryCounts(all, left);
-  const list = healthList(all, { tab, categories: cats, q, sort, left });
+  // the issues being fixed leave the list; their runs show above it until their banner is dismissed
+  const liveRuns = runs.filter((r) => r.status === 'queued' || r.status === 'running');
+  const fixing = new Set(liveRuns.map((r) => r.key));
+  const shownRuns = tab === 'open' ? runs.filter((r) => r.showBanner) : [];
+  const list = healthList(all, { tab, categories: cats, q, sort, left }).filter((i) => !fixing.has(i.key));
   const openN = all.length - left.size;
   // a fix writes the linking notes or the matched note, so it waits while a run is writing any of them
   const locked = (i: Issue) => [...i.sources, ...(i.candidate ? [i.candidate.rel] : [])].some(isLive);
@@ -122,13 +137,15 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
           </span>
         </span>
       </div>
-      {unfolded.has(i.key) && (
+      <div className={`fold-anim${unfolded.has(i.key) ? ' open' : ''}`} aria-hidden={!unfolded.has(i.key)}>
+        <div className="fold-inner">
         <div className="conn-sub conn-fold-body nf-details mh-fold">
           {tab === 'left'
             ? <><IssueParts parts={[['Dismissed', 'The links stay as they are. Move it back to review to fix it later.']]} /><ReviewDetails meta={issueMeta(i)} /></>
             : <ReviewDetails recommendation={i.recommend} problem={i.problem} solution={i.solution} value={i.value} meta={issueMeta(i)} />}
         </div>
-      )}
+        </div>
+      </div>
     </div>
   );
 
@@ -182,7 +199,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
           </span>
         </div>
       )}
-      <div className="nf-list">{list.map(row)}</div>
+      <div className="nf-list">{shownRuns.map((r) => <RunRow key={r.id} run={r} />)}{list.map(row)}</div>
       {!list.length && <div className="nf-empty"><p>{empty}</p></div>}
     </div>
   );
@@ -228,5 +245,33 @@ export function IssueDrawer({ issue, at, total, locked, busy, onOpen, onDecide, 
         <button className="act-pill primary" disabled={busy || locked} data-tip={locked ? 'Waits until the run writing this note finishes' : undefined} onClick={() => onDecide(true)}>Approve</button>
       </footer>
     </aside>
+  );
+}
+
+// a fix run in Memory health: the same row as an issue, shimmering while it works, with its banner and the issue's
+// details folded open below
+function RunRow({ run }: { run: FixRun }) {
+  const [open, setOpen] = useState(true);
+  const live = run.status === 'queued' || run.status === 'running';
+  const line = run.status === 'queued' ? `Waiting to fix “${run.target}”` : live ? `Fixing “${run.target}”` : run.status === 'success' ? `Fixed “${run.target}”` : `Could not fix “${run.target}”`;
+  return (
+    <div className={`conn-row nf-row mh-row${live ? ' running' : ''}`}>
+      <div className="conn-line nf-line">
+        <span className="nf-check" />
+        <span className="nf-who"><img src={markReview} alt="" width={32} height={32} /></span>
+        <span className="nf-main"><span className="nf-head"><strong className="conn-title nf-title">{line}</strong></span></span>
+        <span className="nf-side mh-side">
+          <span className="nf-tools"><button className={`icon-btn conn-fold${open ? ' open' : ''}`} aria-expanded={open} aria-label={open ? 'Hide details' : 'Show details'} onClick={() => setOpen((o) => !o)}><IconChevron width={14} height={14} /></button></span>
+        </span>
+      </div>
+      <div className={`fold-anim${open ? ' open' : ''}`} aria-hidden={!open}>
+        <div className="fold-inner">
+          <div className="conn-sub conn-fold-body nf-details mh-fold">
+            <RunBanner run={run} />
+            <ReviewDetails problem={run.problem} solution={run.solution} value={run.value} meta={run.meta} />
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

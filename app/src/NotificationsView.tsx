@@ -4,7 +4,7 @@ import markReview from '../assets/quorum-mark-review.png';
 import { IconArchive, IconBell, IconCheck, IconChevron, IconClose } from './icons';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
 import { Avatar } from './Speaker';
-import type { FeedKind, FeedPage, FeedRow, FeedSort, FeedTab } from './quorum';
+import type { FeedKind, FeedPage, FeedRow, FeedSort, FeedTab, FixRun } from './quorum';
 
 const PAGE = 50;
 const TABS: [FeedTab, string][] = [['all', 'All'], ['unread', 'Unread'], ['archived', 'Archived']];
@@ -35,7 +35,7 @@ function useActivityRefresh(fn: () => void) {
   useEffect(() => {
     const go = () => ref.current();
     go();
-    const offs = [window.quorum.onKeeper?.(go), window.quorum.onMemoryUpdates?.(go), window.quorum.onVaultChanged?.(go), window.quorum.onSettings?.(go)];
+    const offs = [window.quorum.onKeeper?.(go), window.quorum.onMemoryUpdates?.(go), window.quorum.onVaultChanged?.(go), window.quorum.onSettings?.(go), window.quorum.onFixRun?.(go)];
     window.addEventListener(CHANGED, go);
     window.addEventListener('quorum:memory-seen', go);
     const t = window.setInterval(go, 60000);
@@ -62,20 +62,22 @@ export function NotificationBell({ active, onOpen }: { active: boolean; onOpen: 
 function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide, onArchive }: {
   row: FeedRow; me: { name: string; photo: string | null }; picked: boolean; busy: boolean; onPick: () => void; onOpen: () => void; onOpenFile: (abs: string) => void; onMark: (unread: boolean) => void; onDecide: (v: 'approve' | 'dismiss') => void; onArchive: (on: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  // a fix run opens its details, so its progress and outcome are in view
+  const [open, setOpen] = useState(!!row.run?.showBanner);
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const go = () => { if (!row.target.gone) onOpen(); };
   return (
-    <div className={`conn-row nf-row${row.unread ? ' unread' : ''}${row.review ? ' mh-row' : ''}`}>
+    <div className={`conn-row nf-row${row.unread ? ' unread' : ''}${row.review || row.run ? ' mh-row' : ''}${row.run && (row.run.status === 'running' || row.run.status === 'queued') ? ' running' : ''}`}>
       <div className="conn-line nf-line" role="button" tabIndex={0} aria-label={row.summary.line} onClick={go} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); go(); } }}>
         <label className="nf-check" onClick={stop}><input type="checkbox" checked={picked} aria-label="Select" onChange={onPick} /></label>
         {/* waiting for a decision shows the orange mark, Quorum's color for anything in review */}
-        <span className="nf-who">{row.who === 'you' ? <span className="nf-you-avatar" aria-label="You" data-tip={me.name}><Avatar name={me.name} photo={me.photo} size={32} /></span> : <img src={row.review ? markReview : markProd} alt={row.review ? 'Quorum, needs review' : 'Quorum'} width={32} height={32} />}</span>
+        <span className="nf-who">{row.who === 'you' ? <span className="nf-you-avatar" aria-label="You" data-tip={me.name}><Avatar name={me.name} photo={me.photo} size={32} /></span> : <img src={row.review || row.run ? markReview : markProd} alt={row.review ? 'Quorum, needs review' : 'Quorum'} width={32} height={32} />}</span>
         <span className="nf-main">
           <span className="nf-head"><strong className="conn-title nf-title">{row.summary.line}</strong>{row.unread && <i className="nf-dot" role="img" aria-label="Unread" data-tip="Unread" />}</span>
-          {!row.review && <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>{row.summary.sub && <> <span className="nf-sep" aria-hidden="true">•</span> {row.summary.sub}</>}</span>}
+          {!row.review && !row.run && <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>{row.summary.sub && <> <span className="nf-sep" aria-hidden="true">•</span> {row.summary.sub}</>}</span>}
         </span>
-        <span className={`nf-side${row.review ? ' mh-side' : ''}`}>
+        <span className={`nf-side${row.review || row.run ? ' mh-side' : ''}`}>
+          {row.run && <span className="mh-swap"><span className="mh-when">{ago(row.at)}</span></span>}
           {/* a row waiting for a decision reads like a Memory health row: the date on the right, and on hover its
               answers slide in as icons */}
           {row.review && (
@@ -88,7 +90,7 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
             </span>
           )}
           <span className="nf-tools" onClick={stop} onKeyDown={stop}>
-            {!row.review && (
+            {!row.review && !row.run && (
               // the hover tools slide in from the right and back out, the way Home's row actions do
               <span className="nf-hover">
                 {!row.archived && <button className="act-pill" disabled={busy} onClick={() => onMark(!row.unread)}>{row.unread ? 'Mark read' : 'Mark unread'}</button>}
@@ -99,21 +101,29 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
           </span>
         </span>
       </div>
-      {open && (
-        <div className="conn-sub conn-fold-body nf-details">
-          {row.review ? (
-            <ReviewDetails recommendation={row.summary.recommendation} problem={row.summary.problem} solution={row.summary.solution} value={row.summary.value}
-              meta={row.review.kind === 'link' ? row.details.filter(([k]) => k !== 'What' && k !== 'When' && k !== 'History') : row.details.filter(([k]) => k !== 'History')} />
-          ) : (
-          <dl>
-            {row.details.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
-            {row.files.length > 0 && (
-              <div><dt>Linked memories</dt><dd className="aa-files">{row.files.map((f) => <button key={f.abs} className="keeper-link" data-tip={f.rel} onClick={() => onOpenFile(f.abs)}>{f.title ?? f.label}</button>)}</dd></div>
+      {/* the details grow open and shut */}
+      <div className={`fold-anim${open ? ' open' : ''}`} aria-hidden={!open}>
+        <div className="fold-inner">
+          <div className="conn-sub conn-fold-body nf-details">
+            {row.run ? (
+              <>
+                {row.run.showBanner && <RunBanner run={row.run} />}
+                <ReviewDetails recommendation={row.run.showBanner ? undefined : row.run.recommendation} problem={row.run.problem} solution={row.run.solution} value={row.run.value} meta={row.run.meta} />
+              </>
+            ) : row.review ? (
+              <ReviewDetails recommendation={row.summary.recommendation} problem={row.summary.problem} solution={row.summary.solution} value={row.summary.value}
+                meta={row.review.kind === 'link' ? row.details.filter(([k]) => k !== 'What' && k !== 'When' && k !== 'History') : row.details.filter(([k]) => k !== 'History')} />
+            ) : (
+              <dl>
+                {row.details.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
+                {row.files.length > 0 && (
+                  <div><dt>Linked memories</dt><dd className="aa-files">{row.files.map((f) => <button key={f.abs} className="keeper-link" data-tip={f.rel} onClick={() => onOpenFile(f.abs)}>{f.title ?? f.label}</button>)}</dd></div>
+                )}
+              </dl>
             )}
-          </dl>
-          )}
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -180,7 +190,10 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
     const picked = rows.filter((r) => r.review);
     if (!picked.length) return;
     const groups = new Map<'approve' | 'revert' | 'dismiss', { kind: NonNullable<FeedRow['review']>['kind']; abs: string; key?: string }[]>();
+    const fixes = picked.filter((r) => verdict === 'approve' && r.review!.kind === 'link').map((r) => r.review!.key!);
+    if (fixes.length) await window.quorum.fixStart(fixes).catch(() => []);
     for (const r of picked) {
+      if (verdict === 'approve' && r.review!.kind === 'link') continue;
       const v = verdict === 'dismiss' ? 'dismiss' : r.summary.ask?.suggest === 'reject' ? 'revert' : 'approve';
       groups.set(v, [...(groups.get(v) ?? []), { kind: r.review!.kind, abs: r.target.abs, key: r.review!.key }]);
     }
@@ -189,7 +202,7 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
     setError(null);
     try {
       const failed: { abs: string; error: string }[] = [];
-      for (const [v, items] of groups) failed.push(...(await window.quorum.activityReview(items, v)).failed);
+      for (const [v, items] of groups) if (items.length) failed.push(...(await window.quorum.activityReview(items, v)).failed);
       if (failed.length) setError(`${failed.length} of ${list.length} could not be ${verdict === 'approve' ? 'approved' : 'dismissed'}: ${failed[0].error}`);
     } catch (e) { setError((e as Error).message); }
     setBusy(false);
@@ -284,4 +297,41 @@ export function ReviewDetails({ recommendation, problem, solution, value, meta }
 // label and text pairs, the labels lined up with the summary text
 export function IssueParts({ parts }: { parts: [string, string][] }) {
   return <dl className="mh-parts">{parts.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>;
+}
+
+// the time a run has taken, in seconds under a minute
+const took = (ms: number) => (ms < 1000 ? `${Math.max(ms, 1)} ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60000)} min ${Math.round((ms % 60000) / 1000)} s`);
+
+// A fix run in progress, then its outcome: the step running now (shimmering) and the time so far, with the steps folded
+// under a chevron; when it ends, a short outcome in green or red with the time it took and a Dismiss button. A banner
+// left alone dismisses itself a day after the run ends
+export function RunBanner({ run }: { run: FixRun }) {
+  const [steps, setSteps] = useState(false);
+  const live = run.status === 'queued' || run.status === 'running';
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { if (!live) return; const t = window.setInterval(() => setNow(Date.now()), 250); return () => window.clearInterval(t); }, [live]);
+  const current = run.steps[run.steps.length - 1];
+  const elapsed = (run.endedAt ?? now) - (run.startedAt ?? run.queuedAt);
+  const dismiss = (e: React.SyntheticEvent) => { e.stopPropagation(); window.quorum.fixDismiss([run.id]).then(() => window.dispatchEvent(new Event(CHANGED))).catch(() => {}); };
+  return (
+    <div className={`run-banner ${live ? 'live' : run.status}`} role="status" aria-live="polite" onClick={(e) => e.stopPropagation()}>
+      <div className="run-head">
+        <span className="run-icon" aria-hidden="true">{live ? <i className="run-spin" /> : run.status === 'success' ? <IconCheck width={15} height={15} /> : <IconClose width={14} height={14} />}</span>
+        <span className={`run-text${live ? ' shimmer' : ''}`}>{live ? (run.status === 'queued' ? 'Waiting for the run before it' : current?.label ?? 'Starting') : run.status === 'success' ? run.outcome : run.error}</span>
+        <span className="run-time">{took(elapsed)}</span>
+        {run.steps.length > 0 && <button className={`icon-btn conn-fold${steps ? ' open' : ''}`} aria-expanded={steps} aria-label={steps ? 'Hide steps' : 'Show steps'} onClick={() => setSteps((o) => !o)}><IconChevron width={14} height={14} /></button>}
+        {!live && <button className="act-pill run-dismiss" onClick={dismiss}>Dismiss</button>}
+      </div>
+      <div className={`fold-anim${steps ? ' open' : ''}`}>
+        <div className="fold-inner">
+          <ol className="run-steps">
+            {run.steps.map((st, i) => {
+              const done = !!st.endedAt || !live || i < run.steps.length - 1;
+              return <li key={`${st.at}-${i}`} className={done ? 'done' : 'now'}><span>{st.label}</span><span className="run-time">{st.endedAt ? took(st.endedAt - st.at) : ''}</span></li>;
+            })}
+          </ol>
+        </div>
+      </div>
+    </div>
+  );
 }

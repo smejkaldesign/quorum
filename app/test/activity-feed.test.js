@@ -179,3 +179,20 @@ describe('memory health issues', () => {
     expect(feedPage(rows, { kinds: ['memory-health'] }).items).toHaveLength(1);
   });
 });
+
+describe('fix runs', () => {
+  const issue = { target: 'Roadmap', sources: ['p/a.md', 'p/b.md'], count: 2, candidates: [], lastAt: 5, abs: '/v/p/a.md' };
+  const run = (status, extra = {}) => ({ id: 'fix:roadmap:1', key: 'roadmap', target: 'Roadmap', rel: 'p/a.md', status, queuedAt: Date.now() - 1000, startedAt: Date.now() - 900, endedAt: status === 'running' ? null : Date.now() - 100, steps: [], outcome: 'Wrote the note p/Roadmap.md', error: null, dismissedAt: null, ...extra });
+  it('takes a running fix out of the count and puts its row in place of the issue', () => {
+    const p = feedPage(feedRows({ links: [issue], runs: [run('running')] }), { review: true });
+    expect(p.counts.review).toBe(0);
+    expect(p.items.map((r) => [r.event, r.summary.line])).toEqual([['fix', 'Fixing “Roadmap”']]);
+  });
+  it('keeps a finished fix in Needs review until it is read or dismissed, then only under All', () => {
+    const done = feedRows({ runs: [run('success')] });
+    expect(feedPage(done, { review: true }).items.map((r) => r.summary.line)).toEqual(['Fixed “Roadmap”']);
+    expect(feedPage(feedRows({ runs: [run('success', { dismissedAt: Date.now() })] }), { review: true }).items).toEqual([]);
+    expect(feedPage(feedRows({ runs: [run('success', { endedAt: Date.now() - 2 * 86400000 })] }), { review: true }).items).toEqual([]);
+    expect(feedPage(feedRows({ runs: [run('success', { dismissedAt: Date.now() })] })).items[0].run.showBanner).toBe(false);
+  });
+});

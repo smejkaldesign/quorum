@@ -11,7 +11,7 @@ import { fileIssues, healthMarks, issueOf, type Issue } from '../memoryHealth.js
 import { Graph, type GraphData, type GraphView } from './Graph';
 import { NotePanel, Palette, type PaletteItem, type PaletteMode } from './NoteTools';
 import { reportMemoryNote } from './navHistory';
-import { IssueDrawer, LinkHealth, acceptIssue, dismissIssue, leftOf, migrateLeft } from './LinkHealth';
+import { IssueDrawer, LinkHealth, acceptIssue, dismissIssue, leftOf, migrateLeft, waitFix } from './LinkHealth';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
 import { IconChevron, IconClose, IconCollapse, IconExpand, IconFolder, IconGraph, IconNewFolder, IconNewNote, IconHistory, IconLink, IconMore, IconReset, IconSearch, IconSidebar, IconSliders, IconSort } from './icons';
@@ -288,7 +288,12 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     if (!item) return;
     setDeciding(true);
     try {
-      flash(approve ? await acceptIssue(item.issue) : await dismissIssue(item.issue));
+      if (approve) {
+        const done = waitFix(item.issue.key);
+        flash(await acceptIssue(item.issue));
+        const run = await done;
+        flash(run.status === 'success' ? run.outcome ?? 'Fixed' : run.error ?? 'Could not fix it');
+      } else flash(await dismissIssue(item.issue));
       countIssues();
       await reloadOpen(preview.rel);
       const items = await loadIssues(preview.rel);

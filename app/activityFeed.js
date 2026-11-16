@@ -32,6 +32,7 @@ export const FEED_SORTS = ['unread', 'recent', 'az'];
 // a file's name as the person reads it, for the places that only have a path
 export const labelOf = (rel) => titleOf({ rel });
 
+const DAY = 86400000;
 const time = (v) => (typeof v === 'number' ? v : new Date(v ?? 0).getTime() || 0);
 const youText = (t) => String(t ?? '').startsWith('You');
 const noteKind = (e) => {
@@ -59,7 +60,7 @@ const prefOn = (prefs, key) => prefs?.[key] !== false;
 //             of its first linking note
 //   state:    { since, read: { [id]: at }, unread: { [id]: at } }; since is when Notifications started keeping its
 //             own marks, read and unread are the person's marks on single rows
-export function feedRows({ notes = [], memories = [], denials = [], junk = [], links = [], state = {}, guardFile = null }) {
+export function feedRows({ notes = [], memories = [], denials = [], junk = [], links = [], runs = [], state = {}, guardFile = null }) {
   const rows = [];
   const since = time(state.since);
   const read = state.read ?? {};
@@ -132,6 +133,14 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], l
       review: { kind: 'link', key: i.key },
     }, null);
   }
+  // each fix run Quorum carried out on an approved Memory health issue: its row shows it working, then its outcome
+  for (const run of runs) {
+    const at = time(run.endedAt ?? run.startedAt ?? run.queuedAt);
+    push({
+      id: `f:${run.id}`, at, kind: 'memory-health', event: 'fix', who: 'agent', target: { kind: 'link', abs: '', rel: run.rel ?? '', title: run.target }, files: [],
+      detail: { problem: run.problem, solution: run.solution, value: run.value, recommend: run.recommendation, meta: run.meta ?? [] }, run,
+    }, null);
+  }
   const guardTarget = { kind: 'guardrail', abs: guardFile ?? '', rel: 'Guardrails', title: 'Guardrails' };
   for (const g of denials) {
     const at = time(g.t);
@@ -159,14 +168,22 @@ const SORTS = {
 // archived holds the ids the person archived: they leave All, Unread, Needs review and the dot, and list under Archived
 export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = '', sort = 'unread', offset = 0, limit = 50, prefs = {}, locale, archived = [] } = {}) {
   const gone = new Set(archived);
-  const kept = rows.filter((r) => !gone.has(r.id));
+  // a run's banner shows until it is dismissed, by hand or a day after it finished
+  const now = Date.now();
+  const banner = (r) => !!r.run && (r.run.status === 'queued' || r.run.status === 'running' || (!r.run.dismissedAt && now - (r.run.endedAt ?? now) < DAY));
+  // an issue being fixed leaves Needs review the moment it is approved; its run row takes its place
+  const fixing = new Set(rows.filter((r) => r.run && (r.run.status === 'queued' || r.run.status === 'running')).map((r) => r.run.key));
+  const kept = rows.filter((r) => !gone.has(r.id) && !(r.review?.kind === 'link' && fixing.has(r.review.key))).map((r) => (r.run ? { ...r, run: { ...r.run, showBanner: banner(r) } } : r));
   const shelf = rows.filter((r) => gone.has(r.id)).map((r) => ({ ...r, archived: true }));
   const shown = (r) => prefOn(prefs, prefOf(r));
   const unread = kept.filter((r) => r.unread && shown(r));
   const reviews = kept.filter((r) => r.review);
   const all = kept.filter(shown);
   let list = tab === 'archived' ? shelf : tab === 'unread' ? unread : all;
-  if (review && tab !== 'archived') list = (tab === 'unread' ? reviews.filter((r) => r.unread) : reviews);
+  // Needs review lists the items waiting for a decision, and above them the runs still working or still showing their
+  // outcome; the count is the waiting items only
+  const shownRuns = kept.filter((r) => r.run?.showBanner && (r.unread || r.run.status === 'queued' || r.run.status === 'running'));
+  if (review && tab !== 'archived') list = [...shownRuns, ...(tab === 'unread' ? reviews.filter((r) => r.unread) : reviews)];
   const kindSet = new Set(kinds);
   const words = String(q ?? '').trim().toLowerCase().split(/\s+/).filter(Boolean);
   list = list.filter((r) => (!kindSet.size || kindSet.has(r.kind)) && matches(r, words));
