@@ -60,6 +60,8 @@ import { createPlatformCache, eventRef, matchPlatforms } from './meetingPlatform
 import { calendarWindow, normalizeDays } from './calendarWindow.js';
 import { ARCHIVE_AFTER, feedPage, feedRows, labelOf } from './activityFeed.js';
 import { issueMeta, issueOf } from './memoryHealth.js';
+import { contextNote } from './linkRules.js';
+import { createElsewhere, withFound } from './linkElsewhere.js';
 import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
 import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, relatedOf, seriesKey, seriesOf } from './meetingBrief.js';
@@ -2180,6 +2182,7 @@ ipcMain.handle('activity-review', async (_e, items, verdict) => {
         seenSet(t.abs, { reviewedAt: at, seenAt: at });
         noteEvent(t.abs, 'reviewed', ok ? 'You approved it' : 'You reviewed it');
       } else if (it.kind === 'link') {
+        if (ok && items.length > 1 && reviewOnlyKey(it.key)) throw new Error('This fix needs a review on its own. Open it and approve it there');
         if (ok) startFixes([it.key]); else await decideLink(it.key, 'dismiss');
       } else if (it.kind === 'junk-note') {
         if (!meetingFile(t.abs) || !t.rel) throw new Error('Not found');
@@ -2502,11 +2505,28 @@ function diskNoteNames() {
 }
 // a missing link whose note is on disk but hidden from Quorum
 const onDisk = (target) => { const t = String(target).toLowerCase().replace(/\.md$/, ''); const names = diskNoteNames(); return names.has(t) || names.has(t.split('/').pop()); };
-// the missing links Memory health reports: the ones whose note is truly not in the vault
-const linkIssues = () => (vindex?.linkHealth() ?? []).filter((m) => !onDisk(m.target));
+// what a missing link names outside this checkout's notes: a folder, script, skill, file or a note on another branch
+// (linkElsewhere.js), one finder per vault
+let elsewhere = null;
+function elsewhereFinder() {
+  const v = brain()?.vault;
+  if (!v) return null;
+  if (elsewhere?.vault !== v) elsewhere = { vault: v, finder: createElsewhere({ vault: v }) };
+  return elsewhere.finder;
+}
+// the missing links Memory health reports: the ones whose note is truly not in the vault, each marked with what its
+// name matches elsewhere
+function linkIssues() {
+  const items = (vindex?.linkHealth() ?? []).filter((m) => !onDisk(m.target));
+  const finder = elsewhereFinder();
+  if (!finder || !vindex) return items;
+  try { return withFound(items, finder, vindex.rels()); } catch (e) { log('memory health elsewhere', e?.message); return items; }
+}
+// a fix that needs a person to read it first (memoryHealth.js reviewOnly): a bulk Approve skips it
+const reviewOnlyKey = (key) => { const m = linkIssues().find((h) => h.target.toLowerCase() === String(key ?? '').toLowerCase()); return !!m && issueOf(withMarks(m)).reviewOnly; };
 // each missing link carries left: true when the person declined it (left it as is)
 ipcMain.handle('vault-link-health', (_e, fresh) => {
-  if (fresh === true) vindex?.sync();
+  if (fresh === true) { vindex?.sync(); elsewhereFinder()?.reset(); }
   const left = linksLeft();
   const declined = linksDeclined();
   return linkIssues().map((m) => withMarks(m, left, declined));
@@ -2544,17 +2564,6 @@ function clearDeclined(keys) {
 }
 // a missing link as Memory health reads it: its declined fixes and whether it was left as is
 const withMarks = (m, left = linksLeft(), declined = linksDeclined()) => ({ ...m, left: left.has(m.target.toLowerCase()), declined: declined[m.target.toLowerCase()] ?? [] });
-// the note Quorum writes for a missing link: what each linking note says about it, with a link back to that note
-function contextNote(issue) {
-  const name = issue.target.split('/').pop();
-  const own = new Set(name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
-  const says = (t) => (t.toLowerCase().match(/[a-z][a-z'’]{2,}/g) ?? []).filter((w) => !own.has(w)).length >= 3;
-  const said = issue.contexts.map((c) => `- [[${c.rel.replace(/\.md$/i, '')}]]: ${says(c.text) ? c.text : (c.title ?? c.rel)}`);
-  // a source marked confidential passes its mark on, so the new note stays as private as what it quotes
-  const marks = issue.sources.map((r) => vindex?.note(r)?.props?.confidential).filter((v) => v != null && v !== false && !/^(false|no)$/i.test(String(v)));
-  const head = marks.length ? ['---', `confidential: ${String(marks[0])}`, '---', ''] : [];
-  return [...head, `# ${name}`, '', `Quorum made this note because ${issue.notes === 1 ? 'one note links' : `${issue.notes} notes link`} to “${name}” and no note had that name. What ${issue.notes === 1 ? 'that note says' : 'those notes say'} about it:`, '', ...said, ''].join('\n');
-}
 // Approve or Decline one Memory health issue, by its key. Approve takes the recommended action: add an alias, point
 // the links at the closest note, make the missing note in the inbox folder, or leave a link outside the vault as it is.
 // Decline leaves the links as they are. A fix waits while a run is writing any note it would change. Answers with a
@@ -2603,13 +2612,19 @@ async function decideLink(key, verdict, step = async () => {}, keep = () => {}) 
     log('memory health', 'removed dead link', entry.target, `${done.links} links in ${done.files} notes`);
     return `Removed ${done.links} dead ${done.links === 1 ? 'link' : 'links'} and kept the words`;
   }
-  // a new note goes where most of its links come from, else the inbox; it starts with what the linking notes say
-  const inbox = existsSync(path.join(b.vault, '00-inbox')) ? '00-inbox' : '';
-  const folder = issue.createIn && existsSync(path.join(b.vault, issue.createIn)) ? issue.createIn : inbox;
+  // a new note goes in the folder most of its linking notes sit in (linkRules.js createPlan); it starts with what the
+  // linking notes say and carries their confidential mark
+  if (issue.action !== 'create') throw new Error('Quorum has no fix to offer for this link');
+  const folder = issue.createIn;
+  if (folder && !existsSync(path.join(b.vault, folder))) throw new Error(`The folder ${folder} is gone, so Quorum did not write the note`);
   const name = issue.target.split('/').pop();
-  await step('Checking the vault for a note with that name');
+  await step('Checking the vault, its folders, scripts, skills and other branches for that name');
   diskNamesCache.at = 0;
   if (onDisk(name)) throw new Error('A note with that name is already in the vault, so Quorum did not write another one');
+  const finder = elsewhereFinder();
+  finder?.reset();
+  const hit = finder?.find(name);
+  if (hit) throw new Error(`${hit.kind === 'branch' ? `A note with that name is on the branch ${hit.branch}` : `A ${hit.kind} with that name is at ${hit.where}`}, so Quorum did not write a note`);
   await step(`Writing ${folder ? `${folder}/` : ''}${name}.md from what the linking notes say`);
   const rel = createNote(b.vault, folder, name);
   keep(rel, true);
@@ -2649,7 +2664,9 @@ const withBanner = (r) => ({ ...r, showBanner: r.status === 'queued' || r.status
 const fixEmit = (run) => toUI('fix-run', withBanner(run));
 // the next tick, so each step reaches the window before the next one starts
 const tick = () => new Promise((r) => setTimeout(r, 0));
-function startFixes(keys) {
+// bulk: Approve on a selection of several issues; it skips the review-only fixes (writing a note, a weak match), which
+// a person approves one at a time
+function startFixes(keys, { bulk = keys.length > 1 } = {}) {
   const started = [];
   // a bulk Approve is one batch: the window shows its progress from the runs, even after leaving the page and coming back
   const batch = keys.length > 1 ? `b:${Date.now()}` : null;
@@ -2661,6 +2678,7 @@ function startFixes(keys) {
     const entry = linkIssues().find((h) => h.target.toLowerCase() === key);
     if (!entry) continue;
     const i = issueOf(withMarks(entry));
+    if (bulk && i.reviewOnly) continue;
     const run = {
       id: `fix:${key}:${Date.now()}`, key, target: i.target, title: i.title, rel: i.path, vault: brain()?.vault ?? '', status: 'queued', queuedAt: Date.now(), startedAt: null, endedAt: null,
       steps: [], outcome: null, error: null, dismissedAt: null, batch,

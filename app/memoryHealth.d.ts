@@ -1,10 +1,10 @@
 import type { MissingLink } from './src/quorum';
 
-export type HealthCategory = 'missing' | 'alias' | 'similar' | 'unlink' | 'outside';
+export type HealthCategory = 'missing' | 'alias' | 'similar' | 'unlink' | 'outside' | 'elsewhere';
 export type HealthAction = 'create' | 'alias' | 'relink' | 'unlink' | 'leave';
 export type Issue = {
   key: string; target: string; category: HealthCategory; title: string; fix: string; problem: string; effect: string; recommend: string; solution: string; value: string; decline: string; action: HealthAction; next: HealthAction | null; sources: string[]; contexts: { rel: string; title?: string; text: string }[]; createIn: string;
-  candidate: MissingLink['candidates'][number] | null; path: string; links: number; notes: number;
+  candidate: (MissingLink['candidates'][number] & { folder?: boolean }) | null; path: string; reviewOnly: boolean; found: MissingLink['found'] | null; confidential: string | null; links: number; notes: number;
   folder: { folder: string; count: number } | null; lastAt: number | null;
 };
 export type CategoryCount = { id: HealthCategory | 'left'; label: string; count: number };

@@ -34,10 +34,10 @@ describe('memory health fix order', () => {
     expect(optionsOf(link('quorum app', ['a.md'], [near]))).toEqual(['relink', 'unlink']);
     expect(optionsOf(link('quorum app', ['a.md', 'b.md'], [near]))).toEqual(['relink', 'create', 'unlink']);
   });
-  it('writes the note when the linking notes say enough, and offers a weak match after it', () => {
+  it('writes the note only when two or more notes link to it, and offers a weak match before it', () => {
     const long = said('Beacon Health Systems currently lacks a self-service inbound scheduling flow for patients, so they call the office');
-    expect(optionsOf(link('beacon-scheduling-prd', ['index.md'], [], { contexts: [long] }))).toEqual(['create', 'unlink']);
-    expect(optionsOf(link('quorum notes', ['a.md', 'b.md'], [weak]))).toEqual(['create', 'relink', 'unlink']);
+    expect(optionsOf(link('beacon-scheduling-prd', ['index.md'], [], { contexts: [long] }))).toEqual(['unlink']);
+    expect(optionsOf(link('quorum notes', ['a.md', 'b.md'], [weak]))).toEqual(['relink', 'create', 'unlink']);
   });
   it('takes the dead link out when nothing matches and nothing says enough', () => {
     expect(optionsOf(link('connector-hub-presentation-2026-04-14', ['index.md'], [], { contexts: [said('connector-hub-presentation-2026-04-14 - Pod Connect')] }))).toEqual(['unlink']);
@@ -104,7 +104,7 @@ describe('memory health write-up, tree marks and list', () => {
 describe('memory health write-up for a single link', () => {
   it('reads in the singular', () => {
     const i = issueOf(link('Roadmap', ['a.md']));
-    expect(i.problem).toBe('The link opens nothing. No note has a close name, and the linking note says too little about “Roadmap” to write one, so the agent follows a link to nothing.');
+    expect(i.problem).toBe('The link opens nothing. No note has a close name. Only one note links to it, which is too little to write a note from. The agent follows a link to nothing.');
     expect(i.effect).toBe('The words stay in the text and the dead link goes. The agent stops following it, and the graph drops the empty node.');
   });
 });

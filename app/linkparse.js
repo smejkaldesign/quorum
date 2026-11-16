@@ -1,6 +1,7 @@
 // One parser for every view: graph, backlinks, search, rename. Follows Obsidian's link rules so links resolve
 // the same way here as they did there.
 import path from 'node:path';
+import { cleanTitle } from './linkRules.js';
 
 const LINK_RE = /(!?)\[\[([^\]|#\n]*)(#[^\]|\n]*)?(?:\|([^\]\n]*))?\]\]|(!?)\[([^\]\n]*)\]\(([^)\s]+?)(#[^)\s]*)?\)/g;
 const TAG_RE = /(^|[\s(])#([A-Za-z][\w/-]*)/g;
@@ -59,7 +60,8 @@ export function parseNote(rel, text) {
     }
     for (const m of prose.matchAll(TAG_RE)) tags.add(m[2].toLowerCase());
   });
-  const title = (typeof props.title === 'string' && props.title) || headings.find((h) => h.level === 1)?.text || path.basename(rel, '.md');
+  // a title holds one line: a note saved as one long line (or with its line breaks written as \n) keeps a short title
+  const title = cleanTitle((typeof props.title === 'string' && props.title) || headings.find((h) => h.level === 1)?.text) || path.basename(rel, '.md');
   return { title, props, aliases: list(props.aliases).map(String), tags: [...tags], headings, links, bodyStart: end };
 }
 
