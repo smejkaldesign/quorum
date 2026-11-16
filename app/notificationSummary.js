@@ -49,6 +49,17 @@ function askOf(row) {
   const d = row.detail ?? {};
   // a Memory health issue: the issue is the question, its recommended fix the recommendation (memoryHealth.js)
   if (row.review.kind === 'link') return { question: d.title ?? `Links to ${q(t)} open nothing`, suggest: 'approve', problem: d.problem ?? '', solution: d.solution ?? '', value: d.value ?? '', recommendation: d.recommend ?? '', why: d.recommend ?? '' };
+  // a fix that ran and that the current rules would not make (fixRecheck.js): Undo when it is possible, else open the note
+  if (row.review.kind === 'past-fix') {
+    const undo = !!row.review.undo;
+    const problem = `${sentence(d.outcome)} The current rules would not make this fix. ${(d.reasons ?? []).join(' ')}`.trim();
+    return {
+      question: undo ? `Undo the fix on ${q(t)}?` : `Check the fix on ${q(t)}`, suggest: 'approve', problem,
+      solution: undo ? sentence(d.undo) : `Quorum cannot undo it here. ${sentence(d.undo)} Open the note to check it.`,
+      value: 'The vault keeps only the fixes the current rules would make, so the agent reads fewer wrong links and notes.',
+      recommendation: undo ? 'Undo the fix.' : 'Open the note and check it.', why: (d.reasons ?? [])[0] ?? '',
+    };
+  }
   if (row.review.kind === 'junk-note') {
     return { question: `Remove ${q(t)}?`, suggest: 'approve', problem: sentence(d.reason) || 'It has no recording and almost no real words.', solution: 'Quorum moves the note to the Trash, where you can put it back.', value: 'Empty notes stop showing up in search and in the agent\'s answers.', recommendation: 'Move it to the Trash.', why: 'It looks empty.' };
   }
@@ -151,7 +162,7 @@ const WHO = { keeper: 'Upkeep', agent: 'Quorum agent', import: 'An import', cli:
 // everything the feed knows about a row, as label and value pairs for the folded-open details
 export function detailsOf(row, { locale } = {}) {
   const d = row.detail ?? {};
-  const out = [['What', row.review?.kind === 'junk-note' ? 'Looks empty' : KIND_LABEL[row.kind] ?? row.kind], ['When', new Date(row.at).toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' })]];
+  const out = [['What', row.review?.kind === 'junk-note' ? 'Looks empty' : row.review?.kind === 'past-fix' ? 'Past fix to check' : KIND_LABEL[row.kind] ?? row.kind], ['When', new Date(row.at).toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' })]];
   const add = (label, value) => { if (value != null && value !== '') out.push([label, String(value)]); };
   if (row.kind === 'guardrail') {
     add('Rule', d.guardLabel || d.guard);
@@ -161,6 +172,11 @@ export function detailsOf(row, { locale } = {}) {
     add('Reason', d.reason);
   } else if (row.review?.kind === 'link') {
     for (const [k, v] of d.meta ?? []) add(k, v);
+  } else if (row.review?.kind === 'past-fix') {
+    add('Fix', sentence(d.outcome));
+    if (d.ranAt) add('Ran', new Date(d.ranAt).toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' }));
+    for (const [k, v] of d.evidence ?? []) add(k, v);
+    add('Undo', sentence(d.undo));
   } else {
     add(row.target.kind === 'memory' ? 'Memory' : 'Note', row.target.rel);
     add('By', row.who === 'you' ? 'You' : WHO[d.who] ?? 'Quorum agent');

@@ -60,9 +60,10 @@ const prefOn = (prefs, key) => prefs?.[key] !== false;
 //   junk:     { abs, rel, title, reason, at }[], the notes upkeep found with no recording and no real words
 //   links:    the open Memory health issues (vindex.js linkHealth, minus the ones declined), each with abs, the path
 //             of its first linking note
+//   pastFixes: the fixes that ran and that the current rules flag (fixRecheck.js): { run, res, plan, abs }
 //   state:    { since, read: { [id]: at }, unread: { [id]: at } }; since is when Notifications started keeping its
 //             own marks, read and unread are the person's marks on single rows
-export function feedRows({ notes = [], memories = [], denials = [], junk = [], links = [], runs = [], state = {}, guardFile = null }) {
+export function feedRows({ notes = [], memories = [], denials = [], junk = [], links = [], runs = [], pastFixes = [], state = {}, guardFile = null }) {
   const rows = [];
   const since = time(state.since);
   const read = state.read ?? {};
@@ -141,6 +142,15 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], l
     push({
       id: `f:${run.id}`, at, kind: 'memory-health', event: 'fix', who: 'agent', target: { kind: 'link', abs: '', rel: run.rel ?? '', title: run.target }, files: [],
       detail: { problem: run.problem, solution: run.solution, value: run.value, recommend: run.recommendation, meta: run.meta ?? [] }, run,
+    }, null);
+  }
+  // each past fix the current rules would not make asks whether to undo it or keep it; Undo shows only when it is possible
+  for (const { run, res, plan, abs } of pastFixes) {
+    push({
+      id: `r:pastfix:${run.id}`, at: time(run.endedAt ?? run.queuedAt), kind: 'memory-health', event: 'review', who: 'agent',
+      target: { kind: 'memory', abs: abs ?? '', rel: res.main ?? run.rel ?? '', title: run.target }, files: [],
+      detail: { outcome: run.outcome, reasons: res.reasons.map((r) => r.text), evidence: res.evidence ?? [], undo: plan.why, ranAt: run.endedAt ?? null },
+      review: { kind: 'past-fix', key: run.id, undo: !!plan.ok },
     }, null);
   }
   const guardTarget = { kind: 'guardrail', abs: guardFile ?? '', rel: 'Guardrails', title: 'Guardrails' };

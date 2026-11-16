@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import markProd from '../assets/quorum-mark.png';
 
-import { IconArchive, IconBell, IconCheck, IconChevron, IconClose, IconMore, IconReset } from './icons';
+import { IconArchive, IconBell, IconCheck, IconChevron, IconClose, IconExternal, IconMore, IconReset } from './icons';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
 import { Avatar } from './Speaker';
 import { toast } from './Toasts';
@@ -72,6 +72,8 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
   const working = pressed || !!row.fixRun;
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const go = () => { if (!row.target.gone) onOpen(); };
+  // a past fix to check: Keep sets it aside, Undo takes the fix back when it can be, and Open shows the note when not
+  const past = row.review?.kind === 'past-fix';
   return (
     <div className={`conn-row nf-row${row.unread ? ' unread' : ''}${row.review || row.run ? ' mh-row' : ''}${(row.run && (row.run.status === 'running' || row.run.status === 'queued')) || working ? ' running' : ''}${working ? ' working' : ''}`}>
       <div className="conn-line nf-line" role="button" tabIndex={0} aria-label={row.summary.line} onClick={go} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); go(); } }}>
@@ -97,9 +99,13 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
             <span className="mh-swap" onClick={stop} onKeyDown={stop}>
               <span className="mh-when"><StatusBadge status={row.fixRun?.status === 'queued' ? 'waiting' : 'review'} /></span>
               <span className="mh-hover">
-                <button className="icon-btn mh-icon" disabled={busy || working} aria-label="Archive" data-tip="Archive: set it aside without fixing it" onClick={() => onArchive(true)}><IconArchive width={16} height={16} /></button>
+                <button className="icon-btn mh-icon" disabled={busy || working} aria-label={past ? 'Keep' : 'Archive'} data-tip={past ? 'Keep: leave the fix as it is' : 'Archive: set it aside without fixing it'} onClick={() => onArchive(true)}><IconArchive width={16} height={16} /></button>
                 {working
                   ? <span className="icon-btn mh-icon mh-busy" role="img" aria-label="Working"><i className="run-spin" /></span>
+                  : past && !row.review.undo
+                    ? <button className="icon-btn mh-icon" disabled={busy} aria-label="Open the note" data-tip={row.summary.solution ?? 'Open the note'} onClick={go}><IconExternal width={16} height={16} /></button>
+                  : past
+                    ? <button className="icon-btn mh-icon mh-yes" disabled={busy} aria-label="Undo" data-tip={`Undo: ${row.summary.solution ?? ''}`} onClick={() => { setWorking(true); Promise.resolve(onDecide('approve')).finally(() => setWorking(false)); }}><IconReset width={16} height={16} /></button>
                   : <button className="icon-btn mh-icon mh-yes" disabled={busy} aria-label="Approve" data-tip={`Approve: ${row.summary.recommendation ?? ''}`} onClick={() => { setWorking(true); Promise.resolve(onDecide('approve')).finally(() => setWorking(false)); }}><IconCheck width={16} height={16} /></button>}
               </span>
             </span>
@@ -218,9 +224,11 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
     const list = picked;
     setBusy(true);
     setError(null);
+    let failedN = 0;
     try {
       const failed: { abs: string; error: string }[] = [];
       for (const [v, items] of groups) if (items.length) failed.push(...(await window.quorum.activityReview(items, v)).failed);
+      failedN = failed.length;
       if (failed.length) setError(`${failed.length} of ${list.length} could not be ${verdict === 'approve' ? 'approved' : 'dismissed'}: ${failed[0].error}`);
     } catch (e) { setError((e as Error).message); }
     setBusy(false);
@@ -228,7 +236,9 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
     changed();
     const one = picked.length === 1 ? `“${picked[0].target.title}”` : `${picked.length} items`;
     const fixing = fixes.length && verdict === 'approve';
-    toast(verdict === 'dismiss' ? `Dismissed ${one}. Nothing changed.` : fixing ? `Approved ${one}. Quorum is fixing ${picked.length === 1 ? 'it' : 'them'} now.` : `Approved ${one}.`);
+    const undoing = picked.every((r) => r.review!.kind === 'past-fix');
+    if (undoing && failedN) return;
+    toast(undoing ? (verdict === 'dismiss' ? `Kept the fix on ${one}.` : `Undid the fix on ${one}.`) : verdict === 'dismiss' ? `Dismissed ${one}. Nothing changed.` : fixing ? `Approved ${one}. Quorum is fixing ${picked.length === 1 ? 'it' : 'them'} now.` : `Approved ${one}.`);
   };
 
   // archive or bring back rows; the list reloads so they leave this tab
@@ -239,7 +249,8 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
     // archiving a review item sets it aside without fixing it; it waits under Archived until it is moved back
     const reviews = rows.filter((r) => r.review);
     const one = (xs: FeedRow[]) => (xs.length === 1 ? `“${xs[0].target.title}”` : `${xs.length} items`);
-    if (reviews.length) toast(on ? `Archived ${one(reviews)} without fixing it. It is under Archived when you want it again.` : `Moved ${one(reviews)} back to review.`);
+    const kept = reviews.length > 0 && reviews.every((r) => r.review!.kind === 'past-fix');
+    if (reviews.length) toast(on ? (kept ? `Kept the fix on ${one(reviews)}. It is under Archived when you want it again.` : `Archived ${one(reviews)} without fixing it. It is under Archived when you want it again.`) : `Moved ${one(reviews)} back to review.`);
   };
 
   const counts = page?.counts;
