@@ -101,7 +101,8 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
               <span className="mh-when"><StatusBadge status={row.fixRun?.status === 'queued' ? 'waiting' : 'review'} /></span>
               <span className="mh-hover">
                 <button className="icon-btn mh-icon" disabled={busy || working} aria-label={past ? 'Keep' : 'Archive'} data-tip={past ? 'Keep: leave the fix as it is' : 'Archive: set it aside without fixing it'} onClick={() => onArchive(true)}><IconArchive width={16} height={16} /></button>
-                {working
+                {/* a review rule's finding has no automatic fix: the row opens the note, and Archive sets it aside */}
+                {row.review.kind === 'finding' ? null : working
                   ? <span className="icon-btn mh-icon mh-busy" role="img" aria-label="Working"><i className="run-spin" /></span>
                   : past && !row.review.undo
                     ? <button className="icon-btn mh-icon" disabled={busy} aria-label="Open the note" data-tip={row.summary.solution ?? 'Open the note'} onClick={go}><IconExternal width={16} height={16} /></button>
@@ -212,7 +213,8 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
   // Approve takes each row's recommendation (for a large memory rewrite that is putting back the earlier text);
   // Dismiss marks rows reviewed and changes nothing
   const decide = async (rows: FeedRow[], verdict: 'approve' | 'dismiss') => {
-    const picked = rows.filter((r) => r.review);
+    // a review rule's finding has no automatic fix, so Approve leaves it for the person to act on
+    const picked = rows.filter((r) => r.review && !(verdict === 'approve' && r.review.kind === 'finding'));
     if (!picked.length) return;
     const groups = new Map<'approve' | 'revert' | 'dismiss', { kind: NonNullable<FeedRow['review']>['kind']; abs: string; key?: string }[]>();
     const fixes = picked.filter((r) => verdict === 'approve' && r.review!.kind === 'link').map((r) => r.review!.key!);

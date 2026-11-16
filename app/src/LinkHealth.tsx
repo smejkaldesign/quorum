@@ -6,7 +6,8 @@ import { CATEGORIES, HEALTH_SORTS, categoryCounts, countsLine, healthList, issue
 import { IconArchive, IconCheck, IconChevron, IconClose, IconReset } from './icons';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
 import { IssueParts, ReviewDetails, RowMenu, RunBanner, StatusBadge, StatusSwap, UndoMenu, ago, runStatus, took } from './NotificationsView';
-import type { FixRun } from './quorum';
+import type { FixRun, MemoryFinding } from './quorum';
+import { MemoryFindings } from './MemoryFindings';
 import { toast } from './Toasts';
 import { Segmented } from './controls';
 
@@ -64,6 +65,8 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const [done, setDone] = useState('');
   const [busy, setBusy] = useState(false);
   const [runs, setRuns] = useState<FixRun[]>([]);
+  // the review rules' findings (rules/index.js), listed under the link issues
+  const [findings, setFindings] = useState<MemoryFinding[]>([]);
   // the issues whose Approve was pressed: a spinner in place of the button until their run takes over
   const [approving, setApproving] = useState<Set<string>>(new Set());
   // a bulk Approve: the issues in it and when it began, for the progress row under the bulk bar
@@ -74,6 +77,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const [hiddenBatch, setHiddenBatch] = useState<string | null>(() => { try { return localStorage.getItem('quorum.hiddenBatch'); } catch { return null; } });
   const load = useCallback((fresh = false) => {
     window.quorum.fixRuns().then(setRuns).catch(() => {});
+    window.quorum.memoryFindings().then((r) => setFindings(r.findings)).catch(() => {});
     const q = { kinds: ['memory-health' as const], limit: 5000, idsOnly: true as const };
     Promise.all([window.quorum.activityFeed({ ...q, tab: 'all' }), window.quorum.activityFeed({ ...q, tab: 'archived' })])
       .then(([a, z]) => setMarks({ unread: new Set(a.items.filter((r) => r.unread).map((r) => r.id)), archived: new Set(z.items.map((r) => r.id)) })).catch(() => {}); return window.quorum.vaultLinkHealth(fresh).then(setItems); }, []);
@@ -111,11 +115,18 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const unreadN = lively.filter(unreadOf).length;
   const list = entries.flatMap((e) => ('issue' in e ? [e.issue] : []));
   const idOf = (e: Entry) => ('issue' in e ? e.issue.key : e.run.id);
-  const openN = open.filter((i) => !liveRuns.has(i.key)).length;
+  const openN = open.filter((i) => !liveRuns.has(i.key)).length + findings.filter((f) => !f.archived).length;
+  // findings show under All, Needs review and Archived, and only when no link type filter is on
+  const findingsShown = !cats.length && tab !== 'unread' && findings.some((f) => f.archived === (tab === 'archived'));
   // a fix writes the linking notes or the matched note, so it waits while a run is writing any of them
   const locked = (i: Issue) => [...i.sources, ...(i.candidate ? [i.candidate.rel] : [])].some(isLive);
 
-  const refresh = async () => { setBusy(true); try { await load(true); } finally { setBusy(false); } };
+  const refresh = async () => { setBusy(true); try { await window.quorum.memorySweepNow().catch(() => null); await load(true); } finally { setBusy(false); } };
+  const archiveFindings = async (keys: string[], on: boolean) => {
+    await window.quorum.memoryFindingsArchive(keys, on);
+    toast(on ? (keys.length === 1 ? 'Archived. It comes back if its evidence changes.' : `Archived ${keys.length}. They come back if their evidence changes.`) : keys.length === 1 ? 'Moved back' : `Moved ${keys.length} back`);
+    await after(on ? `Archived ${keys.length === 1 ? 'it' : keys.length}` : 'Moved back to review');
+  };
   const after = async (msg: string) => {
     setDone(msg);
     setPicked(new Set());
@@ -274,7 +285,8 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
         return <BatchBanner runs={list} onDismiss={() => { setHiddenBatch(last); try { localStorage.setItem('quorum.hiddenBatch', last); } catch { /* the banner just shows again next time */ } }} />;
       })()}
       <div className="nf-list">{entries.map((e) => ('issue' in e ? row(e.issue) : <RunRow key={e.run.id} run={e.run} unread={tab !== 'archived' && unreadOf(e)} picked={picked.has(e.run.id)} onPick={() => toggle(e.run.id)} />))}</div>
-      {!entries.length && <div className="nf-empty"><p>{empty}</p></div>}
+      {findingsShown && <MemoryFindings findings={findings} archived={tab === 'archived'} q={q} unread={marks.unread} onArchive={archiveFindings} onRead={markRead} />}
+      {!entries.length && !findingsShown && <div className="nf-empty"><p>{empty}</p></div>}
     </div>
   );
 }

@@ -130,6 +130,10 @@ export function MemoryUpdatesCard({ settings, onSettings }: { settings: Settings
           desc="An open note shows the text its updates changed in green, or blue once approved. The highlight button on the note turns it off for that view.">
           <Toggle on={settings.memoryHighlight !== false} onChange={(v) => save({ memoryHighlight: v })} />
         </Row>
+        <Row icon={<IconListCheck width={18} height={18} />} title="Check memory in the background"
+          desc="Memory health looks for out-of-date, duplicate, oversized and unlinked notes, frontmatter that does not fit its folder, misplaced confidential marks and written secrets. It checks every 3.5 hours and once a day while you are away. Turn this off to pause those checks; notes you save are still checked.">
+          <Toggle on={settings.memorySweeps !== false} onChange={(v) => save({ memorySweeps: v })} />
+        </Row>
         <Row icon={<IconClock width={18} height={18} />} title="Hide update dots after"
           desc="A blue dot in the Memory tree goes away when you open the note or after this many days. A green dot stays until you accept its updates.">
           <label className="mu-days">

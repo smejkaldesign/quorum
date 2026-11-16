@@ -2455,6 +2455,10 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 /* a Memory health issue's write-up: label and text, the labels lined up with the summary above */
 .mh-parts { margin: 10px 0 0; display: grid; gap: 6px; font-size: 14px; line-height: 1.45; }
 .mh-parts > div { display: grid; gap: 12px; }
+/* the review rules' findings in Memory health, one group per rule under the link issues */
+.mh-findings { display: grid; gap: 20px; margin-top: 24px; }
+.mh-group-head { display: flex; align-items: baseline; gap: 8px; margin: 0 0 8px; }
+.mh-group-head h3 { margin: 0; font-size: 14px; font-weight: 600; }
 .mh-parts dt { color: var(--muted); }
 .mh-parts dd { margin: 0; color: var(--text); }
 .nf-row:has(.mh-parts) .nf-line { align-items: flex-start; }
