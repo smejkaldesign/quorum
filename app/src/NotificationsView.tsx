@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import markProd from '../assets/quorum-mark.png';
 import markReview from '../assets/quorum-mark-review.png';
-import { IconArchive, IconBell, IconChevron } from './icons';
+import { IconArchive, IconBell, IconCheck, IconChevron, IconClose } from './icons';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
 import { Avatar } from './Speaker';
 import type { FeedKind, FeedPage, FeedRow, FeedSort, FeedTab } from './quorum';
@@ -66,28 +66,35 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const go = () => { if (!row.target.gone) onOpen(); };
   return (
-    <div className={`conn-row nf-row${row.unread ? ' unread' : ''}`}>
+    <div className={`conn-row nf-row${row.unread ? ' unread' : ''}${row.review ? ' mh-row' : ''}`}>
       <div className="conn-line nf-line" role="button" tabIndex={0} aria-label={row.summary.line} onClick={go} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); go(); } }}>
         <label className="nf-check" onClick={stop}><input type="checkbox" checked={picked} aria-label="Select" onChange={onPick} /></label>
         {/* waiting for a decision shows the orange mark, Quorum's color for anything in review */}
         <span className="nf-who">{row.who === 'you' ? <span className="nf-you-avatar" aria-label="You" data-tip={me.name}><Avatar name={me.name} photo={me.photo} size={32} /></span> : <img src={row.review ? markReview : markProd} alt={row.review ? 'Quorum, needs review' : 'Quorum'} width={32} height={32} />}</span>
         <span className="nf-main">
           <span className="nf-head"><strong className="conn-title nf-title">{row.summary.line}</strong>{row.unread && <i className="nf-dot" role="img" aria-label="Unread" data-tip="Unread" />}</span>
-          <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>{row.summary.sub && !row.summary.parts && <> <span className="nf-sep" aria-hidden="true">•</span> {row.summary.sub}</>}{row.summary.parts && <> <span className="nf-sep" aria-hidden="true">•</span> {row.target.rel}</>}</span>
+          {!row.review && <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>{row.summary.sub && !row.summary.parts && <> <span className="nf-sep" aria-hidden="true">•</span> {row.summary.sub}</>}</span>}
         </span>
-        <span className="nf-side">
-          <span className="nf-tools" onClick={stop} onKeyDown={stop}>
-            {/* the hover tools slide in from the right and back out, the way Home's row actions do */}
-            <span className="nf-hover">
-              {!row.archived && <button className="act-pill" disabled={busy} onClick={() => onMark(!row.unread)}>{row.unread ? 'Mark read' : 'Mark unread'}</button>}
-              <button className="icon-btn nf-archive" disabled={busy} aria-label={row.archived ? 'Unarchive' : 'Archive'} data-tip={row.archived ? 'Unarchive' : 'Archive'} onClick={() => onArchive(!row.archived)}><IconArchive width={16} height={16} /></button>
+        <span className={`nf-side${row.review ? ' mh-side' : ''}`}>
+          {/* a row waiting for a decision reads like a Memory health row: the date on the right, and on hover its
+              answers slide in as icons */}
+          {row.review && (
+            <span className="mh-swap" onClick={stop} onKeyDown={stop}>
+              <span className="mh-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>
+              <span className="mh-hover">
+                {row.review.kind === 'link' && <button className="icon-btn mh-icon" disabled={busy} aria-label="Ignore" data-tip="Ignore: leave the link as it is and stop flagging it" onClick={() => onDecide('ignore')}><IconArchive width={16} height={16} /></button>}
+                <button className="icon-btn mh-icon mh-no" disabled={busy} aria-label="Decline" data-tip={`Decline: ${row.review.kind === 'link' ? row.summary.parts?.find(([k]) => k === 'Declining this')?.[1] ?? 'leave the links as they are' : row.review.kind === 'memory' ? 'put back the text from before these updates' : row.review.kind === 'junk-note' ? 'keep this note' : 'mark this note rejected'}`} onClick={() => onDecide('reject')}><IconClose width={15} height={15} /></button>
+                <button className="icon-btn mh-icon mh-yes" disabled={busy} aria-label="Approve" data-tip={`Approve: ${row.review.kind === 'link' ? row.summary.parts?.find(([k]) => k.startsWith('Approving'))?.[1] ?? row.summary.ask?.why ?? '' : row.summary.ask?.why ?? ''}`} onClick={() => onDecide('approve')}><IconCheck width={16} height={16} /></button>
+              </span>
             </span>
-            {row.review && (
-              <>
-                {row.review.kind === 'link' && <button className="mh-plain" disabled={busy} data-tip="Leave the link as it is and stop flagging it" onClick={() => onDecide('ignore')}>Ignore</button>}
-                <button className={`act-pill${row.summary.ask?.suggest === 'reject' ? ' primary' : ''}`} disabled={busy} data-tip={row.review.kind === 'memory' ? 'Put back the text from before these updates' : row.review.kind === 'junk-note' ? 'Keep this note' : row.review.kind === 'link' ? 'Leave the links as they are' : 'Mark this note rejected'} onClick={() => onDecide('reject')}>Decline</button>
-                <button className={`act-pill${row.summary.ask?.suggest === 'approve' ? ' primary' : ''}`} disabled={busy} onClick={() => onDecide('approve')}>Approve</button>
-              </>
+          )}
+          <span className="nf-tools" onClick={stop} onKeyDown={stop}>
+            {!row.review && (
+              // the hover tools slide in from the right and back out, the way Home's row actions do
+              <span className="nf-hover">
+                {!row.archived && <button className="act-pill" disabled={busy} onClick={() => onMark(!row.unread)}>{row.unread ? 'Mark read' : 'Mark unread'}</button>}
+                <button className="icon-btn nf-archive" disabled={busy} aria-label={row.archived ? 'Unarchive' : 'Archive'} data-tip={row.archived ? 'Unarchive' : 'Archive'} onClick={() => onArchive(!row.archived)}><IconArchive width={16} height={16} /></button>
+              </span>
             )}
             <button className={`icon-btn conn-fold${open ? ' open' : ''}`} aria-expanded={open} aria-label={open ? 'Hide details' : 'Show details'} onClick={() => setOpen((o) => !o)}><IconChevron width={14} height={14} /></button>
           </span>

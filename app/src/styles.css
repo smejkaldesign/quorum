@@ -2720,3 +2720,14 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .nf-details, .nf-details dl, .nf-details dd, .nf-details dt { font-size: 14px; }
 .nf-hover { background: none; padding-left: 0; }
 .nf-you-avatar { display: inline-flex; }
+
+/* review rows (Memory health and Needs review): one height for every row, the title at most two lines, a one-line title
+   centered; the answers are outlined icon buttons */
+.mh-row .nf-line { align-items: center; min-height: 76px; box-sizing: border-box; }
+.mh-row .nf-check, .mh-row .nf-who { margin-top: 0; }
+.mh-row .nf-side { align-self: center; }
+.mh-row .nf-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.mh-icon { border: 1px solid var(--line-2); border-radius: 999px; box-sizing: border-box; transition: border-color 200ms ease, background-color 200ms ease; }
+.mh-icon:hover:not(:disabled), .mh-icon:focus-visible { border-color: var(--line-hover); }
+.mh-row:has(.mh-parts) .nf-line, .nf-row.mh-row .nf-line { align-items: center; }
+.mh-row:has(.mh-parts) .nf-side { align-self: center; padding-top: 0; }
