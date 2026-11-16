@@ -147,6 +147,17 @@ describe('the existence check before writing a note', () => {
     expect(reads).toBe(1);
     expect(createElsewhere(opts({ vault: path.join(root, 'vault') })).find('merge-notes-review')).toBeNull();
   });
+  it('reads the branch list once for many links, and again after reset', () => {
+    const root = fresh();
+    put('vault/a.md', '# a');
+    let lists = 0;
+    const f = createElsewhere(opts({ vault: path.join(root, 'vault'), gitTop: () => root, listBranches: () => { lists++; return []; }, listTree: () => [] }));
+    for (const t of ['one', 'two', 'three', 'four']) f.find(t);
+    expect(lists).toBe(1);
+    f.reset();
+    f.find('one');
+    expect(lists).toBe(2);
+  });
   it('points a link to a folder at its index note, and leaves a link to a skill or a branch note for review', () => {
     expect(folderIndex('p/checks', ['p/checks/index.md', 'p/checks/x.md'])).toBe('p/checks/index.md');
     expect(folderIndex('p/sprint', ['p/sprint/a.md'])).toBeNull();

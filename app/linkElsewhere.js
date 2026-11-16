@@ -18,6 +18,7 @@ const SKIP = new Set(['node_modules', '.git', '.trash', '.obsidian', 'dist', 'bu
 const MAX_ENTRIES = 200000;
 const MAX_BRANCHES = 40;
 const TTL = 5 * 60000;
+const BRANCH_TTL = 10000;
 const posix = (p) => p.split(path.sep).join('/');
 // a link target as a name: lowercased, no .md, the last part of a path
 export const nameOf = (t) => String(t ?? '').trim().replace(/\/+$/, '').replace(/\.md$/i, '').split('/').pop().toLowerCase();
@@ -44,7 +45,7 @@ export function createElsewhere({ vault: vaultIn, skillRoots = [path.join(os.hom
   const tree = listTree ?? ((root, sha, prefix) => git(root, ['ls-tree', '-r', '--name-only', sha, '--', prefix || '.']).split('\n').filter(Boolean));
 
   let walked = { at: 0, map: new Map() };
-  let onBranches = { key: '', map: new Map() };
+  let onBranches = { key: '', map: new Map(), at: 0 };
 
   const put = (map, name, hit) => { if (name && !map.has(name)) map.set(name, hit); };
   function walkAll() {
@@ -81,13 +82,17 @@ export function createElsewhere({ vault: vaultIn, skillRoots = [path.join(os.hom
     return map;
   }
 
+  // the branch list is read at most once per BRANCH_TTL: find() runs once per missing link, and each read starts git
+  // processes on the main thread
   function branchNotes() {
+    if (Date.now() - onBranches.at < BRANCH_TTL) return onBranches.map;
+    const none = () => { onBranches = { key: '', map: new Map(), at: Date.now() }; return onBranches.map; };
     const root = top();
-    if (!root) return new Map();
+    if (!root) return none();
     let list;
-    try { list = branches(root).slice(0, MAX_BRANCHES); } catch { return new Map(); }
+    try { list = branches(root).slice(0, MAX_BRANCHES); } catch { return none(); }
     const key = list.map((b) => `${b.name}@${b.sha}`).join(',');
-    if (key === onBranches.key) return onBranches.map;
+    if (key === onBranches.key) { onBranches.at = Date.now(); return onBranches.map; }
     const prefix = posix(path.relative(root, vault));
     const map = new Map();
     for (const b of list) {
@@ -99,7 +104,7 @@ export function createElsewhere({ vault: vaultIn, skillRoots = [path.join(os.hom
         put(map, nameOf(rel), { kind: 'branch', where: rel, branch: b.name });
       }
     }
-    onBranches = { key, map };
+    onBranches = { key, map, at: Date.now() };
     return map;
   }
 
@@ -109,7 +114,7 @@ export function createElsewhere({ vault: vaultIn, skillRoots = [path.join(os.hom
     if (!name) return null;
     return walkAll().get(name) ?? branchNotes().get(name) ?? null;
   }
-  return { find, reset: () => { walked = { at: 0, map: new Map() }; onBranches = { key: '', map: new Map() }; } };
+  return { find, reset: () => { walked = { at: 0, map: new Map() }; onBranches = { key: '', map: new Map(), at: 0 }; } };
 }
 
 // the index note of a folder: index.md, _index.md, README.md or a note named like the folder
