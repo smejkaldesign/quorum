@@ -6,8 +6,9 @@
 //   precision    each kind of fix has a prior precision measured on Quorum's own eval (PRIORS) and a posterior from this
 //                vault's decision log: approved against archived and undone. An item whose expected precision is under
 //                SHOW_AT still shows in Needs review, and a bulk plan lists it under Check these first, unticked
-//   live guard   a kind whose own approve rate falls under SHOW_AT over MIN_DECISIONS or more decisions is demoted: its
-//                items list under Check these first, and Apply memory fixes on its own skips it
+//   live guard   a kind whose approve rate over its last WINDOW decisions by a person falls under SHOW_AT, with
+//                MIN_DECISIONS or more decisions in that window, is demoted: its items list under Check these first, and
+//                Apply memory fixes on its own skips it. The demotion lifts once the window is back at SHOW_AT or above
 // Only an item whose Approve could keep it as it is and that tells the person nothing stays out of Needs review
 // (bucket quiet). Every other item shows: bucket show starts ticked in a bulk plan, bucket check starts unticked. An
 // item that needs the agent (a missing note to write, a weak relink or alias) gets its fix from the agent when a person
@@ -21,6 +22,8 @@ import { createHash } from 'node:crypto';
 export const GATE_VERSION = 1;
 export const SHOW_AT = 0.9;
 export const MIN_DECISIONS = 10;
+// the live guard reads each kind's last WINDOW decisions by a person (approved, archived, undone)
+export const WINDOW = 50;
 export const BUCKETS = ['show', 'check', 'quiet'];
 
 // Prior precision per kind of fix: p is the share of right suggestions measured on Quorum's eval, n how many decisions
@@ -104,14 +107,22 @@ export function kindOfRecord(r) {
   return null;
 }
 
-// each kind's decisions from a decision log: approved (a person or Apply on its own), archived and undone
+// each kind's decisions from a decision log: approved (a person or Apply on its own), archived and undone. recent holds
+// the kind's last WINDOW decisions by a person, oldest first by time, for the live guard
 export function tallies(records) {
   const out = {};
-  for (const r of records ?? []) {
+  const seq = {};
+  (records ?? []).forEach((r, i) => {
     const k = kindOfRecord(r);
-    if (!k) continue;
-    const e = (out[k] ??= { approved: 0, auto: 0, archived: 0, undone: 0 });
+    if (!k) return;
+    const e = (out[k] ??= { approved: 0, auto: 0, archived: 0, undone: 0, recent: null });
     if (r.decision in e) e[r.decision]++;
+    if (r.decision === 'approved' || r.decision === 'archived' || r.decision === 'undone') (seq[k] ??= []).push({ at: Number(r.at) || 0, i, decision: r.decision });
+  });
+  for (const [k, e] of Object.entries(out)) {
+    const last = (seq[k] ?? []).sort((a, b) => a.at - b.at || a.i - b.i).slice(-WINDOW);
+    e.recent = { approved: 0, archived: 0, undone: 0 };
+    for (const d of last) e.recent[d.decision]++;
   }
   return out;
 }
@@ -125,14 +136,16 @@ export function expected(kind, t = null) {
   return Math.round(((p * n + good) / (n + good + bad)) * 1e6) / 1e6;
 }
 
-// the live guard: a kind with MIN_DECISIONS or more decisions by a person and an approve rate under SHOW_AT
+// the live guard: a kind whose last WINDOW decisions by a person hold MIN_DECISIONS or more, with an approve rate under
+// SHOW_AT. Before that the eval prior decides (expected). A tally without recent counts all its decisions
 export function demoted(t) {
   if (!t) return null;
-  const total = t.approved + t.archived + t.undone;
-  if (total < MIN_DECISIONS || t.approved / total >= SHOW_AT) return null;
-  return { approved: t.approved, total };
+  const w = t.recent ?? t;
+  const total = w.approved + w.archived + w.undone;
+  if (total < MIN_DECISIONS || w.approved / total >= SHOW_AT) return null;
+  return { approved: w.approved, total };
 }
-export const demotedLine = (d) => `Demoted: ${d.approved} of ${d.total} approved`;
+export const demotedLine = (d) => `Demoted: ${d.approved} of the last ${d.total} approved`;
 // every demoted kind of a log, by kind
 export function demotions(records) {
   const out = {};

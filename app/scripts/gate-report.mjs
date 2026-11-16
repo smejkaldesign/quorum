@@ -17,7 +17,7 @@ const flag = (name) => { const i = args.indexOf(name); if (i < 0) return null; c
 const dataDir = path.resolve(flag('--data') ?? path.join(os.homedir(), 'Library', 'Application Support', 'Quorum'));
 const history = Number(flag('--runs') ?? 0);
 const appDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const { readGateLog, tallies, priorOf, SHOW_AT, MIN_DECISIONS } = await import(pathToFileURL(path.join(appDir, 'qualityGate.js')).href);
+const { readGateLog, tallies, priorOf, demoted } = await import(pathToFileURL(path.join(appDir, 'qualityGate.js')).href);
 
 const log = readGateLog(path.join(dataDir, 'memory-gate-log.jsonl'));
 if (!log.length) { console.log(`No gate runs logged in ${dataDir}. Quorum logs one each time it checks Needs review.`); process.exit(0); }
@@ -46,7 +46,8 @@ for (const [vault, runs] of byVault) {
     const t = measured[k];
     const n = t ? t.approved + t.archived + t.undone : 0;
     const rate = n ? t.approved / n : null;
-    const flagOut = n >= MIN_DECISIONS && rate < SHOW_AT ? ', demoted' : '';
+    const d = demoted(t);
+    const flagOut = d ? `, demoted (${d.approved} of the last ${d.total} approved)` : '';
     const why = Object.entries(e.reasons).map(([r, c]) => `${r} ${c}`).join(', ');
     console.log(`  ${k}: ${e.show} / ${e.check} / ${e.quiet}; expected ${pct(e.expected)} (prior ${pct(priorOf(k).p)}); measured ${pct(rate)} over ${n} decisions${flagOut}${why ? `; held for ${why}` : ''}`);
   }

@@ -36,8 +36,8 @@ export function MemoryRulesCard() {
               <span className="mr-count">{r.archived} archived</span>
               <span className="mr-count">{r.undone} undone</span>
               <span className="mr-count">{r.auto} applied on its own</span>
-              {/* the live precision guard: under 90% approved over 10 or more decisions */}
-              {r.demoted && <span className="mr-count" data-tip="Its fixes wait under Check these first, and Apply memory fixes on its own skips them">Demoted: {r.demoted.approved} of {r.demoted.total} approved</span>}
+              {/* the live precision guard: under 90% approved over the kind's last 50 decisions, 10 or more of them */}
+              {r.demoted && <span className="mr-count" data-tip="Its fixes wait under Check these first, and Apply memory fixes on its own skips them">Demoted: {r.demoted.approved} of the last {r.demoted.total} approved</span>}
             </span>
           </div>
         ))}

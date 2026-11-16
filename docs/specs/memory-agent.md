@@ -137,7 +137,7 @@ Memory work that runs longer than 30 seconds shows as one state that Home and Me
 
 ### Live precision guard
 
-For each kind of fix, once a person decided 10 or more items, Quorum compares approved with approved plus archived plus undone. Under 90%, the kind is demoted: its items list unticked under Check these first, and Apply memory fixes on its own never runs it. Settings > Memory shows "Demoted: 7 of 11 approved" on the rule. Each decision record keeps the kind of fix the gate scored (`proposedFix.gateKind`).
+For each kind of fix, Quorum reads the last 50 decisions a person made (approved, archived, undone) and compares approved with all of them. With 10 or more decisions in that window and under 90% approved, the kind is demoted: its items list unticked under Check these first, and Apply memory fixes on its own never runs it. The demotion lifts once the window is back at 90% or above, so an early run of dismissals does not hold a kind down after the person approves its newer fixes. Until a kind has 10 decisions, its eval prior decides. Settings > Memory shows "Demoted: 7 of the last 11 approved" on the rule. Each decision record keeps the kind of fix the gate scored (`proposedFix.gateKind`).
 
 ### Cadence (Sprint 2)
 
