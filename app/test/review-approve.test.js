@@ -94,7 +94,7 @@ describe('approvePastFix: remove what the fix left', () => {
     expect(onlyStub(stub)).toBe(true);
     expect(onlyStub(`---\nconfidential: team\n---\n${stub}`)).toBe(true);
     const a = approvePastFix(createRun, { ok: false, kind: 'trash', why: 'changed after the fix' }, { vault: vaultOf({ 'n/Kite.md': stub }), gitShow: null });
-    expect(a).toMatchObject({ kind: 'remove', ops: [{ op: 'trash', rel: 'n/Kite.md' }] });
+    expect(a).toMatchObject({ kind: 'remove', ops: [{ op: 'trash', rel: 'n/Kite.md', expect: sha(stub) }] });
   });
 
   it('keeps a stub a person wrote in', () => {

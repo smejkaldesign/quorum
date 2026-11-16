@@ -153,8 +153,9 @@ export function approvePastFix(run, plan, { vault, gitShow = null, undoFiles = n
     }
   }
   // (b) what the fix left behind: a note it wrote that holds nothing else, or links it pointed at a note that is gone
-  if (r.action === 'create' && r.made && onlyStub(vault.read(r.made))) {
-    return { kind: 'remove', why: `Quorum moves ${q(r.made)} to the Trash, where you can put it back. It still holds only what the fix wrote.`, ops: [{ op: 'trash', rel: r.made }] };
+  const made = r.action === 'create' && r.made ? vault.read(r.made) : null;
+  if (made != null && onlyStub(made)) {
+    return { kind: 'remove', why: `Quorum moves ${q(r.made)} to the Trash, where you can put it back. It still holds only what the fix wrote.`, ops: [{ op: 'trash', rel: r.made, expect: sha(made) }] };
   }
   if (r.action === 'relink' && !dest && r.toName) {
     const name = r.toName.split(/\\n|\n/)[0].trim().toLowerCase();

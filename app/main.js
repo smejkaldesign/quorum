@@ -3482,6 +3482,12 @@ async function runOp(item, o, { step, keep, written, vault }) {
     const now = readVault(vault, o.rel);
     if ((now == null ? null : sha(now)) !== item.hashes[o.rel]) throw new Error(`“${o.rel}” changed after Quorum planned this batch, so Quorum did not write. Review the plan again`);
   }
+  // a restore or trash carries the hash of the note its plan read; the plan is kept for a few seconds, so an edit made
+  // since then stops the step even when the item's hashes were taken after it
+  if (!written.has(o.rel) && o.expect && (o.op === 'restore' || o.op === 'trash')) {
+    const now = readVault(vault, o.rel);
+    if ((now == null ? null : sha(now)) !== o.expect) throw new Error(`“${o.rel}” changed after Quorum planned this batch, so Quorum did not write. Review the plan again`);
+  }
   const past = item.kind === 'pastfix';
   if (o.op === 'restore') {
     await step(past ? `Putting back ${o.rel} as it read before the earlier fix` : `Writing ${o.rel} as the agent drafted it`);
