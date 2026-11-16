@@ -1,0 +1,31 @@
+{
+ "projects/atlas.md|decisions/2026-03-02-atlas-pricing.md": {
+  "rule": "R2",
+  "auto": false,
+  "why": "money"
+ },
+ "projects/beacon.md|decisions/2026-04-10-beacon-database.md": {
+  "rule": "R2",
+  "auto": true
+ },
+ "meetings/2026-01-05-comet-standup.md|meetings/2026-06-01-comet-standup.md": {
+  "rule": "R3",
+  "auto": false
+ },
+ "projects/echo.md|meetings/2026-03-15-echo-sync.md": {
+  "rule": "R5",
+  "auto": false
+ },
+ "decisions/2026-01-20-hotel-queue.md|inbox/hotel-thoughts.md": {
+  "rule": "R6",
+  "auto": false
+ },
+ "projects/india.md|reference/india-process.md": {
+  "rule": "R7",
+  "auto": false
+ },
+ "projects/juliet.md|decisions/2026-05-01-juliet-pause.md": {
+  "rule": "R2",
+  "auto": true
+ }
+}

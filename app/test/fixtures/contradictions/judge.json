@@ -1,0 +1,8 @@
+{
+ "meetings/2026-01-05-comet-standup.md|meetings/2026-06-01-comet-standup.md": "different_times",
+ "meetings/2026-03-15-echo-sync.md|projects/echo.md": "refinement",
+ "projects/india.md|reference/india-process.md": "contradiction",
+ "decisions/2026-03-02-atlas-pricing.md|projects/atlas.md": "contradiction",
+ "decisions/2026-04-10-beacon-database.md|projects/beacon.md": "contradiction",
+ "decisions/2026-01-20-hotel-queue.md|inbox/hotel-thoughts.md": "contradiction"
+}
