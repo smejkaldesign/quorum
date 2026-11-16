@@ -196,7 +196,7 @@ The pass shows at once in the agent activity banner on Home and in Memory health
 
 The pass needs Let the agent draft fixes; starting it turns that on and says so. It starts from:
 
-- Onboarding, once the vault connects: "Check my whole memory now", on by default, with the estimate ("This uses your Claude plan for about N calls and runs in the background."). The pass starts when the person opens Quorum, after the model step.
+- Onboarding, once the vault connects: "Check my whole memory now", on by default, with the estimate ("This uses your Claude plan for about N calls and runs in the background."). The pass starts when the person opens Quorum, after the model step, and only with Claude Code signed in; without it the summary points to Settings > Memory. Every start checks the Claude Code sign-in first and refuses without it, since each call would fail and mark its notes failed for a day.
 - Settings > Memory: Check everything now, with the same estimate, off while a pass runs.
 - A script, for an existing install: `node scripts/memory-catchup.mjs [estimate|start|status|cancel] [--dev]` asks the running app over its control socket.
 

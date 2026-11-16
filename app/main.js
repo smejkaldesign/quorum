@@ -3665,6 +3665,11 @@ function catchupEstimate() {
 // starts a catch-up. It needs Let the agent draft fixes; turning the pass on turns that on too, and the answer says so
 async function startCatchup() {
   if (!brain() || !vindex) throw new Error('Connect a vault first.');
+  // the agent runs on the Claude Code sign-in; without it every call would fail and mark its notes failed for a day
+  if (!catchup.running()) {
+    const c = await claudeStatus();
+    if (!c?.installed || !c?.loggedIn) throw new Error('Sign in to Claude Code first. The check runs on your Claude Code sign-in.');
+  }
   const turnedOn = settings.memoryDrafts !== true;
   if (turnedOn) { settings.memoryDrafts = true; store.settings.save(); toUI('settings', settings); }
   return { ...(await catchup.start()), turnedOn };

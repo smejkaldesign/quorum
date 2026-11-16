@@ -29,6 +29,8 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
   // Check my whole memory now: on by default once a vault connects; the pass starts when the person opens Quorum, after
   // the model step, so the agent has a Claude Code sign-in to run on
   const [catchup, setCatchup] = useState(true);
+  // the pass runs on the Claude Code sign-in, so it starts only when that is in place
+  const claudeOk = !!status?.claude?.installed && !!status?.claude?.loggedIn;
   // the fast part first, then permissions and Claude Code, which can take a few seconds; resolves when both are in
   const refresh = () => window.quorum.onboardingStatus().then(async (s) => {
     setStatus((prev) => ({ ...prev, ...s }));
@@ -75,10 +77,10 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
               <li><ProviderMark provider="anthropic" /> {managed ? "Model: Quorum's models (after you sign in)" : status?.model?.source && status.model.source !== 'none' ? `Model: ${SOURCE_NAMES[status.model.source]}` : 'No model source yet (choose one in Settings › Connectors)'}</li>
               {nt.manualListen && <li><IconMic width={16} height={16} /> {status?.permissions?.microphone === 'granted' ? 'Microphone allowed' : nt.meetingCapture ? 'Microphone: macOS will ask on your first call' : 'Microphone: macOS will ask the first time you start listening'}</li>}
               {nt.meetingCapture && <li><IconShield width={16} height={16} /> {status?.permissions?.accessibility === 'granted' ? 'Accessibility allowed' : 'Accessibility: needed to read the meeting chat'}</li>}
-              {brain && catchup && <li><IconCheck width={16} height={16} /> Checks your whole memory in the background once Quorum opens</li>}
+              {brain && catchup && <li><IconCheck width={16} height={16} /> {claudeOk ? 'Checks your whole memory in the background once Quorum opens' : 'Check my whole memory: sign in to Claude Code, then start it in Settings › Memory'}</li>}
             </ul>
             <p>{nt.meetingCapture ? 'Quorum lives in the menu bar. When a Zoom, Google Meet or Teams call starts, it offers to listen.' : nt.manualListen ? 'Quorum lives in the menu bar. Start listening there or in the app to take a note of your own.' : 'Quorum lives in the menu bar.'}</p>
-            <div className="onb-actions"><button className="pill ghost" onClick={back}>Back</button><button className="pill primary" autoFocus onClick={async () => { await window.quorum.onboardingDone(); if (brain && catchup) window.quorum.memoryCatchupStart().catch(() => {}); onDone(); }}>Open Quorum</button></div>
+            <div className="onb-actions"><button className="pill ghost" onClick={back}>Back</button><button className="pill primary" autoFocus onClick={async () => { await window.quorum.onboardingDone(); if (brain && catchup && claudeOk) window.quorum.memoryCatchupStart().catch(() => {}); onDone(); }}>Open Quorum</button></div>
           </section>
         )}
       </div>
