@@ -68,7 +68,7 @@ export function claimPrompt(notes) {
   const ask = [
     `List the claims ${list.length === 1 ? `the note ${list[0].rel} makes` : `each of the ${list.length} notes below makes`} about the state of things: decisions, choices of tools or vendors, prices, plans, owners, statuses, counts, dates and deadlines.`,
     'Skip opinions, questions, open tasks and claims about the note itself.',
-    'subject: the thing the claim is about, as the note names it (the wiki link target when the line links it). attribute: what about it, in two or three words. value: what the note says, short.',
+    'subject: the thing the claim is about, as the note names it (the wiki link target when the line links it). attribute: what about it, in two or three words. value: what the note says, short, in the quote\'s own words.',
     'polarity: "-" when the line says the value does not hold, else "+". modality: decided, proposed, considering, rejected or stated.',
     'date: the YYYY-MM-DD date the quoted lines give for this claim, or null. scope: the project, environment, team or person the claim is limited to, or null.',
     `At most ${MAX_CLAIMS} claims per note. path is the path of the note the quote comes from, and line numbers count within that note.`,
@@ -94,6 +94,17 @@ export function quoteMatches(text, line, lineEnd, quote) {
   const q = typeof quote === 'string' ? quote.trim() : '';
   if (!Number.isInteger(a) || !Number.isInteger(b) || a < 1 || b < a || b > lines.length || b - a > 3 || q.length < 8) return false;
   return lines.slice(a - 1, b).join('\n').includes(q);
+}
+
+// a value the quoted lines back: every number in it and at least half of its other words appear in them. A value the
+// lines do not hold is the model's own (or text in another note told it to say so), so the claim is dropped
+export function valueInSpan(value, span) {
+  const t = String(span ?? '').toLowerCase();
+  const words = String(value ?? '').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+  const nums = words.filter((w) => /\d/.test(w));
+  const rest = words.filter((w) => !/\d/.test(w) && w.length >= 3);
+  if (!nums.length && !rest.length) return false;
+  return nums.every((w) => t.includes(w)) && rest.filter((w) => t.includes(w)).length * 2 >= rest.length;
 }
 
 // a model reply as claims: each claim with a quote that matches its lines and every field it needs; the rest dropped.
@@ -127,6 +138,7 @@ export function checkClaims(n, reply, model = 'claude') {
     const value = clip(c?.value);
     if (!subject || !attribute || !value || !quoteMatches(n.text, line, lineEnd, c?.quote)) { dropped++; continue; }
     const span = lines.slice(line - 1, lineEnd).join('\n');
+    if (!valueInSpan(value, span)) { dropped++; continue; }
     // a date counts only when the quoted lines hold it; otherwise the note's own date stands in
     const said = typeof c.date === 'string' && datesIn(c.date)[0] && span.includes(datesIn(c.date)[0]) ? datesIn(c.date)[0] : null;
     const modality = MODALITY.includes(c.modality) ? c.modality : modalityOf(span);

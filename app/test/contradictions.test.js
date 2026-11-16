@@ -151,11 +151,14 @@ describe('stage 2 claims', () => {
       { subject: 'M', attribute: 'database', value: 'SQLite', quote: 'M runs on SQLite since 2026-02-01.', line: 3, date: '2026-02-01', modality: 'stated' },
       { subject: 'M', attribute: 'cost', value: '$6', quote: 'M costs $6.', line: 4 },
       { subject: 'M', attribute: 'cost', value: '$5', quote: 'M costs $5.', line: 3 },
-      { subject: 'M', attribute: 'owner', value: 'x', quote: 'M runs on SQLite', line: 3, date: '2026-09-09' },
+      { subject: 'M', attribute: 'engine', value: 'SQLite', quote: 'M runs on SQLite', line: 3, date: '2026-09-09' },
       { subject: '', attribute: 'a', value: 'b', quote: 'M runs on SQLite', line: 3 },
+      // a real quote with a value the line does not hold, as text in another note could ask for
+      { subject: 'M', attribute: 'status', value: 'cancelled', quote: 'M runs on SQLite', line: 3 },
+      { subject: 'M', attribute: 'cost', value: '$9', quote: 'M costs $5.', line: 4 },
     ] });
     const { claims, dropped } = checkClaims(n, reply, 'sonnet');
-    expect(dropped).toBe(3);
+    expect(dropped).toBe(5);
     expect(claims).toHaveLength(2);
     expect(claims[0]).toMatchObject({ date: '2026-02-01', dateSource: 'text', extractor: 'model:sonnet', line: 3 });
     // a date the quoted lines do not hold is not taken
