@@ -2426,15 +2426,22 @@ function sweep(kind, only = null) {
 }
 let saveTimer = null;
 const saveRels = new Set();
+const recordingNow = () => meeting.capturing || meeting.armed;
+// a recording writes its note every few seconds; the notes saved during it are checked once it ends
 function sweepOnSave(rels) {
   for (const r of rels ?? []) saveRels.add(r);
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => { const only = [...saveRels]; saveRels.clear(); sweep('save', only); }, 3000);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    if (recordingNow()) { sweepOnSave([]); return; }
+    if (!saveRels.size) return;
+    const only = [...saveRels]; saveRels.clear(); sweep('save', only);
+  }, 3000);
 }
 function sweepTick() {
   const b = brain();
   if (!b || !vindex) return;
-  const kind = dueSweep(memorySweep.state(b.vault), { paused: sweepPaused(), idleMs: powerMonitor.getSystemIdleTime() * 1000, recording: meeting.capturing || meeting.armed });
+  const kind = dueSweep(memorySweep.state(b.vault), { paused: sweepPaused(), idleMs: powerMonitor.getSystemIdleTime() * 1000, recording: recordingNow() });
   if (kind) sweep(kind);
 }
 setInterval(sweepTick, 10 * 60000).unref?.();
@@ -2480,6 +2487,10 @@ ipcMain.handle('memory-sweep-now', () => sweep(memorySweep.state(brain()?.vault 
 function openIndex() {
   vindex?.stop();
   vindex = null;
+  // saves waiting for a check belong to the vault that was open
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  saveRels.clear();
   const b = brain();
   if (!b) return;
   // the first change the index reports is its first full read; the review rules sweep once it is in

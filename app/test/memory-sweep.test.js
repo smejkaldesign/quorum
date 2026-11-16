@@ -25,6 +25,8 @@ describe('sweep cadence', () => {
     expect(dueSweep(s, { now: NOW, idleMs: IDLE_FOR })).toBe('full');
     expect(dueSweep(s, { now: NOW, idleMs: IDLE_FOR - 1 })).toBeNull();
     expect(dueSweep(s, { now: NOW, idleMs: IDLE_FOR, recording: true })).toBeNull();
+    expect(dueSweep(null, { now: NOW, recording: true })).toBeNull();
+    expect(dueSweep(s, { now: NOW + INCREMENTAL_EVERY, recording: true })).toBeNull();
   });
   it('runs nothing while paused', () => {
     expect(dueSweep(null, { now: NOW, paused: true })).toBeNull();

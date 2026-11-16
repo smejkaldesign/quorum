@@ -3,8 +3,8 @@
 // Cadence:
 //   save         the notes that changed, a few seconds after the index sees them change
 //   incremental  every 3.5 hours: the notes changed since the last sweep
-//   full         once a day, only while the person is away (no recording, no keyboard or mouse for 10 minutes)
-// Sweeps can be paused in Settings, Memory; checks on save still run for the notes that changed.
+//   full         once a day, only while the person is away (no keyboard or mouse for 10 minutes)
+// No sweep runs while a meeting is recorded: the saves wait until it ends. Sweeps can be paused in Settings, Memory; checks on save still run for the notes that changed.
 // The state lives in Quorum's data folder: findings (paths, titles and plain evidence lines, never a secret's value),
 // the time of each kind of sweep, and how long the last one took.
 import { closeSync, openSync, readFileSync, readSync, readdirSync, writeFileSync } from 'node:fs';
@@ -20,8 +20,8 @@ const HEAD = 8192;
 // which sweep is due now, or null. idleMs: how long the keyboard and mouse have been still; recording: a meeting is
 // being recorded or listened to
 export function dueSweep(state, { now = Date.now(), paused = false, idleMs = 0, recording = false } = {}) {
-  if (paused) return null;
-  if (!state?.lastFull || (now - state.lastFull >= FULL_EVERY && idleMs >= IDLE_FOR && !recording)) return state?.lastFull ? 'full' : 'first';
+  if (paused || recording) return null;
+  if (!state?.lastFull || (now - state.lastFull >= FULL_EVERY && idleMs >= IDLE_FOR)) return state?.lastFull ? 'full' : 'first';
   if (now - (state.lastIncremental ?? state.lastFull) >= INCREMENTAL_EVERY) return 'incremental';
   return null;
 }
