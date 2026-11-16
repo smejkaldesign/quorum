@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildPlan, checkFirst } from '../batchPlan.js';
-import { WRONG_NOTE_FIX, checkDraft, createDrafter, draftKind, draftPrompt, evidenceRels, trustedDraft, verifyQuotes, withDraft } from '../memoryDraft.js';
+import { WRONG_NOTE_FIX, checkDraft, createDrafter, draftKind, draftPrompt, evidenceRels, fallbackItem, pointOptions, trustedDraft, verifyQuotes, withDraft } from '../memoryDraft.js';
+import { sha } from '../fixUndo.js';
 
 // Synthetic items and notes; every name and line is made up. The model is always a fake
 const createItem = { id: 'r:link:zephyr', kind: 'link', key: 'zephyr', target: 'zephyr', title: 'zephyr', reviewOnly: true, ops: [{ op: 'create', rel: 'notes/zephyr.md', sources: ['notes/a.md', 'notes/b.md'] }] };
@@ -194,5 +195,120 @@ describe('the drafter', () => {
     expect((await d.tick()).why).toMatch(/does not match/);
     expect((await d.tick()).skipped).toBe('nothing');
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe('Approve runs the agent on demand', () => {
+  let dir;
+  afterEach(() => { if (dir) rmSync(dir, { recursive: true, force: true }); dir = null; });
+  const notes = { 'notes/a.md': A.text, 'notes/b.md': B.text };
+  const ev = (item) => evidenceRels(item).map((rel) => ({ rel, text: notes[rel] }));
+  const setup = (replies, opts = {}) => {
+    dir = mkdtempSync(path.join(tmpdir(), 'qdemand-'));
+    const calls = [];
+    const d = createDrafter({
+      file: path.join(dir, 'drafts.json'),
+      model: async (prompt, system, o) => { calls.push({ prompt, signal: o?.signal ?? null }); if (opts.cancel) throw Object.assign(new Error('Cancelled'), { cancelled: true }); return replies.shift(); },
+      items: () => [], evidence: ev, enabled: () => false, cap: () => opts.cap ?? 40, busy: () => true, idleMs: () => 0,
+      now: () => Date.UTC(2026, 10, 16, 12),
+    });
+    return { d, calls };
+  };
+  const good = reply({ kind: 'create', text: 'Zephyr ships in March.', quotes: [{ path: 'notes/a.md', line: 2, text: 'ships in March' }], confidence: 'high' });
+
+  it('drafts a missing note while background drafting is off, busy and the person is typing, and counts it under the cap', async () => {
+    const { d, calls } = setup([good]);
+    const res = await d.onDemand(createItem, ev(createItem));
+    expect(res.draft).toMatchObject({ kind: 'create', text: 'Zephyr ships in March.', confidence: 'high' });
+    expect(calls).toHaveLength(1);
+    expect(d.status().used).toBe(1);
+    expect(d.fallbackFor(createItem, ev(createItem))).toBeNull();
+    expect(withDraft(createItem, res.draft, () => '').ops[0].text).toBe('Zephyr ships in March.');
+  });
+
+  it('writes nothing and keeps the reason when a quote fails or the agent is not sure, until the notes change', async () => {
+    const bad = reply({ kind: 'create', text: 'x', quotes: [{ path: 'notes/a.md', line: 2, text: 'invented words' }], confidence: 'high' });
+    const low = reply({ kind: 'create', text: 'x', quotes: [{ path: 'notes/a.md', line: 2, text: 'ships in March' }], confidence: 'low' });
+    const { d } = setup([bad, low]);
+    const r1 = await d.onDemand(createItem, ev(createItem));
+    expect(r1).toMatchObject({ keep: true });
+    expect(r1.why).toMatch(/does not match its note, so Quorum wrote nothing/);
+    expect(d.fallbackFor(createItem, ev(createItem))).toBe(r1.why);
+    expect((await d.onDemand(createItem, ev(createItem))).why).toMatch(/not sure enough/);
+    expect(d.fallbackFor(createItem, [{ rel: 'notes/a.md', text: 'changed' }])).toBeNull();
+    d.clearFallback(createItem.id);
+    expect(d.fallbackFor(createItem, ev(createItem))).toBeNull();
+  });
+
+  it('never calls the model for a note the read guard keeps away, and offers the fallback', async () => {
+    const { d, calls } = setup([good]);
+    const res = await d.onDemand(createItem, null);
+    expect(res.keep).toBe(true);
+    expect(res.why).toMatch(/read guard or a confidential mark/);
+    expect(calls).toHaveLength(0);
+    expect(d.fallbackFor(createItem, null)).toBe(res.why);
+  });
+
+  it('stops at the daily cap and keeps no fallback, since the cap resets', async () => {
+    const { d, calls } = setup([good], { cap: 0 });
+    const res = await d.onDemand(createItem, ev(createItem));
+    expect(res).toMatchObject({ keep: false });
+    expect(res.why).toMatch(/daily limit/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('gives a cancelled call its place under the cap back and passes the signal to the model', async () => {
+    const { d, calls } = setup([], { cancel: true });
+    const ctl = new AbortController();
+    const res = await d.onDemand(createItem, ev(createItem), { signal: ctl.signal });
+    expect(res).toMatchObject({ cancelled: true, keep: false });
+    expect(calls[0].signal).toBe(ctl.signal);
+    expect(d.status().used).toBe(0);
+  });
+
+  it('runs one model call at a time with the background drafter', async () => {
+    let release;
+    const order = [];
+    dir = mkdtempSync(path.join(tmpdir(), 'qdemand-'));
+    const d = createDrafter({
+      file: path.join(dir, 'drafts.json'),
+      model: async (prompt) => { order.push(prompt.includes('zephyr') ? 'start' : 'other'); if (!release) await new Promise((r) => { release = r; }); order.push('end'); return good; },
+      items: () => [createItem], evidence: ev, enabled: () => true, idleMs: () => 10 * 60000, now: () => Date.UTC(2026, 10, 16, 12),
+    });
+    const bg = d.tick();
+    await new Promise((r) => setTimeout(r, 0));
+    const fg = d.onDemand(createItem, ev(createItem));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(order).toEqual(['start']);
+    release();
+    await bg;
+    await fg;
+    expect(order).toEqual(['start', 'end', 'start', 'end']);
+  });
+
+  it('checks a weak match against the notes Approve offers and relinks to a better one', () => {
+    const notes2 = { ...notes, 'notes/orbit-plan.md': '# Orbit plan', 'notes/orbit-launch.md': '# Orbit launch\nThe orbit launch window.' };
+    const item = { ...pointItem, agentKind: 'point', options: ['notes/orbit-plan.md', 'notes/orbit-launch.md'] };
+    expect(pointOptions(item)).toEqual(['notes/orbit-plan.md', 'notes/orbit-launch.md']);
+    const read = evidenceRels(item).map((rel) => ({ rel, text: notes2[rel] }));
+    expect(read.map((n) => n.rel)).toEqual(['notes/a.md', 'notes/orbit-plan.md', 'notes/orbit-launch.md']);
+    expect(draftPrompt(item, read).prompt).toMatch(/Decide which of these notes the links mean: notes\/orbit-plan.md, notes\/orbit-launch.md/);
+    const q = [{ path: 'notes/orbit-launch.md', line: 2, text: 'orbit launch window' }];
+    const better = checkDraft(item, read, reply({ kind: 'point', to: 'notes/orbit-launch.md', quotes: q, confidence: 'high' })).draft;
+    expect(better.to).toBe('notes/orbit-launch.md');
+    expect(checkDraft(item, read, reply({ kind: 'point', to: 'notes/b.md', quotes: q, confidence: 'high' })).why).toMatch(/did not offer/);
+    const texts = { 'notes/a.md': 'See [[orbit]] and [[orbit|the plan]].' };
+    const next = withDraft(item, better, (rel) => texts[rel] ?? null);
+    expect(next).toMatchObject({ direct: true, relinkTo: 'notes/orbit-launch.md', group: 'relink' });
+    expect(next.ops).toEqual([{ op: 'restore', rel: 'notes/a.md', before: 'See [[orbit-launch]] and [[orbit-launch|the plan]].', expect: sha(texts['notes/a.md']) }]);
+    const same = withDraft(item, { ...better, to: 'notes/orbit-plan.md' }, () => '');
+    expect(same.ops).toEqual(pointItem.ops);
+    expect(same.direct).toBeUndefined();
+  });
+
+  it('turns an item the agent could not fix into removing the dead link, with the reason', () => {
+    const f = fallbackItem({ ...createItem, agentKind: 'create', ops: [{ op: 'create', rel: 'notes/zephyr.md', sources: ['notes/a.md', 'notes/b.md'], lines: { 'notes/a.md': [1] } }] }, 'A quote does not match.');
+    expect(f).toMatchObject({ fallback: 'A quote does not match.', wrongNote: true, group: 'unlink', autoFix: false, ops: [{ op: 'unlink', target: 'zephyr', sources: ['notes/a.md', 'notes/b.md'], lines: { 'notes/a.md': [1] } }] });
+    expect(f.agentKind).toBeUndefined();
   });
 });

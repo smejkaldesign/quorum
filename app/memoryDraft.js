@@ -11,6 +11,12 @@
 // A draft shows only after a second, independent draft agrees with it (confirm): the same kind of fix onto the same
 // note, with every quote of both drafts checked against its note.
 //
+// Approve on a missing note to write or a weak relink or alias runs the agent on demand (onDemand), also while
+// background drafting is off: the person asked for it. It honors the read guard, the confidential gates and the daily
+// cap, and runs one model call at a time. A point draft on demand may pick a better note from item.options. When the
+// agent cannot produce a fix that passes its checks, Quorum writes nothing and keeps the reason (fallbackFor); the item
+// then offers the safe fallback, removing the dead link and keeping its words (fallbackItem).
+//
 // The model runs through the person's own Claude Code sign-in with no tools at all (models.js claudeText), so the agent
 // reads only the note text Quorum puts in the prompt and writes nothing. Quorum checks every quote against the note
 // line it names and drops a draft when any quote does not match. A kept draft changes the item's fix; Quorum applies it
@@ -21,7 +27,8 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { FRONT, frontBlock } from './frontmatter.js';
 import { aliasText } from './relink.js';
-import { RETRO_ACTIONS, retroOps } from './reviewApprove.js';
+import { sha } from './fixUndo.js';
+import { RETRO_ACTIONS, retargetText, retroOps } from './reviewApprove.js';
 
 export const DAILY_CAP = 40;
 export const QUIET_MS = 2 * 60000;
@@ -38,6 +45,8 @@ const baseOf = (rel) => String(rel).split('/').pop().replace(/\.md$/i, '');
 
 // what the agent can draft for an item, or null when the rules decide it on their own
 export function draftKind(item) {
+  // set by Approve for an item it runs the agent on (main.js agentResolve)
+  if (item?.agentKind) return item.agentKind;
   const o = item?.ops?.[0];
   if (item?.kind === 'link' && o?.op === 'create') return 'create';
   if (item?.kind === 'link' && item.reviewOnly && (o?.op === 'relink' || o?.op === 'alias')) return 'point';
@@ -51,10 +60,18 @@ export function evidenceRels(item) {
   const o = item.ops?.[0] ?? {};
   const kind = draftKind(item);
   if (kind === 'create') return [...new Set(o.sources ?? [])];
-  if (kind === 'point') return [...new Set([...(o.sources ?? []), o.op === 'alias' ? o.rel : o.to])];
+  if (kind === 'point') return [...new Set([...(o.sources ?? []), ...pointOptions(item)])];
   if (kind === 'merge') return [...(item.notes ?? [])];
   if (kind === 'retro') { const r = item.retro; return [...new Set([...(r.sources ?? []), r.wrong ?? r.made, ...(r.candidates ?? []).slice(0, 3)].filter(Boolean))]; }
   return [];
+}
+
+// the notes a point draft may name: the note Quorum picked, or the notes Approve offers in its place (item.options)
+export function pointOptions(item) {
+  if (Array.isArray(item?.options)) return [...new Set(item.options)];
+  const o = item?.ops?.[0] ?? {};
+  const to = o.op === 'alias' ? o.rel : o.to;
+  return to ? [to] : [];
 }
 
 // a hash of the evidence notes as they read now: a stored draft holds while it is the same
@@ -83,10 +100,15 @@ export function draftPrompt(item, notes) {
       `Answer: { "kind": "create", "text": "<markdown body>", ${quotes}, "confidence": "high" | "medium" | "low" }`,
     ];
   } else if (kind === 'point') {
-    const to = o.op === 'alias' ? o.rel : o.to;
-    ask = [
-      `Some notes link to [[${item.target}]], which does not exist. Quorum matched the name to the note ${to}. Decide whether the links mean that note.`,
-      `Answer: { "kind": "point", "to": "${to}" or null when the links mean something else, ${quotes}, "confidence": "high" | "medium" | "low" }`,
+    const read = new Set(notes.map((n) => n.rel));
+    const options = pointOptions(item).filter((r) => read.has(r));
+    if (!options.length) return null;
+    ask = options.length === 1 ? [
+      `Some notes link to [[${item.target}]], which does not exist. Quorum matched the name to the note ${options[0]}. Decide whether the links mean that note.`,
+      `Answer: { "kind": "point", "to": "${options[0]}" or null when the links mean something else, ${quotes}, "confidence": "high" | "medium" | "low" }`,
+    ] : [
+      `Some notes link to [[${item.target}]], which does not exist. Decide which of these notes the links mean: ${options.join(', ')}.`,
+      `Answer: { "kind": "point", "to": "<one of those paths>" or null when the links mean none of them, ${quotes}, "confidence": "high" | "medium" | "low" }`,
     ];
   } else if (kind === 'merge') {
     const [a, b] = item.notes;
@@ -161,12 +183,10 @@ export function checkDraft(item, notes, reply) {
     return { draft: { kind, text, ...common } };
   }
   if (kind === 'point') {
-    const o = item.ops[0];
-    const to = o.op === 'alias' ? o.rel : o.to;
     if (j.kind !== 'point') return { why: 'The draft answers another question' };
     if (j.to == null) return { draft: { kind, to: null, ...common } };
-    if (j.to !== to) return { why: 'The draft points at a note Quorum did not offer' };
-    return { draft: { kind, to, ...common } };
+    if (!pointOptions(item).includes(j.to) || !rels.includes(j.to)) return { why: 'The draft points at a note Quorum did not offer' };
+    return { draft: { kind, to: j.to, ...common } };
   }
   if (kind === 'merge') {
     if (!text || text.length > MAX_TEXT) return { why: 'The draft has no note text' };
@@ -202,10 +222,23 @@ export function withDraft(item, draft, textOf, aliasesOf = () => []) {
   const out = { ...item, draft: view, autoFix: false };
   if (draft.kind === 'create') return { ...out, draft: { ...view, text: draft.text }, ops: item.ops.map((o, i) => (i ? o : { ...o, text: draft.text })) };
   if (draft.kind === 'point') {
-    if (draft.to) return out;
-    const from = item.ops.find((o) => o.sources) ?? {};
-    const unlink = { op: 'unlink', target: item.target, sources: from.sources ?? item.sources ?? [], lines: from.lines ?? {}, ...(from.links ? { links: from.links } : {}) };
-    return { ...out, wrongNote: true, group: 'unlink', draft: { ...view, wrong: true }, ops: [unlink] };
+    const o = item.ops?.[0] ?? {};
+    const picked = o.op === 'alias' ? o.rel : o.op === 'relink' ? o.to : null;
+    if (draft.to && draft.to === picked) return { ...out, draft: { ...view, to: draft.to } };
+    if (draft.to) {
+      // a better note than the one Quorum picked: each linking note's links to the missing name point at it
+      const from = item.ops.find((x) => x.sources) ?? {};
+      const ops = [];
+      for (const rel of from.sources ?? item.sources ?? []) {
+        const now = textOf(rel);
+        if (now == null) continue;
+        const next = retargetText(now, [item.target], baseOf(draft.to));
+        if (next !== now) ops.push({ op: 'restore', rel, before: next, expect: sha(now) });
+      }
+      if (!ops.length) return { ...out, ops: [], hold: 'No link in the notes points at the missing name.' };
+      return { ...out, direct: true, relinkTo: draft.to, group: 'relink', draft: { ...view, to: draft.to }, ops };
+    }
+    return { ...unlinkItem(out), draft: { ...view, wrong: true } };
   }
   if (draft.kind === 'merge') {
     const keepText = textOf(draft.keep);
@@ -230,6 +263,19 @@ export function withDraft(item, draft, textOf, aliasesOf = () => []) {
   return item;
 }
 
+// a link item turned into removing its dead link and keeping the words: what a point draft that found no note, and
+// the fallback after the agent could not produce a fix, both run
+export function unlinkItem(item) {
+  const from = item.ops?.find((o) => o.sources) ?? {};
+  const unlink = { op: 'unlink', target: item.target, sources: from.sources ?? item.sources ?? [], lines: from.lines ?? {}, ...(from.links ? { links: from.links } : {}) };
+  return { ...item, wrongNote: true, group: 'unlink', ops: [unlink] };
+}
+// the safe fallback of a link item the agent could not fix: why says what went wrong, and Approve removes the dead link
+export function fallbackItem(item, why) {
+  const { agentKind, options, draft, ...rest } = item;
+  return { ...unlinkItem(rest), autoFix: false, fallback: why };
+}
+
 // whether a second draft agrees with the first: the same kind of fix onto the same note. Drafted text may differ
 export function agrees(a, b) {
   if (!a || !b || a.kind !== b.kind) return false;
@@ -244,11 +290,13 @@ export function agrees(a, b) {
 export const trustedDraft = (d) => !!d && d.confidence === 'high' && d.verified === true && d.quotes?.length > 0 && d.quotes.every((q) => q.ok);
 
 const today = (t) => new Date(t).toISOString().slice(0, 10);
+// the evidence hash of an item whose notes the agent may not read
+const BLOCKED = 'blocked';
 
 // The drafter: one draft per tick, while drafting is on, under the daily cap, and never while a recording runs or the
 // person typed in the last two minutes. Drafts are kept in a file in Quorum's data folder by item id with the hash of
 // their evidence, so a draft holds until a note it read changes.
-//   model(prompt, system) -> reply text; the person's Claude Code in the app, a fake in the tests
+//   model(prompt, system, { signal }) -> reply text; the person's Claude Code in the app, a fake in the tests
 //   items() -> the review items now; evidence(item) -> [{ rel, text }] the notes the agent may read, or null when the
 //   read guard or a confidential mark keeps a note it needs away from the agent
 export function createDrafter({ file, model, items, evidence, enabled = () => false, cap = () => DAILY_CAP, busy = () => false, idleMs = () => Infinity, now = () => Date.now(), log = () => {} }) {
@@ -257,7 +305,7 @@ export function createDrafter({ file, model, items, evidence, enabled = () => fa
     if (state) return state;
     try { state = JSON.parse(readFileSync(file, 'utf8')); } catch { state = null; }
     if (!state || typeof state !== 'object') state = {};
-    state.drafts ??= {}; state.failed ??= {}; state.day ??= today(now()); state.count ??= 0;
+    state.drafts ??= {}; state.failed ??= {}; state.fallback ??= {}; state.day ??= today(now()); state.count ??= 0;
     return state;
   };
   const save = () => { try { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(`${file}.tmp`, JSON.stringify(state)); renameSync(`${file}.tmp`, file); } catch {} };
@@ -328,7 +376,7 @@ export function createDrafter({ file, model, items, evidence, enabled = () => fa
         try {
           const reply = await model(p.prompt, p.system);
           const res = checkDraft(item, notes, reply);
-          if (res.draft) { s.drafts[item.id] = { hash: h, at: now(), draft: res.draft }; delete s.failed[item.id]; } else s.failed[item.id] = { hash: h, at: now(), why: res.why };
+          if (res.draft) { s.drafts[item.id] = { hash: h, at: now(), draft: res.draft }; delete s.failed[item.id]; delete s.fallback[item.id]; } else s.failed[item.id] = { hash: h, at: now(), why: res.why };
           save();
           log('memory draft', item.id, res.draft ? `${res.draft.kind} ${res.draft.confidence}` : res.why);
           return res.draft ? { drafted: item.id, draft: res.draft } : { dropped: item.id, why: res.why };
@@ -357,9 +405,58 @@ export function createDrafter({ file, model, items, evidence, enabled = () => fa
     const s = load();
     const keep = new Set(ids);
     let n = 0;
-    for (const k of [...Object.keys(s.drafts), ...Object.keys(s.failed)]) if (!keep.has(k)) { delete s.drafts[k]; delete s.failed[k]; n++; }
+    for (const k of [...Object.keys(s.drafts), ...Object.keys(s.failed), ...Object.keys(s.fallback)]) if (!keep.has(k)) { delete s.drafts[k]; delete s.failed[k]; delete s.fallback[k]; n++; }
     if (n) save();
   }
+  // Approve on an item the agent fixes: one draft now, whether background drafting is on or not, under the daily cap and
+  // after any model call already running. notes: evidence(item), null when the read guard or a confidential mark keeps a
+  // needed note from the agent. Answers { draft } or { why, keep }; keep is true when the reason holds until the notes
+  // change (a failed quote, a low confidence, a blocked note), so the item offers its fallback (fallbackFor). A low
+  // confidence draft is not a fix: Quorum writes nothing from it
+  async function onDemand(item, notes, { signal = null } = {}) {
+    while (running) { try { await running; } catch {} }
+    const s = load();
+    const fail = (why, keep, h = null) => {
+      if (keep) { s.fallback[item.id] = { hash: h, at: now(), why }; save(); }
+      log('memory draft on approve', item.id, why);
+      return { why, keep };
+    };
+    if (!notes?.length) return fail('The agent may not read a note this fix needs: the read guard or a confidential mark keeps it away.', true, BLOCKED);
+    if (used() >= cap()) return { why: `The agent already drafted ${cap()} fixes today, its daily limit. Approve it again tomorrow.`, keep: false };
+    const p = draftPrompt(item, notes);
+    if (!p) return fail('The agent has no note it may read for this fix.', true, BLOCKED);
+    const h = evidenceHash(notes);
+    const day = s.day;
+    s.count++;
+    save();
+    running = (async () => {
+      try {
+        const res = checkDraft(item, notes, await model(p.prompt, p.system, { signal }));
+        if (!res.draft) return fail(`${res.why}, so Quorum wrote nothing.`, true, h);
+        if (res.draft.confidence === 'low') return fail('The agent was not sure enough of its draft, so Quorum wrote nothing.', true, h);
+        s.drafts[item.id] = { hash: h, at: now(), draft: res.draft, onDemand: true };
+        delete s.failed[item.id];
+        delete s.fallback[item.id];
+        save();
+        log('memory draft on approve', item.id, `${res.draft.kind} ${res.draft.confidence}`);
+        return { draft: res.draft };
+      } catch (e) {
+        // a call a person cancelled gives its place under the daily cap back
+        if (e?.cancelled || signal?.aborted) { if (s.day === day && s.count > 0) { s.count--; save(); } return { why: 'You cancelled it.', keep: false, cancelled: true }; }
+        return { why: `The agent could not run: ${String(e?.message ?? e).slice(0, 200)}`, keep: false };
+      } finally { running = null; }
+    })();
+    return running;
+  }
+  // why the agent could not fix an item, while its notes read the same as when it tried; null otherwise
+  function fallbackFor(item, notes) {
+    const f = load().fallback[item.id];
+    if (!f) return null;
+    const h = notes?.length ? evidenceHash(notes) : BLOCKED;
+    return f.hash === h ? f.why : null;
+  }
+  // a person moved the item back to review or its fix changed: the agent tries again on the next Approve
+  function clearFallback(id) { const s = load(); if (s.fallback[id]) { delete s.fallback[id]; save(); } }
   const status = () => ({ used: used(), cap: cap(), waiting: waiting() });
-  return { tick, draftFor, prune, status, waiting };
+  return { tick, draftFor, prune, status, waiting, onDemand, fallbackFor, clearFallback };
 }
