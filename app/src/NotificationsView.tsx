@@ -3,6 +3,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import markProd from '../assets/quorum-mark.png';
 
 import { IconArchive, IconBell, IconCheck, IconChevron, IconClose, IconExternal, IconMore, IconReset } from './icons';
+
+// the View and Dismiss buttons every review row shows, here and in Memory health
+export function ViewButton({ disabled, onView }: { disabled?: boolean; onView: () => void }) {
+  return <button className="icon-btn mh-icon mh-view" disabled={disabled} aria-label="View" data-tip="View the note" onClick={(e) => { e.stopPropagation(); onView(); }}><IconExternal width={16} height={16} /></button>;
+}
+export function DismissButton({ disabled, onDismiss }: { disabled?: boolean; onDismiss: () => void }) {
+  return <button className="icon-btn mh-icon" disabled={disabled} aria-label="Dismiss" data-tip="Dismiss: Archive and keep as is" onClick={onDismiss}><IconClose width={16} height={16} /></button>;
+}
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
 import { Avatar } from './Speaker';
 import { toast } from './Toasts';
@@ -75,11 +83,11 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
   const working = pressed || !!row.fixRun;
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const go = () => { if (!row.target.gone) onOpen(); };
-  // a past fix to check: Keep sets it aside, Approve runs its corrective fix when it can, and Open shows the note when not
-  const past = row.review?.kind === 'past-fix';
+  // a review row opens its note from View; a click on the row folds its details open and shut
+  const press = () => { if (row.review) setOpen((o) => !o); else go(); };
   return (
     <div className={`conn-row nf-row${row.unread ? ' unread' : ''}${row.review || row.run ? ' mh-row' : ''}${(row.run && (row.run.status === 'running' || row.run.status === 'queued')) || working ? ' running' : ''}${working ? ' working' : ''}`}>
-      <div className="conn-line nf-line" role="button" tabIndex={0} aria-label={row.summary.line} onClick={go} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); go(); } }}>
+      <div className="conn-line nf-line" role="button" tabIndex={0} aria-label={row.summary.line} aria-expanded={row.review ? open : undefined} onClick={press} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); press(); } }}>
         <label className="nf-check" onClick={stop}><input type="checkbox" checked={picked} aria-label="Select" onChange={onPick} /></label>
         {/* waiting for a decision shows the orange mark, Quorum's color for anything in review */}
         <span className="nf-who">{row.who === 'you' ? <span className="nf-you-avatar" aria-label="You" data-tip={me.name}><Avatar name={me.name} photo={me.photo} size={32} /></span> : <img src={markProd} alt={row.review ? 'Quorum, needs review' : 'Quorum'} width={32} height={32} />}</span>
@@ -95,19 +103,18 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
               {row.run.status === 'success' && <UndoMenu run={row.run} />}
             </StatusSwap>
           )}
+          {/* every review row: View opens the note, left of Dismiss and Approve */}
+          {row.review && <span onClick={stop} onKeyDown={stop}><ViewButton disabled={!!row.target.gone} onView={go} /></span>}
           {row.review && row.archived && (
-            <StatusSwap status="dismissed"><RowMenu label="Move back to review" onPick={() => onArchive(false)} /></StatusSwap>
+            <StatusSwap status={row.done ? 'accepted' : 'dismissed'}><RowMenu label="Move back to review" onPick={() => onArchive(false)} /></StatusSwap>
           )}
           {row.review && !row.archived && (
             <span className="mh-swap" onClick={stop} onKeyDown={stop}>
               <span className="mh-when"><StatusBadge status={row.fixRun?.status === 'queued' ? 'waiting' : 'review'} /></span>
               <span className="mh-hover">
-                <button className="icon-btn mh-icon" disabled={busy || working} aria-label={past ? 'Keep' : 'Archive'} data-tip={past ? 'Keep: leave the fix as it is' : 'Archive: set it aside without fixing it'} onClick={() => onArchive(true)}><IconArchive width={16} height={16} /></button>
-                {/* a review rule's finding without a fix: the row opens the note, and Archive sets it aside */}
-                {row.review.kind === 'finding' && !row.review.fix ? null : working
+                <DismissButton disabled={busy || working} onDismiss={() => onArchive(true)} />
+                {working
                   ? <span className="icon-btn mh-icon mh-busy" role="img" aria-label="Working"><i className="run-spin" /></span>
-                  : past && !row.review.undo
-                    ? <button className="icon-btn mh-icon" disabled={busy} aria-label="Open the note" data-tip={row.summary.solution ?? 'Open the note'} onClick={go}><IconExternal width={16} height={16} /></button>
                   : <button className="icon-btn mh-icon mh-yes" disabled={busy} aria-label="Approve" data-tip={`Approve: ${row.summary.recommendation ?? ''}`} onClick={() => { setWorking(true); Promise.resolve(onDecide('approve')).finally(() => setWorking(false)); }}><IconCheck width={16} height={16} /></button>}
               </span>
             </span>
@@ -216,8 +223,7 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
   // Approve takes each row's recommendation (for a large memory rewrite that is putting back the earlier text);
   // Dismiss marks rows reviewed and changes nothing
   const decide = async (rows: FeedRow[], verdict: 'approve' | 'dismiss') => {
-    // a review rule's finding without a fix leaves Approve to the person, who acts on the note
-    const picked = rows.filter((r) => r.review && !(verdict === 'approve' && r.review.kind === 'finding' && !r.review.fix));
+    const picked = rows.filter((r) => r.review);
     if (!picked.length) return;
     const groups = new Map<'approve' | 'revert' | 'dismiss', { kind: NonNullable<FeedRow['review']>['kind']; abs: string; key?: string }[]>();
     const fixes = picked.filter((r) => verdict === 'approve' && r.review!.kind === 'link').map((r) => r.review!.key!);
@@ -243,8 +249,10 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
     const one = picked.length === 1 ? `“${picked[0].target.title}”` : `${picked.length} items`;
     const fixing = fixes.length && verdict === 'approve';
     const undoing = picked.every((r) => r.review!.kind === 'past-fix');
+    // Approve on an item Quorum keeps as it is changes nothing and marks it done
+    const keeping = verdict === 'approve' && picked.every((r) => r.review!.approve === 'keep' || (r.review!.kind === 'finding' && r.detail?.keep));
     if (undoing && failedN) return;
-    toast(undoing ? (verdict === 'dismiss' ? `Kept the fix on ${one}.` : `Approved the corrective fix on ${one}. Quorum is applying it now.`) : verdict === 'dismiss' ? `Dismissed ${one}. Nothing changed.` : fixing ? `Approved ${one}. Quorum is fixing ${picked.length === 1 ? 'it' : 'them'} now.` : `Approved ${one}.`);
+    toast(keeping ? `Kept ${one} as ${picked.length === 1 ? 'it is' : 'they are'} and marked ${picked.length === 1 ? 'it' : 'them'} done.` : undoing ? (verdict === 'dismiss' ? `Kept the fix on ${one}.` : `Approved the corrective fix on ${one}. Quorum is applying it now.`) : verdict === 'dismiss' ? `Dismissed ${one}. Nothing changed.` : fixing ? `Approved ${one}. Quorum is fixing ${picked.length === 1 ? 'it' : 'them'} now.` : `Approved ${one}.`);
   };
 
   // archive or bring back rows; the list reloads so they leave this tab
@@ -305,7 +313,7 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
             <button className="act-pill" disabled={busy || !sel.some((r) => r.unread)} onClick={async () => { await mark(sel); setPicked(new Set()); }}>Mark read</button>
             <button className="act-pill primary" disabled={busy || !selReview.length} onClick={() => {
               // Memory health items go through the bulk plan sheet when there are several; the rest are approved here
-              const planned = selReview.filter((r) => r.review!.kind === 'link' || r.review!.kind === 'past-fix' || (r.review!.kind === 'finding' && r.review!.fix));
+              const planned = selReview.filter((r) => r.review!.kind === 'link' || r.review!.kind === 'past-fix' || r.review!.kind === 'finding');
               if (planned.length < 2) { decide(selReview, 'approve'); return; }
               const rest = selReview.filter((r) => !planned.includes(r));
               if (rest.length) decide(rest, 'approve');
