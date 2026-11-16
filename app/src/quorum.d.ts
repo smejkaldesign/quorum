@@ -271,7 +271,7 @@ export type FeedSort = 'unread' | 'recent' | 'az';
 export type FeedSummary = { line: string; sub: string | null; ask?: { question: string; suggest: 'approve' | 'reject'; why: string; problem: string; solution: string; value: string; recommendation: string }; problem?: string; solution?: string; value?: string; recommendation?: string };
 export type FixStep = { label: string; at: number; endedAt: number | null };
 export type FixRun = { id: string; key: string; target: string; title: string; rel: string; status: 'queued' | 'running' | 'success' | 'error'; queuedAt: number; startedAt: number | null; endedAt: number | null; steps: FixStep[]; outcome: string | null; error: string | null; dismissedAt: number | null; batch?: string | null; undoable?: boolean; undoneAt?: number | null; problem?: string; solution?: string; value?: string; recommendation?: string; meta?: [string, string][]; showBanner?: boolean };
-export type FeedRow = { id: string; at: number; kind: FeedKind; event: string; who: 'agent' | 'you'; target: { kind: 'note' | 'memory' | 'guardrail' | 'link'; abs: string; rel: string; title: string; gone?: boolean }; files: { rel: string; abs: string; label: string; title?: string }[]; unread: boolean; backfill: boolean; archived?: boolean; review?: { kind: 'note' | 'memory' | 'junk-note' | 'link'; count?: number; key?: string }; run?: FixRun; fixRun?: FixRun; summary: FeedSummary; details: [string, string][] };
+export type FeedRow = { id: string; at: number; kind: FeedKind; event: string; who: 'agent' | 'you'; target: { kind: 'note' | 'memory' | 'guardrail' | 'link'; abs: string; rel: string; title: string; gone?: boolean }; files: { rel: string; abs: string; label: string; title?: string }[]; unread: boolean; backfill: boolean; archived?: boolean; review?: { kind: 'note' | 'memory' | 'junk-note' | 'link' | 'past-fix'; count?: number; key?: string; undo?: boolean }; run?: FixRun; fixRun?: FixRun; summary: FeedSummary; details: [string, string][] };
 export type FeedQuery = { tab?: FeedTab; review?: boolean; kinds?: FeedKind[]; q?: string; sort?: FeedSort; offset?: number; limit?: number };
 // a feed query that returns each item as its id and unread mark only
 export type FeedMark = { id: string; unread: boolean };
@@ -431,7 +431,7 @@ declare global {
       activityFeed(query: FeedQuery): Promise<FeedPage>;
       activityMark(rows: { id: string; abs: string }[], unread?: boolean): Promise<number>;
       activityArchive(rows: { id: string }[], on?: boolean): Promise<number>;
-      activityReview(items: { kind: 'note' | 'memory' | 'junk-note' | 'link'; abs: string; key?: string }[], verdict: 'approve' | 'revert' | 'dismiss'): Promise<{ done: string[]; failed: { abs: string; error: string }[] }>;
+      activityReview(items: { kind: 'note' | 'memory' | 'junk-note' | 'link' | 'past-fix'; abs: string; key?: string }[], verdict: 'approve' | 'revert' | 'dismiss'): Promise<{ done: string[]; failed: { abs: string; error: string }[] }>;
       vaultSearch(q: string, limit?: number): Promise<SearchHit[]>;
       vaultBacklinks(rel: string): Promise<Backlink[]>;
       vaultLinkHealth(fresh?: boolean): Promise<MissingLink[]>;

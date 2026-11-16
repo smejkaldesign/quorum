@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FEED_KINDS, FEED_SORTS, feedPage, feedRows, labelOf } from '../activityFeed.js';
+import { detailsOf } from '../notificationSummary.js';
 
 const T = (m) => new Date(Date.UTC(2026, 10, 1, 9, m)).toISOString();
 const ms = (m) => new Date(T(m)).getTime();
@@ -208,5 +209,28 @@ describe('fix runs', () => {
     expect(marks.items).toEqual(full.items.map((r) => ({ id: r.id, unread: r.unread })));
     expect(marks.counts).toEqual(full.counts);
     expect(marks.dot).toBe(full.dot);
+  });
+});
+
+describe('past fixes to check', () => {
+  const run = { id: 'fix:lantern:1', key: 'lantern', target: 'Lantern', status: 'success', endedAt: ms(20), outcome: 'Wrote the note n/Lantern.md from what the linking notes say' };
+  const res = { flagged: true, action: 'create', main: 'n/Lantern.md', reasons: [{ id: 'few-sources', text: 'Only one note a person wrote links to it. Writing a note now needs at least two.' }], evidence: [['Note it wrote', 'n/Lantern.md']] };
+  const row = (plan) => feedRows({ pastFixes: [{ run, res, plan, abs: '/v/n/Lantern.md' }] })[0];
+  it('lists a flagged fix in Needs review with Undo when it can be undone', () => {
+    const r = row({ ok: true, kind: 'trash', why: 'Quorum moves “n/Lantern.md” to the Trash, where you can put it back.' });
+    expect(r.review).toEqual({ kind: 'past-fix', key: run.id, undo: true });
+    expect(r.summary.line).toBe('Undo the fix on “Lantern”?');
+    expect(r.summary.problem).toMatch(/The current rules would not make this fix\. Only one note/);
+    expect(r.summary.recommendation).toBe('Undo the fix.');
+    expect(detailsOf(r)).toContainEqual(['What', 'Past fix to check']);
+    expect(detailsOf(r)).toContainEqual(['Note it wrote', 'n/Lantern.md']);
+    expect(feedPage([r], { review: true }).items.map((x) => x.id)).toEqual([`r:pastfix:${run.id}`]);
+  });
+  it('explains why Undo is not possible and recommends opening the note', () => {
+    const r = row({ ok: false, kind: 'trash', why: '“n/Lantern.md” changed after the fix, so Quorum leaves it as it is.' });
+    expect(r.review.undo).toBe(false);
+    expect(r.summary.line).toBe('Check the fix on “Lantern”');
+    expect(r.summary.solution).toMatch(/^Quorum cannot undo it here\. “n\/Lantern\.md” changed after the fix/);
+    expect(r.summary.recommendation).toBe('Open the note and check it.');
   });
 });

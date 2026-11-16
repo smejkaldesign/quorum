@@ -63,6 +63,7 @@ import { ARCHIVE_AFTER, feedPage, feedRows, labelOf } from './activityFeed.js';
 import { issueMeta, issueOf } from './memoryHealth.js';
 import { LINK_RULE, LINK_RULE_VERSION, contextNote, isGenerated } from './linkRules.js';
 import { createDecisionLog, fingerprint } from './decisionLog.js';
+import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, applyPlan, fixVersions, recheckAll, undoPlan } from './fixRecheck.js';
 import { createElsewhere, withFound } from './linkElsewhere.js';
 import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
@@ -2112,7 +2113,7 @@ function feedSources() {
   const links = linkItems.map((m) => ({ ...withMarks(m, left, declined), abs: path.join(b.vault, m.sources?.[0] ?? '') }));
   const v = b.vault;
   const runs = fixRunList().filter((r) => r.vault === v && (r.endedAt ?? r.queuedAt) > Date.now() - 7 * 86400000);
-  return { notes, memories, denials, junk: keeper.junk(), links, runs, state, guardFile: DENIAL_LOG };
+  return { notes, memories, denials, junk: keeper.junk(), links, runs, pastFixes: pastFixRows(), state, guardFile: DENIAL_LOG };
 }
 ipcMain.handle('activity-feed', (_e, query) => {
   const q = query ?? {};
@@ -2138,16 +2139,19 @@ ipcMain.handle('activity-archive', (_e, rows, on) => {
   const at = new Date().toISOString();
   let n = 0;
   const linkKeys = [];
+  const pastIds = [];
   for (const r of Array.isArray(rows) ? rows : []) {
     const id = String(r?.id ?? '');
     if (!id || id.length > 2000) continue;
     st.kept ??= {};
     if (id.startsWith('r:link:')) { setLinksLeft([id.slice(7)], on !== false); linkKeys.push(id.slice(7)); }
+    if (id.startsWith(PAST_FIX_ROW)) pastIds.push(id.slice(PAST_FIX_ROW.length));
     if (on === false) { delete st.archived[id]; if (!id.startsWith('r:link:')) st.kept[id] = at; } else { st.archived[id] = at; delete st.kept[id]; st.read[id] = at; delete st.unread[id]; }
     n++;
   }
   feedStateSave();
   logDecision(linkKeys, on === false ? 'reopened' : 'archived');
+  for (const id of pastIds) logPastFix(id, on === false ? 'reopened' : 'archived', on === false ? null : 'Kept the fix');
   return n;
 });
 ipcMain.handle('activity-mark', (_e, rows, unread) => {
@@ -2179,7 +2183,7 @@ ipcMain.handle('activity-review', async (_e, items, verdict) => {
   const done = [];
   const failed = [];
   for (const it of Array.isArray(items) ? items : []) {
-    const t = it?.kind === 'link' ? { abs: String(it.abs ?? ''), rel: null } : feedFile(it?.abs);
+    const t = it?.kind === 'link' || it?.kind === 'past-fix' ? { abs: String(it.abs ?? ''), rel: null } : feedFile(it?.abs);
     try {
       if (!t) throw new Error('Not found');
       const at = new Date().toISOString();
@@ -2190,6 +2194,10 @@ ipcMain.handle('activity-review', async (_e, items, verdict) => {
       } else if (it.kind === 'link') {
         if (ok && items.length > 1 && reviewOnlyKey(it.key)) throw new Error('This fix needs a review on its own. Open it and approve it there');
         if (ok) startFixes([it.key]); else await decideLink(it.key, 'dismiss');
+      } else if (it.kind === 'past-fix') {
+        // Undo changes notes, so each one is undone on its own; Dismiss keeps the fix
+        if (ok && items.filter((x) => x?.kind === 'past-fix').length > 1) throw new Error('Undo needs a review on its own. Open it and undo it there');
+        if (ok) await undoPastFix(String(it.key ?? '')); else keepPastFix(String(it.key ?? ''));
       } else if (it.kind === 'junk-note') {
         if (!meetingFile(t.abs) || !t.rel) throw new Error('Not found');
         if (ok) {
@@ -2912,6 +2920,120 @@ ipcMain.handle('fix-dismiss', (_e, ids) => {
   fixRunsSave();
   return n;
 });
+
+// Past fixes to check (fixRecheck.js): every fix that ran is checked against the current rules. A fix the rules would
+// no longer make waits in Needs review with Undo and Keep; nothing is undone until the person presses Undo. The check
+// runs once per start for each vault, and its results are kept in the data folder under the rule versions: a start with
+// the same versions checks only the runs it has not seen, and a new rule version checks them all again
+const pastFixFile = path.join(DATA_DIR, 'fix-recheck.json');
+const PAST_FIX_VERSION = `${LINK_RULE_VERSION}.${FIX_RECHECK_VERSION}`;
+const PAST_FIX_ROW = 'r:pastfix:';
+let pastFixState = null;
+function pastFixVault() {
+  const b = brain();
+  if (!b || !vindex) return null;
+  const read = (rel) => { try { return readFileSync(vaultPath(b.vault, rel), 'utf8'); } catch { return null; } };
+  return { rels: () => vindex.rels(), note: (rel) => vindex.note(rel), backlinks: (rel) => vindex.backlinks(rel), resolve: (t, from) => vindex.resolve(t, from), read };
+}
+function pastFixCheck() {
+  const b = brain();
+  const vault = pastFixVault();
+  if (!b || !vault) return null;
+  if (pastFixState?.vault === b.vault) return pastFixState;
+  let all = {};
+  try { all = JSON.parse(readFileSync(pastFixFile, 'utf8')) ?? {}; } catch {}
+  const finder = elsewhereFinder();
+  let cache = { version: PAST_FIX_VERSION, results: {} };
+  try { cache = recheckAll(fixRunList().filter((r) => r.vault === b.vault), { vault, find: (n) => finder?.find(n) ?? null }, all[b.vault] ?? null, PAST_FIX_VERSION); } catch (e) { log('past fixes', e?.message); }
+  all[b.vault] = cache;
+  try { writeFileSync(pastFixFile, JSON.stringify(all)); } catch (e) { log('past fixes', e?.message); }
+  pastFixState = { vault: b.vault, cache, plans: new Map() };
+  return pastFixState;
+}
+// how a flagged fix can be undone right now; kept a few seconds, since the feed reloads often
+function pastFixPlan(run, fresh = false) {
+  const st = pastFixCheck();
+  const vault = pastFixVault();
+  if (!st || !vault) return null;
+  const hit = st.plans.get(run.id);
+  if (!fresh && hit && Date.now() - hit.at < 10000) return hit.plan;
+  let undoFiles = null;
+  try { undoFiles = JSON.parse(readFileSync(undoFile(run.id), 'utf8')).files ?? null; } catch {}
+  const mtime = (rel) => { try { const st = statSync(vaultPath(run.vault, rel)); return Math.max(st.mtimeMs, st.ctimeMs); } catch { return null; } };
+  const plan = undoPlan(run, { vault, undoFiles, versions: fixVersions(memoryVersions.files(run.vault), run), readVersion: (rel, id) => memoryVersions.read(run.vault, rel, id), mtime });
+  st.plans.set(run.id, { at: Date.now(), plan });
+  return plan;
+}
+// the flagged fixes for the feed: each with its re-check, its Undo plan and the note it opens on
+function pastFixRows() {
+  const b = brain();
+  const st = pastFixCheck();
+  if (!b || !st) return [];
+  const out = [];
+  for (const run of fixRunList()) {
+    if (run.vault !== b.vault || run.status !== 'success' || run.undoneAt) continue;
+    const res = st.cache.results[run.id];
+    if (!res?.flagged) continue;
+    const abs = res.main ? vaultPath(b.vault, res.main) : null;
+    // a note the fix wrote that is gone since leaves nothing to check
+    if (res.action === 'create' && (!abs || !existsSync(abs))) continue;
+    const plan = pastFixPlan(run);
+    if (plan) out.push({ run, res, plan, abs: abs ?? '' });
+  }
+  return out;
+}
+function logPastFix(id, decision, note = null, plan = null) {
+  const v = brain()?.vault;
+  const run = fixRunList().find((r) => r.id === id);
+  const res = pastFixState?.cache.results[id];
+  if (!v || !run) return;
+  try {
+    decisionLog.record(v, {
+      ruleId: FIX_RECHECK_RULE, ruleVersion: FIX_RECHECK_VERSION, key: `pastfix:${run.id}`, target: run.target, sources: res?.main ? [res.main] : [],
+      evidence: { outcome: run.outcome, reasons: res?.reasons ?? [], evidence: res?.evidence ?? [] }, proposedFix: { action: 'undo', kind: plan?.kind ?? null }, decision, note,
+    });
+  } catch (e) { log('decision log', e?.message); }
+}
+// Keep: the fix stays as it is and its row moves to Archived, where Move back to review brings it back
+function keepPastFix(id) {
+  const st = feedState();
+  const at = new Date().toISOString();
+  st.archived[`${PAST_FIX_ROW}${id}`] = at;
+  st.read[`${PAST_FIX_ROW}${id}`] = at;
+  feedStateSave();
+  logPastFix(id, 'archived', 'Kept the fix');
+}
+async function undoPastFix(id) {
+  const b = brain();
+  const run = fixRunList().find((r) => r.id === id);
+  if (!b || !run || run.vault !== b.vault) throw new Error('That fix was made in another vault');
+  if (run.status !== 'success' || !pastFixCheck()?.cache.results[run.id]?.flagged) throw new Error('That fix is not one to check');
+  const plan = pastFixPlan(run, true);
+  if (!plan?.ok) throw new Error(plan?.why ?? 'There is nothing to undo on that fix');
+  const nowText = (rel) => { try { return readFileSync(vaultPath(b.vault, rel), 'utf8'); } catch { return null; } };
+  const was = plan.files.map((f) => ({ rel: f.rel, text: nowText(f.rel) }));
+  // the undo is a version of its own, so the fixed text can be brought back from the history; a note changed before a
+  // later write failed is recorded too
+  try {
+    await applyPlan(b.vault, plan, (abs) => shell.trashItem(abs));
+  } finally {
+    for (const w of was) {
+      const after = nowText(w.rel);
+      if (after === w.text) continue;
+      try { memoryVersions.record({ vault: b.vault, rel: w.rel, before: w.text, after, who: 'you', reason: `Undid the Memory health fix on “${run.target}”`, agent: false }); } catch (e) { log('fix versions', e?.message); }
+    }
+  }
+  vindex?.sync();
+  diskNamesCache.at = 0;
+  setLinksLeft([run.key], false);
+  run.undoneAt = Date.now();
+  logPastFix(id, 'undone', null, plan);
+  fixRunsSave();
+  fixEmit(run);
+  toUI('memory-updates', null);
+  log('past fix undo', run.key, plan.kind, `${plan.files.length} notes`);
+  return `Undid the fix. “${run.target}” is back in Needs review`;
+}
 // fix a missing link by pointing it at a note that exists; refuses a target that isn't a real note in the vault
 ipcMain.handle('vault-fix-link', (_e, target, toRel) => {
   if (!vindex || !vindex.rels().includes(String(toRel))) throw new Error('That note no longer exists');
