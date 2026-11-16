@@ -197,12 +197,12 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
           <span className="nf-sub"><span className="nf-when" title={i.lastAt ? new Date(i.lastAt).toLocaleString() : undefined}>{i.lastAt ? ago(i.lastAt) : ''}</span></span>
         </span>
         <span className="nf-side mh-side">
-          {/* View opens the note on its issue with the drawer open */}
-          <span onClick={stop} onKeyDown={stop}><ViewButton onView={() => { if (marks.unread.has(issueId(i.key))) markRead([issueId(i.key)]); onReview(i); }} /></span>
           {/* the date sits on the right; on hover it slides out and the actions slide in, the way Home's rows do */}
           <span className="mh-swap" onClick={stop} onKeyDown={stop}>
             <span className="mh-when"><StatusBadge status={tab === 'archived' ? 'dismissed' : waiting ? 'waiting' : 'review'} /></span>
             <span className="mh-hover">
+              {/* View opens the note on its issue with the drawer open */}
+              <ViewButton onView={() => { if (marks.unread.has(issueId(i.key))) markRead([issueId(i.key)]); onReview(i); }} />
               {tab === 'archived'
                 ? <RowMenu label="Move back to review" onPick={() => back([i])} />
                 : <>
