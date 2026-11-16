@@ -168,7 +168,8 @@ const SORTS = {
 // items waiting for a decision, and lists them all whatever the switches say. kinds narrows to event types, q to rows
 // whose words match. counts and dot are for the bell and the labels, and use the switches the same way
 // archived holds the ids the person archived: they leave All, Unread, Needs review and the dot, and list under Archived
-export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = '', sort = 'unread', offset = 0, limit = 50, prefs = {}, locale, archived = [], kept: keptIds = [] } = {}) {
+// idsOnly returns each item as its id and unread mark, for a caller that only needs the marks (Memory health)
+export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = '', sort = 'unread', offset = 0, limit = 50, prefs = {}, locale, archived = [], kept: keptIds = [], idsOnly = false } = {}) {
   // decided items archive on their own: an issue set aside unfixed (Dismissed), and a fix a few seconds after it ends
   // (Accepted or Failed), unless the person brought it back with Unarchive
   const back = new Set(keptIds);
@@ -202,7 +203,7 @@ export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = ''
   const start = Math.max(0, offset | 0);
   const end = start + Math.max(0, limit | 0);
   return {
-    items: list.slice(start, end).map((r) => ({ ...r, details: detailsOf(r, { locale }) })),
+    items: list.slice(start, end).map((r) => (idsOnly ? { id: r.id, unread: r.unread } : { ...r, details: detailsOf(r, { locale }) })),
     total: list.length,
     more: end < list.length,
     counts: { all: all.length, unread: unread.length, review: waiting.length, archived: shelf.length },

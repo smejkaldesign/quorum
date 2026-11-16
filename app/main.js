@@ -1816,12 +1816,14 @@ async function matchMeetingApps() {
 }
 
 // the in-app reader only opens notes inside the connected Agent OS's meetings folder
-const meetingFile = (file) => {
-  const root = meetingsDir();
+// the folders it reads from cost a vault scan to find, so a caller checking many files finds them once (meetingRoots)
+// and checks each file with meetingFileIn
+const meetingRoots = () => { const root = meetingsDir(); return root ? [root, ...meetingSources().map((s) => s.path)] : []; };
+const meetingFileIn = (roots, file) => {
   const abs = path.resolve(String(file));
-  const roots = root ? [root, ...meetingSources().map((s) => s.path)] : [];
   return roots.some((r) => abs.startsWith(r + path.sep)) && abs.endsWith('.md') && existsSync(abs) ? abs : null;
 };
+const meetingFile = (file) => meetingFileIn(meetingRoots(), file);
 
 // a note written again from its parts (a speaker correction, a second save, a connector re-import) keeps the share
 // choice, the confidential mark, where it came from and every frontmatter key the guardrails deny, as the file on
@@ -2014,7 +2016,7 @@ function runEvents(vault, rel, runs) {
 // a note Quorum wrote (a recording's summary, an agent import) waits for the person to review it
 function agentWrote(abs) {
   let fm = {};
-  try { fm = readFrontmatter(store.notes.read(abs).slice(0, 4000)); } catch { /* unreadable */ }
+  try { fm = noteHead(abs); } catch { /* unreadable */ }
   const recorded = fm.recorded === true || fm.recorded === 'true';
   return fm.imported_by === 'agent' || ((fm.source === 'quorum' || fm.source === 'quorum-dev') && (fm.type !== 'note' || recorded));
 }
@@ -2079,7 +2081,8 @@ function feedSources() {
     try { const st = statSync(m.file); at = st.birthtimeMs || st.mtimeMs; } catch { continue; }
     imports.set(path.resolve(m.file), { at, source: m.source, sourceName: sourceName(m.source), date: m.date || null });
   }
-  const noteAbs = new Set([...Object.keys(logged), ...imports.keys(), ...Object.keys(trails).map((rel) => path.join(b.vault, rel))].map((f) => meetingFile(f)).filter(Boolean));
+  const roots = meetingRoots();
+  const noteAbs = new Set([...Object.keys(logged), ...imports.keys(), ...Object.keys(trails).map((rel) => path.join(b.vault, rel))].map((f) => meetingFileIn(roots, f)).filter(Boolean));
   const titled = (x) => ({ rel: x, abs: path.join(b.vault, x), label: fileTitle(path.join(b.vault, x), x), title: fileTitle(path.join(b.vault, x), x) });
   const notes = [...noteAbs].map((abs) => {
     const rel = toRel(abs);
@@ -2096,7 +2099,7 @@ function feedSources() {
   });
   const memories = Object.entries(memoryVersions.files(b.vault)).map(([rel, rec]) => {
     const abs = path.join(b.vault, rel);
-    return { abs, rel, title: fileTitle(abs, rel), note: !!meetingFile(abs), gone: !existsSync(abs), versions: rec.versions ?? [], updates: rec.updates ?? [], seenAt: seen[abs]?.seenAt ?? null };
+    return { abs, rel, title: fileTitle(abs, rel), note: !!meetingFileIn(roots, abs), gone: !existsSync(abs), versions: rec.versions ?? [], updates: rec.updates ?? [], seenAt: seen[abs]?.seenAt ?? null };
   });
   const left = linksLeft();
   const declined = linksDeclined();
@@ -2109,7 +2112,7 @@ ipcMain.handle('activity-feed', (_e, query) => {
   const q = query ?? {};
   return feedPage(feedRows(feedSources()), {
     tab: ['unread', 'archived'].includes(q.tab) ? q.tab : 'all', archived: Object.keys(feedState().archived), kept: Object.keys(feedState().kept ?? {}), review: q.review === true, kinds: Array.isArray(q.kinds) ? q.kinds.map(String) : [], q: String(q.q ?? ''),
-    sort: String(q.sort ?? 'unread'), offset: Number(q.offset) || 0, limit: Number(q.limit ?? 50), prefs: settings.notifications ?? {},
+    sort: String(q.sort ?? 'unread'), offset: Number(q.offset) || 0, limit: Number(q.limit ?? 50), prefs: settings.notifications ?? {}, idsOnly: q.idsOnly === true,
   });
 });
 // a file in the feed, by its path: a saved note, or a note inside the vault
@@ -3001,7 +3004,8 @@ ipcMain.handle('ask', async (_e, question, files) => {
   const kbCards = extra.kb && kbSearch ? kbSearch.sources(r.kb ?? [], extra.kb.hits) : [];
   const sources = [...fileCards, ...kbCards.map((c, i) => ({ n: fileCards.length + i + 1, ...c }))];
   saveChat(question, r.text, sources, steps);
-  for (const abs of new Set(r.files)) { const f = meetingFile(abs); if (f) noteEvent(f, 'referenced', `Agent referenced it to answer "${String(question).slice(0, 80)}"`); }
+  const roots = meetingRoots();
+  for (const abs of new Set(r.files)) { const f = meetingFileIn(roots, abs); if (f) noteEvent(f, 'referenced', `Agent referenced it to answer "${String(question).slice(0, 80)}"`); }
   return { text: r.text, sources, steps };
 });
 

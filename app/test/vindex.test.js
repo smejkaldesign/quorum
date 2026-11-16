@@ -109,3 +109,23 @@ describe('graph cluster names', () => {
     expect(forgotten).toEqual(['folder:gone']);
   });
 });
+
+describe('linkHealth', () => {
+  it('keeps its answer until the index changes, then reflects edits and deletes', () => {
+    vault = mkdtempSync(path.join(tmpdir(), 'vindex-'));
+    write('a.md', '# A\n\n[[missing-one]]\n');
+    const index = open();
+    const first = index.linkHealth();
+    expect(first.map((m) => m.target)).toEqual(['missing-one']);
+    expect(index.linkHealth()).toBe(first);
+    write('b.md', '# B\n\n[[missing-two]]\n');
+    index.syncPaths(['b.md']);
+    expect(index.linkHealth().map((m) => m.target).sort()).toEqual(['missing-one', 'missing-two']);
+    rmSync(path.join(vault, 'b.md'));
+    index.syncPaths(['b.md']);
+    expect(index.linkHealth().map((m) => m.target)).toEqual(['missing-one']);
+    write('missing-one.md', '# Found\n');
+    index.sync();
+    expect(index.linkHealth()).toEqual([]);
+  });
+});
