@@ -2581,8 +2581,7 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 @media (prefers-reduced-motion: reduce) { .note-dock .chat-strip { transform: none; } }
 
 /* ---------- In review: Quorum's color for anything waiting on a decision (the orange mark, the Needs review count) */
-:root { --review: #ff9f0a; --issue: #ff453a; }
-.nf-count.review { background: var(--review); color: #fff; }
+:root { --review: #ff9f0a; --issue: #ff453a; --issue-rgb: 255, 69, 58; --issue-text: #ff6961; --ok: #30d158; --ok-rgb: 48, 209, 88; }
 /* outlined buttons fade their border in and out over 0.2s; the segmented tabs keep one border on hover */
 .pill, .act-pill, .filter, .up-all, button.meta-pill, a.meta-pill, .nf-toggle, .nf-pick, .nf-search-btn, .keeper-link, .icon-btn.outlined { transition: border-color 200ms ease, background-color 200ms ease, color 200ms ease; }
 
@@ -2640,10 +2639,9 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
    sides, at the shared page width */
 .kb-preview > .doc { width: auto; padding-left: max(40px, calc((100% - var(--page-w)) / 2)); padding-right: max(40px, calc((100% - var(--page-w)) / 2)); }
 
-/* ---------- In review orange, everywhere Memory health shows. --review is the mark and text color; --review-badge is
-   the darker fill behind white text (4.7:1, passes AA for small text) */
-:root { --review-badge: #bd5500; --review-rgb: 255, 159, 10; }
-.nf-count.review, .kb-issues, .lh-btn.alert .lh-count { background: var(--review-badge); color: #fff; }
+/* ---------- In review orange, everywhere Memory health shows. --review is the mark, text and badge color; badges put
+   dark text on it */
+:root { --review-rgb: 255, 159, 10; }
 .lh-btn.alert { color: var(--review); }
 .kb-dot.red { background: var(--review); }
 .mu-banner.orange { border-color: rgba(var(--review-rgb), 0.4); background: rgba(var(--review-rgb), 0.08); }
@@ -2756,8 +2754,8 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .rv-details .mh-parts { gap: 8px; }
 
 /* the Recommendation card: green, with a green check on a lighter green square filling its left side */
-.rv-card { display: flex; align-items: stretch; gap: 0; padding: 0; overflow: hidden; border: 1px solid rgba(48, 209, 88, 0.35); background: rgba(48, 209, 88, 0.07); }
-.rv-card::before { content: ''; flex: none; width: 44px; background: rgba(48, 209, 88, 0.16) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2330d158' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") no-repeat center; }
+.rv-card { display: flex; align-items: stretch; gap: 0; padding: 0; overflow: hidden; border: 1px solid rgba(var(--ok-rgb), 0.35); background: rgba(var(--ok-rgb), 0.07); }
+.rv-card::before { content: ''; flex: none; width: 44px; background: rgba(var(--ok-rgb), 0.16) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2330d158' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") no-repeat center; }
 .rv-card p { padding: 12px 14px; font-size: 14px; }
 
 /* count badges in the In review orange: the light orange with dark text */
@@ -2766,11 +2764,11 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 /* a fix run: the row's title shimmers while it works; the banner shows the step running now, then the outcome */
 .mh-row.running .nf-title { background: linear-gradient(90deg, var(--text) 0%, var(--text) 40%, rgba(255, 255, 255, 0.35) 50%, var(--text) 60%, var(--text) 100%); background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 1.8s linear infinite; }
 .run-banner { border: 1px solid var(--line-2); border-radius: 12px; background: var(--card); overflow: hidden; }
-.run-banner.success { border-color: rgba(48, 209, 88, 0.35); background: rgba(48, 209, 88, 0.07); }
-.run-banner.error { border-color: rgba(255, 69, 58, 0.4); background: rgba(255, 69, 58, 0.08); }
+.run-banner.success { border-color: rgba(var(--ok-rgb), 0.35); background: rgba(var(--ok-rgb), 0.07); }
+.run-banner.error { border-color: rgba(var(--issue-rgb), 0.4); background: rgba(var(--issue-rgb), 0.08); }
 .run-head { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 12px; min-height: 44px; box-sizing: border-box; }
 .run-icon { flex: none; display: grid; place-items: center; width: 20px; height: 20px; }
-.run-banner.success .run-icon { color: #30d158; }
+.run-banner.success .run-icon { color: var(--ok); }
 .run-banner.error .run-icon { color: var(--danger); }
 .run-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.18); border-top-color: var(--review); animation: run-spin 0.9s linear infinite; }
 @keyframes run-spin { to { transform: rotate(360deg); } }
@@ -2789,8 +2787,8 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .toasts { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 1000; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
 .toast { position: relative; overflow: hidden; display: flex; align-items: center; gap: 10px; min-width: 280px; max-width: min(560px, calc(100vw - 48px)); padding: 10px 8px 12px 14px; box-sizing: border-box; border: 1px solid var(--line-2); border-radius: 12px; background: var(--menu-bg); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45); color: var(--text); font-size: 14px; pointer-events: auto; animation: toast-in 220ms cubic-bezier(0.2, 0, 0, 1); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
-.toast-icon { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: rgba(48, 209, 88, 0.16); color: #30d158; }
-.toast.error .toast-icon { background: rgba(255, 69, 58, 0.16); color: var(--danger); }
+.toast-icon { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: rgba(var(--ok-rgb), 0.16); color: var(--ok); }
+.toast.error .toast-icon { background: rgba(var(--issue-rgb), 0.16); color: var(--danger); }
 .toast-text { flex: 1; min-width: 0; line-height: 1.4; }
 .toast-x { flex: none; width: 26px; height: 26px; }
 .toast-bar { position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; background: rgba(255, 255, 255, 0.35); transform-origin: left; animation: toast-bar linear forwards; }
@@ -2806,13 +2804,13 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .run-banner:not(.live) .run-head > :not(.run-icon) { align-self: center; }
 .run-banner:not(.live) .run-head > .run-text { padding: 10px 0; }
 .run-banner:not(.live) .run-icon { width: 48px; height: auto; align-self: stretch; }
-.run-banner.success .run-icon { background: rgba(48, 209, 88, 0.18); }
-.run-banner.error .run-icon { background: rgba(255, 69, 58, 0.18); }
+.run-banner.success .run-icon { background: rgba(var(--ok-rgb), 0.18); }
+.run-banner.error .run-icon { background: rgba(var(--issue-rgb), 0.18); }
 
 /* the answer an item got, in place of the unread dot */
 .nf-status { flex: none; display: inline-flex; align-items: center; height: 20px; margin-left: 10px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 600; vertical-align: 2px; }
-.nf-status.accepted { background: rgba(48, 209, 88, 0.16); color: #30d158; }
-.nf-status.failed, .nf-status.declined { background: rgba(255, 69, 58, 0.16); color: #ff6961; }
+.nf-status.accepted { background: rgba(var(--ok-rgb), 0.16); color: var(--ok); }
+.nf-status.failed, .nf-status.declined { background: rgba(var(--issue-rgb), 0.16); color: var(--issue-text); }
 /* the In review count keeps dark text in a selected tab too */
 .seg button .nf-count.review, .seg button.on .nf-count.review, .nf-toggle .nf-count.review, .nf-toggle.on .nf-count.review { color: #1a1a1b; }
 
@@ -2829,7 +2827,7 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 /* a bulk Approve's progress row, full width under the bulk bar */
 .mh-batch { margin: 0 0 12px; }
 .mh-batch-bar { height: 3px; margin: 0 14px 10px; border-radius: 2px; background: var(--line-2); overflow: hidden; }
-.mh-batch-bar i { display: block; height: 100%; background: #30d158; transition: width 400ms ease; }
+.mh-batch-bar i { display: block; height: 100%; background: var(--ok); transition: width 400ms ease; }
 .mh-batch-list { max-height: 280px; overflow: auto; }
 .mh-batch-list .shimmer { background: linear-gradient(90deg, var(--text) 0%, var(--text) 40%, rgba(255, 255, 255, 0.35) 50%, var(--text) 60%, var(--text) 100%); background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 1.8s linear infinite; }
 /* an item waiting its turn in a bulk Approve: no shimmer, its buttons put away, the date reads Waiting */
@@ -2864,7 +2862,7 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 
 /* the note drawer while a fix runs: the title shimmers; then green when fixed, grey when not */
 .mh-drawer.running h3.nf-title { background: linear-gradient(90deg, var(--text) 0%, var(--text) 40%, rgba(255, 255, 255, 0.35) 50%, var(--text) 60%, var(--text) 100%); background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 1.8s linear infinite; }
-.mh-drawer.fixed .mh-drawer-kind { color: #30d158; }
+.mh-drawer.fixed .mh-drawer-kind { color: var(--ok); }
 .mh-drawer.not-fixed .mh-drawer-kind { color: var(--muted); }
 .mh-drawer.not-fixed .run-banner.error { border-color: var(--line-2); background: rgba(255, 255, 255, 0.04); }
 .mh-drawer.not-fixed .run-banner.error .run-icon { color: var(--muted); }
