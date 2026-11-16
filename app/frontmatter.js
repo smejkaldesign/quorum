@@ -48,3 +48,20 @@ export function setFrontmatterKey(text, key, value) {
   const fm = re.test(block) ? block.replace(re, () => line) : block ? `${block}${eol}${line}` : line;
   return `---${eol}${fm}${eol}---${src.slice(m[0].length)}`;
 }
+
+// one key taken out of the frontmatter, every other byte kept; a block left empty goes with it
+export function removeFrontmatterKey(text, key) {
+  const src = String(text ?? '');
+  const m = src.match(/^---\r?\n(?:([\s\S]*?)\r?\n)??---(?=[ \t]*(?:\r?\n|$))/);
+  if (!m) return src;
+  const eol = eolOf(src);
+  const lines = (m[1] ?? '').split(/\r?\n/);
+  const at = lines.findIndex((l) => new RegExp(`^${key}:`).test(l));
+  if (at < 0) return src;
+  let end = at + 1;
+  while (end < lines.length && /^\s+\S/.test(lines[end])) end++;
+  lines.splice(at, end - at);
+  const rest = src.slice(m[0].length);
+  if (!lines.filter((l) => l.trim()).length) return rest.replace(/^\r?\n/, '');
+  return `---${eol}${lines.join(eol)}${eol}---${rest}`;
+}

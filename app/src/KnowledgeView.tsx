@@ -6,6 +6,8 @@ import { NoteMeta, type NoteMetaInfo } from './NoteMeta';
 import type { TreeSort, Brain, TreeItem, NoteViews, MemoryDots, MemoryReview, MemoryVersion, LiveRun, LiveState, MissingLink } from './quorum';
 import { LiveBanner, ReviewBanner, VersionBar, VersionList, when, type ReviewMode } from './MemoryUpdates';
 import { ConfirmModal } from './ConfirmModal';
+import { ConfidentialMark } from './BulkPlan';
+import { useMenu } from './controls';
 import { changeBlocks } from '../memoryReview.js';
 import { fileIssues, healthMarks, issueOf, type Issue } from '../memoryHealth.js';
 import { Graph, type GraphData, type GraphView } from './Graph';
@@ -16,7 +18,7 @@ import type { FixRun } from './quorum';
 import { IssueDrawer, LinkHealth, acceptIssue, dismissIssue, leftOf, migrateLeft, waitFix } from './LinkHealth';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
-import { IconChevron, IconClose, IconCollapse, IconExpand, IconFolder, IconGraph, IconNewFolder, IconNewNote, IconHistory, IconLink, IconMore, IconReset, IconSearch, IconSidebar, IconSliders, IconSort } from './icons';
+import { IconChevron, IconClose, IconCollapse, IconExpand, IconFolder, IconGraph, IconNewFolder, IconNewNote, IconHistory, IconLink, IconLock, IconMore, IconReset, IconSearch, IconSidebar, IconSliders, IconSort } from './icons';
 
 type Creating = { kind: 'note' | 'folder'; parent: string } | null;
 type Preview = { rel: string; title: string; body: string; abs: string; app: string; views?: NoteViews; meta?: NoteMetaInfo | null } | null;
@@ -55,6 +57,10 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   // review of agent changes (memoryVersions.js): the tree's dots, the open note's banner and Before or After, and a
   // version opened read-only from the side panel. stamp refreshes the versions list after a change
   const [dots, setDots] = useState<MemoryDots>({ files: {}, folders: {} });
+  // confidential marks: a folder marked in Quorum's settings, a note tagged confidential:, for the lock in the tree
+  const [locks, setLocks] = useState<{ folders: Record<string, string>; notes: Record<string, string> }>({ folders: {}, notes: {} });
+  const [marking, setMarking] = useState<{ rel: string; dir: boolean } | null>(null);
+  const [noteMore, setNoteMore] = useMenu();
   const [review, setReview] = useState<MemoryReview | null>(null);
   const [mode, setMode] = useState<ReviewMode>('after');
   const [version, setVersion] = useState<{ v: MemoryVersion; body: string } | null>(null);
@@ -136,6 +142,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     const [t, g] = await Promise.all([window.quorum.vaultTree(), window.quorum.vaultGraph()]);
     setTree(t);
     window.quorum.memoryDots().then(setDots).catch(() => {});
+    window.quorum.confidentialMarks().then(setLocks).catch(() => {});
     setGraph(g);
     // your own tweaks win over the vault's graph.json until you reset them
     let saved: Partial<GraphView> = {};
@@ -457,6 +464,13 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     if (pick === 'duplicate') { try { const rel = await window.quorum.vaultDuplicate(it.path); await load(); setSelected(rel); flash(`Duplicated as ${rel.split('/').pop()!.replace(/\.md$/, '')}`); } catch (e) { flash(errText(e)); } }
     if (pick === 'move') { setScope({ moving: it.path }); setPalette('move'); }
     if (pick === 'search') { setScope({ search: it.path }); setPalette('search'); }
+    if (pick === 'confidential') setMarking({ rel: it.path, dir: !!it.dir });
+    if (pick === 'unconfidential') unmark(it.path, !!it.dir);
+  }
+
+  async function unmark(rel: string, dir: boolean) {
+    try { flash(await window.quorum.confidentialMark(rel, dir, null)); } catch (e) { flash(errText(e)); }
+    window.quorum.confidentialMarks().then(setLocks).catch(() => {});
   }
 
   async function moveTo(folder: string) {
@@ -510,7 +524,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   const vaultRun = live.runs.find((r) => r.wholeVault) ?? null;
 
   const ops: TreeOps = {
-    open: null, selected, creating, renaming, dropTarget, dots, marks: issueMarks, liveFiles, liveFolders,
+    open: null, selected, creating, renaming, dropTarget, dots, marks: issueMarks, liveFiles, liveFolders, locks,
     onToggle: (p) => { setSelected(p); setOpen((o) => { const n = new Set(o); if (n.has(p)) n.delete(p); else n.add(p); return n; }); },
     onOpen: openNote, onCreate: create, onRename: rename, onMenu: menu,
     onDragStart: (p) => { dragging.current = p; }, onDragOver: setDropTarget, onDrop: drop,
@@ -555,6 +569,16 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
               </span>
               <div className="kb-actions">
                 <button className="icon-btn" aria-label="View in graph" data-tip="View in graph" onClick={() => { setFocus(preview.rel); setPreview(null); }}><IconGraph /></button>
+                <span className="menu-wrap">
+                  <button className="icon-btn" aria-label="More" data-tip="More" aria-haspopup="menu" aria-expanded={noteMore} onClick={(e) => { e.stopPropagation(); setNoteMore((o) => !o); }}><IconMore /></button>
+                  {noteMore && (
+                    <div className="menu end" role="menu">
+                      {locks.notes[preview.rel]
+                        ? <button role="menuitem" onClick={() => unmark(preview.rel, false)}><IconLock width={15} height={15} /> Remove confidential mark</button>
+                        : <button role="menuitem" onClick={() => setMarking({ rel: preview.rel, dir: false })}><IconLock width={15} height={15} /> Mark confidential…</button>}
+                    </div>
+                  )}
+                </span>
                 <button className={`icon-btn ${side ? 'active' : ''}`} aria-label={side ? 'Hide links and outline' : 'Show links and outline'} aria-expanded={side}
                   data-tip={side ? 'Hide links and outline' : 'Show links and outline'} onClick={toggleSide}><IconSidebar /></button>
               </div>
@@ -659,6 +683,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
           </>
         ) : <div className="end-loading"><span className="spinner big" /><p>Building graph…</p></div>}
       </section>
+      {marking && <ConfidentialMark rel={marking.rel} dir={marking.dir} onClose={() => setMarking(null)} onDone={(msg) => { flash(msg); window.quorum.confidentialMarks().then(setLocks).catch(() => {}); }} />}
       {confirmStop && (
         <ConfirmModal title={`Stop ${confirmStop.label}?`} action="Stop and delete updates"
           body="The updates from this run will be deleted and cannot be recovered. The notes it changed go back to how they were before the run."
@@ -746,7 +771,7 @@ function GraphPanel({ view, groups, onChange, onReset, onClose }: {
 }
 
 type TreeOps = {
-  open: Set<string> | null; selected: string; creating: Creating; renaming: string | null; dropTarget: string | null; dots: MemoryDots; marks: { files: Record<string, number>; folders: Record<string, number> }; liveFiles: Set<string>; liveFolders: Set<string>;
+  open: Set<string> | null; selected: string; creating: Creating; renaming: string | null; dropTarget: string | null; dots: MemoryDots; marks: { files: Record<string, number>; folders: Record<string, number> }; liveFiles: Set<string>; liveFolders: Set<string>; locks: { folders: Record<string, string>; notes: Record<string, string> };
   onToggle: (p: string) => void; onOpen: (p: string) => void; onCreate: (name: string) => void;
   onRename: (it: TreeItem, name: string) => void; onMenu: (it: TreeItem, at?: { x: number; y: number }) => void;
   onDragStart: (p: string) => void; onDragOver: (p: string | null) => void; onDrop: (folder: string) => void;
@@ -780,6 +805,7 @@ function TreeLevel({ items, depth, ops }: { items: TreeItem[]; depth: number; op
                 onDrop={(e) => { e.preventDefault(); e.stopPropagation(); ops.onDrop(target); }}>
                 {it.dir ? <IconChevron className={isOpen ? '' : 'closed'} /> : <span className="kb-spacer" />}
                 <span>{it.name}</span>
+                {(() => { const v = it.dir ? ops.locks.folders[it.path] : ops.locks.notes[it.path]; return v ? <IconLock className="kb-lock" width={12} height={12} role="img" aria-label={`Confidential: ${v}`} data-tip={`Confidential: ${v}`} /> : null; })()}
                 {it.dir && <FolderApp rel={it.path} />}
               </button>
               <button className="kb-more" aria-label={`More options for ${it.name}`} data-tip="More options"

@@ -8,7 +8,7 @@
 //   archived  a person set the finding aside without fixing it
 //   undone    a person undid a fix that ran
 //   reopened  a person moved it back to review, or Quorum did because its evidence changed after an archive
-//   auto      Quorum applied the fix on its own (no rule does this yet)
+//   auto      Quorum applied the fix on its own (Settings > Memory, Apply memory fixes on its own); actor is auto
 //
 // An archived finding stays out of Needs review while its fingerprint is the same. The fingerprint hashes the rule id,
 // the normalized target and the set of linking notes, so a new linking note (new evidence) brings it back.
@@ -24,6 +24,19 @@ export const normTarget = (t) => String(t ?? '').toLowerCase().replace(/\.md$/, 
 // a stable id of a finding: the same rule, target and linking notes give the same fingerprint in any order
 export function fingerprint(ruleId, target, sources = []) {
   return hash([ruleId, normTarget(target), ...[...new Set(sources.map(String))].sort()].join('\n')).slice(0, 24);
+}
+
+// trims a log to cap records, oldest first, keeping the latest record of every fingerprint so an archived finding never
+// comes back once its records grow old. A log with more fingerprints than cap keeps all of their latest records
+export function trim(list, cap = CAP) {
+  if (list.length <= cap) return list;
+  const latest = new Map();
+  list.forEach((r, i) => latest.set(r.fingerprint, i));
+  const keep = new Set(latest.values());
+  let drop = list.length - cap;
+  const out = list.filter((r, i) => { if (drop > 0 && !keep.has(i)) { drop--; return false; } return true; });
+  list.splice(0, list.length, ...out);
+  return list;
 }
 
 export function createDecisionLog(dir) {
@@ -48,7 +61,7 @@ export function createDecisionLog(dir) {
   // written to a temporary file and renamed over the log, so a quit partway never leaves half a log
   const save = (vault) => {
     const list = load(vault);
-    if (list.length > CAP) list.splice(0, list.length - CAP);
+    if (list.length > CAP) trim(list, CAP);
     const tmp = `${file(vault)}.tmp`;
     try { mkdirSync(dir, { recursive: true }); writeFileSync(tmp, JSON.stringify({ vault, records: list })); renameSync(tmp, file(vault)); } catch {}
   };

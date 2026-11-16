@@ -1,10 +1,12 @@
 // The Memory health review rules and the engine that runs them. Each rule is a plain module with an id, a version, a
-// readable label and run(ctx) -> findings. Every finding is review-only (autoFix false).
+// readable label and run(ctx) -> findings. A finding can carry a fix the batch planner runs once a person approves it;
+// autoFix marks the fixes Apply memory fixes on its own may run without a review.
 //
 // ctx: { notes, resolve, tags, now }
 //   notes   [{ rel, text, note: { title, props, headings }, mtime, size, inbound, outbound }] from the vault index
 //   resolve (target, fromRel) -> rel | null, the index's link resolver
 //   tags    [{ rel, value }] the confidential value of every note in the vault, including notes the index leaves out
+//   folders { [folder rel]: value } the folders a person marked confidential (kept in Quorum's settings)
 import * as orphans from './orphans.js';
 import * as duplicates from './duplicates.js';
 import * as frontmatter from './frontmatter.js';

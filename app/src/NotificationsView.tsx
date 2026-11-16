@@ -7,6 +7,7 @@ import { Avatar } from './Speaker';
 import { toast } from './Toasts';
 import type { FeedKind, FeedPage, FeedRow, FeedSort, FeedTab, FixRun } from './quorum';
 import { Segmented } from './controls';
+import { BulkPlan } from './BulkPlan';
 
 const PAGE = 50;
 const TABS: [FeedTab, string][] = [['all', 'All'], ['unread', 'Unread'], ['archived', 'Archived']];
@@ -73,7 +74,7 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
   const working = pressed || !!row.fixRun;
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const go = () => { if (!row.target.gone) onOpen(); };
-  // a past fix to check: Keep sets it aside, Undo takes the fix back when it can be, and Open shows the note when not
+  // a past fix to check: Keep sets it aside, Approve runs its corrective fix when it can, and Open shows the note when not
   const past = row.review?.kind === 'past-fix';
   return (
     <div className={`conn-row nf-row${row.unread ? ' unread' : ''}${row.review || row.run ? ' mh-row' : ''}${(row.run && (row.run.status === 'running' || row.run.status === 'queued')) || working ? ' running' : ''}${working ? ' working' : ''}`}>
@@ -101,13 +102,11 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
               <span className="mh-when"><StatusBadge status={row.fixRun?.status === 'queued' ? 'waiting' : 'review'} /></span>
               <span className="mh-hover">
                 <button className="icon-btn mh-icon" disabled={busy || working} aria-label={past ? 'Keep' : 'Archive'} data-tip={past ? 'Keep: leave the fix as it is' : 'Archive: set it aside without fixing it'} onClick={() => onArchive(true)}><IconArchive width={16} height={16} /></button>
-                {/* a review rule's finding has no automatic fix: the row opens the note, and Archive sets it aside */}
-                {row.review.kind === 'finding' ? null : working
+                {/* a review rule's finding without a fix: the row opens the note, and Archive sets it aside */}
+                {row.review.kind === 'finding' && !row.review.fix ? null : working
                   ? <span className="icon-btn mh-icon mh-busy" role="img" aria-label="Working"><i className="run-spin" /></span>
                   : past && !row.review.undo
                     ? <button className="icon-btn mh-icon" disabled={busy} aria-label="Open the note" data-tip={row.summary.solution ?? 'Open the note'} onClick={go}><IconExternal width={16} height={16} /></button>
-                  : past
-                    ? <button className="icon-btn mh-icon mh-yes" disabled={busy} aria-label="Undo" data-tip={`Undo: ${row.summary.solution ?? ''}`} onClick={() => { setWorking(true); Promise.resolve(onDecide('approve')).finally(() => setWorking(false)); }}><IconReset width={16} height={16} /></button>
                   : <button className="icon-btn mh-icon mh-yes" disabled={busy} aria-label="Approve" data-tip={`Approve: ${row.summary.recommendation ?? ''}`} onClick={() => { setWorking(true); Promise.resolve(onDecide('approve')).finally(() => setWorking(false)); }}><IconCheck width={16} height={16} /></button>}
               </span>
             </span>
@@ -171,6 +170,8 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // the bulk plan sheet, for Approve on several Memory health items (their row ids)
+  const [plan, setPlan] = useState<string[] | null>(null);
   const shown = useRef(PAGE);
   const query = useRef({ tab, review, kinds, sort, q });
   useEffect(() => { query.current = { tab, review, kinds, sort, q }; });
@@ -213,8 +214,8 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
   // Approve takes each row's recommendation (for a large memory rewrite that is putting back the earlier text);
   // Dismiss marks rows reviewed and changes nothing
   const decide = async (rows: FeedRow[], verdict: 'approve' | 'dismiss') => {
-    // a review rule's finding has no automatic fix, so Approve leaves it for the person to act on
-    const picked = rows.filter((r) => r.review && !(verdict === 'approve' && r.review.kind === 'finding'));
+    // a review rule's finding without a fix leaves Approve to the person, who acts on the note
+    const picked = rows.filter((r) => r.review && !(verdict === 'approve' && r.review.kind === 'finding' && !r.review.fix));
     if (!picked.length) return;
     const groups = new Map<'approve' | 'revert' | 'dismiss', { kind: NonNullable<FeedRow['review']>['kind']; abs: string; key?: string }[]>();
     const fixes = picked.filter((r) => verdict === 'approve' && r.review!.kind === 'link').map((r) => r.review!.key!);
@@ -241,7 +242,7 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
     const fixing = fixes.length && verdict === 'approve';
     const undoing = picked.every((r) => r.review!.kind === 'past-fix');
     if (undoing && failedN) return;
-    toast(undoing ? (verdict === 'dismiss' ? `Kept the fix on ${one}.` : `Undid the fix on ${one}.`) : verdict === 'dismiss' ? `Dismissed ${one}. Nothing changed.` : fixing ? `Approved ${one}. Quorum is fixing ${picked.length === 1 ? 'it' : 'them'} now.` : `Approved ${one}.`);
+    toast(undoing ? (verdict === 'dismiss' ? `Kept the fix on ${one}.` : `Approved the corrective fix on ${one}. Quorum is applying it now.`) : verdict === 'dismiss' ? `Dismissed ${one}. Nothing changed.` : fixing ? `Approved ${one}. Quorum is fixing ${picked.length === 1 ? 'it' : 'them'} now.` : `Approved ${one}.`);
   };
 
   // archive or bring back rows; the list reloads so they leave this tab
@@ -300,7 +301,14 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
             {/* left to right: Archive, Mark read, Dismiss, and Approve as the primary action on the far right */}
             <button className="icon-btn mh-icon" disabled={busy} aria-label={tab === 'archived' ? 'Unarchive' : 'Archive'} data-tip={tab === 'archived' ? 'Unarchive' : 'Archive'} onClick={async () => { await archive(sel, tab !== 'archived'); setPicked(new Set()); }}><IconArchive width={16} height={16} /></button>
             <button className="act-pill" disabled={busy || !sel.some((r) => r.unread)} onClick={async () => { await mark(sel); setPicked(new Set()); }}>Mark read</button>
-            <button className="act-pill primary" disabled={busy || !selReview.length} onClick={() => decide(selReview, 'approve')}>Approve</button>
+            <button className="act-pill primary" disabled={busy || !selReview.length} onClick={() => {
+              // Memory health items go through the bulk plan sheet when there are several; the rest are approved here
+              const planned = selReview.filter((r) => r.review!.kind === 'link' || r.review!.kind === 'past-fix' || (r.review!.kind === 'finding' && r.review!.fix));
+              if (planned.length < 2) { decide(selReview, 'approve'); return; }
+              const rest = selReview.filter((r) => !planned.includes(r));
+              if (rest.length) decide(rest, 'approve');
+              setPlan(planned.map((r) => r.id));
+            }}>Approve</button>
           </span>
         </div>
       )}
@@ -314,6 +322,7 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
       </div>
       {page && !items.length && <div className="nf-empty"><IconBell width={22} height={22} /><p>{empty}</p></div>}
       {page?.more && <button className="act-pill nf-more-btn" onClick={more}>Show more</button>}
+      {plan && <BulkPlan ids={plan} onClose={() => setPlan(null)} onApplied={() => { setPicked(new Set()); changed(); }} />}
     </div>
   );
 }

@@ -216,15 +216,22 @@ describe('past fixes to check', () => {
   const run = { id: 'fix:lantern:1', key: 'lantern', target: 'Lantern', status: 'success', endedAt: ms(20), outcome: 'Wrote the note n/Lantern.md from what the linking notes say' };
   const res = { flagged: true, action: 'create', main: 'n/Lantern.md', reasons: [{ id: 'few-sources', text: 'Only one note a person wrote links to it. Writing a note now needs at least two.' }], evidence: [['Note it wrote', 'n/Lantern.md']] };
   const row = (plan) => feedRows({ pastFixes: [{ run, res, plan, abs: '/v/n/Lantern.md' }] })[0];
-  it('lists a flagged fix in Needs review with Undo when it can be undone', () => {
+  it('lists a flagged fix in Needs review as its corrective fix when it can be undone', () => {
     const r = row({ ok: true, kind: 'trash', why: 'Quorum moves “n/Lantern.md” to the Trash, where you can put it back.' });
     expect(r.review).toEqual({ kind: 'past-fix', key: run.id, undo: true });
-    expect(r.summary.line).toBe('Undo the fix on “Lantern”?');
+    expect(r.summary.line).toBe('Correct the fix on “Lantern”?');
+    expect(r.summary.solution).toMatch(/to the Trash, where you can put it back\. Then the link goes back to Needs review/);
     expect(r.summary.problem).toMatch(/The current rules would not make this fix\. Only one note/);
-    expect(r.summary.recommendation).toBe('Undo the fix.');
+    expect(r.summary.recommendation).toBe('Approve the corrective fix.');
     expect(detailsOf(r)).toContainEqual(['What', 'Past fix to check']);
     expect(detailsOf(r)).toContainEqual(['Note it wrote', 'n/Lantern.md']);
     expect(feedPage([r], { review: true }).items.map((x) => x.id)).toEqual([`r:pastfix:${run.id}`]);
+  });
+  it('shows a batch run with its item count, and marks one Quorum applied on its own', () => {
+    const batch = { id: 'batch:1', key: 'batch:1', kind: 'batch', auto: true, target: '2 memory fixes', status: 'success', queuedAt: ms(30), endedAt: ms(20), steps: [], items: [{}, {}], outcome: 'Applied the plan: Tag 2 notes confidential' };
+    const r = feedRows({ runs: [batch] })[0];
+    expect(r.summary.line).toBe('Quorum applied 2 memory fixes on its own');
+    expect(r.summary.sub).toBe('Applied the plan: Tag 2 notes confidential.');
   });
   it('explains why Undo is not possible and recommends opening the note', () => {
     const r = row({ ok: false, kind: 'trash', why: '“n/Lantern.md” changed after the fix, so Quorum leaves it as it is.' });

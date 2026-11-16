@@ -1,6 +1,6 @@
 # Memory agent
 
-Status: the local agent is built through Sprint 4 (past-fix re-check). Team vault mode is a spec only. Related: [team-knowledge.md](team-knowledge.md), [workspace-knowledge.md](workspace-knowledge.md).
+Status: the local agent is built through Sprint 4 (past-fix re-check) and Sprint 3A (bulk plans, corrective past fixes, confidential marks, Apply memory fixes on its own). Team vault mode is a spec only. Related: [team-knowledge.md](team-knowledge.md), [workspace-knowledge.md](workspace-knowledge.md), [research](../research/memory-agent.md).
 
 The memory agent keeps a vault's links and notes in good shape. It finds problems, proposes a fix for each, and changes a note only after a person approves. Every fix can be traced and undone.
 
@@ -18,16 +18,46 @@ A detector is a rule with an id and a version. The version goes up when the fix 
 
 Sprint 2 adds review-only rules, each with its own id: orphans, exact duplicates, frontmatter schema per folder, oversized notes, confidential mark versus folder, secrets, and stale notes.
 
+The confidential rule (`note.confidential-folder`, version 2) offers fixes that run through the batch planner:
+
+- Add the confidential tag: a note with no tag inside a folder marked confidential. This fix is automatic. An untagged note in a folder where most notes carry one value gets the same fix, approved by a person.
+- Move: a note with a value outside every folder that holds that value moves to the main one.
+- Move and tag: a note with no tag outside those folders whose links and embeds go mostly to notes with one value (three or more, and 60% or more of the notes it links) moves there and gets the tag.
+
+A move updates the links that point at the note. Nothing moves until a person approves it.
+
+### Confidential marks
+
+A person marks a note or a folder confidential from the notes tree menu or the note view's More menu, and picks a value the vault already uses or a new one. A note mark writes `confidential: <value>` into its frontmatter. A folder mark is kept in Quorum's settings per vault and never written into the vault. Every note inside a marked folder counts as confidential for the read guard and the guardrails (while the built-in confidential rule is on) and for the confidential rule. The tree shows a lock on a marked folder and on a tagged note.
+
 ### Fix pipeline
 
 1. A person approves one finding, or a selection of findings.
-2. A bulk Approve skips review-only fixes. Writing a note and a weak match are review-only.
-3. Each approved fix becomes a run in one queue. Runs go one at a time.
+2. Approve on several items opens the bulk plan (below). A single link fix runs as its own run.
+3. Each approved fix or plan becomes a run in one queue. Runs go one at a time.
 4. The run records the hash of every note it will touch. It refuses to write a note whose text changed since the finding.
 5. It refuses when the fix the finding gets now differs from the fix the person approved.
 6. Before each write, the run saves the note's text in an undo record on disk.
 7. After the write, Quorum checks the links of every touched note again. A fix that left a new broken link, a missing target or the same dead link is rolled back and marked Failed.
 8. Each changed note gets a new version in its history (`app/memoryVersions.js`).
+
+### Bulk plans (`app/batchPlan.js`, `app/reviewItems.js`)
+
+Approve on several items in Memory health or Notifications opens a sheet at once with the loader "Building your bulk accept plan...". Review everything in Memory health plans the whole Needs review list the same way.
+
+- The planner reads each item as a list of changes: put back, remove, add or take back an alias, relink, unlink, write a note, tag, move.
+- It handles these conflicts: the same item twice or two items for the same target (the later one is skipped); two changes to the same line or frontmatter key (merged when both apply in one pass, held back otherwise); a note put back whole that another item changes (held back); a relink or alias onto a note another item removes or writes in the batch (skipped); an edit of a note another item removes (held back); an edit of a note another item moves (runs before the move).
+- Corrective past fixes plan first, then link fixes, then finding fixes.
+- The steps run in phases so each precondition holds: put back, remove, tag, alias, relink, unlink, write, move.
+- The sheet lists groups with counts ("Remove 17 notes earlier fixes created", "Relink 9 links", "Tag 34 notes confidential", "Move 1 note") that fold open to their items and notes, then Merged, Skipped and Held back with a reason each. A group or an item can be unticked, and the plan is built again without it. Fixes a person should read first (a written missing note, a weak relink or alias, a move, move and tag, and a tag guessed from nearby notes) list under "Check these first" with a one-line reason per group. They start unticked, and the main process leaves them out of the batch unless the person ticks them.
+- Apply runs the plan as one batch run: one journal, one undo record, the hash of every note checked before the first write, the links of every touched note checked after the last, and the whole batch put back when any step fails. Every changed note gets a version. Undo on the batch puts every note back. Cancel changes nothing.
+- Review everything offers "Save as a note", off by default. Only that click writes a repair plan note into the vault.
+
+### Apply memory fixes on its own
+
+Settings > Memory has "Apply memory fixes on its own", off by default. When it is on, after each scheduled sweep (never after a save) every item with an automatic fix goes through the planner and the steps it can run apply as one batch with no review. Held back, conflicting and review-only items stay in Needs review. The batch shows in Notifications as one row with Undo. Each item is logged with the decision `auto` and the actor `auto`.
+
+Automatic fixes: link fixes that are not review-only, corrective past fixes Quorum can undo exactly, and the confidential tag for a note in a marked folder.
 
 ### Run journal and recovery
 
@@ -43,17 +73,18 @@ Approve, Archive, Undo and Move back to review each add a record (`app/decisionL
 
 The fingerprint hashes the rule id, the target and the set of linking notes. An archived finding stays archived while its fingerprint is the same. New evidence brings it back to review, and the log says why.
 
+The log keeps 5,000 records. Trimming drops the oldest records first and always keeps the latest record of every fingerprint, so an archived finding never comes back when its records grow old.
+
 ### Past fixes to check
 
 Fixes that ran before the current rules can be wrong. Quorum checks every finished fix against the current rules (`app/fixRecheck.js`).
 
 - Old runs kept only their outcome and steps. Quorum reads the action, the note written and the note pointed at back from those lines, and the sources from the vault.
 - A run is flagged when the rules now would not make its fix. The reasons are: fewer than two real sources, a session or eval folder, a name that exists as a folder, script, skill, repo file or branch note, a dropped confidential mark, a link fixed in a generated report, a relink or alias onto a stub an earlier fix wrote, onto a generated report or onto the linking note, and a match through a title that holds the note body.
-- A flagged run shows in Needs review as "Past fix to check", with its reasons and evidence.
-- Undo is offered only when Quorum can undo it. It tries, in order: the undo record; the note versions saved during the fix; the Trash for a note the fix wrote; an exact reversal of an alias or a relink, computed from the run's outcome. Each path refuses when a note changed after the fix. Undo checks the notes once more right before it writes.
-- When Undo is not possible, the row says why and opens the note.
-- Keep archives the item. Undo, Keep and Move back to review are logged in the decision log under the rule `fix.recheck`.
-- Undo is never part of a bulk Approve.
+- A flagged run shows in Needs review as its corrective fix, with its reasons and evidence. Approve undoes the wrong change, sends the link back to review, and points it at the note the current rules pick when that fix is an alias or relink that needs no review of its own and is not onto a note Quorum wrote from links alone. It runs through the batch planner, alone or with other items.
+- The undo part tries, in order: the undo record; the note versions saved during the fix; the Trash for a note the fix wrote; an exact reversal of an alias or a relink, computed from the run's outcome. Each path refuses when a note changed after the fix. The batch checks the notes once more right before it writes.
+- When the undo is not possible, the row says why and opens the note.
+- Archive keeps the fix. Approve, Archive and Move back to review are logged in the decision log under the rule `fix.recheck`.
 - The check runs once per start. Results are kept in `fix-recheck.json` under the rule versions. A start with the same versions checks only new runs. A new rule version checks every run again.
 - `app/scripts/fix-recheck-eval.mjs` runs the same check read-only against a vault and scores it against labels kept outside the repo.
 
@@ -132,7 +163,7 @@ Every note in a team vault has an owner. The owner is the member who wrote it or
 | `fingerprint` | decision record | set | set |
 | `owner` | decision record | empty | the note owner |
 | `approver` | decision record | empty | the member who approved |
-| `actor` | decision record | `you` or `quorum` | the member, or `quorum` |
+| `actor` | decision record | `you`, `quorum` or `auto` | the member, `quorum` or `auto` |
 | `undoneAt` | fix run | set on Undo | set on Undo |
 
 ## Open questions

@@ -10,7 +10,7 @@ import { checkConnection } from './connectionCheck.js';
 import { openSpeech, SPEECH_ENGINES } from './speech/provider.js';
 import { createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTree } from './vault.js';
 import { createVaultIndex } from './vindex.js';
-import { applyUndo, undoRecord } from './fixUndo.js';
+import { applyUndo, sha, undoRecord } from './fixUndo.js';
 import { changedSince, createFixJournal, fixCheck, hashNotes, recoveryReason, rollback } from './fixJournal.js';
 import { addAlias, retargetLinks, rewriteLinks, unlinkTarget, writeAtomic } from './relink.js';
 import store from './store/index.js';
@@ -63,7 +63,11 @@ import { ARCHIVE_AFTER, feedPage, feedRows, labelOf } from './activityFeed.js';
 import { issueMeta, issueOf } from './memoryHealth.js';
 import { LINK_RULE, LINK_RULE_VERSION, contextNote, isGenerated } from './linkRules.js';
 import { createDecisionLog, fingerprint } from './decisionLog.js';
-import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, applyPlan, fixVersions, recheckAll, undoPlan } from './fixRecheck.js';
+import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, fixVersions, recheckAll, undoPlan } from './fixRecheck.js';
+import { buildPlan, checkFirst, checkOrder, effects, groupLabel, groupOf, notesOf, planExclude } from './batchPlan.js';
+import { ROW, findingItem, itemLine, linkItem, pastFixItem } from './reviewItems.js';
+import { removeFrontmatterKey } from './frontmatter.js';
+import { isOff } from './rules/common.js';
 import { createMemorySweep, dueSweep, rescanTags, scanTags } from './memorySweep.js';
 import { RULE_LABELS } from './rules/index.js';
 import { createElsewhere, withFound } from './linkElsewhere.js';
@@ -231,7 +235,7 @@ let trayMenu;
 let quitting = false;
 // guardrails: one rule set for what the agent may read and say (app/guardrails.js); brain() is defined below and read lazily
 const DENIAL_LOG = path.join(DATA_DIR, 'guard-denials.jsonl');
-const guardrails = createGuardrails({ settings, saveSettings: () => store.settings.save(), brain: () => brain(), privateDirs, denialLog: DENIAL_LOG, log: (...a) => log(...a) });
+const guardrails = createGuardrails({ settings, saveSettings: () => store.settings.save(), brain: () => brain(), privateDirs, confidentialDirs: () => confidentialDirs(), denialLog: DENIAL_LOG, log: (...a) => log(...a) });
 const KEEPER_ERRORS = path.join(DATA_DIR, 'keeper-errors.log');
 // versions of the vault notes Quorum's agents change, and the updates the Memory tab shows for review (memoryVersions.js)
 const memoryVersions = createVersionStore({
@@ -1416,6 +1420,13 @@ ipcMain.handle('set-settings', (_e, next) => {
     settings.memorySweeps = next.memorySweeps;
     store.settings.save();
   }
+  // Settings > Memory: Apply memory fixes on its own (autoApply below); turning it on runs it once now
+  if (typeof next.memoryAutoApply === 'boolean') {
+    const was = settings.memoryAutoApply === true;
+    settings.memoryAutoApply = next.memoryAutoApply;
+    store.settings.save();
+    if (next.memoryAutoApply && !was) setTimeout(() => { try { autoApply(); } catch (e) { log('auto apply', e?.message); } }, 0);
+  }
   // provider MCPs the person disconnected from Quorum, by connector id
   if (Array.isArray(next.mcpIgnored)) {
     settings.mcpIgnored = [...new Set(next.mcpIgnored.filter((x) => typeof x === 'string' && /^[a-z0-9-]{1,40}$/.test(x)))].slice(0, 100);
@@ -2205,12 +2216,13 @@ ipcMain.handle('activity-review', async (_e, items, verdict) => {
         if (ok && items.length > 1 && reviewOnlyKey(it.key)) throw new Error('This fix needs a review on its own. Open it and approve it there');
         if (ok) startFixes([it.key]); else await decideLink(it.key, 'dismiss');
       } else if (it.kind === 'past-fix') {
-        // Undo changes notes, so each one is undone on its own; Dismiss keeps the fix
-        if (ok && items.filter((x) => x?.kind === 'past-fix').length > 1) throw new Error('Undo needs a review on its own. Open it and undo it there');
-        if (ok) await undoPastFix(String(it.key ?? '')); else keepPastFix(String(it.key ?? ''));
+        // Approve runs the corrective fix through the batch planner (several at once come from the bulk plan); Archive
+        // keeps the fix as it is
+        if (ok) startPlanFor([`${ROW.pastfix}${String(it.key ?? '')}`]); else keepPastFix(String(it.key ?? ''));
       } else if (it.kind === 'finding') {
-        // review rules never fix a note on their own: a person acts on the note, then archives the finding
-        if (ok) throw new Error('Quorum has no automatic fix for this. Open the note to act on it, then archive it');
+        // a finding with a fix (a confidential tag or a move) runs through the planner; one without needs a person to
+        // act on the note, then archive the finding
+        if (ok) startPlanFor([`${ROW.finding}${String(it.key ?? '')}`]);
         archiveFindings([String(it.key ?? '')], true);
         const st = feedState();
         st.archived[`r:find:${it.key}`] = at;
@@ -2421,10 +2433,13 @@ function sweep(kind, only = null) {
   try {
     const tags = kind === 'save' && only && tagScan?.vault === b.vault ? rescanTags(b.vault, tagScan.tags, only, excludedPath) : scanTags(b.vault, excludedPath);
     tagScan = { vault: b.vault, tags };
-    const ctx = { notes: vindex.snapshot(), resolve: (t, from) => vindex.resolve(t, from), tags };
+    const ctx = { notes: vindex.snapshot(), resolve: (t, from) => vindex.resolve(t, from), tags, folders: confFolders(b.vault) };
     const s = memorySweep.run(b.vault, kind, ctx, { only });
     log('memory sweep', kind, `${s.last.notes} notes`, `${s.last.ms} ms`, `${s.last.found} findings`);
     toUI('memory-updates', null);
+    // a sweep on a schedule, or one a person asked for, is when Apply memory fixes on its own runs; a save sweep is not,
+    // so a fix's own writes never start another run
+    if (kind !== 'save') setTimeout(() => { try { autoApply(); } catch (e) { log('auto apply', e?.message); } }, 0);
     return s.last;
   } catch (e) { log('memory sweep', e?.message); return null; } finally { sweeping = false; }
 }
@@ -2938,20 +2953,25 @@ async function pumpFixes() {
       fixEmit(run);
       await tick();
     };
-    const keep = (rel, created = false) => {
-      if (kept.some((k) => k.rel === rel)) return;
-      try { kept.push({ rel, before: created ? null : readFileSync(vaultPath(run.vault, rel), 'utf8') }); } catch {}
+    // gone: the fix removes the note or moves it away, so a rollback or Undo writes it back at its path
+    const keep = (rel, created = false, gone = false) => {
+      const had = kept.find((k) => k.rel === rel);
+      if (had) { if (gone && !had.gone) { had.gone = true; stamp(); } return; }
+      try { kept.push({ rel, before: created ? null : readFileSync(vaultPath(run.vault, rel), 'utf8'), ...(gone ? { gone: true } : {}) }); } catch {}
       // the undo record is on disk before the note is written, so a quit partway can be put back on the next start
       stamp();
       fixJournal.append(run.id, { step: 'keep', rel, created });
     };
     try {
-      run.outcome = await decideLink(run.key, 'approve', step, keep, run.hashes ?? null, run.finding?.proposedFix ?? null);
+      run.outcome = run.kind === 'batch' ? await runBatch(run, step, keep) : await decideLink(run.key, 'approve', step, keep, run.hashes ?? null, run.finding?.proposedFix ?? null);
       run.status = 'success';
       run.undoable = saveUndo(run, kept);
+      if (run.kind === 'batch') afterBatch(run, kept);
     } catch (e) {
       run.status = 'error';
       run.error = e?.message ?? String(e);
+      // a batch is all or nothing: every item goes back with it
+      if (run.kind === 'batch') for (const it of run.items ?? []) it.status = 'error';
       // a fix that failed after it wrote (the re-check found it made the links worse, or an error partway) puts the
       // notes back, so a Failed run leaves the vault as it was
       if (kept.length) {
@@ -2974,6 +2994,7 @@ async function pumpFixes() {
     run.endedAt = Date.now();
     const last = run.steps[run.steps.length - 1];
     if (last && !last.endedAt) last.endedAt = run.endedAt;
+    batchPlans.delete(run.id);
     log('fix run', run.key, run.status, `${run.endedAt - run.startedAt} ms`);
     fixRunsSave();
     fixEmit(run);
@@ -3010,9 +3031,17 @@ ipcMain.handle('fix-undo', async (_e, id) => {
   for (const w of was) memoryVersions.record({ vault: run.vault, rel: w.rel, before: w.text, after: nowText(w.rel), who: 'you', reason: `Undid the Memory health fix on “${run.target}”`, agent: false });
   vindex?.sync();
   diskNamesCache.at = 0;
+  run.undoneAt = Date.now();
+  if (run.kind === 'batch') {
+    undoBatch(run, (saved.files ?? []).map((f) => f.rel));
+    fixRunsSave();
+    fixEmit(run);
+    toUI('memory-updates', null);
+    log('fix undo', run.key, `${n} notes`);
+    return `Undid the batch. Its ${run.items?.length === 1 ? 'item is' : `${run.items?.length ?? 0} items are`} back in Needs review`;
+  }
   setLinksLeft([run.key], false);
   if (run.finding) logFinding(run.finding, 'undone'); else logDecision([run.key], 'undone');
-  run.undoneAt = Date.now();
   fixRunsSave();
   fixEmit(run);
   toUI('memory-updates', null);
@@ -3030,7 +3059,8 @@ ipcMain.handle('fix-dismiss', (_e, ids) => {
 });
 
 // Past fixes to check (fixRecheck.js): every fix that ran is checked against the current rules. A fix the rules would
-// no longer make waits in Needs review with Undo and Keep; nothing is undone until the person presses Undo. The check
+// no longer make waits in Needs review as its corrective fix (reviewItems.js pastFixItem); nothing changes until the
+// person approves it, alone or in a bulk plan. The check
 // runs once per start for each vault, and its results are kept in the data folder under the rule versions: a start with
 // the same versions checks only the runs it has not seen, and a new rule version checks them all again
 const pastFixFile = path.join(DATA_DIR, 'fix-recheck.json');
@@ -3090,7 +3120,7 @@ function pastFixRows() {
   }
   return out;
 }
-function logPastFix(id, decision, note = null, plan = null) {
+function logPastFix(id, decision, note = null, plan = null, actor = 'you') {
   const v = brain()?.vault;
   const run = fixRunList().find((r) => r.id === id);
   const res = pastFixState?.cache.results[id];
@@ -3098,7 +3128,7 @@ function logPastFix(id, decision, note = null, plan = null) {
   try {
     decisionLog.record(v, {
       ruleId: FIX_RECHECK_RULE, ruleVersion: FIX_RECHECK_VERSION, key: `pastfix:${run.id}`, target: run.target, sources: res?.main ? [res.main] : [],
-      evidence: { outcome: run.outcome, reasons: res?.reasons ?? [], evidence: res?.evidence ?? [] }, proposedFix: { action: 'undo', kind: plan?.kind ?? null }, decision, note,
+      evidence: { outcome: run.outcome, reasons: res?.reasons ?? [], evidence: res?.evidence ?? [] }, proposedFix: { action: 'correct', kind: plan?.kind ?? null }, decision, note, actor,
     });
   } catch (e) { log('decision log', e?.message); }
 }
@@ -3111,37 +3141,359 @@ function keepPastFix(id) {
   feedStateSave();
   logPastFix(id, 'archived', 'Kept the fix');
 }
-async function undoPastFix(id) {
+// Bulk plans (batchPlan.js): Approve on several items, Review everything, and Apply memory fixes on its own all turn the
+// review items (reviewItems.js) into one plan and run it as one batch: one run, one journal and undo record, the hash
+// of every note checked before the first write, the links checked again after the last, and the whole batch put back
+// when any step fails. The plan itself stays in memory; a batch cut short by a quit is recovered like any run
+const batchPlans = new Map();
+// the items waiting in Needs review, or the ones with these row ids. Each carries the hash of every note it touches
+function reviewItems({ ids = null } = {}) {
   const b = brain();
-  const run = fixRunList().find((r) => r.id === id);
-  if (!b || !run || run.vault !== b.vault) throw new Error('That fix was made in another vault');
-  if (run.status !== 'success' || !pastFixCheck()?.cache.results[run.id]?.flagged) throw new Error('That fix is not one to check');
-  const plan = pastFixPlan(run, true);
-  if (!plan?.ok) throw new Error(plan?.why ?? 'There is nothing to undo on that fix');
-  const nowText = (rel) => { try { return readFileSync(vaultPath(b.vault, rel), 'utf8'); } catch { return null; } };
-  const was = plan.files.map((f) => ({ rel: f.rel, text: nowText(f.rel) }));
-  // the undo is a version of its own, so the fixed text can be brought back from the history; a note changed before a
-  // later write failed is recorded too
-  try {
-    await applyPlan(b.vault, plan, (abs) => shell.trashItem(abs));
-  } finally {
-    for (const w of was) {
-      const after = nowText(w.rel);
-      if (after === w.text) continue;
-      try { memoryVersions.record({ vault: b.vault, rel: w.rel, before: w.text, after, who: 'you', reason: `Undid the Memory health fix on “${run.target}”`, agent: false }); } catch (e) { log('fix versions', e?.message); }
+  if (!b || !vindex) return [];
+  const want = ids ? new Set(ids.map(String)) : null;
+  const live = new Set(fixRunList().filter((r) => r.vault === b.vault && (r.status === 'queued' || r.status === 'running')).flatMap((r) => (r.items ? r.items.map((i) => i.id) : [`${ROW.link}${r.key}`])));
+  const skip = (id, archived) => live.has(id) || (want ? !want.has(id) : archived);
+  const out = [];
+  const left = linksLeft();
+  const declined = linksDeclined();
+  for (const m of linkIssues()) {
+    const key = m.target.toLowerCase();
+    if (skip(`${ROW.link}${key}`, left.has(key))) continue;
+    const issue = issueOf(withMarks(m, left, declined));
+    const finding = findingOf(issue);
+    out.push({ ...linkItem(issue, { noteOf: (rel) => vindex.note(rel) }), hashes: hashNotes(b.vault, [...issue.sources, ...(issue.candidate ? [issue.candidate.rel] : [])]), approved: finding.proposedFix, finding });
+  }
+  const st = feedState();
+  for (const row of pastFixRows()) {
+    const id = `${ROW.pastfix}${row.run.id}`;
+    if (skip(id, !!st.archived[id])) continue;
+    const item = pastFixItem(row);
+    out.push({ ...item, wrong: row.res?.main ?? null, hashes: hashNotes(b.vault, item.ops.map((o) => o.rel)) });
+  }
+  for (const f of findingsNow()) {
+    if (skip(`${ROW.finding}${f.key}`, f.archived)) continue;
+    out.push({ ...findingItem(f), hashes: hashNotes(b.vault, [f.rel]), finding: findingRecord(f) });
+  }
+  return out;
+}
+// the plan as the bulk plan sheet shows it: every group with each item ticked or not, and what was merged, skipped and
+// held back. An unticked item stays listed under its group so it can be ticked again. Check-first items (checkFirst)
+// list in their own groups with check and a reason, and stay out of the plan until the person ticks them (include)
+function planView(items, exclude = [], include = []) {
+  const off = planExclude(items, exclude, include);
+  const full = buildPlan(items);
+  const cur = buildPlan(items, { exclude: [...off] });
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const groups = new Map();
+  for (const g of [...full.groups, ...cur.groups]) {
+    const e = groups.get(g.id) ?? groups.set(g.id, { id: g.id, items: [] }).get(g.id);
+    for (const i of g.items) if (!e.items.some((x) => x.id === i.id)) e.items.push({ ...i, line: itemLine(byId.get(i.id) ?? {}), on: cur.ok.includes(i.id) });
+  }
+  for (const id of off) {
+    const i = byId.get(id);
+    if (!i || !i.ops?.length) continue;
+    const g = groupOf(i);
+    const e = groups.get(g) ?? groups.set(g, { id: g, items: [] }).get(g);
+    if (!e.items.some((x) => x.id === id)) e.items.push({ id, title: i.title, kind: i.kind, notes: notesOf(i), line: itemLine(i), on: false });
+  }
+  const order = full.groups.map((g) => g.id);
+  const out = [];
+  for (const g of [...groups.values()].sort((a, b) => (order.indexOf(a.id) + 1 || 99) - (order.indexOf(b.id) + 1 || 99))) {
+    for (const check of [false, true]) {
+      const list = g.items.filter((i) => !!checkFirst(byId.get(i.id)) === check);
+      if (!list.length) continue;
+      const raw = (xs) => xs.map((i) => byId.get(i.id)).filter(Boolean);
+      const view = { id: check ? `check:${g.id}` : g.id, label: groupLabel(g.id, raw(list)), count: list.filter((i) => i.on).length, items: list };
+      out.push(check ? { ...view, check: true, reason: checkFirst(raw(list)[0]) } : view);
     }
   }
-  vindex?.sync();
-  diskNamesCache.at = 0;
-  setLinksLeft([run.key], false);
-  run.undoneAt = Date.now();
-  logPastFix(id, 'undone', null, plan);
-  fixRunsSave();
-  fixEmit(run);
-  toUI('memory-updates', null);
-  log('past fix undo', run.key, plan.kind, `${plan.files.length} notes`);
-  return `Undid the fix. “${run.target}” is back in Needs review`;
+  return {
+    total: items.length, run: cur.ok.length, steps: cur.steps.length,
+    groups: [...out.filter((g) => !g.check), ...out.filter((g) => g.check)],
+    merged: cur.merged, skipped: cur.skipped.filter((x) => !off.has(x.id)), held: cur.held.filter((x) => !off.has(x.id)),
+  };
 }
+// the decision record of an item, for the log
+function logItem(item, decision, actor = 'you') {
+  const v = brain()?.vault;
+  if (!v) return;
+  if (item.kind === 'link') logFinding(item.finding, decision, actor);
+  else if (item.kind === 'pastfix') logPastFix(item.key, decision, null, null, actor);
+  else if (item.finding) { try { decisionLog.record(v, { ...item.finding, proposedFix: { ...item.finding.proposedFix, action: item.ops?.map((o) => o.op).join('+') ?? 'review' }, decision, actor }); } catch (e) { log('decision log', e?.message); } }
+}
+// queues a plan as one batch run. actor: you, or auto for Apply memory fixes on its own
+function startPlan(plan, items, { actor = 'you' } = {}) {
+  const b = brain();
+  if (!b) throw new Error('No vault connected');
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const go = plan.ok.map((id) => byId.get(id)).filter(Boolean);
+  if (!go.length) throw new Error('Nothing in the plan can run');
+  const id = `batch:${Date.now()}`;
+  const n = go.length;
+  const groups = plan.groups.map((g) => ({ id: g.id, label: g.label, count: g.count }));
+  const run = {
+    id, key: id, batch: id, kind: 'batch', auto: actor === 'auto', vault: b.vault, rel: '',
+    target: actor === 'auto' ? `${n} memory ${n === 1 ? 'fix' : 'fixes'} Quorum applied on its own` : `${n} memory ${n === 1 ? 'fix' : 'fixes'}`,
+    title: groups.map((g) => g.label).join(', '), status: 'queued', queuedAt: Date.now(), startedAt: null, endedAt: null, steps: [], outcome: null, error: null, dismissedAt: null,
+    items: go.map((i) => ({ id: i.id, kind: i.kind, key: i.key, link: i.link ?? null, title: i.title, line: itemLine(i), status: 'queued', finding: i.finding ?? null })),
+    groups, problem: `${n} ${n === 1 ? 'item' : 'items'} from Needs review, planned as one batch.`, solution: groups.map((g) => g.label).join('. '),
+    value: 'One batch, one undo: Undo puts every note back as it was before the batch.', meta: groups.map((g) => ['Change', g.label]),
+    hashes: Object.assign({}, ...go.map((i) => i.hashes ?? {})),
+  };
+  batchPlans.set(id, { plan, items: go, actor });
+  for (const i of go) logItem(i, actor === 'auto' ? 'auto' : 'approved', actor === 'auto' ? 'auto' : 'you');
+  fixJournal.append(run.id, { step: 'queued', action: 'batch', items: go.map((i) => i.id), hashes: run.hashes });
+  fixRunList().unshift(run);
+  fixQueue.push(run);
+  fixEmit(run);
+  fixRunsSave();
+  pumpFixes();
+  return run;
+}
+// plans and starts the items with these row ids; refuses with the reason the first one was left out
+function startPlanFor(ids, actor = 'you') {
+  const items = reviewItems({ ids });
+  if (!items.length) throw new Error('That item is no longer in Needs review');
+  const plan = buildPlan(items);
+  if (!plan.ok.length) throw new Error((plan.held[0] ?? plan.skipped[0])?.reason ?? 'Nothing in the plan can run');
+  return startPlan(plan, items, { actor });
+}
+const readVault = (vault, rel) => { try { return readFileSync(vaultPath(vault, rel), 'utf8'); } catch { return null; } };
+const STUB_TEXT = 'Quorum made this note because';
+// one step of a batch. written: the notes earlier steps of the batch changed, whose hashes no longer apply
+async function runOp(item, o, { step, keep, written, vault }) {
+  if (item.kind === 'link') {
+    const hashes = Object.fromEntries(Object.entries(item.hashes ?? {}).filter(([r]) => !written.has(r)));
+    await decideLink(item.key, 'approve', step, keep, hashes, item.approved);
+    return;
+  }
+  const abs = vaultPath(vault, o.rel);
+  if (!abs && o.op !== 'create') throw new Error(`“${o.rel}” is no longer in the vault`);
+  if (!written.has(o.rel) && item.hashes && o.rel in item.hashes) {
+    const now = readVault(vault, o.rel);
+    if ((now == null ? null : sha(now)) !== item.hashes[o.rel]) throw new Error(`“${o.rel}” changed after Quorum planned this batch, so Quorum did not write. Review the plan again`);
+  }
+  if (o.op === 'restore') {
+    await step(`Putting back ${o.rel} as it read before the earlier fix`);
+    keep(o.rel);
+    writeAtomic(abs, o.before);
+  } else if (o.op === 'trash') {
+    await step(`Moving ${o.rel}, which an earlier fix wrote, to the Trash`);
+    keep(o.rel, false, true);
+    await shell.trashItem(abs);
+  } else if (o.op === 'tag') {
+    await step(`Tagging ${o.rel} confidential: ${o.value}`);
+    keep(o.rel);
+    writeAtomic(abs, setFrontmatterKey(readFileSync(abs, 'utf8'), 'confidential', o.value));
+  } else if (o.op === 'move') {
+    const folder = o.to.includes('/') ? o.to.slice(0, o.to.lastIndexOf('/')) : '';
+    await step(`Moving ${o.rel} to ${folder || 'the vault folder'} and updating the links to it`);
+    if (existsSync(path.join(vault, o.to))) throw new Error(`A note is already at “${o.to}”, so Quorum did not move it`);
+    if (folder && !existsSync(path.join(vault, folder))) throw new Error(`The folder ${folder} is gone, so Quorum did not move the note`);
+    for (const bl of vindex.backlinks(o.rel)) keep(bl.rel);
+    keep(o.rel, false, true);
+    keep(o.to, true);
+    const r = relocate(o.rel, () => moveItem(vault, o.rel, folder));
+    if (r.rel !== o.to) throw new Error(`The note moved to “${r.rel}” and not to “${o.to}”`);
+  } else throw new Error(`Quorum cannot run a ${o.op} step here`);
+  vindex.sync();
+}
+const opRels = (o) => { const e = effects(o); return [...e.writes.map((w) => w.rel), ...e.removes, ...e.creates]; };
+// runs a batch's steps in the plan's order, then sends each corrected past fix's link back to review or points it at
+// the note the current rules pick when that fix needs no review of its own, then checks the links of every note it
+// touched. Any failure throws, and the run puts every note back
+async function runBatch(run, step, keep) {
+  const b = brain();
+  if (!b || !vindex) throw new Error('No vault connected');
+  const saved = batchPlans.get(run.id);
+  if (!saved) throw new Error('Quorum quit before this batch started. Approve the items again');
+  const { plan, items, actor } = saved;
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const mark = (id, status) => { const it = run.items.find((x) => x.id === id); if (it) { it.status = status; fixEmit(run); } };
+  await step(`Checking the ${Object.keys(run.hashes ?? {}).length} notes in the plan again`);
+  const moved = changedSince(b.vault, run.hashes ?? {});
+  if (moved.length) throw new Error(`“${moved[0]}” changed after Quorum planned this batch, so Quorum did not write. Review the plan again`);
+  const exists = new Set([...vindex.rels(), ...Object.entries(run.hashes ?? {}).filter(([, h]) => h).map(([r]) => r)]);
+  const bad = checkOrder(plan.steps, exists);
+  if (bad) throw new Error(`The plan cannot run in order: ${bad.why}. Review the plan again`);
+  const touched = new Set(plan.steps.flatMap((s) => opRels(s.op)));
+  const movedTo = new Map(plan.steps.filter((s) => s.op.op === 'move').map((s) => [s.op.to, s.op.rel]));
+  const missingOf = (rels) => new Map([...rels].filter((r) => vindex.rels().includes(r)).map((r) => [movedTo.get(r) ?? r, new Set(vindex.missingIn(r).map((l) => l.target.toLowerCase()))]));
+  const before = missingOf(touched);
+  const written = new Set();
+  const left = new Map(items.map((i) => [i.id, plan.steps.filter((s) => s.item === i.id).length]));
+  for (const s of plan.steps) {
+    const item = byId.get(s.item);
+    mark(item.id, 'running');
+    await runOp(item, s.op, { step, keep, written, vault: b.vault });
+    for (const r of opRels(s.op)) written.add(r);
+    left.set(item.id, left.get(item.id) - 1);
+    if (!left.get(item.id)) mark(item.id, 'success');
+  }
+  vindex.sync();
+  diskNamesCache.at = 0;
+  // a corrected past fix's link goes back to review; the current rules then point it at a note when that is safe
+  const reopened = new Set();
+  const gone = new Set(plan.steps.filter((s) => s.op.op === 'trash' || s.op.op === 'move').map((s) => s.op.rel));
+  const followed = [];
+  for (const item of items.filter((i) => i.kind === 'pastfix' && i.link)) {
+    const key = String(item.link).toLowerCase();
+    reopened.add(key);
+    setLinksLeft([key], false);
+    const entry = linkIssues().find((h) => h.target.toLowerCase() === key);
+    if (!entry) continue;
+    const issue = issueOf(withMarks(entry));
+    const c = issue.candidate;
+    if (issue.reviewOnly || !['alias', 'relink'].includes(issue.action) || !c || gone.has(c.rel) || c.rel === item.wrong || (readVault(b.vault, c.rel) ?? '').includes(STUB_TEXT)) continue;
+    await decideLink(issue.key, 'approve', step, keep, null, findingOf(issue).proposedFix);
+    logFinding(findingOf(issue), actor === 'auto' ? 'auto' : 'approved', actor === 'auto' ? 'auto' : 'you', 'The rules picked this fix after a corrective fix sent the link back');
+    for (const r of [...issue.sources, c.rel]) touched.add(r);
+    reopened.delete(key);
+    followed.push(issue.target);
+  }
+  await step('Checking the links again');
+  const after = missingOf(touched);
+  for (const [rel, set] of after) after.set(rel, new Set([...set].filter((t) => !reopened.has(t))));
+  const reason = fixCheck({ before, after });
+  if (reason) throw new Error(reason);
+  run.undid = items.filter((i) => i.kind === 'pastfix').map((i) => i.key);
+  run.touched = [...touched];
+  const done = (run.groups ?? []).map((g) => g.label).join(', ');
+  return `Applied the plan: ${done}${followed.length ? `. Then pointed ${followed.length === 1 ? `the link to “${followed[0]}”` : `${followed.length} links`} at the notes the current rules pick` : ''}`;
+}
+// after a batch ran: each corrected past fix counts as undone, and the review rules check the notes it touched
+function afterBatch(run) {
+  const at = Date.now();
+  for (const id of run.undid ?? []) { const o = fixRunList().find((r) => r.id === id); if (o) o.undoneAt = at; }
+  if (pastFixState) pastFixState.plans.clear();
+  try { sweep('save', run.touched ?? []); } catch (e) { log('memory sweep', e?.message); }
+}
+// Undo on a batch: its notes are back (fix-undo), so each corrected past fix is flagged again and each item is logged
+function undoBatch(run, rels) {
+  for (const id of run.undid ?? []) { const o = fixRunList().find((r) => r.id === id); if (o) delete o.undoneAt; }
+  if (pastFixState) pastFixState.plans.clear();
+  for (const it of run.items ?? []) {
+    if (it.kind === 'link') { setLinksLeft([it.key], false); if (it.finding) logFinding(it.finding, 'undone'); }
+    else if (it.kind === 'pastfix') logPastFix(it.key, 'undone');
+    else if (it.finding) { try { decisionLog.record(run.vault, { ...it.finding, decision: 'undone', actor: 'you' }); } catch (e) { log('decision log', e?.message); } }
+  }
+  try { sweep('save', rels); } catch (e) { log('memory sweep', e?.message); }
+}
+// Apply memory fixes on its own (Settings > Memory, off by default): after a sweep, every item with an automatic fix
+// goes through the planner and the steps it can run apply as one batch, with no review. Held back and conflicting
+// items stay in Needs review. The batch shows in Notifications with Undo, and each item is logged with actor auto
+function autoApply() {
+  if (settings.memoryAutoApply !== true) return null;
+  const b = brain();
+  if (!b || !vindex || recordingNow()) return null;
+  if (fixRunList().some((r) => r.vault === b.vault && (r.status === 'queued' || r.status === 'running'))) return null;
+  const items = reviewItems().filter((i) => i.autoFix && !i.hold && !i.reviewOnly);
+  if (!items.length) return null;
+  const plan = buildPlan(items);
+  if (!plan.ok.length) return null;
+  log('auto apply', `${plan.ok.length} items`, `${plan.held.length + plan.skipped.length} left for review`);
+  return startPlan(plan, items, { actor: 'auto' });
+}
+// a repair plan written as a note in the vault, only when the person asks for it (Save as a note)
+function savePlanNote(view) {
+  const b = brain();
+  if (!b) throw new Error('No vault connected');
+  const day = new Date().toISOString().slice(0, 10);
+  const rel = createNote(b.vault, '', `Memory repair plan ${day}`);
+  const lines = [`# Memory repair plan ${day}`, '', `Quorum planned ${view.run} of ${view.total} items in Needs review as one batch.`, '', '## What the batch does', ''];
+  for (const g of view.groups) {
+    lines.push(`- ${g.label}`);
+    for (const i of g.items) lines.push(`  - ${i.on ? '' : '(unticked) '}${i.line}`);
+  }
+  const part = (title, xs) => { if (!xs.length) return; lines.push('', `## ${title}`, ''); for (const x of xs) lines.push(`- ${x.title}: ${x.reason}`); };
+  part('Merged', view.merged);
+  part('Skipped', view.skipped);
+  part('Held back', view.held);
+  writeAtomic(path.join(b.vault, rel), `${lines.join('\n')}\n`);
+  vindex?.sync();
+  return rel;
+}
+const idList = (xs) => (Array.isArray(xs) ? xs.map(String) : []);
+ipcMain.handle('fix-plan', (_e, ids, exclude, include) => planView(reviewItems({ ids: Array.isArray(ids) ? ids.map(String) : null }), idList(exclude), idList(include)));
+ipcMain.handle('fix-plan-apply', (_e, ids, exclude, opts, include) => {
+  const items = reviewItems({ ids: Array.isArray(ids) ? ids.map(String) : null });
+  const note = opts?.saveNote === true ? savePlanNote(planView(items, idList(exclude), idList(include))) : null;
+  const plan = buildPlan(items, { exclude: [...planExclude(items, idList(exclude), idList(include))] });
+  const run = plan.ok.length ? startPlan(plan, items) : null;
+  return { run, note };
+});
+
+// Confidential marks: a note's mark is confidential: <value> in its frontmatter; a folder's mark is kept in Quorum's
+// settings per vault and never written into the vault. A marked folder counts for the read guard and the guardrails
+// (confidentialDirs) and for the confidential rule (rules/confidential.js)
+const CONF_VALUE = /^[a-z0-9][a-z0-9 _.-]{0,39}$/i;
+function confFoldersAll() {
+  if (!settings.confidentialFolders || typeof settings.confidentialFolders !== 'object') settings.confidentialFolders = {};
+  return settings.confidentialFolders;
+}
+function confFolders(vault = brain()?.vault) { return vault ? { ...(confFoldersAll()[vault] ?? {}) } : {}; }
+// the marked folders relative to the Agent OS root, the way the read guard takes them
+function confidentialDirs() {
+  const b = brain();
+  if (!b) return [];
+  return Object.keys(confFolders(b.vault)).map((d) => path.relative(b.root, path.join(b.vault, d)).split(path.sep).join('/')).filter((d) => d && !d.startsWith('..'));
+}
+function noteMark(vault, rel) {
+  const head = (readVault(vault, rel) ?? '').slice(0, 8192);
+  const v = readFrontmatter(head).confidential;
+  return v == null || isOff(v) ? null : String(v);
+}
+ipcMain.handle('confidential-marks', () => {
+  const b = brain();
+  if (!b) return { folders: {}, notes: {}, values: [] };
+  if (tagScan?.vault !== b.vault) tagScan = { vault: b.vault, tags: scanTags(b.vault, excludedPath) };
+  const notes = {};
+  for (const t of tagScan.tags) if (t.value != null && !isOff(t.value)) notes[t.rel] = String(Array.isArray(t.value) ? t.value[0] : t.value);
+  const folders = confFolders(b.vault);
+  const values = [...new Set([...Object.values(notes), ...Object.values(folders)].map((v) => String(v).trim().toLowerCase()).filter(Boolean))].sort();
+  return { folders, notes, values };
+});
+// marks or clears a note or a folder; value null clears it. Answers a line saying what changed
+ipcMain.handle('confidential-mark', (_e, rel, isDir, value) => {
+  const b = brain();
+  if (!b) throw new Error('No vault connected');
+  const r = String(rel ?? '').replace(/^\/+|\/+$/g, '');
+  const v = value == null ? null : String(value).trim().toLowerCase();
+  if (v != null && !CONF_VALUE.test(v)) throw new Error('Use letters, numbers, spaces, dots, dashes or underscores, up to 40 characters');
+  if (isDir) {
+    if (!r || !existsSync(path.join(b.vault, r)) || !path.join(b.vault, r).startsWith(b.vault + path.sep)) throw new Error('That folder is not in the vault');
+    const all = confFoldersAll();
+    const mine = { ...(all[b.vault] ?? {}) };
+    if (v) mine[r] = v; else delete mine[r];
+    all[b.vault] = mine;
+    store.settings.save();
+    // the guardrail snapshot in settings.json takes the folder now, so the CLI and the suggester deny it before the
+    // next agent run in the app
+    guardrails.compiled();
+    log('confidential', isDir ? 'folder' : 'note', v ? 'marked' : 'cleared');
+    setTimeout(() => sweep(memorySweep.state(b.vault)?.lastFull ? 'full' : 'first'), 0);
+    toUI('memory-updates', null);
+    return v ? `Marked ${r} confidential: ${v}. Quorum keeps every note in it private.` : `Removed the confidential mark from ${r}`;
+  }
+  const abs = vaultPath(b.vault, r);
+  if (!abs || !/\.md$/i.test(r)) throw new Error('That note is not in the vault');
+  const text = readFileSync(abs, 'utf8');
+  if (!v && !noteMark(b.vault, r)) {
+    const up = Object.keys(confFolders(b.vault)).find((d) => r.startsWith(`${d}/`));
+    throw new Error(up ? `This note is inside ${up}, which is marked confidential. Remove the mark from the folder.` : 'This note has no confidential mark');
+  }
+  const next = v ? setFrontmatterKey(text, 'confidential', v) : removeFrontmatterKey(text, 'confidential');
+  if (next !== text) {
+    writeAtomic(abs, next);
+    try { memoryVersions.record({ vault: b.vault, rel: r, before: text, after: next, who: 'you', reason: v ? `Marked confidential: ${v}` : 'Removed the confidential mark', agent: false }); } catch (e) { log('confidential versions', e?.message); }
+  }
+  vindex?.sync();
+  if (tagScan?.vault === b.vault) tagScan = { vault: b.vault, tags: rescanTags(b.vault, tagScan.tags, [r], excludedPath) };
+  setTimeout(() => sweep('save', [r]), 0);
+  toUI('memory-updates', [r]);
+  return v ? `Marked ${r.split('/').pop().replace(/\.md$/i, '')} confidential: ${v}` : `Removed the confidential mark from ${r.split('/').pop().replace(/\.md$/i, '')}`;
+});
+
 // fix a missing link by pointing it at a note that exists; refuses a target that isn't a real note in the vault
 ipcMain.handle('vault-fix-link', (_e, target, toRel) => {
   if (!vindex || !vindex.rels().includes(String(toRel))) throw new Error('That note no longer exists');
@@ -3216,6 +3568,8 @@ ipcMain.handle('vault-sort-menu', (_e, current, at) => new Promise((resolve) => 
 ipcMain.handle('vault-menu', (_e, rel, isDir, at) => new Promise((resolve) => {
   const vault = brain()?.vault ?? '';
   const pick = (v) => () => resolve(v);
+  // a folder's own mark, or a note's confidential: tag; a note inside a marked folder can still get a tag of its own
+  const marked = vault && (isDir ? !!confFolders(vault)[String(rel)] : !!noteMark(vault, String(rel)));
   const items = [
     ...(isDir ? [{ label: 'New note', click: pick('new-note') }, { type: 'separator' }] : []),
     { label: 'Duplicate', click: pick('duplicate') },
@@ -3227,6 +3581,8 @@ ipcMain.handle('vault-menu', (_e, rel, isDir, at) => new Promise((resolve) => {
       { label: 'From vault folder', click: () => { clipboard.writeText(String(rel)); resolve(null); } },
       { label: 'Full path', click: () => { clipboard.writeText(path.join(vault, String(rel))); resolve(null); } },
     ] },
+    { type: 'separator' },
+    marked ? { label: 'Remove confidential mark', click: pick('unconfidential') } : { label: 'Mark confidential…', click: pick('confidential') },
     { type: 'separator' },
     { label: 'Reveal in Finder', click: pick('reveal') },
     { type: 'separator' },
