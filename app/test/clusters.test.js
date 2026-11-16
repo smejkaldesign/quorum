@@ -62,8 +62,8 @@ describe('cluster names', () => {
     expect(cluster[0]).not.toBe(cluster[3]);
   });
   it('reads an Obsidian group query as the name it points at', () => {
-    expect(groupLabel('path:"01-daily/today.md"')).toBe('today');
-    expect(groupLabel('path:/^MyBrain\\/05-knowledge\\//')).toBe('05-knowledge');
+    expect(groupLabel('path:"01-journal/today.md"')).toBe('today');
+    expect(groupLabel('path:/^Notebook\\/07-library\\//')).toBe('07-library');
     expect(groupLabel('path:/Projects/ OR path:"a.md"')).toBe('Projects');
     expect(groupLabel('')).toBe('Group');
   });
@@ -76,20 +76,20 @@ describe('cluster names, harder cases', () => {
     expect(names.slice(0, 6)).toEqual(['Work · a', 'Work · a', 'Work · a', 'Work · y', 'Work · y', 'Work · y']);
   });
   it('reads a regex group by its literal start only', () => {
-    expect(groupLabel('path:/^01-daily\\/\\d{4}/')).toBe('01-daily');
+    expect(groupLabel('path:/^01-journal\\/\\d{4}/')).toBe('01-journal');
     expect(groupLabel('path:/notes.*/')).toBe('notes');
-    expect(groupLabel('path:/^MyBrain\\/05-knowledge\\/proj.*/')).toBe('05-knowledge');
+    expect(groupLabel('path:/^Notebook\\/07-library\\/proj.*/')).toBe('07-library');
     expect(groupLabel('path:/(work|personal)\\//')).toBe('(work|personal)/');
   });
 });
 
 describe('cluster names in plain words', () => {
   it('reads a folder the way a person would say it', () => {
-    expect(folderLabel('01-daily')).toBe('Daily');
-    expect(folderLabel('00-inbox')).toBe('Inbox');
-    expect(folderLabel('MyBrain/04-projects')).toBe('Projects');
-    expect(folderLabel('auto-memory')).toBe('Auto memory');
-    expect(folderLabel('02_personal_notes')).toBe('Personal notes');
+    expect(folderLabel('01-journal')).toBe('Journal');
+    expect(folderLabel('00-drafts')).toBe('Drafts');
+    expect(folderLabel('Notebook/03-ventures')).toBe('Ventures');
+    expect(folderLabel('side-quests')).toBe('Side quests');
+    expect(folderLabel('06_garden_notes')).toBe('Garden notes');
     expect(folderLabel('2026')).toBe('2026');
     expect(folderLabel('work')).toBe('Work');
   });
@@ -101,12 +101,12 @@ describe('cluster names in plain words', () => {
     expect(folderLabel('01.daily')).toBe('01.daily');
   });
   it('does not name a cluster after a folder that wraps most of the vault', () => {
-    const rels = ['MyBrain/01-daily/a.md', 'MyBrain/04-projects/b.md', 'MyBrain/00-inbox/c.md', 'MyBrain/x.md'];
+    const rels = ['Notebook/01-journal/a.md', 'Notebook/03-ventures/b.md', 'Notebook/00-drafts/c.md', 'Notebook/x.md'];
     const wrapper = wrapperFolders(rels);
-    expect(wrapper('MyBrain')).toBe(true);
+    expect(wrapper('Notebook')).toBe(true);
     expect(sharedFolder(rels, 0.6, wrapper)).toBe('');
     const labels = clusterLabels(rels, [0, 0, 0, -1], [1, 3, 1, 0]);
-    expect(labels[0]).toEqual({ key: 'note:MyBrain/04-projects/b.md', name: 'b', folder: '' });
+    expect(labels[0]).toEqual({ key: 'note:Notebook/03-ventures/b.md', name: 'b', folder: '' });
   });
   it('keys a folder cluster by its folder even when the name is shared, and applies a rename before telling names apart', () => {
     const rest = ['p.md', 'q.md', 'r.md', 's.md', 't.md', 'u.md', 'v.md'];
@@ -119,15 +119,15 @@ describe('cluster names in plain words', () => {
     expect(clusterNames(rels, cl, deg, undefined, { 'folder:work': 'Desk' })[0]).toBe('Desk');
   });
   it('finds the deepest folder most notes share, counting subfolders', () => {
-    expect(sharedFolder(['04-projects/a/x.md', '04-projects/b/y.md', '04-projects/c.md'])).toBe('04-projects');
-    expect(sharedFolder(['01-daily/a.md', '01-daily/b.md', '01-daily/c.md', '00-inbox/d.md'])).toBe('01-daily');
+    expect(sharedFolder(['03-ventures/a/x.md', '03-ventures/b/y.md', '03-ventures/c.md'])).toBe('03-ventures');
+    expect(sharedFolder(['01-journal/a.md', '01-journal/b.md', '01-journal/c.md', '00-drafts/d.md'])).toBe('01-journal');
     expect(sharedFolder(['a.md', 'b.md', 'work/c.md'])).toBe('');
   });
-  it('names a daily cluster Daily, with the folder it stands for and a key a rename can keep', () => {
-    const rels = ['MyBrain/01-daily/2026-11-01.md', 'MyBrain/01-daily/2026-11-02.md', 'MyBrain/01-daily/2026-11-03.md', 'MyBrain/00-inbox/a.md', 'MyBrain/00-inbox/b.md', 'MyBrain/00-inbox/c.md'];
+  it('names a journal cluster Journal, with the folder it stands for and a key a rename can keep', () => {
+    const rels = ['Notebook/01-journal/2026-11-01.md', 'Notebook/01-journal/2026-11-02.md', 'Notebook/01-journal/2026-11-03.md', 'Notebook/00-drafts/a.md', 'Notebook/00-drafts/b.md', 'Notebook/00-drafts/c.md'];
     const labels = clusterLabels(rels, [0, 0, 0, 1, 1, 1], [2, 2, 2, 2, 2, 2]);
-    expect(labels[0]).toEqual({ key: 'folder:MyBrain/01-daily', name: 'Daily', folder: 'MyBrain/01-daily' });
-    expect(labels[3]).toEqual({ key: 'folder:MyBrain/00-inbox', name: 'Inbox', folder: 'MyBrain/00-inbox' });
+    expect(labels[0]).toEqual({ key: 'folder:Notebook/01-journal', name: 'Journal', folder: 'Notebook/01-journal' });
+    expect(labels[3]).toEqual({ key: 'folder:Notebook/00-drafts', name: 'Drafts', folder: 'Notebook/00-drafts' });
   });
   it('keys a cluster by its most linked note when the folder name is shared or missing', () => {
     const labels = clusterLabels(['work/a.md', 'work/b.md', 'work/c.md', 'work/x.md', 'work/y.md', 'work/z.md', 'p.md', 'q.md', 'r.md'], [0, 0, 0, 1, 1, 1, 2, 2, 2], [3, 1, 1, 1, 4, 1, 1, 5, 1]);
@@ -136,11 +136,11 @@ describe('cluster names in plain words', () => {
     expect(labels[6]).toEqual({ key: 'note:q.md', name: 'q', folder: '' });
   });
   it('names an Obsidian group by the folder its notes share, else by its query in plain words', () => {
-    expect(groupInfo('path:/^01-/', ['01-daily/a.md', '01-daily/b.md'])).toEqual({ key: 'group:path:/^01-/', name: 'Daily', folder: '01-daily' });
-    expect(groupInfo('path:"04-projects"', [])).toEqual({ key: 'group:path:"04-projects"', name: 'Projects', folder: '' });
-    expect(groupInfo('path:"01-daily/2026-11-01.md"', []).name).toBe('2026-11-01');
+    expect(groupInfo('path:/^01-/', ['01-journal/a.md', '01-journal/b.md'])).toEqual({ key: 'group:path:/^01-/', name: 'Journal', folder: '01-journal' });
+    expect(groupInfo('path:"03-ventures"', [])).toEqual({ key: 'group:path:"03-ventures"', name: 'Ventures', folder: '' });
+    expect(groupInfo('path:"01-journal/2026-11-01.md"', []).name).toBe('2026-11-01');
     expect(groupInfo('path:/notes-2.*/', []).name).toBe('notes-2');
     expect(groupInfo('path:/(work|personal)\\//', []).name).toBe('(work|personal)/');
-    expect(groupInfo('path:"04-projects"', [], undefined, { 'group:path:"04-projects"': 'Builds' }).name).toBe('Builds');
+    expect(groupInfo('path:"03-ventures"', [], undefined, { 'group:path:"03-ventures"': 'Builds' }).name).toBe('Builds');
   });
 });
