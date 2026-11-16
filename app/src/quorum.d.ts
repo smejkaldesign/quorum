@@ -276,7 +276,7 @@ export type BatchItem = { id: string; kind: 'link' | 'pastfix' | 'finding'; key:
 // the bulk plan sheet: groups of what the batch will do, each item ticked or not, and what was merged, skipped or held back
 export type PlanItem = { id: string; title: string; kind: string; notes: string[]; line: string; on: boolean; draft?: MemoryDraft | null };
 // a fix the agent drafted (memoryDraft.js); every quote was checked against the line it names
-export type MemoryDraft = { kind: 'create' | 'point' | 'merge' | 'contradiction'; confidence: 'high' | 'medium' | 'low'; quotes: { path: string; line: number; text: string; ok: boolean }[]; verified: boolean; text?: string; keep?: string; drop?: string; rel?: string; line?: string; check?: boolean; hold?: string | null; at?: number | null };
+export type MemoryDraft = { kind: 'create' | 'point' | 'merge' | 'contradiction'; confidence: 'high' | 'medium' | 'low'; quotes: { path: string; line: number; text: string; ok: boolean }[]; verified: boolean; text?: string; keep?: string; drop?: string; rel?: string; line?: string; check?: boolean; hold?: string | null; wrong?: boolean; at?: number | null };
 // Settings > Memory: a rule's decisions from the decision log and what it does now
 export type RuleRecord = { id: string; label: string; approved: number; archived: number; undone: number; auto: number; last: number; open: number; ignores: number; state: string };
 export type IgnoreRule = { id: string; ruleId: string; field: 'folder' | 'key' | 'target'; value: string; title: string; at: number };

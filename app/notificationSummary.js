@@ -50,7 +50,7 @@ function askOf(row) {
   // a Memory health issue: the issue is the question, its recommended fix the recommendation (memoryHealth.js)
   // a review rule's finding (rules/index.js): no automatic fix, so the suggestion is to act on the note and archive it
   // an item the agent drafted recommends the draft (memoryDraft.js)
-  const drafted = d.draft?.line ? `The agent drafted a fix: ${d.draft.line}.` : null;
+  const drafted = d.draft?.wrong ? d.draft.line : d.draft?.line ? `The agent drafted a fix: ${d.draft.line}.` : null;
   if (row.review.kind === 'finding') return { question: d.title ?? `Check ${q(t)}`, suggest: row.review.fix ? 'approve' : 'dismiss', problem: d.problem ?? '', solution: drafted ?? d.solution ?? '', value: '', recommendation: drafted ?? d.recommend ?? '', why: d.rule ?? '' };
   if (row.review.kind === 'link') return { question: d.title ?? `Links to ${q(t)} open nothing`, suggest: 'approve', problem: d.problem ?? '', solution: drafted ?? d.solution ?? '', value: d.value ?? '', recommendation: drafted ?? d.recommend ?? '', why: d.recommend ?? '' };
   // an ignore rule Quorum proposes (ruleRecords.js)

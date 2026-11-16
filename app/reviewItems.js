@@ -17,7 +17,7 @@ export function linkLines(noteOf, sources, target) {
 
 // a missing link's fix (memoryHealth.js issueOf). A fix that leaves the link has nothing to run
 export function linkItem(issue, { noteOf = () => null } = {}) {
-  const base = { id: `${ROW.link}${issue.key}`, kind: 'link', key: issue.key, target: issue.target, title: issue.target, autoFix: !issue.reviewOnly && issue.action !== 'leave', reviewOnly: !!issue.reviewOnly };
+  const base = { id: `${ROW.link}${issue.key}`, kind: 'link', key: issue.key, target: issue.target, title: issue.target, sources: issue.sources ?? [], autoFix: !issue.reviewOnly && issue.action !== 'leave', reviewOnly: !!issue.reviewOnly };
   const c = issue.candidate;
   const lines = () => linkLines(noteOf, issue.sources, issue.target);
   if (issue.action === 'alias' && c) return { ...base, ops: [{ op: 'alias', rel: c.rel, alias: issue.target }] };

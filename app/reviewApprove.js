@@ -174,7 +174,8 @@ export function approvePastFix(run, plan, { vault, gitShow = null, undoFiles = n
       return { kind: 'remove', why: `The note the fix pointed the links at is gone. Quorum removes the ${links === 1 ? 'link' : `${links} links`} to ${q(target)} it left and keeps the words.`, ops: [{ op: 'unlink', target, sources: Object.keys(lines), lines, links }] };
     }
   }
-  // (c) a fix an agent drafted, when drafting is on; draft(run, r) answers { ops, why } or null
+  // (c) DRAFTED FIX SLOT: a fix an agent drafted, when drafting is on. draft(run, r) answers { ops, why } or null. main
+  // passes null until past fixes have a draft type in memoryDraft.js; then it wraps draftFix(item) from main.js here
   const drafted = typeof draft === 'function' ? draft(run, r) : null;
   if (drafted?.ops?.length) return { kind: 'draft', why: drafted.why ?? 'Quorum runs the fix an agent drafted for it.', ops: drafted.ops };
   return { kind: 'keep', why: `${plan?.why ?? 'Quorum cannot undo it exactly.'} Approve keeps the fix as it is and marks the item done.`, ops: [{ op: 'keep' }] };

@@ -74,7 +74,7 @@ import { folderMarkOf } from './rules/confidential.js';
 import { createMemorySweep, dueSweep, rescanTags, scanTags } from './memorySweep.js';
 import { RULE_LABELS, RULES } from './rules/index.js';
 import { relatedLine } from './rules/nearDuplicates.js';
-import { DAILY_CAP, createDrafter, draftKind, evidenceRels, withDraft } from './memoryDraft.js';
+import { DAILY_CAP, WRONG_NOTE_FIX, createDrafter, draftKind, evidenceRels, withDraft } from './memoryDraft.js';
 import { ignoreProposals, ignored, ruleRecords } from './ruleRecords.js';
 import { createElsewhere, withFound } from './linkElsewhere.js';
 import { titleOf } from './notificationSummary.js';
@@ -2931,6 +2931,7 @@ function startFixes(keys, { bulk = keys.length > 1 } = {}) {
   // a bulk Approve is one batch: the window shows its progress from the runs, even after leaving the page and coming back
   const batch = keys.length > 1 ? `b:${Date.now()}` : null;
   const draftHolds = linkDraftHolds();
+  const wrong = [];
   for (const k of keys) {
     const key = String(k ?? '').toLowerCase();
     if (!key) continue;
@@ -2940,9 +2941,9 @@ function startFixes(keys, { bulk = keys.length > 1 } = {}) {
     if (!entry) continue;
     const i = issueOf(withMarks(entry));
     if (bulk && i.reviewOnly) continue;
-    // a link whose stored draft says Quorum's match is the wrong note never runs Quorum's fix: a single Approve says why
-    const held = draftHolds.get(key);
-    if (held) { if (!bulk) throw new Error(held); continue; }
+    // a link whose stored draft says Quorum's match is the wrong note never runs Quorum's fix: Approve removes the dead
+    // link through the planner instead
+    if (draftHolds.has(key)) { wrong.push(`${ROW.link}${key}`); continue; }
     const run = {
       id: `fix:${key}:${Date.now()}`, key, target: i.target, title: i.title, rel: i.path, vault: brain()?.vault ?? '', status: 'queued', queuedAt: Date.now(), startedAt: null, endedAt: null,
       steps: [], outcome: null, error: null, dismissedAt: null, batch,
@@ -2960,6 +2961,8 @@ function startFixes(keys, { bulk = keys.length > 1 } = {}) {
   }
   fixRunsSave();
   pumpFixes();
+  // the wrong-note links run as one planned batch: unlink, journal, versions and Undo
+  if (wrong.length) started.push(startPlanFor(wrong));
   return started;
 }
 async function pumpFixes() {
@@ -3135,7 +3138,8 @@ function pastFixPlan(run, fresh = false) {
   const mtime = (rel) => { try { const st = statSync(vaultPath(run.vault, rel)); return Math.max(st.mtimeMs, st.ctimeMs); } catch { return null; } };
   const plan = undoPlan(run, { vault, undoFiles, versions: fixVersions(memoryVersions.files(run.vault), run), readVersion: (rel, id) => memoryVersions.read(run.vault, rel, id), mtime });
   // Quorum cannot undo it exactly: Approve restores from git history, removes what the fix left, or keeps it as is.
-  // draft is where Sprint 3B's agent-drafted fix plugs in when drafting is on; until then it is null
+  // DRAFTED FIX SLOT (reviewApprove.js step c, before Keep as is): draftFix(item) has no draft type for past fixes yet,
+  // so draft stays null. Wire it as draft: () => draftFix(pastFixItem(...)) once memoryDraft.js drafts past fixes
   if (!plan.ok) plan.approve = approvePastFix(run, plan, { vault, gitShow: gitOf(run.vault), undoFiles: undoFiles?.map((f) => f.rel) ?? null, draft: null });
   st.plans.set(run.id, { at: Date.now(), plan });
   return plan;
@@ -3266,10 +3270,10 @@ function mergeBreaksLinks(keep, drop) {
   const broken = from.filter((r) => vindex.outgoing(r).some((l) => l.rel === drop && resolve(l.target, r) !== keep));
   return broken.length ? `${broken.length === 1 ? `${broken[0]} links` : `${broken.length} notes link`} to ${drop} in a way the merged note would not answer. Point those links at ${keep} first.` : null;
 }
-// link key -> why its stored draft holds it back (the agent found the match is the wrong note)
+// link key -> its item, for each link whose stored draft found Quorum's match is the wrong note
 function linkDraftHolds() {
   if (settings.memoryDrafts !== true) return new Map();
-  return new Map(reviewItems().filter((i) => i.kind === 'link' && i.draft && i.hold).map((i) => [String(i.key).toLowerCase(), i.hold]));
+  return new Map(reviewItems().filter((i) => i.kind === 'link' && i.wrongNote).map((i) => [String(i.key).toLowerCase(), i]));
 }
 // the agent's fix for a review item, or null: the item with its stored draft applied while drafting is on, the draft's
 // notes are unchanged and its quotes still match. Other Approve paths (a past fix Quorum cannot undo exactly) call it
@@ -3364,7 +3368,7 @@ ipcMain.handle('memory-draft-status', () => drafter.status());
 function draftViews() {
   const out = {};
   if (settings.memoryDrafts !== true) return out;
-  for (const i of reviewItems()) if (i.draft) out[i.id] = { ...i.draft, line: itemLine(i), check: !!checkFirst(i), hold: i.hold ?? null };
+  for (const i of reviewItems()) if (i.draft) out[i.id] = { ...i.draft, line: i.wrongNote ? WRONG_NOTE_FIX : itemLine(i), check: !!checkFirst(i), hold: i.hold ?? null };
   return out;
 }
 // the plan as the bulk plan sheet shows it: every group with each item ticked or not, and what was merged, skipped and
@@ -3453,15 +3457,17 @@ const readVault = (vault, rel) => { try { return readFileSync(vaultPath(vault, r
 const STUB_TEXT = 'Quorum made this note because';
 // one step of a batch. written: the notes earlier steps of the batch changed, whose hashes no longer apply
 async function runOp(item, o, { step, keep, written, vault }) {
-  if (item.kind === 'link') {
+  // a link whose draft found Quorum's match is the wrong note runs its unlink step below instead of Quorum's fix
+  if (item.kind === 'link' && !item.wrongNote) {
     const hashes = Object.fromEntries(Object.entries(item.hashes ?? {}).filter(([r]) => !written.has(r)));
     await decideLink(item.key, 'approve', step, keep, hashes, item.approved, item.draft ?? null);
     return;
   }
   if (o.op === 'keep') { await step(`Keeping ${item.kind === 'pastfix' ? `the earlier fix on ${item.title}` : item.title} as it is`); return; }
   if (o.op === 'unlink') {
-    // links an earlier fix left pointing at a note that is gone: each is replaced by its words
-    await step(`Removing the links to ${o.target} an earlier fix left`);
+    // links an earlier fix left pointing at a note that is gone, or a dead link whose draft found the wrong note: each
+    // is replaced by its words
+    await step(item.kind === 'link' ? `Removing the dead links to ${o.target} and keeping their words` : `Removing the links to ${o.target} an earlier fix left`);
     for (const rel of o.sources) {
       if (!written.has(rel) && item.hashes && rel in item.hashes && (readVault(vault, rel) == null ? null : sha(readVault(vault, rel))) !== item.hashes[rel]) throw new Error(`“${rel}” changed after Quorum planned this batch, so Quorum did not write. Review the plan again`);
       keep(rel);

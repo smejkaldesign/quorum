@@ -252,6 +252,13 @@ describe('past fixes to check', () => {
     expect(keep.summary.recommendation).toBe('Keep as is.');
     expect(keep.summary.solution).toMatch(/Approve keeps the fix as it is and marks the item done\.$/);
   });
+  it('recommends removing the dead link when the agent found the wrong note', () => {
+    const link = { target: 'Orbit', sources: ['notes/a.md'], count: 1, candidates: [] };
+    const fix = 'The agent found the note Quorum picked is the wrong one. Approve removes the dead link and keeps its words.';
+    const r = feedRows({ links: [link], drafts: { 'r:link:orbit': { kind: 'point', confidence: 'high', quotes: [], verified: true, wrong: true, line: fix } } })[0];
+    expect(r.summary.recommendation).toBe(fix);
+    expect(JSON.stringify(r.summary)).not.toMatch(/by hand/);
+  });
   it('lists an item an Approve finished under Archived as done', () => {
     const r = row({ ok: false, why: 'x', approve: { kind: 'keep', why: 'x', ops: [] } });
     const page = feedPage([r], { tab: 'archived', archived: [r.id], done: [r.id] });
