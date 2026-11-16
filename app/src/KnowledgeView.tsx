@@ -67,10 +67,6 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   // the drawer for the issue under the cursor: the arrows, a click on an issue line, and View from Notifications open it
   const [issueOpen, setIssueOpen] = useState(false);
   const [deciding, setDeciding] = useState(false);
-  // the review banner follows the note down: once it scrolls out of sight a copy slides down from under the title row
-  const docRef = useRef<HTMLElement>(null);
-  const bannerRef = useRef<HTMLDivElement>(null);
-  const [stuck, setStuck] = useState(false);
   // runs writing notes right now (liveRuns.js): shimmer in the tree and the graph, and a lock with Stop on an open note
   const [live, setLive] = useState<LiveState>({ runs: [], files: {}, folders: [], vault: [] });
   const [confirmStop, setConfirmStop] = useState<LiveRun | null>(null);
@@ -217,14 +213,6 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     requestAnimationFrame(() => document.querySelector(`.mu-text [data-line="${line}"]`)?.scrollIntoView({ block: 'center', behavior: smooth ? 'smooth' : 'auto' }));
   };
   // the review is read before the note counts as opened, so a blue banner shows on the open that clears its dot
-  useEffect(() => {
-    const root = docRef.current;
-    const el = bannerRef.current;
-    if (!root || !el) { setStuck(false); return; }
-    const io = new IntersectionObserver(([e]) => setStuck(!e.isIntersecting && e.boundingClientRect.top < (e.rootBounds?.top ?? 0)), { root, threshold: 0 });
-    io.observe(el);
-    return () => io.disconnect();
-  }, [preview?.rel, issueReview, review, version]);
   // counts note opens, so the issues of a note opened earlier never land on the one open now
   const opening = useRef(0);
   const openNote = useCallback(async (rel: string) => {
@@ -587,35 +575,31 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
             <button className="act-pill" onClick={() => setMissing(null)}>Back to Memory</button>
           </div>
         ) : preview ? (
+          <>
+            {/* one review banner at a time, docked under the header row so it stays in view and the issue drawer opens below it: a version opened read-only, else the issues from Memory health in red (with
+                the updates' Before and After when there are updates), else the updates in green or blue */}
+            {(() => {
+              const banner = version
+              ? <VersionBar version={version.v} busy={restoring} locked={locked} onRestore={restore} onClose={() => setVersion(null)} />
+              : issueReview
+                ? <ReviewBanner tone="orange" locked={locked}
+                    label={`${issueReview.length} ${issueReview.length === 1 ? 'item needs' : 'items need'} review`}
+                    mode={review ? mode : undefined} onMode={review ? setMode : undefined}
+                    highlight={review ? highlight : undefined} onHighlight={review ? () => setHighlight((h) => !h) : undefined}
+                    nav={mode === 'after' ? (() => { const n = navOver(issueReview.map((x) => x.line)); return { ...n, onPrev: () => { n.onPrev(); setIssueOpen(true); }, onNext: () => { n.onNext(); setIssueOpen(true); } }; })() : undefined}
+                    onAccept={() => decideIssue(true)} onReject={() => decideIssue(false)} acceptTip="Approve the recommendation" rejectTip="Decline, leave the link as it is" />
+                : review && <ReviewBanner tone={review.dot} locked={locked}
+                    label={`${review.count} ${review.count === 1 ? 'update' : 'updates'} on ${when(review.at)}`}
+                    mode={mode} onMode={(m) => { setMode(m); setCursor(-1); }} highlight={highlight} onHighlight={() => setHighlight((h) => !h)}
+                    nav={mode === 'after' ? navOver(blocks.map((b) => b[0])) : undefined}
+                    onAccept={review.dot === 'green' ? accept : undefined} acceptTip="Accept updates"
+                    onReject={reject} rejectTip="Reject updates and restore the earlier text" />;
+              if (!banner) return null;
+              return <div className="mu-dock">{banner}</div>;
+            })()}
           <div className={`kb-preview ${side ? "side-open" : ""}`}>
-            <article className="doc" ref={docRef}>
+            <article className="doc">
               {openRun && <LiveBanner run={openRun} onStop={() => setConfirmStop(openRun)} />}
-              {/* one review banner at a time: a version opened read-only, else the issues from Memory health in red (with
-                  the updates' Before and After when there are updates), else the updates in green or blue */}
-              {(() => {
-                const banner = version
-                ? <VersionBar version={version.v} busy={restoring} locked={locked} onRestore={restore} onClose={() => setVersion(null)} />
-                : issueReview
-                  ? <ReviewBanner tone="orange" locked={locked}
-                      label={`${issueReview.length} ${issueReview.length === 1 ? 'item needs' : 'items need'} review`}
-                      mode={review ? mode : undefined} onMode={review ? setMode : undefined}
-                      highlight={review ? highlight : undefined} onHighlight={review ? () => setHighlight((h) => !h) : undefined}
-                      nav={mode === 'after' ? (() => { const n = navOver(issueReview.map((x) => x.line)); return { ...n, onPrev: () => { n.onPrev(); setIssueOpen(true); }, onNext: () => { n.onNext(); setIssueOpen(true); } }; })() : undefined}
-                      onAccept={() => decideIssue(true)} onReject={() => decideIssue(false)} acceptTip="Approve the recommendation" rejectTip="Decline, leave the link as it is" />
-                  : review && <ReviewBanner tone={review.dot} locked={locked}
-                      label={`${review.count} ${review.count === 1 ? 'update' : 'updates'} on ${when(review.at)}`}
-                      mode={mode} onMode={(m) => { setMode(m); setCursor(-1); }} highlight={highlight} onHighlight={() => setHighlight((h) => !h)}
-                      nav={mode === 'after' ? navOver(blocks.map((b) => b[0])) : undefined}
-                      onAccept={review.dot === 'green' ? accept : undefined} acceptTip="Accept updates"
-                      onReject={reject} rejectTip="Reject updates and restore the earlier text" />;
-                if (!banner) return null;
-                return (
-                  <>
-                    <div className={`mu-float${stuck ? ' in' : ''}`} aria-hidden={!stuck}>{stuck && banner}</div>
-                    <div ref={bannerRef}>{banner}</div>
-                  </>
-                );
-              })()}
               <h1>{preview.title}</h1>
               {/* the full path under the title; a long one loses its start, so the file name stays readable */}
               {/* the details row: date, apps, people, then the file in its folder (the path is in the tooltip) */}
@@ -639,6 +623,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
               <VersionList rel={preview.rel} stamp={stamp} viewing={version?.v.id ?? null} onView={viewVersion} />
             </NotePanel>
           </div>
+          </>
         ) : graph ? (
           <>
             <div className={`kb-stage ${health ? 'taken-over' : ''}`}>
