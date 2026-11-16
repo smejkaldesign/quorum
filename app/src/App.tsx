@@ -34,6 +34,7 @@ import { useNotetaker } from './flags';
 import { type RecordChoice } from './noteRecord';
 import { RecLevel } from './RecLevel';
 import { NotificationBell, NotificationsView } from './NotificationsView';
+import { Toaster } from './Toasts';
 import { IconFolderOpen, IconPerson, IconClose, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, IconRecord, Wave } from './icons';
 
 // one speaker turn as main.js built it; a turn that grows arrives again with the same id and replace: true
@@ -679,6 +680,7 @@ export function App() {
 
   return (
     <div className={`panel ${view === 'main' && tab === 'home' && convoOpen ? 'convo-wide' : ''}`}>
+      <Toaster />
       <header className="bar">
         <div className="brand static"><img src={mark} alt={window.quorum.isDev ? 'Quorum Dev' : 'Quorum'} /></div>
         <nav className="tabs" aria-label="Views">

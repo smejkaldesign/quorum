@@ -4,6 +4,7 @@ import markReview from '../assets/quorum-mark-review.png';
 import { IconArchive, IconBell, IconCheck, IconChevron, IconClose } from './icons';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
 import { Avatar } from './Speaker';
+import { toast } from './Toasts';
 import type { FeedKind, FeedPage, FeedRow, FeedSort, FeedTab, FixRun } from './quorum';
 
 const PAGE = 50;
@@ -64,10 +65,12 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
 }) {
   // a fix run opens its details, so its progress and outcome are in view
   const [open, setOpen] = useState(!!row.run?.showBanner);
+  // Approve pressed: the button turns into a spinner and the title shimmers until the row is answered
+  const [working, setWorking] = useState(false);
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const go = () => { if (!row.target.gone) onOpen(); };
   return (
-    <div className={`conn-row nf-row${row.unread ? ' unread' : ''}${row.review || row.run ? ' mh-row' : ''}${row.run && (row.run.status === 'running' || row.run.status === 'queued') ? ' running' : ''}`}>
+    <div className={`conn-row nf-row${row.unread ? ' unread' : ''}${row.review || row.run ? ' mh-row' : ''}${(row.run && (row.run.status === 'running' || row.run.status === 'queued')) || working ? ' running' : ''}${working ? ' working' : ''}`}>
       <div className="conn-line nf-line" role="button" tabIndex={0} aria-label={row.summary.line} onClick={go} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); go(); } }}>
         <label className="nf-check" onClick={stop}><input type="checkbox" checked={picked} aria-label="Select" onChange={onPick} /></label>
         {/* waiting for a decision shows the orange mark, Quorum's color for anything in review */}
@@ -85,7 +88,9 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
               <span className="mh-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>
               <span className="mh-hover">
                 <button className="icon-btn mh-icon mh-no" disabled={busy} aria-label="Dismiss" data-tip="Dismiss: mark it reviewed and change nothing" onClick={() => onDecide('dismiss')}><IconClose width={15} height={15} /></button>
-                <button className="icon-btn mh-icon mh-yes" disabled={busy} aria-label="Approve" data-tip={`Approve: ${row.summary.recommendation ?? ''}`} onClick={() => onDecide('approve')}><IconCheck width={16} height={16} /></button>
+                {working
+                  ? <span className="icon-btn mh-icon mh-busy" role="img" aria-label="Working"><i className="run-spin" /></span>
+                  : <button className="icon-btn mh-icon mh-yes" disabled={busy} aria-label="Approve" data-tip={`Approve: ${row.summary.recommendation ?? ''}`} onClick={() => { setWorking(true); onDecide('approve'); }}><IconCheck width={16} height={16} /></button>}
               </span>
             </span>
           )}
@@ -208,6 +213,9 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
     setBusy(false);
     setPicked(new Set());
     changed();
+    const one = picked.length === 1 ? `“${picked[0].target.title}”` : `${picked.length} items`;
+    const fixing = fixes.length && verdict === 'approve';
+    toast(verdict === 'dismiss' ? `Dismissed ${one}. Nothing changed.` : fixing ? `Approved ${one}. Quorum is fixing ${picked.length === 1 ? 'it' : 'them'} now.` : `Approved ${one}.`);
   };
 
   // archive or bring back rows; the list reloads so they leave this tab

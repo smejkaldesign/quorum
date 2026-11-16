@@ -2544,7 +2544,10 @@ function contextNote(issue) {
   const own = new Set(name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
   const says = (t) => (t.toLowerCase().match(/[a-z][a-z'’]{2,}/g) ?? []).filter((w) => !own.has(w)).length >= 3;
   const said = issue.contexts.map((c) => `- [[${c.rel.replace(/\.md$/i, '')}]]: ${says(c.text) ? c.text : (c.title ?? c.rel)}`);
-  return [`# ${name}`, '', `Quorum made this note because ${issue.notes === 1 ? 'one note links' : `${issue.notes} notes link`} to “${name}” and no note had that name. What ${issue.notes === 1 ? 'that note says' : 'those notes say'} about it:`, '', ...said, ''].join('\n');
+  // a source marked confidential passes its mark on, so the new note stays as private as what it quotes
+  const marks = issue.sources.map((r) => vindex?.note(r)?.props?.confidential).filter((v) => v != null && v !== false && !/^(false|no)$/i.test(String(v)));
+  const head = marks.length ? ['---', `confidential: ${String(marks[0])}`, '---', ''] : [];
+  return [...head, `# ${name}`, '', `Quorum made this note because ${issue.notes === 1 ? 'one note links' : `${issue.notes} notes link`} to “${name}” and no note had that name. What ${issue.notes === 1 ? 'that note says' : 'those notes say'} about it:`, '', ...said, ''].join('\n');
 }
 // Approve or Decline one Memory health issue, by its key. Approve takes the recommended action: add an alias, point
 // the links at the closest note, make the missing note in the inbox folder, or leave a link outside the vault as it is.

@@ -88,7 +88,9 @@ export function issueOf(m) {
   const linkWord = one ? 'link' : 'links';
   const them = one ? 'it' : 'them';
   const top = topFolder(m.sources ?? []);
-  const createIn = top?.folder ?? '';
+  // a new note goes where its linking notes live, leaving out notes at the vault root (indexes and logs), so what it
+  // quotes stays in the same area of the vault
+  const createIn = topFolder((m.sources ?? []).filter((s) => s.includes('/')))?.folder ?? '';
   const linking = m.count === 1 ? 'the linking note' : `the ${m.count} linking notes`;
   const why = c ? [
     c.shared?.length ? `shares the words ${list(c.shared.slice(0, 4).map(quote))}` : null,

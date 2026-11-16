@@ -11,6 +11,7 @@ import { fileIssues, healthMarks, issueOf, type Issue } from '../memoryHealth.js
 import { Graph, type GraphData, type GraphView } from './Graph';
 import { NotePanel, Palette, type PaletteItem, type PaletteMode } from './NoteTools';
 import { reportMemoryNote } from './navHistory';
+import { toast } from './Toasts';
 import { IssueDrawer, LinkHealth, acceptIssue, dismissIssue, leftOf, migrateLeft, waitFix } from './LinkHealth';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
@@ -291,9 +292,10 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
       if (approve) {
         const done = waitFix(item.issue.key);
         flash(await acceptIssue(item.issue));
+        toast(`Approved “${item.issue.target}”. Quorum is fixing it now.`);
         const run = await done;
         flash(run.status === 'success' ? run.outcome ?? 'Fixed' : run.error ?? 'Could not fix it');
-      } else flash(await dismissIssue(item.issue));
+      } else { flash(await dismissIssue(item.issue)); toast(`Dismissed “${item.issue.target}”. Nothing changed.`); }
       countIssues();
       await reloadOpen(preview.rel);
       const items = await loadIssues(preview.rel);

@@ -6,6 +6,7 @@ import { IconCheck, IconChevron, IconClose, IconReset } from './icons';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
 import { IssueParts, ReviewDetails, RunBanner } from './NotificationsView';
 import type { FixRun } from './quorum';
+import { toast } from './Toasts';
 
 // Memory health: links that point at a note that does not exist, one row per missing note, in the same list pattern
 // as Notifications. Each row states the issue, the problem it causes, what fixing it does and the recommended action,
@@ -54,6 +55,8 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const [done, setDone] = useState('');
   const [busy, setBusy] = useState(false);
   const [runs, setRuns] = useState<FixRun[]>([]);
+  // the issues whose Approve was pressed: a spinner in place of the button until their run takes over
+  const [approving, setApproving] = useState<Set<string>>(new Set());
   const load = useCallback((fresh = false) => { window.quorum.fixRuns().then(setRuns).catch(() => {}); return window.quorum.vaultLinkHealth(fresh).then(setItems); }, []);
   useEffect(() => { migrateLeft().finally(() => load()); }, [load]);
   useEffect(() => window.quorum.onVaultChanged(() => { load(); }), [load]);
@@ -86,6 +89,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   };
   // one or many issues decided; the list, the tree, the button count and Notifications all read again
   const decide = async (issues: Issue[], verdict: 'approve' | 'dismiss') => {
+    if (verdict === 'approve') setApproving(new Set(issues.map((i) => i.key)));
     setBusy(true);
     const lines: string[] = [];
     let firstError = '';
@@ -94,7 +98,11 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
       catch (e) { firstError ||= String(e).replace(/^.*Error:\s*/, ''); }
     }
     setBusy(false);
+    setApproving(new Set());
     const failed = issues.length - lines.length;
+    const one = issues.length === 1 ? `“${issues[0].target}”` : `${issues.length} issues`;
+    if (failed && !lines.length) toast(firstError || 'That did not work', 'error');
+    else toast(verdict === 'approve' ? `Approved ${one}. Quorum is fixing ${issues.length === 1 ? 'it' : 'them'} now.` : `Dismissed ${one}. Nothing changed.`);
     await after(issues.length === 1 ? (lines[0] ?? firstError) : `${verdict === 'approve' ? 'Approved' : 'Dismissed'} ${lines.length} of ${issues.length}${failed ? `. ${firstError}` : ''}`);
   };
   const back = async (issues: Issue[]) => {
@@ -112,7 +120,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const fold = (k: string) => setUnfolded((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const row = (i: Issue) => (
-    <div key={i.key} id={`lh-${i.key}`} className={`conn-row nf-row mh-row${focus?.toLowerCase() === i.key ? ' focus' : ''}`}>
+    <div key={i.key} id={`lh-${i.key}`} className={`conn-row nf-row mh-row${focus?.toLowerCase() === i.key ? ' focus' : ''}${approving.has(i.key) ? ' running working' : ''}`}>
       <div className="conn-line nf-line" role="button" tabIndex={0} aria-label={i.title} onClick={() => onReview(i)} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onReview(i); } }}>
         <label className="nf-check" onClick={stop}><input type="checkbox" checked={picked.has(i.key)} aria-label="Select" onChange={() => toggle(i.key)} /></label>
         <span className="nf-who"><img src={markReview} alt="Quorum, needs review" width={32} height={32} /></span>
@@ -128,7 +136,9 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
                 ? <button className="act-pill" disabled={busy} onClick={() => back([i])}>Move back to review</button>
                 : <>
                     <button className="icon-btn mh-icon mh-no" disabled={busy} aria-label="Dismiss" data-tip="Dismiss: mark it reviewed and change nothing" onClick={() => decide([i], 'dismiss')}><IconClose width={15} height={15} /></button>
-                    <button className="icon-btn mh-icon mh-yes" disabled={busy || locked(i)} aria-label="Approve" data-tip={locked(i) ? 'Waits until the run writing these notes finishes' : `Approve: ${i.recommend}`} onClick={() => decide([i], 'approve')}><IconCheck width={16} height={16} /></button>
+                    {approving.has(i.key)
+                      ? <span className="icon-btn mh-icon mh-busy" role="img" aria-label="Working"><i className="run-spin" /></span>
+                      : <button className="icon-btn mh-icon mh-yes" disabled={busy || locked(i)} aria-label="Approve" data-tip={locked(i) ? 'Waits until the run writing these notes finishes' : `Approve: ${i.recommend}`} onClick={() => decide([i], 'approve')}><IconCheck width={16} height={16} /></button>}
                   </>}
             </span>
           </span>

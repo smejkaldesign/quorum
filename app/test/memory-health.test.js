@@ -108,3 +108,10 @@ describe('memory health write-up for a single link', () => {
     expect(i.effect).toBe('The words stay in the text and the dead link goes. The agent stops following it, and the graph drops the empty node.');
   });
 });
+
+describe('where a written note goes', () => {
+  it('goes to the folder its linking notes share, leaving out notes at the vault root', () => {
+    expect(issueOf(link('X', ['index.md', 'memory/drift.md', '05-knowledge/notable/a.md', '05-knowledge/notable/b.md'])).createIn).toBe('05-knowledge/notable');
+    expect(issueOf(link('Y', ['index.md'])).createIn).toBe('');
+  });
+});
