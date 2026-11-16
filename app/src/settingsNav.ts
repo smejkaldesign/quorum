@@ -41,7 +41,8 @@ export type VoiceMode = 'voice' | 'dictionary' | null;
 export const voiceMode = (dictation: boolean, manualListen: boolean): VoiceMode => (dictation ? 'voice' : manualListen ? 'dictionary' : null);
 // the pages a build's flags take out of the navs; resolvePage sends a remembered one elsewhere. The guardrails flag
 // hides only the Guardrails page; the built-in guards run either way
-export const flagHiddenPages = (mode: VoiceMode, guardrails = true): Page[] => [...(mode ? [] : ['voice' as const]), ...(guardrails ? [] : ['guardrails' as const])];
+// the workspace's Guardrails page holds only organization and team rules, so it goes with the custom rules flag
+export const flagHiddenPages = (mode: VoiceMode, guardrails = true, custom = true): Page[] => [...(mode ? [] : ['voice' as const]), ...(guardrails ? [] : ['guardrails' as const]), ...(guardrails && custom ? [] : ['org-guardrails' as const])];
 
 // a remembered or requested page has to fit the nav allowed to show it; a page the flags hide lands on the first page
 // of its own nav (Preferences, or General for an admin page); Profile folded into Preferences some time ago,
