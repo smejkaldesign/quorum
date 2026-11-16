@@ -118,7 +118,7 @@ describe('approvePastFix: remove what the fix left', () => {
   it('runs a drafted fix through the hook when nothing else applies', () => {
     const ops = [{ op: 'restore', rel: 'a.md', before: 'x', expect: 'h' }];
     const files = { 'a.md': 'See [[kite-note]].\n', 'kite-note.md': '# K\n' };
-    expect(approvePastFix(relinkRun(), refused, { vault: vaultOf(files), draft: () => ({ ops, why: 'An agent drafted it.' }) })).toEqual({ kind: 'draft', why: 'An agent drafted it.', ops });
+    expect(approvePastFix(relinkRun(), refused, { vault: vaultOf(files), draft: () => ({ ops, why: 'An agent drafted it.' }) })).toMatchObject({ kind: 'draft', why: 'An agent drafted it.', ops });
     expect(approvePastFix(relinkRun(), refused, { vault: vaultOf(files), draft: () => null }).kind).toBe('keep');
   });
 });

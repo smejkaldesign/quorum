@@ -154,10 +154,13 @@ describe('the drafter', () => {
   it('drafts once per item and keeps the draft while its notes read the same', async () => {
     const { d, calls, notes } = setup();
     expect((await d.tick()).drafted).toBe('r:link:zephyr');
-    expect((await d.tick()).skipped).toBe('nothing');
-    expect(calls).toHaveLength(1);
     const ev = () => evidenceRels(createItem).map((rel) => ({ rel, text: notes[rel] }));
-    expect(d.draftFor(createItem, ev())).toMatchObject({ kind: 'create', confidence: 'high' });
+    expect(d.draftFor(createItem, ev()).confirmed).toBeUndefined();
+    // the next tick drafts the same item again, independently, to confirm the first draft
+    expect(await d.tick()).toEqual({ confirmed: 'r:link:zephyr', agree: true });
+    expect((await d.tick()).skipped).toBe('nothing');
+    expect(calls).toHaveLength(2);
+    expect(d.draftFor(createItem, ev())).toMatchObject({ kind: 'create', confidence: 'high', confirmed: true });
     notes['notes/a.md'] = '# A\nchanged';
     expect(d.draftFor(createItem, ev())).toBeNull();
   });
