@@ -19,6 +19,8 @@ import { aliasText } from './relink.js';
 export const DAILY_CAP = 40;
 export const QUIET_MS = 2 * 60000;
 export const CONFIDENCE = ['high', 'medium', 'low'];
+// why a link waits when the agent read its notes and says Quorum's match is wrong
+export const WRONG_NOTE = 'The agent found this is the wrong note';
 const MAX_TEXT = 20000;
 const MAX_NOTE = 12000;
 const RETRY_MS = 24 * 3600000;
@@ -154,7 +156,7 @@ export function withDraft(item, draft, textOf, aliasesOf = () => []) {
   const view = { kind: draft.kind, confidence: draft.confidence, quotes: draft.quotes, verified: draft.verified, at: draft.at ?? null };
   const out = { ...item, draft: view, autoFix: false };
   if (draft.kind === 'create') return { ...out, draft: { ...view, text: draft.text }, ops: item.ops.map((o, i) => (i ? o : { ...o, text: draft.text })) };
-  if (draft.kind === 'point') return draft.to ? out : { ...out, ops: [], hold: 'The agent read the notes and says the links do not mean the note Quorum picked.' };
+  if (draft.kind === 'point') return draft.to ? out : { ...out, ops: [], hold: WRONG_NOTE };
   if (draft.kind === 'merge') {
     const keepText = textOf(draft.keep);
     if (keepText == null || textOf(draft.drop) == null) return { ...out, ops: [], hold: 'A note in the draft is gone.' };

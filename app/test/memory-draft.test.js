@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildPlan, checkFirst } from '../batchPlan.js';
-import { checkDraft, createDrafter, draftKind, draftPrompt, evidenceRels, trustedDraft, verifyQuotes, withDraft } from '../memoryDraft.js';
+import { WRONG_NOTE, checkDraft, createDrafter, draftKind, draftPrompt, evidenceRels, trustedDraft, verifyQuotes, withDraft } from '../memoryDraft.js';
 
 // Synthetic items and notes; every name and line is made up. The model is always a fake
 const createItem = { id: 'r:link:zephyr', kind: 'link', key: 'zephyr', target: 'zephyr', title: 'zephyr', reviewOnly: true, ops: [{ op: 'create', rel: 'notes/zephyr.md', sources: ['notes/a.md', 'notes/b.md'] }] };
@@ -67,7 +67,19 @@ describe('quote checks', () => {
     expect(checkDraft(pointItem, notes, reply({ kind: 'point', to: 'notes/orbit-plan.md', quotes: q, confidence: 'medium' })).draft.to).toBe('notes/orbit-plan.md');
     expect(checkDraft(pointItem, notes, reply({ kind: 'point', to: 'notes/elsewhere.md', quotes: q, confidence: 'high' })).why).toMatch(/did not offer/);
     const no = checkDraft(pointItem, notes, reply({ kind: 'point', to: null, quotes: q, confidence: 'high' })).draft;
-    expect(withDraft(pointItem, no, () => '').hold).toMatch(/do not mean/);
+    expect(withDraft(pointItem, no, () => '').hold).toBe(WRONG_NOTE);
+  });
+
+  it('holds a wrong-match link out of the bulk plan instead of running Quorum\'s fix', () => {
+    const notes = [A, { rel: 'notes/orbit-plan.md', text: '# Orbit plan\nThe orbit plan.' }];
+    const q = [{ path: 'notes/orbit-plan.md', line: 2, text: 'The orbit plan.' }];
+    const no = checkDraft(pointItem, notes, reply({ kind: 'point', to: null, quotes: q, confidence: 'high' })).draft;
+    const item = withDraft(pointItem, no, () => '');
+    expect(item.ops).toEqual([]);
+    expect(item.autoFix).toBe(false);
+    const plan = buildPlan([{ ...item, hashes: {} }]);
+    expect(plan.ok).toEqual([]);
+    expect(plan.held).toEqual([expect.objectContaining({ id: pointItem.id, reason: WRONG_NOTE })]);
   });
 });
 

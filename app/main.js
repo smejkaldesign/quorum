@@ -2922,6 +2922,7 @@ function startFixes(keys, { bulk = keys.length > 1 } = {}) {
   const started = [];
   // a bulk Approve is one batch: the window shows its progress from the runs, even after leaving the page and coming back
   const batch = keys.length > 1 ? `b:${Date.now()}` : null;
+  const draftHolds = linkDraftHolds();
   for (const k of keys) {
     const key = String(k ?? '').toLowerCase();
     if (!key) continue;
@@ -2931,6 +2932,9 @@ function startFixes(keys, { bulk = keys.length > 1 } = {}) {
     if (!entry) continue;
     const i = issueOf(withMarks(entry));
     if (bulk && i.reviewOnly) continue;
+    // a link whose stored draft says Quorum's match is the wrong note never runs Quorum's fix: a single Approve says why
+    const held = draftHolds.get(key);
+    if (held) { if (!bulk) throw new Error(held); continue; }
     const run = {
       id: `fix:${key}:${Date.now()}`, key, target: i.target, title: i.title, rel: i.path, vault: brain()?.vault ?? '', status: 'queued', queuedAt: Date.now(), startedAt: null, endedAt: null,
       steps: [], outcome: null, error: null, dismissedAt: null, batch,
@@ -3243,6 +3247,11 @@ function mergeBreaksLinks(keep, drop) {
   const broken = from.filter((r) => vindex.outgoing(r).some((l) => l.rel === drop && resolve(l.target, r) !== keep));
   return broken.length ? `${broken.length === 1 ? `${broken[0]} links` : `${broken.length} notes link`} to ${drop} in a way the merged note would not answer. Point those links at ${keep} first.` : null;
 }
+// link key -> why its stored draft holds it back (the agent found the match is the wrong note)
+function linkDraftHolds() {
+  if (settings.memoryDrafts !== true) return new Map();
+  return new Map(reviewItems().filter((i) => i.kind === 'link' && i.draft && i.hold).map((i) => [String(i.key).toLowerCase(), i.hold]));
+}
 // the agent's fix for a review item, or null: the item with its stored draft applied while drafting is on, the draft's
 // notes are unchanged and its quotes still match. Other Approve paths (a past fix Quorum cannot undo exactly) call it
 function draftFix(item) {
@@ -3336,7 +3345,7 @@ ipcMain.handle('memory-draft-status', () => drafter.status());
 function draftViews() {
   const out = {};
   if (settings.memoryDrafts !== true) return out;
-  for (const i of reviewItems()) if (i.draft) out[i.id] = { ...i.draft, line: itemLine(i), check: !!checkFirst(i) };
+  for (const i of reviewItems()) if (i.draft) out[i.id] = { ...i.draft, line: itemLine(i), check: !!checkFirst(i), hold: i.hold ?? null };
   return out;
 }
 // the plan as the bulk plan sheet shows it: every group with each item ticked or not, and what was merged, skipped and

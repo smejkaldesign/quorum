@@ -18,6 +18,7 @@ export function DraftEvidence({ draft, compact = false }: { draft: MemoryDraft; 
         <span className={`md-conf ${draft.confidence}`}>{CONFIDENCE[draft.confidence]}</span>
         {!compact && <span className="muted">{WHAT[draft.kind]}</span>}
       </div>
+      {draft.hold && <p className="md-hold" role="status">{draft.hold}. Quorum will not run its own fix; archive the link or fix it by hand.</p>}
       <ul className="md-quotes" aria-label="Quoted evidence">
         {draft.quotes.map((q, i) => (
           <li key={`${q.path}:${q.line}:${i}`}>

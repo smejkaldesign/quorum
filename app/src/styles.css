@@ -2759,6 +2759,7 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .md-draft { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--card-2); display: grid; gap: 8px; font-size: 13px; }
 .md-draft.compact { margin: 6px 0 2px 24px; padding: 8px 10px; }
 .md-draft-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.md-hold { margin: 0; font-size: 13px; color: var(--text); }
 .md-conf { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line-2); color: var(--text); }
 .md-conf.high { border-color: rgba(var(--ok-rgb), 0.5); background: rgba(var(--ok-rgb), 0.12); }
 .md-conf.medium { border-color: rgba(var(--review-rgb), 0.5); background: rgba(var(--review-rgb), 0.12); }
