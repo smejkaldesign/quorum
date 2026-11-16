@@ -1,26 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import markProd from '../assets/quorum-mark.png';
-import { IconArchive, IconBell, IconCheck, IconChevron, IconClose, IconSearch } from './icons';
-import { useMenu } from './controls';
-import type { FeedKind, FeedPage, FeedRow, FeedSort, FeedTab } from './quorum';
+
+import { IconArchive, IconBell, IconCheck, IconChevron, IconClose, IconMore, IconReset } from './icons';
+import { PickMenu, SearchButton, SearchField } from './FilterBar';
+import { Avatar } from './Speaker';
+import { toast } from './Toasts';
+import type { FeedKind, FeedPage, FeedRow, FeedSort, FeedTab, FixRun } from './quorum';
 
 const PAGE = 50;
 const TABS: [FeedTab, string][] = [['all', 'All'], ['unread', 'Unread'], ['archived', 'Archived']];
 // the event types the Type filter offers, the same list as activityFeed.js
 const KINDS: [FeedKind, string][] = [
   ['note-written', 'Wrote a note'], ['note-updated', 'Updated a note'], ['filed', 'Filed and linked'], ['referenced', 'Referenced'],
-  ['memory-created', 'Created a memory'], ['memory-updated', 'Updated a memory'], ['imported', 'Imported'], ['guardrail', 'Guardrail blocked'], ['you', 'Your changes'],
+  ['memory-created', 'Created a memory'], ['memory-updated', 'Updated a memory'], ['imported', 'Imported'], ['guardrail', 'Guardrail blocked'], ['memory-health', 'Memory health'], ['you', 'Your changes'],
 ];
 const KIND_LABEL = Object.fromEntries(KINDS) as Record<FeedKind, string>;
 // Urgency is a future sort; it waits for a score per row (activityFeed.js)
 const SORTS: [FeedSort, string][] = [['unread', 'Unread first'], ['recent', 'Recent'], ['az', 'A to Z']];
 const CHANGED = 'quorum:activity-changed';
 
-const ago = (at: number) => {
+export const ago = (at: number) => {
   const s = Math.max(0, (Date.now() - at) / 1000);
   if (s < 60) return 'just now';
-  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return new Date(at).toLocaleDateString([], { month: 'short', day: 'numeric' });
 };
 
@@ -33,7 +36,7 @@ function useActivityRefresh(fn: () => void) {
   useEffect(() => {
     const go = () => ref.current();
     go();
-    const offs = [window.quorum.onKeeper?.(go), window.quorum.onMemoryUpdates?.(go), window.quorum.onVaultChanged?.(go), window.quorum.onSettings?.(go)];
+    const offs = [window.quorum.onKeeper?.(go), window.quorum.onMemoryUpdates?.(go), window.quorum.onVaultChanged?.(go), window.quorum.onSettings?.(go), window.quorum.onFixRun?.(go)];
     window.addEventListener(CHANGED, go);
     window.addEventListener('quorum:memory-seen', go);
     const t = window.setInterval(go, 60000);
@@ -57,45 +60,88 @@ export function NotificationBell({ active, onOpen }: { active: boolean; onOpen: 
 
 // the row's ⋯ menu: Open, Mark read or unread, and Approve and Disapprove on a row waiting for a decision. It closes on
 // a click anywhere else or Escape
-function Row({ row, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide, onArchive }: {
-  row: FeedRow; picked: boolean; busy: boolean; onPick: () => void; onOpen: () => void; onOpenFile: (abs: string) => void; onMark: (unread: boolean) => void; onDecide: (v: 'approve' | 'reject') => void; onArchive: (on: boolean) => void;
+function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide, onArchive }: {
+  row: FeedRow; me: { name: string; photo: string | null }; picked: boolean; busy: boolean; onPick: () => void; onOpen: () => void; onOpenFile: (abs: string) => void; onMark: (unread: boolean) => void; onDecide: (v: 'approve' | 'dismiss') => void | Promise<void>; onArchive: (on: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  // a fix run opens its details, so its progress and outcome are in view
+  const [open, setOpen] = useState(!!row.run?.showBanner);
+  // Approve pressed: the button turns into a spinner and the title shimmers until the fix starts; the run's own state
+  // takes over from there, so a fix that fails or never starts does not leave the spinner on
+  const [pressed, setWorking] = useState(false);
+  // the row stays where it is, its buttons showing and the spinner on, until the fix ends
+  const working = pressed || !!row.fixRun;
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const go = () => { if (!row.target.gone) onOpen(); };
   return (
-    <div className={`conn-row nf-row${row.unread ? ' unread' : ''}`}>
+    <div className={`conn-row nf-row${row.unread ? ' unread' : ''}${row.review || row.run ? ' mh-row' : ''}${(row.run && (row.run.status === 'running' || row.run.status === 'queued')) || working ? ' running' : ''}${working ? ' working' : ''}`}>
       <div className="conn-line nf-line" role="button" tabIndex={0} aria-label={row.summary.line} onClick={go} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); go(); } }}>
         <label className="nf-check" onClick={stop}><input type="checkbox" checked={picked} aria-label="Select" onChange={onPick} /></label>
-        <span className="nf-who">{row.who === 'you' ? <span className="nf-you" aria-label="You">You</span> : <img src={markProd} alt="Quorum" width={32} height={32} />}</span>
+        {/* waiting for a decision shows the orange mark, Quorum's color for anything in review */}
+        <span className="nf-who">{row.who === 'you' ? <span className="nf-you-avatar" aria-label="You" data-tip={me.name}><Avatar name={me.name} photo={me.photo} size={32} /></span> : <img src={markProd} alt={row.review ? 'Quorum, needs review' : 'Quorum'} width={32} height={32} />}</span>
         <span className="nf-main">
-          <span className="nf-head"><strong className="conn-title nf-title">{row.summary.line}</strong>{row.unread && <i className="nf-dot" role="img" aria-label="Unread" data-tip="Unread" />}</span>
-          <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>{row.summary.sub && <> <span className="nf-sep" aria-hidden="true">•</span> {row.summary.sub}</>}</span>
+          <span className="nf-head"><strong className="conn-title nf-title" data-tip={row.review || row.run ? row.summary.line : undefined}>{row.summary.line}</strong>{row.unread && !row.archived && <i className="nf-dot" role="img" aria-label="Unread" data-tip="Unread" />}</span>
+          {(row.review || row.run) && <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span></span>}
+          {!row.review && !row.run && <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>{row.summary.sub && <> <span className="nf-sep" aria-hidden="true">•</span> {row.summary.sub}</>}</span>}
         </span>
-        <span className="nf-side">
+        <span className={`nf-side${row.review || row.run ? ' mh-side' : ''}`}>
+          {/* the item's state on the right; on hover its actions slide in over it */}
+          {row.run && (
+            <StatusSwap status={runStatus(row.run)}>
+              {row.run.status === 'success' && <UndoMenu run={row.run} />}
+            </StatusSwap>
+          )}
+          {row.review && row.archived && (
+            <StatusSwap status="dismissed"><RowMenu label="Move back to review" onPick={() => onArchive(false)} /></StatusSwap>
+          )}
+          {row.review && !row.archived && (
+            <span className="mh-swap" onClick={stop} onKeyDown={stop}>
+              <span className="mh-when"><StatusBadge status={row.fixRun?.status === 'queued' ? 'waiting' : 'review'} /></span>
+              <span className="mh-hover">
+                <button className="icon-btn mh-icon" disabled={busy || working} aria-label="Archive" data-tip="Archive: set it aside without fixing it" onClick={() => onArchive(true)}><IconArchive width={16} height={16} /></button>
+                {working
+                  ? <span className="icon-btn mh-icon mh-busy" role="img" aria-label="Working"><i className="run-spin" /></span>
+                  : <button className="icon-btn mh-icon mh-yes" disabled={busy} aria-label="Approve" data-tip={`Approve: ${row.summary.recommendation ?? ''}`} onClick={() => { setWorking(true); Promise.resolve(onDecide('approve')).finally(() => setWorking(false)); }}><IconCheck width={16} height={16} /></button>}
+              </span>
+            </span>
+          )}
           <span className="nf-tools" onClick={stop} onKeyDown={stop}>
-            {!row.archived && <button className="act-pill nf-markbtn" disabled={busy} onClick={() => onMark(!row.unread)}>{row.unread ? 'Mark read' : 'Mark unread'}</button>}
-            <button className="icon-btn nf-markbtn nf-archive" disabled={busy} aria-label={row.archived ? 'Unarchive' : 'Archive'} data-tip={row.archived ? 'Unarchive' : 'Archive'} onClick={() => onArchive(!row.archived)}><IconArchive width={16} height={16} /></button>
-            {row.review && (
-              <>
-                <button className={`act-pill${row.summary.ask?.suggest === 'approve' ? ' primary' : ''}`} disabled={busy} onClick={() => onDecide('approve')}>Approve</button>
-                <button className={`act-pill${row.summary.ask?.suggest === 'reject' ? ' primary' : ''}`} disabled={busy} data-tip={row.review.kind === 'memory' ? 'Put back the text from before these updates' : row.review.kind === 'junk-note' ? 'Keep this note' : 'Mark this note rejected'} onClick={() => onDecide('reject')}>Disapprove</button>
-              </>
+            {!row.review && !row.run && (
+              // the hover tools slide in from the right and back out, the way Home's row actions do
+              <span className="nf-hover">
+                {!row.archived && <button className="act-pill" disabled={busy} onClick={() => onMark(!row.unread)}>{row.unread ? 'Mark read' : 'Mark unread'}</button>}
+                <button className="icon-btn nf-archive" disabled={busy} aria-label={row.archived ? 'Unarchive' : 'Archive'} data-tip={row.archived ? 'Unarchive' : 'Archive'} onClick={() => onArchive(!row.archived)}><IconArchive width={16} height={16} /></button>
+              </span>
             )}
             <button className={`icon-btn conn-fold${open ? ' open' : ''}`} aria-expanded={open} aria-label={open ? 'Hide details' : 'Show details'} onClick={() => setOpen((o) => !o)}><IconChevron width={14} height={14} /></button>
           </span>
         </span>
       </div>
-      {open && (
-        <div className="conn-sub conn-fold-body nf-details">
-          <dl>
-            {row.details.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
-            {row.files.length > 0 && (
-              <div><dt>Linked memories</dt><dd className="aa-files">{row.files.map((f) => <button key={f.abs} className="keeper-link" data-tip={f.rel} onClick={() => onOpenFile(f.abs)}>{f.title ?? f.label}</button>)}</dd></div>
+      {/* the details grow open and shut */}
+      <div className={`fold-anim${open ? ' open' : ''}`} aria-hidden={!open}>
+        <div className="fold-inner">
+          <div className="conn-sub conn-fold-body nf-details">
+            {row.run ? (
+              <>
+                <RunBanner run={row.run} />
+                <ReviewDetails problem={row.run.problem} solution={row.run.solution} value={row.run.value} meta={row.run.meta} />
+              </>
+            ) : row.review ? (
+              <>
+                {row.fixRun && <RunBanner run={row.fixRun} />}
+                <ReviewDetails recommendation={row.fixRun ? undefined : row.summary.recommendation} problem={row.summary.problem} solution={row.summary.solution} value={row.summary.value}
+                  meta={row.review.kind === 'link' ? row.details.filter(([k]) => k !== 'What' && k !== 'When' && k !== 'History') : row.details.filter(([k]) => k !== 'History')} />
+              </>
+            ) : (
+              <dl>
+                {row.details.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
+                {row.files.length > 0 && (
+                  <div><dt>Linked memories</dt><dd className="aa-files">{row.files.map((f) => <button key={f.abs} className="keeper-link" data-tip={f.rel} onClick={() => onOpenFile(f.abs)}>{f.title ?? f.label}</button>)}</dd></div>
+                )}
+              </dl>
             )}
-          </dl>
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -104,7 +150,8 @@ function Row({ row, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide, 
 // referenced, memories they created and updated, imports, each guardrail block) and the person's own changes. All and
 // Unread are the tabs; Needs review narrows either to the items waiting for a decision. Type picks event types, each
 // a chip to remove; Sort orders the list. Opening a row marks it read
-export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote: (abs: string) => void; onOpenGuardrails: () => void }) {
+// me: the person's name and photo, for the rows they made
+export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { name: string; photo: string | null }; onOpenNote: (abs: string) => void; onOpenGuardrails: () => void }) {
   const [tab, setTab] = useState<FeedTab>('all');
   const [review, setReview] = useState(false);
   const [kinds, setKinds] = useState<FeedKind[]>([]);
@@ -151,21 +198,37 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
   const open = (r: FeedRow) => {
     mark([r]);
     if (r.target.kind === 'guardrail') onOpenGuardrails();
+    else if (r.review?.kind === 'link') window.dispatchEvent(new CustomEvent('quorum:open-health', { detail: r.review.key }));
     else if (r.target.kind === 'note') onOpenNote(r.target.abs);
     else window.dispatchEvent(new CustomEvent('quorum:open-memory', { detail: r.target.abs }));
   };
-  const decide = async (rows: FeedRow[], verdict: 'approve' | 'reject') => {
-    const list = rows.filter((r) => r.review).map((r) => ({ kind: r.review!.kind, abs: r.target.abs }));
-    if (!list.length) return;
+  // Approve takes each row's recommendation (for a large memory rewrite that is putting back the earlier text);
+  // Dismiss marks rows reviewed and changes nothing
+  const decide = async (rows: FeedRow[], verdict: 'approve' | 'dismiss') => {
+    const picked = rows.filter((r) => r.review);
+    if (!picked.length) return;
+    const groups = new Map<'approve' | 'revert' | 'dismiss', { kind: NonNullable<FeedRow['review']>['kind']; abs: string; key?: string }[]>();
+    const fixes = picked.filter((r) => verdict === 'approve' && r.review!.kind === 'link').map((r) => r.review!.key!);
+    if (fixes.length) await window.quorum.fixStart(fixes).catch(() => []);
+    for (const r of picked) {
+      if (verdict === 'approve' && r.review!.kind === 'link') continue;
+      const v = verdict === 'dismiss' ? 'dismiss' : r.summary.ask?.suggest === 'reject' ? 'revert' : 'approve';
+      groups.set(v, [...(groups.get(v) ?? []), { kind: r.review!.kind, abs: r.target.abs, key: r.review!.key }]);
+    }
+    const list = picked;
     setBusy(true);
     setError(null);
     try {
-      const r = await window.quorum.activityReview(list, verdict);
-      if (r.failed.length) setError(`${r.failed.length} of ${list.length} could not be ${verdict === 'approve' ? 'approved' : 'disapproved'}: ${r.failed[0].error}`);
+      const failed: { abs: string; error: string }[] = [];
+      for (const [v, items] of groups) if (items.length) failed.push(...(await window.quorum.activityReview(items, v)).failed);
+      if (failed.length) setError(`${failed.length} of ${list.length} could not be ${verdict === 'approve' ? 'approved' : 'dismissed'}: ${failed[0].error}`);
     } catch (e) { setError((e as Error).message); }
     setBusy(false);
     setPicked(new Set());
     changed();
+    const one = picked.length === 1 ? `“${picked[0].target.title}”` : `${picked.length} items`;
+    const fixing = fixes.length && verdict === 'approve';
+    toast(verdict === 'dismiss' ? `Dismissed ${one}. Nothing changed.` : fixing ? `Approved ${one}. Quorum is fixing ${picked.length === 1 ? 'it' : 'them'} now.` : `Approved ${one}.`);
   };
 
   // archive or bring back rows; the list reloads so they leave this tab
@@ -173,12 +236,16 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
     if (!rows.length) return;
     await window.quorum.activityArchive(rows.map((r) => ({ id: r.id })), on).catch(() => 0);
     changed();
+    // archiving a review item sets it aside without fixing it; it waits under Archived until it is moved back
+    const reviews = rows.filter((r) => r.review);
+    const one = (xs: FeedRow[]) => (xs.length === 1 ? `“${xs[0].target.title}”` : `${xs.length} items`);
+    if (reviews.length) toast(on ? `Archived ${one(reviews)} without fixing it. It is under Archived when you want it again.` : `Moved ${one(reviews)} back to review.`);
   };
 
   const counts = page?.counts;
   const filtered = !!(q || kinds.length);
   const empty = filtered ? 'No notifications match these filters.'
-    : review ? 'Nothing waits for your review. Notes Quorum writes and memory updates waiting for approval show up here.'
+    : review ? 'Nothing waits for your review. The Quorum agent keeps watching your memories and lists new ways to improve them here as they come up.'
       : tab === 'archived' ? 'Nothing archived. Archived notifications stay here, out of your list.'
       : tab === 'unread' ? 'You are all caught up. New agent activity shows up here.'
         : 'No activity yet. Quorum lists what its agents do with your notes and memories here.';
@@ -195,21 +262,15 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
           })}
         </div>
         <button className={`nf-toggle${review ? ' on' : ''}`} aria-pressed={review} onClick={() => setReview((r) => !r)}>
-          Needs review{counts?.review ? <span className="nf-count">{counts.review}</span> : null}
+          Needs review{counts?.review ? <span className="nf-count review">{counts.review}</span> : null}
         </button>
         <span className="nf-fill" />
-        <button className={`icon-btn nf-search-btn${searching || q ? ' on' : ''}`} aria-label="Search notifications" aria-expanded={searching || !!q} data-tip="Search" onClick={() => { if (searching || q) { setQ(''); setSearching(false); } else { setSearching(true); window.setTimeout(() => searchRef.current?.focus(), 60); } }}><IconSearch width={16} height={16} /></button>
+        <SearchButton open={searching || !!q} label="Search notifications" onToggle={() => { if (searching || q) { setQ(''); setSearching(false); } else { setSearching(true); window.setTimeout(() => searchRef.current?.focus(), 60); } }} />
         <PickMenu label="Type" count={kinds.length} multi options={KINDS} picked={kinds} onPick={(k) => setKinds(kinds.includes(k) ? kinds.filter((x) => x !== k) : [...kinds, k])} />
         <PickMenu label={SORTS.find(([id]) => id === sort)?.[1] ?? 'Sort'} options={SORTS} picked={[sort]} onPick={(v) => setSort(v)} />
       </div>
       {/* search opens below the bar from its icon button, focused; the list filters as you type */}
-      <div className={`nf-search-wrap${searching || q ? ' open' : ''}`} aria-hidden={!(searching || q)}>
-        <label className="nf-search">
-          <IconSearch width={16} height={16} />
-          <input ref={searchRef} value={q} tabIndex={searching || q ? 0 : -1} placeholder="Search notifications" aria-label="Search notifications" onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') { setQ(''); setSearching(false); } }} />
-          <button className="icon-btn nf-search-x" tabIndex={searching || q ? 0 : -1} aria-label="Close search" onClick={(e) => { e.preventDefault(); setQ(''); setSearching(false); }}><IconClose width={16} height={16} /></button>
-        </label>
-      </div>
+      <SearchField open={searching || !!q} inputRef={searchRef} value={q} placeholder="Search notifications" onChange={setQ} onClose={() => { setQ(''); setSearching(false); }} />
       {kinds.length > 0 && (
         <div className="nf-chips" aria-label="Type filters">
           {kinds.map((k) => (
@@ -224,17 +285,17 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
           <span className="muted">{sel.length ? `${sel.length} selected` : 'Select all'}</span>
           {/* the actions appear once something is picked; the bar keeps its height either way */}
           <span className={`nf-bulk-actions${sel.length ? '' : ' hidden'}`} aria-hidden={!sel.length}>
-            <button className="act-pill primary" disabled={busy || !selReview.length} onClick={() => decide(selReview, 'approve')}>Approve</button>
-            <button className="act-pill" disabled={busy || !selReview.length} data-tip="Memory updates go back to the text from before them; a note Quorum wrote is marked rejected" onClick={() => decide(selReview, 'reject')}>Disapprove</button>
+            {/* left to right: Archive, Mark read, Dismiss, and Approve as the primary action on the far right */}
+            <button className="icon-btn mh-icon" disabled={busy} aria-label={tab === 'archived' ? 'Unarchive' : 'Archive'} data-tip={tab === 'archived' ? 'Unarchive' : 'Archive'} onClick={async () => { await archive(sel, tab !== 'archived'); setPicked(new Set()); }}><IconArchive width={16} height={16} /></button>
             <button className="act-pill" disabled={busy || !sel.some((r) => r.unread)} onClick={async () => { await mark(sel); setPicked(new Set()); }}>Mark read</button>
-            <button className="act-pill" disabled={busy} onClick={async () => { await archive(sel, tab !== 'archived'); setPicked(new Set()); }}>{tab === 'archived' ? 'Unarchive' : 'Archive'}</button>
+            <button className="act-pill primary" disabled={busy || !selReview.length} onClick={() => decide(selReview, 'approve')}>Approve</button>
           </span>
         </div>
       )}
       {error && <p className="nf-error" role="alert">{error}</p>}
       <div className="nf-list">
         {items.map((r) => (
-          <Row key={r.id} row={r} picked={picked.has(r.id)} busy={busy} onPick={() => toggle(r.id)} onOpen={() => open(r)}
+          <Row key={r.id} row={r} me={me} picked={picked.has(r.id)} busy={busy} onPick={() => toggle(r.id)} onOpen={() => open(r)}
             onOpenFile={(abs) => { mark([r]); window.dispatchEvent(new CustomEvent('quorum:open-memory', { detail: abs })); }}
             onMark={(unread) => mark([r], unread)} onDecide={(v) => decide([r], v)} onArchive={(on) => archive([r], on)} />
         ))}
@@ -245,24 +306,118 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
   );
 }
 
-// A pill button that opens Quorum's own menu: one pick (Sort) or several (Type, with a blue count of the picks). The
-// button is as wide as its label
-function PickMenu<T extends string>({ label, count = 0, multi = false, options, picked, onPick }: { label: string; count?: number; multi?: boolean; options: [T, string][]; picked: T[]; onPick: (v: T) => void }) {
-  const [open, setOpen] = useMenu();
+// One review, the same block in Notifications, Memory health and the note's drawer: the recommendation in its own card,
+// then the problem, solution and value that explain it, then a divider and the facts
+export function ReviewDetails({ recommendation, problem, solution, value, meta }: { recommendation?: string; problem?: string; solution?: string; value?: string; meta?: [string, string][] }) {
+  const why: [string, string][] = ([['Problem', problem], ['Solution', solution], ['Value', value]] as [string, string | undefined][]).filter((x): x is [string, string] => !!x[1]);
   return (
-    <span className="menu-wrap nf-pick-wrap">
-      <button className={`nf-pick${open ? ' open' : ''}`} aria-haspopup="menu" aria-expanded={open} onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}>
-        {label}{count > 0 && <span className="nf-badge" aria-label={`${count} selected`}>{count}</span>}<IconChevron width={13} height={13} />
-      </button>
+    <div className="rv-details">
+      {recommendation && <div className="rv-card"><p><strong>Recommendation:</strong> {recommendation}</p></div>}
+      {why.length > 0 && <IssueParts parts={why} />}
+      {meta && meta.length > 0 && <dl className="mh-parts rv-meta">{meta.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>}
+    </div>
+  );
+}
+
+// label and text pairs, the labels lined up with the summary text
+export function IssueParts({ parts }: { parts: [string, string][] }) {
+  return <dl className="mh-parts">{parts.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>;
+}
+
+// the time a run has taken, in seconds under a minute
+export const took = (ms: number) => (ms < 1000 ? `${Math.max(ms, 1)} ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60000)} min ${Math.round((ms % 60000) / 1000)} s`);
+
+// A fix run in progress, then its outcome: the step running now (shimmering) and the time so far, with the steps folded
+// under a chevron; when it ends, a short outcome in green or red with the time it took and a Dismiss button. A banner
+// left alone dismisses itself a day after the run ends
+export function RunBanner({ run }: { run: FixRun }) {
+  const [steps, setSteps] = useState(false);
+  const live = run.status === 'queued' || run.status === 'running';
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { if (!live) return; const t = window.setInterval(() => setNow(Date.now()), 250); return () => window.clearInterval(t); }, [live]);
+  const current = run.steps[run.steps.length - 1];
+  const elapsed = run.startedAt || run.queuedAt ? (run.endedAt ?? now) - (run.startedAt ?? run.queuedAt) : 0;
+  return (
+    <div className={`run-banner ${live ? 'live' : run.status}`} role="status" aria-live="polite" onClick={(e) => e.stopPropagation()}>
+      <div className="run-head">
+        <span className="run-icon" aria-hidden="true">{live ? <i className="run-spin" /> : run.status === 'success' ? <IconCheck width={18} height={18} /> : <IconClose width={17} height={17} />}</span>
+        {(() => { const t = live ? (run.status === 'queued' ? 'Waiting for the run before it' : current?.label ?? 'Starting') : run.status === 'success' ? run.outcome : run.error; return <span className={`run-text${live ? ' shimmer' : ''}`} data-tip={t ?? undefined}>{t}</span>; })()}
+        <span className="run-time">{took(elapsed)}</span>
+        {run.steps.length > 0 && <button className={`icon-btn conn-fold${steps ? ' open' : ''}`} aria-expanded={steps} aria-label={steps ? 'Hide steps' : 'Show steps'} onClick={() => setSteps((o) => !o)}><IconChevron width={14} height={14} /></button>}
+      </div>
+      <div className={`fold-anim${steps ? ' open' : ''}`}>
+        <div className="fold-inner">
+          <ol className="run-steps">
+            {run.steps.map((st, i) => {
+              const done = !!st.endedAt || !live || i < run.steps.length - 1;
+              return <li key={`${st.at}-${i}`} className={done ? 'done' : 'now'}><span data-tip={st.label}>{st.label}</span><span className="run-time">{st.endedAt ? took(st.endedAt - st.at) : ''}</span></li>;
+            })}
+          </ol>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Dismiss on a finished fix: its banner is dismissed and its notification leaves the list. It stays under Archived as
+// history, with its outcome
+export async function dismissRun(run: FixRun) {
+  await window.quorum.fixDismiss([run.id]).catch(() => 0);
+  await window.quorum.activityArchive([{ id: `f:${run.id}` }], true).catch(() => 0);
+  window.dispatchEvent(new Event(CHANGED));
+}
+
+// the answer an item got: Accepted (green) when its fix ran, Failed (red) when the fix did not work, Declined (red) when
+// it was dismissed
+export type ItemStatus = 'review' | 'waiting' | 'accepted' | 'failed' | 'dismissed';
+const STATUS_TEXT: Record<ItemStatus, string> = { review: 'Needs review', waiting: 'Waiting', accepted: 'Accepted', failed: 'Failed', dismissed: 'Dismissed' };
+export function StatusBadge({ status }: { status: ItemStatus }) {
+  return <span className={`nf-status ${status}`}>{STATUS_TEXT[status]}</span>;
+}
+export const runStatus = (r: FixRun): ItemStatus => (r.status === 'success' ? 'accepted' : r.status === 'error' ? 'failed' : 'waiting');
+
+// a row's state badge on the right; when the row has actions, hovering slides the badge out and the actions in
+export function StatusSwap({ status, children }: { status: ItemStatus; children?: React.ReactNode }) {
+  const has = !!children && (!Array.isArray(children) || children.some(Boolean));
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
+  return (
+    <span className={`mh-swap${has ? '' : ' mh-still'}`} onClick={stop} onKeyDown={stop}>
+      <span className="mh-when"><StatusBadge status={status} /></span>
+      {has && <span className="mh-hover">{children}</span>}
+    </span>
+  );
+}
+
+// the ⋯ menu on an answered item: Undo takes it back to Needs review. For a fix, the notes the agent changed go back to
+// how they were and a note it wrote goes to the Trash; for a dismissed item, it simply returns to review
+export function RowMenu({ label, tip, onPick }: { label: string; tip?: string; onPick: () => Promise<void> | void }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const off = (e: MouseEvent) => { if (!wrap.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('mousedown', off);
+    window.addEventListener('keydown', esc);
+    return () => { window.removeEventListener('mousedown', off); window.removeEventListener('keydown', esc); };
+  }, [open]);
+  return (
+    <span ref={wrap} className={`menu-wrap mh-menu${open ? ' open' : ''}`}>
+      <button className="icon-btn mh-icon" aria-label="More" aria-haspopup="menu" aria-expanded={open} data-tip="More" onClick={() => setOpen((o) => !o)}><IconMore width={16} height={16} /></button>
       {open && (
-        <div className="menu nf-pick-menu" role="menu" onClick={(e) => { if (multi) e.stopPropagation(); }}>
-          {options.map(([id, text]) => (
-            <button key={id} role={multi ? 'menuitemcheckbox' : 'menuitemradio'} aria-checked={picked.includes(id)} className={picked.includes(id) ? 'checked' : ''} onClick={() => { onPick(id); if (!multi) setOpen(false); }}>
-              <span>{text}</span>{picked.includes(id) && <IconCheck width={14} height={14} />}
-            </button>
-          ))}
+        <div className="menu end" role="menu">
+          <button role="menuitem" disabled={!!tip} data-tip={tip} onClick={async () => { setOpen(false); await onPick(); }}><IconReset width={15} height={15} /> {label}</button>
         </div>
       )}
     </span>
+  );
+}
+export function UndoMenu({ run }: { run: FixRun }) {
+  return (
+    <RowMenu label="Undo and move back to review" tip={run.undoable ? undefined : 'This fix ran before Quorum kept a copy of the notes it changed, so it cannot be undone here'}
+      onPick={async () => {
+        try { toast(await window.quorum.fixUndo(run.id)); } catch (e) { toast(String(e).replace(/^.*Error:\s*/, ''), 'error'); }
+        window.dispatchEvent(new Event(CHANGED));
+      }} />
   );
 }

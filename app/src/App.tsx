@@ -34,6 +34,7 @@ import { useNotetaker } from './flags';
 import { type RecordChoice } from './noteRecord';
 import { RecLevel } from './RecLevel';
 import { NotificationBell, NotificationsView } from './NotificationsView';
+import { Toaster } from './Toasts';
 import { IconFolderOpen, IconPerson, IconClose, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, IconRecord, Wave } from './icons';
 
 // one speaker turn as main.js built it; a turn that grows arrives again with the same id and replace: true
@@ -289,7 +290,10 @@ export function App() {
     // quorum://note links, from the OS or from a link inside a note
     const link = (e: Event) => { const t = (e as CustomEvent<NoteLinkTarget>).detail; nav.mark(); setView('main'); setTab('memory'); setKbCommand(t.missing ? { kind: 'missing', id: t.id ?? '', n: Date.now() } : { kind: 'open', rel: t.rel!, anchor: t.anchor, n: Date.now() }); };
     window.addEventListener('quorum:note-link', link);
-    return () => { window.removeEventListener('quorum:open-memory', open); window.removeEventListener('quorum:open-graph', graph); window.removeEventListener('quorum:note-link', link); };
+    // View on a Memory health row in Notifications: the Memory tab, on the note with the issue marked
+    const health = (e: Event) => { nav.mark(); setView('main'); setTab('memory'); setKbCommand({ kind: 'health', key: String((e as CustomEvent).detail ?? ''), n: Date.now() }); };
+    window.addEventListener('quorum:open-health', health);
+    return () => { window.removeEventListener('quorum:open-memory', open); window.removeEventListener('quorum:open-graph', graph); window.removeEventListener('quorum:note-link', link); window.removeEventListener('quorum:open-health', health); };
   });
   // a cited knowledge base note opens in the Knowledge tab
   const openKbNote = useCallback((t: KbOpenTarget) => {
@@ -676,6 +680,7 @@ export function App() {
 
   return (
     <div className={`panel ${view === 'main' && tab === 'home' && convoOpen ? 'convo-wide' : ''}`}>
+      <Toaster />
       <header className="bar">
         <div className="brand static"><img src={mark} alt={window.quorum.isDev ? 'Quorum Dev' : 'Quorum'} /></div>
         <nav className="tabs" aria-label="Views">
@@ -741,7 +746,7 @@ export function App() {
         </div>
       ) : view === 'notifications' ? (
         <div className="body wide">
-          <NotificationsView onOpenNote={(abs) => { openNoteView(abs); setView('main'); }} onOpenGuardrails={() => openSettings('guardrails')} />
+          <NotificationsView me={{ name: me?.name || 'You', photo: me?.photo ?? null }} onOpenNote={(abs) => { openNoteView(abs); setView('main'); }} onOpenGuardrails={() => openSettings('guardrails')} />
         </div>
       ) : showLive ? liveArea : note ? null : <>
       {tab === 'home' && !convoOpen && (

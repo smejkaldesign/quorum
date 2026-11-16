@@ -210,29 +210,66 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     };
   }
 
-  // every missing link target, with who links to it, plus the closest real notes as fix suggestions
+  // every missing link target, with who links to it, the closest real notes as fix suggestions, and the text around
+  // each link. Memory health (memoryHealth.js) picks a fix from these: point the link at a note that is clearly the one
+  // meant, write the missing note when the linking notes say enough about it, or take the dead link out
   function linkHealth() {
     const byName = new Map();
     for (const [rel, missing] of unresolved) for (const link of missing) {
       const name = link.target.replace(/\.md$/i, '').trim();
       if (!name) continue;
       const key = name.toLowerCase();
-      const e = byName.get(key) ?? byName.set(key, { target: name, sources: new Set(), links: 0 }).get(key);
+      const e = byName.get(key) ?? byName.set(key, { target: name, sources: new Set(), links: 0, at: [] }).get(key);
       e.sources.add(rel);
       e.links++;
+      e.at.push({ rel, line: link.line });
     }
     // compare names loosely: no date prefix, no Claude memory type prefix (feedback_, reference_...), no punctuation
     const norm = (x) => x.toLowerCase().replace(/\.md$/, '').replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/^(feedback|reference|project|user)_/, '').replace(/[^a-z0-9]+/g, '');
-    const index = [...files.keys()].map((rel) => ({ rel, key: norm(path.basename(rel)), alias: aliasesOf(rel).map(norm), title: norm(files.get(rel).note.title) }));
-    // links counts every link to the target, lastAt is the newest change among the notes that hold them
-    return [...byName.values()].map(({ target, sources, links }) => {
-      const k = norm(target.split('/').pop());
-      const candidates = k.length < 3 ? [] : index
-        .map((n) => ({ rel: n.rel, score: n.key === k || n.alias.includes(k) || n.title === k ? 3 : n.key.includes(k) || k.includes(n.key) ? (Math.min(k.length, n.key.length) / Math.max(k.length, n.key.length) > 0.6 ? 2 : 0) : 0 }))
-        .filter((c) => c.score > 0).sort((a, b) => b.score - a.score || a.rel.length - b.rel.length).slice(0, 3)
-        .map((c) => ({ rel: c.rel, title: titleOf(c.rel), name: typeof files.get(c.rel).note.props.name === 'string' ? files.get(c.rel).note.props.name : null, exact: c.score === 3 }));
+    // the words of a name, without dates, numbers and filler words, for matching names that differ in a date or a word
+    const STOP = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'to', 'for', 'in', 'on', 'with', 'md', 'note', 'notes', 'feedback', 'reference', 'project', 'user']);
+    const words = (x) => [...new Set(String(x).toLowerCase().replace(/\.md$/, '').split(/[^a-z0-9]+/).filter((w) => w.length > 1 && !STOP.has(w) && !/^\d+$/.test(w)))];
+    // words that name a kind of document: two notes that share only these are different documents, and a PRD is not the
+    // code review of the same feature
+    const KIND = new Set(['prd', 'spec', 'review', 'code', 'report', 'retro', 'retrospective', 'plan', 'brief', 'research', 'analysis', 'summary', 'notes', 'doc', 'docs', 'page', 'deep', 'dive', 'kickoff', 'recap', 'audit', 'proposal', 'requirements', 'presentation', 'deck', 'draft', 'v1', 'v2', 'v3', 'synthesis', 'findings', 'teardown', 'guide', 'playbook', 'index']);
+    const kinds = (ws) => new Set([...ws].filter((w) => KIND.has(w)));
+    const dirOf = (rel) => (rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '');
+    const index = [...files.keys()].map((rel) => ({ rel, key: norm(path.basename(rel)), alias: aliasesOf(rel).map(norm), title: norm(files.get(rel).note.title), words: new Set([...words(path.basename(rel)), ...words(files.get(rel).note.title)]) }));
+    // a link's line as plain words: the link itself becomes its text, list marks and markup go
+    const plain = (t) => t.replace(/!?\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]*))?\]\]/g, (_, a, b) => b ?? a.split('/').pop()).replace(/^\s*(?:[-*+]|\d+\.)\s+/, '').replace(/[*`>#]+/g, '').replace(/\s+/g, ' ').trim();
+    return [...byName.values()].map(({ target, sources, links, at }) => {
+      const last = target.split('/').pop();
+      const k = norm(last);
+      const tw = words(last);
+      const srcDirs = new Set([...sources].map(dirOf));
+      // the notes the linking notes already link to or from: a candidate among them sits in the same part of the graph
+      const near = new Set();
+      for (const s of sources) {
+        for (const o of forward.get(s) ?? []) near.add(o.to);
+        for (const b of backward.get(s) ?? []) near.add(b.from);
+      }
+      const scored = k.length < 3 && tw.length === 0 ? [] : index.map((n) => {
+        if (n.key === k || n.alias.includes(k) || n.title === k) return { n, exact: true, score: 1, shared: tw };
+        const shared = tw.filter((w) => n.words.has(w));
+        if (shared.length < 2 && !(shared.length === 1 && tw.length === 1 && n.words.size === 1)) return null;
+        const union = new Set([...tw, ...n.words]).size;
+        // the topic words (not kind words) the names share, and how much of the link's topic they cover
+        const topic = tw.filter((w) => !KIND.has(w));
+        const sharedTopic = shared.filter((w) => !KIND.has(w));
+        const tk = kinds(tw);
+        const nk = kinds(n.words);
+        const kindClash = tk.size > 0 && nk.size > 0 && ![...tk].some((w) => nk.has(w));
+        if (sharedTopic.length < 2 && !(sharedTopic.length === 1 && topic.length === 1)) return null;
+        return { n, exact: false, score: shared.length / union, shared: sharedTopic, cover: topic.length ? sharedTopic.length / topic.length : 0, kindClash };
+      }).filter(Boolean);
+      const candidates = scored
+        .map((c) => ({ ...c, neighbor: near.has(c.n.rel), sameFolder: srcDirs.has(dirOf(c.n.rel)) }))
+        .sort((a, b) => Number(b.exact) - Number(a.exact) || Number(a.kindClash) - Number(b.kindClash) || (b.cover ?? 0) - (a.cover ?? 0) || (b.score + (b.neighbor ? 0.2 : 0) + (b.sameFolder ? 0.1 : 0)) - (a.score + (a.neighbor ? 0.2 : 0) + (a.sameFolder ? 0.1 : 0)) || a.n.rel.length - b.n.rel.length)
+        .slice(0, 3)
+        .map((c) => ({ rel: c.n.rel, title: titleOf(c.n.rel), name: typeof files.get(c.n.rel).note.props.name === 'string' ? files.get(c.n.rel).note.props.name : null, exact: c.exact, score: Math.round(c.score * 100) / 100, cover: c.exact ? 1 : Math.round((c.cover ?? 0) * 100) / 100, kindClash: !!c.kindClash, shared: c.shared, neighbor: c.neighbor, sameFolder: c.sameFolder }));
+      const contexts = at.slice(0, 6).map(({ rel, line }) => ({ rel, title: titleOf(rel), text: plain(lineOf(rel, line)).slice(0, 280) })).filter((c) => c.text);
       const lastAt = Math.max(0, ...[...sources].map((r) => files.get(r)?.mtime ?? 0)) || null;
-      return { target, sources: [...sources], count: sources.size, links, lastAt, candidates };
+      return { target, sources: [...sources], count: sources.size, links, lastAt, candidates, contexts };
     }).sort((a, b) => b.count - a.count || a.target.localeCompare(b.target));
   }
 

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BUILT_IN, ENFORCEMENT, classifyHook, claudeMdRules, compile, createGuardrails, discover, discoverConventions, discoverQuick, effective, frontmatterKeys, frontmatterPairs, obsidianExcluded, scopeOf, wouldBlock } from '../guardrails.js';
+import { BUILT_IN, ENFORCEMENT, classifyHook, claudeMdRules, compile, createGuardrails, discover, discoverConventions, discoverQuick, effective, frontmatterKeys, frontmatterPairs, markingKeys, obsidianExcluded, scopeOf, wouldBlock } from '../guardrails.js';
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'guardrails-vault');
 
@@ -232,5 +232,16 @@ describe('createGuardrails', () => {
     const st = await g.get();
     expect(st.rules.find((r) => r.id === 'ws:1')).toMatchObject({ source: 'workspace', locked: true, enabled: true });
     expect(g.compiled().frontmatterKeys).toEqual(['confidential', 'legal_hold']);
+  });
+});
+
+describe('frontmatter keys with an off value', () => {
+  it('marks a note only when the key is set to something other than false, no, off, none, public or 0', () => {
+    expect(markingKeys('---\nconfidential: false\nnda: true\n---\n')).toEqual(['nda']);
+    expect(markingKeys('---\nconfidential: personal\n---\n')).toEqual(['confidential']);
+    expect(markingKeys('---\nconfidential:\n---\n')).toEqual(['confidential']);
+    const c = { denyDirs: [], frontmatterKeys: ['confidential'], secretPattern: null, secretsOff: true };
+    expect(wouldBlock(c, 'a.md', '---\nconfidential: false\n---\n# A')).toBeNull();
+    expect(wouldBlock(c, 'a.md', '---\nconfidential: notable-internal\n---\n# A')).toBe('marked confidential: in its frontmatter');
   });
 });

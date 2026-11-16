@@ -89,7 +89,8 @@ def in_dir(rel, d):
 
 
 def frontmatter_key(abs_path, keys):
-    """The first of `keys` present in the note's frontmatter, or None."""
+    """The first of `keys` that marks the note in its frontmatter, or None. A key set to false, no, off, none, public or 0
+    does not mark it, so `confidential: false` keeps a note readable; any other value, an empty one included, does."""
     try:
         with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
             head = f.read(2048)
@@ -100,7 +101,8 @@ def frontmatter_key(abs_path, keys):
     end = head.find("\n---", 3)
     block = head[3:end if end > 0 else len(head)]
     for k in keys:
-        if re.search(r"^\s*" + re.escape(k) + r"\s*:", block, re.M | re.I):
+        m = re.search(r"^\s*" + re.escape(k) + r"\s*:(.*)$", block, re.M | re.I)
+        if m and not re.fullmatch(r"\s*[\"']?(false|no|off|none|public|0)[\"']?\s*", m.group(1), re.I):
             return k
     return None
 

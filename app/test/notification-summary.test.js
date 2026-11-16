@@ -53,13 +53,16 @@ describe('summaryOf', () => {
     const rev = summaryOf(note({ kind: 'note-written', event: 'review', review: { kind: 'note' }, detail: { writtenFrom: 'recording' } }));
     expect(rev.line).toBe('Keep “Pricing call” as Quorum wrote it?');
     expect(rev.ask.suggest).toBe('approve');
-    expect(rev.sub).toMatch(/^Suggested: approve\. Quorum wrote it from your own recording/);
+    expect(rev).toMatchObject({ recommendation: 'Keep it as Quorum wrote it.', solution: 'Quorum marks the note reviewed and keeps its text.' });
+    expect(rev.problem).toMatch(/Quorum wrote it from your own recording/);
     const small = summaryOf(note({ kind: 'memory-updated', event: 'review', review: { kind: 'memory', count: 2 }, detail: { changes: 3, reason: 'Filed the pricing call' } }));
     expect(small.line).toBe('Keep the agent’s 2 updates to “Pricing call”?'.replace('’', "'"));
-    expect(small.sub).toBe('Suggested: approve. A small change (3 changed blocks) the agent made when it filed the pricing call.');
+    expect(small.recommendation).toBe("Keep the agent's 2 updates.");
+    expect(small.problem).toMatch(/A small change \(3 changed blocks\) the agent made when it filed the pricing call\./);
     const big = summaryOf(note({ kind: 'memory-updated', event: 'review', review: { kind: 'memory', count: 1 }, detail: { changes: 40 } }));
     expect(big.ask.suggest).toBe('reject');
-    expect(big.sub).toMatch(/^Suggested: disapprove\. It rewrites a large part of the page \(40 changed blocks\)/);
+    expect(big.recommendation).toBe('Put back the text from before these updates.');
+    expect(big.problem).toMatch(/It rewrites a large part of the page \(40 changed blocks\)/);
   });
 });
 
@@ -91,12 +94,11 @@ describe('a junk note', () => {
     const s = summaryOf(row);
     expect(s.line).toBe('Remove “kjhkjhkjh”?');
     expect(s.ask.suggest).toBe('approve');
-    expect(s.sub).toBe('Suggested: approve. It has no recording, and “kjhkjhkjh” does not read as words. Approve moves it to the Trash, where you can put it back.');
+    expect(s).toMatchObject({ recommendation: 'Move it to the Trash.', problem: 'It has no recording, and “kjhkjhkjh” does not read as words.' });
   });
-  it('says in the details what each answer does', () => {
+  it('lists what is known in the details', () => {
     const d = Object.fromEntries(detailsOf(row));
     expect(d.What).toBe('Looks empty');
     expect(d.Reason).toContain('does not read as words');
-    expect(d['If you approve']).toBe('It moves to the Trash. Disapprove keeps it, and upkeep does not ask again');
   });
 });

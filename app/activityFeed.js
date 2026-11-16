@@ -9,6 +9,7 @@
 // History: the rows that come from records kept before Notifications started (older versions, upkeep runs and
 // imports) are marked backfill and start out read, so the first opening lists the past without lighting the bell.
 import { detailsOf, summaryOf, titleOf } from './notificationSummary.js';
+import { issueMeta, issueOf } from './memoryHealth.js';
 
 // the event types the Type filter offers, in the order it shows them
 export const FEED_KINDS = [
@@ -20,6 +21,7 @@ export const FEED_KINDS = [
   ['memory-updated', 'Updated a memory'],
   ['imported', 'Imported'],
   ['guardrail', 'Guardrail blocked'],
+  ['memory-health', 'Memory health'],
   ['you', 'Your changes'],
 ];
 export const FEED_TABS = ['all', 'unread', 'archived'];
@@ -30,6 +32,9 @@ export const FEED_SORTS = ['unread', 'recent', 'az'];
 // a file's name as the person reads it, for the places that only have a path
 export const labelOf = (rel) => titleOf({ rel });
 
+const DAY = 86400000;
+// how long a finished fix shows its outcome in place before it moves to Archived
+export const ARCHIVE_AFTER = 8000;
 const time = (v) => (typeof v === 'number' ? v : new Date(v ?? 0).getTime() || 0);
 const youText = (t) => String(t ?? '').startsWith('You');
 const noteKind = (e) => {
@@ -53,9 +58,11 @@ const prefOn = (prefs, key) => prefs?.[key] !== false;
 //   memories: { abs, rel, title?, note?, gone?, versions, updates, seenAt }
 //   denials:  { id, t, path, tool, surface, reason, guard, guardLabel }[]
 //   junk:     { abs, rel, title, reason, at }[], the notes upkeep found with no recording and no real words
+//   links:    the open Memory health issues (vindex.js linkHealth, minus the ones declined), each with abs, the path
+//             of its first linking note
 //   state:    { since, read: { [id]: at }, unread: { [id]: at } }; since is when Notifications started keeping its
 //             own marks, read and unread are the person's marks on single rows
-export function feedRows({ notes = [], memories = [], denials = [], junk = [], state = {}, guardFile = null }) {
+export function feedRows({ notes = [], memories = [], denials = [], junk = [], links = [], runs = [], state = {}, guardFile = null }) {
   const rows = [];
   const since = time(state.since);
   const read = state.read ?? {};
@@ -63,7 +70,8 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], s
   // a row is unread when the agent made it after the file was last seen, it is not from before Notifications began,
   // and the person has not marked it; a mark on the row wins either way
   const push = (row, seen) => {
-    row.backfill = !!since && row.at < since && !row.review;
+    // a Memory health issue older than Notifications starts out read too; it still waits in Needs review
+    row.backfill = !!since && row.at < since && (!row.review || row.review.kind === 'link');
     const fresh = row.who !== 'you' && row.at > time(seen) && !row.backfill;
     row.unread = unreadMark[row.id] ? true : read[row.id] ? false : fresh;
     rows.push(row);
@@ -117,6 +125,24 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], s
     const at = time(j.at);
     push({ id: `r:junk:${j.abs}`, at, kind: 'note-updated', event: 'review', who: 'agent', target: { kind: 'note', abs: j.abs, rel: j.rel, title: j.title ?? titleOf({ rel: j.rel }) }, files: [], detail: { reason: j.reason ?? null }, review: { kind: 'junk-note' } }, null);
   }
+  // each open Memory health issue asks to take its recommended action; it opens on its first linking note
+  for (const m of links) {
+    const i = issueOf(m);
+    push({
+      id: `r:link:${i.key}`, at: time(m.lastAt), kind: 'memory-health', event: 'review', who: 'agent',
+      target: { kind: 'link', abs: m.abs ?? '', rel: i.path, title: i.target }, files: [],
+      detail: { title: i.title, problem: i.problem, solution: i.solution, value: i.value, recommend: i.recommend, meta: issueMeta(i), category: i.category, links: i.links, notes: i.notes, folder: i.folder?.folder ?? null },
+      review: { kind: 'link', key: i.key, ...(m.left ? { left: true } : {}) },
+    }, null);
+  }
+  // each fix run Quorum carried out on an approved Memory health issue: its row shows it working, then its outcome
+  for (const run of runs.filter((x) => !x.undoneAt)) {
+    const at = time(run.endedAt ?? run.startedAt ?? run.queuedAt);
+    push({
+      id: `f:${run.id}`, at, kind: 'memory-health', event: 'fix', who: 'agent', target: { kind: 'link', abs: '', rel: run.rel ?? '', title: run.target }, files: [],
+      detail: { problem: run.problem, solution: run.solution, value: run.value, recommend: run.recommendation, meta: run.meta ?? [] }, run,
+    }, null);
+  }
   const guardTarget = { kind: 'guardrail', abs: guardFile ?? '', rel: 'Guardrails', title: 'Guardrails' };
   for (const g of denials) {
     const at = time(g.t);
@@ -128,7 +154,7 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], s
 
 const matches = (row, words) => {
   if (!words.length) return true;
-  const hay = `${row.summary.line} ${row.summary.sub ?? ''} ${row.target.title} ${row.target.rel} ${row.files.map((f) => f.title ?? f.label).join(' ')} ${row.detail?.path ?? ''}`.toLowerCase();
+  const hay = `${row.summary.line} ${row.summary.sub ?? ''} ${row.detail?.problem ?? ''} ${row.target.title} ${row.target.rel} ${row.files.map((f) => f.title ?? f.label).join(' ')} ${row.detail?.path ?? ''}`.toLowerCase();
   return words.every((w) => hay.includes(w));
 };
 const SORTS = {
@@ -142,16 +168,33 @@ const SORTS = {
 // items waiting for a decision, and lists them all whatever the switches say. kinds narrows to event types, q to rows
 // whose words match. counts and dot are for the bell and the labels, and use the switches the same way
 // archived holds the ids the person archived: they leave All, Unread, Needs review and the dot, and list under Archived
-export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = '', sort = 'unread', offset = 0, limit = 50, prefs = {}, locale, archived = [] } = {}) {
-  const gone = new Set(archived);
-  const kept = rows.filter((r) => !gone.has(r.id));
+export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = '', sort = 'unread', offset = 0, limit = 50, prefs = {}, locale, archived = [], kept: keptIds = [] } = {}) {
+  // decided items archive on their own: an issue set aside unfixed (Dismissed), and a fix a few seconds after it ends
+  // (Accepted or Failed), unless the person brought it back with Unarchive
+  const back = new Set(keptIds);
+  const now0 = Date.now();
+  const decided = (r) => !back.has(r.id) && (!!r.review?.left || (!!r.run && (r.run.status === 'success' || r.run.status === 'error') && now0 - (r.run.endedAt ?? now0) >= ARCHIVE_AFTER));
+  const gone = new Set([...archived, ...rows.filter(decided).map((r) => r.id)]);
+  // a run's banner shows until it is dismissed, by hand or a day after it finished
+  const now = Date.now();
+  const banner = (r) => !!r.run && (r.run.status === 'queued' || r.run.status === 'running' || (!r.run.dismissedAt && now - (r.run.endedAt ?? now) < DAY));
+  // an issue being fixed keeps its row and its place, loading, with its run attached; the run gets its own row once it
+  // ends. A live run whose issue is not listed keeps its own row
+  const live = new Map(rows.filter((r) => r.run && (r.run.status === 'queued' || r.run.status === 'running')).map((r) => [r.run.key, r.run]));
+  const issueKeys = new Set(rows.filter((r) => r.review?.kind === 'link' && !gone.has(r.id)).map((r) => r.review.key));
+  const kept = rows
+    .filter((r) => !gone.has(r.id) && !(r.run && live.get(r.run.key) === r.run && issueKeys.has(r.run.key)))
+    .map((r) => (r.run ? { ...r, run: { ...r.run, showBanner: banner(r) } } : r.review?.kind === 'link' && live.has(r.review.key) ? { ...r, fixRun: { ...live.get(r.review.key), showBanner: true } } : r));
   const shelf = rows.filter((r) => gone.has(r.id)).map((r) => ({ ...r, archived: true }));
   const shown = (r) => prefOn(prefs, prefOf(r));
   const unread = kept.filter((r) => r.unread && shown(r));
   const reviews = kept.filter((r) => r.review);
+  const waiting = reviews.filter((r) => !r.fixRun);
   const all = kept.filter(shown);
   let list = tab === 'archived' ? shelf : tab === 'unread' ? unread : all;
-  if (review && tab !== 'archived') list = (tab === 'unread' ? reviews.filter((r) => r.unread) : reviews);
+  // Needs review lists the items waiting for a decision, and the ones being fixed right now; an accepted item no longer
+  // needs review, so a finished fix lists under All and Unread only. The count is the waiting items
+  if (review && tab !== 'archived') list = tab === 'unread' ? reviews.filter((r) => r.unread) : reviews;
   const kindSet = new Set(kinds);
   const words = String(q ?? '').trim().toLowerCase().split(/\s+/).filter(Boolean);
   list = list.filter((r) => (!kindSet.size || kindSet.has(r.kind)) && matches(r, words));
@@ -162,7 +205,7 @@ export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = ''
     items: list.slice(start, end).map((r) => ({ ...r, details: detailsOf(r, { locale }) })),
     total: list.length,
     more: end < list.length,
-    counts: { all: all.length, unread: unread.length, review: reviews.length, archived: shelf.length },
-    dot: unread.length > 0 || reviews.some(shown),
+    counts: { all: all.length, unread: unread.length, review: waiting.length, archived: shelf.length },
+    dot: unread.length > 0 || waiting.some(shown),
   };
 }

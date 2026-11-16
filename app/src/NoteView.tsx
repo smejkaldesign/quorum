@@ -2,7 +2,8 @@ import { BackButton } from './BackButton';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { HandNoteRef, RecordState } from './quorum';
 import { Markdown } from './Markdown';
-import { IconCalendar, IconFolder, IconNotes, IconRecord, IconStop } from './icons';
+import { IconCalendar, IconFolder, IconMore, IconNotes, IconRecord, IconStop } from './icons';
+import { useMenu } from './controls';
 import { IconPen } from './PrivateNotes';
 import { RecordMenu } from './Record';
 import { appendTurn, emptyWritten, recordChoices, type RecordChoice, type Written } from './noteRecord';
@@ -41,6 +42,8 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
   const [error, setError] = useState<string | null>(null);
   const [rec, setRec] = useState<RecordState>({ audio: false, screen: false });
   const [menu, setMenu] = useState(false);
+  const [moreOpen, setMoreOpen] = useMenu();
+  const [propsOpen, setPropsOpen] = useState(false);
   const [choice, setChoice] = useState<RecordChoice>(() => recordChoices(screenOffered));
   const [preview, setPreview] = useState(false);
   // rich text when the body survives the editor's round trip unchanged, plain text otherwise (decided once it loads)
@@ -281,6 +284,17 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
 
   return (
     <div className={`${embedded ? 'end embedded' : 'panel end'} note-view`}>
+      {propsOpen && ref && (
+        <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) setPropsOpen(false); }}
+          onKeyDown={(e) => { if (e.key === 'Escape' && !(e.target as HTMLElement).closest('.props')) { e.stopPropagation(); setPropsOpen(false); } }}>
+          <div className="modal props-sheet" role="dialog" aria-modal="true" aria-labelledby="props-title">
+            <h2 id="props-title">Properties</h2>
+            <p>The fields saved at the top of this note's file. Quorum and the apps that made the note read them, so a change here can change how the note is matched, dated or shared.</p>
+            <Properties inModal value={frontmatter} readOnly={readOnly || status === 'conflict'} error={propsError} onChange={editProps} />
+            <div className="modal-actions"><span /><span className="modal-actions-end"><button className="pill" autoFocus onClick={() => setPropsOpen(false)}>Done</button></span></div>
+          </div>
+        </div>
+      )}
       <header className="end-bar">
         <BackButton onClick={() => close()} />
         <div className="end-actions">
@@ -299,6 +313,18 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
                 </button>
               )}
               {menu && !recording && <RecordMenu choice={choice} onChoice={setChoice} onStart={start} />}
+            </div>
+          )}
+          {/* the note's frontmatter (ids, source, date, people, visibility) lives behind this menu, in a sheet: apps and
+              Quorum read those fields, so they stay off the page */}
+          {ref && (
+            <div className="menu-wrap">
+              <button className="icon-btn note-more" aria-label="More" data-tip="More" aria-haspopup="menu" aria-expanded={moreOpen} onClick={(e) => { e.stopPropagation(); setMoreOpen((o) => !o); }}><IconMore width={18} height={18} /></button>
+              {moreOpen && (
+                <div className="menu note-menu" role="menu">
+                  <button role="menuitem" onClick={() => { setMoreOpen(false); setPropsOpen(true); }}>Properties…</button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -322,7 +348,6 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
             </div>
             )}
           </div>
-          {ref && <Properties value={frontmatter} readOnly={readOnly || status === 'conflict'} error={propsError} onChange={editProps} />}
           {error && <p className="set-error" role="alert">{error}</p>}
           {unsaved && (
             <p className="set-error" role="alert">

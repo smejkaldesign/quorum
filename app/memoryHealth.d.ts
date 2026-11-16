@@ -1,9 +1,9 @@
 import type { MissingLink } from './src/quorum';
 
-export type HealthCategory = 'missing' | 'alias' | 'similar' | 'outside';
-export type HealthAction = 'create' | 'alias' | 'relink' | 'leave';
+export type HealthCategory = 'missing' | 'alias' | 'similar' | 'unlink' | 'outside';
+export type HealthAction = 'create' | 'alias' | 'relink' | 'unlink' | 'leave';
 export type Issue = {
-  key: string; target: string; category: HealthCategory; title: string; fix: string; action: HealthAction;
+  key: string; target: string; category: HealthCategory; title: string; fix: string; problem: string; effect: string; recommend: string; solution: string; value: string; decline: string; action: HealthAction; next: HealthAction | null; sources: string[]; contexts: { rel: string; title?: string; text: string }[]; createIn: string;
   candidate: MissingLink['candidates'][number] | null; path: string; links: number; notes: number;
   folder: { folder: string; count: number } | null; lastAt: number | null;
 };
@@ -17,3 +17,10 @@ export function categoryCounts(items: MissingLink[], left?: Set<string>): Catego
 export function countsLine(counts: CategoryCount[]): string;
 export function footerFacts(issue: Issue, opts?: { date?: (t: number) => string }): string[];
 export function fileIssues(lines: { target: string; line: number }[], items: MissingLink[], left?: Set<string>): { line: number; issue: Issue }[];
+export function healthMarks(items: MissingLink[], left?: Set<string>): { files: Record<string, number>; folders: Record<string, number> };
+export type HealthSort = 'links' | 'recent' | 'az';
+export const HEALTH_SORTS: [HealthSort, string][];
+export function healthList(items: MissingLink[], opts?: { tab?: 'open' | 'left'; categories?: HealthCategory[]; q?: string; sort?: HealthSort; left?: Set<string> }): Issue[];
+export function optionsOf(m: MissingLink): HealthAction[];
+export function contextWords(m: MissingLink): number;
+export function issueMeta(issue: Issue, opts?: { date?: (t: number) => string }): [string, string][];

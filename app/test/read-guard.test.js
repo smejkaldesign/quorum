@@ -109,3 +109,18 @@ describe('read guard with compiled guardrails', () => {
     expect(lines.at(-1)).toMatchObject({ tool: 'Read', path: 'notes/brain.sqlite', reason: expect.stringContaining('secret') });
   });
 });
+
+describe('a frontmatter key set to an off value', () => {
+  it('lets a note marked confidential: false through, and still stops confidential: personal or an empty value', () => {
+    writeFileSync(path.join(root, 'notes/open.md'), '---\ntitle: Research\nconfidential: false\n---\n# Research\n');
+    writeFileSync(path.join(root, 'notes/quoted.md'), '---\nconfidential: "no"\n---\n# Quoted\n');
+    writeFileSync(path.join(root, 'notes/personal.md'), '---\nconfidential: personal\n---\n# Money\n');
+    writeFileSync(path.join(root, 'notes/blank.md'), '---\nconfidential:\n---\n# Blank\n');
+    const flags = ['--frontmatter-key', 'confidential'];
+    const at = (f) => runWith(flags, { tool_name: 'Read', tool_input: { file_path: path.join(root, f) } });
+    expect(at('notes/open.md')).toBeNull();
+    expect(at('notes/quoted.md')).toBeNull();
+    expect(at('notes/personal.md')).toMatchObject({ permissionDecision: 'deny' });
+    expect(at('notes/blank.md')).toMatchObject({ permissionDecision: 'deny' });
+  });
+});
