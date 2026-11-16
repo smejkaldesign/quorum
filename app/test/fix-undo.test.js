@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync, rmSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { applyUndo, undoRecord } from '../fixUndo.js';
+import { applyUndo, sha, undoRecord } from '../fixUndo.js';
 
 let vault;
 const put = (rel, t) => { mkdirSync(path.dirname(path.join(vault, rel)), { recursive: true }); writeFileSync(path.join(vault, rel), t); };
@@ -33,5 +33,20 @@ describe('fix undo', () => {
     put('b.md', 'edited later');
     await expect(applyUndo(vault, files, async () => {})).rejects.toThrow('changed after the fix');
     expect(get('a.md')).toBe('fixed a');
+  });
+  it('refuses a record that points outside the vault, and writes nothing there', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'qundo-root-'));
+    vault = path.join(root, 'vault');
+    mkdirSync(vault);
+    writeFileSync(path.join(root, 'outside.md'), 'mine');
+    put('a.md', 'fixed a');
+    const files = [{ rel: 'a.md', before: 'one', after: undoRecord(vault, [{ rel: 'a.md', before: 'one' }])[0].after }, { rel: '../outside.md', before: 'overwritten', after: sha('mine') }];
+    expect(undoRecord(vault, [{ rel: '../outside.md', before: 'x' }])).toEqual([]);
+    const trashed = [];
+    await expect(applyUndo(vault, files, async (abs) => { trashed.push(abs); })).rejects.toThrow('changed after the fix');
+    expect(readFileSync(path.join(root, 'outside.md'), 'utf8')).toBe('mine');
+    expect(get('a.md')).toBe('fixed a');
+    expect(trashed).toEqual([]);
+    rmSync(root, { recursive: true, force: true });
   });
 });
