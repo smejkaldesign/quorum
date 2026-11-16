@@ -66,6 +66,7 @@ import { createDecisionLog, fingerprint } from './decisionLog.js';
 import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, fixVersions, recheckAll, undoPlan } from './fixRecheck.js';
 import { buildPlan, checkFirst, checkOrder, effects, groupLabel, groupOf, notesOf, planExclude } from './batchPlan.js';
 import { ROW, findingItem, itemLine, linkItem, pastFixItem } from './reviewItems.js';
+import { approveFinding, approvePastFix, gitReader, withLinkLine } from './reviewApprove.js';
 import { frontBlock, removeFrontmatterKey } from './frontmatter.js';
 import { createResolver } from './linkparse.js';
 import { isOff } from './rules/common.js';
@@ -2068,6 +2069,7 @@ const feedState = () => {
   feedStateCache.read ??= {};
   feedStateCache.unread ??= {};
   feedStateCache.archived ??= {};
+  feedStateCache.done ??= {};
   return feedStateCache;
 };
 // the marks kept: the newest 5000 of each, so the file stays small
@@ -2146,7 +2148,7 @@ function feedSources() {
 ipcMain.handle('activity-feed', (_e, query) => {
   const q = query ?? {};
   return feedPage(feedRows(feedSources()), {
-    tab: ['unread', 'archived'].includes(q.tab) ? q.tab : 'all', archived: Object.keys(feedState().archived), kept: Object.keys(feedState().kept ?? {}), review: q.review === true, kinds: Array.isArray(q.kinds) ? q.kinds.map(String) : [], q: String(q.q ?? ''),
+    tab: ['unread', 'archived'].includes(q.tab) ? q.tab : 'all', archived: Object.keys(feedState().archived), done: Object.keys(feedState().done ?? {}), kept: Object.keys(feedState().kept ?? {}), review: q.review === true, kinds: Array.isArray(q.kinds) ? q.kinds.map(String) : [], q: String(q.q ?? ''),
     sort: String(q.sort ?? 'unread'), offset: Number(q.offset) || 0, limit: Number(q.limit ?? 50), prefs: settings.notifications ?? {}, idsOnly: q.idsOnly === true,
   });
 });
@@ -2177,7 +2179,7 @@ ipcMain.handle('activity-archive', (_e, rows, on) => {
     if (id.startsWith(PAST_FIX_ROW)) pastIds.push(id.slice(PAST_FIX_ROW.length));
     if (id.startsWith('r:find:')) findKeys.push(id.slice(7));
     if (id.startsWith('r:ignore:')) dismissIgnore(id.slice(9), on !== false);
-    if (on === false) { delete st.archived[id]; if (!id.startsWith('r:link:')) st.kept[id] = at; } else { st.archived[id] = at; delete st.kept[id]; st.read[id] = at; delete st.unread[id]; }
+    if (on === false) { delete st.archived[id]; delete st.done?.[id]; if (!id.startsWith('r:link:')) st.kept[id] = at; } else { st.archived[id] = at; delete st.kept[id]; st.read[id] = at; delete st.unread[id]; }
     n++;
   }
   feedStateSave();
@@ -2237,11 +2239,15 @@ ipcMain.handle('activity-review', async (_e, items, verdict) => {
       } else if (it.kind === 'finding') {
         // a finding with a fix (a confidential tag or a move) runs through the planner; one without needs a person to
         // act on the note, then archive the finding
-        // Approve logs approved through the planner; only Archive logs archived, so a rule's record counts each once
-        if (ok) startPlanFor([`${ROW.finding}${String(it.key ?? '')}`]); else archiveFindings([String(it.key ?? '')], true);
-        const st = feedState();
-        st.archived[`r:find:${it.key}`] = at;
-        feedStateSave();
+        // Approve runs the change its rule allows, or keeps it as it is, through the planner; the batch marks it done.
+        // Only Archive logs archived, so a rule's record counts each once
+        if (ok) startPlanFor([`${ROW.finding}${String(it.key ?? '')}`]);
+        else {
+          archiveFindings([String(it.key ?? '')], true);
+          const st = feedState();
+          st.archived[`r:find:${it.key}`] = at;
+          feedStateSave();
+        }
       } else if (it.kind === 'ignore') {
         // Approve stores the ignore rule; Archive turns the proposal down
         if (ok) acceptIgnore(String(it.key ?? '')); else dismissIgnore(String(it.key ?? ''), true);
@@ -2492,11 +2498,13 @@ function findingsNow() {
   const latest = decisionLog.latestAll(b.vault);
   const reopened = [];
   const ign = ignoreList();
+  const rels = vindex?.rels() ?? [];
   const out = memorySweep.findings(b.vault).filter((f) => !(ign.length && ignored(ign, f.ruleId, f))).map((f) => {
     const last = latest.get(f.key);
     const archived = last?.decision === 'archived' && last.fingerprint === fingerprint(f.ruleId, f.target, findingSources(f));
     if (last?.decision === 'archived' && !archived) reopened.push({ ...findingRecord(f), decision: 'reopened', actor: 'quorum', note: 'The evidence changed after it was archived' });
-    return { ...f, archived, abs: path.join(b.vault, f.rel) };
+    const approve = f.fix ? null : approveFinding(f, { rels, title: (rel) => vindex?.note(rel)?.title ?? null });
+    return { ...f, archived, abs: path.join(b.vault, f.rel), ...(approve ? { approve } : {}) };
   });
   if (reopened.length) { try { decisionLog.recordMany(b.vault, reopened); } catch (e) { log('decision log', e?.message); } }
   return out;
@@ -2991,7 +2999,8 @@ async function pumpFixes() {
     try {
       run.outcome = run.kind === 'batch' ? await runBatch(run, step, keep) : await decideLink(run.key, 'approve', step, keep, run.hashes ?? null, run.finding?.proposedFix ?? null);
       run.status = 'success';
-      run.undoable = saveUndo(run, kept);
+      // a batch that only kept items as they are wrote nothing, and its Undo still moves them back to review
+      run.undoable = saveUndo(run, kept) || (run.kind === 'batch' && !!run.done?.length);
       if (run.kind === 'batch') afterBatch(run, kept);
     } catch (e) {
       run.status = 'error';
@@ -3125,8 +3134,17 @@ function pastFixPlan(run, fresh = false) {
   try { undoFiles = JSON.parse(readFileSync(undoFile(run.id), 'utf8')).files ?? null; } catch {}
   const mtime = (rel) => { try { const st = statSync(vaultPath(run.vault, rel)); return Math.max(st.mtimeMs, st.ctimeMs); } catch { return null; } };
   const plan = undoPlan(run, { vault, undoFiles, versions: fixVersions(memoryVersions.files(run.vault), run), readVersion: (rel, id) => memoryVersions.read(run.vault, rel, id), mtime });
+  // Quorum cannot undo it exactly: Approve restores from git history, removes what the fix left, or keeps it as is.
+  // draft is where Sprint 3B's agent-drafted fix plugs in when drafting is on; until then it is null
+  if (!plan.ok) plan.approve = approvePastFix(run, plan, { vault, gitShow: gitOf(run.vault), undoFiles: undoFiles?.map((f) => f.rel) ?? null, draft: null });
   st.plans.set(run.id, { at: Date.now(), plan });
   return plan;
+}
+// git history of a vault, read only (reviewApprove.js gitReader); one reader per vault keeps what it read
+const gitReaders = new Map();
+function gitOf(vault) {
+  if (!gitReaders.has(vault)) gitReaders.set(vault, gitReader(vault));
+  return gitReaders.get(vault);
 }
 // the flagged fixes for the feed: each with its re-check, its Undo plan and the note it opens on
 function pastFixRows() {
@@ -3194,11 +3212,12 @@ function reviewItems({ ids = null, drafts = true } = {}) {
     const id = `${ROW.pastfix}${row.run.id}`;
     if (skip(id, !!st.archived[id])) continue;
     const item = pastFixItem(row);
-    out.push({ ...item, wrong: row.res?.main ?? null, hashes: hashNotes(b.vault, item.ops.map((o) => o.rel)) });
+    out.push({ ...item, wrong: row.res?.main ?? null, hashes: hashNotes(b.vault, notesOf(item)) });
   }
   for (const f of findingsNow()) {
     if (skip(`${ROW.finding}${f.key}`, f.archived)) continue;
-    out.push({ ...findingItem(f), hashes: hashNotes(b.vault, f.notes), finding: findingRecord(f) });
+    const item = findingItem(f);
+    out.push({ ...item, hashes: hashNotes(b.vault, [...new Set([...f.notes, ...notesOf(item)])]), finding: findingRecord(f) });
   }
   return drafts ? out.map(drafted) : out;
 }
@@ -3407,7 +3426,7 @@ function startPlan(plan, items, { actor = 'you' } = {}) {
     id, key: id, batch: id, kind: 'batch', auto: actor === 'auto', vault: b.vault, rel: '',
     target: actor === 'auto' ? `${n} memory ${n === 1 ? 'fix' : 'fixes'} Quorum applied on its own` : `${n} memory ${n === 1 ? 'fix' : 'fixes'}`,
     title: groups.map((g) => g.label).join(', '), status: 'queued', queuedAt: Date.now(), startedAt: null, endedAt: null, steps: [], outcome: null, error: null, dismissedAt: null,
-    items: go.map((i) => ({ id: i.id, kind: i.kind, key: i.key, link: i.link ?? null, title: i.title, line: itemLine(i), status: 'queued', finding: i.finding ?? null })),
+    items: go.map((i) => ({ id: i.id, kind: i.kind, key: i.key, link: i.link ?? null, title: i.title, line: itemLine(i), status: 'queued', finding: i.finding ?? null, ...(i.keep ? { keep: true } : {}) })),
     groups, problem: `${n} ${n === 1 ? 'item' : 'items'} from Needs review, planned as one batch.`, solution: groups.map((g) => g.label).join('. '),
     value: 'One batch, one undo: Undo puts every note back as it was before the batch.', meta: groups.map((g) => ['Change', g.label]),
     hashes: Object.assign({}, ...go.map((i) => i.hashes ?? {})),
@@ -3439,6 +3458,18 @@ async function runOp(item, o, { step, keep, written, vault }) {
     await decideLink(item.key, 'approve', step, keep, hashes, item.approved, item.draft ?? null);
     return;
   }
+  if (o.op === 'keep') { await step(`Keeping ${item.kind === 'pastfix' ? `the earlier fix on ${item.title}` : item.title} as it is`); return; }
+  if (o.op === 'unlink') {
+    // links an earlier fix left pointing at a note that is gone: each is replaced by its words
+    await step(`Removing the links to ${o.target} an earlier fix left`);
+    for (const rel of o.sources) {
+      if (!written.has(rel) && item.hashes && rel in item.hashes && (readVault(vault, rel) == null ? null : sha(readVault(vault, rel))) !== item.hashes[rel]) throw new Error(`“${rel}” changed after Quorum planned this batch, so Quorum did not write. Review the plan again`);
+      keep(rel);
+    }
+    unlinkTarget({ vault, sources: o.sources, target: o.target });
+    vindex.sync();
+    return;
+  }
   const abs = vaultPath(vault, o.rel);
   if (!abs && o.op !== 'create') throw new Error(`“${o.rel}” is no longer in the vault`);
   if (!written.has(o.rel) && item.hashes && o.rel in item.hashes) {
@@ -3464,6 +3495,14 @@ async function runOp(item, o, { step, keep, written, vault }) {
     await step(`Tagging ${o.rel} confidential: ${o.value}`);
     keep(o.rel);
     writeAtomic(abs, setFrontmatterKey(readFileSync(abs, 'utf8'), 'confidential', o.value));
+  } else if (o.op === 'setkey') {
+    await step(`Setting ${o.key}: ${o.value} in ${o.rel}`);
+    keep(o.rel);
+    writeAtomic(abs, setFrontmatterKey(readFileSync(abs, 'utf8'), o.key, o.value));
+  } else if (o.op === 'addlink') {
+    await step(`Linking ${o.note} from ${o.rel}`);
+    keep(o.rel);
+    writeAtomic(abs, withLinkLine(readFileSync(abs, 'utf8'), o.line));
   } else if (o.op === 'move') {
     const folder = o.to.includes('/') ? o.to.slice(0, o.to.lastIndexOf('/')) : '';
     await step(`Moving ${o.rel} to ${folder || 'the vault folder'} and updating the links to it`);
@@ -3515,7 +3554,7 @@ async function runBatch(run, step, keep) {
   const reopened = new Set();
   const gone = new Set(plan.steps.filter((s) => s.op.op === 'trash' || s.op.op === 'move').map((s) => s.op.rel));
   const followed = [];
-  for (const item of items.filter((i) => i.kind === 'pastfix' && i.link)) {
+  for (const item of items.filter((i) => i.kind === 'pastfix' && i.link && !i.keep)) {
     const key = String(item.link).toLowerCase();
     reopened.add(key);
     setLinksLeft([key], false);
@@ -3535,7 +3574,9 @@ async function runBatch(run, step, keep) {
   for (const [rel, set] of after) after.set(rel, new Set([...set].filter((t) => !reopened.has(t))));
   const reason = fixCheck({ before, after });
   if (reason) throw new Error(reason);
-  run.undid = items.filter((i) => i.kind === 'pastfix').map((i) => i.key);
+  run.undid = items.filter((i) => i.kind === 'pastfix' && !i.keep).map((i) => i.key);
+  // a kept past fix and every finding leave Needs review as done
+  run.done = items.filter((i) => (i.kind === 'pastfix' && i.keep) || i.kind === 'finding').map((i) => i.id);
   run.touched = [...touched];
   const done = (run.groups ?? []).map((g) => g.label).join(', ');
   return `Applied the plan: ${done}${followed.length ? `. Then pointed ${followed.length === 1 ? `the link to “${followed[0]}”` : `${followed.length} links`} at the notes the current rules pick` : ''}`;
@@ -3544,12 +3585,33 @@ async function runBatch(run, step, keep) {
 function afterBatch(run) {
   const at = Date.now();
   for (const id of run.undid ?? []) { const o = fixRunList().find((r) => r.id === id); if (o) o.undoneAt = at; }
+  markDone(run, true);
   if (pastFixState) pastFixState.plans.clear();
   try { sweep('save', run.touched ?? []); } catch (e) { log('memory sweep', e?.message); }
+}
+// The items a batch approved that leave Needs review as done: a past fix kept as it is, and every finding. Each moves
+// to Archived with the done mark, which shows Accepted; a finding also records archived in the decision log, so it
+// stays out of review until its evidence changes. on false, after an Undo, they come back to review (undoBatch logs
+// each one undone)
+function markDone(run, on) {
+  const ids = run.done ?? [];
+  if (!ids.length) return;
+  const st = feedState();
+  const at = new Date().toISOString();
+  for (const id of ids) {
+    if (on) { st.archived[id] = at; st.done[id] = at; st.read[id] = at; delete st.unread[id]; } else { delete st.archived[id]; delete st.done[id]; }
+  }
+  feedStateSave();
+  const items = (run.items ?? []).filter((i) => ids.includes(i.id) && i.kind === 'finding' && i.finding);
+  if (on && items.length) {
+    const recs = items.map((i) => ({ ...i.finding, decision: 'archived', actor: run.auto ? 'auto' : 'you', note: 'Approved' }));
+    try { decisionLog.recordMany(run.vault, recs); } catch (e) { log('decision log', e?.message); }
+  }
 }
 // Undo on a batch: its notes are back (fix-undo), so each corrected past fix is flagged again and each item is logged
 function undoBatch(run, rels) {
   for (const id of run.undid ?? []) { const o = fixRunList().find((r) => r.id === id); if (o) delete o.undoneAt; }
+  markDone(run, false);
   if (pastFixState) pastFixState.plans.clear();
   for (const it of run.items ?? []) {
     if (it.kind === 'link') { setLinksLeft([it.key], false); if (it.finding) logFinding(it.finding, 'undone'); }

@@ -18,6 +18,15 @@ A detector is a rule with an id and a version. The version goes up when the fix 
 
 Sprint 2 adds review-only rules, each with its own id: orphans, exact duplicates, frontmatter schema per folder, oversized notes, confidential mark versus folder, secrets, and stale notes.
 
+Every finding has an Approve (`app/reviewApprove.js` approveFinding). It runs through the batch planner like any fix:
+
+- Frontmatter: add each missing key, with the value Quorum can tell (the title, or a date in the file name) or an empty one.
+- Stale: set `last_verified` to today when the folder checks notes on an interval, else set `status: archived`.
+- Orphan: add a link line to the folder's index note (index, _index, README or the folder note), when there is one.
+- Oversized, duplicates, secrets, and a confidential finding with no fix: keep as is.
+
+An approved finding, and a past fix kept as is, move to Archived marked done (Accepted). A finding's new evidence brings it back to review.
+
 The confidential rule (`note.confidential-folder`, version 2) offers fixes that run through the batch planner:
 
 - Add the confidential tag: a note with no tag inside a folder marked confidential. This fix is automatic. An untagged note in a folder where most notes carry one value gets the same fix, approved by a person.
@@ -83,7 +92,12 @@ Fixes that ran before the current rules can be wrong. Quorum checks every finish
 - A run is flagged when the rules now would not make its fix. The reasons are: fewer than two real sources, a session or eval folder, a name that exists as a folder, script, skill, repo file or branch note, a dropped confidential mark, a link fixed in a generated report, a relink or alias onto a stub an earlier fix wrote, onto a generated report or onto the linking note, and a match through a title that holds the note body.
 - A flagged run shows in Needs review as its corrective fix, with its reasons and evidence. Approve undoes the wrong change, sends the link back to review, and points it at the note the current rules pick when that fix is an alias or relink that needs no review of its own and is not onto a note Quorum wrote from links alone. It runs through the batch planner, alone or with other items.
 - The undo part tries, in order: the undo record; the note versions saved during the fix; the Trash for a note the fix wrote; an exact reversal of an alias or a relink, computed from the run's outcome. Each path refuses when a note changed after the fix. The batch checks the notes once more right before it writes.
-- When the undo is not possible, the row says why and opens the note.
+- When the undo is not possible (no undo record or saved version, a removed link, or a note changed after the fix), Approve does the first of these that applies, and the row's recommendation says which (`app/reviewApprove.js`):
+  1. Restore from git history: the vault is in a git repo, and each note's text in the last commit before the fix differs from the note now only by the fix's change. Quorum puts that text back.
+  2. Remove what the fix left: a note the fix wrote that still holds only what the fix wrote goes to the Trash, or the links a relink left pointing at a note that is gone lose their link and keep their words.
+  3. A fix an agent drafted, when drafting is on. `approvePastFix` takes a `draft` hook for it.
+  4. Keep as is: nothing changes, and the item leaves Needs review as done.
+- Each path runs as a batch step, so it has a journal, versions and Undo, and bulk Approve plans it with the rest.
 - Archive keeps the fix. Approve, Archive and Move back to review are logged in the decision log under the rule `fix.recheck`.
 - The check runs once per start. Results are kept in `fix-recheck.json` under the rule versions. A start with the same versions checks only new runs. A new rule version checks every run again.
 - `app/scripts/fix-recheck-eval.mjs` runs the same check read-only against a vault and scores it against labels kept outside the repo.

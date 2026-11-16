@@ -240,4 +240,22 @@ describe('past fixes to check', () => {
     expect(r.summary.solution).toMatch(/^Quorum cannot undo it here\. “n\/Lantern\.md” changed after the fix/);
     expect(r.summary.recommendation).toBe('Open the note and check it.');
   });
+  it('says what Approve does when Quorum cannot undo it exactly: restore, remove or keep', () => {
+    const refused = { ok: false, kind: 'trash', why: '“n/Lantern.md” changed after the fix, so Quorum leaves it as it is.' };
+    const git = row({ ...refused, approve: { kind: 'git', why: 'Quorum puts back “a.md” as it reads in git history before the fix.', ops: [] } });
+    expect(git.review).toEqual({ kind: 'past-fix', key: run.id, undo: true, approve: 'git' });
+    expect(git.summary.recommendation).toBe('Restore the note from git history.');
+    expect(git.summary.solution).toMatch(/^Quorum puts back “a\.md” as it reads in git history before the fix\. Then the link goes back/);
+    expect(row({ ...refused, approve: { kind: 'remove', why: 'Quorum moves it to the Trash.', ops: [] } }).summary.recommendation).toBe('Remove what the fix left.');
+    const keep = row({ ...refused, approve: { kind: 'keep', why: `${refused.why} Approve keeps the fix as it is and marks the item done.`, ops: [] } });
+    expect(keep.summary.line).toBe('Keep the fix on “Lantern”?');
+    expect(keep.summary.recommendation).toBe('Keep as is.');
+    expect(keep.summary.solution).toMatch(/Approve keeps the fix as it is and marks the item done\.$/);
+  });
+  it('lists an item an Approve finished under Archived as done', () => {
+    const r = row({ ok: false, why: 'x', approve: { kind: 'keep', why: 'x', ops: [] } });
+    const page = feedPage([r], { tab: 'archived', archived: [r.id], done: [r.id] });
+    expect(page.items[0]).toMatchObject({ archived: true, done: true });
+    expect(feedPage([r], { review: true, archived: [r.id], done: [r.id] }).items).toEqual([]);
+  });
 });

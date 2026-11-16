@@ -28,7 +28,7 @@ describe('review items', () => {
     const f = (fix) => ({ key: 'note.confidential-folder:x', rel: 'loose/x.md', fix, autoFix: false });
     expect(findingItem(f({ kind: 'move-tag', to: 'deals/x.md', value: 'deal' })).ops).toEqual([{ op: 'tag', rel: 'loose/x.md', value: 'deal' }, { op: 'move', rel: 'loose/x.md', to: 'deals/x.md' }]);
     expect(itemLine(findingItem(f({ kind: 'move-tag', to: 'deals/x.md', value: 'deal' })))).toBe('Tag “loose/x.md” confidential: deal and move it to “deals/x.md”');
-    expect(findingItem(f(null)).hold).toMatch(/no automatic fix/);
+    expect(findingItem(f(null))).toMatchObject({ keep: true, ops: [{ op: 'keep' }] });
   });
   it('plans a corrective fix ahead of a relink onto the stub it removes', () => {
     const past = pastFixItem({ run: { id: 'r1', key: 'kite', target: 'Kite' }, res: { action: 'create' }, plan: { ok: true, kind: 'trash', files: [{ rel: 'n/Kite.md', before: null }] } });

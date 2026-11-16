@@ -66,13 +66,21 @@ function askOf(row) {
   // a fix that ran and that the current rules would not make (fixRecheck.js): its corrective fix undoes the wrong change
   // and sends the link back to review, where the current rules give it a fix; when Quorum cannot undo it, open the note
   if (row.review.kind === 'past-fix') {
-    const undo = !!row.review.undo;
+    const a = d.approve ?? null;
     const problem = `${sentence(d.outcome)} The current rules would not make this fix. ${(d.reasons ?? []).join(' ')}`.trim();
+    const value = 'The vault keeps only the fixes the current rules would make, so the agent reads fewer wrong links and notes.';
+    const back = 'Then the link goes back to Needs review, or Quorum points it at the note the current rules pick when that fix needs no review of its own.';
+    // Quorum cannot undo it exactly: Approve does the first of git, remove and draft that applies, else keeps it
+    if (a?.kind === 'keep') return { question: `Keep the fix on ${q(t)}?`, suggest: 'approve', problem, solution: sentence(a.why), value, recommendation: 'Keep as is.', why: (d.reasons ?? [])[0] ?? '' };
+    if (a) {
+      const rec = a.kind === 'git' ? 'Restore the note from git history.' : a.kind === 'remove' ? 'Remove what the fix left.' : 'Run the drafted fix.';
+      return { question: `Correct the fix on ${q(t)}?`, suggest: 'approve', problem, solution: `${sentence(a.why)} ${back}`, value, recommendation: rec, why: (d.reasons ?? [])[0] ?? '' };
+    }
+    const undo = !!row.review.undo;
     return {
       question: undo ? `Correct the fix on ${q(t)}?` : `Check the fix on ${q(t)}`, suggest: 'approve', problem,
-      solution: undo ? `${sentence(d.undo)} Then the link goes back to Needs review, or Quorum points it at the note the current rules pick when that fix needs no review of its own.` : `Quorum cannot undo it here. ${sentence(d.undo)} Open the note to check it.`,
-      value: 'The vault keeps only the fixes the current rules would make, so the agent reads fewer wrong links and notes.',
-      recommendation: undo ? 'Approve the corrective fix.' : 'Open the note and check it.', why: (d.reasons ?? [])[0] ?? '',
+      solution: undo ? `${sentence(d.undo)} ${back}` : `Quorum cannot undo it here. ${sentence(d.undo)} Open the note to check it.`,
+      value, recommendation: undo ? 'Approve the corrective fix.' : 'Open the note and check it.', why: (d.reasons ?? [])[0] ?? '',
     };
   }
   if (row.review.kind === 'junk-note') {
