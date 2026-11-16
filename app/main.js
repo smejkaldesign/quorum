@@ -2799,7 +2799,13 @@ async function pumpFixes() {
     fixEmit(run);
     fixJournal.append(run.id, { step: 'started' });
     writeUndo(run, []);
+    // the text of every note the fix changes, before it changes it; saved beside the runs so Undo can restore it
+    const kept = [];
+    // the undo record on disk holds the hash of each kept note as it reads now, so recovery after a quit puts back only
+    // a note that still reads as the fix left it, and leaves one the person edited before the next start
+    const stamp = () => { const h = hashNotes(run.vault, kept.map((k) => k.rel)); writeUndo(run, kept.map((k) => ({ ...k, after: h[k.rel] }))); };
     const step = async (label) => {
+      if (kept.length) stamp();
       fixJournal.append(run.id, { step: 'step', label });
       const at = Date.now();
       const last = run.steps[run.steps.length - 1];
@@ -2808,13 +2814,11 @@ async function pumpFixes() {
       fixEmit(run);
       await tick();
     };
-    // the text of every note the fix changes, before it changes it; saved beside the runs so Undo can restore it
-    const kept = [];
     const keep = (rel, created = false) => {
       if (kept.some((k) => k.rel === rel)) return;
       try { kept.push({ rel, before: created ? null : readFileSync(vaultPath(run.vault, rel), 'utf8') }); } catch {}
       // the undo record is on disk before the note is written, so a quit partway can be put back on the next start
-      writeUndo(run, kept);
+      stamp();
       fixJournal.append(run.id, { step: 'keep', rel, created });
     };
     try {
@@ -2859,8 +2863,8 @@ ipcMain.handle('fix-start', (_e, keys) => startFixes(Array.isArray(keys) ? keys 
 // back in Needs review. It refuses when a note changed after the fix, so it never throws away later edits
 const fixUndoDir = path.join(DATA_DIR, 'fix-undo');
 const undoFile = (id) => path.join(fixUndoDir, `${String(id).replace(/[^a-z0-9_-]/gi, '_').slice(0, 200)}.json`);
-// every run has an undo record, written before its first note changes (after: null) and completed with the hash of
-// what the fix wrote once it ends; it is deleted only when the run drops off the list (fixRunsSave)
+// every run has an undo record, written before its first note changes, stamped with the hash of each kept note at
+// every step and once it ends; it is deleted only when the run drops off the list (fixRunsSave)
 function writeUndo(run, files) {
   try { mkdirSync(fixUndoDir, { recursive: true }); writeFileSync(undoFile(run.id), JSON.stringify({ vault: run.vault, files: files.map((f) => ({ after: null, ...f })) })); } catch (e) { log('fix undo save', e?.message); }
 }
