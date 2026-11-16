@@ -54,7 +54,10 @@ export async function runModel({ source = 'none', role = null, providers = null,
 // Claude via the signed-in Claude Code (the user's own claude.ai sign-in), never a raw API key. --tools '' leaves the
 // model no tools at all. Exported for the memory agent's drafts (memoryDraft.js), which always run on Claude Code
 // with onDelta the reply streams (stream-json with partial messages); onDelta gets the whole text so far each time
-export function claudeText({ prompt, system, model, cwd, onDelta = null }) {
+// timeoutMs ends a run that takes too long; stopClaudeText() ends every run still going, for the app's quit
+const liveClaude = new Set();
+export function stopClaudeText() { for (const p of liveClaude) { try { p.kill(); } catch {} } liveClaude.clear(); }
+export function claudeText({ prompt, system, model, cwd, onDelta = null, timeoutMs = null }) {
   return new Promise((resolve, reject) => {
     const env = { ...process.env };
     delete env.ANTHROPIC_API_KEY;
@@ -63,6 +66,9 @@ export function claudeText({ prompt, system, model, cwd, onDelta = null }) {
       '--model', model, '--tools', '', '--no-session-persistence',
       '--strict-mcp-config', '--setting-sources', 'user', '--system-prompt', system,
     ], { env, cwd });
+    liveClaude.add(proc);
+    const timer = timeoutMs ? setTimeout(() => { proc.kill(); reject(new Error(`Claude Code took more than ${Math.round(timeoutMs / 1000)} seconds`)); }, timeoutMs) : null;
+    const done = () => { liveClaude.delete(proc); if (timer) clearTimeout(timer); };
     let out = '';
     let err = '';
     let result = null;
@@ -77,8 +83,9 @@ export function claudeText({ prompt, system, model, cwd, onDelta = null }) {
       });
     } else proc.stdout.on('data', (d) => { out += d; });
     proc.stderr.on('data', (d) => { err += d; });
-    proc.on('error', reject);
+    proc.on('error', (e) => { done(); reject(e); });
     proc.on('close', (code) => {
+      done();
       if (onDelta) return result && !result.is_error ? resolve(String(result.result).trim()) : reject(new Error(result?.result || err.split('\n')[0] || `claude exited ${code}`));
       return code === 0 ? resolve(out.trim()) : reject(new Error(err || `claude exited ${code}`));
     });

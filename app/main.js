@@ -1,6 +1,6 @@
 import './startup-flags.js';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, powerMonitor, screen, session, shell, systemPreferences, Tray } from 'electron';
-import { NEEDS_SOURCE, NEEDS_TOOLS, SOURCES, claudeText, modelLabel, runModel, sourceStatus } from './models.js';
+import { NEEDS_SOURCE, NEEDS_TOOLS, SOURCES, claudeText, modelLabel, runModel, sourceStatus, stopClaudeText } from './models.js';
 import { BY_ID, cleanConnectors, cleanProviders, needsKey, providerFor, providersFromSource, sourceFromProviders } from './connectors/catalog.js';
 import { connectorKey, removeConnectorKey, setConnectorKey, testSavedConnector } from './connectors/keys.js';
 import { createConnectGuard, guardIpc } from './connectors/connectGuard.js';
@@ -3238,7 +3238,7 @@ function draftFix(item) {
 }
 const drafter = createDrafter({
   file: path.join(DATA_DIR, 'memory-drafts.json'),
-  model: (prompt, system) => claudeText({ prompt, system, model: 'sonnet', cwd: tmpdir() }),
+  model: (prompt, system) => claudeText({ prompt, system, model: 'sonnet', cwd: tmpdir(), timeoutMs: 180000 }),
   items: () => reviewItems({ drafts: false }),
   evidence: draftEvidence,
   enabled: () => settings.memoryDrafts === true && !!brain() && !!vindex,
@@ -4847,7 +4847,7 @@ app.whenReady().then(() => {
   devHooks?.install({ win, meeting, toUI, log, endMeeting, sessionsDir: SESSIONS, userName: USER_NAME });
 });
 
-app.on('before-quit', () => { quitting = true; helperSend({ cmd: 'quit' }); });
+app.on('before-quit', () => { quitting = true; helperSend({ cmd: 'quit' }); stopClaudeText(); });
 app.on('activate', openMain);
 // coming back to the window pulls what other devices changed; the Realtime channel in sync.js delivers them as they
 // happen, and this and the timer in account.js cover the time a dropped socket takes to rejoin
