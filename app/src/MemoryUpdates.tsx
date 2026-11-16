@@ -118,6 +118,11 @@ export function MemoryUpdatesCard({ settings, onSettings }: { settings: Settings
     const n = Math.round(Number(el.value));
     if (Number.isFinite(n) && n >= 1 && n <= 365) { el.value = String(n); if (n !== saved) save({ memoryDotDays: n }); } else el.value = String(saved);
   };
+  const cap = settings.memoryDraftCap ?? 40;
+  const commitCap = (el: HTMLInputElement) => {
+    const n = Math.round(Number(el.value));
+    if (Number.isFinite(n) && n >= 1 && n <= 500) { el.value = String(n); if (n !== cap) save({ memoryDraftCap: n }); } else el.value = String(cap);
+  };
   return (
     <>
       <h3>Memory updates</h3>
@@ -138,6 +143,26 @@ export function MemoryUpdatesCard({ settings, onSettings }: { settings: Settings
           desc="After each check, Quorum applies every Memory health fix that needs no review of its own as one batch, and lists it in Notifications with Undo. Fixes that conflict or need a review stay in Needs review. Off by default.">
           <Toggle on={settings.memoryAutoApply === true} onChange={(v) => save({ memoryAutoApply: v })} />
         </Row>
+        <Row icon={<IconListCheck width={18} height={18} />} title="Let the agent draft fixes"
+          desc="For fixes the rules cannot decide (a missing note to write, a weak relink or alias, two notes that repeat each other), the agent reads those notes and drafts the fix with quoted lines and a confidence. It runs on your own Claude Code sign-in, reads only the notes Quorum gives it, and changes nothing until you approve. It waits while you record or type. Off by default.">
+          <Toggle on={settings.memoryDrafts === true} onChange={(v) => save({ memoryDrafts: v })} />
+        </Row>
+        {settings.memoryDrafts === true && (
+          <>
+            <Row icon={<IconClock width={18} height={18} />} title="Drafts per day"
+              desc="The agent stops drafting for the day after this many drafts.">
+              <label className="mu-days">
+                <input key={cap} type="number" min={1} max={500} defaultValue={cap} aria-label="Drafts per day"
+                  onBlur={(e) => commitCap(e.currentTarget)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+                <span>drafts</span>
+              </label>
+            </Row>
+            <Row icon={<IconListCheck width={18} height={18} />} title="Let the agent read confidential notes"
+              desc="Off: a note marked confidential, or in a folder marked confidential, is never sent to the agent, and a fix that needs one gets no draft. Folders the read guard blocks are never sent.">
+              <Toggle on={settings.memoryDraftConfidential === true} onChange={(v) => save({ memoryDraftConfidential: v })} />
+            </Row>
+          </>
+        )}
         <Row icon={<IconClock width={18} height={18} />} title="Hide update dots after"
           desc="A blue dot in the Memory tree goes away when you open the note or after this many days. A green dot stays until you accept its updates.">
           <label className="mu-days">
