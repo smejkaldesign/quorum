@@ -3456,10 +3456,9 @@ async function agentResolve(item, run, step) {
   return done(next);
 }
 ipcMain.handle('memory-gate', () => {
-  const held = gateHeld();
   const checking = gateChecking();
   // stopped: no verdicts yet and no check running, after Cancel or before the first check starts
-  return { checking, stopped: checking && !checkWork && !gateRunning, at: gateState?.at ?? 0, held: [...held].map(([id, v]) => ({ id, ...v })) };
+  return { checking, stopped: checking && !checkWork && !gateRunning, at: gateState?.at ?? 0 };
 });
 // Agent-drafted fixes (memoryDraft.js; Settings > Memory, Let the agent draft fixes, off by default). The agent runs
 // on the person's own Claude Code sign-in with no tools and reads only the notes Quorum puts in its prompt. A note the
