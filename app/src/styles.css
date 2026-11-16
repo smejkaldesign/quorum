@@ -2636,3 +2636,6 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 /* Properties in its sheet */
 .props-sheet { width: min(640px, calc(100vw - 48px)); max-height: calc(100vh - 96px); overflow-y: auto; }
 .props.in-modal { border: 0; padding: 0; margin: 12px 0 4px; background: none; }
+/* the Memory note is its own scroll area, so it fills its column and centers the text with equal padding on both
+   sides, at the shared page width */
+.kb-preview > .doc { width: auto; padding-left: max(40px, calc((100% - var(--page-w)) / 2)); padding-right: max(40px, calc((100% - var(--page-w)) / 2)); }
