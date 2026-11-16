@@ -61,7 +61,7 @@ import { createPlatformCache, eventRef, matchPlatforms } from './meetingPlatform
 import { calendarWindow, normalizeDays } from './calendarWindow.js';
 import { ARCHIVE_AFTER, feedPage, feedRows, labelOf } from './activityFeed.js';
 import { issueMeta, issueOf } from './memoryHealth.js';
-import { LINK_RULE, LINK_RULE_VERSION, contextNote } from './linkRules.js';
+import { LINK_RULE, LINK_RULE_VERSION, contextNote, isGenerated } from './linkRules.js';
 import { createDecisionLog, fingerprint } from './decisionLog.js';
 import { createElsewhere, withFound } from './linkElsewhere.js';
 import { titleOf } from './notificationSummary.js';
@@ -2526,7 +2526,9 @@ function linkIssues() {
   const items = (vindex?.linkHealth() ?? []).filter((m) => !onDisk(m.target));
   const finder = elsewhereFinder();
   if (!finder || !vindex) return items;
-  try { return withFound(items, finder, vindex.rels()); } catch (e) { log('memory health elsewhere', e?.message); return items; }
+  // a generated report is never the note a link is pointed at, so it is never a folder's index note either
+  const rels = vindex.rels().filter((r) => !isGenerated(r, vindex.note(r)?.props));
+  try { return withFound(items, finder, rels); } catch (e) { log('memory health elsewhere', e?.message); return items; }
 }
 // a fix that needs a person to read it first (memoryHealth.js reviewOnly): a bulk Approve skips it
 const reviewOnlyKey = (key) => { const m = linkIssues().find((h) => h.target.toLowerCase() === String(key ?? '').toLowerCase()); return !!m && issueOf(withMarks(m)).reviewOnly; };
