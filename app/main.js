@@ -2620,12 +2620,18 @@ const withMarks = (m, left = linksLeft(), declined = linksDeclined()) => ({ ...m
 // keep(rel, created) records a note's text before a fix changes it (or that the fix made it), so Undo can put it back.
 // hashes: each note's hash when the issue was found; a note that changed since is never written. After the write the
 // links of every touched note are checked again, and a fix that made them worse throws, so the run puts the notes back
-async function decideLink(key, verdict, step = async () => {}, keep = () => {}, hashes = null) {
+// approved: the fix the person approved (findingOf proposedFix); a queued fix whose issue now reads with another fix
+// (an earlier fix in the batch changed the vault) is refused, so a run never makes a fix nobody approved
+async function decideLink(key, verdict, step = async () => {}, keep = () => {}, hashes = null, approved = null) {
   const b = brain();
   if (!b || !vindex) throw new Error('No vault connected');
   const entry = linkIssues().find((h) => h.target.toLowerCase() === String(key ?? '').toLowerCase());
   if (!entry) throw new Error('That link is already fixed');
   const issue = issueOf(withMarks(entry));
+  if (verdict === 'approve' && approved) {
+    const now = findingOf(issue).proposedFix;
+    if (now.action !== approved.action || now.to !== approved.to || now.createIn !== approved.createIn) throw new Error('The fix for this link changed after you approved it, so Quorum did not write. Review the issue again');
+  }
   // Dismiss marks it reviewed and changes nothing: the link stays and the issue moves to Dismissed
   if (verdict !== 'approve' || issue.action === 'leave') { if (verdict !== 'approve') logFinding(findingOf(issue), 'archived'); setLinksLeft([issue.key], true); return 'Dismissed. The link stays as it is'; }
   const c = issue.candidate;
@@ -2824,7 +2830,7 @@ async function pumpFixes() {
       fixJournal.append(run.id, { step: 'keep', rel, created });
     };
     try {
-      run.outcome = await decideLink(run.key, 'approve', step, keep, run.hashes ?? null);
+      run.outcome = await decideLink(run.key, 'approve', step, keep, run.hashes ?? null, run.finding?.proposedFix ?? null);
       run.status = 'success';
       run.undoable = saveUndo(run, kept);
     } catch (e) {
