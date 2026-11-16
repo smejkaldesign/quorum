@@ -107,7 +107,7 @@ function Row({ row, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide }
             {row.review && (
               <>
                 <button className={`act-pill${row.summary.ask?.suggest === 'approve' ? ' primary' : ''}`} disabled={busy} onClick={() => onDecide('approve')}>Approve</button>
-                <button className={`act-pill${row.summary.ask?.suggest === 'reject' ? ' primary' : ''}`} disabled={busy} data-tip={row.review.kind === 'memory' ? 'Put back the text from before these updates' : 'Mark this note rejected'} onClick={() => onDecide('reject')}>Disapprove</button>
+                <button className={`act-pill${row.summary.ask?.suggest === 'reject' ? ' primary' : ''}`} disabled={busy} data-tip={row.review.kind === 'memory' ? 'Put back the text from before these updates' : row.review.kind === 'junk-note' ? 'Keep this note' : 'Mark this note rejected'} onClick={() => onDecide('reject')}>Disapprove</button>
               </>
             )}
             <RowMenu row={row} busy={busy} onOpen={go} onMark={onMark} onDecide={onDecide} />

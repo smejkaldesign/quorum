@@ -13,6 +13,8 @@ import { splitChoices } from './MeetingNote';
 import { ChatExit, ChatStrip, useChats } from './ChatStack';
 import { Composer } from './Composer';
 import { AgentRun, NoteNotifications, unseenOf, useNoteActivity } from './AgentActivity';
+import { JunkNoteDialog } from './JunkNoteDialog';
+import { junkOf } from '../noteJunk.js';
 
 type Followup = { q: string; a: string | null };
 
@@ -24,7 +26,7 @@ export type Turn = SpeakerTurn & { who: string; voice?: number | 'mix' | 'sound'
 // live: the recording is running (or paused) and this is its page under the header; the transcript shows as it is
 // heard and the summary waits for Stop, which writes it into this same page. embedded drops the window chrome
 // ready: a new note before any recording; you can type in Your notes and Save, or press Record to transcribe into it
-export function EndView({ notes, draft, meta, summarizing, transcript, participants, onSpeaker, privateNotes, onPrivateNotes, flushPrivateNotes, onClose, me, live = false, paused = false, embedded = false, partial = '', who = null, onAnswer, ready = false, onSaveDraft, onRecord, onContinue, recordBusy = false, asker, initialTitle = '' }: { initialTitle?: string; asker?: { name: string; photo: string | null }; onContinue?: () => void; onRecord?: () => void; recordBusy?: boolean; ready?: boolean; onSaveDraft?: (title: string) => Promise<void>; who?: WhoAsk | null; onAnswer?: (a: WhoAnswers | null) => void; live?: boolean; paused?: boolean; embedded?: boolean; partial?: string; me?: { name: string; photo: string | null }; notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; participants: string[]; onSpeaker: (id: number, name: string | null, similar: boolean) => Promise<void>; privateNotes: string; onPrivateNotes: (v: string) => void; flushPrivateNotes: () => void; onClose: () => void }) {
+export function EndView({ notes, draft, meta, summarizing, transcript, participants, onSpeaker, privateNotes, onPrivateNotes, flushPrivateNotes, onClose, me, live = false, paused = false, embedded = false, partial = '', who = null, onAnswer, ready = false, onSaveDraft, onRecord, onContinue, recordBusy = false, asker, initialTitle = '' }: { initialTitle?: string; asker?: { name: string; photo: string | null }; onContinue?: () => void; onRecord?: () => void; recordBusy?: boolean; ready?: boolean; onSaveDraft?: (title: string, keep?: boolean) => Promise<void>; who?: WhoAsk | null; onAnswer?: (a: WhoAnswers | null) => void; live?: boolean; paused?: boolean; embedded?: boolean; partial?: string; me?: { name: string; photo: string | null }; notes: Notes | null; draft: NotesDraft | null; meta: MeetingMeta | null; summarizing: boolean; transcript: Turn[]; participants: string[]; onSpeaker: (id: number, name: string | null, similar: boolean) => Promise<void>; privateNotes: string; onPrivateNotes: (v: string) => void; flushPrivateNotes: () => void; onClose: () => void }) {
   // three tabs on one note: your Note, the Summary (once there is one) and the Transcript; the note's one chat sits below
   const [showing, setShowing] = useState<'note' | 'summary' | 'transcript' | 'activity'>(live ? 'transcript' : 'note');
   // a new note's title: empty reads New note in italics, and a click puts the cursor in it
@@ -66,6 +68,9 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
   // naming an untitled recording moves its file; the run card and the activity follow it
   useEffect(() => window.quorum.onNoteRenamed((d) => setSaved((s) => (s && s.file === d.from ? { ...s, file: d.to } : s))), []);
   const [saving, setSaving] = useState(false);
+  // a draft that looks empty (no recording, almost no real words) waits here for Discard or Save anyway
+  const [junk, setJunk] = useState<string | null>(null);
+  const saveDraft = async (keep = false) => { setSaving(true); try { await onSaveDraft?.(title.trim(), keep); } finally { setSaving(false); } };
   const [hot, setHot] = useState<number[]>([]);
   const end = useRef<HTMLDivElement>(null);
   const similar = similarCounts(transcript);
@@ -145,7 +150,8 @@ export function EndView({ notes, draft, meta, summarizing, transcript, participa
           {ready ? <>
           {/* Record turns this page into the recording, the same as Record in the header */}
           {onRecord && <span data-tip={recordBusy ? 'A recording is already running' : undefined}><button className="act-pill" disabled={recordBusy} onClick={onRecord}><IconRecord width={15} height={15} /> Record</button></span>}
-          <button className="act-pill primary" disabled={(!privateNotes.trim() && !title.trim()) || saving} onClick={async () => { setSaving(true); try { await onSaveDraft?.(title.trim()); } finally { setSaving(false); } }}>{saving ? 'Saving…' : 'Save'}</button>
+          <button className="act-pill primary" disabled={(!privateNotes.trim() && !title.trim()) || saving} onClick={() => { const j = junkOf({ title: title.trim(), body: privateNotes }); if (j) setJunk(j.reason); else saveDraft(); }}>{saving ? 'Saving…' : 'Save'}</button>
+          {junk && <JunkNoteDialog reason={junk} onDiscard={() => { setJunk(null); onClose(); }} onSave={async () => { setJunk(null); await saveDraft(true); }} />}
           </> : live ? <button className="act-pill primary" onClick={() => window.quorum.end()}><IconStop width={14} height={14} /> Stop recording</button> : <>
           {saved ? (
             <>

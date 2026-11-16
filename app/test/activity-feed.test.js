@@ -130,3 +130,20 @@ describe('backfill fixture', () => {
     expect(feedPage(r, { tab: 'unread' }).total).toBe(0);
   });
 });
+
+describe('junk notes', () => {
+  const junk = [{ abs: '/v/Meetings/2026-11-15-kjhkjhkjh-q1.md', rel: 'Meetings/2026-11-15-kjhkjhkjh-q1.md', title: 'kjhkjhkjh', reason: 'It has no recording, and “kjhkjhkjh twesrtykjhlkij” does not read as words.', at: T(20) }];
+  it('lists each one as a review item that asks to remove it', () => {
+    const rows = feedRows({ junk, state: { since: T(10) } });
+    expect(rows).toHaveLength(1);
+    const [r] = rows;
+    expect(r.review).toEqual({ kind: 'junk-note' });
+    expect(r.unread).toBe(true);
+    expect(r.summary.line).toBe('Remove “kjhkjhkjh”?');
+    expect(r.summary.ask.suggest).toBe('approve');
+    const page = feedPage(rows, { review: true });
+    expect(page.total).toBe(1);
+    expect(page.counts.review).toBe(1);
+    expect(page.dot).toBe(true);
+  });
+});

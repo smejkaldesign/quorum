@@ -11,6 +11,8 @@ import { NoteEditor, type NoteEditorHandle } from './editor/NoteEditor';
 import { Properties } from './editor/Properties';
 import { isLossless } from './editor/markdown';
 import { KeepPrivate } from './KeepPrivate';
+import { JunkNoteDialog } from './JunkNoteDialog';
+import { junkOf } from '../noteJunk.js';
 
 const SAVE_AFTER = 800;
 type Status = 'idle' | 'saving' | 'saved' | 'conflict';
@@ -60,6 +62,8 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
   const heard = useRef<{ turns: TimedTurn[]; reads: SpeakerRead[]; others: Set<string>; self: string[] }>({ turns: [], reads: [], others: new Set(), self: [] });
   // Back could not save: the view stays open with the text, Copy and a way to close anyway
   const [unsaved, setUnsaved] = useState(false);
+  // a new note that looks empty when it closes waits here for Discard or Save anyway
+  const [junk, setJunk] = useState<{ file: string; reason: string } | null>(null);
   const timer = useRef<number | null>(null);
   const recording = rec.audio || rec.screen;
   live.current.rec = rec;
@@ -252,7 +256,22 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
       setUnsaved(true);
       return;
     }
+    // a note this editor made, with nothing recorded and almost no real words, asks before it is kept
+    const heardHere = heard.current.turns.length > 0 || /^recorded:\s*true\s*$/m.test(s.ref?.frontmatter ?? '');
+    const j = !force && fresh && s.ref && !s.conflict && !s.readOnly ? junkOf({ title: s.title, body: s.body, hasRecording: heardHere }) : null;
+    if (j && s.ref) { setJunk({ file: s.ref.file, reason: j.reason }); return; }
     await window.quorum.handNoteDone(s.ref?.file ?? null);
+    onClose();
+  }
+  async function discardJunk(file: string) {
+    await window.quorum.noteDiscard(file);
+    setJunk(null);
+    onClose();
+  }
+  async function keepJunk(file: string) {
+    await window.quorum.noteKeep(file);
+    setJunk(null);
+    await window.quorum.handNoteDone(file);
     onClose();
   }
   useEffect(() => { if (leave) close(); }, [leave]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -334,6 +353,7 @@ export function NoteView({ file: initialFile, fresh, record: startWith, canRecor
           )}
         </article>
       </div>
+      {junk && <JunkNoteDialog reason={junk.reason} onDiscard={() => discardJunk(junk.file)} onSave={() => keepJunk(junk.file)} />}
     </div>
   );
 }

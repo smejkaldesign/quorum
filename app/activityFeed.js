@@ -52,9 +52,10 @@ const prefOn = (prefs, key) => prefs?.[key] !== false;
 //               imported?: { at, source, sourceName, date } }
 //   memories: { abs, rel, title?, note?, gone?, versions, updates, seenAt }
 //   denials:  { id, t, path, tool, surface, reason, guard, guardLabel }[]
+//   junk:     { abs, rel, title, reason, at }[], the notes upkeep found with no recording and no real words
 //   state:    { since, read: { [id]: at }, unread: { [id]: at } }; since is when Notifications started keeping its
 //             own marks, read and unread are the person's marks on single rows
-export function feedRows({ notes = [], memories = [], denials = [], state = {}, guardFile = null }) {
+export function feedRows({ notes = [], memories = [], denials = [], junk = [], state = {}, guardFile = null }) {
   const rows = [];
   const since = time(state.since);
   const read = state.read ?? {};
@@ -110,6 +111,11 @@ export function feedRows({ notes = [], memories = [], denials = [], state = {}, 
         detail: { changes: waiting.reduce((s, u) => s + (u.changes ?? 0), 0), reason: last.reason || null }, review: { kind: 'memory', count: waiting.length },
       }, m.seenAt);
     }
+  }
+  // a junk note asks whether to move it to the Trash; it reads as a change to the note in the Type filter
+  for (const j of junk) {
+    const at = time(j.at);
+    push({ id: `r:junk:${j.abs}`, at, kind: 'note-updated', event: 'review', who: 'agent', target: { kind: 'note', abs: j.abs, rel: j.rel, title: j.title ?? titleOf({ rel: j.rel }) }, files: [], detail: { reason: j.reason ?? null }, review: { kind: 'junk-note' } }, null);
   }
   const guardTarget = { kind: 'guardrail', abs: guardFile ?? '', rel: 'Guardrails', title: 'Guardrails' };
   for (const g of denials) {
