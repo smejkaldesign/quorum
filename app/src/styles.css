@@ -2808,3 +2808,10 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .run-banner:not(.live) .run-icon { width: 48px; height: auto; align-self: stretch; }
 .run-banner.success .run-icon { background: rgba(48, 209, 88, 0.18); }
 .run-banner.error .run-icon { background: rgba(255, 69, 58, 0.18); }
+
+/* the answer an item got, in place of the unread dot */
+.nf-status { flex: none; display: inline-flex; align-items: center; height: 20px; margin-left: 10px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 600; vertical-align: 2px; }
+.nf-status.accepted { background: rgba(48, 209, 88, 0.16); color: #30d158; }
+.nf-status.failed, .nf-status.declined { background: rgba(255, 69, 58, 0.16); color: #ff6961; }
+/* the In review count keeps dark text in a selected tab too */
+.seg button .nf-count.review, .seg button.on .nf-count.review, .nf-toggle .nf-count.review, .nf-toggle.on .nf-count.review { color: #1a1a1b; }

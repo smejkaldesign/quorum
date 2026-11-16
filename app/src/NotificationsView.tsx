@@ -76,7 +76,7 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
         {/* waiting for a decision shows the orange mark, Quorum's color for anything in review */}
         <span className="nf-who">{row.who === 'you' ? <span className="nf-you-avatar" aria-label="You" data-tip={me.name}><Avatar name={me.name} photo={me.photo} size={32} /></span> : <img src={row.review || row.run ? markReview : markProd} alt={row.review ? 'Quorum, needs review' : 'Quorum'} width={32} height={32} />}</span>
         <span className="nf-main">
-          <span className="nf-head"><strong className="conn-title nf-title">{row.summary.line}</strong>{row.unread && <i className="nf-dot" role="img" aria-label="Unread" data-tip="Unread" />}</span>
+          <span className="nf-head"><strong className="conn-title nf-title">{row.summary.line}</strong>{row.run && (row.run.status === 'success' || row.run.status === 'error') ? <StatusBadge status={row.run.status === 'success' ? 'accepted' : 'failed'} /> : row.unread && <i className="nf-dot" role="img" aria-label="Unread" data-tip="Unread" />}</span>
           {!row.review && !row.run && <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>{row.summary.sub && <> <span className="nf-sep" aria-hidden="true">•</span> {row.summary.sub}</>}</span>}
         </span>
         <span className={`nf-side${row.review || row.run ? ' mh-side' : ''}`}>
@@ -112,8 +112,8 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
           <div className="conn-sub conn-fold-body nf-details">
             {row.run ? (
               <>
-                {row.run.showBanner && <RunBanner run={row.run} />}
-                <ReviewDetails recommendation={row.run.showBanner ? undefined : row.run.recommendation} problem={row.run.problem} solution={row.run.solution} value={row.run.value} meta={row.run.meta} />
+                <RunBanner run={row.run} />
+                <ReviewDetails problem={row.run.problem} solution={row.run.solution} value={row.run.value} meta={row.run.meta} />
               </>
             ) : row.review ? (
               <ReviewDetails recommendation={row.summary.recommendation} problem={row.summary.problem} solution={row.summary.solution} value={row.summary.value}
@@ -320,7 +320,7 @@ export function RunBanner({ run }: { run: FixRun }) {
   useEffect(() => { if (!live) return; const t = window.setInterval(() => setNow(Date.now()), 250); return () => window.clearInterval(t); }, [live]);
   const current = run.steps[run.steps.length - 1];
   const elapsed = (run.endedAt ?? now) - (run.startedAt ?? run.queuedAt);
-  const dismiss = (e: React.SyntheticEvent) => { e.stopPropagation(); window.quorum.fixDismiss([run.id]).then(() => window.dispatchEvent(new Event(CHANGED))).catch(() => {}); };
+  const dismiss = (e: React.SyntheticEvent) => { e.stopPropagation(); dismissRun(run); };
   return (
     <div className={`run-banner ${live ? 'live' : run.status}`} role="status" aria-live="polite" onClick={(e) => e.stopPropagation()}>
       <div className="run-head">
@@ -328,7 +328,7 @@ export function RunBanner({ run }: { run: FixRun }) {
         <span className={`run-text${live ? ' shimmer' : ''}`}>{live ? (run.status === 'queued' ? 'Waiting for the run before it' : current?.label ?? 'Starting') : run.status === 'success' ? run.outcome : run.error}</span>
         <span className="run-time">{took(elapsed)}</span>
         {run.steps.length > 0 && <button className={`icon-btn conn-fold${steps ? ' open' : ''}`} aria-expanded={steps} aria-label={steps ? 'Hide steps' : 'Show steps'} onClick={() => setSteps((o) => !o)}><IconChevron width={14} height={14} /></button>}
-        {!live && <button className="act-pill run-dismiss" onClick={dismiss}>Dismiss</button>}
+        {!live && run.showBanner && <button className="act-pill run-dismiss" onClick={dismiss}>Dismiss</button>}
       </div>
       <div className={`fold-anim${steps ? ' open' : ''}`}>
         <div className="fold-inner">
@@ -342,4 +342,19 @@ export function RunBanner({ run }: { run: FixRun }) {
       </div>
     </div>
   );
+}
+
+// Dismiss on a finished fix: its banner is dismissed and its notification leaves the list. It stays under Archived as
+// history, with its outcome
+export async function dismissRun(run: FixRun) {
+  await window.quorum.fixDismiss([run.id]).catch(() => 0);
+  await window.quorum.activityArchive([{ id: `f:${run.id}` }], true).catch(() => 0);
+  window.dispatchEvent(new Event(CHANGED));
+}
+
+// the answer an item got: Accepted (green) when its fix ran, Failed (red) when the fix did not work, Declined (red) when
+// it was dismissed
+export function StatusBadge({ status }: { status: 'accepted' | 'failed' | 'declined' }) {
+  const text = status === 'accepted' ? 'Accepted' : status === 'failed' ? 'Failed' : 'Declined';
+  return <span className={`nf-status ${status}`}>{text}</span>;
 }

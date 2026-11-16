@@ -4,7 +4,7 @@ import markReview from '../assets/quorum-mark-review.png';
 import { CATEGORIES, HEALTH_SORTS, categoryCounts, countsLine, healthList, issueMeta, type HealthCategory, type HealthSort, type Issue } from '../memoryHealth.js';
 import { IconCheck, IconChevron, IconClose, IconReset } from './icons';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
-import { IssueParts, ReviewDetails, RunBanner } from './NotificationsView';
+import { IssueParts, ReviewDetails, RunBanner, StatusBadge, dismissRun } from './NotificationsView';
 import type { FixRun } from './quorum';
 import { toast } from './Toasts';
 
@@ -125,7 +125,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
         <label className="nf-check" onClick={stop}><input type="checkbox" checked={picked.has(i.key)} aria-label="Select" onChange={() => toggle(i.key)} /></label>
         <span className="nf-who"><img src={markReview} alt="Quorum, needs review" width={32} height={32} /></span>
         <span className="nf-main">
-          <span className="nf-head"><strong className="conn-title nf-title">{i.title}</strong></span>
+          <span className="nf-head"><strong className="conn-title nf-title">{i.title}</strong>{tab === 'left' && <StatusBadge status="declined" />}</span>
         </span>
         <span className="nf-side mh-side">
           {/* the date sits on the right; on hover it slides out and the actions slide in, the way Home's rows do */}
@@ -198,18 +198,18 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
       {list.length > 0 && (
         <div className="nf-bulk">
           <label className="nf-check"><input type="checkbox" checked={allOn} aria-label="Select all" onChange={() => setPicked(allOn ? new Set() : new Set(list.map((i) => i.key)))} /></label>
-          <span className="muted">{sel.length ? `${sel.length} selected` : 'Select all'}</span>
-          <span className={`nf-bulk-actions${sel.length ? '' : ' hidden'}`} aria-hidden={!sel.length}>
+          <span className="muted">{picked.size ? `${picked.size} selected` : 'Select all'}</span>
+          <span className={`nf-bulk-actions${picked.size ? '' : ' hidden'}`} aria-hidden={!picked.size}>
             {tab === 'left'
               ? <button className="act-pill" disabled={busy} onClick={() => back(sel)}>Move back to review</button>
               : <>
-                  <button className="act-pill" disabled={busy} data-tip="Mark them reviewed and change nothing" onClick={() => decide(sel, 'dismiss')}>Dismiss</button>
+                  <button className="act-pill" disabled={busy} data-tip="Mark them reviewed and change nothing" onClick={async () => { for (const r of shownRuns.filter((x) => picked.has(x.id) && x.endedAt)) await dismissRun(r); await decide(sel, 'dismiss'); }}>Dismiss</button>
                   <button className="act-pill primary" disabled={busy || sel.some(locked)} onClick={() => decide(sel, 'approve')}>Approve</button>
                 </>}
           </span>
         </div>
       )}
-      <div className="nf-list">{shownRuns.map((r) => <RunRow key={r.id} run={r} />)}{list.map(row)}</div>
+      <div className="nf-list">{shownRuns.map((r) => <RunRow key={r.id} run={r} picked={picked.has(r.id)} onPick={() => toggle(r.id)} />)}{list.map(row)}</div>
       {!list.length && <div className="nf-empty"><p>{empty}</p></div>}
     </div>
   );
@@ -260,17 +260,18 @@ export function IssueDrawer({ issue, at, total, locked, busy, onOpen, onDecide, 
 
 // a fix run in Memory health: the same row as an issue, shimmering while it works, with its banner and the issue's
 // details folded open below
-function RunRow({ run }: { run: FixRun }) {
+function RunRow({ run, picked, onPick }: { run: FixRun; picked: boolean; onPick: () => void }) {
   const [open, setOpen] = useState(true);
   const live = run.status === 'queued' || run.status === 'running';
   const line = run.status === 'queued' ? `Waiting to fix “${run.target}”` : live ? `Fixing “${run.target}”` : run.status === 'success' ? `Fixed “${run.target}”` : `Could not fix “${run.target}”`;
   return (
     <div className={`conn-row nf-row mh-row${live ? ' running' : ''}`}>
       <div className="conn-line nf-line">
-        <span className="nf-check" />
+        <label className="nf-check"><input type="checkbox" checked={picked} aria-label="Select" onChange={onPick} /></label>
         <span className="nf-who"><img src={markReview} alt="" width={32} height={32} /></span>
-        <span className="nf-main"><span className="nf-head"><strong className="conn-title nf-title">{line}</strong></span></span>
+        <span className="nf-main"><span className="nf-head"><strong className="conn-title nf-title">{line}</strong>{!live && <StatusBadge status={run.status === 'success' ? 'accepted' : 'failed'} />}</span></span>
         <span className="nf-side mh-side">
+          <span className="mh-swap"><span className="mh-when">{new Date(run.endedAt ?? run.queuedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span></span>
           <span className="nf-tools"><button className={`icon-btn conn-fold${open ? ' open' : ''}`} aria-expanded={open} aria-label={open ? 'Hide details' : 'Show details'} onClick={() => setOpen((o) => !o)}><IconChevron width={14} height={14} /></button></span>
         </span>
       </div>
