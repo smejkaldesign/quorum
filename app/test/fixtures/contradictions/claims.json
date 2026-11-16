@@ -1,0 +1,242 @@
+{
+ "projects/atlas.md": [
+  {
+   "subject": "Atlas",
+   "attribute": "pricing",
+   "value": "$49 per seat per month",
+   "quote": "Atlas pricing is $49 per seat per month.",
+   "modality": "stated",
+   "scope": null,
+   "polarity": "+",
+   "date": null
+  }
+ ],
+ "decisions/2026-03-02-atlas-pricing.md": [
+  {
+   "subject": "Atlas",
+   "attribute": "pricing",
+   "value": "$25 per seat per month",
+   "quote": "We decided Atlas pricing is $25 per seat per month.",
+   "modality": "decided",
+   "scope": null,
+   "polarity": "+",
+   "date": null
+  }
+ ],
+ "projects/beacon.md": [
+  {
+   "subject": "Beacon",
+   "attribute": "database",
+   "value": "Postgres",
+   "quote": "Beacon stores its data in Postgres.",
+   "modality": "stated",
+   "scope": null,
+   "polarity": "+",
+   "date": null
+  }
+ ],
+ "decisions/2026-04-10-beacon-database.md": [
+  {
+   "subject": "Beacon",
+   "attribute": "database",
+   "value": "SQLite",
+   "quote": "We decided Beacon will store its data in SQLite.",
+   "modality": "decided",
+   "scope": null,
+   "polarity": "+",
+   "date": null
+  }
+ ],
+ "meetings/2026-01-05-comet-standup.md": [
+  {
+   "subject": "Comet team",
+   "attribute": "team size",
+   "value": "4 engineers",
+   "quote": "The Comet team has 4 engineers.",
+   "modality": "stated",
+   "scope": null,
+   "polarity": "+",
+   "date": null
+  }
+ ],
+ "meetings/2026-06-01-comet-standup.md": [
+  {
+   "subject": "Comet team",
+   "attribute": "team size",
+   "value": "6 engineers",
+   "quote": "The Comet team has 6 engineers.",
+   "modality": "stated",
+   "scope": null,
+   "polarity": "+",
+   "date": null
+  }
+ ],
+ "projects/delta.md": [
+  {
+   "subject": "Delta",
+   "attribute": "region",
+   "value": "us-east-1",
+   "quote": "Delta staging runs in us-east-1.",
+   "modality": "stated",
+   "scope": "staging",
+   "polarity": "+",
+   "date": null
+  }
+ ],
+ "projects/delta-ops.md": [
+  {
+   "subject": "Delta",
+   "attribute": "region",
+   "value": "eu-west-1",
+   "quote": "Delta production runs in eu-west-1.",
+   "modality": "stated",
+   "scope": "production",
+   "polarity": "+",
+   "date": null
+  }
+ ],
+ "projects/echo.md": [
+  {
+   "subject": "Echo",
+   "attribute": "ship date",
+   "value": "Q3",
+   "quote": "Echo ships in Q3.",
+   "modality": "stated",
+   "scope": null,
+   "polarity": "+",
+   "date": null
+  }
+ ],
+ "meetings/2026-03-15-echo-sync.md": [
+  {
+   "subject": "Echo",
+   "attribute": "ship date",
+   "value": "late September, end of Q3",
+   "quote": "Echo ships in late September, at the end of Q3.",
+   "modality": "stated",
+   "scope": null,
+   "polarity": "+",
+   "date": null
+  }
+ ],
+ "projects/foxtrot.md": [
+  {
+   "subject": "Foxtrot",
+   "attribute": "owner",
+   "value": "the platform team",
+   "quote": "Foxtrot is owned by the platform team.",
+   "modality": "stated",
+   "scope": null,
+   "polarity": "+",
+   "date": null
+  }
+ ],
+ "meetings/2026-02-20-foxtrot-review.md": [
+  {
+   "subject": "Foxtrot",
+   "attribute": "owner",
+   "value": "platform team",
+   "quote": "The platform team owns Foxtrot.",
+   "modality": "stated",
+   "scope": null,
+   "polarity": "+",
+   "date": null
+  }
+ ],
+ "projects/golf.md": [
+  {
+   "subject": "Golf",
+   "attribute": "client protocol",
+   "value": "REST",
+   "quote": "Golf talks to clients over REST.",
+   "modality": "stated",
+   "scope": null,
+   "polarity": "+",
+   "date": null
+  }
+ ],
+ "decisions/2026-05-01-golf-api.md": [
+  {
+   "subject": "Golf",
+   "attribute": "client protocol",
+   "value": "gRPC",
+   "quote": "We decided Golf talks to clients over gRPC.",
+   "modality": "decided",
+   "scope": null,
+   "polarity": "+",
+   "date": null
+  }
+ ],
+ "decisions/2026-01-20-hotel-queue.md": [
+  {
+   "subject": "Hotel",
+   "attribute": "queue",
+   "value": "Kafka",
+   "quote": "We decided Hotel uses Kafka for its queue.",
+   "modality": "decided",
+   "scope": null,
+   "polarity": "+",
+   "date": null
+  }
+ ],
+ "inbox/hotel-thoughts.md": [
+  {
+   "subject": "Hotel",
+   "attribute": "queue",
+   "value": "RabbitMQ",
+   "quote": "Hotel uses RabbitMQ for its queue now.",
+   "modality": "stated",
+   "scope": null,
+   "polarity": "+",
+   "date": null
+  }
+ ],
+ "projects/india.md": [
+  {
+   "subject": "India",
+   "attribute": "release cadence",
+   "value": "weekly",
+   "quote": "India runs on a weekly release train.",
+   "modality": "stated",
+   "scope": null,
+   "polarity": "+",
+   "date": null
+  }
+ ],
+ "reference/india-process.md": [
+  {
+   "subject": "India",
+   "attribute": "release cadence",
+   "value": "every two weeks",
+   "quote": "India releases every two weeks.",
+   "modality": "stated",
+   "scope": null,
+   "polarity": "+",
+   "date": null
+  }
+ ],
+ "projects/kilo.md": [
+  {
+   "subject": "Kilo",
+   "attribute": "server count",
+   "value": "10",
+   "quote": "We decided Kilo runs on 10 servers.",
+   "modality": "decided",
+   "scope": null,
+   "polarity": "+",
+   "date": null
+  }
+ ],
+ "projects/lima.md": [
+  {
+   "subject": "Lima",
+   "attribute": "cache",
+   "value": "Memcached",
+   "quote": "Lima uses Memcached for caching.",
+   "modality": "decided",
+   "scope": null,
+   "polarity": "+",
+   "date": null
+  }
+ ]
+}

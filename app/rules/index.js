@@ -7,6 +7,7 @@
 //   resolve (target, fromRel) -> rel | null, the index's link resolver
 //   tags    [{ rel, value }] the confidential value of every note in the vault, including notes the index leaves out
 //   folders { [folder rel]: value } the folders a person marked confidential (kept in Quorum's settings)
+//   contradictions { provider, bar } the agent's claims and verdicts and the rule's measured bar (rules/contradictions.js)
 import * as orphans from './orphans.js';
 import * as duplicates from './duplicates.js';
 import * as nearDuplicates from './nearDuplicates.js';
@@ -15,8 +16,9 @@ import * as oversized from './oversized.js';
 import * as confidential from './confidential.js';
 import * as secrets from './secrets.js';
 import * as stale from './stale.js';
+import * as contradictions from './contradictions.js';
 
-export const RULES = [stale, duplicates, nearDuplicates, frontmatter, confidential, secrets, oversized, orphans];
+export const RULES = [stale, duplicates, nearDuplicates, contradictions, frontmatter, confidential, secrets, oversized, orphans];
 export const RULE_LABELS = Object.fromEntries(RULES.map((r) => [r.rule.id, r.rule.label]));
 
 // runs every rule over the vault. only: the notes that changed; findings that touch none of them are left out, so the

@@ -54,7 +54,7 @@ export function pastFixItem({ run, res, plan }) {
 }
 
 // a review rule's finding: its own fix (rules/confidential.js: tag, move, or move and tag; rules/nearDuplicates.js:
-// link two notes), else the change Approve makes for its rule (reviewApprove.js approveFinding, kept on the finding as
+// link two notes; rules/contradictions.js: add a marker to one line), else the change Approve makes for its rule (reviewApprove.js approveFinding, kept on the finding as
 // approve), else keep as is
 export function findingItem(f) {
   const base = { id: `${ROW.finding}${f.key}`, kind: 'finding', key: f.key, target: f.key, title: f.rel, ruleId: f.ruleId, notes: f.notes, autoFix: !!f.autoFix, reviewOnly: false };
@@ -65,6 +65,7 @@ export function findingItem(f) {
   }
   const ops = [];
   if (x.kind === 'link') ops.push({ op: 'link', rel: f.rel, to: x.to });
+  if (x.kind === 'annotate') ops.push({ op: 'annotate', rel: f.rel, line: x.line, text: x.text, add: x.add });
   if (x.kind === 'tag' || x.kind === 'move-tag') ops.push({ op: 'tag', rel: f.rel, value: x.value });
   if (x.kind === 'move' || x.kind === 'move-tag') ops.push({ op: 'move', rel: f.rel, to: x.to });
   return { ...base, ops };
@@ -95,6 +96,7 @@ export function itemLine(item) {
   if (o.op === 'unlink') return `Remove the dead links to ${q(o.target)}`;
   if (o.op === 'create') return `Write ${q(o.rel)}${o.text ? ' as the agent drafted it' : ''}`;
   if (o.op === 'link') return `Link ${q(o.rel)} to ${q(o.to)}`;
+  if (o.op === 'annotate') return `Add ${q(o.add.trim())} to line ${o.line} of ${q(o.rel)}`;
   if (o.op === 'tag' && item.ops[1]?.op === 'move') return `Tag ${q(o.rel)} confidential: ${o.value} and move it to ${q(item.ops[1].to)}`;
   if (o.op === 'tag') return `Tag ${q(o.rel)} confidential: ${o.value}`;
   if (o.op === 'move') return `Move ${q(o.rel)} to ${q(o.to)}`;

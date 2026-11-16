@@ -16,6 +16,7 @@
 //   { op: 'link', rel, to }                     add a Related line that links rel to the note to
 //   { op: 'setkey', rel, key, value }           set one frontmatter key (value written as YAML)
 //   { op: 'addlink', rel, line, note }          add a link line to the end of an index note, linking note
+//   { op: 'annotate', rel, line, text, add }    add text at the end of line (1-based), which must still read text
 //   { op: 'keep' }                              change nothing: Approve keeps the item as it is and marks it done
 // An item the agent drafted (memoryDraft.js) carries draft; a merge is a restore of the kept note and a trash of the
 // other, a rewrite is a restore.
@@ -33,7 +34,7 @@
 // The steps that remain run in phases so each step's preconditions hold: put back, remove, edit, write, move.
 
 const q = (t) => `“${t}”`;
-const PHASE = { restore: 0, unalias: 0, trash: 1, tag: 2, setkey: 2, alias: 3, relink: 4, unlink: 5, link: 5, addlink: 5, create: 6, move: 7, keep: 8 };
+const PHASE = { restore: 0, unalias: 0, trash: 1, tag: 2, setkey: 2, alias: 3, relink: 4, unlink: 5, link: 5, addlink: 5, annotate: 5, create: 6, move: 7, keep: 8 };
 const KIND_ORDER = { pastfix: 0, link: 1, finding: 2 };
 const norm = (t) => String(t ?? '').toLowerCase().replace(/\.md$/, '').replace(/\s+/g, ' ').trim();
 
@@ -55,6 +56,7 @@ export function effects(o) {
     case 'link': writes.push({ rel: o.rel, region: `related:${norm(o.to)}` }); out.points = o.to; break;
     case 'setkey': writes.push({ rel: o.rel, region: `fm:${o.key}` }); break;
     case 'addlink': writes.push({ rel: o.rel, region: 'end' }); out.points = o.note ?? null; break;
+    case 'annotate': writes.push({ rel: o.rel, region: `line:${o.line}` }); break;
     case 'move': out.removes.push(o.rel); out.creates.push(o.to); break;
     default: break;
   }
@@ -89,7 +91,8 @@ const GROUPS = {
   rewrite: { order: 12, label: (n) => `Rewrite ${n} ${n === 1 ? 'note' : 'notes'} that disagree with another` },
   setkey: { order: 13, label: (n) => `Update the frontmatter of ${n} ${n === 1 ? 'note' : 'notes'}` },
   addlink: { order: 14, label: (n) => `Link ${n} ${n === 1 ? 'note' : 'notes'} from ${n === 1 ? 'its folder index' : 'their folder indexes'}` },
-  keep: { order: 15, label: (n) => `Keep ${n} ${n === 1 ? 'item' : 'items'} as ${n === 1 ? 'it is' : 'they are'}` },
+  annotate: { order: 15, label: (n) => `Mark ${n} out of date ${n === 1 ? 'line' : 'lines'} that newer notes disagree with` },
+  keep: { order: 16, label: (n) => `Keep ${n} ${n === 1 ? 'item' : 'items'} as ${n === 1 ? 'it is' : 'they are'}` },
 };
 // the group an item lists under: what its first change does, or move and tag for a move that also tags
 export function groupOf(item) {
@@ -108,6 +111,7 @@ const CHECK = {
   'move-tag': 'Quorum picked the folder and the tag from the notes each one links to.',
   tag: 'Quorum guessed each tag from the other notes in its folder or the notes it links to.',
   link: 'Quorum found these pairs from their shared text alone.',
+  annotate: 'Quorum paired these lines from the claims two notes make. Read both quotes first.',
   draft: 'The agent drafted these fixes. Read its quotes and its confidence first.',
 };
 // the reason an item starts unticked in a bulk plan, or null when it starts ticked
