@@ -2016,7 +2016,7 @@ function runEvents(vault, rel, runs) {
 // a note Quorum wrote (a recording's summary, an agent import) waits for the person to review it
 function agentWrote(abs) {
   let fm = {};
-  try { fm = readFrontmatter(store.notes.read(abs).slice(0, 4000)); } catch { /* unreadable */ }
+  try { fm = noteHead(abs); } catch { /* unreadable */ }
   const recorded = fm.recorded === true || fm.recorded === 'true';
   return fm.imported_by === 'agent' || ((fm.source === 'quorum' || fm.source === 'quorum-dev') && (fm.type !== 'note' || recorded));
 }
