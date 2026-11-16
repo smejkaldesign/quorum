@@ -70,7 +70,10 @@ export function rewriteLinks({ vault, mapping, sources, resolve, allRels, aliase
 // point every link written as `target` (case-insensitive) in the given notes at an existing note instead
 // add a name to a note's aliases: list, leaving the rest of the file byte-for-byte; one edit fixes every link to it
 export function addAlias(abs, alias) {
-  const raw = readFileSync(abs, 'utf8');
+  writeAtomic(abs, aliasText(readFileSync(abs, 'utf8'), alias));
+}
+// a note's text with alias added to its aliases: list
+export function aliasText(raw, alias) {
   const m = raw.match(/^---\n([\s\S]*?)\n---/);
   let fm;
   if (!m) fm = null;
@@ -82,8 +85,7 @@ export function addAlias(abs, alias) {
     lines.splice(i, 0, `  - ${alias}`);
     fm = lines.join('\n');
   } else fm = `${m[1]}\naliases:\n  - ${alias}`;
-  const next = fm === null ? `---\naliases:\n  - ${alias}\n---\n${raw}` : `---\n${fm}\n---${raw.slice(m[0].length)}`;
-  writeAtomic(abs, next);
+  return fm === null ? `---\naliases:\n  - ${alias}\n---\n${raw}` : `---\n${fm}\n---${raw.slice(m[0].length)}`;
 }
 
 export function retargetLinks({ vault, sources, target, toRel, toName, allRels }) {

@@ -13,6 +13,9 @@
 //   { op: 'create', rel, sources }              write a missing note
 //   { op: 'tag', rel, value }                   set confidential: value in a note's frontmatter
 //   { op: 'move', rel, to }                     move a note; the links that point at it follow
+//   { op: 'link', rel, to }                     add a Related line that links rel to the note to
+// An item the agent drafted (memoryDraft.js) carries draft; a merge is a restore of the kept note and a trash of the
+// other, a rewrite is a restore.
 //
 // The planner checks each item against the items before it, in order: corrective past fixes first, then link fixes,
 // then finding fixes, each kind in the order given. The conflicts it handles:
@@ -27,7 +30,7 @@
 // The steps that remain run in phases so each step's preconditions hold: put back, remove, edit, write, move.
 
 const q = (t) => `“${t}”`;
-const PHASE = { restore: 0, unalias: 0, trash: 1, tag: 2, alias: 3, relink: 4, unlink: 5, create: 6, move: 7 };
+const PHASE = { restore: 0, unalias: 0, trash: 1, tag: 2, alias: 3, relink: 4, unlink: 5, link: 5, create: 6, move: 7 };
 const KIND_ORDER = { pastfix: 0, link: 1, finding: 2 };
 const norm = (t) => String(t ?? '').toLowerCase().replace(/\.md$/, '').replace(/\s+/g, ' ').trim();
 
@@ -46,6 +49,7 @@ export function effects(o) {
       break;
     case 'create': out.creates.push(o.rel); break;
     case 'tag': writes.push({ rel: o.rel, region: 'fm:confidential' }); break;
+    case 'link': writes.push({ rel: o.rel, region: `related:${norm(o.to)}` }); out.points = o.to; break;
     case 'move': out.removes.push(o.rel); out.creates.push(o.to); break;
     default: break;
   }
@@ -73,6 +77,9 @@ const GROUPS = {
   tag: { order: 7, label: (n) => `Tag ${n} ${n === 1 ? 'note' : 'notes'} confidential` },
   'move-tag': { order: 8, label: (n) => `Move and tag ${n} ${n === 1 ? 'note' : 'notes'}` },
   move: { order: 9, label: (n) => `Move ${n} ${n === 1 ? 'note' : 'notes'}` },
+  link: { order: 10, label: (n) => `Link ${n} ${n === 1 ? 'pair' : 'pairs'} of notes that repeat each other` },
+  merge: { order: 11, label: (n) => `Merge ${n} ${n === 1 ? 'pair' : 'pairs'} of notes` },
+  rewrite: { order: 12, label: (n) => `Rewrite ${n} ${n === 1 ? 'note' : 'notes'} that disagree with another` },
 };
 // the group an item lists under: what its first change does, or move and tag for a move that also tags
 export function groupOf(item) {
@@ -81,8 +88,8 @@ export function groupOf(item) {
   if (ops.some((o) => o.op === 'move') && ops.some((o) => o.op === 'tag')) return 'move-tag';
   return GROUPS[ops[0]?.op] ? ops[0].op : 'relink';
 }
-// Fixes a person should read before they run: a written missing note, a weak relink or alias, a move, and a tag
-// guessed from other notes. A bulk plan leaves them unticked under Check these first, with this reason per group
+// Fixes a person should read before they run: a written missing note, a weak relink or alias, a move, a tag guessed
+// from other notes, a link between notes that repeat each other, and a fix the agent drafted below high confidence. A bulk plan leaves them unticked under Check these first, with this reason per group
 const CHECK = {
   create: 'Quorum writes each note from the links to it alone, and those notes are often wrong.',
   relink: 'The note each one points at is a weak match by name.',
@@ -90,10 +97,14 @@ const CHECK = {
   move: 'A move changes the folder of the note and every link to it.',
   'move-tag': 'Quorum picked the folder and the tag from the notes each one links to.',
   tag: 'Quorum guessed each tag from the other notes in its folder or the notes it links to.',
+  link: 'Quorum found these pairs from their shared text alone.',
+  draft: 'The agent drafted these fixes. Read its quotes and its confidence first.',
 };
 // the reason an item starts unticked in a bulk plan, or null when it starts ticked
 export function checkFirst(item) {
   if (!item?.ops?.length || item.kind === 'pastfix') return null;
+  // a drafted fix starts ticked only at high confidence with every quote checked against its note
+  if (item.draft) return item.draft.confidence === 'high' && item.draft.verified && item.draft.quotes?.length && item.draft.quotes.every((x) => x.ok) ? null : CHECK.draft;
   const g = groupOf(item);
   if (item.kind === 'link') return item.reviewOnly || g === 'create' ? CHECK[g] ?? CHECK.relink : null;
   if (item.kind === 'finding') return g === 'move' || g === 'move-tag' || !item.autoFix ? CHECK[g] ?? null : null;

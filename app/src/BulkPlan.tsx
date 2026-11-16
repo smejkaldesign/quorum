@@ -1,3 +1,4 @@
+import { DraftEvidence } from './MemoryDraft';
 import { useEffect, useRef, useState } from 'react';
 import type { PlanView } from './quorum';
 import { IconChevron } from './icons';
@@ -42,6 +43,8 @@ export function BulkPlan({ ids, everything = false, onClose, onApplied }: { ids:
   const notes = view ? [['Merged', view.merged], ['Skipped', view.skipped], ['Held back', view.held]] as const : [];
   return (
     <Modal titleId="bulk-plan-title" title={everything ? 'Review everything' : 'Bulk accept plan'} className="bulk-plan" onClose={busy ? undefined : onClose} locked={busy}>
+      {/* one scrolling column for the whole plan; the title and the buttons stay in place */}
+      <div className="bp-body">
       {!view
         ? <p className="bp-loading" role="status"><i className="run-spin" /> <span className="shimmer">Building your bulk accept plan...</span></p>
         : <>
@@ -58,7 +61,7 @@ export function BulkPlan({ ids, everything = false, onClose, onApplied }: { ids:
                         <div className="bp-row">
                           <input type="checkbox" aria-label={g.label} checked={on > 0} ref={(el) => { if (el) el.indeterminate = on > 0 && on < g.items.length; }} onChange={(e) => flip(g.items.map((i) => i.id), e.target.checked)} />
                           <span className="bp-label">{g.label}{g.reason && <span className="bp-reason">{g.reason}</span>}</span>
-                          <span className="nf-count">{on}</span>
+                          <span className="nf-count" aria-label={`${g.items.length} ${g.items.length === 1 ? 'item' : 'items'}`}>{g.items.length}</span>
                           <button className={`icon-btn conn-fold${open.has(g.id) ? ' open' : ''}`} aria-expanded={open.has(g.id)} aria-label={open.has(g.id) ? `Hide items: ${g.label}` : `Show items: ${g.label}`} onClick={() => fold(g.id)}><IconChevron width={14} height={14} /></button>
                         </div>
                         {open.has(g.id) && (
@@ -67,6 +70,7 @@ export function BulkPlan({ ids, everything = false, onClose, onApplied }: { ids:
                               <li key={i.id}>
                                 <label><input type="checkbox" checked={i.on} onChange={(e) => flip([i.id], e.target.checked)} /> <span>{i.line}</span></label>
                                 {i.notes.length > 0 && <span className="bp-notes" data-tip={i.notes.join(', ')}>{i.notes.length === 1 ? i.notes[0] : `${i.notes.length} notes`}</span>}
+                                {i.draft && <DraftEvidence draft={i.draft} compact />}
                               </li>
                             ))}
                           </ul>
@@ -86,6 +90,7 @@ export function BulkPlan({ ids, everything = false, onClose, onApplied }: { ids:
             {everything && <label className="bp-save"><input type="checkbox" checked={saveNote} onChange={(e) => setSaveNote(e.target.checked)} /> Save as a note in the vault</label>}
           </>}
       {error && <p className="set-error" role="alert">{error}</p>}
+      </div>
       <ModalActions>
         <button className="pill" autoFocus disabled={busy} onClick={onClose}>Cancel</button>
         <button className="pill primary" disabled={busy || !view || (!view.run && !(everything && saveNote))} onClick={apply}>{busy ? 'Starting...' : 'Apply'}</button>

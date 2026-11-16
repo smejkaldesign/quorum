@@ -1,6 +1,6 @@
 import './startup-flags.js';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, powerMonitor, screen, session, shell, systemPreferences, Tray } from 'electron';
-import { NEEDS_SOURCE, NEEDS_TOOLS, SOURCES, modelLabel, runModel, sourceStatus } from './models.js';
+import { NEEDS_SOURCE, NEEDS_TOOLS, SOURCES, claudeText, modelLabel, runModel, sourceStatus, stopClaudeText } from './models.js';
 import { BY_ID, cleanConnectors, cleanProviders, needsKey, providerFor, providersFromSource, sourceFromProviders } from './connectors/catalog.js';
 import { connectorKey, removeConnectorKey, setConnectorKey, testSavedConnector } from './connectors/keys.js';
 import { createConnectGuard, guardIpc } from './connectors/connectGuard.js';
@@ -66,10 +66,15 @@ import { createDecisionLog, fingerprint } from './decisionLog.js';
 import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, fixVersions, recheckAll, undoPlan } from './fixRecheck.js';
 import { buildPlan, checkFirst, checkOrder, effects, groupLabel, groupOf, notesOf, planExclude } from './batchPlan.js';
 import { ROW, findingItem, itemLine, linkItem, pastFixItem } from './reviewItems.js';
-import { removeFrontmatterKey } from './frontmatter.js';
+import { frontBlock, removeFrontmatterKey } from './frontmatter.js';
+import { createResolver } from './linkparse.js';
 import { isOff } from './rules/common.js';
+import { folderMarkOf } from './rules/confidential.js';
 import { createMemorySweep, dueSweep, rescanTags, scanTags } from './memorySweep.js';
-import { RULE_LABELS } from './rules/index.js';
+import { RULE_LABELS, RULES } from './rules/index.js';
+import { relatedLine } from './rules/nearDuplicates.js';
+import { DAILY_CAP, createDrafter, draftKind, evidenceRels, withDraft } from './memoryDraft.js';
+import { ignoreProposals, ignored, ruleRecords } from './ruleRecords.js';
 import { createElsewhere, withFound } from './linkElsewhere.js';
 import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
@@ -1427,6 +1432,11 @@ ipcMain.handle('set-settings', (_e, next) => {
     store.settings.save();
     if (next.memoryAutoApply && !was) setTimeout(() => { try { autoApply(); } catch (e) { log('auto apply', e?.message); } }, 0);
   }
+  // Settings > Memory: Let the agent draft fixes (memoryDraft.js), its daily cap, and whether it may read notes marked
+  // confidential
+  if (typeof next.memoryDrafts === 'boolean') { settings.memoryDrafts = next.memoryDrafts; store.settings.save(); }
+  if (typeof next.memoryDraftConfidential === 'boolean') { settings.memoryDraftConfidential = next.memoryDraftConfidential; store.settings.save(); }
+  if (Number.isFinite(next.memoryDraftCap)) { settings.memoryDraftCap = Math.max(1, Math.min(500, Math.round(next.memoryDraftCap))); store.settings.save(); }
   // provider MCPs the person disconnected from Quorum, by connector id
   if (Array.isArray(next.mcpIgnored)) {
     settings.mcpIgnored = [...new Set(next.mcpIgnored.filter((x) => typeof x === 'string' && /^[a-z0-9-]{1,40}$/.test(x)))].slice(0, 100);
@@ -2131,7 +2141,7 @@ function feedSources() {
   const links = linkItems.map((m) => ({ ...withMarks(m, left, declined), abs: path.join(b.vault, m.sources?.[0] ?? '') }));
   const v = b.vault;
   const runs = fixRunList().filter((r) => r.vault === v && (r.endedAt ?? r.queuedAt) > Date.now() - 7 * 86400000);
-  return { notes, memories, denials, junk: keeper.junk(), links, runs, pastFixes: pastFixRows(), findings: findingsNow(), state, guardFile: DENIAL_LOG };
+  return { notes, memories, denials, junk: keeper.junk(), links, runs, pastFixes: pastFixRows(), findings: findingsNow(), drafts: draftViews(), ignores: ignoreRows(), state, guardFile: DENIAL_LOG };
 }
 ipcMain.handle('activity-feed', (_e, query) => {
   const q = query ?? {};
@@ -2166,6 +2176,7 @@ ipcMain.handle('activity-archive', (_e, rows, on) => {
     if (id.startsWith('r:link:')) { setLinksLeft([id.slice(7)], on !== false); linkKeys.push(id.slice(7)); }
     if (id.startsWith(PAST_FIX_ROW)) pastIds.push(id.slice(PAST_FIX_ROW.length));
     if (id.startsWith('r:find:')) findKeys.push(id.slice(7));
+    if (id.startsWith('r:ignore:')) dismissIgnore(id.slice(9), on !== false);
     if (on === false) { delete st.archived[id]; if (!id.startsWith('r:link:')) st.kept[id] = at; } else { st.archived[id] = at; delete st.kept[id]; st.read[id] = at; delete st.unread[id]; }
     n++;
   }
@@ -2204,7 +2215,7 @@ ipcMain.handle('activity-review', async (_e, items, verdict) => {
   const done = [];
   const failed = [];
   for (const it of Array.isArray(items) ? items : []) {
-    const t = it?.kind === 'link' || it?.kind === 'past-fix' || it?.kind === 'finding' ? { abs: String(it.abs ?? ''), rel: null } : feedFile(it?.abs);
+    const t = it?.kind === 'link' || it?.kind === 'past-fix' || it?.kind === 'finding' || it?.kind === 'ignore' ? { abs: String(it.abs ?? ''), rel: null } : feedFile(it?.abs);
     try {
       if (!t) throw new Error('Not found');
       const at = new Date().toISOString();
@@ -2214,7 +2225,11 @@ ipcMain.handle('activity-review', async (_e, items, verdict) => {
         noteEvent(t.abs, 'reviewed', ok ? 'You approved it' : 'You reviewed it');
       } else if (it.kind === 'link') {
         if (ok && items.length > 1 && reviewOnlyKey(it.key)) throw new Error('This fix needs a review on its own. Open it and approve it there');
-        if (ok) startFixes([it.key]); else await decideLink(it.key, 'dismiss');
+        // a link the agent drafted a fix for runs its draft through the planner
+        const id = `${ROW.link}${String(it.key ?? '').toLowerCase()}`;
+        const raw = ok ? reviewItems({ ids: [id], drafts: false })[0] : null;
+        if (raw && draftFix(raw)) startPlanFor([id]);
+        else if (ok) startFixes([it.key]); else await decideLink(it.key, 'dismiss');
       } else if (it.kind === 'past-fix') {
         // Approve runs the corrective fix through the batch planner (several at once come from the bulk plan); Archive
         // keeps the fix as it is
@@ -2222,11 +2237,14 @@ ipcMain.handle('activity-review', async (_e, items, verdict) => {
       } else if (it.kind === 'finding') {
         // a finding with a fix (a confidential tag or a move) runs through the planner; one without needs a person to
         // act on the note, then archive the finding
-        if (ok) startPlanFor([`${ROW.finding}${String(it.key ?? '')}`]);
-        archiveFindings([String(it.key ?? '')], true);
+        // Approve logs approved through the planner; only Archive logs archived, so a rule's record counts each once
+        if (ok) startPlanFor([`${ROW.finding}${String(it.key ?? '')}`]); else archiveFindings([String(it.key ?? '')], true);
         const st = feedState();
         st.archived[`r:find:${it.key}`] = at;
         feedStateSave();
+      } else if (it.kind === 'ignore') {
+        // Approve stores the ignore rule; Archive turns the proposal down
+        if (ok) acceptIgnore(String(it.key ?? '')); else dismissIgnore(String(it.key ?? ''), true);
       } else if (it.kind === 'junk-note') {
         if (!meetingFile(t.abs) || !t.rel) throw new Error('Not found');
         if (ok) {
@@ -2467,13 +2485,14 @@ setInterval(sweepTick, 10 * 60000).unref?.();
 // a finding's decisions go through the decision log: its fingerprint covers its notes and facts, so new evidence
 // brings an archived finding back to Needs review
 const findingSources = (f) => [...f.notes, ...(f.facts ?? [])];
-const findingRecord = (f) => ({ ruleId: f.ruleId, ruleVersion: f.ruleVersion, key: f.key, target: f.target, sources: findingSources(f), evidence: { notes: f.notes, lines: f.evidence }, proposedFix: { action: 'review', text: f.proposal, autoFix: false } });
+const findingRecord = (f) => ({ ruleId: f.ruleId, ruleVersion: f.ruleVersion, key: f.key, target: f.target, sources: findingSources(f), evidence: { notes: f.notes, lines: f.evidence, facts: f.facts ?? [] }, proposedFix: { action: 'review', text: f.proposal, autoFix: false } });
 function findingsNow() {
   const b = brain();
   if (!b) return [];
   const latest = decisionLog.latestAll(b.vault);
   const reopened = [];
-  const out = memorySweep.findings(b.vault).map((f) => {
+  const ign = ignoreList();
+  const out = memorySweep.findings(b.vault).filter((f) => !(ign.length && ignored(ign, f.ruleId, f))).map((f) => {
     const last = latest.get(f.key);
     const archived = last?.decision === 'archived' && last.fingerprint === fingerprint(f.ruleId, f.target, findingSources(f));
     if (last?.decision === 'archived' && !archived) reopened.push({ ...findingRecord(f), decision: 'reopened', actor: 'quorum', note: 'The evidence changed after it was archived' });
@@ -2492,7 +2511,7 @@ function archiveFindings(keys, on) {
 }
 ipcMain.handle('memory-findings', () => {
   const s = brain() ? memorySweep.state(brain().vault) : null;
-  return { findings: findingsNow(), last: s?.last ?? null, lastFull: s?.lastFull ?? 0, paused: sweepPaused(), labels: RULE_LABELS };
+  return { findings: findingsNow(), last: s?.last ?? null, lastFull: s?.lastFull ?? 0, paused: sweepPaused(), labels: RULE_LABELS, drafts: draftViews() };
 });
 // Archive or Move back to review on findings, by key; the Notifications marks move with them
 ipcMain.handle('memory-findings-archive', (_e, keys, on) => {
@@ -2654,7 +2673,8 @@ function elsewhereFinder() {
 // the missing links Memory health reports: the ones whose note is truly not in the vault, each marked with what its
 // name matches elsewhere
 function linkIssues() {
-  const items = (vindex?.linkHealth() ?? []).filter((m) => !onDisk(m.target));
+  const ign = ignoreList();
+  const items = (vindex?.linkHealth() ?? []).filter((m) => !onDisk(m.target) && !(ign.length && ignored(ign, LINK_RULE, { notes: m.sources, target: m.target })));
   const finder = elsewhereFinder();
   if (!finder || !vindex) return items;
   // a generated report is never the note a link is pointed at, so it is never a folder's index note either
@@ -2753,7 +2773,8 @@ const withMarks = (m, left = linksLeft(), declined = linksDeclined()) => ({ ...m
 // links of every touched note are checked again, and a fix that made them worse throws, so the run puts the notes back
 // approved: the fix the person approved (findingOf proposedFix); a queued fix whose issue now reads with another fix
 // (an earlier fix in the batch changed the vault) is refused, so a run never makes a fix nobody approved
-async function decideLink(key, verdict, step = async () => {}, keep = () => {}, hashes = null, approved = null) {
+// draft: the agent's draft of the fix (memoryDraft.js); a drafted missing note is written from the draft's text
+async function decideLink(key, verdict, step = async () => {}, keep = () => {}, hashes = null, approved = null, draft = null) {
   const b = brain();
   if (!b || !vindex) throw new Error('No vault connected');
   const entry = linkIssues().find((h) => h.target.toLowerCase() === String(key ?? '').toLowerCase());
@@ -2834,11 +2855,12 @@ async function decideLink(key, verdict, step = async () => {}, keep = () => {}, 
   finder?.reset();
   const hit = finder?.find(name);
   if (hit) throw new Error(`${hit.kind === 'branch' ? `A note with that name is on the branch ${hit.branch}` : `A ${hit.kind} with that name is at ${hit.where}`}, so Quorum did not write a note`);
-  await step(`Writing ${folder ? `${folder}/` : ''}${name}.md from what the linking notes say`);
+  await step(`Writing ${folder ? `${folder}/` : ''}${name}.md from ${draft?.text ? 'the agent\'s draft' : 'what the linking notes say'}`);
   guard();
   const rel = createNote(b.vault, folder, name);
   keep(rel, true);
-  writeAtomic(path.join(b.vault, rel), contextNote(issue));
+  // a drafted note keeps the frontmatter Quorum writes (the confidential mark of its sources) above the draft's text
+  writeAtomic(path.join(b.vault, rel), draft?.text ? `${frontBlock(contextNote(issue))}${draft.text.trim()}\n` : contextNote(issue));
   await step('Updating the vault index');
   vindex.sync();
   await recheck({ made: rel });
@@ -2900,6 +2922,7 @@ function startFixes(keys, { bulk = keys.length > 1 } = {}) {
   const started = [];
   // a bulk Approve is one batch: the window shows its progress from the runs, even after leaving the page and coming back
   const batch = keys.length > 1 ? `b:${Date.now()}` : null;
+  const draftHolds = linkDraftHolds();
   for (const k of keys) {
     const key = String(k ?? '').toLowerCase();
     if (!key) continue;
@@ -2909,6 +2932,9 @@ function startFixes(keys, { bulk = keys.length > 1 } = {}) {
     if (!entry) continue;
     const i = issueOf(withMarks(entry));
     if (bulk && i.reviewOnly) continue;
+    // a link whose stored draft says Quorum's match is the wrong note never runs Quorum's fix: a single Approve says why
+    const held = draftHolds.get(key);
+    if (held) { if (!bulk) throw new Error(held); continue; }
     const run = {
       id: `fix:${key}:${Date.now()}`, key, target: i.target, title: i.title, rel: i.path, vault: brain()?.vault ?? '', status: 'queued', queuedAt: Date.now(), startedAt: null, endedAt: null,
       steps: [], outcome: null, error: null, dismissedAt: null, batch,
@@ -3147,7 +3173,7 @@ function keepPastFix(id) {
 // when any step fails. The plan itself stays in memory; a batch cut short by a quit is recovered like any run
 const batchPlans = new Map();
 // the items waiting in Needs review, or the ones with these row ids. Each carries the hash of every note it touches
-function reviewItems({ ids = null } = {}) {
+function reviewItems({ ids = null, drafts = true } = {}) {
   const b = brain();
   if (!b || !vindex) return [];
   const want = ids ? new Set(ids.map(String)) : null;
@@ -3172,8 +3198,154 @@ function reviewItems({ ids = null } = {}) {
   }
   for (const f of findingsNow()) {
     if (skip(`${ROW.finding}${f.key}`, f.archived)) continue;
-    out.push({ ...findingItem(f), hashes: hashNotes(b.vault, [f.rel]), finding: findingRecord(f) });
+    out.push({ ...findingItem(f), hashes: hashNotes(b.vault, f.notes), finding: findingRecord(f) });
   }
+  return drafts ? out.map(drafted) : out;
+}
+// Agent-drafted fixes (memoryDraft.js; Settings > Memory, Let the agent draft fixes, off by default). The agent runs
+// on the person's own Claude Code sign-in with no tools and reads only the notes Quorum puts in its prompt. A note the
+// read guard keeps from the agent is never sent; a note marked confidential is sent only when the person turned on
+// Let the agent read confidential notes. An item that needs a note it may not read gets no draft
+function confidentialNote(vault, rel, text) {
+  if (isConfidentialText(text)) return true;
+  if (tagScan?.vault === vault && tagScan.tags.some((t) => t.rel === rel && !isOff(t.value))) return true;
+  return !!folderMarkOf(rel, confFolders(vault));
+}
+function draftEvidence(item) {
+  const b = brain();
+  if (!b) return null;
+  const rels = evidenceRels(item);
+  const notes = [];
+  for (const rel of rels) {
+    const text = readVault(b.vault, rel);
+    const kept = text != null && !excludedPath(rel) && !isPrivatePath(rel) && !isSecretPath(rel) && (settings.memoryDraftConfidential === true || !confidentialNote(b.vault, rel, text));
+    if (kept) notes.push({ rel, text });
+    // the two notes of a merge and the note a weak link points at are both needed; a missing note needs one source
+    else if (draftKind(item) !== 'create') return null;
+  }
+  return notes.length ? notes : null;
+}
+// the item with its stored draft applied, while the notes the draft read are unchanged and its quotes still match
+// Turning drafting off sets every stored draft aside
+function drafted(item) {
+  if (settings.memoryDrafts !== true || !draftKind(item)) return item;
+  const d = drafter.draftFor(item, draftEvidence(item));
+  if (!d) return item;
+  const b = brain();
+  let next = withDraft(item, d, (rel) => readVault(b.vault, rel), (rel) => vindex.aliasesOf(rel));
+  const why = next.draft?.kind === 'merge' && next.ops.length ? mergeBreaksLinks(next.draft.keep, next.draft.drop) : null;
+  if (why) next = { ...next, ops: [], hold: why };
+  return next.ops.length ? { ...next, hashes: { ...(item.hashes ?? {}), ...hashNotes(b.vault, notesOf(next)) } } : next;
+}
+// a merge keeps links working only when every link to the dropped note opens the kept note once the dropped note's
+// name and aliases are on it. A link by path or a name another note also has would break, so the merge waits
+function mergeBreaksLinks(keep, drop) {
+  const rels = vindex.rels().filter((r) => r !== drop);
+  const extra = [path.posix.basename(drop).replace(/\.md$/i, ''), ...vindex.aliasesOf(drop)];
+  const resolve = createResolver(rels, (r) => (r === keep ? [...vindex.aliasesOf(keep), ...extra] : vindex.aliasesOf(r)));
+  const from = [...new Set(vindex.backlinks(drop).map((l) => l.rel))].filter((r) => r !== keep && r !== drop);
+  const broken = from.filter((r) => vindex.outgoing(r).some((l) => l.rel === drop && resolve(l.target, r) !== keep));
+  return broken.length ? `${broken.length === 1 ? `${broken[0]} links` : `${broken.length} notes link`} to ${drop} in a way the merged note would not answer. Point those links at ${keep} first.` : null;
+}
+// link key -> why its stored draft holds it back (the agent found the match is the wrong note)
+function linkDraftHolds() {
+  if (settings.memoryDrafts !== true) return new Map();
+  return new Map(reviewItems().filter((i) => i.kind === 'link' && i.draft && i.hold).map((i) => [String(i.key).toLowerCase(), i.hold]));
+}
+// the agent's fix for a review item, or null: the item with its stored draft applied while drafting is on, the draft's
+// notes are unchanged and its quotes still match. Other Approve paths (a past fix Quorum cannot undo exactly) call it
+function draftFix(item) {
+  const next = drafted(item);
+  return next !== item && next.draft && next.ops?.length ? next : null;
+}
+const drafter = createDrafter({
+  file: path.join(DATA_DIR, 'memory-drafts.json'),
+  model: (prompt, system) => claudeText({ prompt, system, model: 'sonnet', cwd: tmpdir(), timeoutMs: 180000 }),
+  items: () => reviewItems({ drafts: false }),
+  evidence: draftEvidence,
+  enabled: () => settings.memoryDrafts === true && !!brain() && !!vindex,
+  cap: () => settings.memoryDraftCap ?? DAILY_CAP,
+  busy: () => recordingNow() || fixRunList().some((r) => r.status === 'queued' || r.status === 'running'),
+  idleMs: () => powerMonitor.getSystemIdleTime() * 1000,
+  log,
+});
+setInterval(() => { drafter.tick().then((r) => { if (r?.drafted) toUI('memory-updates', null); }).catch((e) => log('memory draft', e?.message)); }, 60000).unref?.();
+// Ignore rules (ruleRecords.js): kept in Quorum's settings per vault, never in the vault. Quorum proposes one after the
+// same rule's findings were archived three or more times with a shared folder, frontmatter key or target
+function ignoreStore(name) {
+  if (!settings[name] || typeof settings[name] !== 'object' || Array.isArray(settings[name])) settings[name] = {};
+  return settings[name];
+}
+function ignoreList(vault = brain()?.vault) { return vault ? [...(ignoreStore('memoryIgnore')[vault] ?? [])] : []; }
+const RULE_NAMES = () => ({ ...RULE_LABELS, [LINK_RULE]: 'Links that open no note' });
+function ignoreProposalsNow() {
+  const b = brain();
+  if (!b) return [];
+  return ignoreProposals(decisionLog.list(b.vault), { ignores: ignoreList(b.vault), dismissed: ignoreStore('memoryIgnoreDismissed')[b.vault] ?? [], labels: RULE_NAMES() });
+}
+function ignoreRows() {
+  const names = RULE_NAMES();
+  return ignoreProposalsNow().map((g) => ({ ...g, rule: names[g.ruleId] ?? g.ruleId, at: Date.now() }));
+}
+function acceptIgnore(id) {
+  const b = brain();
+  const g = ignoreProposalsNow().find((x) => x.id === id);
+  if (!b || !g) throw new Error('That proposal is no longer open');
+  const all = ignoreStore('memoryIgnore');
+  all[b.vault] = [...(all[b.vault] ?? []).filter((x) => x.id !== id), { id, ruleId: g.ruleId, field: g.field, value: g.value, title: g.title, at: Date.now() }];
+  store.settings.save();
+  toUI('memory-updates', null);
+}
+function dismissIgnore(id, on) {
+  const b = brain();
+  if (!b) return;
+  const all = ignoreStore('memoryIgnoreDismissed');
+  const list = new Set(all[b.vault] ?? []);
+  if (on) list.add(id); else list.delete(id);
+  all[b.vault] = [...list].slice(-500);
+  store.settings.save();
+}
+// Settings > Memory: each rule's record from the decision log, and what it does now. Informational; the one switch is
+// Apply memory fixes on its own
+function ruleRecordList() {
+  const b = brain();
+  if (!b) return [];
+  const tally = ruleRecords(decisionLog.list(b.vault));
+  const ign = ignoreList(b.vault);
+  const open = {};
+  for (const f of findingsNow()) if (!f.archived) open[f.ruleId] = (open[f.ruleId] ?? 0) + 1;
+  const left = linksLeft();
+  open[LINK_RULE] = linkIssues().filter((m) => !left.has(m.target.toLowerCase())).length;
+  open[FIX_RECHECK_RULE] = pastFixRows().length;
+  const autoOn = settings.memoryAutoApply === true;
+  const rules = [
+    { id: LINK_RULE, label: 'Links that open no note', auto: true },
+    { id: FIX_RECHECK_RULE, label: 'Past fixes to check', auto: true },
+    ...RULES.map((r) => ({ id: r.rule.id, label: r.rule.label, auto: r.rule.id === 'note.confidential-folder' })),
+  ];
+  return rules.map((r) => {
+    const t = tally[r.id] ?? { approved: 0, archived: 0, undone: 0, auto: 0, reopened: 0, last: 0 };
+    const state = !r.auto ? 'Review only' : autoOn ? 'Applies its automatic fixes on its own' : 'Waits for review';
+    return { id: r.id, label: r.label, approved: t.approved, archived: t.archived, undone: t.undone, auto: t.auto, last: t.last, open: open[r.id] ?? 0, ignores: ign.filter((g) => g.ruleId === r.id).length, state };
+  });
+}
+ipcMain.handle('memory-rule-records', () => ruleRecordList());
+ipcMain.handle('memory-ignore-list', () => ignoreList());
+ipcMain.handle('memory-ignore-remove', (_e, id) => {
+  const b = brain();
+  if (!b) return false;
+  const all = ignoreStore('memoryIgnore');
+  all[b.vault] = (all[b.vault] ?? []).filter((x) => x.id !== String(id));
+  store.settings.save();
+  toUI('memory-updates', null);
+  return true;
+});
+ipcMain.handle('memory-draft-status', () => drafter.status());
+// the drafts of the items in review, for the rows in Notifications: row id -> what the draft does and its evidence
+function draftViews() {
+  const out = {};
+  if (settings.memoryDrafts !== true) return out;
+  for (const i of reviewItems()) if (i.draft) out[i.id] = { ...i.draft, line: itemLine(i), check: !!checkFirst(i), hold: i.hold ?? null };
   return out;
 }
 // the plan as the bulk plan sheet shows it: every group with each item ticked or not, and what was merged, skipped and
@@ -3187,14 +3359,14 @@ function planView(items, exclude = [], include = []) {
   const groups = new Map();
   for (const g of [...full.groups, ...cur.groups]) {
     const e = groups.get(g.id) ?? groups.set(g.id, { id: g.id, items: [] }).get(g.id);
-    for (const i of g.items) if (!e.items.some((x) => x.id === i.id)) e.items.push({ ...i, line: itemLine(byId.get(i.id) ?? {}), on: cur.ok.includes(i.id) });
+    for (const i of g.items) if (!e.items.some((x) => x.id === i.id)) e.items.push({ ...i, line: itemLine(byId.get(i.id) ?? {}), on: cur.ok.includes(i.id), draft: byId.get(i.id)?.draft ?? null });
   }
   for (const id of off) {
     const i = byId.get(id);
     if (!i || !i.ops?.length) continue;
     const g = groupOf(i);
     const e = groups.get(g) ?? groups.set(g, { id: g, items: [] }).get(g);
-    if (!e.items.some((x) => x.id === id)) e.items.push({ id, title: i.title, kind: i.kind, notes: notesOf(i), line: itemLine(i), on: false });
+    if (!e.items.some((x) => x.id === id)) e.items.push({ id, title: i.title, kind: i.kind, notes: notesOf(i), line: itemLine(i), on: false, draft: i.draft ?? null });
   }
   const order = full.groups.map((g) => g.id);
   const out = [];
@@ -3264,7 +3436,7 @@ const STUB_TEXT = 'Quorum made this note because';
 async function runOp(item, o, { step, keep, written, vault }) {
   if (item.kind === 'link') {
     const hashes = Object.fromEntries(Object.entries(item.hashes ?? {}).filter(([r]) => !written.has(r)));
-    await decideLink(item.key, 'approve', step, keep, hashes, item.approved);
+    await decideLink(item.key, 'approve', step, keep, hashes, item.approved, item.draft ?? null);
     return;
   }
   const abs = vaultPath(vault, o.rel);
@@ -3273,14 +3445,21 @@ async function runOp(item, o, { step, keep, written, vault }) {
     const now = readVault(vault, o.rel);
     if ((now == null ? null : sha(now)) !== item.hashes[o.rel]) throw new Error(`“${o.rel}” changed after Quorum planned this batch, so Quorum did not write. Review the plan again`);
   }
+  const past = item.kind === 'pastfix';
   if (o.op === 'restore') {
-    await step(`Putting back ${o.rel} as it read before the earlier fix`);
+    await step(past ? `Putting back ${o.rel} as it read before the earlier fix` : `Writing ${o.rel} as the agent drafted it`);
     keep(o.rel);
     writeAtomic(abs, o.before);
   } else if (o.op === 'trash') {
-    await step(`Moving ${o.rel}, which an earlier fix wrote, to the Trash`);
+    await step(past ? `Moving ${o.rel}, which an earlier fix wrote, to the Trash` : `Moving ${o.rel}, merged into another note, to the Trash`);
     keep(o.rel, false, true);
     await shell.trashItem(abs);
+  } else if (o.op === 'link') {
+    await step(`Linking ${o.rel} to ${o.to}`);
+    if (!vindex.rels().includes(o.to)) throw new Error(`“${o.to}” is no longer in the vault`);
+    keep(o.rel);
+    const text = readFileSync(abs, 'utf8');
+    writeAtomic(abs, `${text.replace(/\s*$/, '')}\n\n${relatedLine(o.to)}\n`);
   } else if (o.op === 'tag') {
     await step(`Tagging ${o.rel} confidential: ${o.value}`);
     keep(o.rel);
@@ -4690,7 +4869,7 @@ app.whenReady().then(() => {
   devHooks?.install({ win, meeting, toUI, log, endMeeting, sessionsDir: SESSIONS, userName: USER_NAME });
 });
 
-app.on('before-quit', () => { quitting = true; helperSend({ cmd: 'quit' }); });
+app.on('before-quit', () => { quitting = true; helperSend({ cmd: 'quit' }); stopClaudeText(); });
 app.on('activate', openMain);
 // coming back to the window pulls what other devices changed; the Realtime channel in sync.js delivers them as they
 // happen, and this and the timer in account.js cover the time a dropped socket takes to rejoin

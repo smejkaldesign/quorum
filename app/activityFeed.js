@@ -64,7 +64,9 @@ const prefOn = (prefs, key) => prefs?.[key] !== false;
 //   pastFixes: the fixes that ran and that the current rules flag (fixRecheck.js): { run, res, plan, abs }
 //   state:    { since, read: { [id]: at }, unread: { [id]: at } }; since is when Notifications started keeping its
 //             own marks, read and unread are the person's marks on single rows
-export function feedRows({ notes = [], memories = [], denials = [], junk = [], links = [], runs = [], pastFixes = [], findings = [], state = {}, guardFile = null }) {
+// drafts: row id -> the agent's draft of that item's fix (memoryDraft.js); ignores: the ignore rules Quorum proposes
+// (ruleRecords.js)
+export function feedRows({ notes = [], memories = [], denials = [], junk = [], links = [], runs = [], pastFixes = [], findings = [], drafts = {}, ignores = [], state = {}, guardFile = null }) {
   const rows = [];
   const since = time(state.since);
   const read = state.read ?? {};
@@ -133,8 +135,8 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], l
     push({
       id: `r:link:${i.key}`, at: time(m.lastAt), kind: 'memory-health', event: 'review', who: 'agent',
       target: { kind: 'link', abs: m.abs ?? '', rel: i.path, title: i.target }, files: [],
-      detail: { title: i.title, problem: i.problem, solution: i.solution, value: i.value, recommend: i.recommend, meta: issueMeta(i), category: i.category, links: i.links, notes: i.notes, folder: i.folder?.folder ?? null },
-      review: { kind: 'link', key: i.key, ...(m.left ? { left: true } : {}) },
+      detail: { title: i.title, problem: i.problem, solution: i.solution, value: i.value, recommend: i.recommend, meta: issueMeta(i), category: i.category, links: i.links, notes: i.notes, folder: i.folder?.folder ?? null, draft: drafts[`r:link:${i.key}`] ?? null },
+      review: { kind: 'link', key: i.key, ...(m.left ? { left: true } : {}) }, draft: drafts[`r:link:${i.key}`] ?? null,
     }, null);
   }
   // each finding of a review rule (rules/index.js) waits for a person: there is no automatic fix, so it opens on its note
@@ -143,8 +145,8 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], l
     push({
       id: `r:find:${f.key}`, at: time(f.at), kind: 'memory-health', event: 'review', who: 'agent', initial: !!f.initial,
       target: { kind: 'memory', abs: f.abs ?? '', rel: f.rel, title: f.title }, files: [],
-      detail: { title: f.title, problem: f.problem, solution: f.proposal, recommend: f.proposal, rule: f.rule, meta: [['Check', f.rule], ...(f.meta ?? []), ...(f.evidence ?? []).map((e, i) => [i ? `Evidence ${i + 1}` : 'Evidence', e])] },
-      review: { kind: 'finding', key: f.key, ...(f.fix ? { fix: true } : {}), ...(f.archived ? { left: true } : {}) },
+      detail: { title: f.title, problem: f.problem, solution: f.proposal, recommend: f.proposal, rule: f.rule, meta: [['Check', f.rule], ...(f.meta ?? []), ...(f.evidence ?? []).map((e, i) => [i ? `Evidence ${i + 1}` : 'Evidence', e])], draft: drafts[`r:find:${f.key}`] ?? null },
+      review: { kind: 'finding', key: f.key, ...(f.fix || drafts[`r:find:${f.key}`] ? { fix: true } : {}), ...(f.archived ? { left: true } : {}) }, draft: drafts[`r:find:${f.key}`] ?? null,
     }, null);
   }
   // each fix run Quorum carried out on an approved Memory health issue: its row shows it working, then its outcome
@@ -162,6 +164,15 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], l
       target: { kind: 'memory', abs: abs ?? '', rel: res.main ?? run.rel ?? '', title: run.target }, files: [],
       detail: { outcome: run.outcome, reasons: res.reasons.map((r) => r.text), evidence: res.evidence ?? [], undo: plan.why, ranAt: run.endedAt ?? null },
       review: { kind: 'past-fix', key: run.id, undo: !!plan.ok },
+    }, null);
+  }
+  // an ignore rule Quorum proposes after the same kind of finding was archived again and again; Approve stores it
+  for (const g of ignores) {
+    push({
+      id: `r:ignore:${g.id}`, at: time(g.at), kind: 'memory-health', event: 'review', who: 'agent',
+      target: { kind: 'memory', abs: '', rel: g.value, title: g.title }, files: [],
+      detail: { title: g.title, rule: g.rule, field: g.field, value: g.value, count: g.count, findings: g.findings },
+      review: { kind: 'ignore', key: g.id },
     }, null);
   }
   const guardTarget = { kind: 'guardrail', abs: guardFile ?? '', rel: 'Guardrails', title: 'Guardrails' };

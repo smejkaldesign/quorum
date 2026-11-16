@@ -1,3 +1,4 @@
+import { DraftEvidence } from './MemoryDraft';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import markProd from '../assets/quorum-mark.png';
 
@@ -137,6 +138,7 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
                 {row.fixRun && <RunBanner run={row.fixRun} />}
                 <ReviewDetails recommendation={row.fixRun ? undefined : row.summary.recommendation} problem={row.summary.problem} solution={row.summary.solution} value={row.summary.value}
                   meta={row.review.kind === 'link' ? row.details.filter(([k]) => k !== 'What' && k !== 'When' && k !== 'History') : row.details.filter(([k]) => k !== 'History')} />
+                {row.draft && <DraftEvidence draft={row.draft} />}
               </>
             ) : (
               <dl>

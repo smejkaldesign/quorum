@@ -49,8 +49,20 @@ function askOf(row) {
   const d = row.detail ?? {};
   // a Memory health issue: the issue is the question, its recommended fix the recommendation (memoryHealth.js)
   // a review rule's finding (rules/index.js): no automatic fix, so the suggestion is to act on the note and archive it
-  if (row.review.kind === 'finding') return { question: d.title ?? `Check ${q(t)}`, suggest: row.review.fix ? 'approve' : 'dismiss', problem: d.problem ?? '', solution: d.solution ?? '', value: '', recommendation: d.recommend ?? '', why: d.rule ?? '' };
-  if (row.review.kind === 'link') return { question: d.title ?? `Links to ${q(t)} open nothing`, suggest: 'approve', problem: d.problem ?? '', solution: d.solution ?? '', value: d.value ?? '', recommendation: d.recommend ?? '', why: d.recommend ?? '' };
+  // an item the agent drafted recommends the draft (memoryDraft.js)
+  const drafted = d.draft?.line ? `The agent drafted a fix: ${d.draft.line}.` : null;
+  if (row.review.kind === 'finding') return { question: d.title ?? `Check ${q(t)}`, suggest: row.review.fix ? 'approve' : 'dismiss', problem: d.problem ?? '', solution: drafted ?? d.solution ?? '', value: '', recommendation: drafted ?? d.recommend ?? '', why: d.rule ?? '' };
+  if (row.review.kind === 'link') return { question: d.title ?? `Links to ${q(t)} open nothing`, suggest: 'approve', problem: d.problem ?? '', solution: drafted ?? d.solution ?? '', value: d.value ?? '', recommendation: drafted ?? d.recommend ?? '', why: d.recommend ?? '' };
+  // an ignore rule Quorum proposes (ruleRecords.js)
+  if (row.review.kind === 'ignore') {
+    const shared = d.field === 'folder' ? `the folder ${q(d.value)}` : d.field === 'key' ? `the frontmatter key ${q(d.value)}` : `the target ${q(d.value)}`;
+    return {
+      question: `${d.title ?? 'Stop flagging these findings'}?`, suggest: 'approve',
+      problem: `You archived findings of the check ${q(d.rule ?? '')} ${d.count ?? 0} times, and they share ${shared}.`,
+      solution: 'Quorum keeps an ignore rule in its own settings, never in the vault. Findings of this check that match it stop showing. You can remove the rule in Settings > Memory.',
+      value: 'Needs review stops asking about what you already decided to leave.', recommendation: 'Stop flagging them.', why: d.title ?? '',
+    };
+  }
   // a fix that ran and that the current rules would not make (fixRecheck.js): its corrective fix undoes the wrong change
   // and sends the link back to review, where the current rules give it a fix; when Quorum cannot undo it, open the note
   if (row.review.kind === 'past-fix') {
@@ -184,6 +196,9 @@ export function detailsOf(row, { locale } = {}) {
     add('Reason', d.reason);
   } else if (row.review?.kind === 'link' || row.review?.kind === 'finding') {
     for (const [k, v] of d.meta ?? []) add(k, v);
+  } else if (row.review?.kind === 'ignore') {
+    add('Check', d.rule);
+    add('Archived', d.count);
   } else if (row.review?.kind === 'past-fix') {
     add('Fix', sentence(d.outcome));
     if (d.ranAt) add('Ran', new Date(d.ranAt).toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' }));

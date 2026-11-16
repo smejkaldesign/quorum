@@ -2,7 +2,8 @@ import { useState } from 'react';
 import markReview from '../assets/quorum-mark.png';
 import { IconArchive, IconChevron } from './icons';
 import { ReviewDetails, RowMenu, StatusBadge, ago } from './NotificationsView';
-import type { MemoryFinding } from './quorum';
+import type { MemoryDraft, MemoryFinding } from './quorum';
+import { DraftEvidence } from './MemoryDraft';
 
 // The review rules' findings in Memory health (rules/index.js): stale notes, duplicates, frontmatter, confidential
 // marks, secrets, oversized and orphan notes. One group per rule, in the same row pattern as the link issues. None has
@@ -10,8 +11,8 @@ import type { MemoryFinding } from './quorum';
 const openNote = (abs: string) => window.dispatchEvent(new CustomEvent('quorum:open-memory', { detail: abs }));
 export const findingId = (key: string) => `r:find:${key}`;
 
-export function MemoryFindings({ findings, archived, q, unread, onArchive, onRead }: {
-  findings: MemoryFinding[]; archived: boolean; q: string; unread: Set<string>;
+export function MemoryFindings({ findings, drafts = {}, archived, q, unread, onArchive, onRead }: {
+  findings: MemoryFinding[]; drafts?: Record<string, MemoryDraft>; archived: boolean; q: string; unread: Set<string>;
   onArchive: (keys: string[], on: boolean) => Promise<void>; onRead: (ids: string[]) => void;
 }) {
   const [unfolded, setUnfolded] = useState<Set<string>>(new Set());
@@ -63,7 +64,8 @@ export function MemoryFindings({ findings, archived, q, unread, onArchive, onRea
                 <div className="fold-inner">
                   <div className="conn-sub conn-fold-body nf-details mh-fold">
                     <ReviewDetails recommendation={f.proposal} problem={f.problem}
-                      meta={[...f.evidence.map((e, i) => [i ? `Evidence ${i + 1}` : 'Evidence', e] as [string, string]), ...f.meta, ['Fix', 'You make the change; Quorum has no automatic fix for this']]} />
+                      meta={[...f.evidence.map((e, i) => [i ? `Evidence ${i + 1}` : 'Evidence', e] as [string, string]), ...f.meta, ['Fix', drafts[findingId(f.key)] ? `The agent drafted a fix: ${drafts[findingId(f.key)].line ?? ''}. Approve it in Notifications` : 'You make the change in the note, or approve its fix in Notifications']]} />
+                    {drafts[findingId(f.key)] && <DraftEvidence draft={drafts[findingId(f.key)]} />}
                   </div>
                 </div>
               </div>
