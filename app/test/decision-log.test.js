@@ -44,6 +44,16 @@ describe('decision log', () => {
     expect(again.list('/v1').map((r) => r.decision)).toEqual(['archived', 'reopened']);
     expect(again.latest('/v1', 'orbit').decision).toBe('reopened');
   });
+  it('writes a bulk decision once and reads the latest record of every key in one pass', () => {
+    const log = fresh();
+    const recs = ['a', 'b', 'c'].map((k) => ({ ...finding([`${k}.md`], { key: k, target: k }), decision: 'archived' }));
+    expect(log.recordMany('/v1', [...recs, { ...recs[0], decision: 'nope' }])).toHaveLength(3);
+    log.recordMany('/v1', [{ ...recs[1], decision: 'reopened' }]);
+    const again = createDecisionLog(dir);
+    const latest = again.latestAll('/v1');
+    expect([...latest].map(([k, r]) => [k, r.decision])).toEqual([['a', 'archived'], ['b', 'reopened'], ['c', 'archived']]);
+    expect(latest.get('b')).toEqual(again.latest('/v1', 'b'));
+  });
   it('moves a log that does not parse aside instead of writing over it', () => {
     const log = fresh();
     log.record('/v1', { ...finding(['a.md']), decision: 'archived' });

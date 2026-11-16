@@ -2456,20 +2456,24 @@ const findingRecord = (f) => ({ ruleId: f.ruleId, ruleVersion: f.ruleVersion, ke
 function findingsNow() {
   const b = brain();
   if (!b) return [];
-  return memorySweep.findings(b.vault).map((f) => {
-    const last = decisionLog.latest(b.vault, f.key);
+  const latest = decisionLog.latestAll(b.vault);
+  const reopened = [];
+  const out = memorySweep.findings(b.vault).map((f) => {
+    const last = latest.get(f.key);
     const archived = last?.decision === 'archived' && last.fingerprint === fingerprint(f.ruleId, f.target, findingSources(f));
-    if (last?.decision === 'archived' && !archived) logFinding(findingRecord(f), 'reopened', 'quorum', 'The evidence changed after it was archived');
+    if (last?.decision === 'archived' && !archived) reopened.push({ ...findingRecord(f), decision: 'reopened', actor: 'quorum', note: 'The evidence changed after it was archived' });
     return { ...f, archived, abs: path.join(b.vault, f.rel) };
   });
+  if (reopened.length) { try { decisionLog.recordMany(b.vault, reopened); } catch (e) { log('decision log', e?.message); } }
+  return out;
 }
 function archiveFindings(keys, on) {
   const b = brain();
   if (!b || !keys.length) return 0;
-  const all = memorySweep.findings(b.vault);
-  let n = 0;
-  for (const k of keys) { const f = all.find((x) => x.key === k); if (f) { logFinding(findingRecord(f), on ? 'archived' : 'reopened'); n++; } }
-  return n;
+  const byKey = new Map(memorySweep.findings(b.vault).map((f) => [f.key, f]));
+  const recs = keys.map((k) => byKey.get(k)).filter(Boolean).map((f) => ({ ...findingRecord(f), decision: on ? 'archived' : 'reopened', actor: 'you' }));
+  try { decisionLog.recordMany(b.vault, recs); } catch (e) { log('decision log', e?.message); }
+  return recs.length;
 }
 ipcMain.handle('memory-findings', () => {
   const s = brain() ? memorySweep.state(brain().vault) : null;
