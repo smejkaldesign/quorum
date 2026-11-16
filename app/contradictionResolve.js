@@ -45,20 +45,23 @@ export function annotateFix(older, newer, kind, lineOf) {
   return { kind: 'annotate', line: older.lineEnd, text, add };
 }
 
-// the line an annotate fix writes, or an error when the line changed since Quorum planned it
+// the line an annotate fix writes, or an error when the line changed since Quorum planned it. The text goes before the
+// line's trailing spaces (a Markdown line break) and every line keeps its own line ending, so nothing else changes
+const parts = (raw) => { const cr = raw.endsWith('\r') ? '\r' : ''; const body = raw.slice(0, raw.length - cr.length); const trail = body.match(/[ \t]*$/)[0]; return { core: body.slice(0, body.length - trail.length), trail, cr }; };
 export function annotateLine(text, { line, text: expect, add }) {
-  const eol = /\r\n/.test(text) ? '\r\n' : '\n';
-  const lines = String(text).split(/\r?\n/);
-  if (!Number.isInteger(line) || line < 1 || line > lines.length || lines[line - 1] !== expect) throw new Error('The line changed after Quorum planned this fix, so Quorum did not write');
-  lines[line - 1] = `${expect.replace(/\s+$/, '')}${add}`;
-  return lines.join(eol);
+  const lines = String(text).split('\n');
+  if (!Number.isInteger(line) || line < 1 || line > lines.length || lines[line - 1].replace(/\r$/, '') !== expect) throw new Error('The line changed after Quorum planned this fix, so Quorum did not write');
+  const { core, trail, cr } = parts(lines[line - 1]);
+  lines[line - 1] = `${core}${add}${trail}${cr}`;
+  return lines.join('\n');
 }
 // the line as it read before the fix: the added text taken off again
 export const unannotateLine = (text, { line, add }) => {
-  const eol = /\r\n/.test(text) ? '\r\n' : '\n';
-  const lines = String(text).split(/\r?\n/);
-  if (lines[line - 1]?.endsWith(add)) lines[line - 1] = lines[line - 1].slice(0, -add.length);
-  return lines.join(eol);
+  const lines = String(text).split('\n');
+  if (lines[line - 1] == null) return String(text);
+  const { core, trail, cr } = parts(lines[line - 1]);
+  if (core.endsWith(add)) lines[line - 1] = `${core.slice(0, -add.length)}${trail}${cr}`;
+  return lines.join('\n');
 };
 
 // a pair resolved. judge: the judge's label for this pair, or null when it has not judged it. Answers

@@ -240,6 +240,11 @@ describe('stage 4 resolve and stage 5 fixes', () => {
     expect(out).toBe('# A\r\nAtlas uses X. (as of 2026-01-01)\r\nEnd\r\n');
     expect(unannotateLine(out, fix)).toBe('# A\r\nAtlas uses X.\r\nEnd\r\n');
     expect(() => annotateLine('# A\nAtlas uses Z.\n', fix)).toThrow(/changed/);
+    // a Markdown line break stays after the added text, and the other lines keep their own endings
+    const mixed = '# A\nAtlas uses X.  \r\nEnd\n';
+    const hard = { ...fix, text: 'Atlas uses X.  ' };
+    expect(annotateLine(mixed, hard)).toBe('# A\nAtlas uses X. (as of 2026-01-01)  \r\nEnd\n');
+    expect(unannotateLine(annotateLine(mixed, hard), hard)).toBe(mixed);
   });
 
   it('checks the judge reply: a label and a matching quote from each note', () => {
