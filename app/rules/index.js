@@ -9,13 +9,14 @@
 //   folders { [folder rel]: value } the folders a person marked confidential (kept in Quorum's settings)
 import * as orphans from './orphans.js';
 import * as duplicates from './duplicates.js';
+import * as nearDuplicates from './nearDuplicates.js';
 import * as frontmatter from './frontmatter.js';
 import * as oversized from './oversized.js';
 import * as confidential from './confidential.js';
 import * as secrets from './secrets.js';
 import * as stale from './stale.js';
 
-export const RULES = [stale, duplicates, frontmatter, confidential, secrets, oversized, orphans];
+export const RULES = [stale, duplicates, nearDuplicates, frontmatter, confidential, secrets, oversized, orphans];
 export const RULE_LABELS = Object.fromEntries(RULES.map((r) => [r.rule.id, r.rule.label]));
 
 // runs every rule over the vault. only: the notes that changed; findings that touch none of them are left out, so the

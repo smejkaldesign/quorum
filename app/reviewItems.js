@@ -41,12 +41,14 @@ export function pastFixItem({ run, res, plan }) {
   return { ...base, group, autoFix: plan.kind === 'record' || plan.kind === 'versions' || plan.kind === 'trash' || plan.kind === 'exact', ops };
 }
 
-// a review rule's finding with a fix (rules/confidential.js): tag, move, or move and tag
+// a review rule's finding with a fix: tag, move, or move and tag (rules/confidential.js); link two notes
+// (rules/nearDuplicates.js)
 export function findingItem(f) {
-  const base = { id: `${ROW.finding}${f.key}`, kind: 'finding', key: f.key, target: f.key, title: f.rel, autoFix: !!f.autoFix, reviewOnly: false };
+  const base = { id: `${ROW.finding}${f.key}`, kind: 'finding', key: f.key, target: f.key, title: f.rel, ruleId: f.ruleId, notes: f.notes, autoFix: !!f.autoFix, reviewOnly: false };
   const x = f.fix;
   if (!x) return { ...base, autoFix: false, hold: 'Quorum has no automatic fix for it. Open the note to act on it.', ops: [] };
   const ops = [];
+  if (x.kind === 'link') ops.push({ op: 'link', rel: f.rel, to: x.to });
   if (x.kind === 'tag' || x.kind === 'move-tag') ops.push({ op: 'tag', rel: f.rel, value: x.value });
   if (x.kind === 'move' || x.kind === 'move-tag') ops.push({ op: 'move', rel: f.rel, to: x.to });
   return { ...base, ops };
@@ -56,11 +58,14 @@ export function findingItem(f) {
 export function itemLine(item) {
   const o = item.ops?.[0];
   if (!o) return item.hold ?? '';
+  if (item.group === 'merge') return `Merge ${q(item.ops[1]?.rel)} into ${q(o.rel)}`;
+  if (item.group === 'rewrite') return `Rewrite ${q(o.rel)} as the agent drafted it`;
   if (item.kind === 'pastfix') return item.group === 'trash' ? `Remove ${q(o.rel)}, which an earlier fix wrote for ${q(item.title)}` : `Undo the earlier fix on ${q(item.title)}`;
   if (o.op === 'alias') return `Add ${q(o.alias)} as an alias of ${q(o.rel)}`;
   if (o.op === 'relink') return `Point the links to ${q(o.target)} at ${q(o.to)}`;
   if (o.op === 'unlink') return `Remove the dead links to ${q(o.target)}`;
-  if (o.op === 'create') return `Write ${q(o.rel)}`;
+  if (o.op === 'create') return `Write ${q(o.rel)}${o.text ? ' as the agent drafted it' : ''}`;
+  if (o.op === 'link') return `Link ${q(o.rel)} to ${q(o.to)}`;
   if (o.op === 'tag' && item.ops[1]?.op === 'move') return `Tag ${q(o.rel)} confidential: ${o.value} and move it to ${q(item.ops[1].to)}`;
   if (o.op === 'tag') return `Tag ${q(o.rel)} confidential: ${o.value}`;
   if (o.op === 'move') return `Move ${q(o.rel)} to ${q(o.to)}`;
