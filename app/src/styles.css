@@ -2731,3 +2731,4 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .mh-icon:hover:not(:disabled), .mh-icon:focus-visible { border-color: var(--line-hover); }
 .mh-row:has(.mh-parts) .nf-line, .nf-row.mh-row .nf-line { align-items: center; }
 .mh-row:has(.mh-parts) .nf-side { align-self: center; padding-top: 0; }
+.mh-icon { border-radius: 10px; }
