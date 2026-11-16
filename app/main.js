@@ -2959,7 +2959,7 @@ function pastFixPlan(run, fresh = false) {
   if (!fresh && hit && Date.now() - hit.at < 10000) return hit.plan;
   let undoFiles = null;
   try { undoFiles = JSON.parse(readFileSync(undoFile(run.id), 'utf8')).files ?? null; } catch {}
-  const mtime = (rel) => { try { return statSync(vaultPath(run.vault, rel)).mtimeMs; } catch { return null; } };
+  const mtime = (rel) => { try { const st = statSync(vaultPath(run.vault, rel)); return Math.max(st.mtimeMs, st.ctimeMs); } catch { return null; } };
   const plan = undoPlan(run, { vault, undoFiles, versions: fixVersions(memoryVersions.files(run.vault), run), readVersion: (rel, id) => memoryVersions.read(run.vault, rel, id), mtime });
   st.plans.set(run.id, { at: Date.now(), plan });
   return plan;

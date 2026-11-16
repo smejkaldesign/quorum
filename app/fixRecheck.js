@@ -195,7 +195,8 @@ export function fixVersions(files, run) {
 }
 
 // How this run can be undone. undoFiles: its undo record's files or null; versions: fixVersions(); readVersion(rel, id)
-// the text of a version; mtime(rel) a note's file time or null.
+// the text of a version; mtime(rel) the later of a note's modified and changed times, or null. The changed time counts
+// because a rename or move onto a path keeps the file's modified time.
 // Answers { ok, kind: 'record' | 'versions' | 'trash' | 'exact' | 'none', why, files: [{ rel, before, expect }], open }
 // expect is the hash of each note's text now, checked again before Undo writes
 export function undoPlan(run, { vault, undoFiles = null, versions = [], readVersion = () => null, mtime = () => null }) {
@@ -203,6 +204,8 @@ export function undoPlan(run, { vault, undoFiles = null, versions = [], readVers
   const hash = (rel) => { const t = vault.read(rel); return t == null ? null : sha(t); };
   const no = (kind, why, open = null) => ({ ok: false, kind, why, files: [], open });
   const after = (rel) => { const t = mtime(rel); return t != null && t > (run.endedAt ?? 0) + SLACK; };
+  // a note the fix wrote always starts with the stub line; without it, the file at that path is another note
+  const notStub = (rel) => !(vault.read(rel) ?? '').includes(STUB_MARK);
   if (run.undoneAt) return no('none', 'This fix was undone already.');
   if (undoFiles?.length) {
     for (const f of undoFiles) if (hash(f.rel) !== f.after) return no('record', `${q(f.rel)} changed after the fix, so undoing it would lose those edits.`, f.rel);
@@ -211,7 +214,7 @@ export function undoPlan(run, { vault, undoFiles = null, versions = [], readVers
   if (versions.length) {
     const files = [];
     for (const v of versions) {
-      if (v.later || after(v.rel)) return no('versions', `${q(v.rel)} changed after the fix, so undoing it would lose those edits.`, v.rel);
+      if (v.later || after(v.rel) || (v.created && notStub(v.rel))) return no('versions', `${q(v.rel)} changed after the fix, so undoing it would lose those edits.`, v.rel);
       const before = v.created ? null : readVersion(v.rel, v.id);
       if (!v.created && before == null) return no('versions', `Quorum no longer has the text of ${q(v.rel)} from before the fix.`, v.rel);
       files.push({ rel: v.rel, before, expect: hash(v.rel) });
@@ -220,7 +223,7 @@ export function undoPlan(run, { vault, undoFiles = null, versions = [], readVers
   }
   if (r.action === 'create') {
     if (!vault.rels().includes(r.made) && vault.read(r.made) == null) return no('none', 'The note this fix wrote is no longer in the vault.');
-    if (after(r.made)) return no('trash', `${q(r.made)} changed after the fix, so Quorum leaves it as it is.`, r.made);
+    if (after(r.made) || notStub(r.made)) return no('trash', `${q(r.made)} changed after the fix, so Quorum leaves it as it is.`, r.made);
     return { ok: true, kind: 'trash', why: `Quorum moves ${q(r.made)} to the Trash, where you can put it back.`, files: [{ rel: r.made, before: null, expect: hash(r.made) }], open: null };
   }
   if (r.action === 'alias') {

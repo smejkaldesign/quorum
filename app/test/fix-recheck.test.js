@@ -175,6 +175,12 @@ describe('undoPlan', () => {
     const plan = undoPlan(created('Lantern', 'n/Lantern.md'), { vault: s.vault, mtime: s.mtime });
     expect(plan).toMatchObject({ ok: false, kind: 'trash', open: 'n/Lantern.md' });
   });
+  it('refuses to trash a different note renamed onto the path the fix wrote, though its file time is old', () => {
+    const s = setup({ 'n/Lantern.md': '# Lantern\n\nA note a person wrote long ago' });
+    settle(s, 'n/Lantern.md');
+    const plan = undoPlan(created('Lantern', 'n/Lantern.md'), { vault: s.vault, mtime: s.mtime });
+    expect(plan).toMatchObject({ ok: false, kind: 'trash', open: 'n/Lantern.md' });
+  });
   it('takes an alias back out when the text before is certain, and refuses when it is not', async () => {
     const block = setup({ 'n/Lighthouse.md': '---\naliases:\n  - beam\n  - lighthouse-x\ntags: [a]\n---\n# Lighthouse' });
     settle(block, 'n/Lighthouse.md');
