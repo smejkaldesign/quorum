@@ -22,6 +22,8 @@ describe('review items', () => {
     const ok = pastFixItem({ run, res: { action: 'create' }, plan: { ok: true, kind: 'trash', files: [{ rel: 'n/Kite.md', before: null, expect: 'h' }] } });
     expect(ok).toMatchObject({ id: 'r:pastfix:fix:kite:1', group: 'trash', autoFix: true, link: 'kite', ops: [{ op: 'trash', rel: 'n/Kite.md' }] });
     expect(itemLine(ok)).toBe('Remove “n/Kite.md”, which an earlier fix wrote for “Kite”');
+    expect(itemLine({ kind: 'link', target: 'Kite', agent: { line: 'Write a note about “Kite” from the 2 notes that link to it, as the agent drafts it' }, ops: [{ op: 'create', rel: 'Kite.md' }] })).toMatch(/^Write a note about “Kite”/);
+    expect(itemLine({ kind: 'link', target: 'Kite', fallback: 'A quote did not check.', ops: [{ op: 'unlink', target: 'Kite' }] })).toBe('Remove the dead links to “Kite” and keep their words');
     expect(pastFixItem({ run, res: {}, plan: { ok: false, why: 'It changed.' } })).toMatchObject({ hold: 'It changed.', ops: [] });
   });
   it('turns a confidential finding into tag, move, or move and tag steps', () => {

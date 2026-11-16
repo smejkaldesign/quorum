@@ -90,7 +90,6 @@ export const SYSTEM = [
 // the prompt for an item: what to draft, the shape of the answer, and the numbered notes
 export function draftPrompt(item, notes) {
   const kind = draftKind(item);
-  const o = item.ops?.[0] ?? {};
   const quotes = '"quotes": [{ "path": "<note path>", "line": <line number>, "text": "<exact text from that line>" }]';
   let ask;
   if (kind === 'create') {

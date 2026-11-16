@@ -62,7 +62,7 @@ const prefOn = (prefs, key) => prefs?.[key] !== false;
 //   links:    the open Memory health issues (vindex.js linkHealth, minus the ones declined), each with abs, the path
 //             of its first linking note
 //   pastFixes: the fixes that ran and that the current rules flag (fixRecheck.js): { run, res, plan, abs }
-//   held:     row id -> { bucket, why } for each item the quality gate (qualityGate.js) holds back
+//   held:     row id -> { bucket, why } for each item the quality gate (qualityGate.js) keeps out of view
 //   state:    { since, read: { [id]: at }, unread: { [id]: at } }; since is when Notifications started keeping its
 //             own marks, read and unread are the person's marks on single rows
 // drafts: row id -> the agent's draft of that item's fix (memoryDraft.js); ignores: the ignore rules Quorum proposes
@@ -182,7 +182,8 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], l
     const at = time(g.t);
     push({ id: `g:${g.id ?? at}`, at, kind: 'guardrail', event: 'denial', who: 'agent', target: guardTarget, files: [], detail: { path: g.path ?? '', tool: g.tool ?? '', surface: g.surface ?? null, reason: g.reason ?? '', guard: g.guard ?? null, guardLabel: g.guardLabel ?? null } }, null);
   }
-  // an item the quality gate (qualityGate.js) holds back waits in Not shown yet in Memory health, out of every tab here.
+  // an item the quality gate (qualityGate.js) keeps out of view (keep-only with nothing to act on, or still being
+  // checked) is left out of every tab here.
   // A Retroactive improvement shows under its own title
   for (const r of rows) {
     if (held.has(r.id)) r.held = held.get(r.id);

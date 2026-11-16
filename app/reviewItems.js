@@ -73,6 +73,9 @@ export function findingItem(f) {
 
 // what an item does, in one line for the checklist
 export function itemLine(item) {
+  // an item the agent fixes when Approve runs (main.js agentNeed), and the fallback after the agent could not fix it
+  if (item.agent?.line) return item.agent.line;
+  if (item.fallback) return `Remove the dead links to ${q(item.target)} and keep their words`;
   const o = item.ops?.[0];
   if (!o) return item.hold ?? '';
   if (item.group === 'merge') return `Merge ${q(item.ops[1]?.rel)} into ${q(o.rel)}`;

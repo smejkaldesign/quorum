@@ -137,6 +137,15 @@ describe('bulk plan default selection', () => {
     expect(checkFirst(items[2])).toContain('links to it alone');
   });
 
+  it('leaves an item the agent fixes when the plan runs unticked, with what the agent does as its reason', () => {
+    const agentCreate = { ...create('agent', 'Lark', 'lark.md'), agent: { kind: 'create' } };
+    const agentPoint = { id: 'p', kind: 'link', target: 'Finch', reviewOnly: true, agent: { kind: 'point', options: ['finch-notes.md'] }, ops: [{ op: 'relink', target: 'Finch', to: 'finch-notes.md', sources: ['a.md'] }] };
+    expect(checkFirst(agentCreate)).toMatch(/the agent writes each note from the notes that link to it/);
+    expect(checkFirst(agentPoint)).toMatch(/removes the dead link when no note fits/);
+    expect([...planExclude([agentCreate, agentPoint])].sort()).toEqual(['agent', 'p']);
+    expect([...planExclude([agentCreate, agentPoint], [], ['agent'])]).toEqual(['p']);
+  });
+
   it('runs a check-first fix only when the person ticks it, and keeps a person\'s untick', () => {
     const off = planExclude(items, ['strong'], ['stub']);
     expect(off.has('stub')).toBe(false);
