@@ -24,6 +24,7 @@ export function MemoryFindings({ findings, archived, q, unread, onArchive, onRea
   const act = async (keys: string[], on: boolean) => { setBusy(true); try { await onArchive(keys, on); } finally { setBusy(false); } };
   const fold = (k: string) => setUnfolded((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
+  const open = (f: MemoryFinding) => { if (unread.has(findingId(f.key))) onRead([findingId(f.key)]); openNote(f.abs); };
   return (
     <div className="mh-findings">
       {[...groups].map(([label, list]) => (
@@ -37,8 +38,8 @@ export function MemoryFindings({ findings, archived, q, unread, onArchive, onRea
           {list.map((f) => (
             <div key={f.key} className="conn-row nf-row mh-row">
               <div className="conn-line nf-line" role="button" tabIndex={0} aria-label={f.title}
-                onClick={() => { if (unread.has(findingId(f.key))) onRead([findingId(f.key)]); openNote(f.abs); }}
-                onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openNote(f.abs); } }}>
+                onClick={() => open(f)}
+                onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); open(f); } }}>
                 <span className="nf-who"><img src={markReview} alt="Quorum, needs review" width={32} height={32} /></span>
                 <span className="nf-main">
                   <span className="nf-head"><strong className="conn-title nf-title" data-tip={f.title}>{f.title}</strong>{!archived && unread.has(findingId(f.key)) && <i className="nf-dot" role="img" aria-label="Unread" data-tip="Unread" />}</span>
