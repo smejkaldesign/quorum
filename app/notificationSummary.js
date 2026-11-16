@@ -49,17 +49,18 @@ function askOf(row) {
   const d = row.detail ?? {};
   // a Memory health issue: the issue is the question, its recommended fix the recommendation (memoryHealth.js)
   // a review rule's finding (rules/index.js): no automatic fix, so the suggestion is to act on the note and archive it
-  if (row.review.kind === 'finding') return { question: d.title ?? `Check ${q(t)}`, suggest: 'dismiss', problem: d.problem ?? '', solution: d.solution ?? '', value: '', recommendation: d.recommend ?? '', why: d.rule ?? '' };
+  if (row.review.kind === 'finding') return { question: d.title ?? `Check ${q(t)}`, suggest: row.review.fix ? 'approve' : 'dismiss', problem: d.problem ?? '', solution: d.solution ?? '', value: '', recommendation: d.recommend ?? '', why: d.rule ?? '' };
   if (row.review.kind === 'link') return { question: d.title ?? `Links to ${q(t)} open nothing`, suggest: 'approve', problem: d.problem ?? '', solution: d.solution ?? '', value: d.value ?? '', recommendation: d.recommend ?? '', why: d.recommend ?? '' };
-  // a fix that ran and that the current rules would not make (fixRecheck.js): Undo when it is possible, else open the note
+  // a fix that ran and that the current rules would not make (fixRecheck.js): its corrective fix undoes the wrong change
+  // and sends the link back to review, where the current rules give it a fix; when Quorum cannot undo it, open the note
   if (row.review.kind === 'past-fix') {
     const undo = !!row.review.undo;
     const problem = `${sentence(d.outcome)} The current rules would not make this fix. ${(d.reasons ?? []).join(' ')}`.trim();
     return {
-      question: undo ? `Undo the fix on ${q(t)}?` : `Check the fix on ${q(t)}`, suggest: 'approve', problem,
-      solution: undo ? sentence(d.undo) : `Quorum cannot undo it here. ${sentence(d.undo)} Open the note to check it.`,
+      question: undo ? `Correct the fix on ${q(t)}?` : `Check the fix on ${q(t)}`, suggest: 'approve', problem,
+      solution: undo ? `${sentence(d.undo)} Then the link goes back to Needs review, or Quorum points it at the note the current rules pick when that fix needs no review of its own.` : `Quorum cannot undo it here. ${sentence(d.undo)} Open the note to check it.`,
       value: 'The vault keeps only the fixes the current rules would make, so the agent reads fewer wrong links and notes.',
-      recommendation: undo ? 'Undo the fix.' : 'Open the note and check it.', why: (d.reasons ?? [])[0] ?? '',
+      recommendation: undo ? 'Approve the corrective fix.' : 'Open the note and check it.', why: (d.reasons ?? [])[0] ?? '',
     };
   }
   if (row.review.kind === 'junk-note') {
@@ -103,6 +104,15 @@ export function summaryOf(row) {
     // the decision part of a review: what is wrong and what Quorum recommends. Approve takes the recommendation;
     // Dismiss marks it reviewed and changes nothing
     return { line: ask.question, sub: null, ask, problem: ask.problem, solution: ask.solution, value: ask.value, recommendation: ask.recommendation };
+  }
+  if (row.event === 'fix' && row.run?.kind === 'batch') {
+    const r = row.run;
+    const n = r.items?.length ?? 0;
+    const what = `${n} memory ${n === 1 ? 'fix' : 'fixes'}`;
+    if (r.status === 'queued') return { line: `Waiting to apply ${what}`, sub: null };
+    if (r.status === 'running') return { line: `Applying ${what}`, sub: null };
+    if (r.status === 'error') return { line: `Could not apply ${what}`, sub: sentence(r.error) || null };
+    return { line: r.auto ? `Quorum applied ${what} on its own` : `Applied ${what}`, sub: sentence(r.outcome) || null };
   }
   if (row.event === 'fix' && row.run) {
     const r = row.run;

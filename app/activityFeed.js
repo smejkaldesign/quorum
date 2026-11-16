@@ -144,7 +144,7 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], l
       id: `r:find:${f.key}`, at: time(f.at), kind: 'memory-health', event: 'review', who: 'agent', initial: !!f.initial,
       target: { kind: 'memory', abs: f.abs ?? '', rel: f.rel, title: f.title }, files: [],
       detail: { title: f.title, problem: f.problem, solution: f.proposal, recommend: f.proposal, rule: f.rule, meta: [['Check', f.rule], ...(f.meta ?? []), ...(f.evidence ?? []).map((e, i) => [i ? `Evidence ${i + 1}` : 'Evidence', e])] },
-      review: { kind: 'finding', key: f.key, ...(f.archived ? { left: true } : {}) },
+      review: { kind: 'finding', key: f.key, ...(f.fix ? { fix: true } : {}), ...(f.archived ? { left: true } : {}) },
     }, null);
   }
   // each fix run Quorum carried out on an approved Memory health issue: its row shows it working, then its outcome
@@ -155,7 +155,7 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], l
       detail: { problem: run.problem, solution: run.solution, value: run.value, recommend: run.recommendation, meta: run.meta ?? [] }, run,
     }, null);
   }
-  // each past fix the current rules would not make asks whether to undo it or keep it; Undo shows only when it is possible
+  // each past fix the current rules would not make waits as its corrective fix; Approve shows only when it can run
   for (const { run, res, plan, abs } of pastFixes) {
     push({
       id: `r:pastfix:${run.id}`, at: time(run.endedAt ?? run.queuedAt), kind: 'memory-health', event: 'review', who: 'agent',
