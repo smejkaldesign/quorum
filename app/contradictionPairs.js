@@ -10,6 +10,7 @@ import { hashText } from './contradictionIndex.js';
 export const SUBJECT_SIMILARITY = 0.86;
 export const ATTRIBUTE_SIMILARITY = 0.8;
 export const MAX_PAIRS_PER_GROUP = 40;
+export const MAX_COMPARISONS_PER_GROUP = 20000;
 const STOP = new Set(['the', 'a', 'an', 'of', 'for', 'to', 'our', 'its', 'their']);
 const RANK = { exact: 0, alias: 1, acronym: 2, fuzzy: 3 };
 export const weaker = (...hows) => hows.reduce((w, h) => (RANK[h] > RANK[w] ? h : w), 'exact');
@@ -161,10 +162,16 @@ export function pairClaims(claims, sx, resolve = () => null) {
   const pairs = [];
   for (const [k, list] of groups) {
     if (new Set(list.map((x) => x.c.rel)).size < 2) continue;
+    // newest dated claims first, so a large group stops early with the pairs the rules can settle: the newest claim
+    // against every older one. The search stops at MAX_PAIRS_PER_GROUP pairs or MAX_COMPARISONS_PER_GROUP comparisons,
+    // so a subject many notes name never costs the sweep n squared work
+    const order = [...list].sort((x, y) => (!!y.c.date - !!x.c.date) || String(y.c.date ?? '').localeCompare(String(x.c.date ?? '')) || x.c.rel.localeCompare(y.c.rel) || x.c.line - y.c.line);
     const found = [];
-    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
-      const x = list[i];
-      const y = list[j];
+    let budget = MAX_COMPARISONS_PER_GROUP;
+    search: for (let i = 0; i < order.length; i++) for (let j = i + 1; j < order.length; j++) {
+      if (found.length >= MAX_PAIRS_PER_GROUP || budget-- <= 0) break search;
+      const x = order[i];
+      const y = order[j];
       if (x.c.rel === y.c.rel) continue;
       const same = sameValue(x.c.value, y.c.value);
       if (same && x.c.polarity === y.c.polarity) continue;

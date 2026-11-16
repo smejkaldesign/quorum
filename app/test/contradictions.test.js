@@ -14,7 +14,7 @@ import { buildPlan, checkFirst, effects } from '../batchPlan.js';
 import { findingItem, itemLine } from '../reviewItems.js';
 import { authorityOf, indexNote, modalityOf, noteDate } from '../contradictionIndex.js';
 import { checkClaims, checkClaimsBatch, claimPrompt, quoteMatches, structuredClaims } from '../contradictionClaims.js';
-import { acronymOf, attributeKey, normKey, pairClaims, resolveSubject, sameValue, subjectIndex } from '../contradictionPairs.js';
+import { MAX_PAIRS_PER_GROUP, acronymOf, attributeKey, normKey, pairClaims, resolveSubject, sameValue, subjectIndex } from '../contradictionPairs.js';
 import { annotateLine, autoCriteria, checkJudge, resolvePair, ruleBar, unannotateLine, wilson } from '../contradictionResolve.js';
 import { BATCH_CHARS, createContradictionAgent, packBatches } from '../contradictionAgent.js';
 import { analyze, run } from '../rules/contradictions.js';
@@ -195,6 +195,17 @@ describe('stage 3 pairing', () => {
     const { pairs } = pairClaims(claims, subjectIndex([]));
     expect(pairs.map((p) => [p.a.quote, p.b.quote].sort().join('-')).sort()).toEqual(['a1-b1', 'a2-b1', 'a2-c1', 'b1-c1']);
     expect(pairs.every((p) => p.attribute === 'price')).toBe(true);
+  });
+
+  it('bounds the work in a group many notes share and pairs the newest claim first', () => {
+    const base = { extractor: 'regex', polarity: '+', modality: 'stated', authority: 2, scope: null, self: false, line: 1 };
+    const claims = Array.from({ length: 3000 }, (_, i) => ({ ...base, rel: `n${i}.md`, quote: `q${i}`, subject: 'Atlas', attribute: 'price', value: `$${i}`, date: `2026-01-${String(1 + (i % 28)).padStart(2, '0')}` }));
+    claims.push({ ...base, rel: 'newest.md', quote: 'qn', subject: 'Atlas', attribute: 'price', value: '$9999', date: '2026-06-01' });
+    const t = performance.now();
+    const { pairs } = pairClaims(claims, subjectIndex([]));
+    expect(performance.now() - t).toBeLessThan(2000);
+    expect(pairs.length).toBe(MAX_PAIRS_PER_GROUP);
+    expect(pairs.every((p) => p.a.rel === 'newest.md' || p.b.rel === 'newest.md')).toBe(true);
   });
 });
 
