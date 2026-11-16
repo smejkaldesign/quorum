@@ -10,10 +10,10 @@ export function Row({ icon, title, desc, children }: { icon: ReactNode; title: R
   );
 }
 
-export function Toggle({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+export function Toggle({ on, onChange, disabled, label }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean; label?: string }) {
   return (
     <label className={`switch ${disabled ? 'off' : ''}`}>
-      <input type="checkbox" checked={on} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+      <input type="checkbox" checked={on} disabled={disabled} aria-label={label} onChange={(e) => onChange(e.target.checked)} />
       <span className="track"><span className="thumb" /></span>
     </label>
   );

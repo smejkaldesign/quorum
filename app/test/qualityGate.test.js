@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { PRIORS, SHOW_AT, demoted, demotions, expected, gateItem, kindOf, kindOfRecord, logGate, readGateLog, ruleDemotion, runGate, signature, stability, summarize, tallies } from '../qualityGate.js';
+import { PRIORS, SHOW_AT, WINDOW, demoted, demotions, expected, gateItem, kindOf, kindOfRecord, logGate, readGateLog, ruleDemotion, runGate, signature, stability, summarize, tallies } from '../qualityGate.js';
 
 const alias = (id = 'r:link:a', extra = {}) => ({ id, kind: 'link', target: 'a', reviewOnly: false, match: { exact: true, score: 1 }, ops: [{ op: 'alias', rel: 'notes/a-note.md', alias: 'a' }], hashes: { 'x.md': 'h1' }, ...extra });
 const finding = (ruleId, ops, extra = {}) => ({ id: `r:find:${ruleId}`, kind: 'finding', ruleId, ops, ...extra });
-const rec = (ruleId, decision, proposedFix = null) => ({ ruleId, decision, proposedFix });
+const rec = (ruleId, decision, proposedFix = null, at = undefined) => ({ ruleId, decision, proposedFix, ...(at !== undefined ? { at } : {}) });
 
 describe('kinds', () => {
   it('reads the kind of each item', () => {
@@ -40,7 +40,7 @@ describe('calibrated precision', () => {
   });
   it('counts decisions per kind', () => {
     const t = tallies([rec('link.missing', 'approved', { action: 'alias' }), rec('link.missing', 'archived', { action: 'alias' }), rec('link.missing', 'reopened', { action: 'alias' }), rec('note.stale', 'undone')]);
-    expect(t['link:alias']).toEqual({ approved: 1, auto: 0, archived: 1, undone: 0 });
+    expect(t['link:alias']).toEqual({ approved: 1, auto: 0, archived: 1, undone: 0, recent: { approved: 1, archived: 1, undone: 0 } });
     expect(t['finding:note.stale'].undone).toBe(1);
   });
 });
@@ -57,10 +57,41 @@ describe('live precision guard', () => {
     expect(ruleDemotion('link.missing', log)).toEqual({ approved: 7, total: 11 });
     expect(ruleDemotion('note.stale', log)).toBeNull();
   });
+  it('reads only each kind\'s last 50 decisions, and lifts the demotion once the window is back at 90%', () => {
+    const unlink = { action: 'unlink' };
+    // 20 early dismissals, then 50 approvals: the window holds only the approvals
+    const early = [...Array(20)].map((_, i) => rec('link.missing', 'archived', unlink, i));
+    const later = [...Array(WINDOW)].map((_, i) => rec('link.missing', 'approved', unlink, 100 + i));
+    expect(WINDOW).toBe(50);
+    expect(demotions(early)).toEqual({ 'link:unlink': { approved: 0, total: 20 } });
+    expect(demotions([...early, ...later.slice(0, 10)])).toEqual({ 'link:unlink': { approved: 10, total: 30 } });
+    expect(demotions([...early, ...later])).toEqual({});
+    // the counts keep every decision; only the guard reads the window
+    const t = tallies([...early, ...later])['link:unlink'];
+    expect(t.archived).toBe(20);
+    expect(t.recent).toEqual({ approved: 50, archived: 0, undone: 0 });
+    // 45 of the last 50 approved is exactly 90%: no demotion; 44 of 50 is under
+    const mix = (bad) => [...Array(WINDOW)].map((_, i) => rec('link.missing', i < bad ? 'undone' : 'approved', unlink, i));
+    expect(demotions(mix(5))).toEqual({});
+    expect(demotions(mix(6))).toEqual({ 'link:unlink': { approved: 44, total: 50 } });
+  });
+  it('orders the window by time, and leaves decisions applied on its own and reopenings out', () => {
+    const unlink = { action: 'unlink' };
+    // the dismissals are older by time even though they come last in the log
+    const log = [...[...Array(WINDOW)].map((_, i) => rec('link.missing', 'approved', unlink, 100 + i)), ...[...Array(10)].map((_, i) => rec('link.missing', 'archived', unlink, i))];
+    expect(demotions(log)).toEqual({});
+    const auto = [...Array(30)].map((_, i) => rec('link.missing', i < 10 ? 'archived' : 'auto', unlink, i));
+    expect(tallies(auto)['link:unlink'].recent).toEqual({ approved: 0, archived: 10, undone: 0 });
+  });
+  it('lets the prior decide until a kind has 10 decisions', () => {
+    const nine = [...Array(9)].map((_, i) => rec('link.missing', 'archived', { action: 'unlink' }, i));
+    expect(demotions(nine)).toEqual({});
+    expect(gateItem({ id: 'u', kind: 'link', target: 'x', ops: [{ op: 'unlink', sources: ['a.md'] }] }, { tally: tallies(nine)['link:unlink'] }).reasons).not.toContain('demoted');
+  });
   it('moves a demoted kind to Check these first, and keeps a keep-only item with nothing to act on out of view', () => {
     const tally = { approved: 2, auto: 0, archived: 9, undone: 0 };
     expect(gateItem(alias(), { tally }).bucket).toBe('check');
-    expect(gateItem(alias(), { tally }).why).toMatch(/^Demoted: 2 of 11 approved/);
+    expect(gateItem(alias(), { tally }).why).toMatch(/^Demoted: 2 of the last 11 approved/);
     expect(gateItem(finding('note.secret', [{ op: 'keep' }]), { tally }).bucket).toBe('check');
     expect(gateItem(finding('note.oversized', [{ op: 'keep' }]), { tally }).bucket).toBe('quiet');
   });

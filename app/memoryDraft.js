@@ -309,12 +309,13 @@ export function createDrafter({ file, model, items, evidence, enabled = () => fa
   };
   const save = () => { try { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(`${file}.tmp`, JSON.stringify(state)); renameSync(`${file}.tmp`, file); } catch {} };
   const used = () => { const s = load(); if (s.day !== today(now())) { s.day = today(now()); s.count = 0; } return s.count; };
-  // why drafting waits now, or null when it can run
-  const waiting = () => {
+  // why drafting waits now, or null when it can run. uncapped: a catch-up pass (memoryCatchup.js), which neither reads
+  // nor counts against the daily cap and does not wait for the person to stop typing
+  const waiting = ({ uncapped = false } = {}) => {
     if (!enabled()) return 'off';
-    if (used() >= cap()) return 'cap';
+    if (!uncapped && used() >= cap()) return 'cap';
     if (busy()) return 'busy';
-    if (idleMs() < QUIET_MS) return 'typing';
+    if (!uncapped && idleMs() < QUIET_MS) return 'typing';
     return null;
   };
   // the stored draft of an item while its evidence reads the same, quotes checked again against the notes now
@@ -327,22 +328,63 @@ export function createDrafter({ file, model, items, evidence, enabled = () => fa
     return { ...d.draft, quotes, at: d.at, ...(d.confirm ? { confirmed: d.confirm.agree } : {}) };
   }
   let running = null;
+  // the next item that has no draft for its evidence now, else the next draft that has no second draft: { item, notes,
+  // h, confirm }, or null when nothing waits
+  function next(list) {
+    const s = load();
+    for (const item of list) {
+      const notes = evidence(item);
+      if (!notes?.length) continue;
+      const h = evidenceHash(notes);
+      if (s.drafts[item.id]?.hash === h) continue;
+      const f = s.failed[item.id];
+      if (f?.hash === h && now() - f.at < RETRY_MS) continue;
+      if (!draftPrompt(item, notes)) continue;
+      return { item, notes, h, confirm: false };
+    }
+    for (const item of list) {
+      const d = s.drafts[item.id];
+      if (!d || d.confirm) continue;
+      const notes = evidence(item);
+      if (!notes?.length || d.hash !== evidenceHash(notes) || !draftPrompt(item, notes)) continue;
+      return { item, notes, h: d.hash, confirm: true };
+    }
+    return null;
+  }
+  // the model calls the drafter still has to make for the items now: a draft and its second draft for each item with no
+  // draft, one for each draft that waits for its second
+  function pendingCalls() {
+    const s = load();
+    let n = 0;
+    for (const item of items().filter((i) => draftKind(i))) {
+      const notes = evidence(item);
+      if (!notes?.length || !draftPrompt(item, notes)) continue;
+      const h = evidenceHash(notes);
+      const d = s.drafts[item.id];
+      if (d?.hash === h) { if (!d.confirm) n++; continue; }
+      const f = s.failed[item.id];
+      if (f?.hash === h && now() - f.at < RETRY_MS) continue;
+      n += 2;
+    }
+    return n;
+  }
   // drafts the next item that has no draft for its evidence now, else confirms the next draft that has no second draft.
-  // Answers what it did, for the log and the tests
-  async function tick() {
+  // uncapped: a catch-up pass, whose calls do not count against the daily cap. Answers what it did, for the log and the
+  // tests
+  async function tick({ uncapped = false } = {}) {
     if (running) return { skipped: 'running' };
-    const why = waiting();
+    const why = waiting({ uncapped });
     if (why) return { skipped: why };
     const s = load();
     const list = items().filter((i) => draftKind(i));
     // a call a person cancelled gives its place under the daily cap back, unless the day turned while it ran
     const day = s.day;
-    const refund = () => { if (s.day === day && s.count > 0) { s.count--; save(); } };
+    const charge = () => { if (!uncapped) { s.count++; save(); } };
+    const refund = () => { if (!uncapped && s.day === day && s.count > 0) { s.count--; save(); } };
     const confirmOf = (item, notes, h) => {
       const p = draftPrompt(item, notes);
       if (!p) return null;
-      s.count++;
-      save();
+      charge();
       running = (async () => {
         try {
           const res = checkDraft(item, notes, await model(p.prompt, p.system));
@@ -360,17 +402,12 @@ export function createDrafter({ file, model, items, evidence, enabled = () => fa
       })();
       return running;
     };
-    for (const item of list) {
-      const notes = evidence(item);
-      if (!notes?.length) continue;
-      const h = evidenceHash(notes);
-      if (s.drafts[item.id]?.hash === h) continue;
-      const f = s.failed[item.id];
-      if (f?.hash === h && now() - f.at < RETRY_MS) continue;
+    const todo = next(list);
+    if (todo?.confirm) return confirmOf(todo.item, todo.notes, todo.h);
+    if (todo) {
+      const { item, notes, h } = todo;
       const p = draftPrompt(item, notes);
-      if (!p) continue;
-      s.count++;
-      save();
+      charge();
       running = (async () => {
         try {
           const reply = await model(p.prompt, p.system);
@@ -388,14 +425,6 @@ export function createDrafter({ file, model, items, evidence, enabled = () => fa
         } finally { running = null; }
       })();
       return running;
-    }
-    for (const item of list) {
-      const d = s.drafts[item.id];
-      if (!d || d.confirm) continue;
-      const notes = evidence(item);
-      if (!notes?.length || d.hash !== evidenceHash(notes)) continue;
-      const run = confirmOf(item, notes, d.hash);
-      if (run) return run;
     }
     return { skipped: 'nothing' };
   }
@@ -455,5 +484,5 @@ export function createDrafter({ file, model, items, evidence, enabled = () => fa
     return f.hash === h ? f.why : null;
   }
   const status = () => ({ used: used(), cap: cap(), waiting: waiting() });
-  return { tick, draftFor, prune, status, waiting, onDemand, fallbackFor };
+  return { tick, draftFor, prune, status, waiting, onDemand, fallbackFor, pendingCalls };
 }

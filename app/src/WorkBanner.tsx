@@ -60,7 +60,7 @@ export function AgentActivityBanner({ onOpen, className = '' }: { onOpen?: () =>
       text={`${a.label}${count}${MORE(a.more)}`}
       startedAt={a.startedAt}
       progress={progress}
-      note={a.kind === 'check' ? 'Quorum is checking your memory. This can take a few minutes and runs in the background.' : null}
+      note={a.kind === 'check' ? 'Quorum is checking your memory. This can take a few minutes and runs in the background.' : a.kind === 'catchup' ? 'The agent reads one batch of notes at a time and writes nothing to them. What it finds waits in Needs review. Cancel stops it; the rest runs under the daily limit.' : null}
       onOpen={onOpen}
       // Stopping keeps the button in place, so focus stays on it until the work ends
       actions={a.cancellable || stopping === a.id ? <button className="act-pill run-dismiss" aria-disabled={stopping === a.id} onClick={() => { if (stopping !== a.id) cancel(); }}>{stopping === a.id ? 'Stopping' : 'Cancel'}</button> : null}
