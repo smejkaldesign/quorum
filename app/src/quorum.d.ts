@@ -278,7 +278,9 @@ export type PlanItem = { id: string; title: string; kind: string; notes: string[
 // a fix the agent drafted (memoryDraft.js); every quote was checked against the line it names
 export type MemoryDraft = { kind: 'create' | 'point' | 'merge' | 'contradiction'; confidence: 'high' | 'medium' | 'low'; quotes: { path: string; line: number; text: string; ok: boolean }[]; verified: boolean; text?: string; keep?: string; drop?: string; rel?: string; line?: string; check?: boolean; hold?: string | null; wrong?: boolean; at?: number | null };
 // Settings > Memory: a rule's decisions from the decision log and what it does now
-export type RuleRecord = { id: string; label: string; approved: number; archived: number; undone: number; auto: number; last: number; open: number; ignores: number; state: string };
+export type RuleRecord = { id: string; label: string; approved: number; archived: number; undone: number; auto: number; last: number; open: number; ignores: number; state: string; demoted?: { approved: number; total: number } | null };
+// an item the quality gate holds back from Needs review (qualityGate.js): under Check these first in a bulk plan, or out of view
+export type GateHold = { bucket: 'check' | 'quiet'; why: string | null; title: string; line: string; kind: string };
 export type IgnoreRule = { id: string; ruleId: string; field: 'folder' | 'key' | 'target'; value: string; title: string; at: number };
 export type PlanGroup = { id: string; label: string; count: number; items: PlanItem[]; check?: boolean; reason?: string | null };
 export type PlanNote = { id: string; title: string; reason: string };
@@ -293,9 +295,9 @@ export type NoteLinkTarget = { rel?: string; anchor: string | null; missing?: bo
 export type NoteDoc = { hand?: boolean; parts?: { note: string; summary: string; split: boolean }; file: string; rel: string; title: string; date?: string; people: string[]; body: string; app: string; url: string; source?: string | null; views?: NoteViews; visibility: Visibility; withheld: boolean; link: string; summarizable?: boolean; transcript?: { id: number; channel: 'me' | 'them'; who: string; text: string }[]; platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null; sourceUrl?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; event?: EventRef | null };
 export type SavedChat = { id: string; title: string; turns: { q: string; a: string; sources?: Source[]; steps?: string[] }[] };
 // a review rule's finding (rules/index.js, memorySweep.js): review-only, with plain evidence lines
-export type MemoryFinding = { ruleId: string; ruleVersion: number; rule: string; key: string; target: string; notes: string[]; rel: string; abs: string; title: string; problem: string; proposal: string; evidence: string[]; facts: string[]; meta: [string, string][]; autoFix: boolean; at: number; initial?: boolean; archived: boolean; fix?: { kind: string }; approve?: { kind: 'setkey' | 'addlink' | 'keep'; says: string } };
+export type MemoryFinding = { held?: GateHold; ruleId: string; ruleVersion: number; rule: string; key: string; target: string; notes: string[]; rel: string; abs: string; title: string; problem: string; proposal: string; evidence: string[]; facts: string[]; meta: [string, string][]; autoFix: boolean; at: number; initial?: boolean; archived: boolean; fix?: { kind: string }; approve?: { kind: 'setkey' | 'addlink' | 'keep'; says: string } };
 export type MemorySweepInfo = { kind: string; at: number; ms: number; notes: number; found: number; rules: Record<string, number> };
-export type MissingLink = { target: string; sources: string[]; count: number; links?: number; lastAt?: number | null; left?: boolean; declined?: string[]; contexts?: { rel: string; title?: string; text: string }[]; confidential?: unknown[]; found?: { kind: 'folder' | 'script' | 'skill' | 'file' | 'branch'; where: string; branch?: string; rel?: string | null }; candidates: { rel: string; title: string; name: string | null; exact: boolean; score?: number; cover?: number; kindClash?: boolean; shared?: string[]; neighbor?: boolean; sameFolder?: boolean }[] };
+export type MissingLink = { held?: GateHold; target: string; sources: string[]; count: number; links?: number; lastAt?: number | null; left?: boolean; declined?: string[]; contexts?: { rel: string; title?: string; text: string }[]; confidential?: unknown[]; found?: { kind: 'folder' | 'script' | 'skill' | 'file' | 'branch'; where: string; branch?: string; rel?: string | null }; candidates: { rel: string; title: string; name: string | null; exact: boolean; score?: number; cover?: number; kindClash?: boolean; shared?: string[]; neighbor?: boolean; sameFolder?: boolean }[] };
 export type Relocated = { rel: string; files: number; links: number };
 export type SearchHit = { rel: string; title: string; score: number; line: number; snippet: string };
 export type Backlink = { rel: string; title: string; line: number; context: string };
@@ -453,7 +455,8 @@ declare global {
       vaultLinksLeft(keys: string[], on?: boolean): Promise<number>;
       vaultLinkDecide(key: string, verdict: 'approve' | 'dismiss'): Promise<string>;
       fixStart(keys: string[]): Promise<FixRun[]>;
-      memoryFindings(): Promise<{ findings: MemoryFinding[]; last: MemorySweepInfo | null; lastFull: number; paused: boolean; labels: Record<string, string>; drafts?: Record<string, MemoryDraft> }>;
+      memoryFindings(): Promise<{ findings: MemoryFinding[]; last: MemorySweepInfo | null; lastFull: number; paused: boolean; labels: Record<string, string>; drafts?: Record<string, MemoryDraft>; checking?: boolean }>;
+      memoryGate(): Promise<{ checking: boolean; at: number; held: (GateHold & { id: string })[] }>;
       memoryRuleRecords(): Promise<RuleRecord[]>;
       memoryIgnoreList(): Promise<IgnoreRule[]>;
       memoryIgnoreRemove(id: string): Promise<boolean>;

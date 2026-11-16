@@ -105,6 +105,7 @@ contextBridge.exposeInMainWorld('quorum', {
   memoryFindingsArchive: (keys, on) => ipcRenderer.invoke('memory-findings-archive', keys, on !== false),
   memorySweepNow: () => ipcRenderer.invoke('memory-sweep-now'),
   memoryRuleRecords: () => ipcRenderer.invoke('memory-rule-records'),
+  memoryGate: () => ipcRenderer.invoke('memory-gate'),
   memoryIgnoreList: () => ipcRenderer.invoke('memory-ignore-list'),
   memoryIgnoreRemove: (id) => ipcRenderer.invoke('memory-ignore-remove', id),
   memoryDraftStatus: () => ipcRenderer.invoke('memory-draft-status'),
