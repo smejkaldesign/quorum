@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -43,6 +43,18 @@ describe('decision log', () => {
     const again = createDecisionLog(dir);
     expect(again.list('/v1').map((r) => r.decision)).toEqual(['archived', 'reopened']);
     expect(again.latest('/v1', 'orbit').decision).toBe('reopened');
+  });
+  it('moves a log that does not parse aside instead of writing over it', () => {
+    const log = fresh();
+    log.record('/v1', { ...finding(['a.md']), decision: 'archived' });
+    writeFileSync(log.file('/v1'), '{"vault":"/v1","records":[{"id"');
+    const again = createDecisionLog(dir);
+    again.record('/v1', { ...finding(['a.md']), decision: 'approved' });
+    const aside = readdirSync(dir).filter((f) => f.includes('.corrupt-'));
+    expect(aside).toHaveLength(1);
+    expect(readFileSync(path.join(dir, aside[0]), 'utf8')).toBe('{"vault":"/v1","records":[{"id"');
+    expect(createDecisionLog(dir).list('/v1').map((r) => r.decision)).toEqual(['approved']);
+    expect(readdirSync(dir).some((f) => f.endsWith('.tmp'))).toBe(false);
   });
   it('keeps an archived finding archived until its evidence changes', () => {
     const log = fresh();

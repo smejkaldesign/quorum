@@ -13,7 +13,7 @@
 // An archived finding stays out of Needs review while its fingerprint is the same. The fingerprint hashes the rule id,
 // the normalized target and the set of linking notes, so a new linking note (new evidence) brings it back.
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 export const DECISIONS = ['approved', 'archived', 'undone', 'reopened', 'auto'];
@@ -29,18 +29,28 @@ export function fingerprint(ruleId, target, sources = []) {
 export function createDecisionLog(dir) {
   const cache = new Map();
   const file = (vault) => path.join(dir, `${hash(String(vault)).slice(0, 16)}.json`);
+  // a log that does not parse is moved aside as <name>.corrupt-<time>.json before the next save, so a new record never
+  // writes over the history in it
   const load = (vault) => {
     if (!cache.has(vault)) {
       let list = [];
-      try { const j = JSON.parse(readFileSync(file(vault), 'utf8')); if (Array.isArray(j.records)) list = j.records; } catch {}
+      let raw = null;
+      try { raw = readFileSync(file(vault), 'utf8'); } catch {}
+      if (raw != null) {
+        try { const j = JSON.parse(raw); if (!Array.isArray(j.records)) throw new Error('no records'); list = j.records; } catch {
+          try { renameSync(file(vault), file(vault).replace(/\.json$/, `.corrupt-${Date.now()}.json`)); } catch {}
+        }
+      }
       cache.set(vault, list);
     }
     return cache.get(vault);
   };
+  // written to a temporary file and renamed over the log, so a quit partway never leaves half a log
   const save = (vault) => {
     const list = load(vault);
     if (list.length > CAP) list.splice(0, list.length - CAP);
-    try { mkdirSync(dir, { recursive: true }); writeFileSync(file(vault), JSON.stringify({ vault, records: list })); } catch {}
+    const tmp = `${file(vault)}.tmp`;
+    try { mkdirSync(dir, { recursive: true }); writeFileSync(tmp, JSON.stringify({ vault, records: list })); renameSync(tmp, file(vault)); } catch {}
   };
 
   // adds a record; key is the finding's key (the missing link's target, lowercased)
