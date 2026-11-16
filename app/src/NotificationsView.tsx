@@ -324,7 +324,7 @@ export function RunBanner({ run }: { run: FixRun }) {
   return (
     <div className={`run-banner ${live ? 'live' : run.status}`} role="status" aria-live="polite" onClick={(e) => e.stopPropagation()}>
       <div className="run-head">
-        <span className="run-icon" aria-hidden="true">{live ? <i className="run-spin" /> : run.status === 'success' ? <IconCheck width={15} height={15} /> : <IconClose width={14} height={14} />}</span>
+        <span className="run-icon" aria-hidden="true">{live ? <i className="run-spin" /> : run.status === 'success' ? <IconCheck width={18} height={18} /> : <IconClose width={17} height={17} />}</span>
         <span className={`run-text${live ? ' shimmer' : ''}`}>{live ? (run.status === 'queued' ? 'Waiting for the run before it' : current?.label ?? 'Starting') : run.status === 'success' ? run.outcome : run.error}</span>
         <span className="run-time">{took(elapsed)}</span>
         {run.steps.length > 0 && <button className={`icon-btn conn-fold${steps ? ' open' : ''}`} aria-expanded={steps} aria-label={steps ? 'Hide steps' : 'Show steps'} onClick={() => setSteps((o) => !o)}><IconChevron width={14} height={14} /></button>}

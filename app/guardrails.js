@@ -94,6 +94,11 @@ export function frontmatterPairs(text) {
   return out;
 }
 export const frontmatterKeys = (text) => frontmatterPairs(text).map((p) => p.key);
+// a value that says the note is not private: a key set to one of these does not mark the note, so `confidential: false`
+// keeps a note readable. Any other value, an empty one included, marks it
+export const OFF_VALUE = /^(false|no|off|none|public|0)$/i;
+// the keys in a note's frontmatter that mark it private
+export const markingKeys = (text) => frontmatterPairs(text).filter((p) => !OFF_VALUE.test(p.value.trim())).map((p) => p.key);
 
 // what a note's frontmatter says about keeping it off limits: the marker keys it carries, and the value keys set to an
 // open value, which count against offering that key as a rule
@@ -335,7 +340,8 @@ export function wouldBlock(compiled, rel, head = '') {
   if (head.startsWith('---')) {
     const end = head.indexOf('\n---', 3);
     const block = head.slice(3, end > 0 ? end : undefined);
-    for (const k of compiled.frontmatterKeys) if (new RegExp(`^\\s*${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:`, 'im').test(block)) return `marked ${k}: in its frontmatter`;
+    const marked = new Set(markingKeys(`---${block}\n---`));
+    for (const k of compiled.frontmatterKeys) if (marked.has(k)) return `marked ${k}: in its frontmatter`;
   }
   return null;
 }
