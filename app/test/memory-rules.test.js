@@ -206,6 +206,16 @@ describe('stale notes', () => {
     ];
     expect(stale.run(ctx(notes))).toEqual([]);
   });
+  it('stops flagging a note marked current until the folder’s interval passes', () => {
+    const notes = [
+      note('p/plan.md', `${fm({ status: 'planned', updated: '2026-04-01', last_verified: '2026-11-10' })}# Plan`),
+      note('p/due.md', `${fm({ status: 'in progress', updated: '2026-11-10', due: '2026-10-01', last_verified: '2026-11-10' })}# Due`),
+      note('p/old.md', `${fm({ status: 'planned', updated: '2026-04-01', last_verified: '2026-06-01' })}# Old`),
+    ];
+    const f = stale.run(ctx(notes));
+    expect(rels(f)).toEqual(['p/old.md']);
+    expect(f[0].facts).toEqual(['open', 'verify']);
+  });
   it('uses the folder’s verify_every as the interval', () => {
     const notes = [1, 2].map((i) => note(`k/f${i}.md`, `${fm({ verify_every: 400, last_verified: '2026-01-01' })}# F`));
     expect(stale.run(ctx(notes))).toEqual([]);

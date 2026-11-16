@@ -5,9 +5,11 @@
 //   past due     due: or deadline: in the past, or a date in the title in the past, while the status is open
 //   unverified   last_verified older than the folder's interval: the verify_every (days) most notes in the folder
 //                carry, else 90 days
+// A last_verified inside the folder's interval means a person checked the note is current (Approve, Mark it current),
+// so the open status, past due and dated title signals wait until the interval passes
 import { DAY, dateIn, dirOf, finding, quote, skipped } from './common.js';
 
-export const rule = { id: 'note.stale', version: 1, label: 'Notes that look out of date' };
+export const rule = { id: 'note.stale', version: 2, label: 'Notes that look out of date' };
 export const OPEN = /^(draft|planned|planning|proposed|todo|to do|in[ -]?progress|wip|doing|building|blocked|pending|scoping|ready|in[ -]?review|review|next)$/i;
 export const STALE_DAYS = 90;
 const DATE_KEYS = ['updated', 'last_updated', 'modified', 'last_modified', 'date', 'created'];
@@ -31,15 +33,16 @@ export function run({ notes, now = Date.now() }) {
     const open = OPEN.test(status);
     const stamps = DATE_KEYS.map((k) => dateIn(p[k])).filter((t) => t != null);
     const touched = stamps.length ? Math.max(...stamps) : n.mtime;
-    const signals = [];
-    if (open && touched && now - touched > STALE_DAYS * DAY) signals.push({ id: 'open', line: `Status ${quote(status)}, last updated ${day(touched)} (${days(now - touched)} days ago)` });
-    const due = dateIn(p.due ?? p.deadline);
-    if (open && due != null && due < now - DAY) signals.push({ id: 'due', line: `Due ${day(due)}, and the status is still ${quote(status)}` });
-    const titled = dateIn(n.note?.title);
-    if (open && due == null && titled != null && titled < now - STALE_DAYS * DAY && !signals.length) signals.push({ id: 'title', line: `The title names ${day(titled)}, and the status is still ${quote(status)}` });
     const verified = dateIn(p.last_verified);
     const iv = intervalOf(dirOf(n.rel));
-    if (verified != null && now - verified > iv * DAY) signals.push({ id: 'verify', line: `Last verified ${day(verified)}; notes in ${dirOf(n.rel) || 'the vault root'} are checked every ${iv} days` });
+    const current = verified != null && now - verified <= iv * DAY;
+    const signals = [];
+    if (current) { /* checked within the interval: nothing to flag */ } else if (open && touched && now - touched > STALE_DAYS * DAY) signals.push({ id: 'open', line: `Status ${quote(status)}, last updated ${day(touched)} (${days(now - touched)} days ago)` });
+    const due = dateIn(p.due ?? p.deadline);
+    if (!current && open && due != null && due < now - DAY) signals.push({ id: 'due', line: `Due ${day(due)}, and the status is still ${quote(status)}` });
+    const titled = dateIn(n.note?.title);
+    if (!current && open && due == null && titled != null && titled < now - STALE_DAYS * DAY && !signals.length) signals.push({ id: 'title', line: `The title names ${day(titled)}, and the status is still ${quote(status)}` });
+    if (verified != null && !current) signals.push({ id: 'verify', line: `Last verified ${day(verified)}; notes in ${dirOf(n.rel) || 'the vault root'} are checked every ${iv} days` });
     if (!signals.length) continue;
     out.push(finding(rule, {
       key: n.rel, target: n.rel, notes: [n.rel],
