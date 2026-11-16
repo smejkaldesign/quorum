@@ -388,13 +388,13 @@ describe('the pipeline on the synthetic vault', () => {
     expect(failed()).toBe(0);
   });
 
-  it('routes items through the quality gate: a fix waits under Check these first, an item with no fix in Not shown yet', async () => {
+  it('routes items through the quality gate: every item shows under Check these first, with or without a fix', async () => {
     const { notes, resolve } = vault();
     const a = agent();
     const found = await settle({ notes, resolve, tags: [], folders: {}, contradictions: { provider: a.provider, bar: BAR_OK } }, a);
     const verdicts = found.map((f) => [f.facts[0], gateItem(findingItem(f)).bucket]);
     expect(new Set(verdicts.filter(([r]) => r === 'rule:R2' || r === 'rule:R3' || r === 'rule:R5').map(([, b]) => b))).toEqual(new Set(['check']));
-    expect(new Set(verdicts.filter(([r]) => r === 'rule:R6' || r === 'rule:R7').map(([, b]) => b))).toEqual(new Set(['quiet']));
+    expect(new Set(verdicts.filter(([r]) => r === 'rule:R6' || r === 'rule:R7').map(([, b]) => b))).toEqual(new Set(['check']));
     expect(gateItem(findingItem(found.find((f) => f.facts[0] === 'rule:R7'))).reasons).toEqual(['low-precision']);
     // this vault's approvals lift the kind to shown
     expect(gateItem(findingItem(found.find((f) => f.facts[0] === 'rule:R2')), { tally: { approved: 30, auto: 0, archived: 0, undone: 0 } }).bucket).toBe('show');

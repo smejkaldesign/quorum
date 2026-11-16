@@ -60,8 +60,8 @@ export const PRIORS = {
   'draft:point': { p: 0.9, n: 2, source: 'unmeasured' },
   'draft:merge': { p: 0.9, n: 2, source: 'unmeasured' },
   'draft:retro': { p: 0.9, n: 2, source: 'unmeasured' },
-  // two notes that disagree (rules/contradictions.js): unmeasured on a real vault, so its fixes start under Check these
-  // first and an item with no fix waits in Not shown yet until this vault's decisions lift it
+  // two notes that disagree (rules/contradictions.js): unmeasured on a real vault, so its items start under Check these
+  // first until this vault's decisions lift it. An item with no fix shows too; Approve keeps both notes
   'finding:note.contradiction': { p: 0.7, n: 2, source: 'unmeasured' },
 };
 const DEFAULT_PRIOR = { p: SHOW_AT, n: 1, source: 'unmeasured' };
