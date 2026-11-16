@@ -201,4 +201,12 @@ describe('fix runs', () => {
     expect(feedPage(old, { tab: 'archived' }).items.map((r) => r.event)).toEqual(expect.arrayContaining(['fix', 'review']));
     expect(feedPage(old, { kept: ['f:fix:roadmap:1'] }).items.map((r) => r.event)).toEqual(['fix']);
   });
+
+  it('returns only the id and unread mark of each item with idsOnly, for the same items and counts', () => {
+    const full = feedPage(rows, { limit: 100 });
+    const marks = feedPage(rows, { limit: 100, idsOnly: true });
+    expect(marks.items).toEqual(full.items.map((r) => ({ id: r.id, unread: r.unread })));
+    expect(marks.counts).toEqual(full.counts);
+    expect(marks.dot).toBe(full.dot);
+  });
 });

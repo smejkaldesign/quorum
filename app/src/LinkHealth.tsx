@@ -73,7 +73,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const [hiddenBatch, setHiddenBatch] = useState<string | null>(() => { try { return localStorage.getItem('quorum.hiddenBatch'); } catch { return null; } });
   const load = useCallback((fresh = false) => {
     window.quorum.fixRuns().then(setRuns).catch(() => {});
-    const q = { kinds: ['memory-health' as const], limit: 5000 };
+    const q = { kinds: ['memory-health' as const], limit: 5000, idsOnly: true as const };
     Promise.all([window.quorum.activityFeed({ ...q, tab: 'all' }), window.quorum.activityFeed({ ...q, tab: 'archived' })])
       .then(([a, z]) => setMarks({ unread: new Set(a.items.filter((r) => r.unread).map((r) => r.id)), archived: new Set(z.items.map((r) => r.id)) })).catch(() => {}); return window.quorum.vaultLinkHealth(fresh).then(setItems); }, []);
   useEffect(() => { migrateLeft().finally(() => load()); }, [load]);
