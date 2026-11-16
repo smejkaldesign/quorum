@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { DECISIONS, createDecisionLog, fingerprint } from '../decisionLog.js';
+import { DECISIONS, createDecisionLog, fingerprint, trim } from '../decisionLog.js';
 import { LINK_RULE, LINK_RULE_VERSION } from '../linkRules.js';
 
 let dir;
@@ -75,5 +75,21 @@ describe('decision log', () => {
     expect(log.changedArchives('/v1', grown)).toEqual(['orbit']);
     log.record('/v1', { ...finding(['a.md', 'c.md']), decision: 'reopened', actor: 'quorum' });
     expect(log.changedArchives('/v1', grown)).toEqual([]);
+  });
+});
+
+describe('decision log cap', () => {
+  it('keeps the latest record of every fingerprint when it trims', () => {
+    const recs = [
+      { id: 'a1', fingerprint: 'A', decision: 'archived' },
+      { id: 'b1', fingerprint: 'B', decision: 'approved' },
+      { id: 'b2', fingerprint: 'B', decision: 'reopened' },
+      { id: 'c1', fingerprint: 'C', decision: 'approved' },
+      { id: 'b3', fingerprint: 'B', decision: 'archived' },
+    ];
+    expect(trim([...recs], 3).map((r) => r.id)).toEqual(['a1', 'c1', 'b3']);
+    // more fingerprints than the cap: each keeps its latest record
+    expect(trim([...recs], 2).map((r) => r.id)).toEqual(['a1', 'c1', 'b3']);
+    expect(trim([...recs], 10)).toHaveLength(5);
   });
 });
