@@ -61,7 +61,8 @@ import { createPlatformCache, eventRef, matchPlatforms } from './meetingPlatform
 import { calendarWindow, normalizeDays } from './calendarWindow.js';
 import { ARCHIVE_AFTER, feedPage, feedRows, labelOf } from './activityFeed.js';
 import { issueMeta, issueOf } from './memoryHealth.js';
-import { contextNote } from './linkRules.js';
+import { LINK_RULE, LINK_RULE_VERSION, contextNote } from './linkRules.js';
+import { createDecisionLog, fingerprint } from './decisionLog.js';
 import { createElsewhere, withFound } from './linkElsewhere.js';
 import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
@@ -2104,9 +2105,11 @@ function feedSources() {
     const abs = path.join(b.vault, rel);
     return { abs, rel, title: fileTitle(abs, rel), note: !!meetingFileIn(roots, abs), gone: !existsSync(abs), versions: rec.versions ?? [], updates: rec.updates ?? [], seenAt: seen[abs]?.seenAt ?? null };
   });
+  const linkItems = linkIssues();
+  reopenChanged(linkItems);
   const left = linksLeft();
   const declined = linksDeclined();
-  const links = linkIssues().map((m) => ({ ...withMarks(m, left, declined), abs: path.join(b.vault, m.sources?.[0] ?? '') }));
+  const links = linkItems.map((m) => ({ ...withMarks(m, left, declined), abs: path.join(b.vault, m.sources?.[0] ?? '') }));
   const v = b.vault;
   const runs = fixRunList().filter((r) => r.vault === v && (r.endedAt ?? r.queuedAt) > Date.now() - 7 * 86400000);
   return { notes, memories, denials, junk: keeper.junk(), links, runs, state, guardFile: DENIAL_LOG };
@@ -2134,15 +2137,17 @@ ipcMain.handle('activity-archive', (_e, rows, on) => {
   const st = feedState();
   const at = new Date().toISOString();
   let n = 0;
+  const linkKeys = [];
   for (const r of Array.isArray(rows) ? rows : []) {
     const id = String(r?.id ?? '');
     if (!id || id.length > 2000) continue;
     st.kept ??= {};
-    if (id.startsWith('r:link:')) setLinksLeft([id.slice(7)], on !== false);
+    if (id.startsWith('r:link:')) { setLinksLeft([id.slice(7)], on !== false); linkKeys.push(id.slice(7)); }
     if (on === false) { delete st.archived[id]; if (!id.startsWith('r:link:')) st.kept[id] = at; } else { st.archived[id] = at; delete st.kept[id]; st.read[id] = at; delete st.unread[id]; }
     n++;
   }
   feedStateSave();
+  logDecision(linkKeys, on === false ? 'reopened' : 'archived');
   return n;
 });
 ipcMain.handle('activity-mark', (_e, rows, unread) => {
@@ -2528,9 +2533,11 @@ const reviewOnlyKey = (key) => { const m = linkIssues().find((h) => h.target.toL
 // each missing link carries left: true when the person declined it (left it as is)
 ipcMain.handle('vault-link-health', (_e, fresh) => {
   if (fresh === true) { vindex?.sync(); elsewhereFinder()?.reset(); }
+  const items = linkIssues();
+  reopenChanged(items);
   const left = linksLeft();
   const declined = linksDeclined();
-  return linkIssues().map((m) => withMarks(m, left, declined));
+  return items.map((m) => withMarks(m, left, declined));
 });
 // the missing links the person declined, per vault, so Memory health, the Memory tree and Notifications all leave them
 // out. Kept in Quorum's data folder; older versions kept them in the window's storage, which the window hands over once
@@ -2549,7 +2556,46 @@ function setLinksLeft(keys, on) {
   try { writeFileSync(linksLeftFile, JSON.stringify(all)); } catch (e) { log('links left', e?.message); }
   return n;
 }
-ipcMain.handle('vault-links-left', (_e, keys, on) => { const list = Array.isArray(keys) ? keys : []; if (on === false) clearDeclined(list); return setLinksLeft(list, on !== false); });
+ipcMain.handle('vault-links-left', (_e, keys, on) => { const list = Array.isArray(keys) ? keys : []; if (on === false) clearDeclined(list); logDecision(list, on === false ? 'reopened' : 'archived'); return setLinksLeft(list, on !== false); });
+// The decision log (decisionLog.js): Approve, Archive, Undo and Move back to review each add a record of the finding,
+// the fix Quorum proposed and who decided. An archived finding stays archived while its evidence is the same
+const decisionLog = createDecisionLog(path.join(DATA_DIR, 'finding-decisions'));
+const findingOf = (i) => ({
+  ruleId: LINK_RULE, ruleVersion: LINK_RULE_VERSION, key: i.key, target: i.target, sources: i.sources,
+  evidence: { links: i.links, sources: i.sources, candidate: i.candidate?.rel ?? null, found: i.found ? { kind: i.found.kind, where: i.found.where } : null },
+  proposedFix: { action: i.action, to: i.candidate?.rel ?? null, createIn: i.action === 'create' ? i.createIn : null, reviewOnly: i.reviewOnly },
+});
+function logFinding(finding, decision, actor = 'you', note = null) {
+  const v = brain()?.vault;
+  if (!v || !finding) return;
+  try { decisionLog.record(v, { ...finding, decision, actor, note }); } catch (e) { log('decision log', e?.message); }
+}
+function logDecision(keys, decision, actor = 'you', note = null) {
+  if (!keys.length) return;
+  const all = linkIssues();
+  for (const k of keys) {
+    const key = String(k ?? '').toLowerCase();
+    if (!key) continue;
+    const m = all.find((h) => h.target.toLowerCase() === key);
+    logFinding(m ? findingOf(issueOf(withMarks(m))) : { ruleId: LINK_RULE, ruleVersion: LINK_RULE_VERSION, key, target: key, sources: [], evidence: null, proposedFix: null }, decision, actor, note);
+  }
+}
+// an archived finding whose evidence changed (a new linking note, one gone) is back in Needs review, and the log says why
+function reopenChanged(items) {
+  const v = brain()?.vault;
+  const left = linksLeft();
+  if (!v || !left.size) return;
+  const current = new Map();
+  for (const m of items) { const k = m.target.toLowerCase(); if (left.has(k)) current.set(k, fingerprint(LINK_RULE, m.target, m.sources)); }
+  const keys = decisionLog.changedArchives(v, current);
+  if (!keys.length) return;
+  setLinksLeft(keys, false);
+  clearDeclined(keys);
+  const st = feedState();
+  for (const k of keys) delete st.archived[`r:link:${k}`];
+  feedStateSave();
+  for (const k of keys) { const m = items.find((h) => h.target.toLowerCase() === k); if (m) logFinding(findingOf(issueOf(withMarks(m))), 'reopened', 'quorum', 'The evidence changed after it was archived'); }
+}
 // the fixes the person declined for each missing link, per vault: Memory health then recommends the next fix in its
 // order (memoryHealth.js optionsOf). Moving an issue back to review forgets them
 const linksDeclinedFile = path.join(DATA_DIR, 'links-declined.json');
@@ -2579,7 +2625,7 @@ async function decideLink(key, verdict, step = async () => {}, keep = () => {}, 
   if (!entry) throw new Error('That link is already fixed');
   const issue = issueOf(withMarks(entry));
   // Dismiss marks it reviewed and changes nothing: the link stays and the issue moves to Dismissed
-  if (verdict !== 'approve' || issue.action === 'leave') { setLinksLeft([issue.key], true); return 'Dismissed. The link stays as it is'; }
+  if (verdict !== 'approve' || issue.action === 'leave') { if (verdict !== 'approve') logFinding(findingOf(issue), 'archived'); setLinksLeft([issue.key], true); return 'Dismissed. The link stays as it is'; }
   const c = issue.candidate;
   await step(`Reading the ${entry.sources.length === 1 ? 'linking note' : `${entry.sources.length} linking notes`}`);
   const busy = liveRuns.state().files ?? {};
@@ -2731,6 +2777,8 @@ function startFixes(keys, { bulk = keys.length > 1 } = {}) {
       // each note the fix will touch, as it reads now: the fix refuses to write a note that changed after this
       hashes: hashNotes(brain()?.vault ?? '', [...i.sources, ...(i.candidate ? [i.candidate.rel] : [])]),
     };
+    run.finding = findingOf(i);
+    logFinding(run.finding, 'approved');
     fixJournal.append(run.id, { step: 'queued', action: i.action, hashes: run.hashes });
     fixRunList().unshift(run);
     fixQueue.push(run);
@@ -2835,6 +2883,7 @@ ipcMain.handle('fix-undo', async (_e, id) => {
   vindex?.sync();
   diskNamesCache.at = 0;
   setLinksLeft([run.key], false);
+  if (run.finding) logFinding(run.finding, 'undone'); else logDecision([run.key], 'undone');
   run.undoneAt = Date.now();
   fixRunsSave();
   fixEmit(run);
