@@ -39,7 +39,7 @@ describe('summaryOf', () => {
   });
 
   it('names the app an imported meeting came from', () => {
-    expect(summaryOf(note({ kind: 'imported', event: 'imported-note', detail: { sourceName: 'Granola', date: '2026-10-30' } }))).toEqual({ line: 'Imported “Pricing call” from Granola', sub: 'Meeting on 2026-10-30.' });
+    expect(summaryOf(note({ kind: 'imported', event: 'imported-note', detail: { sourceName: 'Granola', date: '2026-10-30' } }))).toEqual({ line: 'Imported “Pricing call” from Granola', sub: 'Meeting on Fri, Oct 30.' });
   });
 
   it('says what a guardrail stopped and which rule', () => {
@@ -73,5 +73,14 @@ describe('detailsOf', () => {
     const d = Object.fromEntries(detailsOf(note({ kind: 'memory-updated', event: 'version', backfill: true, target: { kind: 'memory', abs: '/v/Ana.md', rel: 'People/Ana.md', title: 'Ana' }, detail: { who: 'keeper', reason: 'Filed a meeting', changes: 2, approved: true, auto: true } })));
     expect(d).toMatchObject({ Memory: 'People/Ana.md', By: 'Upkeep', Reason: 'Filed a meeting', Changes: '2 changed blocks', Approval: 'Approved automatically' });
     expect(d.History).toMatch(/starts out read/);
+  });
+});
+
+describe('meeting dates in summaries', () => {
+  it('reads a timestamp and a bare day the same way', async () => {
+    const { meetingDay } = await import('../notificationSummary.js');
+    expect(meetingDay('2026-11-12T15:00:00.000-08:00')).toBe('Thu, Nov 12');
+    expect(meetingDay('2026-11-12')).toBe('Thu, Nov 12');
+    expect(meetingDay('soon')).toBe('soon');
   });
 });

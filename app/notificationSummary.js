@@ -61,6 +61,16 @@ function askOf(row) {
 }
 
 // the summary of one row: line is the first line, sub an optional second; ask is set when the row needs a decision
+// a meeting's date in words ("Thu, Nov 12"); a full timestamp or a bare day both read the same, and anything unreadable
+// is shown as given
+const DAY = { weekday: 'short', month: 'short', day: 'numeric' };
+export function meetingDay(raw) {
+  const s = String(raw);
+  const bare = /^\d{4}-\d{2}-\d{2}$/.test(s);
+  const d = new Date(bare ? `${s}T12:00:00` : s);
+  return Number.isNaN(d.getTime()) ? s : d.toLocaleDateString('en-US', DAY);
+}
+
 export function summaryOf(row) {
   const t = row.target?.title ?? 'a note';
   const d = row.detail ?? {};
@@ -75,7 +85,7 @@ export function summaryOf(row) {
     return { line: `Blocked ${who === 'Upkeep' ? 'upkeep' : 'the agent'} from ${verb === 'running a command on' && !d.path ? 'running a command' : `${verb} ${what}`}`, sub: sentence([d.guardLabel && `${d.guardLabel} rule`, d.reason].filter(Boolean).join(': ')) || null };
   }
   if (row.kind === 'imported' && row.event === 'imported-note') {
-    return { line: `Imported ${q(t)} from ${d.sourceName ?? 'a connected app'}`, sub: d.date ? `Meeting on ${d.date}.` : null };
+    return { line: `Imported ${q(t)} from ${d.sourceName ?? 'a connected app'}`, sub: d.date ? `Meeting on ${meetingDay(d.date)}.` : null };
   }
   if (row.target?.kind === 'memory' || row.event === 'version') {
     if (row.who === 'you') {
