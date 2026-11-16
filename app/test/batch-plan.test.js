@@ -10,7 +10,6 @@ const trashStub = (id, target, rel) => ({ id, kind: 'pastfix', target, title: ta
 const restore = (id, target, rel) => ({ id, kind: 'pastfix', target, title: target, ops: [{ op: 'restore', rel, before: 'old', expect: 'h' }] });
 const tag = (id, rel, value) => ({ id, kind: 'finding', target: `tag:${rel}`, title: rel, autoFix: true, ops: [{ op: 'tag', rel, value }] });
 const moveTag = (id, rel, to, value) => ({ id, kind: 'finding', target: `move:${rel}`, title: rel, ops: [{ op: 'tag', rel, value }, { op: 'move', rel, to }] });
-const ids = (xs) => xs.map((x) => x.id);
 
 describe('effects', () => {
   it('reads the regions an op writes and the note it points at', () => {
