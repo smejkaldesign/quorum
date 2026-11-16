@@ -17,8 +17,23 @@ import { toast } from './Toasts';
 import type { FeedKind, FeedPage, FeedRow, FeedSort, FeedTab, FixRun } from './quorum';
 import { Segmented } from './controls';
 import { BulkPlan } from './BulkPlan';
+import { NO_SELECTION, bulkView, dropAcross, keepOnPage, toggleAcross, toggleOne, togglePage, type BulkSel, type BulkView } from './bulkSelect';
+
+// the left of the bulk bar, here and in Memory health: the checkbox for the page, the count (read out as it changes),
+// and Select all once the whole page is picked and more items match
+export function BulkPick({ view, across, onPage, onAcross }: { view: BulkView; across: boolean; onPage: () => void; onAcross: () => void }) {
+  return (
+    <>
+      <label className="nf-check"><input type="checkbox" checked={view.pageOn} aria-label={view.checkLabel} onChange={onPage} /></label>
+      <span className="muted" role="status" aria-live="polite">{view.text}</span>
+      {view.offerAll && <button className={`nf-toggle nf-select-all${across ? ' on' : ''}`} aria-pressed={across} onClick={onAcross}>{view.allLabel}</button>}
+    </>
+  );
+}
 
 const PAGE = 50;
+// the most rows Select all reads from main in one go
+const EVERY = 100000;
 const TABS: [FeedTab, string][] = [['all', 'All'], ['unread', 'Unread'], ['archived', 'Archived']];
 // the event types the Type filter offers, the same list as activityFeed.js
 const KINDS: [FeedKind, string][] = [
@@ -176,7 +191,7 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
   const [searching, setSearching] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const [page, setPage] = useState<FeedPage | null>(null);
-  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [bulk, setBulk] = useState<BulkSel>(NO_SELECTION);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // the bulk plan sheet, for Approve on several Memory health items (their row ids)
@@ -191,21 +206,37 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
     window.quorum.activityFeed({ ...cur, offset: 0, limit: shown.current }).then((p) => {
       if (JSON.stringify(query.current) !== JSON.stringify(cur)) return;
       setPage(p);
-      setPicked((s) => new Set([...s].filter((id) => p.items.some((r) => r.id === id))));
+      setBulk((s) => keepOnPage(s, p.items.map((r) => r.id)));
     }).catch(() => {});
   }, []);
   useActivityRefresh(load);
-  // a new tab, filter, sort or search starts again at the first page; picks not in the new list drop out when it loads
+  // a new tab, filter, sort or search ends Select all in the same render, so no action can take the old list's rows
+  const queryKey = JSON.stringify([tab, review, kinds, sort, q]);
+  const [bulkKey, setBulkKey] = useState(queryKey);
+  if (bulkKey !== queryKey) { setBulkKey(queryKey); setBulk(dropAcross); }
+  // and starts again at the first page; picks not in the new list drop out when it loads
   useEffect(() => { shown.current = PAGE; const t = window.setTimeout(load, q ? 150 : 0); return () => window.clearTimeout(t); }, [tab, review, kinds, sort, q, load]);
-  const more = () => { shown.current += PAGE; load(); };
+  const more = () => { shown.current += PAGE; setBulk(dropAcross); load(); };
   const changed = () => window.dispatchEvent(new Event(CHANGED));
 
   const items = page?.items ?? [];
-  const byId = new Map(items.map((r) => [r.id, r]));
-  const sel = [...picked].map((id) => byId.get(id)).filter((r): r is FeedRow => !!r);
-  const selReview = sel.filter((r) => r.review);
-  const toggle = (id: string) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  const allOn = items.length > 0 && items.every((r) => picked.has(r.id));
+  const pageIds = items.map((r) => r.id);
+  const view = bulkView(pageIds, bulk, page?.total ?? items.length);
+  const isPicked = (id: string) => bulk.across || bulk.picked.has(id);
+  const sel = items.filter((r) => isPicked(r.id));
+  const toggle = (id: string) => setBulk((s) => toggleOne(id, s, pageIds));
+  const clear = () => setBulk(NO_SELECTION);
+  // the rows a bulk action takes: the picks on screen, or with Select all on, every row that matches, read from main
+  const withRows = async (fn: (rows: FeedRow[]) => Promise<unknown> | void) => {
+    let rows = sel;
+    if (bulk.across) {
+      setBusy(true);
+      try { rows = (await window.quorum.activityFeed({ ...query.current, offset: 0, limit: EVERY })).items; }
+      catch (e) { setError((e as Error).message); rows = []; }
+      setBusy(false);
+    }
+    if (rows.length) await fn(rows);
+  };
 
   const mark = async (rows: FeedRow[], unread = false) => {
     const list = rows.filter((r) => r.unread !== unread).map((r) => ({ id: r.id, abs: r.target.abs }));
@@ -244,7 +275,7 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
       if (failed.length) setError(`${failed.length} of ${list.length} could not be ${verdict === 'approve' ? 'approved' : 'dismissed'}: ${failed[0].error}`);
     } catch (e) { setError((e as Error).message); }
     setBusy(false);
-    setPicked(new Set());
+    clear();
     changed();
     const one = picked.length === 1 ? `“${picked[0].target.title}”` : `${picked.length} items`;
     const fixing = fixes.length && verdict === 'approve';
@@ -304,35 +335,35 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
       )}
       {items.length > 0 && (
         <div className="nf-bulk">
-          <label className="nf-check"><input type="checkbox" checked={allOn} aria-label="Select all" onChange={() => setPicked(allOn ? new Set() : new Set(items.map((r) => r.id)))} /></label>
-          <span className="muted">{sel.length ? `${sel.length} selected` : 'Select all'}</span>
+          <BulkPick view={view} across={bulk.across} onPage={() => setBulk((s) => togglePage(pageIds, s))} onAcross={() => setBulk((s) => toggleAcross(pageIds, s))} />
           {/* the actions appear once something is picked; the bar keeps its height either way */}
-          <span className={`nf-bulk-actions${sel.length ? '' : ' hidden'}`} aria-hidden={!sel.length}>
+          <span className={`nf-bulk-actions${view.count ? '' : ' hidden'}`} aria-hidden={!view.count}>
             {/* left to right: Archive, Mark read, Dismiss, and Approve as the primary action on the far right */}
-            <button className="icon-btn mh-icon" disabled={busy} aria-label={tab === 'archived' ? 'Unarchive' : 'Archive'} data-tip={tab === 'archived' ? 'Unarchive' : 'Archive'} onClick={async () => { await archive(sel, tab !== 'archived'); setPicked(new Set()); }}><IconArchive width={16} height={16} /></button>
-            <button className="act-pill" disabled={busy || !sel.some((r) => r.unread)} onClick={async () => { await mark(sel); setPicked(new Set()); }}>Mark read</button>
-            <button className="act-pill primary" disabled={busy || !selReview.length} onClick={() => {
+            <button className="icon-btn mh-icon" disabled={busy} aria-label={tab === 'archived' ? 'Unarchive' : 'Archive'} data-tip={tab === 'archived' ? 'Unarchive' : 'Archive'} onClick={() => withRows(async (rows) => { await archive(rows, tab !== 'archived'); clear(); })}><IconArchive width={16} height={16} /></button>
+            <button className="act-pill" disabled={busy || !(bulk.across ? counts?.unread : sel.some((r) => r.unread))} onClick={() => withRows(async (rows) => { await mark(rows); clear(); })}>Mark read</button>
+            <button className="act-pill primary" disabled={busy || !(bulk.across ? tab !== 'archived' && counts?.review : sel.some((r) => r.review))} onClick={() => withRows((rows) => {
               // Memory health items go through the bulk plan sheet when there are several; the rest are approved here
+              const selReview = rows.filter((r) => r.review);
               const planned = selReview.filter((r) => r.review!.kind === 'link' || r.review!.kind === 'past-fix' || r.review!.kind === 'finding');
               if (planned.length < 2) { decide(selReview, 'approve'); return; }
               const rest = selReview.filter((r) => !planned.includes(r));
               if (rest.length) decide(rest, 'approve');
               setPlan(planned.map((r) => r.id));
-            }}>Approve</button>
+            })}>Approve</button>
           </span>
         </div>
       )}
       {error && <p className="nf-error" role="alert">{error}</p>}
       <div className="nf-list">
         {items.map((r) => (
-          <Row key={r.id} row={r} me={me} picked={picked.has(r.id)} busy={busy} onPick={() => toggle(r.id)} onOpen={() => open(r)}
+          <Row key={r.id} row={r} me={me} picked={isPicked(r.id)} busy={busy} onPick={() => toggle(r.id)} onOpen={() => open(r)}
             onOpenFile={(abs) => { mark([r]); window.dispatchEvent(new CustomEvent('quorum:open-memory', { detail: abs })); }}
             onMark={(unread) => mark([r], unread)} onDecide={(v) => decide([r], v)} onArchive={(on) => archive([r], on)} />
         ))}
       </div>
       {page && !items.length && <div className="nf-empty"><IconBell width={22} height={22} /><p>{empty}</p></div>}
       {page?.more && <button className="act-pill nf-more-btn" onClick={more}>Show more</button>}
-      {plan && <BulkPlan ids={plan} onClose={() => setPlan(null)} onApplied={() => { setPicked(new Set()); changed(); }} />}
+      {plan && <BulkPlan ids={plan} onClose={() => setPlan(null)} onApplied={() => { clear(); changed(); }} />}
     </div>
   );
 }

@@ -61,3 +61,8 @@ export function keepOnPage(sel: BulkSel, pageIds: string[]): BulkSel {
 export function selectedIds(sel: BulkSel, pageIds: string[], allIds: string[]): string[] {
   return sel.across ? allIds : pageIds.filter((id) => sel.picked.has(id));
 }
+
+// a new tab, filter, sort, search or page ends Select all; the picks on the page stay
+export function dropAcross(sel: BulkSel): BulkSel {
+  return sel.across ? { picked: sel.picked, across: false } : sel;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NO_SELECTION, bulkView, keepOnPage, selectedIds, toggleAcross, toggleOne, togglePage } from '../src/bulkSelect.ts';
+import { NO_SELECTION, bulkView, dropAcross, keepOnPage, selectedIds, toggleAcross, toggleOne, togglePage } from '../src/bulkSelect.ts';
 
 const page = Array.from({ length: 50 }, (_, i) => `r${i}`);
 const all = Array.from({ length: 273 }, (_, i) => `r${i}`);
@@ -52,5 +52,13 @@ describe('bulk bar selection', () => {
     expect([...keepOnPage(s, page).picked]).toEqual(['r1']);
     const a = toggleAcross(page, togglePage(page, NO_SELECTION));
     expect(keepOnPage(a, page)).toBe(a);
+  });
+
+  it('a new tab, filter or page ends Select all and keeps the page picks', () => {
+    const a = toggleAcross(page, togglePage(page, NO_SELECTION));
+    const d = dropAcross(a);
+    expect(d.across).toBe(false);
+    expect(bulkView(page, d, 273).text).toBe('50 selected');
+    expect(dropAcross(d)).toBe(d);
   });
 });
