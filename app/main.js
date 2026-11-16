@@ -2499,15 +2499,21 @@ function sweepTick() {
   const b = brain();
   if (!b || !vindex) return;
   const kind = dueSweep(memorySweep.state(b.vault), { paused: sweepPaused(), idleMs: powerMonitor.getSystemIdleTime() * 1000, recording: recordingNow() });
-  if (kind) memoryCheck(kind);
+  if (kind) { memoryCheck(kind); return; }
+  // a vault with no gate verdicts (an update from before the gate, or a check that quit partway) is checked now, unless
+  // the person stopped its check in this session; Check again in Memory health runs it then
+  if (gateChecking() && checkStopped !== b.vault && !sweepPaused() && !recordingNow()) memoryCheck('incremental');
 }
 // A memory check: a sweep of the review rules, then both gate passes, then Apply memory fixes on its own. It runs in the
 // background as agent activity; on a vault's first check (onboarding) Memory health says it is checking until it ends.
 // Cancel stops it between its parts, before the gate saves verdicts, so nothing is half saved
 let checkWork = null;
+// the vault whose first check the person cancelled, so the next tick does not start it again
+let checkStopped = null;
 async function memoryCheck(kind) {
   const b = brain();
   if (!b || !vindex || checkWork) return null;
+  checkStopped = null;
   gateFor(b.vault);
   const first = kind === 'first' || gateChecking();
   const work = agentActivity.start({ kind: first ? 'check' : 'sweep', label: first ? 'Checking your memory' : 'Checking every note in your memory', cancellable: true, onCancel: () => {} });
@@ -2520,7 +2526,11 @@ async function memoryCheck(kind) {
     await gateNow(work);
     if (!work.cancelled) setTimeout(() => { try { autoApply(); } catch (e) { log('auto apply', e?.message); } }, 0);
     return last;
-  } finally { checkWork = null; work.end(); }
+  } finally {
+    checkWork = null;
+    work.end();
+    if (work.cancelled && gateChecking()) { checkStopped = b.vault; toUI('memory-updates', null); }
+  }
 }
 setInterval(sweepTick, 10 * 60000).unref?.();
 // a finding's decisions go through the decision log: its fingerprint covers its notes and facts, so new evidence
@@ -3364,7 +3374,9 @@ function gateHeld() {
 }
 ipcMain.handle('memory-gate', () => {
   const held = gateHeld();
-  return { checking: gateChecking(), at: gateState?.at ?? 0, held: [...held].map(([id, v]) => ({ id, ...v })) };
+  const checking = gateChecking();
+  // stopped: no verdicts yet and no check running, after Cancel or before the first check starts
+  return { checking, stopped: checking && !checkWork && !gateRunning, at: gateState?.at ?? 0, held: [...held].map(([id, v]) => ({ id, ...v })) };
 });
 // Agent-drafted fixes (memoryDraft.js; Settings > Memory, Let the agent draft fixes, off by default). The agent runs
 // on the person's own Claude Code sign-in with no tools and reads only the notes Quorum puts in its prompt. A note the

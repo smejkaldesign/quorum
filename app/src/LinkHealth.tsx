@@ -52,6 +52,8 @@ const CHANGED = 'quorum:activity-changed';
 // (qualityGate.js) holds back, each with its reason; it shows only while there is something in it
 type Tab = 'all' | 'unread' | 'archived' | 'held';
 const issueId = (key: string) => `r:link:${key}`;
+// the gate has no verdicts and no check runs: the person cancelled the first check
+const STOPPED = 'The memory check stopped before it finished. Press Check again to run it.';
 const runId = (r: FixRun) => `f:${r.id}`;
 // the rows listed at first; Show more adds as many again
 const PAGE = 50;
@@ -76,7 +78,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const [findings, setFindings] = useState<MemoryFinding[]>([]);
   const [drafts, setDrafts] = useState<Record<string, MemoryDraft>>({});
   // the quality gate: whether a vault's first check is still running, and the items it holds back
-  const [gate, setGate] = useState<{ checking: boolean; held: (GateHold & { id: string })[] }>({ checking: false, held: [] });
+  const [gate, setGate] = useState<{ checking: boolean; stopped: boolean; held: (GateHold & { id: string })[] }>({ checking: false, stopped: false, held: [] });
   // the issues whose Approve was pressed: a spinner in place of the button until their run takes over
   const [approving, setApproving] = useState<Set<string>>(new Set());
   // a bulk Approve: the issues in it and when it began, for the progress row under the bulk bar
@@ -90,7 +92,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const load = useCallback((fresh = false) => {
     window.quorum.fixRuns().then(setRuns).catch(() => {});
     window.quorum.memoryFindings().then((r) => { setFindings(r.findings.filter((f) => !f.held)); setDrafts(r.drafts ?? {}); }).catch(() => {});
-    window.quorum.memoryGate().then((g) => setGate({ checking: g.checking, held: g.held })).catch(() => {});
+    window.quorum.memoryGate().then((g) => setGate({ checking: g.checking, stopped: !!g.stopped, held: g.held })).catch(() => {});
     const q = { kinds: ['memory-health' as const], limit: 5000, idsOnly: true as const };
     Promise.all([window.quorum.activityFeed({ ...q, tab: 'all' }), window.quorum.activityFeed({ ...q, tab: 'archived' })])
       .then(([a, z]) => setMarks({ unread: new Set(a.items.filter((r) => r.unread).map((r) => r.id)), archived: new Set(z.items.map((r) => r.id)) })).catch(() => {}); return window.quorum.vaultLinkHealth(fresh).then(setItems); }, []);
@@ -250,7 +252,8 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
 
   const filtered = !!(q || cats.length);
   const empty = items === null ? 'Checking your notes…'
-    : gate.checking ? 'Checking your memory, this takes a minute. Quorum checks every suggestion several times before it shows it.'
+    : gate.stopped ? STOPPED
+      : gate.checking ? 'Checking your memory, this takes a minute. Quorum checks every suggestion several times before it shows it.'
     : filtered ? 'No issues match these filters.'
       : tab === 'archived' ? 'Nothing archived. Fixes list here once they finish, and so do items you archive without fixing.'
         : tab === 'unread' ? 'Nothing unread.'
@@ -267,7 +270,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
         </span>
       </div>
       <p className="lh-sum">
-        {items === null ? 'Checking your notes…' : gate.checking ? 'Checking your memory, this takes a minute' : !counts.length ? 'Every link points at a note.' : countsLine(counts)}
+        {items === null ? 'Checking your notes…' : gate.stopped ? STOPPED : gate.checking ? 'Checking your memory, this takes a minute' : !counts.length ? 'Every link points at a note.' : countsLine(counts)}
         {!gate.checking && gate.held.length > 0 && <span>{gate.held.length} {gate.held.length === 1 ? 'suggestion' : 'suggestions'} not shown yet. Quorum shows a suggestion once it is sure enough of it.</span>}
         {done && <span className="lh-done">{done}</span>}
       </p>
