@@ -86,7 +86,7 @@ export function NotificationBell({ active, onOpen }: { active: boolean; onOpen: 
 
 // the row's ⋯ menu: Open, Mark read or unread, and Approve and Disapprove on a row waiting for a decision. It closes on
 // a click anywhere else or Escape
-function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide, onArchive }: {
+export function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide, onArchive }: {
   row: FeedRow; me: { name: string; photo: string | null }; picked: boolean; busy: boolean; onPick: () => void; onOpen: () => void; onOpenFile: (abs: string) => void; onMark: (unread: boolean) => void; onDecide: (v: 'approve' | 'dismiss') => void | Promise<void>; onArchive: (on: boolean) => void;
 }) {
   // a fix run opens its details, so its progress and outcome are in view

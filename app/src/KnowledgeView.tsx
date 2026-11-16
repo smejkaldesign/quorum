@@ -9,7 +9,7 @@ import { ConfirmModal } from './ConfirmModal';
 import { ConfidentialMark } from './BulkPlan';
 import { useMenu } from './controls';
 import { changeBlocks } from '../memoryReview.js';
-import { fileIssues, healthMarks, issueOf, type Issue } from '../memoryHealth.js';
+import { fileIssues, issueOf, type Issue } from '../memoryHealth.js';
 import { Graph, type GraphData, type GraphView } from './Graph';
 import { NotePanel, Palette, type PaletteItem, type PaletteMode } from './NoteTools';
 import { reportMemoryNote } from './navHistory';
@@ -119,23 +119,28 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     const t = setTimeout(() => setHealthShown(null), 240);
     return () => clearTimeout(t);
   }, [health]);
-  // missing links nobody has reviewed yet; the button goes red while there are any
+  // the items waiting in Needs review (main's memory-review-count); the button goes red while there are any
   const [issues, setIssues] = useState(0);
-  // the open issues on the tree: a red dot on each note that links to a missing note, and on each folder the number of
-  // open issues with a linking note inside it
+  // the same items on the tree: a red dot on each note an item is about, and on each folder the number of items about
+  // a note inside it
   const [issueMarks, setIssueMarks] = useState<{ files: Record<string, number>; folders: Record<string, number> }>({ files: {}, folders: {} });
   const migrated = useRef<Promise<void> | null>(null);
   const countIssues = useCallback(async () => {
     migrated.current ??= migrateLeft().catch(() => {});
     await migrated.current;
-    const h = await window.quorum.vaultLinkHealth();
-    const left = leftOf(h);
-    setIssues(h.length - left.size);
-    setIssueMarks(healthMarks(h, left));
+    const c = await window.quorum.memoryReviewCount().catch(() => null);
+    if (!c) return;
+    setIssues(c.total);
+    setIssueMarks({ files: c.files, folders: c.folders });
   }, []);
   useEffect(() => { countIssues(); }, [graph, countIssues]);
-  // an issue decided anywhere else (Notifications) moves the counts here too
-  useEffect(() => { const go = () => { countIssues(); }; window.addEventListener('quorum:activity-changed', go); return () => window.removeEventListener('quorum:activity-changed', go); }, [countIssues]);
+  // an item decided anywhere else (Notifications), a gate run or a fix that ends moves the counts here too
+  useEffect(() => {
+    const go = () => { countIssues(); };
+    window.addEventListener('quorum:activity-changed', go);
+    const offs = [window.quorum.onMemoryUpdates(go), window.quorum.onFixRun(go)];
+    return () => { window.removeEventListener('quorum:activity-changed', go); offs.forEach((off) => off()); };
+  }, [countIssues]);
   useEffect(() => { if (command?.kind === 'open') { setMissing(null); openNote(command.rel).then(() => { if (command.anchor) scrollToAnchor(command.anchor); }); } else if (command?.kind === 'missing') { setPreview(null); setMissing(command.id); } else if (command?.kind === 'health' && !command.key) { setPreview(null); setPanel(false); setHealth({ focus: null }); } else if (command?.kind === 'health') { reviewKey(command.key); } else if (command?.kind === 'graph') { setPreview(null); setSelected(command.rel); setFocus(command.rel); } else if (command) { setScope({}); setPalette(command.kind); } }, [command]);
 
   const load = useCallback(async () => {

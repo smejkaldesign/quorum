@@ -5,8 +5,8 @@ import markReview from '../assets/quorum-mark.png';
 import { CATEGORIES, HEALTH_SORTS, categoryCounts, countsLine, healthList, issueMeta, type HealthCategory, type HealthSort, type Issue } from '../memoryHealth.js';
 import { IconArchive, IconCheck, IconChevron, IconClose, IconReset } from './icons';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
-import { BulkPick, DismissButton, IssueParts, ReviewDetails, RowMenu, RunBanner, StatusBadge, StatusSwap, UndoMenu, ViewButton, ago, runStatus } from './NotificationsView';
-import type { FixRun, MemoryDraft, MemoryFinding } from './quorum';
+import { BulkPick, DismissButton, IssueParts, ReviewDetails, Row as FeedItem, RowMenu, RunBanner, StatusBadge, StatusSwap, UndoMenu, ViewButton, ago, runStatus } from './NotificationsView';
+import type { FeedRow, FixRun, MemoryDraft, MemoryFinding } from './quorum';
 import { MemoryFindings } from './MemoryFindings';
 import { toast } from './Toasts';
 import { Segmented } from './controls';
@@ -91,7 +91,14 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const [hiddenBatch, setHiddenBatch] = useState<string | null>(() => { try { return localStorage.getItem('quorum.hiddenBatch'); } catch { return null; } });
   // the bulk plan sheet: Approve on several issues (their row ids), or Review everything (null: all of Needs review)
   const [plan, setPlan] = useState<{ ids: string[] | null; everything: boolean } | null>(null);
+  // Needs review as main counts it (memory-review-count), the same number as the Memory health button and the tree
+  const [reviewN, setReviewN] = useState(0);
+  // the past fixes and the rules Quorum proposes that wait in Needs review, shown with the Notifications row
+  const [others, setOthers] = useState<FeedRow[]>([]);
   const load = useCallback((fresh = false) => {
+    window.quorum.memoryReviewCount().then((c) => setReviewN(c.total)).catch(() => {});
+    window.quorum.activityFeed({ kinds: ['memory-health'], review: true, tab: 'all', limit: 5000 })
+      .then((p) => setOthers(p.items.filter((r) => !r.fixRun && (r.review?.kind === 'past-fix' || r.review?.kind === 'ignore')))).catch(() => {});
     window.quorum.fixRuns().then(setRuns).catch(() => {});
     window.quorum.memoryFindings().then((r) => { setFindings(r.findings.filter((f) => !f.held)); setDrafts(r.drafts ?? {}); }).catch(() => {});
     window.quorum.memoryGate().then((g) => setGate({ checking: g.checking, stopped: !!g.stopped })).catch(() => {});
@@ -134,7 +141,14 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const unreadN = lively.filter(unreadOf).length;
   const list = entries.flatMap((e) => ('issue' in e ? [e.issue] : []));
   const idOf = (e: Entry) => ('issue' in e ? e.issue.key : e.run.id);
-  const openN = open.filter((i) => !liveRuns.has(i.key)).length + findings.filter((f) => !f.archived).length;
+  const openN = reviewN;
+  // past fixes and proposed rules list under All and Needs review when no link type filter is on
+  const othersShown = cats.length || tab === 'archived' || gate.checking ? [] : others.filter((r) => (tab !== 'unread' || r.unread) && words.every((w) => r.summary.line.toLowerCase().includes(w)));
+  const decideOther = async (r: FeedRow, v: 'approve' | 'dismiss') => {
+    const { failed } = await window.quorum.activityReview([{ kind: r.review!.kind, abs: r.target.abs, key: r.review!.key }], v);
+    await after(failed.length ? failed[0].error : r.review!.kind === 'past-fix' ? (v === 'approve' ? 'Approved the corrective fix' : 'Kept the fix') : v === 'approve' ? 'Stopped flagging them' : 'Archived it');
+  };
+  const archiveOther = async (r: FeedRow, on: boolean) => { await window.quorum.activityArchive([{ id: r.id }], on).catch(() => 0); await after(on ? 'Archived it' : 'Moved back to review'); };
   // findings show under All, Needs review and Archived, and only when no link type filter is on
   const findingsShown = !cats.length && tab !== 'unread' && !gate.checking && findings.some((f) => f.archived === (tab === 'archived'));
   // a fix writes the linking notes or the matched note, so it waits while a run is writing any of them
@@ -320,8 +334,13 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
       })()}
       <div className="nf-list">{pageEntries.map((e) => ('issue' in e ? row(e.issue) : <RunRow key={e.run.id} run={e.run} unread={tab !== 'archived' && unreadOf(e)} picked={picked.has(e.run.id)} onPick={() => toggle(e.run.id)} />))}</div>
       {entries.length > pageEntries.length && <button className="act-pill nf-more-btn" onClick={() => { setShownN(pageEntries.length + PAGE); setBulk(dropAcross); }}>Show more</button>}
+      {othersShown.length > 0 && <div className="nf-list">{othersShown.map((r) => (
+        <FeedItem key={r.id} row={r} me={{ name: '', photo: null }} picked={false} busy={busy} onPick={() => {}} onOpen={() => window.dispatchEvent(new CustomEvent('quorum:open-memory', { detail: r.target.abs }))}
+          onOpenFile={(abs) => window.dispatchEvent(new CustomEvent('quorum:open-memory', { detail: abs }))} onMark={(unread) => { window.quorum.activityMark([{ id: r.id, abs: r.target.abs }], unread).catch(() => 0).then(() => load()); }}
+          onDecide={(v) => decideOther(r, v)} onArchive={(on) => archiveOther(r, on)} />
+      ))}</div>}
       {findingsShown && <MemoryFindings findings={findings} drafts={drafts} archived={tab === 'archived'} q={q} unread={marks.unread} onArchive={archiveFindings} onApprove={approveFinding} onRead={markRead} />}
-      {!entries.length && !findingsShown && <div className="nf-empty"><p>{empty}</p></div>}
+      {!entries.length && !findingsShown && !othersShown.length && <div className="nf-empty"><p>{empty}</p></div>}
       {plan && <BulkPlan ids={plan.ids} everything={plan.everything} onClose={() => setPlan(null)} onApplied={() => { clear(); load(); onChanged(); window.dispatchEvent(new Event(CHANGED)); }} />}
     </div>
   );

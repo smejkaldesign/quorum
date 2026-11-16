@@ -59,7 +59,7 @@ import { createUpdater, feedFor } from './updater.js';
 import { createGuardrails } from './guardrails.js';
 import { createPlatformCache, eventRef, matchPlatforms } from './meetingPlatforms.js';
 import { calendarWindow, normalizeDays } from './calendarWindow.js';
-import { ARCHIVE_AFTER, feedPage, feedRows, labelOf } from './activityFeed.js';
+import { ARCHIVE_AFTER, feedPage, feedRows, labelOf, needsReview } from './activityFeed.js';
 import { issueMeta, issueOf } from './memoryHealth.js';
 import { LINK_RULE, LINK_RULE_VERSION, contextNote, isGenerated } from './linkRules.js';
 import { createDecisionLog, fingerprint } from './decisionLog.js';
@@ -2177,6 +2177,13 @@ ipcMain.handle('activity-feed', (_e, query) => {
     sort: String(q.sort ?? 'unread'), offset: Number(q.offset) || 0, limit: Number(q.limit ?? 50), prefs: settings.notifications ?? {}, idsOnly: q.idsOnly === true,
   });
 });
+// Needs review for Memory health (activityFeed.js needsReview): the one count the Memory health button, the folder
+// counts in the notes tree and the Needs review toggle all show, with the same marks Notifications reads
+ipcMain.handle('memory-review-count', () => {
+  const st = feedState();
+  const { total, files, folders } = needsReview(feedRows(feedSources()), { archived: Object.keys(st.archived), done: Object.keys(st.done ?? {}), kept: Object.keys(st.kept ?? {}), prefs: settings.notifications ?? {} });
+  return { total, files, folders };
+});
 // a file in the feed, by its path: a saved note, or a note inside the vault
 const feedFile = (abs) => {
   const b = brain();
@@ -3359,7 +3366,7 @@ async function gateNow(work = null) {
     all[b.vault] = { at: gateState.at, verdicts: Object.fromEntries(verdicts) };
     try { writeFileSync(gateFile, JSON.stringify(all)); } catch (e) { log('memory gate', e?.message); }
     logGate(gateLogFile, b.vault, g, { passes: 2 });
-    log('memory gate', `${g.counts.show} shown`, `${g.counts.check} to check first`, `${g.counts.quiet} not shown`, `${Date.now() - t0} ms`);
+    log('memory gate', `${g.counts.show + g.counts.check} shown in Needs review (${g.counts.check} of them under Check these first)`, `${g.counts.quiet} not shown`, `${Date.now() - t0} ms`);
     toUI('memory-updates', null);
     return g.counts;
   } catch (e) { log('memory gate', e?.message); return null; } finally { gateRunning = false; }
