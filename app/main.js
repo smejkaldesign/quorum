@@ -75,6 +75,8 @@ import { createMemorySweep, dueSweep, rescanTags, scanTags } from './memorySweep
 import { RULE_LABELS, RULES } from './rules/index.js';
 import { relatedLine } from './rules/nearDuplicates.js';
 import { DAILY_CAP, WRONG_NOTE_FIX, createDrafter, draftKind, evidenceRels, withDraft } from './memoryDraft.js';
+import { createContradictionAgent } from './contradictionAgent.js';
+import { annotateLine, ruleBar } from './contradictionResolve.js';
 import { ignoreProposals, ignored, ruleRecords } from './ruleRecords.js';
 import { demotions, kindOf, logGate, ruleDemotion, runGate, signature } from './qualityGate.js';
 import { createAgentActivity } from './agentActivity.js';
@@ -2468,7 +2470,7 @@ function sweep(kind, only = null, { after = true } = {}) {
   try {
     const tags = kind === 'save' && only && tagScan?.vault === b.vault ? rescanTags(b.vault, tagScan.tags, only, excludedPath) : scanTags(b.vault, excludedPath);
     tagScan = { vault: b.vault, tags };
-    const ctx = { notes: vindex.snapshot(), resolve: (t, from) => vindex.resolve(t, from), tags, folders: confFolders(b.vault) };
+    const ctx = { notes: vindex.snapshot(), resolve: (t, from) => vindex.resolve(t, from), tags, folders: confFolders(b.vault), contradictions: contradictionCtx(b.vault) };
     const s = memorySweep.run(b.vault, kind, ctx, { only });
     log('memory sweep', kind, `${s.last.notes} notes`, `${s.last.ms} ms`, `${s.last.found} findings`);
     toUI('memory-updates', null);
@@ -3387,6 +3389,10 @@ function confidentialNote(vault, rel, text) {
   if (tagScan?.vault === vault && tagScan.tags.some((t) => t.rel === rel && !isOff(t.value))) return true;
   return !!folderMarkOf(rel, confFolders(vault));
 }
+// a note the agent may read: never one the read guard keeps out, and a confidential one only with the setting on
+function agentMayRead(vault, rel, text) {
+  return !excludedPath(rel) && !isPrivatePath(rel) && !isSecretPath(rel) && (settings.memoryDraftConfidential === true || !confidentialNote(vault, rel, text));
+}
 function draftEvidence(item) {
   const b = brain();
   if (!b) return null;
@@ -3394,7 +3400,7 @@ function draftEvidence(item) {
   const notes = [];
   for (const rel of rels) {
     const text = readVault(b.vault, rel);
-    const kept = text != null && !excludedPath(rel) && !isPrivatePath(rel) && !isSecretPath(rel) && (settings.memoryDraftConfidential === true || !confidentialNote(b.vault, rel, text));
+    const kept = text != null && agentMayRead(b.vault, rel, text);
     if (kept) notes.push({ rel, text });
     // the two notes of a merge and the note a weak link points at are both needed; a missing note needs one source, and
     // a Retroactive improvement offers only the candidate notes the agent may read
@@ -3443,11 +3449,30 @@ const drafter = createDrafter({
   items: () => reviewItems({ drafts: false }),
   evidence: draftEvidence,
   enabled: () => settings.memoryDrafts === true && !!brain() && !!vindex,
-  cap: () => settings.memoryDraftCap ?? DAILY_CAP,
+  cap: () => Math.max(0, (settings.memoryDraftCap ?? DAILY_CAP) - contradictionAgent.status().used),
   busy: () => recordingNow() || fixRunList().some((r) => r.status === 'queued' || r.status === 'running'),
   idleMs: () => powerMonitor.getSystemIdleTime() * 1000,
   log,
 });
+// Contradiction detection (rules/contradictions.js): the agent's claims and verdicts run behind the same setting, the
+// same daily cap (shared with the drafter), the same pause and the same read gate. A draft goes first; the agent takes
+// the minute only when the drafter has nothing to do. A note it read or a pair it judged is checked again at once
+const contradictionAgent = createContradictionAgent({
+  file: path.join(DATA_DIR, 'memory-contradictions.json'),
+  model: (prompt, system) => claudeText({ prompt, system, model: 'sonnet', cwd: tmpdir(), timeoutMs: 180000 }),
+  modelId: 'sonnet',
+  enabled: () => settings.memoryDrafts === true && !sweepPaused() && !!brain() && !!vindex,
+  cap: () => Math.max(0, (settings.memoryDraftCap ?? DAILY_CAP) - drafter.status().used),
+  busy: () => recordingNow() || fixRunList().some((r) => r.status === 'queued' || r.status === 'running'),
+  idleMs: () => powerMonitor.getSystemIdleTime() * 1000,
+  readable: (rel, text) => !!brain() && agentMayRead(brain().vault, rel, text),
+  log,
+});
+function contradictionCtx(vault) {
+  let bar = null;
+  try { bar = ruleBar(decisionLog.list(vault)); } catch {}
+  return { provider: settings.memoryDrafts === true ? contradictionAgent.provider : null, bar };
+}
 // each drafting run is agent activity; Cancel stops the model call, and the item is drafted again later
 let draftAbort = null;
 async function draftTick() {
@@ -3458,6 +3483,10 @@ async function draftTick() {
   try {
     const r = await drafter.tick();
     if (r?.drafted || r?.confirmed) toUI('memory-updates', null);
+    if (r?.skipped === 'nothing') {
+      const c = await contradictionAgent.tick();
+      if (c?.rels?.length) sweepOnSave(c.rels);
+    }
   } catch (e) { log('memory draft', e?.message); } finally { draftAbort = null; work.end(); }
 }
 setInterval(() => { draftTick(); }, 60000).unref?.();
@@ -3685,6 +3714,10 @@ async function runOp(item, o, { step, keep, written, vault }) {
     await step(`Setting ${o.key}: ${o.value} in ${o.rel}`);
     keep(o.rel);
     writeAtomic(abs, setFrontmatterKey(readFileSync(abs, 'utf8'), o.key, o.value));
+  } else if (o.op === 'annotate') {
+    await step(`Adding “${o.add.trim()}” to line ${o.line} of ${o.rel}`);
+    keep(o.rel);
+    writeAtomic(abs, annotateLine(readFileSync(abs, 'utf8'), o));
   } else if (o.op === 'addlink') {
     await step(`Linking ${o.note} from ${o.rel}`);
     keep(o.rel);
