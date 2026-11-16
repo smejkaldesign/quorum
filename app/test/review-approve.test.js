@@ -148,6 +148,10 @@ describe('approveFinding', () => {
     expect(folderIndex('projects/p.md', ['projects/p.md', 'projects/projects.md'])).toBe('projects/projects.md');
     expect(approveFinding(f('note.orphan'), { rels }).ops).toEqual([{ op: 'addlink', rel: 'notes/index.md', line: '- [[notes/x]]', note: 'notes/x.md' }]);
     expect(approveFinding(f('note.orphan'), { rels: ['notes/x.md'] })).toMatchObject({ kind: 'keep', ops: [{ op: 'keep' }] });
+    // a generated report or template named index is never written into
+    const gen = (r) => r === 'notes/index.md';
+    expect(folderIndex('notes/x.md', [...rels, 'notes/notes.md'], gen)).toBe('notes/notes.md');
+    expect(approveFinding(f('note.orphan'), { rels, skip: gen })).toMatchObject({ kind: 'keep', ops: [{ op: 'keep' }] });
     expect(withLinkLine('# Index\n- [[a]]', '- [[x]]')).toBe('# Index\n- [[a]]\n- [[x]]\n');
     expect(withLinkLine('# Index\n- [[x]]\n', '- [[x]]')).toBe('# Index\n- [[x]]\n');
   });

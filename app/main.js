@@ -69,7 +69,7 @@ import { ROW, findingItem, itemLine, linkItem, pastFixItem } from './reviewItems
 import { approveFinding, approvePastFix, gitReader, withLinkLine } from './reviewApprove.js';
 import { frontBlock, removeFrontmatterKey, withDate } from './frontmatter.js';
 import { createResolver } from './linkparse.js';
-import { isOff } from './rules/common.js';
+import { isOff, skipped } from './rules/common.js';
 import { folderMarkOf } from './rules/confidential.js';
 import { createMemorySweep, dueSweep, rescanTags, scanTags } from './memorySweep.js';
 import { RULE_LABELS, RULES } from './rules/index.js';
@@ -2503,7 +2503,7 @@ function findingsNow() {
     const last = latest.get(f.key);
     const archived = last?.decision === 'archived' && last.fingerprint === fingerprint(f.ruleId, f.target, findingSources(f));
     if (last?.decision === 'archived' && !archived) reopened.push({ ...findingRecord(f), decision: 'reopened', actor: 'quorum', note: 'The evidence changed after it was archived' });
-    const approve = f.fix ? null : approveFinding(f, { rels, title: (rel) => vindex?.note(rel)?.title ?? null });
+    const approve = f.fix ? null : approveFinding(f, { rels, title: (rel) => vindex?.note(rel)?.title ?? null, skip: (rel) => skipped({ rel, note: vindex?.note(rel) }) });
     return { ...f, archived, abs: path.join(b.vault, f.rel), ...(approve ? { approve } : {}) };
   });
   if (reopened.length) { try { decisionLog.recordMany(b.vault, reopened); } catch (e) { log('decision log', e?.message); } }

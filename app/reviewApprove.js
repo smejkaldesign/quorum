@@ -186,19 +186,21 @@ export function approvePastFix(run, plan, { vault, gitShow = null, undoFiles = n
 // the day on this computer's clock: last_verified is the day the person approved, in their time zone
 const today = (now) => { const d = new Date(now); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const INDEX_NAMES = ['index', '_index', 'readme'];
-// the index note of a note's folder: index, _index or README in it, or the folder note named like the folder
-export function folderIndex(rel, rels) {
+// the index note of a note's folder: index, _index or README in it, or the folder note named like the folder. skip(rel)
+// answers true for a note Quorum never writes into (a generated report or a template)
+export function folderIndex(rel, rels, skip = () => false) {
   const dir = dirOf(rel);
   const own = baseOf(dir).toLowerCase();
-  const inDir = rels.filter((r) => dirOf(r) === dir && r !== rel);
+  const inDir = rels.filter((r) => dirOf(r) === dir && r !== rel && !skip(r));
   return inDir.find((r) => INDEX_NAMES.includes(baseOf(r).toLowerCase())) ?? (dir ? inDir.find((r) => baseOf(r).toLowerCase() === own) : null) ?? null;
 }
 // the wiki name a link to rel needs: its file name, or its path when another note shares the name
 const wikiName = (rel, rels) => (rels.filter((r) => baseOf(r).toLowerCase() === baseOf(rel).toLowerCase()).length > 1 ? noExt(rel) : baseOf(rel));
 
 // The Approve of a review rule's finding that has no fix of its own. f: the finding (rules/common.js); ctx: { rels: the
-// vault's notes, title(rel), now }. Answers { kind, says, ops }; says is the one line the row shows for Approve
-export function approveFinding(f, { rels = [], title = () => null, now = Date.now() } = {}) {
+// vault's notes, title(rel), skip(rel) for generated reports and templates, now }. Answers { kind, says, ops }; says is
+// the one line the row shows for Approve
+export function approveFinding(f, { rels = [], title = () => null, skip = () => false, now = Date.now() } = {}) {
   const keep = (why) => ({ kind: 'keep', says: `${why} Approve keeps the note as it is and marks the item done.`, ops: [{ op: 'keep' }] });
   if (f.ruleId === 'note.frontmatter') {
     const missing = (f.facts ?? []).filter((x) => x.startsWith('missing:')).map((x) => x.slice(8));
@@ -223,7 +225,7 @@ export function approveFinding(f, { rels = [], title = () => null, now = Date.no
     return keep('Quorum cannot tell the work is finished.');
   }
   if (f.ruleId === 'note.orphan') {
-    const index = folderIndex(f.rel, rels);
+    const index = folderIndex(f.rel, rels, skip);
     if (!index) return keep('Its folder has no index note to link it from.');
     return { kind: 'addlink', says: `Link it from ${q(index)}.`, ops: [{ op: 'addlink', rel: index, line: `- [[${wikiName(f.rel, rels)}]]`, note: f.rel }] };
   }
