@@ -2848,7 +2848,7 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .mh-row .mh-when .nf-status { margin: 0; }
 .nf-status.review { background: var(--review); color: #1a1a1b; }
 .nf-status.waiting { background: rgba(255, 255, 255, 0.08); color: var(--muted); }
-.nf-status.dismissed { background: rgba(255, 69, 58, 0.16); color: #ff6961; }
+.nf-status.dismissed { background: rgba(142, 142, 147, 0.18); color: var(--muted); }
 /* an open ⋯ menu keeps the row's actions showing */
 .mh-row .nf-line:has(.mh-menu.open) .mh-hover { opacity: 1; visibility: visible; transform: translateY(-50%); }
 .mh-row .nf-line:has(.mh-menu.open) .mh-when { opacity: 0; }
