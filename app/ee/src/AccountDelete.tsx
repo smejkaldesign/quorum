@@ -97,7 +97,7 @@ export function DeleteAccountZone() {
   const owned = status?.owned ?? [];
   const desc = status?.platformOwner ? 'This account runs Quorum, so it is changed by hand, outside the app'
     : owned.length ? `You own ${owned.map((w) => w.name).join(', ')}. Delete the organization under Admin, General first`
-    : 'Removes your hosted account and everything synced to it. Files on this Mac stay';
+    : 'Removes your hosted account and your private synced notes. Shared notes stay with the team. Files on this Mac stay';
   return (
     <>
       <h3>Danger zone</h3>
@@ -108,7 +108,7 @@ export function DeleteAccountZone() {
       </div>
       {open && (
         <TypeEmailConfirm title="Delete your Quorum account?" action="Delete my account" email={account.email}
-          body={`This deletes the hosted account for ${account.email} and everything it synced: notes, meetings, chats and your place in every workspace. Quorum then signs you out. The vault and every file on this Mac stay as they are. This cannot be undone.`}
+          body={`This deletes the hosted account for ${account.email}, your private synced notes, your meetings and chats, and your place in every workspace. Notes you shared with a workspace, a team or a knowledge base stay with the team and move to the workspace owner, so everyone on them keeps access. Quorum then signs you out. The vault and every file on this Mac stay as they are. This cannot be undone.`}
           onClose={() => setOpen(false)}
           onConfirm={async (typed) => { const r = await window.quorum.accountDelete(typed); if (r?.error) return r.error; setOpen(false); return null; }} />
       )}
