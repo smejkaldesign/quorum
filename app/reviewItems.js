@@ -2,6 +2,8 @@
 // past fix, and a review rule's fix. Plain Node with no Electron, so main and the read-only plan script build the same
 // items. An item's id is its row id in Notifications.
 export const ROW = { link: 'r:link:', pastfix: 'r:pastfix:', finding: 'r:find:' };
+// the title of a past fix an agent can improve (reviewApprove.js retroOf)
+export const RETRO_TITLE = 'Retroactive improvement';
 const q = (t) => `“${t}”`;
 
 // the line of every link to target in each source note. noteOf(rel) answers the parsed note (linkparse.js)
@@ -17,8 +19,10 @@ export function linkLines(noteOf, sources, target) {
 
 // a missing link's fix (memoryHealth.js issueOf). A fix that leaves the link has nothing to run
 export function linkItem(issue, { noteOf = () => null } = {}) {
-  const base = { id: `${ROW.link}${issue.key}`, kind: 'link', key: issue.key, target: issue.target, title: issue.target, sources: issue.sources ?? [], autoFix: !issue.reviewOnly && issue.action !== 'leave', reviewOnly: !!issue.reviewOnly };
   const c = issue.candidate;
+  // how well the name matched the note Quorum picked, for the quality gate (qualityGate.js weakLink)
+  const match = c ? { exact: !!c.exact, score: Number(c.score ?? 0) } : null;
+  const base = { id: `${ROW.link}${issue.key}`, kind: 'link', key: issue.key, target: issue.target, title: issue.target, sources: issue.sources ?? [], autoFix: !issue.reviewOnly && issue.action !== 'leave', reviewOnly: !!issue.reviewOnly, match };
   const lines = () => linkLines(noteOf, issue.sources, issue.target);
   if (issue.action === 'alias' && c) return { ...base, ops: [{ op: 'alias', rel: c.rel, alias: issue.target }] };
   if (issue.action === 'relink' && c) return { ...base, ops: [{ op: 'relink', target: issue.target, to: c.rel, sources: issue.sources, lines: lines(), links: issue.links }] };
@@ -38,9 +42,10 @@ export function pastFixItem({ run, res, plan }) {
   if (!plan?.ok) {
     const a = plan?.approve;
     if (!a?.ops?.length) return { ...base, hold: plan?.why ?? 'Quorum cannot undo this fix.', ops: [] };
-    // keep changes nothing, so the fix stays and its link stays as it is; the other paths undo the change like an undo
-    const group = a.kind === 'keep' ? 'keep' : a.ops[0].op === 'trash' ? 'trash' : a.ops[0].op === 'unlink' ? 'unlink' : 'restore';
-    return { ...base, group, via: a.kind, keep: a.kind === 'keep', ops: a.ops };
+    // keep changes nothing, so the fix stays and its link stays as it is; the other paths undo the change like an undo.
+    // A Retroactive improvement carries what the agent may draft for it, and its draft once there is one
+    const group = a.kind === 'draft' ? 'retro' : a.kind === 'keep' ? 'keep' : a.ops[0].op === 'trash' ? 'trash' : a.ops[0].op === 'unlink' ? 'unlink' : 'restore';
+    return { ...base, group, via: a.kind, keep: a.kind === 'keep', ops: a.ops, ...(a.retro ? { retro: a.retro } : {}), ...(a.draft ? { draft: a.draft } : {}) };
   }
   const ops = plan.files.map((f) => (f.before == null ? { op: 'trash', rel: f.rel } : { op: 'restore', rel: f.rel, before: f.before, expect: f.expect }));
   const group = res?.action === 'create' ? 'trash' : res?.action === 'alias' ? 'unalias' : 'restore';
@@ -72,6 +77,14 @@ export function itemLine(item) {
   if (item.group === 'merge') return `Merge ${q(item.ops[1]?.rel)} into ${q(o.rel)}`;
   if (item.group === 'rewrite') return `Rewrite ${q(o.rel)} as the agent drafted it`;
   if (o.op === 'keep') return item.kind === 'pastfix' ? `Keep the earlier fix on ${q(item.title)} as it is` : `Keep ${q(item.title)} as it is`;
+  if (item.kind === 'pastfix' && item.group === 'retro' && item.retro) {
+    const r = item.retro;
+    const a = item.draft?.action;
+    if (a === 'relink') return `Point the links an earlier fix moved to ${q(r.wrong)} at ${q(item.draft.to)}`;
+    if (a === 'unlink') return `Remove the links an earlier fix pointed at ${q(r.wrong)}, and keep their words`;
+    if (a === 'rewrite') return `Rewrite ${q(r.made)} from its linking notes, as the agent drafted it`;
+    if (a === 'remove') return `Remove ${q(r.made)}, which an earlier fix wrote`;
+  }
   if (item.kind === 'pastfix') {
     if (item.group === 'trash') return `Remove ${q(o.rel)}, which an earlier fix wrote for ${q(item.title)}`;
     if (o.op === 'unlink') return `Remove the links to ${q(o.target)} an earlier fix left, and keep their words`;

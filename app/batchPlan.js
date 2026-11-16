@@ -75,6 +75,7 @@ const sameOp = (a, b) => a.op === b.op && JSON.stringify({ ...a, lines: undefine
 const GROUPS = {
   trash: { order: 0, label: (n, past) => (past ? `Remove ${n} ${n === 1 ? 'note an earlier fix' : 'notes earlier fixes'} created` : `Remove ${n} ${n === 1 ? 'note' : 'notes'}`) },
   restore: { order: 1, label: (n) => `Put back ${n} ${n === 1 ? 'note an earlier fix' : 'notes earlier fixes'} changed` },
+  retro: { order: 1.5, label: (n) => `Make ${n} retroactive ${n === 1 ? 'improvement' : 'improvements'} to earlier fixes` },
   unalias: { order: 2, label: (n) => `Take back ${n} ${n === 1 ? 'alias an earlier fix' : 'aliases earlier fixes'} added` },
   relink: { order: 3, label: (n) => `Relink ${n} ${n === 1 ? 'link' : 'links'}` },
   alias: { order: 4, label: (n) => `Add ${n} ${n === 1 ? 'alias' : 'aliases'}` },
@@ -111,7 +112,10 @@ const CHECK = {
 };
 // the reason an item starts unticked in a bulk plan, or null when it starts ticked
 export function checkFirst(item) {
-  if (!item?.ops?.length || item.kind === 'pastfix') return null;
+  if (!item?.ops?.length) return null;
+  // the quality gate (qualityGate.js) sends an item it does not trust enough here
+  if (item.gate?.bucket === 'check') return item.gate.why;
+  if (item.kind === 'pastfix' && !item.draft) return null;
   // a drafted fix starts ticked only at high confidence with every quote checked against its note
   if (item.draft) return item.draft.confidence === 'high' && item.draft.verified && item.draft.quotes?.length && item.draft.quotes.every((x) => x.ok) ? null : CHECK.draft;
   const g = groupOf(item);

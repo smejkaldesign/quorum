@@ -1,6 +1,6 @@
 # Memory agent
 
-Status: the local agent is built through Sprint 4 (past-fix re-check), Sprint 3A (bulk plans, corrective past fixes, confidential marks, Apply memory fixes on its own) and Sprint 3B (agent-drafted fixes, near-duplicates, rule records, ignore rules). Team vault mode is a spec only. Related: [team-knowledge.md](team-knowledge.md), [workspace-knowledge.md](workspace-knowledge.md), [research](../research/memory-agent.md).
+Status: the local agent is built through Sprint 4 (past-fix re-check), Sprint 3A (bulk plans, corrective past fixes, confidential marks, Apply memory fixes on its own), Sprint 3B (agent-drafted fixes, near-duplicates, rule records, ignore rules) and the suggestion quality gate (the quality gate, the live precision guard, Retroactive improvements). Team vault mode is a spec only. Related: [team-knowledge.md](team-knowledge.md), [workspace-knowledge.md](workspace-knowledge.md), [research](../research/memory-agent.md).
 
 The memory agent keeps a vault's links and notes in good shape. It finds problems, proposes a fix for each, and changes a note only after a person approves. Every fix can be traced and undone.
 
@@ -21,7 +21,7 @@ Sprint 2 adds review-only rules, each with its own id: orphans, exact duplicates
 Every finding has an Approve (`app/reviewApprove.js` approveFinding). It runs through the batch planner like any fix:
 
 - Frontmatter: add each missing key, with the value Quorum can tell (the title, or a date in the file name) or an empty one.
-- Stale: set `last_verified` to today when the folder checks notes on an interval. Set `status: archived` only when the open note is both untouched for 90 days and past its due date. Any other stale note is kept as it is.
+- Stale: set `status: archived` only when the open note is both untouched for 90 days and past its due date. Any other stale note gets Mark it current: `last_verified` set to today (the local day). The rule (`note.stale`, version 2) then stops flagging the note until the folder's interval passes.
 - Orphan: add a link line to the folder's index note (index, _index, README or the folder note), when there is one.
 - Oversized, duplicates, secrets, and a confidential finding with no fix: keep as is.
 
@@ -64,7 +64,7 @@ Approve on several items in Memory health or Notifications opens a sheet at once
 
 ### Apply memory fixes on its own
 
-Settings > Memory has "Apply memory fixes on its own", off by default. When it is on, after each scheduled sweep (never after a save) every item with an automatic fix goes through the planner and the steps it can run apply as one batch with no review. Held back, conflicting and review-only items stay in Needs review. The batch shows in Notifications as one row with Undo. Each item is logged with the decision `auto` and the actor `auto`.
+Settings > Memory has "Apply memory fixes on its own", off by default. When it is on, after each scheduled sweep (never after a save) every item with an automatic fix that the quality gate shows and the live precision guard has not demoted goes through the planner and the steps it can run apply as one batch with no review. Held back, conflicting and review-only items stay in Needs review. The batch shows in Notifications as one row with Undo. Each item is logged with the decision `auto` and the actor `auto`.
 
 Automatic fixes: link fixes that are not review-only, corrective past fixes Quorum can undo exactly, and the confidential tag for a note in a marked folder.
 
@@ -95,12 +95,49 @@ Fixes that ran before the current rules can be wrong. Quorum checks every finish
 - When the undo is not possible (no undo record or saved version, a removed link, or a note changed after the fix), Approve does the first of these that applies, and the row's recommendation says which (`app/reviewApprove.js`):
   1. Restore from git history: the vault is in a git repo, and each note's text in the last commit before the fix differs from the note now only by the fix's change. Quorum puts that text back.
   2. Remove what the fix left: a note the fix wrote that still holds only what the fix wrote goes to the Trash, or the links a relink left pointing at a note that is gone lose their link and keep their words.
-  3. A fix an agent drafted, when drafting is on. `approvePastFix` takes a `draft` hook for it.
+  3. A Retroactive improvement an agent drafted, when drafting is on and a second draft agreed (below).
   4. Keep as is: nothing changes, and the item leaves Needs review as done.
 - Each path runs as a batch step, so it has a journal, versions and Undo, and bulk Approve plans it with the rest.
 - Archive keeps the fix. Approve, Archive and Move back to review are logged in the decision log under the rule `fix.recheck`.
 - The check runs once per start. Results are kept in `fix-recheck.json` under the rule versions. A start with the same versions checks only new runs. A new rule version checks every run again.
 - `app/scripts/fix-recheck-eval.mjs` runs the same check read-only against a vault and scores it against labels kept outside the repo.
+
+### Retroactive improvements
+
+A past fix Quorum cannot undo exactly, or one that left a note worse, can still be improved (`reviewApprove.js` retroOf). Its item shows with the title "Retroactive improvement" and has its own group in the bulk plan ("Make 2 retroactive improvements to earlier fixes").
+
+- A relink or alias that pointed links at the wrong note: the agent points them at the right note, chosen from the notes whose file names hold the link's words, or removes the links and keeps their words. An alias comes back off the wrong note first.
+- A note an earlier fix wrote that now holds more than the stub: the agent rewrites it into a real note from its linking notes, with quotes, or removes it. The links then go back to review, where the current rules point them at a note when that is safe.
+- An unlink has nothing to improve.
+
+The agent drafts it like any other fix (`memoryDraft.js`, kind `retro`): its own sign-in, no tools, quotes checked character for character. The draft runs through the drafted fix slot of `approvePastFix` only after a second draft agreed. When drafting is off, the item says that turning on Let the agent draft fixes lets Quorum propose one, and Approve keeps the fix as it is.
+
+### Quality gate (`app/qualityGate.js`)
+
+Every item passes the gate before it shows in Needs review. The goal is that at least 90% of what Needs review shows is right, on any vault.
+
+- Stability. The items are built twice: once, then again after the index re-scans and every note is read again. An item whose fix or note hashes differ between the passes waits. A drafted fix also needs a second, independent draft that agrees on the fix (the same kind onto the same note), with every quote of both drafts checked. A draft whose second draft disagrees is not offered.
+- Fixability. An item whose only Approve is Keep as is shows only when it tells the person something they can act on: a secret, an exact duplicate, a confidential note in the wrong place, or a past fix the agent can improve. The rest is counted, not shown.
+- Calibrated precision. Each kind of fix has a prior precision measured on Quorum's eval (`PRIORS`, with the count it rests on and its source): aliases 95%, strong relinks 92%, unlinks 95%, weak relinks and aliases 40%, writing a missing note 0%, the review rules 100% on their labeled items, past fixes Quorum can undo 95%, past fixes it cannot undo 90%. Agent drafts are unmeasured and start at 90% with little weight. This vault's decisions move it: expected precision is (p × n + approved) / (n + approved + archived + undone).
+- Buckets. 90% or more: shown. 50% to 90% with a real fix: under Check these first in a bulk plan, unticked. Anything else: Not shown yet.
+- Also not shown: a relink or alias onto a note Quorum wrote from links alone, and an item whose fix leaves the link as it is.
+
+Memory health says how many suggestions are not shown yet, and the Not shown yet tab lists each with its reason. Notifications leaves them out. Review everything leaves out what is not shown; Approve on an item in Not shown yet plans its fix by id, so it can still run.
+
+On a vault's first sweep, Needs review waits until the gate ran, and Memory health says "Checking your memory, this takes a minute". The verdicts are kept per vault in `memory-gate.json` with each item's signature, so a restart shows the list at once. An item whose fix or notes changed since waits for the next run, a few seconds later.
+
+Each run adds a line to `memory-gate-log.jsonl` in the data folder: the passes, the counts, and each item's id, kind, bucket and reasons. `app/scripts/gate-report.mjs` prints shown against held per kind with the precision the decisions measure. `app/scripts/gate-eval.mjs` runs the gate read-only on a vault and scores the shown items against labels kept outside the repo.
+
+### Agent activity (`app/agentActivity.js`)
+
+Memory work that runs longer than 30 seconds shows as one state that Home and Memory health both read: the first memory check, a full sweep, a bulk batch, and a drafting run. The state holds the kind, a plain label, when it started, its progress and whether it can be cancelled. Home shows it as the AI working banner below the suggestion chips under the composer; clicking it opens Memory health, which shows the same banner. It hides when the work ends.
+
+- The first memory check (a sweep, then both gate passes) runs in the background as soon as a vault is connected. Onboarding says so.
+- Cancel stops a batch before its next step, and the batch puts back every note it wrote. It stops a check before the gate saves verdicts; when that was a vault's first check, Memory health says it stopped and Check again runs it. It stops a draft by stopping the model call; the call does not count against the daily cap, and that item is drafted again later.
+
+### Live precision guard
+
+For each kind of fix, once a person decided 10 or more items, Quorum compares approved with approved plus archived plus undone. Under 90%, the kind is demoted: its items move to Check these first (a real fix) or Not shown yet, and Apply memory fixes on its own never runs it. Settings > Memory shows "Demoted: 7 of 11 approved" on the rule. Each decision record keeps the kind of fix the gate scored (`proposedFix.gateKind`).
 
 ### Cadence (Sprint 2)
 

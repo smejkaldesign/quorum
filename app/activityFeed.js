@@ -62,11 +62,12 @@ const prefOn = (prefs, key) => prefs?.[key] !== false;
 //   links:    the open Memory health issues (vindex.js linkHealth, minus the ones declined), each with abs, the path
 //             of its first linking note
 //   pastFixes: the fixes that ran and that the current rules flag (fixRecheck.js): { run, res, plan, abs }
+//   held:     row id -> { bucket, why } for each item the quality gate (qualityGate.js) holds back
 //   state:    { since, read: { [id]: at }, unread: { [id]: at } }; since is when Notifications started keeping its
 //             own marks, read and unread are the person's marks on single rows
 // drafts: row id -> the agent's draft of that item's fix (memoryDraft.js); ignores: the ignore rules Quorum proposes
 // (ruleRecords.js)
-export function feedRows({ notes = [], memories = [], denials = [], junk = [], links = [], runs = [], pastFixes = [], findings = [], drafts = {}, ignores = [], state = {}, guardFile = null }) {
+export function feedRows({ notes = [], memories = [], denials = [], junk = [], links = [], runs = [], pastFixes = [], findings = [], drafts = {}, ignores = [], held = new Map(), state = {}, guardFile = null }) {
   const rows = [];
   const since = time(state.since);
   const read = state.read ?? {};
@@ -181,7 +182,13 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], l
     const at = time(g.t);
     push({ id: `g:${g.id ?? at}`, at, kind: 'guardrail', event: 'denial', who: 'agent', target: guardTarget, files: [], detail: { path: g.path ?? '', tool: g.tool ?? '', surface: g.surface ?? null, reason: g.reason ?? '', guard: g.guard ?? null, guardLabel: g.guardLabel ?? null } }, null);
   }
-  for (const r of rows) r.summary = summaryOf(r);
+  // an item the quality gate (qualityGate.js) holds back waits in Not shown yet in Memory health, out of every tab here.
+  // A Retroactive improvement shows under its own title
+  for (const r of rows) {
+    if (held.has(r.id)) r.held = held.get(r.id);
+    if (r.review?.kind === 'past-fix' && r.detail?.approve?.retro) r.detail.title = 'Retroactive improvement';
+    r.summary = summaryOf(r);
+  }
   return rows.sort((a, b) => b.at - a.at || a.id.localeCompare(b.id));
 }
 
@@ -219,7 +226,7 @@ export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = ''
   const live = new Map(rows.filter((r) => r.run && (r.run.status === 'queued' || r.run.status === 'running')).map((r) => [r.run.key, r.run]));
   const issueKeys = new Set(rows.filter((r) => r.review?.kind === 'link' && !gone.has(r.id)).map((r) => r.review.key));
   const kept = rows
-    .filter((r) => !gone.has(r.id) && !(r.run && live.get(r.run.key) === r.run && issueKeys.has(r.run.key)))
+    .filter((r) => !gone.has(r.id) && !r.held && !(r.run && live.get(r.run.key) === r.run && issueKeys.has(r.run.key)))
     .map((r) => (r.run ? { ...r, run: { ...r.run, showBanner: banner(r) } } : r.review?.kind === 'link' && live.has(r.review.key) ? { ...r, fixRun: { ...live.get(r.review.key), showBanner: true } } : r));
   const doneSet = new Set(doneIds);
   const shelf = rows.filter((r) => gone.has(r.id)).map((r) => ({ ...r, archived: true, ...(doneSet.has(r.id) ? { done: true } : {}) }));
@@ -242,7 +249,7 @@ export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = ''
     items: list.slice(start, end).map((r) => (idsOnly ? { id: r.id, unread: r.unread } : { ...r, details: detailsOf(r, { locale }) })),
     total: list.length,
     more: end < list.length,
-    counts: { all: all.length, unread: unread.length, review: waiting.length, archived: shelf.length },
+    counts: { all: all.length, unread: unread.length, review: waiting.length, archived: shelf.length, held: rows.filter((r) => r.held && !gone.has(r.id)).length },
     dot: unread.length > 0 || waiting.some(shown),
   };
 }

@@ -118,7 +118,7 @@ describe('approvePastFix: remove what the fix left', () => {
   it('runs a drafted fix through the hook when nothing else applies', () => {
     const ops = [{ op: 'restore', rel: 'a.md', before: 'x', expect: 'h' }];
     const files = { 'a.md': 'See [[kite-note]].\n', 'kite-note.md': '# K\n' };
-    expect(approvePastFix(relinkRun(), refused, { vault: vaultOf(files), draft: () => ({ ops, why: 'An agent drafted it.' }) })).toEqual({ kind: 'draft', why: 'An agent drafted it.', ops });
+    expect(approvePastFix(relinkRun(), refused, { vault: vaultOf(files), draft: () => ({ ops, why: 'An agent drafted it.' }) })).toMatchObject({ kind: 'draft', why: 'An agent drafted it.', ops });
     expect(approvePastFix(relinkRun(), refused, { vault: vaultOf(files), draft: () => null }).kind).toBe('keep');
   });
 });
@@ -132,10 +132,12 @@ describe('approveFinding', () => {
     expect(approveFinding(f('note.frontmatter', { facts: ['twice:tags'] })).kind).toBe('keep');
   });
 
-  it('archives a stale note only on strong evidence, or marks it verified today when its folder checks on an interval', () => {
+  it('archives a stale note only on two signals, and marks any other stale note current today', () => {
     const now = Date.UTC(2026, 10, 16);
     expect(approveFinding(f('note.stale', { facts: ['open', 'due'] }), { now }).ops).toEqual([{ op: 'setkey', rel: 'notes/x.md', key: 'status', value: 'archived' }]);
-    for (const facts of [['open'], ['due'], ['title']]) expect(approveFinding(f('note.stale', { facts }), { now })).toMatchObject({ kind: 'keep', ops: [{ op: 'keep' }] });
+    const today = new Date(now);
+    const day = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    for (const facts of [['open'], ['due'], ['title'], ['verify', 'open']]) expect(approveFinding(f('note.stale', { facts }), { now })).toEqual({ kind: 'setkey', says: `Mark it current: set last_verified to ${day}.`, ops: [{ op: 'setkey', rel: 'notes/x.md', key: 'last_verified', value: day }] });
     expect(approveFinding(f('note.stale', { facts: ['verify'] }), { now: new Date(2026, 10, 16, 12).getTime() }).ops).toEqual([{ op: 'setkey', rel: 'notes/x.md', key: 'last_verified', value: '2026-11-16' }]);
   });
 

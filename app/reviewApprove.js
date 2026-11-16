@@ -6,20 +6,23 @@
 //            by the fix's change: Quorum puts that text back
 //   remove   a note the fix wrote still holds only what the fix wrote: Quorum moves it to the Trash. Or a relink pointed
 //            the links at a note that is gone: Quorum removes the links it left that open nothing and keeps their words
-//   draft    a fix an agent drafted for it (Sprint 3B), when drafting is on: Quorum runs the drafted fix
+//   draft    a Retroactive improvement an agent drafted for it, when drafting is on: Quorum runs the drafted fix
 //   keep     none of these: Approve keeps the fix as it is and marks the item done
+// A Retroactive improvement (retroOf) is what an agent can still do for a fix Quorum cannot undo: point the links a
+// relink or alias moved at the right note, or remove them; rewrite a note the fix wrote into a real one from its
+// sources, or remove it. An unlink leaves nothing to improve.
 //
 // A review rule's finding with no fix of its own (rules/*.js) gets the change its rule allows, or keep:
 //   note.frontmatter  add each missing key, with the value Quorum can tell from the note or an empty one
-//   note.stale        set last_verified to today when the folder checks notes on an interval; status: archived only
-//                     when the open note is both untouched for 90 days and past its due date; else keep
+//   note.stale        status: archived when the open note is both untouched for 90 days and past its due date (two
+//                     signals); else Mark it current: last_verified set to today, so the rule waits a folder interval
 //   note.orphan       link the note from its folder's index note, when the folder has one
 //   anything else     keep
 // Every change is a batch step (batchPlan.js), so it runs through the fix journal, saves versions and has Undo.
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { sha } from './fixUndo.js';
-import { destOf, readRun } from './fixRecheck.js';
+import { destOf, readRun, removeAlias } from './fixRecheck.js';
 import { parseNote } from './linkparse.js';
 
 const q = (t) => `“${t}”`;
@@ -134,10 +137,121 @@ export function onlyStub(text, { name = null, sources = null } = {}) {
   return lines.every((l, i) => (i === 0 && (name ? l === `# ${name}` : /^# /.test(l))) || l.startsWith(STUB_MARK) || quote(l));
 }
 
+// the improvements an agent may draft for each kind of earlier fix
+export const RETRO_ACTIONS = { relink: ['relink', 'unlink'], alias: ['relink', 'unlink'], create: ['rewrite', 'remove'] };
+const tokens = (t) => noExt(t).toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 2);
+// the notes a link name could mean, best first: the share of the name's words in the note's file name, half or more,
+// then the note with fewer other words
+export function retroCandidates(target, rels, { exclude = [], limit = 5 } = {}) {
+  const want = [...new Set(tokens(path.posix.basename(noExt(target))))];
+  if (!want.length) return [];
+  const off = new Set(exclude);
+  return rels
+    .filter((r) => !off.has(r))
+    .map((r) => { const have = new Set(tokens(baseOf(r))); const hit = want.filter((w) => have.has(w)).length; return { r, score: hit / want.length, extra: have.size - hit }; })
+    .filter((x) => x.score >= 0.5)
+    .sort((a, b) => b.score - a.score || a.extra - b.extra || a.r.localeCompare(b.r))
+    .slice(0, limit)
+    .map((x) => x.r);
+}
+// the Retroactive improvement of an earlier fix, or null when there is nothing to improve. r: readRun(run); dest: the
+// note a relink or alias pointed at. candidates: the notes the links could mean instead
+export function retroOf(run, r, { vault, dest = null }) {
+  const reasons = Array.isArray(run.reasons) ? run.reasons : [];
+  if (r.action === 'create') {
+    if (!r.made || vault.read(r.made) == null) return null;
+    return { action: 'create', target: String(run.target ?? ''), made: r.made, sources: (r.sources ?? []).filter((s) => s !== r.made), reasons };
+  }
+  if ((r.action === 'relink' || r.action === 'alias') && dest) {
+    const sources = (r.sources ?? []).filter((s) => s !== dest && vault.read(s) != null);
+    if (!sources.length) return null;
+    const names = r.action === 'alias' ? [String(run.target)] : [...new Set([baseOf(dest), String(r.toName ?? '').split(/\\n|\n/)[0].trim()].filter(Boolean))];
+    const candidates = retroCandidates(run.target, vault.rels(), { exclude: [dest, ...sources] });
+    return { action: r.action, target: String(run.target ?? ''), wrong: dest, names, sources, candidates, reasons };
+  }
+  return null;
+}
+// every wiki link in a text whose name is one of names, pointed at name instead: its anchor and words stay
+export function retargetText(text, names, name) {
+  const want = new Set(names.map((n) => noExt(n).toLowerCase()));
+  const t = String(text ?? '');
+  const links = parseNote('note.md', t).links.filter((l) => l.kind === 'wiki' && (want.has(noExt(l.target).toLowerCase()) || want.has(path.posix.basename(noExt(l.target)).toLowerCase())));
+  let out = '';
+  let at = 0;
+  for (const l of links) {
+    const i = t.indexOf(l.raw, at);
+    if (i < 0) continue;
+    out += t.slice(at, i) + `${l.embed ? '!' : ''}[[${name}${l.anchor ? `#${l.anchor}` : ''}${l.display !== null ? `|${l.display}` : ''}]]`;
+    at = i + l.raw.length;
+  }
+  return out + t.slice(at);
+}
+// The steps of a drafted Retroactive improvement. pick: { action, to, text }; text is the whole note text a rewrite
+// writes. textOf(rel) answers a note's text now. Answers { ops } or { why } when the steps cannot be made
+export function retroOps(retro, pick, textOf) {
+  const restore = (rel, before) => { const now = textOf(rel); return now == null ? null : { op: 'restore', rel, before, expect: sha(now) }; };
+  if (retro.action === 'create') {
+    const now = textOf(retro.made);
+    if (now == null) return { why: `${q(retro.made)} is gone.` };
+    if (pick.action === 'remove') return { ops: [{ op: 'trash', rel: retro.made, expect: sha(now) }] };
+    if (pick.action === 'rewrite' && pick.text) return { ops: [restore(retro.made, pick.text)] };
+    return { why: 'The draft has no change for this note.' };
+  }
+  const ops = [];
+  // an alias goes back off the note it was added to, so the links no longer open it
+  if (retro.action === 'alias') {
+    const now = textOf(retro.wrong);
+    // exactness is not needed here: any text without the alias will do, and the person reviews the draft
+    const back = now == null ? null : removeAlias(now, retro.target) ?? aliasBacks(now, retro.target)[0] ?? null;
+    if (back == null) return { why: `Quorum cannot find the alias in ${q(retro.wrong)}.` };
+    ops.push({ op: 'restore', rel: retro.wrong, before: back, expect: sha(now) });
+  }
+  if (pick.action === 'relink') {
+    if (!pick.to) return { why: 'The draft names no note.' };
+    const name = baseOf(pick.to);
+    for (const rel of retro.sources) {
+      const now = textOf(rel);
+      if (now == null) continue;
+      const next = retargetText(now, retro.names, name);
+      if (next !== now) ops.push({ op: 'restore', rel, before: next, expect: sha(now) });
+    }
+    return ops.some((o) => o.rel !== retro.wrong) ? { ops } : { why: 'No link in the notes points at the note the earlier fix picked.' };
+  }
+  if (pick.action === 'unlink') {
+    const sources = retro.sources.filter((rel) => { const now = textOf(rel); return now != null && retargetText(now, retro.names, '\u0000') !== now; });
+    if (!sources.length) return { why: 'No link in the notes points at the note the earlier fix picked.' };
+    // a relink's links still open the wrong note, so each is pointed at its own name first, which opens nothing
+    if (retro.action === 'relink') {
+      for (const rel of sources) ops.push({ op: 'restore', rel, before: unlinkText(textOf(rel), retro.names), expect: sha(textOf(rel)) });
+      return { ops };
+    }
+    ops.push({ op: 'unlink', target: retro.target, sources });
+    return { ops };
+  }
+  return { why: 'The draft has no change for these links.' };
+}
+// every wiki link in a text whose name is one of names, replaced by its words
+export function unlinkText(text, names) {
+  const want = new Set(names.map((n) => noExt(n).toLowerCase()));
+  const t = String(text ?? '');
+  const links = parseNote('note.md', t).links.filter((l) => l.kind === 'wiki' && (want.has(noExt(l.target).toLowerCase()) || want.has(path.posix.basename(noExt(l.target)).toLowerCase())));
+  let out = '';
+  let at = 0;
+  for (const l of links) {
+    const i = t.indexOf(l.raw, at);
+    if (i < 0) continue;
+    out += t.slice(at, i) + (l.display !== null && l.display !== '' ? l.display : path.posix.basename(noExt(l.target)));
+    at = i + l.raw.length;
+  }
+  return out + t.slice(at);
+}
+
 // The Approve of a flagged past fix whose undo plan refused. run: the fix run; plan: its undoPlan(); ctx: { vault (the
 // fixRecheck vault reader), gitShow: gitReader() or null, undoFiles: the rels of its undo record or null, draft: the
-// agent drafting hook or null }. Answers { kind: 'git' | 'remove' | 'draft' | 'keep', why, ops }
-export function approvePastFix(run, plan, { vault, gitShow = null, undoFiles = null, draft = null }) {
+// agent drafting hook or null, drafting: whether Let the agent draft fixes is on, reasons: why the re-check flagged it
+// as plain lines }. Answers { kind: 'git' | 'remove' |
+// 'draft' | 'keep', why, ops, retro }; retro is the Retroactive improvement an agent can draft, or null
+export function approvePastFix(run, plan, { vault, gitShow = null, undoFiles = null, draft = null, drafting = false, reasons = [] }) {
   const r = readRun(run);
   const at = run.startedAt ?? run.queuedAt ?? run.endedAt;
   const dest = r.action === 'alias' || r.action === 'relink' ? destOf(r, vault) : null;
@@ -179,11 +293,16 @@ export function approvePastFix(run, plan, { vault, gitShow = null, undoFiles = n
       return { kind: 'remove', why: `The note the fix pointed the links at is gone. Quorum removes the ${links === 1 ? 'link' : `${links} links`} to ${q(target)} it left and keeps the words.`, ops: [{ op: 'unlink', target, sources: Object.keys(lines), lines, links }] };
     }
   }
-  // (c) DRAFTED FIX SLOT: a fix an agent drafted, when drafting is on. draft(run, r) answers { ops, why } or null. main
-  // passes null until past fixes have a draft type in memoryDraft.js; then it wraps draftFix(item) from main.js here
-  const drafted = typeof draft === 'function' ? draft(run, r) : null;
-  if (drafted?.ops?.length) return { kind: 'draft', why: drafted.why ?? 'Quorum runs the fix an agent drafted for it.', ops: drafted.ops };
-  return { kind: 'keep', why: `${plan?.why ?? 'Quorum cannot undo it exactly.'} Approve keeps the fix as it is and marks the item done.`, ops: [{ op: 'keep' }] };
+  // (c) DRAFTED FIX SLOT: a Retroactive improvement an agent drafted (memoryDraft.js retro), when drafting is on.
+  // draft(run, r, retro) answers { ops, why, draft } or null
+  const retro = retroOf({ ...run, reasons }, r, { vault, dest });
+  const drafted = retro && typeof draft === 'function' ? draft(run, r, retro) : null;
+  if (drafted?.ops?.length) return { kind: 'draft', why: drafted.why ?? 'Quorum runs the improvement an agent drafted for it.', ops: drafted.ops, retro, draft: drafted.draft ?? null };
+  const cannot = plan?.why ?? 'Quorum cannot undo it exactly.';
+  const why = !retro ? `${cannot} Approve keeps the fix as it is and marks the item done.`
+    : drafting ? `${cannot} The agent drafts an improvement for it soon. Until then, Approve keeps the fix as it is and marks the item done.`
+      : `${cannot} Turn on Let the agent draft fixes in Settings > Memory and the agent drafts an improvement for it. Approve keeps the fix as it is and marks the item done.`;
+  return { kind: 'keep', why, ops: [{ op: 'keep' }], retro };
 }
 
 // the day on this computer's clock: last_verified is the day the person approved, in their time zone
@@ -220,12 +339,12 @@ export function approveFinding(f, { rels = [], title = () => null, skip = () => 
     return { kind: 'setkey', says: `Add ${[...filled, ...(empty.length ? [`${empty.join(', ')} with an empty value`] : [])].join(' and ')}.`, ops };
   }
   if (f.ruleId === 'note.stale') {
-    if ((f.facts ?? []).includes('verify')) return { kind: 'setkey', says: `Set last_verified to ${today(now)}.`, ops: [{ op: 'setkey', rel: f.rel, key: 'last_verified', value: today(now) }] };
     // archiving takes a note out of what the agent reads, so it needs two signals: no update in 90 days and a due date
-    // passed. One signal alone can be a note the person still uses
+    // passed. One signal alone can be a note the person still uses: Approve marks it current, and the rule stops
+    // flagging it until the folder's interval passes
     const facts = f.facts ?? [];
     if (facts.includes('open') && facts.includes('due')) return { kind: 'setkey', says: 'Set its status to archived.', ops: [{ op: 'setkey', rel: f.rel, key: 'status', value: 'archived' }] };
-    return keep('Quorum cannot tell the work is finished.');
+    return { kind: 'setkey', says: `Mark it current: set last_verified to ${today(now)}.`, ops: [{ op: 'setkey', rel: f.rel, key: 'last_verified', value: today(now) }] };
   }
   if (f.ruleId === 'note.orphan') {
     const index = folderIndex(f.rel, rels, skip);

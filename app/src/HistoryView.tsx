@@ -1,4 +1,5 @@
 import { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { AgentActivityBanner } from './WorkBanner';
 import { SourceAskBanner } from './MeetingSources';
 import type { Brain, CalendarEvent, ChatRow, MeetingRow, NoteDoc } from './quorum';
 import { NoteMenu, VisibilityPill } from './NoteControls';
@@ -260,6 +261,8 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, on
       <div className="recipes">
         {RECIPES.map((r) => <button key={r.label} className="recipe" onClick={() => ask(r.label)}><r.icon width={15} height={15} />{r.label}</button>)}
       </div>
+      {/* long agent work on the memory; it opens Memory health, where the same banner shows */}
+      <AgentActivityBanner className="hist-work" onOpen={() => window.dispatchEvent(new CustomEvent('quorum:open-health', { detail: '' }))} />
 
       <hr className="hist-rule" />
 

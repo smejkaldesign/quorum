@@ -130,6 +130,17 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain 
   // guardrails found in the folder: the count, for one line here; the review itself is on Settings, Guardrails
   const [guardCount, setGuardCount] = useState(0);
   useEffect(() => { if (!brain) { setGuardCount(0); return; } window.quorum.guardrailsGet().then((g) => setGuardCount(g?.summary?.toReview ?? 0)).catch(() => {}); }, [brain?.root]);
+  // the first memory check runs in the background as soon as the folder is connected (main.js memoryCheck)
+  const [checking, setChecking] = useState<boolean | null>(null);
+  const root = brain?.root ?? null;
+  useEffect(() => {
+    if (!root) return;
+    let live = true;
+    const read = () => window.quorum.memoryGate().then((g) => { if (live) setChecking(g.checking); }).catch(() => {});
+    read();
+    const off = window.quorum.onMemoryUpdates(() => { read(); });
+    return () => { live = false; off(); };
+  }, [root]);
   const [connecting, setConnecting] = useState(false);
   const connectGranola = async () => {
     setConnecting(true); setError('');
@@ -161,6 +172,7 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain 
           </button>
         </div>
       )}
+      {brain && checking !== null && <p className="muted onb-check" role="status">{checking ? 'Quorum is checking your memory. This can take a few minutes and runs in the background.' : 'Quorum checked your memory. Its suggestions are in Memory health.'}</p>}
       {!brain && mode === 'create' && (
         <div className="onb-form">
           <label className="set-field wide onb-field"><span className="onb-label">Name</span><input value={name} aria-label="Name of your Agent OS" placeholder="My Agent OS" autoFocus onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') create(true); }} /></label>

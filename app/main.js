@@ -65,7 +65,7 @@ import { LINK_RULE, LINK_RULE_VERSION, contextNote, isGenerated } from './linkRu
 import { createDecisionLog, fingerprint } from './decisionLog.js';
 import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, fixVersions, recheckAll, undoPlan } from './fixRecheck.js';
 import { buildPlan, checkFirst, checkOrder, effects, groupLabel, groupOf, notesOf, planExclude } from './batchPlan.js';
-import { ROW, findingItem, itemLine, linkItem, pastFixItem } from './reviewItems.js';
+import { RETRO_TITLE, ROW, findingItem, itemLine, linkItem, pastFixItem } from './reviewItems.js';
 import { approveFinding, approvePastFix, gitReader, withLinkLine } from './reviewApprove.js';
 import { frontBlock, removeFrontmatterKey, withDate } from './frontmatter.js';
 import { createResolver } from './linkparse.js';
@@ -76,6 +76,8 @@ import { RULE_LABELS, RULES } from './rules/index.js';
 import { relatedLine } from './rules/nearDuplicates.js';
 import { DAILY_CAP, WRONG_NOTE_FIX, createDrafter, draftKind, evidenceRels, withDraft } from './memoryDraft.js';
 import { ignoreProposals, ignored, ruleRecords } from './ruleRecords.js';
+import { demotions, kindOf, logGate, ruleDemotion, runGate, signature } from './qualityGate.js';
+import { createAgentActivity } from './agentActivity.js';
 import { createElsewhere, withFound } from './linkElsewhere.js';
 import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
@@ -336,6 +338,11 @@ const refreshGates = () => { baseGates = notetakerGates(flagsApi ? flagsApi.all(
 const gate = () => (meeting.armed && !meeting.solo ? callGates : baseGates);
 // windows can be gone mid-quit while the helper or agent is still reporting
 const toUI = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
+// Agent activity (agentActivity.js): the memory work that runs longer than 30 seconds (the first memory check, a full
+// sweep, a bulk batch, a drafting run), as one state Home and Memory health both read, with Cancel
+const agentActivity = createAgentActivity({ emit: (s) => toUI('agent-activity', s) });
+ipcMain.handle('agent-activity-get', () => agentActivity.state());
+ipcMain.handle('agent-activity-cancel', (_e, id) => agentActivity.cancel(String(id ?? '')));
 // the Agent OS folder or the meetings folder changed; every open view reads the folder again
 const brainChanged = () => toUI('brain-changed', brain());
 const helperSend = (cmd) => helper?.stdin.write(JSON.stringify(cmd) + '\n');
@@ -2146,7 +2153,7 @@ function feedSources() {
   const links = linkItems.map((m) => ({ ...withMarks(m, left, declined), abs: path.join(b.vault, m.sources?.[0] ?? '') }));
   const v = b.vault;
   const runs = fixRunList().filter((r) => r.vault === v && (r.endedAt ?? r.queuedAt) > Date.now() - 7 * 86400000);
-  return { notes, memories, denials, junk: keeper.junk(), links, runs, pastFixes: pastFixRows(), findings: findingsNow(), drafts: draftViews(), ignores: ignoreRows(), state, guardFile: DENIAL_LOG };
+  return { notes, memories, denials, junk: keeper.junk(), links, runs, pastFixes: pastFixRows(), findings: findingsNow(), drafts: draftViews(), ignores: ignoreRows(), held: gateHeld(), state, guardFile: DENIAL_LOG };
 }
 ipcMain.handle('activity-feed', (_e, query) => {
   const q = query ?? {};
@@ -2453,7 +2460,8 @@ const sweepPaused = () => settings.memorySweeps === false;
 let sweeping = false;
 // the last confidential tag scan; a save sweep reads again only the notes that changed
 let tagScan = null;
-function sweep(kind, only = null) {
+// after: false leaves the gate and Apply memory fixes on its own to the caller (memoryCheck)
+function sweep(kind, only = null, { after = true } = {}) {
   const b = brain();
   if (!b || !vindex || sweeping) return null;
   sweeping = true;
@@ -2466,6 +2474,9 @@ function sweep(kind, only = null) {
     toUI('memory-updates', null);
     // a sweep on a schedule, or one a person asked for, is when Apply memory fixes on its own runs; a save sweep is not,
     // so a fix's own writes never start another run
+    if (!after) return s.last;
+    gateFor(b.vault);
+    scheduleGate(4000);
     if (kind !== 'save') setTimeout(() => { try { autoApply(); } catch (e) { log('auto apply', e?.message); } }, 0);
     return s.last;
   } catch (e) { log('memory sweep', e?.message); return null; } finally { sweeping = false; }
@@ -2488,7 +2499,38 @@ function sweepTick() {
   const b = brain();
   if (!b || !vindex) return;
   const kind = dueSweep(memorySweep.state(b.vault), { paused: sweepPaused(), idleMs: powerMonitor.getSystemIdleTime() * 1000, recording: recordingNow() });
-  if (kind) sweep(kind);
+  if (kind) { memoryCheck(kind); return; }
+  // a vault with no gate verdicts (an update from before the gate, or a check that quit partway) is checked now, unless
+  // the person stopped its check in this session; Check again in Memory health runs it then
+  if (gateChecking() && checkStopped !== b.vault && !sweepPaused() && !recordingNow()) memoryCheck('incremental');
+}
+// A memory check: a sweep of the review rules, then both gate passes, then Apply memory fixes on its own. It runs in the
+// background as agent activity; on a vault's first check (onboarding) Memory health says it is checking until it ends.
+// Cancel stops it between its parts, before the gate saves verdicts, so nothing is half saved
+let checkWork = null;
+// the vault whose first check the person cancelled, so the next tick does not start it again
+let checkStopped = null;
+async function memoryCheck(kind) {
+  const b = brain();
+  if (!b || !vindex || checkWork) return null;
+  checkStopped = null;
+  gateFor(b.vault);
+  const first = kind === 'first' || gateChecking();
+  const work = agentActivity.start({ kind: first ? 'check' : 'sweep', label: first ? 'Checking your memory' : 'Checking every note in your memory', cancellable: true, onCancel: () => {} });
+  checkWork = work;
+  try {
+    work.progress(0, 3, first ? 'Checking your memory: running the checks on every note' : 'Running the checks on every note');
+    await tick();
+    const last = sweep(kind, null, { after: false });
+    if (work.cancelled) return last;
+    await gateNow(work);
+    if (!work.cancelled) setTimeout(() => { try { autoApply(); } catch (e) { log('auto apply', e?.message); } }, 0);
+    return last;
+  } finally {
+    checkWork = null;
+    work.end();
+    if (work.cancelled && gateChecking()) { checkStopped = b.vault; toUI('memory-updates', null); }
+  }
 }
 setInterval(sweepTick, 10 * 60000).unref?.();
 // a finding's decisions go through the decision log: its fingerprint covers its notes and facts, so new evidence
@@ -2522,7 +2564,9 @@ function archiveFindings(keys, on) {
 }
 ipcMain.handle('memory-findings', () => {
   const s = brain() ? memorySweep.state(brain().vault) : null;
-  return { findings: findingsNow(), last: s?.last ?? null, lastFull: s?.lastFull ?? 0, paused: sweepPaused(), labels: RULE_LABELS, drafts: draftViews() };
+  const held = gateHeld();
+  const findings = findingsNow().map((f) => { const h = held.get(`${ROW.finding}${f.key}`); return h ? { ...f, held: h } : f; });
+  return { findings, last: s?.last ?? null, lastFull: s?.lastFull ?? 0, paused: sweepPaused(), labels: RULE_LABELS, drafts: draftViews(), checking: gateChecking() };
 });
 // Archive or Move back to review on findings, by key; the Notifications marks move with them
 ipcMain.handle('memory-findings-archive', (_e, keys, on) => {
@@ -2535,7 +2579,7 @@ ipcMain.handle('memory-findings-archive', (_e, keys, on) => {
   return n;
 });
 // Check again in Memory health: a full sweep now
-ipcMain.handle('memory-sweep-now', () => sweep(memorySweep.state(brain()?.vault ?? '')?.lastFull ? 'full' : 'first'));
+ipcMain.handle('memory-sweep-now', () => memoryCheck(memorySweep.state(brain()?.vault ?? '')?.lastFull ? 'full' : 'first'));
 
 function openIndex() {
   vindex?.stop();
@@ -2701,7 +2745,8 @@ ipcMain.handle('vault-link-health', (_e, fresh) => {
   reopenChanged(items);
   const left = linksLeft();
   const declined = linksDeclined();
-  return items.map((m) => withMarks(m, left, declined));
+  const held = gateHeld();
+  return items.map((m) => { const h = held.get(`${ROW.link}${m.target.toLowerCase()}`); return { ...withMarks(m, left, declined), ...(h ? { held: h } : {}) }; });
 });
 // the missing links the person declined, per vault, so Memory health, the Memory tree and Notifications all leave them
 // out. Kept in Quorum's data folder; older versions kept them in the window's storage, which the window hands over once
@@ -2727,7 +2772,7 @@ const decisionLog = createDecisionLog(path.join(DATA_DIR, 'finding-decisions'));
 const findingOf = (i) => ({
   ruleId: LINK_RULE, ruleVersion: LINK_RULE_VERSION, key: i.key, target: i.target, sources: i.sources,
   evidence: { links: i.links, sources: i.sources, candidate: i.candidate?.rel ?? null, found: i.found ? { kind: i.found.kind, where: i.found.where } : null },
-  proposedFix: { action: i.action, to: i.candidate?.rel ?? null, createIn: i.action === 'create' ? i.createIn : null, reviewOnly: i.reviewOnly },
+  proposedFix: { action: i.action, to: i.candidate?.rel ?? null, createIn: i.action === 'create' ? i.createIn : null, reviewOnly: i.reviewOnly, weak: !!i.candidate && !i.candidate.exact && Number(i.candidate.score ?? 0) < 0.5 },
 });
 function logFinding(finding, decision, actor = 'you', note = null) {
   const v = brain()?.vault;
@@ -2975,6 +3020,9 @@ async function pumpFixes() {
     const run = fixQueue.shift();
     run.status = 'running';
     run.startedAt = Date.now();
+    // a bulk batch is agent activity: Cancel stops it before its next step, and the rollback below puts back every note.
+    // It starts with the run and ends in the finally below, so an error never leaves it showing
+    let work = null;
     fixEmit(run);
     fixJournal.append(run.id, { step: 'started' });
     writeUndo(run, []);
@@ -2984,6 +3032,8 @@ async function pumpFixes() {
     // a note that still reads as the fix left it, and leaves one the person edited before the next start
     const stamp = () => { const h = hashNotes(run.vault, kept.map((k) => k.rel)); writeUndo(run, kept.map((k) => ({ ...k, after: h[k.rel] }))); };
     const step = async (label) => {
+      if (run.cancel) throw new Error('You cancelled the batch');
+      if (work) work.progress((run.items ?? []).filter((i) => i.status === 'success').length, (run.items ?? []).length, label);
       if (kept.length) stamp();
       fixJournal.append(run.id, { step: 'step', label });
       const at = Date.now();
@@ -3002,6 +3052,7 @@ async function pumpFixes() {
       stamp();
       fixJournal.append(run.id, { step: 'keep', rel, created });
     };
+    if (run.kind === 'batch') work = agentActivity.start({ kind: 'batch', label: `Applying ${run.target}`, cancellable: true, onCancel: () => { run.cancel = true; } });
     try {
       run.outcome = run.kind === 'batch' ? await runBatch(run, step, keep) : await decideLink(run.key, 'approve', step, keep, run.hashes ?? null, run.finding?.proposedFix ?? null);
       run.status = 'success';
@@ -3023,7 +3074,7 @@ async function pumpFixes() {
         } catch (err) { log('fix rollback', err?.message); }
       }
       saveUndo(run, kept);
-    }
+    } finally { work?.end(); }
     fixJournal.append(run.id, { step: 'ended', status: run.status, error: run.error });
     // each note the fix changed gets a new version in its history, so it can be restored from there too; a fix that
     // failed partway still records the notes it wrote before it stopped
@@ -3140,12 +3191,19 @@ function pastFixPlan(run, fresh = false) {
   try { undoFiles = JSON.parse(readFileSync(undoFile(run.id), 'utf8')).files ?? null; } catch {}
   const mtime = (rel) => { try { const st = statSync(vaultPath(run.vault, rel)); return Math.max(st.mtimeMs, st.ctimeMs); } catch { return null; } };
   const plan = undoPlan(run, { vault, undoFiles, versions: fixVersions(memoryVersions.files(run.vault), run), readVersion: (rel, id) => memoryVersions.read(run.vault, rel, id), mtime });
-  // Quorum cannot undo it exactly: Approve restores from git history, removes what the fix left, or keeps it as is.
-  // DRAFTED FIX SLOT (reviewApprove.js step c, before Keep as is): draftFix(item) has no draft type for past fixes yet,
-  // so draft stays null. Wire it as draft: () => draftFix(pastFixItem(...)) once memoryDraft.js drafts past fixes
-  if (!plan.ok) plan.approve = approvePastFix(run, plan, { vault, gitShow: gitOf(run.vault), undoFiles: undoFiles?.map((f) => f.rel) ?? null, draft: null });
+  // Quorum cannot undo it exactly: Approve restores from git history, removes what the fix left, runs a Retroactive
+  // improvement the agent drafted (DRAFTED FIX SLOT, reviewApprove.js step c), or keeps it as is
+  const reasons = (st.cache.results[run.id]?.reasons ?? []).map((x) => x.text);
+  if (!plan.ok) plan.approve = approvePastFix(run, plan, { vault, gitShow: gitOf(run.vault), undoFiles: undoFiles?.map((f) => f.rel) ?? null, draft: retroDraft, drafting: settings.memoryDrafts === true, reasons });
   st.plans.set(run.id, { at: Date.now(), plan });
   return plan;
+}
+// the Retroactive improvement the agent drafted for a past fix (memoryDraft.js retro), once a second draft agreed. Until
+// then the item keeps the fix as it is and says the agent drafts an improvement soon
+function retroDraft(run, r, retro) {
+  const it = draftFix({ id: `${ROW.pastfix}${run.id}`, kind: 'pastfix', key: run.id, target: `pastfix:${run.id}`, title: run.target, retro, keep: true, group: 'keep', ops: [{ op: 'keep' }] });
+  if (!it || it.draft?.confirmed !== true) return null;
+  return { ops: it.ops, why: `The agent drafted an improvement: ${itemLine(it)}.`, draft: it.draft };
 }
 // git history of a vault, read only (reviewApprove.js gitReader); one reader per vault keeps what it read
 const gitReaders = new Map();
@@ -3171,15 +3229,16 @@ function pastFixRows() {
   }
   return out;
 }
-function logPastFix(id, decision, note = null, plan = null, actor = 'you') {
+function logPastFix(id, decision, note = null, plan = null, actor = 'you', gateKind = null) {
   const v = brain()?.vault;
+  plan ??= pastFixState?.plans.get(id)?.plan ?? null;
   const run = fixRunList().find((r) => r.id === id);
   const res = pastFixState?.cache.results[id];
   if (!v || !run) return;
   try {
     decisionLog.record(v, {
       ruleId: FIX_RECHECK_RULE, ruleVersion: FIX_RECHECK_VERSION, key: `pastfix:${run.id}`, target: run.target, sources: res?.main ? [res.main] : [],
-      evidence: { outcome: run.outcome, reasons: res?.reasons ?? [], evidence: res?.evidence ?? [] }, proposedFix: { action: 'correct', kind: plan?.kind ?? null }, decision, note, actor,
+      evidence: { outcome: run.outcome, reasons: res?.reasons ?? [], evidence: res?.evidence ?? [] }, proposedFix: { action: 'correct', kind: plan?.approve?.kind ?? plan?.kind ?? null, ...(gateKind ? { gateKind } : {}) }, decision, note, actor,
     });
   } catch (e) { log('decision log', e?.message); }
 }
@@ -3228,6 +3287,97 @@ function reviewItems({ ids = null, drafts = true } = {}) {
   }
   return drafts ? out.map(drafted) : out;
 }
+// The quality gate of Needs review (qualityGate.js). Every item passes it before it shows: two passes (the index
+// re-scanned and every note read again) must give the same fix, its kind of fix must be right often enough on Quorum's
+// eval and in this vault's decisions, and its Approve must change something or tell the person something. The rest
+// waits in Not shown yet in Memory health, or under Check these first in a bulk plan. Verdicts are kept per vault in the
+// data folder with each item's signature; an item whose fix or notes changed since waits for the next gate run. A
+// vault with no verdicts yet is being checked: Memory health says so and Needs review waits. Each run adds a line to the
+// gate log (scripts/gate-report.mjs reads it)
+const gateFile = path.join(DATA_DIR, 'memory-gate.json');
+const gateLogFile = path.join(DATA_DIR, 'memory-gate-log.jsonl');
+let gateState = null;
+let gateRunning = false;
+let gateTimer = null;
+function gateFor(vault) {
+  if (gateState?.vault === vault) return gateState;
+  let all = {};
+  try { all = JSON.parse(readFileSync(gateFile, 'utf8')) ?? {}; } catch {}
+  const saved = all[vault];
+  gateState = saved?.verdicts ? { vault, at: saved.at ?? 0, verdicts: new Map(Object.entries(saved.verdicts)) } : { vault, at: 0, verdicts: null };
+  return gateState;
+}
+// runs the gate passes now and keeps the verdicts. Answers the counts. work: the memory check's agent activity, which
+// shows each pass and can cancel before the verdicts are saved
+async function gateNow(work = null) {
+  const b = brain();
+  if (!b || !vindex || gateRunning) return null;
+  gateRunning = true;
+  try {
+    const t0 = Date.now();
+    work?.progress(1, 3, 'Checking each suggestion');
+    await tick();
+    const first = reviewItems();
+    if (work?.cancelled) return null;
+    work?.progress(2, 3, 'Checking each suggestion again, with every note read again');
+    await tick();
+    vindex.sync();
+    pastFixState?.plans.clear();
+    const second = reviewItems();
+    if (work?.cancelled || brain()?.vault !== b.vault) return null;
+    const g = runGate([first, second], decisionLog.list(b.vault), { isStub: (rel) => (readVault(b.vault, rel) ?? '').includes(STUB_TEXT) });
+    const sigs = new Map(first.map((i) => [i.id, signature(i)]));
+    const verdicts = new Map([...g.verdicts].map(([id, v]) => [id, { ...v, sig: sigs.get(id) }]));
+    gateState = { vault: b.vault, at: Date.now(), verdicts };
+    heldCache.map = null;
+    let all = {};
+    try { all = JSON.parse(readFileSync(gateFile, 'utf8')) ?? {}; } catch {}
+    all[b.vault] = { at: gateState.at, verdicts: Object.fromEntries(verdicts) };
+    try { writeFileSync(gateFile, JSON.stringify(all)); } catch (e) { log('memory gate', e?.message); }
+    logGate(gateLogFile, b.vault, g, { passes: 2 });
+    log('memory gate', `${g.counts.show} shown`, `${g.counts.check} to check first`, `${g.counts.quiet} not shown`, `${Date.now() - t0} ms`);
+    toUI('memory-updates', null);
+    return g.counts;
+  } catch (e) { log('memory gate', e?.message); return null; } finally { gateRunning = false; }
+}
+function scheduleGate(ms = 4000) {
+  clearTimeout(gateTimer);
+  gateTimer = setTimeout(() => { gateTimer = null; gateNow(); }, ms);
+  gateTimer.unref?.();
+}
+const PENDING = { bucket: 'quiet', why: 'Quorum is still checking it.', reasons: ['pending'] };
+// the verdict of an item now: its kept verdict while its fix and notes are the same, else pending until the next run
+function gateOf(item) {
+  const st = gateFor(brain()?.vault ?? '');
+  const v = st.verdicts?.get(item.id);
+  if (v && v.sig === signature(item)) return v;
+  if (st.verdicts && !gateTimer) scheduleGate();
+  return { ...PENDING, kind: kindOf(item) };
+}
+const gateChecking = () => !gateFor(brain()?.vault ?? '').verdicts;
+// the review items with their verdicts. Without ids (everything in Needs review), items the gate keeps out of view are
+// left out; an item picked by id from Not shown yet keeps its verdict and can run
+function gatedItems({ ids = null, drafts = true } = {}) {
+  const out = reviewItems({ ids, drafts }).map((i) => ({ ...i, gate: gateOf(i) }));
+  return ids ? out : out.filter((i) => i.gate.bucket !== 'quiet');
+}
+// row id -> verdict for every item the gate holds back, for Notifications and Memory health
+// kept for two seconds, since one window refresh asks for it several times
+let heldCache = { at: 0, vault: null, map: null };
+function gateHeld() {
+  const v0 = brain()?.vault ?? null;
+  if (heldCache.map && heldCache.vault === v0 && Date.now() - heldCache.at < 2000) return heldCache.map;
+  const out = new Map();
+  for (const i of reviewItems()) { const v = gateOf(i); if (v.bucket !== 'show') out.set(i.id, { bucket: v.bucket, why: v.why, title: i.retro ? RETRO_TITLE : i.title, line: itemLine(i), kind: i.kind }); }
+  heldCache = { at: Date.now(), vault: v0, map: out };
+  return out;
+}
+ipcMain.handle('memory-gate', () => {
+  const held = gateHeld();
+  const checking = gateChecking();
+  // stopped: no verdicts yet and no check running, after Cancel or before the first check starts
+  return { checking, stopped: checking && !checkWork && !gateRunning, at: gateState?.at ?? 0, held: [...held].map(([id, v]) => ({ id, ...v })) };
+});
 // Agent-drafted fixes (memoryDraft.js; Settings > Memory, Let the agent draft fixes, off by default). The agent runs
 // on the person's own Claude Code sign-in with no tools and reads only the notes Quorum puts in its prompt. A note the
 // read guard keeps from the agent is never sent; a note marked confidential is sent only when the person turned on
@@ -3246,15 +3396,18 @@ function draftEvidence(item) {
     const text = readVault(b.vault, rel);
     const kept = text != null && !excludedPath(rel) && !isPrivatePath(rel) && !isSecretPath(rel) && (settings.memoryDraftConfidential === true || !confidentialNote(b.vault, rel, text));
     if (kept) notes.push({ rel, text });
-    // the two notes of a merge and the note a weak link points at are both needed; a missing note needs one source
-    else if (draftKind(item) !== 'create') return null;
+    // the two notes of a merge and the note a weak link points at are both needed; a missing note needs one source, and
+    // a Retroactive improvement offers only the candidate notes the agent may read
+    else if (draftKind(item) !== 'create' && draftKind(item) !== 'retro') return null;
   }
   return notes.length ? notes : null;
 }
 // the item with its stored draft applied, while the notes the draft read are unchanged and its quotes still match
 // Turning drafting off sets every stored draft aside
-function drafted(item) {
-  if (settings.memoryDrafts !== true || !draftKind(item)) return item;
+// A past fix takes its Retroactive improvement through approvePastFix (retroDraft), only once a second draft agreed
+function drafted(item) { return item.kind === 'pastfix' ? item : withStoredDraft(item); }
+function withStoredDraft(item) {
+  if (settings.memoryDrafts !== true || !draftKind(item) || item.draft) return item;
   const d = drafter.draftFor(item, draftEvidence(item));
   if (!d) return item;
   const b = brain();
@@ -3281,12 +3434,12 @@ function linkDraftHolds() {
 // the agent's fix for a review item, or null: the item with its stored draft applied while drafting is on, the draft's
 // notes are unchanged and its quotes still match. Other Approve paths (a past fix Quorum cannot undo exactly) call it
 function draftFix(item) {
-  const next = drafted(item);
+  const next = withStoredDraft(item);
   return next !== item && next.draft && next.ops?.length ? next : null;
 }
 const drafter = createDrafter({
   file: path.join(DATA_DIR, 'memory-drafts.json'),
-  model: (prompt, system) => claudeText({ prompt, system, model: 'sonnet', cwd: tmpdir(), timeoutMs: 180000 }),
+  model: (prompt, system) => claudeText({ prompt, system, model: 'sonnet', cwd: tmpdir(), timeoutMs: 180000, signal: draftAbort?.signal ?? null }),
   items: () => reviewItems({ drafts: false }),
   evidence: draftEvidence,
   enabled: () => settings.memoryDrafts === true && !!brain() && !!vindex,
@@ -3295,7 +3448,19 @@ const drafter = createDrafter({
   idleMs: () => powerMonitor.getSystemIdleTime() * 1000,
   log,
 });
-setInterval(() => { drafter.tick().then((r) => { if (r?.drafted) toUI('memory-updates', null); }).catch((e) => log('memory draft', e?.message)); }, 60000).unref?.();
+// each drafting run is agent activity; Cancel stops the model call, and the item is drafted again later
+let draftAbort = null;
+async function draftTick() {
+  if (draftAbort) return;
+  const ctl = new AbortController();
+  draftAbort = ctl;
+  const work = agentActivity.start({ kind: 'draft', label: 'The agent is drafting a fix', cancellable: true, onCancel: () => ctl.abort() });
+  try {
+    const r = await drafter.tick();
+    if (r?.drafted || r?.confirmed) toUI('memory-updates', null);
+  } catch (e) { log('memory draft', e?.message); } finally { draftAbort = null; work.end(); }
+}
+setInterval(() => { draftTick(); }, 60000).unref?.();
 // Ignore rules (ruleRecords.js): kept in Quorum's settings per vault, never in the vault. Quorum proposes one after the
 // same rule's findings were archived three or more times with a shared folder, frontmatter key or target
 function ignoreStore(name) {
@@ -3336,7 +3501,8 @@ function dismissIgnore(id, on) {
 function ruleRecordList() {
   const b = brain();
   if (!b) return [];
-  const tally = ruleRecords(decisionLog.list(b.vault));
+  const records = decisionLog.list(b.vault);
+  const tally = ruleRecords(records);
   const ign = ignoreList(b.vault);
   const open = {};
   for (const f of findingsNow()) if (!f.archived) open[f.ruleId] = (open[f.ruleId] ?? 0) + 1;
@@ -3351,8 +3517,11 @@ function ruleRecordList() {
   ];
   return rules.map((r) => {
     const t = tally[r.id] ?? { approved: 0, archived: 0, undone: 0, auto: 0, reopened: 0, last: 0 };
-    const state = !r.auto ? 'Review only' : autoOn ? 'Applies its automatic fixes on its own' : 'Waits for review';
-    return { id: r.id, label: r.label, approved: t.approved, archived: t.archived, undone: t.undone, auto: t.auto, last: t.last, open: open[r.id] ?? 0, ignores: ign.filter((g) => g.ruleId === r.id).length, state };
+    // the live precision guard (qualityGate.js): a demoted rule's items wait under Check these first or in Not shown
+    // yet, and Apply memory fixes on its own skips them
+    const demoted = ruleDemotion(r.id, records);
+    const state = demoted ? 'Shows its fixes only under Check these first' : !r.auto ? 'Review only' : autoOn ? 'Applies its automatic fixes on its own' : 'Waits for review';
+    return { id: r.id, label: r.label, approved: t.approved, archived: t.archived, undone: t.undone, auto: t.auto, last: t.last, open: open[r.id] ?? 0, ignores: ign.filter((g) => g.ruleId === r.id).length, state, demoted };
   });
 }
 ipcMain.handle('memory-rule-records', () => ruleRecordList());
@@ -3371,7 +3540,7 @@ ipcMain.handle('memory-draft-status', () => drafter.status());
 function draftViews() {
   const out = {};
   if (settings.memoryDrafts !== true) return out;
-  for (const i of reviewItems()) if (i.draft) out[i.id] = { ...i.draft, line: i.wrongNote ? WRONG_NOTE_FIX : itemLine(i), check: !!checkFirst(i), hold: i.hold ?? null };
+  for (const i of reviewItems()) if (i.draft) out[i.id] = { ...i.draft, line: i.wrongNote ? WRONG_NOTE_FIX : itemLine(i), check: !!checkFirst({ ...i, gate: gateOf(i) }), hold: i.hold ?? null };
   return out;
 }
 // the plan as the bulk plan sheet shows it: every group with each item ticked or not, and what was merged, skipped and
@@ -3415,9 +3584,11 @@ function planView(items, exclude = [], include = []) {
 function logItem(item, decision, actor = 'you') {
   const v = brain()?.vault;
   if (!v) return;
-  if (item.kind === 'link') logFinding(item.finding, decision, actor);
-  else if (item.kind === 'pastfix') logPastFix(item.key, decision, null, null, actor);
-  else if (item.finding) { try { decisionLog.record(v, { ...item.finding, proposedFix: { ...item.finding.proposedFix, action: item.ops?.map((o) => o.op).join('+') ?? 'review' }, decision, actor }); } catch (e) { log('decision log', e?.message); } }
+  // each record keeps the kind of fix the quality gate scored (qualityGate.js kindOf), for the live precision guard
+  const gateKind = kindOf(item);
+  if (item.kind === 'link') logFinding(item.finding ? { ...item.finding, proposedFix: { ...item.finding.proposedFix, gateKind } } : item.finding, decision, actor);
+  else if (item.kind === 'pastfix') logPastFix(item.key, decision, null, null, actor, gateKind);
+  else if (item.finding) { try { decisionLog.record(v, { ...item.finding, proposedFix: { ...item.finding.proposedFix, action: item.ops?.map((o) => o.op).join('+') ?? 'review', gateKind }, decision, actor }); } catch (e) { log('decision log', e?.message); } }
 }
 // queues a plan as one batch run. actor: you, or auto for Apply memory fixes on its own
 function startPlan(plan, items, { actor = 'you' } = {}) {
@@ -3450,7 +3621,7 @@ function startPlan(plan, items, { actor = 'you' } = {}) {
 }
 // plans and starts the items with these row ids; refuses with the reason the first one was left out
 function startPlanFor(ids, actor = 'you') {
-  const items = reviewItems({ ids });
+  const items = gatedItems({ ids });
   if (!items.length) throw new Error('That item is no longer in Needs review');
   const plan = buildPlan(items);
   if (!plan.ok.length) throw new Error((plan.held[0] ?? plan.skipped[0])?.reason ?? 'Nothing in the plan can run');
@@ -3643,7 +3814,9 @@ function autoApply() {
   const b = brain();
   if (!b || !vindex || recordingNow()) return null;
   if (fixRunList().some((r) => r.vault === b.vault && (r.status === 'queued' || r.status === 'running'))) return null;
-  const items = reviewItems().filter((i) => i.autoFix && !i.hold && !i.reviewOnly);
+  // the gate's shown items only, and never a kind the live precision guard demoted
+  const down = demotions(decisionLog.list(b.vault));
+  const items = gatedItems().filter((i) => i.autoFix && !i.hold && !i.reviewOnly && i.gate.bucket === 'show' && !down[kindOf(i)]);
   if (!items.length) return null;
   const plan = buildPlan(items);
   if (!plan.ok.length) return null;
@@ -3670,9 +3843,9 @@ function savePlanNote(view) {
   return rel;
 }
 const idList = (xs) => (Array.isArray(xs) ? xs.map(String) : []);
-ipcMain.handle('fix-plan', (_e, ids, exclude, include) => planView(reviewItems({ ids: Array.isArray(ids) ? ids.map(String) : null }), idList(exclude), idList(include)));
+ipcMain.handle('fix-plan', (_e, ids, exclude, include) => planView(gatedItems({ ids: Array.isArray(ids) ? ids.map(String) : null }), idList(exclude), idList(include)));
 ipcMain.handle('fix-plan-apply', (_e, ids, exclude, opts, include) => {
-  const items = reviewItems({ ids: Array.isArray(ids) ? ids.map(String) : null });
+  const items = gatedItems({ ids: Array.isArray(ids) ? ids.map(String) : null });
   const note = opts?.saveNote === true ? savePlanNote(planView(items, idList(exclude), idList(include))) : null;
   const plan = buildPlan(items, { exclude: [...planExclude(items, idList(exclude), idList(include))] });
   const run = plan.ok.length ? startPlan(plan, items) : null;
@@ -3727,7 +3900,8 @@ ipcMain.handle('confidential-mark', (_e, rel, isDir, value) => {
     // next agent run in the app
     guardrails.compiled();
     log('confidential', isDir ? 'folder' : 'note', v ? 'marked' : 'cleared');
-    setTimeout(() => sweep(memorySweep.state(b.vault)?.lastFull ? 'full' : 'first'), 0);
+    // the first memory check of a newly connected vault runs here, in the background (onboarding says so)
+    setTimeout(() => memoryCheck(memorySweep.state(b.vault)?.lastFull ? 'full' : 'first'), 0);
     toUI('memory-updates', null);
     return v ? `Marked ${r} confidential: ${v}. Quorum keeps every note in it private.` : `Removed the confidential mark from ${r}`;
   }

@@ -71,7 +71,7 @@ describe('feedRows', () => {
 describe('feedPage', () => {
   it('counts All, Unread and Needs review, and shows the dot', () => {
     const p = feedPage(rows);
-    expect(p.counts).toEqual({ all: rows.length, unread: 6, review: 2, archived: 0 });
+    expect(p.counts).toEqual({ all: rows.length, unread: 6, review: 2, archived: 0, held: 0 });
     expect(p.dot).toBe(true);
   });
 
@@ -226,6 +226,24 @@ describe('past fixes to check', () => {
     expect(detailsOf(r)).toContainEqual(['What', 'Past fix to check']);
     expect(detailsOf(r)).toContainEqual(['Note it wrote', 'n/Lantern.md']);
     expect(feedPage([r], { review: true }).items.map((x) => x.id)).toEqual([`r:pastfix:${run.id}`]);
+  });
+  it('keeps an item the quality gate holds back out of every tab, and counts it', () => {
+    const r = feedRows({ pastFixes: [{ run, res, plan: { ok: true, kind: 'trash', why: 'x' }, abs: '/v/n/Lantern.md' }], held: new Map([[`r:pastfix:${run.id}`, { bucket: 'quiet', why: 'Quorum is still checking it.' }]]) })[0];
+    expect(r.held).toEqual({ bucket: 'quiet', why: 'Quorum is still checking it.' });
+    const p = feedPage([r], { review: true });
+    expect(p.items).toEqual([]);
+    expect(p.counts).toMatchObject({ review: 0, held: 1 });
+    expect(p.dot).toBe(false);
+  });
+  it('titles a past fix the agent can improve as a Retroactive improvement', () => {
+    const approve = { kind: 'keep', why: 'Quorum cannot undo it exactly. Turn on Let the agent draft fixes in Settings > Memory and the agent drafts an improvement for it. Approve keeps the fix as it is and marks the item done.', ops: [{ op: 'keep' }], retro: { action: 'create', made: 'n/Lantern.md' } };
+    const r = row({ ok: false, kind: 'trash', why: 'x', approve });
+    expect(r.summary.line).toBe('Retroactive improvement: the fix on “Lantern” can be improved');
+    expect(r.summary.solution).toMatch(/Turn on Let the agent draft fixes/);
+    expect(detailsOf(r)).toContainEqual(['What', 'Retroactive improvement']);
+    const drafted = row({ ok: false, kind: 'trash', why: 'x', approve: { ...approve, kind: 'draft', why: 'The agent drafted an improvement: Rewrite “n/Lantern.md” from its linking notes, as the agent drafted it.' } });
+    expect(drafted.summary.line).toBe('Retroactive improvement: improve the fix on “Lantern”?');
+    expect(drafted.summary.recommendation).toBe('Run the improvement the agent drafted.');
   });
   it('shows a batch run with its item count, and marks one Quorum applied on its own', () => {
     const batch = { id: 'batch:1', key: 'batch:1', kind: 'batch', auto: true, target: '2 memory fixes', status: 'success', queuedAt: ms(30), endedAt: ms(20), steps: [], items: [{}, {}], outcome: 'Applied the plan: Tag 2 notes confidential' };

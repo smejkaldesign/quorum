@@ -4,6 +4,12 @@
 //   point   a weak relink or alias: the agent says whether the note Quorum picked is the right one
 //   merge   two notes that repeat each other: the agent writes one merged note, or rewrites the note that is wrong
 //           when the two disagree (a contradiction)
+//   retro   a Retroactive improvement: an earlier fix Quorum cannot undo exactly, or one that left a note worse. The
+//           agent drafts the improvement from the note and its context: point the links at the right note, remove
+//           them, rewrite a note the fix wrote into a real one from its sources, or remove that note
+//
+// A draft shows only after a second, independent draft agrees with it (confirm): the same kind of fix onto the same
+// note, with every quote of both drafts checked against its note.
 //
 // The model runs through the person's own Claude Code sign-in with no tools at all (models.js claudeText), so the agent
 // reads only the note text Quorum puts in the prompt and writes nothing. Quorum checks every quote against the note
@@ -15,6 +21,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { FRONT, frontBlock } from './frontmatter.js';
 import { aliasText } from './relink.js';
+import { RETRO_ACTIONS, retroOps } from './reviewApprove.js';
 
 export const DAILY_CAP = 40;
 export const QUIET_MS = 2 * 60000;
@@ -35,6 +42,7 @@ export function draftKind(item) {
   if (item?.kind === 'link' && o?.op === 'create') return 'create';
   if (item?.kind === 'link' && item.reviewOnly && (o?.op === 'relink' || o?.op === 'alias')) return 'point';
   if (item?.kind === 'finding' && item.ruleId === 'note.near-duplicate') return 'merge';
+  if (item?.kind === 'pastfix' && item.retro) return 'retro';
   return null;
 }
 
@@ -45,6 +53,7 @@ export function evidenceRels(item) {
   if (kind === 'create') return [...new Set(o.sources ?? [])];
   if (kind === 'point') return [...new Set([...(o.sources ?? []), o.op === 'alias' ? o.rel : o.to])];
   if (kind === 'merge') return [...(item.notes ?? [])];
+  if (kind === 'retro') { const r = item.retro; return [...new Set([...(r.sources ?? []), r.wrong ?? r.made, ...(r.candidates ?? []).slice(0, 3)].filter(Boolean))]; }
   return [];
 }
 
@@ -86,6 +95,26 @@ export function draftPrompt(item, notes) {
       `When they say the same things, merge them: write one body that keeps every fact from both. Answer: { "kind": "merge", "keep": "${a}" or "${b}", "text": "<merged markdown body, no frontmatter>", ${quotes}, "confidence": "high" | "medium" | "low" }`,
       `When they disagree on a fact, rewrite the note that is out of date. Answer: { "kind": "contradiction", "rel": "<the note to rewrite>", "text": "<its corrected body, no frontmatter>", ${quotes}, "confidence": "high" | "medium" | "low" }`,
       'Quote the lines that show the facts you keep, and for a contradiction the lines that disagree.',
+    ];
+  } else if (kind === 'retro') {
+    const r = item.retro;
+    const read = new Set(notes.map((n) => n.rel));
+    const to = (r.candidates ?? []).filter((c) => read.has(c));
+    const did = r.action === 'create' ? `wrote the note ${r.made} for the missing link [[${r.target}]]` : r.action === 'alias' ? `added [[${r.target}]] as an alias of ${r.wrong}` : `pointed the links to [[${r.target}]] at ${r.wrong}`;
+    const options = r.action === 'create'
+      ? [
+        `When the linking notes say enough about it, rewrite ${r.made} into a real note from them. Answer: { "kind": "retro", "action": "rewrite", "text": "<markdown body, no frontmatter>", ${quotes}, "confidence": "high" | "medium" | "low" }`,
+        `When they do not, remove it. Answer: { "kind": "retro", "action": "remove", ${quotes}, "confidence": "high" | "medium" | "low" }`,
+      ]
+      : [
+        ...(to.length ? [`When the links mean one of these notes, point them there: ${to.join(', ')}. Answer: { "kind": "retro", "action": "relink", "to": "<one of those paths>", ${quotes}, "confidence": "high" | "medium" | "low" }`] : []),
+        `When no note given here is what they mean, remove the links and keep their words. Answer: { "kind": "retro", "action": "unlink", ${quotes}, "confidence": "high" | "medium" | "low" }`,
+      ];
+    ask = [
+      `An earlier automatic fix ${did}. Quorum now finds that fix wrong: ${(r.reasons ?? []).join(' ') || 'its rules would not make it today.'}`,
+      'Draft the improvement.',
+      ...options,
+      'Quote the lines that show what the links mean.',
     ];
   } else return null;
   return { system: SYSTEM, prompt: `${ask.join('\n')}\n\n${notes.map(block).join('\n\n')}` };
@@ -145,6 +174,20 @@ export function checkDraft(item, notes, reply) {
     if (j.kind === 'contradiction' && rels.includes(j.rel)) return { draft: { kind: 'contradiction', rel: j.rel, text, ...common } };
     return { why: 'The draft names a note outside the pair' };
   }
+  if (kind === 'retro') {
+    const r = item.retro;
+    const allowed = RETRO_ACTIONS[r.action] ?? [];
+    if (j.kind !== 'retro' || !allowed.includes(j.action)) return { why: 'The draft answers another question' };
+    if (j.action === 'relink') {
+      if (!(r.candidates ?? []).includes(j.to) || !rels.includes(j.to)) return { why: 'The draft points at a note Quorum did not offer' };
+      return { draft: { kind, action: 'relink', to: j.to, ...common } };
+    }
+    if (j.action === 'rewrite') {
+      if (!text || text.length > MAX_TEXT) return { why: 'The draft has no note text' };
+      return { draft: { kind, action: 'rewrite', text, ...common } };
+    }
+    return { draft: { kind, action: j.action, ...common } };
+  }
   return { why: 'Quorum does not draft this kind of fix' };
 }
 
@@ -155,7 +198,7 @@ const withFront = (current, body) => `${frontBlock(current)}${body.endsWith('\n'
 // note's text now; aliasesOf(rel) a note's aliases, so a merge carries the dropped note's aliases onto the kept note.
 // A point draft that says the match is wrong turns the item into removing the dead link, keeping its words
 export function withDraft(item, draft, textOf, aliasesOf = () => []) {
-  const view = { kind: draft.kind, confidence: draft.confidence, quotes: draft.quotes, verified: draft.verified, at: draft.at ?? null };
+  const view = { kind: draft.kind, confidence: draft.confidence, quotes: draft.quotes, verified: draft.verified, at: draft.at ?? null, ...(draft.confirmed !== undefined ? { confirmed: draft.confirmed } : {}) };
   const out = { ...item, draft: view, autoFix: false };
   if (draft.kind === 'create') return { ...out, draft: { ...view, text: draft.text }, ops: item.ops.map((o, i) => (i ? o : { ...o, text: draft.text })) };
   if (draft.kind === 'point') {
@@ -177,7 +220,24 @@ export function withDraft(item, draft, textOf, aliasesOf = () => []) {
     if (cur == null) return { ...out, ops: [], hold: 'The note in the draft is gone.' };
     return { ...out, group: 'rewrite', draft: { ...view, rel: draft.rel, text: draft.text }, ops: [{ op: 'restore', rel: draft.rel, before: withFront(cur, draft.text) }] };
   }
+  if (draft.kind === 'retro') {
+    const body = draft.action === 'rewrite' ? withFront(textOf(item.retro.made) ?? '', draft.text) : null;
+    const res = retroOps(item.retro, { action: draft.action, to: draft.to ?? null, text: body }, textOf);
+    const view2 = { ...view, action: draft.action, ...(draft.to ? { to: draft.to } : {}), ...(draft.text ? { text: draft.text } : {}) };
+    if (!res.ops) return { ...out, draft: view2, ops: [], hold: res.why };
+    return { ...out, group: 'retro', keep: false, via: 'draft', draft: view2, ops: res.ops };
+  }
   return item;
+}
+
+// whether a second draft agrees with the first: the same kind of fix onto the same note. Drafted text may differ
+export function agrees(a, b) {
+  if (!a || !b || a.kind !== b.kind) return false;
+  if (a.kind === 'point') return a.to === b.to;
+  if (a.kind === 'merge') return a.keep === b.keep;
+  if (a.kind === 'contradiction') return a.rel === b.rel;
+  if (a.kind === 'retro') return a.action === b.action && (a.to ?? null) === (b.to ?? null);
+  return true;
 }
 
 // a draft a bulk plan can tick on its own: high confidence and every quote checked
@@ -216,17 +276,44 @@ export function createDrafter({ file, model, items, evidence, enabled = () => fa
     if (!d || !notes || d.hash !== evidenceHash(notes)) return null;
     const quotes = verifyQuotes(d.draft.quotes, notes);
     if (quotes.some((q) => !q.ok)) return null;
-    return { ...d.draft, quotes, at: d.at };
+    // confirmed: true when a second draft agreed, false when it did not or its quotes failed, absent while it waits
+    return { ...d.draft, quotes, at: d.at, ...(d.confirm ? { confirmed: d.confirm.agree } : {}) };
   }
   let running = null;
-  // drafts the next item that has no draft for its evidence now. Answers what it did, for the log and the tests
+  // drafts the next item that has no draft for its evidence now, else confirms the next draft that has no second draft.
+  // Answers what it did, for the log and the tests
   async function tick() {
     if (running) return { skipped: 'running' };
     const why = waiting();
     if (why) return { skipped: why };
     const s = load();
-    for (const item of items()) {
-      if (!draftKind(item)) continue;
+    const list = items().filter((i) => draftKind(i));
+    // a call a person cancelled gives its place under the daily cap back, unless the day turned while it ran
+    const day = s.day;
+    const refund = () => { if (s.day === day && s.count > 0) { s.count--; save(); } };
+    const confirmOf = (item, notes, h) => {
+      const p = draftPrompt(item, notes);
+      if (!p) return null;
+      s.count++;
+      save();
+      running = (async () => {
+        try {
+          const res = checkDraft(item, notes, await model(p.prompt, p.system));
+          const first = s.drafts[item.id];
+          if (!first || first.hash !== h) return { skipped: 'changed' };
+          const agree = !!res.draft && agrees(first.draft, res.draft);
+          first.confirm = { agree, at: now(), ...(res.draft ? {} : { why: res.why }) };
+          save();
+          log('memory draft confirm', item.id, agree ? 'agrees' : res.why ?? 'disagrees');
+          return { confirmed: item.id, agree };
+        } catch (e) {
+          if (e?.cancelled) { refund(); return { cancelled: item.id }; }
+          return { failed: item.id, why: String(e?.message ?? e).slice(0, 200) };
+        } finally { running = null; }
+      })();
+      return running;
+    };
+    for (const item of list) {
       const notes = evidence(item);
       if (!notes?.length) continue;
       const h = evidenceHash(notes);
@@ -246,12 +333,22 @@ export function createDrafter({ file, model, items, evidence, enabled = () => fa
           log('memory draft', item.id, res.draft ? `${res.draft.kind} ${res.draft.confidence}` : res.why);
           return res.draft ? { drafted: item.id, draft: res.draft } : { dropped: item.id, why: res.why };
         } catch (e) {
+          // a draft a person cancelled is tried again later, as if it never ran
+          if (e?.cancelled) { refund(); return { cancelled: item.id }; }
           s.failed[item.id] = { hash: h, at: now(), why: String(e?.message ?? e).slice(0, 200) };
           save();
           return { failed: item.id, why: s.failed[item.id].why };
         } finally { running = null; }
       })();
       return running;
+    }
+    for (const item of list) {
+      const d = s.drafts[item.id];
+      if (!d || d.confirm) continue;
+      const notes = evidence(item);
+      if (!notes?.length || d.hash !== evidenceHash(notes)) continue;
+      const run = confirmOf(item, notes, d.hash);
+      if (run) return run;
     }
     return { skipped: 'nothing' };
   }

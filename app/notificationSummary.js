@@ -70,6 +70,9 @@ function askOf(row) {
     const problem = `${sentence(d.outcome)} The current rules would not make this fix. ${(d.reasons ?? []).join(' ')}`.trim();
     const value = 'The vault keeps only the fixes the current rules would make, so the agent reads fewer wrong links and notes.';
     const back = 'Then the link goes back to Needs review, or Quorum points it at the note the current rules pick when that fix needs no review of its own.';
+    // a Retroactive improvement (reviewApprove.js retroOf): the agent drafted a better fix, or can once drafting is on
+    if (a?.retro && a.kind === 'draft') return { question: `Retroactive improvement: improve the fix on ${q(t)}?`, suggest: 'approve', problem, solution: sentence(a.why), value, recommendation: 'Run the improvement the agent drafted.', why: (d.reasons ?? [])[0] ?? '' };
+    if (a?.retro && a.kind === 'keep') return { question: `Retroactive improvement: the fix on ${q(t)} can be improved`, suggest: 'approve', problem, solution: sentence(a.why), value, recommendation: 'Keep as is for now.', why: (d.reasons ?? [])[0] ?? '' };
     // Quorum cannot undo it exactly: Approve does the first of git, remove and draft that applies, else keeps it
     if (a?.kind === 'keep') return { question: `Keep the fix on ${q(t)}?`, suggest: 'approve', problem, solution: sentence(a.why), value, recommendation: 'Keep as is.', why: (d.reasons ?? [])[0] ?? '' };
     if (a) {
@@ -194,7 +197,7 @@ const WHO = { keeper: 'Upkeep', agent: 'Quorum agent', import: 'An import', cli:
 // everything the feed knows about a row, as label and value pairs for the folded-open details
 export function detailsOf(row, { locale } = {}) {
   const d = row.detail ?? {};
-  const out = [['What', row.review?.kind === 'junk-note' ? 'Looks empty' : row.review?.kind === 'past-fix' ? 'Past fix to check' : KIND_LABEL[row.kind] ?? row.kind], ['When', new Date(row.at).toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' })]];
+  const out = [['What', row.review?.kind === 'junk-note' ? 'Looks empty' : row.review?.kind === 'past-fix' ? (row.detail?.approve?.retro ? 'Retroactive improvement' : 'Past fix to check') : KIND_LABEL[row.kind] ?? row.kind], ['When', new Date(row.at).toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' })]];
   const add = (label, value) => { if (value != null && value !== '') out.push([label, String(value)]); };
   if (row.kind === 'guardrail') {
     add('Rule', d.guardLabel || d.guard);

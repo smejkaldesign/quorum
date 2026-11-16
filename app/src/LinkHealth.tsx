@@ -5,12 +5,13 @@ import markReview from '../assets/quorum-mark.png';
 import { CATEGORIES, HEALTH_SORTS, categoryCounts, countsLine, healthList, issueMeta, type HealthCategory, type HealthSort, type Issue } from '../memoryHealth.js';
 import { IconArchive, IconCheck, IconChevron, IconClose, IconReset } from './icons';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
-import { BulkPick, DismissButton, IssueParts, ReviewDetails, RowMenu, RunBanner, StatusBadge, StatusSwap, UndoMenu, ViewButton, ago, runStatus, took } from './NotificationsView';
-import type { FixRun, MemoryDraft, MemoryFinding } from './quorum';
+import { BulkPick, DismissButton, IssueParts, ReviewDetails, RowMenu, RunBanner, StatusBadge, StatusSwap, UndoMenu, ViewButton, ago, runStatus } from './NotificationsView';
+import type { FixRun, GateHold, MemoryDraft, MemoryFinding } from './quorum';
 import { MemoryFindings } from './MemoryFindings';
 import { toast } from './Toasts';
 import { Segmented } from './controls';
 import { BulkPlan } from './BulkPlan';
+import { AgentActivityBanner, WorkBanner } from './WorkBanner';
 import { NO_SELECTION, bulkView, dropAcross, selectedIds, toggleAcross, toggleOne, togglePage, type BulkSel } from './bulkSelect';
 
 // Memory health: links that point at a note that does not exist, one row per missing note, in the same list pattern
@@ -47,9 +48,12 @@ const CHANGED = 'quorum:activity-changed';
 
 // All (the default), Unread and Archived, the same bar and the same read and archive marks as Notifications; Needs
 // review narrows All to the items waiting for a decision. Decided items list under Archived: a fix once it finished
-// (Accepted or Failed), an issue archived without fixing it (Dismissed)
-type Tab = 'all' | 'unread' | 'archived';
+// (Accepted or Failed), an issue archived without fixing it (Dismissed). Not shown yet lists what the quality gate
+// (qualityGate.js) holds back, each with its reason; it shows only while there is something in it
+type Tab = 'all' | 'unread' | 'archived' | 'held';
 const issueId = (key: string) => `r:link:${key}`;
+// the gate has no verdicts and no check runs: the person cancelled the first check
+const STOPPED = 'The memory check stopped before it finished. Press Check again to run it.';
 const runId = (r: FixRun) => `f:${r.id}`;
 // the rows listed at first; Show more adds as many again
 const PAGE = 50;
@@ -73,6 +77,8 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   // the review rules' findings (rules/index.js), listed under the link issues
   const [findings, setFindings] = useState<MemoryFinding[]>([]);
   const [drafts, setDrafts] = useState<Record<string, MemoryDraft>>({});
+  // the quality gate: whether a vault's first check is still running, and the items it holds back
+  const [gate, setGate] = useState<{ checking: boolean; stopped: boolean; held: (GateHold & { id: string })[] }>({ checking: false, stopped: false, held: [] });
   // the issues whose Approve was pressed: a spinner in place of the button until their run takes over
   const [approving, setApproving] = useState<Set<string>>(new Set());
   // a bulk Approve: the issues in it and when it began, for the progress row under the bulk bar
@@ -85,7 +91,8 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const [plan, setPlan] = useState<{ ids: string[] | null; everything: boolean } | null>(null);
   const load = useCallback((fresh = false) => {
     window.quorum.fixRuns().then(setRuns).catch(() => {});
-    window.quorum.memoryFindings().then((r) => { setFindings(r.findings); setDrafts(r.drafts ?? {}); }).catch(() => {});
+    window.quorum.memoryFindings().then((r) => { setFindings(r.findings.filter((f) => !f.held)); setDrafts(r.drafts ?? {}); }).catch(() => {});
+    window.quorum.memoryGate().then((g) => setGate({ checking: g.checking, stopped: !!g.stopped, held: g.held })).catch(() => {});
     const q = { kinds: ['memory-health' as const], limit: 5000, idsOnly: true as const };
     Promise.all([window.quorum.activityFeed({ ...q, tab: 'all' }), window.quorum.activityFeed({ ...q, tab: 'archived' })])
       .then(([a, z]) => setMarks({ unread: new Set(a.items.filter((r) => r.unread).map((r) => r.id)), archived: new Set(z.items.map((r) => r.id)) })).catch(() => {}); return window.quorum.vaultLinkHealth(fresh).then(setItems); }, []);
@@ -99,7 +106,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   // a new tab, filter, sort or search starts again at the first page with nothing picked
   useEffect(() => { setBulk(NO_SELECTION); setShownN(PAGE); }, [tab, review, cats, q, sort]);
 
-  const all = items ?? [];
+  const all = (items ?? []).filter((m) => !m.held);
   const left = leftOf(all);
   const counts = categoryCounts(all, left);
   // an issue being fixed keeps its row and place, loading, until its run ends; then the run lists under Accepted
@@ -118,7 +125,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   // All: the items to decide, then the fixes, newest first; a fixed item leaves its place without pushing the list.
   // Needs review keeps only the items
   const lively: Entry[] = [...open.map((issue) => ({ issue })), ...showing.map((run) => ({ run }))];
-  const entries: Entry[] = tab === 'archived'
+  const entries: Entry[] = tab === 'held' || gate.checking ? [] : tab === 'archived'
     ? [...shelved.map((run) => ({ run })), ...healthList(all, { tab: 'left', categories: cats, q, sort, left }).map((issue) => ({ issue }))]
     : review ? open.map((issue) => ({ issue })).filter((e) => tab !== 'unread' || unreadOf(e))
       : tab === 'unread' ? lively.filter(unreadOf) : lively;
@@ -127,7 +134,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const idOf = (e: Entry) => ('issue' in e ? e.issue.key : e.run.id);
   const openN = open.filter((i) => !liveRuns.has(i.key)).length + findings.filter((f) => !f.archived).length;
   // findings show under All, Needs review and Archived, and only when no link type filter is on
-  const findingsShown = !cats.length && tab !== 'unread' && findings.some((f) => f.archived === (tab === 'archived'));
+  const findingsShown = !cats.length && tab !== 'unread' && tab !== 'held' && !gate.checking && findings.some((f) => f.archived === (tab === 'archived'));
   // a fix writes the linking notes or the matched note, so it waits while a run is writing any of them
   const locked = (i: Issue) => [...i.sources, ...(i.candidate ? [i.candidate.rel] : [])].some(isLive);
 
@@ -245,6 +252,8 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
 
   const filtered = !!(q || cats.length);
   const empty = items === null ? 'Checking your notes…'
+    : gate.stopped ? STOPPED
+      : gate.checking ? 'Checking your memory, this takes a minute. Quorum checks every suggestion several times before it shows it.'
     : filtered ? 'No issues match these filters.'
       : tab === 'archived' ? 'Nothing archived. Fixes list here once they finish, and so do items you archive without fixing.'
         : tab === 'unread' ? 'Nothing unread.'
@@ -261,13 +270,14 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
         </span>
       </div>
       <p className="lh-sum">
-        {items === null ? 'Checking your notes…' : !counts.length ? 'Every link points at a note.' : countsLine(counts)}
+        {items === null ? 'Checking your notes…' : gate.stopped ? STOPPED : gate.checking ? 'Checking your memory, this takes a minute' : !counts.length ? 'Every link points at a note.' : countsLine(counts)}
+        {!gate.checking && gate.held.length > 0 && <span>{gate.held.length} {gate.held.length === 1 ? 'suggestion' : 'suggestions'} not shown yet. Quorum shows a suggestion once it is sure enough of it.</span>}
         {done && <span className="lh-done">{done}</span>}
       </p>
       <div className="nf-bar">
-        <Segmented kind="tabs" label="Show" value={tab} onChange={(id) => { setTab(id); if (id === 'archived') setReview(false); }}
-          options={([['all', 'All'], ['unread', 'Unread'], ['archived', 'Archived']] as [Tab, string][]).map(([id, label]) => ({ id, label: <>{label}{id === 'unread' && unreadN ? <span className="nf-count">{unreadN}</span> : null}</> }))} />
-        <button className={`nf-toggle${review ? ' on' : ''}`} aria-pressed={review} onClick={() => { setReview((r) => !r); if (tab === 'archived') setTab('all'); }}>
+        <Segmented kind="tabs" label="Show" value={tab} onChange={(id) => { setTab(id); if (id === 'archived' || id === 'held') setReview(false); }}
+          options={([['all', 'All'], ['unread', 'Unread'], ['archived', 'Archived'], ...(gate.held.length || tab === 'held' ? [['held', 'Not shown yet']] : [])] as [Tab, string][]).map(([id, label]) => ({ id, label: <>{label}{id === 'unread' && unreadN ? <span className="nf-count">{unreadN}</span> : id === 'held' && gate.held.length ? <span className="nf-count">{gate.held.length}</span> : null}</> }))} />
+        <button className={`nf-toggle${review ? ' on' : ''}`} aria-pressed={review} onClick={() => { setReview((r) => !r); if (tab === 'archived' || tab === 'held') setTab('all'); }}>
           Needs review{openN ? <span className="nf-count review">{openN}</span> : null}
         </button>
         <span className="nf-fill" />
@@ -297,6 +307,8 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
           </span>
         </div>
       )}
+      {/* long agent work on the memory (the first check, a full sweep, a batch, drafting), the same banner as on Home */}
+      <AgentActivityBanner />
       {(() => {
         const last = runs.filter((r) => r.batch).sort((a, b) => b.queuedAt - a.queuedAt)[0]?.batch;
         if (!last || last === hiddenBatch) return null;
@@ -308,7 +320,19 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
       <div className="nf-list">{pageEntries.map((e) => ('issue' in e ? row(e.issue) : <RunRow key={e.run.id} run={e.run} unread={tab !== 'archived' && unreadOf(e)} picked={picked.has(e.run.id)} onPick={() => toggle(e.run.id)} />))}</div>
       {entries.length > pageEntries.length && <button className="act-pill nf-more-btn" onClick={() => { setShownN(pageEntries.length + PAGE); setBulk(dropAcross); }}>Show more</button>}
       {findingsShown && <MemoryFindings findings={findings} drafts={drafts} archived={tab === 'archived'} q={q} unread={marks.unread} onArchive={archiveFindings} onApprove={approveFinding} onRead={markRead} />}
-      {!entries.length && !findingsShown && <div className="nf-empty"><p>{empty}</p></div>}
+      {tab === 'held' && !gate.checking && gate.held.length > 0 && (
+        <div className="set-card mr-rules" aria-label="Not shown yet">
+          {gate.held.map((h) => (
+            <div key={h.id} className="set-line mr-rule">
+              <span className="mr-name"><strong>{h.title}</strong><span className="muted">{h.line}</span><span className="muted">{h.why}</span></span>
+              {h.bucket === 'check' && <span className="mr-counts"><span className="mr-count" data-tip="It waits unticked in Review everything">Check these first</span></span>}
+              {/* picked by id, a held item keeps its verdict and can run (main.js gatedItems) */}
+              <button className="act-pill" disabled={busy} aria-label={`Approve ${h.title}`} data-tip="Plan its fix, then choose whether it runs" onClick={() => setPlan({ ids: [h.id], everything: false })}>Approve</button>
+            </div>
+          ))}
+        </div>
+      )}
+      {!entries.length && !findingsShown && !(tab === 'held' && gate.held.length > 0) && <div className="nf-empty"><p>{tab === 'held' && !gate.checking ? 'Every suggestion Quorum checked is in Needs review.' : empty}</p></div>}
       {plan && <BulkPlan ids={plan.ids} everything={plan.everything} onClose={() => setPlan(null)} onApplied={() => { clear(); load(); onChanged(); window.dispatchEvent(new Event(CHANGED)); }} />}
     </div>
   );
@@ -418,25 +442,19 @@ function BatchBanner({ runs, error, onDismiss }: { runs: FixRun[]; error?: strin
   const finished = ok + bad;
   const now = items.find((x) => x.run.status === 'running');
   const live = finished < items.length;
-  const at = Math.min(...items.map((x) => x.run.queuedAt));
-  const [tick, setTick] = useState(() => Date.now());
-  useEffect(() => { if (!live) return; const t = window.setInterval(() => setTick(Date.now()), 500); return () => window.clearInterval(t); }, [live]);
-  const elapsed = (live ? tick : Math.max(...items.map((x) => x.run.endedAt ?? 0))) - at;
   const text = live
     ? `Fixing ${finished + 1} of ${items.length}${now ? `: “${now.title}”${now.run.steps.length ? `, ${now.run.steps[now.run.steps.length - 1].label.toLowerCase()}` : ''}` : ''}`
     : `Fixed ${ok} of ${items.length}${bad ? `. ${bad} could not be fixed` : ''}`;
   return (
-    <div className={`run-banner mh-batch ${live ? 'live' : bad && !ok ? 'error' : 'success'}`} role="status" aria-live="polite">
-      <div className="run-head">
-        <span className="run-icon" aria-hidden="true">{live ? <i className="run-spin" /> : bad && !ok ? <IconClose width={17} height={17} /> : <IconCheck width={18} height={18} />}</span>
-        <span className={`run-text${live ? ' shimmer' : ''}`} data-tip={text}>{text}</span>
-        <span className="run-time">{took(Math.max(0, elapsed))}</span>
+    <WorkBanner
+      state={live ? 'live' : bad && !ok ? 'error' : 'success'} text={text} startedAt={Math.min(...items.map((x) => x.run.queuedAt))} endedAt={Math.max(...items.map((x) => x.run.endedAt ?? 0))}
+      progress={finished / items.length}
+      note={live ? 'This can take a few minutes. You can leave this page; Quorum keeps fixing in the background and each item updates as it finishes.' : error}
+      actions={<>
         <button className={`icon-btn conn-fold${open ? ' open' : ''}`} aria-expanded={open} aria-label={open ? 'Hide items' : 'Show items'} onClick={() => setOpen((o) => !o)}><IconChevron width={14} height={14} /></button>
         {!live && <button className="act-pill run-dismiss" onClick={onDismiss}>Dismiss</button>}
-      </div>
-      <div className="mh-batch-bar" aria-hidden="true"><i style={{ width: `${(finished / items.length) * 100}%` }} /></div>
-      {live && <p className="mh-batch-note">This can take a few minutes. You can leave this page; Quorum keeps fixing in the background and each item updates as it finishes.</p>}
-      {!live && error && <p className="mh-batch-note">{error}</p>}
+      </>}
+    >
       <div className={`fold-anim${open ? ' open' : ''}`}>
         <div className="fold-inner">
           <ol className="run-steps mh-batch-list">
@@ -447,6 +465,6 @@ function BatchBanner({ runs, error, onDismiss }: { runs: FixRun[]; error?: strin
           </ol>
         </div>
       </div>
-    </div>
+    </WorkBanner>
   );
 }
