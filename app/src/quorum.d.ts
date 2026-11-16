@@ -266,9 +266,11 @@ export type NoteViews = { total: number; human: number; agent: number; tokens: n
 export type NoteActivity = { seenAt: string | null; reviewedAt: string | null; agentWritten: boolean; folder: string; filedBefore: boolean; on: boolean; pending: boolean; running: boolean; abs: string; rel: string; cluster: string | null; events: { at: string; kind: string; text: string; files?: { rel: string; abs: string; label: string }[] }[] };
 // the Notifications view (activityFeed.js): one row per event on a note or memory, the review items, and the bell's dot
 export type FeedKind = 'note-written' | 'note-updated' | 'filed' | 'referenced' | 'memory-created' | 'memory-updated' | 'imported' | 'guardrail' | 'you';
-export type FeedTab = 'review' | 'unread' | 'all';
-export type FeedRow = { id: string; at: number; kind: FeedKind; who: 'agent' | 'you'; text: string; target: { kind: 'note' | 'memory' | 'guardrail'; abs: string; rel: string; label: string; gone?: boolean }; files: { rel: string; abs: string; label: string }[]; unread: boolean; review?: { kind: 'note' | 'memory'; count?: number } };
-export type FeedQuery = { tab?: FeedTab; kinds?: FeedKind[]; q?: string; offset?: number; limit?: number };
+export type FeedTab = 'all' | 'unread';
+export type FeedSort = 'unread' | 'recent' | 'az';
+export type FeedSummary = { line: string; sub: string | null; ask?: { question: string; suggest: 'approve' | 'reject'; why: string } };
+export type FeedRow = { id: string; at: number; kind: FeedKind; event: string; who: 'agent' | 'you'; target: { kind: 'note' | 'memory' | 'guardrail'; abs: string; rel: string; title: string; gone?: boolean }; files: { rel: string; abs: string; label: string; title?: string }[]; unread: boolean; backfill: boolean; review?: { kind: 'note' | 'memory'; count?: number }; summary: FeedSummary; details: [string, string][] };
+export type FeedQuery = { tab?: FeedTab; review?: boolean; kinds?: FeedKind[]; q?: string; sort?: FeedSort; offset?: number; limit?: number };
 export type FeedPage = { items: FeedRow[]; total: number; more: boolean; counts: { review: number; unread: number; all: number }; dot: boolean };
 export type NotificationPrefs = { noteUpdates?: boolean; memoryChanges?: boolean; reviews?: boolean; guardrails?: boolean };
 export type NoteLinkTarget = { rel?: string; anchor: string | null; missing?: boolean; id?: string };
@@ -419,7 +421,7 @@ declare global {
       onNoteLink?(fn: (t: NoteLinkTarget) => void): () => void;
       noteReviewed(file: string): Promise<boolean>;
       activityFeed(query: FeedQuery): Promise<FeedPage>;
-      activityRead(files: string[]): Promise<number>;
+      activityMark(rows: { id: string; abs: string }[], unread?: boolean): Promise<number>;
       activityReview(items: { kind: 'note' | 'memory'; abs: string }[], verdict: 'approve' | 'reject'): Promise<{ done: string[]; failed: { abs: string; error: string }[] }>;
       vaultSearch(q: string, limit?: number): Promise<SearchHit[]>;
       vaultBacklinks(rel: string): Promise<Backlink[]>;

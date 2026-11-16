@@ -1,11 +1,16 @@
-// The Notifications view's list: every event Quorum's agents and the person left on notes and memories, in one feed.
+// The Notifications view's list: every event Quorum's agents and the person left on notes and memories, and every
+// guardrail block, in one feed.
 //
-// The main process gathers the raw records (each note's activity log and upkeep runs, each memory's versions and
-// updates, and when each file was last seen or reviewed); this module turns them into rows, the review items, the
-// unread state and the counts for the bell, then filters and pages them for the three tabs. It reads no files, so
-// the rules are tested on their own (test/activity-feed.test.js).
+// The main process gathers the raw records (each note's activity log and upkeep runs, the meeting notes imported from
+// connected apps, each memory's versions and updates, the guardrail denials, and the read marks); this module turns
+// them into rows with their summary (notificationSummary.js), the review items and the unread state, then filters,
+// sorts and pages them. It reads no files, so the rules are tested on their own (test/activity-feed.test.js).
+//
+// History: the rows that come from records kept before Notifications started (older versions, upkeep runs and
+// imports) are marked backfill and start out read, so the first opening lists the past without lighting the bell.
+import { detailsOf, summaryOf, titleOf } from './notificationSummary.js';
 
-// the event types the filter offers, in the order it shows them
+// the event types the Type filter offers, in the order it shows them
 export const FEED_KINDS = [
   ['note-written', 'Wrote a note'],
   ['note-updated', 'Updated a note'],
@@ -17,20 +22,18 @@ export const FEED_KINDS = [
   ['guardrail', 'Guardrail blocked'],
   ['you', 'Your changes'],
 ];
-export const FEED_TABS = ['review', 'unread', 'all'];
+export const FEED_TABS = ['all', 'unread'];
+// Urgency is a future sort: it needs a score per row (how old a waiting review is, how large a change, how sensitive
+// the file a guard protected) before it can order the list
+export const FEED_SORTS = ['unread', 'recent', 'az'];
 
-// a file's name as the person reads it: the index, a daily note, or its words in title case
-export function labelOf(rel) {
-  const base = String(rel).split('/').pop().replace(/\.md$/, '');
-  if (base === 'index') return 'Index';
-  if (/^\d{4}-\d{2}-\d{2}$/.test(base)) return `Daily note ${base}`;
-  return base.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-}
+// a file's name as the person reads it, for the places that only have a path
+export const labelOf = (rel) => titleOf({ rel });
 
 const time = (v) => (typeof v === 'number' ? v : new Date(v ?? 0).getTime() || 0);
-// a note's log says who did each step in its first word; the person's own steps start with You
+const youText = (t) => String(t ?? '').startsWith('You');
 const noteKind = (e) => {
-  if (String(e.text ?? '').startsWith('You')) return 'you';
+  if (youText(e.text)) return 'you';
   if (e.kind === 'filed') return 'filed';
   if (e.kind === 'referenced') return 'referenced';
   return 'note-updated';
@@ -40,94 +43,116 @@ const memoryKind = (v) => {
   if (v.who === 'import') return 'imported';
   return v.created ? 'memory-created' : 'memory-updated';
 };
-const memoryText = (v, kind) => {
-  const why = v.reason ? `: ${v.reason}` : '';
-  if (kind === 'you') return `You ${v.created ? 'created it' : v.removed ? 'deleted it' : 'edited it'}${why}`;
-  if (kind === 'imported') return `Imported${why}`;
-  return `Agent ${v.created ? 'created it' : v.removed ? 'removed it' : 'updated it'}${why}`;
-};
-// which Settings > Notifications switch covers a row: reviews for the review items, guardrails for what a guard
-// blocked, memory changes for memory pages, note updates for everything on notes
+// which Settings > Notifications switch covers a row
 const prefOf = (row) => (row.review ? 'reviews' : row.kind === 'guardrail' ? 'guardrails' : row.target.kind === 'memory' ? 'memoryChanges' : 'noteUpdates');
 const prefOn = (prefs, key) => prefs?.[key] !== false;
 
-// every row from the raw records, newest first. notes: { abs, rel, label?, events, seenAt, reviewedAt, rejectedAt,
-// agentWritten, writtenAt }. memories: { abs, rel, label?, note?, gone?, versions, updates, seenAt }; note marks a
-// memory that is also a saved note, so it opens on the note page. guard: { file, seenAt, denials: { t, tool, path,
-// reason }[] } from the guardrail denial log; its rows open the Guardrails page and are read together
-export function feedRows({ notes = [], memories = [], guard = null }) {
+// every row from the raw records, newest first.
+//   notes:    { abs, rel, title?, events, runs, seenAt, reviewedAt, rejectedAt, agentWritten, writtenAt, writtenFrom,
+//               imported?: { at, source, sourceName, date } }
+//   memories: { abs, rel, title?, note?, gone?, versions, updates, seenAt }
+//   denials:  { id, t, path, tool, surface, reason, guard, guardLabel }[]
+//   state:    { since, read: { [id]: at }, unread: { [id]: at } }; since is when Notifications started keeping its
+//             own marks, read and unread are the person's marks on single rows
+export function feedRows({ notes = [], memories = [], denials = [], state = {}, guardFile = null }) {
   const rows = [];
+  const since = time(state.since);
+  const read = state.read ?? {};
+  const unreadMark = state.unread ?? {};
+  // a row is unread when the agent made it after the file was last seen, it is not from before Notifications began,
+  // and the person has not marked it; a mark on the row wins either way
+  const push = (row, seen) => {
+    row.backfill = !!since && row.at < since && !row.review;
+    const fresh = row.who !== 'you' && row.at > time(seen) && !row.backfill;
+    row.unread = unreadMark[row.id] ? true : read[row.id] ? false : fresh;
+    rows.push(row);
+  };
   for (const n of notes) {
-    const target = { kind: 'note', abs: n.abs, rel: n.rel, label: n.label ?? labelOf(n.rel) };
-    const seen = time(n.seenAt);
-    (n.events ?? []).forEach((e, i) => {
+    const target = { kind: 'note', abs: n.abs, rel: n.rel, title: n.title ?? titleOf({ rel: n.rel }) };
+    const events = n.events ?? [];
+    events.forEach((e) => {
       const kind = noteKind(e);
       const at = time(e.at);
-      rows.push({ id: `n:${n.abs}:${at}:${i}`, at, kind, who: kind === 'you' ? 'you' : 'agent', text: e.text, target, files: e.files ?? [], unread: kind !== 'you' && at > seen });
+      push({ id: `n:${n.abs}:${at}:${e.kind}`, at, kind, event: e.kind, who: kind === 'you' ? 'you' : 'agent', target, files: [], detail: { text: e.text } }, n.seenAt);
     });
+    for (const r of n.runs ?? []) {
+      const at = time(r.at);
+      push({ id: `t:${n.rel}:${at}`, at, kind: 'filed', event: 'filed', who: 'agent', target, files: r.files ?? [], detail: { who: 'keeper', skipped: r.skipped ?? null } }, n.seenAt);
+    }
+    if (n.imported) {
+      const at = time(n.imported.at);
+      push({ id: `i:${n.abs}`, at, kind: 'imported', event: 'imported-note', who: 'agent', target, files: [], detail: { who: 'import', source: n.imported.source, sourceName: n.imported.sourceName, date: n.imported.date ?? null } }, n.seenAt);
+    }
     if (n.agentWritten && !n.reviewedAt && !n.rejectedAt) {
       const at = time(n.writtenAt);
-      rows.push({ id: `r:note:${n.abs}`, at, kind: 'note-written', who: 'agent', text: 'Quorum wrote this note. Review it before you rely on it or share it.', target, files: [], unread: at > seen, review: { kind: 'note' } });
+      const editedAfter = events.some((e) => e.kind === 'edited' && time(e.at) > at);
+      push({ id: `r:note:${n.abs}`, at, kind: 'note-written', event: 'review', who: 'agent', target, files: [], detail: { writtenFrom: n.writtenFrom ?? null, editedAfter }, review: { kind: 'note' } }, n.seenAt);
     }
   }
   for (const m of memories) {
-    const target = { kind: m.note ? 'note' : 'memory', abs: m.abs, rel: m.rel, label: m.label ?? labelOf(m.rel), gone: !!m.gone };
-    const seen = time(m.seenAt);
+    const target = { kind: m.note ? 'note' : 'memory', abs: m.abs, rel: m.rel, title: m.title ?? titleOf({ rel: m.rel }), gone: !!m.gone };
+    const updates = new Map((m.updates ?? []).map((u) => [u.id, u]));
     for (const v of m.versions ?? []) {
       const kind = memoryKind(v);
-      const at = time(v.at);
-      rows.push({ id: `m:${m.rel}:${v.id}`, at, kind, who: kind === 'you' ? 'you' : 'agent', text: memoryText(v, kind), target, files: [], unread: kind !== 'you' && at > seen });
+      const u = updates.get(v.id);
+      push({
+        id: `m:${m.rel}:${v.id}`, at: time(v.at), kind, event: 'version', who: kind === 'you' ? 'you' : 'agent', target, files: [],
+        detail: { who: v.who, reason: v.reason || null, created: !!v.created, removed: !!v.removed, changes: u?.changes ?? null, approved: u ? !!u.approved : null, auto: !!u?.auto },
+      }, m.seenAt);
     }
     // the updates waiting for approval make one review item per file: approving or rejecting acts on all of them
     const waiting = (m.updates ?? []).filter((u) => !u.approved);
     if (waiting.length && !m.gone) {
       const at = Math.max(...waiting.map((u) => time(u.at)));
-      const blocks = waiting.reduce((s, u) => s + (u.changes ?? 0), 0);
-      const n = waiting.length;
-      rows.push({
-        id: `r:memory:${m.rel}`, at, kind: 'memory-updated', who: 'agent', target, files: [], unread: at > seen,
-        text: `Agent made ${n} ${n === 1 ? 'update' : 'updates'} to this memory (${blocks} changed ${blocks === 1 ? 'block' : 'blocks'}). They wait for your approval.`,
-        review: { kind: 'memory', count: n },
-      });
+      const last = waiting.reduce((a, u) => (time(u.at) > time(a.at) ? u : a), waiting[0]);
+      push({
+        id: `r:memory:${m.rel}`, at, kind: 'memory-updated', event: 'review', who: 'agent', target, files: [],
+        detail: { changes: waiting.reduce((s, u) => s + (u.changes ?? 0), 0), reason: last.reason || null }, review: { kind: 'memory', count: waiting.length },
+      }, m.seenAt);
     }
   }
-  if (guard) {
-    const target = { kind: 'guardrail', abs: guard.file, rel: 'Guardrails', label: 'Guardrails' };
-    const seen = time(guard.seenAt);
-    (guard.denials ?? []).forEach((d, i) => {
-      const at = time(d.t);
-      const what = String(d.path ?? '').replace(/^\/Users\/[^/]+/, '~') || d.tool || 'a request';
-      const why = String(d.reason ?? '').replace(/^Quorum read guard: /, '');
-      rows.push({ id: `g:${at}:${i}`, at, kind: 'guardrail', who: 'agent', text: `Guardrail blocked ${what}${why ? `: ${why}` : ''}`, target, files: [], unread: at > seen });
-    });
+  const guardTarget = { kind: 'guardrail', abs: guardFile ?? '', rel: 'Guardrails', title: 'Guardrails' };
+  for (const g of denials) {
+    const at = time(g.t);
+    push({ id: `g:${g.id ?? at}`, at, kind: 'guardrail', event: 'denial', who: 'agent', target: guardTarget, files: [], detail: { path: g.path ?? '', tool: g.tool ?? '', surface: g.surface ?? null, reason: g.reason ?? '', guard: g.guard ?? null, guardLabel: g.guardLabel ?? null } }, null);
   }
+  for (const r of rows) r.summary = summaryOf(r);
   return rows.sort((a, b) => b.at - a.at || a.id.localeCompare(b.id));
 }
 
-const matches = (row, q) => {
-  if (!q) return true;
-  const hay = `${row.text} ${row.target.label} ${row.target.rel} ${row.files.map((f) => f.label).join(' ')}`.toLowerCase();
-  return q.toLowerCase().split(/\s+/).filter(Boolean).every((w) => hay.includes(w));
+const matches = (row, words) => {
+  if (!words.length) return true;
+  const hay = `${row.summary.line} ${row.summary.sub ?? ''} ${row.target.title} ${row.target.rel} ${row.files.map((f) => f.title ?? f.label).join(' ')} ${row.detail?.path ?? ''}`.toLowerCase();
+  return words.every((w) => hay.includes(w));
+};
+const SORTS = {
+  // what is new first, then the rest, each newest first
+  unread: (a, b) => Number(b.unread) - Number(a.unread) || b.at - a.at,
+  recent: (a, b) => b.at - a.at,
+  az: (a, b) => a.target.title.localeCompare(b.target.title, undefined, { sensitivity: 'base' }) || b.at - a.at,
 };
 
-// one page of a tab. Needs review lists every review item, whatever the switches say; Unread and All leave out the
-// rows whose switch is off. kinds narrows to event types, q to rows whose words match. counts and dot are for the bell
-// and the tab labels, and use the switches the same way
-export function feedPage(rows, { tab = 'review', kinds = [], q = '', offset = 0, limit = 50, prefs = {} } = {}) {
+// one page of a tab. All and Unread leave out the rows whose switch is off; the Needs review filter keeps only the
+// items waiting for a decision, and lists them all whatever the switches say. kinds narrows to event types, q to rows
+// whose words match. counts and dot are for the bell and the labels, and use the switches the same way
+export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = '', sort = 'unread', offset = 0, limit = 50, prefs = {}, locale } = {}) {
   const shown = (r) => prefOn(prefs, prefOf(r));
-  const review = rows.filter((r) => r.review);
   const unread = rows.filter((r) => r.unread && shown(r));
+  const reviews = rows.filter((r) => r.review);
   const all = rows.filter(shown);
-  const base = tab === 'review' ? review : tab === 'unread' ? unread : all;
+  let list = tab === 'unread' ? unread : all;
+  if (review) list = (tab === 'unread' ? reviews.filter((r) => r.unread) : reviews);
   const kindSet = new Set(kinds);
-  const list = base.filter((r) => (!kindSet.size || kindSet.has(r.kind)) && matches(r, String(q ?? '').trim()));
+  const words = String(q ?? '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  list = list.filter((r) => (!kindSet.size || kindSet.has(r.kind)) && matches(r, words));
+  list = [...list].sort(SORTS[sort] ?? SORTS.unread);
   const start = Math.max(0, offset | 0);
   const end = start + Math.max(0, limit | 0);
   return {
-    items: list.slice(start, end),
+    items: list.slice(start, end).map((r) => ({ ...r, details: detailsOf(r, { locale }) })),
     total: list.length,
     more: end < list.length,
-    counts: { review: review.length, unread: unread.length, all: all.length },
-    dot: unread.length > 0 || review.some(shown),
+    counts: { all: all.length, unread: unread.length, review: reviews.length },
+    dot: unread.length > 0 || reviews.some(shown),
   };
 }

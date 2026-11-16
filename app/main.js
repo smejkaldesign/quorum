@@ -58,6 +58,7 @@ import { createGuardrails } from './guardrails.js';
 import { createPlatformCache, eventRef, matchPlatforms } from './meetingPlatforms.js';
 import { calendarWindow, normalizeDays } from './calendarWindow.js';
 import { feedPage, feedRows, labelOf } from './activityFeed.js';
+import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
 import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, relatedOf, seriesKey, seriesOf } from './meetingBrief.js';
 import { collectExport, exportFileName, writeZip } from './exportNotes.js';
@@ -2016,42 +2017,92 @@ function agentWrote(abs) {
   return fm.imported_by === 'agent' || ((fm.source === 'quorum' || fm.source === 'quorum-dev') && (fm.type !== 'note' || recorded));
 }
 
-// The Notifications view: the activity of every note (its log and upkeep runs) and every memory (its versions and the
-// updates waiting for approval) in one feed, paged and filtered in activityFeed.js. The switches in Settings >
-// Notifications decide what counts toward the bell and what Unread and All show
+// The Notifications view: the activity of every note (its log and upkeep runs), the meeting notes imported from
+// connected apps, every memory (its versions and the updates waiting for approval) and every guardrail block, in one
+// feed, paged and filtered in activityFeed.js. The switches in Settings > Notifications decide what counts toward the
+// bell and what Unread and All show
+const feedStateFile = path.join(DATA_DIR, 'notifications-state.json');
+let feedStateCache = null;
+// when Notifications started keeping its own marks, and the read and unread marks on single rows. The start is set
+// the first time the list is built, so everything older counts as history and starts out read
+const feedState = () => {
+  if (!feedStateCache) { try { feedStateCache = JSON.parse(readFileSync(feedStateFile, 'utf8')); } catch { feedStateCache = {}; } }
+  if (!feedStateCache.since) { feedStateCache.since = new Date().toISOString(); feedStateSave(); }
+  feedStateCache.read ??= {};
+  feedStateCache.unread ??= {};
+  return feedStateCache;
+};
+// the marks kept: the newest 5000 of each, so the file stays small
+const feedStateSave = () => {
+  const st = feedStateCache;
+  for (const k of ['read', 'unread']) {
+    const e = Object.entries(st[k] ?? {});
+    if (e.length > 5000) st[k] = Object.fromEntries(e.sort((a, b) => String(b[1]).localeCompare(String(a[1]))).slice(0, 5000));
+  }
+  try { writeFileSync(feedStateFile, JSON.stringify(st)); } catch (e) { log('notifications state', e?.message); }
+};
+// a file's title for the list: its frontmatter title, else its first heading, else its name without date and id.
+// Kept per file until the file changes
+const titleCache = new Map();
+function fileTitle(abs, rel) {
+  let st;
+  try { st = statSync(abs); } catch { return titleOf({ rel }); }
+  const kept = titleCache.get(abs);
+  if (kept && kept.mtimeMs === st.mtimeMs) return kept.title;
+  let head = '';
+  try { const buf = Buffer.alloc(Math.min(st.size, 4096)); const fd = openSync(abs, 'r'); try { readSync(fd, buf, 0, buf.length, 0); } finally { closeSync(fd); } head = buf.toString('utf8'); } catch { /* unreadable */ }
+  let fm = {};
+  try { fm = readFrontmatter(head); } catch { /* no frontmatter */ }
+  const h1 = head.replace(/^---\n[\s\S]*?\n---\n/, '').match(/^#\s+(.+)$/m)?.[1];
+  const title = titleOf({ title: typeof fm.title === 'string' ? fm.title : '', h1, rel });
+  titleCache.set(abs, { mtimeMs: st.mtimeMs, title });
+  return title;
+}
+const sourceName = (id) => String(id).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 function feedSources() {
   const b = brain();
-  if (!b) return { notes: [], memories: [] };
+  const state = feedState();
+  const denials = guardrails.denials({ limit: 200 });
+  if (!b) return { notes: [], memories: [], denials, state, guardFile: DENIAL_LOG };
   const toRel = (abs) => path.relative(b.vault, abs).split(path.sep).join('/');
   const trails = keeper.trails();
   const logged = activityAll();
   const seen = seenAll();
-  const noteAbs = new Set([...Object.keys(logged), ...Object.keys(trails).map((rel) => path.join(b.vault, rel))].map((f) => meetingFile(f)).filter(Boolean));
+  // the meeting notes a connected app brought in (Granola and the like), dated by when the file was made
+  const imports = new Map();
+  for (const m of meetingIndex()) {
+    if (!m.source || /^quorum/.test(m.source) || m.written) continue;
+    let at;
+    try { const st = statSync(m.file); at = st.birthtimeMs || st.mtimeMs; } catch { continue; }
+    imports.set(path.resolve(m.file), { at, source: m.source, sourceName: sourceName(m.source), date: m.date || null });
+  }
+  const noteAbs = new Set([...Object.keys(logged), ...imports.keys(), ...Object.keys(trails).map((rel) => path.join(b.vault, rel))].map((f) => meetingFile(f)).filter(Boolean));
+  const titled = (x) => ({ rel: x, abs: path.join(b.vault, x), label: fileTitle(path.join(b.vault, x), x), title: fileTitle(path.join(b.vault, x), x) });
   const notes = [...noteAbs].map((abs) => {
     const rel = toRel(abs);
     const own = logged[abs] ?? [];
-    const events = [...runEvents(b.vault, rel, trails[rel] ?? []), ...own];
+    const runs = (trails[rel] ?? []).map((r) => ({ at: r.at, skipped: r.skipped ?? null, files: r.files.filter((x) => x !== rel).map(titled) }));
     const s = seen[abs] ?? {};
     // when Quorum wrote it: its first logged step, else the file's own time
     let writtenAt = own.length ? own[own.length - 1].at : null;
     if (!writtenAt) { try { writtenAt = statSync(abs).mtimeMs; } catch { writtenAt = 0; } }
-    return { abs, rel, events, seenAt: s.seenAt ?? null, reviewedAt: s.reviewedAt ?? null, rejectedAt: s.rejectedAt ?? null, agentWritten: agentWrote(abs), writtenAt };
+    let fm = {};
+    try { fm = noteHead(abs); } catch { /* unreadable */ }
+    const writtenFrom = fm.imported_by === 'agent' ? 'import' : fm.recorded === true || fm.recorded === 'true' ? 'recording' : null;
+    return { abs, rel, title: fileTitle(abs, rel), events: own, runs, imported: imports.get(abs) ?? null, seenAt: s.seenAt ?? null, reviewedAt: s.reviewedAt ?? null, rejectedAt: s.rejectedAt ?? null, agentWritten: agentWrote(abs), writtenAt, writtenFrom };
   });
   const memories = Object.entries(memoryVersions.files(b.vault)).map(([rel, rec]) => {
     const abs = path.join(b.vault, rel);
-    return { abs, rel, note: !!meetingFile(abs), gone: !existsSync(abs), versions: rec.versions ?? [], updates: rec.updates ?? [], seenAt: seen[abs]?.seenAt ?? null };
+    return { abs, rel, title: fileTitle(abs, rel), note: !!meetingFile(abs), gone: !existsSync(abs), versions: rec.versions ?? [], updates: rec.updates ?? [], seenAt: seen[abs]?.seenAt ?? null };
   });
-  return { notes, memories, guard: { file: DENIAL_LOG, seenAt: seen[DENIAL_LOG]?.seenAt ?? null, denials: recentDenials(200) } };
-}
-// the newest entries of the guardrail denial log, read only; a line that does not parse is left out
-function recentDenials(n) {
-  let text;
-  try { text = readFileSync(DENIAL_LOG, 'utf8'); } catch { return []; }
-  return text.trim().split('\n').slice(-n).flatMap((l) => { try { const d = JSON.parse(l); return d && d.t ? [d] : []; } catch { return []; } });
+  return { notes, memories, denials, state, guardFile: DENIAL_LOG };
 }
 ipcMain.handle('activity-feed', (_e, query) => {
   const q = query ?? {};
-  return feedPage(feedRows(feedSources()), { tab: q.tab, kinds: Array.isArray(q.kinds) ? q.kinds.map(String) : [], q: String(q.q ?? ''), offset: Number(q.offset) || 0, limit: Number(q.limit ?? 50), prefs: settings.notifications ?? {} });
+  return feedPage(feedRows(feedSources()), {
+    tab: q.tab === 'unread' ? 'unread' : 'all', review: q.review === true, kinds: Array.isArray(q.kinds) ? q.kinds.map(String) : [], q: String(q.q ?? ''),
+    sort: String(q.sort ?? 'unread'), offset: Number(q.offset) || 0, limit: Number(q.limit ?? 50), prefs: settings.notifications ?? {},
+  });
 });
 // a file in the feed, by its path: a saved note, or a note inside the vault
 const feedFile = (abs) => {
@@ -2061,20 +2112,22 @@ const feedFile = (abs) => {
   if (b && f.startsWith(b.vault + path.sep)) return { abs: f, rel: path.relative(b.vault, f).split(path.sep).join('/') };
   return null;
 };
-// rows marked read: each file's Notifications count as opened now, and a memory also counts as opened in the Memory tab
-ipcMain.handle('activity-read', (_e, files) => {
+// rows marked read or unread, one at a time: opening a row, the row's menu, or Mark read on a selection. A memory
+// marked read also counts as opened in the Memory tab, which clears its dot there
+ipcMain.handle('activity-mark', (_e, rows, unread) => {
   const b = brain();
+  const st = feedState();
   const at = new Date().toISOString();
   let n = 0;
-  for (const f of new Set(Array.isArray(files) ? files : [])) {
-    // the guardrail rows are read together, by the denial log's own mark
-    if (f === DENIAL_LOG) { seenSet(DENIAL_LOG, { seenAt: at }); n++; continue; }
-    const t = feedFile(f);
-    if (!t) continue;
-    seenSet(t.abs, { seenAt: at });
-    if (b && t.rel) memoryVersions.opened(b.vault, t.rel);
+  for (const r of Array.isArray(rows) ? rows : []) {
+    const id = String(r?.id ?? '');
+    if (!id || id.length > 2000) continue;
+    if (unread === true) { st.unread[id] = at; delete st.read[id]; } else { st.read[id] = at; delete st.unread[id]; }
+    const t = unread === true ? null : feedFile(r?.abs);
+    if (b && t?.rel && !meetingFile(t.abs)) memoryVersions.opened(b.vault, t.rel);
     n++;
   }
+  feedStateSave();
   return n;
 });
 // the review items approved or disapproved. A memory's waiting updates are approved, or rejected so the file gets back
