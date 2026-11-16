@@ -58,12 +58,13 @@ const prefOn = (prefs, key) => prefs?.[key] !== false;
 //   memories: { abs, rel, title?, note?, gone?, versions, updates, seenAt }
 //   denials:  { id, t, path, tool, surface, reason, guard, guardLabel }[]
 //   junk:     { abs, rel, title, reason, at }[], the notes upkeep found with no recording and no real words
+//   findings: the review rules' findings (memorySweep.js), each with abs and archived
 //   links:    the open Memory health issues (vindex.js linkHealth, minus the ones declined), each with abs, the path
 //             of its first linking note
 //   pastFixes: the fixes that ran and that the current rules flag (fixRecheck.js): { run, res, plan, abs }
 //   state:    { since, read: { [id]: at }, unread: { [id]: at } }; since is when Notifications started keeping its
 //             own marks, read and unread are the person's marks on single rows
-export function feedRows({ notes = [], memories = [], denials = [], junk = [], links = [], runs = [], pastFixes = [], state = {}, guardFile = null }) {
+export function feedRows({ notes = [], memories = [], denials = [], junk = [], links = [], runs = [], pastFixes = [], findings = [], state = {}, guardFile = null }) {
   const rows = [];
   const since = time(state.since);
   const read = state.read ?? {};
@@ -72,7 +73,7 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], l
   // and the person has not marked it; a mark on the row wins either way
   const push = (row, seen) => {
     // a Memory health issue older than Notifications starts out read too; it still waits in Needs review
-    row.backfill = !!since && row.at < since && (!row.review || row.review.kind === 'link');
+    row.backfill = (!!since && row.at < since && (!row.review || row.review.kind === 'link')) || (row.review?.kind === 'finding' && row.initial);
     const fresh = row.who !== 'you' && row.at > time(seen) && !row.backfill;
     row.unread = unreadMark[row.id] ? true : read[row.id] ? false : fresh;
     rows.push(row);
@@ -134,6 +135,16 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], l
       target: { kind: 'link', abs: m.abs ?? '', rel: i.path, title: i.target }, files: [],
       detail: { title: i.title, problem: i.problem, solution: i.solution, value: i.value, recommend: i.recommend, meta: issueMeta(i), category: i.category, links: i.links, notes: i.notes, folder: i.folder?.folder ?? null },
       review: { kind: 'link', key: i.key, ...(m.left ? { left: true } : {}) },
+    }, null);
+  }
+  // each finding of a review rule (rules/index.js) waits for a person: there is no automatic fix, so it opens on its note
+  // and Archive sets it aside. Findings from the first sweep of a vault start out read
+  for (const f of findings) {
+    push({
+      id: `r:find:${f.key}`, at: time(f.at), kind: 'memory-health', event: 'review', who: 'agent', initial: !!f.initial,
+      target: { kind: 'memory', abs: f.abs ?? '', rel: f.rel, title: f.title }, files: [],
+      detail: { title: f.title, problem: f.problem, solution: f.proposal, recommend: f.proposal, rule: f.rule, meta: [['Check', f.rule], ...(f.meta ?? []), ...(f.evidence ?? []).map((e, i) => [i ? `Evidence ${i + 1}` : 'Evidence', e])] },
+      review: { kind: 'finding', key: f.key, ...(f.archived ? { left: true } : {}) },
     }, null);
   }
   // each fix run Quorum carried out on an approved Memory health issue: its row shows it working, then its outcome
