@@ -4,6 +4,9 @@
   --card-2: #323234;
   --line: rgba(255, 255, 255, 0.08);
   --line-2: rgba(255, 255, 255, 0.14);
+  /* dividers: the normal one between sections (Home), and a faint one between rows of a list */
+  --divider: var(--line-2);
+  --divider-subtle: rgba(255, 255, 255, 0.05);
   --menu-bg: #1f1f21;
   --menu-line: rgba(255, 255, 255, 0.07);
   --menu-shadow: 0 16px 40px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.35);
@@ -442,7 +445,7 @@ html.popup-root, html.popup-root body { background: transparent; }
 .recipes { display: flex; gap: 18px; padding: 32px 22px 0; flex-wrap: wrap; justify-content: center; }
 .recipe { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 16px; }
 .recipe:hover { color: var(--text); }
-.hist-rule { border: 0; border-top: 1px solid var(--line-2); margin: 40px 0; }
+.hist-rule { border: 0; border-top: 1px solid var(--divider); margin: 40px 0; }
 /* the Next N days heading's line height and menu padding add about 4px above its text */
 .hist-rule + .up-inline { margin-top: -4px; }
 .hist-filters { display: flex; gap: 8px; margin-bottom: 32px; flex-wrap: wrap; }
@@ -2323,11 +2326,11 @@ input::placeholder, textarea::placeholder { font-style: italic; }
 .nf-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; }
 .nf-chip { height: 30px; padding: 0 12px; font-size: 13px; gap: 6px; }
 .nf-chip .filter-x { margin-right: -4px; }
-.nf-bulk { display: flex; align-items: center; gap: 12px; padding: 8px 10px 10px; border-bottom: 1px solid var(--line-2); font-size: 14px; }
+.nf-bulk { display: flex; align-items: center; gap: 12px; padding: 8px 10px 10px; border-bottom: 1px solid var(--divider); font-size: 14px; }
 .nf-bulk-actions { margin-left: auto; display: flex; gap: 6px; }
 .nf-check { flex: none; display: grid; place-items: center; width: 18px; height: 32px; cursor: pointer; }
 .nf-check input { margin: 0; cursor: pointer; }
-.nf-row + .nf-row { border-top: 1px solid var(--line-2); }
+.nf-row + .nf-row { border-top: 1px solid var(--divider-subtle); }
 .nf-who { flex: none; width: 32px; height: 32px; display: grid; place-items: center; }
 .nf-who img { border-radius: 8px; }
 .nf-you { width: 32px; height: 32px; border-radius: 50%; background: rgba(255, 255, 255, 0.1); color: var(--text); font-size: 10px; font-weight: 700; display: grid; place-items: center; }

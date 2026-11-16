@@ -10,6 +10,7 @@ All tokens live in the first `:root` block of `styles.css`. `:root[data-dev]` ov
 |---|---|---|
 | Surfaces | `--panel`, `--card`, `--card-2`, `--menu-bg`, `--container-bg`, `--container-tile` | Window, cards, menus, grouped settings containers and their tiles |
 | Lines | `--line`, `--line-2`, `--menu-line`, `--container-border`, `--line-hover` | Dividers, outlined controls, and the outlined button hover border |
+| Dividers | `--divider`, `--divider-subtle` | `--divider` between sections (Home) and under list headers; `--divider-subtle` between rows of a list (Notifications, Memory health) |
 | Text | `--text`, `--muted`, `--text-soft`, `--text-faint`, `--text-dim` | Primary text, secondary text, reading body copy, heading marks and placeholders, list markers and paths |
 | Hover | `--hover` | Background of a hovered row, menu item or icon button |
 | Brand | `--brand`, `--brand-rgb`, `--brand-soft`, `--brand-tint`, `--brand-grad-a`, `--brand-grad-b`, `--brand-deep`, `--brand-graph` | Primary actions, focus rings, selection |
