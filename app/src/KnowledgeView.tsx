@@ -3,7 +3,7 @@ import { HeadingLinks, slugsOf } from './HeadingLinks';
 import { MemoryBell, MemoryNotifications } from './MemoryNotifications';
 import { FolderApp } from './FolderApp';
 import { NoteMeta, type NoteMetaInfo } from './NoteMeta';
-import type { TreeSort, Brain, TreeItem, NoteViews, MemoryDots, MemoryReview, MemoryVersion, LiveRun, LiveState } from './quorum';
+import type { TreeSort, Brain, TreeItem, NoteViews, MemoryDots, MemoryReview, MemoryVersion, LiveRun, LiveState, MissingLink } from './quorum';
 import { LiveBanner, ReviewBanner, VersionBar, VersionList, when, type ReviewMode } from './MemoryUpdates';
 import { ConfirmModal } from './ConfirmModal';
 import { changeBlocks } from '../memoryReview.js';
@@ -210,6 +210,8 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     requestAnimationFrame(() => document.querySelector(`.mu-text [data-line="${line}"]`)?.scrollIntoView({ block: 'center', behavior: smooth ? 'smooth' : 'auto' }));
   };
   // the review is read before the note counts as opened, so a blue banner shows on the open that clears its dot
+  // counts note opens, so the issues of a note opened earlier never land on the one open now
+  const opening = useRef(0);
   const openNote = useCallback(async (rel: string) => {
     setMissing(null);
     setSelected(rel);
@@ -227,6 +229,13 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     setCursor(-1);
     setHighlight(lit);
     window.quorum.memoryOpened(rel);
+    // a note with open Memory health issues (a red dot in the tree) opens with the red banner on its first issue
+    const token = ++opening.current;
+    const [lines, items] = await Promise.all([window.quorum.vaultFileIssues(rel), window.quorum.vaultLinkHealth()]).catch((): [{ target: string; line: number }[], MissingLink[]] => [[], []]);
+    const found = fileIssues(lines, items, leftOf(items));
+    if (token !== opening.current || !found.length) return;
+    setIssueReview(found);
+    setCursor(0);
   }, []);
   const reloadOpen = async (rel: string) => {
     const [n, r] = await Promise.all([window.quorum.vaultNote(rel), window.quorum.memoryReview(rel).catch(() => null)]);
@@ -557,7 +566,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
                       mode={review ? mode : undefined} onMode={review ? setMode : undefined}
                       highlight={review ? highlight : undefined} onHighlight={review ? () => setHighlight((h) => !h) : undefined}
                       nav={mode === 'after' ? navOver(issueReview.map((x) => x.line)) : undefined}
-                      onAccept={() => decideIssue(true)} onReject={() => decideIssue(false)} acceptTip="Accept recommendation" rejectTip="Reject, leave the link as it is"
+                      onAccept={() => decideIssue(true)} onReject={() => decideIssue(false)} acceptTip="Approve the recommendation" rejectTip="Decline, leave the link as it is"
                       onClose={() => { setIssueReview(null); setCursor(-1); }} />
                   : review && <ReviewBanner tone={review.dot} locked={locked}
                       label={`${review.count} ${review.count === 1 ? 'update' : 'updates'} on ${when(review.at)}`}
