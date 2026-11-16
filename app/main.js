@@ -80,6 +80,8 @@ import { annotateLine, ruleBar } from './contradictionResolve.js';
 import { ignoreProposals, ignored, ruleRecords } from './ruleRecords.js';
 import { demotions, kindOf, logGate, ruleDemotion, runGate, signature, weakLink } from './qualityGate.js';
 import { createAgentActivity } from './agentActivity.js';
+import { createCatchup } from './memoryCatchup.js';
+import { analyze as contradictionPass } from './rules/contradictions.js';
 import { createElsewhere, withFound } from './linkElsewhere.js';
 import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
@@ -3589,7 +3591,8 @@ function contradictionCtx(vault) {
 // each drafting run is agent activity; Cancel stops the model call, and the item is drafted again later
 let draftAbort = null;
 async function draftTick() {
-  if (draftAbort) return;
+  // a catch-up pass makes the agent's calls while it runs
+  if (draftAbort || catchup.running()) return;
   const ctl = new AbortController();
   draftAbort = ctl;
   const work = agentActivity.start({ kind: 'draft', label: 'The agent is drafting a fix', cancellable: true, onCancel: () => ctl.abort() });
@@ -3618,6 +3621,58 @@ async function contradictionTick() {
   } catch (e) { log('memory contradictions', e?.message); } finally { contradictionAbort = null; work?.end(); }
 }
 setInterval(() => { draftTick(); }, 60000).unref?.();
+// Check everything now (memoryCatchup.js): one full pass of the agent's pending drafts and claim batches past the daily
+// cap, one model call at a time, with the drafter's and the contradiction agent's timeouts and gates. It needs Let the
+// agent draft fixes, writes nothing to the vault and stops by itself. Onboarding offers it once the vault connects, and
+// Settings > Memory has the button; the control socket starts it on an existing install (scripts/memory-catchup.mjs)
+const catchupOwns = { draft: null, claims: null };
+const catchup = createCatchup({
+  drafter,
+  agent: contradictionAgent,
+  activity: agentActivity,
+  // stage 1 to 4 over the whole vault with the agent's provider, so its queues hold every note still to read
+  refresh: async () => {
+    const b = brain();
+    if (!b || !vindex) return;
+    contradictionPass({ notes: vindex.snapshot(), resolve: (t, from) => vindex.resolve(t, from), contradictions: contradictionCtx(b.vault) });
+  },
+  // the pass's call holds the same abort slot as a scheduled call, so the two never run at once; a slot another call
+  // holds is left alone
+  bind: (kind, ctl) => {
+    const cur = kind === 'draft' ? draftAbort : contradictionAbort;
+    if (ctl ? cur : cur !== catchupOwns[kind]) return;
+    catchupOwns[kind] = ctl;
+    if (kind === 'draft') draftAbort = ctl; else contradictionAbort = ctl;
+  },
+  after: async (res, kind) => {
+    if (kind === 'draft' && (res?.drafted || res?.confirmed)) toUI('memory-updates', null);
+    if (res?.rels?.length) sweepOnSave(res.rels);
+  },
+  notes: () => vindex?.rels().length ?? 0,
+  emit: (st) => toUI('memory-catchup', st),
+  log,
+});
+// what a catch-up would cost now: stage 1's notes to read packed into claim calls, leaving out notes whose claims are
+// stored, plus the drafts and second drafts that wait. Judge calls are counted as the pass finds pairs
+function catchupEstimate() {
+  const b = brain();
+  if (!b || !vindex) return null;
+  const a = contradictionPass({ notes: vindex.snapshot(), resolve: (t, from) => vindex.resolve(t, from) });
+  const claims = contradictionAgent.estimate(a.toRead);
+  const drafts = drafter.pendingCalls();
+  return { notes: vindex.rels().length, read: claims.notes, claimCalls: claims.calls, draftCalls: drafts, calls: claims.calls + drafts, drafting: settings.memoryDrafts === true };
+}
+// starts a catch-up. It needs Let the agent draft fixes; turning the pass on turns that on too, and the answer says so
+async function startCatchup() {
+  if (!brain() || !vindex) throw new Error('Connect a vault first.');
+  const turnedOn = settings.memoryDrafts !== true;
+  if (turnedOn) { settings.memoryDrafts = true; store.settings.save(); toUI('settings', settings); }
+  return { ...(await catchup.start()), turnedOn };
+}
+ipcMain.handle('memory-catchup-estimate', () => catchupEstimate());
+ipcMain.handle('memory-catchup-status', () => catchup.status());
+ipcMain.handle('memory-catchup-start', () => startCatchup());
+ipcMain.handle('memory-catchup-cancel', () => catchup.cancel());
 // Ignore rules (ruleRecords.js): kept in Quorum's settings per vault, never in the vault. Quorum proposes one after the
 // same rule's findings were archived three or more times with a shared folder, frontmatter key or target
 function ignoreStore(name) {
@@ -5247,6 +5302,15 @@ async function control({ cmd, args = {} }) {
       store.notes.write(abs, `${fm}${String(args.text ?? '').replace(/^---\n[\s\S]*?\n---\n/, '').replace(/\n*$/, '\n')}`);
       cliVersion(path.relative(b.vault, abs), text, 'Rewrote the note');
       return { rel: path.relative(b.vault, abs) };
+    }
+    // Check everything now from a script (scripts/memory-catchup.mjs): estimate, start, status or cancel
+    case 'memory-catchup': {
+      const action = String(args.action ?? 'status');
+      if (action === 'estimate') return catchupEstimate();
+      if (action === 'start') return startCatchup();
+      if (action === 'cancel') return { cancelled: catchup.cancel() };
+      if (action === 'status') return catchup.status();
+      throw new Error('Use estimate, start, status or cancel');
     }
     case 'settings-get': return { model: settings.model, modelSource: modelSource(), providers: providers(), autoListen: !!settings.autoListen, suggestions: settings.suggestions !== false, access: settings.access ?? 'write' };
     case 'settings-set': {

@@ -38,7 +38,7 @@ function setup(opts = {}) {
   const calls = [];
   const signals = { draft: null, claims: null };
   let gate = null;
-  const model = (kind) => async (prompt) => {
+  const model = (kind) => async () => {
     const signal = signals[kind]?.signal ?? null;
     calls.push(kind);
     if (opts.hold) await new Promise((resolve, reject) => { gate = resolve; signal?.addEventListener('abort', () => reject(Object.assign(new Error('Cancelled'), { cancelled: true }))); });

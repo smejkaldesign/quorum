@@ -280,7 +280,10 @@ export type MemoryDraft = { kind: 'create' | 'point' | 'merge' | 'contradiction'
 // Settings > Memory: a rule's decisions from the decision log and what it does now
 export type RuleRecord = { id: string; label: string; approved: number; archived: number; undone: number; auto: number; last: number; open: number; ignores: number; state: string; demoted?: { approved: number; total: number } | null };
 // long memory work in the background (agentActivity.js), shown once it has run 30 seconds
-export type AgentActivity = { id: string; kind: 'check' | 'sweep' | 'batch' | 'draft'; label: string; startedAt: number; progress: { done: number; total: number } | null; cancellable: boolean; more: number };
+export type AgentActivity = { id: string; kind: 'check' | 'sweep' | 'batch' | 'draft' | 'catchup'; label: string; startedAt: number; progress: { done: number; total: number } | null; cancellable: boolean; more: number };
+// Check everything now (memoryCatchup.js): what a catch-up pass would cost, and the pass that runs or ran last
+export type CatchupEstimate = { notes: number; read: number; claimCalls: number; draftCalls: number; calls: number; drafting: boolean };
+export type CatchupStatus = { running: true; done: number; total: number; notes: number; id: string } | { running: false; last: { end: 'done' | 'cancelled' | 'off' | 'failed'; done: number; total: number; notes: number; startedAt: number; endedAt: number } | null };
 // an item the quality gate holds back from Needs review (qualityGate.js): under Check these first in a bulk plan, or out of view
 export type GateHold = { bucket: 'check' | 'quiet'; why: string | null; title: string; line: string; kind: string };
 export type IgnoreRule = { id: string; ruleId: string; field: 'folder' | 'key' | 'target'; value: string; title: string; at: number };
@@ -490,6 +493,11 @@ declare global {
       onMemoryUpdates(cb: (rels: string[]) => void): Unsub;
       agentActivity(): Promise<AgentActivity | null>;
       agentActivityCancel(id: string): Promise<boolean>;
+      memoryCatchupEstimate(): Promise<CatchupEstimate | null>;
+      memoryCatchupStatus(): Promise<CatchupStatus>;
+      memoryCatchupStart(): Promise<CatchupStatus & { turnedOn: boolean }>;
+      memoryCatchupCancel(): Promise<boolean>;
+      onMemoryCatchup(cb: (s: CatchupStatus) => void): Unsub;
       onAgentActivity(cb: (state: AgentActivity | null) => void): Unsub;
       memoryReject(rel: string): Promise<boolean>;
       liveRuns(): Promise<LiveState>;

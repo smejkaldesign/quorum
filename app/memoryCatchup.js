@@ -13,15 +13,16 @@
 //   refresh() fills the agent's queues from the vault as it reads now (main runs stage 1 to 4 with the provider)
 //   bind(kind, ctl) hands main the AbortController of the call that runs ('draft' or 'claims'), so Cancel stops the
 //   model call; ctl is null once it ends
-//   after(result) runs after each claim or judge call (main checks the notes it read again)
+//   after(result, kind) runs after each call, kind 'draft' or 'claims' (main checks the notes it read again)
 //   notes()   how many notes the vault holds, for the label
+//   emit(status) tells the windows when the pass starts, moves on or ends
 export const BUSY_WAIT_MS = 5000;
 // how many times the pass reads the vault again when both queues look empty, before it calls the pass done
 const RESWEEPS = 2;
 
 export const catchupLabel = (notes, done, total) => `Checking all ${notes} ${notes === 1 ? 'note' : 'notes'}: ${done} of ${total} ${total === 1 ? 'call' : 'calls'}`;
 
-export function createCatchup({ drafter, agent, activity, refresh = async () => {}, bind = () => {}, after = async () => {}, notes = () => 0, wait = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); }), busyWaitMs = BUSY_WAIT_MS, log = () => {} }) {
+export function createCatchup({ drafter, agent, activity, refresh = async () => {}, bind = () => {}, after = async () => {}, notes = () => 0, emit = () => {}, wait = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); }), busyWaitMs = BUSY_WAIT_MS, log = () => {} }) {
   let run = null;
   let last = null;
   // the calls a pass would make now, for the estimate in onboarding and Settings > Memory
@@ -56,9 +57,10 @@ export function createCatchup({ drafter, agent, activity, refresh = async () => 
       }
       empty = 0;
       r.done++;
-      if (kind === 'claims') { try { await after(res); } catch (e) { log('memory catchup after', e?.message); } }
+      try { await after(res, kind); } catch (e) { log('memory catchup after', e?.message); }
       r.total = Math.max(r.total, r.done + remaining());
       r.work.progress(r.done, r.total, catchupLabel(r.notes, r.done, r.total));
+      emit(status());
     }
     return 'cancelled';
   }
@@ -69,6 +71,7 @@ export function createCatchup({ drafter, agent, activity, refresh = async () => 
     const r = { done: 0, total: 0, notes: notes(), stopped: false, ctl: null, work: null };
     r.work = activity.start({ kind: 'catchup', label: catchupLabel(r.notes, 0, 0), cancellable: true, immediate: true, onCancel: () => { r.stopped = true; r.ctl?.abort(); } });
     run = r;
+    emit(status());
     const startedAt = Date.now();
     r.promise = (async () => {
       let end = 'done';
@@ -76,6 +79,7 @@ export function createCatchup({ drafter, agent, activity, refresh = async () => 
         await refresh();
         r.total = remaining();
         r.work.progress(0, r.total, catchupLabel(r.notes, 0, r.total));
+        emit(status());
         end = await loop(r);
       } catch (e) {
         end = 'failed';
@@ -84,6 +88,7 @@ export function createCatchup({ drafter, agent, activity, refresh = async () => 
         last = { end, done: r.done, total: r.total, notes: r.notes, startedAt, endedAt: Date.now() };
         run = null;
         r.work.end();
+        emit(status());
         log('memory catchup', end, `${r.done} of ${r.total} calls`);
       }
       return last;
