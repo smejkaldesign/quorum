@@ -1,9 +1,10 @@
 -- applied-when: select exists(select 1 from pg_proc where proname = 'delete_my_account')
 -- Quorum hosted edition, step 39: a person deletes their own hosted account, and a workspace owner deletes their
 -- workspace, from Settings in the app. Both run as security definer functions that check the caller themselves.
---   * delete_my_account() removes the caller's auth user. Every row that names the user cascades from auth.users
---     (0001 onward); hosted KB notes pass to a remaining member first (0034's auth_users_kb_hosted_keep). An owner of a
---     live workspace is refused, because workspaces.user_id cascades too and would take the members' data with it.
+--   * delete_my_account() hands the caller's shared notes (in a knowledge base, visibility public, or contributed) to
+--     the workspace owner, then removes the caller's auth user. What still names the user cascades from auth.users
+--     (0001 onward): private notes, chats, meetings. An owner of a live workspace is refused, because workspaces.user_id
+--     cascades too and would take the members' data with it.
 --   * delete_workspace(ws) removes one workspace and every row under it. Only its owner may, and only once no Stripe
 --     subscription is live, so nobody keeps paying for a workspace that is gone.
 --   * The Quorum platform owner (platform_owners, 0008) is refused both: that account runs Quorum itself and is changed
@@ -64,20 +65,59 @@ end $$;
 revoke all on function public.account_delete_status() from public, anon;
 grant execute on function public.account_delete_status() to authenticated;
 
--- deletes the caller's hosted account. The attachments they uploaded go to the trash first, since their rows cascade
+-- the member who takes over a leaving person's shared notes in one workspace: the owner, else the longest-standing
+-- admin, else the longest-standing member, so the team keeps the notes even in a workspace left without an owner
+create or replace function public.account_heir(ws public.ulid, leaving uuid) returns uuid
+language sql stable security definer set search_path = public as $$
+  select coalesce(
+    (select m.user_id from public.members m where m.workspace_id = ws and m.user_id <> leaving and m.deleted_at is null
+      order by (m.role = 'owner') desc, (m.role = 'admin') desc, m.created_at limit 1),
+    (select w.user_id from public.workspaces w where w.id = ws and w.user_id <> leaving));
+$$;
+revoke all on function public.account_heir(public.ulid, uuid) from public, anon, authenticated;
+
+-- deletes the caller's hosted account. In order:
+--   1. refuse a signed-out caller, the platform owner and the owner of a live workspace;
+--   2. hand every shared note to the workspace's heir (account_heir). A note is shared when anyone besides its author
+--      can read it (notes_select, 0024): it sits in a knowledge base (kb_id, team KBs included), its frontmatter says
+--      visibility: public, or it has a pending or included contribution. The note's links, attachments and contribution
+--      move with it, since their rows also cascade from the author;
+--   3. put the attachments that stay with the person (the ones not on a handed-over note) in the storage trash;
+--   4. delete the auth user. What still names the person cascades: private notes, chats, meetings, memberships.
+-- A shared note with no heir (the person was the workspace's last member) goes with the account.
 create or replace function public.delete_my_account() returns jsonb
 language plpgsql security definer set search_path = public, auth as $$
-declare uid uuid := auth.uid(); objects integer;
+declare uid uuid := auth.uid(); objects integer; kept integer;
 begin
   if uid is null then raise exception 'You need to sign in first'; end if;
   if public.account_is_platform_owner(uid) then raise exception 'The account that runs Quorum cannot be deleted from the app'; end if;
   if exists (select 1 from public.account_owned_workspaces(uid)) then raise exception 'You own a workspace. Delete the organization first'; end if;
+
+  create temp table if not exists pg_temp.account_handover (note_id public.ulid primary key, heir uuid not null) on commit drop;
+  delete from pg_temp.account_handover;
+  insert into pg_temp.account_handover (note_id, heir)
+  select n.id, public.account_heir(n.workspace_id, uid) from public.notes n
+  where n.user_id = uid
+    and (n.kb_id is not null
+         or coalesce(n.frontmatter ->> 'visibility', 'private') = 'public'
+         or exists (select 1 from public.contributions c where c.note_id = n.id and c.status in ('pending', 'included')))
+    and public.account_heir(n.workspace_id, uid) is not null;
+  get diagnostics kept = row_count;
+
+  -- hosted KB notes and KB membership checks refuse signed-in edits (0029, 0034); this hand-over is the system path
+  perform set_config('quorum.kb_system', 'on', true);
+  update public.notes n set user_id = h.heir from pg_temp.account_handover h where n.id = h.note_id;
+  update public.links l set user_id = h.heir from pg_temp.account_handover h where l.from_note = h.note_id and l.user_id = uid;
+  update public.attachments a set user_id = h.heir from pg_temp.account_handover h where a.note_id = h.note_id and a.user_id = uid;
+  update public.contributions c set author_id = h.heir from pg_temp.account_handover h where c.note_id = h.note_id and c.author_id = uid;
+  perform set_config('quorum.kb_system', '', true);
+
   insert into public.kb_files_trash (object_path, workspace_id, kb_id, bucket)
   select a.object_path, a.workspace_id, null, 'attachments' from public.attachments a where a.user_id = uid and a.bucket = 'attachments'
   on conflict (object_path) do nothing;
   get diagnostics objects = row_count;
   delete from auth.users u where u.id = uid;
-  return jsonb_build_object('ok', true, 'objects', objects);
+  return jsonb_build_object('ok', true, 'kept', kept, 'objects', objects);
 end $$;
 revoke all on function public.delete_my_account() from public, anon;
 grant execute on function public.delete_my_account() to authenticated;
