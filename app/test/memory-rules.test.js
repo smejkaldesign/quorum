@@ -19,7 +19,7 @@ const fm = (o) => `---\n${Object.entries(o).map(([k, v]) => `${k}: ${v}`).join('
 const words = (n, seed = 'orbit') => Array.from({ length: n }, (_, i) => `${seed}${i % 37}`).join(' ');
 
 describe('every rule', () => {
-  it('has an id, a version, a readable label, and offers no automatic fix', () => {
+  it('has an id, a version, a readable label, and offers no automatic fix without a confidential folder mark', () => {
     for (const r of RULES) {
       expect(r.rule.id).toMatch(/^note\.[a-z-]+$/);
       expect(r.rule.version).toBeGreaterThanOrEqual(1);
@@ -141,6 +141,32 @@ describe('confidential tag versus folder', () => {
   it('falls back to the notes in the index when no tag list is given', () => {
     const notes = Array.from({ length: 6 }, (_, i) => note(`team/t${i}.md`, `${fm({ confidential: 'team-only' })}# T`));
     expect(rels(confidential.run(ctx([...notes, note('team/new.md', '# New')])))).toEqual(['team/new.md']);
+  });
+  it('offers Add the confidential tag for an untagged note in a marked folder, as an automatic fix', () => {
+    const f = confidential.run(ctx([], { tags: tags([['vault/plans/a.md', null], ['vault/plans/b.md', 'board'], ['vault/plans/c.md', 'false']]), folders: { 'vault/plans': 'board' } }));
+    expect(f.map((x) => [x.key, x.fix, x.autoFix])).toEqual([['note.confidential-folder:folder:vault/plans/a.md', { kind: 'tag', value: 'board' }, true]]);
+    expect(f[0].proposal).toBe('Add the confidential tag: confidential: board.');
+    expect(confidential.folderMarkOf('vault/plans/deep/x.md', { 'vault/plans': 'Board' })).toEqual({ folder: 'vault/plans', value: 'board' });
+    expect(confidential.folderMarkOf('vault/x.md', { 'vault/plans': 'board' })).toBeNull();
+  });
+  it('offers a tag for an untagged note in a folder of one value, approved by a person', () => {
+    const f = confidential.run(ctx([], { tags: tags([...home, ['work/acme/stub.md', null]]) }));
+    expect(f[0]).toMatchObject({ fix: { kind: 'tag', value: 'acme-internal' }, autoFix: false });
+  });
+  it('offers a move for a tagged note outside its folders, unless a note with that name is there', () => {
+    const f = confidential.run(ctx([], { tags: tags([...home, ['projects/side.md', 'acme-internal'], ['projects/n0.md', 'acme-internal']]) }));
+    const by = Object.fromEntries(f.map((x) => [x.target, x]));
+    expect(by['projects/side.md'].fix).toEqual({ kind: 'move', to: 'work/acme/side.md' });
+    expect(by['projects/n0.md'].fix).toBeUndefined();
+  });
+  it('offers Move and tag for an untagged note outside the area that links mostly to notes with one value', () => {
+    const marked = Array.from({ length: 6 }, (_, i) => note(`deals/d${i}.md`, `${fm({ confidential: 'deal' })}# D${i}`));
+    const quoting = note('notes/recap.md', '# Recap\n![[d0]] [[d1]] [[d2]] [[open]]');
+    const light = note('notes/light.md', '# Light\n[[d0]] [[open]] [[other]] [[more]]');
+    const open = [note('notes/open.md', '# Open'), note('notes/other.md', '# Other'), note('notes/more.md', '# More')];
+    const f = confidential.run(ctx([...marked, quoting, light, ...open]));
+    expect(f.map((x) => [x.key, x.fix])).toEqual([['note.confidential-folder:quotes:notes/recap.md', { kind: 'move-tag', to: 'deals/recap.md', value: 'deal' }]]);
+    expect(f[0].autoFix).toBe(false);
   });
 });
 

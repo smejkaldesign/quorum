@@ -51,6 +51,8 @@ export function percentile(values, p) {
 // one finding of a rule. key is unique for the finding; target and facts make its fingerprint with the notes, so a
 // change in the facts (new evidence) makes a new fingerprint. evidence holds plain lines for the drawer; it never
 // holds a secret or a note's text beyond a title
-export function finding(rule, { key, target, notes, title, problem, proposal, evidence = [], facts = [], meta = [] }) {
-  return { ruleId: rule.id, ruleVersion: rule.version, rule: rule.label, key: `${rule.id}:${key}`, target, notes, rel: notes[0], title, problem, proposal, evidence, facts, meta, autoFix: false };
+// fix: what the finding's Approve does, for a rule that offers one ({ kind: 'tag' | 'move' | 'move-tag', value, to });
+// autoFix: Apply memory fixes on its own may run the fix without a review
+export function finding(rule, { key, target, notes, title, problem, proposal, evidence = [], facts = [], meta = [], fix = null, autoFix = false }) {
+  return { ruleId: rule.id, ruleVersion: rule.version, rule: rule.label, key: `${rule.id}:${key}`, target, notes, rel: notes[0], title, problem, proposal, evidence, facts, meta, ...(fix ? { fix } : {}), autoFix: !!(fix && autoFix) };
 }
