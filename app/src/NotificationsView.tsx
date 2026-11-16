@@ -139,6 +139,8 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
   const [kinds, setKinds] = useState<FeedKind[]>([]);
   const [sort, setSort] = useState<FeedSort>('unread');
   const [q, setQ] = useState('');
+  const [searching, setSearching] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
   const [page, setPage] = useState<FeedPage | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -216,18 +218,22 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
           Needs review{counts?.review ? <span className="nf-count">{counts.review}</span> : null}
         </button>
         <span className="nf-fill" />
-        <select className="set-select nf-select" aria-label="Type" value="" onChange={(e) => { const k = e.target.value as FeedKind; if (k && !kinds.includes(k)) setKinds([...kinds, k]); }}>
+        <button className={`icon-btn nf-search-btn${searching ? ' on' : ''}`} aria-label="Search notifications" aria-expanded={searching} data-tip="Search" onClick={() => { if (searching && !q) setSearching(false); else { setSearching(true); requestAnimationFrame(() => searchRef.current?.focus()); } }}><IconSearch width={16} height={16} /></button>
+        <select className="nf-select" aria-label="Type" value="" onChange={(e) => { const k = e.target.value as FeedKind; if (k && !kinds.includes(k)) setKinds([...kinds, k]); }}>
           <option value="">Type</option>
           {KINDS.filter(([id]) => !kinds.includes(id)).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
         </select>
-        <select className="set-select nf-select" aria-label="Sort" value={sort} onChange={(e) => setSort(e.target.value as FeedSort)}>
+        <select className="nf-select" aria-label="Sort" value={sort} onChange={(e) => setSort(e.target.value as FeedSort)}>
           {SORTS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
         </select>
       </div>
-      <label className="nf-search">
-        <IconSearch width={15} height={15} />
-        <input value={q} placeholder="Search notifications" aria-label="Search notifications" onChange={(e) => setQ(e.target.value)} />
-      </label>
+      {/* search opens below the bar from its icon button, focused; the list filters as you type */}
+      {(searching || !!q) && (
+        <label className="nf-search">
+          <IconSearch width={15} height={15} />
+          <input ref={searchRef} value={q} placeholder="Search notifications" aria-label="Search notifications" onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') { setQ(''); setSearching(false); } }} />
+        </label>
+      )}
       {kinds.length > 0 && (
         <div className="nf-chips" aria-label="Type filters">
           {kinds.map((k) => (
@@ -239,8 +245,9 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
       {items.length > 0 && (
         <div className="nf-bulk">
           <label className="nf-check"><input type="checkbox" checked={allOn} aria-label="Select all" onChange={() => setPicked(allOn ? new Set() : new Set(items.map((r) => r.id)))} /></label>
-          <span className="muted">{sel.length ? `${sel.length} selected` : 'Select rows to act on several at once'}</span>
-          <span className="nf-bulk-actions">
+          <span className="muted">{sel.length ? `${sel.length} selected` : 'Select all'}</span>
+          {/* the actions appear once something is picked; the bar keeps its height either way */}
+          <span className={`nf-bulk-actions${sel.length ? '' : ' hidden'}`} aria-hidden={!sel.length}>
             <button className="act-pill primary" disabled={busy || !selReview.length} onClick={() => decide(selReview, 'approve')}>Approve</button>
             <button className="act-pill" disabled={busy || !selReview.length} data-tip="Memory updates go back to the text from before them; a note Quorum wrote is marked rejected" onClick={() => decide(selReview, 'reject')}>Disapprove</button>
             <button className="act-pill" disabled={busy || !sel.some((r) => r.unread)} onClick={async () => { await mark(sel); setPicked(new Set()); }}>Mark read</button>
@@ -255,7 +262,7 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
             onMark={(unread) => mark([r], unread)} onDecide={(v) => decide([r], v)} />
         ))}
       </div>
-      {page && !items.length && <p className="muted nf-empty">{empty}</p>}
+      {page && !items.length && <div className="nf-empty"><IconBell width={22} height={22} /><p>{empty}</p></div>}
       {page?.more && <button className="act-pill nf-more-btn" onClick={more}>Show more</button>}
     </div>
   );

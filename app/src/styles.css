@@ -2494,3 +2494,18 @@ input::placeholder, textarea::placeholder { font-style: italic; }
 .conn-detail-cta .conn-actions { gap: 8px; }
 /* the summary line: 2px larger, its first line centered on the row buttons beside it */
 .nf-sub { font-size: 15px; margin-top: 7px; }
+
+/* the Notifications page keeps the standard page width in every state, empty or filtered */
+.notif-page { width: 100%; box-sizing: border-box; }
+.nf-empty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 64px 0; color: var(--muted); text-align: center; }
+.nf-empty p { margin: 0; max-width: 46ch; }
+/* Type and Sort read as outlined pill buttons with a chevron */
+.nf-select { appearance: none; -webkit-appearance: none; height: 36px; padding: 0 34px 0 14px; border-radius: 999px; border: 1px solid var(--line-2); background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238e8e93' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 13px center; color: var(--text); font: inherit; font-size: 14px; cursor: pointer; }
+.nf-select:hover { border-color: rgba(255, 255, 255, 0.24); }
+.nf-search-btn { width: 36px; height: 36px; border: 1px solid var(--line-2); border-radius: 999px; }
+.nf-search-btn.on { border-color: rgba(255, 255, 255, 0.24); color: var(--text); }
+/* Select all: one fixed height, so the actions appearing moves nothing */
+.nf-bulk { min-height: 56px; box-sizing: border-box; }
+.nf-bulk-actions.hidden { visibility: hidden; }
+/* the details labels start where the summary text does */
+.nf-details { padding-left: 84px; }
