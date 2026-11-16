@@ -2681,3 +2681,14 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .mu-dock { flex: none; }
 .mu-dock > .mu-banner { margin: 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 8px 14px; min-height: 52px; box-sizing: border-box; background: var(--card); }
 .mu-dock > .mu-banner.orange { background: color-mix(in srgb, var(--panel), rgb(var(--review-rgb)) 8%); border-bottom-color: rgba(var(--review-rgb), 0.35); }
+/* issue lines: a faint orange fill by default, brighter on hover and on the current one, reaching a little left of
+   the text */
+.mu-text .md-issue { background: rgba(var(--review-rgb), 0.07); box-shadow: -10px 0 0 4px rgba(var(--review-rgb), 0.07), 0 0 0 4px rgba(var(--review-rgb), 0.07); }
+.mu-text .md-issue:hover { background: rgba(var(--review-rgb), 0.16); box-shadow: -10px 0 0 4px rgba(var(--review-rgb), 0.16), 0 0 0 4px rgba(var(--review-rgb), 0.16); }
+.mu-text .md-issue.md-cur, .mu-text .md-issue.md-cur:hover { background: rgba(var(--review-rgb), 0.2); box-shadow: -10px 0 0 4px rgba(var(--review-rgb), 0.2), 0 0 0 4px rgba(var(--review-rgb), 0.2); }
+/* the issue banner's words: Ignore, Decline, Approve; the drawer's quotes from the linking notes */
+.mu-banner .mu-words { gap: 8px; }
+.mu-banner .mu-words .act-pill { height: 30px; }
+.mh-quotes { display: grid; gap: 8px; }
+.mh-quotes p { margin: 0; }
+.mh-fold { padding-left: 98px; }

@@ -18,12 +18,12 @@ export type ReviewMode = 'before' | 'after';
 // one banner for both reviews: green or blue for updates, red for issues. Each part shows only when its handler is
 // given: the Before and After toggle, the highlight switch, the arrows through the items, Accept and Reject, and
 // Done. locked turns off the controls that change the note while a run is writing it
-export function ReviewBanner({ tone, label, mode, onMode, highlight, onHighlight, nav, onAccept, onReject, acceptTip, rejectTip, onClose, locked = false }: {
+export function ReviewBanner({ tone, label, mode, onMode, highlight, onHighlight, nav, onAccept, onReject, onIgnore, acceptTip, rejectTip, onClose, locked = false }: {
   tone: 'green' | 'blue' | 'red' | 'orange'; label: ReactNode;
   mode?: ReviewMode; onMode?: (m: ReviewMode) => void;
   highlight?: boolean; onHighlight?: () => void;
   nav?: { at: number; total: number; onPrev: () => void; onNext: () => void };
-  onAccept?: () => void; onReject?: () => void; acceptTip?: string; rejectTip?: string;
+  onAccept?: () => void; onReject?: () => void; onIgnore?: () => void; acceptTip?: string; rejectTip?: string;
   onClose?: () => void; locked?: boolean;
 }) {
   return (
@@ -46,7 +46,15 @@ export function ReviewBanner({ tone, label, mode, onMode, highlight, onHighlight
           <button className="icon-btn mu-icon" aria-label="Next" data-tip="Next" onClick={nav.onNext}><IconArrowDown width={15} height={15} /></button>
         </span>
       )}
-      {(onAccept || onReject) && (
+      {/* a Memory health issue answers in words: Ignore, Decline, Approve */}
+      {onIgnore && (
+        <span className="mu-nav mu-words">
+          <button className="mh-plain" disabled={locked} data-tip="Leave the link as it is and stop flagging it" onClick={onIgnore}>Ignore</button>
+          {onReject && <button className="act-pill" disabled={locked} data-tip={rejectTip} onClick={onReject}>Decline</button>}
+          {onAccept && <button className="act-pill primary" disabled={locked} data-tip={acceptTip} onClick={onAccept}>Approve</button>}
+        </span>
+      )}
+      {!onIgnore && (onAccept || onReject) && (
         <span className="mu-nav">
           {/* decline first, the check on the right, the same order as Decline and Approve everywhere else */}
           {onReject && <button className="icon-btn mu-icon mu-no" disabled={locked} aria-label={rejectTip ?? 'Reject'} data-tip={rejectTip ?? 'Reject'} onClick={onReject}><IconClose width={15} height={15} /></button>}

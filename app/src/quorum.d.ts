@@ -276,7 +276,7 @@ export type NotificationPrefs = { noteUpdates?: boolean; memoryChanges?: boolean
 export type NoteLinkTarget = { rel?: string; anchor: string | null; missing?: boolean; id?: string };
 export type NoteDoc = { hand?: boolean; parts?: { note: string; summary: string; split: boolean }; file: string; rel: string; title: string; date?: string; people: string[]; body: string; app: string; url: string; source?: string | null; views?: NoteViews; visibility: Visibility; withheld: boolean; link: string; summarizable?: boolean; transcript?: { id: number; channel: 'me' | 'them'; who: string; text: string }[]; platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null; sourceUrl?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; event?: EventRef | null };
 export type SavedChat = { id: string; title: string; turns: { q: string; a: string; sources?: Source[]; steps?: string[] }[] };
-export type MissingLink = { target: string; sources: string[]; count: number; links?: number; lastAt?: number | null; left?: boolean; candidates: { rel: string; title: string; name: string | null; exact: boolean }[] };
+export type MissingLink = { target: string; sources: string[]; count: number; links?: number; lastAt?: number | null; left?: boolean; declined?: string[]; contexts?: { rel: string; title?: string; text: string }[]; candidates: { rel: string; title: string; name: string | null; exact: boolean; score?: number; cover?: number; kindClash?: boolean; shared?: string[]; neighbor?: boolean; sameFolder?: boolean }[] };
 export type Relocated = { rel: string; files: number; links: number };
 export type SearchHit = { rel: string; title: string; score: number; line: number; snippet: string };
 export type Backlink = { rel: string; title: string; line: number; context: string };
@@ -426,12 +426,12 @@ declare global {
       activityFeed(query: FeedQuery): Promise<FeedPage>;
       activityMark(rows: { id: string; abs: string }[], unread?: boolean): Promise<number>;
       activityArchive(rows: { id: string }[], on?: boolean): Promise<number>;
-      activityReview(items: { kind: 'note' | 'memory' | 'junk-note' | 'link'; abs: string; key?: string }[], verdict: 'approve' | 'reject'): Promise<{ done: string[]; failed: { abs: string; error: string }[] }>;
+      activityReview(items: { kind: 'note' | 'memory' | 'junk-note' | 'link'; abs: string; key?: string }[], verdict: 'approve' | 'reject' | 'ignore'): Promise<{ done: string[]; failed: { abs: string; error: string }[] }>;
       vaultSearch(q: string, limit?: number): Promise<SearchHit[]>;
       vaultBacklinks(rel: string): Promise<Backlink[]>;
       vaultLinkHealth(fresh?: boolean): Promise<MissingLink[]>;
       vaultLinksLeft(keys: string[], on?: boolean): Promise<number>;
-      vaultLinkDecide(key: string, verdict: 'approve' | 'reject'): Promise<string>;
+      vaultLinkDecide(key: string, verdict: 'approve' | 'reject' | 'ignore'): Promise<string>;
       vaultFixLink(target: string, toRel: string): Promise<{ files: number; links: number }>;
       vaultAddAlias(rel: string, alias: string): Promise<boolean>;
       vaultOutgoing(rel: string): Promise<OutLink[]>;

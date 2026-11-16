@@ -59,7 +59,7 @@ export function NotificationBell({ active, onOpen }: { active: boolean; onOpen: 
 // the row's ⋯ menu: Open, Mark read or unread, and Approve and Disapprove on a row waiting for a decision. It closes on
 // a click anywhere else or Escape
 function Row({ row, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide, onArchive }: {
-  row: FeedRow; picked: boolean; busy: boolean; onPick: () => void; onOpen: () => void; onOpenFile: (abs: string) => void; onMark: (unread: boolean) => void; onDecide: (v: 'approve' | 'reject') => void; onArchive: (on: boolean) => void;
+  row: FeedRow; picked: boolean; busy: boolean; onPick: () => void; onOpen: () => void; onOpenFile: (abs: string) => void; onMark: (unread: boolean) => void; onDecide: (v: 'approve' | 'reject' | 'ignore') => void; onArchive: (on: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
@@ -73,7 +73,6 @@ function Row({ row, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide, 
         <span className="nf-main">
           <span className="nf-head"><strong className="conn-title nf-title">{row.summary.line}</strong>{row.unread && <i className="nf-dot" role="img" aria-label="Unread" data-tip="Unread" />}</span>
           <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>{row.summary.sub && !row.summary.parts && <> <span className="nf-sep" aria-hidden="true">•</span> {row.summary.sub}</>}{row.summary.parts && <> <span className="nf-sep" aria-hidden="true">•</span> {row.target.rel}</>}</span>
-          {row.summary.parts && <IssueParts parts={row.summary.parts} />}
         </span>
         <span className="nf-side">
           <span className="nf-tools" onClick={stop} onKeyDown={stop}>
@@ -84,7 +83,7 @@ function Row({ row, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide, 
             </span>
             {row.review && (
               <>
-                <button className="mh-plain" onClick={go}>View</button>
+                {row.review.kind === 'link' && <button className="mh-plain" disabled={busy} data-tip="Leave the link as it is and stop flagging it" onClick={() => onDecide('ignore')}>Ignore</button>}
                 <button className={`act-pill${row.summary.ask?.suggest === 'reject' ? ' primary' : ''}`} disabled={busy} data-tip={row.review.kind === 'memory' ? 'Put back the text from before these updates' : row.review.kind === 'junk-note' ? 'Keep this note' : row.review.kind === 'link' ? 'Leave the links as they are' : 'Mark this note rejected'} onClick={() => onDecide('reject')}>Decline</button>
                 <button className={`act-pill${row.summary.ask?.suggest === 'approve' ? ' primary' : ''}`} disabled={busy} onClick={() => onDecide('approve')}>Approve</button>
               </>
@@ -95,6 +94,7 @@ function Row({ row, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide, 
       </div>
       {open && (
         <div className="conn-sub conn-fold-body nf-details">
+          {row.summary.parts && <IssueParts parts={row.summary.parts} />}
           <dl>
             {row.details.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
             {row.files.length > 0 && (
@@ -162,14 +162,14 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
     else if (r.target.kind === 'note') onOpenNote(r.target.abs);
     else window.dispatchEvent(new CustomEvent('quorum:open-memory', { detail: r.target.abs }));
   };
-  const decide = async (rows: FeedRow[], verdict: 'approve' | 'reject') => {
+  const decide = async (rows: FeedRow[], verdict: 'approve' | 'reject' | 'ignore') => {
     const list = rows.filter((r) => r.review).map((r) => ({ kind: r.review!.kind, abs: r.target.abs, key: r.review!.key }));
     if (!list.length) return;
     setBusy(true);
     setError(null);
     try {
       const r = await window.quorum.activityReview(list, verdict);
-      if (r.failed.length) setError(`${r.failed.length} of ${list.length} could not be ${verdict === 'approve' ? 'approved' : 'disapproved'}: ${r.failed[0].error}`);
+      if (r.failed.length) setError(`${r.failed.length} of ${list.length} could not be ${verdict === 'approve' ? 'approved' : verdict === 'ignore' ? 'ignored' : 'declined'}: ${r.failed[0].error}`);
     } catch (e) { setError((e as Error).message); }
     setBusy(false);
     setPicked(new Set());

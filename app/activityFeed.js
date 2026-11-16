@@ -128,7 +128,7 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], l
     push({
       id: `r:link:${i.key}`, at: time(m.lastAt), kind: 'memory-health', event: 'review', who: 'agent',
       target: { kind: 'link', abs: m.abs ?? '', rel: i.path, title: i.target }, files: [],
-      detail: { title: i.title, problem: i.problem, effect: i.effect, recommend: i.recommend, category: i.category, links: i.links, notes: i.notes, folder: i.folder?.folder ?? null },
+      detail: { title: i.title, problem: i.problem, effect: i.effect, recommend: i.recommend, decline: i.decline, category: i.category, links: i.links, notes: i.notes, folder: i.folder?.folder ?? null },
       review: { kind: 'link', key: i.key },
     }, null);
   }

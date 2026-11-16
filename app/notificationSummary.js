@@ -84,7 +84,7 @@ export function summaryOf(row) {
   if (row.review) {
     const ask = askOf(row);
     // a Memory health issue shows its problem, what fixing it does and the recommendation as their own lines
-    if (row.review.kind === 'link') return { line: ask.question, sub: d.problem ?? null, ask, parts: [['Problem', d.problem], ['If fixed', d.effect], ['Recommended', d.recommend]].filter(([, v]) => v) };
+    if (row.review.kind === 'link') return { line: ask.question, sub: d.problem ?? null, ask, parts: [['Problem', d.problem], ['If fixed', d.effect], ['Approving this (Recommended)', d.recommend], ['Declining this', d.decline]].filter(([, v]) => v) };
     return { line: ask.question, sub: `Suggested: ${ask.suggest === 'approve' ? 'approve' : 'decline'}. ${ask.why}`, ask };
   }
   if (row.kind === 'guardrail') {
@@ -152,7 +152,7 @@ export function detailsOf(row, { locale } = {}) {
     add('First linked from', row.target.rel);
     add('Links', d.links);
     if (d.folder != null) add('Most from', d.folder || 'The vault root');
-    add('If you decline', 'The links stay as they are, and the issue moves to Left as is in Memory health');
+    add('Ignoring this', 'The links stay as they are, and the issue moves to Left as is in Memory health');
   } else {
     add(row.target.kind === 'memory' ? 'Memory' : 'Note', row.target.rel);
     add('By', row.who === 'you' ? 'You' : WHO[d.who] ?? 'Quorum agent');

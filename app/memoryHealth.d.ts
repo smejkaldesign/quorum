@@ -1,9 +1,9 @@
 import type { MissingLink } from './src/quorum';
 
-export type HealthCategory = 'missing' | 'alias' | 'similar' | 'outside';
-export type HealthAction = 'create' | 'alias' | 'relink' | 'leave';
+export type HealthCategory = 'missing' | 'alias' | 'similar' | 'unlink' | 'outside';
+export type HealthAction = 'create' | 'alias' | 'relink' | 'unlink' | 'leave';
 export type Issue = {
-  key: string; target: string; category: HealthCategory; title: string; fix: string; problem: string; effect: string; recommend: string; action: HealthAction; sources: string[];
+  key: string; target: string; category: HealthCategory; title: string; fix: string; problem: string; effect: string; recommend: string; decline: string; action: HealthAction; next: HealthAction | null; sources: string[]; contexts: { rel: string; title?: string; text: string }[]; createIn: string;
   candidate: MissingLink['candidates'][number] | null; path: string; links: number; notes: number;
   folder: { folder: string; count: number } | null; lastAt: number | null;
 };
@@ -21,3 +21,5 @@ export function healthMarks(items: MissingLink[], left?: Set<string>): { files: 
 export type HealthSort = 'links' | 'recent' | 'az';
 export const HEALTH_SORTS: [HealthSort, string][];
 export function healthList(items: MissingLink[], opts?: { tab?: 'open' | 'left'; categories?: HealthCategory[]; q?: string; sort?: HealthSort; left?: Set<string> }): Issue[];
+export function optionsOf(m: MissingLink): HealthAction[];
+export function contextWords(m: MissingLink): number;

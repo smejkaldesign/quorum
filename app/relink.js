@@ -110,3 +110,25 @@ export function retargetLinks({ vault, sources, target, toRel, toName, allRels }
   }
   return { files, links };
 }
+
+// take every link to a missing note out of the linking notes and keep its words: [[a/b|Label]] becomes Label,
+// [[a/b#x]] becomes b. Answers with how many links in how many notes changed
+export function unlinkTarget({ vault, sources, target }) {
+  const want = noExt(target).toLowerCase();
+  let files = 0;
+  let links = 0;
+  for (const from of sources) {
+    const abs = path.join(vault, from);
+    let raw;
+    try { raw = readFileSync(abs, 'utf8'); } catch { continue; }
+    const lines = raw.split('\n');
+    let changed = 0;
+    for (const link of parseNote(from, raw).links) {
+      if (link.kind !== 'wiki' || noExt(link.target).toLowerCase() !== want) continue;
+      const words = link.display !== null && link.display !== '' ? link.display : path.posix.basename(noExt(link.target));
+      if (lines[link.line]?.includes(link.raw)) { lines[link.line] = lines[link.line].replace(link.raw, words); changed++; }
+    }
+    if (changed) { writeAtomic(abs, lines.join('\n')); files++; links += changed; }
+  }
+  return { files, links };
+}

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { MissingLink } from './quorum';
 import markReview from '../assets/quorum-mark-review.png';
 import { CATEGORIES, HEALTH_SORTS, categoryCounts, countsLine, footerFacts, healthList, type HealthCategory, type HealthSort, type Issue } from '../memoryHealth.js';
-import { IconClose, IconReset } from './icons';
+import { IconChevron, IconClose, IconReset } from './icons';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
 import { IssueParts } from './NotificationsView';
 
@@ -27,6 +27,7 @@ export const leftOf = (items: MissingLink[]) => new Set(items.filter((m) => m.le
 // Approve or Decline one issue, shared with the review banner and Notifications; answers with a line saying what changed
 export const acceptIssue = (issue: Issue) => window.quorum.vaultLinkDecide(issue.key, 'approve');
 export const rejectIssue = (issue: Issue) => window.quorum.vaultLinkDecide(issue.key, 'reject');
+export const ignoreIssue = (issue: Issue) => window.quorum.vaultLinkDecide(issue.key, 'ignore');
 const CHANGED = 'quorum:activity-changed';
 
 type Tab = 'open' | 'left';
@@ -67,17 +68,17 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
     window.dispatchEvent(new Event(CHANGED));
   };
   // one or many issues decided; the list, the tree, the button count and Notifications all read again
-  const decide = async (issues: Issue[], verdict: 'approve' | 'reject') => {
+  const decide = async (issues: Issue[], verdict: 'approve' | 'reject' | 'ignore') => {
     setBusy(true);
     const lines: string[] = [];
     let firstError = '';
     for (const i of issues) {
-      try { lines.push(verdict === 'approve' ? await acceptIssue(i) : await rejectIssue(i)); }
+      try { lines.push(verdict === 'approve' ? await acceptIssue(i) : verdict === 'ignore' ? await ignoreIssue(i) : await rejectIssue(i)); }
       catch (e) { firstError ||= String(e).replace(/^.*Error:\s*/, ''); }
     }
     setBusy(false);
     const failed = issues.length - lines.length;
-    await after(issues.length === 1 ? (lines[0] ?? firstError) : `${verdict === 'approve' ? 'Approved' : 'Declined'} ${lines.length} of ${issues.length}${failed ? `. ${firstError}` : ''}`);
+    await after(issues.length === 1 ? (lines[0] ?? firstError) : `${verdict === 'approve' ? 'Approved' : verdict === 'ignore' ? 'Ignored' : 'Declined'} ${lines.length} of ${issues.length}${failed ? `. ${firstError}` : ''}`);
   };
   const back = async (issues: Issue[]) => {
     await window.quorum.vaultLinksLeft(issues.map((i) => i.key), false);
@@ -89,30 +90,39 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const toggle = (k: string) => setPicked((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const catLabel = Object.fromEntries(CATEGORIES.map((c) => [c.id, c.label])) as Record<HealthCategory, string>;
 
+  // a row opens the note on its issue with the drawer open; the chevron folds the write-up open, closed at first
+  const [unfolded, setUnfolded] = useState<Set<string>>(new Set());
+  const fold = (k: string) => setUnfolded((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const row = (i: Issue) => (
     <div key={i.key} id={`lh-${i.key}`} className={`conn-row nf-row mh-row${focus?.toLowerCase() === i.key ? ' focus' : ''}`}>
-      <div className="conn-line nf-line">
-        <label className="nf-check"><input type="checkbox" checked={picked.has(i.key)} aria-label="Select" onChange={() => toggle(i.key)} /></label>
+      <div className="conn-line nf-line" role="button" tabIndex={0} aria-label={i.title} onClick={() => onReview(i)} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onReview(i); } }}>
+        <label className="nf-check" onClick={stop}><input type="checkbox" checked={picked.has(i.key)} aria-label="Select" onChange={() => toggle(i.key)} /></label>
         <span className="nf-who"><img src={markReview} alt="Quorum, needs review" width={32} height={32} /></span>
         <span className="nf-main">
           <span className="nf-head"><strong className="conn-title nf-title">{i.title}</strong></span>
           <span className="nf-sub">{footerFacts(i).map((f, n) => <span key={f}>{n > 0 && <span className="nf-sep" aria-hidden="true"> • </span>}{f}</span>)}</span>
-          {tab === 'left'
-            ? <IssueParts parts={[['Left as is', 'The links stay as they are. Move it back to review to fix it later.']]} />
-            : <IssueParts parts={[['Problem', i.problem], ['If fixed', i.effect], ['Recommended', i.recommend]]} />}
         </span>
         <span className="nf-side">
-          <span className="nf-tools">
-            <button className="mh-plain" onClick={() => onReview(i)}>View</button>
+          <span className="nf-tools" onClick={stop} onKeyDown={stop}>
             {tab === 'left'
               ? <button className="act-pill" disabled={busy} onClick={() => back([i])}>Move back to review</button>
               : <>
-                  {i.action !== 'leave' && <button className="act-pill" disabled={busy} data-tip="Leave the links as they are" onClick={() => decide([i], 'reject')}>Decline</button>}
-                  <button className="act-pill primary" disabled={busy || locked(i)} data-tip={locked(i) ? 'Waits until the run writing these notes finishes' : undefined} onClick={() => decide([i], 'approve')}>Approve</button>
+                  <button className="mh-plain" disabled={busy} data-tip="Leave the link as it is and stop flagging it" onClick={() => decide([i], 'ignore')}>Ignore</button>
+                  {i.action !== 'leave' && <button className="act-pill" disabled={busy} data-tip={i.decline} onClick={() => decide([i], 'reject')}>Decline</button>}
+                  <button className="act-pill primary" disabled={busy || locked(i)} data-tip={locked(i) ? 'Waits until the run writing these notes finishes' : i.recommend} onClick={() => decide([i], 'approve')}>Approve</button>
                 </>}
+            <button className={`icon-btn conn-fold${unfolded.has(i.key) ? ' open' : ''}`} aria-expanded={unfolded.has(i.key)} aria-label={unfolded.has(i.key) ? 'Hide details' : 'Show details'} onClick={() => fold(i.key)}><IconChevron width={14} height={14} /></button>
           </span>
         </span>
       </div>
+      {unfolded.has(i.key) && (
+        <div className="conn-sub conn-fold-body nf-details mh-fold">
+          {tab === 'left'
+            ? <IssueParts parts={[['Left as is', 'The links stay as they are. Move it back to review to fix it later.']]} />
+            : <IssueParts parts={[['Problem', i.problem], ['If fixed', i.effect], ['Approving this (Recommended)', i.recommend], ['Declining this', i.decline]]} />}
+        </div>
+      )}
     </div>
   );
 
@@ -160,6 +170,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
             {tab === 'left'
               ? <button className="act-pill" disabled={busy} onClick={() => back(sel)}>Move back to review</button>
               : <>
+                  <button className="mh-plain" disabled={busy} onClick={() => decide(sel, 'ignore')}>Ignore</button>
                   <button className="act-pill" disabled={busy} onClick={() => decide(sel, 'reject')}>Decline</button>
                   <button className="act-pill primary" disabled={busy || sel.some(locked)} onClick={() => decide(sel, 'approve')}>Approve</button>
                 </>}
@@ -175,7 +186,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
 // The drawer for one Memory health issue in an open note: everything the Needs review notification has (the issue, its
 // facts, the problem, what fixing it does, the recommendation, where the links come from), with Decline and Approve
 export function IssueDrawer({ issue, at, total, locked, busy, onOpen, onDecide, onClose }: {
-  issue: Issue; at: number; total: number; locked: boolean; busy: boolean; onOpen: (rel: string) => void; onDecide: (yes: boolean) => void; onClose: () => void;
+  issue: Issue; at: number; total: number; locked: boolean; busy: boolean; onOpen: (rel: string) => void; onDecide: (verdict: boolean | 'ignore') => void; onClose: () => void;
 }) {
   const shown = issue.sources.slice(0, 8);
   const c = issue.candidate;
@@ -189,7 +200,7 @@ export function IssueDrawer({ issue, at, total, locked, busy, onOpen, onDecide, 
       <div className="mh-drawer-body">
         <h3>{issue.title}</h3>
         <p className="nf-sub">{footerFacts(issue).join(' • ')}</p>
-        <IssueParts parts={[['Problem', issue.problem], ['If fixed', issue.effect], ['Recommended', issue.recommend]]} />
+        <IssueParts parts={[['Problem', issue.problem], ['If fixed', issue.effect], ['Approving this (Recommended)', issue.recommend], ['Declining this', issue.decline]]} />
         <dl className="mh-parts mh-facts">
           <div><dt>Missing note</dt><dd>{issue.target}</dd></div>
           {c && <div><dt>Closest note</dt><dd><button className="keeper-link" onClick={() => onOpen(c.rel)}>{c.name ?? c.title}</button></dd></div>}
@@ -200,10 +211,16 @@ export function IssueDrawer({ issue, at, total, locked, busy, onOpen, onDecide, 
               {issue.sources.length > shown.length && <span className="muted">and {issue.sources.length - shown.length} more</span>}
             </dd>
           </div>
-          <div><dt>If you decline</dt><dd>The links stay as they are, and the issue moves to Left as is in Memory health.</dd></div>
+          {issue.contexts.length > 0 && (
+            <div>
+              <dt>What the linking notes say</dt>
+              <dd className="mh-quotes">{issue.contexts.map((c) => <p key={c.rel + c.text}><button className="keeper-link" data-tip={c.rel} onClick={() => onOpen(c.rel)}>{c.rel.split('/').pop()!.replace(/\.md$/i, '')}</button> {c.text}</p>)}</dd>
+            </div>
+          )}
         </dl>
       </div>
       <footer className="mh-drawer-foot">
+        <button className="mh-plain" disabled={busy || locked} data-tip="Leave the link as it is and stop flagging it" onClick={() => onDecide('ignore')}>Ignore</button>
         {issue.action !== 'leave' && <button className="act-pill" disabled={busy || locked} onClick={() => onDecide(false)}>Decline</button>}
         <button className="act-pill primary" disabled={busy || locked} data-tip={locked ? 'Waits until the run writing this note finishes' : undefined} onClick={() => onDecide(true)}>Approve</button>
       </footer>
