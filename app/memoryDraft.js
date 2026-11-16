@@ -288,6 +288,9 @@ export function createDrafter({ file, model, items, evidence, enabled = () => fa
     if (why) return { skipped: why };
     const s = load();
     const list = items().filter((i) => draftKind(i));
+    // a call a person cancelled gives its place under the daily cap back, unless the day turned while it ran
+    const day = s.day;
+    const refund = () => { if (s.day === day && s.count > 0) { s.count--; save(); } };
     const confirmOf = (item, notes, h) => {
       const p = draftPrompt(item, notes);
       if (!p) return null;
@@ -304,7 +307,7 @@ export function createDrafter({ file, model, items, evidence, enabled = () => fa
           log('memory draft confirm', item.id, agree ? 'agrees' : res.why ?? 'disagrees');
           return { confirmed: item.id, agree };
         } catch (e) {
-          if (e?.cancelled) return { cancelled: item.id };
+          if (e?.cancelled) { refund(); return { cancelled: item.id }; }
           return { failed: item.id, why: String(e?.message ?? e).slice(0, 200) };
         } finally { running = null; }
       })();
@@ -331,7 +334,7 @@ export function createDrafter({ file, model, items, evidence, enabled = () => fa
           return res.draft ? { drafted: item.id, draft: res.draft } : { dropped: item.id, why: res.why };
         } catch (e) {
           // a draft a person cancelled is tried again later, as if it never ran
-          if (e?.cancelled) return { cancelled: item.id };
+          if (e?.cancelled) { refund(); return { cancelled: item.id }; }
           s.failed[item.id] = { hash: h, at: now(), why: String(e?.message ?? e).slice(0, 200) };
           save();
           return { failed: item.id, why: s.failed[item.id].why };

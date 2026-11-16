@@ -139,7 +139,7 @@ describe('the drafter', () => {
     const good = reply({ kind: 'create', text: 'Zephyr ships in March.', quotes: [{ path: 'notes/a.md', line: 2, text: 'ships in March' }], confidence: 'high' });
     const d = createDrafter({
       file: path.join(dir, 'drafts.json'),
-      model: async (prompt, system) => { calls.push({ prompt, system }); return opts.reply ?? good; },
+      model: async (prompt, system) => { calls.push({ prompt, system }); if (opts.cancel) throw Object.assign(new Error('Cancelled'), { cancelled: true }); return opts.reply ?? good; },
       items: () => [createItem],
       evidence: (item) => (opts.guarded ? null : evidenceRels(item).map((rel) => ({ rel, text: notes[rel] }))),
       enabled: () => opts.enabled ?? true,
@@ -173,6 +173,14 @@ describe('the drafter', () => {
     capped.d.status();
     await capped.d.tick();
     expect(capped.d.status()).toMatchObject({ used: 1, cap: 1, waiting: 'cap' });
+  });
+
+  it('gives a cancelled call its place under the daily cap back and drafts the item again later', async () => {
+    const run = setup({ cap: 1, cancel: true });
+    expect(await run.d.tick()).toEqual({ cancelled: 'r:link:zephyr' });
+    expect(run.d.status()).toMatchObject({ used: 0, waiting: null });
+    expect(await run.d.tick()).toEqual({ cancelled: 'r:link:zephyr' });
+    expect(run.calls).toHaveLength(2);
   });
 
   it('never calls the model when the read guard or a confidential mark keeps a needed note away', async () => {
