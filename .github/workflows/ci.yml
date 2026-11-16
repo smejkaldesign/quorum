@@ -1,7 +1,9 @@
 name: CI
 
+# pushes to main and every pull request; a push to a PR branch runs once, through its pull_request event
 on:
   push:
+    branches: [main]
   pull_request:
 
 jobs:
