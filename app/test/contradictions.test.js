@@ -275,6 +275,14 @@ describe('stage 4 resolve and stage 5 fixes', () => {
     expect(failing({ textOf: () => 'changed' })).toEqual(['verbatim']);
     expect(failing({}, { ...p, match: 'fuzzy' })).toEqual(['match']);
     expect(failing({}, { ...p, a: { ...older, value: '$5 a seat' } })).toEqual(['not-sensitive']);
+    // a project note the model calls decided, with no decision phrase on its line, is no decision
+    const said = claim({ rel: 'projects/b.md', value: 'Y', date: '2026-03-01', modality: 'decided', quote: 'Atlas uses Y.', extractor: 'model:sonnet' });
+    const p2 = { ...p, b: said };
+    const res2 = resolvePair(p2, { ix, lineOf, judge: 'contradiction' });
+    expect(res2.rule).toBe('R2');
+    const ids = (text) => autoCriteria(p2, res2, { ...ctx, textOf: (rel) => (rel === 'a.md' ? '#\n\nAtlas uses X.\n' : text) }).filter((c) => !c.ok).map((c) => c.id);
+    expect(ids('#\n\nAtlas uses Y.\n')).toEqual(['decision']);
+    expect(ids('#\n\nWe decided Atlas uses Y.\n')).toEqual([]);
   });
 });
 

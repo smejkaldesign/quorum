@@ -11,7 +11,7 @@
 //   R7 undated             either side lacks a date from its text or frontmatter, or both carry the same date: ask
 //   R8 cascade             other notes on the same point are listed with the item, never fixed on their own
 import { verifyQuotes } from './memoryDraft.js';
-import { AUTHORITY, SUPERSEDED_RE } from './contradictionIndex.js';
+import { AUTHORITY, SUPERSEDED_RE, modalityOf } from './contradictionIndex.js';
 import { parseJson, quoteMatches } from './contradictionClaims.js';
 import { normKey } from './contradictionPairs.js';
 
@@ -101,11 +101,15 @@ export function autoCriteria(p, res, ctx) {
   const { older, newer } = res;
   const verbatim = [older, newer].every((c) => { const t = ctx.textOf(c.rel); return t != null && quoteMatches(t, c.line, c.lineEnd, c.quote); });
   const scopes = (older.scope ?? '') === (newer.scope ?? '') || (!older.scope && !newer.scope);
+  // a decision the text shows: a decision record, or a decision phrase on the quoted lines. The model's own modality
+  // label is not enough, since text in a note can ask the model for it
+  const spanOf = (c) => String(ctx.textOf(c.rel) ?? '').split('\n').slice(c.line - 1, c.lineEnd).join('\n');
+  const decided = newer.authority === AUTHORITY.decision || (newer.modality === 'decided' && modalityOf(spanOf(newer)) === 'decided');
   return [
     { id: 'verbatim', ok: verbatim },
     { id: 'match', ok: p.match === 'exact' || p.match === 'alias' },
     { id: 'dated', ok: TEXT_DATE.has(older.dateSource) && TEXT_DATE.has(newer.dateSource) },
-    { id: 'decision', ok: (newer.modality === 'decided' || newer.authority === AUTHORITY.decision) && newer.authority <= older.authority },
+    { id: 'decision', ok: decided && newer.authority <= older.authority },
     { id: 'scope', ok: scopes },
     { id: 'rule', ok: res.rule === 'R1' || res.rule === 'R2' || res.rule === 'R3' },
     { id: 'add-only', ok: res.fix?.kind === 'annotate' },
