@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { MissingLink } from './quorum';
 import markReview from '../assets/quorum-mark-review.png';
 import { CATEGORIES, HEALTH_SORTS, categoryCounts, countsLine, footerFacts, healthList, type HealthCategory, type HealthSort, type Issue } from '../memoryHealth.js';
-import { IconChevron, IconClose, IconReset } from './icons';
+import { IconArchive, IconCheck, IconChevron, IconClose, IconReset } from './icons';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
 import { IssueParts } from './NotificationsView';
 
@@ -101,23 +101,29 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
         <span className="nf-who"><img src={markReview} alt="Quorum, needs review" width={32} height={32} /></span>
         <span className="nf-main">
           <span className="nf-head"><strong className="conn-title nf-title">{i.title}</strong></span>
-          <span className="nf-sub">{footerFacts(i).map((f, n) => <span key={f}>{n > 0 && <span className="nf-sep" aria-hidden="true"> • </span>}{f}</span>)}</span>
         </span>
-        <span className="nf-side">
+        <span className="nf-side mh-side">
+          {/* the date sits on the right; on hover it slides out and the actions slide in, the way Home's rows do */}
+          <span className="mh-swap" onClick={stop} onKeyDown={stop}>
+            <span className="mh-when" title={i.lastAt ? new Date(i.lastAt).toLocaleString() : undefined}>{i.lastAt ? new Date(i.lastAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) : ''}</span>
+            <span className="mh-hover">
+              {tab === 'left'
+                ? <button className="act-pill" disabled={busy} onClick={() => back([i])}>Move back to review</button>
+                : <>
+                    <button className="icon-btn mh-icon" disabled={busy} aria-label="Ignore" data-tip="Ignore: leave the link as it is and stop flagging it" onClick={() => decide([i], 'ignore')}><IconArchive width={16} height={16} /></button>
+                    {i.action !== 'leave' && <button className="icon-btn mh-icon mh-no" disabled={busy} aria-label="Decline" data-tip={`Decline: ${i.decline}`} onClick={() => decide([i], 'reject')}><IconClose width={15} height={15} /></button>}
+                    <button className="icon-btn mh-icon mh-yes" disabled={busy || locked(i)} aria-label="Approve" data-tip={locked(i) ? 'Waits until the run writing these notes finishes' : `Approve: ${i.recommend}`} onClick={() => decide([i], 'approve')}><IconCheck width={16} height={16} /></button>
+                  </>}
+            </span>
+          </span>
           <span className="nf-tools" onClick={stop} onKeyDown={stop}>
-            {tab === 'left'
-              ? <button className="act-pill" disabled={busy} onClick={() => back([i])}>Move back to review</button>
-              : <>
-                  <button className="mh-plain" disabled={busy} data-tip="Leave the link as it is and stop flagging it" onClick={() => decide([i], 'ignore')}>Ignore</button>
-                  {i.action !== 'leave' && <button className="act-pill" disabled={busy} data-tip={i.decline} onClick={() => decide([i], 'reject')}>Decline</button>}
-                  <button className="act-pill primary" disabled={busy || locked(i)} data-tip={locked(i) ? 'Waits until the run writing these notes finishes' : i.recommend} onClick={() => decide([i], 'approve')}>Approve</button>
-                </>}
             <button className={`icon-btn conn-fold${unfolded.has(i.key) ? ' open' : ''}`} aria-expanded={unfolded.has(i.key)} aria-label={unfolded.has(i.key) ? 'Hide details' : 'Show details'} onClick={() => fold(i.key)}><IconChevron width={14} height={14} /></button>
           </span>
         </span>
       </div>
       {unfolded.has(i.key) && (
         <div className="conn-sub conn-fold-body nf-details mh-fold">
+          <p className="mh-fold-facts">{footerFacts(i).join(' • ')}</p>
           {tab === 'left'
             ? <IssueParts parts={[['Left as is', 'The links stay as they are. Move it back to review to fix it later.']]} />
             : <IssueParts parts={[['Problem', i.problem], ['If fixed', i.effect], ['Approving this (Recommended)', i.recommend], ['Declining this', i.decline]]} />}

@@ -2691,4 +2691,22 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .mu-banner .mu-words .act-pill { height: 30px; }
 .mh-quotes { display: grid; gap: 8px; }
 .mh-quotes p { margin: 0; }
-.mh-fold { padding-left: 98px; }
+.mh-fold { padding-left: 84px; }
+
+/* Memory health rows: the checkbox and mark sit at the top with the title; the date on the right gives way on hover
+   to Ignore, Decline and Approve as icon buttons, sliding in the way Home's row actions do */
+.mh-row .nf-line { align-items: flex-start; }
+.mh-row .nf-check, .mh-row .nf-who { margin-top: 2px; }
+.mh-row .nf-who img { display: block; }
+.mh-row .nf-side { align-self: flex-start; display: flex; align-items: center; gap: 4px; }
+.mh-swap { position: relative; display: inline-flex; align-items: center; justify-content: flex-end; min-width: 120px; height: 32px; }
+.mh-when { color: var(--muted); font-size: 14px; white-space: nowrap; transition: opacity 250ms ease 250ms, transform 250ms ease 250ms; }
+.mh-hover { position: absolute; right: 0; top: 50%; display: inline-flex; align-items: center; gap: 4px; transform: translateY(-50%) translateX(16px); opacity: 0; visibility: hidden;
+  transition: opacity 250ms ease, transform 250ms ease, visibility 0s linear 250ms; }
+.mh-row .nf-line:hover .mh-when, .mh-row .nf-line:focus-within .mh-when { opacity: 0; transform: translateX(16px); transition: opacity 250ms ease, transform 250ms ease; }
+.mh-row .nf-line:hover .mh-hover, .mh-row .nf-line:focus-within .mh-hover { opacity: 1; visibility: visible; transform: translateY(-50%); transition: opacity 250ms ease 250ms, transform 250ms ease 250ms, visibility 0s linear 250ms; }
+@media (prefers-reduced-motion: reduce) { .mh-when, .mh-hover { transition: none; } }
+.mh-icon { width: 32px; height: 32px; }
+.mh-icon.mh-yes svg { color: var(--go); }
+.mh-icon.mh-no svg { color: var(--danger); }
+.mh-fold-facts { margin: 0 0 12px; color: var(--muted); font-size: 14px; }
