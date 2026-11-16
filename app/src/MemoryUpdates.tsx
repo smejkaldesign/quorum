@@ -134,6 +134,10 @@ export function MemoryUpdatesCard({ settings, onSettings }: { settings: Settings
           desc="Memory health looks for out-of-date, duplicate, oversized and unlinked notes, frontmatter that does not fit its folder, misplaced confidential marks and written secrets. It checks every 3.5 hours and once a day while you are away. Turn this off to pause those checks; notes you save are still checked.">
           <Toggle on={settings.memorySweeps !== false} onChange={(v) => save({ memorySweeps: v })} />
         </Row>
+        <Row icon={<IconListCheck width={18} height={18} />} title="Apply memory fixes on its own"
+          desc="After each check, Quorum applies every Memory health fix that needs no review of its own as one batch, and lists it in Notifications with Undo. Fixes that conflict or need a review stay in Needs review. Off by default.">
+          <Toggle on={settings.memoryAutoApply === true} onChange={(v) => save({ memoryAutoApply: v })} />
+        </Row>
         <Row icon={<IconClock width={18} height={18} />} title="Hide update dots after"
           desc="A blue dot in the Memory tree goes away when you open the note or after this many days. A green dot stays until you accept its updates.">
           <label className="mu-days">
