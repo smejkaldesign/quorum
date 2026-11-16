@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MissingLink } from './quorum';
-import markReview from '../assets/quorum-mark-review.png';
+// every Quorum agent row shows the blue mark; review state shows through the badges and counts
+import markReview from '../assets/quorum-mark.png';
 import { CATEGORIES, HEALTH_SORTS, categoryCounts, countsLine, healthList, issueMeta, type HealthCategory, type HealthSort, type Issue } from '../memoryHealth.js';
 import { IconCheck, IconChevron, IconClose, IconReset } from './icons';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
-import { IssueParts, ReviewDetails, RunBanner, StatusBadge, dismissRun } from './NotificationsView';
+import { IssueParts, ReviewDetails, RunBanner, StatusBadge, dismissRun, took } from './NotificationsView';
 import type { FixRun } from './quorum';
 import { toast } from './Toasts';
 
@@ -39,13 +40,16 @@ export function waitFix(key: string): Promise<FixRun> {
 export const dismissIssue = (issue: Issue) => window.quorum.vaultLinkDecide(issue.key, 'dismiss');
 const CHANGED = 'quorum:activity-changed';
 
-type Tab = 'open' | 'left';
+// All (the default), Accepted (the fixes Quorum carried out) and Dismissed, the same bar as Notifications; Needs review
+// narrows All to the items waiting for a decision
+type Tab = 'all' | 'accepted' | 'left';
 
 export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   focus: string | null; isLive: (rel: string) => boolean; onReview: (issue: Issue) => void; onClose: () => void; onChanged: () => void;
 }) {
   const [items, setItems] = useState<MissingLink[] | null>(null);
-  const [tab, setTab] = useState<Tab>('open');
+  const [tab, setTab] = useState<Tab>('all');
+  const [review, setReview] = useState(false);
   const [cats, setCats] = useState<HealthCategory[]>([]);
   const [sort, setSort] = useState<HealthSort>('links');
   const [q, setQ] = useState('');
@@ -57,25 +61,39 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const [runs, setRuns] = useState<FixRun[]>([]);
   // the issues whose Approve was pressed: a spinner in place of the button until their run takes over
   const [approving, setApproving] = useState<Set<string>>(new Set());
+  // a bulk Approve: the issues in it and when it began, for the progress row under the bulk bar
+  const [batch, setBatch] = useState<{ keys: string[]; titles: Record<string, string>; at: number } | null>(null);
   const load = useCallback((fresh = false) => { window.quorum.fixRuns().then(setRuns).catch(() => {}); return window.quorum.vaultLinkHealth(fresh).then(setItems); }, []);
   useEffect(() => { migrateLeft().finally(() => load()); }, [load]);
   useEffect(() => window.quorum.onVaultChanged(() => { load(); }), [load]);
   // a run's progress, and the list again once it ends
-  useEffect(() => window.quorum.onFixRun((r) => { setRuns((xs) => [r, ...xs.filter((x) => x.id !== r.id)]); if (r.status === 'success' || r.status === 'error') load(); }), [load]);
+  useEffect(() => window.quorum.onFixRun((r) => { setRuns((xs) => [r, ...xs.filter((x) => x.id !== r.id)]); setApproving((ks) => { if (!ks.has(r.key)) return ks; const n = new Set(ks); n.delete(r.key); return n; }); if (r.status === 'success' || r.status === 'error') load(); }), [load]);
   // an issue answered in Notifications leaves this list too: both read the same issues
   useEffect(() => { const go = () => { load(); }; window.addEventListener(CHANGED, go); return () => window.removeEventListener(CHANGED, go); }, [load]);
   useEffect(() => { if (focus) document.getElementById(`lh-${focus.toLowerCase()}`)?.scrollIntoView({ block: 'center' }); }, [focus, items]);
-  useEffect(() => { setPicked(new Set()); }, [tab, cats, q, sort]);
+  useEffect(() => { setPicked(new Set()); }, [tab, review, cats, q, sort]);
 
   const all = items ?? [];
   const left = leftOf(all);
   const counts = categoryCounts(all, left);
-  // the issues being fixed leave the list; their runs show above it until their banner is dismissed
-  const liveRuns = runs.filter((r) => r.status === 'queued' || r.status === 'running');
-  const fixing = new Set(liveRuns.map((r) => r.key));
-  const shownRuns = tab === 'open' ? runs.filter((r) => r.showBanner) : [];
-  const list = healthList(all, { tab, categories: cats, q, sort, left }).filter((i) => !fixing.has(i.key));
-  const openN = all.length - left.size;
+  // an issue being fixed keeps its row and place, loading, until its run ends; then the run lists under Accepted
+  const liveRuns = new Map(runs.filter((r) => r.status === 'queued' || r.status === 'running').map((r) => [r.key, r]));
+  const open = healthList(all, { tab: 'open', categories: cats, q, sort, left });
+  const openKeys = new Set(all.map((i) => i.target.toLowerCase()));
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const ended = cats.length ? [] : runs
+    .filter((r) => (r.endedAt || !openKeys.has(r.key)) && words.every((w) => r.target.toLowerCase().includes(w)))
+    .sort((a, b) => (b.endedAt ?? b.queuedAt) - (a.endedAt ?? a.queuedAt));
+  type Entry = { issue: Issue } | { run: FixRun };
+  // All: the items to decide, then the fixes, newest first; a fixed item leaves its place without pushing the list.
+  // Needs review keeps only the items
+  const entries: Entry[] = tab === 'left' ? healthList(all, { tab: 'left', categories: cats, q, sort, left }).map((issue) => ({ issue }))
+    : tab === 'accepted' ? ended.map((run) => ({ run }))
+      : review ? open.map((issue) => ({ issue }))
+        : [...open.map((issue) => ({ issue })), ...ended.map((run) => ({ run }))];
+  const list = entries.flatMap((e) => ('issue' in e ? [e.issue] : []));
+  const idOf = (e: Entry) => ('issue' in e ? e.issue.key : e.run.id);
+  const openN = open.filter((i) => !liveRuns.has(i.key)).length;
   // a fix writes the linking notes or the matched note, so it waits while a run is writing any of them
   const locked = (i: Issue) => [...i.sources, ...(i.candidate ? [i.candidate.rel] : [])].some(isLive);
 
@@ -89,16 +107,16 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   };
   // one or many issues decided; the list, the tree, the button count and Notifications all read again
   const decide = async (issues: Issue[], verdict: 'approve' | 'dismiss') => {
-    if (verdict === 'approve') setApproving(new Set(issues.map((i) => i.key)));
+    if (verdict === 'approve') setApproving((s) => new Set([...s, ...issues.map((i) => i.key)]));
+    if (verdict === 'approve' && issues.length > 1) setBatch({ keys: issues.map((i) => i.key), titles: Object.fromEntries(issues.map((i) => [i.key, i.target])), at: Date.now() - 1000 });
     setBusy(true);
     const lines: string[] = [];
     let firstError = '';
     for (const i of issues) {
       try { lines.push(verdict === 'approve' ? await acceptIssue(i) : await dismissIssue(i)); }
-      catch (e) { firstError ||= String(e).replace(/^.*Error:\s*/, ''); }
+      catch (e) { firstError ||= String(e).replace(/^.*Error:\s*/, ''); setApproving((ks) => { const n = new Set(ks); n.delete(i.key); return n; }); }
     }
     setBusy(false);
-    setApproving(new Set());
     const failed = issues.length - lines.length;
     const one = issues.length === 1 ? `“${issues[0].target}”` : `${issues.length} issues`;
     if (failed && !lines.length) toast(firstError || 'That did not work', 'error');
@@ -110,8 +128,10 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
     await after(issues.length === 1 ? 'Moved back to review' : `Moved ${issues.length} back to review`);
   };
 
-  const sel = list.filter((i) => picked.has(i.key));
-  const allOn = list.length > 0 && list.every((i) => picked.has(i.key));
+  // the Approve mark stays until the issue's run reports in (see onFixRun), so the row never flickers between the two
+  const sel = list.filter((i) => picked.has(i.key) && !liveRuns.has(i.key));
+  const pickedRuns = entries.flatMap((e) => ('run' in e && picked.has(e.run.id) && e.run.endedAt ? [e.run] : []));
+  const allOn = entries.length > 0 && entries.every((e) => picked.has(idOf(e)));
   const toggle = (k: string) => setPicked((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const catLabel = Object.fromEntries(CATEGORIES.map((c) => [c.id, c.label])) as Record<HealthCategory, string>;
 
@@ -119,24 +139,29 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const [unfolded, setUnfolded] = useState<Set<string>>(new Set());
   const fold = (k: string) => setUnfolded((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
-  const row = (i: Issue) => (
-    <div key={i.key} id={`lh-${i.key}`} className={`conn-row nf-row mh-row${focus?.toLowerCase() === i.key ? ' focus' : ''}${approving.has(i.key) ? ' running working' : ''}`}>
+  const row = (i: Issue) => {
+    const fixRun = liveRuns.get(i.key);
+    const working = approving.has(i.key) || !!fixRun;
+    const waiting = fixRun ? fixRun.status === 'queued' : working && !!batch?.keys.includes(i.key);
+    return (
+    <div key={i.key} id={`lh-${i.key}`} className={`conn-row nf-row mh-row${focus?.toLowerCase() === i.key ? ' focus' : ''}${working ? (waiting ? ' working waiting' : ' running working') : ''}`}>
       <div className="conn-line nf-line" role="button" tabIndex={0} aria-label={i.title} onClick={() => onReview(i)} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onReview(i); } }}>
         <label className="nf-check" onClick={stop}><input type="checkbox" checked={picked.has(i.key)} aria-label="Select" onChange={() => toggle(i.key)} /></label>
         <span className="nf-who"><img src={markReview} alt="Quorum, needs review" width={32} height={32} /></span>
         <span className="nf-main">
-          <span className="nf-head"><strong className="conn-title nf-title">{i.title}</strong>{tab === 'left' && <StatusBadge status="declined" />}</span>
+          <span className="nf-head"><strong className="conn-title nf-title">{i.title}</strong></span>
         </span>
         <span className="nf-side mh-side">
+          {tab === 'left' && <StatusBadge status="declined" />}
           {/* the date sits on the right; on hover it slides out and the actions slide in, the way Home's rows do */}
           <span className="mh-swap" onClick={stop} onKeyDown={stop}>
-            <span className="mh-when" title={i.lastAt ? new Date(i.lastAt).toLocaleString() : undefined}>{i.lastAt ? new Date(i.lastAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) : ''}</span>
+            <span className="mh-when" title={i.lastAt ? new Date(i.lastAt).toLocaleString() : undefined}>{waiting ? 'Waiting' : i.lastAt ? new Date(i.lastAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) : ''}</span>
             <span className="mh-hover">
               {tab === 'left'
                 ? <button className="act-pill" disabled={busy} onClick={() => back([i])}>Move back to review</button>
                 : <>
-                    <button className="icon-btn mh-icon mh-no" disabled={busy} aria-label="Dismiss" data-tip="Dismiss: mark it reviewed and change nothing" onClick={() => decide([i], 'dismiss')}><IconClose width={15} height={15} /></button>
-                    {approving.has(i.key)
+                    <button className="icon-btn mh-icon mh-no" disabled={busy || working} aria-label="Dismiss" data-tip="Dismiss: mark it reviewed and change nothing" onClick={() => decide([i], 'dismiss')}><IconClose width={15} height={15} /></button>
+                    {working
                       ? <span className="icon-btn mh-icon mh-busy" role="img" aria-label="Working"><i className="run-spin" /></span>
                       : <button className="icon-btn mh-icon mh-yes" disabled={busy || locked(i)} aria-label="Approve" data-tip={locked(i) ? 'Waits until the run writing these notes finishes' : `Approve: ${i.recommend}`} onClick={() => decide([i], 'approve')}><IconCheck width={16} height={16} /></button>}
                   </>}
@@ -152,18 +177,20 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
         <div className="conn-sub conn-fold-body nf-details mh-fold">
           {tab === 'left'
             ? <><IssueParts parts={[['Dismissed', 'The links stay as they are. Move it back to review to fix it later.']]} /><ReviewDetails meta={issueMeta(i)} /></>
-            : <ReviewDetails recommendation={i.recommend} problem={i.problem} solution={i.solution} value={i.value} meta={issueMeta(i)} />}
+            : <>{fixRun && <RunBanner run={{ ...fixRun, showBanner: true }} />}<ReviewDetails recommendation={fixRun ? undefined : i.recommend} problem={i.problem} solution={i.solution} value={i.value} meta={issueMeta(i)} /></>}
         </div>
         </div>
       </div>
     </div>
-  );
+    );
+  };
 
   const filtered = !!(q || cats.length);
   const empty = items === null ? 'Checking your notes…'
     : filtered ? 'No issues match these filters.'
       : tab === 'left' ? 'Nothing dismissed. Issues you dismiss stay here, out of review.'
-        : 'Every link points at a note.';
+        : tab === 'accepted' ? 'Nothing accepted yet. The fixes you approve list here once Quorum makes them.'
+          : 'Every link points at a note.';
 
   return (
     <div className="link-health mh-page" role="region" aria-label="Memory health">
@@ -180,9 +207,13 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
       </p>
       <div className="nf-bar">
         <div className="seg" role="tablist" aria-label="Show">
-          <button role="tab" aria-selected={tab === 'open'} className={tab === 'open' ? 'on' : ''} onClick={() => setTab('open')}>Needs review{openN ? <span className="nf-count review">{openN}</span> : null}</button>
-          <button role="tab" aria-selected={tab === 'left'} className={tab === 'left' ? 'on' : ''} onClick={() => setTab('left')}>Dismissed</button>
+          {([['all', 'All'], ['accepted', 'Accepted'], ['left', 'Dismissed']] as [Tab, string][]).map(([id, label]) => (
+            <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? 'on' : ''} onClick={() => { setTab(id); if (id !== 'all') setReview(false); }}>{label}</button>
+          ))}
         </div>
+        <button className={`nf-toggle${review ? ' on' : ''}`} aria-pressed={review} onClick={() => { setReview((r) => !r); setTab('all'); }}>
+          Needs review{openN ? <span className="nf-count review">{openN}</span> : null}
+        </button>
         <span className="nf-fill" />
         <SearchButton open={searching || !!q} label="Search Memory health" onToggle={() => { if (searching || q) { setQ(''); setSearching(false); } else { setSearching(true); window.setTimeout(() => searchRef.current?.focus(), 60); } }} />
         <PickMenu label="Type" count={cats.length} multi options={CATEGORIES.map((c) => [c.id, c.label] as [HealthCategory, string])} picked={cats} onPick={(c) => setCats(cats.includes(c) ? cats.filter((x) => x !== c) : [...cats, c])} />
@@ -195,22 +226,23 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
           {cats.length > 1 && <button className="text-btn" onClick={() => setCats([])}>Clear all</button>}
         </div>
       )}
-      {list.length > 0 && (
+      {entries.length > 0 && (
         <div className="nf-bulk">
-          <label className="nf-check"><input type="checkbox" checked={allOn} aria-label="Select all" onChange={() => setPicked(allOn ? new Set() : new Set(list.map((i) => i.key)))} /></label>
+          <label className="nf-check"><input type="checkbox" checked={allOn} aria-label="Select all" onChange={() => setPicked(allOn ? new Set() : new Set(entries.map(idOf)))} /></label>
           <span className="muted">{picked.size ? `${picked.size} selected` : 'Select all'}</span>
           <span className={`nf-bulk-actions${picked.size ? '' : ' hidden'}`} aria-hidden={!picked.size}>
             {tab === 'left'
               ? <button className="act-pill" disabled={busy} onClick={() => back(sel)}>Move back to review</button>
               : <>
-                  <button className="act-pill" disabled={busy} data-tip="Mark them reviewed and change nothing" onClick={async () => { for (const r of shownRuns.filter((x) => picked.has(x.id) && x.endedAt)) await dismissRun(r); await decide(sel, 'dismiss'); }}>Dismiss</button>
-                  <button className="act-pill primary" disabled={busy || sel.some(locked)} onClick={() => decide(sel, 'approve')}>Approve</button>
+                  <button className="act-pill" disabled={busy} data-tip="Mark them reviewed and change nothing" onClick={async () => { for (const r of pickedRuns) await dismissRun(r); if (sel.length) await decide(sel, 'dismiss'); else { setPicked(new Set()); load(); } }}>Dismiss</button>
+                  {sel.length > 0 && <button className="act-pill primary" disabled={busy || sel.some(locked)} onClick={() => decide(sel, 'approve')}>Approve</button>}
                 </>}
           </span>
         </div>
       )}
-      <div className="nf-list">{shownRuns.map((r) => <RunRow key={r.id} run={r} picked={picked.has(r.id)} onPick={() => toggle(r.id)} />)}{list.map(row)}</div>
-      {!list.length && <div className="nf-empty"><p>{empty}</p></div>}
+      {batch && <BatchBanner batch={batch} runs={runs} onDismiss={() => setBatch(null)} />}
+      <div className="nf-list">{entries.map((e) => ('issue' in e ? row(e.issue) : <RunRow key={e.run.id} run={e.run} picked={picked.has(e.run.id)} onPick={() => toggle(e.run.id)} />))}</div>
+      {!entries.length && <div className="nf-empty"><p>{empty}</p></div>}
     </div>
   );
 }
@@ -261,7 +293,7 @@ export function IssueDrawer({ issue, at, total, locked, busy, onOpen, onDecide, 
 // a fix run in Memory health: the same row as an issue, shimmering while it works, with its banner and the issue's
 // details folded open below
 function RunRow({ run, picked, onPick }: { run: FixRun; picked: boolean; onPick: () => void }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(!!run.showBanner);
   const live = run.status === 'queued' || run.status === 'running';
   const line = run.status === 'queued' ? `Waiting to fix “${run.target}”` : live ? `Fixing “${run.target}”` : run.status === 'success' ? `Fixed “${run.target}”` : `Could not fix “${run.target}”`;
   return (
@@ -269,9 +301,10 @@ function RunRow({ run, picked, onPick }: { run: FixRun; picked: boolean; onPick:
       <div className="conn-line nf-line">
         <label className="nf-check"><input type="checkbox" checked={picked} aria-label="Select" onChange={onPick} /></label>
         <span className="nf-who"><img src={markReview} alt="" width={32} height={32} /></span>
-        <span className="nf-main"><span className="nf-head"><strong className="conn-title nf-title">{line}</strong>{!live && <StatusBadge status={run.status === 'success' ? 'accepted' : 'failed'} />}</span></span>
+        <span className="nf-main"><span className="nf-head"><strong className="conn-title nf-title">{line}</strong></span></span>
         <span className="nf-side mh-side">
-          <span className="mh-swap"><span className="mh-when">{new Date(run.endedAt ?? run.queuedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span></span>
+          {!live && <StatusBadge status={run.status === 'success' ? 'accepted' : 'failed'} />}
+          <span className="mh-swap mh-still"><span className="mh-when">{new Date(run.endedAt ?? run.queuedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span></span>
           <span className="nf-tools"><button className={`icon-btn conn-fold${open ? ' open' : ''}`} aria-expanded={open} aria-label={open ? 'Hide details' : 'Show details'} onClick={() => setOpen((o) => !o)}><IconChevron width={14} height={14} /></button></span>
         </span>
       </div>
@@ -281,6 +314,48 @@ function RunRow({ run, picked, onPick }: { run: FixRun; picked: boolean; onPick:
             <RunBanner run={run} />
             <ReviewDetails problem={run.problem} solution={run.solution} value={run.value} meta={run.meta} />
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// a bulk Approve's progress, full width under the bulk bar: the item being fixed shimmers here and in its row, the bar
+// fills as items finish, and the fold lists every item with its state. Done, it says how many were fixed
+function BatchBanner({ batch, runs, onDismiss }: { batch: { keys: string[]; titles: Record<string, string>; at: number }; runs: FixRun[]; onDismiss: () => void }) {
+  const [open, setOpen] = useState(false);
+  const runOf = (k: string) => runs.filter((r) => r.key === k && r.queuedAt >= batch.at).sort((a, b) => b.queuedAt - a.queuedAt)[0];
+  const items = batch.keys.map((k) => ({ k, title: batch.titles[k] ?? k, run: runOf(k) }));
+  const ok = items.filter((x) => x.run?.status === 'success').length;
+  const bad = items.filter((x) => x.run?.status === 'error').length;
+  const finished = ok + bad;
+  const now = items.find((x) => x.run?.status === 'running');
+  const live = finished < items.length;
+  const ends = items.map((x) => x.run?.endedAt ?? 0);
+  const [tick, setTick] = useState(() => Date.now());
+  useEffect(() => { if (!live) return; const t = window.setInterval(() => setTick(Date.now()), 500); return () => window.clearInterval(t); }, [live]);
+  const elapsed = (live ? tick : Math.max(...ends)) - batch.at;
+  const text = live
+    ? `Fixing ${finished + 1} of ${items.length}${now ? `: “${now.title}”${now.run?.steps.length ? `, ${now.run.steps[now.run.steps.length - 1].label.toLowerCase()}` : ''}` : ''}`
+    : `Fixed ${ok} of ${items.length}${bad ? `. ${bad} could not be fixed` : ''}`;
+  return (
+    <div className={`run-banner mh-batch ${live ? 'live' : bad && !ok ? 'error' : 'success'}`} role="status" aria-live="polite">
+      <div className="run-head">
+        <span className="run-icon" aria-hidden="true">{live ? <i className="run-spin" /> : bad && !ok ? <IconClose width={17} height={17} /> : <IconCheck width={18} height={18} />}</span>
+        <span className={`run-text${live ? ' shimmer' : ''}`}>{text}</span>
+        <span className="run-time">{took(Math.max(0, elapsed))}</span>
+        <button className={`icon-btn conn-fold${open ? ' open' : ''}`} aria-expanded={open} aria-label={open ? 'Hide items' : 'Show items'} onClick={() => setOpen((o) => !o)}><IconChevron width={14} height={14} /></button>
+        {!live && <button className="act-pill run-dismiss" onClick={onDismiss}>Dismiss</button>}
+      </div>
+      <div className="mh-batch-bar" aria-hidden="true"><i style={{ width: `${(finished / items.length) * 100}%` }} /></div>
+      <div className={`fold-anim${open ? ' open' : ''}`}>
+        <div className="fold-inner">
+          <ol className="run-steps mh-batch-list">
+            {items.map((x) => {
+              const st = x.run?.status;
+              return <li key={x.k} className={st === 'running' ? 'now' : st === 'success' || st === 'error' ? 'done' : ''}><span className={st === 'running' ? 'shimmer' : ''}>{x.title}</span><span className="run-time">{st === 'success' ? 'Fixed' : st === 'error' ? 'Could not fix' : st === 'running' ? 'Fixing' : 'Waiting'}</span></li>;
+            })}
+          </ol>
         </div>
       </div>
     </div>

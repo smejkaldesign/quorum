@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import markProd from '../assets/quorum-mark.png';
-import markReview from '../assets/quorum-mark-review.png';
+
 import { IconArchive, IconBell, IconCheck, IconChevron, IconClose } from './icons';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
 import { Avatar } from './Speaker';
@@ -66,7 +66,9 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
   // a fix run opens its details, so its progress and outcome are in view
   const [open, setOpen] = useState(!!row.run?.showBanner);
   // Approve pressed: the button turns into a spinner and the title shimmers until the row is answered
-  const [working, setWorking] = useState(false);
+  const [pressed, setWorking] = useState(false);
+  // the row stays where it is, its buttons showing and the spinner on, until the fix ends
+  const working = pressed || !!row.fixRun;
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const go = () => { if (!row.target.gone) onOpen(); };
   return (
@@ -74,13 +76,14 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
       <div className="conn-line nf-line" role="button" tabIndex={0} aria-label={row.summary.line} onClick={go} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); go(); } }}>
         <label className="nf-check" onClick={stop}><input type="checkbox" checked={picked} aria-label="Select" onChange={onPick} /></label>
         {/* waiting for a decision shows the orange mark, Quorum's color for anything in review */}
-        <span className="nf-who">{row.who === 'you' ? <span className="nf-you-avatar" aria-label="You" data-tip={me.name}><Avatar name={me.name} photo={me.photo} size={32} /></span> : <img src={row.review || row.run ? markReview : markProd} alt={row.review ? 'Quorum, needs review' : 'Quorum'} width={32} height={32} />}</span>
+        <span className="nf-who">{row.who === 'you' ? <span className="nf-you-avatar" aria-label="You" data-tip={me.name}><Avatar name={me.name} photo={me.photo} size={32} /></span> : <img src={markProd} alt={row.review ? 'Quorum, needs review' : 'Quorum'} width={32} height={32} />}</span>
         <span className="nf-main">
-          <span className="nf-head"><strong className="conn-title nf-title">{row.summary.line}</strong>{row.run && (row.run.status === 'success' || row.run.status === 'error') ? <StatusBadge status={row.run.status === 'success' ? 'accepted' : 'failed'} /> : row.unread && <i className="nf-dot" role="img" aria-label="Unread" data-tip="Unread" />}</span>
+          <span className="nf-head"><strong className="conn-title nf-title">{row.summary.line}</strong>{!(row.run && (row.run.status === 'success' || row.run.status === 'error')) && row.unread && <i className="nf-dot" role="img" aria-label="Unread" data-tip="Unread" />}</span>
           {!row.review && !row.run && <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>{row.summary.sub && <> <span className="nf-sep" aria-hidden="true">•</span> {row.summary.sub}</>}</span>}
         </span>
         <span className={`nf-side${row.review || row.run ? ' mh-side' : ''}`}>
-          {row.run && <span className="mh-swap"><span className="mh-when">{ago(row.at)}</span></span>}
+          {row.run && (row.run.status === 'success' || row.run.status === 'error') && <StatusBadge status={row.run.status === 'success' ? 'accepted' : 'failed'} />}
+          {row.run && <span className="mh-swap mh-still"><span className="mh-when">{ago(row.at)}</span></span>}
           {/* a row waiting for a decision reads like a Memory health row: the date on the right, and on hover its
               answers slide in as icons */}
           {row.review && (
@@ -116,8 +119,11 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
                 <ReviewDetails problem={row.run.problem} solution={row.run.solution} value={row.run.value} meta={row.run.meta} />
               </>
             ) : row.review ? (
-              <ReviewDetails recommendation={row.summary.recommendation} problem={row.summary.problem} solution={row.summary.solution} value={row.summary.value}
-                meta={row.review.kind === 'link' ? row.details.filter(([k]) => k !== 'What' && k !== 'When' && k !== 'History') : row.details.filter(([k]) => k !== 'History')} />
+              <>
+                {row.fixRun && <RunBanner run={row.fixRun} />}
+                <ReviewDetails recommendation={row.fixRun ? undefined : row.summary.recommendation} problem={row.summary.problem} solution={row.summary.solution} value={row.summary.value}
+                  meta={row.review.kind === 'link' ? row.details.filter(([k]) => k !== 'What' && k !== 'When' && k !== 'History') : row.details.filter(([k]) => k !== 'History')} />
+              </>
             ) : (
               <dl>
                 {row.details.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
@@ -308,7 +314,7 @@ export function IssueParts({ parts }: { parts: [string, string][] }) {
 }
 
 // the time a run has taken, in seconds under a minute
-const took = (ms: number) => (ms < 1000 ? `${Math.max(ms, 1)} ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60000)} min ${Math.round((ms % 60000) / 1000)} s`);
+export const took = (ms: number) => (ms < 1000 ? `${Math.max(ms, 1)} ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60000)} min ${Math.round((ms % 60000) / 1000)} s`);
 
 // A fix run in progress, then its outcome: the step running now (shimmering) and the time so far, with the steps folded
 // under a chevron; when it ends, a short outcome in green or red with the time it took and a Dismiss button. A banner

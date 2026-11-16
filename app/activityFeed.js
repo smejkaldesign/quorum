@@ -171,19 +171,23 @@ export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = ''
   // a run's banner shows until it is dismissed, by hand or a day after it finished
   const now = Date.now();
   const banner = (r) => !!r.run && (r.run.status === 'queued' || r.run.status === 'running' || (!r.run.dismissedAt && now - (r.run.endedAt ?? now) < DAY));
-  // an issue being fixed leaves Needs review the moment it is approved; its run row takes its place
-  const fixing = new Set(rows.filter((r) => r.run && (r.run.status === 'queued' || r.run.status === 'running')).map((r) => r.run.key));
-  const kept = rows.filter((r) => !gone.has(r.id) && !(r.review?.kind === 'link' && fixing.has(r.review.key))).map((r) => (r.run ? { ...r, run: { ...r.run, showBanner: banner(r) } } : r));
+  // an issue being fixed keeps its row and its place, loading, with its run attached; the run gets its own row once it
+  // ends. A live run whose issue is not listed keeps its own row
+  const live = new Map(rows.filter((r) => r.run && (r.run.status === 'queued' || r.run.status === 'running')).map((r) => [r.run.key, r.run]));
+  const issueKeys = new Set(rows.filter((r) => r.review?.kind === 'link' && !gone.has(r.id)).map((r) => r.review.key));
+  const kept = rows
+    .filter((r) => !gone.has(r.id) && !(r.run && live.get(r.run.key) === r.run && issueKeys.has(r.run.key)))
+    .map((r) => (r.run ? { ...r, run: { ...r.run, showBanner: banner(r) } } : r.review?.kind === 'link' && live.has(r.review.key) ? { ...r, fixRun: { ...live.get(r.review.key), showBanner: true } } : r));
   const shelf = rows.filter((r) => gone.has(r.id)).map((r) => ({ ...r, archived: true }));
   const shown = (r) => prefOn(prefs, prefOf(r));
   const unread = kept.filter((r) => r.unread && shown(r));
   const reviews = kept.filter((r) => r.review);
+  const waiting = reviews.filter((r) => !r.fixRun);
   const all = kept.filter(shown);
   let list = tab === 'archived' ? shelf : tab === 'unread' ? unread : all;
-  // Needs review lists the items waiting for a decision, and above them the runs still working or still showing their
-  // outcome; the count is the waiting items only
-  const shownRuns = kept.filter((r) => r.run?.showBanner && (r.unread || r.run.status === 'queued' || r.run.status === 'running'));
-  if (review && tab !== 'archived') list = [...shownRuns, ...(tab === 'unread' ? reviews.filter((r) => r.unread) : reviews)];
+  // Needs review lists the items waiting for a decision, and the ones being fixed right now; an accepted item no longer
+  // needs review, so a finished fix lists under All and Unread only. The count is the waiting items
+  if (review && tab !== 'archived') list = tab === 'unread' ? reviews.filter((r) => r.unread) : reviews;
   const kindSet = new Set(kinds);
   const words = String(q ?? '').trim().toLowerCase().split(/\s+/).filter(Boolean);
   list = list.filter((r) => (!kindSet.size || kindSet.has(r.kind)) && matches(r, words));
@@ -194,7 +198,7 @@ export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = ''
     items: list.slice(start, end).map((r) => ({ ...r, details: detailsOf(r, { locale }) })),
     total: list.length,
     more: end < list.length,
-    counts: { all: all.length, unread: unread.length, review: reviews.length, archived: shelf.length },
-    dot: unread.length > 0 || reviews.some(shown),
+    counts: { all: all.length, unread: unread.length, review: waiting.length, archived: shelf.length },
+    dot: unread.length > 0 || waiting.some(shown),
   };
 }
