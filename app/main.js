@@ -3010,8 +3010,9 @@ async function pumpFixes() {
     const run = fixQueue.shift();
     run.status = 'running';
     run.startedAt = Date.now();
-    // a bulk batch is agent activity: Cancel stops it before its next step, and the rollback below puts back every note
-    const work = run.kind === 'batch' ? agentActivity.start({ kind: 'batch', label: `Applying ${run.target}`, cancellable: true, onCancel: () => { run.cancel = true; } }) : null;
+    // a bulk batch is agent activity: Cancel stops it before its next step, and the rollback below puts back every note.
+    // It starts with the run and ends in the finally below, so an error never leaves it showing
+    let work = null;
     fixEmit(run);
     fixJournal.append(run.id, { step: 'started' });
     writeUndo(run, []);
@@ -3041,6 +3042,7 @@ async function pumpFixes() {
       stamp();
       fixJournal.append(run.id, { step: 'keep', rel, created });
     };
+    if (run.kind === 'batch') work = agentActivity.start({ kind: 'batch', label: `Applying ${run.target}`, cancellable: true, onCancel: () => { run.cancel = true; } });
     try {
       run.outcome = run.kind === 'batch' ? await runBatch(run, step, keep) : await decideLink(run.key, 'approve', step, keep, run.hashes ?? null, run.finding?.proposedFix ?? null);
       run.status = 'success';
@@ -3062,7 +3064,7 @@ async function pumpFixes() {
         } catch (err) { log('fix rollback', err?.message); }
       }
       saveUndo(run, kept);
-    }
+    } finally { work?.end(); }
     fixJournal.append(run.id, { step: 'ended', status: run.status, error: run.error });
     // each note the fix changed gets a new version in its history, so it can be restored from there too; a fix that
     // failed partway still records the notes it wrote before it stopped
@@ -3075,7 +3077,6 @@ async function pumpFixes() {
     const last = run.steps[run.steps.length - 1];
     if (last && !last.endedAt) last.endedAt = run.endedAt;
     batchPlans.delete(run.id);
-    work?.end();
     log('fix run', run.key, run.status, `${run.endedAt - run.startedAt} ms`);
     fixRunsSave();
     fixEmit(run);
