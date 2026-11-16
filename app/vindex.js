@@ -336,5 +336,8 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     missingIn: (rel) => (unresolved.get(rel) ?? []).map((l) => ({ target: l.target.replace(/\.md$/i, '').trim(), line: l.line })),
     size: () => files.size,
     rels: () => [...files.keys()],
+    // every note as the review rules read it (rules/index.js): its path, text, parsed note, file time, and how many
+    // notes link to it and how many links it has to other notes
+    snapshot: () => [...files].map(([rel, f]) => ({ rel, text: f.text, note: f.note, mtime: f.mtime, size: f.size, inbound: new Set((backward.get(rel) ?? []).map((b) => b.from)).size, outbound: (forward.get(rel) ?? []).length })),
   };
 }
