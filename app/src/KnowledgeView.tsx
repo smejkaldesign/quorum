@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { HeadingLinks, slugsOf } from './HeadingLinks';
 import { MemoryBell, MemoryNotifications } from './MemoryNotifications';
-import { FolderApp } from './FolderApp';
+import { FolderApp, FolderIcon } from './FolderApp';
 import { NoteMeta, type NoteMetaInfo } from './NoteMeta';
 import type { TreeSort, Brain, TreeItem, NoteViews, MemoryDots, MemoryReview, MemoryVersion, LiveRun, LiveState, MissingLink } from './quorum';
 import { LiveBanner, ReviewBanner, VersionBar, VersionList, when, type ReviewMode } from './MemoryUpdates';
@@ -803,7 +803,7 @@ function TreeLevel({ items, depth, ops }: { items: TreeItem[]; depth: number; op
                 onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; ops.onDragStart(it.path); }}
                 onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); ops.onDragOver(target); }}
                 onDrop={(e) => { e.preventDefault(); e.stopPropagation(); ops.onDrop(target); }}>
-                {it.dir ? <IconChevron className={isOpen ? '' : 'closed'} /> : <span className="kb-spacer" />}
+                {it.dir ? <FolderIcon rel={it.path} open={isOpen} /> : <span className="kb-spacer" />}
                 <span>{it.name}</span>
                 {(() => { const v = it.dir ? ops.locks.folders[it.path] : ops.locks.notes[it.path]; return v ? <IconLock className="kb-lock" width={12} height={12} role="img" aria-label={`Confidential: ${v}`} data-tip={`Confidential: ${v}`} /> : null; })()}
                 {it.dir && <FolderApp rel={it.path} />}
@@ -839,7 +839,7 @@ function RenameRow({ item, depth, onDone }: { item: TreeItem; depth: number; onD
   useEffect(() => { ref.current?.focus(); ref.current?.select(); }, []);
   return (
     <div className="kb-item new" style={{ paddingLeft: 10 + depth * 16 }}>
-      {item.dir ? <IconChevron className="closed" /> : <span className="kb-spacer" />}
+      {item.dir ? <IconFolder className="kb-folder" width={16} height={16} /> : <span className="kb-spacer" />}
       <input ref={ref} defaultValue={item.name} aria-label={`Rename ${item.name}`}
         onKeyDown={(e) => { if (e.key === 'Enter') finish(e.currentTarget.value); if (e.key === 'Escape') finish(''); }}
         onBlur={(e) => finish(e.target.value)} />

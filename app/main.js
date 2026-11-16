@@ -1804,7 +1804,17 @@ function folderApps() {
   for (const s of meetingSources()) if (!out.has(rel(s.path))) out.set(rel(s.path), s.key === 'quorum-dev' ? 'quorum-dev' : s.key);
   return [...out.entries()].filter(([r]) => r && !r.startsWith('..')).map(([r, app]) => ({ rel: r, app }));
 }
-ipcMain.handle('meeting-folder-apps', () => folderApps());
+// Every folder the notes tree marks as synced: the meetings folder Quorum writes to and each meeting source folder.
+// The shape ({ rel, with }) leaves room for knowledge base folders later.
+function syncedFolders() {
+  const vault = brain()?.vault;
+  if (!vault) return [];
+  const root = meetingsDir();
+  const r = root ? path.relative(vault, root).split(path.sep).join('/') : '';
+  const meetings = r && !r.startsWith('..') ? [{ rel: r, with: { kind: 'meetings' } }] : [];
+  return [...meetings, ...folderApps().map((f) => ({ rel: f.rel, with: { kind: 'source', app: f.app } }))];
+}
+ipcMain.handle('synced-folders', () => syncedFolders());
 // the notetaker a vault file came from, by the meeting folder it sits in
 function folderAppOf(abs) {
   const vault = brain()?.vault;
