@@ -95,9 +95,13 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
   };
 
   let running = null;
-  // one model call for these ids ([[id, hash]]); a failure marks every id, so none is asked again for a day
+  // one model call for these ids ([[id, hash]]); a failure marks every id, so none is asked again for a day. A call a
+  // person cancelled gives its place under the daily cap back (unless the day turned while it ran) and marks nothing,
+  // so its notes are asked for again on the next sweep
   async function call(ids, ask, onReply) {
     const s = load();
+    used();
+    const day = s.day;
     s.count++;
     save();
     const fail = (why) => { for (const [id, h] of ids) s.failed[id] = { hash: h, at: now(), why }; };
@@ -108,14 +112,16 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
       save();
       return res;
     } catch (e) {
+      if (e?.cancelled) { if (s.day === day && s.count > 0) s.count--; save(); return { ok: false, cancelled: true, why: 'Cancelled' }; }
       const why = String(e?.message ?? e).slice(0, 200);
       fail(why);
       save();
       return { ok: false, why };
     }
   }
-  // one model call: a pair to judge first, then the note that most needs its claims. Answers what it did
-  async function tick() {
+  // one model call: a pair to judge first, then the notes that most need their claims. onStart({ kind, notes }) runs
+  // just before the call, kind 'judge' or 'claims', so the caller can show the work and offer Cancel. Answers what it did
+  async function tick({ onStart = () => {} } = {}) {
     if (running) return { skipped: 'running' };
     const why = waiting();
     if (why) return { skipped: why };
@@ -123,12 +129,13 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
     for (const [key, j] of wantJudge) {
       wantJudge.delete(key);
       if (!j.notes.every((x) => readable(x.rel, x.text))) continue;
+      onStart({ kind: 'judge', notes: j.notes.length });
       running = call([[key, j.h]], judgePrompt(j.p, j.notes), (reply) => {
         const r = checkJudge(j.p, j.notes, reply);
         if (!r.label) return { ok: false, why: r.why };
         s.judged[key] = { hash: j.h, at: now(), label: r.label, quotes: r.quotes, reason: r.reason };
         return { ok: true };
-      }).then((res) => { log('contradiction judge', key, res.ok ? s.judged[key].label : res.why); return res.ok ? { judged: key, rels: j.notes.map((x) => x.rel), label: s.judged[key].label } : { dropped: key, why: res.why }; }).finally(() => { running = null; });
+      }).then((res) => { log('contradiction judge', key, res.ok ? s.judged[key].label : res.why); if (res.cancelled) return { cancelled: [key] }; return res.ok ? { judged: key, rels: j.notes.map((x) => x.rel), label: s.judged[key].label } : { dropped: key, why: res.why }; }).finally(() => { running = null; });
       return running;
     }
     // a note the read gate keeps out is never sent and leaves the queue
@@ -138,6 +145,7 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
     for (const w of batch) wantClaims.delete(w.rel);
     const rels = batch.map((w) => w.rel);
     let kept = 0;
+    onStart({ kind: 'claims', notes: rels.length });
     running = call(batch.map((w) => [w.rel, w.h]), claimPrompt(batch.map((w) => w.n)), (reply) => {
       const r = checkClaimsBatch(batch.map((w) => w.n), reply, modelId);
       if (r.why) return { ok: false, why: r.why };
@@ -147,7 +155,7 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
         kept += got.claims.length;
       }
       return { ok: true };
-    }).then((res) => { log('contradiction claims', `${rels.length} notes`, res.ok ? `${kept} claims` : res.why); return res.ok ? { extracted: rels, rels, claims: kept } : { dropped: rels, why: res.why }; }).finally(() => { running = null; });
+    }).then((res) => { log('contradiction claims', `${rels.length} notes`, res.ok ? `${kept} claims` : res.why); if (res.cancelled) return { cancelled: rels }; return res.ok ? { extracted: rels, rels, claims: kept } : { dropped: rels, why: res.why }; }).finally(() => { running = null; });
     return running;
   }
   const status = () => ({ used: used(), cap: cap(), waiting: waiting(), running: !!running, ...provider.pending() });

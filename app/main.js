@@ -3450,7 +3450,8 @@ const drafter = createDrafter({
   evidence: draftEvidence,
   enabled: () => settings.memoryDrafts === true && !!brain() && !!vindex,
   cap: () => Math.max(0, (settings.memoryDraftCap ?? DAILY_CAP) - contradictionAgent.status().used),
-  busy: () => recordingNow() || fixRunList().some((r) => r.status === 'queued' || r.status === 'running'),
+  // never while a contradiction call runs, so the agent makes one model call at a time
+  busy: () => recordingNow() || !!contradictionAbort || fixRunList().some((r) => r.status === 'queued' || r.status === 'running'),
   idleMs: () => powerMonitor.getSystemIdleTime() * 1000,
   log,
 });
@@ -3460,11 +3461,11 @@ const drafter = createDrafter({
 const contradictionAgent = createContradictionAgent({
   file: path.join(DATA_DIR, 'memory-contradictions.json'),
   // one call reads up to 20 notes, so it gets more time than a draft
-  model: (prompt, system) => claudeText({ prompt, system, model: 'sonnet', cwd: tmpdir(), timeoutMs: 300000 }),
+  model: (prompt, system) => claudeText({ prompt, system, model: 'sonnet', cwd: tmpdir(), timeoutMs: 300000, signal: contradictionAbort?.signal ?? null }),
   modelId: 'sonnet',
   enabled: () => settings.memoryDrafts === true && !sweepPaused() && !!brain() && !!vindex,
   cap: () => Math.max(0, (settings.memoryDraftCap ?? DAILY_CAP) - drafter.status().used),
-  busy: () => recordingNow() || fixRunList().some((r) => r.status === 'queued' || r.status === 'running'),
+  busy: () => recordingNow() || !!draftAbort || fixRunList().some((r) => r.status === 'queued' || r.status === 'running'),
   idleMs: () => powerMonitor.getSystemIdleTime() * 1000,
   readable: (rel, text) => !!brain() && agentMayRead(brain().vault, rel, text),
   log,
@@ -3481,14 +3482,29 @@ async function draftTick() {
   const ctl = new AbortController();
   draftAbort = ctl;
   const work = agentActivity.start({ kind: 'draft', label: 'The agent is drafting a fix', cancellable: true, onCancel: () => ctl.abort() });
+  let r;
   try {
-    const r = await drafter.tick();
+    r = await drafter.tick();
     if (r?.drafted || r?.confirmed) toUI('memory-updates', null);
-    if (r?.skipped === 'nothing') {
-      const c = await contradictionAgent.tick();
-      if (c?.rels?.length) sweepOnSave(c.rels);
-    }
-  } catch (e) { log('memory draft', e?.message); } finally { draftAbort = null; work.end(); }
+  } catch (e) { log('memory draft', e?.message); return; } finally { draftAbort = null; work.end(); }
+  if (r?.skipped === 'nothing') await contradictionTick();
+}
+// a claim reading or judge run is agent activity too; Cancel stops the model call, gives its place under the daily cap
+// back, and the notes are asked for again on the next sweep
+let contradictionAbort = null;
+async function contradictionTick() {
+  if (contradictionAbort) return;
+  const ctl = new AbortController();
+  contradictionAbort = ctl;
+  let work = null;
+  const onStart = ({ kind, notes }) => {
+    const label = kind === 'judge' ? 'The agent is checking two notes that may disagree' : `The agent is reading ${notes === 1 ? '1 note' : `${notes} notes`} for decisions that disagree`;
+    work = agentActivity.start({ kind: 'draft', label, cancellable: true, onCancel: () => ctl.abort() });
+  };
+  try {
+    const c = await contradictionAgent.tick({ onStart });
+    if (c?.rels?.length) sweepOnSave(c.rels);
+  } catch (e) { log('memory contradictions', e?.message); } finally { contradictionAbort = null; work?.end(); }
 }
 setInterval(() => { draftTick(); }, 60000).unref?.();
 // Ignore rules (ruleRecords.js): kept in Quorum's settings per vault, never in the vault. Quorum proposes one after the

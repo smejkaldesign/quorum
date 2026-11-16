@@ -18,6 +18,7 @@ import { acronymOf, attributeKey, normKey, pairClaims, resolveSubject, sameValue
 import { annotateLine, autoCriteria, checkJudge, resolvePair, ruleBar, unannotateLine, wilson } from '../contradictionResolve.js';
 import { BATCH_CHARS, createContradictionAgent, packBatches } from '../contradictionAgent.js';
 import { analyze, run } from '../rules/contradictions.js';
+import { gateItem } from '../qualityGate.js';
 
 const DIR = path.join(path.dirname(new URL(import.meta.url).pathname), 'fixtures/contradictions');
 const CLAIMS = JSON.parse(readFileSync(path.join(DIR, 'claims.json'), 'utf8'));
@@ -324,6 +325,35 @@ describe('the pipeline on the synthetic vault', () => {
     await settle(ctx, a);
     const lima = analyze(ctx).claims.filter((c) => c.rel === 'projects/lima.md');
     expect(lima).toEqual([]);
+  });
+
+  it('gives a cancelled call its place under the cap back and asks for the notes again', async () => {
+    const { notes, resolve } = vault();
+    let cancel = true;
+    const starts = [];
+    const a = agent({ cap: () => 1, model: (...x) => (cancel ? Promise.reject(Object.assign(new Error('Cancelled'), { cancelled: true })) : fakeModel(...x)) });
+    const ctx = { notes, resolve, contradictions: { provider: a.provider } };
+    run(ctx);
+    expect(await a.tick({ onStart: (w) => starts.push(w) })).toMatchObject({ cancelled: expect.any(Array) });
+    expect(starts).toEqual([{ kind: 'claims', notes: 20 }]);
+    expect(a.status().used).toBe(0);
+    cancel = false;
+    run(ctx);
+    expect(await a.tick()).toMatchObject({ extracted: expect.any(Array) });
+    expect(a.status().used).toBe(1);
+    expect((await a.tick()).skipped).toBe('cap');
+  });
+
+  it('routes items through the quality gate: a fix waits under Check these first, an item with no fix in Not shown yet', async () => {
+    const { notes, resolve } = vault();
+    const a = agent();
+    const found = await settle({ notes, resolve, tags: [], folders: {}, contradictions: { provider: a.provider, bar: BAR_OK } }, a);
+    const verdicts = found.map((f) => [f.facts[0], gateItem(findingItem(f)).bucket]);
+    expect(new Set(verdicts.filter(([r]) => r === 'rule:R2' || r === 'rule:R3' || r === 'rule:R5').map(([, b]) => b))).toEqual(new Set(['check']));
+    expect(new Set(verdicts.filter(([r]) => r === 'rule:R6' || r === 'rule:R7').map(([, b]) => b))).toEqual(new Set(['quiet']));
+    expect(gateItem(findingItem(found.find((f) => f.facts[0] === 'rule:R7'))).reasons).toEqual(['low-precision']);
+    // this vault's approvals lift the kind to shown
+    expect(gateItem(findingItem(found.find((f) => f.facts[0] === 'rule:R2')), { tally: { approved: 30, auto: 0, archived: 0, undone: 0 } }).bucket).toBe('show');
   });
 
   it('plans the fix as one add-only line edit through the batch planner', () => {
