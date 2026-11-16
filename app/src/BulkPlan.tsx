@@ -87,7 +87,7 @@ export function BulkPlan({ ids, everything = false, onClose, onApplied }: { ids:
           </>}
       {error && <p className="set-error" role="alert">{error}</p>}
       <ModalActions>
-        <button className="pill" disabled={busy} onClick={onClose}>Cancel</button>
+        <button className="pill" autoFocus disabled={busy} onClick={onClose}>Cancel</button>
         <button className="pill primary" disabled={busy || !view || (!view.run && !(everything && saveNote))} onClick={apply}>{busy ? 'Starting...' : 'Apply'}</button>
       </ModalActions>
     </Modal>
@@ -118,7 +118,7 @@ export function ConfidentialMark({ rel, dir, onClose, onDone }: { rel: string; d
       </div>
       {error && <p className="set-error" role="alert">{error}</p>}
       <ModalActions>
-        <button className="pill" disabled={busy} onClick={onClose}>Cancel</button>
+        <button className="pill" autoFocus disabled={busy} onClick={onClose}>Cancel</button>
         <button className="pill primary" disabled={busy || !value || values === null} onClick={save}>Mark confidential</button>
       </ModalActions>
     </Modal>
