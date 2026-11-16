@@ -148,8 +148,9 @@ export function checkDraft(item, notes, reply) {
 const withFront = (current, body) => `${frontBlock(current)}${body.endsWith('\n') ? body : `${body}\n`}`;
 
 // the item with its draft applied: the fix it runs, and the draft for the drawer and the plan. textOf(rel) answers a
-// note's text now. A point draft that says the match is wrong holds the item back: its link needs a person
-export function withDraft(item, draft, textOf) {
+// note's text now; aliasesOf(rel) a note's aliases, so a merge carries the dropped note's aliases onto the kept note.
+// A point draft that says the match is wrong holds the item back: its link needs a person
+export function withDraft(item, draft, textOf, aliasesOf = () => []) {
   const view = { kind: draft.kind, confidence: draft.confidence, quotes: draft.quotes, verified: draft.verified, at: draft.at ?? null };
   const out = { ...item, draft: view, autoFix: false };
   if (draft.kind === 'create') return { ...out, draft: { ...view, text: draft.text }, ops: item.ops.map((o, i) => (i ? o : { ...o, text: draft.text })) };
@@ -157,7 +158,9 @@ export function withDraft(item, draft, textOf) {
   if (draft.kind === 'merge') {
     const keepText = textOf(draft.keep);
     if (keepText == null || textOf(draft.drop) == null) return { ...out, ops: [], hold: 'A note in the draft is gone.' };
-    const merged = aliasText(withFront(keepText, draft.text), baseOf(draft.drop));
+    const have = new Set([baseOf(draft.keep), ...aliasesOf(draft.keep)].map((a) => String(a).toLowerCase()));
+    const add = [...new Set([baseOf(draft.drop), ...aliasesOf(draft.drop)].map(String))].filter((a) => a && !have.has(a.toLowerCase()) && have.add(a.toLowerCase()));
+    const merged = add.reduce(aliasText, withFront(keepText, draft.text));
     return { ...out, group: 'merge', draft: { ...view, keep: draft.keep, drop: draft.drop, text: draft.text }, ops: [{ op: 'restore', rel: draft.keep, before: merged }, { op: 'trash', rel: draft.drop }] };
   }
   if (draft.kind === 'contradiction') {

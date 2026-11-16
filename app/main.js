@@ -67,6 +67,7 @@ import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, fixVersions, recheckAll, undoPla
 import { buildPlan, checkFirst, checkOrder, effects, groupLabel, groupOf, notesOf, planExclude } from './batchPlan.js';
 import { ROW, findingItem, itemLine, linkItem, pastFixItem } from './reviewItems.js';
 import { frontBlock, removeFrontmatterKey } from './frontmatter.js';
+import { createResolver } from './linkparse.js';
 import { isOff } from './rules/common.js';
 import { folderMarkOf } from './rules/confidential.js';
 import { createMemorySweep, dueSweep, rescanTags, scanTags } from './memorySweep.js';
@@ -3227,8 +3228,20 @@ function drafted(item) {
   const d = drafter.draftFor(item, draftEvidence(item));
   if (!d) return item;
   const b = brain();
-  const next = withDraft(item, d, (rel) => readVault(b.vault, rel));
+  let next = withDraft(item, d, (rel) => readVault(b.vault, rel), (rel) => vindex.aliasesOf(rel));
+  const why = next.draft?.kind === 'merge' && next.ops.length ? mergeBreaksLinks(next.draft.keep, next.draft.drop) : null;
+  if (why) next = { ...next, ops: [], hold: why };
   return next.ops.length ? { ...next, hashes: { ...(item.hashes ?? {}), ...hashNotes(b.vault, notesOf(next)) } } : next;
+}
+// a merge keeps links working only when every link to the dropped note opens the kept note once the dropped note's
+// name and aliases are on it. A link by path or a name another note also has would break, so the merge waits
+function mergeBreaksLinks(keep, drop) {
+  const rels = vindex.rels().filter((r) => r !== drop);
+  const extra = [path.posix.basename(drop).replace(/\.md$/i, ''), ...vindex.aliasesOf(drop)];
+  const resolve = createResolver(rels, (r) => (r === keep ? [...vindex.aliasesOf(keep), ...extra] : vindex.aliasesOf(r)));
+  const from = [...new Set(vindex.backlinks(drop).map((l) => l.rel))].filter((r) => r !== keep && r !== drop);
+  const broken = from.filter((r) => vindex.outgoing(r).some((l) => l.rel === drop && resolve(l.target, r) !== keep));
+  return broken.length ? `${broken.length === 1 ? `${broken[0]} links` : `${broken.length} notes link`} to ${drop} in a way the merged note would not answer. Point those links at ${keep} first.` : null;
 }
 // the agent's fix for a review item, or null: the item with its stored draft applied while drafting is on, the draft's
 // notes are unchanged and its quotes still match. Other Approve paths (a past fix Quorum cannot undo exactly) call it

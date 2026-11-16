@@ -89,6 +89,14 @@ describe('a draft as a fix', () => {
     expect(plan.groups.map((g) => g.label)).toEqual(['Merge 1 pair of notes']);
   });
 
+  it('carries the dropped note\'s aliases onto the kept note once each', () => {
+    const d = checkDraft(mergeItem, [ONE, TWO], reply({ kind: 'merge', keep: 'notes/one.md', text: '# One\nIt needs two reviewers.', quotes: q, confidence: 'high' })).draft;
+    const aliases = { 'notes/one.md': ['First'], 'notes/two.md': ['Second', 'first'] };
+    const before = withDraft(mergeItem, d, (rel) => texts[rel], (rel) => aliases[rel] ?? []).ops[0].before;
+    expect(before).toContain('  - two\n  - Second');
+    expect(before).not.toMatch(/- first/);
+  });
+
   it('rewrites one note for a contradiction', () => {
     const d = checkDraft(mergeItem, [ONE, TWO], reply({ kind: 'contradiction', rel: 'notes/two.md', text: '# Two\nThe launch is on Monday.', quotes: q, confidence: 'medium' })).draft;
     const item = withDraft(mergeItem, d, (rel) => texts[rel]);
