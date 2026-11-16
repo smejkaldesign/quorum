@@ -1,5 +1,7 @@
 // Granola over its MCP server: list meetings, fetch notes, write markdown in the same shape the vault already holds
 // for Granola notes (granola_id, participants, source: granola, granola_url) plus the generic source_id.
+import { oneLine } from '../frontmatter.js';
+
 const ATTR = /(\w+)="([^"]*)"/g;
 export const decode = (s) => String(s ?? '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, '&');
 const attrs = (tag) => { const o = {}; for (const m of tag.matchAll(ATTR)) o[m[1]] = decode(m[2]); return o; };
@@ -101,16 +103,16 @@ export const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').r
 export function noteMarkdown(m) {
   const lines = [
     '---',
-    `granola_id: ${m.id}`,
-    `source_id: ${m.id}`,
+    `granola_id: ${oneLine(m.id)}`,
+    `source_id: ${oneLine(m.id)}`,
     `title: ${yamlStr(m.title || 'Untitled meeting')}`,
-    `date: ${m.meetingAt ?? new Date().toISOString()}`,
+    `date: ${oneLine(m.meetingAt ?? new Date().toISOString())}`,
     'participants:',
-    ...m.participants.map((p) => `  - ${p.name}${p.recorder ? ' (recorder)' : ''}`),
+    ...m.participants.map((p) => `  - ${oneLine(p.name)}${p.recorder ? ' (recorder)' : ''}`),
     `participant_count: ${m.participants.length}`,
     'source: granola',
     'visibility: private',
-    ...(m.url ? [`granola_url: ${m.url}`] : []),
+    ...(m.url ? [`granola_url: ${oneLine(m.url)}`] : []),
     ...(m.folders?.length ? ['folders:', ...m.folders.map((f) => `  - ${yamlStr(f)}`)] : []),
     '---',
     '',
