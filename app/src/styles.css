@@ -2492,3 +2492,5 @@ input::placeholder, textarea::placeholder { font-style: italic; }
 .mcp-col { display: inline-flex; align-items: center; gap: 8px; }
 .mcp-col .conn-dot { margin-left: 0; }
 .conn-detail-cta .conn-actions { gap: 8px; }
+/* the summary line: 2px larger, its first line centered on the row buttons beside it */
+.nf-sub { font-size: 15px; margin-top: 7px; }
