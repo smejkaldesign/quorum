@@ -110,3 +110,5 @@ export function indexNote(n) {
   return out;
 }
 export const clearIndexCache = () => cache.clear();
+// drops cached notes the vault no longer has. keep: a Set of rels
+export const pruneIndexCache = (keep) => { for (const rel of cache.keys()) if (!keep.has(rel)) cache.delete(rel); };

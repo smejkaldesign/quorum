@@ -12,7 +12,7 @@
 //
 // ctx.contradictions: { provider, bar } from main; without it the rule reads structured claims only
 import { ancestors, finding, isOff, quote, skipped } from './common.js';
-import { hashText, indexNote } from '../contradictionIndex.js';
+import { hashText, indexNote, pruneIndexCache } from '../contradictionIndex.js';
 import { structuredClaims } from '../contradictionClaims.js';
 import { normValue, pairClaims, subjectIndex } from '../contradictionPairs.js';
 import { PERSON_FOLDER, autoCriteria, inSlice, resolvePair } from '../contradictionResolve.js';
@@ -37,6 +37,9 @@ export function analyze(ctx) {
   const provider = ctx.contradictions?.provider ?? null;
   const live = (ctx.notes ?? []).filter((n) => !skipped(n));
   const byRel = new Map(live.map((n) => [n.rel, n]));
+  // a renamed or deleted note leaves both caches (ctx.notes is the whole vault on every sweep)
+  pruneIndexCache(new Set(byRel.keys()));
+  for (const rel of structured.keys()) if (!byRel.has(rel)) structured.delete(rel);
   provider?.begin();
   const index = new Map(live.map((n) => [n.rel, indexNote(n)]));
   const resolve = ctx.resolve ?? (() => null);

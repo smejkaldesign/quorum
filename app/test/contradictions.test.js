@@ -371,6 +371,23 @@ describe('the pipeline on the synthetic vault', () => {
     expect((await a.tick()).skipped).toBe('cap');
   });
 
+  it('blocks a failed call for a day, then forgets it', async () => {
+    const { notes, resolve } = vault();
+    let t = Date.UTC(2026, 5, 1, 12);
+    const file = path.join(mkdtempSync(path.join(tmpdir(), 'contra-')), 'state.json');
+    const a = agent({ file, now: () => t, model: () => Promise.reject(new Error('boom')) });
+    const ctx = { notes, resolve, contradictions: { provider: a.provider } };
+    run(ctx);
+    expect(await a.tick()).toMatchObject({ dropped: expect.any(Array) });
+    const failed = () => Object.keys(JSON.parse(readFileSync(file, 'utf8')).failed).length;
+    expect(failed()).toBeGreaterThan(0);
+    run(ctx);
+    expect(failed()).toBeGreaterThan(0);
+    t += 25 * 3600000;
+    run(ctx);
+    expect(failed()).toBe(0);
+  });
+
   it('routes items through the quality gate: a fix waits under Check these first, an item with no fix in Not shown yet', async () => {
     const { notes, resolve } = vault();
     const a = agent();

@@ -89,6 +89,8 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
       let n = 0;
       for (const rel of Object.keys(s.claims)) if (!r.has(rel)) { delete s.claims[rel]; n++; }
       for (const key of Object.keys(s.judged)) if (!k.has(key) && !wantJudge.has(key)) { delete s.judged[key]; n++; }
+      // a failure only blocks a retry for a day, so an older one is kept no longer
+      for (const [id, f] of Object.entries(s.failed)) if (!(now() - f.at < RETRY_MS)) { delete s.failed[id]; n++; }
       if (n) save();
     },
     pending: () => ({ claims: wantClaims.size, judge: wantJudge.size }),
