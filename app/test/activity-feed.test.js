@@ -1,132 +1,132 @@
 import { describe, expect, it } from 'vitest';
-import { FEED_KINDS, feedPage, feedRows, labelOf } from '../activityFeed.js';
+import { FEED_KINDS, FEED_SORTS, feedPage, feedRows, labelOf } from '../activityFeed.js';
 
 const T = (m) => new Date(Date.UTC(2026, 10, 1, 9, m)).toISOString();
 const ms = (m) => new Date(T(m)).getTime();
 
+// a vault seen before and after Notifications began keeping marks (at minute 10)
 const note = {
-  abs: '/v/Meetings/standup.md', rel: 'Meetings/standup.md', seenAt: T(5), reviewedAt: null, rejectedAt: null, agentWritten: true, writtenAt: T(1),
+  abs: '/v/Meetings/2026-11-01-standup-f55bd1f8.md', rel: 'Meetings/2026-11-01-standup-f55bd1f8.md', title: 'Weekly standup',
+  seenAt: T(5), reviewedAt: null, rejectedAt: null, agentWritten: true, writtenAt: T(1), writtenFrom: 'recording',
   events: [
     { at: T(1), kind: 'saved', text: 'Agent wrote the summary and saved the recording' },
     { at: T(4), kind: 'edited', text: 'You saved edits' },
-    { at: T(8), kind: 'filed', text: 'Agent linked it to 1 memory', files: [{ rel: 'People/ana.md', abs: '/v/People/ana.md', label: 'Ana' }] },
-    { at: T(9), kind: 'referenced', text: 'Agent referenced it to answer "who owns it"' },
+    { at: T(19), kind: 'referenced', text: 'Agent referenced it to answer "who owns the launch"' },
   ],
+  runs: [{ at: T(8), files: [{ rel: 'People/ana.md', abs: '/v/People/ana.md', label: 'Ana', title: 'Ana' }] }, { at: T(12), files: [] }],
 };
+const imported = { abs: '/v/Granola/kickoff.md', rel: 'Granola/kickoff.md', title: 'Kickoff', events: [], runs: [], imported: { at: ms(3), source: 'granola', sourceName: 'Granola', date: '2026-10-30' }, seenAt: null };
 const memory = {
-  abs: '/v/People/ana.md', rel: 'People/ana.md', seenAt: null,
+  abs: '/v/People/ana.md', rel: 'People/ana.md', title: 'Ana', seenAt: null,
   versions: [
     { id: 'a', at: ms(2), who: 'keeper', reason: 'Filed a meeting', created: true, removed: false },
     { id: 'b', at: ms(6), who: 'you', reason: '', created: false, removed: false },
-    { id: 'c', at: ms(7), who: 'import', reason: 'From Granola', created: false, removed: false },
+    { id: 'c', at: ms(15), who: 'import', reason: 'From Granola', created: false, removed: false },
+    { id: 'd', at: ms(17), who: 'keeper', reason: 'Filed the standup', created: false, removed: false },
   ],
-  updates: [{ id: 'a', at: ms(2), approved: true }, { id: 'c', at: ms(7), approved: false, changes: 2 }],
+  updates: [{ id: 'a', at: ms(2), approved: true, auto: true, changes: 1 }, { id: 'd', at: ms(17), approved: false, changes: 2, reason: 'Filed the standup' }],
 };
-const rows = feedRows({ notes: [note], memories: [memory] });
+const denials = [{ id: 'g1', t: T(16), path: '/x/private/bank.md', tool: 'Read', surface: 'agent', reason: 'Inside a private folder', guard: 'privateDirs', guardLabel: 'Private folders' }];
+const state = { since: T(10), read: {}, unread: {} };
+const rows = feedRows({ notes: [note, imported], memories: [memory], denials, state, guardFile: '/data/guard-denials.jsonl' });
+const byId = (id) => rows.find((r) => r.id === id);
 
 describe('feedRows', () => {
-  it('labels files the way the note activity does', () => {
-    expect(labelOf('Meetings/weekly-sync_notes.md')).toBe('Weekly Sync Notes');
+  it('reads file names the way the person named them', () => {
+    expect(labelOf('Meetings/2026-11-15-kjhkjhkjh-f55bd1f8.md')).toBe('Kjhkjhkjh');
     expect(labelOf('Daily/2026-11-01.md')).toBe('Daily note 2026-11-01');
-    expect(labelOf('index.md')).toBe('Index');
   });
 
-  it('sorts newest first and sorts each event into a type', () => {
-    const kinds = rows.filter((r) => !r.review).map((r) => [r.at, r.kind]);
-    expect(kinds).toEqual([[ms(9), 'referenced'], [ms(8), 'filed'], [ms(7), 'imported'], [ms(6), 'you'], [ms(4), 'you'], [ms(2), 'memory-created'], [ms(1), 'note-updated']]);
-    for (const r of rows) expect(FEED_KINDS.map(([k]) => k)).toContain(r.kind);
+  it('gives every row a kind from the Type list and a summary', () => {
+    const known = FEED_KINDS.map(([k]) => k);
+    for (const r of rows) { expect(known).toContain(r.kind); expect(r.summary.line).toBeTruthy(); }
   });
 
-  it('marks agent rows after the last opening unread and never the person\'s own', () => {
-    const unread = rows.filter((r) => r.unread && !r.review).map((r) => r.at);
-    expect(unread).toEqual([ms(9), ms(8), ms(7), ms(2)]);
-    expect(rows.find((r) => r.at === ms(6) && !r.review).unread).toBe(false);
+  it('marks rows from before Notifications began as history that starts out read', () => {
+    const history = rows.filter((r) => r.backfill).map((r) => r.id).sort();
+    expect(history).toEqual([`i:${imported.abs}`, `m:People/ana.md:a`, `m:People/ana.md:b`, `n:${note.abs}:${ms(1)}:saved`, `n:${note.abs}:${ms(4)}:edited`, `t:${note.rel}:${ms(8)}`].sort());
+    expect(rows.filter((r) => r.backfill).every((r) => !r.unread)).toBe(true);
   });
 
-  it('makes a review item for a note Quorum wrote until it is reviewed or rejected', () => {
-    expect(rows.filter((r) => r.review?.kind === 'note')).toHaveLength(1);
-    expect(feedRows({ notes: [{ ...note, reviewedAt: T(10) }] }).some((r) => r.review)).toBe(false);
-    expect(feedRows({ notes: [{ ...note, rejectedAt: T(10) }] }).some((r) => r.review)).toBe(false);
-    expect(feedRows({ notes: [{ ...note, agentWritten: false }] }).some((r) => r.review)).toBe(false);
+  it('marks agent rows since then unread, the person\'s own never, and a mark on a row wins', () => {
+    expect(rows.filter((r) => r.unread).map((r) => r.id).sort()).toEqual(['g:g1', `m:People/ana.md:c`, `m:People/ana.md:d`, `n:${note.abs}:${ms(19)}:referenced`, 'r:memory:People/ana.md', `t:${note.rel}:${ms(12)}`].sort());
+    const marked = feedRows({ notes: [note], memories: [memory], denials, state: { since: T(10), read: { 'g:g1': T(20) }, unread: { [`t:${note.rel}:${ms(8)}`]: T(20) } } });
+    expect(marked.find((r) => r.id === 'g:g1').unread).toBe(false);
+    expect(marked.find((r) => r.id === `t:${note.rel}:${ms(8)}`).unread).toBe(true);
   });
 
-  it('groups a memory\'s updates waiting for approval into one review item', () => {
-    const r = rows.find((x) => x.review?.kind === 'memory');
-    expect(r).toMatchObject({ at: ms(7), kind: 'memory-updated', review: { kind: 'memory', count: 1 } });
-    expect(r.text).toContain('2 changed blocks');
-    expect(feedRows({ memories: [{ ...memory, gone: true }] }).some((x) => x.review)).toBe(false);
+  it('keeps review items out of history and joins a version to its update', () => {
+    expect(byId(`r:note:${note.abs}`)).toMatchObject({ backfill: false, review: { kind: 'note' } });
+    expect(byId('r:memory:People/ana.md')).toMatchObject({ review: { kind: 'memory', count: 1 }, detail: { changes: 2 } });
+    expect(byId('m:People/ana.md:a').detail).toMatchObject({ changes: 1, approved: true, auto: true });
   });
 
-  it('opens a memory that is also a saved note on the note page', () => {
-    expect(feedRows({ memories: [{ ...memory, note: true }] })[0].target.kind).toBe('note');
-    expect(rows.find((r) => r.id.startsWith('m:')).target.kind).toBe('memory');
-  });
-});
-
-describe('guardrail rows', () => {
-  // a made-up home folder, joined so the content guard does not read it as a real one
-  const home = ['', 'Users', 'sam', ''].join('/');
-  const guard = { file: '/data/guard-denials.jsonl', seenAt: T(3), denials: [
-    { t: T(2), tool: 'Read', path: `${home}vault/private/bank.md`, reason: 'Quorum read guard: private folder' },
-    { t: T(4), tool: 'Bash', path: '', reason: 'secret word in a command' },
-  ] };
-  const g = feedRows({ guard });
-
-  it('lists each block with what was blocked and why, unread after the last opening', () => {
-    expect(g.map((r) => [r.kind, r.text, r.unread])).toEqual([
-      ['guardrail', 'Guardrail blocked Bash: secret word in a command', true],
-      ['guardrail', 'Guardrail blocked ~/vault/private/bank.md: private folder', false],
-    ]);
-    expect(g[0].target).toMatchObject({ kind: 'guardrail', abs: guard.file });
-  });
-
-  it('follows the guardrails switch like the other kinds', () => {
-    expect(feedPage(g, { tab: 'all', prefs: { guardrails: false } }).total).toBe(0);
-    expect(feedPage(g, { tab: 'all', prefs: { guardrails: false } }).dot).toBe(false);
-    expect(feedPage(g, { tab: 'unread', prefs: { noteUpdates: false } }).total).toBe(1);
-    expect(feedPage(g, { tab: 'all', kinds: ['guardrail'] }).total).toBe(2);
+  it('drops a note review once it is reviewed or rejected', () => {
+    expect(feedRows({ notes: [{ ...note, reviewedAt: T(30) }] }).some((r) => r.review)).toBe(false);
+    expect(feedRows({ notes: [{ ...note, rejectedAt: T(30) }] }).some((r) => r.review)).toBe(false);
   });
 });
 
 describe('feedPage', () => {
-  it('lists only review items on Needs review and counts each tab', () => {
-    const p = feedPage(rows, { tab: 'review' });
-    expect(p.items.every((r) => r.review)).toBe(true);
-    expect(p.counts).toEqual({ review: 2, unread: 5, all: rows.length });
+  it('counts All, Unread and Needs review, and shows the dot', () => {
+    const p = feedPage(rows);
+    expect(p.counts).toEqual({ all: rows.length, unread: 6, review: 2 });
     expect(p.dot).toBe(true);
   });
 
-  it('filters by type and by words in the text or the file name', () => {
-    expect(feedPage(rows, { tab: 'all', kinds: ['filed', 'referenced'] }).items.map((r) => r.kind)).toEqual(['referenced', 'filed']);
-    expect(feedPage(rows, { tab: 'all', q: 'granola' }).items.map((r) => r.kind)).toEqual(['imported']);
-    expect(feedPage(rows, { tab: 'all', q: 'standup owns' }).total).toBe(1);
-    expect(feedPage(rows, { tab: 'all', q: 'ana' }).items.some((r) => r.kind === 'filed')).toBe(true);
+  it('narrows to review items with the Needs review filter, on either tab', () => {
+    expect(feedPage(rows, { review: true }).items.map((r) => r.id).sort()).toEqual([`r:note:${note.abs}`, 'r:memory:People/ana.md'].sort());
+    expect(feedPage(rows, { tab: 'unread', review: true }).items.map((r) => r.id)).toEqual(['r:memory:People/ana.md']);
   });
 
-  it('pages the list', () => {
-    const a = feedPage(rows, { tab: 'all', offset: 0, limit: 3 });
-    const b = feedPage(rows, { tab: 'all', offset: 3, limit: 50 });
-    expect(a.items).toHaveLength(3);
+  it('sorts unread first, by time, or by title', () => {
+    expect(FEED_SORTS).toEqual(['unread', 'recent', 'az']);
+    const u = feedPage(rows, { sort: 'unread', limit: 100 }).items;
+    const firstRead = u.findIndex((r) => !r.unread);
+    expect(u.slice(firstRead).every((r) => !r.unread)).toBe(true);
+    const recent = feedPage(rows, { sort: 'recent', limit: 100 }).items.map((r) => r.at);
+    expect(recent).toEqual([...recent].sort((a, b) => b - a));
+    const az = feedPage(rows, { sort: 'az', limit: 100 }).items.map((r) => r.target.title);
+    expect(az[0]).toBe('Ana');
+    expect(az[az.length - 1]).toBe('Weekly standup');
+  });
+
+  it('filters by type and by words in the summary or file', () => {
+    expect(feedPage(rows, { kinds: ['guardrail', 'referenced'] }).items.map((r) => r.kind).sort()).toEqual(['guardrail', 'referenced']);
+    expect(feedPage(rows, { q: 'launch' }).total).toBe(1);
+    expect(feedPage(rows, { q: 'bank.md' }).items[0].kind).toBe('guardrail');
+  });
+
+  it('adds the details to each row on the page and pages the list', () => {
+    const a = feedPage(rows, { sort: 'recent', offset: 0, limit: 4 });
+    expect(a.items[0].details[0]).toEqual(['What', expect.any(String)]);
     expect(a.more).toBe(true);
-    expect(b.more).toBe(false);
-    expect([...a.items, ...b.items].map((r) => r.id)).toEqual(feedPage(rows, { tab: 'all', limit: 100 }).items.map((r) => r.id));
-    expect(feedPage(rows, { tab: 'all', limit: 0 }).items).toEqual([]);
+    expect(feedPage(rows, { limit: 0 }).items).toEqual([]);
   });
 
-  it('leaves switched-off kinds out of Unread, All and the dot, and keeps reviews on Needs review', () => {
-    const prefs = { noteUpdates: false, memoryChanges: false, reviews: false };
-    expect(feedPage(rows, { tab: 'all', prefs }).total).toBe(0);
-    expect(feedPage(rows, { tab: 'unread', prefs }).total).toBe(0);
-    const review = feedPage(rows, { tab: 'review', prefs });
-    expect(review.total).toBe(2);
-    expect(review.dot).toBe(false);
-    const memOnly = feedPage(rows, { tab: 'all', prefs: { noteUpdates: false, reviews: false } });
-    expect(memOnly.items.every((r) => r.target.kind === 'memory' && !r.review)).toBe(true);
-    expect(memOnly.dot).toBe(true);
+  it('follows the Settings > Notifications switches and keeps reviews in Needs review', () => {
+    const off = { noteUpdates: false, memoryChanges: false, reviews: false, guardrails: false };
+    expect(feedPage(rows, { prefs: off }).total).toBe(0);
+    expect(feedPage(rows, { prefs: off }).dot).toBe(false);
+    expect(feedPage(rows, { prefs: off, review: true }).total).toBe(2);
+    expect(feedPage(rows, { prefs: { guardrails: false }, kinds: ['guardrail'] }).total).toBe(0);
   });
+});
 
-  it('shows no dot when everything is read and reviewed', () => {
-    const quiet = feedRows({ notes: [{ ...note, agentWritten: false, seenAt: T(30) }], memories: [{ ...memory, seenAt: T(30), updates: [] }] });
-    expect(feedPage(quiet, { tab: 'all' }).dot).toBe(false);
+// a fixture with the history a vault has before the list kept its own log: what the backfill brings back
+describe('backfill fixture', () => {
+  const versions = Array.from({ length: 6 }, (_, i) => ({ id: `v${i}`, at: ms(i), who: i % 3 === 2 ? 'you' : 'keeper', reason: 'Filed a meeting', created: i === 0, removed: false }));
+  const notes = [
+    { abs: '/v/Granola/a.md', rel: 'Granola/a.md', title: 'Design review', events: [], runs: [{ at: T(1), files: [] }], imported: { at: ms(0), source: 'granola', sourceName: 'Granola' } },
+    { abs: '/v/Granola/b.md', rel: 'Granola/b.md', title: 'Pricing call', events: [], runs: [{ at: T(2), files: [{ rel: 'P/x.md', abs: '/v/P/x.md', title: 'X' }] }], imported: { at: ms(1), source: 'granola', sourceName: 'Granola' } },
+    { abs: '/v/Q/c.md', rel: 'Q/c.md', title: 'Standup', events: [{ at: T(3), kind: 'saved', text: 'You saved the note' }], runs: [{ at: T(4), files: [] }] },
+  ];
+  const r = feedRows({ notes, memories: [{ abs: '/v/P/x.md', rel: 'P/x.md', title: 'X', versions, updates: [] }], state: { since: T(30) } });
+
+  it('lists 12 past events, all read, with no bell dot', () => {
+    expect(r.length).toBe(12);
+    expect(r.every((x) => x.backfill && !x.unread)).toBe(true);
+    expect(feedPage(r).dot).toBe(false);
+    expect(feedPage(r, { tab: 'unread' }).total).toBe(0);
   });
 });
