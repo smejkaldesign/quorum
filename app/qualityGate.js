@@ -5,10 +5,13 @@
 //   fixability   an item whose only Approve is Keep as is and that tells the person nothing they can act on is not shown
 //   precision    each kind of fix has a prior precision measured on Quorum's own eval (PRIORS) and a posterior from this
 //                vault's decision log: approved against archived and undone. An item whose expected precision is under
-//                SHOW_AT does not show as a normal item. It waits in Not shown yet, or under Check these first in a bulk
-//                plan when it has a real fix and its expected precision is at least CHECK_AT
+//                SHOW_AT still shows in Needs review, and a bulk plan lists it under Check these first, unticked
 //   live guard   a kind whose own approve rate falls under SHOW_AT over MIN_DECISIONS or more decisions is demoted: its
-//                items move to Check these first (a real fix) or Not shown yet, and Apply memory fixes on its own skips it
+//                items list under Check these first, and Apply memory fixes on its own skips it
+// Only an item whose Approve could keep it as it is and that tells the person nothing stays out of Needs review
+// (bucket quiet). Every other item shows: bucket show starts ticked in a bulk plan, bucket check starts unticked. An
+// item that needs the agent (a missing note to write, a weak relink or alias) gets its fix from the agent when a person
+// approves it (main.js agentResolve)
 // Plain Node with no Electron, so main, the tests and the read-only scripts (scripts/gate-eval.mjs,
 // scripts/gate-report.mjs) use the same gate.
 import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -17,7 +20,6 @@ import { createHash } from 'node:crypto';
 
 export const GATE_VERSION = 1;
 export const SHOW_AT = 0.9;
-export const CHECK_AT = 0.5;
 export const MIN_DECISIONS = 10;
 export const BUCKETS = ['show', 'check', 'quiet'];
 
@@ -184,29 +186,26 @@ export function infoValue(item) {
 }
 
 // The gate of one item. ctx: { stable: { stable } | null, tally: the kind's decisions, isStub(rel) }. Answers
-// { bucket, why, kind, expected, reasons }; why is the one line Not shown yet shows
+// { bucket, why, kind, expected, reasons }; why is the one line a bulk plan shows under Check these first
 export function gateItem(item, { stable = null, tally = null, isStub = () => false } = {}) {
   const kind = kindOf(item);
   const exp = expected(kind, tally);
   const reasons = [];
   const out = (bucket, why) => ({ bucket, why, kind, expected: Math.round(exp * 1000) / 1000, reasons });
-  if (stable && !stable.stable) { reasons.push('unstable'); return out('quiet', 'Its fix changed between Quorum\'s checks. Quorum checks it again after your notes settle.'); }
-  if (item.hold) { reasons.push('held'); return out('quiet', item.hold); }
+  if (keepOnly(item) && !infoValue(item)) { reasons.push('keep-only'); return out('quiet', item.hold ?? 'Approve could only keep it as it is, and it shows nothing you need to act on.'); }
+  if (stable && !stable.stable) { reasons.push('unstable'); return out('check', 'Its fix changed between Quorum\'s checks, so read it before it runs.'); }
+  if (item.hold) { reasons.push('held'); return out('check', item.hold); }
   const o = item.ops?.[0];
-  if (o && (o.op === 'alias' || o.op === 'relink') && isStub(o.op === 'alias' ? o.rel : o.to)) { reasons.push('onto-stub'); return out('quiet', 'It points the link at a note Quorum wrote from links alone.'); }
+  if (o && (o.op === 'alias' || o.op === 'relink') && isStub(o.op === 'alias' ? o.rel : o.to)) { reasons.push('onto-stub'); return out('check', 'It points the link at a note Quorum wrote from links alone.'); }
   if (item.draft) {
-    if (item.draft.confirmed === false) { reasons.push('drafts-disagree'); return out('quiet', 'Two drafts of this fix disagree, so Quorum does not offer either.'); }
-    if (item.draft.confirmed !== true) { reasons.push('draft-unconfirmed'); return out('quiet', 'Quorum waits for a second draft to agree before it shows this fix.'); }
+    if (item.draft.confirmed === false) { reasons.push('drafts-disagree'); return out('check', 'Two drafts of this fix disagree, so read it before it runs.'); }
+    if (item.draft.confirmed !== true) { reasons.push('draft-unconfirmed'); return out('check', 'A second draft has not checked this fix yet, so read it before it runs.'); }
   }
-  if (keepOnly(item) && !infoValue(item)) { reasons.push('keep-only'); return out('quiet', 'Approve could only keep it as it is, and it shows nothing you need to act on.'); }
   const d = demoted(tally);
-  const real = !keepOnly(item);
-  if (d) { reasons.push('demoted'); return out(real ? 'check' : 'quiet', `${demotedLine(d)}, so Quorum shows this kind of fix only when you ask.`); }
+  if (d) { reasons.push('demoted'); return out('check', `${demotedLine(d)}, so read fixes like this before they run.`); }
   if (exp >= SHOW_AT) return out('show', null);
   reasons.push('low-precision');
-  const pct = `${Math.round(exp * 100)}%`;
-  if (real && exp >= CHECK_AT) return out('check', `Fixes like this were right about ${pct} of the time, so it waits under Check these first.`);
-  return out('quiet', `Fixes like this were right about ${pct} of the time, so Quorum does not show it yet.`);
+  return out('check', `Fixes like this were right about ${Math.round(exp * 100)}% of the time, so read it before it runs.`);
 }
 
 // The gate over the review items. passes: the items from each pass, the first pass is the one shown; records: the
