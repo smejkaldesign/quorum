@@ -83,6 +83,14 @@ describe('rollback and recovery', () => {
     expect(res).toEqual({ restored: [], skipped: ['a.md'] });
     expect(get('a.md')).toBe('edited by hand later');
   });
+  it('leaves a note deleted after the fix deleted and still puts the others back', async () => {
+    fresh();
+    put('b.md', 'what the fix wrote');
+    const res = await rollback(vault, [{ rel: 'a.md', before: 'one', after: null }, { rel: 'b.md', before: 'two', after: null }], trash);
+    expect(res).toEqual({ restored: ['b.md'], skipped: ['a.md'] });
+    expect(existsSync(path.join(vault, 'a.md'))).toBe(false);
+    expect(get('b.md')).toBe('two');
+  });
   it('does nothing for a run that never wrote', async () => {
     fresh();
     put('a.md', 'one');

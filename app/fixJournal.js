@@ -68,6 +68,8 @@ export async function rollback(vault, files, trash) {
     if (now === f.before) continue;
     if (f.after && (now == null ? null : sha(now)) !== f.after) { skipped.push(f.rel); continue; }
     if (f.before == null) { if (now != null) { await trash(abs); restored.push(f.rel); } }
+    // a note deleted after the fix wrote it is a later change: it stays deleted, and the rest still go back
+    else if (now == null || !abs) skipped.push(f.rel);
     else { writeAtomic(abs, f.before); restored.push(f.rel); }
   }
   return { restored, skipped };
