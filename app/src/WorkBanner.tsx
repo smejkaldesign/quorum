@@ -12,13 +12,16 @@ export function WorkBanner({ state, text, startedAt, endedAt = null, progress = 
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { if (!live) return; const t = window.setInterval(() => setNow(Date.now()), 500); return () => window.clearInterval(t); }, [live]);
   const elapsed = (live ? now : endedAt ?? now) - startedAt;
-  const open = onOpen ? { role: 'button', tabIndex: 0, onClick: onOpen, onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } } } : {};
+  // the row opens on a click; the keyboard and screen readers reach it through the text, so the actions are never
+  // nested inside a button
+  const open = onOpen ? { role: 'button', tabIndex: 0, onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } } } : {};
   return (
     <div className={`run-banner mh-batch ${state}${onOpen ? ' work-open' : ''} ${className}`.trim()} role="status" aria-live="polite">
-      <div className="run-head" {...open}>
+      <div className="run-head" onClick={onOpen}>
         <span className="run-icon" aria-hidden="true">{live ? <i className="run-spin" /> : state === 'error' ? <IconClose width={17} height={17} /> : <IconCheck width={18} height={18} />}</span>
-        <span className={`run-text${live ? ' shimmer' : ''}`} data-tip={text}>{text}</span>
-        <span className="run-time">{took(Math.max(0, elapsed))}</span>
+        <span className={`run-text${live ? ' shimmer' : ''}`} data-tip={text} {...open}>{text}</span>
+        {/* the live region would read the clock out on every tick */}
+        <span className="run-time" aria-hidden="true">{took(Math.max(0, elapsed))}</span>
         {actions && <span className="work-actions" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>{actions}</span>}
       </div>
       {progress != null && <div className="mh-batch-bar" aria-hidden="true"><i style={{ width: `${Math.max(0, Math.min(1, progress)) * 100}%` }} /></div>}
@@ -59,7 +62,8 @@ export function AgentActivityBanner({ onOpen, className = '' }: { onOpen?: () =>
       progress={progress}
       note={a.kind === 'check' ? 'Quorum is checking your memory. This can take a few minutes and runs in the background.' : null}
       onOpen={onOpen}
-      actions={a.cancellable && stopping !== a.id ? <button className="act-pill run-dismiss" onClick={cancel}>Cancel</button> : null}
+      // Stopping keeps the button in place, so focus stays on it until the work ends
+      actions={a.cancellable || stopping === a.id ? <button className="act-pill run-dismiss" aria-disabled={stopping === a.id} onClick={() => { if (stopping !== a.id) cancel(); }}>{stopping === a.id ? 'Stopping' : 'Cancel'}</button> : null}
     />
   );
 }
