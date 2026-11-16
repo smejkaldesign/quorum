@@ -454,8 +454,6 @@ export function createDrafter({ file, model, items, evidence, enabled = () => fa
     const h = notes?.length ? evidenceHash(notes) : BLOCKED;
     return f.hash === h ? f.why : null;
   }
-  // a person moved the item back to review or its fix changed: the agent tries again on the next Approve
-  function clearFallback(id) { const s = load(); if (s.fallback[id]) { delete s.fallback[id]; save(); } }
   const status = () => ({ used: used(), cap: cap(), waiting: waiting() });
-  return { tick, draftFor, prune, status, waiting, onDemand, fallbackFor, clearFallback };
+  return { tick, draftFor, prune, status, waiting, onDemand, fallbackFor };
 }

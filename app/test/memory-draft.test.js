@@ -236,8 +236,6 @@ describe('Approve runs the agent on demand', () => {
     expect(d.fallbackFor(createItem, ev(createItem))).toBe(r1.why);
     expect((await d.onDemand(createItem, ev(createItem))).why).toMatch(/not sure enough/);
     expect(d.fallbackFor(createItem, [{ rel: 'notes/a.md', text: 'changed' }])).toBeNull();
-    d.clearFallback(createItem.id);
-    expect(d.fallbackFor(createItem, ev(createItem))).toBeNull();
   });
 
   it('never calls the model for a note the read guard keeps away, and offers the fallback', async () => {
