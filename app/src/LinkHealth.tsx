@@ -129,8 +129,12 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
     const lines: string[] = [];
     let firstError = '';
     // many approved at once go to Quorum as one batch; it fixes them one by one in the background
+    // writing a note and a weak match are review-only: a bulk Approve leaves them for a person to approve one by one
     if (verdict === 'approve' && issues.length > 1) {
-      try { const started = await window.quorum.fixStart(issues.map((i) => i.key)); lines.push(...started.map((r) => `Fixing “${r.target}”`)); }
+      const go = issues.filter((i) => !i.reviewOnly);
+      const held = issues.length - go.length;
+      if (held) { firstError = `${held} ${held === 1 ? 'fix needs' : 'fixes need'} a review on its own. Open ${held === 1 ? 'it' : 'each one'} to approve it.`; setApproving((ks) => new Set([...ks].filter((k) => go.some((i) => i.key === k)))); }
+      try { const started = go.length ? await window.quorum.fixStart(go.map((i) => i.key)) : []; lines.push(...started.map((r) => `Fixing “${r.target}”`)); }
       catch (e) { firstError = String(e).replace(/^.*Error:\s*/, ''); setApproving(new Set()); }
     } else for (const i of issues) {
       try { lines.push(verdict === 'approve' ? await acceptIssue(i) : (await window.quorum.activityArchive([{ id: issueId(i.key) }], true), 'Archived without fixing it')); }

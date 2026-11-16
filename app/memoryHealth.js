@@ -7,10 +7,16 @@
 //   1. alias: a note goes by that exact name: add the name as its alias
 //   2. relink: a note is clearly the one meant (it shares most of the name's words, or shares some and is already
 //               linked with the linking notes or sits in their folder): point the link at it
-//   3. create: the linking notes say enough about the missing note to start it: write it from what they say
-//   4. relink: a weaker match, offered after writing the note
+//   3. relink: a weaker match: a note that exists beats a new note that only quotes the links
+//   4. create: two or more notes link to it: write it from what they say
 //   5. unlink: nothing matches and nothing says enough: keep the words and take the dead link out
+// A link whose name is a folder, script, skill, file or a note on another branch (linkElsewhere.js) is left as it is,
+// or pointed at the folder's index note. Writing a note and a weaker match are review-only: Approve on a selection of
+// several issues skips them, so a person reads each one first (see linkRules.js createPlan for when Quorum may write
+// a note at all)
 // Decline moves to the next fix in the order; Ignore leaves the link as it is.
+
+import { createPlan } from './linkRules.js';
 
 // the Type filter, one entry per recommended fix
 export const CATEGORIES = [
@@ -19,6 +25,7 @@ export const CATEGORIES = [
   { id: 'missing', label: 'Notes to write' },
   { id: 'unlink', label: 'Dead links' },
   { id: 'outside', label: 'Outside the vault' },
+  { id: 'elsewhere', label: 'Not a note' },
 ];
 export const LEFT_LABEL = 'Dismissed';
 
@@ -38,25 +45,30 @@ export function contextWords(m) {
   for (const c of m.contexts ?? []) n += (String(c.text).toLowerCase().match(/[a-z][a-z'’]{2,}/g) ?? []).filter((w) => !own.has(w)).length;
   return n;
 }
-// enough to start a note: more than one note refers to it, or the linking lines describe it in a sentence or more
-const hasContext = (m) => m.count >= 2 || contextWords(m) >= 12;
+// what the link names outside this checkout's notes (linkElsewhere.js), unless a note goes by that exact name
+const foundOf = (m) => (m.found && !m.candidates?.[0]?.exact ? m.found : null);
+// a folder's index note, as the candidate for a link to the folder
+const folderCandidate = (f) => ({ rel: f.rel, title: f.rel.split('/').pop().replace(/\.md$/i, ''), name: null, exact: false, score: 1, cover: 1, kindClash: false, shared: [], neighbor: false, sameFolder: false, folder: true });
 
 // the fixes for a missing link, best first (see the order above)
 export function optionsOf(m) {
   if (OUTSIDE_RE.test(m.target)) return ['leave'];
+  const found = foundOf(m);
+  if (found) return found.rel ? ['relink', 'leave'] : ['leave'];
   const c = m.candidates?.[0];
   const out = [];
   if (c?.exact) out.push('alias');
   else if (strong(c)) out.push('relink');
-  if (hasContext(m)) out.push('create');
-  if (usable(c) && !strong(c)) out.push('relink');
+  else if (usable(c)) out.push('relink');
+  if (createPlan(m).ok) out.push('create');
   out.push('unlink');
   return out;
 }
 
 // which category a missing link falls in: the fix recommended now, after the ones the person declined
 export function categoryOf(m) {
-  return CATEGORY_OF[pending(m)[0] ?? 'leave'];
+  const action = pending(m)[0] ?? 'leave';
+  return action === 'leave' && foundOf(m) ? 'elsewhere' : CATEGORY_OF[action];
 }
 const pending = (m) => { const no = new Set(m.declined ?? []); return optionsOf(m).filter((o) => !no.has(o)); };
 
@@ -79,8 +91,10 @@ export function issueOf(m) {
   const options = pending(m);
   const action = options[0] ?? 'leave';
   const next = options[1] ?? null;
-  const category = CATEGORY_OF[action];
-  const c = m.candidates?.[0] ?? null;
+  const found = foundOf(m);
+  const category = action === 'leave' && found ? 'elsewhere' : CATEGORY_OF[action];
+  const c = found ? (found.rel ? folderCandidate(found) : null) : (m.candidates?.[0] ?? null);
+  const plan = createPlan(m);
   const name = quote(m.target);
   const match = c ? quote(c.name ?? c.title) : '';
   const one = (m.links ?? m.count) === 1;
@@ -88,14 +102,19 @@ export function issueOf(m) {
   const linkWord = one ? 'link' : 'links';
   const them = one ? 'it' : 'them';
   const top = topFolder(m.sources ?? []);
-  // a new note goes where its linking notes live, leaving out notes at the vault root (indexes and logs), so what it
-  // quotes stays in the same area of the vault
-  const createIn = topFolder((m.sources ?? []).filter((s) => s.includes('/')))?.folder ?? '';
+  // a new note goes where most of its linking notes live (linkRules.js createPlan), so what it quotes stays in the
+  // same area of the vault
+  const createIn = plan.ok ? plan.folder : '';
+  // writing a note and a weak match need a person to read the issue first; a bulk Approve skips them
+  const reviewOnly = action === 'create' || (action === 'relink' && !c?.folder && !strong(c));
+  const kindWord = found ? { folder: 'a folder', script: 'a script', skill: 'a skill', file: 'a file outside this vault', branch: `a note on the branch ${found.branch}` }[found.kind] ?? 'a file' : '';
+  const where = found ? quote(found.where) : '';
   const linking = m.count === 1 ? 'the linking note' : `the ${m.count} linking notes`;
   const why = c ? [
     c.shared?.length ? `shares the words ${list(c.shared.slice(0, 4).map(quote))}` : null,
     c.neighbor ? `is already linked with ${m.count === 1 ? 'the linking note' : 'these notes'}` : null,
     c.sameFolder ? 'sits in the same folder' : null,
+    c.folder ? 'is the index note of the folder with that name' : null,
   ].filter(Boolean) : [];
 
   const title = {
@@ -103,14 +122,17 @@ export function issueOf(m) {
     relink: `${notes(m.count)} to ${name}, and the closest note is ${match}`,
     create: `${notes(m.count)} to ${name}, a note that does not exist`,
     unlink: `${notes(m.count)} to ${name}, a note that does not exist`,
-    leave: `${notes(m.count)} to ${name}, which is outside this vault`,
+    leave: found ? `${notes(m.count)} to ${name}, which is ${kindWord}` : `${notes(m.count)} to ${name}, which is outside this vault`,
   }[action];
   const problem = {
     alias: `${Links} nothing, because the note is named ${match}. The agent treats ${name} as a separate topic with no note.`,
     relink: `${Links} nothing. ${match} ${list(why) || 'has a close name'}, so it is most likely the note meant.`,
     create: `${Links} nothing. ${m.count > 1 ? `${m.count} notes refer to ${name}` : `The linking note describes ${name}`}, so it reads as a topic of its own with no note for the agent to read.`,
-    unlink: `${Links} nothing. No note has a close name, and ${linking} ${m.count === 1 ? 'says' : 'say'} too little about ${name} to write one, so the agent follows ${one ? 'a link' : 'links'} to nothing.`,
-    leave: 'The link points at a file outside this vault. Quorum and the agent only follow links inside the vault.',
+    unlink: `${Links} nothing. No note has a close name. ${plan.ok ? `${linking[0].toUpperCase()}${linking.slice(1)} ${m.count === 1 ? 'says' : 'say'} too little about ${name} to write one.` : plan.reason} The agent follows ${one ? 'a link' : 'links'} to nothing.`,
+    leave: found?.kind === 'branch'
+      ? `${Links} nothing on this branch. A note with that name is at ${where} on the branch ${found.branch}, so the link works once that branch merges. A second note here would clash with it.`
+      : found ? `${name} is ${kindWord} at ${where}. A note link cannot open it, and a new note with that name would split the topic, so Quorum leaves the link for you to decide.`
+        : 'The link points at a file outside this vault. Quorum and the agent only follow links inside the vault.',
   }[action];
   const effect = {
     alias: `${one ? 'The link opens' : 'Every link opens'} ${match}, and the agent counts ${them} as links to that note. No note text changes.`,
@@ -146,10 +168,12 @@ export function issueOf(m) {
     relink: `point the ${linkWord} at ${match}`,
     create: `make a note named ${name} from what ${linking} ${m.count === 1 ? 'says' : 'say'}`,
     unlink: `remove the ${linkWord} and keep the words`,
+    leave: 'leave the link as it is',
   };
   const decline = next ? `Quorum suggests the next fix instead: ${nextText[next]}.` : 'The links stay as they are, and the issue moves to Left as is.';
   return {
     key: m.target.toLowerCase(), target: m.target, category, title, fix: recommend, problem, effect, recommend, solution, value, decline, action, next, candidate: c, sources: m.sources ?? [],
+    reviewOnly, found: found ?? null, confidential: plan.ok ? plan.confidential : null,
     contexts: m.contexts ?? [], createIn, path: m.sources?.[0] ?? '', links: m.links ?? m.count, notes: m.count, folder: top, lastAt: m.lastAt ?? null,
   };
 }

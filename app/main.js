@@ -11,6 +11,7 @@ import { openSpeech, SPEECH_ENGINES } from './speech/provider.js';
 import { createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTree } from './vault.js';
 import { createVaultIndex } from './vindex.js';
 import { applyUndo, undoRecord } from './fixUndo.js';
+import { changedSince, createFixJournal, fixCheck, hashNotes, recoveryReason, rollback } from './fixJournal.js';
 import { addAlias, retargetLinks, rewriteLinks, unlinkTarget, writeAtomic } from './relink.js';
 import store from './store/index.js';
 import { registerSources } from './sources/index.js';
@@ -60,6 +61,9 @@ import { createPlatformCache, eventRef, matchPlatforms } from './meetingPlatform
 import { calendarWindow, normalizeDays } from './calendarWindow.js';
 import { ARCHIVE_AFTER, feedPage, feedRows, labelOf } from './activityFeed.js';
 import { issueMeta, issueOf } from './memoryHealth.js';
+import { LINK_RULE, LINK_RULE_VERSION, contextNote, isGenerated } from './linkRules.js';
+import { createDecisionLog, fingerprint } from './decisionLog.js';
+import { createElsewhere, withFound } from './linkElsewhere.js';
 import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
 import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, relatedOf, seriesKey, seriesOf } from './meetingBrief.js';
@@ -2101,9 +2105,11 @@ function feedSources() {
     const abs = path.join(b.vault, rel);
     return { abs, rel, title: fileTitle(abs, rel), note: !!meetingFileIn(roots, abs), gone: !existsSync(abs), versions: rec.versions ?? [], updates: rec.updates ?? [], seenAt: seen[abs]?.seenAt ?? null };
   });
+  const linkItems = linkIssues();
+  reopenChanged(linkItems);
   const left = linksLeft();
   const declined = linksDeclined();
-  const links = linkIssues().map((m) => ({ ...withMarks(m, left, declined), abs: path.join(b.vault, m.sources?.[0] ?? '') }));
+  const links = linkItems.map((m) => ({ ...withMarks(m, left, declined), abs: path.join(b.vault, m.sources?.[0] ?? '') }));
   const v = b.vault;
   const runs = fixRunList().filter((r) => r.vault === v && (r.endedAt ?? r.queuedAt) > Date.now() - 7 * 86400000);
   return { notes, memories, denials, junk: keeper.junk(), links, runs, state, guardFile: DENIAL_LOG };
@@ -2131,15 +2137,17 @@ ipcMain.handle('activity-archive', (_e, rows, on) => {
   const st = feedState();
   const at = new Date().toISOString();
   let n = 0;
+  const linkKeys = [];
   for (const r of Array.isArray(rows) ? rows : []) {
     const id = String(r?.id ?? '');
     if (!id || id.length > 2000) continue;
     st.kept ??= {};
-    if (id.startsWith('r:link:')) setLinksLeft([id.slice(7)], on !== false);
+    if (id.startsWith('r:link:')) { setLinksLeft([id.slice(7)], on !== false); linkKeys.push(id.slice(7)); }
     if (on === false) { delete st.archived[id]; if (!id.startsWith('r:link:')) st.kept[id] = at; } else { st.archived[id] = at; delete st.kept[id]; st.read[id] = at; delete st.unread[id]; }
     n++;
   }
   feedStateSave();
+  logDecision(linkKeys, on === false ? 'reopened' : 'archived');
   return n;
 });
 ipcMain.handle('activity-mark', (_e, rows, unread) => {
@@ -2180,6 +2188,7 @@ ipcMain.handle('activity-review', async (_e, items, verdict) => {
         seenSet(t.abs, { reviewedAt: at, seenAt: at });
         noteEvent(t.abs, 'reviewed', ok ? 'You approved it' : 'You reviewed it');
       } else if (it.kind === 'link') {
+        if (ok && items.length > 1 && reviewOnlyKey(it.key)) throw new Error('This fix needs a review on its own. Open it and approve it there');
         if (ok) startFixes([it.key]); else await decideLink(it.key, 'dismiss');
       } else if (it.kind === 'junk-note') {
         if (!meetingFile(t.abs) || !t.rel) throw new Error('Not found');
@@ -2502,14 +2511,35 @@ function diskNoteNames() {
 }
 // a missing link whose note is on disk but hidden from Quorum
 const onDisk = (target) => { const t = String(target).toLowerCase().replace(/\.md$/, ''); const names = diskNoteNames(); return names.has(t) || names.has(t.split('/').pop()); };
-// the missing links Memory health reports: the ones whose note is truly not in the vault
-const linkIssues = () => (vindex?.linkHealth() ?? []).filter((m) => !onDisk(m.target));
+// what a missing link names outside this checkout's notes: a folder, script, skill, file or a note on another branch
+// (linkElsewhere.js), one finder per vault
+let elsewhere = null;
+function elsewhereFinder() {
+  const v = brain()?.vault;
+  if (!v) return null;
+  if (elsewhere?.vault !== v) elsewhere = { vault: v, finder: createElsewhere({ vault: v }) };
+  return elsewhere.finder;
+}
+// the missing links Memory health reports: the ones whose note is truly not in the vault, each marked with what its
+// name matches elsewhere
+function linkIssues() {
+  const items = (vindex?.linkHealth() ?? []).filter((m) => !onDisk(m.target));
+  const finder = elsewhereFinder();
+  if (!finder || !vindex) return items;
+  // a generated report is never the note a link is pointed at, so it is never a folder's index note either
+  const rels = vindex.rels().filter((r) => !isGenerated(r, vindex.note(r)?.props));
+  try { return withFound(items, finder, rels); } catch (e) { log('memory health elsewhere', e?.message); return items; }
+}
+// a fix that needs a person to read it first (memoryHealth.js reviewOnly): a bulk Approve skips it
+const reviewOnlyKey = (key) => { const m = linkIssues().find((h) => h.target.toLowerCase() === String(key ?? '').toLowerCase()); return !!m && issueOf(withMarks(m)).reviewOnly; };
 // each missing link carries left: true when the person declined it (left it as is)
 ipcMain.handle('vault-link-health', (_e, fresh) => {
-  if (fresh === true) vindex?.sync();
+  if (fresh === true) { vindex?.sync(); elsewhereFinder()?.reset(); }
+  const items = linkIssues();
+  reopenChanged(items);
   const left = linksLeft();
   const declined = linksDeclined();
-  return linkIssues().map((m) => withMarks(m, left, declined));
+  return items.map((m) => withMarks(m, left, declined));
 });
 // the missing links the person declined, per vault, so Memory health, the Memory tree and Notifications all leave them
 // out. Kept in Quorum's data folder; older versions kept them in the window's storage, which the window hands over once
@@ -2528,7 +2558,46 @@ function setLinksLeft(keys, on) {
   try { writeFileSync(linksLeftFile, JSON.stringify(all)); } catch (e) { log('links left', e?.message); }
   return n;
 }
-ipcMain.handle('vault-links-left', (_e, keys, on) => { const list = Array.isArray(keys) ? keys : []; if (on === false) clearDeclined(list); return setLinksLeft(list, on !== false); });
+ipcMain.handle('vault-links-left', (_e, keys, on) => { const list = Array.isArray(keys) ? keys : []; if (on === false) clearDeclined(list); logDecision(list, on === false ? 'reopened' : 'archived'); return setLinksLeft(list, on !== false); });
+// The decision log (decisionLog.js): Approve, Archive, Undo and Move back to review each add a record of the finding,
+// the fix Quorum proposed and who decided. An archived finding stays archived while its evidence is the same
+const decisionLog = createDecisionLog(path.join(DATA_DIR, 'finding-decisions'));
+const findingOf = (i) => ({
+  ruleId: LINK_RULE, ruleVersion: LINK_RULE_VERSION, key: i.key, target: i.target, sources: i.sources,
+  evidence: { links: i.links, sources: i.sources, candidate: i.candidate?.rel ?? null, found: i.found ? { kind: i.found.kind, where: i.found.where } : null },
+  proposedFix: { action: i.action, to: i.candidate?.rel ?? null, createIn: i.action === 'create' ? i.createIn : null, reviewOnly: i.reviewOnly },
+});
+function logFinding(finding, decision, actor = 'you', note = null) {
+  const v = brain()?.vault;
+  if (!v || !finding) return;
+  try { decisionLog.record(v, { ...finding, decision, actor, note }); } catch (e) { log('decision log', e?.message); }
+}
+function logDecision(keys, decision, actor = 'you', note = null) {
+  if (!keys.length) return;
+  const all = linkIssues();
+  for (const k of keys) {
+    const key = String(k ?? '').toLowerCase();
+    if (!key) continue;
+    const m = all.find((h) => h.target.toLowerCase() === key);
+    logFinding(m ? findingOf(issueOf(withMarks(m))) : { ruleId: LINK_RULE, ruleVersion: LINK_RULE_VERSION, key, target: key, sources: [], evidence: null, proposedFix: null }, decision, actor, note);
+  }
+}
+// an archived finding whose evidence changed (a new linking note, one gone) is back in Needs review, and the log says why
+function reopenChanged(items) {
+  const v = brain()?.vault;
+  const left = linksLeft();
+  if (!v || !left.size) return;
+  const current = new Map();
+  for (const m of items) { const k = m.target.toLowerCase(); if (left.has(k)) current.set(k, fingerprint(LINK_RULE, m.target, m.sources)); }
+  const keys = decisionLog.changedArchives(v, current);
+  if (!keys.length) return;
+  setLinksLeft(keys, false);
+  clearDeclined(keys);
+  const st = feedState();
+  for (const k of keys) delete st.archived[`r:link:${k}`];
+  feedStateSave();
+  for (const k of keys) { const m = items.find((h) => h.target.toLowerCase() === k); if (m) logFinding(findingOf(issueOf(withMarks(m))), 'reopened', 'quorum', 'The evidence changed after it was archived'); }
+}
 // the fixes the person declined for each missing link, per vault: Memory health then recommends the next fix in its
 // order (memoryHealth.js optionsOf). Moving an issue back to review forgets them
 const linksDeclinedFile = path.join(DATA_DIR, 'links-declined.json');
@@ -2544,42 +2613,56 @@ function clearDeclined(keys) {
 }
 // a missing link as Memory health reads it: its declined fixes and whether it was left as is
 const withMarks = (m, left = linksLeft(), declined = linksDeclined()) => ({ ...m, left: left.has(m.target.toLowerCase()), declined: declined[m.target.toLowerCase()] ?? [] });
-// the note Quorum writes for a missing link: what each linking note says about it, with a link back to that note
-function contextNote(issue) {
-  const name = issue.target.split('/').pop();
-  const own = new Set(name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
-  const says = (t) => (t.toLowerCase().match(/[a-z][a-z'’]{2,}/g) ?? []).filter((w) => !own.has(w)).length >= 3;
-  const said = issue.contexts.map((c) => `- [[${c.rel.replace(/\.md$/i, '')}]]: ${says(c.text) ? c.text : (c.title ?? c.rel)}`);
-  // a source marked confidential passes its mark on, so the new note stays as private as what it quotes
-  const marks = issue.sources.map((r) => vindex?.note(r)?.props?.confidential).filter((v) => v != null && v !== false && !/^(false|no)$/i.test(String(v)));
-  const head = marks.length ? ['---', `confidential: ${String(marks[0])}`, '---', ''] : [];
-  return [...head, `# ${name}`, '', `Quorum made this note because ${issue.notes === 1 ? 'one note links' : `${issue.notes} notes link`} to “${name}” and no note had that name. What ${issue.notes === 1 ? 'that note says' : 'those notes say'} about it:`, '', ...said, ''].join('\n');
-}
 // Approve or Decline one Memory health issue, by its key. Approve takes the recommended action: add an alias, point
 // the links at the closest note, make the missing note in the inbox folder, or leave a link outside the vault as it is.
 // Decline leaves the links as they are. A fix waits while a run is writing any note it would change. Answers with a
 // line saying what changed
-// keep(rel, created) records a note's text before a fix changes it (or that the fix made it), so Undo can put it back
-async function decideLink(key, verdict, step = async () => {}, keep = () => {}) {
+// keep(rel, created) records a note's text before a fix changes it (or that the fix made it), so Undo can put it back.
+// hashes: each note's hash when the issue was found; a note that changed since is never written. After the write the
+// links of every touched note are checked again, and a fix that made them worse throws, so the run puts the notes back
+// approved: the fix the person approved (findingOf proposedFix); a queued fix whose issue now reads with another fix
+// (an earlier fix in the batch changed the vault) is refused, so a run never makes a fix nobody approved
+async function decideLink(key, verdict, step = async () => {}, keep = () => {}, hashes = null, approved = null) {
   const b = brain();
   if (!b || !vindex) throw new Error('No vault connected');
   const entry = linkIssues().find((h) => h.target.toLowerCase() === String(key ?? '').toLowerCase());
   if (!entry) throw new Error('That link is already fixed');
   const issue = issueOf(withMarks(entry));
+  if (verdict === 'approve' && approved) {
+    const now = findingOf(issue).proposedFix;
+    if (now.action !== approved.action || now.to !== approved.to || now.createIn !== approved.createIn) throw new Error('The fix for this link changed after you approved it, so Quorum did not write. Review the issue again');
+  }
   // Dismiss marks it reviewed and changes nothing: the link stays and the issue moves to Dismissed
-  if (verdict !== 'approve' || issue.action === 'leave') { setLinksLeft([issue.key], true); return 'Dismissed. The link stays as it is'; }
+  if (verdict !== 'approve' || issue.action === 'leave') { if (verdict !== 'approve') logFinding(findingOf(issue), 'archived'); setLinksLeft([issue.key], true); return 'Dismissed. The link stays as it is'; }
   const c = issue.candidate;
   await step(`Reading the ${entry.sources.length === 1 ? 'linking note' : `${entry.sources.length} linking notes`}`);
   const busy = liveRuns.state().files ?? {};
   if ([...entry.sources, ...(c ? [c.rel] : [])].some((r) => busy[r])) throw new Error('Waits until the run writing these notes finishes');
+  const guard = () => {
+    const moved = hashes ? changedSince(b.vault, hashes) : [];
+    if (moved.length) throw new Error(`“${moved[0]}” changed after Quorum found this issue, so Quorum did not write. Review the issue again`);
+  };
+  const touched = [...entry.sources, ...(c ? [c.rel] : [])];
+  const missingOf = (rels) => new Map(rels.map((r) => [r, new Set(vindex.missingIn(r).map((l) => l.target.toLowerCase()))]));
+  const before = missingOf(touched);
+  const recheck = async ({ made = null, toRel = null } = {}) => {
+    await step('Checking the links again');
+    const after = missingOf(made && vindex.rels().includes(made) ? [...touched, made] : touched);
+    const targetGone = made ? !existsSync(path.join(b.vault, made)) : !!toRel && !vindex.rels().includes(toRel);
+    const indexed = !made || vindex.rels().includes(made);
+    const reason = fixCheck({ before, after, target: entry.target, targetGone, stillMissing: indexed && entry.sources.some((r) => after.get(r)?.has(entry.target.toLowerCase())) });
+    if (reason) throw new Error(reason);
+  };
   if (issue.action === 'alias' && c) {
     const abs = vindex.rels().includes(c.rel) ? vaultPath(b.vault, c.rel) : null;
     if (!abs) throw new Error('That note no longer exists');
     await step(`Adding “${issue.target}” as an alias of ${c.name ?? c.title}`);
+    guard();
     keep(c.rel);
     addAlias(abs, issue.target);
     await step('Updating the vault index');
     vindex.sync();
+    await recheck({ toRel: c.rel });
     log('memory health', 'added alias', issue.target, 'to', c.rel);
     return `Added “${issue.target}” as an alias of ${c.name ?? c.title}, so ${issue.links} ${issue.links === 1 ? 'link now works' : 'links now work'}`;
   }
@@ -2587,35 +2670,47 @@ async function decideLink(key, verdict, step = async () => {}, keep = () => {}) 
     if (!vindex.rels().includes(c.rel)) throw new Error('That note no longer exists');
     const name = vindex.note(c.rel)?.props.name;
     await step(`Pointing the ${issue.links === 1 ? 'link' : `${issue.links} links`} at ${c.name ?? c.title}`);
+    guard();
     for (const r of entry.sources) keep(r);
     const done = retargetLinks({ vault: b.vault, sources: entry.sources, target: entry.target, toRel: c.rel, toName: typeof name === 'string' ? name : null, allRels: vindex.rels() });
     await step('Updating the vault index');
     vindex.sync();
+    await recheck({ toRel: c.rel });
     log('memory health', 'fixed link', entry.target, '->', c.rel);
     return `Fixed ${done.links} ${done.links === 1 ? 'link' : 'links'} in ${done.files} ${done.files === 1 ? 'note' : 'notes'}`;
   }
   if (issue.action === 'unlink') {
     await step(`Removing the dead ${issue.links === 1 ? 'link' : `${issue.links} links`}`);
+    guard();
     for (const r of entry.sources) keep(r);
     const done = unlinkTarget({ vault: b.vault, sources: entry.sources, target: entry.target });
     await step('Updating the vault index');
     vindex.sync();
+    await recheck();
     log('memory health', 'removed dead link', entry.target, `${done.links} links in ${done.files} notes`);
     return `Removed ${done.links} dead ${done.links === 1 ? 'link' : 'links'} and kept the words`;
   }
-  // a new note goes where most of its links come from, else the inbox; it starts with what the linking notes say
-  const inbox = existsSync(path.join(b.vault, '00-inbox')) ? '00-inbox' : '';
-  const folder = issue.createIn && existsSync(path.join(b.vault, issue.createIn)) ? issue.createIn : inbox;
+  // a new note goes in the folder most of its linking notes sit in (linkRules.js createPlan); it starts with what the
+  // linking notes say and carries their confidential mark
+  if (issue.action !== 'create') throw new Error('Quorum has no fix to offer for this link');
+  const folder = issue.createIn;
+  if (folder && !existsSync(path.join(b.vault, folder))) throw new Error(`The folder ${folder} is gone, so Quorum did not write the note`);
   const name = issue.target.split('/').pop();
-  await step('Checking the vault for a note with that name');
+  await step('Checking the vault, its folders, scripts, skills and other branches for that name');
   diskNamesCache.at = 0;
   if (onDisk(name)) throw new Error('A note with that name is already in the vault, so Quorum did not write another one');
+  const finder = elsewhereFinder();
+  finder?.reset();
+  const hit = finder?.find(name);
+  if (hit) throw new Error(`${hit.kind === 'branch' ? `A note with that name is on the branch ${hit.branch}` : `A ${hit.kind} with that name is at ${hit.where}`}, so Quorum did not write a note`);
   await step(`Writing ${folder ? `${folder}/` : ''}${name}.md from what the linking notes say`);
+  guard();
   const rel = createNote(b.vault, folder, name);
   keep(rel, true);
   writeAtomic(path.join(b.vault, rel), contextNote(issue));
   await step('Updating the vault index');
   vindex.sync();
+  await recheck({ made: rel });
   log('memory health', 'wrote the missing note', rel);
   return `Wrote the note ${rel} from what the linking notes say`;
 }
@@ -2630,15 +2725,34 @@ const fixRunList = () => {
   if (!fixRuns) {
     try { fixRuns = JSON.parse(readFileSync(fixRunsFile, 'utf8')); } catch { fixRuns = []; }
     if (!Array.isArray(fixRuns)) fixRuns = [];
-    // a fix still waiting or working when Quorum last quit never finished: it says so, and its issue is back in review
-    for (const r of fixRuns) if (r.status === 'queued' || r.status === 'running') Object.assign(r, { status: 'error', error: 'Quorum quit before this fix finished. Approve it again to fix it.', endedAt: r.endedAt ?? Date.now() });
+    // a fix still waiting or working when Quorum last quit never finished: it is marked Failed, the notes it wrote go
+    // back from its undo record, and its issue is back in review
+    const cut = fixRuns.filter((r) => r.status === 'queued' || r.status === 'running');
+    for (const r of cut) Object.assign(r, { status: 'error', error: 'Quorum quit before this fix finished. Approve it again to fix it.', endedAt: r.endedAt ?? Date.now() });
+    if (cut.length) setTimeout(() => { recoverRuns(cut).catch((e) => log('fix recover', e?.message)); }, 0);
   }
   return fixRuns;
 };
+const fixJournal = createFixJournal(path.join(DATA_DIR, 'fix-journal'));
+async function recoverRuns(runs) {
+  for (const r of runs) {
+    let files = [];
+    try { files = JSON.parse(readFileSync(undoFile(r.id), 'utf8')).files ?? []; } catch {}
+    const was = files.map((f) => { try { return { rel: f.rel, text: readFileSync(vaultPath(r.vault, f.rel), 'utf8') }; } catch { return { rel: f.rel, text: null }; } });
+    const res = await rollback(r.vault, files, (abs) => shell.trashItem(abs));
+    for (const w of was) if (res.restored.includes(w.rel)) { try { memoryVersions.record({ vault: r.vault, rel: w.rel, before: w.text, after: files.find((f) => f.rel === w.rel)?.before ?? null, who: 'agent', reason: `Put back after an interrupted Memory health fix on “${r.target}”` }); } catch (e) { log('fix versions', e?.message); } }
+    r.error = recoveryReason(res);
+    fixJournal.append(r.id, { step: 'recovered', restored: res.restored, skipped: res.skipped });
+    log('fix recover', r.key, `${res.restored.length} put back`, `${res.skipped.length} left`);
+    fixEmit(r);
+  }
+  fixRunsSave();
+  if (runs.length) { vindex?.sync(); diskNamesCache.at = 0; toUI('memory-updates', null); }
+}
 // a run that drops off the list takes its undo record with it, so the saved note text does not stay behind
 const fixRunsSave = () => {
   const all = fixRunList();
-  for (const r of all.slice(300)) { try { rmSync(undoFile(r.id), { force: true }); } catch {} }
+  for (const r of all.slice(300)) { try { rmSync(undoFile(r.id), { force: true }); } catch {} fixJournal.remove(r.id); }
   fixRuns = all.slice(0, 300);
   try { writeFileSync(fixRunsFile, JSON.stringify(fixRuns)); } catch (e) { log('fix runs', e?.message); }
 };
@@ -2649,7 +2763,9 @@ const withBanner = (r) => ({ ...r, showBanner: r.status === 'queued' || r.status
 const fixEmit = (run) => toUI('fix-run', withBanner(run));
 // the next tick, so each step reaches the window before the next one starts
 const tick = () => new Promise((r) => setTimeout(r, 0));
-function startFixes(keys) {
+// bulk: Approve on a selection of several issues; it skips the review-only fixes (writing a note, a weak match), which
+// a person approves one at a time
+function startFixes(keys, { bulk = keys.length > 1 } = {}) {
   const started = [];
   // a bulk Approve is one batch: the window shows its progress from the runs, even after leaving the page and coming back
   const batch = keys.length > 1 ? `b:${Date.now()}` : null;
@@ -2661,11 +2777,17 @@ function startFixes(keys) {
     const entry = linkIssues().find((h) => h.target.toLowerCase() === key);
     if (!entry) continue;
     const i = issueOf(withMarks(entry));
+    if (bulk && i.reviewOnly) continue;
     const run = {
       id: `fix:${key}:${Date.now()}`, key, target: i.target, title: i.title, rel: i.path, vault: brain()?.vault ?? '', status: 'queued', queuedAt: Date.now(), startedAt: null, endedAt: null,
       steps: [], outcome: null, error: null, dismissedAt: null, batch,
       problem: i.problem, solution: i.solution, value: i.value, recommendation: i.recommend, meta: issueMeta(i),
+      // each note the fix will touch, as it reads now: the fix refuses to write a note that changed after this
+      hashes: hashNotes(brain()?.vault ?? '', [...i.sources, ...(i.candidate ? [i.candidate.rel] : [])]),
     };
+    run.finding = findingOf(i);
+    logFinding(run.finding, 'approved');
+    fixJournal.append(run.id, { step: 'queued', action: i.action, hashes: run.hashes });
     fixRunList().unshift(run);
     fixQueue.push(run);
     started.push(run);
@@ -2683,7 +2805,16 @@ async function pumpFixes() {
     run.status = 'running';
     run.startedAt = Date.now();
     fixEmit(run);
+    fixJournal.append(run.id, { step: 'started' });
+    writeUndo(run, []);
+    // the text of every note the fix changes, before it changes it; saved beside the runs so Undo can restore it
+    const kept = [];
+    // the undo record on disk holds the hash of each kept note as it reads now, so recovery after a quit puts back only
+    // a note that still reads as the fix left it, and leaves one the person edited before the next start
+    const stamp = () => { const h = hashNotes(run.vault, kept.map((k) => k.rel)); writeUndo(run, kept.map((k) => ({ ...k, after: h[k.rel] }))); };
     const step = async (label) => {
+      if (kept.length) stamp();
+      fixJournal.append(run.id, { step: 'step', label });
       const at = Date.now();
       const last = run.steps[run.steps.length - 1];
       if (last && !last.endedAt) last.endedAt = at;
@@ -2691,20 +2822,32 @@ async function pumpFixes() {
       fixEmit(run);
       await tick();
     };
-    // the text of every note the fix changes, before it changes it; saved beside the runs so Undo can restore it
-    const kept = [];
     const keep = (rel, created = false) => {
       if (kept.some((k) => k.rel === rel)) return;
       try { kept.push({ rel, before: created ? null : readFileSync(vaultPath(run.vault, rel), 'utf8') }); } catch {}
+      // the undo record is on disk before the note is written, so a quit partway can be put back on the next start
+      stamp();
+      fixJournal.append(run.id, { step: 'keep', rel, created });
     };
     try {
-      run.outcome = await decideLink(run.key, 'approve', step, keep);
+      run.outcome = await decideLink(run.key, 'approve', step, keep, run.hashes ?? null, run.finding?.proposedFix ?? null);
       run.status = 'success';
       run.undoable = saveUndo(run, kept);
     } catch (e) {
       run.status = 'error';
       run.error = e?.message ?? String(e);
+      // a fix that failed after it wrote (the re-check found it made the links worse, or an error partway) puts the
+      // notes back, so a Failed run leaves the vault as it was
+      if (kept.length) {
+        try {
+          const res = await rollback(run.vault, kept, (abs) => shell.trashItem(abs));
+          fixJournal.append(run.id, { step: 'rolled-back', restored: res.restored, skipped: res.skipped });
+          if (res.restored.length) { run.error = `${run.error}. Quorum put back the ${res.restored.length === 1 ? 'note' : `${res.restored.length} notes`} it had changed`; vindex?.sync(); diskNamesCache.at = 0; }
+        } catch (err) { log('fix rollback', err?.message); }
+      }
+      saveUndo(run, kept);
     }
+    fixJournal.append(run.id, { step: 'ended', status: run.status, error: run.error });
     // each note the fix changed gets a new version in its history, so it can be restored from there too; a fix that
     // failed partway still records the notes it wrote before it stopped
     for (const k of kept) {
@@ -2728,14 +2871,15 @@ ipcMain.handle('fix-start', (_e, keys) => startFixes(Array.isArray(keys) ? keys 
 // back in Needs review. It refuses when a note changed after the fix, so it never throws away later edits
 const fixUndoDir = path.join(DATA_DIR, 'fix-undo');
 const undoFile = (id) => path.join(fixUndoDir, `${String(id).replace(/[^a-z0-9_-]/gi, '_').slice(0, 200)}.json`);
+// every run has an undo record, written before its first note changes, stamped with the hash of each kept note at
+// every step and once it ends; it is deleted only when the run drops off the list (fixRunsSave)
+function writeUndo(run, files) {
+  try { mkdirSync(fixUndoDir, { recursive: true }); writeFileSync(undoFile(run.id), JSON.stringify({ vault: run.vault, files: files.map((f) => ({ after: null, ...f })) })); } catch (e) { log('fix undo save', e?.message); }
+}
 function saveUndo(run, kept) {
-  try {
-    const files = undoRecord(run.vault, kept);
-    if (!files.length) return false;
-    mkdirSync(fixUndoDir, { recursive: true });
-    writeFileSync(undoFile(run.id), JSON.stringify({ vault: run.vault, files }));
-    return true;
-  } catch (e) { log('fix undo save', e?.message); return false; }
+  const files = undoRecord(run.vault, kept);
+  writeUndo(run, files);
+  return files.length > 0;
 }
 ipcMain.handle('fix-undo', async (_e, id) => {
   const run = fixRunList().find((r) => r.id === String(id));
@@ -2751,6 +2895,7 @@ ipcMain.handle('fix-undo', async (_e, id) => {
   vindex?.sync();
   diskNamesCache.at = 0;
   setLinksLeft([run.key], false);
+  if (run.finding) logFinding(run.finding, 'undone'); else logDecision([run.key], 'undone');
   run.undoneAt = Date.now();
   fixRunsSave();
   fixEmit(run);

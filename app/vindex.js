@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createResolver, parseNote } from './linkparse.js';
 import { SKIP, graphConfig, noteDate, walk } from './vault.js';
 import { clusterAssign, clusterLabels, groupInfo, wrapperFolders } from './clusters.js';
+import { isGenerated } from './linkRules.js';
 
 // the folders walk() skips, as a test on a watcher path (the same list, so the two can never disagree)
 const IGNORED = new RegExp(`(^|/)(${[...SKIP].map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(/|$)`);
@@ -224,7 +225,10 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   }
   function scoreLinks() {
     const byName = new Map();
+    // a generated report or log restates links found elsewhere: it is never a source (linkRules.js GENERATED_RULES)
+    const generated = (rel) => isGenerated(rel, files.get(rel)?.note.props);
     for (const [rel, missing] of unresolved) for (const link of missing) {
+      if (generated(rel)) continue;
       const name = link.target.replace(/\.md$/i, '').trim();
       if (!name) continue;
       const key = name.toLowerCase();
@@ -234,7 +238,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
       e.at.push({ rel, line: link.line });
     }
     // compare names loosely: no date prefix, no Claude memory type prefix (feedback_, reference_...), no punctuation
-    const norm = (x) => x.toLowerCase().replace(/\.md$/, '').replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/^(feedback|reference|project|user)_/, '').replace(/[^a-z0-9]+/g, '');
+    const norm = (x) => x.toLowerCase().replace(/\.md$/, '').replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/^(feedback|reference|project|user)[_-]/, '').replace(/[^a-z0-9]+/g, '');
     // the words of a name, without dates, numbers and filler words, for matching names that differ in a date or a word
     const STOP = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'to', 'for', 'in', 'on', 'with', 'md', 'note', 'notes', 'feedback', 'reference', 'project', 'user']);
     const words = (x) => [...new Set(String(x).toLowerCase().replace(/\.md$/, '').split(/[^a-z0-9]+/).filter((w) => w.length > 1 && !STOP.has(w) && !/^\d+$/.test(w)))];
@@ -243,7 +247,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     const KIND = new Set(['prd', 'spec', 'review', 'code', 'report', 'retro', 'retrospective', 'plan', 'brief', 'research', 'analysis', 'summary', 'notes', 'doc', 'docs', 'page', 'deep', 'dive', 'kickoff', 'recap', 'audit', 'proposal', 'requirements', 'presentation', 'deck', 'draft', 'v1', 'v2', 'v3', 'synthesis', 'findings', 'teardown', 'guide', 'playbook', 'index']);
     const kinds = (ws) => new Set([...ws].filter((w) => KIND.has(w)));
     const dirOf = (rel) => (rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '');
-    const index = [...files.keys()].map((rel) => ({ rel, key: norm(path.basename(rel)), alias: aliasesOf(rel).map(norm), title: norm(files.get(rel).note.title), words: new Set([...words(path.basename(rel)), ...words(files.get(rel).note.title)]) }));
+    const index = [...files.keys()].filter((rel) => !generated(rel)).map((rel) => ({ rel, key: norm(path.basename(rel)), alias: aliasesOf(rel).map(norm), title: norm(files.get(rel).note.title), words: new Set([...words(path.basename(rel)), ...words(files.get(rel).note.title)]) }));
     // a link's line as plain words: the link itself becomes its text, list marks and markup go
     const plain = (t) => t.replace(/!?\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]*))?\]\]/g, (_, a, b) => b ?? a.split('/').pop()).replace(/^\s*(?:[-*+]|\d+\.)\s+/, '').replace(/[*`>#]+/g, '').replace(/\s+/g, ' ').trim();
     return [...byName.values()].map(({ target, sources, links, at }) => {
@@ -258,6 +262,8 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
         for (const b of backward.get(s) ?? []) near.add(b.from);
       }
       const scored = k.length < 3 && tw.length === 0 ? [] : index.map((n) => {
+        // a linking note is never the fix for its own link
+        if (sources.has(n.rel)) return null;
         if (n.key === k || n.alias.includes(k) || n.title === k) return { n, exact: true, score: 1, shared: tw };
         const shared = tw.filter((w) => n.words.has(w));
         if (shared.length < 2 && !(shared.length === 1 && tw.length === 1 && n.words.size === 1)) return null;
@@ -278,7 +284,9 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
         .map((c) => ({ rel: c.n.rel, title: titleOf(c.n.rel), name: typeof files.get(c.n.rel).note.props.name === 'string' ? files.get(c.n.rel).note.props.name : null, exact: c.exact, score: Math.round(c.score * 100) / 100, cover: c.exact ? 1 : Math.round((c.cover ?? 0) * 100) / 100, kindClash: !!c.kindClash, shared: c.shared, neighbor: c.neighbor, sameFolder: c.sameFolder }));
       const contexts = at.slice(0, 6).map(({ rel, line }) => ({ rel, title: titleOf(rel), text: plain(lineOf(rel, line)).slice(0, 280) })).filter((c) => c.text);
       const lastAt = Math.max(0, ...[...sources].map((r) => files.get(r)?.mtime ?? 0)) || null;
-      return { target, sources: [...sources], count: sources.size, links, lastAt, candidates, contexts };
+      // each linking note's confidential mark, so a note written from them stays as private as they are
+      const confidential = [...sources].map((r) => files.get(r)?.note.props.confidential).filter((v) => v != null && !(Array.isArray(v) && !v.length));
+      return { target, sources: [...sources], count: sources.size, links, lastAt, candidates, contexts, confidential };
     }).sort((a, b) => b.count - a.count || a.target.localeCompare(b.target));
   }
 
