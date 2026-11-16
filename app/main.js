@@ -3441,6 +3441,10 @@ async function agentResolve(item, run, step) {
   const kept = notes ? drafter.draftFor(base, notes) : null;
   let draft = kept && kept.confirmed !== false && kept.confidence !== 'low' ? kept : null;
   if (!draft) {
+    // a contradiction call that already runs finishes first, so the agent makes one model call at a time. Neither the
+    // drafter nor the contradiction agent starts a new call while this batch runs (their busy)
+    while (contradictionAbort && !run.cancel) await new Promise((r) => setTimeout(r, 250));
+    if (run.cancel) throw new Error('You cancelled the batch');
     const ctl = new AbortController();
     run.agentAbort = ctl;
     let res;
