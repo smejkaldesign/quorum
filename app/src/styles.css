@@ -2678,4 +2678,10 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .mh-drawer .mh-facts { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
 .mh-sources { display: flex; flex-wrap: wrap; gap: 6px; }
 .mh-drawer-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
-.mu-float { top: -14px; }
+.mu-float { top: -26px; }
+/* the drawer's fields: the label in white above its text, with more room between fields */
+.mh-drawer .mh-parts { gap: 18px; margin-top: 18px; }
+.mh-drawer .mh-parts > div, .nf-main .mh-drawer .mh-parts > div { display: flex; flex-direction: column; gap: 4px; }
+.mh-drawer .mh-parts dt { color: var(--text); font-weight: 600; }
+.mh-drawer .mh-parts dd { color: var(--muted); }
+.mh-drawer .mh-facts { margin-top: 22px; padding-top: 20px; }
