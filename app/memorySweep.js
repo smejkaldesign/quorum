@@ -28,6 +28,8 @@ export function dueSweep(state, { now = Date.now(), paused = false, idleMs = 0, 
 
 // the confidential value of every note in the vault, read from the first 8 KB of each file only (its frontmatter):
 // the confidential rule needs the notes the index leaves out, and reads nothing else of them
+const headOf = (abs, buf) => { try { const fd = openSync(abs, 'r'); try { return buf.toString('utf8', 0, readSync(fd, buf, 0, HEAD, 0)); } finally { closeSync(fd); } } catch { return null; } };
+const tagOf = (head) => { const v = parseFrontmatter(head).props.confidential; return v === undefined ? null : v; };
 export function scanTags(vault, isExcluded = () => false) {
   const out = [];
   const buf = Buffer.alloc(HEAD);
@@ -40,13 +42,24 @@ export function scanTags(vault, isExcluded = () => false) {
       const r = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) { walk(path.join(dir, e.name), r, depth + 1); continue; }
       if (!/\.md$/i.test(e.name) || isExcluded(r)) continue;
-      let head;
-      try { const fd = openSync(path.join(dir, e.name), 'r'); const n = readSync(fd, buf, 0, HEAD, 0); closeSync(fd); head = buf.toString('utf8', 0, n); } catch { continue; }
-      const v = parseFrontmatter(head).props.confidential;
-      out.push({ rel: r, value: v === undefined ? null : v });
+      const head = headOf(path.join(dir, e.name), buf);
+      if (head != null) out.push({ rel: r, value: tagOf(head) });
     }
   };
   walk(vault, '', 0);
+  return out;
+}
+
+// the scan after a save: the earlier scan with only the notes that changed read again, so a save never walks the vault
+export function rescanTags(vault, tags, rels, isExcluded = () => false) {
+  const changed = new Set(rels);
+  const out = tags.filter((t) => !changed.has(t.rel));
+  const buf = Buffer.alloc(HEAD);
+  for (const r of changed) {
+    if (!/\.md$/i.test(r) || isExcluded(r) || r.split('/').some((p) => p.startsWith('.') || p === 'node_modules')) continue;
+    const head = headOf(path.join(vault, r), buf);
+    if (head != null) out.push({ rel: r, value: tagOf(head) });
+  }
   return out;
 }
 

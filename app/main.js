@@ -64,7 +64,7 @@ import { issueMeta, issueOf } from './memoryHealth.js';
 import { LINK_RULE, LINK_RULE_VERSION, contextNote, isGenerated } from './linkRules.js';
 import { createDecisionLog, fingerprint } from './decisionLog.js';
 import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, applyPlan, fixVersions, recheckAll, undoPlan } from './fixRecheck.js';
-import { createMemorySweep, dueSweep, scanTags } from './memorySweep.js';
+import { createMemorySweep, dueSweep, rescanTags, scanTags } from './memorySweep.js';
 import { RULE_LABELS } from './rules/index.js';
 import { createElsewhere, withFound } from './linkElsewhere.js';
 import { titleOf } from './notificationSummary.js';
@@ -2412,12 +2412,16 @@ let vindex = null;
 const memorySweep = createMemorySweep({ file: path.join(DATA_DIR, 'memory-findings.json') });
 const sweepPaused = () => settings.memorySweeps === false;
 let sweeping = false;
+// the last confidential tag scan; a save sweep reads again only the notes that changed
+let tagScan = null;
 function sweep(kind, only = null) {
   const b = brain();
   if (!b || !vindex || sweeping) return null;
   sweeping = true;
   try {
-    const ctx = { notes: vindex.snapshot(), resolve: (t, from) => vindex.resolve(t, from), tags: scanTags(b.vault, excludedPath) };
+    const tags = kind === 'save' && only && tagScan?.vault === b.vault ? rescanTags(b.vault, tagScan.tags, only, excludedPath) : scanTags(b.vault, excludedPath);
+    tagScan = { vault: b.vault, tags };
+    const ctx = { notes: vindex.snapshot(), resolve: (t, from) => vindex.resolve(t, from), tags };
     const s = memorySweep.run(b.vault, kind, ctx, { only });
     log('memory sweep', kind, `${s.last.notes} notes`, `${s.last.ms} ms`, `${s.last.found} findings`);
     toUI('memory-updates', null);

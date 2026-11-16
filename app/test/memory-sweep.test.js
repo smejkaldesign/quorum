@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FULL_EVERY, IDLE_FOR, INCREMENTAL_EVERY, createMemorySweep, dueSweep, scanTags } from '../memorySweep.js';
+import { FULL_EVERY, IDLE_FOR, INCREMENTAL_EVERY, createMemorySweep, dueSweep, rescanTags, scanTags } from '../memorySweep.js';
 import { parseNote } from '../linkparse.js';
 import { feedRows } from '../activityFeed.js';
 
@@ -74,6 +74,18 @@ describe('the confidential tag scan', () => {
     put('skip/hidden.md', '---\nconfidential: x\n---\n');
     put('.obsidian/x.md', '# no');
     expect(scanTags(dir, (rel) => rel.startsWith('skip/')).sort((x, y) => x.rel.localeCompare(y.rel))).toEqual([{ rel: 'a/plain.md', value: null }, { rel: 'a/tagged.md', value: 'team-only' }]);
+  });
+  it('reads again only the notes that changed after a save, and drops the ones that are gone', () => {
+    fresh();
+    const put = (rel, text) => { mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); writeFileSync(path.join(dir, rel), text); };
+    put('a/one.md', '# One');
+    put('a/two.md', '---\nconfidential: team-only\n---\n');
+    const before = scanTags(dir);
+    put('a/one.md', '---\nconfidential: team-only\n---\n# One');
+    rmSync(path.join(dir, 'a/two.md'));
+    put('a/three.md', '# Three');
+    const after = rescanTags(dir, before, ['a/one.md', 'a/two.md', 'skip/x.md'], (rel) => rel.startsWith('skip/'));
+    expect(after.sort((x, y) => x.rel.localeCompare(y.rel))).toEqual([{ rel: 'a/one.md', value: 'team-only' }]);
   });
 });
 
