@@ -89,6 +89,14 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
   }, []);
   const [draft, setDraft] = useState('');
   const { quote, shown, typing } = useQuote();
+  // the source line steps back 5 seconds after the quote has typed out; hovering the quote brings it back
+  const [quiet, setQuiet] = useState(false);
+  useEffect(() => {
+    setQuiet(false);
+    if (typing) return;
+    const t = window.setTimeout(() => setQuiet(true), 5000);
+    return () => window.clearTimeout(t);
+  }, [typing, quote.text]);
   // the quote stays on one line: in a window narrower than the default, the heading eases down to fit
   const heroTitle = useRef<HTMLHeadingElement>(null);
   useLayoutEffect(() => {
@@ -216,7 +224,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
 
   return (
     <div className="history">
-      <section className="hist-hero" key={quote.text}>
+      <section className={`hist-hero${quiet ? ' quiet' : ''}`} key={quote.text}>
         <h1 ref={heroTitle} className={typing ? 'typing' : undefined}>
           {shown || '\u00a0'}
         </h1>

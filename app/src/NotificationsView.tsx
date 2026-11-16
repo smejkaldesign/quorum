@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import markProd from '../assets/quorum-mark.png';
-import { IconBell, IconChevron, IconMore, IconSearch } from './icons';
+import { IconBell, IconCheck, IconChevron, IconClose, IconMore, IconSearch } from './icons';
+import { useMenu } from './controls';
 import type { FeedKind, FeedPage, FeedRow, FeedSort, FeedTab } from './quorum';
 
 const PAGE = 50;
@@ -218,22 +219,18 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
           Needs review{counts?.review ? <span className="nf-count">{counts.review}</span> : null}
         </button>
         <span className="nf-fill" />
-        <button className={`icon-btn nf-search-btn${searching ? ' on' : ''}`} aria-label="Search notifications" aria-expanded={searching} data-tip="Search" onClick={() => { if (searching && !q) setSearching(false); else { setSearching(true); requestAnimationFrame(() => searchRef.current?.focus()); } }}><IconSearch width={16} height={16} /></button>
-        <select className="nf-select" aria-label="Type" value="" onChange={(e) => { const k = e.target.value as FeedKind; if (k && !kinds.includes(k)) setKinds([...kinds, k]); }}>
-          <option value="">Type</option>
-          {KINDS.filter(([id]) => !kinds.includes(id)).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-        </select>
-        <select className="nf-select" aria-label="Sort" value={sort} onChange={(e) => setSort(e.target.value as FeedSort)}>
-          {SORTS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-        </select>
+        <button className={`icon-btn nf-search-btn${searching || q ? ' on' : ''}`} aria-label="Search notifications" aria-expanded={searching || !!q} data-tip="Search" onClick={() => { if (searching || q) { setQ(''); setSearching(false); } else { setSearching(true); window.setTimeout(() => searchRef.current?.focus(), 60); } }}><IconSearch width={16} height={16} /></button>
+        <PickMenu label="Type" count={kinds.length} multi options={KINDS} picked={kinds} onPick={(k) => setKinds(kinds.includes(k) ? kinds.filter((x) => x !== k) : [...kinds, k])} />
+        <PickMenu label={SORTS.find(([id]) => id === sort)?.[1] ?? 'Sort'} options={SORTS} picked={[sort]} onPick={(v) => setSort(v)} />
       </div>
       {/* search opens below the bar from its icon button, focused; the list filters as you type */}
-      {(searching || !!q) && (
+      <div className={`nf-search-wrap${searching || q ? ' open' : ''}`} aria-hidden={!(searching || q)}>
         <label className="nf-search">
-          <IconSearch width={15} height={15} />
-          <input ref={searchRef} value={q} placeholder="Search notifications" aria-label="Search notifications" onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') { setQ(''); setSearching(false); } }} />
+          <IconSearch width={16} height={16} />
+          <input ref={searchRef} value={q} tabIndex={searching || q ? 0 : -1} placeholder="Search notifications" aria-label="Search notifications" onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') { setQ(''); setSearching(false); } }} />
+          <button className="icon-btn nf-search-x" tabIndex={searching || q ? 0 : -1} aria-label="Close search" onClick={(e) => { e.preventDefault(); setQ(''); setSearching(false); }}><IconClose width={16} height={16} /></button>
         </label>
-      )}
+      </div>
       {kinds.length > 0 && (
         <div className="nf-chips" aria-label="Type filters">
           {kinds.map((k) => (
@@ -265,5 +262,27 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
       {page && !items.length && <div className="nf-empty"><IconBell width={22} height={22} /><p>{empty}</p></div>}
       {page?.more && <button className="act-pill nf-more-btn" onClick={more}>Show more</button>}
     </div>
+  );
+}
+
+// A pill button that opens Quorum's own menu: one pick (Sort) or several (Type, with a blue count of the picks). The
+// button is as wide as its label
+function PickMenu<T extends string>({ label, count = 0, multi = false, options, picked, onPick }: { label: string; count?: number; multi?: boolean; options: [T, string][]; picked: T[]; onPick: (v: T) => void }) {
+  const [open, setOpen] = useMenu();
+  return (
+    <span className="menu-wrap nf-pick-wrap">
+      <button className={`nf-pick${open ? ' open' : ''}`} aria-haspopup="menu" aria-expanded={open} onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}>
+        {label}{count > 0 && <span className="nf-badge" aria-label={`${count} selected`}>{count}</span>}<IconChevron width={13} height={13} />
+      </button>
+      {open && (
+        <div className="menu nf-pick-menu" role="menu" onClick={(e) => { if (multi) e.stopPropagation(); }}>
+          {options.map(([id, text]) => (
+            <button key={id} role={multi ? 'menuitemcheckbox' : 'menuitemradio'} aria-checked={picked.includes(id)} className={picked.includes(id) ? 'checked' : ''} onClick={() => { onPick(id); if (!multi) setOpen(false); }}>
+              <span>{text}</span>{picked.includes(id) && <IconCheck width={14} height={14} />}
+            </button>
+          ))}
+        </div>
+      )}
+    </span>
   );
 }
