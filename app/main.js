@@ -2989,8 +2989,10 @@ function startFixes(keys, { bulk = keys.length > 1 } = {}) {
   for (const k of keys) {
     const key = String(k ?? '').toLowerCase();
     if (!key) continue;
-    const live = fixRunList().find((r) => r.key === key && (r.status === 'queued' || r.status === 'running'));
-    if (live) { started.push(live); continue; }
+    // a link already in a queued or running batch (the agent's work, a wrong-note unlink) is that batch: a second Approve
+    // never runs Quorum's own fix beside it
+    const live = fixRunList().find((r) => (r.status === 'queued' || r.status === 'running') && (r.key === key || r.items?.some((x) => x.id === `${ROW.link}${key}`)));
+    if (live) { if (!started.includes(live)) started.push(live); continue; }
     const entry = linkIssues().find((h) => h.target.toLowerCase() === key);
     if (!entry) continue;
     const i = issueOf(withMarks(entry));
