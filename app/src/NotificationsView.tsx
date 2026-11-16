@@ -3,6 +3,7 @@ import markProd from '../assets/quorum-mark.png';
 import markReview from '../assets/quorum-mark-review.png';
 import { IconArchive, IconBell, IconChevron } from './icons';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
+import { Avatar } from './Speaker';
 import type { FeedKind, FeedPage, FeedRow, FeedSort, FeedTab } from './quorum';
 
 const PAGE = 50;
@@ -58,8 +59,8 @@ export function NotificationBell({ active, onOpen }: { active: boolean; onOpen: 
 
 // the row's ⋯ menu: Open, Mark read or unread, and Approve and Disapprove on a row waiting for a decision. It closes on
 // a click anywhere else or Escape
-function Row({ row, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide, onArchive }: {
-  row: FeedRow; picked: boolean; busy: boolean; onPick: () => void; onOpen: () => void; onOpenFile: (abs: string) => void; onMark: (unread: boolean) => void; onDecide: (v: 'approve' | 'reject' | 'ignore') => void; onArchive: (on: boolean) => void;
+function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide, onArchive }: {
+  row: FeedRow; me: { name: string; photo: string | null }; picked: boolean; busy: boolean; onPick: () => void; onOpen: () => void; onOpenFile: (abs: string) => void; onMark: (unread: boolean) => void; onDecide: (v: 'approve' | 'reject' | 'ignore') => void; onArchive: (on: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
@@ -69,7 +70,7 @@ function Row({ row, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide, 
       <div className="conn-line nf-line" role="button" tabIndex={0} aria-label={row.summary.line} onClick={go} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); go(); } }}>
         <label className="nf-check" onClick={stop}><input type="checkbox" checked={picked} aria-label="Select" onChange={onPick} /></label>
         {/* waiting for a decision shows the orange mark, Quorum's color for anything in review */}
-        <span className="nf-who">{row.who === 'you' ? <span className="nf-you" aria-label="You">You</span> : <img src={row.review ? markReview : markProd} alt={row.review ? 'Quorum, needs review' : 'Quorum'} width={32} height={32} />}</span>
+        <span className="nf-who">{row.who === 'you' ? <span className="nf-you-avatar" aria-label="You" data-tip={me.name}><Avatar name={me.name} photo={me.photo} size={32} /></span> : <img src={row.review ? markReview : markProd} alt={row.review ? 'Quorum, needs review' : 'Quorum'} width={32} height={32} />}</span>
         <span className="nf-main">
           <span className="nf-head"><strong className="conn-title nf-title">{row.summary.line}</strong>{row.unread && <i className="nf-dot" role="img" aria-label="Unread" data-tip="Unread" />}</span>
           <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>{row.summary.sub && !row.summary.parts && <> <span className="nf-sep" aria-hidden="true">•</span> {row.summary.sub}</>}{row.summary.parts && <> <span className="nf-sep" aria-hidden="true">•</span> {row.target.rel}</>}</span>
@@ -111,7 +112,8 @@ function Row({ row, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide, 
 // referenced, memories they created and updated, imports, each guardrail block) and the person's own changes. All and
 // Unread are the tabs; Needs review narrows either to the items waiting for a decision. Type picks event types, each
 // a chip to remove; Sort orders the list. Opening a row marks it read
-export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote: (abs: string) => void; onOpenGuardrails: () => void }) {
+// me: the person's name and photo, for the rows they made
+export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { name: string; photo: string | null }; onOpenNote: (abs: string) => void; onOpenGuardrails: () => void }) {
   const [tab, setTab] = useState<FeedTab>('all');
   const [review, setReview] = useState(false);
   const [kinds, setKinds] = useState<FeedKind[]>([]);
@@ -236,7 +238,7 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
       {error && <p className="nf-error" role="alert">{error}</p>}
       <div className="nf-list">
         {items.map((r) => (
-          <Row key={r.id} row={r} picked={picked.has(r.id)} busy={busy} onPick={() => toggle(r.id)} onOpen={() => open(r)}
+          <Row key={r.id} row={r} me={me} picked={picked.has(r.id)} busy={busy} onPick={() => toggle(r.id)} onOpen={() => open(r)}
             onOpenFile={(abs) => { mark([r]); window.dispatchEvent(new CustomEvent('quorum:open-memory', { detail: abs })); }}
             onMark={(unread) => mark([r], unread)} onDecide={(v) => decide([r], v)} onArchive={(on) => archive([r], on)} />
         ))}

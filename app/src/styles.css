@@ -2714,3 +2714,9 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .nf-line, .nf-line.conn-line { margin: 0 -14px; padding-left: 14px; padding-right: 14px; }
 .nf-bulk { padding-left: 0; padding-right: 0; }
 .nf-details { padding-left: 74px; }
+/* the hover tools keep their labels on one line; the folded details use the same 14px as the Needs review write-up */
+.nf-hover { white-space: nowrap; }
+.nf-hover .act-pill { white-space: nowrap; flex: none; }
+.nf-details, .nf-details dl, .nf-details dd, .nf-details dt { font-size: 14px; }
+.nf-hover { background: none; padding-left: 0; }
+.nf-you-avatar { display: inline-flex; }
