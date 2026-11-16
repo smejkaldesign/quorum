@@ -3539,7 +3539,8 @@ function draftFix(item) {
 }
 const drafter = createDrafter({
   file: path.join(DATA_DIR, 'memory-drafts.json'),
-  model: (prompt, system) => claudeText({ prompt, system, model: 'sonnet', cwd: tmpdir(), timeoutMs: 180000, signal: draftAbort?.signal ?? null }),
+  // an Approve passes its own signal (onDemand), so its Cancel stops the call
+  model: (prompt, system, { signal = null } = {}) => claudeText({ prompt, system, model: 'sonnet', cwd: tmpdir(), timeoutMs: 180000, signal: signal ?? draftAbort?.signal ?? null }),
   items: () => reviewItems({ drafts: false }),
   evidence: draftEvidence,
   enabled: () => settings.memoryDrafts === true && !!brain() && !!vindex,
