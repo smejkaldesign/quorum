@@ -2476,7 +2476,7 @@ function diskNoteNames() {
   const names = new Set();
   const walk = (dir, depth) => {
     if (depth > 12) return;
-    let entries = [];
+    let entries;
     try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const e of entries) {
       if (e.name.startsWith('.') || e.name === 'node_modules') continue;
