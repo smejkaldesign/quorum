@@ -7,6 +7,7 @@ import { IconPen } from '../../src/PrivateNotes';
 import { withFile, withoutFile } from './kbFiles';
 import { findFolder, flattenFolders, folderPath } from './kbTree';
 import { kbCall, KbConfirm } from './kbUi';
+import { Segmented } from '../../src/controls';
 
 // A note of a knowledge base hosted by Quorum, in the note editor (ee/kbHosted.js, migration 0034). Editors and admins
 // write, rename, move and delete it and attach images or PDFs; readers read it in the preview, where pictures show
@@ -179,10 +180,9 @@ export function KbHostedNote({ kb, note, folderId, onBack, onChanged, onSaved, o
         <span className="tk-crumb">{loaded ? loaded.path : `New note in ${place}`}</span>
         {writable && (
           <span className="kbh-actions">
-            <span className="seg" role="group" aria-label="Mode">
-              <button className={!preview ? 'on' : ''} aria-pressed={!preview} aria-label="Write" data-tip="Write" onClick={() => setPreview(false)}><IconPen width={16} height={16} /></button>
-              <button className={preview ? 'on' : ''} aria-pressed={preview} aria-label="Preview" data-tip="Preview" onClick={() => { setContent(current()); setPreview(true); }}><IconNotes width={16} height={16} /></button>
-            </span>
+            <Segmented kind="pressed" inline label="Mode" value={preview ? 'preview' : 'write'}
+              onChange={(v) => { if (v === 'write') setPreview(false); else { setContent(current()); setPreview(true); } }}
+              options={[{ id: 'write', label: <IconPen width={16} height={16} />, ariaLabel: 'Write', tip: 'Write' }, { id: 'preview', label: <IconNotes width={16} height={16} />, ariaLabel: 'Preview', tip: 'Preview' }]} />
             <select className="kb-role" aria-label="Folder" value={folder ?? ''} disabled={busy} onChange={(e) => move(e.target.value || null)}>
               {targets.map((t) => <option key={t.id ?? 'top'} value={t.id ?? ''}>{t.label}</option>)}
             </select>

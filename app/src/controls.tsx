@@ -57,3 +57,24 @@ export function ModalActions({ start, children }: { start?: ReactNode; children:
 export function EmptyState({ icon, title, children }: { icon: ReactNode; title: ReactNode; children?: ReactNode }) {
   return <div className="set-card set-zero"><span className="set-zero-icon">{icon}</span><strong>{title}</strong>{children}</div>;
 }
+
+export type SegOption<T extends string> = { id: T; label: ReactNode; ariaLabel?: string; tip?: string };
+
+// the rounded segmented switch (.seg). kind sets the ARIA pattern: tabs for a view switch, radio inside a form,
+// pressed for a pair of toggle buttons
+export function Segmented<T extends string>({ options, value, onChange, kind, label, className, disabled, inline }: {
+  options: SegOption<T>[]; value: T; onChange: (id: T) => void; kind: 'tabs' | 'radio' | 'pressed';
+  label: string; className?: string; disabled?: boolean; inline?: boolean;
+}) {
+  const Wrap = inline ? 'span' : 'div';
+  const role = kind === 'tabs' ? 'tablist' : kind === 'radio' ? 'radiogroup' : 'group';
+  return (
+    <Wrap className={className ? `seg ${className}` : 'seg'} role={role} aria-label={label}>
+      {options.map((o) => {
+        const on = o.id === value;
+        const state = kind === 'tabs' ? { role: 'tab', 'aria-selected': on } : kind === 'radio' ? { type: 'button' as const, role: 'radio', 'aria-checked': on } : { 'aria-pressed': on };
+        return <button key={o.id} {...state} disabled={disabled} aria-label={o.ariaLabel} data-tip={o.tip} className={on ? 'on' : ''} onClick={() => onChange(o.id)}>{o.label}</button>;
+      })}
+    </Wrap>
+  );
+}
