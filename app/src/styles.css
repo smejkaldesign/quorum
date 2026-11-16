@@ -2753,3 +2753,23 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .conf-values { display: grid; gap: 8px; font-size: 14px; }
 .conf-values label { display: flex; gap: 8px; align-items: center; }
 .kb-lock { flex: none; margin-left: 4px; color: var(--text-dim); }
+
+/* Memory agent drafts (MemoryDraft.tsx) and the rule records in Settings > Memory (MemoryRules.tsx) */
+.md-draft { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--card-2); display: grid; gap: 8px; font-size: 13px; }
+.md-draft.compact { margin: 6px 0 2px 24px; padding: 8px 10px; }
+.md-draft-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.md-conf { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line-2); color: var(--text); }
+.md-conf.high { border-color: rgba(var(--ok-rgb), 0.5); background: rgba(var(--ok-rgb), 0.12); }
+.md-conf.medium { border-color: rgba(var(--review-rgb), 0.5); background: rgba(var(--review-rgb), 0.12); }
+.md-conf.low { border-color: rgba(var(--issue-rgb), 0.5); background: rgba(var(--issue-rgb), 0.12); }
+.md-quotes { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.md-quotes li { display: grid; gap: 2px; }
+.md-where { color: var(--text-dim); font-size: 12px; overflow-wrap: anywhere; }
+.md-quotes q { color: var(--text-soft); overflow-wrap: anywhere; }
+.md-text summary { cursor: pointer; color: var(--muted); }
+.md-text pre { margin: 8px 0 0; max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; color: var(--text-soft); }
+.mr-rule { flex-wrap: wrap; gap: 8px 16px; }
+.mr-name { display: grid; gap: 2px; min-width: 200px; flex: 1; }
+.mr-name .muted { font-size: 13px; }
+.mr-counts { display: flex; flex-wrap: wrap; gap: 6px; }
+.mr-count { display: inline-flex; align-items: center; height: 24px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--line-2); font-size: 12px; color: var(--muted); }

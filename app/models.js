@@ -51,9 +51,10 @@ export async function runModel({ source = 'none', role = null, providers = null,
   throw new Error(`${BY_ID[id]?.name ?? id} cannot run this step`);
 }
 
-// Claude via the signed-in Claude Code (the user's own claude.ai sign-in), never a raw API key
+// Claude via the signed-in Claude Code (the user's own claude.ai sign-in), never a raw API key. --tools '' leaves the
+// model no tools at all. Exported for the memory agent's drafts (memoryDraft.js), which always run on Claude Code
 // with onDelta the reply streams (stream-json with partial messages); onDelta gets the whole text so far each time
-function claudeText({ prompt, system, model, cwd, onDelta = null }) {
+export function claudeText({ prompt, system, model, cwd, onDelta = null }) {
   return new Promise((resolve, reject) => {
     const env = { ...process.env };
     delete env.ANTHROPIC_API_KEY;

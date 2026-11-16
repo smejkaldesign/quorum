@@ -1,3 +1,4 @@
+import { DraftEvidence } from './MemoryDraft';
 import { useEffect, useRef, useState } from 'react';
 import type { PlanView } from './quorum';
 import { IconChevron } from './icons';
@@ -67,6 +68,7 @@ export function BulkPlan({ ids, everything = false, onClose, onApplied }: { ids:
                               <li key={i.id}>
                                 <label><input type="checkbox" checked={i.on} onChange={(e) => flip([i.id], e.target.checked)} /> <span>{i.line}</span></label>
                                 {i.notes.length > 0 && <span className="bp-notes" data-tip={i.notes.join(', ')}>{i.notes.length === 1 ? i.notes[0] : `${i.notes.length} notes`}</span>}
+                                {i.draft && <DraftEvidence draft={i.draft} compact />}
                               </li>
                             ))}
                           </ul>
