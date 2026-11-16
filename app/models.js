@@ -57,7 +57,8 @@ export async function runModel({ source = 'none', role = null, providers = null,
 // timeoutMs ends a run that takes too long; stopClaudeText() ends every run still going, for the app's quit
 const liveClaude = new Set();
 export function stopClaudeText() { for (const p of liveClaude) { try { p.kill(); } catch {} } liveClaude.clear(); }
-export function claudeText({ prompt, system, model, cwd, onDelta = null, timeoutMs = null }) {
+// signal: an AbortSignal that stops the call; it rejects with an error whose cancelled is true
+export function claudeText({ prompt, system, model, cwd, onDelta = null, timeoutMs = null, signal = null }) {
   return new Promise((resolve, reject) => {
     const env = { ...process.env };
     delete env.ANTHROPIC_API_KEY;
@@ -69,6 +70,8 @@ export function claudeText({ prompt, system, model, cwd, onDelta = null, timeout
     liveClaude.add(proc);
     const timer = timeoutMs ? setTimeout(() => { proc.kill(); reject(new Error(`Claude Code took more than ${Math.round(timeoutMs / 1000)} seconds`)); }, timeoutMs) : null;
     const done = () => { liveClaude.delete(proc); if (timer) clearTimeout(timer); };
+    const stop = () => { proc.kill(); done(); reject(Object.assign(new Error('Cancelled'), { cancelled: true })); };
+    if (signal?.aborted) stop(); else signal?.addEventListener('abort', stop, { once: true });
     let out = '';
     let err = '';
     let result = null;

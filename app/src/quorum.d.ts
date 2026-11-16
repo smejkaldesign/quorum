@@ -279,6 +279,8 @@ export type PlanItem = { id: string; title: string; kind: string; notes: string[
 export type MemoryDraft = { kind: 'create' | 'point' | 'merge' | 'contradiction'; confidence: 'high' | 'medium' | 'low'; quotes: { path: string; line: number; text: string; ok: boolean }[]; verified: boolean; text?: string; keep?: string; drop?: string; rel?: string; line?: string; check?: boolean; hold?: string | null; wrong?: boolean; at?: number | null };
 // Settings > Memory: a rule's decisions from the decision log and what it does now
 export type RuleRecord = { id: string; label: string; approved: number; archived: number; undone: number; auto: number; last: number; open: number; ignores: number; state: string; demoted?: { approved: number; total: number } | null };
+// long memory work in the background (agentActivity.js), shown once it has run 30 seconds
+export type AgentActivity = { id: string; kind: 'check' | 'sweep' | 'batch' | 'draft'; label: string; startedAt: number; progress: { done: number; total: number } | null; cancellable: boolean; more: number };
 // an item the quality gate holds back from Needs review (qualityGate.js): under Check these first in a bulk plan, or out of view
 export type GateHold = { bucket: 'check' | 'quiet'; why: string | null; title: string; line: string; kind: string };
 export type IgnoreRule = { id: string; ruleId: string; field: 'folder' | 'key' | 'target'; value: string; title: string; at: number };
@@ -486,6 +488,9 @@ declare global {
       memoryVersion(rel: string, id: string): Promise<{ body: string } | null>;
       memoryRestore(rel: string, id: string): Promise<boolean>;
       onMemoryUpdates(cb: (rels: string[]) => void): Unsub;
+      agentActivity(): Promise<AgentActivity | null>;
+      agentActivityCancel(id: string): Promise<boolean>;
+      onAgentActivity(cb: (state: AgentActivity | null) => void): Unsub;
       memoryReject(rel: string): Promise<boolean>;
       liveRuns(): Promise<LiveState>;
       liveStop(id: string): Promise<string[]>;

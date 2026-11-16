@@ -77,6 +77,7 @@ import { relatedLine } from './rules/nearDuplicates.js';
 import { DAILY_CAP, WRONG_NOTE_FIX, createDrafter, draftKind, evidenceRels, withDraft } from './memoryDraft.js';
 import { ignoreProposals, ignored, ruleRecords } from './ruleRecords.js';
 import { demotions, kindOf, logGate, ruleDemotion, runGate, signature } from './qualityGate.js';
+import { createAgentActivity } from './agentActivity.js';
 import { createElsewhere, withFound } from './linkElsewhere.js';
 import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
@@ -337,6 +338,11 @@ const refreshGates = () => { baseGates = notetakerGates(flagsApi ? flagsApi.all(
 const gate = () => (meeting.armed && !meeting.solo ? callGates : baseGates);
 // windows can be gone mid-quit while the helper or agent is still reporting
 const toUI = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
+// Agent activity (agentActivity.js): the memory work that runs longer than 30 seconds (the first memory check, a full
+// sweep, a bulk batch, a drafting run), as one state Home and Memory health both read, with Cancel
+const agentActivity = createAgentActivity({ emit: (s) => toUI('agent-activity', s) });
+ipcMain.handle('agent-activity-get', () => agentActivity.state());
+ipcMain.handle('agent-activity-cancel', (_e, id) => agentActivity.cancel(String(id ?? '')));
 // the Agent OS folder or the meetings folder changed; every open view reads the folder again
 const brainChanged = () => toUI('brain-changed', brain());
 const helperSend = (cmd) => helper?.stdin.write(JSON.stringify(cmd) + '\n');
@@ -2454,7 +2460,8 @@ const sweepPaused = () => settings.memorySweeps === false;
 let sweeping = false;
 // the last confidential tag scan; a save sweep reads again only the notes that changed
 let tagScan = null;
-function sweep(kind, only = null) {
+// after: false leaves the gate and Apply memory fixes on its own to the caller (memoryCheck)
+function sweep(kind, only = null, { after = true } = {}) {
   const b = brain();
   if (!b || !vindex || sweeping) return null;
   sweeping = true;
@@ -2467,9 +2474,9 @@ function sweep(kind, only = null) {
     toUI('memory-updates', null);
     // a sweep on a schedule, or one a person asked for, is when Apply memory fixes on its own runs; a save sweep is not,
     // so a fix's own writes never start another run
-    // the gate runs right after the first sweep of a vault, so its list shows once it is checked
+    if (!after) return s.last;
     gateFor(b.vault);
-    scheduleGate(kind === 'first' || gateChecking() ? 0 : 4000);
+    scheduleGate(4000);
     if (kind !== 'save') setTimeout(() => { try { autoApply(); } catch (e) { log('auto apply', e?.message); } }, 0);
     return s.last;
   } catch (e) { log('memory sweep', e?.message); return null; } finally { sweeping = false; }
@@ -2492,7 +2499,28 @@ function sweepTick() {
   const b = brain();
   if (!b || !vindex) return;
   const kind = dueSweep(memorySweep.state(b.vault), { paused: sweepPaused(), idleMs: powerMonitor.getSystemIdleTime() * 1000, recording: recordingNow() });
-  if (kind) sweep(kind);
+  if (kind) memoryCheck(kind);
+}
+// A memory check: a sweep of the review rules, then both gate passes, then Apply memory fixes on its own. It runs in the
+// background as agent activity; on a vault's first check (onboarding) Memory health says it is checking until it ends.
+// Cancel stops it between its parts, before the gate saves verdicts, so nothing is half saved
+let checkWork = null;
+async function memoryCheck(kind) {
+  const b = brain();
+  if (!b || !vindex || checkWork) return null;
+  gateFor(b.vault);
+  const first = kind === 'first' || gateChecking();
+  const work = agentActivity.start({ kind: first ? 'check' : 'sweep', label: first ? 'Checking your memory' : 'Checking every note in your memory', cancellable: true, onCancel: () => {} });
+  checkWork = work;
+  try {
+    work.progress(0, 3, first ? 'Checking your memory: running the checks on every note' : 'Running the checks on every note');
+    await tick();
+    const last = sweep(kind, null, { after: false });
+    if (work.cancelled) return last;
+    await gateNow(work);
+    if (!work.cancelled) setTimeout(() => { try { autoApply(); } catch (e) { log('auto apply', e?.message); } }, 0);
+    return last;
+  } finally { checkWork = null; work.end(); }
 }
 setInterval(sweepTick, 10 * 60000).unref?.();
 // a finding's decisions go through the decision log: its fingerprint covers its notes and facts, so new evidence
@@ -2541,7 +2569,7 @@ ipcMain.handle('memory-findings-archive', (_e, keys, on) => {
   return n;
 });
 // Check again in Memory health: a full sweep now
-ipcMain.handle('memory-sweep-now', () => sweep(memorySweep.state(brain()?.vault ?? '')?.lastFull ? 'full' : 'first'));
+ipcMain.handle('memory-sweep-now', () => memoryCheck(memorySweep.state(brain()?.vault ?? '')?.lastFull ? 'full' : 'first'));
 
 function openIndex() {
   vindex?.stop();
@@ -2982,6 +3010,8 @@ async function pumpFixes() {
     const run = fixQueue.shift();
     run.status = 'running';
     run.startedAt = Date.now();
+    // a bulk batch is agent activity: Cancel stops it before its next step, and the rollback below puts back every note
+    const work = run.kind === 'batch' ? agentActivity.start({ kind: 'batch', label: `Applying ${run.target}`, cancellable: true, onCancel: () => { run.cancel = true; } }) : null;
     fixEmit(run);
     fixJournal.append(run.id, { step: 'started' });
     writeUndo(run, []);
@@ -2991,6 +3021,8 @@ async function pumpFixes() {
     // a note that still reads as the fix left it, and leaves one the person edited before the next start
     const stamp = () => { const h = hashNotes(run.vault, kept.map((k) => k.rel)); writeUndo(run, kept.map((k) => ({ ...k, after: h[k.rel] }))); };
     const step = async (label) => {
+      if (run.cancel) throw new Error('You cancelled the batch');
+      if (work) work.progress((run.items ?? []).filter((i) => i.status === 'success').length, (run.items ?? []).length, label);
       if (kept.length) stamp();
       fixJournal.append(run.id, { step: 'step', label });
       const at = Date.now();
@@ -3043,6 +3075,7 @@ async function pumpFixes() {
     const last = run.steps[run.steps.length - 1];
     if (last && !last.endedAt) last.endedAt = run.endedAt;
     batchPlans.delete(run.id);
+    work?.end();
     log('fix run', run.key, run.status, `${run.endedAt - run.startedAt} ms`);
     fixRunsSave();
     fixEmit(run);
@@ -3263,17 +3296,24 @@ function gateFor(vault) {
   gateState = saved?.verdicts ? { vault, at: saved.at ?? 0, verdicts: new Map(Object.entries(saved.verdicts)) } : { vault, at: 0, verdicts: null };
   return gateState;
 }
-// runs the gate passes now and keeps the verdicts. Answers the counts
-function gateNow() {
+// runs the gate passes now and keeps the verdicts. Answers the counts. work: the memory check's agent activity, which
+// shows each pass and can cancel before the verdicts are saved
+async function gateNow(work = null) {
   const b = brain();
   if (!b || !vindex || gateRunning) return null;
   gateRunning = true;
   try {
     const t0 = Date.now();
+    work?.progress(1, 3, 'Checking each suggestion');
+    await tick();
     const first = reviewItems();
+    if (work?.cancelled) return null;
+    work?.progress(2, 3, 'Checking each suggestion again, with every note read again');
+    await tick();
     vindex.sync();
     pastFixState?.plans.clear();
     const second = reviewItems();
+    if (work?.cancelled || brain()?.vault !== b.vault) return null;
     const g = runGate([first, second], decisionLog.list(b.vault), { isStub: (rel) => (readVault(b.vault, rel) ?? '').includes(STUB_TEXT) });
     const sigs = new Map(first.map((i) => [i.id, signature(i)]));
     const verdicts = new Map([...g.verdicts].map(([id, v]) => [id, { ...v, sig: sigs.get(id) }]));
@@ -3386,7 +3426,7 @@ function draftFix(item) {
 }
 const drafter = createDrafter({
   file: path.join(DATA_DIR, 'memory-drafts.json'),
-  model: (prompt, system) => claudeText({ prompt, system, model: 'sonnet', cwd: tmpdir(), timeoutMs: 180000 }),
+  model: (prompt, system) => claudeText({ prompt, system, model: 'sonnet', cwd: tmpdir(), timeoutMs: 180000, signal: draftAbort?.signal ?? null }),
   items: () => reviewItems({ drafts: false }),
   evidence: draftEvidence,
   enabled: () => settings.memoryDrafts === true && !!brain() && !!vindex,
@@ -3395,7 +3435,19 @@ const drafter = createDrafter({
   idleMs: () => powerMonitor.getSystemIdleTime() * 1000,
   log,
 });
-setInterval(() => { drafter.tick().then((r) => { if (r?.drafted) toUI('memory-updates', null); }).catch((e) => log('memory draft', e?.message)); }, 60000).unref?.();
+// each drafting run is agent activity; Cancel stops the model call, and the item is drafted again later
+let draftAbort = null;
+async function draftTick() {
+  if (draftAbort) return;
+  const ctl = new AbortController();
+  draftAbort = ctl;
+  const work = agentActivity.start({ kind: 'draft', label: 'The agent is drafting a fix', cancellable: true, onCancel: () => ctl.abort() });
+  try {
+    const r = await drafter.tick();
+    if (r?.drafted || r?.confirmed) toUI('memory-updates', null);
+  } catch (e) { log('memory draft', e?.message); } finally { draftAbort = null; work.end(); }
+}
+setInterval(() => { draftTick(); }, 60000).unref?.();
 // Ignore rules (ruleRecords.js): kept in Quorum's settings per vault, never in the vault. Quorum proposes one after the
 // same rule's findings were archived three or more times with a shared folder, frontmatter key or target
 function ignoreStore(name) {
@@ -3835,7 +3887,8 @@ ipcMain.handle('confidential-mark', (_e, rel, isDir, value) => {
     // next agent run in the app
     guardrails.compiled();
     log('confidential', isDir ? 'folder' : 'note', v ? 'marked' : 'cleared');
-    setTimeout(() => sweep(memorySweep.state(b.vault)?.lastFull ? 'full' : 'first'), 0);
+    // the first memory check of a newly connected vault runs here, in the background (onboarding says so)
+    setTimeout(() => memoryCheck(memorySweep.state(b.vault)?.lastFull ? 'full' : 'first'), 0);
     toUI('memory-updates', null);
     return v ? `Marked ${r} confidential: ${v}. Quorum keeps every note in it private.` : `Removed the confidential mark from ${r}`;
   }

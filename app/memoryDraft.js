@@ -304,6 +304,7 @@ export function createDrafter({ file, model, items, evidence, enabled = () => fa
           log('memory draft confirm', item.id, agree ? 'agrees' : res.why ?? 'disagrees');
           return { confirmed: item.id, agree };
         } catch (e) {
+          if (e?.cancelled) return { cancelled: item.id };
           return { failed: item.id, why: String(e?.message ?? e).slice(0, 200) };
         } finally { running = null; }
       })();
@@ -329,6 +330,8 @@ export function createDrafter({ file, model, items, evidence, enabled = () => fa
           log('memory draft', item.id, res.draft ? `${res.draft.kind} ${res.draft.confidence}` : res.why);
           return res.draft ? { drafted: item.id, draft: res.draft } : { dropped: item.id, why: res.why };
         } catch (e) {
+          // a draft a person cancelled is tried again later, as if it never ran
+          if (e?.cancelled) return { cancelled: item.id };
           s.failed[item.id] = { hash: h, at: now(), why: String(e?.message ?? e).slice(0, 200) };
           save();
           return { failed: item.id, why: s.failed[item.id].why };
