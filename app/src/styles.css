@@ -2691,7 +2691,7 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .mu-banner .mu-words .act-pill { height: 30px; }
 .mh-quotes { display: grid; gap: 8px; }
 .mh-quotes p { margin: 0; }
-.mh-fold { padding-left: 84px; }
+.mh-fold { padding-left: 74px; }
 
 /* Memory health rows: the checkbox and mark sit at the top with the title; the date on the right gives way on hover
    to Ignore, Decline and Approve as icon buttons, sliding in the way Home's row actions do */
@@ -2710,3 +2710,7 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .mh-icon.mh-yes svg { color: var(--go); }
 .mh-icon.mh-no svg { color: var(--danger); }
 .mh-fold-facts { margin: 0 0 12px; color: var(--muted); font-size: 14px; }
+/* list rows: the checkbox lines up with the page's left edge, and the hover fill reaches 14px past both edges */
+.nf-line, .nf-line.conn-line { margin: 0 -14px; padding-left: 14px; padding-right: 14px; }
+.nf-bulk { padding-left: 0; padding-right: 0; }
+.nf-details { padding-left: 74px; }
