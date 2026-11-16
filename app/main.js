@@ -3467,6 +3467,9 @@ ipcMain.handle('confidential-mark', (_e, rel, isDir, value) => {
     if (v) mine[r] = v; else delete mine[r];
     all[b.vault] = mine;
     store.settings.save();
+    // the guardrail snapshot in settings.json takes the folder now, so the CLI and the suggester deny it before the
+    // next agent run in the app
+    guardrails.compiled();
     log('confidential', isDir ? 'folder' : 'note', v ? 'marked' : 'cleared');
     setTimeout(() => sweep(memorySweep.state(b.vault)?.lastFull ? 'full' : 'first'), 0);
     toUI('memory-updates', null);
