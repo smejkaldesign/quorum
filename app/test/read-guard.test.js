@@ -73,6 +73,20 @@ describe('read guard', () => {
     expect(run({ tool_name: 'Grep', tool_input: { pattern: 'TODO', path: root } })).toBeNull();
   });
 
+  it('returns matching lines from one checked note at a time, and lists matches over a folder', () => {
+    const search = (input) => run({ tool_name: 'Grep', tool_input: { pattern: 'plan', ...input } });
+    for (const input of [{ output_mode: 'content' }, { output_mode: 'content', path: root }, { output_mode: 'content', path: 'notes' }]) {
+      expect(search(input)?.permissionDecision).toBe('deny');
+    }
+    expect(search({ output_mode: 'content', path: 'notes/plan.md' })?.permissionDecision).toBe('deny');
+    expect(search({ output_mode: 'content', path: 'private/notes.md' })?.permissionDecision).toBe('deny');
+    expect(search({ output_mode: 'content', path: 'id_rsa' })?.permissionDecision).toBe('deny');
+    expect(search({ output_mode: 'content', path: 'notes/plain.md' })).toBeNull();
+    expect(search({ path: root })).toBeNull();
+    expect(search({ output_mode: 'files_with_matches' })).toBeNull();
+    expect(search({ output_mode: 'count', path: 'notes' })).toBeNull();
+  });
+
   it('ignores tools other than Read, Grep and Glob', () => {
     expect(run({ tool_name: 'Edit', tool_input: { file_path: path.join(root, '.env') } })).toBeNull();
   });

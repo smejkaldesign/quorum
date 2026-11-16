@@ -2,7 +2,8 @@
 """Quorum's built-in read guard: a Claude Code PreToolUse hook for Read, Grep and Glob.
 
 Denies reads of secret-looking files, of folders the user marked private, and of notes whose
-frontmatter carries a `confidential:` key. Ships with the app, so every Agent OS gets it even
+frontmatter carries a `confidential:` key. A Grep that returns matching lines searches one file at a
+time. Ships with the app, so every Agent OS gets it even
 when the connected repo has no guard hooks of its own.
 
 usage: read-guard.py --root <agent os root> [--deny <relative dir>]... [--frontmatter-key <key>]...
@@ -135,6 +136,16 @@ def main():
         if hit:
             deny(f"Quorum read guard: this note is marked {hit} in its frontmatter.", tool, rel, "frontmatter", hit)
         log_read(log, abs_path)
+    # a Grep that returns matching lines reads them, so it reads one note at a time and that note passes the Read checks.
+    # Over a folder it would quote lines from private folders, credential files and confidential notes inside it;
+    # listing the files that match is still allowed, and each one is then read through Read
+    if tool == "Grep" and str(inp.get("output_mode") or "files_with_matches") == "content":
+        abs_path = os.path.realpath(target if os.path.isabs(target) else os.path.join(root, target or "."))
+        if not os.path.isfile(abs_path):
+            deny("Quorum read guard: matching lines come from one note at a time. Search with output_mode files_with_matches, then Read the notes it lists.", tool, rel, "scope", "content")
+        hit = frontmatter_key(abs_path, keys)
+        if hit:
+            deny(f"Quorum read guard: this note is marked {hit} in its frontmatter.", tool, rel, "frontmatter", hit)
     # a Grep or Glob rooted above a private folder would still match files inside it, so the pattern must not name one
     if tool in ("Grep", "Glob"):
         pat = str(inp.get("pattern") or "") + " " + str(inp.get("glob") or "")
