@@ -128,6 +128,13 @@ On a vault's first sweep, Needs review waits until the gate ran, and Memory heal
 
 Each run adds a line to `memory-gate-log.jsonl` in the data folder: the passes, the counts, and each item's id, kind, bucket and reasons. `app/scripts/gate-report.mjs` prints shown against held per kind with the precision the decisions measure. `app/scripts/gate-eval.mjs` runs the gate read-only on a vault and scores the shown items against labels kept outside the repo.
 
+### Agent activity (`app/agentActivity.js`)
+
+Memory work that runs longer than 30 seconds shows as one state that Home and Memory health both read: the first memory check, a full sweep, a bulk batch, and a drafting run. The state holds the kind, a plain label, when it started, its progress and whether it can be cancelled. Home shows it as the AI working banner below the suggestion chips under the composer; clicking it opens Memory health, which shows the same banner. It hides when the work ends.
+
+- The first memory check (a sweep, then both gate passes) runs in the background as soon as a vault is connected. Onboarding says so.
+- Cancel stops a batch before its next step, and the batch puts back every note it wrote. It stops a check before the gate saves verdicts, and a draft by stopping the model call; that item is drafted again later.
+
 ### Live precision guard
 
 For each kind of fix, once a person decided 10 or more items, Quorum compares approved with approved plus archived plus undone. Under 90%, the kind is demoted: its items move to Check these first (a real fix) or Not shown yet, and Apply memory fixes on its own never runs it. Settings > Memory shows "Demoted: 7 of 11 approved" on the rule. Each decision record keeps the kind of fix the gate scored (`proposedFix.gateKind`).
