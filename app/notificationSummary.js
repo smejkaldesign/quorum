@@ -46,6 +46,8 @@ const BIG_CHANGE = 20;
 // the Trash keeps it recoverable
 function askOf(row) {
   const t = row.target.title;
+  // a Memory health issue: the issue is the question, its recommended action the suggestion (memoryHealth.js)
+  if (row.review.kind === 'link') return { question: row.detail?.title ?? `Links to ${q(t)} open nothing`, suggest: 'approve', why: row.detail?.recommend ?? '' };
   if (row.review.kind === 'junk-note') {
     return { question: `Remove ${q(t)}?`, suggest: 'approve', why: `${sentence(row.detail?.reason) || 'It looks empty.'} Approve moves it to the Trash, where you can put it back.` };
   }
@@ -81,7 +83,9 @@ export function summaryOf(row) {
   const d = row.detail ?? {};
   if (row.review) {
     const ask = askOf(row);
-    return { line: ask.question, sub: `Suggested: ${ask.suggest === 'approve' ? 'approve' : 'disapprove'}. ${ask.why}`, ask };
+    // a Memory health issue shows its problem, what fixing it does and the recommendation as their own lines
+    if (row.review.kind === 'link') return { line: ask.question, sub: d.problem ?? null, ask, parts: [['Problem', d.problem], ['If fixed', d.effect], ['Recommended', d.recommend]].filter(([, v]) => v) };
+    return { line: ask.question, sub: `Suggested: ${ask.suggest === 'approve' ? 'approve' : 'decline'}. ${ask.why}`, ask };
   }
   if (row.kind === 'guardrail') {
     const who = d.surface === 'keeper' ? 'Upkeep' : 'The agent';
@@ -121,14 +125,14 @@ export function summaryOf(row) {
     case 'saved': return row.who === 'you' ? { line: `You saved ${q(t)}`, sub: null } : { line: `Wrote the summary of ${q(t)}`, sub: 'Saved it with your recording.' };
     case 'edited': return { line: `You edited ${q(t)}`, sub: null };
     case 'reviewed': return { line: `You approved ${q(t)}`, sub: null };
-    case 'rejected': return { line: `You disapproved ${q(t)}`, sub: null };
+    case 'rejected': return { line: `You declined ${q(t)}`, sub: null };
     default: return { line: row.who === 'you' ? `You changed ${q(t)}` : `Updated ${q(t)}`, sub: sentence(d.text) || null };
   }
 }
 
 const KIND_LABEL = {
   'note-written': 'Wrote a note', 'note-updated': 'Updated a note', filed: 'Filed and linked', referenced: 'Referenced',
-  'memory-created': 'Created a memory', 'memory-updated': 'Updated a memory', imported: 'Imported', guardrail: 'Guardrail blocked', you: 'Your change',
+  'memory-created': 'Created a memory', 'memory-updated': 'Updated a memory', imported: 'Imported', guardrail: 'Guardrail blocked', 'memory-health': 'Memory health', you: 'Your change',
 };
 const WHO = { keeper: 'Upkeep', agent: 'Quorum agent', import: 'An import', cli: 'The quorum command', you: 'You', human: 'You' };
 
@@ -143,11 +147,17 @@ export function detailsOf(row, { locale } = {}) {
     add('Where', d.surface === 'keeper' ? 'Upkeep, filing your notes' : d.surface === 'agent' ? 'The agent, answering in chat' : d.surface);
     add('Path', home(d.path));
     add('Reason', d.reason);
+  } else if (row.review?.kind === 'link') {
+    add('Missing note', row.target.title);
+    add('First linked from', row.target.rel);
+    add('Links', d.links);
+    if (d.folder != null) add('Most from', d.folder || 'The vault root');
+    add('If you decline', 'The links stay as they are, and the issue moves to Left as is in Memory health');
   } else {
     add(row.target.kind === 'memory' ? 'Memory' : 'Note', row.target.rel);
     add('By', row.who === 'you' ? 'You' : WHO[d.who] ?? 'Quorum agent');
     add('Reason', d.reason);
-    if (row.review?.kind === 'junk-note') add('If you approve', 'It moves to the Trash. Disapprove keeps it, and upkeep does not ask again');
+    if (row.review?.kind === 'junk-note') add('If you approve', 'It moves to the Trash. Decline keeps it, and upkeep does not ask again');
     add('Source', d.sourceName);
     if (d.changes) add('Changes', plural(d.changes, 'changed block'));
     if (d.approved != null && !row.review) add('Approval', d.auto ? 'Approved automatically' : d.approved ? 'Approved' : 'Waiting for approval');

@@ -98,6 +98,8 @@ contextBridge.exposeInMainWorld('quorum', {
   vaultSearch: (q, limit) => ipcRenderer.invoke('vault-search', q, limit),
   vaultBacklinks: (rel) => ipcRenderer.invoke('vault-backlinks', rel),
   vaultLinkHealth: (fresh) => ipcRenderer.invoke('vault-link-health', fresh === true),
+  vaultLinksLeft: (keys, on) => ipcRenderer.invoke('vault-links-left', keys, on !== false),
+  vaultLinkDecide: (key, verdict) => ipcRenderer.invoke('vault-link-decide', key, verdict),
   vaultFixLink: (target, toRel) => ipcRenderer.invoke('vault-fix-link', target, toRel),
   vaultAddAlias: (rel, alias) => ipcRenderer.invoke('vault-add-alias', rel, alias),
   vaultOutgoing: (rel) => ipcRenderer.invoke('vault-outgoing', rel),

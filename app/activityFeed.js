@@ -9,6 +9,7 @@
 // History: the rows that come from records kept before Notifications started (older versions, upkeep runs and
 // imports) are marked backfill and start out read, so the first opening lists the past without lighting the bell.
 import { detailsOf, summaryOf, titleOf } from './notificationSummary.js';
+import { issueOf } from './memoryHealth.js';
 
 // the event types the Type filter offers, in the order it shows them
 export const FEED_KINDS = [
@@ -20,6 +21,7 @@ export const FEED_KINDS = [
   ['memory-updated', 'Updated a memory'],
   ['imported', 'Imported'],
   ['guardrail', 'Guardrail blocked'],
+  ['memory-health', 'Memory health'],
   ['you', 'Your changes'],
 ];
 export const FEED_TABS = ['all', 'unread', 'archived'];
@@ -53,9 +55,11 @@ const prefOn = (prefs, key) => prefs?.[key] !== false;
 //   memories: { abs, rel, title?, note?, gone?, versions, updates, seenAt }
 //   denials:  { id, t, path, tool, surface, reason, guard, guardLabel }[]
 //   junk:     { abs, rel, title, reason, at }[], the notes upkeep found with no recording and no real words
+//   links:    the open Memory health issues (vindex.js linkHealth, minus the ones declined), each with abs, the path
+//             of its first linking note
 //   state:    { since, read: { [id]: at }, unread: { [id]: at } }; since is when Notifications started keeping its
 //             own marks, read and unread are the person's marks on single rows
-export function feedRows({ notes = [], memories = [], denials = [], junk = [], state = {}, guardFile = null }) {
+export function feedRows({ notes = [], memories = [], denials = [], junk = [], links = [], state = {}, guardFile = null }) {
   const rows = [];
   const since = time(state.since);
   const read = state.read ?? {};
@@ -63,7 +67,8 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], s
   // a row is unread when the agent made it after the file was last seen, it is not from before Notifications began,
   // and the person has not marked it; a mark on the row wins either way
   const push = (row, seen) => {
-    row.backfill = !!since && row.at < since && !row.review;
+    // a Memory health issue older than Notifications starts out read too; it still waits in Needs review
+    row.backfill = !!since && row.at < since && (!row.review || row.review.kind === 'link');
     const fresh = row.who !== 'you' && row.at > time(seen) && !row.backfill;
     row.unread = unreadMark[row.id] ? true : read[row.id] ? false : fresh;
     rows.push(row);
@@ -117,6 +122,16 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], s
     const at = time(j.at);
     push({ id: `r:junk:${j.abs}`, at, kind: 'note-updated', event: 'review', who: 'agent', target: { kind: 'note', abs: j.abs, rel: j.rel, title: j.title ?? titleOf({ rel: j.rel }) }, files: [], detail: { reason: j.reason ?? null }, review: { kind: 'junk-note' } }, null);
   }
+  // each open Memory health issue asks to take its recommended action; it opens on its first linking note
+  for (const m of links) {
+    const i = issueOf(m);
+    push({
+      id: `r:link:${i.key}`, at: time(m.lastAt), kind: 'memory-health', event: 'review', who: 'agent',
+      target: { kind: 'link', abs: m.abs ?? '', rel: i.path, title: i.target }, files: [],
+      detail: { title: i.title, problem: i.problem, effect: i.effect, recommend: i.recommend, category: i.category, links: i.links, notes: i.notes, folder: i.folder?.folder ?? null },
+      review: { kind: 'link', key: i.key },
+    }, null);
+  }
   const guardTarget = { kind: 'guardrail', abs: guardFile ?? '', rel: 'Guardrails', title: 'Guardrails' };
   for (const g of denials) {
     const at = time(g.t);
@@ -128,7 +143,7 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], s
 
 const matches = (row, words) => {
   if (!words.length) return true;
-  const hay = `${row.summary.line} ${row.summary.sub ?? ''} ${row.target.title} ${row.target.rel} ${row.files.map((f) => f.title ?? f.label).join(' ')} ${row.detail?.path ?? ''}`.toLowerCase();
+  const hay = `${row.summary.line} ${row.summary.sub ?? ''} ${row.detail?.problem ?? ''} ${row.target.title} ${row.target.rel} ${row.files.map((f) => f.title ?? f.label).join(' ')} ${row.detail?.path ?? ''}`.toLowerCase();
   return words.every((w) => hay.includes(w));
 };
 const SORTS = {

@@ -58,6 +58,7 @@ import { createGuardrails } from './guardrails.js';
 import { createPlatformCache, eventRef, matchPlatforms } from './meetingPlatforms.js';
 import { calendarWindow, normalizeDays } from './calendarWindow.js';
 import { feedPage, feedRows, labelOf } from './activityFeed.js';
+import { issueOf } from './memoryHealth.js';
 import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
 import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, relatedOf, seriesKey, seriesOf } from './meetingBrief.js';
@@ -2096,7 +2097,9 @@ function feedSources() {
     const abs = path.join(b.vault, rel);
     return { abs, rel, title: fileTitle(abs, rel), note: !!meetingFile(abs), gone: !existsSync(abs), versions: rec.versions ?? [], updates: rec.updates ?? [], seenAt: seen[abs]?.seenAt ?? null };
   });
-  return { notes, memories, denials, junk: keeper.junk(), state, guardFile: DENIAL_LOG };
+  const left = linksLeft();
+  const links = (vindex?.linkHealth() ?? []).filter((m) => !left.has(m.target.toLowerCase())).map((m) => ({ ...m, abs: path.join(b.vault, m.sources?.[0] ?? '') }));
+  return { notes, memories, denials, junk: keeper.junk(), links, state, guardFile: DENIAL_LOG };
 }
 ipcMain.handle('activity-feed', (_e, query) => {
   const q = query ?? {};
@@ -2156,14 +2159,16 @@ ipcMain.handle('activity-review', async (_e, items, verdict) => {
   const done = [];
   const failed = [];
   for (const it of Array.isArray(items) ? items : []) {
-    const t = feedFile(it?.abs);
+    const t = it?.kind === 'link' ? { abs: String(it.abs ?? ''), rel: null } : feedFile(it?.abs);
     try {
       if (!t) throw new Error('Not found');
       const at = new Date().toISOString();
       if (it.kind === 'note') {
         if (!meetingFile(t.abs)) throw new Error('Not found');
         seenSet(t.abs, ok ? { reviewedAt: at, seenAt: at } : { rejectedAt: at, seenAt: at });
-        noteEvent(t.abs, ok ? 'reviewed' : 'rejected', ok ? 'You reviewed it' : 'You disapproved it');
+        noteEvent(t.abs, ok ? 'reviewed' : 'rejected', ok ? 'You reviewed it' : 'You declined it');
+      } else if (it.kind === 'link') {
+        decideLink(it.key, ok ? 'approve' : 'reject');
       } else if (it.kind === 'junk-note') {
         if (!meetingFile(t.abs) || !t.rel) throw new Error('Not found');
         if (ok) {
@@ -2455,7 +2460,67 @@ ipcMain.handle('vault-cluster-name', (_e, key, name) => {
 });
 ipcMain.handle('vault-search', (_e, q, limit) => vindex?.search(String(q), Math.min(Number(limit) || 30, 1000)) ?? []);
 // fresh reads the vault again first (the Refresh button in Memory health)
-ipcMain.handle('vault-link-health', (_e, fresh) => { if (fresh === true) vindex?.sync(); return vindex?.linkHealth() ?? []; });
+// each missing link carries left: true when the person declined it (left it as is)
+ipcMain.handle('vault-link-health', (_e, fresh) => {
+  if (fresh === true) vindex?.sync();
+  const left = linksLeft();
+  return (vindex?.linkHealth() ?? []).map((m) => ({ ...m, left: left.has(m.target.toLowerCase()) }));
+});
+// the missing links the person declined, per vault, so Memory health, the Memory tree and Notifications all leave them
+// out. Kept in Quorum's data folder; older versions kept them in the window's storage, which the window hands over once
+const linksLeftFile = path.join(DATA_DIR, 'links-left.json');
+let linksLeftCache = null;
+const linksLeftAll = () => { if (!linksLeftCache) { try { linksLeftCache = JSON.parse(readFileSync(linksLeftFile, 'utf8')); } catch { linksLeftCache = {}; } } return linksLeftCache; };
+const linksLeft = () => new Set(linksLeftAll()[brain()?.vault] ?? []);
+function setLinksLeft(keys, on) {
+  const v = brain()?.vault;
+  if (!v) return 0;
+  const all = linksLeftAll();
+  const set = new Set(all[v] ?? []);
+  let n = 0;
+  for (const k of keys) { const key = String(k ?? '').toLowerCase().slice(0, 1000); if (!key) continue; if (on) set.add(key); else set.delete(key); n++; }
+  all[v] = [...set];
+  try { writeFileSync(linksLeftFile, JSON.stringify(all)); } catch (e) { log('links left', e?.message); }
+  return n;
+}
+ipcMain.handle('vault-links-left', (_e, keys, on) => setLinksLeft(Array.isArray(keys) ? keys : [], on !== false));
+// Approve or Decline one Memory health issue, by its key. Approve takes the recommended action: add an alias, point
+// the links at the closest note, make the missing note in the inbox folder, or leave a link outside the vault as it is.
+// Decline leaves the links as they are. A fix waits while a run is writing any note it would change. Answers with a
+// line saying what changed
+function decideLink(key, verdict) {
+  const b = brain();
+  if (!b || !vindex) throw new Error('No vault connected');
+  const entry = vindex.linkHealth().find((h) => h.target.toLowerCase() === String(key ?? '').toLowerCase());
+  if (!entry) throw new Error('That link is already fixed');
+  const issue = issueOf(entry);
+  if (verdict !== 'approve' || issue.action === 'leave') { setLinksLeft([issue.key], true); return 'Left the link as it is'; }
+  const c = issue.candidate;
+  const busy = liveRuns.state().files ?? {};
+  if ([...entry.sources, ...(c ? [c.rel] : [])].some((r) => busy[r])) throw new Error('Waits until the run writing these notes finishes');
+  if (issue.action === 'alias' && c) {
+    const abs = vindex.rels().includes(c.rel) ? vaultPath(b.vault, c.rel) : null;
+    if (!abs) throw new Error('That note no longer exists');
+    addAlias(abs, issue.target);
+    vindex.sync();
+    log('memory health', 'added alias', issue.target, 'to', c.rel);
+    return `Added “${issue.target}” as an alias of ${c.name ?? c.title}, so ${issue.links} ${issue.links === 1 ? 'link now works' : 'links now work'}`;
+  }
+  if (issue.action === 'relink' && c) {
+    if (!vindex.rels().includes(c.rel)) throw new Error('That note no longer exists');
+    const name = vindex.note(c.rel)?.props.name;
+    const done = retargetLinks({ vault: b.vault, sources: entry.sources, target: entry.target, toRel: c.rel, toName: typeof name === 'string' ? name : null, allRels: vindex.rels() });
+    vindex.sync();
+    log('memory health', 'fixed link', entry.target, '->', c.rel);
+    return `Fixed ${done.links} ${done.links === 1 ? 'link' : 'links'} in ${done.files} ${done.files === 1 ? 'note' : 'notes'}`;
+  }
+  const inbox = existsSync(path.join(b.vault, '00-inbox')) ? '00-inbox' : '';
+  const rel = createNote(b.vault, inbox, issue.target.split('/').pop());
+  vindex.sync();
+  log('memory health', 'made the missing note', rel);
+  return `Made the note ${rel}`;
+}
+ipcMain.handle('vault-link-decide', (_e, key, verdict) => decideLink(key, verdict === 'approve' ? 'approve' : 'reject'));
 // fix a missing link by pointing it at a note that exists; refuses a target that isn't a real note in the vault
 ipcMain.handle('vault-fix-link', (_e, target, toRel) => {
   if (!vindex || !vindex.rels().includes(String(toRel))) throw new Error('That note no longer exists');

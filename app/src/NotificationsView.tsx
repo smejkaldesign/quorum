@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import markProd from '../assets/quorum-mark.png';
-import { IconArchive, IconBell, IconCheck, IconChevron, IconClose, IconSearch } from './icons';
-import { useMenu } from './controls';
+import markReview from '../assets/quorum-mark-review.png';
+import { IconArchive, IconBell, IconChevron } from './icons';
+import { PickMenu, SearchButton, SearchField } from './FilterBar';
 import type { FeedKind, FeedPage, FeedRow, FeedSort, FeedTab } from './quorum';
 
 const PAGE = 50;
@@ -9,7 +10,7 @@ const TABS: [FeedTab, string][] = [['all', 'All'], ['unread', 'Unread'], ['archi
 // the event types the Type filter offers, the same list as activityFeed.js
 const KINDS: [FeedKind, string][] = [
   ['note-written', 'Wrote a note'], ['note-updated', 'Updated a note'], ['filed', 'Filed and linked'], ['referenced', 'Referenced'],
-  ['memory-created', 'Created a memory'], ['memory-updated', 'Updated a memory'], ['imported', 'Imported'], ['guardrail', 'Guardrail blocked'], ['you', 'Your changes'],
+  ['memory-created', 'Created a memory'], ['memory-updated', 'Updated a memory'], ['imported', 'Imported'], ['guardrail', 'Guardrail blocked'], ['memory-health', 'Memory health'], ['you', 'Your changes'],
 ];
 const KIND_LABEL = Object.fromEntries(KINDS) as Record<FeedKind, string>;
 // Urgency is a future sort; it waits for a score per row (activityFeed.js)
@@ -67,19 +68,25 @@ function Row({ row, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide, 
     <div className={`conn-row nf-row${row.unread ? ' unread' : ''}`}>
       <div className="conn-line nf-line" role="button" tabIndex={0} aria-label={row.summary.line} onClick={go} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); go(); } }}>
         <label className="nf-check" onClick={stop}><input type="checkbox" checked={picked} aria-label="Select" onChange={onPick} /></label>
-        <span className="nf-who">{row.who === 'you' ? <span className="nf-you" aria-label="You">You</span> : <img src={markProd} alt="Quorum" width={32} height={32} />}</span>
+        {/* waiting for a decision shows the orange mark, Quorum's color for anything in review */}
+        <span className="nf-who">{row.who === 'you' ? <span className="nf-you" aria-label="You">You</span> : <img src={row.review ? markReview : markProd} alt={row.review ? 'Quorum, needs review' : 'Quorum'} width={32} height={32} />}</span>
         <span className="nf-main">
           <span className="nf-head"><strong className="conn-title nf-title">{row.summary.line}</strong>{row.unread && <i className="nf-dot" role="img" aria-label="Unread" data-tip="Unread" />}</span>
-          <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>{row.summary.sub && <> <span className="nf-sep" aria-hidden="true">•</span> {row.summary.sub}</>}</span>
+          <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>{row.summary.sub && !row.summary.parts && <> <span className="nf-sep" aria-hidden="true">•</span> {row.summary.sub}</>}{row.summary.parts && <> <span className="nf-sep" aria-hidden="true">•</span> {row.target.rel}</>}</span>
+          {row.summary.parts && <IssueParts parts={row.summary.parts} />}
         </span>
         <span className="nf-side">
           <span className="nf-tools" onClick={stop} onKeyDown={stop}>
-            {!row.archived && <button className="act-pill nf-markbtn" disabled={busy} onClick={() => onMark(!row.unread)}>{row.unread ? 'Mark read' : 'Mark unread'}</button>}
-            <button className="icon-btn nf-markbtn nf-archive" disabled={busy} aria-label={row.archived ? 'Unarchive' : 'Archive'} data-tip={row.archived ? 'Unarchive' : 'Archive'} onClick={() => onArchive(!row.archived)}><IconArchive width={16} height={16} /></button>
+            {/* the hover tools slide in from the right and back out, the way Home's row actions do */}
+            <span className="nf-hover">
+              {!row.archived && <button className="act-pill" disabled={busy} onClick={() => onMark(!row.unread)}>{row.unread ? 'Mark read' : 'Mark unread'}</button>}
+              <button className="icon-btn nf-archive" disabled={busy} aria-label={row.archived ? 'Unarchive' : 'Archive'} data-tip={row.archived ? 'Unarchive' : 'Archive'} onClick={() => onArchive(!row.archived)}><IconArchive width={16} height={16} /></button>
+            </span>
             {row.review && (
               <>
+                <button className="mh-plain" onClick={go}>View</button>
+                <button className={`act-pill${row.summary.ask?.suggest === 'reject' ? ' primary' : ''}`} disabled={busy} data-tip={row.review.kind === 'memory' ? 'Put back the text from before these updates' : row.review.kind === 'junk-note' ? 'Keep this note' : row.review.kind === 'link' ? 'Leave the links as they are' : 'Mark this note rejected'} onClick={() => onDecide('reject')}>Decline</button>
                 <button className={`act-pill${row.summary.ask?.suggest === 'approve' ? ' primary' : ''}`} disabled={busy} onClick={() => onDecide('approve')}>Approve</button>
-                <button className={`act-pill${row.summary.ask?.suggest === 'reject' ? ' primary' : ''}`} disabled={busy} data-tip={row.review.kind === 'memory' ? 'Put back the text from before these updates' : row.review.kind === 'junk-note' ? 'Keep this note' : 'Mark this note rejected'} onClick={() => onDecide('reject')}>Disapprove</button>
               </>
             )}
             <button className={`icon-btn conn-fold${open ? ' open' : ''}`} aria-expanded={open} aria-label={open ? 'Hide details' : 'Show details'} onClick={() => setOpen((o) => !o)}><IconChevron width={14} height={14} /></button>
@@ -151,11 +158,12 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
   const open = (r: FeedRow) => {
     mark([r]);
     if (r.target.kind === 'guardrail') onOpenGuardrails();
+    else if (r.review?.kind === 'link') window.dispatchEvent(new CustomEvent('quorum:open-health', { detail: r.review.key }));
     else if (r.target.kind === 'note') onOpenNote(r.target.abs);
     else window.dispatchEvent(new CustomEvent('quorum:open-memory', { detail: r.target.abs }));
   };
   const decide = async (rows: FeedRow[], verdict: 'approve' | 'reject') => {
-    const list = rows.filter((r) => r.review).map((r) => ({ kind: r.review!.kind, abs: r.target.abs }));
+    const list = rows.filter((r) => r.review).map((r) => ({ kind: r.review!.kind, abs: r.target.abs, key: r.review!.key }));
     if (!list.length) return;
     setBusy(true);
     setError(null);
@@ -178,7 +186,7 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
   const counts = page?.counts;
   const filtered = !!(q || kinds.length);
   const empty = filtered ? 'No notifications match these filters.'
-    : review ? 'Nothing waits for your review. Notes Quorum writes and memory updates waiting for approval show up here.'
+    : review ? 'Nothing waits for your review. Notes Quorum writes, memory updates waiting for approval and Memory health issues show up here.'
       : tab === 'archived' ? 'Nothing archived. Archived notifications stay here, out of your list.'
       : tab === 'unread' ? 'You are all caught up. New agent activity shows up here.'
         : 'No activity yet. Quorum lists what its agents do with your notes and memories here.';
@@ -195,21 +203,15 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
           })}
         </div>
         <button className={`nf-toggle${review ? ' on' : ''}`} aria-pressed={review} onClick={() => setReview((r) => !r)}>
-          Needs review{counts?.review ? <span className="nf-count">{counts.review}</span> : null}
+          Needs review{counts?.review ? <span className="nf-count review">{counts.review}</span> : null}
         </button>
         <span className="nf-fill" />
-        <button className={`icon-btn nf-search-btn${searching || q ? ' on' : ''}`} aria-label="Search notifications" aria-expanded={searching || !!q} data-tip="Search" onClick={() => { if (searching || q) { setQ(''); setSearching(false); } else { setSearching(true); window.setTimeout(() => searchRef.current?.focus(), 60); } }}><IconSearch width={16} height={16} /></button>
+        <SearchButton open={searching || !!q} label="Search notifications" onToggle={() => { if (searching || q) { setQ(''); setSearching(false); } else { setSearching(true); window.setTimeout(() => searchRef.current?.focus(), 60); } }} />
         <PickMenu label="Type" count={kinds.length} multi options={KINDS} picked={kinds} onPick={(k) => setKinds(kinds.includes(k) ? kinds.filter((x) => x !== k) : [...kinds, k])} />
         <PickMenu label={SORTS.find(([id]) => id === sort)?.[1] ?? 'Sort'} options={SORTS} picked={[sort]} onPick={(v) => setSort(v)} />
       </div>
       {/* search opens below the bar from its icon button, focused; the list filters as you type */}
-      <div className={`nf-search-wrap${searching || q ? ' open' : ''}`} aria-hidden={!(searching || q)}>
-        <label className="nf-search">
-          <IconSearch width={16} height={16} />
-          <input ref={searchRef} value={q} tabIndex={searching || q ? 0 : -1} placeholder="Search notifications" aria-label="Search notifications" onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') { setQ(''); setSearching(false); } }} />
-          <button className="icon-btn nf-search-x" tabIndex={searching || q ? 0 : -1} aria-label="Close search" onClick={(e) => { e.preventDefault(); setQ(''); setSearching(false); }}><IconClose width={16} height={16} /></button>
-        </label>
-      </div>
+      <SearchField open={searching || !!q} inputRef={searchRef} value={q} placeholder="Search notifications" onChange={setQ} onClose={() => { setQ(''); setSearching(false); }} />
       {kinds.length > 0 && (
         <div className="nf-chips" aria-label="Type filters">
           {kinds.map((k) => (
@@ -225,7 +227,7 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
           {/* the actions appear once something is picked; the bar keeps its height either way */}
           <span className={`nf-bulk-actions${sel.length ? '' : ' hidden'}`} aria-hidden={!sel.length}>
             <button className="act-pill primary" disabled={busy || !selReview.length} onClick={() => decide(selReview, 'approve')}>Approve</button>
-            <button className="act-pill" disabled={busy || !selReview.length} data-tip="Memory updates go back to the text from before them; a note Quorum wrote is marked rejected" onClick={() => decide(selReview, 'reject')}>Disapprove</button>
+            <button className="act-pill" disabled={busy || !selReview.length} data-tip="Memory updates go back to the text from before them, a note Quorum wrote is marked rejected, and missing links stay as they are" onClick={() => decide(selReview, 'reject')}>Decline</button>
             <button className="act-pill" disabled={busy || !sel.some((r) => r.unread)} onClick={async () => { await mark(sel); setPicked(new Set()); }}>Mark read</button>
             <button className="act-pill" disabled={busy} onClick={async () => { await archive(sel, tab !== 'archived'); setPicked(new Set()); }}>{tab === 'archived' ? 'Unarchive' : 'Archive'}</button>
           </span>
@@ -245,24 +247,8 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
   );
 }
 
-// A pill button that opens Quorum's own menu: one pick (Sort) or several (Type, with a blue count of the picks). The
-// button is as wide as its label
-function PickMenu<T extends string>({ label, count = 0, multi = false, options, picked, onPick }: { label: string; count?: number; multi?: boolean; options: [T, string][]; picked: T[]; onPick: (v: T) => void }) {
-  const [open, setOpen] = useMenu();
-  return (
-    <span className="menu-wrap nf-pick-wrap">
-      <button className={`nf-pick${open ? ' open' : ''}`} aria-haspopup="menu" aria-expanded={open} onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}>
-        {label}{count > 0 && <span className="nf-badge" aria-label={`${count} selected`}>{count}</span>}<IconChevron width={13} height={13} />
-      </button>
-      {open && (
-        <div className="menu nf-pick-menu" role="menu" onClick={(e) => { if (multi) e.stopPropagation(); }}>
-          {options.map(([id, text]) => (
-            <button key={id} role={multi ? 'menuitemcheckbox' : 'menuitemradio'} aria-checked={picked.includes(id)} className={picked.includes(id) ? 'checked' : ''} onClick={() => { onPick(id); if (!multi) setOpen(false); }}>
-              <span>{text}</span>{picked.includes(id) && <IconCheck width={14} height={14} />}
-            </button>
-          ))}
-        </div>
-      )}
-    </span>
-  );
+// a Memory health issue's write-up under its title: the problem, what fixing it does, and the recommended action, with
+// the labels lined up with the summary text
+export function IssueParts({ parts }: { parts: [string, string][] }) {
+  return <dl className="mh-parts">{parts.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>;
 }

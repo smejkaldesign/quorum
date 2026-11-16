@@ -6,9 +6,11 @@ import { draftOf, eolOf, followSave, parseProps, propsProblem, shownValue, store
 // kept; a title save that rewrites it while you edit other rows is merged into your draft. Frontmatter that does not
 // split into rows shows as raw text. error is a save the main process turned down.
 
-export function Properties({ value, readOnly, error, onChange }: { value: string; readOnly: boolean; error?: string | null; onChange: (fm: string) => void }) {
+// inModal: shown open inside the Properties sheet, which carries its own title
+export function Properties({ value, readOnly, error, onChange, inModal = false }: { value: string; readOnly: boolean; error?: string | null; onChange: (fm: string) => void; inModal?: boolean }) {
   const [draft, setDraft] = useState<Draft>(() => draftOf(value));
-  const [open, setOpen] = useState(false);
+  const [opened, setOpen] = useState(false);
+  const open = inModal || opened;
   const [problem, setProblem] = useState<string | null>(null);
   const [focusRow, setFocusRow] = useState<number | null>(null);
   // when Esc was pressed: the blur right after it must not save the draft Esc just threw away
@@ -47,10 +49,12 @@ export function Properties({ value, readOnly, error, onChange }: { value: string
   const shownError = problem ?? error ?? null;
 
   return (
-    <section className={`props ${open ? 'open' : ''}`} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) commit(); }}>
-      <button className="props-head" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        Properties <em>{value ? (parsed ? `${count} ${count === 1 ? 'field' : 'fields'}` : 'raw') : 'none'}</em>
-      </button>
+    <section className={`props ${open ? 'open' : ''}${inModal ? ' in-modal' : ''}`} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) commit(); }}>
+      {!inModal && (
+        <button className="props-head" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+          Properties <em>{value ? (parsed ? `${count} ${count === 1 ? 'field' : 'fields'}` : 'raw') : 'none'}</em>
+        </button>
+      )}
       {open && shownError && <p className="set-error props-error" role="alert">{shownError}</p>}
       {open && (draft.rows ? (
         <div className="props-rows">

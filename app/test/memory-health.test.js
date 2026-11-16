@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { categoryCounts, categoryOf, countsLine, fileIssues, footerFacts, issueOf, topFolder } from '../memoryHealth.js';
+import { categoryCounts, categoryOf, countsLine, fileIssues, footerFacts, issueOf, topFolder, healthMarks, healthList } from '../memoryHealth.js';
 
 const link = (target, sources, candidates = [], extra = {}) => ({ target, sources, count: sources.length, candidates, ...extra });
 const exact = { rel: 'people/ada.md', title: 'Ada Lovelace', name: 'Ada', exact: true };
@@ -51,5 +51,27 @@ describe('memory health issue cards', () => {
     const items = [link('A', ['n.md']), link('B', ['n.md']), link('C', ['n.md'])];
     const lines = [{ target: 'b', line: 9 }, { target: 'A', line: 2 }, { target: 'C', line: 4 }, { target: 'Gone', line: 1 }];
     expect(fileIssues(lines, items, new Set(['c'])).map((x) => [x.line, x.issue.target])).toEqual([[2, 'A'], [9, 'B']]);
+  });
+});
+
+describe('memory health write-up, tree marks and list', () => {
+  it('states the problem, what fixing it does, and the recommended action', () => {
+    const i = issueOf(link('Roadmap', ['a.md', 'b.md']));
+    expect(i.problem).toBe('The links open nothing. The agent can not follow them, so it can not bring together what these notes say about “Roadmap”.');
+    expect(i.effect).toBe('Every link opens the new note, and the graph connects the 2 notes through it.');
+    expect(i.recommend).toBe('Make an empty note named “Roadmap”. You can add to it later.');
+    expect(issueOf(link('ada', ['a.md'], [exact])).recommend).toBe('Add “ada” as an alias of “Ada”.');
+  });
+  it('counts open issues per note and per folder, once per folder, leaving out the ones left as is', () => {
+    const items = [link('x', ['p/a.md', 'p/q/b.md']), link('y', ['p/a.md']), link('z', ['top.md'])];
+    expect(healthMarks(items, new Set(['z']))).toEqual({ files: { 'p/a.md': 2, 'p/q/b.md': 1 }, folders: { p: 2, 'p/q': 1 } });
+  });
+  it('lists one tab, narrowed by category and words, in the chosen order', () => {
+    const items = [link('b', ['n/1.md']), link('a', ['n/1.md', 'n/2.md', 'n/3.md']), link('ada', ['m/1.md'], [exact])];
+    expect(healthList(items).map((i) => i.target)).toEqual(['a', 'ada', 'b']);
+    expect(healthList(items, { sort: 'az' }).map((i) => i.target)).toEqual(['a', 'ada', 'b']);
+    expect(healthList(items, { categories: ['alias'] }).map((i) => i.target)).toEqual(['ada']);
+    expect(healthList(items, { q: 'm/1' }).map((i) => i.target)).toEqual(['ada']);
+    expect(healthList(items, { tab: 'left', left: new Set(['b']) }).map((i) => i.target)).toEqual(['b']);
   });
 });

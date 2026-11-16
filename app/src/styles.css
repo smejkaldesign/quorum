@@ -2521,8 +2521,8 @@ input::placeholder, textarea::placeholder { font-style: italic; }
 @media (prefers-reduced-motion: reduce) { .hist-hero .hist-quote { transition: opacity 120ms linear; transform: none !important; } }
 
 /* Notifications toolbar: every control 36px tall with 14px text, Type and Sort as pill buttons that open Quorum's menu */
-.notif-page .seg { height: 36px; box-sizing: border-box; align-items: stretch; }
-.notif-page .seg button { padding: 0 14px; font-size: 14px; }
+.notif-page .seg, .mh-page .seg { height: 36px; box-sizing: border-box; align-items: stretch; }
+.notif-page .seg button, .mh-page .seg button { padding: 0 14px; font-size: 14px; }
 .nf-toggle { height: 36px; font-size: 14px; }
 .nf-pick { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--text); font-size: 14px; white-space: nowrap; }
 .nf-pick svg { color: var(--muted); transition: transform 160ms ease; }
@@ -2545,15 +2545,15 @@ input::placeholder, textarea::placeholder { font-style: italic; }
 
 /* ---------- design system: outlined buttons. Every button drawn with the subdued border turns its border near white on
    hover and keyboard focus, so they all read the same. New outlined buttons take one of these classes */
-:root { --line-hover: rgba(255, 255, 255, 0.78); }
+:root { --line-hover: rgba(255, 255, 255, 0.5); }
 .pill:not(.primary):hover:not(:disabled), .act-pill:not(.primary):hover:not(:disabled), .filter:hover, .up-all:hover,
 button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-pick:hover, .nf-pick.open, .nf-search-btn:hover,
-.keeper-link:hover, .notif-page .seg:hover, .icon-btn.outlined:hover,
+.keeper-link:hover, .icon-btn.outlined:hover,
 .pill:not(.primary):focus-visible, .act-pill:not(.primary):focus-visible, .filter:focus-visible, .nf-toggle:focus-visible, .nf-pick:focus-visible, .nf-search-btn:focus-visible { border-color: var(--line-hover); }
 .nf-search-btn.on { border-color: var(--line-hover); }
 
 /* Notifications tabs: white labels, and a count as a blue circle */
-.notif-page .seg button, .nf-toggle { color: var(--text); }
+.notif-page .seg button, .mh-page .seg button, .nf-toggle { color: var(--text); }
 .nf-count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; margin-left: 8px; padding: 0 5px; box-sizing: border-box; border-radius: 999px; background: #3b82f6; color: #fff; font-size: 11px; font-weight: 600; line-height: 1; vertical-align: 1px; }
 .seg button.on .nf-count, .nf-toggle.on .nf-count { color: #fff; }
 /* menus are as wide as their widest item */
@@ -2568,8 +2568,8 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .nf-sub .nf-when { font-size: inherit; line-height: inherit; color: var(--muted); }
 .nf-side { flex-direction: row; align-items: center; }
 .nf-tools { display: flex; align-items: center; gap: 6px; }
-.nf-markbtn { opacity: 0; transition: opacity 120ms ease; }
-.nf-line:hover .nf-markbtn, .nf-line:focus-within .nf-markbtn { opacity: 1; }
+
+
 /* the details: 2px larger, with the same room above as below, starting clear of the row's hover edge */
 .nf-details { padding-top: 14px; padding-bottom: 14px; font-size: 17px; }
 
@@ -2579,3 +2579,60 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .note-dock:hover .chat-strip, .note-dock:focus-within .chat-strip, .note-dock .chat-strip.all { opacity: 1; transform: none; pointer-events: auto; }
 .cs-private { flex: none; display: inline-flex; color: var(--muted); }
 @media (prefers-reduced-motion: reduce) { .note-dock .chat-strip { transform: none; } }
+
+/* ---------- In review: Quorum's color for anything waiting on a decision (the orange mark, the Needs review count) */
+:root { --review: #ff9f0a; --issue: #ff453a; }
+.nf-count.review { background: var(--review); color: #fff; }
+/* outlined buttons fade their border in and out over 0.2s; the segmented tabs keep one border on hover */
+.pill, .act-pill, .filter, .up-all, button.meta-pill, a.meta-pill, .nf-toggle, .nf-pick, .nf-search-btn, .keeper-link, .icon-btn.outlined { transition: border-color 200ms ease, background-color 200ms ease, color 200ms ease; }
+
+/* Notification rows: Mark read and Archive slide in from the right on hover and back out on leave, the way Home's
+   row actions do; the decision buttons stay in place */
+.nf-hover { display: inline-flex; align-items: center; gap: 6px; opacity: 0; visibility: hidden; transform: translateX(16px);
+  transition: opacity 250ms ease, transform 250ms ease, visibility 0s linear 250ms; }
+.nf-line:hover .nf-hover, .nf-line:focus-within .nf-hover { opacity: 1; visibility: visible; transform: none; transition: opacity 250ms ease, transform 250ms ease, visibility 0s; }
+@media (prefers-reduced-motion: reduce) { .nf-hover { transition: none; transform: none; } }
+.nf-tools .mh-plain { height: 32px; font-size: 14px; }
+
+/* a Memory health issue's write-up: label and text, the labels lined up with the summary above */
+.mh-parts { margin: 10px 0 0; display: grid; gap: 6px; font-size: 14px; line-height: 1.45; }
+.mh-parts > div { display: grid; grid-template-columns: 96px 1fr; gap: 12px; }
+.mh-parts dt { color: var(--muted); }
+.mh-parts dd { margin: 0; color: var(--text); }
+.nf-row:has(.mh-parts) .nf-line { align-items: flex-start; }
+.nf-row:has(.mh-parts) .nf-side { align-self: flex-start; padding-top: 2px; }
+
+/* Memory health as a list page, the same pattern as Notifications */
+.mh-page > * { max-width: 860px; }
+.mh-page .lh-sum { margin-bottom: 18px; }
+.mh-row.focus .nf-line { background: rgba(255, 255, 255, 0.05); border-radius: 12px; }
+.mh-page .nf-empty { padding: 48px 0; }
+
+/* the Memory tree's issue marks, at the far right of the row: a red count on a folder, a red dot on a note */
+.kb-dot.red { background: var(--issue); }
+.kb-issues { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; border-radius: 999px;
+  background: var(--issue); color: #fff; font-size: 11px; font-weight: 600; line-height: 18px; text-align: center; pointer-events: auto; transition: opacity 120ms ease; }
+.kb-row.has-count .kb-item { padding-right: 36px; }
+.kb-row:hover .kb-issues { opacity: 0; }
+/* the hover tools take no room while hidden: they float left of the row's buttons over a fade of the row color */
+.nf-tools { position: relative; }
+.nf-hover { position: absolute; right: 100%; top: 50%; margin-top: -16px; height: 32px; padding: 0 6px 0 28px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--bg), white 5%) 24px); }
+.nf-tools:not(:has(> :not(.nf-hover))) .nf-hover { padding-right: 0; }
+.mh-parts > div { grid-template-columns: 112px 1fr; }
+.nf-main .mh-parts > div { grid-template-columns: 112px 1fr; }
+
+/* ---------- one content width for every contained page (Home, a note, Notifications, Settings, Memory health): the
+   text lines up with the buttons above it. Only the heading # links and the hover backgrounds of list rows reach past
+   it, by their own negative margins */
+:root { --page-w: 780px; }
+.doc { max-width: var(--page-w); padding-left: 0; padding-right: 0; width: calc(100% - 80px); box-sizing: border-box; }
+.end.embedded .end-bar, .end-bar, .end-dock, .end-composer, .chat-thread { max-width: var(--page-w); }
+.end.embedded .end-bar, .end-dock { width: calc(100% - 80px); }
+.set-col { max-width: calc(var(--page-w) + 80px); box-sizing: border-box; }
+.notif-page { max-width: calc(var(--page-w) + 80px); }
+.link-health > *, .mh-page > * { max-width: var(--page-w); }
+
+/* Properties in its sheet */
+.props-sheet { width: min(640px, calc(100vw - 48px)); max-height: calc(100vh - 96px); overflow-y: auto; }
+.props.in-modal { border: 0; padding: 0; margin: 12px 0 4px; background: none; }

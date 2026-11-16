@@ -289,7 +289,10 @@ export function App() {
     // quorum://note links, from the OS or from a link inside a note
     const link = (e: Event) => { const t = (e as CustomEvent<NoteLinkTarget>).detail; nav.mark(); setView('main'); setTab('memory'); setKbCommand(t.missing ? { kind: 'missing', id: t.id ?? '', n: Date.now() } : { kind: 'open', rel: t.rel!, anchor: t.anchor, n: Date.now() }); };
     window.addEventListener('quorum:note-link', link);
-    return () => { window.removeEventListener('quorum:open-memory', open); window.removeEventListener('quorum:open-graph', graph); window.removeEventListener('quorum:note-link', link); };
+    // View on a Memory health row in Notifications: the Memory tab, on the note with the issue marked
+    const health = (e: Event) => { nav.mark(); setView('main'); setTab('memory'); setKbCommand({ kind: 'health', key: String((e as CustomEvent).detail ?? ''), n: Date.now() }); };
+    window.addEventListener('quorum:open-health', health);
+    return () => { window.removeEventListener('quorum:open-memory', open); window.removeEventListener('quorum:open-graph', graph); window.removeEventListener('quorum:note-link', link); window.removeEventListener('quorum:open-health', health); };
   });
   // a cited knowledge base note opens in the Knowledge tab
   const openKbNote = useCallback((t: KbOpenTarget) => {

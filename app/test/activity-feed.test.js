@@ -162,3 +162,18 @@ describe('archive', () => {
     expect(feedPage(rows, { archived: ['a', 'b'] }).dot).toBe(false);
   });
 });
+
+describe('memory health issues', () => {
+  it('lists each open issue as a review with its problem, fix and recommendation, read when older than the log', () => {
+    const since = new Date(1000).toISOString();
+    const rows = feedRows({ links: [{ target: 'Roadmap', sources: ['p/a.md', 'p/b.md'], count: 2, candidates: [], lastAt: 500, abs: '/v/p/a.md' }], state: { since } });
+    expect(rows).toHaveLength(1);
+    const r = rows[0];
+    expect(r).toMatchObject({ id: 'r:link:roadmap', kind: 'memory-health', review: { kind: 'link', key: 'roadmap' }, unread: false, target: { kind: 'link', rel: 'p/a.md', title: 'Roadmap' } });
+    expect(r.summary.line).toBe('2 notes link to “Roadmap”, a note that does not exist');
+    expect(r.summary.parts.map(([k]) => k)).toEqual(['Problem', 'If fixed', 'Recommended']);
+    const p = feedPage(rows, { review: true });
+    expect(p.counts.review).toBe(1);
+    expect(feedPage(rows, { kinds: ['memory-health'] }).items).toHaveLength(1);
+  });
+});

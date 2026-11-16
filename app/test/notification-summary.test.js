@@ -59,7 +59,7 @@ describe('summaryOf', () => {
     expect(small.sub).toBe('Suggested: approve. A small change (3 changed blocks) the agent made when it filed the pricing call.');
     const big = summaryOf(note({ kind: 'memory-updated', event: 'review', review: { kind: 'memory', count: 1 }, detail: { changes: 40 } }));
     expect(big.ask.suggest).toBe('reject');
-    expect(big.sub).toMatch(/^Suggested: disapprove\. It rewrites a large part of the page \(40 changed blocks\)/);
+    expect(big.sub).toMatch(/^Suggested: decline\. It rewrites a large part of the page \(40 changed blocks\)/);
   });
 });
 
@@ -97,6 +97,6 @@ describe('a junk note', () => {
     const d = Object.fromEntries(detailsOf(row));
     expect(d.What).toBe('Looks empty');
     expect(d.Reason).toContain('does not read as words');
-    expect(d['If you approve']).toBe('It moves to the Trash. Disapprove keeps it, and upkeep does not ask again');
+    expect(d['If you approve']).toBe('It moves to the Trash. Decline keeps it, and upkeep does not ask again');
   });
 });

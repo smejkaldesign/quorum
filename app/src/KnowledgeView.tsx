@@ -7,11 +7,11 @@ import type { TreeSort, Brain, TreeItem, NoteViews, MemoryDots, MemoryReview, Me
 import { LiveBanner, ReviewBanner, VersionBar, VersionList, when, type ReviewMode } from './MemoryUpdates';
 import { ConfirmModal } from './ConfirmModal';
 import { changeBlocks } from '../memoryReview.js';
-import { fileIssues, type Issue } from '../memoryHealth.js';
+import { fileIssues, healthMarks, issueOf, type Issue } from '../memoryHealth.js';
 import { Graph, type GraphData, type GraphView } from './Graph';
 import { NotePanel, Palette, type PaletteItem, type PaletteMode } from './NoteTools';
 import { reportMemoryNote } from './navHistory';
-import { LinkHealth, acceptIssue, leftAsIs, rejectIssue } from './LinkHealth';
+import { LinkHealth, acceptIssue, leftOf, migrateLeft, rejectIssue } from './LinkHealth';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
 import { IconChevron, IconClose, IconCollapse, IconExpand, IconFolder, IconGraph, IconNewFolder, IconNewNote, IconHistory, IconLink, IconMore, IconReset, IconSearch, IconSidebar, IconSliders, IconSort } from './icons';
@@ -19,7 +19,7 @@ import { IconChevron, IconClose, IconCollapse, IconExpand, IconFolder, IconGraph
 type Creating = { kind: 'note' | 'folder'; parent: string } | null;
 type Preview = { rel: string; title: string; body: string; abs: string; app: string; views?: NoteViews; meta?: NoteMetaInfo | null } | null;
 
-export type KbCommand = { kind: 'switcher' | 'search' | 'palette'; n: number } | { kind: 'open' | 'graph'; rel: string; anchor?: string | null; n: number } | { kind: 'missing'; id: string; n: number } | null;
+export type KbCommand = { kind: 'switcher' | 'search' | 'palette'; n: number } | { kind: 'health'; key: string; n: number } | { kind: 'open' | 'graph'; rel: string; anchor?: string | null; n: number } | { kind: 'missing'; id: string; n: number } | null;
 
 export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain | null; command?: KbCommand; extraCommands?: PaletteItem[] }) {
   const [tree, setTree] = useState<TreeItem[]>([]);
@@ -108,11 +108,22 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   }, [health]);
   // missing links nobody has reviewed yet; the button goes red while there are any
   const [issues, setIssues] = useState(0);
-  const countIssues = useCallback(() => {
-    window.quorum.vaultLinkHealth().then((h) => { const left = leftAsIs(); setIssues(h.filter((m) => !left.has(m.target.toLowerCase())).length); });
+  // the open issues on the tree: a red dot on each note that links to a missing note, and on each folder the number of
+  // open issues with a linking note inside it
+  const [issueMarks, setIssueMarks] = useState<{ files: Record<string, number>; folders: Record<string, number> }>({ files: {}, folders: {} });
+  const migrated = useRef<Promise<void> | null>(null);
+  const countIssues = useCallback(async () => {
+    migrated.current ??= migrateLeft().catch(() => {});
+    await migrated.current;
+    const h = await window.quorum.vaultLinkHealth();
+    const left = leftOf(h);
+    setIssues(h.length - left.size);
+    setIssueMarks(healthMarks(h, left));
   }, []);
   useEffect(() => { countIssues(); }, [graph, countIssues]);
-  useEffect(() => { if (command?.kind === 'open') { setMissing(null); openNote(command.rel).then(() => { if (command.anchor) scrollToAnchor(command.anchor); }); } else if (command?.kind === 'missing') { setPreview(null); setMissing(command.id); } else if (command?.kind === 'graph') { setPreview(null); setSelected(command.rel); setFocus(command.rel); } else if (command) { setScope({}); setPalette(command.kind); } }, [command]);
+  // an issue decided anywhere else (Notifications) moves the counts here too
+  useEffect(() => { const go = () => { countIssues(); }; window.addEventListener('quorum:activity-changed', go); return () => window.removeEventListener('quorum:activity-changed', go); }, [countIssues]);
+  useEffect(() => { if (command?.kind === 'open') { setMissing(null); openNote(command.rel).then(() => { if (command.anchor) scrollToAnchor(command.anchor); }); } else if (command?.kind === 'missing') { setPreview(null); setMissing(command.id); } else if (command?.kind === 'health') { reviewKey(command.key); } else if (command?.kind === 'graph') { setPreview(null); setSelected(command.rel); setFocus(command.rel); } else if (command) { setScope({}); setPalette(command.kind); } }, [command]);
 
   const load = useCallback(async () => {
     const [t, g] = await Promise.all([window.quorum.vaultTree(), window.quorum.vaultGraph()]);
@@ -242,7 +253,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   // the open note's issues, from Memory health
   const loadIssues = async (rel: string) => {
     const [lines, items] = await Promise.all([window.quorum.vaultFileIssues(rel), window.quorum.vaultLinkHealth()]);
-    return fileIssues(lines, items, leftAsIs());
+    return fileIssues(lines, items, leftOf(items));
   };
   // Review from a Memory health card: the note opens with its issues marked, on the one the card is about
   const reviewIssue = async (issue: Issue) => {
@@ -253,12 +264,18 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     const at = Math.max(0, items.findIndex((x) => x.issue.key === issue.key));
     if (items.length) jump(at, items[at].line);
   };
+  // View from a Memory health row in Notifications: the same review, found by the issue's key
+  const reviewKey = async (key: string) => {
+    const m = (await window.quorum.vaultLinkHealth()).find((x) => x.target.toLowerCase() === key.toLowerCase());
+    if (m) await reviewIssue(issueOf(m));
+  };
   const decideIssue = async (yes: boolean) => {
     if (!preview || !issueReview) return;
     const item = issueReview[cursor] ?? issueReview[0];
     if (!item) return;
     try {
-      flash(yes ? await acceptIssue(item.issue, { folder: inboxFolder() }) : rejectIssue(item.issue));
+      flash(yes ? await acceptIssue(item.issue) : await rejectIssue(item.issue));
+      countIssues();
       await reloadOpen(preview.rel);
       const items = await loadIssues(preview.rel);
       countIssues();
@@ -446,7 +463,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   const vaultRun = live.runs.find((r) => r.wholeVault) ?? null;
 
   const ops: TreeOps = {
-    open: null, selected, creating, renaming, dropTarget, dots, liveFiles, liveFolders,
+    open: null, selected, creating, renaming, dropTarget, dots, marks: issueMarks, liveFiles, liveFolders,
     onToggle: (p) => { setSelected(p); setOpen((o) => { const n = new Set(o); if (n.has(p)) n.delete(p); else n.add(p); return n; }); },
     onOpen: openNote, onCreate: create, onRename: rename, onMenu: menu,
     onDragStart: (p) => { dragging.current = p; }, onDragOver: setDropTarget, onDrop: drop,
@@ -573,7 +590,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
               {view && <Graph data={graph} view={view} query={query} focus={focus} timelapse={lapse} onOpen={openGraphNode} onTimelapseEnd={endLapse} onRenameCluster={renameCluster} live={liveFiles} />}
               {healthShown && (
                 <div className={`kb-takeover ${health ? 'in' : 'out'}`}>
-                  <LinkHealth focus={healthShown.focus} folder={inboxFolder()} isLive={(rel) => !!live.files[rel]} onReview={reviewIssue} onClose={() => setHealth(null)} onChanged={() => { load(); countIssues(); }} />
+                  <LinkHealth focus={healthShown.focus} isLive={(rel) => !!live.files[rel]} onReview={reviewIssue} onClose={() => setHealth(null)} onChanged={() => { load(); countIssues(); }} />
                 </div>
               )}
             </div>
@@ -668,7 +685,7 @@ function GraphPanel({ view, groups, onChange, onReset, onClose }: {
 }
 
 type TreeOps = {
-  open: Set<string> | null; selected: string; creating: Creating; renaming: string | null; dropTarget: string | null; dots: MemoryDots; liveFiles: Set<string>; liveFolders: Set<string>;
+  open: Set<string> | null; selected: string; creating: Creating; renaming: string | null; dropTarget: string | null; dots: MemoryDots; marks: { files: Record<string, number>; folders: Record<string, number> }; liveFiles: Set<string>; liveFolders: Set<string>;
   onToggle: (p: string) => void; onOpen: (p: string) => void; onCreate: (name: string) => void;
   onRename: (it: TreeItem, name: string) => void; onMenu: (it: TreeItem, at?: { x: number; y: number }) => void;
   onDragStart: (p: string) => void; onDragOver: (p: string | null) => void; onDrop: (folder: string) => void;
@@ -683,12 +700,14 @@ function TreeLevel({ items, depth, ops }: { items: TreeItem[]; depth: number; op
         const target = it.dir ? it.path : it.path.split('/').slice(0, -1).join('/');
         const dot = it.dir ? ops.dots.folders[it.path] : ops.dots.files[it.path];
         const busy = it.dir ? ops.liveFolders.has(it.path) : ops.liveFiles.has(it.path);
+        const issues = (it.dir ? ops.marks.folders[it.path] : ops.marks.files[it.path]) ?? 0;
+        const issueTip = `${issues} Memory health ${issues === 1 ? 'issue' : 'issues'}${it.dir ? ' in this folder' : ''}`;
         return (
           <div key={it.path}>
             {ops.renaming === it.path ? (
               <RenameRow item={it} depth={depth} onDone={(name) => ops.onRename(it, name)} />
             ) : (
-              <div className={`kb-row ${dot ? 'has-dot' : ''}`}>
+              <div className={`kb-row ${dot || issues ? 'has-dot' : ''}${issues && it.dir ? ' has-count' : ''}`}>
               <button role="treeitem" aria-expanded={it.dir ? isOpen : undefined} draggable
                 className={`kb-item ${ops.selected === it.path ? 'sel' : ''} ${it.dir ? 'dir' : ''} ${it.dir && ops.dropTarget === it.path ? 'drop' : ''} ${busy ? 'live' : ''}`}
                 aria-busy={busy || undefined}
@@ -706,7 +725,11 @@ function TreeLevel({ items, depth, ops }: { items: TreeItem[]; depth: number; op
                 onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); ops.onMenu(it, { x: r.left, y: r.bottom + 4 }); }}>
                 <IconMore width={16} height={16} />
               </button>
-              {dot && <span className={`kb-dot ${dot}`} role="img" aria-label={dot === 'green' ? 'Updates to review' : 'Updated since you last opened it'} data-tip={dot === 'green' ? 'Updates to review' : 'Updated since you last opened it'} />}
+              {/* the issue mark sits at the far right of the row: a count on a folder, a red dot on a note */}
+              {issues > 0 && (it.dir
+                ? <span className="kb-issues" role="img" aria-label={issueTip} data-tip={issueTip}>{issues}</span>
+                : <span className="kb-dot red" role="img" aria-label={issueTip} data-tip={issueTip} />)}
+              {dot && !issues && <span className={`kb-dot ${dot}`} role="img" aria-label={dot === 'green' ? 'Updates to review' : 'Updated since you last opened it'} data-tip={dot === 'green' ? 'Updates to review' : 'Updated since you last opened it'} />}
               </div>
             )}
             {it.dir && isOpen && (
