@@ -182,7 +182,8 @@ export function approvePastFix(run, plan, { vault, gitShow = null, undoFiles = n
   return { kind: 'keep', why: `${plan?.why ?? 'Quorum cannot undo it exactly.'} Approve keeps the fix as it is and marks the item done.`, ops: [{ op: 'keep' }] };
 }
 
-const today = (now) => new Date(now).toISOString().slice(0, 10);
+// the day on this computer's clock: last_verified is the day the person approved, in their time zone
+const today = (now) => { const d = new Date(now); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const INDEX_NAMES = ['index', '_index', 'readme'];
 // the index note of a note's folder: index, _index or README in it, or the folder note named like the folder
 export function folderIndex(rel, rels) {

@@ -131,7 +131,14 @@ describe('approveFinding', () => {
   it('archives a stale note, or marks it verified today when its folder checks on an interval', () => {
     const now = Date.UTC(2026, 10, 16);
     expect(approveFinding(f('note.stale', { facts: ['open'] }), { now }).ops).toEqual([{ op: 'setkey', rel: 'notes/x.md', key: 'status', value: 'archived' }]);
-    expect(approveFinding(f('note.stale', { facts: ['verify'] }), { now }).ops).toEqual([{ op: 'setkey', rel: 'notes/x.md', key: 'last_verified', value: '2026-11-16' }]);
+    expect(approveFinding(f('note.stale', { facts: ['verify'] }), { now: new Date(2026, 10, 16, 12).getTime() }).ops).toEqual([{ op: 'setkey', rel: 'notes/x.md', key: 'last_verified', value: '2026-11-16' }]);
+  });
+
+  it('marks it verified on the local day, late at night and early in the morning', () => {
+    for (const hour of [0, 23]) {
+      const a = approveFinding(f('note.stale', { facts: ['verify'] }), { now: new Date(2026, 10, 16, hour, 30).getTime() });
+      expect(a.ops[0].value).toBe('2026-11-16');
+    }
   });
 
   it('links an orphan from its folder index, else keeps it', () => {
