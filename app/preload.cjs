@@ -122,6 +122,7 @@ contextBridge.exposeInMainWorld('quorum', {
   vaultResolve: (target, from) => ipcRenderer.invoke('vault-resolve', target, from),
   onVaultChanged: on('vault-changed'),
   vaultNote: (rel) => ipcRenderer.invoke('vault-note', rel),
+  vaultNoteDate: (rel, day) => ipcRenderer.invoke('vault-note-date', rel, day),
   // Memory tab review of agent changes and note versions (memoryVersions.js)
   memoryDots: () => ipcRenderer.invoke('memory-dots'),
   memoryReview: (rel) => ipcRenderer.invoke('memory-review', rel),

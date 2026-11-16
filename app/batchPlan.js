@@ -14,6 +14,9 @@
 //   { op: 'tag', rel, value }                   set confidential: value in a note's frontmatter
 //   { op: 'move', rel, to }                     move a note; the links that point at it follow
 //   { op: 'link', rel, to }                     add a Related line that links rel to the note to
+//   { op: 'setkey', rel, key, value }           set one frontmatter key (value written as YAML)
+//   { op: 'addlink', rel, line, note }          add a link line to the end of an index note, linking note
+//   { op: 'keep' }                              change nothing: Approve keeps the item as it is and marks it done
 // An item the agent drafted (memoryDraft.js) carries draft; a merge is a restore of the kept note and a trash of the
 // other, a rewrite is a restore.
 //
@@ -30,7 +33,7 @@
 // The steps that remain run in phases so each step's preconditions hold: put back, remove, edit, write, move.
 
 const q = (t) => `“${t}”`;
-const PHASE = { restore: 0, unalias: 0, trash: 1, tag: 2, alias: 3, relink: 4, unlink: 5, link: 5, create: 6, move: 7 };
+const PHASE = { restore: 0, unalias: 0, trash: 1, tag: 2, setkey: 2, alias: 3, relink: 4, unlink: 5, link: 5, addlink: 5, create: 6, move: 7, keep: 8 };
 const KIND_ORDER = { pastfix: 0, link: 1, finding: 2 };
 const norm = (t) => String(t ?? '').toLowerCase().replace(/\.md$/, '').replace(/\s+/g, ' ').trim();
 
@@ -50,6 +53,8 @@ export function effects(o) {
     case 'create': out.creates.push(o.rel); break;
     case 'tag': writes.push({ rel: o.rel, region: 'fm:confidential' }); break;
     case 'link': writes.push({ rel: o.rel, region: `related:${norm(o.to)}` }); out.points = o.to; break;
+    case 'setkey': writes.push({ rel: o.rel, region: `fm:${o.key}` }); break;
+    case 'addlink': writes.push({ rel: o.rel, region: 'end' }); out.points = o.note ?? null; break;
     case 'move': out.removes.push(o.rel); out.creates.push(o.to); break;
     default: break;
   }
@@ -61,6 +66,7 @@ function composes(a, b) {
   const links = (o) => o.op === 'relink' || o.op === 'unlink';
   if (links(a) && links(b)) return norm(a.target) !== norm(b.target);
   if (a.op === 'alias' && b.op === 'alias') return norm(a.alias) !== norm(b.alias);
+  if (a.op === 'addlink' && b.op === 'addlink') return a.line !== b.line;
   return false;
 }
 // the same change twice
@@ -80,6 +86,9 @@ const GROUPS = {
   link: { order: 10, label: (n) => `Link ${n} ${n === 1 ? 'pair' : 'pairs'} of notes that repeat each other` },
   merge: { order: 11, label: (n) => `Merge ${n} ${n === 1 ? 'pair' : 'pairs'} of notes` },
   rewrite: { order: 12, label: (n) => `Rewrite ${n} ${n === 1 ? 'note' : 'notes'} that disagree with another` },
+  setkey: { order: 13, label: (n) => `Update the frontmatter of ${n} ${n === 1 ? 'note' : 'notes'}` },
+  addlink: { order: 14, label: (n) => `Link ${n} ${n === 1 ? 'note' : 'notes'} from ${n === 1 ? 'its folder index' : 'their folder indexes'}` },
+  keep: { order: 15, label: (n) => `Keep ${n} ${n === 1 ? 'item' : 'items'} as ${n === 1 ? 'it is' : 'they are'}` },
 };
 // the group an item lists under: what its first change does, or move and tag for a move that also tags
 export function groupOf(item) {

@@ -5,7 +5,7 @@ import markReview from '../assets/quorum-mark.png';
 import { CATEGORIES, HEALTH_SORTS, categoryCounts, countsLine, healthList, issueMeta, type HealthCategory, type HealthSort, type Issue } from '../memoryHealth.js';
 import { IconArchive, IconCheck, IconChevron, IconClose, IconReset } from './icons';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
-import { IssueParts, ReviewDetails, RowMenu, RunBanner, StatusBadge, StatusSwap, UndoMenu, ago, runStatus, took } from './NotificationsView';
+import { DismissButton, IssueParts, ReviewDetails, RowMenu, RunBanner, StatusBadge, StatusSwap, UndoMenu, ViewButton, ago, runStatus, took } from './NotificationsView';
 import type { FixRun, MemoryDraft, MemoryFinding } from './quorum';
 import { MemoryFindings } from './MemoryFindings';
 import { toast } from './Toasts';
@@ -132,6 +132,13 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
     toast(on ? (keys.length === 1 ? 'Archived. It comes back if its evidence changes.' : `Archived ${keys.length}. They come back if their evidence changes.`) : keys.length === 1 ? 'Moved back' : `Moved ${keys.length} back`);
     await after(on ? `Archived ${keys.length === 1 ? 'it' : keys.length}` : 'Moved back to review');
   };
+  // Approve on a finding runs through the planner as one batch: its fix, the change its rule allows, or keep as is
+  const approveFinding = async (f: MemoryFinding) => {
+    const { failed } = await window.quorum.activityReview([{ kind: 'finding', abs: f.abs, key: f.key }], 'approve');
+    if (failed.length) { toast(failed[0].error, 'error'); return; }
+    toast(f.approve?.kind === 'keep' || (!f.approve && !f.fix) ? `Kept “${f.title}” as it is and marked it done.` : `Approved “${f.title}”. Quorum is applying it now.`);
+    await after('Approved');
+  };
   const after = async (msg: string) => {
     setDone(msg);
     setPicked(new Set());
@@ -172,7 +179,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const toggle = (k: string) => setPicked((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const catLabel = Object.fromEntries(CATEGORIES.map((c) => [c.id, c.label])) as Record<HealthCategory, string>;
 
-  // a row opens the note on its issue with the drawer open; the chevron folds the write-up open, closed at first
+  // View opens the note on its issue with the drawer open; a click on the row or the chevron folds the write-up open
   const [unfolded, setUnfolded] = useState<Set<string>>(new Set());
   const fold = (k: string) => setUnfolded((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
@@ -182,7 +189,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
     const waiting = fixRun ? fixRun.status === 'queued' : false;
     return (
     <div key={i.key} id={`lh-${i.key}`} className={`conn-row nf-row mh-row${focus?.toLowerCase() === i.key ? ' focus' : ''}${working ? (waiting ? ' working waiting' : ' running working') : ''}`}>
-      <div className="conn-line nf-line" role="button" tabIndex={0} aria-label={i.title} onClick={() => { if (marks.unread.has(issueId(i.key))) markRead([issueId(i.key)]); onReview(i); }} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onReview(i); } }}>
+      <div className="conn-line nf-line" role="button" tabIndex={0} aria-label={i.title} aria-expanded={unfolded.has(i.key)} onClick={() => fold(i.key)} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); fold(i.key); } }}>
         <label className="nf-check" onClick={stop}><input type="checkbox" checked={picked.has(i.key)} aria-label="Select" onChange={() => toggle(i.key)} /></label>
         <span className="nf-who"><img src={markReview} alt="Quorum, needs review" width={32} height={32} /></span>
         <span className="nf-main">
@@ -190,6 +197,8 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
           <span className="nf-sub"><span className="nf-when" title={i.lastAt ? new Date(i.lastAt).toLocaleString() : undefined}>{i.lastAt ? ago(i.lastAt) : ''}</span></span>
         </span>
         <span className="nf-side mh-side">
+          {/* View opens the note on its issue with the drawer open */}
+          <span onClick={stop} onKeyDown={stop}><ViewButton onView={() => { if (marks.unread.has(issueId(i.key))) markRead([issueId(i.key)]); onReview(i); }} /></span>
           {/* the date sits on the right; on hover it slides out and the actions slide in, the way Home's rows do */}
           <span className="mh-swap" onClick={stop} onKeyDown={stop}>
             <span className="mh-when"><StatusBadge status={tab === 'archived' ? 'dismissed' : waiting ? 'waiting' : 'review'} /></span>
@@ -197,7 +206,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
               {tab === 'archived'
                 ? <RowMenu label="Move back to review" onPick={() => back([i])} />
                 : <>
-                    <button className="icon-btn mh-icon" disabled={busy || working} aria-label="Archive" data-tip="Archive: set it aside without fixing it" onClick={() => decide([i], 'dismiss')}><IconArchive width={16} height={16} /></button>
+                    <DismissButton disabled={busy || working} onDismiss={() => decide([i], 'dismiss')} />
                     {working
                       ? <span className="icon-btn mh-icon mh-busy" role="img" aria-label="Working"><i className="run-spin" /></span>
                       : <button className="icon-btn mh-icon mh-yes" disabled={busy || locked(i)} aria-label="Approve" data-tip={locked(i) ? 'Waits until the run writing these notes finishes' : `Approve: ${i.recommend}`} onClick={() => decide([i], 'approve')}><IconCheck width={16} height={16} /></button>}
@@ -286,7 +295,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
         return <BatchBanner runs={list} error={one?.status === 'error' ? one.error : null} onDismiss={() => { setHiddenBatch(last); try { localStorage.setItem('quorum.hiddenBatch', last); } catch { /* the banner just shows again next time */ } }} />;
       })()}
       <div className="nf-list">{entries.map((e) => ('issue' in e ? row(e.issue) : <RunRow key={e.run.id} run={e.run} unread={tab !== 'archived' && unreadOf(e)} picked={picked.has(e.run.id)} onPick={() => toggle(e.run.id)} />))}</div>
-      {findingsShown && <MemoryFindings findings={findings} drafts={drafts} archived={tab === 'archived'} q={q} unread={marks.unread} onArchive={archiveFindings} onRead={markRead} />}
+      {findingsShown && <MemoryFindings findings={findings} drafts={drafts} archived={tab === 'archived'} q={q} unread={marks.unread} onArchive={archiveFindings} onApprove={approveFinding} onRead={markRead} />}
       {!entries.length && !findingsShown && <div className="nf-empty"><p>{empty}</p></div>}
       {plan && <BulkPlan ids={plan.ids} everything={plan.everything} onClose={() => setPlan(null)} onApplied={() => { setPicked(new Set()); load(); onChanged(); window.dispatchEvent(new Event(CHANGED)); }} />}
     </div>

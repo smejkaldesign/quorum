@@ -19,8 +19,10 @@ import { aliasText } from './relink.js';
 export const DAILY_CAP = 40;
 export const QUIET_MS = 2 * 60000;
 export const CONFIDENCE = ['high', 'medium', 'low'];
-// why a link waits when the agent read its notes and says Quorum's match is wrong
+// what a link's row says when the agent read its notes and found Quorum's match is wrong. Approve then removes the
+// dead link and keeps its words
 export const WRONG_NOTE = 'The agent found this is the wrong note';
+export const WRONG_NOTE_FIX = 'The agent found the note Quorum picked is the wrong one. Approve removes the dead link and keeps its words.';
 const MAX_TEXT = 20000;
 const MAX_NOTE = 12000;
 const RETRY_MS = 24 * 3600000;
@@ -151,12 +153,17 @@ const withFront = (current, body) => `${frontBlock(current)}${body.endsWith('\n'
 
 // the item with its draft applied: the fix it runs, and the draft for the drawer and the plan. textOf(rel) answers a
 // note's text now; aliasesOf(rel) a note's aliases, so a merge carries the dropped note's aliases onto the kept note.
-// A point draft that says the match is wrong holds the item back: its link needs a person
+// A point draft that says the match is wrong turns the item into removing the dead link, keeping its words
 export function withDraft(item, draft, textOf, aliasesOf = () => []) {
   const view = { kind: draft.kind, confidence: draft.confidence, quotes: draft.quotes, verified: draft.verified, at: draft.at ?? null };
   const out = { ...item, draft: view, autoFix: false };
   if (draft.kind === 'create') return { ...out, draft: { ...view, text: draft.text }, ops: item.ops.map((o, i) => (i ? o : { ...o, text: draft.text })) };
-  if (draft.kind === 'point') return draft.to ? out : { ...out, ops: [], hold: WRONG_NOTE };
+  if (draft.kind === 'point') {
+    if (draft.to) return out;
+    const from = item.ops.find((o) => o.sources) ?? {};
+    const unlink = { op: 'unlink', target: item.target, sources: from.sources ?? item.sources ?? [], lines: from.lines ?? {}, ...(from.links ? { links: from.links } : {}) };
+    return { ...out, wrongNote: true, group: 'unlink', draft: { ...view, wrong: true }, ops: [unlink] };
+  }
   if (draft.kind === 'merge') {
     const keepText = textOf(draft.keep);
     if (keepText == null || textOf(draft.drop) == null) return { ...out, ops: [], hold: 'A note in the draft is gone.' };

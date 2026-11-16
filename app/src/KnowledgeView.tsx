@@ -643,7 +643,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
               <h1>{preview.title}</h1>
               {/* the full path under the title; a long one loses its start, so the file name stays readable */}
               {/* the details row: date, apps, people, then the file in its folder (the path is in the tooltip) */}
-              <NoteMeta meta={{ ...(preview.meta ?? {}), title: preview.title }}>
+              <NoteMeta meta={{ ...(preview.meta ?? {}), title: preview.title }} onSetDate={locked ? undefined : async (day) => { await window.quorum.vaultNoteDate(preview.rel, day); await reloadOpen(preview.rel); }}>
                 <button className="meta-pill meta-icon" aria-label="Open in your editor" disabled={locked} data-tip={locked ? 'Locked until the update finishes' : `Open in your editor: ${preview.rel}`} onClick={() => window.quorum.openNote(preview.abs)}><IconFolder width={17} height={17} /></button>
                 <MemoryBell rel={preview.rel} open={notifsOpen} onToggle={() => setNotifsOpen((o) => !o)} />
               </NoteMeta>

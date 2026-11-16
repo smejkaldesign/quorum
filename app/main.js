@@ -66,14 +66,15 @@ import { createDecisionLog, fingerprint } from './decisionLog.js';
 import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, fixVersions, recheckAll, undoPlan } from './fixRecheck.js';
 import { buildPlan, checkFirst, checkOrder, effects, groupLabel, groupOf, notesOf, planExclude } from './batchPlan.js';
 import { ROW, findingItem, itemLine, linkItem, pastFixItem } from './reviewItems.js';
-import { frontBlock, removeFrontmatterKey } from './frontmatter.js';
+import { approveFinding, approvePastFix, gitReader, withLinkLine } from './reviewApprove.js';
+import { frontBlock, removeFrontmatterKey, withDate } from './frontmatter.js';
 import { createResolver } from './linkparse.js';
-import { isOff } from './rules/common.js';
+import { isOff, skipped } from './rules/common.js';
 import { folderMarkOf } from './rules/confidential.js';
 import { createMemorySweep, dueSweep, rescanTags, scanTags } from './memorySweep.js';
 import { RULE_LABELS, RULES } from './rules/index.js';
 import { relatedLine } from './rules/nearDuplicates.js';
-import { DAILY_CAP, createDrafter, draftKind, evidenceRels, withDraft } from './memoryDraft.js';
+import { DAILY_CAP, WRONG_NOTE_FIX, createDrafter, draftKind, evidenceRels, withDraft } from './memoryDraft.js';
 import { ignoreProposals, ignored, ruleRecords } from './ruleRecords.js';
 import { createElsewhere, withFound } from './linkElsewhere.js';
 import { titleOf } from './notificationSummary.js';
@@ -2068,6 +2069,7 @@ const feedState = () => {
   feedStateCache.read ??= {};
   feedStateCache.unread ??= {};
   feedStateCache.archived ??= {};
+  feedStateCache.done ??= {};
   return feedStateCache;
 };
 // the marks kept: the newest 5000 of each, so the file stays small
@@ -2146,7 +2148,7 @@ function feedSources() {
 ipcMain.handle('activity-feed', (_e, query) => {
   const q = query ?? {};
   return feedPage(feedRows(feedSources()), {
-    tab: ['unread', 'archived'].includes(q.tab) ? q.tab : 'all', archived: Object.keys(feedState().archived), kept: Object.keys(feedState().kept ?? {}), review: q.review === true, kinds: Array.isArray(q.kinds) ? q.kinds.map(String) : [], q: String(q.q ?? ''),
+    tab: ['unread', 'archived'].includes(q.tab) ? q.tab : 'all', archived: Object.keys(feedState().archived), done: Object.keys(feedState().done ?? {}), kept: Object.keys(feedState().kept ?? {}), review: q.review === true, kinds: Array.isArray(q.kinds) ? q.kinds.map(String) : [], q: String(q.q ?? ''),
     sort: String(q.sort ?? 'unread'), offset: Number(q.offset) || 0, limit: Number(q.limit ?? 50), prefs: settings.notifications ?? {}, idsOnly: q.idsOnly === true,
   });
 });
@@ -2177,7 +2179,7 @@ ipcMain.handle('activity-archive', (_e, rows, on) => {
     if (id.startsWith(PAST_FIX_ROW)) pastIds.push(id.slice(PAST_FIX_ROW.length));
     if (id.startsWith('r:find:')) findKeys.push(id.slice(7));
     if (id.startsWith('r:ignore:')) dismissIgnore(id.slice(9), on !== false);
-    if (on === false) { delete st.archived[id]; if (!id.startsWith('r:link:')) st.kept[id] = at; } else { st.archived[id] = at; delete st.kept[id]; st.read[id] = at; delete st.unread[id]; }
+    if (on === false) { delete st.archived[id]; delete st.done?.[id]; if (!id.startsWith('r:link:')) st.kept[id] = at; } else { st.archived[id] = at; delete st.kept[id]; st.read[id] = at; delete st.unread[id]; }
     n++;
   }
   feedStateSave();
@@ -2237,11 +2239,15 @@ ipcMain.handle('activity-review', async (_e, items, verdict) => {
       } else if (it.kind === 'finding') {
         // a finding with a fix (a confidential tag or a move) runs through the planner; one without needs a person to
         // act on the note, then archive the finding
-        // Approve logs approved through the planner; only Archive logs archived, so a rule's record counts each once
-        if (ok) startPlanFor([`${ROW.finding}${String(it.key ?? '')}`]); else archiveFindings([String(it.key ?? '')], true);
-        const st = feedState();
-        st.archived[`r:find:${it.key}`] = at;
-        feedStateSave();
+        // Approve runs the change its rule allows, or keeps it as it is, through the planner; the batch marks it done.
+        // Only Archive logs archived, so a rule's record counts each once
+        if (ok) startPlanFor([`${ROW.finding}${String(it.key ?? '')}`]);
+        else {
+          archiveFindings([String(it.key ?? '')], true);
+          const st = feedState();
+          st.archived[`r:find:${it.key}`] = at;
+          feedStateSave();
+        }
       } else if (it.kind === 'ignore') {
         // Approve stores the ignore rule; Archive turns the proposal down
         if (ok) acceptIgnore(String(it.key ?? '')); else dismissIgnore(String(it.key ?? ''), true);
@@ -2492,11 +2498,13 @@ function findingsNow() {
   const latest = decisionLog.latestAll(b.vault);
   const reopened = [];
   const ign = ignoreList();
+  const rels = vindex?.rels() ?? [];
   const out = memorySweep.findings(b.vault).filter((f) => !(ign.length && ignored(ign, f.ruleId, f))).map((f) => {
     const last = latest.get(f.key);
     const archived = last?.decision === 'archived' && last.fingerprint === fingerprint(f.ruleId, f.target, findingSources(f));
     if (last?.decision === 'archived' && !archived) reopened.push({ ...findingRecord(f), decision: 'reopened', actor: 'quorum', note: 'The evidence changed after it was archived' });
-    return { ...f, archived, abs: path.join(b.vault, f.rel) };
+    const approve = f.fix ? null : approveFinding(f, { rels, title: (rel) => vindex?.note(rel)?.title ?? null, skip: (rel) => skipped({ rel, note: vindex?.note(rel) }) });
+    return { ...f, archived, abs: path.join(b.vault, f.rel), ...(approve ? { approve } : {}) };
   });
   if (reopened.length) { try { decisionLog.recordMany(b.vault, reopened); } catch (e) { log('decision log', e?.message); } }
   return out;
@@ -2923,6 +2931,7 @@ function startFixes(keys, { bulk = keys.length > 1 } = {}) {
   // a bulk Approve is one batch: the window shows its progress from the runs, even after leaving the page and coming back
   const batch = keys.length > 1 ? `b:${Date.now()}` : null;
   const draftHolds = linkDraftHolds();
+  const wrong = [];
   for (const k of keys) {
     const key = String(k ?? '').toLowerCase();
     if (!key) continue;
@@ -2932,9 +2941,9 @@ function startFixes(keys, { bulk = keys.length > 1 } = {}) {
     if (!entry) continue;
     const i = issueOf(withMarks(entry));
     if (bulk && i.reviewOnly) continue;
-    // a link whose stored draft says Quorum's match is the wrong note never runs Quorum's fix: a single Approve says why
-    const held = draftHolds.get(key);
-    if (held) { if (!bulk) throw new Error(held); continue; }
+    // a link whose stored draft says Quorum's match is the wrong note never runs Quorum's fix: Approve removes the dead
+    // link through the planner instead
+    if (draftHolds.has(key)) { wrong.push(`${ROW.link}${key}`); continue; }
     const run = {
       id: `fix:${key}:${Date.now()}`, key, target: i.target, title: i.title, rel: i.path, vault: brain()?.vault ?? '', status: 'queued', queuedAt: Date.now(), startedAt: null, endedAt: null,
       steps: [], outcome: null, error: null, dismissedAt: null, batch,
@@ -2952,6 +2961,8 @@ function startFixes(keys, { bulk = keys.length > 1 } = {}) {
   }
   fixRunsSave();
   pumpFixes();
+  // the wrong-note links run as one planned batch: unlink, journal, versions and Undo
+  if (wrong.length) started.push(startPlanFor(wrong));
   return started;
 }
 async function pumpFixes() {
@@ -2991,7 +3002,8 @@ async function pumpFixes() {
     try {
       run.outcome = run.kind === 'batch' ? await runBatch(run, step, keep) : await decideLink(run.key, 'approve', step, keep, run.hashes ?? null, run.finding?.proposedFix ?? null);
       run.status = 'success';
-      run.undoable = saveUndo(run, kept);
+      // a batch that only kept items as they are wrote nothing, and its Undo still moves them back to review
+      run.undoable = saveUndo(run, kept) || (run.kind === 'batch' && !!run.done?.length);
       if (run.kind === 'batch') afterBatch(run, kept);
     } catch (e) {
       run.status = 'error';
@@ -3125,8 +3137,18 @@ function pastFixPlan(run, fresh = false) {
   try { undoFiles = JSON.parse(readFileSync(undoFile(run.id), 'utf8')).files ?? null; } catch {}
   const mtime = (rel) => { try { const st = statSync(vaultPath(run.vault, rel)); return Math.max(st.mtimeMs, st.ctimeMs); } catch { return null; } };
   const plan = undoPlan(run, { vault, undoFiles, versions: fixVersions(memoryVersions.files(run.vault), run), readVersion: (rel, id) => memoryVersions.read(run.vault, rel, id), mtime });
+  // Quorum cannot undo it exactly: Approve restores from git history, removes what the fix left, or keeps it as is.
+  // DRAFTED FIX SLOT (reviewApprove.js step c, before Keep as is): draftFix(item) has no draft type for past fixes yet,
+  // so draft stays null. Wire it as draft: () => draftFix(pastFixItem(...)) once memoryDraft.js drafts past fixes
+  if (!plan.ok) plan.approve = approvePastFix(run, plan, { vault, gitShow: gitOf(run.vault), undoFiles: undoFiles?.map((f) => f.rel) ?? null, draft: null });
   st.plans.set(run.id, { at: Date.now(), plan });
   return plan;
+}
+// git history of a vault, read only (reviewApprove.js gitReader); one reader per vault keeps what it read
+const gitReaders = new Map();
+function gitOf(vault) {
+  if (!gitReaders.has(vault)) gitReaders.set(vault, gitReader(vault));
+  return gitReaders.get(vault);
 }
 // the flagged fixes for the feed: each with its re-check, its Undo plan and the note it opens on
 function pastFixRows() {
@@ -3194,11 +3216,12 @@ function reviewItems({ ids = null, drafts = true } = {}) {
     const id = `${ROW.pastfix}${row.run.id}`;
     if (skip(id, !!st.archived[id])) continue;
     const item = pastFixItem(row);
-    out.push({ ...item, wrong: row.res?.main ?? null, hashes: hashNotes(b.vault, item.ops.map((o) => o.rel)) });
+    out.push({ ...item, wrong: row.res?.main ?? null, hashes: hashNotes(b.vault, notesOf(item)) });
   }
   for (const f of findingsNow()) {
     if (skip(`${ROW.finding}${f.key}`, f.archived)) continue;
-    out.push({ ...findingItem(f), hashes: hashNotes(b.vault, f.notes), finding: findingRecord(f) });
+    const item = findingItem(f);
+    out.push({ ...item, hashes: hashNotes(b.vault, [...new Set([...f.notes, ...notesOf(item)])]), finding: findingRecord(f) });
   }
   return drafts ? out.map(drafted) : out;
 }
@@ -3247,10 +3270,10 @@ function mergeBreaksLinks(keep, drop) {
   const broken = from.filter((r) => vindex.outgoing(r).some((l) => l.rel === drop && resolve(l.target, r) !== keep));
   return broken.length ? `${broken.length === 1 ? `${broken[0]} links` : `${broken.length} notes link`} to ${drop} in a way the merged note would not answer. Point those links at ${keep} first.` : null;
 }
-// link key -> why its stored draft holds it back (the agent found the match is the wrong note)
+// link key -> its item, for each link whose stored draft found Quorum's match is the wrong note
 function linkDraftHolds() {
   if (settings.memoryDrafts !== true) return new Map();
-  return new Map(reviewItems().filter((i) => i.kind === 'link' && i.draft && i.hold).map((i) => [String(i.key).toLowerCase(), i.hold]));
+  return new Map(reviewItems().filter((i) => i.kind === 'link' && i.wrongNote).map((i) => [String(i.key).toLowerCase(), i]));
 }
 // the agent's fix for a review item, or null: the item with its stored draft applied while drafting is on, the draft's
 // notes are unchanged and its quotes still match. Other Approve paths (a past fix Quorum cannot undo exactly) call it
@@ -3345,7 +3368,7 @@ ipcMain.handle('memory-draft-status', () => drafter.status());
 function draftViews() {
   const out = {};
   if (settings.memoryDrafts !== true) return out;
-  for (const i of reviewItems()) if (i.draft) out[i.id] = { ...i.draft, line: itemLine(i), check: !!checkFirst(i), hold: i.hold ?? null };
+  for (const i of reviewItems()) if (i.draft) out[i.id] = { ...i.draft, line: i.wrongNote ? WRONG_NOTE_FIX : itemLine(i), check: !!checkFirst(i), hold: i.hold ?? null };
   return out;
 }
 // the plan as the bulk plan sheet shows it: every group with each item ticked or not, and what was merged, skipped and
@@ -3407,7 +3430,7 @@ function startPlan(plan, items, { actor = 'you' } = {}) {
     id, key: id, batch: id, kind: 'batch', auto: actor === 'auto', vault: b.vault, rel: '',
     target: actor === 'auto' ? `${n} memory ${n === 1 ? 'fix' : 'fixes'} Quorum applied on its own` : `${n} memory ${n === 1 ? 'fix' : 'fixes'}`,
     title: groups.map((g) => g.label).join(', '), status: 'queued', queuedAt: Date.now(), startedAt: null, endedAt: null, steps: [], outcome: null, error: null, dismissedAt: null,
-    items: go.map((i) => ({ id: i.id, kind: i.kind, key: i.key, link: i.link ?? null, title: i.title, line: itemLine(i), status: 'queued', finding: i.finding ?? null })),
+    items: go.map((i) => ({ id: i.id, kind: i.kind, key: i.key, link: i.link ?? null, title: i.title, line: itemLine(i), status: 'queued', finding: i.finding ?? null, ...(i.keep ? { keep: true } : {}) })),
     groups, problem: `${n} ${n === 1 ? 'item' : 'items'} from Needs review, planned as one batch.`, solution: groups.map((g) => g.label).join('. '),
     value: 'One batch, one undo: Undo puts every note back as it was before the batch.', meta: groups.map((g) => ['Change', g.label]),
     hashes: Object.assign({}, ...go.map((i) => i.hashes ?? {})),
@@ -3434,9 +3457,23 @@ const readVault = (vault, rel) => { try { return readFileSync(vaultPath(vault, r
 const STUB_TEXT = 'Quorum made this note because';
 // one step of a batch. written: the notes earlier steps of the batch changed, whose hashes no longer apply
 async function runOp(item, o, { step, keep, written, vault }) {
-  if (item.kind === 'link') {
+  // a link whose draft found Quorum's match is the wrong note runs its unlink step below instead of Quorum's fix
+  if (item.kind === 'link' && !item.wrongNote) {
     const hashes = Object.fromEntries(Object.entries(item.hashes ?? {}).filter(([r]) => !written.has(r)));
     await decideLink(item.key, 'approve', step, keep, hashes, item.approved, item.draft ?? null);
+    return;
+  }
+  if (o.op === 'keep') { await step(`Keeping ${item.kind === 'pastfix' ? `the earlier fix on ${item.title}` : item.title} as it is`); return; }
+  if (o.op === 'unlink') {
+    // links an earlier fix left pointing at a note that is gone, or a dead link whose draft found the wrong note: each
+    // is replaced by its words
+    await step(item.kind === 'link' ? `Removing the dead links to ${o.target} and keeping their words` : `Removing the links to ${o.target} an earlier fix left`);
+    for (const rel of o.sources) {
+      if (!written.has(rel) && item.hashes && rel in item.hashes && (readVault(vault, rel) == null ? null : sha(readVault(vault, rel))) !== item.hashes[rel]) throw new Error(`“${rel}” changed after Quorum planned this batch, so Quorum did not write. Review the plan again`);
+      keep(rel);
+    }
+    unlinkTarget({ vault, sources: o.sources, target: o.target });
+    vindex.sync();
     return;
   }
   const abs = vaultPath(vault, o.rel);
@@ -3444,6 +3481,12 @@ async function runOp(item, o, { step, keep, written, vault }) {
   if (!written.has(o.rel) && item.hashes && o.rel in item.hashes) {
     const now = readVault(vault, o.rel);
     if ((now == null ? null : sha(now)) !== item.hashes[o.rel]) throw new Error(`“${o.rel}” changed after Quorum planned this batch, so Quorum did not write. Review the plan again`);
+  }
+  // a restore or trash carries the hash of the note its plan read; the plan is kept for a few seconds, so an edit made
+  // since then stops the step even when the item's hashes were taken after it
+  if (!written.has(o.rel) && o.expect && (o.op === 'restore' || o.op === 'trash')) {
+    const now = readVault(vault, o.rel);
+    if ((now == null ? null : sha(now)) !== o.expect) throw new Error(`“${o.rel}” changed after Quorum planned this batch, so Quorum did not write. Review the plan again`);
   }
   const past = item.kind === 'pastfix';
   if (o.op === 'restore') {
@@ -3464,6 +3507,14 @@ async function runOp(item, o, { step, keep, written, vault }) {
     await step(`Tagging ${o.rel} confidential: ${o.value}`);
     keep(o.rel);
     writeAtomic(abs, setFrontmatterKey(readFileSync(abs, 'utf8'), 'confidential', o.value));
+  } else if (o.op === 'setkey') {
+    await step(`Setting ${o.key}: ${o.value} in ${o.rel}`);
+    keep(o.rel);
+    writeAtomic(abs, setFrontmatterKey(readFileSync(abs, 'utf8'), o.key, o.value));
+  } else if (o.op === 'addlink') {
+    await step(`Linking ${o.note} from ${o.rel}`);
+    keep(o.rel);
+    writeAtomic(abs, withLinkLine(readFileSync(abs, 'utf8'), o.line));
   } else if (o.op === 'move') {
     const folder = o.to.includes('/') ? o.to.slice(0, o.to.lastIndexOf('/')) : '';
     await step(`Moving ${o.rel} to ${folder || 'the vault folder'} and updating the links to it`);
@@ -3515,7 +3566,7 @@ async function runBatch(run, step, keep) {
   const reopened = new Set();
   const gone = new Set(plan.steps.filter((s) => s.op.op === 'trash' || s.op.op === 'move').map((s) => s.op.rel));
   const followed = [];
-  for (const item of items.filter((i) => i.kind === 'pastfix' && i.link)) {
+  for (const item of items.filter((i) => i.kind === 'pastfix' && i.link && !i.keep)) {
     const key = String(item.link).toLowerCase();
     reopened.add(key);
     setLinksLeft([key], false);
@@ -3535,7 +3586,9 @@ async function runBatch(run, step, keep) {
   for (const [rel, set] of after) after.set(rel, new Set([...set].filter((t) => !reopened.has(t))));
   const reason = fixCheck({ before, after });
   if (reason) throw new Error(reason);
-  run.undid = items.filter((i) => i.kind === 'pastfix').map((i) => i.key);
+  run.undid = items.filter((i) => i.kind === 'pastfix' && !i.keep).map((i) => i.key);
+  // a kept past fix and every finding leave Needs review as done
+  run.done = items.filter((i) => (i.kind === 'pastfix' && i.keep) || i.kind === 'finding').map((i) => i.id);
   run.touched = [...touched];
   const done = (run.groups ?? []).map((g) => g.label).join(', ');
   return `Applied the plan: ${done}${followed.length ? `. Then pointed ${followed.length === 1 ? `the link to “${followed[0]}”` : `${followed.length} links`} at the notes the current rules pick` : ''}`;
@@ -3544,12 +3597,33 @@ async function runBatch(run, step, keep) {
 function afterBatch(run) {
   const at = Date.now();
   for (const id of run.undid ?? []) { const o = fixRunList().find((r) => r.id === id); if (o) o.undoneAt = at; }
+  markDone(run, true);
   if (pastFixState) pastFixState.plans.clear();
   try { sweep('save', run.touched ?? []); } catch (e) { log('memory sweep', e?.message); }
+}
+// The items a batch approved that leave Needs review as done: a past fix kept as it is, and every finding. Each moves
+// to Archived with the done mark, which shows Accepted; a finding also records archived in the decision log, so it
+// stays out of review until its evidence changes. on false, after an Undo, they come back to review (undoBatch logs
+// each one undone)
+function markDone(run, on) {
+  const ids = run.done ?? [];
+  if (!ids.length) return;
+  const st = feedState();
+  const at = new Date().toISOString();
+  for (const id of ids) {
+    if (on) { st.archived[id] = at; st.done[id] = at; st.read[id] = at; delete st.unread[id]; } else { delete st.archived[id]; delete st.done[id]; }
+  }
+  feedStateSave();
+  const items = (run.items ?? []).filter((i) => ids.includes(i.id) && i.kind === 'finding' && i.finding);
+  if (on && items.length) {
+    const recs = items.map((i) => ({ ...i.finding, decision: 'archived', actor: run.auto ? 'auto' : 'you', note: 'Approved' }));
+    try { decisionLog.recordMany(run.vault, recs); } catch (e) { log('decision log', e?.message); }
+  }
 }
 // Undo on a batch: its notes are back (fix-undo), so each corrected past fix is flagged again and each item is logged
 function undoBatch(run, rels) {
   for (const id of run.undid ?? []) { const o = fixRunList().find((r) => r.id === id); if (o) delete o.undoneAt; }
+  markDone(run, false);
   if (pastFixState) pastFixState.plans.clear();
   for (const it of run.items ?? []) {
     if (it.kind === 'link') { setLinksLeft([it.key], false); if (it.finding) logFinding(it.finding, 'undone'); }
@@ -3788,6 +3862,24 @@ ipcMain.handle('vault-note', (_e, rel) => {
     ? { date: fm.date || null, people: fm.participants.filter((p) => !isSelf(p)).map(personName), source: source || null, ...noteMeetingApps(fm, n.abs) }
     : null;
   return { title: h1 ? h1[1].trim() : path.basename(n.abs, '.md'), body: h1 && body.startsWith(h1[0]) ? body.slice(h1[0].length).trim() : body, abs: n.abs, ...noteLink(n.abs), views: views.of(n.abs), meta };
+});
+
+// the date pill in the note view: date: YYYY-MM-DD written into the note's frontmatter, saved as a version by you
+ipcMain.handle('vault-note-date', (_e, rel, day) => {
+  const b = brain();
+  const r = String(rel ?? '');
+  const abs = b && /\.md$/i.test(r) ? vaultPath(b.vault, r) : null;
+  if (!abs || !existsSync(abs)) throw new Error('That note is not in the vault');
+  const text = readFileSync(abs, 'utf8');
+  const next = withDate(text, day);
+  if (next !== text) {
+    writeAtomic(abs, next);
+    try { memoryVersions.record({ vault: b.vault, rel: r, before: text, after: next, who: 'you', reason: `Set the date to ${day}`, agent: false }); } catch (e) { log('note date versions', e?.message); }
+  }
+  vindex?.sync();
+  setTimeout(() => sweep('save', [r]), 0);
+  toUI('memory-updates', [r]);
+  return String(day);
 });
 
 // Memory tab review of agent changes (memoryVersions.js): the tree's dots, an open file's banner with its Before text

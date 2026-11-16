@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildPlan, checkFirst } from '../batchPlan.js';
-import { WRONG_NOTE, checkDraft, createDrafter, draftKind, draftPrompt, evidenceRels, trustedDraft, verifyQuotes, withDraft } from '../memoryDraft.js';
+import { WRONG_NOTE_FIX, checkDraft, createDrafter, draftKind, draftPrompt, evidenceRels, trustedDraft, verifyQuotes, withDraft } from '../memoryDraft.js';
 
 // Synthetic items and notes; every name and line is made up. The model is always a fake
 const createItem = { id: 'r:link:zephyr', kind: 'link', key: 'zephyr', target: 'zephyr', title: 'zephyr', reviewOnly: true, ops: [{ op: 'create', rel: 'notes/zephyr.md', sources: ['notes/a.md', 'notes/b.md'] }] };
@@ -67,19 +67,22 @@ describe('quote checks', () => {
     expect(checkDraft(pointItem, notes, reply({ kind: 'point', to: 'notes/orbit-plan.md', quotes: q, confidence: 'medium' })).draft.to).toBe('notes/orbit-plan.md');
     expect(checkDraft(pointItem, notes, reply({ kind: 'point', to: 'notes/elsewhere.md', quotes: q, confidence: 'high' })).why).toMatch(/did not offer/);
     const no = checkDraft(pointItem, notes, reply({ kind: 'point', to: null, quotes: q, confidence: 'high' })).draft;
-    expect(withDraft(pointItem, no, () => '').hold).toBe(WRONG_NOTE);
+    expect(withDraft(pointItem, no, () => '')).toMatchObject({ wrongNote: true, ops: [{ op: 'unlink', target: 'orbit', sources: ['notes/a.md'] }] });
+    expect(WRONG_NOTE_FIX).toMatch(/Approve removes the dead link and keeps its words/);
   });
 
-  it('holds a wrong-match link out of the bulk plan instead of running Quorum\'s fix', () => {
+  it('turns a wrong-match link into removing the dead link, which the bulk plan runs', () => {
     const notes = [A, { rel: 'notes/orbit-plan.md', text: '# Orbit plan\nThe orbit plan.' }];
     const q = [{ path: 'notes/orbit-plan.md', line: 2, text: 'The orbit plan.' }];
     const no = checkDraft(pointItem, notes, reply({ kind: 'point', to: null, quotes: q, confidence: 'high' })).draft;
     const item = withDraft(pointItem, no, () => '');
-    expect(item.ops).toEqual([]);
+    expect(item.hold).toBeUndefined();
     expect(item.autoFix).toBe(false);
+    expect(item.draft.wrong).toBe(true);
     const plan = buildPlan([{ ...item, hashes: {} }]);
-    expect(plan.ok).toEqual([]);
-    expect(plan.held).toEqual([expect.objectContaining({ id: pointItem.id, reason: WRONG_NOTE })]);
+    expect(plan.ok).toEqual([pointItem.id]);
+    expect(plan.steps.map((s) => s.op.op)).toEqual(['unlink']);
+    expect(plan.groups.map((g) => g.label)).toEqual(['Remove 1 dead link']);
   });
 });
 

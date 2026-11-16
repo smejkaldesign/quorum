@@ -139,14 +139,14 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], l
       review: { kind: 'link', key: i.key, ...(m.left ? { left: true } : {}) }, draft: drafts[`r:link:${i.key}`] ?? null,
     }, null);
   }
-  // each finding of a review rule (rules/index.js) waits for a person: there is no automatic fix, so it opens on its note
-  // and Archive sets it aside. Findings from the first sweep of a vault start out read
+  // each finding of a review rule (rules/index.js) waits for a person: Approve runs its fix, the change its rule allows
+  // (reviewApprove.js), or keeps it as it is; Dismiss sets it aside. Findings from the first sweep of a vault start out read
   for (const f of findings) {
     push({
       id: `r:find:${f.key}`, at: time(f.at), kind: 'memory-health', event: 'review', who: 'agent', initial: !!f.initial,
       target: { kind: 'memory', abs: f.abs ?? '', rel: f.rel, title: f.title }, files: [],
-      detail: { title: f.title, problem: f.problem, solution: f.proposal, recommend: f.proposal, rule: f.rule, meta: [['Check', f.rule], ...(f.meta ?? []), ...(f.evidence ?? []).map((e, i) => [i ? `Evidence ${i + 1}` : 'Evidence', e])], draft: drafts[`r:find:${f.key}`] ?? null },
-      review: { kind: 'finding', key: f.key, ...(f.fix || drafts[`r:find:${f.key}`] ? { fix: true } : {}), ...(f.archived ? { left: true } : {}) }, draft: drafts[`r:find:${f.key}`] ?? null,
+      detail: { title: f.title, problem: f.problem, solution: f.proposal, recommend: drafts[`r:find:${f.key}`] ? f.proposal : f.approve?.says ?? f.proposal, keep: !drafts[`r:find:${f.key}`] && f.approve?.kind === 'keep', rule: f.rule, meta: [['Check', f.rule], ...(f.meta ?? []), ...(f.evidence ?? []).map((e, i) => [i ? `Evidence ${i + 1}` : 'Evidence', e])], draft: drafts[`r:find:${f.key}`] ?? null },
+      review: { kind: 'finding', key: f.key, ...(f.fix || f.approve || drafts[`r:find:${f.key}`] ? { fix: true } : {}), ...(f.archived ? { left: true } : {}) }, draft: drafts[`r:find:${f.key}`] ?? null,
     }, null);
   }
   // each fix run Quorum carried out on an approved Memory health issue: its row shows it working, then its outcome
@@ -157,13 +157,14 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], l
       detail: { problem: run.problem, solution: run.solution, value: run.value, recommend: run.recommendation, meta: run.meta ?? [] }, run,
     }, null);
   }
-  // each past fix the current rules would not make waits as its corrective fix; Approve shows only when it can run
+  // each past fix the current rules would not make waits as its corrective fix. When Quorum cannot undo it exactly,
+  // plan.approve (reviewApprove.js) says what Approve does instead: git, remove, draft or keep
   for (const { run, res, plan, abs } of pastFixes) {
     push({
       id: `r:pastfix:${run.id}`, at: time(run.endedAt ?? run.queuedAt), kind: 'memory-health', event: 'review', who: 'agent',
       target: { kind: 'memory', abs: abs ?? '', rel: res.main ?? run.rel ?? '', title: run.target }, files: [],
-      detail: { outcome: run.outcome, reasons: res.reasons.map((r) => r.text), evidence: res.evidence ?? [], undo: plan.why, ranAt: run.endedAt ?? null },
-      review: { kind: 'past-fix', key: run.id, undo: !!plan.ok },
+      detail: { outcome: run.outcome, reasons: res.reasons.map((r) => r.text), evidence: res.evidence ?? [], undo: plan.why, approve: plan.approve ?? null, ranAt: run.endedAt ?? null },
+      review: { kind: 'past-fix', key: run.id, undo: !!plan.ok || !!plan.approve, ...(plan.approve ? { approve: plan.approve.kind } : {}) },
     }, null);
   }
   // an ignore rule Quorum proposes after the same kind of finding was archived again and again; Approve stores it
@@ -201,7 +202,9 @@ const SORTS = {
 // whose words match. counts and dot are for the bell and the labels, and use the switches the same way
 // archived holds the ids the person archived: they leave All, Unread, Needs review and the dot, and list under Archived
 // idsOnly returns each item as its id and unread mark, for a caller that only needs the marks (Memory health)
-export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = '', sort = 'unread', offset = 0, limit = 50, prefs = {}, locale, archived = [], kept: keptIds = [], idsOnly = false } = {}) {
+// done holds the archived ids an Approve finished (a past fix or finding kept as it is, or a finding fixed): they list
+// under Archived as Accepted
+export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = '', sort = 'unread', offset = 0, limit = 50, prefs = {}, locale, archived = [], done: doneIds = [], kept: keptIds = [], idsOnly = false } = {}) {
   // decided items archive on their own: an issue set aside unfixed (Dismissed), and a fix a few seconds after it ends
   // (Accepted or Failed), unless the person brought it back with Unarchive
   const back = new Set(keptIds);
@@ -218,7 +221,8 @@ export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = ''
   const kept = rows
     .filter((r) => !gone.has(r.id) && !(r.run && live.get(r.run.key) === r.run && issueKeys.has(r.run.key)))
     .map((r) => (r.run ? { ...r, run: { ...r.run, showBanner: banner(r) } } : r.review?.kind === 'link' && live.has(r.review.key) ? { ...r, fixRun: { ...live.get(r.review.key), showBanner: true } } : r));
-  const shelf = rows.filter((r) => gone.has(r.id)).map((r) => ({ ...r, archived: true }));
+  const doneSet = new Set(doneIds);
+  const shelf = rows.filter((r) => gone.has(r.id)).map((r) => ({ ...r, archived: true, ...(doneSet.has(r.id) ? { done: true } : {}) }));
   const shown = (r) => prefOn(prefs, prefOf(r));
   const unread = kept.filter((r) => r.unread && shown(r));
   const reviews = kept.filter((r) => r.review);

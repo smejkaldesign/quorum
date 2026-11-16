@@ -51,7 +51,7 @@ describe('near-duplicates', () => {
     const notes = [note('a/alpha.md', `${body}\n\n[[beta]]`), note('a/beta.md', edit(body, 0.02))];
     const [f] = run({ notes });
     expect(f.fix).toBeUndefined();
-    expect(findingItem(f).hold).toMatch(/no automatic fix/);
+    expect(findingItem(f)).toMatchObject({ keep: true, ops: [{ op: 'keep' }] });
   });
 
   it('turns its fix into a link op, and the Related line links by path', () => {
