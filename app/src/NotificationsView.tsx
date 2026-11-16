@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import markProd from '../assets/quorum-mark.png';
-import { IconBell, IconCheck, IconChevron, IconClose, IconMore, IconSearch } from './icons';
+import { IconArchive, IconBell, IconCheck, IconChevron, IconClose, IconSearch } from './icons';
 import { useMenu } from './controls';
 import type { FeedKind, FeedPage, FeedRow, FeedSort, FeedTab } from './quorum';
 
 const PAGE = 50;
-const TABS: [FeedTab, string][] = [['all', 'All'], ['unread', 'Unread']];
+const TABS: [FeedTab, string][] = [['all', 'All'], ['unread', 'Unread'], ['archived', 'Archived']];
 // the event types the Type filter offers, the same list as activityFeed.js
 const KINDS: [FeedKind, string][] = [
   ['note-written', 'Wrote a note'], ['note-updated', 'Updated a note'], ['filed', 'Filed and linked'], ['referenced', 'Referenced'],
@@ -57,38 +57,8 @@ export function NotificationBell({ active, onOpen }: { active: boolean; onOpen: 
 
 // the row's ⋯ menu: Open, Mark read or unread, and Approve and Disapprove on a row waiting for a decision. It closes on
 // a click anywhere else or Escape
-function RowMenu({ row, busy, onOpen, onMark, onDecide }: { row: FeedRow; busy: boolean; onOpen: () => void; onMark: (unread: boolean) => void; onDecide: (v: 'approve' | 'reject') => void }) {
-  const [open, setOpen] = useState(false);
-  const wrap = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const away = (e: MouseEvent) => { if (!wrap.current?.contains(e.target as Node)) setOpen(false); };
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', away);
-    document.addEventListener('keydown', key);
-    return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', key); };
-  }, [open]);
-  const pick = (fn: () => void) => () => { setOpen(false); fn(); };
-  return (
-    <span className={`menu-wrap nf-more${open ? ' open' : ''}`} ref={wrap}>
-      <button className="icon-btn" aria-label="More" aria-haspopup="menu" aria-expanded={open} data-tip="More" onClick={() => setOpen((o) => !o)}><IconMore width={16} height={16} /></button>
-      {open && (
-        <div className="menu" role="menu">
-          {!row.target.gone && <button role="menuitem" onClick={pick(onOpen)}>Open</button>}
-          <button role="menuitem" onClick={pick(() => onMark(!row.unread))}>{row.unread ? 'Mark read' : 'Mark unread'}</button>
-          {row.review && <button role="menuitem" disabled={busy} onClick={pick(() => onDecide('approve'))}>Approve</button>}
-          {row.review && <button role="menuitem" disabled={busy} onClick={pick(() => onDecide('reject'))}>Disapprove</button>}
-        </div>
-      )}
-    </span>
-  );
-}
-
-// one notification, laid out like a connector row: the mark of who did it, the summary with its unread dot, the time
-// at the top right, the actions, and a chevron that folds the row open to everything known about the event. A click
-// anywhere else on the row opens its note, memory or the Guardrails page
-function Row({ row, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide }: {
-  row: FeedRow; picked: boolean; busy: boolean; onPick: () => void; onOpen: () => void; onOpenFile: (abs: string) => void; onMark: (unread: boolean) => void; onDecide: (v: 'approve' | 'reject') => void;
+function Row({ row, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide, onArchive }: {
+  row: FeedRow; picked: boolean; busy: boolean; onPick: () => void; onOpen: () => void; onOpenFile: (abs: string) => void; onMark: (unread: boolean) => void; onDecide: (v: 'approve' | 'reject') => void; onArchive: (on: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
@@ -100,18 +70,18 @@ function Row({ row, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide }
         <span className="nf-who">{row.who === 'you' ? <span className="nf-you" aria-label="You">You</span> : <img src={markProd} alt="Quorum" width={32} height={32} />}</span>
         <span className="nf-main">
           <span className="nf-head"><strong className="conn-title nf-title">{row.summary.line}</strong>{row.unread && <i className="nf-dot" role="img" aria-label="Unread" data-tip="Unread" />}</span>
-          {row.summary.sub && <span className="nf-sub">{row.summary.sub}</span>}
+          <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>{row.summary.sub && <> <span className="nf-sep" aria-hidden="true">•</span> {row.summary.sub}</>}</span>
         </span>
         <span className="nf-side">
-          <span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>
           <span className="nf-tools" onClick={stop} onKeyDown={stop}>
+            {!row.archived && <button className="act-pill nf-markbtn" disabled={busy} onClick={() => onMark(!row.unread)}>{row.unread ? 'Mark read' : 'Mark unread'}</button>}
+            <button className="icon-btn nf-markbtn nf-archive" disabled={busy} aria-label={row.archived ? 'Unarchive' : 'Archive'} data-tip={row.archived ? 'Unarchive' : 'Archive'} onClick={() => onArchive(!row.archived)}><IconArchive width={16} height={16} /></button>
             {row.review && (
               <>
                 <button className={`act-pill${row.summary.ask?.suggest === 'approve' ? ' primary' : ''}`} disabled={busy} onClick={() => onDecide('approve')}>Approve</button>
                 <button className={`act-pill${row.summary.ask?.suggest === 'reject' ? ' primary' : ''}`} disabled={busy} data-tip={row.review.kind === 'memory' ? 'Put back the text from before these updates' : 'Mark this note rejected'} onClick={() => onDecide('reject')}>Disapprove</button>
               </>
             )}
-            <RowMenu row={row} busy={busy} onOpen={go} onMark={onMark} onDecide={onDecide} />
             <button className={`icon-btn conn-fold${open ? ' open' : ''}`} aria-expanded={open} aria-label={open ? 'Hide details' : 'Show details'} onClick={() => setOpen((o) => !o)}><IconChevron width={14} height={14} /></button>
           </span>
         </span>
@@ -198,10 +168,18 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
     changed();
   };
 
+  // archive or bring back rows; the list reloads so they leave this tab
+  const archive = async (rows: FeedRow[], on: boolean) => {
+    if (!rows.length) return;
+    await window.quorum.activityArchive(rows.map((r) => ({ id: r.id })), on).catch(() => 0);
+    changed();
+  };
+
   const counts = page?.counts;
   const filtered = !!(q || kinds.length);
   const empty = filtered ? 'No notifications match these filters.'
     : review ? 'Nothing waits for your review. Notes Quorum writes and memory updates waiting for approval show up here.'
+      : tab === 'archived' ? 'Nothing archived. Archived notifications stay here, out of your list.'
       : tab === 'unread' ? 'You are all caught up. New agent activity shows up here.'
         : 'No activity yet. Quorum lists what its agents do with your notes and memories here.';
 
@@ -212,6 +190,7 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
         <div className="seg" role="tablist" aria-label="Show">
           {TABS.map(([id, label]) => {
             const n = id === 'unread' ? counts?.unread : 0;
+            // Archived carries no count; it is a shelf, and its number would read as more to do
             return <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? 'on' : ''} onClick={() => setTab(id)}>{label}{n ? <span className="nf-count">{n}</span> : null}</button>;
           })}
         </div>
@@ -248,6 +227,7 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
             <button className="act-pill primary" disabled={busy || !selReview.length} onClick={() => decide(selReview, 'approve')}>Approve</button>
             <button className="act-pill" disabled={busy || !selReview.length} data-tip="Memory updates go back to the text from before them; a note Quorum wrote is marked rejected" onClick={() => decide(selReview, 'reject')}>Disapprove</button>
             <button className="act-pill" disabled={busy || !sel.some((r) => r.unread)} onClick={async () => { await mark(sel); setPicked(new Set()); }}>Mark read</button>
+            <button className="act-pill" disabled={busy} onClick={async () => { await archive(sel, tab !== 'archived'); setPicked(new Set()); }}>{tab === 'archived' ? 'Unarchive' : 'Archive'}</button>
           </span>
         </div>
       )}
@@ -256,7 +236,7 @@ export function NotificationsView({ onOpenNote, onOpenGuardrails }: { onOpenNote
         {items.map((r) => (
           <Row key={r.id} row={r} picked={picked.has(r.id)} busy={busy} onPick={() => toggle(r.id)} onOpen={() => open(r)}
             onOpenFile={(abs) => { mark([r]); window.dispatchEvent(new CustomEvent('quorum:open-memory', { detail: abs })); }}
-            onMark={(unread) => mark([r], unread)} onDecide={(v) => decide([r], v)} />
+            onMark={(unread) => mark([r], unread)} onDecide={(v) => decide([r], v)} onArchive={(on) => archive([r], on)} />
         ))}
       </div>
       {page && !items.length && <div className="nf-empty"><IconBell width={22} height={22} /><p>{empty}</p></div>}

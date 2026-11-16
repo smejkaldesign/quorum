@@ -2542,3 +2542,40 @@ input::placeholder, textarea::placeholder { font-style: italic; }
 .nf-search-x { flex: none; width: 28px; height: 28px; color: var(--muted); }
 .nf-search-x:hover { color: var(--text); }
 @media (prefers-reduced-motion: reduce) { .nf-search-wrap { transition: opacity 120ms linear; transform: none; } }
+
+/* ---------- design system: outlined buttons. Every button drawn with the subdued border turns its border near white on
+   hover and keyboard focus, so they all read the same. New outlined buttons take one of these classes */
+:root { --line-hover: rgba(255, 255, 255, 0.78); }
+.pill:not(.primary):hover:not(:disabled), .act-pill:not(.primary):hover:not(:disabled), .filter:hover, .up-all:hover,
+button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-pick:hover, .nf-pick.open, .nf-search-btn:hover,
+.keeper-link:hover, .notif-page .seg:hover, .icon-btn.outlined:hover,
+.pill:not(.primary):focus-visible, .act-pill:not(.primary):focus-visible, .filter:focus-visible, .nf-toggle:focus-visible, .nf-pick:focus-visible, .nf-search-btn:focus-visible { border-color: var(--line-hover); }
+.nf-search-btn.on { border-color: var(--line-hover); }
+
+/* Notifications tabs: white labels, and a count as a blue circle */
+.notif-page .seg button, .nf-toggle { color: var(--text); }
+.nf-count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; margin-left: 8px; padding: 0 5px; box-sizing: border-box; border-radius: 999px; background: #3b82f6; color: #fff; font-size: 11px; font-weight: 600; line-height: 1; vertical-align: 1px; }
+.seg button.on .nf-count, .nf-toggle.on .nf-count { color: #fff; }
+/* menus are as wide as their widest item */
+.nf-pick-menu { min-width: 0; width: max-content; }
+
+/* Notification rows: equal room above and below, 2px between the divider and the hover edge, controls centered */
+.nf-row { padding: 2px 0; }
+.nf-line { align-items: center; padding: 12px 10px; }
+.nf-main { padding-top: 0; }
+.nf-sub { margin-top: 0; }
+.nf-sep { margin: 0 2px; }
+.nf-sub .nf-when { font-size: inherit; line-height: inherit; color: var(--muted); }
+.nf-side { flex-direction: row; align-items: center; }
+.nf-tools { display: flex; align-items: center; gap: 6px; }
+.nf-markbtn { opacity: 0; transition: opacity 120ms ease; }
+.nf-line:hover .nf-markbtn, .nf-line:focus-within .nf-markbtn { opacity: 1; }
+/* the details: 2px larger, with the same room above as below, starting clear of the row's hover edge */
+.nf-details { padding-top: 14px; padding-bottom: 14px; font-size: 17px; }
+
+/* the chats above a page's composer stay out of the way until the pointer is over the composer area or the composer
+   has focus; each one is marked private */
+.note-dock .chat-strip { opacity: 0; transform: translateY(6px); pointer-events: none; transition: opacity 180ms ease, transform 180ms ease; }
+.note-dock:hover .chat-strip, .note-dock:focus-within .chat-strip, .note-dock .chat-strip.all { opacity: 1; transform: none; pointer-events: auto; }
+.cs-private { flex: none; display: inline-flex; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .note-dock .chat-strip { transform: none; } }
