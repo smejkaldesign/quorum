@@ -49,7 +49,7 @@ import { startControl } from './control.js';
 import { PROVIDERS as DECISION_PROVIDERS, connectedProvider, decide as decideRaw, removeDecisionsKey, setDecisionsKey } from './decisions.js';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -2632,7 +2632,13 @@ const fixRunList = () => {
   }
   return fixRuns;
 };
-const fixRunsSave = () => { fixRuns = fixRunList().slice(0, 300); try { writeFileSync(fixRunsFile, JSON.stringify(fixRuns)); } catch (e) { log('fix runs', e?.message); } };
+// a run that drops off the list takes its undo record with it, so the saved note text does not stay behind
+const fixRunsSave = () => {
+  const all = fixRunList();
+  for (const r of all.slice(300)) { try { rmSync(undoFile(r.id), { force: true }); } catch {} }
+  fixRuns = all.slice(0, 300);
+  try { writeFileSync(fixRunsFile, JSON.stringify(fixRuns)); } catch (e) { log('fix runs', e?.message); }
+};
 const fixQueue = [];
 let fixWorking = false;
 // showBanner: still working, or finished less than a day ago and not dismissed
