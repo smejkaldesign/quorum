@@ -2226,7 +2226,8 @@ ipcMain.handle('activity-review', async (_e, items, verdict) => {
         if (ok && items.length > 1 && reviewOnlyKey(it.key)) throw new Error('This fix needs a review on its own. Open it and approve it there');
         // a link the agent drafted a fix for runs its draft through the planner
         const id = `${ROW.link}${String(it.key ?? '').toLowerCase()}`;
-        if (ok && reviewItems({ ids: [id] })[0]?.draft) startPlanFor([id]);
+        const raw = ok ? reviewItems({ ids: [id], drafts: false })[0] : null;
+        if (raw && draftFix(raw)) startPlanFor([id]);
         else if (ok) startFixes([it.key]); else await decideLink(it.key, 'dismiss');
       } else if (it.kind === 'past-fix') {
         // Approve runs the corrective fix through the batch planner (several at once come from the bulk plan); Archive
@@ -3228,6 +3229,12 @@ function drafted(item) {
   const b = brain();
   const next = withDraft(item, d, (rel) => readVault(b.vault, rel));
   return next.ops.length ? { ...next, hashes: { ...(item.hashes ?? {}), ...hashNotes(b.vault, notesOf(next)) } } : next;
+}
+// the agent's fix for a review item, or null: the item with its stored draft applied while drafting is on, the draft's
+// notes are unchanged and its quotes still match. Other Approve paths (a past fix Quorum cannot undo exactly) call it
+function draftFix(item) {
+  const next = drafted(item);
+  return next !== item && next.draft && next.ops?.length ? next : null;
 }
 const drafter = createDrafter({
   file: path.join(DATA_DIR, 'memory-drafts.json'),
