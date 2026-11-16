@@ -3007,6 +3007,7 @@ async function undoPastFix(id) {
   const b = brain();
   const run = fixRunList().find((r) => r.id === id);
   if (!b || !run || run.vault !== b.vault) throw new Error('That fix was made in another vault');
+  if (run.status !== 'success' || !pastFixCheck()?.cache.results[run.id]?.flagged) throw new Error('That fix is not one to check');
   const plan = pastFixPlan(run, true);
   if (!plan?.ok) throw new Error(plan?.why ?? 'There is nothing to undo on that fix');
   const nowText = (rel) => { try { return readFileSync(vaultPath(b.vault, rel), 'utf8'); } catch { return null; } };
