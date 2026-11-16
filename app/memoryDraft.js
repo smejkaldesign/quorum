@@ -13,7 +13,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { frontBlock } from './frontmatter.js';
+import { FRONT, frontBlock } from './frontmatter.js';
 import { aliasText } from './relink.js';
 
 export const DAILY_CAP = 40;
@@ -118,7 +118,9 @@ export function checkDraft(item, notes, reply) {
   const quotes = verifyQuotes(j.quotes, notes);
   if (!quotes.length) return { why: 'The draft quotes no evidence' };
   if (quotes.some((q) => !q.ok)) return { why: 'A quote in the draft does not match its note' };
-  const text = typeof j.text === 'string' ? j.text.trim() : '';
+  // a body only: a frontmatter block the reply opens with is dropped, so a draft never sets a note's aliases or marks
+  let text = typeof j.text === 'string' ? j.text.trim() : '';
+  while (FRONT.test(text)) text = text.replace(FRONT, '').trim();
   const rels = notes.map((n) => n.rel);
   const common = { quotes, confidence, verified: true };
   if (kind === 'create') {

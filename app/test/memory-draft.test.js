@@ -54,6 +54,13 @@ describe('quote checks', () => {
     expect(checkDraft(createItem, [A, B], 'no json here').why).toMatch(/did not answer/);
   });
 
+  it('drops a frontmatter block from the drafted text, so a draft cannot set aliases or marks', () => {
+    const quotes = [{ path: 'notes/a.md', line: 2, text: 'The zephyr project ships in March.' }];
+    const text = '---\naliases: [orbit]\nconfidential: false\n---\nZephyr ships in March.';
+    expect(checkDraft(createItem, [A, B], reply({ kind: 'create', text, quotes, confidence: 'high' })).draft.text).toBe('Zephyr ships in March.');
+    expect(checkDraft(createItem, [A, B], reply({ kind: 'create', text: '---\naliases: [orbit]\n---\n', quotes, confidence: 'high' })).why).toMatch(/no note text/);
+  });
+
   it('keeps a point draft only for the note Quorum offered', () => {
     const notes = [A, { rel: 'notes/orbit-plan.md', text: '# Orbit plan\nThe orbit plan.' }];
     const q = [{ path: 'notes/orbit-plan.md', line: 2, text: 'The orbit plan.' }];
