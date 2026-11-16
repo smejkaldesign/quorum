@@ -5,12 +5,13 @@ import markReview from '../assets/quorum-mark.png';
 import { CATEGORIES, HEALTH_SORTS, categoryCounts, countsLine, healthList, issueMeta, type HealthCategory, type HealthSort, type Issue } from '../memoryHealth.js';
 import { IconArchive, IconCheck, IconChevron, IconClose, IconReset } from './icons';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
-import { DismissButton, IssueParts, ReviewDetails, RowMenu, RunBanner, StatusBadge, StatusSwap, UndoMenu, ViewButton, ago, runStatus, took } from './NotificationsView';
+import { BulkPick, DismissButton, IssueParts, ReviewDetails, RowMenu, RunBanner, StatusBadge, StatusSwap, UndoMenu, ViewButton, ago, runStatus, took } from './NotificationsView';
 import type { FixRun, MemoryDraft, MemoryFinding } from './quorum';
 import { MemoryFindings } from './MemoryFindings';
 import { toast } from './Toasts';
 import { Segmented } from './controls';
 import { BulkPlan } from './BulkPlan';
+import { NO_SELECTION, bulkView, dropAcross, selectedIds, toggleAcross, toggleOne, togglePage, type BulkSel } from './bulkSelect';
 
 // Memory health: links that point at a note that does not exist, one row per missing note, in the same list pattern
 // as Notifications. Each row states the issue, the problem it causes, what fixing it does and the recommended action,
@@ -50,6 +51,8 @@ const CHANGED = 'quorum:activity-changed';
 type Tab = 'all' | 'unread' | 'archived';
 const issueId = (key: string) => `r:link:${key}`;
 const runId = (r: FixRun) => `f:${r.id}`;
+// the rows listed at first; Show more adds as many again
+const PAGE = 50;
 
 export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   focus: string | null; isLive: (rel: string) => boolean; onReview: (issue: Issue) => void; onClose: () => void; onChanged: () => void;
@@ -62,7 +65,8 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const [q, setQ] = useState('');
   const [searching, setSearching] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
-  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [bulk, setBulk] = useState<BulkSel>(NO_SELECTION);
+  const [shownN, setShownN] = useState(PAGE);
   const [done, setDone] = useState('');
   const [busy, setBusy] = useState(false);
   const [runs, setRuns] = useState<FixRun[]>([]);
@@ -92,7 +96,8 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   // an issue answered in Notifications leaves this list too: both read the same issues
   useEffect(() => { const go = () => { load(); }; window.addEventListener(CHANGED, go); return () => window.removeEventListener(CHANGED, go); }, [load]);
   useEffect(() => { if (focus) document.getElementById(`lh-${focus.toLowerCase()}`)?.scrollIntoView({ block: 'center' }); }, [focus, items]);
-  useEffect(() => { setPicked(new Set()); }, [tab, review, cats, q, sort]);
+  // a new tab, filter, sort or search starts again at the first page with nothing picked
+  useEffect(() => { setBulk(NO_SELECTION); setShownN(PAGE); }, [tab, review, cats, q, sort]);
 
   const all = items ?? [];
   const left = leftOf(all);
@@ -141,7 +146,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   };
   const after = async (msg: string) => {
     setDone(msg);
-    setPicked(new Set());
+    setBulk(NO_SELECTION);
     await load();
     onChanged();
     window.dispatchEvent(new Event(CHANGED));
@@ -170,13 +175,20 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
     await after(issues.length === 1 ? 'Moved back to review' : `Moved ${issues.length} back to review`);
   };
 
+  // the first pages of the list, and far enough to show the issue a link opened here for
+  const focusAt = focus ? entries.findIndex((e) => 'issue' in e && e.issue.key === focus.toLowerCase()) : -1;
+  const pageEntries = entries.slice(0, Math.max(shownN, focusAt + 1));
+  const pageIds = pageEntries.map(idOf);
+  const view = bulkView(pageIds, bulk, entries.length);
+  // with Select all on, every entry that matches counts as picked, on this page or not
+  const picked = new Set(selectedIds(bulk, pageIds, entries.map(idOf)));
   // the Approve mark stays until the issue's run reports in (see onFixRun), so the row never flickers between the two
   const sel = list.filter((i) => picked.has(i.key) && !liveRuns.has(i.key));
   const pickedRuns = entries.flatMap((e) => ('run' in e && picked.has(e.run.id) && e.run.endedAt ? [e.run] : []));
   const pickedLeft = tab === 'archived' ? entries.flatMap((e) => ('issue' in e && picked.has(e.issue.key) ? [e.issue] : [])) : [];
   const markRead = async (ids: string[]) => { await window.quorum.activityMark(ids.map((id) => ({ id, abs: "" })), false).catch(() => 0); load(); window.dispatchEvent(new Event(CHANGED)); };
-  const allOn = entries.length > 0 && entries.every((e) => picked.has(idOf(e)));
-  const toggle = (k: string) => setPicked((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  const toggle = (k: string) => setBulk((s) => toggleOne(k, s, pageIds));
+  const clear = () => setBulk(NO_SELECTION);
   const catLabel = Object.fromEntries(CATEGORIES.map((c) => [c.id, c.label])) as Record<HealthCategory, string>;
 
   // View opens the note on its issue with the drawer open; a click on the row or the chevron folds the write-up open
@@ -272,15 +284,14 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
       )}
       {entries.length > 0 && (
         <div className="nf-bulk">
-          <label className="nf-check"><input type="checkbox" checked={allOn} aria-label="Select all" onChange={() => setPicked(allOn ? new Set() : new Set(entries.map(idOf)))} /></label>
-          <span className="muted">{picked.size ? `${picked.size} selected` : 'Select all'}</span>
-          <span className={`nf-bulk-actions${picked.size ? '' : ' hidden'}`} aria-hidden={!picked.size}>
+          <BulkPick view={view} across={bulk.across} onPage={() => setBulk((s) => togglePage(pageIds, s))} onAcross={() => setBulk((s) => toggleAcross(pageIds, s))} />
+          <span className={`nf-bulk-actions${view.count ? '' : ' hidden'}`} aria-hidden={!view.count}>
             {tab === 'archived'
-              ? <button className="act-pill" disabled={busy} onClick={async () => { await back(pickedLeft, pickedRuns); setPicked(new Set()); await load(); window.dispatchEvent(new Event(CHANGED)); }}>Move back</button>
+              ? <button className="act-pill" disabled={busy} onClick={async () => { await back(pickedLeft, pickedRuns); clear(); await load(); window.dispatchEvent(new Event(CHANGED)); }}>Move back</button>
               : <>
                   {/* left to right: Archive, Mark read, and Approve as the primary action on the far right */}
-                  <button className="icon-btn mh-icon" disabled={busy} aria-label="Archive" data-tip="Archive: set them aside without fixing them" onClick={async () => { if (pickedRuns.length) { await window.quorum.activityArchive(pickedRuns.map((r) => ({ id: runId(r) })), true); for (const r of pickedRuns) await window.quorum.fixDismiss([r.id]).catch(() => 0); } if (sel.length) await decide(sel, 'dismiss'); else { setPicked(new Set()); load(); } }}><IconArchive width={16} height={16} /></button>
-                  <button className="act-pill" disabled={busy || !entries.some((e) => picked.has(idOf(e)) && unreadOf(e))} onClick={async () => { await markRead(entries.filter((e) => picked.has(idOf(e)) && unreadOf(e)).map((e) => ('issue' in e ? issueId(e.issue.key) : runId(e.run)))); setPicked(new Set()); }}>Mark read</button>
+                  <button className="icon-btn mh-icon" disabled={busy} aria-label="Archive" data-tip="Archive: set them aside without fixing them" onClick={async () => { if (pickedRuns.length) { await window.quorum.activityArchive(pickedRuns.map((r) => ({ id: runId(r) })), true); for (const r of pickedRuns) await window.quorum.fixDismiss([r.id]).catch(() => 0); } if (sel.length) await decide(sel, 'dismiss'); else { clear(); load(); } }}><IconArchive width={16} height={16} /></button>
+                  <button className="act-pill" disabled={busy || !entries.some((e) => picked.has(idOf(e)) && unreadOf(e))} onClick={async () => { await markRead(entries.filter((e) => picked.has(idOf(e)) && unreadOf(e)).map((e) => ('issue' in e ? issueId(e.issue.key) : runId(e.run)))); clear(); }}>Mark read</button>
                   <button className="act-pill primary" disabled={busy || !sel.length || sel.some(locked)} onClick={() => (sel.length > 1 ? setPlan({ ids: sel.map((i) => issueId(i.key)), everything: false }) : decide(sel, 'approve'))}>Approve</button>
                 </>}
           </span>
@@ -294,10 +305,11 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
         if (!list.length) return null;
         return <BatchBanner runs={list} error={one?.status === 'error' ? one.error : null} onDismiss={() => { setHiddenBatch(last); try { localStorage.setItem('quorum.hiddenBatch', last); } catch { /* the banner just shows again next time */ } }} />;
       })()}
-      <div className="nf-list">{entries.map((e) => ('issue' in e ? row(e.issue) : <RunRow key={e.run.id} run={e.run} unread={tab !== 'archived' && unreadOf(e)} picked={picked.has(e.run.id)} onPick={() => toggle(e.run.id)} />))}</div>
+      <div className="nf-list">{pageEntries.map((e) => ('issue' in e ? row(e.issue) : <RunRow key={e.run.id} run={e.run} unread={tab !== 'archived' && unreadOf(e)} picked={picked.has(e.run.id)} onPick={() => toggle(e.run.id)} />))}</div>
+      {entries.length > pageEntries.length && <button className="act-pill nf-more-btn" onClick={() => { setShownN(pageEntries.length + PAGE); setBulk(dropAcross); }}>Show more</button>}
       {findingsShown && <MemoryFindings findings={findings} drafts={drafts} archived={tab === 'archived'} q={q} unread={marks.unread} onArchive={archiveFindings} onApprove={approveFinding} onRead={markRead} />}
       {!entries.length && !findingsShown && <div className="nf-empty"><p>{empty}</p></div>}
-      {plan && <BulkPlan ids={plan.ids} everything={plan.everything} onClose={() => setPlan(null)} onApplied={() => { setPicked(new Set()); load(); onChanged(); window.dispatchEvent(new Event(CHANGED)); }} />}
+      {plan && <BulkPlan ids={plan.ids} everything={plan.everything} onClose={() => setPlan(null)} onApplied={() => { clear(); load(); onChanged(); window.dispatchEvent(new Event(CHANGED)); }} />}
     </div>
   );
 }
