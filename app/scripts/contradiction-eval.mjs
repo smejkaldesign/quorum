@@ -21,6 +21,8 @@ const appDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const load = (f) => import(pathToFileURL(path.join(appDir, f)).href);
 const { createVaultIndex } = await load('vindex.js');
 const { analyze, run } = await load('rules/contradictions.js');
+const { packBatches, BATCH_CHARS } = await load('contradictionAgent.js');
+const { DAILY_CAP } = await load('memoryDraft.js');
 
 const vaultDir = path.resolve(vaultArg);
 const idx = createVaultIndex({ vault: vaultDir, isExcludedPath: () => false, isExcludedText: () => false, redact: (t) => t, onChange: () => {} });
@@ -36,7 +38,10 @@ const findings = run(ctx);
 const count = (list, key) => list.reduce((m, x) => { const k = key(x); m[k] = (m[k] ?? 0) + 1; return m; }, {});
 const open = a.results.filter((r) => !r.res.closed && !r.res.pending);
 
-console.log(`notes ${a.notes}, sent to extraction when drafting is on ${a.worth}`);
+const batches = packBatches(a.toRead);
+const chars = a.toRead.reduce((n, x) => n + Math.min(12000, x.text.length), 0);
+console.log(`notes ${a.notes}; stage 1 sends ${a.worth} to claim extraction, plus ${a.linked} that link to one of them`);
+console.log(`first pass: ${batches.length} claim calls of up to ${BATCH_CHARS} characters (about ${Math.round(chars / 4 / 1000)}k input tokens in all), ${Math.ceil(batches.length / DAILY_CAP)} days at ${DAILY_CAP} calls a day before judge calls`);
 console.log(`structured claims ${a.claims.length}`, count(a.claims, (c) => c.extractor));
 console.log(`attribute groups ${a.groups}, candidate pairs ${a.pairs.length}`, count(a.pairs, (p) => p.match));
 console.log('resolved', count(a.results, (r) => r.res.rule ?? r.res.pending));
