@@ -254,3 +254,25 @@ export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = ''
     dot: unread.length > 0 || waiting.some(shown),
   };
 }
+
+// Needs review for Memory health: the items a person still has to decide on, one list for every count that shows it
+// (the Memory health button, the folder counts in the notes tree, the Needs review toggle in Memory health). It is the
+// Notifications Needs review list narrowed to Memory health, so it holds the same items: missing links, findings
+// (contradictions among them), past fixes and Retroactive improvements, and the rules Quorum proposes, each after the
+// quality gate, with an archived or decided item left out and an item being fixed left out of the count. Each item
+// counts toward the note it is about and every folder above that note; an item about no note (a proposed rule, a note
+// at the top of the vault) counts in the total only
+export function needsReview(rows, opts = {}) {
+  const page = feedPage(rows, { ...opts, tab: 'all', review: true, kinds: ['memory-health'], q: '', offset: 0, limit: 1e6, idsOnly: false });
+  const items = page.items.filter((r) => !r.fixRun);
+  const files = {};
+  const folders = {};
+  for (const r of items) {
+    const rel = r.review?.kind === 'ignore' ? '' : String(r.target?.rel ?? '');
+    if (!/\.md$/i.test(rel)) continue;
+    files[rel] = (files[rel] ?? 0) + 1;
+    const parts = rel.split('/');
+    for (let k = 1; k < parts.length; k++) { const f = parts.slice(0, k).join('/'); folders[f] = (folders[f] ?? 0) + 1; }
+  }
+  return { items, total: items.length, files, folders };
+}
