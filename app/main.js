@@ -2030,6 +2030,7 @@ const feedState = () => {
   if (!feedStateCache.since) { feedStateCache.since = new Date().toISOString(); feedStateSave(); }
   feedStateCache.read ??= {};
   feedStateCache.unread ??= {};
+  feedStateCache.archived ??= {};
   return feedStateCache;
 };
 // the marks kept: the newest 5000 of each, so the file stays small
@@ -2100,7 +2101,7 @@ function feedSources() {
 ipcMain.handle('activity-feed', (_e, query) => {
   const q = query ?? {};
   return feedPage(feedRows(feedSources()), {
-    tab: q.tab === 'unread' ? 'unread' : 'all', review: q.review === true, kinds: Array.isArray(q.kinds) ? q.kinds.map(String) : [], q: String(q.q ?? ''),
+    tab: ['unread', 'archived'].includes(q.tab) ? q.tab : 'all', archived: Object.keys(feedState().archived), review: q.review === true, kinds: Array.isArray(q.kinds) ? q.kinds.map(String) : [], q: String(q.q ?? ''),
     sort: String(q.sort ?? 'unread'), offset: Number(q.offset) || 0, limit: Number(q.limit ?? 50), prefs: settings.notifications ?? {},
   });
 });
@@ -2114,6 +2115,21 @@ const feedFile = (abs) => {
 };
 // rows marked read or unread, one at a time: opening a row, the row's menu, or Mark read on a selection. A memory
 // marked read also counts as opened in the Memory tab, which clears its dot there
+// archive hides rows from the list without touching the records they come from; unarchive brings them back. Archiving
+// also marks a row read. Kept on this Mac with the read marks
+ipcMain.handle('activity-archive', (_e, rows, on) => {
+  const st = feedState();
+  const at = new Date().toISOString();
+  let n = 0;
+  for (const r of Array.isArray(rows) ? rows : []) {
+    const id = String(r?.id ?? '');
+    if (!id || id.length > 2000) continue;
+    if (on === false) delete st.archived[id]; else { st.archived[id] = at; st.read[id] = at; delete st.unread[id]; }
+    n++;
+  }
+  feedStateSave();
+  return n;
+});
 ipcMain.handle('activity-mark', (_e, rows, unread) => {
   const b = brain();
   const st = feedState();

@@ -70,7 +70,7 @@ describe('feedRows', () => {
 describe('feedPage', () => {
   it('counts All, Unread and Needs review, and shows the dot', () => {
     const p = feedPage(rows);
-    expect(p.counts).toEqual({ all: rows.length, unread: 6, review: 2 });
+    expect(p.counts).toEqual({ all: rows.length, unread: 6, review: 2, archived: 0 });
     expect(p.dot).toBe(true);
   });
 
@@ -145,5 +145,20 @@ describe('junk notes', () => {
     expect(page.total).toBe(1);
     expect(page.counts.review).toBe(1);
     expect(page.dot).toBe(true);
+  });
+});
+
+describe('archive', () => {
+  it('moves archived rows out of every tab and the dot, and lists them under Archived', () => {
+    const rows = [
+      { id: 'a', kind: 'imported', at: 3, unread: true, review: null, target: { title: 'A' } },
+      { id: 'b', kind: 'imported', at: 2, unread: true, review: null, target: { title: 'B' } },
+    ];
+    const p = feedPage(rows, { archived: ['a'] });
+    expect(p.items.map((r) => r.id)).toEqual(['b']);
+    expect(p.counts).toMatchObject({ all: 1, unread: 1, archived: 1 });
+    const shelf = feedPage(rows, { tab: 'archived', archived: ['a'] });
+    expect(shelf.items.map((r) => [r.id, r.archived])).toEqual([['a', true]]);
+    expect(feedPage(rows, { archived: ['a', 'b'] }).dot).toBe(false);
   });
 });

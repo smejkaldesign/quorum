@@ -93,6 +93,7 @@ contextBridge.exposeInMainWorld('quorum', {
   // the Notifications view: every note's and memory's activity in one feed, rows marked read or unread, review items decided
   activityFeed: (query) => ipcRenderer.invoke('activity-feed', query),
   activityMark: (rows, unread) => ipcRenderer.invoke('activity-mark', rows, unread === true),
+  activityArchive: (rows, on) => ipcRenderer.invoke('activity-archive', rows, on !== false),
   activityReview: (items, verdict) => ipcRenderer.invoke('activity-review', items, verdict),
   vaultSearch: (q, limit) => ipcRenderer.invoke('vault-search', q, limit),
   vaultBacklinks: (rel) => ipcRenderer.invoke('vault-backlinks', rel),

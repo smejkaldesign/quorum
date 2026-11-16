@@ -22,7 +22,7 @@ export const FEED_KINDS = [
   ['guardrail', 'Guardrail blocked'],
   ['you', 'Your changes'],
 ];
-export const FEED_TABS = ['all', 'unread'];
+export const FEED_TABS = ['all', 'unread', 'archived'];
 // Urgency is a future sort: it needs a score per row (how old a waiting review is, how large a change, how sensitive
 // the file a guard protected) before it can order the list
 export const FEED_SORTS = ['unread', 'recent', 'az'];
@@ -141,13 +141,17 @@ const SORTS = {
 // one page of a tab. All and Unread leave out the rows whose switch is off; the Needs review filter keeps only the
 // items waiting for a decision, and lists them all whatever the switches say. kinds narrows to event types, q to rows
 // whose words match. counts and dot are for the bell and the labels, and use the switches the same way
-export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = '', sort = 'unread', offset = 0, limit = 50, prefs = {}, locale } = {}) {
+// archived holds the ids the person archived: they leave All, Unread, Needs review and the dot, and list under Archived
+export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = '', sort = 'unread', offset = 0, limit = 50, prefs = {}, locale, archived = [] } = {}) {
+  const gone = new Set(archived);
+  const kept = rows.filter((r) => !gone.has(r.id));
+  const shelf = rows.filter((r) => gone.has(r.id)).map((r) => ({ ...r, archived: true }));
   const shown = (r) => prefOn(prefs, prefOf(r));
-  const unread = rows.filter((r) => r.unread && shown(r));
-  const reviews = rows.filter((r) => r.review);
-  const all = rows.filter(shown);
-  let list = tab === 'unread' ? unread : all;
-  if (review) list = (tab === 'unread' ? reviews.filter((r) => r.unread) : reviews);
+  const unread = kept.filter((r) => r.unread && shown(r));
+  const reviews = kept.filter((r) => r.review);
+  const all = kept.filter(shown);
+  let list = tab === 'archived' ? shelf : tab === 'unread' ? unread : all;
+  if (review && tab !== 'archived') list = (tab === 'unread' ? reviews.filter((r) => r.unread) : reviews);
   const kindSet = new Set(kinds);
   const words = String(q ?? '').trim().toLowerCase().split(/\s+/).filter(Boolean);
   list = list.filter((r) => (!kindSet.size || kindSet.has(r.kind)) && matches(r, words));
@@ -158,7 +162,7 @@ export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = ''
     items: list.slice(start, end).map((r) => ({ ...r, details: detailsOf(r, { locale }) })),
     total: list.length,
     more: end < list.length,
-    counts: { all: all.length, unread: unread.length, review: reviews.length },
+    counts: { all: all.length, unread: unread.length, review: reviews.length, archived: shelf.length },
     dot: unread.length > 0 || reviews.some(shown),
   };
 }
