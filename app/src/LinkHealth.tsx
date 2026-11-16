@@ -323,6 +323,8 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
             <div key={h.id} className="set-line mr-rule">
               <span className="mr-name"><strong>{h.title}</strong><span className="muted">{h.line}</span><span className="muted">{h.why}</span></span>
               {h.bucket === 'check' && <span className="mr-counts"><span className="mr-count" data-tip="It waits unticked in Review everything">Check these first</span></span>}
+              {/* picked by id, a held item keeps its verdict and can run (main.js gatedItems) */}
+              <button className="act-pill" disabled={busy} aria-label={`Approve ${h.title}`} data-tip="Plan its fix, then choose whether it runs" onClick={() => setPlan({ ids: [h.id], everything: false })}>Approve</button>
             </div>
           ))}
         </div>
