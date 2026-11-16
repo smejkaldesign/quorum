@@ -4,14 +4,19 @@ import { IconChevron } from './icons';
 import { Modal, ModalActions } from './controls';
 import { toast } from './Toasts';
 
+// the ticks the person changed, as the ids main leaves out and the check-first ids it adds back
+const ticks = (picks: Map<string, boolean>) => ({ exclude: [...picks].filter(([, on]) => !on).map(([id]) => id), include: [...picks].filter(([, on]) => on).map(([id]) => id) });
+
 // The bulk plan sheet (batchPlan.js): Approve on several items, or Review everything, opens it at once with the
 // loader, then shows what the batch will do as groups with counts, each folding open to its items, and what was merged,
-// skipped or held back and why. Unticking a group or an item plans again without it. Apply runs the plan as one batch
+// skipped or held back and why. Unticking a group or an item plans again without it. Fixes a person should read first
+// (batchPlan.js checkFirst) list under Check these first, unticked until ticked. Apply runs the plan as one batch
 // with the progress banner; Cancel changes nothing. ids: the row ids picked, or null for everything in Needs review.
 // everything: Review everything, which also offers to save the plan as a note (off unless ticked)
 export function BulkPlan({ ids, everything = false, onClose, onApplied }: { ids: string[] | null; everything?: boolean; onClose: () => void; onApplied: () => void }) {
   const [view, setView] = useState<PlanView | null>(null);
-  const [off, setOff] = useState<Set<string>>(new Set());
+  // the ticks the person changed: id -> on. Main leaves out every check-first item that is not ticked here
+  const [picks, setPicks] = useState<Map<string, boolean>>(new Map());
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [saveNote, setSaveNote] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -19,14 +24,16 @@ export function BulkPlan({ ids, everything = false, onClose, onApplied }: { ids:
   const asked = useRef(0);
   useEffect(() => {
     const n = ++asked.current;
-    window.quorum.fixPlan(ids, [...off]).then((v) => { if (n === asked.current) { setView(v); setError(''); } }).catch((e) => setError(String(e).replace(/^.*Error:\s*/, '')));
-  }, [ids, off]);
-  const flip = (list: string[], on: boolean) => setOff((s) => { const n = new Set(s); for (const id of list) { if (on) n.delete(id); else n.add(id); } return n; });
+    const { exclude, include } = ticks(picks);
+    window.quorum.fixPlan(ids, exclude, include).then((v) => { if (n === asked.current) { setView(v); setError(''); } }).catch((e) => setError(String(e).replace(/^.*Error:\s*/, '')));
+  }, [ids, picks]);
+  const flip = (list: string[], on: boolean) => setPicks((s) => { const n = new Map(s); for (const id of list) n.set(id, on); return n; });
   const fold = (id: string) => setOpen((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const apply = async () => {
     setBusy(true);
     try {
-      const r = await window.quorum.fixPlanApply(ids, [...off], { saveNote: everything && saveNote });
+      const { exclude, include } = ticks(picks);
+      const r = await window.quorum.fixPlanApply(ids, exclude, { saveNote: everything && saveNote }, include);
       toast(r.run ? `Applying ${r.run.items?.length ?? 0} ${r.run.items?.length === 1 ? 'fix' : 'fixes'} as one batch.${r.note ? ` Saved the plan as ${r.note}.` : ''}` : r.note ? `Saved the plan as ${r.note}. Nothing was applied.` : 'Nothing in the plan can run.');
       onApplied();
       onClose();
@@ -38,32 +45,38 @@ export function BulkPlan({ ids, everything = false, onClose, onApplied }: { ids:
       {!view
         ? <p className="bp-loading" role="status"><i className="run-spin" /> <span className="shimmer">Building your bulk accept plan...</span></p>
         : <>
-            <p>{view.run ? `Quorum runs ${view.run} of ${view.total} ${view.total === 1 ? 'item' : 'items'} as one batch, in an order where each step can run. Undo on the batch puts every note back.` : 'Nothing in this plan can run. The reasons are below.'}</p>
-            <div className="bp-list" role="list">
-              {view.groups.map((g) => {
-                const on = g.items.filter((i) => i.on).length;
-                return (
-                  <div key={g.id} className="bp-group" role="listitem">
-                    <div className="bp-row">
-                      <input type="checkbox" aria-label={g.label} checked={on > 0} ref={(el) => { if (el) el.indeterminate = on > 0 && on < g.items.length; }} onChange={(e) => flip(g.items.map((i) => i.id), e.target.checked)} />
-                      <span className="bp-label">{g.label}</span>
-                      <span className="nf-count">{on}</span>
-                      <button className={`icon-btn conn-fold${open.has(g.id) ? ' open' : ''}`} aria-expanded={open.has(g.id)} aria-label={open.has(g.id) ? 'Hide items' : 'Show items'} onClick={() => fold(g.id)}><IconChevron width={14} height={14} /></button>
-                    </div>
-                    {open.has(g.id) && (
-                      <ul className="bp-items">
-                        {g.items.map((i) => (
-                          <li key={i.id}>
-                            <label><input type="checkbox" checked={i.on} onChange={(e) => flip([i.id], e.target.checked)} /> <span>{i.line}</span></label>
-                            {i.notes.length > 0 && <span className="bp-notes" data-tip={i.notes.join(', ')}>{i.notes.length === 1 ? i.notes[0] : `${i.notes.length} notes`}</span>}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+            <p>{view.run ? `Quorum runs ${view.run} of ${view.total} ${view.total === 1 ? 'item' : 'items'} as one batch, in an order where each step can run. Undo on the batch puts every note back.` : view.groups.some((g) => g.check) ? 'Nothing is ticked yet. Tick the fixes under Check these first to add them to the batch.' : 'Nothing in this plan can run. The reasons are below.'}</p>
+            {[view.groups.filter((g) => !g.check), view.groups.filter((g) => g.check)].map((list, at) => list.length > 0 && (
+              <section key={at} className="bp-section" aria-labelledby={at ? 'bp-check-title' : undefined}>
+                {at === 1 && <h3 id="bp-check-title" className="bp-heading">Check these first</h3>}
+                {at === 1 && <p className="bp-sub">These start unticked. Apply leaves them out unless you tick them.</p>}
+                <div className="bp-list" role="list">
+                  {list.map((g) => {
+                    const on = g.items.filter((i) => i.on).length;
+                    return (
+                      <div key={g.id} className="bp-group" role="listitem">
+                        <div className="bp-row">
+                          <input type="checkbox" aria-label={g.label} checked={on > 0} ref={(el) => { if (el) el.indeterminate = on > 0 && on < g.items.length; }} onChange={(e) => flip(g.items.map((i) => i.id), e.target.checked)} />
+                          <span className="bp-label">{g.label}{g.reason && <span className="bp-reason">{g.reason}</span>}</span>
+                          <span className="nf-count">{on}</span>
+                          <button className={`icon-btn conn-fold${open.has(g.id) ? ' open' : ''}`} aria-expanded={open.has(g.id)} aria-label={open.has(g.id) ? `Hide items: ${g.label}` : `Show items: ${g.label}`} onClick={() => fold(g.id)}><IconChevron width={14} height={14} /></button>
+                        </div>
+                        {open.has(g.id) && (
+                          <ul className="bp-items">
+                            {g.items.map((i) => (
+                              <li key={i.id}>
+                                <label><input type="checkbox" checked={i.on} onChange={(e) => flip([i.id], e.target.checked)} /> <span>{i.line}</span></label>
+                                {i.notes.length > 0 && <span className="bp-notes" data-tip={i.notes.join(', ')}>{i.notes.length === 1 ? i.notes[0] : `${i.notes.length} notes`}</span>}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
             {notes.map(([label, xs]) => xs.length > 0 && (
               <details key={label} className="bp-why">
                 <summary>{label} <span className="nf-count">{xs.length}</span></summary>

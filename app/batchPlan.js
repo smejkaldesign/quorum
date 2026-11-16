@@ -81,12 +81,42 @@ export function groupOf(item) {
   if (ops.some((o) => o.op === 'move') && ops.some((o) => o.op === 'tag')) return 'move-tag';
   return GROUPS[ops[0]?.op] ? ops[0].op : 'relink';
 }
+// Fixes a person should read before they run: a written missing note, a weak relink or alias, a move, and a tag
+// guessed from other notes. A bulk plan leaves them unticked under Check these first, with this reason per group
+const CHECK = {
+  create: 'Quorum writes each note from the links to it alone, and those notes are often wrong.',
+  relink: 'The note each one points at is a weak match by name.',
+  alias: 'The note each alias goes on is a weak match by name.',
+  move: 'A move changes the folder of the note and every link to it.',
+  'move-tag': 'Quorum picked the folder and the tag from the notes each one links to.',
+  tag: 'Quorum guessed each tag from the other notes in its folder or the notes it links to.',
+};
+// the reason an item starts unticked in a bulk plan, or null when it starts ticked
+export function checkFirst(item) {
+  if (!item?.ops?.length || item.kind === 'pastfix') return null;
+  const g = groupOf(item);
+  if (item.kind === 'link') return item.reviewOnly || g === 'create' ? CHECK[g] ?? CHECK.relink : null;
+  if (item.kind === 'finding') return g === 'move' || g === 'move-tag' || !item.autoFix ? CHECK[g] ?? null : null;
+  return null;
+}
+// the ids a bulk plan leaves out: the ones the person unticked, and every check-first item they did not tick
+export function planExclude(items, exclude = [], include = []) {
+  const on = new Set(include.map(String));
+  const off = new Set(exclude.map(String));
+  for (const i of items) if (checkFirst(i) && !on.has(i.id)) off.add(i.id);
+  return off;
+}
 // how much an item adds to its group's count: links for a relink or unlink, one note otherwise
 const countOf = (item, group) => {
   if (group !== 'relink' && group !== 'unlink') return 1;
   const o = item.ops.find((x) => x.op === group);
   return o ? (o.links ?? (Object.values(o.lines ?? {}).reduce((s, l) => s + l.length, 0) || (o.sources ?? []).length || 1)) : 1;
 };
+// a group's label for these items, in the words of the plan
+export function groupLabel(group, items) {
+  const id = GROUPS[group] ? group : 'relink';
+  return GROUPS[id].label(items.reduce((n, i) => n + countOf(i, id), 0), items.length > 0 && items.every((i) => i.kind === 'pastfix'));
+}
 // the notes an item touches, for the checklist
 export function notesOf(item) {
   const out = new Set();

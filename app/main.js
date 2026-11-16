@@ -64,7 +64,7 @@ import { issueMeta, issueOf } from './memoryHealth.js';
 import { LINK_RULE, LINK_RULE_VERSION, contextNote, isGenerated } from './linkRules.js';
 import { createDecisionLog, fingerprint } from './decisionLog.js';
 import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, fixVersions, recheckAll, undoPlan } from './fixRecheck.js';
-import { buildPlan, checkOrder, effects, groupOf } from './batchPlan.js';
+import { buildPlan, checkFirst, checkOrder, effects, groupLabel, groupOf, notesOf, planExclude } from './batchPlan.js';
 import { ROW, findingItem, itemLine, linkItem, pastFixItem } from './reviewItems.js';
 import { removeFrontmatterKey } from './frontmatter.js';
 import { isOff } from './rules/common.js';
@@ -3177,29 +3177,39 @@ function reviewItems({ ids = null } = {}) {
   return out;
 }
 // the plan as the bulk plan sheet shows it: every group with each item ticked or not, and what was merged, skipped and
-// held back. An unticked item stays listed under its group so it can be ticked again
-function planView(items, exclude = []) {
-  const off = new Set(exclude.map(String));
+// held back. An unticked item stays listed under its group so it can be ticked again. Check-first items (checkFirst)
+// list in their own groups with check and a reason, and stay out of the plan until the person ticks them (include)
+function planView(items, exclude = [], include = []) {
+  const off = planExclude(items, exclude, include);
   const full = buildPlan(items);
   const cur = buildPlan(items, { exclude: [...off] });
   const byId = new Map(items.map((i) => [i.id, i]));
   const groups = new Map();
-  const curGroups = new Map(cur.groups.map((g) => [g.id, g]));
   for (const g of [...full.groups, ...cur.groups]) {
-    const e = groups.get(g.id) ?? groups.set(g.id, { id: g.id, label: curGroups.get(g.id)?.label ?? g.label, count: curGroups.get(g.id)?.count ?? 0, items: [] }).get(g.id);
+    const e = groups.get(g.id) ?? groups.set(g.id, { id: g.id, items: [] }).get(g.id);
     for (const i of g.items) if (!e.items.some((x) => x.id === i.id)) e.items.push({ ...i, line: itemLine(byId.get(i.id) ?? {}), on: cur.ok.includes(i.id) });
   }
   for (const id of off) {
     const i = byId.get(id);
     if (!i || !i.ops?.length) continue;
     const g = groupOf(i);
-    const e = groups.get(g) ?? groups.set(g, { id: g, label: buildPlan([i]).groups[0]?.label ?? g, count: 0, items: [] }).get(g);
-    if (!e.items.some((x) => x.id === id)) e.items.push({ id, title: i.title, kind: i.kind, notes: [], line: itemLine(i), on: false });
+    const e = groups.get(g) ?? groups.set(g, { id: g, items: [] }).get(g);
+    if (!e.items.some((x) => x.id === id)) e.items.push({ id, title: i.title, kind: i.kind, notes: notesOf(i), line: itemLine(i), on: false });
   }
   const order = full.groups.map((g) => g.id);
+  const out = [];
+  for (const g of [...groups.values()].sort((a, b) => (order.indexOf(a.id) + 1 || 99) - (order.indexOf(b.id) + 1 || 99))) {
+    for (const check of [false, true]) {
+      const list = g.items.filter((i) => !!checkFirst(byId.get(i.id)) === check);
+      if (!list.length) continue;
+      const raw = (xs) => xs.map((i) => byId.get(i.id)).filter(Boolean);
+      const view = { id: check ? `check:${g.id}` : g.id, label: groupLabel(g.id, raw(list)), count: list.filter((i) => i.on).length, items: list };
+      out.push(check ? { ...view, check: true, reason: checkFirst(raw(list)[0]) } : view);
+    }
+  }
   return {
     total: items.length, run: cur.ok.length, steps: cur.steps.length,
-    groups: [...groups.values()].sort((a, b) => (order.indexOf(a.id) + 1 || 99) - (order.indexOf(b.id) + 1 || 99)),
+    groups: [...out.filter((g) => !g.check), ...out.filter((g) => g.check)],
     merged: cur.merged, skipped: cur.skipped.filter((x) => !off.has(x.id)), held: cur.held.filter((x) => !off.has(x.id)),
   };
 }
@@ -3403,12 +3413,12 @@ function savePlanNote(view) {
   vindex?.sync();
   return rel;
 }
-ipcMain.handle('fix-plan', (_e, ids, exclude) => planView(reviewItems({ ids: Array.isArray(ids) ? ids.map(String) : null }), Array.isArray(exclude) ? exclude : []));
-ipcMain.handle('fix-plan-apply', (_e, ids, exclude, opts) => {
+const idList = (xs) => (Array.isArray(xs) ? xs.map(String) : []);
+ipcMain.handle('fix-plan', (_e, ids, exclude, include) => planView(reviewItems({ ids: Array.isArray(ids) ? ids.map(String) : null }), idList(exclude), idList(include)));
+ipcMain.handle('fix-plan-apply', (_e, ids, exclude, opts, include) => {
   const items = reviewItems({ ids: Array.isArray(ids) ? ids.map(String) : null });
-  const off = Array.isArray(exclude) ? exclude.map(String) : [];
-  const note = opts?.saveNote === true ? savePlanNote(planView(items, off)) : null;
-  const plan = buildPlan(items, { exclude: off });
+  const note = opts?.saveNote === true ? savePlanNote(planView(items, idList(exclude), idList(include))) : null;
+  const plan = buildPlan(items, { exclude: [...planExclude(items, idList(exclude), idList(include))] });
   const run = plan.ok.length ? startPlan(plan, items) : null;
   return { run, note };
 });

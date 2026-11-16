@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildPlan, checkOrder, effects, groupOf, planLine } from '../batchPlan.js';
+import { buildPlan, checkFirst, checkOrder, effects, groupLabel, groupOf, planExclude, planLine } from '../batchPlan.js';
 
 // synthetic items; every note name is made up
 const relink = (id, target, to, sources, lines = {}) => ({ id, kind: 'link', target, title: target, autoFix: true, ops: [{ op: 'relink', target, to, sources, lines }] });
@@ -110,5 +110,43 @@ describe('buildPlan order and groups', () => {
     expect(p.groups[1].items[0].notes).toEqual(['x.md', 'y.md']);
     expect(planLine(p)).toBe('Remove 2 notes earlier fixes created, Relink 3 links, Tag 2 notes confidential, Move and tag 1 note');
     expect(groupOf({ ops: [{ op: 'unalias', rel: 'a', alias: 'b' }] })).toBe('unalias');
+  });
+});
+
+describe('bulk plan default selection', () => {
+  const items = [
+    relink('strong', 'Kite', 'kite.md', ['a.md']),
+    { ...relink('weak', 'Lamp', 'lamp.md', ['b.md']), autoFix: false, reviewOnly: true },
+    create('stub', 'Moth', 'moth.md'),
+    tag('marked', 'c.md', 'team'),
+    { ...tag('guessed', 'd.md', 'team'), autoFix: false },
+    { id: 'move', kind: 'finding', target: 'move:e.md', title: 'e.md', ops: [{ op: 'move', rel: 'e.md', to: 'x/e.md' }] },
+    moveTag('movetag', 'f.md', 'x/f.md', 'team'),
+    restore('past', 'Owl', 'g.md'),
+  ];
+
+  it('leaves every review-only fix unticked and ticks the rest', () => {
+    expect(items.filter((i) => checkFirst(i)).map((i) => i.id)).toEqual(['weak', 'stub', 'guessed', 'move', 'movetag']);
+    const off = planExclude(items);
+    expect([...off].sort()).toEqual(['guessed', 'move', 'movetag', 'stub', 'weak']);
+    expect(buildPlan(items, { exclude: [...off] }).ok).toEqual(['past', 'strong', 'marked']);
+  });
+
+  it('gives each check-first group a one-line reason', () => {
+    for (const i of items.filter((x) => checkFirst(x))) expect(checkFirst(i)).toMatch(/^[A-Z][^\n]+\.$/);
+    expect(checkFirst(items[2])).toContain('links to it alone');
+  });
+
+  it('runs a check-first fix only when the person ticks it, and keeps a person\'s untick', () => {
+    const off = planExclude(items, ['strong'], ['stub']);
+    expect(off.has('stub')).toBe(false);
+    expect(off.has('strong')).toBe(true);
+    expect(off.has('weak')).toBe(true);
+    expect(buildPlan(items, { exclude: [...off] }).ok).toEqual(['past', 'stub', 'marked']);
+  });
+
+  it('labels a split group from its own items', () => {
+    expect(groupLabel('create', [items[2]])).toBe('Write 1 missing note');
+    expect(groupLabel('relink', [items[0], items[1]])).toBe('Relink 2 links');
   });
 });

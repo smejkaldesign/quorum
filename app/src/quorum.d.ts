@@ -275,7 +275,7 @@ export type FixRun = { id: string; key: string; target: string; title: string; r
 export type BatchItem = { id: string; kind: 'link' | 'pastfix' | 'finding'; key: string; link: string | null; title: string; line: string; status: 'queued' | 'running' | 'success' | 'error' };
 // the bulk plan sheet: groups of what the batch will do, each item ticked or not, and what was merged, skipped or held back
 export type PlanItem = { id: string; title: string; kind: string; notes: string[]; line: string; on: boolean };
-export type PlanGroup = { id: string; label: string; count: number; items: PlanItem[] };
+export type PlanGroup = { id: string; label: string; count: number; items: PlanItem[]; check?: boolean; reason?: string | null };
 export type PlanNote = { id: string; title: string; reason: string };
 export type PlanView = { total: number; run: number; steps: number; groups: PlanGroup[]; merged: (PlanNote & { items: string[] })[]; skipped: PlanNote[]; held: PlanNote[] };
 export type FeedRow = { id: string; at: number; kind: FeedKind; event: string; who: 'agent' | 'you'; target: { kind: 'note' | 'memory' | 'guardrail' | 'link'; abs: string; rel: string; title: string; gone?: boolean }; files: { rel: string; abs: string; label: string; title?: string }[]; unread: boolean; backfill: boolean; archived?: boolean; review?: { kind: 'note' | 'memory' | 'junk-note' | 'link' | 'past-fix' | 'finding'; count?: number; key?: string; undo?: boolean; fix?: boolean }; run?: FixRun; fixRun?: FixRun; summary: FeedSummary; details: [string, string][] };
@@ -454,8 +454,8 @@ declare global {
       fixRuns(): Promise<FixRun[]>;
       fixDismiss(ids: string[]): Promise<number>;
       fixUndo(id: string): Promise<string>;
-      fixPlan(ids: string[] | null, exclude: string[]): Promise<PlanView>;
-      fixPlanApply(ids: string[] | null, exclude: string[], opts?: { saveNote?: boolean }): Promise<{ run: FixRun | null; note: string | null }>;
+      fixPlan(ids: string[] | null, exclude: string[], include?: string[]): Promise<PlanView>;
+      fixPlanApply(ids: string[] | null, exclude: string[], opts?: { saveNote?: boolean }, include?: string[]): Promise<{ run: FixRun | null; note: string | null }>;
       confidentialMarks(): Promise<{ folders: Record<string, string>; notes: Record<string, string>; values: string[] }>;
       confidentialMark(rel: string, isDir: boolean, value: string | null): Promise<string>;
       onFixRun(cb: (run: FixRun) => void): () => void;
