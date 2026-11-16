@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { LiveRun, MemoryVersion, Settings } from './quorum';
 import { Row, Segmented, Toggle } from './controls';
 import { Section } from './NoteTools';
+import { useCatchupControl } from './Catchup';
 import { IconArrowDown, IconArrowUp, IconCheck, IconClock, IconClose, IconHighlight, IconListCheck, IconStop } from './icons';
 
 // Review of the changes Quorum's agents make to vault notes (memoryVersions.js) and of the issues Memory health finds
@@ -123,6 +124,7 @@ export function MemoryUpdatesCard({ settings, onSettings }: { settings: Settings
     const n = Math.round(Number(el.value));
     if (Number.isFinite(n) && n >= 1 && n <= 500) { el.value = String(n); if (n !== cap) save({ memoryDraftCap: n }); } else el.value = String(cap);
   };
+  const catchup = useCatchupControl(settings.memoryDrafts === true);
   return (
     <>
       <h3>Memory updates</h3>
@@ -146,6 +148,9 @@ export function MemoryUpdatesCard({ settings, onSettings }: { settings: Settings
         <Row icon={<IconListCheck width={18} height={18} />} title="Let the agent draft fixes"
           desc="For fixes the rules cannot decide (a missing note to write, a weak relink or alias, two notes that repeat each other), the agent reads those notes and drafts the fix with quoted lines and a confidence. It runs on your own Claude Code sign-in, reads only the notes Quorum gives it, and changes nothing until you approve. It waits while you record or type. Off by default.">
           <Toggle on={settings.memoryDrafts === true} onChange={(v) => save({ memoryDrafts: v })} />
+        </Row>
+        <Row icon={<IconListCheck width={18} height={18} />} title="Check everything now" desc={catchup.desc}>
+          {catchup.control}
         </Row>
         {settings.memoryDrafts === true && (
           <>

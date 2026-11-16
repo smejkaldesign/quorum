@@ -7,6 +7,8 @@ import { CONNECTORS, mcpPathsOf } from '../connectors/library';
 import { IconCalendar, IconCheck, IconFolder, IconFolderOpen, IconLock, IconMic, IconPerson, IconQuorum, IconShield, ProviderMark } from './icons';
 import { isCloud } from './edition';
 import { useNotetaker } from './flags';
+import { DRAFTS_NEEDED, catchupCost, useCatchupEstimate } from './Catchup';
+import { Toggle } from './controls';
 import { detectProvider, KEY_NAMES, KEY_PROVIDERS, SOURCE_NAMES, type KeyProvider } from './modelSource';
 import { SetupForm, answersFrom, draftFrom, draftIsEmpty, emptyDraft, type SetupDraft } from './SetupForm';
 import mark from '../assets/quorum-mark.png';
@@ -24,6 +26,9 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
   const nt = useNotetaker();
   // Use Quorum's models was picked: the account step is then required, since the relay needs a signed-in Cloud account
   const [managed, setManaged] = useState(false);
+  // Check my whole memory now: on by default once a vault connects; the pass starts when the person opens Quorum, after
+  // the model step, so the agent has a Claude Code sign-in to run on
+  const [catchup, setCatchup] = useState(true);
   // the fast part first, then permissions and Claude Code, which can take a few seconds; resolves when both are in
   const refresh = () => window.quorum.onboardingStatus().then(async (s) => {
     setStatus((prev) => ({ ...prev, ...s }));
@@ -55,7 +60,7 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
             <div className="onb-actions"><span /><button className="pill primary" autoFocus onClick={next}>Get started</button></div>
           </section>
         )}
-        {step === 'agentos' && <AgentOsStep brain={brain} status={status} onBrain={onBrain} onBack={back} onNext={next} />}
+        {step === 'agentos' && <AgentOsStep brain={brain} status={status} onBrain={onBrain} onBack={back} onNext={next} catchup={catchup} onCatchup={setCatchup} />}
         {step === 'you' && <NameStep onBack={back} onNext={next} />}
         {step === 'model' && <ModelStep status={status} onRefresh={refresh} onBack={back} onNext={next} onManaged={setManaged} />}
         {step === 'account' && <AccountStep slot={accountSlot} required={managed} onBack={back} onNext={next} />}
@@ -70,9 +75,10 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
               <li><ProviderMark provider="anthropic" /> {managed ? "Model: Quorum's models (after you sign in)" : status?.model?.source && status.model.source !== 'none' ? `Model: ${SOURCE_NAMES[status.model.source]}` : 'No model source yet (choose one in Settings › Connectors)'}</li>
               {nt.manualListen && <li><IconMic width={16} height={16} /> {status?.permissions?.microphone === 'granted' ? 'Microphone allowed' : nt.meetingCapture ? 'Microphone: macOS will ask on your first call' : 'Microphone: macOS will ask the first time you start listening'}</li>}
               {nt.meetingCapture && <li><IconShield width={16} height={16} /> {status?.permissions?.accessibility === 'granted' ? 'Accessibility allowed' : 'Accessibility: needed to read the meeting chat'}</li>}
+              {brain && catchup && <li><IconCheck width={16} height={16} /> Checks your whole memory in the background once Quorum opens</li>}
             </ul>
             <p>{nt.meetingCapture ? 'Quorum lives in the menu bar. When a Zoom, Google Meet or Teams call starts, it offers to listen.' : nt.manualListen ? 'Quorum lives in the menu bar. Start listening there or in the app to take a note of your own.' : 'Quorum lives in the menu bar.'}</p>
-            <div className="onb-actions"><button className="pill ghost" onClick={back}>Back</button><button className="pill primary" autoFocus onClick={async () => { await window.quorum.onboardingDone(); onDone(); }}>Open Quorum</button></div>
+            <div className="onb-actions"><button className="pill ghost" onClick={back}>Back</button><button className="pill primary" autoFocus onClick={async () => { await window.quorum.onboardingDone(); if (brain && catchup) window.quorum.memoryCatchupStart().catch(() => {}); onDone(); }}>Open Quorum</button></div>
           </section>
         )}
       </div>
@@ -92,7 +98,7 @@ function Actions({ onBack, onNext, ready, onSkip, extra, busy }: { onBack: () =>
 
 // the first real step: the folder of markdown notes Quorum and Claude Code work in. Two choices, and the create form
 // shows only once Create new is picked; meeting notes inside an existing folder are found by scanning it afterwards
-function AgentOsStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain | null; status: Status; onBrain: (b: Brain | null) => void; onBack: () => void; onNext: () => void }) {
+function AgentOsStep({ brain, status, onBrain, onBack, onNext, catchup, onCatchup }: { brain: Brain | null; status: Status; onBrain: (b: Brain | null) => void; onBack: () => void; onNext: () => void; catchup: boolean; onCatchup: (on: boolean) => void }) {
   const [mode, setMode] = useState<'create' | null>(null);
   const [name, setName] = useState('My Agent OS');
   const [dir, setDir] = useState<string | null>(null);
@@ -141,6 +147,8 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain 
     const off = window.quorum.onMemoryUpdates(() => { read(); });
     return () => { live = false; off(); };
   }, [root]);
+  // what Check my whole memory now costs, from stage 1 of the vault just connected
+  const estimate = useCatchupEstimate(root);
   const [connecting, setConnecting] = useState(false);
   const connectGranola = async () => {
     setConnecting(true); setError('');
@@ -173,6 +181,12 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext }: { brain: Brain 
         </div>
       )}
       {brain && checking !== null && <p className="muted onb-check" role="status">{checking ? 'Quorum is checking your memory. This can take a few minutes and runs in the background.' : 'Quorum checked your memory. Its suggestions are in Memory health.'}</p>}
+      {brain && (
+        <div className={`onb-choice ${catchup ? 'on' : ''}`}>
+          <div><strong>Check my whole memory now</strong><em>{catchupCost(estimate)} It starts when you open Quorum, writes nothing to your notes, and what it finds waits in Memory health.{estimate && !estimate.drafting ? ` ${DRAFTS_NEEDED}` : ''}</em></div>
+          <Toggle on={catchup} onChange={onCatchup} />
+        </div>
+      )}
       {!brain && mode === 'create' && (
         <div className="onb-form">
           <label className="set-field wide onb-field"><span className="onb-label">Name</span><input value={name} aria-label="Name of your Agent OS" placeholder="My Agent OS" autoFocus onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') create(true); }} /></label>

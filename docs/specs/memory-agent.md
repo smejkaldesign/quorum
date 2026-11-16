@@ -188,6 +188,20 @@ Items show both quotes with their note, line and date. They go through the batch
 
 The agent's calls share the drafter's daily cap and wait the same way. A draft goes first; claim extraction and judging take the minute only when the drafter has nothing to do, and only one model call runs at a time. A call that runs past 30 seconds shows in Agent activity on Home ("The agent is reading 12 notes for decisions that disagree", "The agent is checking two notes that may disagree") with Cancel, which stops the model call, gives its place under the daily cap back, and leaves the notes to be asked for again on the next sweep. A note the read guard blocks or a note marked confidential is never sent (the same gate as drafts). With drafting off, the rule reads structured claims only.
 
+### Check everything now
+
+A first full pass over a vault normally runs under the daily cap: on a vault of 2,000 notes, about a week at 40 calls a day. Check everything now (`app/memoryCatchup.js`) lifts the cap for one full pass only. It runs every pending draft and claim batch, then the pairs to judge those claims bring, one model call at a time, with the same timeouts, the read guard and the confidential gates. It does not wait for the person to stop typing, and it waits while a recording or a fix runs. Its calls do not count against the daily cap, so once the pass is done the normal cap applies again. It writes nothing to the vault; what it finds waits in Needs review.
+
+The pass shows at once in the agent activity banner on Home and in Memory health ("Checking all 1,940 notes: 12 of 261 calls"). Cancel stops the call that runs; that call is not counted, and everything left runs later under the normal cap.
+
+The pass needs Let the agent draft fixes; starting it turns that on and says so. It starts from:
+
+- Onboarding, once the vault connects: "Check my whole memory now", on by default, with the estimate ("This uses your Claude plan for about N calls and runs in the background."). The pass starts when the person opens Quorum, after the model step.
+- Settings > Memory: Check everything now, with the same estimate, off while a pass runs.
+- A script, for an existing install: `node scripts/memory-catchup.mjs [estimate|start|status|cancel] [--dev]` asks the running app over its control socket.
+
+The estimate is stage 1's notes to read that have no stored claims for their text now, packed into claim calls (`packBatches`), plus two calls for each item that waits for a draft and one for each draft that waits for its second. Judge calls are counted as the pass finds pairs.
+
 `app/scripts/contradiction-eval.mjs` runs stages 1, 3 and the symbolic part of 4 read-only against a vault with no model call and prints counts, and scores against contradiction labels kept outside the repo. It also packs the notes stage 1 sends into calls and prints how many calls and days the first pass takes. On a real vault of 1,940 notes, stage 1 sends 1,641 notes plus 66 linked ones: 261 calls (about 2.4M input tokens), 7 days at 40 calls a day before judge calls. The same vault reads 25,071 structured claims and makes no candidate pair, so the no-model path adds no items there; the first run takes about 0.7 s and later runs about 80 ms. The synthetic fixture (`app/test/fixtures/contradictions`) covers true contradictions, different times, a scope split, a refinement, the same fact in other words, an explicit marker, an authority inversion, an undated pair, a confidential note and a quote that does not match.
 
 ### Approve does the work (`main.js` agentNeed, agentResolve)
