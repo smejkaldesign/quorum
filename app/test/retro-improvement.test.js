@@ -118,13 +118,13 @@ describe('the agent drafts a Retroactive improvement', () => {
     expect(checkFirst(next)).toMatch(/The agent drafted these fixes/);
     expect(retroOps(retro, { action: 'remove' }, (rel) => g[rel] ?? null).ops).toEqual([{ op: 'trash', rel: 'n/Kite.md', expect: sha(g['n/Kite.md']) }]);
   });
-  it('shows under its own title and passes the gate only after a second draft agrees', () => {
+  it('shows under its own title and starts ticked only after a second draft agrees', () => {
     const it0 = item();
     expect(RETRO_TITLE).toBe('Retroactive improvement');
     expect(gateItem(it0).bucket).toBe('show');
     const { draft } = checkDraft(it0, notesOf(it0), relinkReply());
     const f = files();
-    expect(gateItem(withDraft(it0, draft, (rel) => f[rel])).bucket).toBe('quiet');
+    expect(gateItem(withDraft(it0, draft, (rel) => f[rel])).bucket).toBe('check');
     expect(gateItem(withDraft(it0, { ...draft, confirmed: true }, (rel) => f[rel])).bucket).toBe('show');
   });
 });

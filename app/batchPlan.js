@@ -102,7 +102,9 @@ export function groupOf(item) {
   return GROUPS[ops[0]?.op] ? ops[0].op : 'relink';
 }
 // Fixes a person should read before they run: a written missing note, a weak relink or alias, a move, a tag guessed
-// from other notes, a link between notes that repeat each other, and a fix the agent drafted below high confidence. A bulk plan leaves them unticked under Check these first, with this reason per group
+// from other notes, a link between notes that repeat each other, a fix the agent drafted below high confidence, and an
+// item the agent fixes when the plan runs. A bulk plan leaves them unticked under Check these first, with this reason
+// per group
 const CHECK = {
   create: 'Quorum writes each note from the links to it alone, and those notes are often wrong.',
   relink: 'The note each one points at is a weak match by name.',
@@ -114,9 +116,15 @@ const CHECK = {
   annotate: 'Quorum paired these lines from the claims two notes make. Read both quotes first.',
   draft: 'The agent drafted these fixes. Read its quotes and its confidence first.',
 };
+// items the agent fixes when the plan runs (main.js agentNeed): one model call each, one at a time
+const AGENT = {
+  create: 'When the plan runs, the agent writes each note from the notes that link to it. Quorum writes nothing when a quote does not check.',
+  point: 'When the plan runs, the agent checks each match against the notes with a close name. It removes the dead link when no note fits.',
+};
 // the reason an item starts unticked in a bulk plan, or null when it starts ticked
 export function checkFirst(item) {
   if (!item?.ops?.length) return null;
+  if (item.agent) return AGENT[item.agent.kind] ?? CHECK.draft;
   // the quality gate (qualityGate.js) sends an item it does not trust enough here
   if (item.gate?.bucket === 'check') return item.gate.why;
   if (item.kind === 'pastfix' && !item.draft) return null;

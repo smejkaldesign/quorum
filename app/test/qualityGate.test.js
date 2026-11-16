@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { CHECK_AT, PRIORS, SHOW_AT, demoted, demotions, expected, gateItem, kindOf, kindOfRecord, logGate, readGateLog, ruleDemotion, runGate, signature, stability, summarize, tallies } from '../qualityGate.js';
+import { PRIORS, SHOW_AT, demoted, demotions, expected, gateItem, kindOf, kindOfRecord, logGate, readGateLog, ruleDemotion, runGate, signature, stability, summarize, tallies } from '../qualityGate.js';
 
 const alias = (id = 'r:link:a', extra = {}) => ({ id, kind: 'link', target: 'a', reviewOnly: false, match: { exact: true, score: 1 }, ops: [{ op: 'alias', rel: 'notes/a-note.md', alias: 'a' }], hashes: { 'x.md': 'h1' }, ...extra });
 const finding = (ruleId, ops, extra = {}) => ({ id: `r:find:${ruleId}`, kind: 'finding', ruleId, ops, ...extra });
@@ -57,11 +57,12 @@ describe('live precision guard', () => {
     expect(ruleDemotion('link.missing', log)).toEqual({ approved: 7, total: 11 });
     expect(ruleDemotion('note.stale', log)).toBeNull();
   });
-  it('moves a demoted kind with a real fix to Check these first, and keep-only items out of view', () => {
+  it('moves a demoted kind to Check these first, and keeps a keep-only item with nothing to act on out of view', () => {
     const tally = { approved: 2, auto: 0, archived: 9, undone: 0 };
     expect(gateItem(alias(), { tally }).bucket).toBe('check');
     expect(gateItem(alias(), { tally }).why).toMatch(/^Demoted: 2 of 11 approved/);
-    expect(gateItem(finding('note.secret', [{ op: 'keep' }]), { tally }).bucket).toBe('quiet');
+    expect(gateItem(finding('note.secret', [{ op: 'keep' }]), { tally }).bucket).toBe('check');
+    expect(gateItem(finding('note.oversized', [{ op: 'keep' }]), { tally }).bucket).toBe('quiet');
   });
 });
 
@@ -74,7 +75,7 @@ describe('stability', () => {
     expect(stability([[a], [moved]]).get(a.id).stable).toBe(false);
     expect(stability([[a], [edited]]).get(a.id).stable).toBe(false);
     expect(stability([[a], []]).get(a.id).stable).toBe(false);
-    expect(gateItem(a, { stable: { stable: false } }).bucket).toBe('quiet');
+    expect(gateItem(a, { stable: { stable: false } }).bucket).toBe('check');
   });
   it('ignores line numbers and expected hashes in the signature, but not drafted text', () => {
     const o = { op: 'restore', rel: 'a.md', before: 'one', expect: 'e1', lines: { 'a.md': [1] } };
@@ -84,38 +85,40 @@ describe('stability', () => {
 });
 
 describe('the gate', () => {
-  it('shows a strong alias, holds a create, and checks a weak relink first', () => {
+  it('shows a strong alias ticked, and a create or a weak relink unticked under Check these first', () => {
     expect(gateItem(alias()).bucket).toBe('show');
-    expect(gateItem({ id: 'c', kind: 'link', ops: [{ op: 'create', rel: 'a.md' }] }).bucket).toBe('quiet');
+    expect(gateItem({ id: 'c', kind: 'link', ops: [{ op: 'create', rel: 'a.md' }] }).bucket).toBe('check');
     const weak = gateItem({ id: 'w', kind: 'link', reviewOnly: true, ops: [{ op: 'relink', to: 'b.md' }] });
-    expect(PRIORS['link:relink-weak'].p).toBeLessThan(CHECK_AT);
-    expect(weak.bucket).toBe('quiet');
-    const t = { approved: 10, auto: 0, archived: 1, undone: 0 };
-    expect(gateItem({ id: 'w', kind: 'link', reviewOnly: true, ops: [{ op: 'relink', to: 'b.md' }] }, { tally: t }).bucket).toBe('check');
+    expect(PRIORS['link:relink-weak'].p).toBeLessThan(SHOW_AT);
+    expect(weak.bucket).toBe('check');
+    expect(weak.reasons).toContain('low-precision');
+    const t = { approved: 40, auto: 0, archived: 1, undone: 0 };
+    expect(gateItem({ id: 'w', kind: 'link', reviewOnly: true, ops: [{ op: 'relink', to: 'b.md' }] }, { tally: t }).bucket).toBe('show');
   });
-  it('never offers a link onto a note Quorum wrote from links alone', () => {
+  it('never ticks a link onto a note Quorum wrote from links alone', () => {
     const v = gateItem(alias(), { isStub: (rel) => rel === 'notes/a-note.md' });
-    expect(v.bucket).toBe('quiet');
+    expect(v.bucket).toBe('check');
     expect(v.reasons).toContain('onto-stub');
   });
-  it('hides keep-only items unless they tell the person something', () => {
+  it('hides keep-only items unless they tell the person something, also when held', () => {
+    expect(gateItem({ id: 'h', kind: 'finding', ruleId: 'note.oversized', hold: 'A note in the draft is gone.', ops: [] }).bucket).toBe('quiet');
     expect(gateItem(finding('note.oversized', [{ op: 'keep' }])).bucket).toBe('quiet');
     expect(gateItem(finding('note.secret', [{ op: 'keep' }])).bucket).toBe('show');
     expect(gateItem({ id: 'p', kind: 'pastfix', keep: true, ops: [{ op: 'keep' }] }).bucket).toBe('quiet');
     expect(gateItem({ id: 'p', kind: 'pastfix', keep: true, retro: { action: 'relink' }, ops: [{ op: 'keep' }] }).bucket).toBe('show');
   });
-  it('shows a drafted fix only when a second draft agreed', () => {
+  it('ticks a drafted fix only when a second draft agreed', () => {
     const d = (confirmed) => ({ id: 'd', kind: 'link', draft: { kind: 'create', confirmed }, ops: [{ op: 'create', rel: 'a.md', text: 'x' }] });
-    expect(gateItem(d(undefined)).bucket).toBe('quiet');
+    expect(gateItem(d(undefined)).bucket).toBe('check');
     expect(gateItem(d(false)).reasons).toContain('drafts-disagree');
     expect(gateItem(d(true)).bucket).toBe('show');
   });
   it('runs over passes and summarizes per kind', () => {
     const items = [alias(), { id: 'c', kind: 'link', ops: [{ op: 'create', rel: 'a.md' }] }];
     const g = runGate([items, items], []);
-    expect(g.counts).toEqual({ show: 1, check: 0, quiet: 1 });
+    expect(g.counts).toEqual({ show: 1, check: 1, quiet: 0 });
     const s = summarize(g.verdicts);
-    expect(s['link:create'].quiet).toBe(1);
+    expect(s['link:create'].check).toBe(1);
     expect(s['link:create'].reasons['low-precision']).toBe(1);
   });
 });

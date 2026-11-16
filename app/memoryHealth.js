@@ -171,8 +171,10 @@ export function issueOf(m) {
     leave: 'leave the link as it is',
   };
   const decline = next ? `Quorum suggests the next fix instead: ${nextText[next]}.` : 'The links stay as they are, and the issue moves to Left as is.';
+  // what Approve does when the agent does the work, or its fallback after the agent could not (main.js agentNeed)
+  const says = m.approve?.says ?? null;
   return {
-    key: m.target.toLowerCase(), target: m.target, category, title, fix: recommend, problem, effect, recommend, solution, value, decline, action, next, candidate: c, sources: m.sources ?? [],
+    key: m.target.toLowerCase(), target: m.target, category, title, fix: says ?? recommend, problem, effect, recommend: says ?? recommend, solution: says ?? solution, value, decline, action, next, candidate: c, sources: m.sources ?? [],
     reviewOnly, found: found ?? null, confidential: plan.ok ? plan.confidential : null,
     contexts: m.contexts ?? [], createIn, path: m.sources?.[0] ?? '', links: m.links ?? m.count, notes: m.count, folder: top, lastAt: m.lastAt ?? null,
   };

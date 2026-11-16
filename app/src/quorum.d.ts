@@ -299,7 +299,7 @@ export type SavedChat = { id: string; title: string; turns: { q: string; a: stri
 // a review rule's finding (rules/index.js, memorySweep.js): review-only, with plain evidence lines
 export type MemoryFinding = { held?: GateHold; ruleId: string; ruleVersion: number; rule: string; key: string; target: string; notes: string[]; rel: string; abs: string; title: string; problem: string; proposal: string; evidence: string[]; facts: string[]; meta: [string, string][]; autoFix: boolean; at: number; initial?: boolean; archived: boolean; fix?: { kind: string }; approve?: { kind: 'setkey' | 'addlink' | 'keep'; says: string } };
 export type MemorySweepInfo = { kind: string; at: number; ms: number; notes: number; found: number; rules: Record<string, number> };
-export type MissingLink = { held?: GateHold; target: string; sources: string[]; count: number; links?: number; lastAt?: number | null; left?: boolean; declined?: string[]; contexts?: { rel: string; title?: string; text: string }[]; confidential?: unknown[]; found?: { kind: 'folder' | 'script' | 'skill' | 'file' | 'branch'; where: string; branch?: string; rel?: string | null }; candidates: { rel: string; title: string; name: string | null; exact: boolean; score?: number; cover?: number; kindClash?: boolean; shared?: string[]; neighbor?: boolean; sameFolder?: boolean }[] };
+export type MissingLink = { held?: GateHold; approve?: { says: string; fallback?: string }; target: string; sources: string[]; count: number; links?: number; lastAt?: number | null; left?: boolean; declined?: string[]; contexts?: { rel: string; title?: string; text: string }[]; confidential?: unknown[]; found?: { kind: 'folder' | 'script' | 'skill' | 'file' | 'branch'; where: string; branch?: string; rel?: string | null }; candidates: { rel: string; title: string; name: string | null; exact: boolean; score?: number; cover?: number; kindClash?: boolean; shared?: string[]; neighbor?: boolean; sameFolder?: boolean }[] };
 export type Relocated = { rel: string; files: number; links: number };
 export type SearchHit = { rel: string; title: string; score: number; line: number; snippet: string };
 export type Backlink = { rel: string; title: string; line: number; context: string };
@@ -458,7 +458,7 @@ declare global {
       vaultLinkDecide(key: string, verdict: 'approve' | 'dismiss'): Promise<string>;
       fixStart(keys: string[]): Promise<FixRun[]>;
       memoryFindings(): Promise<{ findings: MemoryFinding[]; last: MemorySweepInfo | null; lastFull: number; paused: boolean; labels: Record<string, string>; drafts?: Record<string, MemoryDraft>; checking?: boolean }>;
-      memoryGate(): Promise<{ checking: boolean; stopped: boolean; at: number; held: (GateHold & { id: string })[] }>;
+      memoryGate(): Promise<{ checking: boolean; stopped: boolean; at: number }>;
       memoryRuleRecords(): Promise<RuleRecord[]>;
       memoryIgnoreList(): Promise<IgnoreRule[]>;
       memoryIgnoreRemove(id: string): Promise<boolean>;

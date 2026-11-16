@@ -66,7 +66,7 @@ import { createDecisionLog, fingerprint } from './decisionLog.js';
 import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, fixVersions, recheckAll, undoPlan } from './fixRecheck.js';
 import { buildPlan, checkFirst, checkOrder, effects, groupLabel, groupOf, notesOf, planExclude } from './batchPlan.js';
 import { RETRO_TITLE, ROW, findingItem, itemLine, linkItem, pastFixItem } from './reviewItems.js';
-import { approveFinding, approvePastFix, gitReader, withLinkLine } from './reviewApprove.js';
+import { approveFinding, approvePastFix, gitReader, retroCandidates, withLinkLine } from './reviewApprove.js';
 import { frontBlock, removeFrontmatterKey, withDate } from './frontmatter.js';
 import { createResolver } from './linkparse.js';
 import { isOff, skipped } from './rules/common.js';
@@ -74,11 +74,11 @@ import { folderMarkOf } from './rules/confidential.js';
 import { createMemorySweep, dueSweep, rescanTags, scanTags } from './memorySweep.js';
 import { RULE_LABELS, RULES } from './rules/index.js';
 import { relatedLine } from './rules/nearDuplicates.js';
-import { DAILY_CAP, WRONG_NOTE_FIX, createDrafter, draftKind, evidenceRels, withDraft } from './memoryDraft.js';
+import { DAILY_CAP, WRONG_NOTE_FIX, createDrafter, draftKind, evidenceRels, fallbackItem, unlinkItem, withDraft } from './memoryDraft.js';
 import { createContradictionAgent } from './contradictionAgent.js';
 import { annotateLine, ruleBar } from './contradictionResolve.js';
 import { ignoreProposals, ignored, ruleRecords } from './ruleRecords.js';
-import { demotions, kindOf, logGate, ruleDemotion, runGate, signature } from './qualityGate.js';
+import { demotions, kindOf, logGate, ruleDemotion, runGate, signature, weakLink } from './qualityGate.js';
 import { createAgentActivity } from './agentActivity.js';
 import { createElsewhere, withFound } from './linkElsewhere.js';
 import { titleOf } from './notificationSummary.js';
@@ -2162,7 +2162,8 @@ function feedSources() {
   reopenChanged(linkItems);
   const left = linksLeft();
   const declined = linksDeclined();
-  const links = linkItems.map((m) => ({ ...withMarks(m, left, declined), abs: path.join(b.vault, m.sources?.[0] ?? '') }));
+  const says = approveLines();
+  const links = linkItems.map((m) => { const a = says.get(`${ROW.link}${m.target.toLowerCase()}`); return { ...withMarks(m, left, declined), abs: path.join(b.vault, m.sources?.[0] ?? ''), ...(a ? { approve: a } : {}) }; });
   const v = b.vault;
   const runs = fixRunList().filter((r) => r.vault === v && (r.endedAt ?? r.queuedAt) > Date.now() - 7 * 86400000);
   return { notes, memories, denials, junk: keeper.junk(), links, runs, pastFixes: pastFixRows(), findings: findingsNow(), drafts: draftViews(), ignores: ignoreRows(), held: gateHeld(), state, guardFile: DENIAL_LOG };
@@ -2758,7 +2759,8 @@ ipcMain.handle('vault-link-health', (_e, fresh) => {
   const left = linksLeft();
   const declined = linksDeclined();
   const held = gateHeld();
-  return items.map((m) => { const h = held.get(`${ROW.link}${m.target.toLowerCase()}`); return { ...withMarks(m, left, declined), ...(h ? { held: h } : {}) }; });
+  const says = approveLines();
+  return items.map((m) => { const id = `${ROW.link}${m.target.toLowerCase()}`; const h = held.get(id); const a = says.get(id); return { ...withMarks(m, left, declined), ...(h ? { held: h } : {}), ...(a ? { approve: a } : {}) }; });
 });
 // the missing links the person declined, per vault, so Memory health, the Memory tree and Notifications all leave them
 // out. Kept in Quorum's data folder; older versions kept them in the window's storage, which the window hands over once
@@ -2916,6 +2918,8 @@ async function decideLink(key, verdict, step = async () => {}, keep = () => {}, 
   const folder = issue.createIn;
   if (folder && !existsSync(path.join(b.vault, folder))) throw new Error(`The folder ${folder} is gone, so Quorum did not write the note`);
   const name = issue.target.split('/').pop();
+  // a missing note is written only from the agent's draft (agentResolve); Quorum never writes a note from links alone
+  if (!draft?.text) throw new Error('Quorum writes a missing note only from the agent\'s draft. Approve it again and the agent writes it');
   await step('Checking the vault, its folders, scripts, skills and other branches for that name');
   diskNamesCache.at = 0;
   if (onDisk(name)) throw new Error('A note with that name is already in the vault, so Quorum did not write another one');
@@ -2928,12 +2932,12 @@ async function decideLink(key, verdict, step = async () => {}, keep = () => {}, 
   const rel = createNote(b.vault, folder, name);
   keep(rel, true);
   // a drafted note keeps the frontmatter Quorum writes (the confidential mark of its sources) above the draft's text
-  writeAtomic(path.join(b.vault, rel), draft?.text ? `${frontBlock(contextNote(issue))}${draft.text.trim()}\n` : contextNote(issue));
+  writeAtomic(path.join(b.vault, rel), `${frontBlock(contextNote(issue))}${draft.text.trim()}\n`);
   await step('Updating the vault index');
   vindex.sync();
   await recheck({ made: rel });
   log('memory health', 'wrote the missing note', rel);
-  return `Wrote the note ${rel} from what the linking notes say`;
+  return `Wrote the note ${rel} from what the linking notes say, as the agent drafted it`;
 }
 ipcMain.handle('vault-link-decide', (_e, key, verdict) => (verdict === 'approve' ? startFixes([key])[0] : decideLink(key, 'dismiss')));
 
@@ -2991,19 +2995,25 @@ function startFixes(keys, { bulk = keys.length > 1 } = {}) {
   // a bulk Approve is one batch: the window shows its progress from the runs, even after leaving the page and coming back
   const batch = keys.length > 1 ? `b:${Date.now()}` : null;
   const draftHolds = linkDraftHolds();
-  const wrong = [];
+  const planned = [];
   for (const k of keys) {
     const key = String(k ?? '').toLowerCase();
     if (!key) continue;
-    const live = fixRunList().find((r) => r.key === key && (r.status === 'queued' || r.status === 'running'));
-    if (live) { started.push(live); continue; }
+    // a link already in a queued or running batch (the agent's work, a wrong-note unlink) is that batch: a second Approve
+    // never runs Quorum's own fix beside it
+    const live = fixRunList().find((r) => (r.status === 'queued' || r.status === 'running') && (r.key === key || r.items?.some((x) => x.id === `${ROW.link}${key}`)));
+    if (live) { if (!started.includes(live)) started.push(live); continue; }
     const entry = linkIssues().find((h) => h.target.toLowerCase() === key);
     if (!entry) continue;
     const i = issueOf(withMarks(entry));
     if (bulk && i.reviewOnly) continue;
     // a link whose stored draft says Quorum's match is the wrong note never runs Quorum's fix: Approve removes the dead
-    // link through the planner instead
-    if (draftHolds.has(key)) { wrong.push(`${ROW.link}${key}`); continue; }
+    // link through the planner instead. A link the agent fixes on Approve (agentNeed), and its fallback, also run
+    // through the planner, so the agent's work and the write are one task
+    const id = `${ROW.link}${key}`;
+    if (draftHolds.has(key)) { planned.push(id); continue; }
+    const it0 = gatedItems({ ids: [id] })[0];
+    if (it0 && (it0.agent || it0.fallback || it0.direct || it0.draft)) { planned.push(id); continue; }
     const run = {
       id: `fix:${key}:${Date.now()}`, key, target: i.target, title: i.title, rel: i.path, vault: brain()?.vault ?? '', status: 'queued', queuedAt: Date.now(), startedAt: null, endedAt: null,
       steps: [], outcome: null, error: null, dismissedAt: null, batch,
@@ -3021,8 +3031,8 @@ function startFixes(keys, { bulk = keys.length > 1 } = {}) {
   }
   fixRunsSave();
   pumpFixes();
-  // the wrong-note links run as one planned batch: unlink, journal, versions and Undo
-  if (wrong.length) started.push(startPlanFor(wrong));
+  // the wrong-note links and the agent's links run as one planned batch: journal, versions and Undo
+  if (planned.length) started.push(startPlanFor(planned));
   return started;
 }
 async function pumpFixes() {
@@ -3064,7 +3074,7 @@ async function pumpFixes() {
       stamp();
       fixJournal.append(run.id, { step: 'keep', rel, created });
     };
-    if (run.kind === 'batch') work = agentActivity.start({ kind: 'batch', label: `Applying ${run.target}`, cancellable: true, onCancel: () => { run.cancel = true; } });
+    if (run.kind === 'batch') work = agentActivity.start({ kind: 'batch', label: `Applying ${run.target}`, cancellable: true, onCancel: () => { run.cancel = true; run.agentAbort?.abort(); } });
     try {
       run.outcome = run.kind === 'batch' ? await runBatch(run, step, keep) : await decideLink(run.key, 'approve', step, keep, run.hashes ?? null, run.finding?.proposedFix ?? null);
       run.status = 'success';
@@ -3299,10 +3309,10 @@ function reviewItems({ ids = null, drafts = true } = {}) {
   }
   return drafts ? out.map(drafted) : out;
 }
-// The quality gate of Needs review (qualityGate.js). Every item passes it before it shows: two passes (the index
-// re-scanned and every note read again) must give the same fix, its kind of fix must be right often enough on Quorum's
-// eval and in this vault's decisions, and its Approve must change something or tell the person something. The rest
-// waits in Not shown yet in Memory health, or under Check these first in a bulk plan. Verdicts are kept per vault in the
+// The quality gate of Needs review (qualityGate.js). Every item passes it before it shows: an item whose Approve could
+// only keep it as it is and that tells the person nothing stays out. Every other item shows; one whose fix changed
+// between two passes (the index re-scanned and every note read again), or whose kind of fix is not right often enough
+// on Quorum's eval and in this vault's decisions, lists unticked under Check these first in a bulk plan. Verdicts are kept per vault in the
 // data folder with each item's signature; an item whose fix or notes changed since waits for the next gate run. A
 // vault with no verdicts yet is being checked: Memory health says so and Needs review waits. Each run adds a line to the
 // gate log (scripts/gate-report.mjs reads it)
@@ -3367,28 +3377,104 @@ function gateOf(item) {
   return { ...PENDING, kind: kindOf(item) };
 }
 const gateChecking = () => !gateFor(brain()?.vault ?? '').verdicts;
-// the review items with their verdicts. Without ids (everything in Needs review), items the gate keeps out of view are
-// left out; an item picked by id from Not shown yet keeps its verdict and can run
+// the review items with their verdicts, and what the agent does for each on Approve (agentNeed). Without ids
+// (everything in Needs review), the items the gate keeps out of view are left out
 function gatedItems({ ids = null, drafts = true } = {}) {
-  const out = reviewItems({ ids, drafts }).map((i) => ({ ...i, gate: gateOf(i) }));
+  const out = reviewItems({ ids, drafts }).map((i) => { const agent = agentNeed(i); return { ...i, gate: gateOf(i), ...(agent ? { agent } : {}) }; });
   return ids ? out : out.filter((i) => i.gate.bucket !== 'quiet');
 }
-// row id -> verdict for every item the gate holds back, for Notifications and Memory health
-// kept for two seconds, since one window refresh asks for it several times
-let heldCache = { at: 0, vault: null, map: null };
-function gateHeld() {
+// row id -> verdict for every item the gate keeps out of view (a keep-only item with nothing to act on, or one still
+// being checked), for Notifications and Memory health. Each row also gets what Approve does, in plain words, when the
+// agent does the work or its fallback runs (approveLines). Kept for two seconds, since one window refresh asks often
+let heldCache = { at: 0, vault: null, map: null, says: null };
+function gateScan() {
   const v0 = brain()?.vault ?? null;
-  if (heldCache.map && heldCache.vault === v0 && Date.now() - heldCache.at < 2000) return heldCache.map;
+  if (heldCache.map && heldCache.vault === v0 && Date.now() - heldCache.at < 2000) return heldCache;
   const out = new Map();
-  for (const i of reviewItems()) { const v = gateOf(i); if (v.bucket !== 'show') out.set(i.id, { bucket: v.bucket, why: v.why, title: i.retro ? RETRO_TITLE : i.title, line: itemLine(i), kind: i.kind }); }
-  heldCache = { at: Date.now(), vault: v0, map: out };
-  return out;
+  const says = new Map();
+  for (const i of reviewItems()) {
+    const v = gateOf(i);
+    if (v.bucket === 'quiet') out.set(i.id, { bucket: v.bucket, why: v.why, title: i.retro ? RETRO_TITLE : i.title, line: itemLine(i), kind: i.kind });
+    const a = i.fallback ? { says: `${i.fallback} Approve removes the dead link and keeps its words.`, fallback: i.fallback } : agentNeed(i);
+    if (a) says.set(i.id, { says: a.says, ...(a.fallback ? { fallback: a.fallback } : {}) });
+  }
+  heldCache = { at: Date.now(), vault: v0, map: out, says };
+  return heldCache;
+}
+const gateHeld = () => gateScan().map;
+const approveLines = () => gateScan().says;
+// Approve does the whole job for a link the rules cannot decide on their own: the agent writes a missing note from the
+// notes that link to it, or checks a weak match (or one onto a note Quorum wrote from links alone) against the notes
+// with a close name and relinks to the right one, or removes the dead link when none fits. It runs on Approve through
+// the person's Claude Code sign-in, also while background drafting is off, and honors the read guard, the confidential
+// gates and the daily cap (memoryDraft.js onDemand). Answers { kind, options, says, line } or null when Approve runs the
+// item's own fix. A stored draft whose quotes still check is the fix already, so it needs no agent
+// the notes a link may point at: every note but a generated report. Kept two seconds, since one refresh asks per item
+let linkableCache = { at: 0, list: [] };
+function linkableRels() {
+  if (Date.now() - linkableCache.at > 2000) linkableCache = { at: Date.now(), list: vindex?.rels().filter((r) => !isGenerated(r, vindex.note(r)?.props)) ?? [] };
+  return linkableCache.list;
+}
+const isStubRel = (rel) => !!rel && (readVault(brain()?.vault ?? '', rel) ?? '').includes(STUB_TEXT);
+function agentNeed(item) {
+  if (item?.kind !== 'link' || item.draft || item.fallback || item.wrongNote || item.direct || item.hold) return null;
+  const o = item.ops?.[0];
+  const n = item.sources?.length ?? 0;
+  const from = `from the ${n === 1 ? 'note' : `${n} notes`} that ${n === 1 ? 'links' : 'link'} to it`;
+  if (o?.op === 'create') {
+    return { kind: 'create', says: `Quorum writes a note about “${item.target}” ${from}. The agent drafts it, and Quorum checks every quote against its note before it writes.`, line: `Write a note about “${item.target}” ${from}, as the agent drafts it` };
+  }
+  if (o?.op !== 'relink' && o?.op !== 'alias') return null;
+  const picked = o.op === 'alias' ? o.rel : o.to;
+  const stub = isStubRel(picked);
+  if (!stub && !weakLink(item)) return null;
+  const others = retroCandidates(item.target, linkableRels(), { exclude: [picked, ...(item.sources ?? [])], limit: 6 }).filter((r) => !isStubRel(r)).slice(0, 3);
+  const options = [...new Set([...(stub ? [] : [picked]), ...others])];
+  const name = (rel) => `“${path.posix.basename(rel).replace(/\.md$/i, '')}”`;
+  if (!options.length) return { kind: 'point', options, says: 'Quorum removes the dead link and keeps its words. No note other than one Quorum wrote from links alone fits the name.', line: `Remove the dead links to “${item.target}”` };
+  const says = stub
+    ? `Quorum has the agent pick the note the links mean from ${options.length === 1 ? name(options[0]) : `${options.length} notes with a close name`}, and points them there. When none fits, Quorum removes the dead link and keeps its words.`
+    : `Quorum has the agent check whether the links mean ${name(picked)}, and points them at that note${others.length ? ' or a better one' : ''}. When no note fits, Quorum removes the dead link and keeps its words.`;
+  return { kind: 'point', options, says, line: `Have the agent check the links to “${item.target}” and point them at the right note` };
+}
+// The agent's work on an approved item, inside its batch run: one model call, then the item with the fix the agent
+// drafted. Answers { item } or { why, keep }; keep says the reason holds until the notes change, so the item offers its
+// fallback (memoryDraft.js fallbackItem). A cancel stops the model call and the batch
+async function agentResolve(item, run, step) {
+  const need = item.agent;
+  const { agent, gate, ...rest } = item;
+  const base = { ...rest, agentKind: need.kind, ...(need.kind === 'point' ? { options: need.options } : {}) };
+  const done = (next) => { const { agentKind, options, ...clean } = next; return { item: { ...clean, hashes: { ...hashNotes(brain()?.vault ?? '', notesOf(clean)), ...(item.hashes ?? {}) } } }; };
+  // no note with a close name to check: the dead link goes, with no model call
+  if (need.kind === 'point' && !need.options.length) return done(unlinkItem(base));
+  await step(need.kind === 'create' ? `The agent is writing a note about “${item.target}” from the notes that link to it` : `The agent is checking which note the links to “${item.target}” mean`);
+  const notes = draftEvidence(base);
+  // a draft the agent made before for these notes, its quotes checked again now, saves a model call
+  const kept = notes ? drafter.draftFor(base, notes) : null;
+  let draft = kept && kept.confirmed !== false && kept.confidence !== 'low' ? kept : null;
+  if (!draft) {
+    // a contradiction call that already runs finishes first, so the agent makes one model call at a time. Neither the
+    // drafter nor the contradiction agent starts a new call while this batch runs (their busy)
+    while (contradictionAbort && !run.cancel) await new Promise((r) => setTimeout(r, 250));
+    if (run.cancel) throw new Error('You cancelled the batch');
+    const ctl = new AbortController();
+    run.agentAbort = ctl;
+    let res;
+    try { res = await drafter.onDemand(base, notes, { signal: ctl.signal }); } finally { run.agentAbort = null; }
+    if (res.cancelled || run.cancel) throw new Error('You cancelled the batch');
+    if (!res.draft) return res;
+    draft = res.draft;
+  }
+  const b = brain();
+  const next = withDraft(base, draft, (rel) => readVault(b.vault, rel), (rel) => vindex.aliasesOf(rel));
+  if (!next.ops?.length) return { why: next.hold ?? 'The agent\'s draft has no change to make, so Quorum wrote nothing.', keep: false };
+  await step(next.wrongNote ? `The agent found no note that fits “${item.target}”` : next.relinkTo ? `The agent found the links mean ${next.relinkTo}` : need.kind === 'create' ? `The agent drafted the note, and every quote checks against its note` : `The agent confirmed the links mean ${next.ops[0]?.to ?? next.ops[0]?.rel}`);
+  return done(next);
 }
 ipcMain.handle('memory-gate', () => {
-  const held = gateHeld();
   const checking = gateChecking();
   // stopped: no verdicts yet and no check running, after Cancel or before the first check starts
-  return { checking, stopped: checking && !checkWork && !gateRunning, at: gateState?.at ?? 0, held: [...held].map(([id, v]) => ({ id, ...v })) };
+  return { checking, stopped: checking && !checkWork && !gateRunning, at: gateState?.at ?? 0 };
 });
 // Agent-drafted fixes (memoryDraft.js; Settings > Memory, Let the agent draft fixes, off by default). The agent runs
 // on the person's own Claude Code sign-in with no tools and reads only the notes Quorum puts in its prompt. A note the
@@ -3421,11 +3507,25 @@ function draftEvidence(item) {
 // the item with its stored draft applied, while the notes the draft read are unchanged and its quotes still match
 // Turning drafting off sets every stored draft aside
 // A past fix takes its Retroactive improvement through approvePastFix (retroDraft), only once a second draft agreed
-function drafted(item) { return item.kind === 'pastfix' ? item : withStoredDraft(item); }
+// A link the agent could not fix on Approve offers its safe fallback while its notes read the same (memoryDraft.js
+// fallbackFor): removing the dead link and keeping its words
+function drafted(item) {
+  if (item.kind === 'pastfix') return item;
+  if (item.kind === 'link') {
+    const need = agentNeed(item);
+    if (need) {
+      const base = { ...item, agentKind: need.kind, ...(need.kind === 'point' ? { options: need.options } : {}) };
+      const why = drafter.fallbackFor(base, draftEvidence(base));
+      if (why) return fallbackItem(item, why);
+    }
+  }
+  return withStoredDraft(item);
+}
 function withStoredDraft(item) {
   if (settings.memoryDrafts !== true || !draftKind(item) || item.draft) return item;
   const d = drafter.draftFor(item, draftEvidence(item));
-  if (!d) return item;
+  // a draft a second draft disagreed with is set aside: Approve runs the item's own fix, or the agent again
+  if (!d || d.confirmed === false) return item;
   const b = brain();
   let next = withDraft(item, d, (rel) => readVault(b.vault, rel), (rel) => vindex.aliasesOf(rel));
   const why = next.draft?.kind === 'merge' && next.ops.length ? mergeBreaksLinks(next.draft.keep, next.draft.drop) : null;
@@ -3455,7 +3555,8 @@ function draftFix(item) {
 }
 const drafter = createDrafter({
   file: path.join(DATA_DIR, 'memory-drafts.json'),
-  model: (prompt, system) => claudeText({ prompt, system, model: 'sonnet', cwd: tmpdir(), timeoutMs: 180000, signal: draftAbort?.signal ?? null }),
+  // an Approve passes its own signal (onDemand), so its Cancel stops the call
+  model: (prompt, system, { signal = null } = {}) => claudeText({ prompt, system, model: 'sonnet', cwd: tmpdir(), timeoutMs: 180000, signal: signal ?? draftAbort?.signal ?? null }),
   items: () => reviewItems({ drafts: false }),
   evidence: draftEvidence,
   enabled: () => settings.memoryDrafts === true && !!brain() && !!vindex,
@@ -3573,8 +3674,8 @@ function ruleRecordList() {
   ];
   return rules.map((r) => {
     const t = tally[r.id] ?? { approved: 0, archived: 0, undone: 0, auto: 0, reopened: 0, last: 0 };
-    // the live precision guard (qualityGate.js): a demoted rule's items wait under Check these first or in Not shown
-    // yet, and Apply memory fixes on its own skips them
+    // the live precision guard (qualityGate.js): a demoted rule's items list unticked under Check these first, and
+    // Apply memory fixes on its own skips them
     const demoted = ruleDemotion(r.id, records);
     const state = demoted ? 'Shows its fixes only under Check these first' : !r.auto ? 'Review only' : autoOn ? 'Applies its automatic fixes on its own' : 'Waits for review';
     return { id: r.id, label: r.label, approved: t.approved, archived: t.archived, undone: t.undone, auto: t.auto, last: t.last, open: open[r.id] ?? 0, ignores: ign.filter((g) => g.ruleId === r.id).length, state, demoted };
@@ -3660,13 +3761,14 @@ function startPlan(plan, items, { actor = 'you' } = {}) {
     id, key: id, batch: id, kind: 'batch', auto: actor === 'auto', vault: b.vault, rel: '',
     target: actor === 'auto' ? `${n} memory ${n === 1 ? 'fix' : 'fixes'} Quorum applied on its own` : `${n} memory ${n === 1 ? 'fix' : 'fixes'}`,
     title: groups.map((g) => g.label).join(', '), status: 'queued', queuedAt: Date.now(), startedAt: null, endedAt: null, steps: [], outcome: null, error: null, dismissedAt: null,
-    items: go.map((i) => ({ id: i.id, kind: i.kind, key: i.key, link: i.link ?? null, title: i.title, line: itemLine(i), status: 'queued', finding: i.finding ?? null, ...(i.keep ? { keep: true } : {}) })),
+    items: go.map((i) => ({ id: i.id, kind: i.kind, key: i.key, link: i.link ?? null, title: i.title, line: i.agent?.line ?? itemLine(i), status: 'queued', finding: i.finding ?? null, ...(i.keep ? { keep: true } : {}) })),
     groups, problem: `${n} ${n === 1 ? 'item' : 'items'} from Needs review, planned as one batch.`, solution: groups.map((g) => g.label).join('. '),
     value: 'One batch, one undo: Undo puts every note back as it was before the batch.', meta: groups.map((g) => ['Change', g.label]),
     hashes: Object.assign({}, ...go.map((i) => i.hashes ?? {})),
   };
   batchPlans.set(id, { plan, items: go, actor });
-  for (const i of go) logItem(i, actor === 'auto' ? 'auto' : 'approved', actor === 'auto' ? 'auto' : 'you');
+  // an item the agent fixes is logged once the agent drafted its fix (runBatch), with the kind of fix it drafted
+  for (const i of go) if (!i.agent) logItem(i, actor === 'auto' ? 'auto' : 'approved', actor === 'auto' ? 'auto' : 'you');
   fixJournal.append(run.id, { step: 'queued', action: 'batch', items: go.map((i) => i.id), hashes: run.hashes });
   fixRunList().unshift(run);
   fixQueue.push(run);
@@ -3688,7 +3790,7 @@ const STUB_TEXT = 'Quorum made this note because';
 // one step of a batch. written: the notes earlier steps of the batch changed, whose hashes no longer apply
 async function runOp(item, o, { step, keep, written, vault }) {
   // a link whose draft found Quorum's match is the wrong note runs its unlink step below instead of Quorum's fix
-  if (item.kind === 'link' && !item.wrongNote) {
+  if (item.kind === 'link' && !item.wrongNote && !item.direct) {
     const hashes = Object.fromEntries(Object.entries(item.hashes ?? {}).filter(([r]) => !written.has(r)));
     await decideLink(item.key, 'approve', step, keep, hashes, item.approved, item.draft ?? null);
     return;
@@ -3720,7 +3822,7 @@ async function runOp(item, o, { step, keep, written, vault }) {
   }
   const past = item.kind === 'pastfix';
   if (o.op === 'restore') {
-    await step(past ? `Putting back ${o.rel} as it read before the earlier fix` : `Writing ${o.rel} as the agent drafted it`);
+    await step(past ? `Putting back ${o.rel} as it read before the earlier fix` : item.relinkTo ? `Pointing the links to ${item.target} in ${o.rel} at ${item.relinkTo}` : `Writing ${o.rel} as the agent drafted it`);
     keep(o.rel);
     writeAtomic(abs, o.before);
   } else if (o.op === 'trash') {
@@ -3771,9 +3873,34 @@ async function runBatch(run, step, keep) {
   if (!b || !vindex) throw new Error('No vault connected');
   const saved = batchPlans.get(run.id);
   if (!saved) throw new Error('Quorum quit before this batch started. Approve the items again');
-  const { plan, items, actor } = saved;
+  let { plan, items } = saved;
+  const { actor } = saved;
+  const mark = (id, status, why = null) => { const it = run.items.find((x) => x.id === id); if (it) { it.status = status; if (why) { it.error = why; it.skipped = true; } fixEmit(run); } };
+  // the agent's work first, one item and one model call at a time, before any note is written. An item the agent could
+  // not fix leaves the batch with its reason, writes nothing, and offers its fallback in Needs review
+  if (items.some((i) => i.agent)) {
+    const ready = [];
+    const failed = [];
+    for (const it of items) {
+      if (!it.agent) { ready.push(it); continue; }
+      mark(it.id, 'running');
+      const r = await agentResolve(it, run, step);
+      if (r.item) {
+        ready.push(r.item);
+        logItem(r.item, actor === 'auto' ? 'auto' : 'approved', actor === 'auto' ? 'auto' : 'you');
+        const ri = run.items.find((x) => x.id === it.id);
+        if (ri) ri.line = itemLine(r.item);
+        mark(it.id, 'queued');
+      } else { failed.push(r.why); mark(it.id, 'error', r.why); }
+    }
+    if (!ready.length) throw new Error(failed[0]);
+    plan = buildPlan(ready);
+    for (const x of [...plan.held, ...plan.skipped]) mark(x.id, 'error', x.reason);
+    if (!plan.ok.length) throw new Error((plan.held[0] ?? plan.skipped[0])?.reason ?? failed[0] ?? 'Nothing in the plan can run');
+    items = ready.filter((i) => plan.ok.includes(i.id));
+    for (const i of items) Object.assign(run.hashes, i.hashes ?? {});
+  }
   const byId = new Map(items.map((i) => [i.id, i]));
-  const mark = (id, status) => { const it = run.items.find((x) => x.id === id); if (it) { it.status = status; fixEmit(run); } };
   await step(`Checking the ${Object.keys(run.hashes ?? {}).length} notes in the plan again`);
   const moved = changedSince(b.vault, run.hashes ?? {});
   if (moved.length) throw new Error(`“${moved[0]}” changed after Quorum planned this batch, so Quorum did not write. Review the plan again`);
@@ -3860,6 +3987,8 @@ function undoBatch(run, rels) {
   markDone(run, false);
   if (pastFixState) pastFixState.plans.clear();
   for (const it of run.items ?? []) {
+    // an item the agent could not fix never ran, so there is nothing of it to undo
+    if (it.skipped) continue;
     if (it.kind === 'link') { setLinksLeft([it.key], false); if (it.finding) logFinding(it.finding, 'undone'); }
     else if (it.kind === 'pastfix') logPastFix(it.key, 'undone');
     else if (it.finding) { try { decisionLog.record(run.vault, { ...it.finding, decision: 'undone', actor: 'you' }); } catch (e) { log('decision log', e?.message); } }
@@ -3876,7 +4005,7 @@ function autoApply() {
   if (fixRunList().some((r) => r.vault === b.vault && (r.status === 'queued' || r.status === 'running'))) return null;
   // the gate's shown items only, and never a kind the live precision guard demoted
   const down = demotions(decisionLog.list(b.vault));
-  const items = gatedItems().filter((i) => i.autoFix && !i.hold && !i.reviewOnly && i.gate.bucket === 'show' && !down[kindOf(i)]);
+  const items = gatedItems().filter((i) => i.autoFix && !i.hold && !i.reviewOnly && !i.agent && !i.fallback && i.gate.bucket === 'show' && !down[kindOf(i)]);
   if (!items.length) return null;
   const plan = buildPlan(items);
   if (!plan.ok.length) return null;

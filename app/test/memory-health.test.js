@@ -46,6 +46,8 @@ describe('memory health fix order', () => {
     const m = link('Roadmap', ['a.md', 'b.md']);
     expect(issueOf(m)).toMatchObject({ action: 'create', next: 'unlink', decline: 'Quorum suggests the next fix instead: remove the links and keep the words.' });
     expect(issueOf({ ...m, declined: ['create'] })).toMatchObject({ action: 'unlink', category: 'unlink', next: null, decline: 'The links stay as they are, and the issue moves to Left as is.' });
+    const says = 'Quorum writes a note about “x” from the 2 notes that link to it. The agent drafts it, and Quorum checks every quote against its note before it writes.';
+    expect(issueOf({ ...m, approve: { says } })).toMatchObject({ action: 'create', recommend: says, solution: says, fix: says });
   });
 });
 
