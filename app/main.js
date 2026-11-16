@@ -3343,14 +3343,17 @@ function draftEvidence(item) {
     const text = readVault(b.vault, rel);
     const kept = text != null && !excludedPath(rel) && !isPrivatePath(rel) && !isSecretPath(rel) && (settings.memoryDraftConfidential === true || !confidentialNote(b.vault, rel, text));
     if (kept) notes.push({ rel, text });
-    // the two notes of a merge and the note a weak link points at are both needed; a missing note needs one source
-    else if (draftKind(item) !== 'create') return null;
+    // the two notes of a merge and the note a weak link points at are both needed; a missing note needs one source, and
+    // a Retroactive improvement offers only the candidate notes the agent may read
+    else if (draftKind(item) !== 'create' && draftKind(item) !== 'retro') return null;
   }
   return notes.length ? notes : null;
 }
 // the item with its stored draft applied, while the notes the draft read are unchanged and its quotes still match
 // Turning drafting off sets every stored draft aside
-function drafted(item) {
+// A past fix takes its Retroactive improvement through approvePastFix (retroDraft), only once a second draft agreed
+function drafted(item) { return item.kind === 'pastfix' ? item : withStoredDraft(item); }
+function withStoredDraft(item) {
   if (settings.memoryDrafts !== true || !draftKind(item) || item.draft) return item;
   const d = drafter.draftFor(item, draftEvidence(item));
   if (!d) return item;
@@ -3378,7 +3381,7 @@ function linkDraftHolds() {
 // the agent's fix for a review item, or null: the item with its stored draft applied while drafting is on, the draft's
 // notes are unchanged and its quotes still match. Other Approve paths (a past fix Quorum cannot undo exactly) call it
 function draftFix(item) {
-  const next = drafted(item);
+  const next = withStoredDraft(item);
   return next !== item && next.draft && next.ops?.length ? next : null;
 }
 const drafter = createDrafter({
