@@ -18,3 +18,13 @@ export function useSession<T>(key: string, initial: T, keep: (v: T) => boolean =
   }, [key, value]);
   return [value, setValue] as const;
 }
+
+// a useSession value from this launch, read outside the component that keeps it
+export function readSession<T>(key: string): T | null {
+  try {
+    const raw = sessionStorage.getItem(`quorum.${key}`);
+    if (raw === null) return null;
+    const saved = JSON.parse(raw) as { launch: string; v: T };
+    return saved.launch === window.quorum.launchId ? saved.v : null;
+  } catch { return null; }
+}
