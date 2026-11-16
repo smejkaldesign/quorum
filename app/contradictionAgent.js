@@ -49,11 +49,13 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
   };
   const save = () => { try { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(`${file}.tmp`, JSON.stringify(state)); renameSync(`${file}.tmp`, file); } catch {} };
   const used = () => { const s = load(); if (s.day !== today(now())) { s.day = today(now()); s.count = 0; } return s.count; };
-  const waiting = () => {
+  // uncapped: a catch-up pass (memoryCatchup.js), which neither reads nor counts against the daily cap and does not wait
+  // for the person to stop typing
+  const waiting = ({ uncapped = false } = {}) => {
     if (!enabled()) return 'off';
-    if (used() >= cap()) return 'cap';
+    if (!uncapped && used() >= cap()) return 'cap';
     if (busy()) return 'busy';
-    if (idleMs() < QUIET_MS) return 'typing';
+    if (!uncapped && idleMs() < QUIET_MS) return 'typing';
     return null;
   };
   // what the latest sweep asked for and has no answer yet
@@ -99,12 +101,12 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
   let running = null;
   // one model call for these ids ([[id, hash]]); a failure marks every id, so none is asked again for a day. A call a
   // person cancelled gives its place under the daily cap back (unless the day turned while it ran) and marks nothing,
-  // so its notes are asked for again on the next sweep
-  async function call(ids, ask, onReply) {
+  // so its notes are asked for again on the next sweep. charge: false for a catch-up call, which the cap does not count
+  async function call(ids, ask, onReply, charge = true) {
     const s = load();
     used();
     const day = s.day;
-    s.count++;
+    if (charge) s.count++;
     save();
     const fail = (why) => { for (const [id, h] of ids) s.failed[id] = { hash: h, at: now(), why }; };
     try {
@@ -114,7 +116,7 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
       save();
       return res;
     } catch (e) {
-      if (e?.cancelled) { if (s.day === day && s.count > 0) s.count--; save(); return { ok: false, cancelled: true, why: 'Cancelled' }; }
+      if (e?.cancelled) { if (charge && s.day === day && s.count > 0) s.count--; save(); return { ok: false, cancelled: true, why: 'Cancelled' }; }
       const why = String(e?.message ?? e).slice(0, 200);
       fail(why);
       save();
@@ -123,9 +125,9 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
   }
   // one model call: a pair to judge first, then the notes that most need their claims. onStart({ kind, notes }) runs
   // just before the call, kind 'judge' or 'claims', so the caller can show the work and offer Cancel. Answers what it did
-  async function tick({ onStart = () => {} } = {}) {
+  async function tick({ onStart = () => {}, uncapped = false } = {}) {
     if (running) return { skipped: 'running' };
-    const why = waiting();
+    const why = waiting({ uncapped });
     if (why) return { skipped: why };
     const s = load();
     for (const [key, j] of wantJudge) {
@@ -137,7 +139,7 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
         if (!r.label) return { ok: false, why: r.why };
         s.judged[key] = { hash: j.h, at: now(), label: r.label, quotes: r.quotes, reason: r.reason };
         return { ok: true };
-      }).then((res) => { log('contradiction judge', key, res.ok ? s.judged[key].label : res.why); if (res.cancelled) return { cancelled: [key] }; return res.ok ? { judged: key, rels: j.notes.map((x) => x.rel), label: s.judged[key].label } : { dropped: key, why: res.why }; }).finally(() => { running = null; });
+      }, !uncapped).then((res) => { log('contradiction judge', key, res.ok ? s.judged[key].label : res.why); if (res.cancelled) return { cancelled: [key] }; return res.ok ? { judged: key, rels: j.notes.map((x) => x.rel), label: s.judged[key].label } : { dropped: key, why: res.why }; }).finally(() => { running = null; });
       return running;
     }
     // a note the read gate keeps out is never sent and leaves the queue
@@ -157,9 +159,23 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
         kept += got.claims.length;
       }
       return { ok: true };
-    }).then((res) => { log('contradiction claims', `${rels.length} notes`, res.ok ? `${kept} claims` : res.why); if (res.cancelled) return { cancelled: rels }; return res.ok ? { extracted: rels, rels, claims: kept } : { dropped: rels, why: res.why }; }).finally(() => { running = null; });
+    }, !uncapped).then((res) => { log('contradiction claims', `${rels.length} notes`, res.ok ? `${kept} claims` : res.why); if (res.cancelled) return { cancelled: rels }; return res.ok ? { extracted: rels, rels, claims: kept } : { dropped: rels, why: res.why }; }).finally(() => { running = null; });
     return running;
   }
+  // the model calls the agent still has to make for what the latest sweep asked: a call per pair to judge and per batch of
+  // notes to read
+  function pendingCalls() {
+    const judge = [...wantJudge.values()].filter((j) => j.notes.every((x) => readable(x.rel, x.text))).length;
+    return judge + packBatches([...wantClaims.values()].filter((w) => readable(w.rel, w.text))).length;
+  }
+  // the claim calls a first full pass makes over these notes ([{ rel, text, rank }], stage 1's notes to read), leaving
+  // out the notes whose claims are stored for their text now, the ones that failed in the last day and the ones the read
+  // gate keeps out
+  function estimate(entries) {
+    const s = load();
+    const left = (entries ?? []).filter((e) => { const h = hashText(e.text); return s.claims[e.rel]?.hash !== h && !tried(e.rel, h) && readable(e.rel, e.text); });
+    return { notes: left.length, calls: packBatches(left).length };
+  }
   const status = () => ({ used: used(), cap: cap(), waiting: waiting(), running: !!running, ...provider.pending() });
-  return { provider, tick, status, waiting };
+  return { provider, tick, status, waiting, pendingCalls, estimate };
 }
