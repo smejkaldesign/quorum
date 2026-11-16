@@ -58,6 +58,9 @@ export const PRIORS = {
   'draft:point': { p: 0.9, n: 2, source: 'unmeasured' },
   'draft:merge': { p: 0.9, n: 2, source: 'unmeasured' },
   'draft:retro': { p: 0.9, n: 2, source: 'unmeasured' },
+  // two notes that disagree (rules/contradictions.js): unmeasured on a real vault, so its fixes start under Check these
+  // first and an item with no fix waits in Not shown yet until this vault's decisions lift it
+  'finding:note.contradiction': { p: 0.7, n: 2, source: 'unmeasured' },
 };
 const DEFAULT_PRIOR = { p: SHOW_AT, n: 1, source: 'unmeasured' };
 export const priorOf = (kind) => PRIORS[kind] ?? DEFAULT_PRIOR;
@@ -65,7 +68,7 @@ export const priorOf = (kind) => PRIORS[kind] ?? DEFAULT_PRIOR;
 // a relink or alias whose name match is neither exact nor strong
 export const WEAK_SCORE = 0.5;
 // review rules whose keep-only finding still tells the person something they can act on themselves
-export const INFO_RULES = new Set(['note.secret', 'note.duplicate', 'note.confidential-folder']);
+export const INFO_RULES = new Set(['note.secret', 'note.duplicate', 'note.confidential-folder', 'note.contradiction']);
 
 const ruleOf = (kind) => String(kind).split(':')[0];
 // the kind of fix an item proposes: the key of PRIORS and of the live guard
