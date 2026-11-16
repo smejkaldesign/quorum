@@ -54,11 +54,11 @@ describe('resolving a remembered page', () => {
 
   it('hides the Guardrails page with the guardrails flag off and sends a remembered visit to General', () => {
     expect(flagHiddenPages('voice')).toEqual([]);
-    expect(flagHiddenPages('voice', false)).toEqual(['guardrails']);
-    expect(flagHiddenPages(null, false)).toEqual(['voice', 'guardrails']);
+    expect(flagHiddenPages('voice', false)).toEqual(['guardrails', 'org-guardrails']);
+    expect(flagHiddenPages(null, false)).toEqual(['voice', 'guardrails', 'org-guardrails']);
     expect(resolvePage('guardrails', true, undefined, flagHiddenPages('voice', false))).toBe('general');
     expect(resolvePage('guardrails', true, undefined, flagHiddenPages('voice', true))).toBe('guardrails');
-    expect(resolvePage('org-guardrails', true, undefined, flagHiddenPages('voice', false))).toBe('org-guardrails');
+    expect(resolvePage('org-guardrails', true, undefined, flagHiddenPages('voice', true, true))).toBe('org-guardrails');
   });
 
   it('keeps a page the current nav may show', () => {
@@ -85,5 +85,14 @@ describe('resolving a remembered page', () => {
     expect(resolvePage('platform', true)).toBe('preferences');
     expect(resolvePage('nope', true)).toBe('preferences');
     expect(WORKSPACE_PAGES).not.toContain('platform');
+  });
+});
+
+describe('the guardrails flags', () => {
+  it('hide the workspace Guardrails page unless custom rules are on, and the personal page with the main flag', () => {
+    expect(flagHiddenPages('voice', true, false)).toEqual(['org-guardrails']);
+    expect(flagHiddenPages('voice', true, true)).toEqual([]);
+    expect(flagHiddenPages('voice', false, true)).toEqual(['guardrails', 'org-guardrails']);
+    expect(resolvePage('org-guardrails', true, undefined, flagHiddenPages('voice', true, false))).toBe('general');
   });
 });

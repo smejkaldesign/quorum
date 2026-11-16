@@ -91,7 +91,8 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   const listed = workspacePages(EDITION, hosted, account?.workspace?.teamEnabled === true, account?.workspace?.role);
   const voice = voiceMode(nt.dictation, nt.manualListen);
   const guardrailsOn = useFlag('guardrails');
-  const hidden = flagHiddenPages(voice, guardrailsOn);
+  const customGuardrails = useFlag('guardrails-custom');
+  const hidden = flagHiddenPages(voice, guardrailsOn, customGuardrails);
   const page = resolvePage(saved, admin, listed, hidden);
   const mode = modeOf(page);
   const quorumEmail = account?.signedIn ? account.email : null;
