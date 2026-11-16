@@ -2692,15 +2692,16 @@ async function pumpFixes() {
       run.outcome = await decideLink(run.key, 'approve', step, keep);
       run.status = 'success';
       run.undoable = saveUndo(run, kept);
-      // each note the fix changed gets a new version in its history, so it can be restored from there too
-      for (const k of kept) {
-        let after = null;
-        try { after = readFileSync(vaultPath(run.vault, k.rel), 'utf8'); } catch {}
-        if (after !== k.before) memoryVersions.record({ vault: run.vault, rel: k.rel, before: k.before, after, who: 'agent', reason: `Memory health fix: ${run.outcome}` });
-      }
     } catch (e) {
       run.status = 'error';
       run.error = e?.message ?? String(e);
+    }
+    // each note the fix changed gets a new version in its history, so it can be restored from there too; a fix that
+    // failed partway still records the notes it wrote before it stopped
+    for (const k of kept) {
+      let after = null;
+      try { after = readFileSync(vaultPath(run.vault, k.rel), 'utf8'); } catch {}
+      try { if (after !== k.before) memoryVersions.record({ vault: run.vault, rel: k.rel, before: k.before, after, who: 'agent', reason: `Memory health fix: ${run.outcome ?? run.error}` }); } catch (e) { log('fix versions', e?.message); }
     }
     run.endedAt = Date.now();
     const last = run.steps[run.steps.length - 1];
