@@ -202,7 +202,11 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
 
   // View opens the note on its issue with the drawer open; a click on the row or the chevron folds the write-up open
   const [unfolded, setUnfolded] = useState<Set<string>>(new Set());
-  const fold = (k: string) => setUnfolded((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  // opening a row's details counts as reading it
+  const fold = (k: string) => {
+    if (!unfolded.has(k) && marks.unread.has(issueId(k))) markRead([issueId(k)]);
+    setUnfolded((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  };
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const row = (i: Issue) => {
     const fixRun = liveRuns.get(i.key);
