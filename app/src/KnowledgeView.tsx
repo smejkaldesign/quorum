@@ -10,6 +10,7 @@ import { changeBlocks } from '../memoryReview.js';
 import { fileIssues, type Issue } from '../memoryHealth.js';
 import { Graph, type GraphData, type GraphView } from './Graph';
 import { NotePanel, Palette, type PaletteItem, type PaletteMode } from './NoteTools';
+import { reportMemoryNote } from './navHistory';
 import { LinkHealth, acceptIssue, leftAsIs, rejectIssue } from './LinkHealth';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
@@ -143,6 +144,9 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   const viaLink = useRef(false);
   const here = useRef<{ rel: string; title: string } | null>(null);
   here.current = preview ? { rel: preview.rel, title: preview.title } : null;
+  // Back from a page opened here reopens this note (navHistory.ts)
+  useEffect(() => { reportMemoryNote(preview?.rel ?? null); }, [preview?.rel]);
+  useEffect(() => () => reportMemoryNote(null), []);
   // a burst of writes (a sync pull, the keeper filing a meeting) reloads the tree and graph once, after it settles
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;

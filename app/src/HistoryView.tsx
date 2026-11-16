@@ -12,6 +12,7 @@ import { openConnectors } from './connectorsNav';
 import { useSession } from './session';
 import { dayLabel } from './upNextList';
 import { OPEN_EVENT, UpNext, takeEvent, useCalendarView } from './UpNext';
+import { HOME_PAGE_EVENT, reportHomePage, takeHomePage } from './navHistory';
 import { AppLogo, CALENDAR_APP, RowDetails, peopleText } from './AppChip';
 import { DayOff } from './DayOff';
 import { IconCalendar, IconClose, IconPlus, IconExternal, IconListCheck, IconMic, IconNewNote, IconQuill, IconNotes, IconPerson, IconQuorum, IconSearch, IconTarget } from './icons';
@@ -41,7 +42,7 @@ function colorFor(s: string) {
   return AVATAR_COLORS[h % AVATAR_COLORS.length];
 }
 
-export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: { brain: Brain | null; focusAsk: number; onAsk: (q: string, files?: string[]) => void; onOpenChat: (id: string) => void; onFiltered?: (filtered: boolean) => void }) {
+export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered, onMark, onBack }: { brain: Brain | null; focusAsk: number; onAsk: (q: string, files?: string[]) => void; onOpenChat: (id: string) => void; onFiltered?: (filtered: boolean) => void; onMark?: () => void; onBack?: () => boolean }) {
   const askRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { if (focusAsk) askRef.current?.focus(); }, [focusAsk]);
   const [data, setData] = useState<{ meetings: MeetingRow[]; chats: ChatRow[] }>({ meetings: [], chats: [] });
@@ -73,6 +74,7 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
     if ('error' in r || 'conflict' in r) { onAsk(q, files); return; }
     const n = await window.quorum.readNote(r.file);
     if (!n) { onAsk(q, files); return; }
+    onMark?.();
     setNoteChat(null); setFirstAsk({ q, files }); setNote(n);
   };
   // an upcoming meeting's page, opened from Up next here or on another tab
@@ -86,6 +88,24 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
     const open = () => { const e = takeEvent(); if (e) { setNote(null); setEvent(e); } };
     window.addEventListener(OPEN_EVENT, open);
     return () => window.removeEventListener(OPEN_EVENT, open);
+  }, []);
+  // App's navigation history (navHistory.ts): the page on screen is reported so App can record it, and Back asks for one again,
+  // here or on the next mount when Back comes from another view
+  useEffect(() => { reportHomePage(event ? { kind: 'event', event } : note ? { kind: 'note', file: note.file } : null); }, [event, note]);
+  useEffect(() => {
+    const apply = () => {
+      const r = takeHomePage();
+      if (!r) return;
+      const p = r.page;
+      if (p?.kind === 'event') { setNote(null); setEvent(p.event); return; }
+      setEvent(null);
+      if (p?.kind === 'note') { openNoteAt(p.file, null); return; }
+      setNote(null); setFirstAsk(null);
+      window.quorum.history().then(setData);
+    };
+    apply();
+    window.addEventListener(HOME_PAGE_EVENT, apply);
+    return () => { window.removeEventListener(HOME_PAGE_EVENT, apply); reportHomePage(null); };
   }, []);
   const [draft, setDraft] = useState('');
   const { quote, shown, typing } = useQuote();
@@ -144,14 +164,14 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
       && (!kw || `${m.title} ${m.people.join(' ')}`.toLowerCase().includes(kw) || !!bodyHits?.has(m.rel))).map((m) => ({
       key: m.id, kind: m.kind, title: m.title, sub: m.kind === 'note' ? 'Note' : peopleLine(m.people, m.count),
       date: m.date ? new Date(m.date) : null, avatar: m.kind === 'note' ? 'note' : (m.people[0] ?? m.title).trim()[0]?.toUpperCase() ?? '?',
-      open: () => openNoteAt(m.file, null), meeting: m,
+      open: () => { onMark?.(); openNoteAt(m.file, null); }, meeting: m,
       children: (byMeeting.get(m.file) ?? []).map((c) => chatRow(c, true)),
     }));
     if (filter === 'meetings' || picked.length) return meetings;
     const known = new Set(data.meetings.map((m) => m.file));
     const loose = data.chats.filter((c) => (!c.meetingFile || !known.has(c.meetingFile)) && !upcoming(c) && chatFits(c)).map((c) => chatRow(c));
     return [...meetings, ...loose].sort((a, b) => (b.date?.getTime() ?? 0) - (a.date?.getTime() ?? 0));
-  }, [data, filter, picked, range, keyword, bodyHits, onOpenChat]);
+  }, [data, filter, picked, range, keyword, bodyHits, onOpenChat, onMark]);
 
   const groups = useMemo(() => {
     const g: { label: string; rows: Row[] }[] = [];
@@ -174,8 +194,9 @@ export function HistoryView({ brain, focusAsk, onAsk, onOpenChat, onFiltered }: 
   // Up next steps aside while the list is filtered, as it did when it lived here
   useEffect(() => { onFiltered?.(filtered); }, [filtered, onFiltered]);
   useEffect(() => () => onFiltered?.(false), [onFiltered]);
-  if (event) return <Suspense fallback={null}><MeetingPage key={event.id} event={event} onBack={() => setEvent(null)} onOpenNote={(file) => window.quorum.readNote(file).then((n) => { if (n) { setEvent(null); setNote(n); } })} /></Suspense>;
-  if (note) return <Suspense fallback={null}><NoteReader key={note.file} chat={noteChat} firstAsk={firstAsk} note={note} dayLabel={dayLabel} peopleLine={peopleLine} onBack={() => { setNote(null); setFirstAsk(null); refresh(); }} /></Suspense>;
+  // Back goes to the place App recorded; with nothing recorded it shows the list
+  if (event) return <Suspense fallback={null}><MeetingPage key={event.id} event={event} onBack={() => { if (!onBack?.()) setEvent(null); }} onOpenNote={(file) => window.quorum.readNote(file).then((n) => { if (n) { onMark?.(); setEvent(null); setNote(n); } })} /></Suspense>;
+  if (note) return <Suspense fallback={null}><NoteReader key={note.file} chat={noteChat} firstAsk={firstAsk} note={note} dayLabel={dayLabel} peopleLine={peopleLine} onBack={() => { if (!onBack?.()) { setNote(null); setFirstAsk(null); refresh(); } }} /></Suspense>;
 
   const ask = (q: string, files: string[] = []) => { if (q.trim()) { setDraft(''); askAsNote(q.trim(), files); } };
 
