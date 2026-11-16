@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ConnectorId, ConnectorRole, ModelSourceStatus, Providers, Settings } from './quorum';
-import { Modal, ModalActions, Row, useMenu } from './controls';
+import { EmptyState, Modal, ModalActions, Row, useMenu } from './controls';
 import { BY_ID, CATALOG, MODEL_ROLES, ROLES, ROLE_LABEL, canServe, modelName, needsBaseUrl, needsKey, rolesFor, type ConnectorManifest } from '../connectors/catalog';
 import { MODELS } from './Composer';
 import { IconChat, IconCheck, IconCode, IconExternal, IconGrid, IconMic, IconMore, IconNotes, IconPerson, IconPlus, IconReset, IconTrash, ProviderMark, Wave } from './icons';
@@ -115,12 +115,10 @@ export function PersonalConnectors() {
       </div>
       <p className="mcp-lede">The AI accounts and keys Quorum can run on: your Claude Code sign-in, your own provider keys, or a local model. Below, pick which one handles each step.</p>
       {!st ? null : zero ? (
-        <div className="set-card set-zero">
-          <span className="set-zero-icon"><IconGrid width={22} height={22} /></span>
-          <strong>No AI provider yet</strong>
+        <EmptyState icon={<IconGrid width={22} height={22} />} title="No AI provider yet">
           <p>Quorum has no key of its own. Connect the AI you already use.</p>
           <button className="pill primary" onClick={() => setSheet({ kind: 'add', id: null })}>Add AI provider</button>
-        </div>
+        </EmptyState>
       ) : (
         <>
           <div className="set-card">

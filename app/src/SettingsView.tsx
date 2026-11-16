@@ -10,7 +10,7 @@ import { ConnectHint } from './ConnectHint';
 import { openConnectors, type ConnectorsTarget } from './connectorsNav';
 import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
-import { Modal, ModalActions, Row, Toggle, useMenu } from './controls';
+import { EmptyState, Modal, ModalActions, Row, Toggle, useMenu } from './controls';
 import { BrainCheckPanel, ContextPanel, SkillsPanel } from './PluginPanels';
 import { AccountArea, BillingArea, DeleteAccountArea, DeleteOrgArea, EDITION, KnowledgeBasesArea, KnowledgeQueueArea, MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { TOP_ADMIN_PAGES, canAdmin, flagHiddenPages, modeOf, resolvePage, voiceMode, workspacePages, type Page } from './settingsNav';
@@ -215,23 +215,19 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
 // page says so and points at the personal page that works on this Mac
 function OrgConnectorsLocal({ onGo }: { onGo: (p: Page) => void }) {
   return (
-    <div className="set-card set-zero">
-      <span className="set-zero-icon"><IconGrid width={22} height={22} /></span>
-      <strong>Organization connectors are a Cloud feature</strong>
+    <EmptyState icon={<IconGrid width={22} height={22} />} title="Organization connectors are a Cloud feature">
       <p>In Quorum Cloud an admin adds speech, model and voice providers once, and every seat in the workspace uses them. The Local edition keeps every key on this Mac.</p>
       <button className="pill" onClick={() => onGo('connectors')}>Open your Connectors</button>
-    </div>
+    </EmptyState>
   );
 }
 
 function OrgVoiceLocal({ onGo }: { onGo: (p: Page) => void }) {
   return (
-    <div className="set-card set-zero">
-      <span className="set-zero-icon"><IconKeyboard width={22} height={22} /></span>
-      <strong>Organization overrides are a Cloud feature</strong>
+    <EmptyState icon={<IconKeyboard width={22} height={22} />} title="Organization overrides are a Cloud feature">
       <p>In Quorum Cloud an admin chooses which provider handles speech to text, the running summary and the final notes for the whole workspace. The Local edition transcribes on this Mac with your own settings.</p>
       <button className="pill" onClick={() => onGo('voice')}>Open your Voice typing settings</button>
-    </div>
+    </EmptyState>
   );
 }
 
@@ -855,12 +851,10 @@ function KnowledgePage() {
       <KnowledgeBasesArea local={(
         <>
           <h3>Company knowledge</h3>
-          <div className="set-card set-zero">
-            <span className="set-zero-icon"><IconBuilding width={22} height={22} /></span>
-            <strong>No company knowledge source<Soon /></strong>
+          <EmptyState icon={<IconBuilding width={22} height={22} />} title={<>No company knowledge source<Soon /></>}>
             <p>Admins will connect a repo, wiki or knowledge base, and Quorum will read it for everyone in the workspace.</p>
             <button className="pill" disabled>Connect to company knowledge source</button>
-          </div>
+          </EmptyState>
         </>
       )} />
 

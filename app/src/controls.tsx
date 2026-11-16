@@ -52,3 +52,8 @@ export function Modal({ titleId, title, className, role = 'dialog', describedBy,
 export function ModalActions({ start, children }: { start?: ReactNode; children: ReactNode }) {
   return <div className="modal-actions">{start ?? <span />}<span className="modal-actions-end">{children}</span></div>;
 }
+
+// the card a settings list shows when it has nothing in it yet: an icon, a title, then a line and an action as children
+export function EmptyState({ icon, title, children }: { icon: ReactNode; title: ReactNode; children?: ReactNode }) {
+  return <div className="set-card set-zero"><span className="set-zero-icon">{icon}</span><strong>{title}</strong>{children}</div>;
+}

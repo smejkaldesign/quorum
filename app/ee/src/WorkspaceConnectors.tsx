@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AccountState, ConnectorDraft, ConnectorProvider, ConnectorRole, WorkspaceConnector } from '../../src/quorum';
-import { ModalActions, Row } from '../../src/controls';
+import { EmptyState, ModalActions, Row } from '../../src/controls';
 import { IconGrid, IconPlus, IconReset, IconTrash, ProviderMark } from '../../src/icons';
 import { AccountCard, EE_MARKER, useAccount } from './Account';
 import { connectorsApi } from './accountMock';
@@ -55,12 +55,10 @@ function Connectors({ account }: { account: AccountState }) {
       </div>
       <p className="mcp-lede">Provider keys for the whole workspace. Quorum keeps each key in the server vault and uses it only for the roles you pick; no one can read it back, not even here.</p>
       {list && !list.length ? (
-        <div className="set-card set-zero">
-          <span className="set-zero-icon"><IconGrid width={22} height={22} /></span>
-          <strong>No connectors yet</strong>
+        <EmptyState icon={<IconGrid width={22} height={22} />} title="No connectors yet">
           <p>{canManage ? 'Add a speech, model or voice provider once and every seat in the workspace uses it.' : 'An owner or admin adds speech, model and voice providers here for everyone.'}</p>
           {canManage && <button className="pill" onClick={() => setEditing('new')}>Add a connector</button>}
-        </div>
+        </EmptyState>
       ) : (
         <div className="set-card">
           {list?.map((c) => (
