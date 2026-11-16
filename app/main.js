@@ -58,7 +58,7 @@ import { createUpdater, feedFor } from './updater.js';
 import { createGuardrails } from './guardrails.js';
 import { createPlatformCache, eventRef, matchPlatforms } from './meetingPlatforms.js';
 import { calendarWindow, normalizeDays } from './calendarWindow.js';
-import { feedPage, feedRows, labelOf } from './activityFeed.js';
+import { ARCHIVE_AFTER, feedPage, feedRows, labelOf } from './activityFeed.js';
 import { issueMeta, issueOf } from './memoryHealth.js';
 import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
@@ -2100,7 +2100,7 @@ function feedSources() {
   });
   const left = linksLeft();
   const declined = linksDeclined();
-  const links = linkIssues().filter((m) => !left.has(m.target.toLowerCase())).map((m) => ({ ...withMarks(m, left, declined), abs: path.join(b.vault, m.sources?.[0] ?? '') }));
+  const links = linkIssues().map((m) => ({ ...withMarks(m, left, declined), abs: path.join(b.vault, m.sources?.[0] ?? '') }));
   const v = b.vault;
   const runs = fixRunList().filter((r) => r.vault === v && (r.endedAt ?? r.queuedAt) > Date.now() - 7 * 86400000);
   return { notes, memories, denials, junk: keeper.junk(), links, runs, state, guardFile: DENIAL_LOG };
@@ -2108,7 +2108,7 @@ function feedSources() {
 ipcMain.handle('activity-feed', (_e, query) => {
   const q = query ?? {};
   return feedPage(feedRows(feedSources()), {
-    tab: ['unread', 'archived'].includes(q.tab) ? q.tab : 'all', archived: Object.keys(feedState().archived), review: q.review === true, kinds: Array.isArray(q.kinds) ? q.kinds.map(String) : [], q: String(q.q ?? ''),
+    tab: ['unread', 'archived'].includes(q.tab) ? q.tab : 'all', archived: Object.keys(feedState().archived), kept: Object.keys(feedState().kept ?? {}), review: q.review === true, kinds: Array.isArray(q.kinds) ? q.kinds.map(String) : [], q: String(q.q ?? ''),
     sort: String(q.sort ?? 'unread'), offset: Number(q.offset) || 0, limit: Number(q.limit ?? 50), prefs: settings.notifications ?? {},
   });
 });
@@ -2131,7 +2131,9 @@ ipcMain.handle('activity-archive', (_e, rows, on) => {
   for (const r of Array.isArray(rows) ? rows : []) {
     const id = String(r?.id ?? '');
     if (!id || id.length > 2000) continue;
-    if (on === false) delete st.archived[id]; else { st.archived[id] = at; st.read[id] = at; delete st.unread[id]; }
+    st.kept ??= {};
+    if (id.startsWith('r:link:')) setLinksLeft([id.slice(7)], on !== false);
+    if (on === false) { delete st.archived[id]; if (!id.startsWith('r:link:')) st.kept[id] = at; } else { st.archived[id] = at; delete st.kept[id]; st.read[id] = at; delete st.unread[id]; }
     n++;
   }
   feedStateSave();
@@ -2621,7 +2623,15 @@ ipcMain.handle('vault-link-decide', (_e, key, verdict) => (verdict === 'approve'
 // They are kept in Quorum's data folder; a finished run's banner is dismissed by the person or after a day
 const fixRunsFile = path.join(DATA_DIR, 'fix-runs.json');
 let fixRuns = null;
-const fixRunList = () => { if (!fixRuns) { try { fixRuns = JSON.parse(readFileSync(fixRunsFile, 'utf8')); } catch { fixRuns = []; } if (!Array.isArray(fixRuns)) fixRuns = []; } return fixRuns; };
+const fixRunList = () => {
+  if (!fixRuns) {
+    try { fixRuns = JSON.parse(readFileSync(fixRunsFile, 'utf8')); } catch { fixRuns = []; }
+    if (!Array.isArray(fixRuns)) fixRuns = [];
+    // a fix still waiting or working when Quorum last quit never finished: it says so, and its issue is back in review
+    for (const r of fixRuns) if (r.status === 'queued' || r.status === 'running') Object.assign(r, { status: 'error', error: 'Quorum quit before this fix finished. Approve it again to fix it.', endedAt: r.endedAt ?? Date.now() });
+  }
+  return fixRuns;
+};
 const fixRunsSave = () => { fixRuns = fixRunList().slice(0, 300); try { writeFileSync(fixRunsFile, JSON.stringify(fixRuns)); } catch (e) { log('fix runs', e?.message); } };
 const fixQueue = [];
 let fixWorking = false;
@@ -2632,6 +2642,8 @@ const fixEmit = (run) => toUI('fix-run', withBanner(run));
 const tick = () => new Promise((r) => setTimeout(r, 0));
 function startFixes(keys) {
   const started = [];
+  // a bulk Approve is one batch: the window shows its progress from the runs, even after leaving the page and coming back
+  const batch = keys.length > 1 ? `b:${Date.now()}` : null;
   for (const k of keys) {
     const key = String(k ?? '').toLowerCase();
     if (!key) continue;
@@ -2642,7 +2654,7 @@ function startFixes(keys) {
     const i = issueOf(withMarks(entry));
     const run = {
       id: `fix:${key}:${Date.now()}`, key, target: i.target, title: i.title, rel: i.path, vault: brain()?.vault ?? '', status: 'queued', queuedAt: Date.now(), startedAt: null, endedAt: null,
-      steps: [], outcome: null, error: null, dismissedAt: null,
+      steps: [], outcome: null, error: null, dismissedAt: null, batch,
       problem: i.problem, solution: i.solution, value: i.value, recommendation: i.recommend, meta: issueMeta(i),
     };
     fixRunList().unshift(run);
@@ -2680,6 +2692,12 @@ async function pumpFixes() {
       run.outcome = await decideLink(run.key, 'approve', step, keep);
       run.status = 'success';
       run.undoable = saveUndo(run, kept);
+      // each note the fix changed gets a new version in its history, so it can be restored from there too
+      for (const k of kept) {
+        let after = null;
+        try { after = readFileSync(vaultPath(run.vault, k.rel), 'utf8'); } catch {}
+        if (after !== k.before) memoryVersions.record({ vault: run.vault, rel: k.rel, before: k.before, after, who: 'agent', reason: `Memory health fix: ${run.outcome}` });
+      }
     } catch (e) {
       run.status = 'error';
       run.error = e?.message ?? String(e);
@@ -2691,6 +2709,7 @@ async function pumpFixes() {
     fixRunsSave();
     fixEmit(run);
     toUI('memory-updates', null);
+    setTimeout(() => toUI('memory-updates', null), ARCHIVE_AFTER + 300);
   }
   fixWorking = false;
 }
@@ -2714,7 +2733,11 @@ ipcMain.handle('fix-undo', async (_e, id) => {
   if (run.vault !== brain()?.vault) throw new Error('That fix was made in another vault');
   let saved;
   try { saved = JSON.parse(readFileSync(undoFile(run.id), 'utf8')); } catch { throw new Error('Quorum has no record of what this fix changed, so it cannot undo it'); }
+  const nowText = (rel) => { try { return readFileSync(vaultPath(run.vault, rel), 'utf8'); } catch { return null; } };
+  const was = (saved.files ?? []).map((f) => ({ rel: f.rel, text: nowText(f.rel) }));
   const n = await applyUndo(run.vault, saved.files ?? [], (abs) => shell.trashItem(abs));
+  // the undo is a version of its own, so the fixed text can be brought back from the history
+  for (const w of was) memoryVersions.record({ vault: run.vault, rel: w.rel, before: w.text, after: nowText(w.rel), who: 'you', reason: `Undid the Memory health fix on “${run.target}”`, agent: false });
   vindex?.sync();
   diskNamesCache.at = 0;
   setLinksLeft([run.key], false);

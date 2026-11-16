@@ -2861,3 +2861,17 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .run-steps li > span:first-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .run-steps li > .run-time { flex: none; }
 .nf-bulk-actions { align-items: center; }
+
+/* the note drawer while a fix runs: the title shimmers; then green when fixed, grey when not */
+.mh-drawer.running h3.nf-title { background: linear-gradient(90deg, var(--text) 0%, var(--text) 40%, rgba(255, 255, 255, 0.35) 50%, var(--text) 60%, var(--text) 100%); background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 1.8s linear infinite; }
+.mh-drawer.fixed .mh-drawer-kind { color: #30d158; }
+.mh-drawer.not-fixed .mh-drawer-kind { color: var(--muted); }
+.mh-drawer.not-fixed .run-banner.error { border-color: var(--line-2); background: rgba(255, 255, 255, 0.04); }
+.mh-drawer.not-fixed .run-banner.error .run-icon { color: var(--muted); }
+.mh-drawer-wait { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
+.mh-drawer .run-banner { margin: 4px 0 16px; }
+.mh-batch-note { margin: 0 14px 12px; font-size: 13px; color: var(--muted); }
+
+/* the side panel: text inside each section lines up with its label on the left (past the chevron) and its count on the right */
+.note-panel .np-item, .note-panel .np-outline, .note-panel .np-empty, .note-panel .views-row { padding-left: 24px; padding-right: 6px; }
+.note-panel .views-row.sub { padding-left: 36px; }

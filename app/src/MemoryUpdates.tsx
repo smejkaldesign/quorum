@@ -46,10 +46,10 @@ export function ReviewBanner({ tone, label, mode, onMode, highlight, onHighlight
           <button className="icon-btn mu-icon" aria-label="Next" data-tip="Next" onClick={nav.onNext}><IconArrowDown width={15} height={15} /></button>
         </span>
       )}
-      {/* a Memory health issue answers in words: Dismiss, Approve */}
+      {/* a Memory health issue answers in words: Archive, Approve */}
       {words && (
         <span className="mu-nav mu-words">
-          {onReject && <button className="act-pill" disabled={locked} data-tip={rejectTip} onClick={onReject}>Dismiss</button>}
+          {onReject && <button className="act-pill" disabled={locked} data-tip={rejectTip} onClick={onReject}>Archive</button>}
           {onAccept && <button className="act-pill primary" disabled={locked} data-tip={acceptTip} onClick={onAccept}>Approve</button>}
         </span>
       )}

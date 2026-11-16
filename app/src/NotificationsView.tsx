@@ -78,7 +78,7 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
         {/* waiting for a decision shows the orange mark, Quorum's color for anything in review */}
         <span className="nf-who">{row.who === 'you' ? <span className="nf-you-avatar" aria-label="You" data-tip={me.name}><Avatar name={me.name} photo={me.photo} size={32} /></span> : <img src={markProd} alt={row.review ? 'Quorum, needs review' : 'Quorum'} width={32} height={32} />}</span>
         <span className="nf-main">
-          <span className="nf-head"><strong className="conn-title nf-title" data-tip={row.review || row.run ? row.summary.line : undefined}>{row.summary.line}</strong>{!row.review && !row.run && row.unread && <i className="nf-dot" role="img" aria-label="Unread" data-tip="Unread" />}</span>
+          <span className="nf-head"><strong className="conn-title nf-title" data-tip={row.review || row.run ? row.summary.line : undefined}>{row.summary.line}</strong>{row.unread && !row.archived && <i className="nf-dot" role="img" aria-label="Unread" data-tip="Unread" />}</span>
           {(row.review || row.run) && <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span></span>}
           {!row.review && !row.run && <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>{row.summary.sub && <> <span className="nf-sep" aria-hidden="true">•</span> {row.summary.sub}</>}</span>}
         </span>
@@ -89,11 +89,14 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
               {row.run.status === 'success' && <UndoMenu run={row.run} />}
             </StatusSwap>
           )}
-          {row.review && (
+          {row.review && row.archived && (
+            <StatusSwap status="dismissed"><RowMenu label="Move back to review" onPick={() => onArchive(false)} /></StatusSwap>
+          )}
+          {row.review && !row.archived && (
             <span className="mh-swap" onClick={stop} onKeyDown={stop}>
               <span className="mh-when"><StatusBadge status={row.fixRun?.status === 'queued' ? 'waiting' : 'review'} /></span>
               <span className="mh-hover">
-                <button className="icon-btn mh-icon mh-no" disabled={busy} aria-label="Dismiss" data-tip="Dismiss: mark it reviewed and change nothing" onClick={() => onDecide('dismiss')}><IconClose width={15} height={15} /></button>
+                <button className="icon-btn mh-icon" disabled={busy || working} aria-label="Archive" data-tip="Archive: set it aside without fixing it" onClick={() => onArchive(true)}><IconArchive width={16} height={16} /></button>
                 {working
                   ? <span className="icon-btn mh-icon mh-busy" role="img" aria-label="Working"><i className="run-spin" /></span>
                   : <button className="icon-btn mh-icon mh-yes" disabled={busy} aria-label="Approve" data-tip={`Approve: ${row.summary.recommendation ?? ''}`} onClick={() => { setWorking(true); onDecide('approve'); }}><IconCheck width={16} height={16} /></button>}
@@ -232,12 +235,16 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
     if (!rows.length) return;
     await window.quorum.activityArchive(rows.map((r) => ({ id: r.id })), on).catch(() => 0);
     changed();
+    // archiving a review item sets it aside without fixing it; it waits under Archived until it is moved back
+    const reviews = rows.filter((r) => r.review);
+    const one = (xs: FeedRow[]) => (xs.length === 1 ? `“${xs[0].target.title}”` : `${xs.length} items`);
+    if (reviews.length) toast(on ? `Archived ${one(reviews)} without fixing it. It is under Archived when you want it again.` : `Moved ${one(reviews)} back to review.`);
   };
 
   const counts = page?.counts;
   const filtered = !!(q || kinds.length);
   const empty = filtered ? 'No notifications match these filters.'
-    : review ? 'Nothing waits for your review. Notes Quorum writes, memory updates waiting for approval and Memory health issues show up here.'
+    : review ? 'Nothing waits for your review. The Quorum agent keeps watching your memories and lists new ways to improve them here as they come up.'
       : tab === 'archived' ? 'Nothing archived. Archived notifications stay here, out of your list.'
       : tab === 'unread' ? 'You are all caught up. New agent activity shows up here.'
         : 'No activity yet. Quorum lists what its agents do with your notes and memories here.';
@@ -280,7 +287,6 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
             {/* left to right: Archive, Mark read, Dismiss, and Approve as the primary action on the far right */}
             <button className="icon-btn mh-icon" disabled={busy} aria-label={tab === 'archived' ? 'Unarchive' : 'Archive'} data-tip={tab === 'archived' ? 'Unarchive' : 'Archive'} onClick={async () => { await archive(sel, tab !== 'archived'); setPicked(new Set()); }}><IconArchive width={16} height={16} /></button>
             <button className="act-pill" disabled={busy || !sel.some((r) => r.unread)} onClick={async () => { await mark(sel); setPicked(new Set()); }}>Mark read</button>
-            <button className="act-pill" disabled={busy || !selReview.length} data-tip="Mark them reviewed and change nothing" onClick={() => decide(selReview, 'dismiss')}>Dismiss</button>
             <button className="act-pill primary" disabled={busy || !selReview.length} onClick={() => decide(selReview, 'approve')}>Approve</button>
           </span>
         </div>
@@ -329,8 +335,7 @@ export function RunBanner({ run }: { run: FixRun }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { if (!live) return; const t = window.setInterval(() => setNow(Date.now()), 250); return () => window.clearInterval(t); }, [live]);
   const current = run.steps[run.steps.length - 1];
-  const elapsed = (run.endedAt ?? now) - (run.startedAt ?? run.queuedAt);
-  const dismiss = (e: React.SyntheticEvent) => { e.stopPropagation(); dismissRun(run); };
+  const elapsed = run.startedAt || run.queuedAt ? (run.endedAt ?? now) - (run.startedAt ?? run.queuedAt) : 0;
   return (
     <div className={`run-banner ${live ? 'live' : run.status}`} role="status" aria-live="polite" onClick={(e) => e.stopPropagation()}>
       <div className="run-head">
@@ -338,7 +343,6 @@ export function RunBanner({ run }: { run: FixRun }) {
         {(() => { const t = live ? (run.status === 'queued' ? 'Waiting for the run before it' : current?.label ?? 'Starting') : run.status === 'success' ? run.outcome : run.error; return <span className={`run-text${live ? ' shimmer' : ''}`} data-tip={t ?? undefined}>{t}</span>; })()}
         <span className="run-time">{took(elapsed)}</span>
         {run.steps.length > 0 && <button className={`icon-btn conn-fold${steps ? ' open' : ''}`} aria-expanded={steps} aria-label={steps ? 'Hide steps' : 'Show steps'} onClick={() => setSteps((o) => !o)}><IconChevron width={14} height={14} /></button>}
-        {!live && run.showBanner && <button className="act-pill run-dismiss" onClick={dismiss}>Dismiss</button>}
       </div>
       <div className={`fold-anim${steps ? ' open' : ''}`}>
         <div className="fold-inner">

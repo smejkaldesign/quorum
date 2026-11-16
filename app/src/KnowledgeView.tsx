@@ -12,6 +12,7 @@ import { Graph, type GraphData, type GraphView } from './Graph';
 import { NotePanel, Palette, type PaletteItem, type PaletteMode } from './NoteTools';
 import { reportMemoryNote } from './navHistory';
 import { toast } from './Toasts';
+import type { FixRun } from './quorum';
 import { IssueDrawer, LinkHealth, acceptIssue, dismissIssue, leftOf, migrateLeft, waitFix } from './LinkHealth';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
@@ -68,6 +69,8 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   // the drawer for the issue under the cursor: the arrows, a click on an issue line, and View from Notifications open it
   const [issueOpen, setIssueOpen] = useState(false);
   const [deciding, setDeciding] = useState(false);
+  // the issue being fixed from the drawer: the drawer stays on it, showing the agent working, then whether it was fixed
+  const [fixShown, setFixShown] = useState<{ issue: Issue; at: number; total: number; run: FixRun | null } | null>(null);
   // runs writing notes right now (liveRuns.js): shimmer in the tree and the graph, and a lock with Stop on an open note
   const [live, setLive] = useState<LiveState>({ runs: [], files: {}, folders: [], vault: [] });
   const [confirmStop, setConfirmStop] = useState<LiveRun | null>(null);
@@ -290,17 +293,23 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     setDeciding(true);
     try {
       if (approve) {
+        setFixShown({ issue: item.issue, at: cursor, total: issueReview.length, run: null });
+        setIssueOpen(true);
+        const off = window.quorum.onFixRun((r) => { if (r.key === item.issue.key) setFixShown((f) => (f && f.issue.key === r.key ? { ...f, run: r } : f)); });
         const done = waitFix(item.issue.key);
-        flash(await acceptIssue(item.issue));
-        toast(`Approved “${item.issue.target}”. Quorum is fixing it now.`);
-        const run = await done;
-        flash(run.status === 'success' ? run.outcome ?? 'Fixed' : run.error ?? 'Could not fix it');
-      } else { flash(await dismissIssue(item.issue)); toast(`Dismissed “${item.issue.target}”. Nothing changed.`); }
+        try {
+          flash(await acceptIssue(item.issue));
+          toast(`Approved “${item.issue.target}”. Quorum is fixing it now.`);
+          const run = await done;
+          setFixShown((f) => (f && f.issue.key === run.key ? { ...f, run } : f));
+          flash(run.status === 'success' ? run.outcome ?? 'Fixed' : run.error ?? 'Could not fix it');
+        } catch (e) { setFixShown(null); throw e; } finally { off(); }
+      } else { flash(await dismissIssue(item.issue)); toast(`Archived “${item.issue.target}” without fixing it. It is under Archived in Memory health.`); }
       countIssues();
       await reloadOpen(preview.rel);
       const items = await loadIssues(preview.rel);
       countIssues();
-      if (!items.length) { setIssueReview(null); setIssueOpen(false); setCursor(-1); return; }
+      if (!items.length) { setIssueReview(null); if (!approve) setIssueOpen(false); setCursor(-1); return; }
       setIssueReview(items);
       const at = Math.min(Math.max(cursor, 0), items.length - 1);
       jump(at, items[at].line);
@@ -594,7 +603,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
                     mode={review ? mode : undefined} onMode={review ? setMode : undefined}
                     highlight={review ? highlight : undefined} onHighlight={review ? () => setHighlight((h) => !h) : undefined}
                     nav={mode === 'after' ? (() => { const n = navOver(issueReview.map((x) => x.line)); return { ...n, onPrev: () => { n.onPrev(); setIssueOpen(true); }, onNext: () => { n.onNext(); setIssueOpen(true); } }; })() : undefined}
-                    onAccept={() => decideIssue(true)} onReject={() => decideIssue(false)} words acceptTip="Take the recommended fix" rejectTip="Mark it reviewed and change nothing" />
+                    onAccept={() => decideIssue(true)} onReject={() => decideIssue(false)} words acceptTip="Take the recommended fix" rejectTip="Set it aside without fixing it" />
                 : review && <ReviewBanner tone={review.dot} locked={locked}
                     label={`${review.count} ${review.count === 1 ? 'update' : 'updates'} on ${when(review.at)}`}
                     mode={mode} onMode={(m) => { setMode(m); setCursor(-1); }} highlight={highlight} onHighlight={() => setHighlight((h) => !h)}
@@ -622,7 +631,12 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
                 <Markdown text={version ? version.body : review && mode === 'before' ? review.before : preview.body} headings root={brain?.root} onWiki={openLink} marks={marks} />
               </div>
             </article>
-            {issueReview && issueOpen && issueReview[cursor] && (
+            {fixShown && issueOpen ? (
+              // the fix in progress, then its result; Next goes on to the next item still waiting
+              <IssueDrawer issue={fixShown.issue} at={fixShown.at} total={fixShown.total} locked busy run={fixShown.run ?? undefined} fixing
+                onOpen={(rel) => openNote(rel)} onDecide={() => {}} onClose={() => { setFixShown(null); setIssueOpen(false); }}
+                onNext={issueReview?.length ? () => { setFixShown(null); const at = Math.min(Math.max(cursor, 0), issueReview.length - 1); jump(at, issueReview[at].line); } : undefined} />
+            ) : issueReview && issueOpen && issueReview[cursor] && (
               <IssueDrawer issue={issueReview[cursor].issue} at={cursor} total={issueReview.length} locked={locked} busy={deciding}
                 onOpen={(rel) => openNote(rel)} onDecide={decideIssue} onClose={() => setIssueOpen(false)} />
             )}

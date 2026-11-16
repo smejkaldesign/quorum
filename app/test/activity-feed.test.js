@@ -195,4 +195,10 @@ describe('fix runs', () => {
     expect(feedPage(done).items.map((r) => r.summary.line)).toEqual(['Fixed “Roadmap”']);
     expect(feedPage(feedRows({ runs: [run('success', { dismissedAt: Date.now() })] })).items[0].run.showBanner).toBe(false);
   });
+  it('archives a fix a few seconds after it ends, and an issue set aside without fixing it', () => {
+    const old = feedRows({ runs: [run('success', { endedAt: Date.now() - 60000 })], links: [{ ...issue, target: 'Other', left: true }] });
+    expect(feedPage(old).items).toEqual([]);
+    expect(feedPage(old, { tab: 'archived' }).items.map((r) => r.event)).toEqual(expect.arrayContaining(['fix', 'review']));
+    expect(feedPage(old, { kept: ['f:fix:roadmap:1'] }).items.map((r) => r.event)).toEqual(['fix']);
+  });
 });

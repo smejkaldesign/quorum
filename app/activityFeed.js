@@ -33,6 +33,8 @@ export const FEED_SORTS = ['unread', 'recent', 'az'];
 export const labelOf = (rel) => titleOf({ rel });
 
 const DAY = 86400000;
+// how long a finished fix shows its outcome in place before it moves to Archived
+export const ARCHIVE_AFTER = 8000;
 const time = (v) => (typeof v === 'number' ? v : new Date(v ?? 0).getTime() || 0);
 const youText = (t) => String(t ?? '').startsWith('You');
 const noteKind = (e) => {
@@ -130,7 +132,7 @@ export function feedRows({ notes = [], memories = [], denials = [], junk = [], l
       id: `r:link:${i.key}`, at: time(m.lastAt), kind: 'memory-health', event: 'review', who: 'agent',
       target: { kind: 'link', abs: m.abs ?? '', rel: i.path, title: i.target }, files: [],
       detail: { title: i.title, problem: i.problem, solution: i.solution, value: i.value, recommend: i.recommend, meta: issueMeta(i), category: i.category, links: i.links, notes: i.notes, folder: i.folder?.folder ?? null },
-      review: { kind: 'link', key: i.key },
+      review: { kind: 'link', key: i.key, ...(m.left ? { left: true } : {}) },
     }, null);
   }
   // each fix run Quorum carried out on an approved Memory health issue: its row shows it working, then its outcome
@@ -166,8 +168,13 @@ const SORTS = {
 // items waiting for a decision, and lists them all whatever the switches say. kinds narrows to event types, q to rows
 // whose words match. counts and dot are for the bell and the labels, and use the switches the same way
 // archived holds the ids the person archived: they leave All, Unread, Needs review and the dot, and list under Archived
-export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = '', sort = 'unread', offset = 0, limit = 50, prefs = {}, locale, archived = [] } = {}) {
-  const gone = new Set(archived);
+export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = '', sort = 'unread', offset = 0, limit = 50, prefs = {}, locale, archived = [], kept: keptIds = [] } = {}) {
+  // decided items archive on their own: an issue set aside unfixed (Dismissed), and a fix a few seconds after it ends
+  // (Accepted or Failed), unless the person brought it back with Unarchive
+  const back = new Set(keptIds);
+  const now0 = Date.now();
+  const decided = (r) => !back.has(r.id) && (!!r.review?.left || (!!r.run && (r.run.status === 'success' || r.run.status === 'error') && now0 - (r.run.endedAt ?? now0) >= ARCHIVE_AFTER));
+  const gone = new Set([...archived, ...rows.filter(decided).map((r) => r.id)]);
   // a run's banner shows until it is dismissed, by hand or a day after it finished
   const now = Date.now();
   const banner = (r) => !!r.run && (r.run.status === 'queued' || r.run.status === 'running' || (!r.run.dismissedAt && now - (r.run.endedAt ?? now) < DAY));
