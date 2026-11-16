@@ -104,3 +104,39 @@ console.log(`\nproposer: ${appDir}`);
 console.log(`open link issues: ${issues.length} (${Object.entries(issues.reduce((a, i) => ({ ...a, [i.action]: (a[i.action] ?? 0) + 1 }), {})).map(([k, v]) => `${k} ${v}`).join(', ')})`);
 for (const [c, v] of Object.entries(byCat)) console.log(`${c}: ${v.correct}/${v.total}`);
 console.log(`link-fix accuracy: ${correct}/${scored.length} = ${scored.length ? Math.round((correct / scored.length) * 100) : 0}% (${rows.length - scored.length} labels not scored)`);
+
+// The review rules (rules/index.js), when the checkout has them: each labeled item of these categories is a hit when a
+// finding of the mapped rules names one of its files (a path ending in / names a folder). A hit on a negative label is a
+// false positive. Precision counts the labeled hits only; the finding totals show how many items Needs review would get
+if (existsSync(path.join(appDir, 'rules', 'index.js'))) {
+  const { runRules, RULE_LABELS } = await load('rules/index.js');
+  const t0 = Date.now();
+  const { findings, ms } = runRules({ notes: idx.snapshot(), resolve: (t, from) => idx.resolve(t, from) });
+  const took = Date.now() - t0;
+  const CAT_RULES = {
+    duplicate: ['note.duplicate'], stale: ['note.stale'], orphan: ['note.orphan'],
+    frontmatter: ['note.frontmatter', 'note.confidential-folder'], confidential: ['note.confidential-folder', 'note.secret'],
+  };
+  const names = (f, file) => f.notes.some((rel) => (file.endsWith('/') ? rel.startsWith(file) : rel === file));
+  const score = {};
+  const lines = [];
+  for (const label of labels) {
+    const want = CAT_RULES[label.category];
+    if (!want) continue;
+    const hit = findings.some((f) => want.includes(f.ruleId) && (label.files ?? []).some((file) => names(f, file)));
+    const s = (score[label.category] ??= { tp: 0, fp: 0, fn: 0, tn: 0 });
+    const k = label.negative ? (hit ? 'fp' : 'tn') : hit ? 'tp' : 'fn';
+    s[k]++;
+    lines.push(`${label.id}\t${label.category}\t${label.negative ? 'negative' : 'positive'}\t${k.toUpperCase()}`);
+  }
+  if (!quiet) console.log(`\n${lines.join('\n')}`);
+  console.log('\nreview rules (labeled items):');
+  const pct = (a, b) => (b ? `${Math.round((a / b) * 100)}%` : 'n/a');
+  for (const [c, s] of Object.entries(score)) console.log(`${c}: precision ${pct(s.tp, s.tp + s.fp)} (${s.tp} TP, ${s.fp} FP), recall ${pct(s.tp, s.tp + s.fn)} (${s.fn} missed), negatives left alone ${s.tn}/${s.tn + s.fp}`);
+  const all = Object.values(score).reduce((a, s) => ({ tp: a.tp + s.tp, fp: a.fp + s.fp, fn: a.fn + s.fn }), { tp: 0, fp: 0, fn: 0 });
+  console.log(`all review categories: precision ${pct(all.tp, all.tp + all.fp)}, recall ${pct(all.tp, all.tp + all.fn)}`);
+  const per = {};
+  for (const f of findings) per[f.ruleId] = (per[f.ruleId] ?? 0) + 1;
+  console.log(`findings in the vault: ${findings.length} (${Object.entries(per).map(([id, n]) => `${RULE_LABELS[id] ?? id} ${n}`).join(', ')})`);
+  console.log(`rules took ${took} ms (${Object.entries(ms).map(([id, t]) => `${id} ${t}`).join(', ')})`);
+}

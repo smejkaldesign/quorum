@@ -1,5 +1,5 @@
 import './startup-flags.js';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, screen, session, shell, systemPreferences, Tray } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, powerMonitor, screen, session, shell, systemPreferences, Tray } from 'electron';
 import { NEEDS_SOURCE, NEEDS_TOOLS, SOURCES, modelLabel, runModel, sourceStatus } from './models.js';
 import { BY_ID, cleanConnectors, cleanProviders, needsKey, providerFor, providersFromSource, sourceFromProviders } from './connectors/catalog.js';
 import { connectorKey, removeConnectorKey, setConnectorKey, testSavedConnector } from './connectors/keys.js';
@@ -64,6 +64,8 @@ import { issueMeta, issueOf } from './memoryHealth.js';
 import { LINK_RULE, LINK_RULE_VERSION, contextNote, isGenerated } from './linkRules.js';
 import { createDecisionLog, fingerprint } from './decisionLog.js';
 import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, applyPlan, fixVersions, recheckAll, undoPlan } from './fixRecheck.js';
+import { createMemorySweep, dueSweep, rescanTags, scanTags } from './memorySweep.js';
+import { RULE_LABELS } from './rules/index.js';
 import { createElsewhere, withFound } from './linkElsewhere.js';
 import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
@@ -1409,6 +1411,11 @@ ipcMain.handle('set-settings', (_e, next) => {
     settings.memoryHighlight = next.memoryHighlight;
     store.settings.save();
   }
+  // Settings > Memory: background sweeps of the review rules (memorySweep.js); off pauses them
+  if (typeof next.memorySweeps === 'boolean') {
+    settings.memorySweeps = next.memorySweeps;
+    store.settings.save();
+  }
   // provider MCPs the person disconnected from Quorum, by connector id
   if (Array.isArray(next.mcpIgnored)) {
     settings.mcpIgnored = [...new Set(next.mcpIgnored.filter((x) => typeof x === 'string' && /^[a-z0-9-]{1,40}$/.test(x)))].slice(0, 100);
@@ -2113,7 +2120,7 @@ function feedSources() {
   const links = linkItems.map((m) => ({ ...withMarks(m, left, declined), abs: path.join(b.vault, m.sources?.[0] ?? '') }));
   const v = b.vault;
   const runs = fixRunList().filter((r) => r.vault === v && (r.endedAt ?? r.queuedAt) > Date.now() - 7 * 86400000);
-  return { notes, memories, denials, junk: keeper.junk(), links, runs, pastFixes: pastFixRows(), state, guardFile: DENIAL_LOG };
+  return { notes, memories, denials, junk: keeper.junk(), links, runs, pastFixes: pastFixRows(), findings: findingsNow(), state, guardFile: DENIAL_LOG };
 }
 ipcMain.handle('activity-feed', (_e, query) => {
   const q = query ?? {};
@@ -2140,18 +2147,21 @@ ipcMain.handle('activity-archive', (_e, rows, on) => {
   let n = 0;
   const linkKeys = [];
   const pastIds = [];
+  const findKeys = [];
   for (const r of Array.isArray(rows) ? rows : []) {
     const id = String(r?.id ?? '');
     if (!id || id.length > 2000) continue;
     st.kept ??= {};
     if (id.startsWith('r:link:')) { setLinksLeft([id.slice(7)], on !== false); linkKeys.push(id.slice(7)); }
     if (id.startsWith(PAST_FIX_ROW)) pastIds.push(id.slice(PAST_FIX_ROW.length));
+    if (id.startsWith('r:find:')) findKeys.push(id.slice(7));
     if (on === false) { delete st.archived[id]; if (!id.startsWith('r:link:')) st.kept[id] = at; } else { st.archived[id] = at; delete st.kept[id]; st.read[id] = at; delete st.unread[id]; }
     n++;
   }
   feedStateSave();
   logDecision(linkKeys, on === false ? 'reopened' : 'archived');
   for (const id of pastIds) logPastFix(id, on === false ? 'reopened' : 'archived', on === false ? null : 'Kept the fix');
+  archiveFindings(findKeys, on !== false);
   return n;
 });
 ipcMain.handle('activity-mark', (_e, rows, unread) => {
@@ -2183,7 +2193,7 @@ ipcMain.handle('activity-review', async (_e, items, verdict) => {
   const done = [];
   const failed = [];
   for (const it of Array.isArray(items) ? items : []) {
-    const t = it?.kind === 'link' || it?.kind === 'past-fix' ? { abs: String(it.abs ?? ''), rel: null } : feedFile(it?.abs);
+    const t = it?.kind === 'link' || it?.kind === 'past-fix' || it?.kind === 'finding' ? { abs: String(it.abs ?? ''), rel: null } : feedFile(it?.abs);
     try {
       if (!t) throw new Error('Not found');
       const at = new Date().toISOString();
@@ -2198,6 +2208,13 @@ ipcMain.handle('activity-review', async (_e, items, verdict) => {
         // Undo changes notes, so each one is undone on its own; Dismiss keeps the fix
         if (ok && items.filter((x) => x?.kind === 'past-fix').length > 1) throw new Error('Undo needs a review on its own. Open it and undo it there');
         if (ok) await undoPastFix(String(it.key ?? '')); else keepPastFix(String(it.key ?? ''));
+      } else if (it.kind === 'finding') {
+        // review rules never fix a note on their own: a person acts on the note, then archives the finding
+        if (ok) throw new Error('Quorum has no automatic fix for this. Open the note to act on it, then archive it');
+        archiveFindings([String(it.key ?? '')], true);
+        const st = feedState();
+        st.archived[`r:find:${it.key}`] = at;
+        feedStateSave();
       } else if (it.kind === 'junk-note') {
         if (!meetingFile(t.abs) || !t.rel) throw new Error('Not found');
         if (ok) {
@@ -2390,16 +2407,107 @@ const excludedPath = (rel) => suggester.isExcluded(rel);
 
 // one live index per connected vault; the watcher tells the UI what changed so it can refresh in place
 let vindex = null;
+// Memory health review rules (rules/index.js) on the cadence memorySweep.js sets: the notes that changed a few seconds
+// after a save, an incremental sweep every 3.5 hours, a full sweep once a day while the person is away
+const memorySweep = createMemorySweep({ file: path.join(DATA_DIR, 'memory-findings.json') });
+const sweepPaused = () => settings.memorySweeps === false;
+let sweeping = false;
+// the last confidential tag scan; a save sweep reads again only the notes that changed
+let tagScan = null;
+function sweep(kind, only = null) {
+  const b = brain();
+  if (!b || !vindex || sweeping) return null;
+  sweeping = true;
+  try {
+    const tags = kind === 'save' && only && tagScan?.vault === b.vault ? rescanTags(b.vault, tagScan.tags, only, excludedPath) : scanTags(b.vault, excludedPath);
+    tagScan = { vault: b.vault, tags };
+    const ctx = { notes: vindex.snapshot(), resolve: (t, from) => vindex.resolve(t, from), tags };
+    const s = memorySweep.run(b.vault, kind, ctx, { only });
+    log('memory sweep', kind, `${s.last.notes} notes`, `${s.last.ms} ms`, `${s.last.found} findings`);
+    toUI('memory-updates', null);
+    return s.last;
+  } catch (e) { log('memory sweep', e?.message); return null; } finally { sweeping = false; }
+}
+let saveTimer = null;
+const saveRels = new Set();
+const recordingNow = () => meeting.capturing || meeting.armed;
+// a recording writes its note every few seconds; the notes saved during it are checked once it ends
+function sweepOnSave(rels) {
+  for (const r of rels ?? []) saveRels.add(r);
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    if (recordingNow()) { sweepOnSave([]); return; }
+    if (!saveRels.size) return;
+    const only = [...saveRels]; saveRels.clear(); sweep('save', only);
+  }, 3000);
+}
+function sweepTick() {
+  const b = brain();
+  if (!b || !vindex) return;
+  const kind = dueSweep(memorySweep.state(b.vault), { paused: sweepPaused(), idleMs: powerMonitor.getSystemIdleTime() * 1000, recording: recordingNow() });
+  if (kind) sweep(kind);
+}
+setInterval(sweepTick, 10 * 60000).unref?.();
+// a finding's decisions go through the decision log: its fingerprint covers its notes and facts, so new evidence
+// brings an archived finding back to Needs review
+const findingSources = (f) => [...f.notes, ...(f.facts ?? [])];
+const findingRecord = (f) => ({ ruleId: f.ruleId, ruleVersion: f.ruleVersion, key: f.key, target: f.target, sources: findingSources(f), evidence: { notes: f.notes, lines: f.evidence }, proposedFix: { action: 'review', text: f.proposal, autoFix: false } });
+function findingsNow() {
+  const b = brain();
+  if (!b) return [];
+  const latest = decisionLog.latestAll(b.vault);
+  const reopened = [];
+  const out = memorySweep.findings(b.vault).map((f) => {
+    const last = latest.get(f.key);
+    const archived = last?.decision === 'archived' && last.fingerprint === fingerprint(f.ruleId, f.target, findingSources(f));
+    if (last?.decision === 'archived' && !archived) reopened.push({ ...findingRecord(f), decision: 'reopened', actor: 'quorum', note: 'The evidence changed after it was archived' });
+    return { ...f, archived, abs: path.join(b.vault, f.rel) };
+  });
+  if (reopened.length) { try { decisionLog.recordMany(b.vault, reopened); } catch (e) { log('decision log', e?.message); } }
+  return out;
+}
+function archiveFindings(keys, on) {
+  const b = brain();
+  if (!b || !keys.length) return 0;
+  const byKey = new Map(memorySweep.findings(b.vault).map((f) => [f.key, f]));
+  const recs = keys.map((k) => byKey.get(k)).filter(Boolean).map((f) => ({ ...findingRecord(f), decision: on ? 'archived' : 'reopened', actor: 'you' }));
+  try { decisionLog.recordMany(b.vault, recs); } catch (e) { log('decision log', e?.message); }
+  return recs.length;
+}
+ipcMain.handle('memory-findings', () => {
+  const s = brain() ? memorySweep.state(brain().vault) : null;
+  return { findings: findingsNow(), last: s?.last ?? null, lastFull: s?.lastFull ?? 0, paused: sweepPaused(), labels: RULE_LABELS };
+});
+// Archive or Move back to review on findings, by key; the Notifications marks move with them
+ipcMain.handle('memory-findings-archive', (_e, keys, on) => {
+  const list = (Array.isArray(keys) ? keys : []).map(String).filter((k) => k && k.length < 2000);
+  const n = archiveFindings(list, on !== false);
+  const st = feedState();
+  const at = new Date().toISOString();
+  for (const k of list) { const id = `r:find:${k}`; if (on === false) delete st.archived[id]; else { st.archived[id] = at; st.read[id] = at; delete st.unread[id]; } }
+  feedStateSave();
+  return n;
+});
+// Check again in Memory health: a full sweep now
+ipcMain.handle('memory-sweep-now', () => sweep(memorySweep.state(brain()?.vault ?? '')?.lastFull ? 'full' : 'first'));
+
 function openIndex() {
   vindex?.stop();
   vindex = null;
+  // saves waiting for a check belong to the vault that was open
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  saveRels.clear();
   const b = brain();
   if (!b) return;
+  // the first change the index reports is its first full read; the review rules sweep once it is in
+  let built = false;
   // the guardrails reach search too: a denied folder, a secret-looking file name or a denied frontmatter key never
   // enters the index, and a rule change rebuilds it (the guardrails IPC handlers below)
   vindex = createVaultIndex({
     vault: b.vault, isExcludedPath: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isDeniedText: isConfidentialText, isExcludedText: suggester.isExcluded, redact: suggester.redactLines,
-    onChange: (rels) => toUI('vault-changed', rels), renamed: () => settings.clusterNames?.[b.vault] ?? {},
+    onChange: (rels) => { toUI('vault-changed', rels); if (!built) { built = true; setTimeout(sweepTick, 5000); } else sweepOnSave(rels); }, renamed: () => settings.clusterNames?.[b.vault] ?? {},
     forget: (keys) => { const mine = settings.clusterNames?.[b.vault]; if (!mine) return; for (const k of keys) delete mine[k]; store.settings.save(); }, log: (...a) => log('index', ...a),
   });
   vindex.start();

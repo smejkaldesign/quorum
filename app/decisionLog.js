@@ -54,18 +54,22 @@ export function createDecisionLog(dir) {
   };
 
   // adds a record; key is the finding's key (the missing link's target, lowercased)
-  function record(vault, { ruleId, ruleVersion, key, target, sources = [], evidence = null, proposedFix = null, decision, actor = 'you', owner = null, approver = null, note = null, at = Date.now() }) {
+  function record(vault, rec) { const r = build(vault, rec); if (r) save(vault); return r; }
+  // adds several records with one write, for a bulk Archive or Move back
+  function recordMany(vault, recs) { const out = recs.map((r) => build(vault, r)).filter(Boolean); if (out.length) save(vault); return out; }
+  function build(vault, { ruleId, ruleVersion, key, target, sources = [], evidence = null, proposedFix = null, decision, actor = 'you', owner = null, approver = null, note = null, at = Date.now() }) {
     if (!vault || !DECISIONS.includes(decision)) return null;
     const rec = {
       id: `${at}-${hash(`${key}${Math.random()}`).slice(0, 8)}`, ruleId, ruleVersion, key: String(key ?? normTarget(target)), fingerprint: fingerprint(ruleId, target ?? key, sources),
       evidence, proposedFix, decision, actor, at, owner, approver, ...(note ? { note } : {}),
     };
     load(vault).push(rec);
-    save(vault);
     return rec;
   }
   const list = (vault) => [...load(vault)];
   const latest = (vault, key) => { const all = load(vault); for (let i = all.length - 1; i >= 0; i--) if (all[i].key === key) return all[i]; return null; };
+  // the latest record of every key, in one pass over the log
+  const latestAll = (vault) => { const m = new Map(); for (const r of load(vault)) m.set(r.key, r); return m; };
   // the archived findings whose evidence changed: their latest record is an archive with another fingerprint
   // current: Map key -> fingerprint of the finding as it reads now
   function changedArchives(vault, current) {
@@ -73,5 +77,5 @@ export function createDecisionLog(dir) {
     for (const [key, fp] of current) { const r = latest(vault, key); if (r?.decision === 'archived' && r.fingerprint !== fp) out.push(key); }
     return out;
   }
-  return { record, list, latest, changedArchives, file };
+  return { record, recordMany, list, latest, latestAll, changedArchives, file };
 }

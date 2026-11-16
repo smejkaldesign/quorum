@@ -48,6 +48,8 @@ function askOf(row) {
   const t = row.target.title;
   const d = row.detail ?? {};
   // a Memory health issue: the issue is the question, its recommended fix the recommendation (memoryHealth.js)
+  // a review rule's finding (rules/index.js): no automatic fix, so the suggestion is to act on the note and archive it
+  if (row.review.kind === 'finding') return { question: d.title ?? `Check ${q(t)}`, suggest: 'dismiss', problem: d.problem ?? '', solution: d.solution ?? '', value: '', recommendation: d.recommend ?? '', why: d.rule ?? '' };
   if (row.review.kind === 'link') return { question: d.title ?? `Links to ${q(t)} open nothing`, suggest: 'approve', problem: d.problem ?? '', solution: d.solution ?? '', value: d.value ?? '', recommendation: d.recommend ?? '', why: d.recommend ?? '' };
   // a fix that ran and that the current rules would not make (fixRecheck.js): Undo when it is possible, else open the note
   if (row.review.kind === 'past-fix') {
@@ -170,7 +172,7 @@ export function detailsOf(row, { locale } = {}) {
     add('Where', d.surface === 'keeper' ? 'Upkeep, filing your notes' : d.surface === 'agent' ? 'The agent, answering in chat' : d.surface);
     add('Path', home(d.path));
     add('Reason', d.reason);
-  } else if (row.review?.kind === 'link') {
+  } else if (row.review?.kind === 'link' || row.review?.kind === 'finding') {
     for (const [k, v] of d.meta ?? []) add(k, v);
   } else if (row.review?.kind === 'past-fix') {
     add('Fix', sentence(d.outcome));
