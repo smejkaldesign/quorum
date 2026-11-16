@@ -28,7 +28,7 @@ export const BUCKETS = ['show', 'check', 'quiet'];
 export const PRIORS = {
   // 3 of 3 labeled aliases right after the stub check, and 3 of 3 past aliases not onto a stub labeled correct
   'link:alias': { p: 0.95, n: 6, source: 'labels 3/3, past runs 3/3' },
-  // 3 of 3 labeled relinks with an exact or strong name match right (L15 at score 0.33 counts as weak); past relinks
+  // 3 of 3 labeled relinks with an exact or strong name match right (a match under WEAK_SCORE counts as weak); past relinks
   // 3 correct and 2 debatable
   'link:relink': { p: 0.92, n: 8, source: 'labels 3/3 strong, past runs 3 correct 2 debatable' },
   // 5 of 5 labeled unlink and self-link items right, 1 past unlink correct
