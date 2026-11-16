@@ -101,6 +101,10 @@ describe('approvePastFix: remove what the fix left', () => {
     const own = `${stub}\nMy own notes on kites.\n`;
     expect(onlyStub(own)).toBe(false);
     expect(onlyStub(`---\ntags: [x]\n---\n${stub}`)).toBe(false);
+    expect(onlyStub(`${stub}- [[c]]: my own line\n`, { name: 'Kite', sources: ['a.md', 'b.md'] })).toBe(false);
+    expect(onlyStub(stub.replace('# Kite', '# Kites I flew'), { name: 'Kite' })).toBe(false);
+    expect(onlyStub(`${stub}\nQuorum made this note because I asked.\n`)).toBe(false);
+    expect(onlyStub(stub, { name: 'Kite', sources: ['a.md', 'b.md'] })).toBe(true);
     expect(approvePastFix(createRun, { ok: false, why: 'changed' }, { vault: vaultOf({ 'n/Kite.md': own }) }).kind).toBe('keep');
   });
 

@@ -120,15 +120,18 @@ export function onlyFixChange(before, now, { action, target }) {
   return changed > 0;
 }
 
-// a note that still holds only what a fix wrote for a missing link (linkRules.js contextNote): a heading, the stub
-// line, the linking notes it quotes, and at most a confidential mark in its frontmatter
-export function onlyStub(text) {
+// a note that still holds only what a fix wrote for a missing link (linkRules.js contextNote): its heading, one stub
+// line, the linking notes it quotes, and at most a confidential mark in its frontmatter. name: the missing link's name,
+// which the heading must be; sources: the linking notes, the only ones a quote line may link to
+export function onlyStub(text, { name = null, sources = null } = {}) {
   const t = String(text ?? '');
   const fm = t.match(/^---\n([\s\S]*?)\n---\n?/);
   if (fm && fm[1].split('\n').some((l) => l.trim() && !/^confidential:/.test(l))) return false;
   const lines = t.slice(fm ? fm[0].length : 0).split('\n').filter((l) => l.trim());
-  if (!lines.some((l) => l.startsWith(STUB_MARK))) return false;
-  return lines.every((l, i) => (i === 0 && /^# /.test(l)) || l.startsWith(STUB_MARK) || /^- \[\[[^\]]+\]\]: /.test(l));
+  if (lines.filter((l) => l.startsWith(STUB_MARK)).length !== 1) return false;
+  const from = sources?.length ? new Set(sources.map((r) => noExt(r).toLowerCase())) : null;
+  const quote = (l) => { const m = l.match(/^- \[\[([^\]]+)\]\]: /); return !!m && (!from || from.has(noExt(m[1]).toLowerCase())); };
+  return lines.every((l, i) => (i === 0 && (name ? l === `# ${name}` : /^# /.test(l))) || l.startsWith(STUB_MARK) || quote(l));
 }
 
 // The Approve of a flagged past fix whose undo plan refused. run: the fix run; plan: its undoPlan(); ctx: { vault (the
@@ -155,7 +158,7 @@ export function approvePastFix(run, plan, { vault, gitShow = null, undoFiles = n
   }
   // (b) what the fix left behind: a note it wrote that holds nothing else, or links it pointed at a note that is gone
   const made = r.action === 'create' && r.made ? vault.read(r.made) : null;
-  if (made != null && onlyStub(made)) {
+  if (made != null && onlyStub(made, { name: String(run.target ?? '').split('/').pop() || null, sources: r.sources ?? null })) {
     return { kind: 'remove', why: `Quorum moves ${q(r.made)} to the Trash, where you can put it back. It still holds only what the fix wrote.`, ops: [{ op: 'trash', rel: r.made, expect: sha(made) }] };
   }
   if (r.action === 'relink' && !dest && r.toName) {
