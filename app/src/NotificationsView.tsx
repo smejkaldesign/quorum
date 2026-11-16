@@ -61,7 +61,7 @@ export function NotificationBell({ active, onOpen }: { active: boolean; onOpen: 
 // the row's ⋯ menu: Open, Mark read or unread, and Approve and Disapprove on a row waiting for a decision. It closes on
 // a click anywhere else or Escape
 function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDecide, onArchive }: {
-  row: FeedRow; me: { name: string; photo: string | null }; picked: boolean; busy: boolean; onPick: () => void; onOpen: () => void; onOpenFile: (abs: string) => void; onMark: (unread: boolean) => void; onDecide: (v: 'approve' | 'dismiss') => void; onArchive: (on: boolean) => void;
+  row: FeedRow; me: { name: string; photo: string | null }; picked: boolean; busy: boolean; onPick: () => void; onOpen: () => void; onOpenFile: (abs: string) => void; onMark: (unread: boolean) => void; onDecide: (v: 'approve' | 'dismiss') => void | Promise<void>; onArchive: (on: boolean) => void;
 }) {
   // a fix run opens its details, so its progress and outcome are in view
   const [open, setOpen] = useState(!!row.run?.showBanner);
@@ -69,6 +69,8 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
   const [pressed, setWorking] = useState(false);
   // the row stays where it is, its buttons showing and the spinner on, until the fix ends
   const working = pressed || !!row.fixRun;
+  // the run takes over the spinner once it is attached; a fix that never starts or fails clears it too
+  useEffect(() => { if (row.fixRun) setWorking(false); }, [row.fixRun]);
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const go = () => { if (!row.target.gone) onOpen(); };
   return (
@@ -99,7 +101,7 @@ function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark, onDeci
                 <button className="icon-btn mh-icon" disabled={busy || working} aria-label="Archive" data-tip="Archive: set it aside without fixing it" onClick={() => onArchive(true)}><IconArchive width={16} height={16} /></button>
                 {working
                   ? <span className="icon-btn mh-icon mh-busy" role="img" aria-label="Working"><i className="run-spin" /></span>
-                  : <button className="icon-btn mh-icon mh-yes" disabled={busy} aria-label="Approve" data-tip={`Approve: ${row.summary.recommendation ?? ''}`} onClick={() => { setWorking(true); onDecide('approve'); }}><IconCheck width={16} height={16} /></button>}
+                  : <button className="icon-btn mh-icon mh-yes" disabled={busy} aria-label="Approve" data-tip={`Approve: ${row.summary.recommendation ?? ''}`} onClick={() => { setWorking(true); Promise.resolve(onDecide('approve')).finally(() => setWorking(false)); }}><IconCheck width={16} height={16} /></button>}
               </span>
             </span>
           )}
