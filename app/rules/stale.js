@@ -35,7 +35,8 @@ export function run({ notes, now = Date.now() }) {
     const touched = stamps.length ? Math.max(...stamps) : n.mtime;
     const verified = dateIn(p.last_verified);
     const iv = intervalOf(dirOf(n.rel));
-    const current = verified != null && now - verified <= iv * DAY;
+    // a last_verified in the future is a typo, and would keep the note from ever being flagged
+    const current = verified != null && verified <= now + DAY && now - verified <= iv * DAY;
     const signals = [];
     if (current) { /* checked within the interval: nothing to flag */ } else if (open && touched && now - touched > STALE_DAYS * DAY) signals.push({ id: 'open', line: `Status ${quote(status)}, last updated ${day(touched)} (${days(now - touched)} days ago)` });
     const due = dateIn(p.due ?? p.deadline);

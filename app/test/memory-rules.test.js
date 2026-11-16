@@ -211,9 +211,10 @@ describe('stale notes', () => {
       note('p/plan.md', `${fm({ status: 'planned', updated: '2026-04-01', last_verified: '2026-11-10' })}# Plan`),
       note('p/due.md', `${fm({ status: 'in progress', updated: '2026-11-10', due: '2026-10-01', last_verified: '2026-11-10' })}# Due`),
       note('p/old.md', `${fm({ status: 'planned', updated: '2026-04-01', last_verified: '2026-06-01' })}# Old`),
+      note('p/typo.md', `${fm({ status: 'planned', updated: '2026-04-01', last_verified: '2099-01-01' })}# Typo`),
     ];
     const f = stale.run(ctx(notes));
-    expect(rels(f)).toEqual(['p/old.md']);
+    expect(rels(f)).toEqual(['p/old.md', 'p/typo.md']);
     expect(f[0].facts).toEqual(['open', 'verify']);
   });
   it('uses the folder’s verify_every as the interval', () => {
