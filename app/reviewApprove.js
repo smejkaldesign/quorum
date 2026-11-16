@@ -11,7 +11,8 @@
 //
 // A review rule's finding with no fix of its own (rules/*.js) gets the change its rule allows, or keep:
 //   note.frontmatter  add each missing key, with the value Quorum can tell from the note or an empty one
-//   note.stale        set last_verified to today when the folder checks notes on an interval, else status: archived
+//   note.stale        set last_verified to today when the folder checks notes on an interval; status: archived only
+//                     when the open note is both untouched for 90 days and past its due date; else keep
 //   note.orphan       link the note from its folder's index note, when the folder has one
 //   anything else     keep
 // Every change is a batch step (batchPlan.js), so it runs through the fix journal, saves versions and has Undo.
@@ -215,7 +216,11 @@ export function approveFinding(f, { rels = [], title = () => null, now = Date.no
   }
   if (f.ruleId === 'note.stale') {
     if ((f.facts ?? []).includes('verify')) return { kind: 'setkey', says: `Set last_verified to ${today(now)}.`, ops: [{ op: 'setkey', rel: f.rel, key: 'last_verified', value: today(now) }] };
-    return { kind: 'setkey', says: 'Set its status to archived.', ops: [{ op: 'setkey', rel: f.rel, key: 'status', value: 'archived' }] };
+    // archiving takes a note out of what the agent reads, so it needs two signals: no update in 90 days and a due date
+    // passed. One signal alone can be a note the person still uses
+    const facts = f.facts ?? [];
+    if (facts.includes('open') && facts.includes('due')) return { kind: 'setkey', says: 'Set its status to archived.', ops: [{ op: 'setkey', rel: f.rel, key: 'status', value: 'archived' }] };
+    return keep('Quorum cannot tell the work is finished.');
   }
   if (f.ruleId === 'note.orphan') {
     const index = folderIndex(f.rel, rels);

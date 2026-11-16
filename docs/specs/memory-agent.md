@@ -21,7 +21,7 @@ Sprint 2 adds review-only rules, each with its own id: orphans, exact duplicates
 Every finding has an Approve (`app/reviewApprove.js` approveFinding). It runs through the batch planner like any fix:
 
 - Frontmatter: add each missing key, with the value Quorum can tell (the title, or a date in the file name) or an empty one.
-- Stale: set `last_verified` to today when the folder checks notes on an interval, else set `status: archived`.
+- Stale: set `last_verified` to today when the folder checks notes on an interval. Set `status: archived` only when the open note is both untouched for 90 days and past its due date. Any other stale note is kept as it is.
 - Orphan: add a link line to the folder's index note (index, _index, README or the folder note), when there is one.
 - Oversized, duplicates, secrets, and a confidential finding with no fix: keep as is.
 

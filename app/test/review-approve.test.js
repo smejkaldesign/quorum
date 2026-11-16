@@ -128,9 +128,10 @@ describe('approveFinding', () => {
     expect(approveFinding(f('note.frontmatter', { facts: ['twice:tags'] })).kind).toBe('keep');
   });
 
-  it('archives a stale note, or marks it verified today when its folder checks on an interval', () => {
+  it('archives a stale note only on strong evidence, or marks it verified today when its folder checks on an interval', () => {
     const now = Date.UTC(2026, 10, 16);
-    expect(approveFinding(f('note.stale', { facts: ['open'] }), { now }).ops).toEqual([{ op: 'setkey', rel: 'notes/x.md', key: 'status', value: 'archived' }]);
+    expect(approveFinding(f('note.stale', { facts: ['open', 'due'] }), { now }).ops).toEqual([{ op: 'setkey', rel: 'notes/x.md', key: 'status', value: 'archived' }]);
+    for (const facts of [['open'], ['due'], ['title']]) expect(approveFinding(f('note.stale', { facts }), { now })).toMatchObject({ kind: 'keep', ops: [{ op: 'keep' }] });
     expect(approveFinding(f('note.stale', { facts: ['verify'] }), { now: new Date(2026, 10, 16, 12).getTime() }).ops).toEqual([{ op: 'setkey', rel: 'notes/x.md', key: 'last_verified', value: '2026-11-16' }]);
   });
 
