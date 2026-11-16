@@ -122,7 +122,7 @@ Every item passes the gate before it shows in Needs review. The goal is that at 
 - Buckets. 90% or more: shown. 50% to 90% with a real fix: under Check these first in a bulk plan, unticked. Anything else: Not shown yet.
 - Also not shown: a relink or alias onto a note Quorum wrote from links alone, and an item whose fix leaves the link as it is.
 
-Memory health says how many suggestions are not shown yet, and the Not shown yet tab lists each with its reason. Notifications leaves them out. Review everything leaves out what is not shown; an item picked from Not shown yet can still run.
+Memory health says how many suggestions are not shown yet, and the Not shown yet tab lists each with its reason. Notifications leaves them out. Review everything leaves out what is not shown; Approve on an item in Not shown yet plans its fix by id, so it can still run.
 
 On a vault's first sweep, Needs review waits until the gate ran, and Memory health says "Checking your memory, this takes a minute". The verdicts are kept per vault in `memory-gate.json` with each item's signature, so a restart shows the list at once. An item whose fix or notes changed since waits for the next run, a few seconds later.
 
@@ -133,7 +133,7 @@ Each run adds a line to `memory-gate-log.jsonl` in the data folder: the passes, 
 Memory work that runs longer than 30 seconds shows as one state that Home and Memory health both read: the first memory check, a full sweep, a bulk batch, and a drafting run. The state holds the kind, a plain label, when it started, its progress and whether it can be cancelled. Home shows it as the AI working banner below the suggestion chips under the composer; clicking it opens Memory health, which shows the same banner. It hides when the work ends.
 
 - The first memory check (a sweep, then both gate passes) runs in the background as soon as a vault is connected. Onboarding says so.
-- Cancel stops a batch before its next step, and the batch puts back every note it wrote. It stops a check before the gate saves verdicts, and a draft by stopping the model call; that item is drafted again later.
+- Cancel stops a batch before its next step, and the batch puts back every note it wrote. It stops a check before the gate saves verdicts; when that was a vault's first check, Memory health says it stopped and Check again runs it. It stops a draft by stopping the model call; the call does not count against the daily cap, and that item is drafted again later.
 
 ### Live precision guard
 
