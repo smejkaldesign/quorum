@@ -118,7 +118,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, { value: string; onChange
     },
     flush: () => serialize(editor),
     focus: () => { editor?.commands.focus('end'); },
-  }), [editor, readOnly]); // eslint-disable-line react-hooks/exhaustive-deps
+  }), [editor, readOnly]);
 
   useEffect(() => { editor?.setEditable(!readOnly); }, [editor, readOnly]);
   useEffect(() => () => { if (serializeTimer.current) window.clearTimeout(serializeTimer.current); }, []);
@@ -141,7 +141,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, { value: string; onChange
       editor.view.dispatch(tr);
     } finally { applying.current = false; }
     serialize(editor);
-  }, [editor, value]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [editor, value]);
 
   const items = useMemo(() => {
     if (!menu) return [] as { id: string; label: string; hint: string; run: () => void }[];

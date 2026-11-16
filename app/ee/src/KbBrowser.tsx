@@ -10,6 +10,7 @@ import { hasKbSync, SyncPanel, type SyncSource } from './KbSync';
 import { KbSuggestionBanner } from './KbSuggestion';
 import { KB_OPEN, takeKbOpen, type KbOpenTarget } from '../../src/kbOpen';
 import { KbHostedNote } from './KbHostedNote';
+import { Modal, ModalActions } from '../../src/controls';
 
 // The knowledge bases in the Knowledge tab: one left column with the team knowledge entry (and, for a folder or git
 // source, that source's own file tree, which the team view portals into the slot below it) and one top-level row per
@@ -413,12 +414,9 @@ function DriveDialog({ kb, folderId, onChanged, onDone }: { kb: Kb; folderId: st
     return () => window.removeEventListener('keydown', esc, true);
   }, [done]);
   return (
-    <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onDone(); }}>
-      <div className="modal kb-drive-modal" role="dialog" aria-modal="true" aria-labelledby="kbt-drive-title">
-        <h2 id="kbt-drive-title">Add from Google Drive</h2>
-        <DrivePanel kb={kb} folderId={folderId} onChanged={onChanged} onDone={onDone} />
-      </div>
-    </div>
+    <Modal titleId="kbt-drive-title" title="Add from Google Drive" className="kb-drive-modal" onClose={onDone} escape={false}>
+      <DrivePanel kb={kb} folderId={folderId} onChanged={onChanged} onDone={onDone} />
+    </Modal>
   );
 }
 
@@ -432,12 +430,9 @@ function SyncDialog({ kb, folderId, source, onChanged, onDone }: { kb: Kb; folde
     return () => window.removeEventListener('keydown', esc, true);
   }, [done]);
   return (
-    <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onDone(); }}>
-      <div className="modal kb-drive-modal" role="dialog" aria-modal="true" aria-labelledby="kbt-sync-title">
-        <h2 id="kbt-sync-title">{source === 'github' ? 'Sync a GitHub repository' : 'Sync a Drive folder'}</h2>
-        <SyncPanel kb={kb} folderId={folderId} source={source} onChanged={onChanged} onDone={onDone} />
-      </div>
-    </div>
+    <Modal titleId="kbt-sync-title" title={source === 'github' ? 'Sync a GitHub repository' : 'Sync a Drive folder'} className="kb-drive-modal" onClose={onDone} escape={false}>
+      <SyncPanel kb={kb} folderId={folderId} source={source} onChanged={onChanged} onDone={onDone} />
+    </Modal>
   );
 }
 
@@ -452,21 +447,18 @@ function MoveDialog({ kb, folderId, onDone }: { kb: Kb; folderId: string; onDone
     return () => window.removeEventListener('keydown', esc, true);
   }, [done]);
   return (
-    <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onDone(undefined); }}>
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="kbt-move-title">
-        <h2 id="kbt-move-title">Move {name}</h2>
-        <p>Choose where it goes inside {kb.name}.</p>
-        <div className="kbt-targets">
-          {targets.map((t, i) => (
-            <button key={t.id ?? 'top'} autoFocus={i === 0} className="tk-item" style={{ paddingLeft: 8 + t.depth * 14 }} onClick={() => onDone(t.id)}>
-              {t.id ? <IconFolder width={14} height={14} /> : <IconStack width={14} height={14} />}<span className="tk-item-text"><span>{t.id ? t.label : `${kb.name} (top level)`}</span></span>
-            </button>
-          ))}
-          {!targets.length && <p className="tk-empty">There is nowhere else to move it.</p>}
-        </div>
-        <div className="modal-actions"><span /><span className="modal-actions-end"><button className="pill" autoFocus={!targets.length} onClick={() => onDone(undefined)}>Cancel</button></span></div>
+    <Modal titleId="kbt-move-title" title={<>Move {name}</>} onClose={() => onDone(undefined)} escape={false}>
+      <p>Choose where it goes inside {kb.name}.</p>
+      <div className="kbt-targets">
+        {targets.map((t, i) => (
+          <button key={t.id ?? 'top'} autoFocus={i === 0} className="tk-item" style={{ paddingLeft: 8 + t.depth * 14 }} onClick={() => onDone(t.id)}>
+            {t.id ? <IconFolder width={14} height={14} /> : <IconStack width={14} height={14} />}<span className="tk-item-text"><span>{t.id ? t.label : `${kb.name} (top level)`}</span></span>
+          </button>
+        ))}
+        {!targets.length && <p className="tk-empty">There is nowhere else to move it.</p>}
       </div>
-    </div>
+      <ModalActions><button className="pill" autoFocus={!targets.length} onClick={() => onDone(undefined)}>Cancel</button></ModalActions>
+    </Modal>
   );
 }
 

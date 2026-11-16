@@ -6,6 +6,7 @@ import { PickMenu, SearchButton, SearchField } from './FilterBar';
 import { Avatar } from './Speaker';
 import { toast } from './Toasts';
 import type { FeedKind, FeedPage, FeedRow, FeedSort, FeedTab, FixRun } from './quorum';
+import { Segmented } from './controls';
 
 const PAGE = 50;
 const TABS: [FeedTab, string][] = [['all', 'All'], ['unread', 'Unread'], ['archived', 'Archived']];
@@ -254,13 +255,11 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
     <div className="set-col notif-page">
       <h1>Notifications</h1>
       <div className="nf-bar">
-        <div className="seg" role="tablist" aria-label="Show">
-          {TABS.map(([id, label]) => {
-            const n = id === 'unread' ? counts?.unread : 0;
-            // Archived carries no count; it is a shelf, and its number would read as more to do
-            return <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? 'on' : ''} onClick={() => setTab(id)}>{label}{n ? <span className="nf-count">{n}</span> : null}</button>;
-          })}
-        </div>
+        <Segmented kind="tabs" label="Show" value={tab} onChange={setTab} options={TABS.map(([id, label]) => {
+          const n = id === 'unread' ? counts?.unread : 0;
+          // Archived carries no count; it is a shelf, and its number would read as more to do
+          return { id, label: <>{label}{n ? <span className="nf-count">{n}</span> : null}</> };
+        })} />
         <button className={`nf-toggle${review ? ' on' : ''}`} aria-pressed={review} onClick={() => setReview((r) => !r)}>
           Needs review{counts?.review ? <span className="nf-count review">{counts.review}</span> : null}
         </button>

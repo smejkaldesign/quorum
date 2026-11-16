@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { GuardrailRule, GuardrailsState } from './quorum';
-import { Row, Toggle, useMenu } from './controls';
+import { Modal, ModalActions, Row, Toggle, useMenu } from './controls';
 import { useFlag } from './flags';
 import { IconCheck, IconClose, IconFolder, IconLock, IconMore, IconPlus, IconSearch, IconShield, IconTrash } from './icons';
 
@@ -174,18 +174,15 @@ function AddRule({ onClose, onAdd }: { onClose: () => void; onAdd: (r: { kind: s
   const [busy, setBusy] = useState(false);
   const submit = async () => { setBusy(true); setError(''); const e = await onAdd({ kind, value, label }); setBusy(false); if (e) setError(e); };
   return (
-    <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }} onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}>
-      <div className="modal conn-sheet" role="dialog" aria-modal="true" aria-labelledby="guard-title">
-        <h2 id="guard-title">Add a guardrail</h2>
-        <div className="guard-kinds" role="radiogroup" aria-label="What the rule matches">
-          {(['path', 'frontmatter', 'term', 'secret'] as const).map((k) => <button key={k} role="radio" aria-checked={kind === k} className={`pill ${kind === k ? 'primary' : ''}`} onClick={() => setKind(k)}>{KIND_LABEL[k]}</button>)}
-        </div>
-        <p className="mcp-lede">{KIND_HINT[kind]}</p>
-        <label className="set-field wide"><span>{KIND_LABEL[kind]}</span><input autoFocus value={value} onChange={(e) => setValue(e.target.value)} placeholder={kind === 'path' ? 'clients/acme' : kind === 'frontmatter' ? 'legal_hold' : kind === 'term' ? 'Project Falcon, Northwind' : String.raw`\.sqlite$`} onKeyDown={(e) => { if (e.key === 'Enter') submit(); }} /></label>
-        <label className="set-field wide"><span>Name (optional)</span><input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="What this protects" /></label>
-        {error && <p className="set-error">{error}</p>}
-        <div className="modal-actions"><span /><span className="modal-actions-end"><button className="pill" onClick={onClose}>Cancel</button><button className="pill primary" disabled={busy || !value.trim()} onClick={submit}>Add</button></span></div>
+    <Modal titleId="guard-title" title="Add a guardrail" className="conn-sheet" onClose={onClose}>
+      <div className="guard-kinds" role="radiogroup" aria-label="What the rule matches">
+        {(['path', 'frontmatter', 'term', 'secret'] as const).map((k) => <button key={k} role="radio" aria-checked={kind === k} className={`pill ${kind === k ? 'primary' : ''}`} onClick={() => setKind(k)}>{KIND_LABEL[k]}</button>)}
       </div>
-    </div>
+      <p className="mcp-lede">{KIND_HINT[kind]}</p>
+      <label className="set-field wide"><span>{KIND_LABEL[kind]}</span><input autoFocus value={value} onChange={(e) => setValue(e.target.value)} placeholder={kind === 'path' ? 'clients/acme' : kind === 'frontmatter' ? 'legal_hold' : kind === 'term' ? 'Project Falcon, Northwind' : String.raw`\.sqlite$`} onKeyDown={(e) => { if (e.key === 'Enter') submit(); }} /></label>
+      <label className="set-field wide"><span>Name (optional)</span><input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="What this protects" /></label>
+      {error && <p className="set-error">{error}</p>}
+      <ModalActions><button className="pill" onClick={onClose}>Cancel</button><button className="pill primary" disabled={busy || !value.trim()} onClick={submit}>Add</button></ModalActions>
+    </Modal>
   );
 }

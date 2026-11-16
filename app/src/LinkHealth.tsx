@@ -8,6 +8,7 @@ import { PickMenu, SearchButton, SearchField } from './FilterBar';
 import { IssueParts, ReviewDetails, RowMenu, RunBanner, StatusBadge, StatusSwap, UndoMenu, ago, runStatus, took } from './NotificationsView';
 import type { FixRun } from './quorum';
 import { toast } from './Toasts';
+import { Segmented } from './controls';
 
 // Memory health: links that point at a note that does not exist, one row per missing note, in the same list pattern
 // as Notifications. Each row states the issue, the problem it causes, what fixing it does and the recommended action,
@@ -233,11 +234,8 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
         {done && <span className="lh-done">{done}</span>}
       </p>
       <div className="nf-bar">
-        <div className="seg" role="tablist" aria-label="Show">
-          {([['all', 'All'], ['unread', 'Unread'], ['archived', 'Archived']] as [Tab, string][]).map(([id, label]) => (
-            <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? 'on' : ''} onClick={() => { setTab(id); if (id === 'archived') setReview(false); }}>{label}{id === 'unread' && unreadN ? <span className="nf-count">{unreadN}</span> : null}</button>
-          ))}
-        </div>
+        <Segmented kind="tabs" label="Show" value={tab} onChange={(id) => { setTab(id); if (id === 'archived') setReview(false); }}
+          options={([['all', 'All'], ['unread', 'Unread'], ['archived', 'Archived']] as [Tab, string][]).map(([id, label]) => ({ id, label: <>{label}{id === 'unread' && unreadN ? <span className="nf-count">{unreadN}</span> : null}</> }))} />
         <button className={`nf-toggle${review ? ' on' : ''}`} aria-pressed={review} onClick={() => { setReview((r) => !r); if (tab === 'archived') setTab('all'); }}>
           Needs review{openN ? <span className="nf-count review">{openN}</span> : null}
         </button>

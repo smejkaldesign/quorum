@@ -10,7 +10,7 @@ import { ConnectHint } from './ConnectHint';
 import { openConnectors, type ConnectorsTarget } from './connectorsNav';
 import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
-import { Row, Toggle, useMenu } from './controls';
+import { EmptyState, Modal, ModalActions, Row, Toggle, useMenu } from './controls';
 import { BrainCheckPanel, ContextPanel, SkillsPanel } from './PluginPanels';
 import { AccountArea, BillingArea, DeleteAccountArea, DeleteOrgArea, EDITION, KnowledgeBasesArea, KnowledgeQueueArea, MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { TOP_ADMIN_PAGES, canAdmin, flagHiddenPages, modeOf, resolvePage, voiceMode, workspacePages, type Page } from './settingsNav';
@@ -215,23 +215,19 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
 // page says so and points at the personal page that works on this Mac
 function OrgConnectorsLocal({ onGo }: { onGo: (p: Page) => void }) {
   return (
-    <div className="set-card set-zero">
-      <span className="set-zero-icon"><IconGrid width={22} height={22} /></span>
-      <strong>Organization connectors are a Cloud feature</strong>
+    <EmptyState icon={<IconGrid width={22} height={22} />} title="Organization connectors are a Cloud feature">
       <p>In Quorum Cloud an admin adds speech, model and voice providers once, and every seat in the workspace uses them. The Local edition keeps every key on this Mac.</p>
       <button className="pill" onClick={() => onGo('connectors')}>Open your Connectors</button>
-    </div>
+    </EmptyState>
   );
 }
 
 function OrgVoiceLocal({ onGo }: { onGo: (p: Page) => void }) {
   return (
-    <div className="set-card set-zero">
-      <span className="set-zero-icon"><IconKeyboard width={22} height={22} /></span>
-      <strong>Organization overrides are a Cloud feature</strong>
+    <EmptyState icon={<IconKeyboard width={22} height={22} />} title="Organization overrides are a Cloud feature">
       <p>In Quorum Cloud an admin chooses which provider handles speech to text, the running summary and the final notes for the whole workspace. The Local edition transcribes on this Mac with your own settings.</p>
       <button className="pill" onClick={() => onGo('voice')}>Open your Voice typing settings</button>
-    </div>
+    </EmptyState>
   );
 }
 
@@ -648,27 +644,20 @@ function UploadCustomers({ list, onAdd, onClose }: { list: OptOut[]; onAdd: (mor
   };
   const n = file?.add.length ?? 0;
   return (
-    <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
-      onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}>
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="upload-title">
-        <h2 id="upload-title">Upload customers</h2>
-        <p>One customer per row: the name in the first column and their email domain in the second. Either can be blank. Quorum skips the header and anything it can't read.</p>
-        <label className={`dropzone ${drag ? 'on' : ''}`} onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
-          onDrop={(e) => { e.preventDefault(); setDrag(false); read(e.dataTransfer.files[0]); }}>
-          <IconUpload width={22} height={22} />
-          <strong>{file ? file.name : 'Drop a CSV file here'}</strong>
-          <span>{file ? [`${n} to add`, file.already && `${file.already} already on the list`, file.skipped && `${file.skipped} skipped`].filter(Boolean).join(' · ') : 'or click to choose one'}</span>
-          <input type="file" accept=".csv,text/csv" autoFocus onChange={(e) => read(e.target.files?.[0])} />
-        </label>
-        <div className="modal-actions">
-          <button className="link-btn" onClick={() => window.quorum.neverListTemplate()}>Download CSV template</button>
-          <span className="modal-actions-end">
-            <button className="pill" onClick={onClose}>Cancel</button>
-            <button className="pill primary" disabled={!n} onClick={() => { onAdd(file!.add); onClose(); }}>{n ? `Add ${n}` : 'Add'}</button>
-          </span>
-        </div>
-      </div>
-    </div>
+    <Modal titleId="upload-title" title="Upload customers" onClose={onClose}>
+      <p>One customer per row: the name in the first column and their email domain in the second. Either can be blank. Quorum skips the header and anything it can't read.</p>
+      <label className={`dropzone ${drag ? 'on' : ''}`} onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
+        onDrop={(e) => { e.preventDefault(); setDrag(false); read(e.dataTransfer.files[0]); }}>
+        <IconUpload width={22} height={22} />
+        <strong>{file ? file.name : 'Drop a CSV file here'}</strong>
+        <span>{file ? [`${n} to add`, file.already && `${file.already} already on the list`, file.skipped && `${file.skipped} skipped`].filter(Boolean).join(' · ') : 'or click to choose one'}</span>
+        <input type="file" accept=".csv,text/csv" autoFocus onChange={(e) => read(e.target.files?.[0])} />
+      </label>
+      <ModalActions start={<button className="link-btn" onClick={() => window.quorum.neverListTemplate()}>Download CSV template</button>}>
+        <button className="pill" onClick={onClose}>Cancel</button>
+        <button className="pill primary" disabled={!n} onClick={() => { onAdd(file!.add); onClose(); }}>{n ? `Add ${n}` : 'Add'}</button>
+      </ModalActions>
+    </Modal>
   );
 }
 
@@ -730,25 +719,18 @@ const ABOUT: Record<string, string[]> = {
 function AboutCapability({ it, onClose }: { it: MemoryItem; onClose: () => void }) {
   const status = it.kind === 'guards' ? it.detail : it.include ? 'Included' : 'Not included yet';
   return (
-    <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
-      onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}>
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="about-title">
-        <h2 id="about-title">{it.label}</h2>
-        {(ABOUT[it.kind] ?? ABOUT.folder).map((t) => <p key={t}>{t}</p>)}
-        <dl className="about-facts">
-          <dt>Status</dt><dd>{status}</dd>
-          <dt>Location</dt><dd>{it.path.replace(/^\/Users\/[^/]+/, '~')}</dd>
-        </dl>
-        {it.kind !== 'guards' && <p className="about-note">Deleting it takes it out of Quorum. The files stay in your Agent OS.</p>}
-        <div className="modal-actions">
-          <span />
-          <span className="modal-actions-end">
-            <button className="pill" onClick={() => window.quorum.memoryOpen(it.id)}>View</button>
-            <button className="pill primary" autoFocus onClick={onClose}>Done</button>
-          </span>
-        </div>
-      </div>
-    </div>
+    <Modal titleId="about-title" title={it.label} onClose={onClose}>
+      {(ABOUT[it.kind] ?? ABOUT.folder).map((t) => <p key={t}>{t}</p>)}
+      <dl className="about-facts">
+        <dt>Status</dt><dd>{status}</dd>
+        <dt>Location</dt><dd>{it.path.replace(/^\/Users\/[^/]+/, '~')}</dd>
+      </dl>
+      {it.kind !== 'guards' && <p className="about-note">Deleting it takes it out of Quorum. The files stay in your Agent OS.</p>}
+      <ModalActions>
+        <button className="pill" onClick={() => window.quorum.memoryOpen(it.id)}>View</button>
+        <button className="pill primary" autoFocus onClick={onClose}>Done</button>
+      </ModalActions>
+    </Modal>
   );
 }
 
@@ -869,12 +851,10 @@ function KnowledgePage() {
       <KnowledgeBasesArea local={(
         <>
           <h3>Company knowledge</h3>
-          <div className="set-card set-zero">
-            <span className="set-zero-icon"><IconBuilding width={22} height={22} /></span>
-            <strong>No company knowledge source<Soon /></strong>
+          <EmptyState icon={<IconBuilding width={22} height={22} />} title={<>No company knowledge source<Soon /></>}>
             <p>Admins will connect a repo, wiki or knowledge base, and Quorum will read it for everyone in the workspace.</p>
             <button className="pill" disabled>Connect to company knowledge source</button>
-          </div>
+          </EmptyState>
         </>
       )} />
 
@@ -1264,22 +1244,15 @@ function DecisionsKey({ provider, info, onDone }: { provider: DecisionProvider; 
     if (r.error) setError(r.error); else onDone(true);
   };
   return (
-    <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onDone(false); }}
-      onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onDone(false); } }}>
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="dk-title">
-        <h2 id="dk-title">Connect {info.name}</h2>
-        <p>Paste your {info.keyHint}. Quorum keeps it in your Mac's Keychain.</p>
-        <label className="set-field wide"><input type="password" autoFocus aria-label={info.keyHint} placeholder={info.placeholder} value={key} onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && key.trim()) save(); }} /></label>
-        {error && <p className="set-error">{error}</p>}
-        <div className="modal-actions">
-          <span />
-          <span className="modal-actions-end">
-            <button className="pill" onClick={() => onDone(false)}>Cancel</button>
-            <button className="pill primary" disabled={!key.trim() || busy} onClick={save}>{busy ? 'Checking…' : 'Connect'}</button>
-          </span>
-        </div>
-      </div>
-    </div>
+    <Modal titleId="dk-title" title={<>Connect {info.name}</>} onClose={() => onDone(false)}>
+      <p>Paste your {info.keyHint}. Quorum keeps it in your Mac's Keychain.</p>
+      <label className="set-field wide"><input type="password" autoFocus aria-label={info.keyHint} placeholder={info.placeholder} value={key} onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && key.trim()) save(); }} /></label>
+      {error && <p className="set-error">{error}</p>}
+      <ModalActions>
+        <button className="pill" onClick={() => onDone(false)}>Cancel</button>
+        <button className="pill primary" disabled={!key.trim() || busy} onClick={save}>{busy ? 'Checking…' : 'Connect'}</button>
+      </ModalActions>
+    </Modal>
   );
 }
 
@@ -1529,25 +1502,18 @@ function MeetingProviders({ onConnector }: { onConnector: (id: string) => void }
         ))}
       </div>
       {details && (
-        <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) setDetails(null); }}
-          onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setDetails(null); } }}>
-          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="prov-title">
-            <h2 id="prov-title">{details.name}</h2>
-            <p>Quorum reads {where(details)} on this Mac. Nothing goes through {details.name}'s servers or a bot.</p>
-            <dl className="about-facts">
-              <dt>Status</dt><dd>{ready(details) ? (details.inCall ? 'Connected, in a call now' : details.running ? 'Connected, app open' : 'Connected') : desc(details)}</dd>
-              <dt>App</dt><dd>{details.version ? `${details.name} ${details.version}` : details.name}</dd>
-              <dt>Location</dt><dd>{details.path}</dd>
-              <dt>Permission</dt><dd>Accessibility {details.access === false ? 'off' : details.access ? 'on' : 'unknown'}</dd>
-              <dt>Reads</dt><dd>{details.chat ? "Meeting title, participant names, chat, and the app's audio" : 'Window title, participant count when the browser exposes it, and the audio it plays'}</dd>
-              <dt>Posts</dt><dd>{details.chat ? "Quorum's notice when it starts, and replies to STOP and GO" : 'Nothing yet. The notice shows on this Mac and the saved note records that none was posted in the call'}</dd>
-            </dl>
-            <div className="modal-actions">
-              <span />
-              <span className="modal-actions-end"><button className="pill primary" autoFocus onClick={() => setDetails(null)}>Done</button></span>
-            </div>
-          </div>
-        </div>
+        <Modal titleId="prov-title" title={details.name} onClose={() => setDetails(null)}>
+          <p>Quorum reads {where(details)} on this Mac. Nothing goes through {details.name}'s servers or a bot.</p>
+          <dl className="about-facts">
+            <dt>Status</dt><dd>{ready(details) ? (details.inCall ? 'Connected, in a call now' : details.running ? 'Connected, app open' : 'Connected') : desc(details)}</dd>
+            <dt>App</dt><dd>{details.version ? `${details.name} ${details.version}` : details.name}</dd>
+            <dt>Location</dt><dd>{details.path}</dd>
+            <dt>Permission</dt><dd>Accessibility {details.access === false ? 'off' : details.access ? 'on' : 'unknown'}</dd>
+            <dt>Reads</dt><dd>{details.chat ? "Meeting title, participant names, chat, and the app's audio" : 'Window title, participant count when the browser exposes it, and the audio it plays'}</dd>
+            <dt>Posts</dt><dd>{details.chat ? "Quorum's notice when it starts, and replies to STOP and GO" : 'Nothing yet. The notice shows on this Mac and the saved note records that none was posted in the call'}</dd>
+          </dl>
+          <ModalActions><button className="pill primary" autoFocus onClick={() => setDetails(null)}>Done</button></ModalActions>
+        </Modal>
       )}
     </>
   );
