@@ -20,7 +20,7 @@ export function createFixJournal(dir) {
       try { mkdirSync(dir, { recursive: true }); appendFileSync(file(id), `${JSON.stringify({ at: Date.now(), ...entry })}\n`); } catch {}
     },
     read(id) {
-      let raw = '';
+      let raw;
       try { raw = readFileSync(file(id), 'utf8'); } catch { return []; }
       return raw.split('\n').filter(Boolean).flatMap((l) => { try { return [JSON.parse(l)]; } catch { return []; } });
     },

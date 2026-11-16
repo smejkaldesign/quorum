@@ -91,7 +91,7 @@ export function createElsewhere({ vault: vaultIn, skillRoots = [path.join(os.hom
     const prefix = posix(path.relative(root, vault));
     const map = new Map();
     for (const b of list) {
-      let files = [];
+      let files;
       try { files = tree(root, b.sha, prefix); } catch { continue; }
       for (const f of files) {
         if (!/\.md$/i.test(f)) continue;
