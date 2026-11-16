@@ -2509,3 +2509,73 @@ input::placeholder, textarea::placeholder { font-style: italic; }
 .nf-bulk-actions.hidden { visibility: hidden; }
 /* the details labels start where the summary text does */
 .nf-details { padding-left: 84px; }
+
+/* Home's quote: the source line sits as far above the composer as the suggestions sit below it, steps back (fading up
+   under the quote) 5 seconds after it types out, and comes back while the pointer is anywhere on the quote. Its room
+   stays reserved, so nothing below moves */
+.hist-hero { margin-bottom: 32px; }
+.hist-hero .hist-quote { position: relative; z-index: 0; transition: opacity 320ms ease, transform 320ms ease; }
+.hist-hero h1 { position: relative; z-index: 1; }
+.hist-hero.quiet .hist-quote { opacity: 0; transform: translateY(-10px); pointer-events: none; }
+.hist-hero.quiet:hover .hist-quote, .hist-hero.quiet:focus-within .hist-quote { opacity: 1; transform: none; pointer-events: auto; }
+@media (prefers-reduced-motion: reduce) { .hist-hero .hist-quote { transition: opacity 120ms linear; transform: none !important; } }
+
+/* Notifications toolbar: every control 36px tall with 14px text, Type and Sort as pill buttons that open Quorum's menu */
+.notif-page .seg { height: 36px; box-sizing: border-box; align-items: stretch; }
+.notif-page .seg button { padding: 0 14px; font-size: 14px; }
+.nf-toggle { height: 36px; font-size: 14px; }
+.nf-pick { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--text); font-size: 14px; white-space: nowrap; }
+.nf-pick svg { color: var(--muted); transition: transform 160ms ease; }
+.nf-pick:hover, .nf-pick.open { border-color: rgba(255, 255, 255, 0.24); }
+.nf-pick.open svg { transform: rotate(180deg); }
+.nf-badge { min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; border-radius: 999px; background: #3b82f6; color: #fff; font-size: 11px; font-weight: 600; line-height: 18px; text-align: center; }
+.nf-pick-menu { top: 42px; min-width: 210px; }
+.nf-pick-menu button { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.nf-pick-menu button svg { color: var(--text); flex: none; }
+/* search: the icon button looks pressed while the field is open; the field folds down and fades in, and back out */
+.nf-search-btn.on { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.32); color: var(--text); }
+.nf-search-wrap { max-height: 0; overflow: hidden; opacity: 0; transform: translateY(-6px); transition: max-height 240ms ease, opacity 200ms ease, transform 240ms ease, margin 240ms ease; margin-bottom: 0; }
+.nf-search-wrap > .nf-search { margin-bottom: 0; }
+.nf-search-wrap.open { max-height: 48px; opacity: 1; transform: none; margin-bottom: 12px; }
+.nf-search { height: 36px; box-sizing: border-box; padding: 0 6px 0 14px; gap: 10px; }
+.nf-search input { font-size: 14px; }
+.nf-search-x { flex: none; width: 28px; height: 28px; color: var(--muted); }
+.nf-search-x:hover { color: var(--text); }
+@media (prefers-reduced-motion: reduce) { .nf-search-wrap { transition: opacity 120ms linear; transform: none; } }
+
+/* ---------- design system: outlined buttons. Every button drawn with the subdued border turns its border near white on
+   hover and keyboard focus, so they all read the same. New outlined buttons take one of these classes */
+:root { --line-hover: rgba(255, 255, 255, 0.78); }
+.pill:not(.primary):hover:not(:disabled), .act-pill:not(.primary):hover:not(:disabled), .filter:hover, .up-all:hover,
+button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-pick:hover, .nf-pick.open, .nf-search-btn:hover,
+.keeper-link:hover, .notif-page .seg:hover, .icon-btn.outlined:hover,
+.pill:not(.primary):focus-visible, .act-pill:not(.primary):focus-visible, .filter:focus-visible, .nf-toggle:focus-visible, .nf-pick:focus-visible, .nf-search-btn:focus-visible { border-color: var(--line-hover); }
+.nf-search-btn.on { border-color: var(--line-hover); }
+
+/* Notifications tabs: white labels, and a count as a blue circle */
+.notif-page .seg button, .nf-toggle { color: var(--text); }
+.nf-count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; margin-left: 8px; padding: 0 5px; box-sizing: border-box; border-radius: 999px; background: #3b82f6; color: #fff; font-size: 11px; font-weight: 600; line-height: 1; vertical-align: 1px; }
+.seg button.on .nf-count, .nf-toggle.on .nf-count { color: #fff; }
+/* menus are as wide as their widest item */
+.nf-pick-menu { min-width: 0; width: max-content; }
+
+/* Notification rows: equal room above and below, 2px between the divider and the hover edge, controls centered */
+.nf-row { padding: 2px 0; }
+.nf-line { align-items: center; padding: 12px 10px; }
+.nf-main { padding-top: 0; }
+.nf-sub { margin-top: 0; }
+.nf-sep { margin: 0 2px; }
+.nf-sub .nf-when { font-size: inherit; line-height: inherit; color: var(--muted); }
+.nf-side { flex-direction: row; align-items: center; }
+.nf-tools { display: flex; align-items: center; gap: 6px; }
+.nf-markbtn { opacity: 0; transition: opacity 120ms ease; }
+.nf-line:hover .nf-markbtn, .nf-line:focus-within .nf-markbtn { opacity: 1; }
+/* the details: 2px larger, with the same room above as below, starting clear of the row's hover edge */
+.nf-details { padding-top: 14px; padding-bottom: 14px; font-size: 17px; }
+
+/* the chats above a page's composer stay out of the way until the pointer is over the composer area or the composer
+   has focus; each one is marked private */
+.note-dock .chat-strip { opacity: 0; transform: translateY(6px); pointer-events: none; transition: opacity 180ms ease, transform 180ms ease; }
+.note-dock:hover .chat-strip, .note-dock:focus-within .chat-strip, .note-dock .chat-strip.all { opacity: 1; transform: none; pointer-events: auto; }
+.cs-private { flex: none; display: inline-flex; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .note-dock .chat-strip { transform: none; } }

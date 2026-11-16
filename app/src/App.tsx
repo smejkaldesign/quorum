@@ -634,12 +634,14 @@ export function App() {
 
   // the recording's note and a hand note open under the header, so the tabs and Record stay in reach
   // Save on a new note that was never recorded: the typed text becomes a note in the Agent OS
-  async function saveDraft(title = '') {
+  // keep is Save anyway on a draft that looked empty: upkeep then leaves it off its junk list
+  async function saveDraft(title = '', keep = false) {
     const body = mine.text.trim();
     if (!body && !title) return;
     // without a typed title it saves untitled; closing it hands it to the naming pass, which writes a title and a summary
     const r = await window.quorum.handNoteSave({ id: `draft-${Date.now()}`, file: null, title, body, hash: null, fresh: true });
     if ('error' in r || 'conflict' in r) return;
+    if (keep) await window.quorum.noteKeep(r.file);
     window.quorum.handNoteDone(r.file);
     mine.reset();
     setDraftOpen(false);

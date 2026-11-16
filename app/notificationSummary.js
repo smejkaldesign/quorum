@@ -42,8 +42,13 @@ const verbOf = (tool) => {
 // connected app keeps its source, so approving it is the usual answer. Memory updates are judged by their size: a few
 // changed blocks are routine upkeep; a large rewrite is worth opening before it is kept
 const BIG_CHANGE = 20;
+// A junk note (noteJunk.js) has no recording and almost no real words, so moving it to the Trash is the usual answer;
+// the Trash keeps it recoverable
 function askOf(row) {
   const t = row.target.title;
+  if (row.review.kind === 'junk-note') {
+    return { question: `Remove ${q(t)}?`, suggest: 'approve', why: `${sentence(row.detail?.reason) || 'It looks empty.'} Approve moves it to the Trash, where you can put it back.` };
+  }
   if (row.review.kind === 'note') {
     const d = row.detail ?? {};
     const why = d.editedAfter ? 'You already edited it after Quorum wrote it, so it has your changes in it.'
@@ -130,7 +135,7 @@ const WHO = { keeper: 'Upkeep', agent: 'Quorum agent', import: 'An import', cli:
 // everything the feed knows about a row, as label and value pairs for the folded-open details
 export function detailsOf(row, { locale } = {}) {
   const d = row.detail ?? {};
-  const out = [['What', KIND_LABEL[row.kind] ?? row.kind], ['When', new Date(row.at).toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' })]];
+  const out = [['What', row.review?.kind === 'junk-note' ? 'Looks empty' : KIND_LABEL[row.kind] ?? row.kind], ['When', new Date(row.at).toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' })]];
   const add = (label, value) => { if (value != null && value !== '') out.push([label, String(value)]); };
   if (row.kind === 'guardrail') {
     add('Rule', d.guardLabel || d.guard);
@@ -142,6 +147,7 @@ export function detailsOf(row, { locale } = {}) {
     add(row.target.kind === 'memory' ? 'Memory' : 'Note', row.target.rel);
     add('By', row.who === 'you' ? 'You' : WHO[d.who] ?? 'Quorum agent');
     add('Reason', d.reason);
+    if (row.review?.kind === 'junk-note') add('If you approve', 'It moves to the Trash. Disapprove keeps it, and upkeep does not ask again');
     add('Source', d.sourceName);
     if (d.changes) add('Changes', plural(d.changes, 'changed block'));
     if (d.approved != null && !row.review) add('Approval', d.auto ? 'Approved automatically' : d.approved ? 'Approved' : 'Waiting for approval');

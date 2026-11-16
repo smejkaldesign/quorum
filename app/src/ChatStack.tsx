@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { IconLock } from './icons';
 import { Avatar } from './Speaker';
 
 // The chats on one note, meeting or recording. A page can hold several: each shows collapsed to its first question
@@ -79,6 +80,8 @@ export function ChatStrip<T extends Turnish>({ chats, onOpen, me }: { chats: Cha
   const row = (c: ChatEntry<T>) => (
     <button key={c.id} className="cs-row" onClick={() => open(c.id)} data-tip={c.turns[0]?.q}>
       <Avatar name={me.name} photo={me.photo} size={20} /><strong>{me.name}</strong><span className="cs-q">{c.turns[0]?.q ?? 'New chat'}</span>
+      {/* every chat is private to the person who asked it for now; a shared chat gets its own mark once sharing exists */}
+      <span className="cs-private" role="img" aria-label="Private" data-tip="Private: only you see this chat"><IconLock width={13} height={13} /></span>
     </button>
   );
   return (

@@ -70,7 +70,7 @@ describe('feedRows', () => {
 describe('feedPage', () => {
   it('counts All, Unread and Needs review, and shows the dot', () => {
     const p = feedPage(rows);
-    expect(p.counts).toEqual({ all: rows.length, unread: 6, review: 2 });
+    expect(p.counts).toEqual({ all: rows.length, unread: 6, review: 2, archived: 0 });
     expect(p.dot).toBe(true);
   });
 
@@ -128,5 +128,37 @@ describe('backfill fixture', () => {
     expect(r.every((x) => x.backfill && !x.unread)).toBe(true);
     expect(feedPage(r).dot).toBe(false);
     expect(feedPage(r, { tab: 'unread' }).total).toBe(0);
+  });
+});
+
+describe('junk notes', () => {
+  const junk = [{ abs: '/v/Meetings/2026-11-15-kjhkjhkjh-q1.md', rel: 'Meetings/2026-11-15-kjhkjhkjh-q1.md', title: 'kjhkjhkjh', reason: 'It has no recording, and “kjhkjhkjh twesrtykjhlkij” does not read as words.', at: T(20) }];
+  it('lists each one as a review item that asks to remove it', () => {
+    const rows = feedRows({ junk, state: { since: T(10) } });
+    expect(rows).toHaveLength(1);
+    const [r] = rows;
+    expect(r.review).toEqual({ kind: 'junk-note' });
+    expect(r.unread).toBe(true);
+    expect(r.summary.line).toBe('Remove “kjhkjhkjh”?');
+    expect(r.summary.ask.suggest).toBe('approve');
+    const page = feedPage(rows, { review: true });
+    expect(page.total).toBe(1);
+    expect(page.counts.review).toBe(1);
+    expect(page.dot).toBe(true);
+  });
+});
+
+describe('archive', () => {
+  it('moves archived rows out of every tab and the dot, and lists them under Archived', () => {
+    const rows = [
+      { id: 'a', kind: 'imported', at: 3, unread: true, review: null, target: { title: 'A' } },
+      { id: 'b', kind: 'imported', at: 2, unread: true, review: null, target: { title: 'B' } },
+    ];
+    const p = feedPage(rows, { archived: ['a'] });
+    expect(p.items.map((r) => r.id)).toEqual(['b']);
+    expect(p.counts).toMatchObject({ all: 1, unread: 1, archived: 1 });
+    const shelf = feedPage(rows, { tab: 'archived', archived: ['a'] });
+    expect(shelf.items.map((r) => [r.id, r.archived])).toEqual([['a', true]]);
+    expect(feedPage(rows, { archived: ['a', 'b'] }).dot).toBe(false);
   });
 });

@@ -84,3 +84,19 @@ describe('meeting dates in summaries', () => {
     expect(meetingDay('soon')).toBe('soon');
   });
 });
+
+describe('a junk note', () => {
+  const row = note({ id: 'r:junk:/v/a.md', kind: 'note-updated', event: 'review', target: { kind: 'note', abs: '/v/a.md', rel: 'Meetings/a.md', title: 'kjhkjhkjh' }, detail: { reason: 'It has no recording, and “kjhkjhkjh” does not read as words.' }, review: { kind: 'junk-note' } });
+  it('asks to remove it, suggests approve and gives the reason', () => {
+    const s = summaryOf(row);
+    expect(s.line).toBe('Remove “kjhkjhkjh”?');
+    expect(s.ask.suggest).toBe('approve');
+    expect(s.sub).toBe('Suggested: approve. It has no recording, and “kjhkjhkjh” does not read as words. Approve moves it to the Trash, where you can put it back.');
+  });
+  it('says in the details what each answer does', () => {
+    const d = Object.fromEntries(detailsOf(row));
+    expect(d.What).toBe('Looks empty');
+    expect(d.Reason).toContain('does not read as words');
+    expect(d['If you approve']).toBe('It moves to the Trash. Disapprove keeps it, and upkeep does not ask again');
+  });
+});

@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('quorum', {
   handNoteOpen: (file) => ipcRenderer.invoke('hand-note-open', file),
   handNoteSave: (payload) => ipcRenderer.invoke('hand-note-save', payload),
   handNoteDone: (file) => ipcRenderer.invoke('hand-note-done', file),
+  noteDiscard: (file) => ipcRenderer.invoke('note-discard', file),
+  noteKeep: (file) => ipcRenderer.invoke('note-keep', file),
   privateNotesSet: (text) => ipcRenderer.invoke('private-notes-set', text),
   discard: () => ipcRenderer.invoke('discard'),
   done: () => ipcRenderer.invoke('done'),
@@ -91,6 +93,7 @@ contextBridge.exposeInMainWorld('quorum', {
   // the Notifications view: every note's and memory's activity in one feed, rows marked read or unread, review items decided
   activityFeed: (query) => ipcRenderer.invoke('activity-feed', query),
   activityMark: (rows, unread) => ipcRenderer.invoke('activity-mark', rows, unread === true),
+  activityArchive: (rows, on) => ipcRenderer.invoke('activity-archive', rows, on !== false),
   activityReview: (items, verdict) => ipcRenderer.invoke('activity-review', items, verdict),
   vaultSearch: (q, limit) => ipcRenderer.invoke('vault-search', q, limit),
   vaultBacklinks: (rel) => ipcRenderer.invoke('vault-backlinks', rel),
