@@ -7,7 +7,8 @@
 //
 // A labels file is a JSON array of { index, label } with label correct, debatable or wrong; index is the run's place in
 // fix-runs.json. --verbose prints each run's index, label, reason ids and undo kind, never note names or text. Keep the
-// labels and the output out of the repo.
+// labels and the output out of the repo. For each flagged run Quorum cannot undo exactly it also counts which Approve
+// path applies (reviewApprove.js): git, remove, draft or keep.
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -26,6 +27,7 @@ const load = (f) => import(pathToFileURL(path.join(appDir, f)).href);
 const { createVaultIndex } = await load('vindex.js');
 const { createElsewhere } = await load('linkElsewhere.js');
 const { recheckAll, undoPlan, fixVersions } = await load('fixRecheck.js');
+const { approvePastFix, gitReader } = await load('reviewApprove.js');
 
 const vaultDir = path.resolve(vaultArg);
 const runs = JSON.parse(readFileSync(path.resolve(runsArg), 'utf8')).filter((r) => r.vault === undefined || path.resolve(r.vault) === vaultDir);
@@ -48,6 +50,8 @@ const labels = labelsArg ? new Map(JSON.parse(readFileSync(path.resolve(labelsAr
 const table = {};
 const reasons = {};
 const undoKinds = {};
+const approveKinds = {};
+const gitShow = gitReader(vaultDir);
 runs.forEach((run, i) => {
   const res = results[run.id];
   if (!res) return;
@@ -60,6 +64,10 @@ runs.forEach((run, i) => {
     plan = undoPlan(run, { vault, undoFiles: undoFiles(run.id), versions: fixVersions(vfiles, run), readVersion, mtime });
     const k = `${plan.kind}:${plan.ok ? 'ok' : 'refused'}`;
     undoKinds[k] = (undoKinds[k] ?? 0) + 1;
+    if (!plan.ok && !run.undoneAt) {
+      const a = approvePastFix(run, plan, { vault, gitShow, undoFiles: undoFiles(run.id)?.map((f) => f.rel) ?? null });
+      approveKinds[a.kind] = (approveKinds[a.kind] ?? 0) + 1;
+    }
   }
   if (verbose) console.log(i, label, res.action, res.flagged ? res.reasons.map((r) => r.id).join(',') : '-', plan ? `${plan.kind}:${plan.ok ? 'ok' : 'refused'}` : '');
 });
@@ -77,3 +85,4 @@ if (labels.size) {
 }
 console.log('reasons', reasons);
 console.log('undo', undoKinds);
+console.log('approve when the undo refused', approveKinds);
