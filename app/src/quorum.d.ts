@@ -473,6 +473,7 @@ declare global {
       vaultOutgoing(rel: string): Promise<OutLink[]>;
       vaultResolve(target: string, from: string): Promise<string | null>;
       onVaultChanged(cb: (rels: string[]) => void): Unsub;
+      vaultNoteDate(rel: string, day: string): Promise<string>;
       vaultNote(rel: string): Promise<{ title: string; body: string; abs: string; app: string; views?: NoteViews; meta?: NoteMetaInfo | null } | null>;
       memoryDots(): Promise<MemoryDots>;
       memoryReview(rel: string): Promise<MemoryReview | null>;

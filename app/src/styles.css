@@ -762,6 +762,9 @@ em.stub { font-style: normal; font-size: 12px; font-weight: 500; padding: 1px 9p
 /* the filters sit at the right, so their popovers open leftward */
 .hist-filters .people-pop { left: auto; right: 0; }
 .date-pop { width: 300px; }
+/* the note view date picker under the date pill */
+.note-date-pop { width: 260px; top: 42px; }
+.note-date-pop .set-error { margin: 0 10px 10px; }
 .dp-presets { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 8px; border-bottom: 1px solid var(--line); }
 .dp-presets button { padding: 8px 10px; border-radius: 9px; text-align: left; font-size: 14px; color: var(--text); }
 .dp-presets button:hover { background: var(--hover); }

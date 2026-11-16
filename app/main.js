@@ -67,7 +67,7 @@ import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, fixVersions, recheckAll, undoPla
 import { buildPlan, checkFirst, checkOrder, effects, groupLabel, groupOf, notesOf, planExclude } from './batchPlan.js';
 import { ROW, findingItem, itemLine, linkItem, pastFixItem } from './reviewItems.js';
 import { approveFinding, approvePastFix, gitReader, withLinkLine } from './reviewApprove.js';
-import { frontBlock, removeFrontmatterKey } from './frontmatter.js';
+import { frontBlock, removeFrontmatterKey, withDate } from './frontmatter.js';
 import { createResolver } from './linkparse.js';
 import { isOff } from './rules/common.js';
 import { folderMarkOf } from './rules/confidential.js';
@@ -3850,6 +3850,24 @@ ipcMain.handle('vault-note', (_e, rel) => {
     ? { date: fm.date || null, people: fm.participants.filter((p) => !isSelf(p)).map(personName), source: source || null, ...noteMeetingApps(fm, n.abs) }
     : null;
   return { title: h1 ? h1[1].trim() : path.basename(n.abs, '.md'), body: h1 && body.startsWith(h1[0]) ? body.slice(h1[0].length).trim() : body, abs: n.abs, ...noteLink(n.abs), views: views.of(n.abs), meta };
+});
+
+// the date pill in the note view: date: YYYY-MM-DD written into the note's frontmatter, saved as a version by you
+ipcMain.handle('vault-note-date', (_e, rel, day) => {
+  const b = brain();
+  const r = String(rel ?? '');
+  const abs = b && /\.md$/i.test(r) ? vaultPath(b.vault, r) : null;
+  if (!abs || !existsSync(abs)) throw new Error('That note is not in the vault');
+  const text = readFileSync(abs, 'utf8');
+  const next = withDate(text, day);
+  if (next !== text) {
+    writeAtomic(abs, next);
+    try { memoryVersions.record({ vault: b.vault, rel: r, before: text, after: next, who: 'you', reason: `Set the date to ${day}`, agent: false }); } catch (e) { log('note date versions', e?.message); }
+  }
+  vindex?.sync();
+  setTimeout(() => sweep('save', [r]), 0);
+  toUI('memory-updates', [r]);
+  return String(day);
 });
 
 // Memory tab review of agent changes (memoryVersions.js): the tree's dots, an open file's banner with its Before text

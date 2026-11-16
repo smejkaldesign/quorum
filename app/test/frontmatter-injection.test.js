@@ -52,3 +52,16 @@ describe('frontmatter values from outside stay on one line', () => {
     expect(t.keep_private).toBeUndefined();
   });
 });
+
+describe('withDate', () => {
+  it('writes date: YYYY-MM-DD into a note, adding a frontmatter block when there is none', async () => {
+    const { withDate } = await import('../frontmatter.js');
+    expect(withDate('# Kite\n', '2026-11-16')).toBe('---\ndate: 2026-11-16\n---\n# Kite\n');
+    expect(withDate('---\ntitle: Kite\ndate: 2025-01-02\n---\nbody\n', '2026-11-16')).toBe('---\ntitle: Kite\ndate: 2026-11-16\n---\nbody\n');
+    expect(withDate('---\r\ntitle: Kite\r\n---\r\nbody', '2026-02-03')).toBe('---\r\ntitle: Kite\r\ndate: 2026-02-03\r\n---\r\nbody');
+  });
+  it('refuses a value that is not a real day', async () => {
+    const { withDate } = await import('../frontmatter.js');
+    for (const bad of ['2026-02-30', '16/11/2026', '2026-11-16\nconfidential: none', '', null]) expect(() => withDate('# Kite\n', bad)).toThrow('Pick a date');
+  });
+});
