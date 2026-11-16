@@ -305,7 +305,9 @@ export function effective(state = {}, discovery = { candidates: [] }) {
 }
 
 // what each enforcement point consumes. denyDirs are relative to the root; frontmatterKeys are matched case-insensitively
-export function compile(rules, { root = null, privateDirs = () => [] } = {}) {
+// confidentialDirs: the folders a person marked confidential, relative to the root; they are denied like a note with
+// confidential: in its frontmatter, so they follow the built-in confidential rule
+export function compile(rules, { root = null, privateDirs = () => [], confidentialDirs = [] } = {}) {
   const on = rules.filter((r) => r.enabled);
   const denyDirs = new Set();
   const frontmatterKeys = new Set();
@@ -322,6 +324,7 @@ export function compile(rules, { root = null, privateDirs = () => [] } = {}) {
       else for (const t of String(r.value).split(/[\n,]/).map((s) => s.trim().toLowerCase()).filter((s) => s.length >= 3)) terms.add(t);
     } else if (r.kind === 'hook') hooks.push({ path: r.path ?? r.value, stage: r.stage ?? 'pre' });
   }
+  if (on.some((r) => r.id === 'built-in:confidential')) for (const d of confidentialDirs) if (d) denyDirs.add(String(d).replace(/^\/+|\/+$/g, ''));
   const secretsOn = on.some((r) => r.id === 'built-in:secrets');
   return {
     denyDirs: [...denyDirs], frontmatterKeys: [...frontmatterKeys], secretPattern, secretsOff: !secretsOn && !secretPattern,
@@ -394,7 +397,7 @@ export function guardOf(entry, rules, { privateDirs = [] } = {}) {
 }
 
 // the app's handle: state in settings.guardrails, discovery cached per root, the compiled set cached until something changes
-export function createGuardrails({ settings, saveSettings = () => {}, brain = () => null, privateDirs = () => [], denialLog = null, log = () => {} }) {
+export function createGuardrails({ settings, saveSettings = () => {}, brain = () => null, privateDirs = () => [], confidentialDirs = () => [], denialLog = null, log = () => {} }) {
   const state = () => (settings.guardrails ??= { builtIns: {}, agentOs: {}, rules: [], workspace: [] });
   let quick = { root: null, at: 0, result: { candidates: [], skipped: [] } };
   let compiledCache = { key: '', value: null };
@@ -429,9 +432,10 @@ export function createGuardrails({ settings, saveSettings = () => {}, brain = ()
   const compiled = () => {
     const b = brain();
     const list = rules();
-    const key = JSON.stringify([b?.root, list.map((r) => [r.id, r.enabled, r.value])]);
+    const marked = confidentialDirs();
+    const key = JSON.stringify([b?.root, list.map((r) => [r.id, r.enabled, r.value]), marked]);
     if (compiledCache.key === key && compiledCache.value) return compiledCache.value;
-    const value = compile(list, { root: b?.root ?? null, privateDirs });
+    const value = compile(list, { root: b?.root ?? null, privateDirs, confidentialDirs: marked });
     compiledCache = { key, value };
     // the CLI and the suggester read this snapshot from settings.json, so they apply the same rules without the app
     const snapshot = { denyDirs: value.denyDirs, frontmatterKeys: value.frontmatterKeys, terms: value.terms, termFiles: value.termFiles, secretPattern: value.secretPattern, secretsOff: value.secretsOff, optOutsOn: value.optOutsOn };

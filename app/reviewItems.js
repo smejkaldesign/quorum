@@ -1,0 +1,68 @@
+// The review items of Needs review as the batch planner reads them (batchPlan.js): a missing link's fix, a corrective
+// past fix, and a review rule's fix. Plain Node with no Electron, so main and the read-only plan script build the same
+// items. An item's id is its row id in Notifications.
+export const ROW = { link: 'r:link:', pastfix: 'r:pastfix:', finding: 'r:find:' };
+const q = (t) => `“${t}”`;
+
+// the line of every link to target in each source note. noteOf(rel) answers the parsed note (linkparse.js)
+export function linkLines(noteOf, sources, target) {
+  const want = String(target).toLowerCase();
+  const out = {};
+  for (const rel of sources ?? []) {
+    const lines = (noteOf(rel)?.links ?? []).filter((l) => String(l.target).toLowerCase() === want).map((l) => l.line);
+    if (lines.length) out[rel] = [...new Set(lines)];
+  }
+  return out;
+}
+
+// a missing link's fix (memoryHealth.js issueOf). A fix that leaves the link has nothing to run
+export function linkItem(issue, { noteOf = () => null } = {}) {
+  const base = { id: `${ROW.link}${issue.key}`, kind: 'link', key: issue.key, target: issue.target, title: issue.target, autoFix: !issue.reviewOnly && issue.action !== 'leave', reviewOnly: !!issue.reviewOnly };
+  const c = issue.candidate;
+  const lines = () => linkLines(noteOf, issue.sources, issue.target);
+  if (issue.action === 'alias' && c) return { ...base, ops: [{ op: 'alias', rel: c.rel, alias: issue.target }] };
+  if (issue.action === 'relink' && c) return { ...base, ops: [{ op: 'relink', target: issue.target, to: c.rel, sources: issue.sources, lines: lines(), links: issue.links }] };
+  if (issue.action === 'unlink') return { ...base, ops: [{ op: 'unlink', target: issue.target, sources: issue.sources, lines: lines(), links: issue.links }] };
+  if (issue.action === 'create') {
+    const name = String(issue.target).split('/').pop();
+    return { ...base, ops: [{ op: 'create', rel: `${issue.createIn ? `${issue.createIn}/` : ''}${name}.md`, sources: issue.sources }] };
+  }
+  return { ...base, autoFix: false, hold: 'Its fix leaves the link as it is. Archive it instead.', ops: [] };
+}
+
+// a past fix the current rules flag (fixRecheck.js), as the fix that corrects it: undo the wrong change, then the link
+// goes back to review, where the current rules give it a fix. plan: undoPlan(); res: recheckRun()
+export function pastFixItem({ run, res, plan }) {
+  const base = { id: `${ROW.pastfix}${run.id}`, kind: 'pastfix', key: run.id, target: `pastfix:${run.id}`, title: run.target, link: run.key, autoFix: false, reviewOnly: false };
+  if (!plan?.ok) return { ...base, hold: plan?.why ?? 'Quorum cannot undo this fix.', ops: [] };
+  const ops = plan.files.map((f) => (f.before == null ? { op: 'trash', rel: f.rel } : { op: 'restore', rel: f.rel, before: f.before, expect: f.expect }));
+  const group = res?.action === 'create' ? 'trash' : res?.action === 'alias' ? 'unalias' : 'restore';
+  // an exact reversal is computed from the vault as it is now, so it can run without a person reading it
+  return { ...base, group, autoFix: plan.kind === 'record' || plan.kind === 'versions' || plan.kind === 'trash' || plan.kind === 'exact', ops };
+}
+
+// a review rule's finding with a fix (rules/confidential.js): tag, move, or move and tag
+export function findingItem(f) {
+  const base = { id: `${ROW.finding}${f.key}`, kind: 'finding', key: f.key, target: f.key, title: f.rel, autoFix: !!f.autoFix, reviewOnly: false };
+  const x = f.fix;
+  if (!x) return { ...base, autoFix: false, hold: 'Quorum has no automatic fix for it. Open the note to act on it.', ops: [] };
+  const ops = [];
+  if (x.kind === 'tag' || x.kind === 'move-tag') ops.push({ op: 'tag', rel: f.rel, value: x.value });
+  if (x.kind === 'move' || x.kind === 'move-tag') ops.push({ op: 'move', rel: f.rel, to: x.to });
+  return { ...base, ops };
+}
+
+// what an item does, in one line for the checklist
+export function itemLine(item) {
+  const o = item.ops?.[0];
+  if (!o) return item.hold ?? '';
+  if (item.kind === 'pastfix') return item.group === 'trash' ? `Remove ${q(o.rel)}, which an earlier fix wrote for ${q(item.title)}` : `Undo the earlier fix on ${q(item.title)}`;
+  if (o.op === 'alias') return `Add ${q(o.alias)} as an alias of ${q(o.rel)}`;
+  if (o.op === 'relink') return `Point the links to ${q(o.target)} at ${q(o.to)}`;
+  if (o.op === 'unlink') return `Remove the dead links to ${q(o.target)}`;
+  if (o.op === 'create') return `Write ${q(o.rel)}`;
+  if (o.op === 'tag' && item.ops[1]?.op === 'move') return `Tag ${q(o.rel)} confidential: ${o.value} and move it to ${q(item.ops[1].to)}`;
+  if (o.op === 'tag') return `Tag ${q(o.rel)} confidential: ${o.value}`;
+  if (o.op === 'move') return `Move ${q(o.rel)} to ${q(o.to)}`;
+  return item.title;
+}
