@@ -31,6 +31,11 @@ const repo = () => {
   g(v, 'commit', '-q', '-m', 'start');
   return v;
 };
+// a token-shaped string built at run time, so no secret-looking text sits in this file
+const fakeToken = () => { const c = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; let t = ''; for (let i = 0; i < 36; i++) t += c[(i * 17 + 5) % 62]; return `ghp_${t}`; };
+const indexed = (v, rels) => rels.map((r) => note(r, readFileSync(path.join(v, r), 'utf8')));
+let hasGitleaks = true;
+try { execFileSync('gitleaks', ['version'], { stdio: 'ignore' }); } catch { hasGitleaks = false; }
 const old = (abs, days) => { const t = (Date.now() - days * DAY) / 1000; utimesSync(abs, t, t); };
 // a block a script appends word for word on every run
 const block = () => '## Auto capture\n\n- hook ran, nothing new\n';
@@ -214,7 +219,7 @@ describe('uncommitted notes', () => {
     const state = gitState(v);
     expect(state).toMatchObject({ repo: true, branch: 'main', behind: 0, merging: null, gitignore: path.join(v, '.gitignore') });
     expect(state.dirty.map((d) => d.rel).sort()).toEqual(['inbox/fresh.md', 'kept.md', 'projects/a.md', 'projects/b.md']);
-    const [f] = run({ notes: [], hygiene: { litter: [], git: state }, now: Date.now() });
+    const [f] = run({ notes: indexed(v, ['projects/a.md', 'projects/b.md', 'kept.md', 'inbox/fresh.md']), hygiene: { litter: [], git: state }, now: Date.now() });
     expect(f.title).toBe('3 notes in 2 folders have gone uncommitted for over 7 days');
     expect(f.proposal).toBe('Stage and commit 3 notes on main with the message “Commit 3 notes in 2 folders left uncommitted for over 7 days”.');
     expect(f.fix.paths.sort()).toEqual(['kept.md', 'projects/a.md', 'projects/b.md']);
@@ -236,6 +241,39 @@ describe('uncommitted notes', () => {
     expect(g(v, 'show', '--name-only', '--format=', 'HEAD').trim().split('\n').sort()).toEqual(['[x].md', 'a*.md']);
     expect(g(v, 'status', '--porcelain').trim().split('\n').sort()).toEqual(['?? ab.md', '?? x.md']);
   });
+  it('leaves out notes the index skips, dot folders, secret-looking names and notes holding a secret', () => {
+    const v = repo();
+    const rels = ['ok/a.md', '.claude/memory.md', 'ok/credentials.md', 'ok/.env.md', 'ok/token.md', 'excluded/private.md'];
+    for (const r of rels) { put(v, r, r === 'ok/token.md' ? `# Token\nkey: ${fakeToken()}\n` : '# Note\n'); old(path.join(v, r), 9); }
+    const state = gitState(v);
+    expect(state.dirty.map((d) => d.rel).sort()).toEqual([...rels].sort());
+    // the index holds every note but the excluded one
+    const [f] = run({ notes: indexed(v, rels.filter((r) => !r.startsWith('excluded/'))), hygiene: { litter: [], git: state }, now: Date.now() });
+    expect(f.fix.paths).toEqual(['ok/a.md']);
+    // the commit step drops dot folders and secret names again, and whatever allow() refuses
+    expect(commitNotes(v, ['ok/a.md', '.claude/memory.md', 'ok/credentials.md'], 'one note', { exec: (c, a, o) => (c === 'gitleaks' ? '' : execFileSync(c, a, o)) })).toEqual({ branch: 'main', count: 1 });
+    expect(g(v, 'show', '--name-only', '--format=', 'HEAD').trim()).toBe('ok/a.md');
+  });
+  it('stops the commit and unstages its notes when gitleaks finds something, keeping what the person staged', () => {
+    const v = repo();
+    put(v, 'mine.md', '# Mine\n');
+    g(v, 'add', 'mine.md');
+    put(v, 'a.md', '# A\n');
+    const exec = (c, a, o) => { if (c === 'gitleaks') { const e = new Error('leaks'); e.status = 3; throw e; } return execFileSync(c, a, o); };
+    expect(() => commitNotes(v, ['a.md', 'mine.md'], 'x', { exec })).toThrow('gitleaks found what looks like a secret in the staged files, so Quorum did not commit and unstaged the notes it staged');
+    expect(g(v, 'diff', '--cached', '--name-only').trim()).toBe('mine.md');
+    expect(g(v, 'log', '--format=%s').trim()).toBe('start');
+    const broken = (c, a, o) => { if (c === 'gitleaks') { const e = new Error('bad'); e.status = 1; throw e; } return execFileSync(c, a, o); };
+    expect(() => commitNotes(v, ['a.md'], 'x', { exec: broken })).toThrow(/gitleaks could not scan/);
+  });
+  it.skipIf(!hasGitleaks)('runs the installed gitleaks on the staged notes', () => {
+    const v = repo();
+    put(v, 'token.md', `# Token\nGITHUB_TOKEN=${fakeToken()}\n`);
+    expect(() => commitNotes(v, ['token.md'], 'x')).toThrow(/gitleaks found/);
+    expect(g(v, 'status', '--porcelain').trim()).toBe('?? token.md');
+    put(v, 'plain.md', '# Plain\nNothing here.\n');
+    expect(commitNotes(v, ['plain.md'], 'plain')).toEqual({ branch: 'main', count: 1 });
+  });
   it('reads only the vault folder of a larger repository', () => {
     const top = repo();
     put(top, 'MyBrain/notes/x.md', '# X\n');
@@ -251,7 +289,7 @@ describe('uncommitted notes', () => {
     writeFileSync(path.join(v, '.git', 'MERGE_HEAD'), 'deadbeef\n');
     const merging = gitState(v);
     expect(merging.merging).toBe('merge');
-    const [f] = run({ notes: [], hygiene: { litter: [], git: merging }, now: Date.now() });
+    const [f] = run({ notes: indexed(v, ['a.md']), hygiene: { litter: [], git: merging }, now: Date.now() });
     expect(f.fix).toBeUndefined();
     expect(f.proposal).toBe('Quorum does not commit while a merge is in progress on main. Approve keeps the notes as they are and marks the item done.');
     expect(() => commitNotes(v, ['a.md'], 'x')).toThrow(/A merge is in progress/);
@@ -260,7 +298,7 @@ describe('uncommitted notes', () => {
     const exec = (cmd, args, opts) => (args[0] === 'status' ? '# branch.oid abc\0# branch.head main\0# branch.upstream origin/main\0# branch.ab +0 -2\0? a.md\0' : execFileSync(cmd, args, opts));
     const behind = gitState(v, { exec });
     expect(behind).toMatchObject({ behind: 2, upstream: 'origin/main' });
-    const [b] = run({ notes: [], hygiene: { litter: [], git: behind }, now: Date.now() });
+    const [b] = run({ notes: indexed(v, ['a.md']), hygiene: { litter: [], git: behind }, now: Date.now() });
     expect(b.proposal).toMatch(/^Quorum does not commit while the branch main is 2 commits behind origin\/main\./);
     expect(() => commitNotes(v, ['a.md'], 'x', { exec })).toThrow(/2 commits behind origin\/main/);
     expect(g(v, 'log', '--format=%s').trim()).toBe('start');

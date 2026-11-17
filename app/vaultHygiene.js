@@ -4,7 +4,7 @@
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { compactText } from './rules/hygiene.js';
+import { DOT_PATH, SECRET_NAME, compactText } from './rules/hygiene.js';
 
 // Folder names tools and tests leave. Only names a known tool gives, so a folder a person named is never one:
 // TemporaryDirectory.* (Python), vitest-*, jest_*, tmp- or tmp_ with a random suffix, *.lock folders, and the
@@ -231,19 +231,43 @@ export function backupNote(dataDir, vault, rel, now = Date.now()) {
 export const compactNote = (text) => compactText(text);
 
 // stages and commits paths on the current branch, after the same checks the rule made: a branch checked out, nothing in
-// progress, not behind its upstream. Only the given paths go in the commit; anything else staged stays staged
-export function commitNotes(vault, paths, message, { exec = execFileSync } = {}) {
+// progress, not behind its upstream. Only the given paths go in the commit; anything else staged stays staged. Paths in
+// dot folders or with a secret-looking name are dropped, and allow(rel) can drop more (main passes the vault index).
+// When gitleaks is installed it scans what is staged first; a finding, or a scan that fails, stops the commit and the
+// notes Quorum staged are unstaged again
+export function commitNotes(vault, paths, message, { exec = execFileSync, allow = () => true } = {}) {
   const g = gitState(vault, { exec });
+  if (g.error) throw new Error(`${g.error}, so Quorum did not commit`);
   if (!g.repo) throw new Error('The vault is no longer in a git repository, so Quorum did not commit');
   if (!g.branch) throw new Error('The repository has no branch checked out, so Quorum did not commit');
   if (g.merging) throw new Error(`A ${g.merging} is in progress, so Quorum did not commit`);
   if (g.behind > 0) throw new Error(`The branch ${g.branch} is ${g.behind} ${g.behind === 1 ? 'commit' : 'commits'} behind ${g.upstream ?? 'its upstream'}, so Quorum did not commit. Pull first`);
-  const live = paths.filter((p) => existsSync(path.join(vault, p)));
-  if (!live.length) throw new Error('None of the notes are there any more, so Quorum did not commit');
+  const live = paths.filter((p) => !DOT_PATH.test(p) && !SECRET_NAME.test(p) && allow(p) && existsSync(path.join(vault, p)));
+  if (!live.length) throw new Error('None of the notes can be committed now, so Quorum did not commit');
   const list = `${live.join('\0')}\0`;
+  const staged = new Set(git(vault, ['diff', '--cached', '--name-only', '-z', '--relative'], exec).split('\0').filter(Boolean));
   // --literal-pathspecs: a name like [x].md or a*.md is that file, never a pattern that matches others
   git(vault, ['--literal-pathspecs', 'add', '--pathspec-from-file=-', '--pathspec-file-nul'], exec, list);
+  const leak = scanStaged(vault, exec);
+  if (leak) {
+    const ours = live.filter((p) => !staged.has(p));
+    if (ours.length) { try { git(vault, ['--literal-pathspecs', 'reset', '-q', '--pathspec-from-file=-', '--pathspec-file-nul'], exec, `${ours.join('\0')}\0`); } catch {} }
+    throw new Error(`${leak}, so Quorum did not commit and unstaged the notes it staged`);
+  }
   // a commit with a path list commits those paths only (git commit --only)
   git(vault, ['--literal-pathspecs', 'commit', '-q', '-m', message, '--pathspec-from-file=-', '--pathspec-file-nul'], exec, list);
   return { branch: g.branch, count: live.length };
+}
+
+// gitleaks over what is staged, when it is installed. Answers null when it found nothing or is not installed, else the
+// reason to stop. Its output is never read, so no secret it finds reaches a log
+export function scanStaged(vault, exec = execFileSync) {
+  try {
+    exec('gitleaks', ['git', '--staged', '--no-banner', '--redact', '--exit-code', '3', '--log-level', 'error', '.'], { cwd: vault, timeout: 60000, stdio: 'ignore' });
+    return null;
+  } catch (e) {
+    if (e?.code === 'ENOENT') return null;
+    if (e?.status === 3) return 'gitleaks found what looks like a secret in the staged files';
+    return 'gitleaks could not scan the staged files';
+  }
 }

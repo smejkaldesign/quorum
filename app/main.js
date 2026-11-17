@@ -3901,7 +3901,8 @@ async function runOp(item, o, { step, keep, written, vault }) {
   }
   if (o.op === 'commit') {
     await step(`Committing ${o.paths.length.toLocaleString('en-US')} ${o.paths.length === 1 ? 'note' : 'notes'} on ${o.branch}`);
-    commitNotes(vault, o.paths, o.message);
+    const indexed = new Set(vindex.rels());
+    commitNotes(vault, o.paths, o.message, { allow: (rel) => indexed.has(rel) });
     return;
   }
   if (o.op === 'unlink') {

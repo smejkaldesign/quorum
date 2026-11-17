@@ -10,6 +10,7 @@
 // The folder walk and git status run once per full sweep in the memory engine (vaultHygiene.js scanHygiene) and reach
 // this rule as ctx.hygiene. This module reads no files, so the tests and the planner use the same functions.
 import { finding, plural, quote } from './common.js';
+import { secretKind } from './secrets.js';
 
 export const rule = { id: 'note.hygiene', version: 1, label: 'Vault upkeep: temp folders, runaway notes and uncommitted notes' };
 export const SIZE_LIMIT = 1024 * 1024;
@@ -172,10 +173,23 @@ function runawayFindings(notes, h) {
 // the commit message Approve writes
 export const commitMessage = (count, folders) => `Commit ${plural(count, 'note')} in ${plural(folders, 'folder')} left uncommitted for over ${STALE_DAYS} days`;
 
-function gitFinding(h, now) {
+// a file name that reads as a key or a credential: .env files, keys, certificates, credentials
+export const SECRET_NAME = /(^|\/)(\.env[^/]*|[^/]*\.(pem|key|p12|pfx)|credentials[^/]*|secrets?\.[^/]*)$/i;
+// a path in a dot folder (.claude, .obsidian, .trash) at any depth
+export const DOT_PATH = /(^|\/)\.[^/]+\//;
+// the notes a commit may take: notes the vault index holds (so excluded folders and what the index skips stay out),
+// outside dot folders, with no secret-looking name and no line the secrets rule reads as a secret
+export function committable(rel, byRel) {
+  const x = byRel.get(rel);
+  if (!x || DOT_PATH.test(rel) || SECRET_NAME.test(rel)) return false;
+  return !String(x.text ?? '').split('\n').some((line) => secretKind(line));
+}
+
+function gitFinding(h, notes, now) {
   const g = h.git;
   if (!g?.repo) return null;
-  const stale = (g.dirty ?? []).filter((d) => now - d.mtime > STALE_DAYS * 86400000);
+  const byRel = new Map(notes.map((x) => [x.rel, x]));
+  const stale = (g.dirty ?? []).filter((d) => now - d.mtime > STALE_DAYS * 86400000 && committable(d.rel, byRel));
   if (!stale.length) return null;
   const byFolder = new Map();
   for (const d of stale) { const f = d.rel.includes('/') ? d.rel.slice(0, d.rel.lastIndexOf('/')) : 'the vault folder'; byFolder.set(f, (byFolder.get(f) ?? 0) + 1); }
@@ -204,6 +218,6 @@ export function run({ notes, hygiene = null, now = Date.now() }) {
   const out = [];
   if (hygiene) { const l = litterFinding(hygiene); if (l) out.push(l); }
   out.push(...runawayFindings(notes, hygiene));
-  if (hygiene) { const g = gitFinding(hygiene, now); if (g) out.push(g); }
+  if (hygiene) { const g = gitFinding(hygiene, notes, now); if (g) out.push(g); }
   return out;
 }
