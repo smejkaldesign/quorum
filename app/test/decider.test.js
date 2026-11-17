@@ -100,6 +100,12 @@ describe('decider decisions', () => {
     expect(m.embed.mock.calls.flatMap((x) => x[0])).toHaveLength(2);
   });
 
+  it('reads every note with a figure, a date or a decision, however short, templated or full of links', () => {
+    for (const text of ['Decided: launch Orion on April 10.', 'Ship it Friday.', 'Budget 4000', 'We agreed.', '# {{title}}\n\nDecided: Atlas moves to Postgres.\n\n{{attendees}}', '- [[Atlas]]\n- [[Orion]]\n- Due 2026-12-01']) {
+      expect(noteRule({ rel: 'x.md', text }).read, text).toBe(true);
+    }
+  });
+
   it('answers the fixture notes', () => {
     for (const n of NOTES) expect(noteRule(n).read, n.rel).toBe(n.truth);
   });

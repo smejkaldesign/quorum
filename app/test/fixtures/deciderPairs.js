@@ -105,7 +105,7 @@ export const PAIRS = [
 export const NOTES = [
   { rel: 'empty.md', text: '', truth: false },
   { rel: 'front.md', text: '---\ntags: [inbox]\n---\n', truth: false },
-  { rel: 'short.md', text: '# Ideas\n\ncall back', truth: false },
+  { rel: 'short.md', text: '# Ideas\n\ncall back', truth: true },
   { rel: 'template.md', text: '# {{title}}\n\nDate: {{date}}\n\n## Attendees\n\n{{attendees}}\n\n## Notes\n\n<% tp.file.cursor() %>', truth: false },
   { rel: 'links.md', text: '# Reading\n\n- [[Atlas overview]]\n- [[Orion launch plan]]\n- https://example.com/guide\n- [Style guide](https://example.com/style)', truth: false },
   { rel: 'decision.md', text: '# Atlas database\n\nWe decided to use Postgres for Atlas. The data team owns the schema and reviews every migration.', truth: true },

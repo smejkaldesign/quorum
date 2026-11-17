@@ -3,22 +3,26 @@
 // flipped polarity) that no local model may overrule. A T0 keep sends the pair to Claude whatever T1 scores.
 import { normValue } from '../contradictionPairs.js';
 
-// a note under this many words after its frontmatter, links and markup has no claim worth a model call
+// a template note under this many words outside its placeholders has nothing of its own to read
 export const MIN_WORDS = 8;
 
 const body = (text) => String(text ?? '').replace(/^---\n[\s\S]*?\n---\n?/, '');
 const words = (s) => s.replace(/\[\[[^\]]*\]\]|\[[^\]]*\]\([^)]*\)|https?:\/\/\S+|[#*_`>|-]+/g, ' ').split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w));
 
-// { read, reason }. read false only for a note the rules are sure holds no claim: empty, a few words, a template, or a
-// list of links
+// a figure, a date or a decision word: a note with one is always read, however short. A short note is often the one
+// that records a decision ("Decided: launch on April 10.")
+const SIGNAL = /\d|\b(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sep(t(ember)?)?|oct(ober)?|nov(ember)?|dec(ember)?|mon(day)?|tue(s(day)?)?|wed(nesday)?|thu(rs(day)?)?|fri(day)?|sat(urday)?|sun(day)?|today|tomorrow|yesterday|decid\w*|agree\w*|approv\w*|chose|chosen|choose|will|must|shall|ship\w*|launch\w*|cancel\w*|deadline|due|owns?|owner)\b/i;
+
+// { read, reason }. read false only for a note the rules are sure holds no claim: empty, a template, or a list of
+// links, with no figure, date or decision word in what is left
 export function noteRule(note) {
   const b = body(note?.text);
   if (!b.trim()) return { read: false, reason: 'empty' };
+  if (SIGNAL.test(b.replace(/\{\{[^}]+\}\}|<%[\s\S]*?%>|\[\[[^\]]*\]\]|\[[^\]]*\]\([^)]*\)|https?:\/\/\S+/g, ' '))) return { read: true, reason: null };
   if (/\{\{[^}]+\}\}|<%[\s\S]*?%>/.test(b) && words(b.replace(/\{\{[^}]+\}\}|<%[\s\S]*?%>/g, ' ')).length < MIN_WORDS * 2) return { read: false, reason: 'template' };
   const lines = b.split('\n').map((l) => l.trim()).filter(Boolean);
   const linkOnly = lines.filter((l) => /^([-*+]|\d+\.)?\s*(\[\[[^\]]+\]\]|\[[^\]]*\]\([^)]*\)|https?:\/\/\S+)\s*$/.test(l)).length;
   if (lines.length >= 3 && linkOnly / lines.length >= 0.8) return { read: false, reason: 'links' };
-  if (words(b).length < MIN_WORDS) return { read: false, reason: 'short' };
   return { read: true, reason: null };
 }
 
