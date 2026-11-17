@@ -202,10 +202,11 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     return () => { off(); if (timer) clearTimeout(timer); };
   }, [load]);
   useEffect(() => { window.quorum.liveRuns().then(setLive).catch(() => {}); return window.quorum.onLiveRuns(setLive); }, []);
-  // a note's versions or updates changed: new dots, and a fresh versions list for the open note
+  // a note's versions or updates changed: new dots, and a fresh versions list for the open note. Main sends null when
+  // it does not name the notes (a sweep or a gate run), and that leaves the open note's versions as they are
   useEffect(() => window.quorum.onMemoryUpdates((rels) => {
     window.quorum.memoryDots().then(setDots).catch(() => {});
-    if (rels.includes(previewRel.current)) setStamp((n) => n + 1);
+    if (rels?.includes(previewRel.current)) setStamp((n) => n + 1);
   }), []);
   // reopen the note that was showing before a reload, then keep tracking whichever one is open
   useEffect(() => { if (openRel) openNote(openRel); }, []);

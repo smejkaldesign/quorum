@@ -497,7 +497,7 @@ declare global {
       memoryVersions(rel: string): Promise<MemoryVersion[]>;
       memoryVersion(rel: string, id: string): Promise<{ body: string } | null>;
       memoryRestore(rel: string, id: string): Promise<boolean>;
-      onMemoryUpdates(cb: (rels: string[]) => void): Unsub;
+      onMemoryUpdates(cb: (rels: string[] | null) => void): Unsub;
       agentActivity(): Promise<AgentActivity | null>;
       agentActivityCancel(id: string): Promise<boolean>;
       memoryCatchupEstimate(): Promise<CatchupEstimate | null>;
