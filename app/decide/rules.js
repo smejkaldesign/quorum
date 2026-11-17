@@ -36,6 +36,9 @@ const NAMES = [['jan', 'jan|january'], ['feb', 'feb|february'], ['mar', 'mar|mar
   ['mon', 'mon|monday'], ['tue', 'tue|tues|tuesday'], ['wed', 'wed|wednesday'], ['thu', 'thu|thur|thurs|thursday'], ['fri', 'fri|friday'], ['sat', 'sat|saturday'], ['sun', 'sun|sunday']];
 const KEY = new Map(NAMES.flatMap(([k, forms]) => forms.split('|').map((f) => [f, k])));
 const NAME = `(${[...KEY.keys()].sort((x, y) => y.length - x.length).join('|')})`;
+// spelled-out numbers, read as the digits they stand for
+const WORDS = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90, hundred: 100, thousand: 1000, million: 1000000, dozen: 12, half: 0.5, once: 1, twice: 2, single: 1, double: 2, triple: 3 };
+const WORD = new RegExp(`\\b(${Object.keys(WORDS).join('|')})\\b`, 'g');
 // the numbers and dates a text names, normalized: "$1,200" -> "1200", "March 3" -> "mar 3", "Q3" -> "q3", "3/14" stays
 export function figures(v) {
   let s = normValue(v);
@@ -44,11 +47,15 @@ export function figures(v) {
   s = s.replace(/\bq([1-4])\b/g, (_, q) => { out.add(`q${q}`); return ' '; });
   s = s.replace(/\b\d{4}-\d{2}-\d{2}\b|\b\d+\/\d+(\/\d+)?\b/g, (m) => { out.add(m); return ' '; });
   for (const m of s.matchAll(/\d+(?:[.,]\d+)*/g)) out.add(m[0].replace(/,/g, ''));
+  for (const m of s.matchAll(WORD)) out.add(String(WORDS[m[1]]));
   for (const m of s.matchAll(new RegExp(`\\b${NAME}\\b`, 'g'))) out.add(KEY.get(m[1]));
   return out;
 }
 
 const NEGATION = /\b(not|no|never|none|nobody|nothing|neither|nor|without|cannot)\b|n't\b/i;
+// a sentence about the past: against one about the present, the same value can mean the use ended ("used Redis" against
+// "uses Redis")
+const PAST = /\b(used|was|were|had|did|previously|formerly|earlier|until|no longer|anymore|used to|moved|switched|replaced|stopped)\b/i;
 const differ = (x, y) => [...x].some((f) => !y.has(f)) || [...y].some((f) => !x.has(f));
 
 // { keep, equivalent, reason } for a pair. keep: a sign of a real change T1 may not overrule, read from the values and
@@ -60,6 +67,7 @@ export function pairRule(a, b) {
   if (flipped) return { keep: true, equivalent: false, reason: 'polarity' };
   if (differ(figures(a?.value), figures(b?.value)) || differ(figures(a?.quote), figures(b?.quote))) return { keep: true, equivalent: false, reason: 'figures differ' };
   if (NEGATION.test(String(a?.quote ?? '')) !== NEGATION.test(String(b?.quote ?? ''))) return { keep: true, equivalent: false, reason: 'negation' };
+  if (PAST.test(String(a?.quote ?? '')) !== PAST.test(String(b?.quote ?? ''))) return { keep: true, equivalent: false, reason: 'tense' };
   const va = normValue(a?.value);
   if (va && va === normValue(b?.value)) return { keep: false, equivalent: true, reason: 'same value' };
   return { keep: false, equivalent: false, reason: null };

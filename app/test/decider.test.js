@@ -101,6 +101,14 @@ describe('decider decisions', () => {
     expect(m.embed).not.toHaveBeenCalled();
   });
 
+  it('keeps spelled-out numbers that differ, and a past use against a present one', () => {
+    expect(pairRule(c('The flow has three screens.', 'three screens'), c('The flow has five screens.', 'five screens'))).toMatchObject({ keep: true, reason: 'figures differ' });
+    expect(pairRule(c('Billing runs twice a month.', 'twice a month'), c('Billing runs once a month.', 'once a month'))).toMatchObject({ keep: true });
+    expect(pairRule(c('Atlas used Redis for caching.', 'Redis'), c('Atlas uses Redis for caching.', 'Redis'))).toMatchObject({ keep: true, equivalent: false, reason: 'tense' });
+    expect(pairRule(c('Orion previously shipped weekly.', 'weekly'), c('Orion ships weekly.', 'weekly'))).toMatchObject({ keep: true, equivalent: false });
+    expect(pairRule(c('Atlas uses Redis.', 'Redis'), c('Redis is what Atlas uses.', 'Redis'))).toMatchObject({ keep: false, equivalent: true });
+  });
+
   it('embeds each text once', async () => {
     const m = fake({ cos: 0.9 });
     const d = createDecider({ load: async () => m });

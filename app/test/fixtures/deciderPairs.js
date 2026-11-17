@@ -100,6 +100,20 @@ export const PAIRS = [
   P('same', c('a.md', 'The helper app is open source.', 'helper app', 'license', 'open source'), c('b.md', 'The source code of the helper app is open.', 'helper app', 'license', 'open source code')),
   P('different_scope', c('a.md', 'On desktop the editor uses a sidebar for outlines.', 'editor', 'outline', 'sidebar'), c('b.md', 'On phones the editor shows outlines in a sheet.', 'editor', 'outline', 'sheet')),
   P('different_scope', c('a.md', 'Admins can delete any workspace note.', 'notes', 'delete permission', 'admins, any note'), c('b.md', 'Members can delete only their own notes.', 'notes', 'delete permission', 'members, own notes')),
+  // review cases: spelled-out numbers, weekday changes, entity swaps with no date-like words, and tense, both with
+  // different values and with the same value ("used Redis" against "uses Redis" says the use may have ended)
+  P('contradiction', c('a.md', 'The onboarding flow has three screens.', 'onboarding', 'screens', 'three screens'), c('b.md', 'The onboarding flow has five screens.', 'onboarding', 'screens', 'five screens')),
+  P('contradiction', c('a.md', 'The team is a dozen people.', 'team', 'size', 'a dozen people'), c('b.md', 'The team has twenty people.', 'team', 'size', 'twenty people')),
+  P('contradiction', c('a.md', 'Billing runs twice a month.', 'billing', 'frequency', 'twice a month'), c('b.md', 'Billing runs once a month.', 'billing', 'frequency', 'once a month')),
+  P('contradiction', c('a.md', 'Standup is on Tuesday.', 'standup', 'day', 'Tuesday'), c('b.md', 'Standup is on Thursday.', 'standup', 'day', 'Thursday')),
+  P('contradiction', c('a.md', 'Design reviews happen every Wednesday.', 'design review', 'day', 'every Wednesday'), c('b.md', 'Design reviews happen every Friday.', 'design review', 'day', 'every Friday')),
+  P('contradiction', c('a.md', 'Priya owns billing.', 'billing', 'owner', 'Priya'), c('b.md', 'Jonah owns billing.', 'billing', 'owner', 'Jonah')),
+  P('contradiction', c('a.md', 'The data team owns the warehouse.', 'warehouse', 'owner', 'data team'), c('b.md', 'The platform team owns the warehouse.', 'warehouse', 'owner', 'platform team')),
+  P('contradiction', c('a.md', 'Atlas is hosted by Northwind.', 'atlas', 'host', 'Northwind'), c('b.md', 'Atlas is hosted by Fabrikam.', 'atlas', 'host', 'Fabrikam')),
+  P('different_times', c('a.md', 'Atlas used Postgres.', 'atlas', 'database', 'Postgres'), c('b.md', 'Atlas uses MySQL.', 'atlas', 'database', 'MySQL')),
+  P('different_times', c('a.md', 'The team was using Slack for support.', 'support', 'channel', 'Slack'), c('b.md', 'Support runs through email.', 'support', 'channel', 'email')),
+  P('different_times', c('a.md', 'Atlas used Redis for caching.', 'atlas', 'cache', 'Redis'), c('b.md', 'Atlas uses Redis for caching.', 'atlas', 'cache', 'Redis')),
+  P('different_times', c('a.md', 'Orion previously shipped weekly.', 'orion', 'release cadence', 'weekly'), c('b.md', 'Orion ships weekly.', 'orion', 'release cadence', 'weekly')),
 ];
 
 export const NOTES = [
