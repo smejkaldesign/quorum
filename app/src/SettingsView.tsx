@@ -20,6 +20,7 @@ import { MeetingSourcesRows } from './MeetingSources';
 import { useFlag, useFlags, useNotetaker } from './flags';
 import { MemoryUpdatesCard } from './MemoryUpdates';
 import { MemoryRulesCard } from './MemoryRules';
+import { LocalModelsCard } from './LocalModels';
 import {
   IconBell, IconBrain, IconBuilding, IconCalendar, IconChat, IconFolder, IconGrid, IconKeyboard, IconLock,
   IconChevron, IconCode, IconExternal, IconGlobe, ProviderMark, IconMic, IconMore, IconNotes, IconPeople, IconPerson, IconPlus, IconPower, IconReset, IconSliders, IconStack, IconCheck, IconCopy, IconFolderFill, IconFork, IconShield, IconGraph, IconSearch, IconClose, Wave,
@@ -194,6 +195,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
               {brain && <KeeperCard brain={brain} />}
               {brain && <MemoryUpdatesCard settings={settings} onSettings={onSettings} />}
               {brain && <MemoryRulesCard />}
+              {brain && <LocalModelsCard />}
               {brain && <MemoryScan />}
             </>
           ) : page === 'members' ? <MembersArea />

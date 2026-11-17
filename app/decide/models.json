@@ -1,0 +1,46 @@
+{
+  "embed": {
+    "repo": "Xenova/bge-small-en-v1.5",
+    "revision": "ea104dacec62c0de699686887e3f920caeb4f3e3",
+    "source": "BAAI/bge-small-en-v1.5",
+    "license": "MIT",
+    "files": {
+      "onnx/model_int8.onnx": {
+        "sha256": "bf64d05457cb391fa88d045faf5927a15ea36d96228ddf23ea970087afdc1197",
+        "size": 33760831
+      },
+      "tokenizer.json": {
+        "sha256": "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
+        "size": 711396
+      },
+      "tokenizer_config.json": {
+        "sha256": "9261e7d79b44c8195c1cada2b453e55b00aeb81e907a6664974b4d7776172ab3",
+        "size": 366
+      }
+    }
+  },
+  "nli": {
+    "repo": "cross-encoder/nli-deberta-v3-xsmall",
+    "revision": "a150876415327c80daeff35ca6f68f5ed8cf5c24",
+    "source": "cross-encoder/nli-deberta-v3-xsmall",
+    "license": "Apache-2.0",
+    "files": {
+      "onnx/model_qint8_arm64.onnx": {
+        "sha256": "ef41fe8474f6070373f97fbe8362461d55108f387723280fcdb64f8015133db2",
+        "size": 87377068
+      },
+      "config.json": {
+        "sha256": "8d9f07bf7ba54a6fc3b1962483056f94c39dcf188db4cf61843e1c88f94b2342",
+        "size": 1053
+      },
+      "tokenizer.json": {
+        "sha256": "5124ef2ead1a10a717703bc436de7f353da76d6340e4587719b42b1693707964",
+        "size": 8656624
+      },
+      "tokenizer_config.json": {
+        "sha256": "f3eecd07c370ef0bf7dd3780d3cd68cf9c8b00c267e21a208ddcd8f82bfec1a6",
+        "size": 1346
+      }
+    }
+  }
+}

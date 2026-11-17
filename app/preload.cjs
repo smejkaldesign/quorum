@@ -110,6 +110,9 @@ contextBridge.exposeInMainWorld('quorum', {
   memoryIgnoreList: () => ipcRenderer.invoke('memory-ignore-list'),
   memoryIgnoreRemove: (id) => ipcRenderer.invoke('memory-ignore-remove', id),
   memoryDraftStatus: () => ipcRenderer.invoke('memory-draft-status'),
+  // the decision layer's model download, for Settings > Memory
+  modelsStatus: () => ipcRenderer.invoke('models-status'),
+  onModelsStatus: on('models-status'),
   fixRuns: () => ipcRenderer.invoke('fix-runs'),
   fixDismiss: (ids) => ipcRenderer.invoke('fix-dismiss', ids),
   fixUndo: (id) => ipcRenderer.invoke('fix-undo', id),
