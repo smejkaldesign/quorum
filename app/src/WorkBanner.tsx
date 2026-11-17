@@ -49,7 +49,8 @@ export function useAgentActivity() {
 const MORE = (n: number) => (n ? ` and ${n} more ${n === 1 ? 'task' : 'tasks'}` : '');
 // Long memory work (more than 30 seconds): what runs, its progress and Cancel. onOpen opens Memory health, where the
 // same banner shows; it hides when the work ends
-export function AgentActivityBanner({ onOpen, className = '' }: { onOpen?: () => void; className?: string }) {
+// hide: an activity another banner on the page already shows, with its own Cancel
+export function AgentActivityBanner({ onOpen, hide, className = '' }: { onOpen?: () => void; hide?: (a: AgentActivity) => boolean; className?: string }) {
   const a = useAgentActivity();
   const [stopping, setStopping] = useState<string | null>(null);
   // Cancel on a Check everything now pass past its first minute asks first (catchupView.ts stopFlow); the dialog
@@ -59,7 +60,7 @@ export function AgentActivityBanner({ onOpen, className = '' }: { onOpen?: () =>
   const current = a?.id ?? null;
   // read at each render, so a dialog opened for an activity that ended shows for no other one (ids are never reused)
   const asked = stopFlow(asking, { type: 'activity', current }).asking;
-  if (!a) return null;
+  if (!a || hide?.(a)) return null;
   const progress = a.progress ? a.progress.done / a.progress.total : null;
   const count = a.progress && a.kind === 'batch' ? ` (${a.progress.done} of ${a.progress.total})` : '';
   const cancel = async (id: string) => { setStopping(id); try { await window.quorum.agentActivityCancel(id); } catch { setStopping(null); } };

@@ -15,7 +15,7 @@ import { NotePanel, Palette, type PaletteItem, type PaletteMode } from './NoteTo
 import { reportMemoryNote } from './navHistory';
 import { toast } from './Toasts';
 import type { FixRun } from './quorum';
-import { IssueDrawer, LinkHealth, acceptIssue, dismissIssue, leftOf, migrateLeft, waitFix } from './LinkHealth';
+import { IssueDrawer, LinkHealth, acceptIssue, dismissIssue, leftOf, migrateLeft, toastWhenFixed, waitFix } from './LinkHealth';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
 import { IconChevron, IconClose, IconCollapse, IconExpand, IconFolder, IconGraph, IconNewFolder, IconNewNote, IconHistory, IconLink, IconLock, IconMore, IconReset, IconSearch, IconSidebar, IconSliders, IconSort } from './icons';
@@ -312,7 +312,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
         const done = waitFix(item.issue.key);
         try {
           flash(await acceptIssue(item.issue));
-          toast(`Approved “${item.issue.target}”. Quorum is fixing it now.`);
+          toastWhenFixed([{ key: item.issue.key, target: item.issue.target, done }]);
           const run = await done;
           setFixShown((f) => (f && f.issue.key === run.key ? { ...f, run } : f));
           flash(run.status === 'success' ? run.outcome ?? 'Fixed' : run.error ?? 'Could not fix it');

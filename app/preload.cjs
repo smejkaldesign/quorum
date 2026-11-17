@@ -102,6 +102,7 @@ contextBridge.exposeInMainWorld('quorum', {
   vaultLinksLeft: (keys, on) => ipcRenderer.invoke('vault-links-left', keys, on !== false),
   vaultLinkDecide: (key, verdict) => ipcRenderer.invoke('vault-link-decide', key, verdict),
   fixStart: (keys) => ipcRenderer.invoke('fix-start', keys),
+  fixCancel: (batch) => ipcRenderer.invoke('fix-cancel', batch),
   memoryFindings: () => ipcRenderer.invoke('memory-findings'),
   memoryFindingsArchive: (keys, on) => ipcRenderer.invoke('memory-findings-archive', keys, on !== false),
   memorySweepNow: () => ipcRenderer.invoke('memory-sweep-now'),

@@ -469,6 +469,8 @@ declare global {
       vaultLinksLeft(keys: string[], on?: boolean): Promise<number>;
       vaultLinkDecide(key: string, verdict: 'approve' | 'dismiss'): Promise<string>;
       fixStart(keys: string[]): Promise<FixRun[]>;
+      // stops a bulk Approve: drops its queued fixes and stops the running one before its next step; answers how many
+      fixCancel(batch: string): Promise<number>;
       memoryFindings(): Promise<{ findings: MemoryFinding[]; last: MemorySweepInfo | null; lastFull: number; paused: boolean; labels: Record<string, string>; drafts?: Record<string, MemoryDraft>; checking?: boolean; engineError?: string | null }>;
       memoryGate(): Promise<{ checking: boolean; stopped: boolean; at: number }>;
       memoryRuleRecords(): Promise<RuleRecord[]>;

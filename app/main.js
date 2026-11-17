@@ -3134,6 +3134,30 @@ async function pumpFixes() {
   fixWorking = false;
 }
 ipcMain.handle('fix-start', (_e, keys) => startFixes(Array.isArray(keys) ? keys : []));
+// Cancel on a bulk Approve: its queued fixes end without running, so their issues stay in Needs review, and the running
+// one stops before its next step, where its rollback puts back every note it changed
+ipcMain.handle('fix-cancel', (_e, batch) => {
+  const id = String(batch ?? '');
+  if (!id) return 0;
+  let n = 0;
+  for (const r of fixRunList()) {
+    if (r.batch !== id) continue;
+    if (r.status === 'queued') {
+      const at = fixQueue.indexOf(r);
+      if (at >= 0) fixQueue.splice(at, 1);
+      r.status = 'error';
+      r.error = 'You cancelled the batch';
+      r.endedAt = Date.now();
+      for (const it of r.items ?? []) it.status = 'error';
+      batchPlans.delete(r.id);
+      fixJournal.append(r.id, { step: 'ended', status: r.status, error: r.error });
+      fixEmit(r);
+      n++;
+    } else if (r.status === 'running') { r.cancel = true; r.agentAbort?.abort(); n++; }
+  }
+  if (n) { fixRunsSave(); toUI('memory-updates', null); }
+  return n;
+});
 // Undo for a fix: the notes it changed go back to how they were, and a note it wrote goes to the Trash, so the issue is
 // back in Needs review. It refuses when a note changed after the fix, so it never throws away later edits
 const fixUndoDir = path.join(DATA_DIR, 'fix-undo');
