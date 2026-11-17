@@ -100,24 +100,21 @@ export function CatchupPlan({ est, drafting, onStart, onClose }: { est: CatchupE
 // Memory health: the last pass that ended, with when it ran, how long it took, the notes it checked and what it added
 // to Needs review. Show these narrows Needs review to its items; Dismiss hides the card for good
 // onDismissed: where focus goes once the card is gone
-export function CatchupSummary({ onShow, onDismissed }: { onShow: (ids: string[], label: string) => void; onDismissed?: () => void }) {
+export function CatchupSummary({ onDismissed }: { onDismissed?: () => void }) {
   const st = useCatchupStatus();
   if (!showSummary(st)) return null;
   const last = st.last;
   const s = summaryOf(last);
-  const label = `From the check on ${ranAt(last.startedAt)}`;
   return (
     <WorkBanner
+      className="cu-summary"
       state={s.state}
       text={`${s.head}. Ran ${ranAt(last.startedAt)}`}
       startedAt={last.startedAt}
       endedAt={s.took == null ? null : last.startedAt + s.took}
       time={s.took != null}
-      note={<>{s.line}{s.added ? ` ${s.added}` : ''}</>}
-      actions={<>
-        {s.ids.length > 0 && <button className="act-pill" onClick={() => onShow(s.ids, label)}>Show these</button>}
-        <button className="act-pill run-dismiss" onClick={() => { window.quorum.memoryCatchupDismiss().catch(() => {}).finally(() => onDismissed?.()); }}>Dismiss</button>
-      </>}
+      note={s.line}
+      actions={<button className="act-pill run-dismiss" onClick={() => { window.quorum.memoryCatchupDismiss().catch(() => {}).finally(() => onDismissed?.()); }}>Dismiss</button>}
     />
   );
 }
