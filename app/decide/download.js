@@ -16,6 +16,10 @@ import path from 'node:path';
 import { MANIFEST, hashFile } from './models.js';
 
 const MB = 1024 * 1024;
+// an error with a code for the status line; the message, which can name a path, stays in the log
+const failure = (code, message) => Object.assign(new Error(message), { code });
+// where a model file may come from after redirects: Hugging Face and its CDN hosts, over HTTPS only
+export const allowedHost = (url) => { try { const u = new URL(url); return u.protocol === 'https:' && /(^|\.)(huggingface\.co|hf\.co)$/.test(u.hostname); } catch { return false; } };
 // onnxruntime-node ships a macOS binary for Apple silicon only
 export const modelsSupported = (platform = process.platform, arch = process.arch) => platform === 'darwin' && arch === 'arm64';
 export const fileUrl = (m, file) => `https://huggingface.co/${m.repo}/resolve/${m.revision}/${file}`;
@@ -73,6 +77,7 @@ export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalTh
     if (have) await new Promise((resolve, reject) => createReadStream(part).on('data', (c) => h.update(c)).on('end', resolve).on('error', reject));
     const ctl = new AbortController();
     const res = await fetch(f.url, { headers: have ? { Range: `bytes=${have}-` } : {}, signal: ctl.signal, redirect: 'follow' });
+    if (!allowedHost(res.url || f.url)) { await res.body?.cancel().catch(() => {}); throw failure('host_refused', `${f.id}/${f.file}: redirected to ${res.url}`); }
     if (!res.ok) throw new Error(`${f.id}/${f.file}: the server answered ${res.status}`);
     if (have && res.status !== 206) { h = createHash('sha256'); have = 0; }
     const fh = await open(part, have ? 'a' : 'w');
@@ -122,7 +127,7 @@ export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalTh
           attempt++;
           log('models', 'download failed', f.id, f.file, attempt, String(e?.message ?? e));
           if (attempt >= retries) {
-            set({ state: 'failed', why: String(e?.message ?? e) });
+            set({ state: 'failed', why: e?.code ?? String(e?.message ?? e) });
             const t = setTimeout(() => { start(); }, retryLaterMs);
             t.unref?.();
             return;

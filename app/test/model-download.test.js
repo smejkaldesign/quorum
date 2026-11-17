@@ -17,17 +17,18 @@ const BODIES = { 'https://huggingface.co/org/embed/resolve/r1/m.onnx': A, 'https
 
 // a fake fetch over BODIES. ignoreRange: answers 200 with the whole file; fail: the first n requests answer 503;
 // corrupt: the first n bodies come back with a changed byte
-function server({ ignoreRange = false, fail = 0, corrupt = 0 } = {}) {
+function server({ ignoreRange = false, fail = 0, corrupt = 0, landAt = null } = {}) {
   const seen = [];
   const f = async (url, init = {}) => {
     const range = init.headers?.Range ?? null;
-    seen.push({ url, range });
-    if (fail > 0) { fail--; return new Response('busy', { status: 503 }); }
+    seen.push({ url, range, headers: init.headers ?? {} });
+    const reply = (r) => { Object.defineProperty(r, 'url', { value: landAt ? landAt(url) : url }); return r; };
+    if (fail > 0) { fail--; return reply(new Response('busy', { status: 503 })); }
     let body = BODIES[url];
-    if (!body) return new Response('missing', { status: 404 });
+    if (!body) return reply(new Response('missing', { status: 404 }));
     if (corrupt > 0) { corrupt--; body = Buffer.from(body); body[0] ^= 1; }
     const from = !ignoreRange && range ? Number(range.match(/bytes=(\d+)-/)[1]) : 0;
-    return new Response(body.subarray(from), { status: from ? 206 : 200 });
+    return reply(new Response(body.subarray(from), { status: from ? 206 : 200 }));
   };
   return { fetch: f, seen };
 }
@@ -107,6 +108,19 @@ describe('model download', () => {
     expect(states).toContain('waiting');
     expect(sleeps.filter((ms) => ms === 60000)).toHaveLength(2);
     expect(d.status().state).toBe('ready');
+  });
+
+  it('follows a redirect to the Hugging Face CDN and refuses one to any other host or to http', async () => {
+    const cdn = await run({ dir: tmp(), manifest: manifest(), fetch: server({ landAt: (u) => u.replace('https://huggingface.co/', 'https://cdn-lfs-us-1.hf.co/') }).fetch });
+    expect(cdn.d.status().state).toBe('ready');
+    const xet = await run({ dir: tmp(), manifest: manifest(), fetch: server({ landAt: (u) => u.replace('https://huggingface.co/', 'https://cas-bridge.xethub.hf.co/') }).fetch });
+    expect(xet.d.status().state).toBe('ready');
+    for (const landAt of [(u) => u.replace('huggingface.co', 'evil.example'), (u) => u.replace('https:', 'http:'), (u) => u.replace('huggingface.co', 'huggingface.co.evil.example')]) {
+      const dir = tmp();
+      const { d } = await run({ dir, manifest: manifest(), fetch: server({ landAt }).fetch, retries: 1 });
+      expect(d.status()).toMatchObject({ state: 'failed', why: 'host_refused' });
+      expect(existsSync(path.join(dir, 'embed/m.onnx'))).toBe(false);
+    }
   });
 
   it('downloads nothing while the decision layer is off', async () => {
