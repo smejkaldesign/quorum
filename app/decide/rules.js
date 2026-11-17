@@ -6,7 +6,11 @@ import { normValue } from '../contradictionPairs.js';
 // a template note under this many words outside its placeholders has nothing of its own to read
 export const MIN_WORDS = 8;
 
-const body = (text) => String(text ?? '').replace(/^---\n[\s\S]*?\n---\n?/, '');
+const FRONT = /^---\n([\s\S]*?)\n---(\n|$)/;
+const body = (text) => String(text ?? '').replace(FRONT, '');
+// properties that name or file the note; every other property with a value can hold a claim (decision:, due:, owner:)
+const NAMING = new Set(['tags', 'tag', 'aliases', 'alias', 'cssclasses', 'cssclass']);
+const claimProps = (text) => (String(text ?? '').match(FRONT)?.[1] ?? '').split('\n').some((l) => { const m = l.match(/^([\w -]+):\s*(.*)$/); return !!m && !NAMING.has(m[1].trim().toLowerCase()) && !/^(\[\s*\]|""|''|null|~)?$/.test(m[2].trim()); });
 const words = (s) => s.replace(/\[\[[^\]]*\]\]|\[[^\]]*\]\([^)]*\)|https?:\/\/\S+|[#*_`>|-]+/g, ' ').split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w));
 
 // a figure, a date or a decision word: a note with one is always read, however short. A short note is often the one
@@ -16,6 +20,7 @@ const SIGNAL = /\d|\b(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|a
 // { read, reason }. read false only for a note the rules are sure holds no claim: empty, a template, or a list of
 // links, with no figure, date or decision word in what is left
 export function noteRule(note) {
+  if (claimProps(note?.text)) return { read: true, reason: null };
   const b = body(note?.text);
   if (!b.trim()) return { read: false, reason: 'empty' };
   if (SIGNAL.test(b.replace(/\{\{[^}]+\}\}|<%[\s\S]*?%>|\[\[[^\]]*\]\]|\[[^\]]*\]\([^)]*\)|https?:\/\/\S+/g, ' '))) return { read: true, reason: null };

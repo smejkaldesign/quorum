@@ -106,6 +106,13 @@ describe('decider decisions', () => {
     }
   });
 
+  it('reads a note whose only content is its properties', () => {
+    expect(noteRule({ rel: 'x.md', text: '---\ndecision: Atlas uses Postgres\nstatus: accepted\n---\n' }).read).toBe(true);
+    expect(noteRule({ rel: 'x.md', text: '---\nowner: data team\n---' }).read).toBe(true);
+    // tags and aliases name the note; they hold no claim
+    expect(noteRule({ rel: 'x.md', text: '---\ntags: [inbox]\naliases: []\n---\n' }).read).toBe(false);
+  });
+
   it('answers the fixture notes', () => {
     for (const n of NOTES) expect(noteRule(n).read, n.rel).toBe(n.truth);
   });
