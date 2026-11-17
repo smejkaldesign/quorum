@@ -61,6 +61,9 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
   // what the latest sweep asked for and has no answer yet
   let wantClaims = new Map();
   let wantJudge = new Map();
+  // the note paths and pair keys of the model call that runs. A sweep during the call finds no stored answer for them
+  // yet; without this set it would queue them again and the next tick would make the same call a second time
+  const inflight = new Set();
   const tried = (id, h) => { const f = load().failed[id]; return f?.hash === h && now() - f.at < RETRY_MS; };
 
   // the provider the rule reads in one sweep. begin() clears the queues; each answer is for the text given now
@@ -72,6 +75,7 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
       const h = hashText(n.text);
       const got = load().claims[n.rel];
       if (got?.hash === h) return stillTrue(got.claims, n.text);
+      if (inflight.has(n.rel)) return [];
       const ix = indexNote(n);
       if ((worth ?? ix.worth) && ix.readable && !tried(n.rel, h)) wantClaims.set(n.rel, { rel: n.rel, text: n.text, n: { rel: n.rel, text: n.text, note: n.note }, h, rank: ix.priority + (ix.worth ? 0 : 20) });
       return [];
@@ -80,6 +84,7 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
       const h = notes.map((x) => hashText(x.text)).join(':');
       const got = load().judged[p.key];
       if (got?.hash === h) return got.label;
+      if (inflight.has(p.key)) return null;
       if (!tried(p.key, h)) wantJudge.set(p.key, { p, notes, h });
       return null;
     },
@@ -90,7 +95,7 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
       const k = new Set(keys);
       let n = 0;
       for (const rel of Object.keys(s.claims)) if (!r.has(rel)) { delete s.claims[rel]; n++; }
-      for (const key of Object.keys(s.judged)) if (!k.has(key) && !wantJudge.has(key)) { delete s.judged[key]; n++; }
+      for (const key of Object.keys(s.judged)) if (!k.has(key) && !wantJudge.has(key) && !inflight.has(key)) { delete s.judged[key]; n++; }
       // a failure only blocks a retry for a day, so an older one is kept no longer
       for (const [id, f] of Object.entries(s.failed)) if (!(now() - f.at < RETRY_MS)) { delete s.failed[id]; n++; }
       if (n) save();
@@ -103,6 +108,10 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
   // person cancelled gives its place under the daily cap back (unless the day turned while it ran) and marks nothing,
   // so its notes are asked for again on the next sweep. charge: false for a catch-up call, which the cap does not count
   async function call(ids, ask, onReply, charge = true) {
+    for (const [id] of ids) inflight.add(id);
+    try { return await send(ids, ask, onReply, charge); } finally { for (const [id] of ids) inflight.delete(id); }
+  }
+  async function send(ids, ask, onReply, charge) {
     const s = load();
     used();
     const day = s.day;
@@ -180,6 +189,6 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
   }
   // the notes the latest sweep queued to read that the read gate lets through, for the note count of a catch-up pass
   const pendingNotes = () => [...wantClaims.values()].filter((w) => readable(w.rel, w.text)).length;
-  const status = () => ({ used: used(), cap: cap(), waiting: waiting(), running: !!running, ...provider.pending() });
+  const status = () => ({ used: used(), cap: cap(), waiting: waiting(), running: !!running, inflight: inflight.size, ...provider.pending() });
   return { provider, tick, status, waiting, pendingCalls, pendingNotes, estimate };
 }

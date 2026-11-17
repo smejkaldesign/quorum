@@ -354,6 +354,38 @@ describe('the pipeline on the synthetic vault', () => {
     expect(lima).toEqual([]);
   });
 
+  it('makes one model call per note and per pair while sweeps run during each call', async () => {
+    const { notes, resolve } = vault();
+    // each id the model is asked about, with how many times: a note path per claim batch, a pair key per judge call
+    const asked = new Map();
+    const count = (id) => asked.set(id, (asked.get(id) ?? 0) + 1);
+    let release = null;
+    const slow = async (prompt, system) => {
+      const judge = prompt.match(/Claim A in (\S+) \(line \d+\)[\s\S]*Claim B in (\S+) \(line \d+\)/);
+      if (judge) count(`judge:${[judge[1], judge[2]].sort().join('|')}`);
+      else for (const block of prompt.split('<note path="').slice(1)) count(`claims:${block.slice(0, block.indexOf('"'))}`);
+      await new Promise((r) => { release = r; });
+      return fakeModel(prompt, system);
+    };
+    const a = agent({ model: slow });
+    const ctx = { notes, resolve, tags: [], folders: {}, contradictions: { provider: a.provider, bar: BAR_OK } };
+    // a catch-up: the sweep after one call runs while the next call waits on the model, and the next tick takes what
+    // that sweep queued. A sweep runs only when the queues are empty otherwise, as the pass reads the vault again
+    run(ctx);
+    let idle = 0;
+    for (let round = 0; round < 60 && idle < 2; round++) {
+      const pending = a.tick({ uncapped: true });
+      await new Promise((r) => setTimeout(r, 0));
+      run(ctx);
+      release?.();
+      release = null;
+      if ((await pending).skipped) { idle++; run(ctx); } else idle = 0;
+    }
+    expect(asked.size).toBeGreaterThan(0);
+    expect([...asked.keys()].some((k) => k.startsWith('judge:'))).toBe(true);
+    expect([...asked].filter(([, n]) => n > 1)).toEqual([]);
+  });
+
   it('gives a cancelled call its place under the cap back and asks for the notes again', async () => {
     const { notes, resolve } = vault();
     let cancel = true;
