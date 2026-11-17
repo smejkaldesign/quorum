@@ -1,6 +1,6 @@
 // Check everything now (memoryCatchup.js) on the synthetic contradiction vault (test/fixtures/contradictions) and a
 // synthetic missing-note item. Every note, name and line is made up. The model is always a fake.
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -174,13 +174,17 @@ describe('Check everything now', () => {
     expect(second.checked).toBe(first.of);
     // the last pass reads again from the data folder
     expect(createLastRunStore(file).load()).toMatchObject({ end: 'done', checked: first.of, of: first.of });
+    // the start list is written once and removed when the pass ends; the saves carry counts only
+    expect(existsSync(path.join(dir, 'last-before.json'))).toBe(false);
+    expect(JSON.parse(readFileSync(file, 'utf8')).before).toBeUndefined();
   });
 
   it('keeps the last pass after a restart, shows a pass a crash stopped as crashed, and Dismiss sticks', async () => {
     const dir = tmp();
     const file = path.join(dir, 'last.json');
     const store = createLastRunStore(file, () => 5000);
-    store.save({ end: 'running', done: 3, total: 9, notes: 12, checked: 4, of: 10, saved: 1, startedAt: 1000, before: [{ id: 'r:find:a', type: 'other', drafted: false }] });
+    store.saveBefore([{ id: 'r:find:a', type: 'other', drafted: false }]);
+    store.save({ end: 'running', done: 3, total: 9, notes: 12, checked: 4, of: 10, saved: 1, startedAt: 1000 });
     const items = [{ id: 'r:find:a', type: 'other', drafted: true }, { id: 'r:find:b', type: 'contradiction', drafted: false }];
     const s = setup({ catchup: () => ({ store: createLastRunStore(file), review: () => items }) });
     const st = s.catchup.status();

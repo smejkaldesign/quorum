@@ -1,7 +1,7 @@
 // Check everything now (memoryCatchup.js): the plan shown before a pass starts, the note counts it shows while it runs,
 // what it added to Needs review, and the last pass kept in the data folder so it shows again after a restart or a crash.
 // Plain Node, so the tests drive it directly.
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 // with no pass to learn from: about how long one model call takes, and how many pairs to judge each note read brings
@@ -55,17 +55,22 @@ export function diffReview(before, after) {
 }
 
 // the last pass in the data folder. A pass saves itself as running when it starts and after each call; one still
-// running when Quorum opens again was stopped by a crash or a quit, and reads as ended 'crashed' at its last save
+// running when Quorum opens again was stopped by a crash or a quit, and reads as ended 'crashed' at its last save.
+// The Needs review items listed at the start sit in a file of their own, written once per pass, so the save after each
+// call holds only the counts; a crashed pass reads them back as before
 export function createLastRunStore(file, now = () => Date.now()) {
+  const beforeFile = `${file.replace(/\.json$/, '')}-before.json`;
+  const write = (f, value) => { try { mkdirSync(path.dirname(f), { recursive: true }); writeFileSync(`${f}.tmp`, JSON.stringify(value)); renameSync(`${f}.tmp`, f); } catch {} };
+  const saveBefore = (list) => write(beforeFile, list ?? null);
+  const loadBefore = () => { try { const v = JSON.parse(readFileSync(beforeFile, 'utf8')); return Array.isArray(v) ? v : null; } catch { return null; } };
+  const clearBefore = () => { try { rmSync(beforeFile, { force: true }); } catch {} };
   const load = () => {
     let last;
     try { last = JSON.parse(readFileSync(file, 'utf8')); } catch { return null; }
     if (!last || typeof last !== 'object' || typeof last.end !== 'string') return null;
-    if (last.end === 'running') return { ...last, end: 'crashed', endedAt: last.savedAt ?? last.startedAt ?? null };
+    if (last.end === 'running') return { ...last, end: 'crashed', endedAt: last.savedAt ?? last.startedAt ?? null, before: loadBefore() };
     return last;
   };
-  const save = (last) => {
-    try { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(`${file}.tmp`, JSON.stringify({ ...last, savedAt: now() })); renameSync(`${file}.tmp`, file); } catch {}
-  };
-  return { load, save };
+  const save = (last) => write(file, { ...last, savedAt: now() });
+  return { load, save, saveBefore, clearBefore };
 }

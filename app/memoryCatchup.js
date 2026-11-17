@@ -41,6 +41,7 @@ export function createCatchup({ drafter, agent, activity, refresh = async () => 
     try { const now = review(); if (!now) return; last = { ...last, added: diffReview(last.before, now) }; } catch { return; }
     delete last.before;
     store?.save(last);
+    store?.clearBefore?.();
   };
   const shown = (l) => (l ? Object.fromEntries(Object.entries(l).filter(([k]) => k !== 'before')) : null);
   const status = () => { if (run) return { running: true, done: run.done, total: run.total, notes: run.notes, id: run.work.id, checked: run.checked, of: run.of, saved: run.saved, startedAt: run.startedAt }; settle(); return { running: false, last: shown(last) }; };
@@ -84,7 +85,7 @@ export function createCatchup({ drafter, agent, activity, refresh = async () => 
       try { await after(res, kind); } catch (e) { log('memory catchup after', e?.message); }
       r.total = Math.max(r.total, r.done + remaining());
       show(r);
-      store?.save({ ...record(r, 'running'), before: r.before });
+      store?.save(record(r, 'running'));
       emit(status());
     }
     return 'cancelled';
@@ -100,7 +101,8 @@ export function createCatchup({ drafter, agent, activity, refresh = async () => 
     run = r;
     emit(status());
     const { startedAt } = r;
-    store?.save({ ...record(r, 'running'), before: r.before });
+    store?.saveBefore?.(r.before);
+    store?.save(record(r, 'running'));
     r.promise = (async () => {
       let end = 'done';
       try {
@@ -117,6 +119,7 @@ export function createCatchup({ drafter, agent, activity, refresh = async () => 
         try { const now = review(); if (r.before && now) added = diffReview(r.before, now); } catch (e) { log('memory catchup review', e?.message); }
         last = { ...record(r, end), startedAt, endedAt: Date.now(), added };
         store?.save(last);
+        store?.clearBefore?.();
         run = null;
         r.work.end();
         emit(status());
