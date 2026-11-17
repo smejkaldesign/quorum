@@ -111,7 +111,7 @@ describe('stage 2 claims', () => {
   // a long note: filler around one decision line, one dated line and a frontmatter status
   const filler = (from, n) => Array.from({ length: n }, (_, i) => `Filler line ${from + i} about the weather and nothing else at all.`);
   const longNote = () => {
-    const body = ['---', 'status: active', 'type: project', '---', '# Orion', '', ...filler(7, 40), 'We decided Orion will ship on Fridays.', ...filler(48, 40), 'On 2026-04-01 the Orion launch moved.', ...filler(89, 40)];
+    const body = ['---', 'status: active', 'type: project', '---', '# Orion', '', ...filler(7, 80), 'We decided Orion will ship on Fridays.', ...filler(88, 80), 'On 2026-04-01 the Orion launch moved.', ...filler(169, 80)];
     return note('projects/orion.md', body.join('\n'));
   };
 
@@ -122,25 +122,25 @@ describe('stage 2 claims', () => {
     const rows = ex.split('\n');
     expect(rows).toContain('2: status: active');
     expect(rows).toContain('5: # Orion');
-    expect(rows).toContain('47: We decided Orion will ship on Fridays.');
-    expect(rows).toContain('46: Filler line 46 about the weather and nothing else at all.');
-    expect(rows).toContain('48: Filler line 48 about the weather and nothing else at all.');
-    expect(rows).not.toContain('45: Filler line 45 about the weather and nothing else at all.');
-    expect(rows).toContain('88: On 2026-04-01 the Orion launch moved.');
+    expect(rows).toContain('87: We decided Orion will ship on Fridays.');
+    expect(rows).toContain('86: Filler line 86 about the weather and nothing else at all.');
+    expect(rows).toContain('88: Filler line 88 about the weather and nothing else at all.');
+    expect(rows).not.toContain('85: Filler line 85 about the weather and nothing else at all.');
+    expect(rows).toContain('168: On 2026-04-01 the Orion launch moved.');
     expect(rows).toContain('...');
     expect(ex.length).toBeLessThan(n.text.length / 5);
     // a quote from the excerpt is checked against the note's own line
-    const r = checkClaims(n, JSON.stringify({ claims: [{ subject: 'Orion', attribute: 'release day', value: 'Fridays', quote: 'We decided Orion will ship on Fridays.', line: 47 }] }), 'haiku');
+    const r = checkClaims(n, JSON.stringify({ claims: [{ subject: 'Orion', attribute: 'release day', value: 'Fridays', quote: 'We decided Orion will ship on Fridays.', line: 87 }] }), 'haiku');
     expect(r.claims).toHaveLength(1);
-    expect(r.claims[0]).toMatchObject({ line: 47, extractor: 'model:haiku' });
+    expect(r.claims[0]).toMatchObject({ line: 87, extractor: 'model:haiku' });
     // a line number the excerpt does not hold fails the check as before
     expect(checkClaims(n, JSON.stringify({ claims: [{ subject: 'Orion', attribute: 'release day', value: 'Fridays', quote: 'We decided Orion will ship on Fridays.', line: 30 }] })).claims).toHaveLength(0);
   });
 
-  it('sends a short note whole, and a long note with no marker by its first lines', () => {
+  it('sends a note up to 12,000 characters whole, and a longer note with no marker by its first lines', () => {
     const short = note('projects/a.md', '# A\n\nA runs on SQLite.\n');
     expect(excerptOf(short)).toBe('1: # A\n3: A runs on SQLite.');
-    const plain = note('notes/plain.md', ['# Plain', '', ...filler(3, 80)].join('\n'));
+    const plain = note('notes/plain.md', ['# Plain', '', ...filler(3, 250)].join('\n'));
     const rows = excerptOf(plain).split('\n');
     expect(rows[0]).toBe('1: # Plain');
     expect(rows.length).toBeLessThan(20);
@@ -188,10 +188,32 @@ describe('stage 2 claims', () => {
     expect(checkClaimsBatch([a, b], 'nothing').why).toMatch(/did not answer/);
   });
 
+  it('reads the compact answer: one line per claim under its note, each quote checked against the note', () => {
+    const a = note('projects/a.md', '# A\n\nWe decided A runs on SQLite.\n');
+    const b = note('projects/b.md', '# B\n\nB runs on Postgres since 2026-02-01.\n');
+    const reply = [
+      '@ projects/a.md',
+      '3 | A | database | SQLite | + | d | - | - | A runs on SQLite',
+      '@ projects/b.md',
+      '3 | B | database | Postgres | + | s | 2026-02-01 | - | B runs on Postgres',
+      '3 | B | database | MySQL | + | s | - | - | B runs on MySQL',
+      'a line that is no claim',
+    ].join('\n');
+    const r = checkClaimsBatch([a, b], reply, 'haiku');
+    expect(r.byRel.get('projects/a.md').claims[0]).toMatchObject({ value: 'SQLite', modality: 'decided', line: 3, extractor: 'model:haiku' });
+    expect(r.byRel.get('projects/b.md').claims.map((c) => c.value)).toEqual(['Postgres']);
+    expect(r.byRel.get('projects/b.md').claims[0].date).toBe('2026-02-01');
+    expect(r.byRel.get('projects/b.md').dropped).toBe(1);
+    // "none" is an answer with no claims; an empty reply is no answer
+    expect(checkClaimsBatch([a], 'none').why).toBeUndefined();
+    expect(checkClaimsBatch([a], '').why).toMatch(/did not answer/);
+    expect(checkClaimsBatch([a], 'I cannot help with that.').why).toMatch(/did not answer/);
+  });
+
   it('packs notes into calls by priority up to the budget', () => {
     // chars: the length of each note's excerpt
     const e = (rel, rank, chars) => ({ rel, rank, text: 'x', chars });
-    const batches = packBatches([e('c', 3, 10000), e('a', 1, 10000), e('b', 2, 10000), e('d', 4, 10000), e('e', 5, 100)]);
+    const batches = packBatches([e('c', 3, 14000), e('a', 1, 14000), e('b', 2, 14000), e('d', 4, 14000), e('e', 5, 100)]);
     expect(batches.map((b) => b.map((x) => x.rel))).toEqual([['a', 'b', 'c'], ['d', 'e']]);
     // a note over the budget still gets its own call
     expect(packBatches([e('big', 1, 90000)]).length).toBe(1);

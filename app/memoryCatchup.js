@@ -28,8 +28,9 @@ import { diffReview, progressOf } from './catchupPlan.js';
 //   store     createLastRunStore (catchupPlan.js): keeps the last pass in the data folder
 export const BUSY_WAIT_MS = 5000;
 export const EMIT_MS = 1000;
-// the most calls a pass runs at once (Settings > Memory, memoryCatchupParallel)
-export const MAX_PARALLEL = 4;
+// the most calls a pass runs at once (Settings > Memory, memoryCatchupParallel); six `claude -p` calls at once all
+// finished in the time of one
+export const MAX_PARALLEL = 6;
 export const DEFAULT_PARALLEL = 4;
 // how many times the pass reads the vault again when both queues look empty, before it calls the pass done
 const RESWEEPS = 2;

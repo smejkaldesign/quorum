@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PAIRS_PER_NOTE, SECONDS_PER_CALL, createLastRunStore, diffReview, planOf, progressOf, secondsPerCall } from '../catchupPlan.js';
-import { CACHE_WRITE, CALL_OVERHEAD_TOKENS, JUDGE_PAIR_TOKENS, OUT_TOKENS_PER_NOTE, JUDGE_SYSTEM_TOKENS, PRICES, costLabel, dollars, judgeCalls, passCost } from '../memoryModels.js';
+import { CACHE_WRITE, CALL_OVERHEAD_TOKENS, JUDGE_PAIR_TOKENS, JUDGE_SYSTEM_TOKENS, MEASURED, MEMORY_MODELS, claimMeasure, PRICES, costLabel, dollars, judgeCalls, passCost } from '../memoryModels.js';
 import { CONFIRM_AFTER_MS, addedText, stopFlow, duration, needsConfirm, planRows, planSentence, progressShare, progressText, showSummary, summaryOf } from '../src/catchupView.ts';
 
 let dirs = [];
@@ -13,7 +13,7 @@ afterEach(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true
 const tmp = () => { const d = mkdtempSync(path.join(tmpdir(), 'qplan-')); dirs.push(d); return d; };
 
 describe('the plan before a pass', () => {
-  it('prices a pass at API rates: Haiku for the claims, Sonnet for the pairs', () => {
+  it('prices a pass at API rates with the model of each stage', () => {
     expect(dollars('haiku', 1e6, 0)).toBe(PRICES.haiku.input);
     expect(dollars('sonnet', 0, 1e6)).toBe(PRICES.sonnet.output);
     // every call carries Claude Code's own prompt; 100 pairs go to the judge in 13 calls of up to 8
@@ -22,12 +22,14 @@ describe('the plan before a pass', () => {
     const claimIn = Math.round(1e6 + 40 * CALL_OVERHEAD_TOKENS * CACHE_WRITE);
     const judgeIn = Math.round(100 * JUDGE_PAIR_TOKENS + 13 * (JUDGE_SYSTEM_TOKENS + CALL_OVERHEAD_TOKENS * CACHE_WRITE));
     expect(c.inputTokens).toBe(claimIn + judgeIn);
-    expect(c.usd).toBeCloseTo(dollars('haiku', claimIn, 1000 * OUT_TOKENS_PER_NOTE) + dollars('sonnet', judgeIn, 100 * 150), 6);
+    expect(c.usd).toBeCloseTo(dollars(MEMORY_MODELS.claims, claimIn, 1000 * claimMeasure().outPerNote) + dollars(MEMORY_MODELS.judge, judgeIn, 100 * 150), 6);
+    // the other model or answer, from the measured table
+    expect(passCost({ notes: 10 }, 0, { model: 'haiku', answer: 'compact' }).outputTokens).toBe(10 * MEASURED['haiku/compact'].outPerNote);
     expect(costLabel(0.4213)).toBe('About $0.42 at API rates');
     expect(costLabel(0.004)).toBe('Less than $0.01 at API rates');
     expect(costLabel(0)).toBeNull();
     const p = planOf({ read: 1000, claimCalls: 40, promptChars: 4e6 }, null, 4);
-    expect(p.costLabel).toMatch(/^About \$\d+\.\d\d at API rates$/);
+    expect(p.costLabel).toMatch(/^About \$\d+(\.\d\d)? at API rates$/);
     // four calls at once take a quarter of the time
     expect(p.seconds).toBe(Math.round(((40 + judgeCalls(p.pairs)) * SECONDS_PER_CALL) / 4));
     expect(planRows({ notes: 1, read: 1000, claimCalls: 40, draftCalls: 0, calls: 40, drafting: true, costLabel: p.costLabel }).find((r) => r[0] === 'Cost')[1]).toBe(`${p.costLabel}, an estimate`);

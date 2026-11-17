@@ -3,12 +3,11 @@
 // Plain Node, so the tests drive it directly.
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { costLabel, judgeCalls, passCost } from './memoryModels.js';
+import { claimMeasure, costLabel, judgeCalls, passCost } from './memoryModels.js';
 
-// with no pass to learn from: about how long one model call takes, and how many pairs to judge each note read brings.
-// Measured on 100 notes: a Haiku claim call of up to 30 excerpts took 86 seconds (its answer is long), a Sonnet call of
-// 20 whole notes 31 seconds; a pass is mostly claim calls, so the default sits between them
-export const SECONDS_PER_CALL = 60;
+// with no pass to learn from: how long one model call takes (a claim call of the model and answer memoryModels.js sets,
+// measured on 100 notes), and how many pairs to judge each note read brings
+export const SECONDS_PER_CALL = claimMeasure().seconds;
 export const PAIRS_PER_NOTE = 0.5;
 // the stored claims and verdicts give the pairs per note once this many notes were read
 const HISTORY_NOTES = 50;

@@ -15,11 +15,11 @@ import { checkClaimsBatch, claimPrompt, excerptOf, stillTrue } from './contradic
 import { JUDGE_BATCH, JUDGE_CHARS, checkJudgeBatch, judgeBatchPrompt, judgePrompt } from './contradictionResolve.js';
 
 const RETRY_MS = 24 * 3600000;
-// one claim call reads the excerpts of several notes (contradictionClaims.js excerptOf), up to about 8k input tokens
-// (4 characters a token). The answer limits the batch more than the input: each note can bring a few claims of about 60
-// output tokens each, and output is what makes a call slow
-export const BATCH_CHARS = 32000;
-export const BATCH_NOTES = 30;
+// one claim call reads several notes (contradictionClaims.js excerptOf: whole notes up to 12,000 characters), up to
+// about 11k input tokens (4 characters a token) and 20 notes. The answer limits the batch more than the input: output
+// is what makes a call slow, so the claims come one compact line each, at most 8 per note
+export const BATCH_CHARS = 44000;
+export const BATCH_NOTES = 20;
 // chars: the excerpt's length, worked out once when the note is queued
 const size = (e) => (e.chars ?? excerptOf(e.n ?? e).length) + 200;
 

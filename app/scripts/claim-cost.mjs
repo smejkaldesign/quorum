@@ -1,75 +1,51 @@
 #!/usr/bin/env node
-// What a first full pass of claim reading would send, READ-ONLY and with no model call: the claim calls, the prompt
-// characters and tokens, and the cost at API rates, for the excerpts the agent sends now and for whole notes (the
-// agent before excerpts: up to 12,000 characters of each note, 20 notes a call, all on Sonnet). Prints counts only,
-// never note names or text. It never writes: the index is built in memory.
+// What a first full pass would send, READ-ONLY and with no model call: claim calls, judge calls, input tokens, the
+// cost at API rates and the wall time, for the agent before this change (Sonnet, one call at a time, one pair per judge
+// call) and for each model and answer the claim stage can use now (memoryModels.js), with calls in parallel. Output
+// tokens and seconds per call are the ones measured on 100 notes (memoryModels.js MEASURED). Prints counts only, never
+// note names or text. It never writes: the index is built in memory.
 //
-//   node scripts/claim-cost.mjs <vault> [--claim-seconds 86] [--judge-seconds 31] [--old-seconds 31] [--parallel 4]
-//     [--pairs-per-note 0.5]
-//
-// The seconds a call takes, measured on 100 notes: 86 for a Haiku claim call of up to 30 excerpts, 31 for a Sonnet call of
-// 20 whole notes (the old claim call; the judge call is taken as the same). --parallel is how many calls a catch-up runs
-// at once, for the wall time.
+//   node scripts/claim-cost.mjs <vault> [--parallel 4,6] [--pairs-per-note 0.32]
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const args = process.argv.slice(2);
-const flag = (name, def) => { const i = args.indexOf(name); if (i < 0) return def; const v = args[i + 1]; args.splice(i, 2); return Number(v); };
-const claimSeconds = flag('--claim-seconds', 86);
-const judgeSeconds = flag('--judge-seconds', 31);
-const oldSeconds = flag('--old-seconds', 31);
-const parallel = flag('--parallel', 4);
-const pairsPerNote = flag('--pairs-per-note', 0.5);
+const flag = (name, def) => { const i = args.indexOf(name); if (i < 0) return def; const v = args[i + 1]; args.splice(i, 2); return v; };
+const parallel = String(flag('--parallel', '4,6')).split(',').map(Number);
+const pairsPerNote = Number(flag('--pairs-per-note', 0.32));
 const [vaultArg] = args;
-if (!vaultArg) { console.error('usage: node scripts/claim-cost.mjs <vault> [--claim-seconds 86] [--judge-seconds 31] [--old-seconds 31] [--parallel 4] [--pairs-per-note 0.5]'); process.exit(2); }
+if (!vaultArg) { console.error('usage: node scripts/claim-cost.mjs <vault> [--parallel 4,6] [--pairs-per-note 0.32]'); process.exit(2); }
 const appDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const load = (f) => import(pathToFileURL(path.join(appDir, f)).href);
 const { createVaultIndex } = await load('vindex.js');
 const { analyze } = await load('rules/contradictions.js');
 const { packBatches } = await load('contradictionAgent.js');
 const { claimPrompt, excerptOf } = await load('contradictionClaims.js');
-const { CACHE_WRITE, CALL_OVERHEAD_TOKENS, JUDGE_BATCH, JUDGE_OUT_TOKENS, JUDGE_PAIR_TOKENS, OUT_TOKENS_PER_NOTE, dollars, judgeCalls, passCost, tokensOf } = await load('memoryModels.js');
+const M = await load('memoryModels.js');
 
 const ix = createVaultIndex({ vault: path.resolve(vaultArg), isExcludedPath: () => false, isExcludedText: () => false, redact: (t) => t, onChange: () => {} });
 ix.sync();
 const a = analyze({ notes: ix.snapshot(), resolve: (t, f) => ix.resolve(t, f) });
-
-// before: whole notes, cut at 12,000 characters, 20 a call up to 44,000 characters, with the old instructions (about
-// 1,500 characters) in each prompt
-const OLD = { chars: 44000, notes: 20, cut: 12000, ask: 1500, system: 330 };
-const oldBatches = [];
-let cur = [];
-let used = 0;
-for (const e of [...a.toRead].sort((x, y) => x.rank - y.rank || x.rel.localeCompare(y.rel))) {
-  const n = Math.min(OLD.cut, e.text.length) + 200;
-  if (cur.length && (used + n > OLD.chars || cur.length >= OLD.notes)) { oldBatches.push(cur); cur = []; used = 0; }
-  cur.push(e);
-  used += n;
-}
-if (cur.length) oldBatches.push(cur);
-const numberedChars = (t) => { const lines = t.slice(0, OLD.cut).split('\n'); return lines.reduce((n, l, i) => n + String(i + 1).length + 2 + l.length + 1, 0); };
-const oldChars = oldBatches.reduce((n, b) => n + OLD.ask + OLD.system + b.reduce((m, e) => m + e.rel.length + 20 + numberedChars(e.text), 0), 0);
-
-// after: excerpts, packed by their length; a note with no line to read makes no call
 const left = a.toRead.map((e) => ({ ...e, chars: excerptOf(e).length })).filter((e) => e.chars);
 const batches = packBatches(left);
-const newChars = batches.reduce((n, b) => { const p = claimPrompt(b); return n + p.prompt.length + p.system.length; }, 0);
-
 const pairs = Math.round(left.length * pairsPerNote);
-// before: one pair a call with the instructions in each prompt (about 700 tokens), plus Claude Code's own prompt
-const oldIn = Math.round(tokensOf(oldChars) + (oldBatches.length + pairs) * CALL_OVERHEAD_TOKENS * CACHE_WRITE + pairs * 700);
-const oldOut = a.toRead.length * OUT_TOKENS_PER_NOTE + pairs * JUDGE_OUT_TOKENS;
-const oldUsd = dollars('sonnet', oldIn, oldOut);
-const now = passCost({ promptChars: newChars, notes: left.length, calls: batches.length }, pairs);
-const jc = judgeCalls(pairs);
-const minutes = (s, p) => Math.round(s / p / 60);
-const r = (v) => Math.round(v * 100) / 100;
-console.log(`notes ${a.notes}; stage 1 sends ${a.toRead.length} to claim reading`);
-console.log(`before: ${oldBatches.length} claim calls, ${tokensOf(oldChars).toLocaleString('en-US')} input tokens (${Math.round(tokensOf(oldChars) / oldBatches.length).toLocaleString('en-US')} a call), all on Sonnet`);
-console.log(`after: ${batches.length} claim calls for ${left.length} notes (${a.toRead.length - left.length} with no line to read), ${tokensOf(newChars).toLocaleString('en-US')} input tokens (${Math.round(tokensOf(newChars) / Math.max(1, batches.length)).toLocaleString('en-US')} a call), on Haiku`);
-console.log(`pairs to judge, estimated at ${pairsPerNote} a note read: ${pairs}; before one a call (${pairs} calls), after up to ${JUDGE_BATCH} a call (${jc} calls), about ${JUDGE_PAIR_TOKENS} input tokens a pair on Sonnet`);
-console.log(`every call adds ${CALL_OVERHEAD_TOKENS} tokens of Claude Code's own prompt, written to the cache at ${CACHE_WRITE} times the input price; input tokens in all, at that weight: before ${oldIn.toLocaleString('en-US')}, after ${now.inputTokens.toLocaleString('en-US')}`);
-console.log(`cost at API rates, claims and judge: before $${r(oldUsd)}, after $${r(now.usd)}`);
-const before = (oldBatches.length + pairs) * oldSeconds;
-const after = batches.length * claimSeconds + jc * judgeSeconds;
-console.log(`wall time: before ${minutes(before, 1)} min one at a time; after ${minutes(after, 1)} min one at a time, ${minutes(after, parallel)} min with ${parallel} at once`);
+const jc = M.judgeCalls(pairs);
+const fmt = (n) => Math.round(n).toLocaleString('en-US');
+const usd = (v) => `$${v.toFixed(2)}`;
+console.log(`notes ${a.notes}; ${left.length} to read in ${batches.length} claim calls; ${pairs} pairs to judge at ${pairsPerNote} a note read`);
+
+// before: the same claim calls on Sonnet one at a time, and one judge call per pair with its instructions in the prompt
+const oldChars = batches.reduce((n, b) => { const p = claimPrompt(b, { answer: 'json' }); return n + p.prompt.length + p.system.length; }, 0);
+const oldIn = M.tokensOf(oldChars) + (batches.length + pairs) * M.CALL_OVERHEAD_TOKENS * M.CACHE_WRITE + pairs * 700;
+const oldOut = left.length * M.MEASURED['sonnet/json'].outPerNote + pairs * M.JUDGE_OUT_TOKENS;
+const oldSec = (batches.length + pairs) * M.MEASURED['sonnet/json'].seconds;
+console.log(`before: ${batches.length + pairs} calls, ${fmt(oldIn)} input and ${fmt(oldOut)} output tokens, ${usd(M.dollars('sonnet', oldIn, oldOut))}, ${fmt(oldSec / 60)} min one at a time`);
+
+for (const key of Object.keys(M.MEASURED)) {
+  const [model, answer] = key.split('/');
+  const chars = batches.reduce((n, b) => { const p = claimPrompt(b, { answer }); return n + p.prompt.length + p.system.length; }, 0);
+  const c = M.passCost({ promptChars: chars, notes: left.length, calls: batches.length }, pairs, { model, answer });
+  const sec = batches.length * M.MEASURED[key].seconds + jc * M.JUDGE_SECONDS;
+  const now = key === `${M.MEMORY_MODELS.claims}/${M.CLAIM_ANSWER}` ? ' (the setting now)' : '';
+  console.log(`${key}${now}: ${batches.length + jc} calls, ${fmt(c.inputTokens)} input and ${fmt(c.outputTokens)} output tokens, ${usd(c.usd)}; ${parallel.map((p) => `${fmt(sec / p / 60)} min with ${p} at once`).join(', ')}`);
+}
