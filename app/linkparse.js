@@ -45,7 +45,8 @@ export function parseNote(rel, text) {
     const h = line.match(HEADING_RE);
     if (h) headings.push({ level: h[1].length, text: h[2], line: i + offset });
     // `[[example]]` inside inline code is syntax being shown, not a link
-    const prose = line.replace(/`[^`]*`/g, (c) => ' '.repeat(c.length));
+    // a span opened by two or more backticks closes on the same number, so ``[[a]]`` is code too
+    const prose = line.replace(/(`+)[\s\S]*?\1/g, (c) => ' '.repeat(c.length));
     for (const m of prose.matchAll(LINK_RE)) {
       if (m[2] !== undefined) {
         links.push({ embed: m[1] === '!', target: m[2].trim(), anchor: (m[3] ?? '').slice(1), display: m[4] ?? null, kind: 'wiki', line: i + offset, raw: m[0] });

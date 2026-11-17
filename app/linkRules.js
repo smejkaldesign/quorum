@@ -39,18 +39,51 @@ export function cleanTitle(text) {
 }
 
 // Where Quorum may write a note for a missing link. Session logs and eval runs are written by agents and read in date
-// order; a topic note there is lost. Each entry is tested against the folder path
-export const NO_CREATE_FOLDERS = [/^memory\/sessions(\/|$)/i, /^memory\/eval(\/|$)/i];
+// order; a topic note there is lost. Each entry is tested against the folder path at any depth, so a vault that holds
+// its notes one folder down (MyBrain/memory/sessions) is covered too
+export const NO_CREATE_FOLDERS = [/(^|\/)sessions?(\/|$)/i, /(^|\/)evals?(\/|$)/i, /(^|\/)logs?(\/|$)/i];
 const createAllowed = (folder) => !NO_CREATE_FOLDERS.some((re) => re.test(folder));
 const dirOf = (rel) => (rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '');
 const falsy = (v) => v == null || v === false || /^(false|no|)$/i.test(String(v).trim());
 
+// Link names that are common words or placeholders: a note about links writes [[link]] or [[filename-without-extension]]
+// to show the syntax, and prose in brackets reads as [[wiki links]]. Quorum never writes a note for one
+export const GENERIC_TARGETS = new Set(['link', 'links', 'wiki link', 'wiki links', 'wikilink', 'wikilinks', 'backlink', 'backlinks', 'filename', 'file name', 'file', 'files', 'filename-without-extension', 'name', 'note', 'notes', 'note name', 'note-name', 'page', 'pages', 'page name', 'title', 'todo', 'todos', 'tbd', 'example', 'examples', 'target', 'this', 'that', 'here', 'something', 'foo', 'bar', 'baz', 'test', 'placeholder', 'name-goes-here', 'your note', 'my note', 'path', 'slug']);
+// placeholder shapes: <name>, {name}, ..., xxx, name-here, your-note, some-note
+const PLACEHOLDER_RE = /^[<{].*[>}]$|\.\.\.|…|^x{2,}$|(^|[-_ ])(here|placeholder|example|without[-_ ]extension)$|^(your|some|another|my)[-_ ]/i;
+export function genericTarget(target) {
+  const name = String(target ?? '').split('/').pop().replace(/\.md$/i, '').trim().toLowerCase();
+  return !name || GENERIC_TARGETS.has(name) || GENERIC_TARGETS.has(name.replace(/[-_]+/g, ' ')) || PLACEHOLDER_RE.test(name);
+}
+
+// A line that reports on links: a drift report or a lint log lists dead links as [[name]] next to words like
+// "dead-wikilink" or "no matching vault file", or next to a file path in a code span. Those [[...]] are examples or
+// findings about other notes, so they are never a source of a missing link
+export const LINK_REPORT_LINE = /dead[- ]?(wiki)?[- ]?links?|broken[- ]?(wiki)?[- ]?links?|unresolved[- ]?(wiki)?[- ]?links?|missing[- ]?(wiki)?[- ]?links?|no matching (vault )?(file|note)|(link|links|wikilinks?) (to|with) no (target|note|file)|does not resolve|doesn['’]t resolve|link[- ]?(drift|lint|audit|check)/i;
+// a code span next to a link that shows a file path or link syntax: `notes/a.md`, `[[name]]`
+const CODE_PATH_RE = /`[^`]*(\.md\b|\[\[|\]\]|\/)[^`]*`/;
+export const reportLine = (line) => LINK_REPORT_LINE.test(String(line ?? '')) || CODE_PATH_RE.test(String(line ?? ''));
+// A whole note that reports on links: its title or a heading names dead or broken links or link drift, or two or more
+// of its lines read as link report lines. Every link in it is left out
+const REPORT_HEADING_RE = /(dead|broken|missing|unresolved|orphan(ed)?)[- ]?(wiki)?[- ]?links?|link (drift|health|lint|audit|report)|drift report|vault (drift|lint|audit)/i;
+export function linkReport(text, title = '') {
+  if (REPORT_HEADING_RE.test(String(title ?? ''))) return true;
+  let hits = 0;
+  for (const line of String(text ?? '').split('\n')) {
+    if (/^#{1,6}\s/.test(line) && REPORT_HEADING_RE.test(line)) return true;
+    if (LINK_REPORT_LINE.test(line) && ++hits >= 2) return true;
+  }
+  return false;
+}
+
 // Whether Quorum can offer to write the missing note, and where. It needs at least two linking notes (generated
 // reports are already left out of the sources), goes in the folder most of them sit in (a sub-folder over the vault
-// root on a tie, never a session log folder or an eval folder), and carries a confidential mark forward when any
+// root on a tie, never a session, log or eval folder at any depth), needs a name that is not a common word or a
+// placeholder (genericTarget), and carries a confidential mark forward when any
 // linking note has one.
 // Answers { ok: true, folder, confidential } or { ok: false, reason } with a plain reason a person can read
 export function createPlan(m) {
+  if (genericTarget(m.target)) return { ok: false, reason: `“${m.target}” is a common word or a placeholder, so it does not name a topic of its own.` };
   const sources = m.sources ?? [];
   if (sources.length < 2) return { ok: false, reason: 'Only one note links to it, which is too little to write a note from.' };
   const n = new Map();

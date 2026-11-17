@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createResolver, parseNote } from './linkparse.js';
 import { SKIP, graphConfig, noteDate, walk } from './vault.js';
 import { clusterAssign, clusterLabels, groupInfo, wrapperFolders } from './clusters.js';
-import { isGenerated } from './linkRules.js';
+import { isGenerated, linkReport, reportLine } from './linkRules.js';
 
 // the folders walk() skips, as a test on a watcher path (the same list, so the two can never disagree)
 const IGNORED = new RegExp(`(^|/)(${[...SKIP].map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(/|$)`);
@@ -242,8 +242,14 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     const byName = new Map();
     // a generated report or log restates links found elsewhere: it is never a source (linkRules.js GENERATED_RULES)
     const generated = (rel) => isGenerated(rel, files.get(rel)?.note.props);
+    // a note or a line that reports on links (a drift report, a lint log) shows link names as examples or findings
+    // about other notes: those are never sources either (linkRules.js linkReport, reportLine)
+    const reports = new Map();
+    const split = new Map();
+    const linesOf = (rel) => split.get(rel) ?? split.set(rel, (files.get(rel)?.text ?? '').split('\n')).get(rel);
+    const reportNote = (rel) => reports.get(rel) ?? reports.set(rel, linkReport(files.get(rel)?.text ?? '', files.get(rel)?.note.title)).get(rel);
     for (const [rel, missing] of unresolved) for (const link of missing) {
-      if (generated(rel)) continue;
+      if (generated(rel) || reportNote(rel) || reportLine(linesOf(rel)[link.line])) continue;
       const name = link.target.replace(/\.md$/i, '').trim();
       if (!name) continue;
       const key = name.toLowerCase();
