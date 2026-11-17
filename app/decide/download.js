@@ -51,7 +51,9 @@ export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalTh
   const totalBytes = files.reduce((a, f) => a + f.size, 0);
   let st = { state: !enabled ? 'off' : supported ? 'idle' : 'unsupported', doneBytes: 0, totalBytes, why: null };
   let running = null;
+  // stop() is final for this download: no retry, no later start
   let stopped = false;
+  let later = null;
   // files whose complete download failed its hash in this run of the app
   const blocked = new Set();
   let emitted = 0;
@@ -111,8 +113,7 @@ export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalTh
   }
 
   async function run() {
-    stopped = false;
-    if (!enabled) return;
+    if (!enabled || stopped) return;
     if (!supported) { set({ state: 'unsupported' }); return; }
     const unpinned = files.find((f) => !/^[0-9a-f]{64}$/.test(f.sha256));
     if (unpinned) { set({ state: 'failed', why: `no SHA-256 pinned for ${unpinned.id}/${unpinned.file}` }); return; }
@@ -134,7 +135,7 @@ export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalTh
           if (e?.code === 'hash_mismatch') { blocked.add(f.dest); set({ state: 'failed', why: 'hash_mismatch' }); return; }
           if (attempt >= retries) {
             set({ state: 'failed', why: e?.code ?? String(e?.message ?? e) });
-            setTimer(() => { start(); }, retryLaterMs);
+            later = setTimer(() => { later = null; start(); }, retryLaterMs);
             return;
           }
           await sleep(Math.min(maxBackoffMs, backoffMs * 2 ** (attempt - 1)));
@@ -151,5 +152,6 @@ export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalTh
     running ??= run().catch((e) => { set({ state: 'failed', why: String(e?.message ?? e) }); }).finally(() => { running = null; });
     return running;
   }
-  return { start, stop: () => { stopped = true; }, status };
+  const stop = () => { stopped = true; if (later !== null) { clearTimer(later); later = null; } };
+  return { start, stop, status };
 }

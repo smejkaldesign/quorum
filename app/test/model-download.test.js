@@ -101,6 +101,21 @@ describe('model download', () => {
     expect(modelsLabel(d.status())).toBe('Local models: download failed. Quorum tries again later; until then every check goes to Claude.');
   });
 
+  it('stays stopped: stop() clears the hourly retry, and a later start() downloads nothing', async () => {
+    const s = server({ fail: 99 });
+    const timers = [];
+    const cleared = [];
+    const { d } = await run({ dir: tmp(), manifest: manifest(), fetch: s.fetch, retries: 1, setTimer: (fn, ms) => { timers.push({ fn, ms }); return 'timer-1'; }, clearTimer: (h) => cleared.push(h) });
+    expect(d.status().state).toBe('failed');
+    expect(timers.map((t) => t.ms)).toEqual([60 * 60 * 1000]);
+    const before = s.seen.length;
+    d.stop();
+    expect(cleared).toEqual(['timer-1']);
+    await timers[0].fn();
+    await d.start();
+    expect(s.seen.length).toBe(before);
+  });
+
   it('fails before any request when a file has no hash pinned', async () => {
     const s = server();
     const { d } = await run({ dir: tmp(), manifest: manifest({ 'x.json': { sha256: '', size: 1 } }), fetch: s.fetch });
