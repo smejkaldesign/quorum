@@ -17,7 +17,7 @@ import { MANIFEST, hashFile } from './models.js';
 
 const MB = 1024 * 1024;
 // an error with a code for the status line; the message, which can name a path, stays in the log
-const failure = (code, message) => Object.assign(new Error(message), { code });
+export const failure = (code, message) => Object.assign(new Error(message), { code });
 // where a model file may come from after redirects: Hugging Face and its CDN hosts, over HTTPS only
 export const allowedHost = (url) => { try { const u = new URL(url); return u.protocol === 'https:' && /(^|\.)(huggingface\.co|hf\.co)$/.test(u.hostname); } catch { return false; } };
 // onnxruntime-node ships a macOS binary for Apple silicon only

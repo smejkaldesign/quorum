@@ -1,5 +1,5 @@
 import './startup-flags.js';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, powerMonitor, screen, session, shell, systemPreferences, Tray, utilityProcess } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net, powerMonitor, screen, session, shell, systemPreferences, Tray, utilityProcess } from 'electron';
 import { NEEDS_SOURCE, NEEDS_TOOLS, SOURCES, claudeText, modelLabel, runModel, sourceStatus, stopClaudeText } from './models.js';
 import { BY_ID, cleanConnectors, cleanProviders, needsKey, providerFor, providersFromSource, sourceFromProviders } from './connectors/catalog.js';
 import { connectorKey, removeConnectorKey, setConnectorKey, testSavedConnector } from './connectors/keys.js';
@@ -79,6 +79,7 @@ import { DAILY_CAP, WRONG_NOTE_FIX, createDrafter, draftKind, evidenceRels, fall
 import { catchupHooks, createSaveSweeps, forkEngine, slotBinder, startMemoryEngine } from './memoryWiring.js';
 import { createModelDownload, macConditions } from './decide/download.js';
 import { DECIDER_ON } from './decide/index.js';
+import { netFetch } from './decide/netFetch.js';
 import { annotateLine, ruleBar } from './contradictionResolve.js';
 import { ignoreProposals, ignored, ruleRecords } from './ruleRecords.js';
 import { demotions, kindOf, logGate, ruleDemotion, runGate, signature, weakLink } from './qualityGate.js';
@@ -3611,7 +3612,8 @@ const memoryEngine = startMemoryEngine({
 });
 // the decision layer's models download in the background into the data folder after launch (decide/download.js);
 // Settings > Memory shows the status. Until they are on disk and verified, every check goes to Claude
-const modelDownload = createModelDownload({ dir: path.join(DATA_DIR, 'models'), enabled: DECIDER_ON, conditions: macConditions, onChange: (s) => toUI('models-status', s), log });
+// net.request goes through Chromium's network stack, so the macOS proxy and PAC settings apply (decide/netFetch.js)
+const modelDownload = createModelDownload({ dir: path.join(DATA_DIR, 'models'), enabled: DECIDER_ON, fetch: netFetch(net), conditions: macConditions, onChange: (s) => toUI('models-status', s), log });
 ipcMain.handle('models-status', () => modelDownload.status());
 const contradictionAgent = memoryEngine.agent;
 // each drafting run is agent activity; Cancel stops the model call, and the item is drafted again later
