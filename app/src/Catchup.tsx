@@ -93,8 +93,8 @@ export function CatchupPlan({ est, drafting, onStart, onClose }: { est: CatchupE
         {planRows(est).map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
       </dl>
       <ModalActions>
-        <button className="pill" onClick={onClose}>Not now</button>
-        <button className="pill primary" autoFocus onClick={onStart}>Start the check</button>
+        <button className="pill" autoFocus onClick={onClose}>Not now</button>
+        <button className="pill primary" onClick={onStart}>Start the check</button>
       </ModalActions>
     </Modal>
   );
