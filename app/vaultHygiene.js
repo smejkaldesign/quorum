@@ -16,7 +16,9 @@ import { noteHash, ruleText } from './rules/common.js';
 const mixed = (s) => /\d/.test(s) && /[a-z]/.test(s) && /[A-Z]/.test(s);
 const MKDTEMP = /^([a-z][a-z0-9]*(?:-[a-z0-9]+)*)-([A-Za-z0-9]{6})$/;
 export const SIBLINGS = 3;
-const BUILD_NAMES = new Set(['node_modules', 'dist', '.next', '.turbo', '.cache', '__pycache__', '.pytest_cache', '.parcel-cache', 'coverage', '.nyc_output', 'out-tsc']);
+// folders the walk never enters: git's own, installed packages and virtual environments
+const SKIP_DIRS = new Set(['.git', 'node_modules', '.venv', 'venv', '.obsidian', '.trash']);
+const BUILD_NAMES = new Set(['dist', '.next', '.turbo', '.cache', '__pycache__', '.pytest_cache', '.parcel-cache', 'coverage', '.nyc_output', 'out-tsc']);
 export function litterKind(name) {
   if (/^TemporaryDirectory\.\w+$/.test(name)) return { kind: 'temp' };
   if (/^vitest-[\w.-]+$/.test(name)) return { kind: 'temp' };
@@ -45,7 +47,8 @@ function measure(abs, budget, codeOnly = false) {
     for (const e of ents) {
       if (--budget.left <= 0) return { bytes, files, md: false, cut: true };
       const p = path.join(d, e.name);
-      if (e.isDirectory()) { stack.push(p); continue; }
+      // a folder the walk never enters leaves the candidate unread, so it is never litter
+      if (e.isDirectory()) { if (SKIP_DIRS.has(e.name)) return { bytes, files, md: false, cut: true }; stack.push(p); continue; }
       if (!e.isFile()) continue;
       if (/\.md$/i.test(e.name) || (codeOnly && KEPT_FILE.test(e.name))) return { bytes, files, md: true };
       files++;
@@ -82,7 +85,7 @@ export function scanLitter(vault, { maxEntries = 400000, exec = execFileSync } =
     let ents;
     try { ents = readdirSync(path.join(vault, rel), { withFileTypes: true }); } catch { continue; }
     for (const e of ents) {
-      if (!e.isDirectory() || e.name === '.git' || e.name === '.obsidian' || e.name === '.trash') continue;
+      if (!e.isDirectory() || SKIP_DIRS.has(e.name)) continue;
       const r = rel ? `${rel}/${e.name}` : e.name;
       const k = litterKind(e.name);
       if (!k) { budget.left--; stack.push(r); continue; }
@@ -101,7 +104,8 @@ export function scanLitter(vault, { maxEntries = 400000, exec = execFileSync } =
 }
 
 // input: text for git's stdin, for a path list too long for the command line
-const git = (cwd, args, exec, input = null) => exec('git', args, { cwd, encoding: 'utf8', timeout: 30000, maxBuffer: 64 << 20, ...(input == null ? { stdio: ['ignore', 'pipe', 'ignore'] } : { input, stdio: ['pipe', 'pipe', 'pipe'] }) });
+export const STATUS_MS = 20000;
+const git = (cwd, args, exec, input = null, timeout = 30000) => exec('git', args, { cwd, encoding: 'utf8', timeout, killSignal: 'SIGKILL', maxBuffer: 64 << 20, ...(input == null ? { stdio: ['ignore', 'pipe', 'ignore'] } : { input, stdio: ['pipe', 'pipe', 'pipe'] }) });
 
 // The git state of the vault with two git calls: rev-parse for the repository, then one status with the branch, its
 // upstream and how far behind it is. dirty: the vault's Markdown files git holds no current copy of, with their mtime.
@@ -115,7 +119,8 @@ export function gitState(vault, { exec = execFileSync, skip = () => false } = {}
   } catch { return { repo: false }; }
   if (!top) return { repo: false };
   let raw;
-  try { raw = git(vault, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all', '--', '.'], exec); } catch { return { repo: false }; }
+  // a status that fails or runs past the time limit is said, never read as a clean vault
+  try { raw = git(vault, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all', '--', '.'], exec, null, STATUS_MS); } catch (e) { return { repo: true, top, prefix, error: e?.code === 'ETIMEDOUT' || e?.signal ? `Could not read git status: it took longer than ${STATUS_MS / 1000} seconds` : 'Could not read git status', dirty: [] }; }
   let branch = null;
   let upstream = null;
   let behind = 0;

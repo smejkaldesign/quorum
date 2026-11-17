@@ -50,6 +50,7 @@ describe('litter folder names', () => {
     expect(litterKind('tmp-a8x2kq91')).toMatchObject({ kind: 'temp' });
     expect(litterKind('index.lock')).toMatchObject({ kind: 'lock' });
     expect(litterKind('dist')).toMatchObject({ kind: 'build' });
+    expect(litterKind('node_modules')).toBeNull();
     for (const name of ['archive-2025Q4', 'Clients-Acme01', 'Project_ABC123', 'tmpNotes2', 'project-finale', 'notes', 'build', 'out', 'sessions', '2026-11-16', 'q3-review', 'design-system', 'vault_x9k2pQ', 'tmp-notes']) expect(litterKind(name)).toBeNull();
   });
 });
@@ -67,6 +68,14 @@ describe('the litter scan', () => {
     expect(found.map((d) => [d.rel, d.kind])).toEqual([['qrules-a8Bc2D', 'temp'], ['qrules-p0QwE7', 'temp'], ['qrules-Zx9k2P', 'temp'], ['tools/runs/TemporaryDirectory.k3j2l1', 'temp'], ['web/dist', 'build']]);
     expect(found.find((d) => d.kind === 'temp' && d.rel.startsWith('tools')).bytes).toBe(2048);
     expect(found[0].ignore).toBe('/qrules-a8Bc2D/');
+  });
+  it('never enters node_modules, .git or .venv, and leaves a candidate that holds one unread', () => {
+    const v = fresh();
+    put(v, 'app/node_modules/pkg/index.js', 'x');
+    put(v, 'app/node_modules/vitest-cache-a1/x.js', 'x');
+    put(v, 'py/.venv/lib/TemporaryDirectory.ab12cd/x.txt', 'x');
+    put(v, 'site/dist/node_modules/pkg/index.js', 'x');
+    expect(scanLitter(v)).toEqual([]);
   });
   it('needs three or more siblings for the name-XXXXXX form, so one folder like design-iOS17a stays', () => {
     const v = fresh();
@@ -328,6 +337,19 @@ describe('uncommitted notes', () => {
     expect(b.proposal).toMatch(/^Quorum does not commit while the branch main is 2 commits behind origin\/main\./);
     expect(() => commitNotes(v, ['a.md'], 'x', { exec })).toThrow(/2 commits behind origin\/main/);
     expect(g(v, 'log', '--format=%s').trim()).toBe('start');
+  });
+  it('says when git status fails or runs too long, and offers no commit', () => {
+    const v = repo();
+    const slow = (c, a, o) => { if (a[0] === 'status') { const e = new Error('spawnSync git ETIMEDOUT'); e.code = 'ETIMEDOUT'; throw e; } return execFileSync(c, a, o); };
+    const state = gitState(v, { exec: slow });
+    expect(state).toMatchObject({ repo: true, error: 'Could not read git status: it took longer than 20 seconds' });
+    const [f] = run({ notes: [], hygiene: { litter: [], git: state }, now: NOW });
+    expect(f.title).toBe('Quorum could not read git status for this vault');
+    expect(f.fix).toBeUndefined();
+    expect(f.problem).toMatch(/^Could not read git status/);
+    const broken = (c, a, o) => { if (a[0] === 'status') throw new Error('fatal'); return execFileSync(c, a, o); };
+    expect(gitState(v, { exec: broken }).error).toBe('Could not read git status');
+    expect(() => commitNotes(v, ['kept.md'], 'x', { exec: broken })).toThrow('Could not read git status, so Quorum did not commit');
   });
   it('answers no repository outside git, and the scan leaves litter out of the uncommitted notes', () => {
     const plain = fresh();

@@ -189,6 +189,17 @@ export function committable(rel, byRel) {
 function gitFinding(h, notes, now) {
   const g = h.git;
   if (!g?.repo) return null;
+  if (g.error) {
+    return finding(rule, {
+      key: 'uncommitted', target: 'uncommitted', notes: [],
+      title: 'Quorum could not read git status for this vault',
+      problem: `${g.error}, so Quorum cannot tell which notes git does not hold yet.`,
+      proposal: 'Approve keeps the notes as they are and marks the item done. Quorum reads git status again at the next full check.',
+      evidence: [g.error],
+      facts: ['git-error'],
+      meta: [['Vault', g.top ?? '']],
+    });
+  }
   const byRel = new Map(notes.map((x) => [x.rel, x]));
   const stale = (g.dirty ?? []).filter((d) => now - d.mtime > STALE_DAYS * 86400000 && committable(d.rel, byRel));
   if (!stale.length) return null;
