@@ -217,6 +217,16 @@ export async function trashLitter(vault, dirs, trash, { exec = execFileSync } = 
   return moved;
 }
 
+// the whole Approve of a litter item (op: rules/hygiene.js trashdirs): move the folders that are still litter to the
+// Trash, then add the anchored pattern of each folder moved to the vault's own .gitignore. Answers { moved, added }
+export async function approveLitter(vault, op, trash, { exec = execFileSync } = {}) {
+  const moved = await trashLitter(vault, op.dirs ?? [], trash, { exec });
+  if (!moved.length) throw new Error('None of the folders are litter any more, so Quorum moved nothing');
+  const gone = new Set(moved.map((d) => `/${d}/`));
+  const added = op.gitignore && op.ignore?.length ? addIgnores(op.gitignore, op.ignore.filter((p) => gone.has(p))) : [];
+  return { moved, added };
+}
+
 // the ignore patterns not yet in a .gitignore, appended under one comment line. Answers the patterns it added
 export function addIgnores(gitignore, patterns) {
   if (!gitignore || !patterns.length) return [];

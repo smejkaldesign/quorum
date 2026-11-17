@@ -73,7 +73,7 @@ import { isOff, skipped } from './rules/common.js';
 import { folderMarkOf } from './rules/confidential.js';
 import { createMemorySweep, dueSweep, rescanTags, scanTags } from './memorySweep.js';
 import { RULE_LABELS, RULES } from './rules/index.js';
-import { addIgnores, commitNotes, prepareCompact, trashLitter } from './vaultHygiene.js';
+import { approveLitter, commitNotes, prepareCompact } from './vaultHygiene.js';
 import { relatedLine } from './rules/nearDuplicates.js';
 import { DAILY_CAP, WRONG_NOTE_FIX, createDrafter, draftKind, evidenceRels, fallbackItem, unlinkItem, withDraft } from './memoryDraft.js';
 import { catchupHooks, createSaveSweeps, forkEngine, slotBinder, startMemoryEngine } from './memoryWiring.js';
@@ -3890,14 +3890,9 @@ async function runOp(item, o, { step, keep, written, vault }) {
   if (o.op === 'trashdirs') {
     // each folder is checked again first: still there, still a litter name, no Markdown file and no file git tracks
     await step(`Moving ${o.dirs.length.toLocaleString('en-US')} ${o.dirs.length === 1 ? 'folder' : 'folders'} to the Trash`);
-    const moved = await trashLitter(vault, o.dirs, (abs) => shell.trashItem(abs));
-    if (!moved.length) throw new Error('None of the folders are litter any more, so Quorum moved nothing');
-    if (o.gitignore && o.ignore?.length) {
-      // anchored patterns for the folders moved, in the vault's own .gitignore (vaultHygiene.js gitState)
-      const gone = new Set(moved.map((d) => `/${d}/`));
-      const added = addIgnores(o.gitignore, o.ignore.filter((p) => gone.has(p)));
-      if (added.length) await step(`Adding ${added.length} ${added.length === 1 ? 'pattern' : 'patterns'} to ${path.basename(o.gitignore)}`);
-    }
+    const { moved, added } = await approveLitter(vault, o, (abs) => shell.trashItem(abs));
+    if (moved.length < o.dirs.length) await step(`Moved ${moved.length.toLocaleString('en-US')}; left ${(o.dirs.length - moved.length).toLocaleString('en-US')} that changed since the check`);
+    if (added.length) await step(`Added ${added.length.toLocaleString('en-US')} ${added.length === 1 ? 'entry' : 'entries'} to ${o.gitignore}`);
     vindex.sync();
     return;
   }

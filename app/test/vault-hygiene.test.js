@@ -8,7 +8,7 @@ import { findingItem, itemLine } from '../reviewItems.js';
 import { approveFinding } from '../reviewApprove.js';
 import { effects, groupOf } from '../batchPlan.js';
 import { compactText, repeatedBlocks, run, rule } from '../rules/hygiene.js';
-import { CHANGED, addIgnores, backupNote, commitNotes, fileHash, gitState, litterKind, prepareCompact, recordSizes, scanHygiene, scanLitter, stillLitter, trashLitter } from '../vaultHygiene.js';
+import { CHANGED, addIgnores, approveLitter, backupNote, commitNotes, fileHash, gitState, litterKind, prepareCompact, recordSizes, scanHygiene, scanLitter, stillLitter, trashLitter } from '../vaultHygiene.js';
 
 // Synthetic vaults in the OS temp folder. Every name and line is made up.
 const NOW = Date.UTC(2026, 10, 16);
@@ -116,6 +116,25 @@ describe('the litter scan', () => {
     expect(trashed).toEqual([path.join(v, 'qrules-a8Bc2D')]);
     expect(existsSync(path.join(v, 'qrules-p0QwE7/now-a-note.md'))).toBe(true);
     expect(existsSync(path.join(v, 'project-finale'))).toBe(true);
+  });
+  it('runs the whole Approve of a scanned item: Trash for what is still litter, .gitignore entries only for those', async () => {
+    const v = repo();
+    temp(v, ['qrules-a8Bc2D', 'qrules-Zx9k2P', 'qrules-p0QwE7', 'qrules-Rt5yU1']);
+    const hyg = scanHygiene({ vault: v, notes: [], now: NOW });
+    const [f] = run({ notes: [], hygiene: hyg, now: NOW });
+    const [op] = findingItem(f).ops;
+    expect(op).toMatchObject({ op: 'trashdirs', gitignore: path.join(v, '.gitignore') });
+    expect(op.dirs).toHaveLength(4);
+    // since the check: one folder got a note, one got a tracked file
+    put(v, 'qrules-a8Bc2D/kept.md', '# Kept\n');
+    g(v, 'add', 'qrules-Zx9k2P/data.json');
+    const trash = fresh('qhyg-trash-');
+    const res = await approveLitter(v, op, async (abs) => { execFileSync('mv', [abs, path.join(trash, path.basename(abs))]); });
+    expect(res.moved.sort()).toEqual(['qrules-Rt5yU1', 'qrules-p0QwE7']);
+    expect(readdirSync(trash).sort()).toEqual(['qrules-Rt5yU1', 'qrules-p0QwE7']);
+    expect(res.added.sort()).toEqual(['/qrules-Rt5yU1/', '/qrules-p0QwE7/']);
+    expect(readFileSync(path.join(v, '.gitignore'), 'utf8')).not.toMatch(/a8Bc2D|Zx9k2P/);
+    await expect(approveLitter(v, { ...op, dirs: ['qrules-a8Bc2D'] }, async () => {})).rejects.toThrow(/None of the folders are litter any more/);
   });
   it('writes one grouped item that says what Approve does, with git ignore patterns when the vault has a .gitignore', () => {
     const litter = Array.from({ length: 3593 }, (_, i) => ({ rel: `qrules-a${String(i).padStart(4, '0')}Z`, kind: 'temp', ignore: `/qrules-a${String(i).padStart(4, '0')}Z/`, bytes: 26800, files: 3 }));
