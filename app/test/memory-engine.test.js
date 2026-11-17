@@ -1,12 +1,13 @@
 // The memory engine (memoryEngine.js) and the vault index's cut for large notes (vindex.js INDEX_MAX). Every note is
 // made up; no model is called.
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { INDEX_MAX, createVaultIndex } from '../vindex.js';
 import { MAX_RULE_TEXT, createMemoryEngine, ruleText } from '../memoryEngine.js';
 import { parseNote } from '../linkparse.js';
+import { linkSources, rewriteLinks } from '../relink.js';
 
 let dirs = [];
 afterEach(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); dirs = []; });
@@ -28,6 +29,28 @@ describe('large notes', () => {
     expect(big.size).toBeGreaterThan(INDEX_MAX);
     expect(ix.backlinks('early.md').map((l) => l.rel)).toEqual(['logs/2026-11-16.md']);
     expect(ix.snapshot().find((n) => n.rel === 'early.md').cut).toBeUndefined();
+  });
+
+  it('rewrites a link past the head of a large note when the note it points at moves', () => {
+    const vault = tmp();
+    mkdirSync(path.join(vault, 'logs'));
+    mkdirSync(path.join(vault, 'notes'));
+    const line = 'A session line.\n';
+    const filler = line.repeat(Math.ceil((INDEX_MAX * 1.2) / line.length));
+    writeFileSync(path.join(vault, 'logs/2026-11-16.md'), `# Log\n\n${filler}See [[target]] here.\n`);
+    writeFileSync(path.join(vault, 'notes/target.md'), '# Target\n');
+    const ix = createVaultIndex({ vault, isExcludedPath: () => false, isExcludedText: () => false, redact: (t) => t, onChange: () => {} });
+    ix.sync();
+    // the link sits past the head, so no backlink names it
+    expect(ix.backlinks('notes/target.md')).toEqual([]);
+    const moving = ['notes/target.md'];
+    const sources = linkSources(ix, moving);
+    expect(sources).toContain('logs/2026-11-16.md');
+    renameSync(path.join(vault, 'notes/target.md'), path.join(vault, 'notes/renamed.md'));
+    const mapping = new Map([['notes/target.md', 'notes/renamed.md']]);
+    const done = rewriteLinks({ vault, mapping, sources, resolve: ix.resolve, allRels: ['logs/2026-11-16.md', 'notes/renamed.md'], aliasesOf: ix.aliasesOf });
+    expect(done.links).toBe(1);
+    expect(readFileSync(path.join(vault, 'logs/2026-11-16.md'), 'utf8').endsWith('See [[renamed]] here.\n')).toBe(true);
   });
 
   it('gives the rules the head of a note past MAX_RULE_TEXT, with its full length', () => {

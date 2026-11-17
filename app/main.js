@@ -12,7 +12,7 @@ import { createFolder, createNote, duplicateItem, moveItem, readVaultNote, renam
 import { createVaultIndex } from './vindex.js';
 import { applyUndo, sha, undoRecord } from './fixUndo.js';
 import { changedSince, createFixJournal, fixCheck, hashNotes, recoveryReason, rollback } from './fixJournal.js';
-import { addAlias, retargetLinks, rewriteLinks, unlinkTarget, writeAtomic } from './relink.js';
+import { addAlias, linkSources, retargetLinks, rewriteLinks, unlinkTarget, writeAtomic } from './relink.js';
 import store from './store/index.js';
 import { registerSources } from './sources/index.js';
 import { DATA_DIR, EDITION, ENV, loadEE, isDevelopment } from './edition.js';
@@ -4258,14 +4258,14 @@ function relocate(rel, doMove) {
   const vault = brain().vault;
   const prefix = `${rel}/`;
   const moving = vindex ? vindex.rels().filter((r) => r === rel || r.startsWith(prefix)) : [];
-  const sources = new Set(moving.flatMap((r) => vindex.backlinks(r).map((b) => b.rel)));
+  const sources = vindex ? linkSources(vindex, moving) : [];
   const resolve = vindex?.resolve;
   const aliasesOf = vindex?.aliasesOf;
   const next = doMove();
   if (!vindex || !moving.length) return { rel: next, files: 0, links: 0 };
   const mapping = new Map(moving.map((r) => [r, r === rel ? next : next + r.slice(rel.length)]));
   const allRels = vindex.rels().map((r) => mapping.get(r) ?? r);
-  const done = rewriteLinks({ vault, mapping, sources: [...sources], resolve, allRels, aliasesOf });
+  const done = rewriteLinks({ vault, mapping, sources, resolve, allRels, aliasesOf });
   vindex.sync();
   log('relocated', rel, '->', next, `rewrote ${done.links} links in ${done.files} notes`);
   return { rel: next, ...done };
