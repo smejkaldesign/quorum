@@ -162,15 +162,30 @@ describe('model download', () => {
     expect(s.seen.length).toBe(before);
   });
 
+  it('reports an error code only, never a message that names a path', async () => {
+    const root = tmp();
+    const dir = path.join(root, 'models');
+    writeFileSync(dir, 'a file where the folder should be');
+    const logged = [];
+    const { d } = await run({ dir, manifest: manifest(), fetch: server().fetch, retries: 1, log: (...a) => logged.push(a.join(' ')) });
+    expect(d.status()).toMatchObject({ state: 'failed', why: 'disk' });
+    expect(JSON.stringify(d.status())).not.toContain(root);
+    expect(logged.join('\n')).toContain(root);
+    const net = await run({ dir: tmp(), manifest: manifest(), fetch: async () => { throw new TypeError('fetch failed'); }, retries: 1 });
+    expect(net.d.status().why).toBe('network');
+    const http = await run({ dir: tmp(), manifest: manifest(), fetch: server({ fail: 99 }).fetch, retries: 1 });
+    expect(http.d.status().why).toBe('http_error');
+  });
+
   it('fails before any request when a file has no hash pinned', async () => {
     const s = server();
     const { d } = await run({ dir: tmp(), manifest: manifest({ 'x.json': { sha256: '', size: 1 } }), fetch: s.fetch });
-    expect(d.status()).toMatchObject({ state: 'failed', why: 'no SHA-256 pinned for embed/x.json' });
+    expect(d.status()).toMatchObject({ state: 'failed', why: 'no_hash' });
     expect(s.seen).toEqual([]);
   });
 
   it('waits while Low Power Mode is on and downloads once it is off', async () => {
-    const answers = [{ ok: false, why: 'Low Power Mode is on' }, { ok: false, why: 'Low Power Mode is on' }];
+    const answers = [{ ok: false, why: 'low_power' }, { ok: false, why: 'low_power' }];
     const states = [];
     const s = server();
     const { d, sleeps } = await run({ dir: tmp(), manifest: manifest(), fetch: s.fetch, waitMs: 60000, conditions: async () => answers.shift() ?? { ok: true }, onChange: (st) => states.push(st.state) });
@@ -217,7 +232,7 @@ describe('model download', () => {
     const MB = 1024 * 1024;
     expect(modelsLabel({ state: 'downloading', doneBytes: 40 * MB, totalBytes: 124.5 * MB })).toBe('Local models: downloading, 40 of 124 MB');
     expect(modelsLabel({ state: 'ready' })).toBe('Local models: ready');
-    expect(modelsLabel({ state: 'waiting', why: 'Low Power Mode is on' })).toBe('Local models: paused while Low Power Mode is on');
+    expect(modelsLabel({ state: 'waiting', why: 'low_power' })).toBe('Local models: paused while Low Power Mode is on');
     expect(lowPowerFromPmset('System-wide power settings:\n lowpowermode         1\n')).toBe(true);
     expect(lowPowerFromPmset(' lowpowermode         0\n')).toBe(false);
     expect(lowPowerFromPmset('')).toBe(false);

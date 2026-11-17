@@ -21,6 +21,11 @@ import { MANIFEST, hashFile } from './models.js';
 const MB = 1024 * 1024;
 // an error with a code for the status line; the message, which can name a path, stays in the log
 export const failure = (code, message) => Object.assign(new Error(message), { code });
+// the status names a failure by code only: no_hash, hash_mismatch, host_refused, http_error, disk, network
+const CODES = new Set(['no_hash', 'hash_mismatch', 'host_refused', 'http_error']);
+export const codeOf = (e) => (CODES.has(e?.code) ? e.code : e?.path || e?.syscall === 'open' ? 'disk' : 'network');
+// what a waiting code means, for the status line
+const WAIT = { low_power: 'Low Power Mode is on' };
 // where a model file may come from after redirects: Hugging Face and its CDN hosts, over HTTPS only
 export const allowedHost = (url) => { try { const u = new URL(url); return u.protocol === 'https:' && /(^|\.)(huggingface\.co|hf\.co)$/.test(u.hostname); } catch { return false; } };
 // onnxruntime-node ships a macOS binary for Apple silicon only
@@ -28,7 +33,7 @@ export const modelsSupported = (platform = process.platform, arch = process.arch
 export const fileUrl = (m, file) => `https://huggingface.co/${m.repo}/resolve/${m.revision}/${file}`;
 export const lowPowerFromPmset = (out) => /^\s*lowpowermode\s+1\s*$/m.test(String(out ?? ''));
 // the conditions on a Mac: no download while Low Power Mode is on (pmset -g reports it)
-export const macConditions = () => new Promise((resolve) => execFile('/usr/bin/pmset', ['-g'], { timeout: 5000 }, (err, out) => resolve(!err && lowPowerFromPmset(out) ? { ok: false, why: 'Low Power Mode is on' } : { ok: true })));
+export const macConditions = () => new Promise((resolve) => execFile('/usr/bin/pmset', ['-g'], { timeout: 5000 }, (err, out) => resolve(!err && lowPowerFromPmset(out) ? { ok: false, why: 'low_power' } : { ok: true })));
 
 // the status line Settings > Memory shows
 export function modelsLabel(s) {
@@ -37,7 +42,7 @@ export function modelsLabel(s) {
     case 'unsupported': return 'Local models: not available on this Mac';
     case 'checking': return 'Local models: checking the downloaded files';
     case 'downloading': return `Local models: downloading, ${Math.floor((s.doneBytes ?? 0) / MB)} of ${Math.floor((s.totalBytes ?? 0) / MB)} MB`;
-    case 'waiting': return `Local models: paused while ${s.why ?? 'the Mac saves power'}`;
+    case 'waiting': return `Local models: paused while ${WAIT[s.why] ?? 'the Mac saves power'}`;
     case 'ready': return 'Local models: ready';
     case 'failed': return 'Local models: download failed. Quorum tries again later; until then every check goes to Claude.';
     default: return 'Local models: not downloaded yet';
@@ -93,7 +98,7 @@ export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalTh
     const ctl = new AbortController();
     const res = await fetch(f.url, { headers: { 'User-Agent': userAgent, ...(have ? { Range: `bytes=${have}-` } : {}) }, signal: ctl.signal, redirect: 'follow' });
     if (!allowedHost(res.url || f.url)) { await res.body?.cancel().catch(() => {}); throw failure('host_refused', `${f.id}/${f.file}: redirected to ${res.url}`); }
-    if (!res.ok) throw new Error(`${f.id}/${f.file}: the server answered ${res.status}`);
+    if (!res.ok) throw failure('http_error', `${f.id}/${f.file}: the server answered ${res.status}`);
     if (have && res.status !== 206) { h = createHash('sha256'); have = 0; }
     const fh = await open(part, have ? 'a' : 'w');
     let got = have;
@@ -126,7 +131,7 @@ export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalTh
     if (!enabled || stopped) return;
     if (!supported) { set({ state: 'unsupported' }); return; }
     const unpinned = files.find((f) => !/^[0-9a-f]{64}$/.test(f.sha256));
-    if (unpinned) { set({ state: 'failed', why: `no SHA-256 pinned for ${unpinned.id}/${unpinned.file}` }); return; }
+    if (unpinned) { log('models', 'no SHA-256 pinned for', `${unpinned.id}/${unpinned.file}`); set({ state: 'failed', why: 'no_hash' }); return; }
     set({ state: 'checking', why: null, doneBytes: 0 });
     let done = 0;
     const todo = [];
@@ -152,7 +157,7 @@ export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalTh
           log('models', 'download failed', f.id, f.file, attempt, String(e?.message ?? e));
           if (e?.code === 'hash_mismatch') { blocked.add(f.dest); set({ state: 'failed', why: 'hash_mismatch' }); return; }
           if (attempt >= retries) {
-            set({ state: 'failed', why: e?.code ?? String(e?.message ?? e) });
+            set({ state: 'failed', why: codeOf(e) });
             later = setTimer(() => { later = null; start(); }, retryLaterMs);
             return;
           }
@@ -167,7 +172,7 @@ export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalTh
   }
 
   function start() {
-    running ??= run().catch((e) => { set({ state: 'failed', why: String(e?.message ?? e) }); }).finally(() => { running = null; });
+    running ??= run().catch((e) => { log('models', 'download stopped', String(e?.message ?? e)); set({ state: 'failed', why: codeOf(e) }); }).finally(() => { running = null; });
     return running;
   }
   const stop = () => { stopped = true; if (later !== null) { clearTimer(later); later = null; } };
