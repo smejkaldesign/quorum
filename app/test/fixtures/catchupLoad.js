@@ -29,7 +29,7 @@ const WORKER = new URL('../../memoryWorker.js', import.meta.url);
 const heap = () => getHeapStatistics().used_heap_size;
 const settle = async () => { for (let i = 0; i < 3; i++) { globalThis.gc?.(); await new Promise((r) => setTimeout(r, 20)); } };
 
-export async function runCatchupLoad({ mode = 'engine', notes = 2000, big = 0, grow = 0, delay = 5, agentModule = '../../contradictionAgent.js', samples = 8, vault: existing = null, parallel = mode === 'engine' ? 4 : 1 } = {}) {
+export async function runCatchupLoad({ mode = 'engine', notes = 2000, big = 0, grow = 0, delay = 5, agentModule = '../../contradictionAgent.js', samples = 8, vault: existing = null, parallel = mode === 'engine' ? 4 : 1, gcSamples = false } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'qload-'));
   const vault = existing ?? path.join(root, 'vault');
   const data = path.join(root, 'data');
@@ -104,7 +104,8 @@ export async function runCatchupLoad({ mode = 'engine', notes = 2000, big = 0, g
   const lag = monitorEventLoopDelay({ resolution: 5 });
   lag.enable();
   const t0 = Date.now();
-  let sampler = setInterval(() => heaps.push(heap()), 50);
+  // gcSamples: each sample after a forced collection, so the samples show what the heap keeps, not what is due for one
+  let sampler = setInterval(() => { if (gcSamples) globalThis.gc?.(); heaps.push(heap()); }, gcSamples ? 200 : 50);
   await catchup.start();
   const last = await catchup.done();
   clearInterval(sampler);
