@@ -2707,7 +2707,8 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 
 /* review rows: a one-line title (the full title in its tooltip), the date under it, the state badge on the right */
 .mh-row .nf-title { display: block; -webkit-line-clamp: unset; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mh-row .nf-head { display: flex; min-width: 0; }
+/* at least 12px between the title, its unread dot and the status on the right */
+.mh-row .nf-head { display: flex; min-width: 0; gap: 12px; }
 .mh-row .nf-main { min-width: 0; }
 .mh-row .nf-sub { display: block; margin-top: 2px; }
 .mh-row .mh-swap { min-width: 0; }
