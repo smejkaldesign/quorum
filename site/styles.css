@@ -802,21 +802,24 @@ ul { margin: 0; padding: 0; list-style: none; }
   mask-image: linear-gradient(to bottom, #000 45%, transparent 100%);
 }
 .connect-col li {
-  height: var(--row);
-  display: flex; align-items: center;
+  height: var(--row); line-height: var(--row);
   border-bottom: 1px solid var(--rule);
   font-size: 15px; color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.connect-col li img {
+  display: inline-block; width: 18px; height: 18px; margin: -3px 10px 0 0;
+  vertical-align: middle; border-radius: 4px; opacity: 0.55;
+}
 .connect-col li.live { color: var(--text); }
+.connect-col li.live img { opacity: 1; }
 .connect-key { margin-top: 20px; font-size: 13px; color: var(--muted); }
-@media (min-width: 720px) {
+@media (min-width: 960px) {
   .connect-table { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
-@media (min-width: 1200px) {
-  .connect-table { grid-template-columns: repeat(8, minmax(0, 1fr)); }
-  .connect-col { padding: 0 12px; }
+@media (max-width: 1199px) {
   .connect-col li { font-size: 14px; }
+  .connect-col li img { width: 16px; height: 16px; margin-right: 8px; }
 }
 
 #join { scroll-margin-top: calc(var(--header-h) + 48px); }
