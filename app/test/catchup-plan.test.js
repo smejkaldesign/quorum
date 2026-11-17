@@ -44,6 +44,10 @@ describe('the plan before a pass', () => {
     expect(p.pairs).toBe(Math.round(100 * PAIRS_PER_NOTE));
     expect(p.seconds).toBe((10 + 4 + judgeCalls(p.pairs)) * SECONDS_PER_CALL);
   });
+  it('takes the pairs the local gate keeps from the judge out of the pairs to judge', () => {
+    expect(planOf({ read: 100, claimed: 200, judged: 100, gated: 25 }).pairs).toBe(38);
+    expect(planOf({ read: 100, claimed: 200, judged: 20, gated: 10 }).pairs).toBe(10);
+  });
   it('learns the pairs per note from the stored verdicts once enough notes were read', () => {
     expect(planOf({ read: 100, claimed: 200, judged: 20 }).pairs).toBe(10);
     // too few notes read to say: the default applies

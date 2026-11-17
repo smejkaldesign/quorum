@@ -9,9 +9,9 @@
 import { cosine, loadModels } from './models.js';
 import { noteRule, pairRule } from './rules.js';
 
-// the switch for the whole layer. It stays false until the contradiction agent calls the decider; while it is false the
-// app downloads no model and Settings > Memory shows no Local models card
-export const DECIDER_ON = false;
+// the switch for the whole layer: the contradiction agent calls the decider (memoryEngine.js). While it is false the app
+// downloads no model and Settings > Memory shows no Local models card
+export const DECIDER_ON = true;
 
 // set from scripts/decider-eval.mjs on the synthetic fixtures for a drop precision of at least 99%. T1 drops only a pair
 // it reads as the same fact: entailment in both directions, no contradiction, and a high similarity, two models agreeing.

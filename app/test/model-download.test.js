@@ -213,8 +213,8 @@ describe('model download', () => {
     await d.start();
     expect(d.status().state).toBe('off');
     expect(s.seen).toEqual([]);
-    // nothing calls the decider until the contradiction agent is wired to it, so main must not download yet
-    expect(DECIDER_ON).toBe(false);
+    // the contradiction agent calls the decider (memoryEngine.js), so main downloads the models
+    expect(DECIDER_ON).toBe(true);
   });
 
   it('does nothing on a Mac the runtime does not support', async () => {

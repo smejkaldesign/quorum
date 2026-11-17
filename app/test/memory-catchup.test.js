@@ -261,10 +261,12 @@ describe('Check everything now with calls in parallel', () => {
     const asked = new Map();
     const open = new Set();
     let most = 0;
-    let signal = null;
+    // each tick's signal by its lane, as memoryHost.js routes it to the model call
+    const laneSignals = new Map();
+    let laneSeq = 0;
     const signals = [];
     const model = async (prompt, system, opts) => {
-      const mine = signal;
+      const mine = laneSignals.get(opts.lane) ?? null;
       signals.push(mine);
       for (const b of prompt.split('<note path="').slice(1)) { const rel = b.slice(0, b.indexOf('"')); asked.set(rel, (asked.get(rel) ?? 0) + 1); }
       const judge = prompt.includes('<pair id="');
@@ -278,8 +280,7 @@ describe('Check everything now with calls in parallel', () => {
       return synthModel(prompt);
     };
     const agent = createContradictionAgent({ file: path.join(root, 'contra.json'), model, enabled: () => true, cap: () => 0, idleMs: () => 0 });
-    // the signal a lane passes reaches the model the way memoryHost.js routes it, before the call starts
-    const lanes = { ...agent, tick: (o) => { signal = o.signal ?? null; return agent.tick(o); } };
+    const lanes = { ...agent, tick: async (o) => { const lane = ++laneSeq; laneSignals.set(lane, o.signal ?? null); try { return await agent.tick({ ...o, lane }); } finally { laneSignals.delete(lane); } } };
     const drafter = createDrafter({ file: path.join(root, 'drafts.json'), model: async () => '', items: () => [], evidence: () => null, enabled: () => true, cap: () => 0, idleMs: () => 0 });
     const activity = createAgentActivity({ emit: () => {}, setTimer: () => null, clearTimer: () => {} });
     const ctx = { notes: ix.snapshot(), resolve: (t, f) => ix.resolve(t, f), contradictions: { provider: agent.provider } };

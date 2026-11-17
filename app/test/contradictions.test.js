@@ -387,6 +387,35 @@ describe('stage 4 resolve and stage 5 fixes', () => {
     expect(a.pendingCalls()).toBe(0);
   });
 
+  it('asks the local decider before it queues a note and the gate before it sends a pair', async () => {
+    const notes1 = [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: 'b.md', text: '#\n\nAtlas uses Y.\n' }];
+    const notes2 = [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: 'c.md', text: '#\n\nAtlas uses Z.\n' }];
+    const p1 = { key: 'k1', a: claim({}), b: claim({ rel: 'b.md' }) };
+    const p2 = { key: 'k2', a: claim({}), b: claim({ rel: 'c.md' }) };
+    const recorded = [];
+    const gate = { check: async (p) => (p.key === 'k1' ? { send: false, audit: false, drop: true, tier: 't1' } : { send: true, audit: true, drop: true, tier: 't1' }), record: (key, label) => { recorded.push([key, label]); return true; }, stats: () => ({ audited: recorded.length, misses: 0, missRate: null }) };
+    const decider = { worthReading: (n) => ({ read: !n.rel.startsWith('empty'), reason: null, tier: 't0' }), tiers: () => ({ t0: 'ready' }) };
+    const sent = [];
+    const a = agent({ decider, gate, model: async (prompt) => {
+      sent.push(prompt.split('<pair id="').length - 1);
+      return JSON.stringify({ verdicts: [{ pair: 'p1', label: 'contradiction', quotes: [{ path: 'a.md', line: 3, text: 'Atlas uses X.' }, { path: 'c.md', line: 3, text: 'Atlas uses Z.' }], reason: 'r' }] });
+    } });
+    a.provider.begin();
+    a.provider.claimsOf(note('empty/blank.md', '# Blank\n\nWe decided nothing on 2026-01-01.\n'), { worth: true });
+    a.provider.claimsOf(note('projects/full.md', '# Full\n\nWe decided Full ships on 2026-01-01.\n'), { worth: true });
+    expect(a.status().claims).toBe(1);
+    a.provider.judgeOf(p1, notes1);
+    a.provider.judgeOf(p2, notes2);
+    const res = await a.tick({ uncapped: true });
+    // the gate kept k1 from the judge and stored it as the same fact; k2 went as an audit and its label was logged
+    expect(sent).toEqual([1]);
+    expect(res).toMatchObject({ judged: ['k2'] });
+    expect(recorded).toEqual([['k2', 'contradiction']]);
+    a.provider.begin();
+    expect(a.provider.judgeOf(p1, notes1)).toBe('same');
+    expect(a.status()).toMatchObject({ tiers: { t0: 'ready' }, audit: { audited: 1 } });
+  });
+
   it('measures the bar from the decision log over the auto slice', () => {
     expect(wilson(150, 150)).toBeGreaterThan(0.97);
     expect(wilson(147, 150)).toBeLessThan(0.95);

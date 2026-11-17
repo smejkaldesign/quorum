@@ -66,7 +66,10 @@ export function judgeBatches(entries, { chars = JUDGE_CHARS, pairs = JUDGE_BATCH
   return out;
 }
 
-export function createContradictionAgent({ file, model, modelId = 'claude', enabled = () => false, cap = () => 40, busy = () => false, idleMs = () => Infinity, readable = () => true, now = () => Date.now(), log = () => {} }) {
+// decider and gate: the local decision layer (decide/index.js createDecider, decide/gate.js createPairGate). The decider
+// keeps notes it is sure hold no claim out of the claim calls; the gate keeps pairs it reads as the same fact out of the
+// judge calls, apart from an audit sample. Without them every note and pair goes to the model as before
+export function createContradictionAgent({ file, model, modelId = 'claude', enabled = () => false, cap = () => 40, busy = () => false, idleMs = () => Infinity, readable = () => true, decider = null, gate = null, now = () => Date.now(), log = () => {} }) {
   let state = null;
   const load = () => {
     if (state) return state;
@@ -106,6 +109,7 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
       if (inflight.has(n.rel)) return [];
       const ix = indexNote(n);
       if (!(worth ?? ix.worth) || !ix.readable || tried(n.rel, h)) return [];
+      if (decider && !decider.worthReading(n).read) return [];
       // a note whose excerpt holds no line to read makes no call: its frontmatter facts are read with no model
       const chars = excerptOf(n).length;
       if (chars) wantClaims.set(n.rel, { rel: n.rel, text: n.text, n: { rel: n.rel, text: n.text, note: n.note }, h, chars, rank: ix.priority + (ix.worth ? 0 : 20) });
@@ -182,9 +186,14 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
     const s = load();
     // a pair the read gate keeps out is never sent and leaves the queue
     for (const [key, j] of wantJudge) if (!j.notes.every((x) => readable(x.rel, x.text))) wantJudge.delete(key);
-    const [pairs] = judgeBatches([...wantJudge.values()]);
-    if (pairs) {
-      for (const j of pairs) wantJudge.delete(j.p.key);
+    // the pairs of this call, strongest first, after the gate: it holds a slot under the parallel limit while it runs
+    let pairs = null;
+    if (wantJudge.size) {
+      const slot = Promise.resolve();
+      running.add(slot);
+      try { pairs = await gatedBatch(s); } finally { running.delete(slot); }
+    }
+    if (pairs?.length) {
       const items = pairs.map((j, i) => ({ id: `p${i + 1}`, key: j.p.key, p: j.p, notes: j.notes, h: j.h }));
       const keys = items.map((x) => x.key);
       const done = [];
@@ -197,6 +206,8 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
           const v = r.byId.get(x.id);
           if (!v.label) { failed.push([x.key, v.why]); continue; }
           s.judged[x.key] = { hash: x.h, at: now(), label: v.label, quotes: v.quotes, reason: v.reason };
+          // an audited pair the gate would have dropped: its verdict goes to the gate's log
+          gate?.record(x.key, v.label);
           done.push(x);
         }
         // a reply that settles none of its pairs is a failed call
@@ -243,16 +254,44 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
   function estimate(entries) {
     const s = load();
     let saved = 0;
-    const left = (entries ?? []).filter((e) => { const h = hashText(e.text); if (s.claims[e.rel]?.hash === h) { saved++; return false; } return !tried(e.rel, h) && readable(e.rel, e.text); })
+    const left = (entries ?? []).filter((e) => { const h = hashText(e.text); if (s.claims[e.rel]?.hash === h) { saved++; return false; } return !tried(e.rel, h) && readable(e.rel, e.text) && !(decider && !decider.worthReading(e).read); })
       .map((e) => ({ ...e, chars: excerptOf(e).length })).filter((e) => e.chars);
     const batches = packBatches(left);
     // the characters the claim calls send: each call's prompt (its notes' excerpts) and the system prompt, for the cost
     const promptChars = batches.reduce((n, b) => { const ask = claimPrompt(b); return n + ask.prompt.length + ask.system.length; }, 0);
     // saved: the notes read in an earlier pass; claimed and judged: every note and pair stored, for the pairs per note
-    return { notes: left.length, calls: batches.length, promptChars, saved, claimed: Object.keys(s.claims).length, judged: Object.keys(s.judged).length };
+    // gated: the stored verdicts the local gate gave (judged 'same' by its tier), for the share of pairs it keeps from the judge
+    const verdicts = Object.values(s.judged);
+    return { notes: left.length, calls: batches.length, promptChars, saved, claimed: Object.keys(s.claims).length, judged: verdicts.length, gated: verdicts.filter((v) => v.by).length };
   }
   // the notes the latest sweep queued to read that the read gate lets through, for the note count of a catch-up pass
   const pendingNotes = () => [...wantClaims.values()].filter((w) => readable(w.rel, w.text)).length;
-  const status = () => ({ used: used(), cap: cap(), waiting: waiting(), running: running.size > 0, calls: running.size, inflight: inflight.size, ...provider.pending() });
+  // the pairs of one judge call, taken from the queue strongest first (judgeRank) while they fit JUDGE_BATCH and
+  // JUDGE_CHARS. Each pair asks the gate first; a pair it drops is stored as judged 'same' by its tier and sent to no
+  // one, and a pair it sends on (an audit among them) joins the call. A pair is in the in-flight set while the gate reads
+  // it, so a sweep meanwhile does not queue it again
+  async function gatedBatch(s) {
+    const out = [];
+    let used = 0;
+    let dropped = 0;
+    for (const j of [...wantJudge.values()].sort((x, y) => judgeRank(x.p) - judgeRank(y.p) || String(x.p.key).localeCompare(String(y.p.key)))) {
+      if (out.length >= JUDGE_BATCH) break;
+      const size = judgePrompt(j.p, j.notes).prompt.length + 40;
+      if (out.length && used + size > JUDGE_CHARS) break;
+      if (!wantJudge.has(j.p.key)) continue;
+      wantJudge.delete(j.p.key);
+      if (gate) {
+        inflight.add(j.p.key);
+        let g;
+        try { g = await gate.check(j.p); } finally { inflight.delete(j.p.key); }
+        if (!g.send) { s.judged[j.p.key] = { hash: j.h, at: now(), label: 'same', by: g.tier }; dropped++; continue; }
+      }
+      out.push(j);
+      used += size;
+    }
+    if (dropped) { save(); log('contradiction gate', `${dropped} pairs kept from the judge`); }
+    return out;
+  }
+  const status = () => ({ used: used(), cap: cap(), waiting: waiting(), running: running.size > 0, calls: running.size, inflight: inflight.size, ...provider.pending(), ...(decider ? { tiers: decider.tiers?.() ?? null } : {}), ...(gate ? { audit: gate.stats?.() ?? null } : {}) });
   return { provider, tick, status, waiting, pendingCalls, pendingNotes, estimate };
 }
