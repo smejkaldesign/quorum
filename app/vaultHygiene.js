@@ -241,8 +241,9 @@ export function commitNotes(vault, paths, message, { exec = execFileSync } = {})
   const live = paths.filter((p) => existsSync(path.join(vault, p)));
   if (!live.length) throw new Error('None of the notes are there any more, so Quorum did not commit');
   const list = `${live.join('\0')}\0`;
-  git(vault, ['add', '--pathspec-from-file=-', '--pathspec-file-nul'], exec, list);
+  // --literal-pathspecs: a name like [x].md or a*.md is that file, never a pattern that matches others
+  git(vault, ['--literal-pathspecs', 'add', '--pathspec-from-file=-', '--pathspec-file-nul'], exec, list);
   // a commit with a path list commits those paths only (git commit --only)
-  git(vault, ['commit', '-q', '-m', message, '--pathspec-from-file=-', '--pathspec-file-nul'], exec, list);
+  git(vault, ['--literal-pathspecs', 'commit', '-q', '-m', message, '--pathspec-from-file=-', '--pathspec-file-nul'], exec, list);
   return { branch: g.branch, count: live.length };
 }

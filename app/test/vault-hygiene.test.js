@@ -226,6 +226,16 @@ describe('uncommitted notes', () => {
     // what the person staged stays staged and out of the commit
     expect(g(v, 'diff', '--cached', '--name-only').trim()).toBe('other.txt');
   });
+  it('reads each path literally, so a name with glob characters commits that file alone', () => {
+    const v = repo();
+    put(v, '[x].md', '# Bracket\n');
+    put(v, 'x.md', '# Plain\n');
+    put(v, 'a*.md', '# Star\n');
+    put(v, 'ab.md', '# Ab\n');
+    commitNotes(v, ['[x].md', 'a*.md'], 'two notes');
+    expect(g(v, 'show', '--name-only', '--format=', 'HEAD').trim().split('\n').sort()).toEqual(['[x].md', 'a*.md']);
+    expect(g(v, 'status', '--porcelain').trim().split('\n').sort()).toEqual(['?? ab.md', '?? x.md']);
+  });
   it('reads only the vault folder of a larger repository', () => {
     const top = repo();
     put(top, 'MyBrain/notes/x.md', '# X\n');
