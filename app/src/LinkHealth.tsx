@@ -99,6 +99,8 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   // Show these on the last-run card: only the items that check added, until the chip is removed
   const [only, setOnly] = useState<{ ids: Set<string>; label: string } | null>(null);
   const inRun = (id: string) => !only || only.ids.has(id);
+  // focus lands on the heading when the last-run card is dismissed
+  const headRef = useRef<HTMLHeadingElement>(null);
   const load = useCallback((fresh = false) => {
     window.quorum.memoryReviewCount().then((c) => setReviewN(c.total)).catch(() => {});
     window.quorum.activityFeed({ kinds: ['memory-health'], review: true, tab: 'all', limit: 5000 })
@@ -287,7 +289,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   return (
     <div className="link-health mh-page" role="region" aria-label="Memory health">
       <div className="lh-head">
-        <h2>Memory health</h2>
+        <h2 ref={headRef} tabIndex={-1}>Memory health</h2>
         <span className="mh-head-actions">
           <button className="act-pill" disabled={busy || !openN} data-tip="Plan a fix for everything in Needs review, then choose what runs" onClick={() => setPlan({ ids: null, everything: true })}>Review everything</button>
           <button className={`icon-btn ${busy ? 'spinning' : ''}`} aria-label="Check again" data-tip="Check again" disabled={busy} onClick={refresh}><IconReset width={16} height={16} /></button>
@@ -339,7 +341,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
       {/* long agent work on the memory (the first check, a full sweep, a batch, drafting), the same banner as on Home */}
       <AgentActivityBanner />
       {/* the last Check everything now pass: when it ran, what it checked and what it added to Needs review */}
-      <CatchupSummary onShow={(ids, label) => { setOnly({ ids: new Set(ids), label }); setReview(true); setTab('all'); }} />
+      <CatchupSummary onDismissed={() => headRef.current?.focus()} onShow={(ids, label) => { setOnly({ ids: new Set(ids), label }); setReview(true); setTab('all'); }} />
       {(() => {
         const last = runs.filter((r) => r.batch).sort((a, b) => b.queuedAt - a.queuedAt)[0]?.batch;
         if (!last || last === hiddenBatch) return null;

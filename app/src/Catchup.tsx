@@ -63,7 +63,7 @@ export function useCatchupControl(drafting: boolean) {
   const running = !!st?.running;
   const close = () => { setPlanning(false); window.setTimeout(() => opener.current?.focus(), 0); };
   const start = async () => {
-    setPlanning(false);
+    close();
     setBusy(true); setNote('');
     try {
       const r = await window.quorum.memoryCatchupStart();
@@ -75,7 +75,8 @@ export function useCatchupControl(drafting: boolean) {
     desc: `Reads every note the agent has not read yet in one pass, past the daily limit, then the limit applies again. ${catchupCost(est)} It writes nothing to your notes; what it finds waits in Needs review.${drafting ? '' : ` ${DRAFTS_NEEDED}`}${line ? ` ${line}` : ''}${note ? ` ${note}` : ''}`,
     control: (
       <>
-        <button ref={opener} className="pill small-pill" disabled={!est || running || busy} onClick={() => setPlanning(true)}>{running ? 'Checking' : 'Check everything now'}</button>
+        {/* while a pass runs the button stays focusable (aria-disabled), so focus stays on it after Start */}
+        <button ref={opener} className="pill small-pill" disabled={!est} aria-disabled={running || busy} onClick={() => { if (!running && !busy) setPlanning(true); }}>{running ? 'Checking' : 'Check everything now'}</button>
         {planning && est && <CatchupPlan est={est} drafting={drafting} onStart={start} onClose={close} />}
       </>
     ),
@@ -101,7 +102,8 @@ export function CatchupPlan({ est, drafting, onStart, onClose }: { est: CatchupE
 
 // Memory health: the last pass that ended, with when it ran, how long it took, the notes it checked and what it added
 // to Needs review. Show these narrows Needs review to its items; Dismiss hides the card for good
-export function CatchupSummary({ onShow }: { onShow: (ids: string[], label: string) => void }) {
+// onDismissed: where focus goes once the card is gone
+export function CatchupSummary({ onShow, onDismissed }: { onShow: (ids: string[], label: string) => void; onDismissed?: () => void }) {
   const st = useCatchupStatus();
   if (!showSummary(st)) return null;
   const last = st.last;
@@ -118,7 +120,7 @@ export function CatchupSummary({ onShow }: { onShow: (ids: string[], label: stri
       note={<>{s.line}{s.added ? ` ${s.added}` : ''}</>}
       actions={<>
         {s.ids.length > 0 && <button className="act-pill" onClick={() => onShow(s.ids, label)}>Show these</button>}
-        <button className="act-pill run-dismiss" onClick={() => { window.quorum.memoryCatchupDismiss().catch(() => {}); }}>Dismiss</button>
+        <button className="act-pill run-dismiss" onClick={() => { window.quorum.memoryCatchupDismiss().catch(() => {}).finally(() => onDismissed?.()); }}>Dismiss</button>
       </>}
     />
   );
