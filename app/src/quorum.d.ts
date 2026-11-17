@@ -17,7 +17,7 @@ export type HelperEvent =
 
 // every generated line carries refs: the ids of the transcript turns it came from
 // the decision layer's model download (decide/download.js); label is the line Settings > Memory shows
-export type ModelsStatus = { state: 'unsupported' | 'idle' | 'checking' | 'downloading' | 'waiting' | 'ready' | 'failed'; doneBytes: number; totalBytes: number; why: string | null; label: string };
+export type ModelsStatus = { state: 'off' | 'unsupported' | 'idle' | 'checking' | 'downloading' | 'waiting' | 'ready' | 'failed'; doneBytes: number; totalBytes: number; why: string | null; label: string };
 export type CliStatus = { added: boolean; where?: 'path' | 'alias'; name?: string; shadowed?: boolean | null; path?: string; onPath?: boolean | null; loaded?: boolean | null; file?: string; resolves?: string; error?: string | null; command?: string };
 export type AgentStatus = { installed: boolean; added: boolean; via?: 'cli' | 'config'; scope?: 'user' | 'project' | 'local' | null; ours?: boolean; error?: string | null };
 export type AgentsStatus = { claude: AgentStatus; codex: AgentStatus; cli: CliStatus };

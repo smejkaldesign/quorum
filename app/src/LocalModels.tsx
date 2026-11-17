@@ -10,7 +10,7 @@ export function LocalModelsCard() {
     window.quorum.modelsStatus().then(setS).catch(() => setS(null));
     return window.quorum.onModelsStatus(setS);
   }, []);
-  if (!s) return null;
+  if (!s || s.state === 'off') return null;
   return (
     <>
       <h3>Local models</h3>

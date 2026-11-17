@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createModelDownload, lowPowerFromPmset, modelsLabel, modelsSupported } from '../decide/download.js';
+import { DECIDER_ON } from '../decide/index.js';
 
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 const A = Buffer.from('a'.repeat(5000));
@@ -106,6 +107,16 @@ describe('model download', () => {
     expect(states).toContain('waiting');
     expect(sleeps.filter((ms) => ms === 60000)).toHaveLength(2);
     expect(d.status().state).toBe('ready');
+  });
+
+  it('downloads nothing while the decision layer is off', async () => {
+    const s = server();
+    const d = createModelDownload({ dir: tmp(), manifest: manifest(), fetch: s.fetch, supported: true, enabled: false });
+    await d.start();
+    expect(d.status().state).toBe('off');
+    expect(s.seen).toEqual([]);
+    // nothing calls the decider until the contradiction agent is wired to it, so main must not download yet
+    expect(DECIDER_ON).toBe(false);
   });
 
   it('does nothing on a Mac the runtime does not support', async () => {

@@ -26,6 +26,7 @@ export const macConditions = () => new Promise((resolve) => execFile('/usr/bin/p
 // the status line Settings > Memory shows
 export function modelsLabel(s) {
   switch (s?.state) {
+    case 'off': return 'Local models: off';
     case 'unsupported': return 'Local models: not available on this Mac';
     case 'checking': return 'Local models: checking the downloaded files';
     case 'downloading': return `Local models: downloading, ${Math.floor((s.doneBytes ?? 0) / MB)} of ${Math.floor((s.totalBytes ?? 0) / MB)} MB`;
@@ -36,12 +37,13 @@ export function modelsLabel(s) {
   }
 }
 
-export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalThis.fetch, supported = modelsSupported(), conditions = async () => ({ ok: true }),
+// enabled: decide/index.js DECIDER_ON; while it is false start() downloads nothing
+export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalThis.fetch, supported = modelsSupported(), enabled = true, conditions = async () => ({ ok: true }),
   retries = 6, backoffMs = 5000, maxBackoffMs = 5 * 60 * 1000, waitMs = 5 * 60 * 1000, retryLaterMs = 60 * 60 * 1000, checkEvery = 8 * MB,
   sleep = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); }), onChange = () => {}, log = () => {} }) {
   const files = Object.entries(manifest).flatMap(([id, m]) => Object.entries(m.files).map(([file, f]) => ({ id, file, url: fileUrl(m, file), sha256: f?.sha256 ?? '', size: f?.size ?? 0, dest: path.join(dir, id, file) })));
   const totalBytes = files.reduce((a, f) => a + f.size, 0);
-  let st = { state: supported ? 'idle' : 'unsupported', doneBytes: 0, totalBytes, why: null };
+  let st = { state: !enabled ? 'off' : supported ? 'idle' : 'unsupported', doneBytes: 0, totalBytes, why: null };
   let running = null;
   let stopped = false;
   let emitted = 0;
@@ -101,6 +103,7 @@ export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalTh
 
   async function run() {
     stopped = false;
+    if (!enabled) return;
     if (!supported) { set({ state: 'unsupported' }); return; }
     const unpinned = files.find((f) => !/^[0-9a-f]{64}$/.test(f.sha256));
     if (unpinned) { set({ state: 'failed', why: `no SHA-256 pinned for ${unpinned.id}/${unpinned.file}` }); return; }
