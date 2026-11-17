@@ -91,5 +91,8 @@ export function createMemorySweep({ file, now = () => Date.now() }) {
     save();
     return s;
   }
-  return { run, state, findings: (vault) => state(vault)?.findings ?? [] };
+  // the state a sweep in another process left (main holds what the memory engine answers, memoryEngine.js); kept in
+  // memory only, since the process that ran the sweep saved it
+  const put = (vault, s) => { load()[vault] = s; };
+  return { run, state, put, findings: (vault) => state(vault)?.findings ?? [] };
 }

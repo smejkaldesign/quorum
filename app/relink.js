@@ -31,6 +31,12 @@ function mdTarget(newRel, oldHref, fromRel) {
  * sources: rels of notes linking to any of them, from the index's backlinks, taken before the move
  * resolve: the index resolver from before the move; allRels: every note after the move
  */
+// the notes that may link to the notes that move: their backlinks, plus every note the index read only the head of,
+// since a link past its head is in no backlink. rewriteLinks reads each one whole from disk
+export function linkSources(index, moving) {
+  return [...new Set([...moving.flatMap((r) => index.backlinks(r).map((b) => b.rel)), ...(index.cutRels?.() ?? [])])];
+}
+
 export function rewriteLinks({ vault, mapping, sources, resolve, allRels, aliasesOf }) {
   const baseCount = new Map();
   for (const rel of allRels) { const b = path.posix.basename(noExt(rel)).toLowerCase(); baseCount.set(b, (baseCount.get(b) ?? 0) + 1); }

@@ -1,5 +1,5 @@
 import './startup-flags.js';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, powerMonitor, screen, session, shell, systemPreferences, Tray } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, powerMonitor, screen, session, shell, systemPreferences, Tray, utilityProcess } from 'electron';
 import { NEEDS_SOURCE, NEEDS_TOOLS, SOURCES, claudeText, modelLabel, runModel, sourceStatus, stopClaudeText } from './models.js';
 import { BY_ID, cleanConnectors, cleanProviders, needsKey, providerFor, providersFromSource, sourceFromProviders } from './connectors/catalog.js';
 import { connectorKey, removeConnectorKey, setConnectorKey, testSavedConnector } from './connectors/keys.js';
@@ -12,7 +12,7 @@ import { createFolder, createNote, duplicateItem, moveItem, readVaultNote, renam
 import { createVaultIndex } from './vindex.js';
 import { applyUndo, sha, undoRecord } from './fixUndo.js';
 import { changedSince, createFixJournal, fixCheck, hashNotes, recoveryReason, rollback } from './fixJournal.js';
-import { addAlias, retargetLinks, rewriteLinks, unlinkTarget, writeAtomic } from './relink.js';
+import { addAlias, linkSources, retargetLinks, rewriteLinks, unlinkTarget, writeAtomic } from './relink.js';
 import store from './store/index.js';
 import { registerSources } from './sources/index.js';
 import { DATA_DIR, EDITION, ENV, loadEE, isDevelopment } from './edition.js';
@@ -75,14 +75,14 @@ import { createMemorySweep, dueSweep, rescanTags, scanTags } from './memorySweep
 import { RULE_LABELS, RULES } from './rules/index.js';
 import { relatedLine } from './rules/nearDuplicates.js';
 import { DAILY_CAP, WRONG_NOTE_FIX, createDrafter, draftKind, evidenceRels, fallbackItem, unlinkItem, withDraft } from './memoryDraft.js';
-import { createContradictionAgent } from './contradictionAgent.js';
+import { catchupHooks, createSaveSweeps, forkEngine, slotBinder, startMemoryEngine } from './memoryWiring.js';
 import { annotateLine, ruleBar } from './contradictionResolve.js';
 import { ignoreProposals, ignored, ruleRecords } from './ruleRecords.js';
 import { demotions, kindOf, logGate, ruleDemotion, runGate, signature, weakLink } from './qualityGate.js';
 import { createAgentActivity } from './agentActivity.js';
 import { createCatchup } from './memoryCatchup.js';
 import { createLastRunStore, planOf } from './catchupPlan.js';
-import { analyze as contradictionPass, rule as CONTRADICTION_RULE } from './rules/contradictions.js';
+import { rule as CONTRADICTION_RULE } from './rules/contradictions.js';
 import { createElsewhere, withFound } from './linkElsewhere.js';
 import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
@@ -2480,19 +2480,28 @@ let vindex = null;
 // after a save, an incremental sweep every 3.5 hours, a full sweep once a day while the person is away
 const memorySweep = createMemorySweep({ file: path.join(DATA_DIR, 'memory-findings.json') });
 const sweepPaused = () => settings.memorySweeps === false;
-let sweeping = false;
-// the last confidential tag scan; a save sweep reads again only the notes that changed
+// the last confidential tag scan, from the memory engine's last sweep (or main's own scan for Confidential marks), with
+// the set of notes it found marked
 let tagScan = null;
+const setTags = (vault, tags) => { tagScan = { vault, tags, marked: new Set(tags.filter((t) => !isOff(t.value)).map((t) => t.rel)) }; };
+// sweeps run one after another in the memory engine (memoryEngine.js), off the main process; a sweep asked for while one
+// runs waits for it
+let sweepChain = Promise.resolve();
 // after: false leaves the gate and Apply memory fixes on its own to the caller (memoryCheck)
 function sweep(kind, only = null, { after = true } = {}) {
+  const run = sweepChain.then(() => sweepNow(kind, only, { after }));
+  sweepChain = run.catch(() => null);
+  return run;
+}
+async function sweepNow(kind, only, { after }) {
   const b = brain();
-  if (!b || !vindex || sweeping) return null;
-  sweeping = true;
+  if (!b || !vindex) return null;
   try {
-    const tags = kind === 'save' && only && tagScan?.vault === b.vault ? rescanTags(b.vault, tagScan.tags, only, excludedPath) : scanTags(b.vault, excludedPath);
-    tagScan = { vault: b.vault, tags };
-    const ctx = { notes: vindex.snapshot(), resolve: (t, from) => vindex.resolve(t, from), tags, folders: confFolders(b.vault), contradictions: contradictionCtx(b.vault) };
-    const s = memorySweep.run(b.vault, kind, ctx, { only });
+    const r = await memoryEngine.sweep(kind, only);
+    if (!r?.state || brain()?.vault !== b.vault) return null;
+    setTags(b.vault, r.tags ?? []);
+    memorySweep.put(b.vault, r.state);
+    const s = r.state;
     log('memory sweep', kind, `${s.last.notes} notes`, `${s.last.ms} ms`, `${s.last.found} findings`);
     toUI('memory-updates', null);
     // a sweep on a schedule, or one a person asked for, is when Apply memory fixes on its own runs; a save sweep is not,
@@ -2502,22 +2511,13 @@ function sweep(kind, only = null, { after = true } = {}) {
     scheduleGate(4000);
     if (kind !== 'save') setTimeout(() => { try { autoApply(); } catch (e) { log('auto apply', e?.message); } }, 0);
     return s.last;
-  } catch (e) { log('memory sweep', e?.message); return null; } finally { sweeping = false; }
+  } catch (e) { log('memory sweep', e?.message); return null; }
 }
-let saveTimer = null;
-const saveRels = new Set();
 const recordingNow = () => meeting.capturing || meeting.armed;
-// a recording writes its note every few seconds; the notes saved during it are checked once it ends
-function sweepOnSave(rels) {
-  for (const r of rels ?? []) saveRels.add(r);
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    saveTimer = null;
-    if (recordingNow()) { sweepOnSave([]); return; }
-    if (!saveRels.size) return;
-    const only = [...saveRels]; saveRels.clear(); sweep('save', only);
-  }, 3000);
-}
+// the notes saved in the last few seconds are checked together (memoryWiring.js). They wait while a meeting is
+// recorded, since it writes its note every few seconds, and while a catch-up runs, since it sweeps once when it ends
+const saves = createSaveSweeps({ sweep, hold: () => recordingNow() || catchup.running() });
+const sweepOnSave = (rels) => saves.add(rels);
 function sweepTick() {
   const b = brain();
   if (!b || !vindex) return;
@@ -2544,7 +2544,7 @@ async function memoryCheck(kind) {
   try {
     work.progress(0, 3, first ? 'Checking your memory: running the checks on every note' : 'Running the checks on every note');
     await tick();
-    const last = sweep(kind, null, { after: false });
+    const last = await sweep(kind, null, { after: false });
     if (work.cancelled) return last;
     await gateNow(work);
     if (!work.cancelled) setTimeout(() => { try { autoApply(); } catch (e) { log('auto apply', e?.message); } }, 0);
@@ -2589,7 +2589,7 @@ ipcMain.handle('memory-findings', () => {
   const s = brain() ? memorySweep.state(brain().vault) : null;
   const held = gateHeld();
   const findings = findingsNow().map((f) => { const h = held.get(`${ROW.finding}${f.key}`); return h ? { ...f, held: h } : f; });
-  return { findings, last: s?.last ?? null, lastFull: s?.lastFull ?? 0, paused: sweepPaused(), labels: RULE_LABELS, drafts: draftViews(), checking: gateChecking() };
+  return { findings, last: s?.last ?? null, lastFull: s?.lastFull ?? 0, paused: sweepPaused(), labels: RULE_LABELS, drafts: draftViews(), checking: gateChecking(), engineError: memoryEngine.error() };
 });
 // Archive or Move back to review on findings, by key; the Notifications marks move with them
 ipcMain.handle('memory-findings-archive', (_e, keys, on) => {
@@ -2608,9 +2608,7 @@ function openIndex() {
   vindex?.stop();
   vindex = null;
   // saves waiting for a check belong to the vault that was open
-  clearTimeout(saveTimer);
-  saveTimer = null;
-  saveRels.clear();
+  saves.clear();
   const b = brain();
   if (!b) return;
   // the first change the index reports is its first full read; the review rules sweep once it is in
@@ -3492,7 +3490,7 @@ ipcMain.handle('memory-gate', () => {
 // Let the agent read confidential notes. An item that needs a note it may not read gets no draft
 function confidentialNote(vault, rel, text) {
   if (isConfidentialText(text)) return true;
-  if (tagScan?.vault === vault && tagScan.tags.some((t) => t.rel === rel && !isOff(t.value))) return true;
+  if (tagScan?.vault === vault && tagScan.marked.has(rel)) return true;
   return !!folderMarkOf(rel, confFolders(vault));
 }
 // a note the agent may read: never one the read guard keeps out, and a confidential one only with the setting on
@@ -3578,24 +3576,36 @@ const drafter = createDrafter({
 });
 // Contradiction detection (rules/contradictions.js): the agent's claims and verdicts run behind the same setting, the
 // same daily cap (shared with the drafter), the same pause and the same read gate. A draft goes first; the agent takes
-// the minute only when the drafter has nothing to do. A note it read or a pair it judged is checked again at once
-const contradictionAgent = createContradictionAgent({
-  file: path.join(DATA_DIR, 'memory-contradictions.json'),
+// the minute only when the drafter has nothing to do. A note it read or a pair it judged is checked again at once.
+// The agent's queues, its stored claims and verdicts, the sweeps and the whole-vault pipeline run in the memory engine
+// (memoryEngine.js), a utility process with its own heap (memoryWorker.js), so neither a long sweep nor a large note
+// stops the windows. Main keeps the vault index, the settings, the abort slots and the model calls (memoryHost.js)
+// heavy: the decision log's bar, the confidential folders and the opt-out terms, for a sweep or a pass over the vault
+function memoryCond(heavy = false) {
+  const b = brain();
+  const out = {
+    enabled: settings.memoryDrafts === true && !sweepPaused() && !!b && !!vindex,
+    cap: Math.max(0, (settings.memoryDraftCap ?? DAILY_CAP) - drafter.status().used),
+    busy: recordingNow() || !!draftAbort || fixRunList().some((r) => r.status === 'queued' || r.status === 'running'),
+    idleMs: powerMonitor.getSystemIdleTime() * 1000,
+    drafts: settings.memoryDrafts === true,
+  };
+  if (!heavy || !b) return out;
+  let bar = null;
+  try { bar = ruleBar(decisionLog.list(b.vault)); } catch {}
+  return { ...out, bar, folders: confFolders(b.vault), terms: suggester.terms() };
+}
+const memoryEngine = startMemoryEngine({
+  fork: forkEngine(utilityProcess, here, DATA_DIR),
+  index: () => vindex,
+  vault: () => brain()?.vault ?? null,
+  mayRead: (rel, text) => !!brain() && agentMayRead(brain().vault, rel, text),
+  cond: memoryCond,
   // one call reads up to 20 notes, so it gets more time than a draft
   model: (prompt, system) => claudeText({ prompt, system, model: 'sonnet', cwd: tmpdir(), timeoutMs: 300000, signal: contradictionAbort?.signal ?? null }),
-  modelId: 'sonnet',
-  enabled: () => settings.memoryDrafts === true && !sweepPaused() && !!brain() && !!vindex,
-  cap: () => Math.max(0, (settings.memoryDraftCap ?? DAILY_CAP) - drafter.status().used),
-  busy: () => recordingNow() || !!draftAbort || fixRunList().some((r) => r.status === 'queued' || r.status === 'running'),
-  idleMs: () => powerMonitor.getSystemIdleTime() * 1000,
-  readable: (rel, text) => !!brain() && agentMayRead(brain().vault, rel, text),
   log,
 });
-function contradictionCtx(vault) {
-  let bar = null;
-  try { bar = ruleBar(decisionLog.list(vault)); } catch {}
-  return { provider: settings.memoryDrafts === true ? contradictionAgent.provider : null, bar };
-}
+const contradictionAgent = memoryEngine.agent;
 // each drafting run is agent activity; Cancel stops the model call, and the item is drafted again later
 let draftAbort = null;
 async function draftTick() {
@@ -3633,34 +3643,26 @@ setInterval(() => { draftTick(); }, 60000).unref?.();
 // cap, one model call at a time, with the drafter's and the contradiction agent's timeouts and gates. It needs Let the
 // agent draft fixes, writes nothing to the vault and stops by itself. Onboarding offers it once the vault connects, and
 // Settings > Memory has the button; the control socket starts it on an existing install (scripts/memory-catchup.mjs)
-const catchupOwns = { draft: null, claims: null };
 const catchup = createCatchup({
   drafter,
   agent: contradictionAgent,
   activity: agentActivity,
-  // stage 1 to 4 over the whole vault with the agent's provider, so its queues hold every note still to read
-  refresh: async () => {
-    const b = brain();
-    if (!b || !vindex) return;
-    contradictionPass({ notes: vindex.snapshot(), resolve: (t, from) => vindex.resolve(t, from), contradictions: contradictionCtx(b.vault) });
-  },
-  // the pass's call holds the same abort slot as a scheduled call, so the two never run at once; a slot another call
-  // holds is left alone
-  bind: (kind, ctl) => {
-    const cur = kind === 'draft' ? draftAbort : contradictionAbort;
-    if (ctl ? cur : cur !== catchupOwns[kind]) return;
-    catchupOwns[kind] = ctl;
-    if (kind === 'draft') draftAbort = ctl; else contradictionAbort = ctl;
-  },
-  after: async (res, kind) => {
-    if (kind === 'draft' && (res?.drafted || res?.confirmed)) toUI('memory-updates', null);
-    if (res?.rels?.length) sweepOnSave(res.rels);
-  },
+  // refresh, bind, after and finish (memoryWiring.js): the pass's calls hold main's abort slots, nothing runs between
+  // calls, and the pass ends with one full sweep and one gate run
+  ...catchupHooks({
+    engine: memoryEngine,
+    ready: () => !!brain() && !!vindex,
+    sweep,
+    gate: () => gateNow(),
+    saves,
+    kind: () => (memorySweep.state(brain()?.vault ?? '')?.lastFull ? 'full' : 'first'),
+    bind: slotBinder({ get: (k) => (k === 'draft' ? draftAbort : contradictionAbort), set: (k, ctl) => { if (k === 'draft') draftAbort = ctl; else contradictionAbort = ctl; } }),
+  }),
   notes: () => vindex?.rels().length ?? 0,
   emit: (st) => toUI('memory-catchup', st),
   // the notes read in earlier passes, the notes still queued, and Needs review before and after, for the note count
   // and the last-run card in Memory health
-  saved: () => catchupEstimate()?.saved ?? 0,
+  saved: async () => (await catchupEstimate())?.saved ?? 0,
   left: () => contradictionAgent.pendingNotes(),
   review: () => catchupReview(),
   store: createLastRunStore(path.join(DATA_DIR, 'memory-catchup-last.json')),
@@ -3677,11 +3679,10 @@ function catchupReview() {
 }
 // what a catch-up would cost now: stage 1's notes to read packed into claim calls, leaving out notes whose claims are
 // stored, plus the drafts and second drafts that wait. Judge calls are counted as the pass finds pairs
-function catchupEstimate() {
+async function catchupEstimate() {
   const b = brain();
   if (!b || !vindex) return null;
-  const a = contradictionPass({ notes: vindex.snapshot(), resolve: (t, from) => vindex.resolve(t, from) });
-  const claims = contradictionAgent.estimate(a.toRead);
+  const claims = await memoryEngine.estimate();
   const drafts = drafter.pendingCalls();
   const est = { notes: vindex.rels().length, read: claims.notes, claimCalls: claims.calls, draftCalls: drafts, calls: claims.calls + drafts, drafting: settings.memoryDrafts === true };
   // the plan shown before a pass: the notes to check, those saved from earlier passes, and estimates of the pairs to
@@ -4152,7 +4153,7 @@ function noteMark(vault, rel) {
 ipcMain.handle('confidential-marks', () => {
   const b = brain();
   if (!b) return { folders: {}, notes: {}, values: [] };
-  if (tagScan?.vault !== b.vault) tagScan = { vault: b.vault, tags: scanTags(b.vault, excludedPath) };
+  if (tagScan?.vault !== b.vault) setTags(b.vault, scanTags(b.vault, excludedPath));
   const notes = {};
   for (const t of tagScan.tags) if (t.value != null && !isOff(t.value)) notes[t.rel] = String(Array.isArray(t.value) ? t.value[0] : t.value);
   const folders = confFolders(b.vault);
@@ -4195,7 +4196,7 @@ ipcMain.handle('confidential-mark', (_e, rel, isDir, value) => {
     try { memoryVersions.record({ vault: b.vault, rel: r, before: text, after: next, who: 'you', reason: v ? `Marked confidential: ${v}` : 'Removed the confidential mark', agent: false }); } catch (e) { log('confidential versions', e?.message); }
   }
   vindex?.sync();
-  if (tagScan?.vault === b.vault) tagScan = { vault: b.vault, tags: rescanTags(b.vault, tagScan.tags, [r], excludedPath) };
+  if (tagScan?.vault === b.vault) setTags(b.vault, rescanTags(b.vault, tagScan.tags, [r], excludedPath));
   setTimeout(() => sweep('save', [r]), 0);
   toUI('memory-updates', [r]);
   return v ? `Marked ${r.split('/').pop().replace(/\.md$/i, '')} confidential: ${v}` : `Removed the confidential mark from ${r.split('/').pop().replace(/\.md$/i, '')}`;
@@ -4231,14 +4232,14 @@ function relocate(rel, doMove) {
   const vault = brain().vault;
   const prefix = `${rel}/`;
   const moving = vindex ? vindex.rels().filter((r) => r === rel || r.startsWith(prefix)) : [];
-  const sources = new Set(moving.flatMap((r) => vindex.backlinks(r).map((b) => b.rel)));
+  const sources = vindex ? linkSources(vindex, moving) : [];
   const resolve = vindex?.resolve;
   const aliasesOf = vindex?.aliasesOf;
   const next = doMove();
   if (!vindex || !moving.length) return { rel: next, files: 0, links: 0 };
   const mapping = new Map(moving.map((r) => [r, r === rel ? next : next + r.slice(rel.length)]));
   const allRels = vindex.rels().map((r) => mapping.get(r) ?? r);
-  const done = rewriteLinks({ vault, mapping, sources: [...sources], resolve, allRels, aliasesOf });
+  const done = rewriteLinks({ vault, mapping, sources, resolve, allRels, aliasesOf });
   vindex.sync();
   log('relocated', rel, '->', next, `rewrote ${done.links} links in ${done.files} notes`);
   return { rel: next, ...done };

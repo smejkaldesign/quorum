@@ -14,14 +14,19 @@ import { diffReview, progressOf } from './catchupPlan.js';
 //   refresh() fills the agent's queues from the vault as it reads now (main runs stage 1 to 4 with the provider)
 //   bind(kind, ctl) hands main the AbortController of the call that runs ('draft' or 'claims'), so Cancel stops the
 //   model call; ctl is null once it ends
-//   after(result, kind) runs after each call, kind 'draft' or 'claims' (main checks the notes it read again)
+//   after(result, kind) runs after each call, kind 'draft' or 'claims'. It must stay light: main only notes what the
+//   call touched, since a sweep of the whole vault after every call is what made a catch-up slow the app
+//   finish(end, touched) runs once when the pass ends, before the windows hear it ended: main runs one full sweep and
+//   the gate there. touched: the note paths the pass's calls read or judged
 //   notes()   how many notes the vault holds, for the label
-//   emit(status) tells the windows when the pass starts, moves on or ends
-//   saved()   how many notes the agent read in earlier passes (claims stored), so the note count starts there
+//   emit(status) tells the windows when the pass starts, moves on or ends; moves are sent at most once per EMIT_MS
+//   saved()   how many notes the agent read in earlier passes (claims stored), so the note count starts there. It may
+//   answer a promise, since main asks the memory engine
 //   left()    how many notes the agent still has queued to read; without it the label counts calls
 //   review()  the Needs review items now ([{ id, type, drafted }]), to tell what the pass added
 //   store     createLastRunStore (catchupPlan.js): keeps the last pass in the data folder
 export const BUSY_WAIT_MS = 5000;
+export const EMIT_MS = 1000;
 // how many times the pass reads the vault again when both queues look empty, before it calls the pass done
 const RESWEEPS = 2;
 
@@ -32,7 +37,7 @@ export const catchupLabel = (notes, done, total) => `Checking all ${fmt(notes)} 
 export const readyLabel = (notes) => `Getting ready to check ${fmt(notes)} ${notes === 1 ? 'note' : 'notes'}`;
 export const notesLabel = (checked, of) => `Checked ${fmt(checked)} of ${fmt(of)} ${of === 1 ? 'note' : 'notes'}`;
 
-export function createCatchup({ drafter, agent, activity, refresh = async () => {}, bind = () => {}, after = async () => {}, notes = () => 0, emit = () => {}, saved = () => 0, left = null, review = () => null, store = null, wait = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); }), busyWaitMs = BUSY_WAIT_MS, log = () => {} }) {
+export function createCatchup({ drafter, agent, activity, refresh = async () => {}, bind = () => {}, after = async () => {}, finish = async () => {}, notes = () => 0, emit = () => {}, saved = () => 0, left = null, review = () => null, store = null, wait = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); }), busyWaitMs = BUSY_WAIT_MS, emitMs = EMIT_MS, clock = () => Date.now(), log = () => {} }) {
   let run = null;
   let last = store?.load() ?? null;
   // the calls a pass would make now, for the estimate in onboarding and Settings > Memory
@@ -54,6 +59,18 @@ export function createCatchup({ drafter, agent, activity, refresh = async () => 
     if (r.of) r.work.progress(r.checked, r.of, notesLabel(r.checked, r.of));
     else if (r.total) r.work.progress(r.done, r.total, catchupLabel(r.notes, r.done, r.total));
     else r.work.progress(0, 0, readyLabel(r.notes));
+  };
+  // the progress of a pass reaches the windows and the last-run file at most once per emitMs; the latest one waits and
+  // goes when the time is up
+  let sentAt = 0;
+  let later = null;
+  const flush = () => { clearTimeout(later); later = null; if (!run) return; sentAt = clock(); show(run); store?.save(record(run, 'running')); emit(status()); };
+  const moved = () => {
+    if (later) return;
+    const due = sentAt + emitMs - clock();
+    if (due <= 0) { flush(); return; }
+    later = setTimeout(flush, due);
+    later.unref?.();
   };
 
   async function loop(r) {
@@ -87,11 +104,10 @@ export function createCatchup({ drafter, agent, activity, refresh = async () => 
       if (kind === 'claims' && Array.isArray(res?.extracted)) r.read += res.extracted.length;
       // a claim call that failed: its notes leave the queue unread, and the agent asks for them again after a day
       if (kind === 'claims' && Array.isArray(res?.dropped)) r.skipped += res.dropped.length;
+      for (const rel of res?.rels ?? []) r.touched.add(rel);
       try { await after(res, kind); } catch (e) { log('memory catchup after', e?.message); }
       r.total = Math.max(r.total, r.done + remaining());
-      show(r);
-      store?.save(record(r, 'running'));
-      emit(status());
+      moved();
     }
     return 'cancelled';
   }
@@ -99,8 +115,9 @@ export function createCatchup({ drafter, agent, activity, refresh = async () => 
   // starts a pass. Answers its status; a pass that runs already is left as it is
   async function start() {
     if (run) return status();
-    const r = { done: 0, total: 0, notes: notes(), stopped: false, ctl: null, work: null, read: 0, skipped: 0, checked: 0, of: 0, saved: 0, startedAt: Date.now(), before: null };
-    try { r.saved = saved() ?? 0; r.before = review(); } catch (e) { log('memory catchup plan', e?.message); }
+    const r = { done: 0, total: 0, notes: notes(), stopped: false, ctl: null, work: null, read: 0, skipped: 0, checked: 0, of: 0, saved: 0, startedAt: Date.now(), before: null, touched: new Set() };
+    let pendingSaved = null;
+    try { const v = saved(); if (typeof v?.then === 'function') pendingSaved = v; else r.saved = v ?? 0; r.before = review(); } catch (e) { log('memory catchup plan', e?.message); }
     r.checked = r.saved;
     r.work = activity.start({ kind: 'catchup', label: readyLabel(r.notes), cancellable: true, immediate: true, onCancel: () => { r.stopped = true; r.ctl?.abort(); } });
     run = r;
@@ -111,15 +128,20 @@ export function createCatchup({ drafter, agent, activity, refresh = async () => 
     r.promise = (async () => {
       let end = 'done';
       try {
+        if (pendingSaved) { try { r.saved = (await pendingSaved) ?? 0; } catch (e) { log('memory catchup plan', e?.message); } r.checked = Math.max(r.checked, r.saved); }
         await refresh();
         r.total = remaining();
-        show(r);
-        emit(status());
+        flush();
         end = await loop(r);
       } catch (e) {
         end = 'failed';
         log('memory catchup', e?.message);
       } finally {
+        clearTimeout(later);
+        later = null;
+        // what the pass's calls found reaches Needs review in one sweep and one gate run, before the pass tells what it added
+        if (r.done) { try { await finish(end, [...r.touched]); } catch (e) { log('memory catchup finish', e?.message); } }
+        if (left) show(r);
         let added = null;
         try { const now = review(); if (r.before && now) added = diffReview(r.before, now); } catch (e) { log('memory catchup review', e?.message); }
         last = { ...record(r, end), startedAt, endedAt: Date.now(), added };
