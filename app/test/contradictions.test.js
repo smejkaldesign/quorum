@@ -434,6 +434,28 @@ describe('stage 4 resolve and stage 5 fixes', () => {
     expect(a.pendingCalls()).toBe(0);
   });
 
+  it('keeps the pairs of a judge call in flight while the gate reads the rest, so a sweep then queues none again', async () => {
+    const notes = (r) => [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: r, text: '#\n\nAtlas uses Y.\n' }];
+    const p1 = { key: 'k1', a: claim({ authority: 1 }), b: claim({ rel: 'b.md' }) };
+    const p2 = { key: 'k2', a: claim({}), b: claim({ rel: 'c.md' }) };
+    let release;
+    const slow = new Promise((r) => { release = r; });
+    const gate = { check: async (p) => { if (p.key === 'k2') await slow; return { send: true, audit: false, drop: false, tier: 't0' }; }, record: () => false };
+    const a = agent({ gate, model: async () => JSON.stringify({ verdicts: [] }) });
+    a.provider.begin();
+    a.provider.judgeOf(p1, notes('b.md'));
+    a.provider.judgeOf(p2, notes('c.md'));
+    const pending = a.tick({ uncapped: true });
+    await new Promise((r) => setTimeout(r, 0));
+    // a save sweep while the gate reads k2: k1 is already in the call
+    a.provider.begin();
+    a.provider.judgeOf(p1, notes('b.md'));
+    a.provider.judgeOf(p2, notes('c.md'));
+    expect(a.status().judge).toBe(0);
+    release();
+    await pending;
+  });
+
   it('asks the local decider before it queues a note and the gate before it sends a pair', async () => {
     const notes1 = [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: 'b.md', text: '#\n\nAtlas uses Y.\n' }];
     const notes2 = [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: 'c.md', text: '#\n\nAtlas uses Z.\n' }];

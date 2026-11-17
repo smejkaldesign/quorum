@@ -202,6 +202,7 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
       running.add(slot);
       try { pairs = await gatedBatch(s); } finally { running.delete(slot); }
     }
+    // the pairs of the call stay in flight until call() below takes them over and lets them go when it ends
     if (pairs?.length) {
       const items = pairs.map((j, i) => ({ id: `p${i + 1}`, key: j.p.key, p: j.p, notes: j.notes, h: j.h }));
       const keys = items.map((x) => x.key);
@@ -305,11 +306,13 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
       if (out.some((x) => notePair(x.p) === notePair(j.p))) continue;
       if (out.length && (single.has(j.p.key) || single.has(out[0].p.key))) continue;
       wantJudge.delete(j.p.key);
+      // the pair stays in the in-flight set from here: through the gate and, once it joins the call, until call()
+      // takes it over, so a sweep while the gate reads a later pair does not queue it again
+      inflight.add(j.p.key);
       if (gate) {
-        inflight.add(j.p.key);
         let g;
-        try { g = await gate.check(j.p); } finally { inflight.delete(j.p.key); }
-        if (!g.send) { s.judged[j.p.key] = { hash: j.h, at: now(), label: 'same', by: g.tier }; dropped++; continue; }
+        try { g = await gate.check(j.p); } catch (e) { inflight.delete(j.p.key); throw e; }
+        if (!g.send) { inflight.delete(j.p.key); s.judged[j.p.key] = { hash: j.h, at: now(), label: 'same', by: g.tier }; dropped++; continue; }
       }
       out.push(j);
       used += size;
