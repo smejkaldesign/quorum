@@ -17,6 +17,7 @@ import { createMemorySweep, rescanTags, scanTags } from './memorySweep.js';
 import { analyze as contradictionPass } from './rules/contradictions.js';
 import { scanHygiene } from './vaultHygiene.js';
 import { MAX_RULE_TEXT, ruleText } from './rules/common.js';
+import { MEMORY_MODELS } from './memoryModels.js';
 
 // the text cut the rules read (rules/common.js), exported here for the callers that already import it
 export { MAX_RULE_TEXT, ruleText };
@@ -38,8 +39,9 @@ export function createMemoryEngine({ dataDir, ask = async () => { throw new Erro
   const sweeps = createMemorySweep({ file: path.join(dataDir, 'memory-findings.json'), now });
   const agent = createContradictionAgent({
     file: path.join(dataDir, 'memory-contradictions.json'),
-    model: (prompt, system) => ask('model', { prompt, system }),
-    modelId: 'sonnet',
+    // kind ('claims' or 'judge') picks the model in main; lane names the abort of the caller that asked for the call
+    model: (prompt, system, { kind = null, lane = null } = {}) => ask('model', { prompt, system, kind, lane }),
+    modelId: MEMORY_MODELS.claims,
     enabled: () => cond.enabled === true,
     cap: () => cond.cap ?? 0,
     busy: () => cond.busy === true,
@@ -124,9 +126,9 @@ export function createMemoryEngine({ dataDir, ask = async () => { throw new Erro
     return agent.estimate(a.toRead);
   }
 
-  async function tick({ uncapped = false, cond: c = null } = {}) {
+  async function tick({ uncapped = false, parallel = 1, lane = null, cond: c = null } = {}) {
     if (c) cond = { ...cond, ...c };
-    const res = await agent.tick({ uncapped, onStart: (w) => emit('agent-start', w) });
+    const res = await agent.tick({ uncapped, parallel, lane, onStart: (w) => emit('agent-start', { ...w, lane }) });
     return res;
   }
 

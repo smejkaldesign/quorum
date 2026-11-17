@@ -100,3 +100,40 @@ describe('an engine that keeps stopping', () => {
     expect(ports).toHaveLength(3);
   });
 });
+
+describe('model calls through the host', () => {
+  it('passes each call its kind and the abort signal of the tick that asked for it', async () => {
+    const vault = tmp();
+    const data = tmp();
+    writeSynthVault(vault, { notes: 60 });
+    const ix = createVaultIndex({ vault, isExcludedPath: () => false, isExcludedText: () => false, redact: (t) => t, onChange: () => {} });
+    ix.sync();
+    const seen = [];
+    const host = createMemoryHost({
+      port: null, restart: () => new Worker(WORKER, { workerData: { dataDir: data } }), index: () => ix, vault: () => vault, mayRead: () => true,
+      model: async (prompt, system, opts) => { seen.push(opts); return synthModel(prompt); },
+      cond: () => ({ enabled: true, cap: 0, busy: false, idleMs: 0, drafts: true, bar: null, folders: {}, terms: [] }),
+    });
+    hosts.push(host);
+    await host.refresh();
+    const a = new AbortController();
+    const b = new AbortController();
+    const starts = [];
+    const [ra, rb] = await Promise.all([
+      host.agent.tick({ uncapped: true, parallel: 2, signal: a.signal, onStart: (w) => starts.push(w.kind) }),
+      host.agent.tick({ uncapped: true, parallel: 2, signal: b.signal }),
+    ]);
+    expect(ra.extracted?.length).toBeGreaterThan(0);
+    expect(rb.extracted?.length).toBeGreaterThan(0);
+    expect(seen.map((o) => o.kind)).toEqual(['claims', 'claims']);
+    expect(seen.map((o) => o.signal)).toEqual([a.signal, b.signal]);
+    expect(starts).toEqual(['claims']);
+    // a tick with no signal of its own (the daily-cap path) passes none, so main's own slot stops the call
+    // the claims read bring pairs to judge, and a judge call names its kind
+    await host.refresh();
+    const before = seen.length;
+    await host.agent.tick({ uncapped: true });
+    expect(seen).toHaveLength(before + 1);
+    expect(seen.at(-1)).toEqual({ kind: 'judge', signal: null });
+  });
+});

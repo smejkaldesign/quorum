@@ -20,6 +20,7 @@ import { diffReview, progressOf } from './catchupPlan.js';
 //   the gate there. touched: the note paths the pass's calls read or judged
 //   notes()   how many notes the vault holds, for the label
 //   emit(status) tells the windows when the pass starts, moves on or ends; moves are sent at most once per EMIT_MS
+//   parallel() how many model calls the pass runs at once, 1 to MAX_PARALLEL
 //   saved()   how many notes the agent read in earlier passes (claims stored), so the note count starts there. It may
 //   answer a promise, since main asks the memory engine
 //   left()    how many notes the agent still has queued to read; without it the label counts calls
@@ -27,6 +28,9 @@ import { diffReview, progressOf } from './catchupPlan.js';
 //   store     createLastRunStore (catchupPlan.js): keeps the last pass in the data folder
 export const BUSY_WAIT_MS = 5000;
 export const EMIT_MS = 1000;
+// the most calls a pass runs at once (Settings > Memory, memoryCatchupParallel)
+export const MAX_PARALLEL = 4;
+export const DEFAULT_PARALLEL = 4;
 // how many times the pass reads the vault again when both queues look empty, before it calls the pass done
 const RESWEEPS = 2;
 
@@ -37,7 +41,7 @@ export const catchupLabel = (notes, done, total) => `Checking all ${fmt(notes)} 
 export const readyLabel = (notes) => `Getting ready to check ${fmt(notes)} ${notes === 1 ? 'note' : 'notes'}`;
 export const notesLabel = (checked, of) => `Checked ${fmt(checked)} of ${fmt(of)} ${of === 1 ? 'note' : 'notes'}`;
 
-export function createCatchup({ drafter, agent, activity, refresh = async () => {}, bind = () => {}, after = async () => {}, finish = async () => {}, notes = () => 0, emit = () => {}, saved = () => 0, left = null, review = () => null, store = null, wait = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); }), busyWaitMs = BUSY_WAIT_MS, emitMs = EMIT_MS, clock = () => Date.now(), log = () => {} }) {
+export function createCatchup({ drafter, agent, activity, refresh = async () => {}, bind = () => {}, after = async () => {}, finish = async () => {}, notes = () => 0, emit = () => {}, saved = () => 0, left = null, review = () => null, store = null, wait = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); }), busyWaitMs = BUSY_WAIT_MS, parallel = () => 1, emitMs = EMIT_MS, clock = () => Date.now(), log = () => {} }) {
   let run = null;
   let last = store?.load() ?? null;
   // the calls a pass would make now, for the estimate in onboarding and Settings > Memory
@@ -52,7 +56,7 @@ export function createCatchup({ drafter, agent, activity, refresh = async () => 
   };
   const shown = (l) => (l ? Object.fromEntries(Object.entries(l).filter(([k]) => k !== 'before')) : null);
   const status = () => { if (run) return { running: true, done: run.done, total: run.total, notes: run.notes, id: run.work.id, checked: run.checked, of: run.of, saved: run.saved, skipped: run.skipped, startedAt: run.startedAt }; settle(); return { running: false, last: shown(last) }; };
-  const record = (r, end) => ({ end, done: r.done, total: r.total, notes: r.notes, checked: r.checked, of: r.of, saved: r.saved, skipped: r.skipped, startedAt: r.startedAt });
+  const record = (r, end) => ({ end, done: r.done, total: r.total, notes: r.notes, checked: r.checked, of: r.of, saved: r.saved, skipped: r.skipped, startedAt: r.startedAt, parallel: r.parallel });
   // the bar and the label: the notes checked when the pass knows them, the calls otherwise
   const show = (r) => {
     if (left) { const p = progressOf(r.of, { saved: r.saved, read: r.read, left: left() }); r.checked = p.checked; r.of = p.of; }
@@ -73,53 +77,81 @@ export function createCatchup({ drafter, agent, activity, refresh = async () => 
     later.unref?.();
   };
 
+  // The pass runs parallel() lanes at once. Lane 0 drafts first and reads claims when no draft waits; the other lanes
+  // read claims and judge pairs. Each call has its own AbortController and Cancel aborts them all. With one lane the
+  // claim call holds main's abort slot (bind) as a scheduled call does; with more, each call passes its own signal. A
+  // lane that finds both queues empty while other calls run waits for one of them to end, since a note read can bring a
+  // pair to judge; when nothing runs, one lane reads the vault again for all of them
   async function loop(r) {
+    const n = r.parallel;
     let empty = 0;
-    while (!r.stopped) {
-      const ctl = new AbortController();
-      r.ctl = ctl;
-      let res;
-      let kind = 'draft';
-      try {
-        bind('draft', ctl);
-        try { res = await drafter.tick({ uncapped: true }); } finally { bind('draft', null); }
-        if (res?.skipped === 'nothing' && !r.stopped) {
-          kind = 'claims';
-          bind('claims', ctl);
-          try { res = await agent.tick({ uncapped: true }); } finally { bind('claims', null); }
+    // the lanes in a tick now; a lane that found nothing while others call waits for one of their calls to end
+    let calling = 0;
+    let end = null;
+    let waiters = [];
+    const ended = () => { const w = waiters; waiters = []; for (const f of w) f(); };
+    const nextEnd = () => new Promise((res) => { waiters.push(res); });
+    let rereading = null;
+    async function lane(i) {
+      while (!r.stopped && !end) {
+        const ctl = new AbortController();
+        r.ctls.add(ctl);
+        let res = null;
+        let kind = 'claims';
+        calling++;
+        try {
+          if (i === 0) {
+            kind = 'draft';
+            bind('draft', ctl);
+            try { res = await drafter.tick({ uncapped: true }); } finally { bind('draft', null); }
+          }
+          if ((i !== 0 || res?.skipped === 'nothing') && !r.stopped) {
+            kind = 'claims';
+            if (n === 1) bind('claims', ctl);
+            try { res = await agent.tick({ uncapped: true, parallel: n, ...(n > 1 ? { signal: ctl.signal } : {}) }); } finally { if (n === 1) bind('claims', null); }
+          }
+        } finally { calling--; r.ctls.delete(ctl); }
+        // the lanes that wait for a call to end wake only when one made a call: a tick that found nothing wakes none
+        if (!res?.skipped) ended();
+        if (r.stopped || res?.cancelled) { end ??= 'cancelled'; break; }
+        if (res?.skipped === 'off') { end ??= 'off'; break; }
+        if (res?.skipped === 'busy' || res?.skipped === 'running') { await wait(busyWaitMs); continue; }
+        if (res?.skipped === 'nothing') {
+          if (calling > 0) { await nextEnd(); continue; }
+          if (rereading) { await rereading; continue; }
+          // both queues are empty and no call runs: read the vault once more, since a note the agent read can bring
+          // a pair to judge
+          if (empty++ >= RESWEEPS) { end ??= 'done'; break; }
+          rereading = refresh().finally(() => { rereading = null; });
+          await rereading;
+          if (!remaining()) { end ??= 'done'; break; }
+          continue;
         }
-      } finally { r.ctl = null; }
-      if (r.stopped || res?.cancelled) return 'cancelled';
-      if (res?.skipped === 'off') return 'off';
-      if (res?.skipped === 'busy' || res?.skipped === 'running') { await wait(busyWaitMs); continue; }
-      if (res?.skipped === 'nothing') {
-        // both queues are empty: read the vault once more, since a note the agent read can bring a pair to judge
-        if (empty++ >= RESWEEPS) return 'done';
-        await refresh();
-        if (!remaining()) return 'done';
-        continue;
+        empty = 0;
+        r.done++;
+        if (kind === 'claims' && Array.isArray(res?.extracted)) r.read += res.extracted.length;
+        // a claim call that failed: its notes leave the queue unread, and the agent asks for them again after a day
+        if (kind === 'claims' && Array.isArray(res?.dropped)) r.skipped += res.dropped.length;
+        for (const rel of res?.rels ?? []) r.touched.add(rel);
+        try { await after(res, kind); } catch (e) { log('memory catchup after', e?.message); }
+        r.total = Math.max(r.total, r.done + remaining());
+        moved();
       }
-      empty = 0;
-      r.done++;
-      if (kind === 'claims' && Array.isArray(res?.extracted)) r.read += res.extracted.length;
-      // a claim call that failed: its notes leave the queue unread, and the agent asks for them again after a day
-      if (kind === 'claims' && Array.isArray(res?.dropped)) r.skipped += res.dropped.length;
-      for (const rel of res?.rels ?? []) r.touched.add(rel);
-      try { await after(res, kind); } catch (e) { log('memory catchup after', e?.message); }
-      r.total = Math.max(r.total, r.done + remaining());
-      moved();
+      // a lane that stops lets the lanes that wait on it look again
+      ended();
     }
-    return 'cancelled';
+    await Promise.all(Array.from({ length: n }, (_, i) => lane(i)));
+    return r.stopped ? 'cancelled' : end ?? 'cancelled';
   }
 
   // starts a pass. Answers its status; a pass that runs already is left as it is
   async function start() {
     if (run) return status();
-    const r = { done: 0, total: 0, notes: notes(), stopped: false, ctl: null, work: null, read: 0, skipped: 0, checked: 0, of: 0, saved: 0, startedAt: Date.now(), before: null, touched: new Set() };
+    const r = { done: 0, total: 0, notes: notes(), stopped: false, ctls: new Set(), work: null, parallel: Math.max(1, Math.min(MAX_PARALLEL, Math.floor(parallel()) || 1)), read: 0, skipped: 0, checked: 0, of: 0, saved: 0, startedAt: Date.now(), before: null, touched: new Set() };
     let pendingSaved = null;
     try { const v = saved(); if (typeof v?.then === 'function') pendingSaved = v; else r.saved = v ?? 0; r.before = review(); } catch (e) { log('memory catchup plan', e?.message); }
     r.checked = r.saved;
-    r.work = activity.start({ kind: 'catchup', label: readyLabel(r.notes), cancellable: true, immediate: true, onCancel: () => { r.stopped = true; r.ctl?.abort(); } });
+    r.work = activity.start({ kind: 'catchup', label: readyLabel(r.notes), cancellable: true, immediate: true, onCancel: () => { r.stopped = true; for (const c of r.ctls) c.abort(); } });
     run = r;
     emit(status());
     const { startedAt } = r;

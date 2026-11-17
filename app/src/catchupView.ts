@@ -51,6 +51,8 @@ export function planRows(e: CatchupEstimate): [string, string][] {
   if (e.draftCalls) rows.push(['Fixes to draft', count(e.draftCalls, 'model call', 'model calls')]);
   if (e.pairs != null) rows.push(['Pairs to judge', `About ${fmt(e.pairs)}, an estimate`]);
   if (e.seconds != null) { const d = duration(e.seconds); rows.push(['Time', `${d[0].toUpperCase()}${d.slice(1)}, an estimate`]); }
+  // what the model calls would cost at API rates; on a Claude Code sign-in they count against the plan's limits instead
+  if (e.costLabel) rows.push(['Cost', `${e.costLabel}, an estimate`]);
   return rows;
 }
 // the same plan in one sentence, for onboarding

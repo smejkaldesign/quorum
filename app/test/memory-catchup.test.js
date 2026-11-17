@@ -11,6 +11,8 @@ import { createAgentActivity } from '../agentActivity.js';
 import { analyze } from '../rules/contradictions.js';
 import { catchupLabel, createCatchup, notesLabel } from '../memoryCatchup.js';
 import { createLastRunStore } from '../catchupPlan.js';
+import { createVaultIndex } from '../vindex.js';
+import { synthModel, writeSynthVault } from './fixtures/synthVault.js';
 
 const DIR = path.join(path.dirname(new URL(import.meta.url).pathname), 'fixtures/contradictions');
 const walk = (dir, base = '') => readdirSync(dir).flatMap((f) => (statSync(path.join(dir, f)).isDirectory() ? walk(path.join(dir, f), `${base}${f}/`) : [`${base}${f}`]));
@@ -246,5 +248,65 @@ describe('Check everything now', () => {
     items = [{ id: 'r:link:x', type: 'other', drafted: false }];
     expect(s.catchup.status().last.added).toEqual({ contradictions: 0, drafts: 0, other: 1, ids: ['r:link:x'] });
     expect(existsSync(path.join(dir, 'last-before.json'))).toBe(false);
+  });
+});
+
+describe('Check everything now with calls in parallel', () => {
+  // a generated vault of 300 notes (test/fixtures/synthVault.js) and a fake model that holds each call until released
+  async function parallelSetup(parallel) {
+    const root = tmp();
+    writeSynthVault(path.join(root, 'vault'), { notes: 300 });
+    const ix = createVaultIndex({ vault: path.join(root, 'vault'), isExcludedPath: () => false, isExcludedText: () => false, redact: (t) => t, onChange: () => {} });
+    ix.sync();
+    const asked = new Map();
+    const open = new Set();
+    let most = 0;
+    let signal = null;
+    const signals = [];
+    const model = async (prompt, system, opts) => {
+      const mine = signal;
+      signals.push(mine);
+      for (const b of prompt.split('<note path="').slice(1)) { const rel = b.slice(0, b.indexOf('"')); asked.set(rel, (asked.get(rel) ?? 0) + 1); }
+      const judge = /Claim A in/.test(prompt);
+      if (judge) asked.set(prompt, (asked.get(prompt) ?? 0) + 1);
+      expect(opts.kind).toBe(judge ? 'judge' : 'claims');
+      open.add(mine);
+      most = Math.max(most, open.size);
+      try {
+        await new Promise((resolve, reject) => { const t = setTimeout(resolve, 5); mine?.addEventListener('abort', () => { clearTimeout(t); reject(Object.assign(new Error('Cancelled'), { cancelled: true })); }); });
+      } finally { open.delete(mine); }
+      return synthModel(prompt);
+    };
+    const agent = createContradictionAgent({ file: path.join(root, 'contra.json'), model, enabled: () => true, cap: () => 0, idleMs: () => 0 });
+    // the signal a lane passes reaches the model the way memoryHost.js routes it, before the call starts
+    const lanes = { ...agent, tick: (o) => { signal = o.signal ?? null; return agent.tick(o); } };
+    const drafter = createDrafter({ file: path.join(root, 'drafts.json'), model: async () => '', items: () => [], evidence: () => null, enabled: () => true, cap: () => 0, idleMs: () => 0 });
+    const activity = createAgentActivity({ emit: () => {}, setTimer: () => null, clearTimer: () => {} });
+    const ctx = { notes: ix.snapshot(), resolve: (t, f) => ix.resolve(t, f), contradictions: { provider: agent.provider } };
+    const catchup = createCatchup({ drafter, agent: lanes, activity, refresh: async () => { analyze(ctx); }, notes: () => 300, wait: async () => {}, busyWaitMs: 0, parallel: () => parallel });
+    return { catchup, asked, signals, most: () => most, open, activity };
+  }
+
+  it('runs up to four calls at once, each with its own abort, and asks for each note and pair once', async () => {
+    const s = await parallelSetup(4);
+    await s.catchup.start();
+    const last = await s.catchup.done();
+    expect(last.end).toBe('done');
+    expect(s.most()).toBe(4);
+    expect(new Set(s.signals).size).toBe(s.signals.length);
+    expect(s.signals.every((x) => x instanceof AbortSignal)).toBe(true);
+    expect([...s.asked.values()].every((n) => n === 1)).toBe(true);
+    expect([...s.asked.keys()].some((k) => k.includes('Claim A in'))).toBe(true);
+  });
+
+  it('cancels every call that runs on Cancel', async () => {
+    const s = await parallelSetup(4);
+    const st = await s.catchup.start();
+    while (s.open.size < 4) await new Promise((r) => setTimeout(r, 1));
+    const running = [...s.open];
+    s.activity.cancel(st.id);
+    const last = await s.catchup.done();
+    expect(last.end).toBe('cancelled');
+    expect(running.every((x) => x.aborted)).toBe(true);
   });
 });

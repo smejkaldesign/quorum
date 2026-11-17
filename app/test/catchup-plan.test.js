@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PAIRS_PER_NOTE, SECONDS_PER_CALL, createLastRunStore, diffReview, planOf, progressOf, secondsPerCall } from '../catchupPlan.js';
+import { PRICES, costLabel, dollars, passCost } from '../memoryModels.js';
 import { CONFIRM_AFTER_MS, addedText, stopFlow, duration, needsConfirm, planRows, planSentence, progressShare, progressText, showSummary, summaryOf } from '../src/catchupView.ts';
 
 let dirs = [];
@@ -12,6 +13,24 @@ afterEach(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true
 const tmp = () => { const d = mkdtempSync(path.join(tmpdir(), 'qplan-')); dirs.push(d); return d; };
 
 describe('the plan before a pass', () => {
+  it('prices a pass at API rates: Haiku for the claims, Sonnet for the pairs', () => {
+    expect(dollars('haiku', 1e6, 0)).toBe(PRICES.haiku.input);
+    expect(dollars('sonnet', 0, 1e6)).toBe(PRICES.sonnet.output);
+    const c = passCost({ promptChars: 4e6, notes: 1000 }, 100);
+    expect(c.inputTokens).toBe(1e6 + 100 * 700);
+    expect(c.usd).toBeCloseTo(dollars('haiku', 1e6, 1000 * 180) + dollars('sonnet', 100 * 700, 100 * 150), 6);
+    expect(costLabel(0.4213)).toBe('About $0.42 at API rates');
+    expect(costLabel(0.004)).toBe('Less than $0.01 at API rates');
+    expect(costLabel(0)).toBeNull();
+    const p = planOf({ read: 1000, claimCalls: 40, promptChars: 4e6 }, null, 4);
+    expect(p.costLabel).toMatch(/^About \$\d+\.\d\d at API rates$/);
+    // four calls at once take a quarter of the time
+    expect(p.seconds).toBe(Math.round(((40 + p.pairs) * SECONDS_PER_CALL) / 4));
+    expect(planRows({ notes: 1, read: 1000, claimCalls: 40, draftCalls: 0, calls: 40, drafting: true, costLabel: p.costLabel }).find((r) => r[0] === 'Cost')[1]).toBe(`${p.costLabel}, an estimate`);
+    // a pass that ran four calls at once took a quarter of the wall time per call
+    expect(secondsPerCall({ done: 100, startedAt: 0, endedAt: 400000, parallel: 4 })).toBe(16);
+  });
+
   it('counts the notes to check with the saved ones, and estimates pairs and time from defaults', () => {
     const p = planOf({ saved: 300, read: 100, claimCalls: 10, draftCalls: 4 });
     expect(p.toCheck).toBe(400);

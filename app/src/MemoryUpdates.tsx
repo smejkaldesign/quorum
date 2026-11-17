@@ -124,6 +124,12 @@ export function MemoryUpdatesCard({ settings, onSettings }: { settings: Settings
     const n = Math.round(Number(el.value));
     if (Number.isFinite(n) && n >= 1 && n <= 500) { el.value = String(n); if (n !== cap) save({ memoryDraftCap: n }); } else el.value = String(cap);
   };
+  // how many model calls Check everything now runs at once, 1 to 4
+  const parallel = settings.memoryCatchupParallel ?? 4;
+  const commitParallel = (el: HTMLInputElement) => {
+    const n = Math.round(Number(el.value));
+    if (Number.isFinite(n) && n >= 1 && n <= 4) { el.value = String(n); if (n !== parallel) save({ memoryCatchupParallel: n }); } else el.value = String(parallel);
+  };
   const catchup = useCatchupControl(settings.memoryDrafts === true);
   return (
     <>
@@ -160,6 +166,14 @@ export function MemoryUpdatesCard({ settings, onSettings }: { settings: Settings
                 <input key={cap} type="number" min={1} max={500} defaultValue={cap} aria-label="Drafts per day"
                   onBlur={(e) => commitCap(e.currentTarget)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
                 <span>drafts</span>
+              </label>
+            </Row>
+            <Row icon={<IconClock width={18} height={18} />} title="Calls at once in Check everything now"
+              desc="How many model calls the check runs side by side. More finishes sooner; each call counts against your Claude Code plan's limits. Drafts per day does not apply to the check.">
+              <label className="mu-days">
+                <input key={parallel} type="number" min={1} max={4} defaultValue={parallel} aria-label="Calls at once in Check everything now"
+                  onBlur={(e) => commitParallel(e.currentTarget)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+                <span>calls</span>
               </label>
             </Row>
             <Row icon={<IconListCheck width={18} height={18} />} title="Let the agent read confidential notes"

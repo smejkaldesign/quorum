@@ -7,6 +7,7 @@
 //   does, so a hook that sweeps between calls shows in the sweep count. mode 'main': the rules, the pipeline and the agent run on the measured thread and a save sweep runs
 //   after every call, a few milliseconds after it ends (main.js before the memory engine), for the before numbers.
 // grow: characters appended to the big log note after every call, as a session log that keeps growing
+// parallel: model calls at once (4 in engine mode, as main runs a catch-up; 1 for the before numbers)
 // vault: an existing vault to read instead of a generated one. It is only read: grow is ignored and nothing is written there
 import { appendFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,7 +29,7 @@ const WORKER = new URL('../../memoryWorker.js', import.meta.url);
 const heap = () => getHeapStatistics().used_heap_size;
 const settle = async () => { for (let i = 0; i < 3; i++) { globalThis.gc?.(); await new Promise((r) => setTimeout(r, 20)); } };
 
-export async function runCatchupLoad({ mode = 'engine', notes = 2000, big = 0, grow = 0, delay = 5, agentModule = '../../contradictionAgent.js', samples = 8, vault: existing = null } = {}) {
+export async function runCatchupLoad({ mode = 'engine', notes = 2000, big = 0, grow = 0, delay = 5, agentModule = '../../contradictionAgent.js', samples = 8, vault: existing = null, parallel = mode === 'engine' ? 4 : 1 } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'qload-'));
   const vault = existing ?? path.join(root, 'vault');
   const data = path.join(root, 'data');
@@ -87,7 +88,7 @@ export async function runCatchupLoad({ mode = 'engine', notes = 2000, big = 0, g
   const drafter = createDrafter({ file: path.join(data, 'drafts.json'), model, items: () => [], evidence: () => null, enabled: () => true, cap: () => 0, idleMs: () => 0 });
   const activity = createAgentActivity({ emit: () => {}, setTimer: () => null, clearTimer: () => {} });
   let emits = 0;
-  const catchup = createCatchup({ drafter, agent, activity, ...(hooks ?? { refresh, after, finish }), notes: () => notes, emit: () => { emits++; }, wait: async () => {}, busyWaitMs: 0 });
+  const catchup = createCatchup({ drafter, agent, activity, ...(hooks ?? { refresh, after, finish }), notes: () => notes, emit: () => { emits++; }, wait: async () => {}, busyWaitMs: 0, parallel: () => parallel });
   running = () => catchup.running();
 
   await settle();
