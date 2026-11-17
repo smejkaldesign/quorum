@@ -14,6 +14,24 @@ export const needsConfirm = (startedAt: number | null | undefined, now: number) 
 export const STOP_TITLE = 'Stop the check?';
 export const STOP_BODY = 'What it found so far is kept. The rest runs later under the daily limit, or when you start the check again.';
 
+// Cancel on the activity banner and its Stop the check? dialog. asking: the id of the activity the dialog was opened
+// for, so the dialog shows only while that activity runs and Stop can only cancel that one. Each step answers the next
+// state and the activity to cancel now, if any
+export type StopEvent =
+  | { type: 'cancel'; activity: { id: string; kind: string; startedAt: number }; now: number }
+  | { type: 'keep' }
+  | { type: 'stop'; current: string | null }
+  | { type: 'activity'; current: string | null };
+export function stopFlow(asking: string | null, e: StopEvent): { asking: string | null; cancel: string | null } {
+  if (e.type === 'cancel') {
+    if (e.activity.kind === 'catchup' && needsConfirm(e.activity.startedAt, e.now)) return { asking: e.activity.id, cancel: null };
+    return { asking: null, cancel: e.activity.id };
+  }
+  if (e.type === 'stop') return { asking: null, cancel: asking && asking === e.current ? asking : null };
+  if (e.type === 'activity') return { asking: asking && asking === e.current ? asking : null, cancel: null };
+  return { asking: null, cancel: null };
+}
+
 // a length of time in hours and minutes, rounded: "under a minute", "about 25 minutes", "about 2 hours 10 minutes"
 export function duration(seconds: number) {
   if (!(seconds >= 60)) return 'under a minute';

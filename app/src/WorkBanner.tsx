@@ -3,7 +3,7 @@ import type { AgentActivity } from './quorum';
 import { IconCheck, IconClose } from './icons';
 import { took } from './NotificationsView';
 import { Modal, ModalActions } from './controls';
-import { STOP_BODY, STOP_TITLE, needsConfirm } from './catchupView';
+import { STOP_BODY, STOP_TITLE, stopFlow, type StopEvent } from './catchupView';
 
 // The AI working banner: the spinning mark, a shimmering line of what runs now, the time it has run and a progress bar.
 // Memory health's bulk batch banner and the agent activity banner (Home and Memory health) both draw it.
@@ -52,14 +52,18 @@ const MORE = (n: number) => (n ? ` and ${n} more ${n === 1 ? 'task' : 'tasks'}` 
 export function AgentActivityBanner({ onOpen, className = '' }: { onOpen?: () => void; className?: string }) {
   const a = useAgentActivity();
   const [stopping, setStopping] = useState<string | null>(null);
-  // Cancel on a Check everything now pass past its first minute asks first; focus goes back to Cancel when it closes
-  const [confirming, setConfirming] = useState(false);
+  // Cancel on a Check everything now pass past its first minute asks first (catchupView.ts stopFlow); the dialog
+  // belongs to the activity it was opened for and closes when that one ends. Focus goes back to Cancel when it closes
+  const [asking, setAsking] = useState<string | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const current = a?.id ?? null;
+  useEffect(() => { setAsking((x) => stopFlow(x, { type: 'activity', current }).asking); }, [current]);
   if (!a) return null;
   const progress = a.progress ? a.progress.done / a.progress.total : null;
   const count = a.progress && a.kind === 'batch' ? ` (${a.progress.done} of ${a.progress.total})` : '';
-  const cancel = async () => { setStopping(a.id); try { await window.quorum.agentActivityCancel(a.id); } catch { setStopping(null); } };
-  const close = (stop: boolean) => { setConfirming(false); if (stop) cancel(); window.setTimeout(() => cancelRef.current?.focus(), 0); };
+  const cancel = async (id: string) => { setStopping(id); try { await window.quorum.agentActivityCancel(id); } catch { setStopping(null); } };
+  const step = (e: StopEvent) => { const r = stopFlow(asking, e); setAsking(r.asking); if (r.cancel) cancel(r.cancel); };
+  const close = (stop: boolean) => { step(stop ? { type: 'stop', current: a.id } : { type: 'keep' }); window.setTimeout(() => cancelRef.current?.focus(), 0); };
   return (
     <>
     <WorkBanner
@@ -71,10 +75,10 @@ export function AgentActivityBanner({ onOpen, className = '' }: { onOpen?: () =>
       note={a.kind === 'check' ? 'Quorum is checking your memory. This can take a few minutes and runs in the background.' : a.kind === 'catchup' ? 'The agent reads one batch of notes at a time and writes nothing to them. What it finds waits in Needs review. Cancel stops it; the rest runs under the daily limit.' : null}
       onOpen={onOpen}
       // Stopping keeps the button in place, so focus stays on it until the work ends
-      actions={a.cancellable || stopping === a.id ? <button ref={cancelRef} className="act-pill run-dismiss" aria-disabled={stopping === a.id} onClick={() => { if (stopping === a.id) return; if (a.kind === 'catchup' && needsConfirm(a.startedAt, Date.now())) setConfirming(true); else cancel(); }}>{stopping === a.id ? 'Stopping' : 'Cancel'}</button> : null}
+      actions={a.cancellable || stopping === a.id ? <button ref={cancelRef} className="act-pill run-dismiss" aria-disabled={stopping === a.id} onClick={() => { if (stopping !== a.id) step({ type: 'cancel', activity: a, now: Date.now() }); }}>{stopping === a.id ? 'Stopping' : 'Cancel'}</button> : null}
     />
     {/* outside the banner, so the live region does not read the dialog out */}
-    {confirming && (
+    {asking === a.id && (
         <Modal titleId="catchup-stop-title" title={STOP_TITLE} role="alertdialog" describedBy="catchup-stop-body" onClose={() => close(false)}>
           <p id="catchup-stop-body">{STOP_BODY}</p>
           <ModalActions>
