@@ -61,7 +61,7 @@ export function analyze(ctx) {
     return { p, res };
   });
   provider?.end([...byRel.keys()], pairs.map((p) => p.key));
-  return { notes: live.length, worth: read.size, linked: linked.size, toRead: live.filter((n) => read.has(n.rel) || linked.has(n.rel)).map((n) => ({ rel: n.rel, text: n.text, rank: index.get(n.rel).priority + (read.has(n.rel) ? 0 : 20) })), claims, pairs, groups, results, byRel };
+  return { notes: live.length, worth: read.size, linked: linked.size, toRead: live.filter((n) => read.has(n.rel) || linked.has(n.rel)).map((n) => ({ rel: n.rel, text: n.text, note: n.note, rank: index.get(n.rel).priority + (read.has(n.rel) ? 0 : 20) })), claims, pairs, groups, results, byRel };
 }
 
 export function run(ctx) {

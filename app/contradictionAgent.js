@@ -11,24 +11,27 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { QUIET_MS } from './memoryDraft.js';
 import { hashText, indexNote } from './contradictionIndex.js';
-import { MAX_NOTE, checkClaimsBatch, claimPrompt, stillTrue } from './contradictionClaims.js';
+import { checkClaimsBatch, claimPrompt, excerptOf, stillTrue } from './contradictionClaims.js';
 import { checkJudge, judgePrompt } from './contradictionResolve.js';
 
 const RETRY_MS = 24 * 3600000;
-// one claim call reads several notes, up to about 12k input tokens of note text (4 characters a token)
-export const BATCH_CHARS = 44000;
-export const BATCH_NOTES = 20;
-const size = (text) => Math.min(MAX_NOTE, String(text ?? '').length) + 200;
+// one claim call reads the excerpts of several notes (contradictionClaims.js excerptOf), up to about 8k input tokens
+// (4 characters a token). The answer limits the batch more than the input: each note can bring a few claims of about 60
+// output tokens each, and output is what makes a call slow
+export const BATCH_CHARS = 32000;
+export const BATCH_NOTES = 30;
+// chars: the excerpt's length, worked out once when the note is queued
+const size = (e) => (e.chars ?? excerptOf(e.n ?? e).length) + 200;
 
 // the notes of each call, in priority order: notes are added to a call while they fit the budget. entries: [{ rank,
-// rel, text }]. Answers the batches as lists of entries; the eval script uses it to count calls
+// rel, text, chars }]. Answers the batches as lists of entries; the eval script uses it to count calls
 export function packBatches(entries, { chars = BATCH_CHARS, notes = BATCH_NOTES } = {}) {
   const sorted = [...entries].sort((x, y) => x.rank - y.rank || x.rel.localeCompare(y.rel));
   const out = [];
   let cur = [];
   let used = 0;
   for (const e of sorted) {
-    const n = size(e.text);
+    const n = size(e);
     if (cur.length && (used + n > chars || cur.length >= notes)) { out.push(cur); cur = []; used = 0; }
     cur.push(e);
     used += n;
@@ -77,7 +80,10 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
       if (got?.hash === h) return stillTrue(got.claims, n.text);
       if (inflight.has(n.rel)) return [];
       const ix = indexNote(n);
-      if ((worth ?? ix.worth) && ix.readable && !tried(n.rel, h)) wantClaims.set(n.rel, { rel: n.rel, text: n.text, n: { rel: n.rel, text: n.text, note: n.note }, h, rank: ix.priority + (ix.worth ? 0 : 20) });
+      if (!(worth ?? ix.worth) || !ix.readable || tried(n.rel, h)) return [];
+      // a note whose excerpt holds no line to read makes no call: its frontmatter facts are read with no model
+      const chars = excerptOf(n).length;
+      if (chars) wantClaims.set(n.rel, { rel: n.rel, text: n.text, n: { rel: n.rel, text: n.text, note: n.note }, h, chars, rank: ix.priority + (ix.worth ? 0 : 20) });
       return [];
     },
     judgeOf(p, notes) {
@@ -109,15 +115,17 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
     pending: () => ({ claims: wantClaims.size, judge: wantJudge.size }),
   };
 
-  let running = null;
+  // the calls that run: one at a time on the daily-cap path, up to parallel at once in a catch-up
+  const running = new Set();
   // one model call for these ids ([[id, hash]]); a failure marks every id, so none is asked again for a day. A call a
   // person cancelled gives its place under the daily cap back (unless the day turned while it ran) and marks nothing,
   // so its notes are asked for again on the next sweep. charge: false for a catch-up call, which the cap does not count
-  async function call(ids, ask, onReply, charge = true) {
+  // opts: { kind, lane } for the model: kind 'claims' or 'judge' picks the model, lane names the caller's abort
+  async function call(ids, ask, onReply, charge = true, opts = {}) {
     for (const [id] of ids) inflight.add(id);
-    try { return await send(ids, ask, onReply, charge); } finally { for (const [id] of ids) inflight.delete(id); }
+    try { return await send(ids, ask, onReply, charge, opts); } finally { for (const [id] of ids) inflight.delete(id); }
   }
-  async function send(ids, ask, onReply, charge) {
+  async function send(ids, ask, onReply, charge, opts) {
     const s = load();
     used();
     const day = s.day;
@@ -125,7 +133,7 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
     save();
     const fail = (why) => { for (const [id, h] of ids) s.failed[id] = { hash: h, at: now(), why }; };
     try {
-      const reply = await model(ask.prompt, ask.system);
+      const reply = await model(ask.prompt, ask.system, opts);
       const res = onReply(reply);
       if (res.ok) for (const [id] of ids) delete s.failed[id]; else fail(res.why);
       save();
@@ -139,9 +147,10 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
     }
   }
   // one model call: a pair to judge first, then the notes that most need their claims. onStart({ kind, notes }) runs
-  // just before the call, kind 'judge' or 'claims', so the caller can show the work and offer Cancel. Answers what it did
-  async function tick({ onStart = () => {}, uncapped = false } = {}) {
-    if (running) return { skipped: 'running' };
+  // just before the call, kind 'judge' or 'claims', so the caller can show the work and offer Cancel. Answers what it did.
+  // parallel: how many calls a catch-up runs at once (uncapped only); lane: passed to the model with the call
+  async function tick({ onStart = () => {}, uncapped = false, parallel = 1, lane = null } = {}) {
+    if (running.size >= (uncapped ? Math.max(1, parallel) : 1)) return { skipped: 'running' };
     const why = waiting({ uncapped });
     if (why) return { skipped: why };
     const s = load();
@@ -149,13 +158,14 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
       wantJudge.delete(key);
       if (!j.notes.every((x) => readable(x.rel, x.text))) continue;
       onStart({ kind: 'judge', notes: j.notes.length });
-      running = call([[key, j.h]], judgePrompt(j.p, j.notes), (reply) => {
+      const p = call([[key, j.h]], judgePrompt(j.p, j.notes), (reply) => {
         const r = checkJudge(j.p, j.notes, reply);
         if (!r.label) return { ok: false, why: r.why };
         s.judged[key] = { hash: j.h, at: now(), label: r.label, quotes: r.quotes, reason: r.reason };
         return { ok: true };
-      }, !uncapped).then((res) => { log('contradiction judge', key, res.ok ? s.judged[key].label : res.why); if (res.cancelled) return { cancelled: [key] }; return res.ok ? { judged: key, rels: j.notes.map((x) => x.rel), label: s.judged[key].label } : { dropped: key, why: res.why }; }).finally(() => { running = null; });
-      return running;
+      }, !uncapped, { kind: 'judge', lane }).then((res) => { log('contradiction judge', key, res.ok ? s.judged[key].label : res.why); if (res.cancelled) return { cancelled: [key] }; return res.ok ? { judged: key, rels: j.notes.map((x) => x.rel), label: s.judged[key].label } : { dropped: key, why: res.why }; }).finally(() => { running.delete(p); });
+      running.add(p);
+      return p;
     }
     // a note the read gate keeps out is never sent and leaves the queue
     for (const [rel, w] of wantClaims) if (!readable(rel, w.text)) wantClaims.delete(rel);
@@ -165,7 +175,7 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
     const rels = batch.map((w) => w.rel);
     let kept = 0;
     onStart({ kind: 'claims', notes: rels.length });
-    running = call(batch.map((w) => [w.rel, w.h]), claimPrompt(batch.map((w) => w.n)), (reply) => {
+    const p = call(batch.map((w) => [w.rel, w.h]), claimPrompt(batch.map((w) => w.n)), (reply) => {
       const r = checkClaimsBatch(batch.map((w) => w.n), reply, modelId);
       if (r.why) return { ok: false, why: r.why };
       for (const w of batch) {
@@ -174,8 +184,9 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
         kept += got.claims.length;
       }
       return { ok: true };
-    }, !uncapped).then((res) => { log('contradiction claims', `${rels.length} notes`, res.ok ? `${kept} claims` : res.why); if (res.cancelled) return { cancelled: rels }; return res.ok ? { extracted: rels, rels, claims: kept } : { dropped: rels, why: res.why }; }).finally(() => { running = null; });
-    return running;
+    }, !uncapped, { kind: 'claims', lane }).then((res) => { log('contradiction claims', `${rels.length} notes`, res.ok ? `${kept} claims` : res.why); if (res.cancelled) return { cancelled: rels }; return res.ok ? { extracted: rels, rels, claims: kept } : { dropped: rels, why: res.why }; }).finally(() => { running.delete(p); });
+    running.add(p);
+    return p;
   }
   // the model calls the agent still has to make for what the latest sweep asked: a call per pair to judge and per batch of
   // notes to read
@@ -189,12 +200,16 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
   function estimate(entries) {
     const s = load();
     let saved = 0;
-    const left = (entries ?? []).filter((e) => { const h = hashText(e.text); if (s.claims[e.rel]?.hash === h) { saved++; return false; } return !tried(e.rel, h) && readable(e.rel, e.text); });
+    const left = (entries ?? []).filter((e) => { const h = hashText(e.text); if (s.claims[e.rel]?.hash === h) { saved++; return false; } return !tried(e.rel, h) && readable(e.rel, e.text); })
+      .map((e) => ({ ...e, chars: excerptOf(e).length })).filter((e) => e.chars);
+    const batches = packBatches(left);
+    // the characters the claim calls send: each call's prompt (its notes' excerpts) and the system prompt, for the cost
+    const promptChars = batches.reduce((n, b) => { const ask = claimPrompt(b); return n + ask.prompt.length + ask.system.length; }, 0);
     // saved: the notes read in an earlier pass; claimed and judged: every note and pair stored, for the pairs per note
-    return { notes: left.length, calls: packBatches(left).length, saved, claimed: Object.keys(s.claims).length, judged: Object.keys(s.judged).length };
+    return { notes: left.length, calls: batches.length, promptChars, saved, claimed: Object.keys(s.claims).length, judged: Object.keys(s.judged).length };
   }
   // the notes the latest sweep queued to read that the read gate lets through, for the note count of a catch-up pass
   const pendingNotes = () => [...wantClaims.values()].filter((w) => readable(w.rel, w.text)).length;
-  const status = () => ({ used: used(), cap: cap(), waiting: waiting(), running: !!running, inflight: inflight.size, ...provider.pending() });
+  const status = () => ({ used: used(), cap: cap(), waiting: waiting(), running: running.size > 0, calls: running.size, inflight: inflight.size, ...provider.pending() });
   return { provider, tick, status, waiting, pendingCalls, pendingNotes, estimate };
 }

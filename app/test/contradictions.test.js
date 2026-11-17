@@ -13,10 +13,11 @@ import { createResolver, parseNote } from '../linkparse.js';
 import { buildPlan, checkFirst, effects } from '../batchPlan.js';
 import { findingItem, itemLine } from '../reviewItems.js';
 import { authorityOf, indexNote, modalityOf, noteDate } from '../contradictionIndex.js';
-import { checkClaims, checkClaimsBatch, claimPrompt, quoteMatches, structuredClaims } from '../contradictionClaims.js';
+import { WHOLE_NOTE, checkClaims, checkClaimsBatch, claimPrompt, excerptOf, quoteMatches, structuredClaims } from '../contradictionClaims.js';
+import { JUDGE_SYSTEM, judgePrompt } from '../contradictionResolve.js';
 import { MAX_PAIRS_PER_GROUP, acronymOf, attributeKey, normKey, pairClaims, resolveSubject, sameValue, subjectIndex } from '../contradictionPairs.js';
 import { annotateLine, autoCriteria, checkJudge, resolvePair, ruleBar, unannotateLine, wilson } from '../contradictionResolve.js';
-import { BATCH_CHARS, createContradictionAgent, packBatches } from '../contradictionAgent.js';
+import { BATCH_CHARS, BATCH_NOTES, createContradictionAgent, packBatches } from '../contradictionAgent.js';
 import { analyze, run } from '../rules/contradictions.js';
 import { gateItem } from '../qualityGate.js';
 
@@ -104,6 +105,55 @@ describe('stage 1 index', () => {
 });
 
 describe('stage 2 claims', () => {
+  // a long note: filler around one decision line, one dated line and a frontmatter status
+  const filler = (from, n) => Array.from({ length: n }, (_, i) => `Filler line ${from + i} about the weather and nothing else at all.`);
+  const longNote = () => {
+    const body = ['---', 'status: active', 'type: project', '---', '# Orion', '', ...filler(7, 40), 'We decided Orion will ship on Fridays.', ...filler(48, 40), 'On 2026-04-01 the Orion launch moved.', ...filler(89, 40)];
+    return note('projects/orion.md', body.join('\n'));
+  };
+
+  it('sends a long note as the lines stage 1 found, with their numbers in the note and one line on either side', () => {
+    const n = longNote();
+    expect(n.text.length).toBeGreaterThan(WHOLE_NOTE);
+    const ex = excerptOf(n);
+    const rows = ex.split('\n');
+    expect(rows).toContain('2: status: active');
+    expect(rows).toContain('5: # Orion');
+    expect(rows).toContain('47: We decided Orion will ship on Fridays.');
+    expect(rows).toContain('46: Filler line 46 about the weather and nothing else at all.');
+    expect(rows).toContain('48: Filler line 48 about the weather and nothing else at all.');
+    expect(rows).not.toContain('45: Filler line 45 about the weather and nothing else at all.');
+    expect(rows).toContain('88: On 2026-04-01 the Orion launch moved.');
+    expect(rows).toContain('...');
+    expect(ex.length).toBeLessThan(n.text.length / 5);
+    // a quote from the excerpt is checked against the note's own line
+    const r = checkClaims(n, JSON.stringify({ claims: [{ subject: 'Orion', attribute: 'release day', value: 'Fridays', quote: 'We decided Orion will ship on Fridays.', line: 47 }] }), 'haiku');
+    expect(r.claims).toHaveLength(1);
+    expect(r.claims[0]).toMatchObject({ line: 47, extractor: 'model:haiku' });
+    // a line number the excerpt does not hold fails the check as before
+    expect(checkClaims(n, JSON.stringify({ claims: [{ subject: 'Orion', attribute: 'release day', value: 'Fridays', quote: 'We decided Orion will ship on Fridays.', line: 30 }] })).claims).toHaveLength(0);
+  });
+
+  it('sends a short note whole, and a long note with no marker by its first lines', () => {
+    const short = note('projects/a.md', '# A\n\nA runs on SQLite.\n');
+    expect(excerptOf(short)).toBe('1: # A\n3: A runs on SQLite.');
+    const plain = note('notes/plain.md', ['# Plain', '', ...filler(3, 80)].join('\n'));
+    const rows = excerptOf(plain).split('\n');
+    expect(rows[0]).toBe('1: # Plain');
+    expect(rows.length).toBeLessThan(20);
+  });
+
+  it('keeps the instructions in the system prompt, so every call starts with the same text', () => {
+    const a = claimPrompt([note('projects/a.md', '# A\n\nA runs on SQLite.\n')]);
+    const b = claimPrompt([note('projects/b.md', '# B\n\nB runs on Postgres.\n'), note('projects/c.md', '# C\n\nC.\n')]);
+    expect(a.system).toBe(b.system);
+    expect(a.prompt.startsWith('<note path="projects/a.md"')).toBe(true);
+    const pair = { a: { rel: 'a.md', line: 3, lineEnd: 3, quote: 'Atlas uses X.', date: null }, b: { rel: 'b.md', line: 3, lineEnd: 3, quote: 'Atlas uses Y.', date: null } };
+    const j = judgePrompt(pair, [{ rel: 'a.md', text: '# A\n\nAtlas uses X.\n' }, { rel: 'b.md', text: '# B\n\nAtlas uses Y.\n' }]);
+    expect(j.system).toBe(JUDGE_SYSTEM);
+    expect(j.prompt.startsWith('Claim A in a.md (line 3)')).toBe(true);
+  });
+
   it('reads frontmatter keys and key: value lines with no model', () => {
     const c = structuredClaims(note('decisions/2026-05-01-x.md', '---\ntype: decision\nowner: Ops\n---\n# X\n\n- [[juliet]] status: paused\n- **Region:** eu-west-1 since 2026-05-03\n- https: example\n\n```\nkey: value\n```\n'));
     expect(c.map((x) => [x.extractor, x.subject, x.attribute, x.value, x.line, x.modality])).toEqual([
@@ -119,8 +169,8 @@ describe('stage 2 claims', () => {
     const a = note('projects/a.md', '# A\n\nA runs on SQLite.\n');
     const b = note('projects/b.md', '# B\n\nB runs on Postgres.\n');
     const p = claimPrompt([a, b]).prompt;
-    expect(p).toContain('<note path="projects/a.md">\n1: # A');
-    expect(p).toContain('<note path="projects/b.md">\n1: # B');
+    expect(p).toContain('<note path="projects/a.md" title="A">\n1: # A');
+    expect(p).toContain('<note path="projects/b.md" title="B">\n1: # B');
     const reply = JSON.stringify({ claims: [
       { path: 'projects/a.md', subject: 'A', attribute: 'database', value: 'SQLite', quote: 'A runs on SQLite.', line: 3 },
       { path: 'projects/b.md', subject: 'B', attribute: 'database', value: 'Postgres', quote: 'B runs on Postgres.', line: 3 },
@@ -136,12 +186,13 @@ describe('stage 2 claims', () => {
   });
 
   it('packs notes into calls by priority up to the budget', () => {
-    const e = (rel, rank, n) => ({ rel, rank, text: 'x'.repeat(n) });
-    const batches = packBatches([e('c', 3, 12000), e('a', 1, 12000), e('b', 2, 30000), e('d', 4, 12000), e('e', 5, 100)]);
+    // chars: the length of each note's excerpt
+    const e = (rel, rank, chars) => ({ rel, rank, text: 'x', chars });
+    const batches = packBatches([e('c', 3, 10000), e('a', 1, 10000), e('b', 2, 10000), e('d', 4, 10000), e('e', 5, 100)]);
     expect(batches.map((b) => b.map((x) => x.rel))).toEqual([['a', 'b', 'c'], ['d', 'e']]);
-    // a note over the budget is cut to 12,000 characters and still gets its own call
+    // a note over the budget still gets its own call
     expect(packBatches([e('big', 1, 90000)]).length).toBe(1);
-    expect(packBatches(Array.from({ length: 45 }, (_, i) => e(`n${i}`, 1, 10))).length).toBe(3);
+    expect(packBatches(Array.from({ length: BATCH_NOTES * 2 + 5 }, (_, i) => e(`n${i}`, 1, 10))).length).toBe(3);
     expect(BATCH_CHARS).toBeLessThanOrEqual(48000);
   });
 
@@ -301,14 +352,14 @@ describe('the pipeline on the synthetic vault', () => {
     const got = Object.fromEntries(found.map((f) => [pairName(f), { rule: f.facts[0].slice(5), auto: f.autoFix }]));
     expect(Object.keys(got).sort()).toEqual(Object.keys(EXPECTED).sort());
     for (const [k, v] of Object.entries(EXPECTED)) expect(got[k], k).toEqual({ rule: v.rule, auto: v.auto });
-    // the confidential note never reached the model, and the notes went in calls of at most 20
+    // the confidential note never reached the model, and the notes went in calls of at most BATCH_NOTES
     expect(sent.some((s) => s.includes('projects/kilo.md'))).toBe(false);
     const calls = sent.filter((s) => s.includes('<note path='));
     const read = calls.reduce((n, s) => n + s.split('<note path=').length - 1, 0);
-    expect(calls.length).toBe(Math.ceil(read / 20));
+    expect(calls.length).toBe(Math.ceil(read / BATCH_NOTES));
     // projects/india.md has no date, decision or status; it is read because it links to a note that is
-    expect(sent.some((s) => s.includes('<note path="projects/india.md">'))).toBe(true);
-    expect(sent.some((s) => s.includes('<note path="products/nimbus-cloud-edition.md">'))).toBe(true);
+    expect(sent.some((s) => s.includes('<note path="projects/india.md" '))).toBe(true);
+    expect(sent.some((s) => s.includes('<note path="products/nimbus-cloud-edition.md" '))).toBe(true);
     // both quotes show on the item
     const beacon = found.find((f) => f.notes[0] === 'projects/beacon.md');
     expect(beacon.evidence[0]).toBe('Older: projects/beacon.md line 7 (2026-02-01): “Beacon stores its data in Postgres.”');
@@ -394,7 +445,7 @@ describe('the pipeline on the synthetic vault', () => {
     const ctx = { notes, resolve, contradictions: { provider: a.provider } };
     run(ctx);
     expect(await a.tick({ onStart: (w) => starts.push(w) })).toMatchObject({ cancelled: expect.any(Array) });
-    expect(starts).toEqual([{ kind: 'claims', notes: 20 }]);
+    expect(starts).toEqual([{ kind: 'claims', notes: expect.any(Number) }]);
     expect(a.status().used).toBe(0);
     cancel = false;
     run(ctx);

@@ -158,27 +158,27 @@ const around = (text, c) => {
   const to = Math.min(lines.length, c.lineEnd + CONTEXT);
   return lines.slice(from - 1, to).map((l, i) => `${from + i}: ${l}`).join('\n');
 };
+// the instructions are the same on every call, so they sit in the system prompt and every call starts with the same text
 export const JUDGE_SYSTEM = [
   'You judge whether two claims from a notes vault disagree. You read only the excerpts given below; you have no tools and change nothing.',
-  'Quotes are the exact text of one numbered line, or an exact part of it, with the note path and line number. Copy them character for character.',
-  'Answer with one JSON object and nothing else.',
+  'Both claims are about the same subject and attribute. Pick one label:',
+  'contradiction: both cannot hold at the same time for the same scope.',
+  'refinement: one adds detail to the other and they do not conflict.',
+  'different_times: each was true at its own date, and the newer one updates the older one.',
+  'different_scope: they speak of different projects, environments, teams or people.',
+  'same: they say the same thing in different words.',
+  'Quote at least one line from each excerpt that supports the label. Quotes are the exact text of one numbered line, or an exact part of it, with the note path and line number. Copy them character for character.',
+  'Answer with one JSON object and nothing else: { "label": "<label>", "quotes": [{ "path": "<note path>", "line": <line number>, "text": "<exact text>" }], "reason": "<one sentence>" }',
 ].join('\n');
 
-// the judge prompt for a pair. notes: [{ rel, text }] for the two notes
+// the judge prompt for a pair: the two claims and CONTEXT lines on either side of each quote, never the whole notes.
+// notes: [{ rel, text }] for the two notes
 export function judgePrompt(p, notes) {
   const textOf = (rel) => notes.find((n) => n.rel === rel)?.text ?? '';
   const side = (c) => `<excerpt path="${c.rel}" date="${c.date ?? 'unknown'}">\n${around(textOf(c.rel), c)}\n</excerpt>`;
   const ask = [
     `Claim A in ${p.a.rel} (line ${p.a.line}): "${p.a.quote}"`,
     `Claim B in ${p.b.rel} (line ${p.b.line}): "${p.b.quote}"`,
-    'Both are about the same subject and attribute. Pick one label:',
-    'contradiction: both cannot hold at the same time for the same scope.',
-    'refinement: one adds detail to the other and they do not conflict.',
-    'different_times: each was true at its own date, and the newer one updates the older one.',
-    'different_scope: they speak of different projects, environments, teams or people.',
-    'same: they say the same thing in different words.',
-    'Quote at least one line from each excerpt that supports the label.',
-    'Answer: { "label": "<label>", "quotes": [{ "path": "<note path>", "line": <line number>, "text": "<exact text>" }], "reason": "<one sentence>" }',
   ];
   return { system: JUDGE_SYSTEM, prompt: `${ask.join('\n')}\n\n${side(p.a)}\n\n${side(p.b)}` };
 }

@@ -10,7 +10,6 @@ import { AUTHORITY, datesIn, frontmatterEnd, indexNote, modalityOf } from './con
 
 export const MODALITY = ['decided', 'proposed', 'considering', 'rejected', 'stated'];
 export const MAX_CLAIMS = 30;
-export const MAX_NOTE = 12000;
 const MAX_FIELD = 160;
 // frontmatter keys that describe the note itself and never state a fact about its subject
 const META_KEYS = new Set(['title', 'aliases', 'alias', 'tags', 'tag', 'created', 'updated', 'modified', 'date', 'decided', 'type', 'confidential', 'last_verified', 'source', 'sources', 'related', 'id', 'cssclass', 'cssclasses', 'publish', 'permalink', 'summary', 'description', 'author', 'authors', 'url', 'links', 'category', 'categories', 'kind', 'template', 'superseded_by', 'supersededby', 'replaced_by', 'attendees', 'participants']);
@@ -54,27 +53,74 @@ export function structuredClaims(n) {
   return out;
 }
 
-const numbered = (text) => String(text).slice(0, MAX_NOTE).split('\n').map((l, i) => `${i + 1}: ${l}`).join('\n');
+// The lines of a note the model reads for its claims. A short note (up to WHOLE_NOTE characters) goes whole, since a
+// dated note can state its facts on lines with no marker. A longer note goes as the lines stage 1 found (decision
+// phrases, body dates, superseded markers), the frontmatter keys that state a fact, the "key: value" lines, and the
+// title heading, each with EXCERPT_CONTEXT lines on either side; with none of those, its lines with a link, and with no
+// link, its first LEAD_LINES body lines. Line numbers stay those of the note, so every quote is checked against the
+// note itself (quoteMatches). Lines past MAX_LINE characters are cut, and the excerpt stops at MAX_EXCERPT characters
+export const EXCERPT_CONTEXT = 1;
+export const WHOLE_NOTE = 2000;
+export const MAX_EXCERPT = 6000;
+const LEAD_LINES = 15;
+const MAX_LINE = 600;
+const LINK_RE = /\[\[[^\]\n]+\]\]|\]\([^)\n]+\.md\b/;
+export function excerptLines(n) {
+  const ix = indexNote(n);
+  const lines = String(n.text ?? '').split('\n');
+  const filled = (from) => { const out = []; for (let i = from; i < lines.length; i++) if (lines[i].trim()) out.push(i + 1); return out; };
+  if (String(n.text ?? '').length <= WHOLE_NOTE) return filled(0);
+  const want = new Set();
+  for (let i = 1; i < ix.fmEnd - 1; i++) { const m = lines[i].match(/^([\w-]+):\s*\S/); if (m && !META_KEYS.has(m[1].toLowerCase())) want.add(i + 1); }
+  for (const d of [...ix.decisions, ...ix.supersededLines, ...ix.dates]) want.add(d.line);
+  for (let i = ix.fmEnd; i < lines.length; i++) if (KV_RE.test(lines[i].replace(/\r$/, ''))) want.add(i + 1);
+  const body = [...want].some((l) => l > ix.fmEnd);
+  if (!body) for (let i = ix.fmEnd; i < lines.length; i++) if (LINK_RE.test(lines[i])) want.add(i + 1);
+  if (![...want].some((l) => l > ix.fmEnd)) for (const l of filled(ix.fmEnd).slice(0, LEAD_LINES)) want.add(l);
+  const title = lines.findIndex((l, i) => i >= ix.fmEnd && /^#\s/.test(l));
+  if (title >= 0) want.add(title + 1);
+  const out = new Set();
+  for (const l of want) for (let k = l - EXCERPT_CONTEXT; k <= l + EXCERPT_CONTEXT; k++) if (k >= 1 && k <= lines.length && lines[k - 1].trim()) out.add(k);
+  return [...out].sort((x, y) => x - y);
+}
+// the excerpt as the model reads it: "<line number>: <text>", with "..." where lines are left out. Empty when the
+// note has nothing to read
+export function excerptOf(n) {
+  const lines = String(n.text ?? '').split('\n');
+  const out = [];
+  let used = 0;
+  let prev = 0;
+  for (const l of excerptLines(n)) {
+    const row = `${l}: ${lines[l - 1].replace(/\r$/, '').slice(0, MAX_LINE)}`;
+    if (used + row.length > MAX_EXCERPT) break;
+    // "..." marks left-out lines with text; a blank line left out needs no mark
+    if (prev && lines.slice(prev, l - 1).some((x) => x.trim())) out.push('...');
+    out.push(row);
+    used += row.length + 1;
+    prev = l;
+  }
+  return out.join('\n');
+}
 
+// the instructions are the same on every call, so they sit in the system prompt and every call starts with the same text
 export const SYSTEM = [
-  'You list the factual claims one note makes. You read only the note given below; you have no tools and change nothing.',
+  'You list the factual claims notes from a notes vault make. You read only the excerpts given; you have no tools and change nothing.',
+  'Each note shows some of its lines, each with its line number in the note; "..." stands for lines left out.',
+  'List the claims each note makes about the state of things: decisions, choices of tools or vendors, prices, plans, owners, statuses, counts, dates and deadlines.',
+  'Skip opinions, questions, open tasks and claims about the note itself.',
+  'subject: the thing the claim is about, as the note names it (the wiki link target when the line links it). attribute: what about it, in two or three words. value: what the note says, short, in the quote\'s own words.',
+  'polarity: "-" when the line says the value does not hold, else "+". modality: decided, proposed, considering, rejected or stated.',
+  'date: the YYYY-MM-DD date the quoted lines give for this claim, or null. scope: the project, environment, team or person the claim is limited to, or null.',
+  `At most ${MAX_CLAIMS} claims per note. path is the path of the note the quote comes from, and line numbers are the numbers shown.`,
   'Every claim rests on a quote: the exact text of one to four consecutive numbered lines, or an exact part of them. Copy quotes character for character; do not fix spelling or spacing.',
-  'Answer with one JSON object and nothing else.',
+  'Answer with one JSON object and nothing else: { "claims": [{ "path": "<note path>", "subject": "", "attribute": "", "value": "", "polarity": "+" | "-", "modality": "", "date": null, "scope": null, "quote": "<exact text>", "line": <first line number>, "line_end": <last line number> }] }',
 ].join('\n');
 
-// the prompt that asks for one note's claims
+// the prompt that asks for the claims of several notes, from their excerpts
 export function claimPrompt(notes) {
   const list = Array.isArray(notes) ? notes : [notes];
-  const ask = [
-    `List the claims ${list.length === 1 ? `the note ${list[0].rel} makes` : `each of the ${list.length} notes below makes`} about the state of things: decisions, choices of tools or vendors, prices, plans, owners, statuses, counts, dates and deadlines.`,
-    'Skip opinions, questions, open tasks and claims about the note itself.',
-    'subject: the thing the claim is about, as the note names it (the wiki link target when the line links it). attribute: what about it, in two or three words. value: what the note says, short, in the quote\'s own words.',
-    'polarity: "-" when the line says the value does not hold, else "+". modality: decided, proposed, considering, rejected or stated.',
-    'date: the YYYY-MM-DD date the quoted lines give for this claim, or null. scope: the project, environment, team or person the claim is limited to, or null.',
-    `At most ${MAX_CLAIMS} claims per note. path is the path of the note the quote comes from, and line numbers count within that note.`,
-    'Answer: { "claims": [{ "path": "<note path>", "subject": "", "attribute": "", "value": "", "polarity": "+" | "-", "modality": "", "date": null, "scope": null, "quote": "<exact text>", "line": <first line number>, "line_end": <last line number> }] }',
-  ];
-  return { system: SYSTEM, prompt: `${ask.join('\n')}\n\n${list.map((n) => `<note path="${n.rel}">\n${numbered(n.text)}\n</note>`).join('\n\n')}` };
+  const title = (n) => String(n.note?.title ?? n.rel).replace(/"/g, "'");
+  return { system: SYSTEM, prompt: list.map((n) => `<note path="${n.rel}" title="${title(n)}">\n${excerptOf(n)}\n</note>`).join('\n\n') };
 }
 
 // the first JSON object in a reply, or null
