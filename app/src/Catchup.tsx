@@ -111,7 +111,6 @@ export function CatchupSummary({ onShow, onDismissed }: { onShow: (ids: string[]
   const label = `From the check on ${ranAt(last.startedAt)}`;
   return (
     <WorkBanner
-      className="catchup-card"
       state={s.state}
       text={`${s.head}. Ran ${ranAt(last.startedAt)}`}
       startedAt={last.startedAt}
