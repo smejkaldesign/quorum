@@ -3,8 +3,8 @@
 //      no note another note links to. Approve moves them to the Trash and, in a git vault with a .gitignore, ignores
 //      their pattern.
 //   2. Runaway notes: a note over the size limit or that grew more than five times in a week, and a note that holds the
-//      same heading-led block 20 or more times. Approve keeps the first and last copy of each repeated block and
-//      everything else, after a backup copy goes to Quorum's data folder.
+//      same block word for word 20 or more times (blocks start at the note's entry heading level). Approve keeps the
+//      first and last copy of each repeated block and everything else, after a backup copy goes to Quorum's data folder.
 //   3. Uncommitted notes in a git vault: notes untracked or changed for more than 7 days, as one item. Approve stages and
 //      commits them on the current branch. A branch behind its upstream or a merge in progress stops it.
 // The folder walk and git status run once per full sweep in the memory engine (vaultHygiene.js scanHygiene) and reach
@@ -19,46 +19,66 @@ export const GROWTH_FLOOR = 64 * 1024;
 export const REPEATS = 20;
 export const STALE_DAYS = 7;
 
-const HEADING = /^#{1,6}\s+\S/;
+const HEADING = /^(#{1,6})\s+\S/;
 const FENCE = /^\s*(```|~~~)/;
 const n = (x) => Number(x).toLocaleString('en-US');
 export const mb = (bytes) => (bytes >= 1024 * 1024 ? `${n(Math.round(bytes / (1024 * 1024)))} MB` : bytes >= 1024 ? `${n(Math.round(bytes / 1024))} KB` : `${n(bytes)} bytes`);
 
-// the note split into blocks: the text before the first heading, then one block per heading up to the next heading.
-// A heading inside fenced code stays in its block. Each block keeps its own line breaks, so joining them gives the text
+// the level a note's entries sit at: the smallest heading level that two or more headings outside fenced code use, so a
+// single title heading above the entries does not count. null when no level repeats
+function entryLevel(lines) {
+  const n = new Map();
+  let fenced = false;
+  for (const line of lines) {
+    if (FENCE.test(line)) { fenced = !fenced; continue; }
+    const h = !fenced && line.match(HEADING);
+    if (h) n.set(h[1].length, (n.get(h[1].length) ?? 0) + 1);
+  }
+  const levels = [...n].filter(([, c]) => c >= 2).map(([l]) => l);
+  return levels.length ? Math.min(...levels) : null;
+}
+
+// the note split into blocks at its entry level only: the text before the first entry, then one block per entry heading
+// up to the next one, sub-headings and fenced code included. Each block keeps its own line breaks, so joining them gives
+// the text back
 function blocksOf(text) {
   const lines = String(text ?? '').split('\n');
+  const level = entryLevel(lines);
   const out = [];
   let cur = [];
   let fenced = false;
   for (const line of lines) {
     if (FENCE.test(line)) fenced = !fenced;
-    if (!fenced && HEADING.test(line) && cur.length) { out.push(cur.join('\n')); cur = []; }
+    const h = !fenced && level != null && line.match(HEADING);
+    const entry = h && h[1].length === level;
+    if (entry && cur.length) { out.push({ text: cur.join('\n'), entry: cur.isEntry }); cur = []; }
+    if (entry) cur.isEntry = true;
     cur.push(line);
   }
-  out.push(cur.join('\n'));
+  out.push({ text: cur.join('\n'), entry: !!cur.isEntry });
   return out;
 }
-// two blocks a script wrote from the same template read the same once their numbers (times, counts, ids) are gone
-const blockKey = (b) => b.replace(/\d+/g, '0').replace(/\s+/g, ' ').trim();
+// two copies of a block match only when their text is the same once runs of whitespace are one space: a date, a count
+// or a word that differs makes them different blocks
+const blockKey = (b) => b.replace(/\s+/g, ' ').trim();
 
-// the heading-led blocks a note holds REPEATS or more times: [{ heading, count }], most copies first
+// the blocks a note holds REPEATS or more times, word for word: [{ heading, count }], most copies first
 export function repeatedBlocks(text, min = REPEATS) {
   const counts = new Map();
   for (const b of blocksOf(text)) {
-    if (!HEADING.test(b)) continue;
-    const k = blockKey(b);
-    const e = counts.get(k) ?? counts.set(k, { heading: b.split('\n')[0].replace(/^#+\s+/, '').trim(), count: 0 }).get(k);
+    if (!b.entry) continue;
+    const k = blockKey(b.text);
+    const e = counts.get(k) ?? counts.set(k, { heading: b.text.split('\n')[0].replace(/^#+\s+/, '').trim(), count: 0 }).get(k);
     e.count++;
   }
   return [...counts.values()].filter((e) => e.count >= min).sort((a, b) => b.count - a.count);
 }
 
-// the note with each repeated block cut to its first and last copy; every other block stays where it was.
+// the note with each block repeated word for word cut to its first and last copy; every other block stays where it was.
 // Answers { text, removed: copies taken out, blocks: how many repeated blocks }
 export function compactText(text, min = REPEATS) {
   const blocks = blocksOf(text);
-  const keys = blocks.map((b) => (HEADING.test(b) ? blockKey(b) : null));
+  const keys = blocks.map((b) => (b.entry ? blockKey(b.text) : null));
   const total = new Map();
   for (const k of keys) if (k) total.set(k, (total.get(k) ?? 0) + 1);
   const seen = new Map();
@@ -67,10 +87,10 @@ export function compactText(text, min = REPEATS) {
   blocks.forEach((b, i) => {
     const k = keys[i];
     const all = k ? total.get(k) : 0;
-    if (!k || all < min) { kept.push(b); return; }
+    if (!k || all < min) { kept.push(b.text); return; }
     const at = (seen.get(k) ?? 0) + 1;
     seen.set(k, at);
-    if (at === 1 || at === all) kept.push(b);
+    if (at === 1 || at === all) kept.push(b.text);
     else removed++;
   });
   return { text: kept.join('\n'), removed, blocks: [...total.values()].filter((c) => c >= min).length };
@@ -122,7 +142,7 @@ function runawayFindings(notes, h) {
     const big = size > (h?.limit ?? SIZE_LIMIT);
     // the cheap test first: a note needs REPEATS headings with one text before its blocks are compared
     const heads = new Map();
-    for (const hd of x.note?.headings ?? []) { const k = `${hd.level}:${String(hd.text).replace(/\d+/g, '0')}`; heads.set(k, (heads.get(k) ?? 0) + 1); }
+    for (const hd of x.note?.headings ?? []) { const k = `${hd.level}:${hd.text}`; heads.set(k, (heads.get(k) ?? 0) + 1); }
     const maybe = [...heads.values()].some((c) => c >= REPEATS);
     const reps = maybe ? repeatedBlocks(x.text) : [];
     if (!big && !grew && !reps.length) continue;
@@ -133,9 +153,9 @@ function runawayFindings(notes, h) {
     out.push(finding(rule, {
       key: `runaway:${x.rel}`, target: x.rel, notes: [x.rel],
       title: reps.length ? `${name} repeats ${reps.length === 1 ? `one block ${n(reps[0].count)} times` : `${reps.length} blocks ${n(reps.reduce((s, r) => s + r.count, 0))} times`}` : `${name} ${why}`,
-      problem: reps.length ? 'A script or an agent appends the same block to it on every run. The copies say nothing new, and the agent reads all of them.' : 'A note this size takes a large part of the agent’s context, and at this rate it keeps growing.',
+      problem: reps.length ? 'A script or an agent appends the same block, word for word, on every run. The copies say nothing new, and the agent reads all of them.' : 'A note this size takes a large part of the agent’s context, and at this rate it keeps growing.',
       proposal: fix
-        ? `Save a backup copy in Quorum’s data folder, then remove ${plural(copies, 'repeated copy', 'repeated copies')} from ${quote(x.rel)}, keeping the first and last copy of each block and the rest of the note.`
+        ? `Save a backup copy in the hygiene-backups folder of Quorum’s data folder, then remove ${plural(copies, 'copy', 'copies')} of ${reps.length === 1 ? 'a block' : 'blocks'} repeated word for word in ${quote(x.rel)}, keeping the first and last copy and the rest of the note. Undo in the activity history puts the note back.`
         : 'Quorum finds no repeated blocks to remove. Approve keeps the note as it is and marks the item done; split it by hand or stop the script that writes to it.',
       evidence: [
         `${n(size)} bytes${before > 0 ? `, ${n(before)} bytes a week ago` : ''}`,

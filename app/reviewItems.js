@@ -111,7 +111,7 @@ export function itemLine(item) {
   if (o.op === 'setkey') return `Set ${item.ops.map((x) => `${x.key}: ${x.value}`).join(', ')} in ${q(o.rel)}`;
   if (o.op === 'addlink') return `Link ${q(o.note)} from ${q(o.rel)}`;
   if (o.op === 'trashdirs') return o.line;
-  if (o.op === 'compact') return `Back up ${q(o.rel)}, then remove ${o.copies} repeated ${o.copies === 1 ? 'copy' : 'copies'} from it`;
+  if (o.op === 'compact') return `Back up ${q(o.rel)} to Quorum’s data folder, then remove ${o.copies} word-for-word repeated ${o.copies === 1 ? 'copy' : 'copies'} from it`;
   if (o.op === 'commit') return `Commit ${o.paths.length} ${o.paths.length === 1 ? 'note' : 'notes'} on ${o.branch} with the message ${q(o.message)}`;
   return item.title;
 }

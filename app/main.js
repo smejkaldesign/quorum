@@ -3963,11 +3963,13 @@ async function runOp(item, o, { step, keep, written, vault }) {
     keep(o.rel);
     writeAtomic(abs, annotateLine(readFileSync(abs, 'utf8'), o));
   } else if (o.op === 'compact') {
-    await step(`Saving a backup copy of ${o.rel} and removing its repeated blocks`);
+    await step(`Saving a backup copy of ${o.rel}`);
     const text = readFileSync(abs, 'utf8');
     const c = compactNote(text);
     if (!c.removed) throw new Error(`“${o.rel}” no longer repeats a block, so Quorum did not change it`);
-    backupNote(DATA_DIR, vault, o.rel);
+    const backup = backupNote(DATA_DIR, vault, o.rel);
+    // the batch keeps the text from before, so Undo in the activity history puts the note back as it was
+    await step(`Saved the backup copy at ${backup}. Removing ${c.removed} repeated ${c.removed === 1 ? 'copy' : 'copies'} from ${o.rel}`);
     keep(o.rel);
     writeAtomic(abs, c.text);
   } else if (o.op === 'addlink') {

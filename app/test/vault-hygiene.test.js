@@ -32,7 +32,9 @@ const repo = () => {
   return v;
 };
 const old = (abs, days) => { const t = (Date.now() - days * DAY) / 1000; utimesSync(abs, t, t); };
-const block = (i) => `## Auto capture 2026-11-${String((i % 28) + 1).padStart(2, '0')} 10:${String(i % 60).padStart(2, '0')}\n\n- hook ran, ${i} files scanned\n`;
+// a block a script appends word for word on every run
+const block = () => '## Auto capture\n\n- hook ran, nothing new\n';
+const entry = (i) => `## Day ${i}\n\nWeight: ${170 + (i % 9)}\n`;
 
 describe('litter folder names', () => {
   it('matches the names tools and tests give, and leaves real folders alone', () => {
@@ -92,35 +94,46 @@ describe('the litter scan', () => {
 });
 
 describe('runaway notes', () => {
-  it('finds a block repeated 20 or more times and keeps its first and last copy and everything else', () => {
-    const text = `# Session log\n\nIntro line.\n\n${Array.from({ length: 25 }, (_, i) => block(i)).join('\n')}\n## Decisions\n\nShip it.\n`;
-    expect(repeatedBlocks(text)).toEqual([{ heading: 'Auto capture 2026-11-01 10:00', count: 25 }]);
+  it('finds a block repeated word for word 20 or more times and keeps its first and last copy and everything else', () => {
+    const text = `# Session log\n\nIntro line.\n\n${Array.from({ length: 25 }, (_, i) => (i === 12 ? entry(1) : block())).join('\n')}\n## Decisions\n\nShip it.\n`;
+    expect(repeatedBlocks(text)).toEqual([{ heading: 'Auto capture', count: 24 }]);
     const c = compactText(text);
-    expect(c.removed).toBe(23);
+    expect(c.removed).toBe(22);
     expect(c.text).toContain('Intro line.');
+    expect(c.text).toContain('## Day 1\n\nWeight: 171');
     expect(c.text).toContain('## Decisions\n\nShip it.');
-    expect(c.text).toContain('0 files scanned');
-    expect(c.text).toContain('24 files scanned');
-    expect(c.text).not.toContain('12 files scanned');
+    expect(c.text.match(/## Auto capture/g)).toHaveLength(2);
     expect(compactText(c.text).removed).toBe(0);
-    expect(repeatedBlocks(Array.from({ length: 19 }, (_, i) => block(i)).join('\n'))).toEqual([]);
+    expect(repeatedBlocks(Array.from({ length: 19 }, () => block()).join('\n'))).toEqual([]);
+  });
+  it('never treats numbered entries as copies: a different number is different data', () => {
+    const text = `# Weight log\n\n${Array.from({ length: 60 }, (_, i) => entry(i + 1)).join('\n')}`;
+    expect(repeatedBlocks(text)).toEqual([]);
+    expect(compactText(text)).toMatchObject({ text, removed: 0 });
+    // the same text with different whitespace is still a copy
+    expect(repeatedBlocks(Array.from({ length: 20 }, (_, i) => `## Ping\n\nok${' '.repeat(i % 3)}\n`).join('\n'))).toEqual([{ heading: 'Ping', count: 20 }]);
+  });
+  it('splits only at the entry level, so identical sub-sections of different entries stay', () => {
+    const text = `# Journal\n\n${Array.from({ length: 30 }, (_, i) => `## 2026-10-${String(i + 1).padStart(2, '0')}\n\nWrote page ${i}.\n\n### Checklist\n\n- [ ] stretch\n`).join('\n')}`;
+    expect(repeatedBlocks(text)).toEqual([]);
+    expect(compactText(text).text).toBe(text);
   });
   it('leaves a heading inside fenced code in its block', () => {
-    const text = `# Note\n\n\`\`\`md\n## Not a heading\n\`\`\`\n${Array.from({ length: 20 }, (_, i) => block(i)).join('\n')}`;
+    const text = `# Note\n\n\`\`\`md\n## Not a heading\n\`\`\`\n${Array.from({ length: 20 }, () => block()).join('\n')}`;
     const c = compactText(text);
     expect(c.removed).toBe(18);
     expect(c.text).toContain('```md\n## Not a heading\n```');
   });
   it('offers to compact a note with repeats, and keeps a big note with none as it is', () => {
-    const reps = note('memory/sessions/2026-11-16.md', `# Log\n${Array.from({ length: 30 }, (_, i) => block(i)).join('\n')}`);
+    const reps = note('memory/sessions/2026-11-16.md', `# Log\n${Array.from({ length: 30 }, () => block()).join('\n')}`);
     const big = note('notes/big.md', `# Big\n${'word '.repeat(220000)}`);
     const small = note('notes/small.md', '# Small\nShort.\n');
     const fs = run({ notes: [reps, big, small], hygiene: null, now: NOW });
     expect(fs.map((f) => f.key)).toEqual(['note.hygiene:runaway:memory/sessions/2026-11-16.md', 'note.hygiene:runaway:notes/big.md']);
     const [c, b] = fs;
     expect(c.fix).toMatchObject({ kind: 'compact', copies: 28 });
-    expect(c.proposal).toBe('Save a backup copy in Quorum’s data folder, then remove 28 repeated copies from “memory/sessions/2026-11-16.md”, keeping the first and last copy of each block and the rest of the note.');
-    expect(itemLine(findingItem(c))).toBe('Back up “memory/sessions/2026-11-16.md”, then remove 28 repeated copies from it');
+    expect(c.proposal).toBe('Save a backup copy in the hygiene-backups folder of Quorum’s data folder, then remove 28 copies of a block repeated word for word in “memory/sessions/2026-11-16.md”, keeping the first and last copy and the rest of the note. Undo in the activity history puts the note back.');
+    expect(itemLine(findingItem(c))).toBe('Back up “memory/sessions/2026-11-16.md” to Quorum’s data folder, then remove 28 word-for-word repeated copies from it');
     expect(effects(findingItem(c).ops[0]).writes).toEqual([{ rel: 'memory/sessions/2026-11-16.md', region: 'all' }]);
     expect(b.fix).toBeUndefined();
     expect(b.title).toBe('“Big” is 1 MB');
