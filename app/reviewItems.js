@@ -54,10 +54,12 @@ export function pastFixItem({ run, res, plan }) {
 }
 
 // a review rule's finding: its own fix (rules/confidential.js: tag, move, or move and tag; rules/nearDuplicates.js:
-// link two notes; rules/contradictions.js: add a marker to one line), else the change Approve makes for its rule (reviewApprove.js approveFinding, kept on the finding as
+// link two notes; rules/contradictions.js: add a marker to one line; rules/hygiene.js: trash litter folders, compact a
+// note, commit notes), else the change Approve makes for its rule (reviewApprove.js approveFinding, kept on the finding as
 // approve), else keep as is
 export function findingItem(f) {
-  const base = { id: `${ROW.finding}${f.key}`, kind: 'finding', key: f.key, target: f.key, title: f.rel, ruleId: f.ruleId, notes: f.notes, autoFix: !!f.autoFix, reviewOnly: false };
+  // a finding on the vault as a whole (rules/hygiene.js litter and uncommitted notes) has no note and goes by its title
+  const base = { id: `${ROW.finding}${f.key}`, kind: 'finding', key: f.key, target: f.key, title: f.rel ?? f.title, ruleId: f.ruleId, notes: f.notes, autoFix: !!f.autoFix, reviewOnly: false };
   const x = f.fix;
   if (!x) {
     const a = f.approve ?? { kind: 'keep', ops: [{ op: 'keep' }] };
@@ -68,6 +70,9 @@ export function findingItem(f) {
   if (x.kind === 'annotate') ops.push({ op: 'annotate', rel: f.rel, line: x.line, text: x.text, add: x.add });
   if (x.kind === 'tag' || x.kind === 'move-tag') ops.push({ op: 'tag', rel: f.rel, value: x.value });
   if (x.kind === 'move' || x.kind === 'move-tag') ops.push({ op: 'move', rel: f.rel, to: x.to });
+  if (x.kind === 'trashdirs') ops.push({ op: 'trashdirs', dirs: x.dirs, ignore: x.ignore ?? [], gitignore: x.gitignore ?? null, bytes: x.bytes ?? 0, line: x.line });
+  if (x.kind === 'compact') ops.push({ op: 'compact', rel: f.rel, copies: x.copies, hash: x.hash });
+  if (x.kind === 'commit') ops.push({ op: 'commit', paths: x.paths, message: x.message, branch: x.branch });
   return { ...base, ops };
 }
 
@@ -105,5 +110,8 @@ export function itemLine(item) {
   if (o.op === 'move') return `Move ${q(o.rel)} to ${q(o.to)}`;
   if (o.op === 'setkey') return `Set ${item.ops.map((x) => `${x.key}: ${x.value}`).join(', ')} in ${q(o.rel)}`;
   if (o.op === 'addlink') return `Link ${q(o.note)} from ${q(o.rel)}`;
+  if (o.op === 'trashdirs') return o.line;
+  if (o.op === 'compact') return `Back up ${q(o.rel)} to Quorum’s data folder, then remove ${o.copies} word-for-word repeated ${o.copies === 1 ? 'copy' : 'copies'} from it`;
+  if (o.op === 'commit') return `Commit ${o.paths.length} ${o.paths.length === 1 ? 'note' : 'notes'} on ${o.branch} with the message ${q(o.message)}`;
   return item.title;
 }

@@ -73,7 +73,7 @@ export const priorOf = (kind) => PRIORS[kind] ?? DEFAULT_PRIOR;
 // a relink or alias whose name match is neither exact nor strong
 export const WEAK_SCORE = 0.5;
 // review rules whose keep-only finding still tells the person something they can act on themselves
-export const INFO_RULES = new Set(['note.secret', 'note.duplicate', 'note.confidential-folder', 'note.contradiction']);
+export const INFO_RULES = new Set(['note.secret', 'note.duplicate', 'note.confidential-folder', 'note.contradiction', 'note.hygiene']);
 
 const ruleOf = (kind) => String(kind).split(':')[0];
 // the kind of fix an item proposes: the key of PRIORS and of the live guard

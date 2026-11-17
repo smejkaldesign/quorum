@@ -351,6 +351,8 @@ export function approveFinding(f, { rels = [], title = () => null, skip = () => 
     if (!index) return keep('Its folder has no index note to link it from.');
     return { kind: 'addlink', says: `Link it from ${q(index)}.`, ops: [{ op: 'addlink', rel: index, line: `- [[${wikiName(f.rel, rels)}]]`, note: f.rel }] };
   }
+  // the hygiene rule writes its Approve line as its proposal when it has nothing to change (rules/hygiene.js)
+  if (f.ruleId === 'note.hygiene') return { kind: 'keep', says: f.proposal, ops: [{ op: 'keep' }] };
   return keep('Quorum has no change to make for this check.');
 }
 

@@ -15,17 +15,11 @@ import { createResolver } from './linkparse.js';
 import { createContradictionAgent } from './contradictionAgent.js';
 import { createMemorySweep, rescanTags, scanTags } from './memorySweep.js';
 import { analyze as contradictionPass } from './rules/contradictions.js';
+import { scanHygiene } from './vaultHygiene.js';
+import { MAX_RULE_TEXT, ruleText } from './rules/common.js';
 
-export const MAX_RULE_TEXT = 1000000;
-
-// the text the rules read for a note: the whole text, or its head cut at a line end. Main cuts it before it sends the
-// note, so the copy that reaches the engine holds no reference to the whole text
-export function ruleText(text) {
-  const t = String(text ?? '');
-  if (t.length <= MAX_RULE_TEXT) return t;
-  const cut = t.lastIndexOf('\n', MAX_RULE_TEXT);
-  return cut > 0 ? t.slice(0, cut) : t.slice(0, MAX_RULE_TEXT);
-}
+// the text cut the rules read (rules/common.js), exported here for the callers that already import it
+export { MAX_RULE_TEXT, ruleText };
 
 export function createMemoryEngine({ dataDir, ask = async () => { throw new Error('No model'); }, emit = () => {}, log = () => {}, now = () => Date.now() }) {
   let vault = null;
@@ -35,6 +29,8 @@ export function createMemoryEngine({ dataDir, ask = async () => { throw new Erro
   let resolve = () => null;
   let list = [];
   let tagScan = null;
+  // the last hygiene scan (vaultHygiene.js), with the vault it read
+  let hygiene = null;
   // how many notes main's index held at the last sync. The engine sweeps and prunes only when it holds them all
   let expected = 0;
   // what main says holds now: { enabled, cap, busy, idleMs, drafts, bar, folders, terms, confidentialFolders }
@@ -102,7 +98,11 @@ export function createMemoryEngine({ dataDir, ask = async () => { throw new Erro
     need();
     const tags = kind === 'save' && only && tagScan?.vault === vault ? rescanTags(vault, tagScan.tags, only, excluded) : scanTags(vault, excluded);
     tagScan = { vault, tags };
-    const ctx = { notes: list, resolve, tags, folders: cond.folders ?? {}, contradictions: contradictions() };
+    // the hygiene rule's folder walk and git status run once per full sweep; the other sweeps reuse the last scan
+    if (kind === 'full' || kind === 'first' || hygiene?.vault !== vault) {
+      try { hygiene = { vault, ...scanHygiene({ vault, notes: list, file: path.join(dataDir, 'memory-hygiene.json'), now: now() }) }; } catch (e) { log('memory engine', 'hygiene scan', e?.message); hygiene = null; }
+    }
+    const ctx = { notes: list, resolve, tags, folders: cond.folders ?? {}, contradictions: contradictions(), hygiene };
     const s = sweeps.run(vault, kind, ctx, { only });
     return { state: s, tags };
   }

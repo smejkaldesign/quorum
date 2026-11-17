@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { GENERATED_RULES, cleanTitle, contextNote, createPlan, generatedRule } from '../linkRules.js';
+import { GENERATED_RULES, cleanTitle, contextNote, createPlan, generatedRule, genericTarget, linkReport, reportLine } from '../linkRules.js';
 import { createElsewhere, folderIndex, withFound } from '../linkElsewhere.js';
 import { createVaultIndex } from '../vindex.js';
 import { issueOf, optionsOf } from '../memoryHealth.js';
@@ -178,5 +178,66 @@ describe('the existence check before writing a note', () => {
     const finder = { find: () => ({ kind: 'folder', where: 'x' }) };
     const [m] = withFound([{ target: 'ada', sources: ['a.md'], count: 1, candidates: [{ rel: 'people/ada.md', title: 'Ada', name: null, exact: true }] }], finder, []);
     expect(issueOf(m).action).toBe('alias');
+  });
+});
+
+describe('no notes for link names that only reports or examples hold', () => {
+  const plan = (target, sources) => createPlan({ target, sources, count: sources.length, candidates: [], confidential: [] });
+  it('never writes a note named by a common word or a placeholder', () => {
+    for (const t of ['link', 'Links', 'wiki links', 'filename-without-extension', 'filename', 'note', 'page', 'todo', '<note name>', 'your note', 'name-goes-here']) expect(genericTarget(t)).toBe(true);
+    for (const t of ['Orbit', 'nova-apps-platform', 'link-rot-study', 'Page Turner', 'Link Building Strategy', 'My Morning Routine', 'Some Like It Hot', 'Another Round', 'your-move']) expect(genericTarget(t)).toBe(false);
+    expect(plan('link', ['p/a.md', 'p/b.md'])).toMatchObject({ ok: false, reason: expect.stringMatching(/common word or a placeholder/) });
+    expect(plan('Orbit', ['p/a.md', 'p/b.md'])).toMatchObject({ ok: true });
+  });
+  it('reads lines and notes that report on links', () => {
+    expect(reportLine('- [[link]] dead-wikilink in `notes/a.md`')).toBe(true);
+    expect(reportLine('[[filename-without-extension]] has no matching vault file')).toBe(true);
+    expect(reportLine('a note', '[[`notes/a.md`]]')).toBe(true);
+    // a code span elsewhere on the line, or prose about broken links, says nothing about this link
+    expect(reportLine('Use `[[name]]` to link a note, see [[Setup]]', '[[Setup]]')).toBe(false);
+    expect(reportLine('Fly the [[Kite]] on Sunday with `npm start`', '[[Kite]]')).toBe(false);
+    expect(reportLine('We fixed the broken links in [[Link Building Strategy]]', '[[Link Building Strategy]]')).toBe(false);
+    expect(linkReport('# Vault drift report\n- [[a]]\n')).toBe(true);
+    expect(linkReport('# Notes\n- [[a]] dead-wikilink\n- [[b]] dead-wikilink\n')).toBe(true);
+    expect(linkReport('# Notes\n- [[a]] dead link\n- [[b]] broken links\n')).toBe(false);
+    expect(linkReport('# Notes\nOne dead-wikilink to [[a]] here.\nSee [[b]].\n')).toBe(false);
+    expect(linkReport('', 'Broken links found 2026-11-10')).toBe(false);
+    expect(linkReport('', 'Link audit 2026-11-10')).toBe(true);
+  });
+  it('drops links that a drift report lists as findings, so approving writes no stub', () => {
+    fresh();
+    put('ops/vault-drift-2026-11-15.md', '# Vault drift 2026-11-15\n\n- `a.md`: [[link]] (dead-wikilink)\n- `b.md`: [[filename-without-extension]] has no matching vault file\n- [[wiki links]] dead-wikilink\n');
+    put('ops/lint-2026-11-16.md', '# Lint\n\nPattern `[[filename-without-extension]]` shows the syntax.\n');
+    put('projects/plan.md', '# Plan\nWe write [[wiki links]] by hand. See [[link]] too.\n');
+    put('projects/roadmap.md', '# Roadmap\nAll [[wiki links]] get checked. The [[link]] page.\n');
+    const i = index();
+    const names = i.linkHealth().map((h) => h.target.toLowerCase());
+    expect(names).not.toContain('filename-without-extension');
+    const prose = i.linkHealth().find((h) => h.target === 'wiki links');
+    expect(prose.sources.sort()).toEqual(['projects/plan.md', 'projects/roadmap.md']);
+    expect(optionsOf(prose)).not.toContain('create');
+    expect(optionsOf(i.linkHealth().find((h) => h.target === 'link'))).not.toContain('create');
+  });
+  it('keeps real titles eligible for a note, in notes that talk about broken links in prose', () => {
+    fresh();
+    put('marketing/seo.md', '# SEO\nWe fixed the broken links. Next: [[Link Building Strategy]] and [[My Morning Routine]].\nWatch [[Some Like It Hot]].\n');
+    put('marketing/plan.md', '# Plan\n- `site/a.html` has broken links, see [[Link Building Strategy]]\n- [[My Morning Routine]] then [[Some Like It Hot]]\n');
+    const i = index();
+    for (const t of ['Link Building Strategy', 'My Morning Routine', 'Some Like It Hot']) {
+      const m = i.linkHealth().find((h) => h.target === t);
+      expect(m.sources.sort()).toEqual(['marketing/plan.md', 'marketing/seo.md']);
+      expect(optionsOf(m)).toContain('create');
+    }
+  });
+  it('treats links in inline code and fenced code as code, also with double backticks', () => {
+    fresh();
+    put('a.md', '# A\nType ``[[ghost-one]]`` here.\n\n```\n[[ghost-two]]\n```\n~~~md\n[[ghost-three]]\n~~~\n');
+    const names = index().linkHealth().map((h) => h.target);
+    expect(names).toEqual([]);
+  });
+  it('never puts a stub in a sessions or log folder, at any depth', () => {
+    expect(plan('nova-apps-platform', ['MyBrain/memory/sessions/2026-11-01.md', 'MyBrain/memory/sessions/2026-11-02.md'])).toMatchObject({ ok: false });
+    expect(plan('nova-apps-platform', ['MyBrain/memory/sessions/2026-11-01.md', 'MyBrain/memory/sessions/2026-11-02.md', 'MyBrain/04-projects/a.md'])).toMatchObject({ ok: true, folder: 'MyBrain/04-projects' });
+    expect(plan('nova-apps-platform', ['work/logs/a.md', 'work/logs/b.md', 'work/c.md']).folder).toBe('work');
   });
 });
