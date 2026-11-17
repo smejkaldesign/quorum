@@ -92,6 +92,15 @@ describe('decider decisions', () => {
     expect(pairRule(c('', 'Postgres'), c('', 'postgres.'))).toMatchObject({ equivalent: true });
   });
 
+  it('keeps a pair whose quotes differ in a figure or a negation even when the values match', async () => {
+    const m = fake(SAME);
+    const d = createDecider({ load: async () => m });
+    expect(await d.relatedPair(c('Atlas runs Postgres 15.', 'Postgres'), c('Atlas runs Postgres 16.', 'Postgres'))).toMatchObject({ drop: false, tier: 't0', reason: 'figures differ' });
+    expect(await d.relatedPair(c('The free plan includes team folders.', 'team folders'), c('The free plan does not include team folders.', 'team folders'))).toMatchObject({ drop: false, tier: 't0', reason: 'negation' });
+    expect(await d.relatedPair(c('Exports never include comments.', 'comments'), c('Exports include comments.', 'comments'))).toMatchObject({ drop: false, tier: 't0', reason: 'negation' });
+    expect(m.embed).not.toHaveBeenCalled();
+  });
+
   it('embeds each text once', async () => {
     const m = fake({ cos: 0.9 });
     const d = createDecider({ load: async () => m });

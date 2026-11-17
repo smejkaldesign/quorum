@@ -48,16 +48,19 @@ export function figures(v) {
   return out;
 }
 
-// { keep, equivalent, reason } for a pair. keep: a sign of a real change T1 may not overrule; equivalent: the same value
-// and the same polarity once normalized (pairClaims already skips those, so this only catches callers that do not)
+const NEGATION = /\b(not|no|never|none|nobody|nothing|neither|nor|without|cannot)\b|n't\b/i;
+const differ = (x, y) => [...x].some((f) => !y.has(f)) || [...y].some((f) => !x.has(f));
+
+// { keep, equivalent, reason } for a pair. keep: a sign of a real change T1 may not overrule, read from the values and
+// from the quotes, since a claim's value can leave out the figure or the negation its sentence holds ("Postgres" for
+// "Atlas runs Postgres 16"). equivalent: the same value, polarity, figures and negation (pairClaims already skips
+// same-value pairs, so this only catches callers that do not)
 export function pairRule(a, b) {
-  const va = normValue(a?.value);
-  const vb = normValue(b?.value);
   const flipped = (a?.polarity ?? 'positive') !== (b?.polarity ?? 'positive');
-  if (va && va === vb && !flipped) return { keep: false, equivalent: true, reason: 'same value' };
   if (flipped) return { keep: true, equivalent: false, reason: 'polarity' };
-  const fa = figures(a?.value);
-  const fb = figures(b?.value);
-  if ([...fa].some((x) => !fb.has(x)) || [...fb].some((x) => !fa.has(x))) return { keep: true, equivalent: false, reason: 'figures differ' };
+  if (differ(figures(a?.value), figures(b?.value)) || differ(figures(a?.quote), figures(b?.quote))) return { keep: true, equivalent: false, reason: 'figures differ' };
+  if (NEGATION.test(String(a?.quote ?? '')) !== NEGATION.test(String(b?.quote ?? ''))) return { keep: true, equivalent: false, reason: 'negation' };
+  const va = normValue(a?.value);
+  if (va && va === normValue(b?.value)) return { keep: false, equivalent: true, reason: 'same value' };
   return { keep: false, equivalent: false, reason: null };
 }
