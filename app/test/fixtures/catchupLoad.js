@@ -95,6 +95,12 @@ export async function runCatchupLoad({ mode = 'engine', notes = 2000, big = 0, g
   await settle();
   const heapStart = heap();
   const heaps = [];
+  // the loop delay of this process with nothing to do, measured the same way just before the pass: what the machine's
+  // own load adds, so the test can judge the pass by what it adds on top
+  const idle = monitorEventLoopDelay({ resolution: 5 });
+  idle.enable();
+  await new Promise((r) => setTimeout(r, 500));
+  idle.disable();
   const lag = monitorEventLoopDelay({ resolution: 5 });
   lag.enable();
   const t0 = Date.now();
@@ -119,7 +125,7 @@ export async function runCatchupLoad({ mode = 'engine', notes = 2000, big = 0, g
   return {
     mode, notes, calls, end: last.end, done: last.done, ms, emits, sweeps: sweepRuns,
     items: asked.size, repeats, callsPerItem: asked.size ? [...asked.values()].reduce((a, b) => a + b, 0) / asked.size : 0,
-    lagP95: lag.percentile(95) / 1e6, lagMax: lag.max / 1e6,
+    lagP95: lag.percentile(95) / 1e6, lagMax: lag.max / 1e6, idleLagP95: idle.percentile(95) / 1e6,
     heapStartMB: heapStart / 1e6, heapEndMB: heapEnd / 1e6, heapPeaksMB: peaks.map((p) => Math.round(p / 1e5) / 10), heapLowsMB: lows.map((p) => Math.round(p / 1e5) / 10),
   };
 }
