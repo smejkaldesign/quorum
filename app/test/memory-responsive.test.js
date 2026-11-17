@@ -10,10 +10,11 @@ import { describe, expect, it } from 'vitest';
 
 const SCRIPT = path.join(path.dirname(new URL(import.meta.url).pathname), '../scripts/memory-catchup-bench.mjs');
 const bench = (...args) => JSON.parse(execFileSync(process.execPath, ['--expose-gc', SCRIPT, ...args], { encoding: 'utf8', timeout: 120000 }));
-// the peaks of the later half of the run against the earlier half: a heap that climbs call after call fails it
-const climbs = (peaks) => {
-  const half = Math.floor(peaks.length / 2);
-  return Math.max(...peaks.slice(half)) > Math.max(...peaks.slice(0, half)) * 1.25 + 5;
+// the heap's low points (what it keeps after a collection) in the later half of the run against the earlier half: a
+// heap that keeps memory call after call fails it. The peaks depend on when the collector runs, so they are not used
+const climbs = (lows) => {
+  const half = Math.floor(lows.length / 2);
+  return Math.min(...lows.slice(half)) > Math.max(...lows.slice(0, half)) * 1.25 + 5;
 };
 
 describe('a catch-up and the main process', () => {
@@ -26,7 +27,7 @@ describe('a catch-up and the main process', () => {
     // every call saved a note, and still one sweep ran: the one that ends the pass. Progress goes at most once a second
     expect(r.sweeps).toBe(1);
     expect(r.emits).toBeLessThanOrEqual(Math.ceil(r.ms / 1000) + 3);
-    expect(climbs(r.heapPeaksMB)).toBe(false);
+    expect(climbs(r.heapLowsMB)).toBe(false);
     expect(r.heapEndMB - r.heapStartMB).toBeLessThan(20);
   }, 130000);
 
@@ -34,7 +35,7 @@ describe('a catch-up and the main process', () => {
     const r = bench('--notes', '300', '--big', '8000000', '--grow', '20000');
     expect(r.end).toBe('done');
     expect(r.lagP95).toBeLessThan(100);
-    expect(climbs(r.heapPeaksMB)).toBe(false);
+    expect(climbs(r.heapLowsMB)).toBe(false);
     // the index holds the note and its lowercased copy for search; the rules' caches are in the engine
     expect(r.heapEndMB - r.heapStartMB).toBeLessThan(40);
   }, 130000);

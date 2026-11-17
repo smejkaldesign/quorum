@@ -110,12 +110,14 @@ export async function runCatchupLoad({ mode = 'engine', notes = 2000, big = 0, g
   // the heap across the run in `samples` slices: the peak of each, to tell growth from noise
   const slice = Math.max(1, Math.ceil(heaps.length / samples));
   const peaks = [];
-  for (let i = 0; i < heaps.length; i += slice) peaks.push(Math.max(...heaps.slice(i, i + slice)));
+  // the low point of each slice is what the heap keeps after a collection; it climbs when memory is kept call after call
+  const lows = [];
+  for (let i = 0; i < heaps.length; i += slice) { peaks.push(Math.max(...heaps.slice(i, i + slice))); lows.push(Math.min(...heaps.slice(i, i + slice))); }
   const repeats = [...asked.values()].filter((n) => n > 1).length;
   return {
     mode, notes, calls, end: last.end, done: last.done, ms, emits, sweeps: sweepRuns,
     items: asked.size, repeats, callsPerItem: asked.size ? [...asked.values()].reduce((a, b) => a + b, 0) / asked.size : 0,
     lagP95: lag.percentile(95) / 1e6, lagMax: lag.max / 1e6,
-    heapStartMB: heapStart / 1e6, heapEndMB: heapEnd / 1e6, heapPeaksMB: peaks.map((p) => Math.round(p / 1e5) / 10),
+    heapStartMB: heapStart / 1e6, heapEndMB: heapEnd / 1e6, heapPeaksMB: peaks.map((p) => Math.round(p / 1e5) / 10), heapLowsMB: lows.map((p) => Math.round(p / 1e5) / 10),
   };
 }
