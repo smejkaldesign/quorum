@@ -14,6 +14,7 @@ export function DismissButton({ disabled, onDismiss }: { disabled?: boolean; onD
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
 import { Avatar } from './Speaker';
 import { toast } from './Toasts';
+import { toastWhenFixed, waitFix } from './fixToast';
 import type { FeedKind, FeedPage, FeedRow, FeedSort, FeedTab, FixRun } from './quorum';
 import { Segmented } from './controls';
 import { BulkPlan } from './BulkPlan';
@@ -260,7 +261,13 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
     if (!picked.length) return;
     const groups = new Map<'approve' | 'revert' | 'dismiss', { kind: NonNullable<FeedRow['review']>['kind']; abs: string; key?: string }[]>();
     const fixes = picked.filter((r) => verdict === 'approve' && r.review!.kind === 'link').map((r) => r.review!.key!);
-    if (fixes.length) await window.quorum.fixStart(fixes).catch(() => []);
+    // a link fix is announced once it ends (toastWhenFixed), and only the fixes that started
+    const waits = fixes.map((k) => waitFix(k));
+    const started = fixes.length ? await window.quorum.fixStart(fixes).catch(() => [] as FixRun[]) : [];
+    const ran = (k: string) => started.some((r) => r.key === k.toLowerCase() || !!r.items?.some((i) => i.kind === 'link' && i.key === k.toLowerCase()));
+    waits.forEach((w, n) => { if (!ran(fixes[n])) w.off(); });
+    if (fixes.length && !started.length) toast(fixes.length === 1 ? 'That item no longer needs a fix' : 'None of those items could start a fix', 'error');
+    toastWhenFixed(fixes.flatMap((k, n) => (ran(k) ? [{ key: k, target: picked.find((r) => r.review!.key === k)!.target.title, done: waits[n] }] : [])));
     for (const r of picked) {
       if (verdict === 'approve' && r.review!.kind === 'link') continue;
       const v = verdict === 'dismiss' ? 'dismiss' : r.summary.ask?.suggest === 'reject' ? 'revert' : 'approve';
@@ -280,12 +287,13 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
     clear();
     changed();
     const one = picked.length === 1 ? `“${picked[0].target.title}”` : `${picked.length} items`;
-    const fixing = fixes.length && verdict === 'approve';
     const undoing = picked.every((r) => r.review!.kind === 'past-fix');
     // Approve on an item Quorum keeps as it is changes nothing and marks it done
     const keeping = verdict === 'approve' && picked.every((r) => r.review!.approve === 'keep' || (r.review!.kind === 'finding' && r.detail?.keep));
     if (undoing && failedN) return;
-    toast(keeping ? `Kept ${one} as ${picked.length === 1 ? 'it is' : 'they are'} and marked ${picked.length === 1 ? 'it' : 'them'} done.` : undoing ? (verdict === 'dismiss' ? `Kept the fix on ${one}.` : `Approved the corrective fix on ${one}. Quorum is applying it now.`) : verdict === 'dismiss' ? `Dismissed ${one}. Nothing changed.` : fixing ? `Approved ${one}. Quorum is fixing ${picked.length === 1 ? 'it' : 'them'} now.` : `Approved ${one}.`);
+    // only link fixes picked: their toast comes when they end
+    if (fixes.length && fixes.length === picked.length) return;
+    toast(keeping ? `Kept ${one} as ${picked.length === 1 ? 'it is' : 'they are'} and marked ${picked.length === 1 ? 'it' : 'them'} done.` : undoing ? (verdict === 'dismiss' ? `Kept the fix on ${one}.` : `Approved the corrective fix on ${one}. Quorum is applying it now.`) : verdict === 'dismiss' ? `Dismissed ${one}. Nothing changed.` : `Approved ${one}.`);
   };
 
   // archive or bring back rows; the list reloads so they leave this tab

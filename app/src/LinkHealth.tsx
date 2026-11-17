@@ -9,6 +9,8 @@ import { BulkPick, DismissButton, IssueParts, ReviewDetails, Row as FeedItem, Ro
 import type { FeedRow, FixRun, MemoryDraft, MemoryFinding } from './quorum';
 import { MemoryFindings } from './MemoryFindings';
 import { toast } from './Toasts';
+import { toastWhenFixed, waitFix } from './fixToast';
+export { toastWhenFixed, waitFix };
 import { Segmented } from './controls';
 import { BulkPlan } from './BulkPlan';
 import { AgentActivityBanner, WorkBanner } from './WorkBanner';
@@ -35,15 +37,12 @@ export const leftOf = (items: MissingLink[]) => new Set(items.filter((m) => m.le
 
 // Approve or Decline one issue, shared with the review banner and Notifications; answers with a line saying what changed
 // Approve starts the fix as a run (main.js startFixes); the answer says it started. waitFix resolves with the run once
-// it has finished
-export const acceptIssue = async (issue: Issue) => { await window.quorum.fixStart([issue.key]); return `Fixing “${issue.target}”`; };
-export function waitFix(key: string): Promise<FixRun> {
-  return new Promise((resolve) => {
-    // a link the agent fixes on Approve runs as a batch of one (main.js startFixes), so its run holds it as an item
-    const mine = (r: FixRun) => r.key === key.toLowerCase() || (r.kind === 'batch' && !!r.items?.some((i) => i.kind === 'link' && i.key === key.toLowerCase()));
-    const off = window.quorum.onFixRun((r) => { if (mine(r) && (r.status === 'success' || r.status === 'error')) { off(); resolve(r); } });
-  });
-}
+// it has finished (fixToast.ts)
+export const acceptIssue = async (issue: Issue) => {
+  // nothing starts when the issue is gone: the links were fixed or the note was written since the list loaded
+  if (!(await window.quorum.fixStart([issue.key])).length) throw new Error(`“${issue.target}” no longer needs a fix`);
+  return `Fixing “${issue.target}”`;
+};
 // Dismiss: marked reviewed, nothing changes, and the issue moves to Dismissed
 // Archive on an issue sets it aside without fixing it; it lists under Archived, read Dismissed, until moved back
 export const dismissIssue = async (issue: Issue) => { await window.quorum.activityArchive([{ id: `r:link:${issue.key}` }], true); return 'Archived without fixing it'; };
@@ -132,8 +131,10 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const open = healthList(all, { tab: 'open', categories: cats, q, sort, left }).filter((i) => inRun(issueId(i.key)));
   const openKeys = new Set(all.map((i) => i.target.toLowerCase()));
   const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  // a fix that failed lists no row of its own while its issues are back in Needs review: they read as not yet approved
+  const backOpen = (r: FixRun) => r.status === 'error' && (r.kind === 'batch' ? !!r.items?.length && r.items.every((i) => i.kind === 'link' && openKeys.has(i.key)) : openKeys.has(r.key));
   const ended = cats.length || only ? [] : runs
-    .filter((r) => !r.undoneAt && (r.endedAt || !openKeys.has(r.key)) && words.every((w) => r.target.toLowerCase().includes(w)))
+    .filter((r) => !r.undoneAt && !backOpen(r) && (r.endedAt || !openKeys.has(r.key)) && words.every((w) => r.target.toLowerCase().includes(w)))
     .sort((a, b) => (b.endedAt ?? b.queuedAt) - (a.endedAt ?? a.queuedAt));
   const shelved = ended.filter((r) => marks.archived.has(runId(r)));
   const showing = ended.filter((r) => !marks.archived.has(runId(r)));
@@ -147,6 +148,16 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
     : review ? open.map((issue) => ({ issue })).filter((e) => tab !== 'unread' || unreadOf(e))
       : tab === 'unread' ? lively.filter(unreadOf) : lively;
   const unreadN = lively.filter(unreadOf).length;
+  // the newest bulk Approve's banner: two or more items. One item approved on its own shows its progress in its row
+  const listOf = (b: string) => runs.filter((r) => r.batch === b && !r.undoneAt).flatMap((r) => (r.kind === 'batch' ? batchItems(r) : [r]));
+  const lastBatch = [...new Set(runs.filter((r) => r.batch).sort((a, b) => b.queuedAt - a.queuedAt).map((r) => r.batch!))].find((b) => listOf(b).length > 1) ?? null;
+  const bulkList = lastBatch ? listOf(lastBatch) : [];
+  const bulkOne = runs.find((r) => r.batch === lastBatch && r.kind === 'batch');
+  const bulkShown = !!lastBatch && lastBatch !== hiddenBatch && bulkList.length > 1;
+  // the running planned batch shows here (bulk) or in its row (one item), never in a second banner. Fixes run one at a
+  // time, so at most one batch runs
+  const planNow = runs.find((r) => r.kind === 'batch' && r.status === 'running');
+  const batchLive = !!planNow && ((bulkShown && planNow.batch === lastBatch) || (planNow.items?.length ?? 0) < 2);
   const list = entries.flatMap((e) => ('issue' in e ? [e.issue] : []));
   const idOf = (e: Entry) => ('issue' in e ? e.issue.key : e.run.id);
   const openN = reviewN;
@@ -190,15 +201,19 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
     const lines: string[] = [];
     let firstError = '';
     // several approved at once go through the bulk plan sheet (BulkPlan.tsx), which runs them as one batch
+    const heard: Issue[] = [];
+    const waits = new Map(verdict === 'approve' ? issues.map((i) => [i.key, waitFix(i.key)] as const) : []);
     for (const i of issues) {
-      try { lines.push(verdict === 'approve' ? await acceptIssue(i) : (await window.quorum.activityArchive([{ id: issueId(i.key) }], true), 'Archived without fixing it')); }
+      try { lines.push(verdict === 'approve' ? await acceptIssue(i) : (await window.quorum.activityArchive([{ id: issueId(i.key) }], true), 'Archived without fixing it')); heard.push(i); }
       catch (e) { firstError ||= String(e).replace(/^.*Error:\s*/, ''); setApproving((ks) => { const n = new Set(ks); n.delete(i.key); return n; }); }
     }
     setBusy(false);
+    for (const [k, w] of waits) if (!heard.some((i) => i.key === k)) w.off();
+    toastWhenFixed(heard.flatMap((i) => { const done = waits.get(i.key); return done ? [{ key: i.key, target: i.target, done }] : []; }));
     const failed = issues.length - lines.length;
     const one = issues.length === 1 ? `“${issues[0].target}”` : `${issues.length} issues`;
     if (failed && !lines.length) toast(firstError || 'That did not work', 'error');
-    else toast(verdict === 'approve' ? `Approved ${one}. Quorum is fixing ${issues.length === 1 ? 'it' : 'them'} now.` : `Archived ${one} without fixing ${issues.length === 1 ? 'it' : 'them'}. ${issues.length === 1 ? 'It is' : 'They are'} under Archived when you want ${issues.length === 1 ? 'it' : 'them'} again.`);
+    else if (verdict === 'dismiss') toast(`Archived ${one} without fixing ${issues.length === 1 ? 'it' : 'them'}. ${issues.length === 1 ? 'It is' : 'They are'} under Archived when you want ${issues.length === 1 ? 'it' : 'them'} again.`);
     await after(issues.length === 1 ? (lines[0] ?? firstError) : `${verdict === 'approve' ? 'Approved' : 'Archived'} ${lines.length} of ${issues.length}${failed ? `. ${firstError}` : ''}`);
   };
   const back = async (issues: Issue[], fixes: FixRun[] = []) => {
@@ -342,17 +357,10 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
         </div>
       )}
       {/* long agent work on the memory (the first check, a full sweep, a batch, drafting), the same banner as on Home */}
-      <AgentActivityBanner />
+      <AgentActivityBanner hide={(a) => a.kind === 'batch' && batchLive} />
       {/* the last Check everything now pass: when it ran, what it checked and what it added to Needs review */}
       <CatchupSummary onDismissed={() => headRef.current?.focus()} onShow={(ids, label) => { setOnly({ ids: new Set(ids), label }); setReview(true); setTab('all'); }} />
-      {(() => {
-        const last = runs.filter((r) => r.batch).sort((a, b) => b.queuedAt - a.queuedAt)[0]?.batch;
-        if (!last || last === hiddenBatch) return null;
-        const list = runs.filter((r) => r.batch === last && !r.undoneAt).flatMap((r) => (r.kind === 'batch' ? batchItems(r) : [r]));
-        const one = runs.find((r) => r.batch === last && r.kind === 'batch');
-        if (!list.length) return null;
-        return <BatchBanner runs={list} error={one?.status === 'error' ? one.error : null} onDismiss={() => { setHiddenBatch(last); try { localStorage.setItem('quorum.hiddenBatch', last); } catch { /* the banner just shows again next time */ } }} />;
-      })()}
+      {bulkShown && <BatchBanner runs={bulkList} error={bulkOne?.status === 'error' ? bulkOne.error : null} onCancel={() => window.quorum.fixCancel(lastBatch!)} onDismiss={() => { setHiddenBatch(lastBatch!); try { localStorage.setItem('quorum.hiddenBatch', lastBatch!); } catch { /* the banner just shows again next time */ } }} />}
       <div className="nf-list">{pageEntries.map((e) => ('issue' in e ? row(e.issue) : <RunRow key={e.run.id} run={e.run} unread={tab !== 'archived' && unreadOf(e)} picked={picked.has(e.run.id)} onPick={() => toggle(e.run.id)} />))}</div>
       {entries.length > pageEntries.length && <button className="act-pill nf-more-btn" onClick={() => { setShownN(pageEntries.length + PAGE); setBulk(dropAcross); }}>Show more</button>}
       {othersShown.length > 0 && <div className="nf-list">{othersShown.map((r) => (
@@ -463,17 +471,19 @@ const batchItems = (r: FixRun): FixRun[] => (r.items ?? []).map((it) => ({ ...r,
 
 // a bulk Approve's progress, full width under the bulk bar: the item being fixed shimmers here and in its row, the bar
 // fills as items finish, and the fold lists every item with its state. Done, it says how many were fixed
-function BatchBanner({ runs, error, onDismiss }: { runs: FixRun[]; error?: string | null; onDismiss: () => void }) {
+function BatchBanner({ runs, error, onCancel, onDismiss }: { runs: FixRun[]; error?: string | null; onCancel: () => Promise<number>; onDismiss: () => void }) {
   const [open, setOpen] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const items = [...runs].sort((a, b) => a.queuedAt - b.queuedAt).map((r) => ({ k: r.id, title: r.target, run: r }));
   const ok = items.filter((x) => x.run.status === 'success').length;
   const bad = items.filter((x) => x.run.status === 'error').length;
   const finished = ok + bad;
   const now = items.find((x) => x.run.status === 'running');
   const live = finished < items.length;
+  const cancelled = !ok && items.some((x) => x.run.error?.startsWith('You cancelled the batch'));
   const text = live
     ? `Fixing ${finished + 1} of ${items.length}${now ? `: “${now.title}”${now.run.steps.length ? `, ${now.run.steps[now.run.steps.length - 1].label.toLowerCase()}` : ''}` : ''}`
-    : `Fixed ${ok} of ${items.length}${bad ? `. ${bad} could not be fixed` : ''}`;
+    : cancelled ? `Cancelled. ${items.length} ${items.length === 1 ? 'item is' : 'items are'} back in Needs review` : `Fixed ${ok} of ${items.length}${bad ? `. ${bad} could not be fixed` : ''}`;
   return (
     <WorkBanner
       state={live ? 'live' : bad && !ok ? 'error' : 'success'} text={text} startedAt={Math.min(...items.map((x) => x.run.queuedAt))} endedAt={Math.max(...items.map((x) => x.run.endedAt ?? 0))}
@@ -481,7 +491,10 @@ function BatchBanner({ runs, error, onDismiss }: { runs: FixRun[]; error?: strin
       note={live ? 'This can take a few minutes. You can leave this page; Quorum keeps fixing in the background and each item updates as it finishes.' : error}
       actions={<>
         <button className={`icon-btn conn-fold${open ? ' open' : ''}`} aria-expanded={open} aria-label={open ? 'Hide items' : 'Show items'} onClick={() => setOpen((o) => !o)}><IconChevron width={14} height={14} /></button>
-        {!live && <button className="act-pill run-dismiss" onClick={onDismiss}>Dismiss</button>}
+        {/* Cancel stops the batch before its next step; a batch puts back every note it changed, and items not started stay in Needs review */}
+        {live
+          ? <button className="act-pill run-dismiss" aria-disabled={stopping} onClick={() => { if (stopping) return; setStopping(true); onCancel().then((n) => { if (!n) setStopping(false); }, () => setStopping(false)); }}>{stopping ? 'Stopping' : 'Cancel'}</button>
+          : <button className="act-pill run-dismiss" onClick={onDismiss}>Dismiss</button>}
       </>}
     >
       <div className={`fold-anim${open ? ' open' : ''}`}>

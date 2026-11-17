@@ -3048,7 +3048,7 @@ function startFixes(keys, { bulk = keys.length > 1 } = {}) {
   fixRunsSave();
   pumpFixes();
   // the wrong-note links and the agent's links run as one planned batch: journal, versions and Undo
-  if (planned.length) started.push(startPlanFor(planned));
+  if (planned.length) started.push(startPlanFor(planned, 'you', batch));
   return started;
 }
 async function pumpFixes() {
@@ -3134,6 +3134,30 @@ async function pumpFixes() {
   fixWorking = false;
 }
 ipcMain.handle('fix-start', (_e, keys) => startFixes(Array.isArray(keys) ? keys : []));
+// Cancel on a bulk Approve: its queued fixes end without running, so their issues stay in Needs review, and the running
+// one stops before its next step, where its rollback puts back every note it changed
+ipcMain.handle('fix-cancel', (_e, batch) => {
+  const id = String(batch ?? '');
+  if (!id) return 0;
+  let n = 0;
+  for (const r of fixRunList()) {
+    if (r.batch !== id) continue;
+    if (r.status === 'queued') {
+      const at = fixQueue.indexOf(r);
+      if (at >= 0) fixQueue.splice(at, 1);
+      r.status = 'error';
+      r.error = 'You cancelled the batch';
+      r.endedAt = Date.now();
+      for (const it of r.items ?? []) it.status = 'error';
+      batchPlans.delete(r.id);
+      fixJournal.append(r.id, { step: 'ended', status: r.status, error: r.error });
+      fixEmit(r);
+      n++;
+    } else if (r.status === 'running') { r.cancel = true; r.agentAbort?.abort(); n++; }
+  }
+  if (n) { fixRunsSave(); toUI('memory-updates', null); }
+  return n;
+});
 // Undo for a fix: the notes it changed go back to how they were, and a note it wrote goes to the Trash, so the issue is
 // back in Needs review. It refuses when a note changed after the fix, so it never throws away later edits
 const fixUndoDir = path.join(DATA_DIR, 'fix-undo');
@@ -3856,7 +3880,7 @@ function logItem(item, decision, actor = 'you') {
   else if (item.finding) { try { decisionLog.record(v, { ...item.finding, proposedFix: { ...item.finding.proposedFix, action: item.ops?.map((o) => o.op).join('+') ?? 'review', gateKind }, decision, actor }); } catch (e) { log('decision log', e?.message); } }
 }
 // queues a plan as one batch run. actor: you, or auto for Apply memory fixes on its own
-function startPlan(plan, items, { actor = 'you' } = {}) {
+function startPlan(plan, items, { actor = 'you', batch = null } = {}) {
   const b = brain();
   if (!b) throw new Error('No vault connected');
   const byId = new Map(items.map((i) => [i.id, i]));
@@ -3866,7 +3890,7 @@ function startPlan(plan, items, { actor = 'you' } = {}) {
   const n = go.length;
   const groups = plan.groups.map((g) => ({ id: g.id, label: g.label, count: g.count }));
   const run = {
-    id, key: id, batch: id, kind: 'batch', auto: actor === 'auto', vault: b.vault, rel: '',
+    id, key: id, batch: batch ?? id, kind: 'batch', auto: actor === 'auto', vault: b.vault, rel: '',
     target: actor === 'auto' ? `${n} memory ${n === 1 ? 'fix' : 'fixes'} Quorum applied on its own` : `${n} memory ${n === 1 ? 'fix' : 'fixes'}`,
     title: groups.map((g) => g.label).join(', '), status: 'queued', queuedAt: Date.now(), startedAt: null, endedAt: null, steps: [], outcome: null, error: null, dismissedAt: null,
     items: go.map((i) => ({ id: i.id, kind: i.kind, key: i.key, link: i.link ?? null, title: i.title, line: i.agent?.line ?? itemLine(i), status: 'queued', finding: i.finding ?? null, ...(i.keep ? { keep: true } : {}) })),
@@ -3886,12 +3910,13 @@ function startPlan(plan, items, { actor = 'you' } = {}) {
   return run;
 }
 // plans and starts the items with these row ids; refuses with the reason the first one was left out
-function startPlanFor(ids, actor = 'you') {
+// batch: the bulk Approve this plan belongs to, so its plain fixes and this run show and cancel as one
+function startPlanFor(ids, actor = 'you', batch = null) {
   const items = gatedItems({ ids });
   if (!items.length) throw new Error('That item is no longer in Needs review');
   const plan = buildPlan(items);
   if (!plan.ok.length) throw new Error((plan.held[0] ?? plan.skipped[0])?.reason ?? 'Nothing in the plan can run');
-  return startPlan(plan, items, { actor });
+  return startPlan(plan, items, { actor, batch });
 }
 const readVault = (vault, rel) => { try { return readFileSync(vaultPath(vault, rel), 'utf8'); } catch { return null; } };
 const STUB_TEXT = 'Quorum made this note because';
