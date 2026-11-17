@@ -6,6 +6,10 @@ on:
     branches: [main]
   pull_request:
 
+# onnxruntime-node (the decision layer) downloads CUDA libraries on Linux x64 at install; the app only ships the macOS build
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
+
 jobs:
   build:
     runs-on: macos-latest

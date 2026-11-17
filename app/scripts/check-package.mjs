@@ -13,8 +13,9 @@ const read = (rel) => { execFileSync('npx', ['asar', 'extract-file', asar, rel],
 
 const seen = new Set();
 const missing = [];
-// memoryWorker.js is started by path (utilityProcess.fork), so no import reaches it
-const queue = ['main.js', 'preload.cjs', 'memoryWorker.js'];
+// memoryWorker.js is started by path (utilityProcess.fork), so no import reaches it. The decision layer (decide/) is
+// listed until the contradiction agent imports it
+const queue = ['main.js', 'preload.cjs', 'memoryWorker.js', 'decide/index.js', 'decide/gate.js'];
 while (queue.length) {
   const rel = queue.shift();
   if (seen.has(rel)) continue;
@@ -31,8 +32,13 @@ if (missing.length) { console.error(`package check: ${missing.length} module(s) 
 const guard = path.resolve(appDir, 'Contents/Resources/app.asar.unpacked/guards/read-guard.py');
 if (!existsSync(guard)) { console.error(`package check: read guard is not unpacked at ${guard}`); process.exit(1); }
 execFileSync('python3', ['-c', `compile(open(${JSON.stringify(guard)}).read(), 'read-guard.py', 'exec')`]);
+// the decision layer's models and ONNX Runtime are read by native code, which cannot read inside the archive
+const unpacked = path.resolve(appDir, 'Contents/Resources/app.asar.unpacked');
+const models = JSON.parse(readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '../decide/models.json'), 'utf8'));
+const notUnpacked = [...Object.entries(models).flatMap(([id, m]) => Object.keys(m.files).map((f) => `models/${id}/${f}`)), 'node_modules/onnxruntime-node/bin/napi-v6/darwin/arm64/onnxruntime_binding.node', 'node_modules/onnxruntime-node/bin/napi-v6/darwin/arm64/libonnxruntime.1.dylib'].filter((rel) => !existsSync(path.join(unpacked, rel)));
+if (notUnpacked.length) { console.error(`package check: not unpacked from app.asar:\n  ${notUnpacked.join('\n  ')}`); process.exit(1); }
 // the CLI runs from Resources/cli outside the archive, so every file it imports has to sit next to it
 const cli = path.resolve(appDir, 'Contents/Resources/cli');
 const cliMissing = [...readFileSync(path.join(cli, 'quorum.mjs'), 'utf8').matchAll(/import\s[^'"]*?from\s*['"](\.{1,2}\/[^'"]+)['"]/g)].map((m) => m[1]).filter((rel) => !existsSync(path.join(cli, rel)));
 if (cliMissing.length) { console.error(`package check: the CLI imports files missing from Resources/cli: ${cliMissing.join(', ')}`); process.exit(1); }
-console.log(`package check: ${seen.size} modules resolve inside app.asar; read guard unpacked`);
+console.log(`package check: ${seen.size} modules resolve inside app.asar; read guard, models and ONNX Runtime unpacked`);
