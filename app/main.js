@@ -3611,7 +3611,7 @@ const memoryEngine = startMemoryEngine({
   mayRead: (rel, text) => !!brain() && agentMayRead(brain().vault, rel, text),
   cond: memoryCond,
   // one call reads up to 20 notes, so it gets more time than a draft
-  // Haiku reads claims and Sonnet judges pairs (memoryModels.js). A catch-up call brings its own abort; a scheduled call
+  // the model of each kind of call is set in memoryModels.js (MEMORY_MODELS). A catch-up call brings its own abort; a scheduled call
   // uses the contradiction slot
   model: (prompt, system, { kind = 'claims', signal = null } = {}) => claudeText({ prompt, system, model: MEMORY_MODELS[kind] ?? MEMORY_MODELS.judge, cwd: tmpdir(), timeoutMs: 300000, signal: signal ?? contradictionAbort?.signal ?? null }),
   log,
