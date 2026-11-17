@@ -2,7 +2,7 @@
 // each SHA-256 checked before it is kept, a partial file resumed with a Range request, retries with backoff, a pause
 // while Low Power Mode is on, and status in plain words. A fake server stands in for the model host.
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -55,6 +55,25 @@ describe('model download', () => {
     const { d } = await run({ dir, manifest: manifest(), fetch: s.fetch });
     expect(d.status().state).toBe('ready');
     expect(s.seen).toEqual([]);
+  });
+
+  it('trusts the size and time stamp it wrote after a verified download instead of hashing again at launch', async () => {
+    const dir = tmp();
+    await run({ dir, manifest: manifest(), fetch: server().fetch });
+    const hashed = [];
+    const hash = async (file) => { hashed.push(file); return sha(readFileSync(file)); };
+    const s = server();
+    const { d } = await run({ dir, manifest: manifest(), fetch: s.fetch, hash });
+    expect(d.status().state).toBe('ready');
+    expect(hashed).toEqual([]);
+    expect(s.seen).toEqual([]);
+    // a file changed after the stamp is hashed again, fails, and is downloaded again
+    writeFileSync(path.join(dir, 'nli/t.json'), Buffer.from('c'.repeat(3000)));
+    utimesSync(path.join(dir, 'nli/t.json'), new Date(), new Date(Date.now() + 5000));
+    const again = await run({ dir, manifest: manifest(), fetch: s.fetch, hash });
+    expect(again.d.status().state).toBe('ready');
+    expect(hashed).toEqual([path.join(dir, 'nli/t.json')]);
+    expect(readFileSync(path.join(dir, 'nli/t.json'))).toEqual(B);
   });
 
   it('resumes a partial file with a Range request', async () => {

@@ -3,6 +3,8 @@
 //   - every file has a pinned SHA-256; a file with none stops the download before any request
 //   - a file is kept only when its SHA-256 matches; a complete download that does not match is deleted, and that file
 //     stays failed until the next launch, so a bad mirror never costs one download after another
+//   - after a file verifies it writes its size and modified time to .verified.json, so a later launch trusts an
+//     unchanged file without reading 124 MB again in main (the engine still hashes before it loads, decide/models.js)
 //   - a partial file (.part) resumes with a Range request; a server that ignores the range sends the whole file again
 //   - failed attempts wait 5 s, 10 s, 20 s and so on up to 5 minutes; after the last one it tries again an hour later
 //   - while conditions() says no (Low Power Mode is on), it waits and checks again every 5 minutes, also mid-file
@@ -11,7 +13,7 @@
 // metered or Low Data connection, so the download does not check for one.
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createReadStream, existsSync, mkdirSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { open, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { MANIFEST, hashFile } from './models.js';
@@ -45,7 +47,7 @@ export function modelsLabel(s) {
 // enabled: decide/index.js DECIDER_ON; while it is false start() downloads nothing
 export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalThis.fetch, supported = modelsSupported(), enabled = true, conditions = async () => ({ ok: true }),
   retries = 6, backoffMs = 5000, maxBackoffMs = 5 * 60 * 1000, waitMs = 5 * 60 * 1000, retryLaterMs = 60 * 60 * 1000, checkEvery = 8 * MB,
-  sleep = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); }), setTimer = (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return t; }, clearTimer = clearTimeout,
+  hash = hashFile, sleep = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); }), setTimer = (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return t; }, clearTimer = clearTimeout,
   onChange = () => {}, log = () => {} }) {
   const files = Object.entries(manifest).flatMap(([id, m]) => Object.entries(m.files).map(([file, f]) => ({ id, file, url: fileUrl(m, file), sha256: f?.sha256 ?? '', size: f?.size ?? 0, dest: path.join(dir, id, file) })));
   const totalBytes = files.reduce((a, f) => a + f.size, 0);
@@ -54,6 +56,10 @@ export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalTh
   // stop() is final for this download: no retry, no later start
   let stopped = false;
   let later = null;
+  const stampFile = path.join(dir, '.verified.json');
+  const stampOf = (f) => { const st = statSync(f.dest); return `${st.size}:${st.mtimeMs}:${f.sha256}`; };
+  const stamps = () => { try { return JSON.parse(readFileSync(stampFile, 'utf8')); } catch { return {}; } };
+  const stamp = (f) => { const all = stamps(); all[`${f.id}/${f.file}`] = stampOf(f); writeFileSync(stampFile, JSON.stringify(all)); };
   // files whose complete download failed its hash in this run of the app
   const blocked = new Set();
   let emitted = 0;
@@ -109,6 +115,7 @@ export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalTh
     if (paused) return false;
     if (h.digest('hex') !== f.sha256) { await rm(part, { force: true }); throw failure('hash_mismatch', `${f.id}/${f.file}: SHA-256 does not match the pinned hash`); }
     await rename(part, f.dest);
+    stamp(f);
     return true;
   }
 
@@ -120,7 +127,15 @@ export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalTh
     set({ state: 'checking', why: null, doneBytes: 0 });
     let done = 0;
     const todo = [];
-    for (const f of files) { if (existsSync(f.dest) && (await hashFile(f.dest)) === f.sha256) done += f.size; else todo.push(f); }
+    const known = stamps();
+    for (const f of files) {
+      let good = false;
+      if (existsSync(f.dest)) {
+        good = known[`${f.id}/${f.file}`] === stampOf(f);
+        if (!good && (await hash(f.dest)) === f.sha256) { good = true; stamp(f); }
+      }
+      if (good) done += f.size; else todo.push(f);
+    }
     set({ doneBytes: done });
     if (todo.some((f) => blocked.has(f.dest))) { set({ state: 'failed', why: 'hash_mismatch' }); return; }
     for (const f of todo) {
