@@ -49,23 +49,23 @@ const falsy = (v) => v == null || v === false || /^(false|no|)$/i.test(String(v)
 // Link names that are common words or placeholders: a note about links writes [[link]] or [[filename-without-extension]]
 // to show the syntax, and prose in brackets reads as [[wiki links]]. Quorum never writes a note for one
 export const GENERIC_TARGETS = new Set(['link', 'links', 'wiki link', 'wiki links', 'wikilink', 'wikilinks', 'backlink', 'backlinks', 'filename', 'file name', 'file', 'files', 'filename-without-extension', 'name', 'note', 'notes', 'note name', 'note-name', 'page', 'pages', 'page name', 'title', 'todo', 'todos', 'tbd', 'example', 'examples', 'target', 'this', 'that', 'here', 'something', 'foo', 'bar', 'baz', 'test', 'placeholder', 'name-goes-here', 'your note', 'my note', 'path', 'slug']);
-// placeholder shapes: <name>, {name}, ..., xxx, name-here, your-note, some-note
-const PLACEHOLDER_RE = /^[<{].*[>}]$|\.\.\.|…|^x{2,}$|(^|[-_ ])(here|placeholder|example|without[-_ ]extension)$|^(your|some|another|my)[-_ ]/i;
+// placeholder shapes: <name>, {name}, ..., xxx, name-here, name-placeholder. A title that starts with My or Some
+// ("My Morning Routine", "Some Like It Hot") is a real title
+const PLACEHOLDER_RE = /^[<{].*[>}]$|\.\.\.|…|^x{2,}$|(^|[-_ ])(here|placeholder|example|without[-_ ]extension)$/i;
 export function genericTarget(target) {
   const name = String(target ?? '').split('/').pop().replace(/\.md$/i, '').trim().toLowerCase();
   return !name || GENERIC_TARGETS.has(name) || GENERIC_TARGETS.has(name.replace(/[-_]+/g, ' ')) || PLACEHOLDER_RE.test(name);
 }
 
-// A line that reports on links: a drift report or a lint log lists dead links as [[name]] next to words like
-// "dead-wikilink" or "no matching vault file", or next to a file path in a code span. Those [[...]] are examples or
-// findings about other notes, so they are never a source of a missing link
-export const LINK_REPORT_LINE = /dead[- ]?(wiki)?[- ]?links?|broken[- ]?(wiki)?[- ]?links?|unresolved[- ]?(wiki)?[- ]?links?|missing[- ]?(wiki)?[- ]?links?|no matching (vault )?(file|note)|(link|links|wikilinks?) (to|with) no (target|note|file)|does not resolve|doesn['’]t resolve|link[- ]?(drift|lint|audit|check)/i;
-// a code span next to a link that shows a file path or link syntax: `notes/a.md`, `[[name]]`
-const CODE_PATH_RE = /`[^`]*(\.md\b|\[\[|\]\]|\/)[^`]*`/;
-export const reportLine = (line) => LINK_REPORT_LINE.test(String(line ?? '')) || CODE_PATH_RE.test(String(line ?? ''));
-// A whole note that reports on links: its title or a heading names dead or broken links or link drift, or two or more
-// of its lines read as link report lines. Every link in it is left out
-const REPORT_HEADING_RE = /(dead|broken|missing|unresolved|orphan(ed)?)[- ]?(wiki)?[- ]?links?|link (drift|health|lint|audit|report)|drift report|vault (drift|lint|audit)/i;
+// A line that reports on links: a drift report or a lint log marks each dead link it lists with a machine marker
+// ("dead-wikilink", "no matching vault file"). Prose like "we fixed the broken links" is not a marker
+export const LINK_REPORT_LINE = /\bdead[-_]wikilinks?\b|\bbroken[-_]wikilinks?\b|\bunresolved[-_]wikilinks?\b|\bno matching vault (file|note)\b/i;
+// a link whose own text holds a code span or a file path in backticks: [[`notes/a.md`]]
+const CODE_PATH_RE = /`[^`]*`/;
+export const reportLine = (line, raw = '') => LINK_REPORT_LINE.test(String(line ?? '')) || CODE_PATH_RE.test(String(raw ?? ''));
+// A whole note that reports on links: its title or a heading names a link or vault drift, lint or audit report, or two
+// or more of its lines carry a dead link marker (LINK_REPORT_LINE). Every link in it is left out
+const REPORT_HEADING_RE = /\b(link|wikilink|vault) (drift|lint|audit|health)\b|\bdrift report\b|\bdead[- ]wikilinks?\b/i;
 export function linkReport(text, title = '') {
   if (REPORT_HEADING_RE.test(String(title ?? ''))) return true;
   let hits = 0;

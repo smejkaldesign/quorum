@@ -184,20 +184,25 @@ describe('the existence check before writing a note', () => {
 describe('no notes for link names that only reports or examples hold', () => {
   const plan = (target, sources) => createPlan({ target, sources, count: sources.length, candidates: [], confidential: [] });
   it('never writes a note named by a common word or a placeholder', () => {
-    for (const t of ['link', 'Links', 'wiki links', 'filename-without-extension', 'filename', 'note', 'page', 'todo', '<note name>', 'your-note', 'name-goes-here', 'some-topic']) expect(genericTarget(t)).toBe(true);
-    for (const t of ['Orbit', 'nova-apps-platform', 'link-rot-study', 'Page Turner']) expect(genericTarget(t)).toBe(false);
+    for (const t of ['link', 'Links', 'wiki links', 'filename-without-extension', 'filename', 'note', 'page', 'todo', '<note name>', 'your note', 'name-goes-here']) expect(genericTarget(t)).toBe(true);
+    for (const t of ['Orbit', 'nova-apps-platform', 'link-rot-study', 'Page Turner', 'Link Building Strategy', 'My Morning Routine', 'Some Like It Hot', 'Another Round', 'your-move']) expect(genericTarget(t)).toBe(false);
     expect(plan('link', ['p/a.md', 'p/b.md'])).toMatchObject({ ok: false, reason: expect.stringMatching(/common word or a placeholder/) });
     expect(plan('Orbit', ['p/a.md', 'p/b.md'])).toMatchObject({ ok: true });
   });
   it('reads lines and notes that report on links', () => {
     expect(reportLine('- [[link]] dead-wikilink in `notes/a.md`')).toBe(true);
     expect(reportLine('[[filename-without-extension]] has no matching vault file')).toBe(true);
-    expect(reportLine('Use `[[name]]` to link a note, see [[Setup]]')).toBe(true);
-    expect(reportLine('Fly the [[Kite]] on Sunday with `npm start`')).toBe(false);
+    expect(reportLine('a note', '[[`notes/a.md`]]')).toBe(true);
+    // a code span elsewhere on the line, or prose about broken links, says nothing about this link
+    expect(reportLine('Use `[[name]]` to link a note, see [[Setup]]', '[[Setup]]')).toBe(false);
+    expect(reportLine('Fly the [[Kite]] on Sunday with `npm start`', '[[Kite]]')).toBe(false);
+    expect(reportLine('We fixed the broken links in [[Link Building Strategy]]', '[[Link Building Strategy]]')).toBe(false);
     expect(linkReport('# Vault drift report\n- [[a]]\n')).toBe(true);
-    expect(linkReport('# Notes\n- [[a]] dead link\n- [[b]] dead link\n')).toBe(true);
-    expect(linkReport('# Notes\nOne dead link to [[a]] here.\nSee [[b]].\n')).toBe(false);
-    expect(linkReport('', 'Broken links found 2026-11-10')).toBe(true);
+    expect(linkReport('# Notes\n- [[a]] dead-wikilink\n- [[b]] dead-wikilink\n')).toBe(true);
+    expect(linkReport('# Notes\n- [[a]] dead link\n- [[b]] broken links\n')).toBe(false);
+    expect(linkReport('# Notes\nOne dead-wikilink to [[a]] here.\nSee [[b]].\n')).toBe(false);
+    expect(linkReport('', 'Broken links found 2026-11-10')).toBe(false);
+    expect(linkReport('', 'Link audit 2026-11-10')).toBe(true);
   });
   it('drops links that a drift report lists as findings, so approving writes no stub', () => {
     fresh();
@@ -212,6 +217,17 @@ describe('no notes for link names that only reports or examples hold', () => {
     expect(prose.sources.sort()).toEqual(['projects/plan.md', 'projects/roadmap.md']);
     expect(optionsOf(prose)).not.toContain('create');
     expect(optionsOf(i.linkHealth().find((h) => h.target === 'link'))).not.toContain('create');
+  });
+  it('keeps real titles eligible for a note, in notes that talk about broken links in prose', () => {
+    fresh();
+    put('marketing/seo.md', '# SEO\nWe fixed the broken links. Next: [[Link Building Strategy]] and [[My Morning Routine]].\nWatch [[Some Like It Hot]].\n');
+    put('marketing/plan.md', '# Plan\n- `site/a.html` has broken links, see [[Link Building Strategy]]\n- [[My Morning Routine]] then [[Some Like It Hot]]\n');
+    const i = index();
+    for (const t of ['Link Building Strategy', 'My Morning Routine', 'Some Like It Hot']) {
+      const m = i.linkHealth().find((h) => h.target === t);
+      expect(m.sources.sort()).toEqual(['marketing/plan.md', 'marketing/seo.md']);
+      expect(optionsOf(m)).toContain('create');
+    }
   });
   it('treats links in inline code and fenced code as code, also with double backticks', () => {
     fresh();

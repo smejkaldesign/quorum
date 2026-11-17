@@ -249,7 +249,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     const linesOf = (rel) => split.get(rel) ?? split.set(rel, (files.get(rel)?.text ?? '').split('\n')).get(rel);
     const reportNote = (rel) => reports.get(rel) ?? reports.set(rel, linkReport(files.get(rel)?.text ?? '', files.get(rel)?.note.title)).get(rel);
     for (const [rel, missing] of unresolved) for (const link of missing) {
-      if (generated(rel) || reportNote(rel) || reportLine(linesOf(rel)[link.line])) continue;
+      if (generated(rel) || reportNote(rel) || reportLine(linesOf(rel)[link.line], link.raw)) continue;
       const name = link.target.replace(/\.md$/i, '').trim();
       if (!name) continue;
       const key = name.toLowerCase();
