@@ -98,7 +98,8 @@ export function addedText(a: CatchupLast['added']) {
     a.drafts ? count(a.drafts, 'drafted fix', 'drafted fixes') : '',
     a.other ? count(a.other, 'other item', 'other items') : '',
   ].filter(Boolean);
-  return parts.length ? `Added to Needs review: ${parts.join(', ')}.` : 'It added nothing to Needs review.';
+  const total = a.contradictions + a.drafts + a.other;
+  return parts.length ? `${count(total, 'item needs', 'items need')} review: ${parts.join(', ')}.` : 'Nothing new needs review.';
 }
 export function summaryOf(last: CatchupLast) {
   const checked = last.of ? `Checked ${fmt(last.checked ?? 0)} of ${count(last.of, 'note', 'notes')}.` : `Made ${count(last.done, 'model call', 'model calls')}.`;
@@ -108,9 +109,8 @@ export function summaryOf(last: CatchupLast) {
   return {
     head: HEAD[last.end] ?? HEAD.failed,
     state: last.end === 'failed' || last.end === 'crashed' ? ('error' as const) : ('success' as const),
-    line: `${checked}${skipped}${why}`,
-    added: addedText(last.added),
-    ids: last.added?.ids ?? [],
+    // what it checked, then how many items now need review and of what kind, then what it could not read
+    line: [checked, addedText(last.added), `${skipped}${why}`.trim()].filter(Boolean).join(' '),
     // how long it ran: a crashed pass ran until its last save, which is after its last call; with no call done the last
     // save is the one at its start, so the length is not known
     took: last.endedAt != null && (last.end !== 'crashed' || last.done > 0) ? Math.max(0, last.endedAt - last.startedAt) : null,

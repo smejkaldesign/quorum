@@ -2659,12 +2659,16 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .mh-busy { display: grid; place-items: center; }
 .mh-row.working .mh-hover { opacity: 1; visibility: visible; transform: translateY(-50%); }
 .mh-row.working .mh-when { opacity: 0; }
-/* a finished run's banner: its icon sits on a lighter square at the banner's left, 4px inside its edges, with the
-   banner's radius */
-.run-banner:not(.live) .run-head { padding-top: 0; padding-bottom: 0; padding-left: 0; align-items: stretch; }
-.run-banner:not(.live) .run-head > :not(.run-icon) { align-self: center; }
-.run-banner:not(.live) .run-head > .run-text { padding: 10px 0; }
-.run-banner:not(.live) .run-icon { width: 44px; height: auto; margin: 4px; align-self: stretch; border-radius: 10px; }
+/* a finished run's banner: its icon sits on a lighter square, 14px in from the banner's top and left edges, so it lines
+   up with the note below it */
+.run-banner:not(.live) .run-head { padding: 14px 14px 0; gap: 12px; }
+.run-banner:not(.live) .run-head > .run-text { padding: 0; }
+.run-banner:not(.live) .run-icon { width: 32px; height: 32px; border-radius: 10px; }
+.run-banner:not(.live) .run-head + .mh-batch-note, .run-banner:not(.live) .run-head + .mh-batch-bar { margin-top: 10px; }
+.run-banner:not(.live) .mh-batch-note { margin-bottom: 14px; }
+.run-banner:not(.live) > .run-head:last-child { padding-bottom: 14px; }
+/* the last check's card: its summary reads in full white */
+.cu-summary .mh-batch-note { color: var(--text); }
 .run-banner.success .run-icon { background: rgba(var(--ok-rgb), 0.18); }
 .run-banner.error .run-icon { background: rgba(var(--issue-rgb), 0.18); }
 

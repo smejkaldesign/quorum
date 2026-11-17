@@ -146,8 +146,8 @@ describe('the words the app shows', () => {
     expect(stopFlow('catchup:1', { type: 'stop', current: 'draft:2' })).toEqual({ asking: null, cancel: null });
   });
   it('says how many notes could not be read', () => {
-    const s = summaryOf({ end: 'done', done: 30, total: 30, notes: 500, startedAt: 0, endedAt: 1000, checked: 380, of: 400, skipped: 20 });
-    expect(s.line).toBe('Checked 380 of 400 notes. 20 notes could not be read. The agent tries them again after a day.');
+    const s = summaryOf({ end: 'done', done: 30, total: 30, notes: 500, startedAt: 0, endedAt: 1000, checked: 380, of: 400, skipped: 20, added: { contradictions: 66, drafts: 0, other: 2, ids: [] } });
+    expect(s.line).toBe('Checked 380 of 400 notes. 68 items need review: 66 contradictions, 2 other items. 20 notes could not be read. The agent tries them again after a day.');
   });
   it('hides the time of a crashed check that made no call', () => {
     const base = { end: 'crashed', total: 30, notes: 500, startedAt: 1000, endedAt: 1001 };
@@ -186,11 +186,11 @@ describe('the words the app shows', () => {
     const s = summaryOf(last);
     expect(s.head).toBe('Stopped early');
     expect(s.state).toBe('error');
-    expect(s.line).toBe('Checked 40 of 50 notes. Quorum closed while it ran. What it checked until then is saved.');
-    expect(s.added).toBe('Added to Needs review: 2 contradictions, 1 drafted fix.');
-    expect(s.ids).toEqual(['a', 'b', 'c']);
+    expect(s.line).toBe('Checked 40 of 50 notes. 3 items need review: 2 contradictions, 1 drafted fix. Quorum closed while it ran. What it checked until then is saved.');
     expect(summaryOf({ ...last, end: 'done', added: null }).state).toBe('success');
-    expect(addedText({ contradictions: 0, drafts: 0, other: 0, ids: [] })).toBe('It added nothing to Needs review.');
+    expect(summaryOf({ ...last, end: 'done', added: null }).line).toBe('Checked 40 of 50 notes.');
+    expect(addedText({ contradictions: 0, drafts: 0, other: 0, ids: [] })).toBe('Nothing new needs review.');
+    expect(addedText({ contradictions: 1, drafts: 0, other: 0, ids: ['a'] })).toBe('1 item needs review: 1 contradiction.');
     expect(showSummary({ running: false, last })).toBe(true);
     expect(showSummary({ running: false, last: { ...last, dismissed: true } })).toBe(false);
     expect(showSummary({ running: true, done: 0, total: 0, notes: 0, id: 'x' })).toBe(false);
