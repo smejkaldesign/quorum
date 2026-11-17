@@ -13,11 +13,14 @@
 //   restart() a fresh port after the engine stopped (it crashed or ran out of memory); the next call uses it
 //   timeouts  how long a call may take before the engine is taken for hung: it is stopped and the call fails. A tick
 //             waits on the model (up to 5 minutes), so it gets longer
+//   limit     { count, windowMs, pauseMs }: an engine that stops count times within windowMs is not started again for
+//             pauseMs, and error() says so in plain words for Memory health
 import { ruleText } from './memoryEngine.js';
 
 export const CALL_TIMEOUTS = { tick: 7 * 60000, other: 3 * 60000 };
+export const RESTART_LIMIT = { count: 3, windowMs: 10 * 60000, pauseMs: 10 * 60000 };
 
-export function createMemoryHost({ port, index = () => null, vault = () => null, mayRead = () => false, cond = () => ({}), model = async () => { throw new Error('No model'); }, restart = null, timeouts = CALL_TIMEOUTS, log = () => {} }) {
+export function createMemoryHost({ port, index = () => null, vault = () => null, mayRead = () => false, cond = () => ({}), model = async () => { throw new Error('No model'); }, restart = null, timeouts = CALL_TIMEOUTS, limit = RESTART_LIMIT, now = () => Date.now(), log = () => {} }) {
   let seq = 0;
   const calls = new Map();
   // the text of each note the engine holds, as last sent, so a sync sends only the notes whose text changed
@@ -34,9 +37,31 @@ export function createMemoryHost({ port, index = () => null, vault = () => null,
     p.on('message', (msg) => receive(p, msg));
     p.on?.('exit', (code) => { if (cur === p) stopped(p, `exited with code ${code}`); });
   }
+  // when the engine stopped, within the restart window; while paused, the time the host starts it again
+  let exits = [];
+  let pausedUntil = 0;
+  // the engine that runs, or a fresh one when it may start one now
+  function running() {
+    if (cur) return true;
+    if (!restart) return false;
+    const t = now();
+    if (t < pausedUntil) return false;
+    exits = exits.filter((x) => t - x < limit.windowMs);
+    if (exits.length >= limit.count) { pausedUntil = t + limit.pauseMs; exits = []; log('memory engine', 'paused after repeated stops'); return false; }
+    attach(restart());
+    return true;
+  }
+  // a plain sentence for Memory health while the host waits to start the engine again, else null
+  function error() {
+    if (now() >= pausedUntil) return null;
+    const mins = (n) => `${n} ${n === 1 ? 'minute' : 'minutes'}`;
+    const left = Math.max(1, Math.ceil((pausedUntil - now()) / 60000));
+    return `Memory checks are paused: the memory engine stopped ${limit.count} times in ${mins(Math.round(limit.windowMs / 60000))}. Quorum tries again in ${mins(left)}.`;
+  }
   // the engine exited or hung: every call that waits fails, and the next call starts a fresh engine
   function stopped(p, why) {
     log('memory engine', 'stopped', why);
+    exits.push(now());
     if (cur === p) cur = null;
     for (const [, c] of calls) { clearTimeout(c.timer); c.reject(new Error(`The memory engine stopped (${why})`)); }
     calls.clear();
@@ -63,8 +88,7 @@ export function createMemoryHost({ port, index = () => null, vault = () => null,
   if (port) attach(port);
 
   function call(method, payload = {}) {
-    if (!cur && restart) attach(restart());
-    if (!cur) return Promise.reject(new Error('The memory engine is not running'));
+    if (!running()) return Promise.reject(new Error(error() ?? 'The memory engine is not running'));
     const id = ++seq;
     const p = cur;
     return new Promise((resolve, reject) => {
@@ -84,7 +108,7 @@ export function createMemoryHost({ port, index = () => null, vault = () => null,
     const ix = index();
     const v = vault();
     if (!ix || !v) return null;
-    if (!cur && restart) attach(restart());
+    if (!running()) throw new Error(error() ?? 'The memory engine is not running');
     if (sentVault !== v) { sent = new Map(); sentVault = v; }
     const meta = [];
     const full = [];
@@ -120,6 +144,7 @@ export function createMemoryHost({ port, index = () => null, vault = () => null,
     estimate: async () => { await sync(); return call('estimate', { cond: cond(true) }); },
     // forgets what was sent, so the next sync sends every note again (a fresh engine, or a read gate that changed)
     resend: () => { sent = new Map(); },
+    error,
     close: () => { const p = cur; cur = null; p?.kill?.(); p?.terminate?.(); },
   };
 }

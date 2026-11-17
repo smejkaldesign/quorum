@@ -467,7 +467,7 @@ declare global {
       vaultLinksLeft(keys: string[], on?: boolean): Promise<number>;
       vaultLinkDecide(key: string, verdict: 'approve' | 'dismiss'): Promise<string>;
       fixStart(keys: string[]): Promise<FixRun[]>;
-      memoryFindings(): Promise<{ findings: MemoryFinding[]; last: MemorySweepInfo | null; lastFull: number; paused: boolean; labels: Record<string, string>; drafts?: Record<string, MemoryDraft>; checking?: boolean }>;
+      memoryFindings(): Promise<{ findings: MemoryFinding[]; last: MemorySweepInfo | null; lastFull: number; paused: boolean; labels: Record<string, string>; drafts?: Record<string, MemoryDraft>; checking?: boolean; engineError?: string | null }>;
       memoryGate(): Promise<{ checking: boolean; stopped: boolean; at: number }>;
       memoryRuleRecords(): Promise<RuleRecord[]>;
       memoryIgnoreList(): Promise<IgnoreRule[]>;

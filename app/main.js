@@ -2599,7 +2599,7 @@ ipcMain.handle('memory-findings', () => {
   const s = brain() ? memorySweep.state(brain().vault) : null;
   const held = gateHeld();
   const findings = findingsNow().map((f) => { const h = held.get(`${ROW.finding}${f.key}`); return h ? { ...f, held: h } : f; });
-  return { findings, last: s?.last ?? null, lastFull: s?.lastFull ?? 0, paused: sweepPaused(), labels: RULE_LABELS, drafts: draftViews(), checking: gateChecking() };
+  return { findings, last: s?.last ?? null, lastFull: s?.lastFull ?? 0, paused: sweepPaused(), labels: RULE_LABELS, drafts: draftViews(), checking: gateChecking(), engineError: memoryEngine.error() };
 });
 // Archive or Move back to review on findings, by key; the Notifications marks move with them
 ipcMain.handle('memory-findings-archive', (_e, keys, on) => {

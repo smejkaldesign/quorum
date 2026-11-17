@@ -82,6 +82,8 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const [drafts, setDrafts] = useState<Record<string, MemoryDraft>>({});
   // the quality gate: whether a vault's first check is still running, or stopped before it finished
   const [gate, setGate] = useState<{ checking: boolean; stopped: boolean }>({ checking: false, stopped: false });
+  // the memory engine stopped several times and Quorum waits before it starts it again
+  const [engineError, setEngineError] = useState<string | null>(null);
   // the issues whose Approve was pressed: a spinner in place of the button until their run takes over
   const [approving, setApproving] = useState<Set<string>>(new Set());
   // a bulk Approve: the issues in it and when it began, for the progress row under the bulk bar
@@ -106,7 +108,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
     window.quorum.activityFeed({ kinds: ['memory-health'], review: true, tab: 'all', limit: 5000 })
       .then((p) => setOthers(p.items.filter((r) => !r.fixRun && (r.review?.kind === 'past-fix' || r.review?.kind === 'ignore')))).catch(() => {});
     window.quorum.fixRuns().then(setRuns).catch(() => {});
-    window.quorum.memoryFindings().then((r) => { setFindings(r.findings.filter((f) => !f.held)); setDrafts(r.drafts ?? {}); }).catch(() => {});
+    window.quorum.memoryFindings().then((r) => { setFindings(r.findings.filter((f) => !f.held)); setDrafts(r.drafts ?? {}); setEngineError(r.engineError ?? null); }).catch(() => {});
     window.quorum.memoryGate().then((g) => setGate({ checking: g.checking, stopped: !!g.stopped })).catch(() => {});
     const q = { kinds: ['memory-health' as const], limit: 5000, idsOnly: true as const };
     Promise.all([window.quorum.activityFeed({ ...q, tab: 'all' }), window.quorum.activityFeed({ ...q, tab: 'archived' })])
@@ -300,6 +302,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
         {items === null ? 'Checking your notes…' : gate.stopped ? STOPPED : gate.checking ? 'Checking your memory, this takes a minute' : !counts.length ? 'Every link points at a note.' : countsLine(counts)}
         {done && <span className="lh-done">{done}</span>}
       </p>
+      {engineError && <p className="lh-sum" role="alert">{engineError}</p>}
       <div className="nf-bar">
         <Segmented kind="tabs" label="Show" value={tab} onChange={(id) => { setTab(id); if (id === 'archived') setReview(false); }}
           options={([['all', 'All'], ['unread', 'Unread'], ['archived', 'Archived']] as [Tab, string][]).map(([id, label]) => ({ id, label: <>{label}{id === 'unread' && unreadN ? <span className="nf-count">{unreadN}</span> : null}</> }))} />

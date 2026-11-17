@@ -82,3 +82,21 @@ describe('a hung memory engine', () => {
     expect(ports).toHaveLength(2);
   });
 });
+
+describe('an engine that keeps stopping', () => {
+  it('is not started again for a while, and Memory health gets a plain sentence', async () => {
+    const ports = [];
+    let t = 1000;
+    const host = createMemoryHost({ port: null, restart: () => { const p = hungPort(); ports.push(p); return p; }, timeouts: { other: 10, tick: 10 }, limit: { count: 2, windowMs: 60000, pauseMs: 120000 }, now: () => t });
+    await expect(host.sweep('full')).rejects.toThrow(/took more than/);
+    await expect(host.sweep('full')).rejects.toThrow(/took more than/);
+    expect(host.error()).toBeNull();
+    await expect(host.sweep('full')).rejects.toThrow('Memory checks are paused: the memory engine stopped 2 times in 1 minute. Quorum tries again in 2 minutes.');
+    expect(ports).toHaveLength(2);
+    expect(host.error()).toMatch(/paused/);
+    t += 120001;
+    expect(host.error()).toBeNull();
+    await expect(host.sweep('full')).rejects.toThrow(/took more than/);
+    expect(ports).toHaveLength(3);
+  });
+});
