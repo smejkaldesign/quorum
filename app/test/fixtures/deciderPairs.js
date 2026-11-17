@@ -63,6 +63,43 @@ export const PAIRS = [
   P('refinement', c('a.md', 'Support uses a shared inbox.', 'support', 'channel', 'shared inbox'), c('b.md', 'Support uses a shared inbox with tags for billing and bugs.', 'support', 'channel', 'shared inbox with tags')),
   P('refinement', c('a.md', 'The design system has a button component.', 'design system', 'button', 'component'), c('b.md', 'The design system button comes in primary, secondary and ghost variants.', 'design system', 'button', 'primary, secondary and ghost variants')),
   P('refinement', c('a.md', 'Orion sends a weekly email.', 'orion', 'email', 'weekly'), c('b.md', 'Orion sends a weekly email every Friday with the open tasks.', 'orion', 'email', 'weekly on Friday with open tasks')),
+  // hard cases: findings a small model can miss. Implicit contradictions with no shared wording, refinements whose
+  // detail pulls the wording apart, and changes over time without a number or date in the value
+  P('contradiction', c('a.md', 'Atlas is written in Go.', 'atlas', 'language', 'Go'), c('b.md', 'Every Atlas service is a TypeScript project.', 'atlas', 'language', 'TypeScript')),
+  P('contradiction', c('a.md', 'Orion is free for every customer.', 'orion', 'pricing', 'free'), c('b.md', 'Customers pay a monthly subscription for Orion.', 'orion', 'pricing', 'monthly subscription')),
+  P('contradiction', c('a.md', 'The helper app needs no permissions.', 'helper app', 'permissions', 'none'), c('b.md', 'The helper app asks for microphone and screen recording access.', 'helper app', 'permissions', 'microphone and screen recording')),
+  P('contradiction', c('a.md', 'Search results include archived notes.', 'search', 'archived notes', 'included'), c('b.md', 'Archived notes are hidden from search.', 'search', 'archived notes', 'hidden')),
+  P('contradiction', c('a.md', 'The design team owns the icon set.', 'icon set', 'owner', 'design team'), c('b.md', 'Engineering maintains the icon set on its own.', 'icon set', 'owner', 'engineering')),
+  P('contradiction', c('a.md', 'Sync happens in real time.', 'sync', 'timing', 'real time'), c('b.md', 'Sync runs once a night as a batch job.', 'sync', 'timing', 'nightly batch')),
+  P('contradiction', c('a.md', 'The mobile app works without an account.', 'mobile app', 'account', 'not needed'), c('b.md', 'An account is required to open the mobile app.', 'mobile app', 'account', 'required')),
+  P('contradiction', c('a.md', 'Exports are available as PDF.', 'exports', 'format', 'PDF'), c('b.md', 'Exports only come out as plain text.', 'exports', 'format', 'plain text only')),
+  P('contradiction', c('a.md', 'The website runs on a single server.', 'website', 'servers', 'single server'), c('b.md', 'The website is spread across a cluster in three regions.', 'website', 'servers', 'cluster in three regions')),
+  P('contradiction', c('a.md', 'Field interviews are recorded on video.', 'interviews', 'recording', 'video'), c('b.md', 'Interviews are captured as handwritten notes only.', 'interviews', 'recording', 'handwritten notes')),
+  P('different_times', c('a.md', 'The team used Jira for tracking.', 'team', 'tracker', 'Jira'), c('b.md', 'The team now tracks work in Linear.', 'team', 'tracker', 'Linear')),
+  P('different_times', c('a.md', 'Orion was in private beta.', 'orion', 'stage', 'private beta'), c('b.md', 'Orion is generally available.', 'orion', 'stage', 'generally available')),
+  P('different_times', c('a.md', 'Billing was handled by the finance team.', 'billing', 'owner', 'finance team'), c('b.md', 'Billing moved to the platform team.', 'billing', 'owner', 'platform team')),
+  P('different_times', c('a.md', 'The editor used to store drafts on the server.', 'editor', 'draft storage', 'server'), c('b.md', 'Drafts are kept on the device.', 'editor', 'draft storage', 'device')),
+  P('different_times', c('a.md', 'Atlas ran on virtual machines.', 'atlas', 'hosting', 'virtual machines'), c('b.md', 'Atlas runs on a managed container service.', 'atlas', 'hosting', 'managed containers')),
+  P('refinement', c('a.md', 'Search supports filters.', 'search', 'filters', 'supported'), c('b.md', 'You can narrow results by tag, author, folder and the week a note was last edited.', 'search', 'filters', 'tag, author, folder, last edited week')),
+  P('refinement', c('a.md', 'The helper app records audio.', 'helper app', 'recording', 'audio'), c('b.md', 'Recording captures the microphone and the system output as two tracks, mixed after the call.', 'helper app', 'recording', 'microphone and system output tracks')),
+  P('refinement', c('a.md', 'Support covers billing questions.', 'support', 'scope', 'billing'), c('b.md', 'Refund requests, invoice corrections and plan changes all go through the support queue.', 'support', 'scope', 'refunds, invoices, plan changes')),
+  P('refinement', c('a.md', 'Atlas has an API.', 'atlas', 'api', 'available'), c('b.md', 'The REST endpoints return JSON and accept a bearer token issued from settings.', 'atlas', 'api', 'REST, JSON, bearer token')),
+  P('refinement', c('a.md', 'The design system covers forms.', 'design system', 'forms', 'covered'), c('b.md', 'Inputs, selects, checkboxes and inline validation messages each have a documented component.', 'design system', 'forms', 'inputs, selects, checkboxes, validation')),
+  P('refinement', c('a.md', 'Orion has a mobile client.', 'orion', 'mobile', 'client'), c('b.md', 'The phone app mirrors the task board and adds push reminders for due items.', 'orion', 'mobile', 'task board and push reminders')),
+  P('refinement', c('a.md', 'Meeting notes get a summary.', 'meeting notes', 'summary', 'generated'), c('b.md', 'After each call a short recap with decisions and owners is written at the top of the note.', 'meeting notes', 'summary', 'recap with decisions and owners')),
+
+  // more closable pairs, so the drop rate reads on more than a handful
+  P('unrelated', c('a.md', 'Orion dashboards refresh every few minutes.', 'orion', 'dashboard', 'refresh'), c('b.md', 'Orion dashboard tiles can be dragged into a new order.', 'orion', 'dashboards', 'drag to reorder')),
+  P('unrelated', c('a.md', 'The mobile app sends push notifications for mentions.', 'mobile app', 'notifications', 'mentions'), c('b.md', 'The mobile app notification settings live under Profile.', 'mobile app', 'notification', 'under Profile')),
+  P('unrelated', c('a.md', 'Atlas logs go to the central logging service.', 'atlas', 'logs', 'central logging'), c('b.md', 'Atlas login uses magic links sent by email.', 'atlas', 'login', 'magic links')),
+  P('unrelated', c('a.md', 'The research team keeps a participant panel.', 'research team', 'panel', 'participants'), c('b.md', 'The research team presents findings at the monthly review.', 'research team', 'panels', 'monthly review')),
+  P('unrelated', c('a.md', 'Billing emails use the brand template.', 'billing', 'email', 'brand template'), c('b.md', 'Billing email address changes need a confirmation step.', 'billing', 'email address', 'confirmation step')),
+  P('unrelated', c('a.md', 'The editor spell checks in English and Spanish.', 'editor', 'spell check', 'English and Spanish'), c('b.md', 'The editor checks links for broken targets on save.', 'editor', 'checks', 'broken links')),
+  P('same', c('a.md', 'Orion is built by the growth team.', 'orion', 'team', 'growth team'), c('b.md', 'The growth team builds Orion.', 'orion', 'team', 'the growth team')),
+  P('same', c('a.md', 'Atlas sends a digest email each morning.', 'atlas', 'digest', 'each morning'), c('b.md', 'Every morning Atlas emails a digest.', 'atlas', 'digest', 'every morning')),
+  P('same', c('a.md', 'The helper app is open source.', 'helper app', 'license', 'open source'), c('b.md', 'The source code of the helper app is open.', 'helper app', 'license', 'open source code')),
+  P('different_scope', c('a.md', 'On desktop the editor uses a sidebar for outlines.', 'editor', 'outline', 'sidebar'), c('b.md', 'On phones the editor shows outlines in a sheet.', 'editor', 'outline', 'sheet')),
+  P('different_scope', c('a.md', 'Admins can delete any workspace note.', 'notes', 'delete permission', 'admins, any note'), c('b.md', 'Members can delete only their own notes.', 'notes', 'delete permission', 'members, own notes')),
 ];
 
 export const NOTES = [

@@ -1,18 +1,19 @@
 // The memory agent's local decision layer: questions answered on the Mac before an item goes to Claude.
 //   worthReading(note)    { read, reason, tier }: false only when T0 is sure the note holds no claim
-//   relatedPair(a, b)     { drop, equivalent, score, tier, reason }: drop true takes the pair out of the judge queue
+//   relatedPair(a, b)     { drop, equivalent, score, tier, reason }: drop true takes the pair out of the judge queue;
+//                         today every drop is a pair marked equivalent
 //   tiers()               the state of every tier, for status and logs
 // T0 (rules.js) always runs. T1 (models.js) is the two bundled models. Every tier fails open: when a tier is missing,
-// errors or runs past its time limit, the item goes on to Claude unchanged. T1 may only drop a pair or mark it
+// errors or runs past its time limit, the item goes on to Claude unchanged. T1 may only drop a pair it marks
 // equivalent; it never answers a label, so no finding Quorum shows comes from a local model.
 import { cosine, loadModels } from './models.js';
 import { noteRule, pairRule } from './rules.js';
 
-// set from scripts/decider-eval.mjs on the synthetic fixtures, then made stricter. A drop as unrelated needs a low
-// contradiction score in both directions, a low similarity (bge-small puts unrelated sentences near 0.65 to 0.85, so the
-// cut sits low), and no entailment in either direction, since one-way entailment is a refinement Quorum shows. A drop as
-// equivalent needs entailment in both directions
-export const THRESHOLDS = Object.freeze({ dropContradiction: 0.05, dropCosine: 0.76, dropEntailment: 0.2, equivEntailment: 0.9, equivContradiction: 0.02 });
+// set from scripts/decider-eval.mjs on the synthetic fixtures for a drop precision of at least 99%. T1 drops only a pair
+// it reads as the same fact: entailment in both directions, no contradiction, and a high similarity, two models agreeing.
+// It does not drop pairs as unrelated: refinements whose detail is worded apart score like unrelated pairs on both
+// models (low contradiction, low similarity, no entailment), so any cut that drops unrelated pairs also drops findings
+export const THRESHOLDS = Object.freeze({ equivEntailment: 0.95, equivContradiction: 0.02, equivCosine: 0.85 });
 export const TIMEOUT_MS = 5000;
 // T1 stops after this many failures in a row, so a broken runtime costs a few timeouts and then nothing
 export const MAX_FAILURES = 3;
@@ -80,9 +81,8 @@ export function createDecider({ load = loadModels, thresholds = THRESHOLDS, time
         const entail = Math.min(ab.entailment, ba.entailment);
         const oneWay = Math.max(ab.entailment, ba.entailment);
         const th = thresholds;
-        if (entail >= th.equivEntailment && contra <= th.equivContradiction) { t1.drops++; return { drop: true, equivalent: true, score: contra, tier: 't1', reason: 'entailment both ways', sim, entail }; }
-        if (contra <= th.dropContradiction && sim <= th.dropCosine && oneWay <= th.dropEntailment) { t1.drops++; return { drop: true, equivalent: false, score: contra, tier: 't1', reason: 'unrelated', sim, entail }; }
-        return { drop: false, equivalent: false, score: contra, tier: 't1', reason: null, sim, entail };
+        if (entail >= th.equivEntailment && contra <= th.equivContradiction && sim >= th.equivCosine) { t1.drops++; return { drop: true, equivalent: true, score: contra, tier: 't1', reason: 'entailment both ways', sim, entail, oneWay }; }
+        return { drop: false, equivalent: false, score: contra, tier: 't1', reason: null, sim, entail, oneWay };
       } catch (e) {
         t1.failures++; t1.streak++; t1.error = String(e?.message ?? e);
         if (t1.streak >= MAX_FAILURES) { t1.state = 'off'; models = null; }

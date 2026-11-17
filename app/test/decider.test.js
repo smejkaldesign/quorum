@@ -1,4 +1,4 @@
-// The local decision layer (decide/): every tier fails open, T1 only drops or marks equivalent, the 5% audit sample is
+// The local decision layer (decide/): every tier fails open, T1 drops only pairs it marks equivalent, the 5% audit sample is
 // deterministic and its verdicts land in a local log, and tiers() reports each tier's state. Fake models stand in for
 // the bundled ones; the last block runs the real models when scripts/fetch-models.mjs has put them on disk.
 import { execFileSync } from 'node:child_process';
@@ -20,6 +20,8 @@ const fake = ({ cos = 0.5, nli = { contradiction: 0.01, entailment: 0.01, neutra
   let n = 0;
   return { embed: vi.fn(async (texts) => texts.map(() => (n++ % 2 ? b : a))), nli: vi.fn(async (pairs) => pairs.map(() => nli)) };
 };
+// scores T1 reads as the same fact: entailment both ways, no contradiction, high similarity
+const SAME = { cos: 0.97, nli: { contradiction: 0.001, entailment: 0.99, neutral: 0.009 } };
 const pairA = c('Atlas stores uploads in a bucket.', 'bucket');
 const pairB = c('Atlas standups are on Tuesday.', 'tuesday');
 const tier = (d, id) => d.tiers().find((t) => t.id === id);
@@ -64,22 +66,21 @@ describe('decider tiers fail open', () => {
 });
 
 describe('decider decisions', () => {
-  it('drops an unrelated pair and marks an equivalent one, and answers no label', async () => {
-    const unrelated = await createDecider({ load: async () => fake({ cos: 0.5 }) }).relatedPair(pairA, pairB);
-    expect(unrelated).toMatchObject({ drop: true, equivalent: false, tier: 't1', reason: 'unrelated' });
-    const same = await createDecider({ load: async () => fake({ cos: 0.97, nli: { contradiction: 0.001, entailment: 0.99, neutral: 0.009 } }) }).relatedPair(pairA, pairB);
+  it('marks an equivalent pair and drops it, and answers no label', async () => {
+    const same = await createDecider({ load: async () => fake(SAME) }).relatedPair(pairA, pairB);
     expect(same).toMatchObject({ drop: true, equivalent: true, tier: 't1' });
-    for (const r of [unrelated, same]) expect(r).not.toHaveProperty('label');
+    expect(same).not.toHaveProperty('label');
   });
 
-  it('keeps a pair with a contradiction score, a high similarity or a one-way entailment', async () => {
-    const keep = (o) => createDecider({ load: async () => fake(o) }).relatedPair(pairA, pairB);
-    expect((await keep({ cos: 0.5, nli: { contradiction: 0.4, entailment: 0, neutral: 0.6 } })).drop).toBe(false);
-    expect((await keep({ cos: 0.9 })).drop).toBe(false);
+  it('keeps unrelated pairs, contradictions, refinements and entailment the similarity does not back', async () => {
+    const keep = async (o, nli) => { const m = fake(o); if (nli) m.nli = async () => nli; return createDecider({ load: async () => m }).relatedPair(pairA, pairB); };
+    // low contradiction and low similarity: refinements score like this too, so it is never dropped
+    expect(await keep({ cos: 0.5 })).toMatchObject({ drop: false, tier: 't1' });
+    expect((await keep({ cos: 0.97, nli: { contradiction: 0.4, entailment: 0.5, neutral: 0.1 } })).drop).toBe(false);
     // one direction entails, the other is neutral: a refinement Quorum shows
-    const m = fake({ cos: 0.5 });
-    m.nli = async () => [{ contradiction: 0.001, entailment: 0.95, neutral: 0.049 }, { contradiction: 0.001, entailment: 0.01, neutral: 0.989 }];
-    expect((await createDecider({ load: async () => m }).relatedPair(pairA, pairB)).drop).toBe(false);
+    expect((await keep({ cos: 0.97 }, [{ contradiction: 0.001, entailment: 0.99, neutral: 0.009 }, { contradiction: 0.001, entailment: 0.01, neutral: 0.989 }])).drop).toBe(false);
+    // entailment both ways that the embedding model does not agree with
+    expect((await keep({ ...SAME, cos: 0.6 })).drop).toBe(false);
   });
 
   it('lets T0 keep a changed figure or a flipped polarity without asking the models', async () => {
@@ -104,7 +105,7 @@ describe('decider decisions', () => {
   });
 
   it('reports both tiers', async () => {
-    const d = createDecider({ load: async () => fake() });
+    const d = createDecider({ load: async () => fake(SAME) });
     expect(d.tiers().map((t) => [t.id, t.state])).toEqual([['t0', 'ready'], ['t1', 'idle']]);
     await d.warm();
     expect(tier(d, 't1')).toMatchObject({ state: 'ready', calls: 0, drops: 0, failures: 0 });
@@ -125,7 +126,7 @@ describe('the 5% audit of dropped pairs', () => {
   it('sends a sampled drop to Claude and logs its verdict, and holds back the rest', async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'decider-'));
     const file = path.join(dir, 'decider-audit.jsonl');
-    const gate = createPairGate({ decider: createDecider({ load: async () => fake({ cos: 0.5 }) }), file, now: () => 1000 });
+    const gate = createPairGate({ decider: createDecider({ load: async () => fake(SAME) }), file, now: () => 1000 });
     const inKey = Array.from({ length: 500 }, (_, i) => `k${i}`).find((k) => audited(k));
     const outKey = Array.from({ length: 500 }, (_, i) => `k${i}`).find((k) => !audited(k));
     expect(await gate.check({ key: outKey, a: pairA, b: pairB })).toMatchObject({ send: false, audit: false, drop: true });
@@ -134,13 +135,13 @@ describe('the 5% audit of dropped pairs', () => {
     expect(gate.record(inKey, 'contradiction')).toBe(true);
     expect(gate.record(inKey, 'contradiction')).toBe(false);
     const rows = readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-    expect(rows).toEqual([{ at: 1000, key: inKey, tier: 't1', equivalent: false, score: 0.01, label: 'contradiction', miss: true }]);
+    expect(rows).toEqual([{ at: 1000, key: inKey, tier: 't1', equivalent: true, score: 0.001, label: 'contradiction', miss: true }]);
     expect(gate.stats()).toEqual({ audited: 1, misses: 1, missRate: 1 });
   });
 
   it('sends every kept pair, and every pair when the decider throws', async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'decider-'));
-    const keepGate = createPairGate({ decider: createDecider({ load: async () => fake({ cos: 0.95 }) }), file: path.join(dir, 'a.jsonl') });
+    const keepGate = createPairGate({ decider: createDecider({ load: async () => fake({ cos: 0.5 }) }), file: path.join(dir, 'a.jsonl') });
     expect(await keepGate.check({ key: 'k', a: pairA, b: pairB })).toMatchObject({ send: true, audit: false, drop: false });
     const broken = createPairGate({ decider: { relatedPair: async () => { throw new Error('boom'); } }, file: path.join(dir, 'b.jsonl') });
     expect(await broken.check({ key: 'k', a: pairA, b: pairB })).toMatchObject({ send: true, drop: false, tier: 'none' });
@@ -165,5 +166,6 @@ describe.skipIf(missingFile() !== null)('the bundled models', () => {
     for (const p of PAIRS) rows.push({ truth: p.truth, ...(await d.relatedPair(p.a, p.b)) });
     expect(rows.filter((r) => r.drop && FINDING.has(r.truth))).toEqual([]);
     expect(rows.filter((r) => r.drop).length).toBeGreaterThan(5);
+    expect(rows.filter((r) => r.drop && r.truth !== 'same')).toEqual([]);
   }, 60000);
 });

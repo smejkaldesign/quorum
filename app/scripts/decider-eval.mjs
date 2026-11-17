@@ -2,6 +2,7 @@
 // and prints what a threshold change needs: the precision of drops (a dropped pair whose truth makes a finding is an
 // error), the drop rate, the latency per pair and per note, and the process memory. No Claude call, no vault content.
 // Fetch the models first: node scripts/fetch-models.mjs
+// Exits 1 when drop precision falls under MIN_PRECISION, so a threshold change that drops findings fails.
 // usage: node scripts/decider-eval.mjs [--json] [--sweep]
 import { performance } from 'node:perf_hooks';
 import { createDecider, THRESHOLDS } from '../decide/index.js';
@@ -9,6 +10,7 @@ import { loadModels } from '../decide/models.js';
 import { FINDING, NOTES, PAIRS } from '../test/fixtures/deciderPairs.js';
 
 const asJson = process.argv.includes('--json');
+export const MIN_PRECISION = 0.99;
 const mb = (n) => Math.round(n / 1e6);
 const pct = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
 const rss0 = process.memoryUsage().rss;
@@ -39,10 +41,10 @@ const score = (rows) => {
 };
 
 if (process.argv.includes('--sweep')) {
-  for (const dropContradiction of [0.02, 0.05, 0.1, 0.2]) for (const dropCosine of [0.5, 0.6, 0.7, 0.8]) for (const equivEntailment of [0.8, 0.9, 0.95]) {
-    const { rows } = await run({ ...THRESHOLDS, dropContradiction, dropCosine, equivEntailment });
+  for (const equivEntailment of [0.8, 0.9, 0.95, 0.98]) for (const equivCosine of [0, 0.8, 0.85, 0.9]) {
+    const { rows } = await run({ ...THRESHOLDS, equivEntailment, equivCosine });
     const s = score(rows);
-    console.log(JSON.stringify({ dropContradiction, dropCosine, equivEntailment, drops: s.drops, wrong: s.wrongDrops, precision: s.dropPrecision }));
+    console.log(JSON.stringify({ equivEntailment, equivCosine, drops: s.drops, wrong: s.wrongDrops, precision: s.dropPrecision }));
   }
   process.exit(0);
 }
@@ -63,10 +65,13 @@ const report = {
   rssMB: { start: mb(rss0), loaded: mb(rssLoaded), end: mb(process.memoryUsage().rss) },
   tiers: d.tiers(),
 };
-if (asJson) { console.log(JSON.stringify(report)); process.exit(0); }
+const failed = s.dropPrecision !== null && s.dropPrecision < MIN_PRECISION;
+if (asJson) { console.log(JSON.stringify(report)); process.exit(failed ? 1 : 0); }
 console.log(`pairs ${s.pairs}, dropped ${s.drops} (${(s.dropRate * 100).toFixed(0)}%), wrong drops ${s.wrongDrops}, drop precision ${s.dropPrecision === null ? 'n/a' : (s.dropPrecision * 100).toFixed(1) + '%'}`);
 console.log(`closable pairs dropped: ${s.closableDropped} of ${s.closable}`);
+for (const [i, r] of rows.entries()) if (r.drop && FINDING.has(r.truth)) console.log(`  wrong drop: ${r.truth} "${PAIRS[i].a.quote}" / "${PAIRS[i].b.quote}"`);
 for (const [t, v] of Object.entries(byTruth)) console.log(`  ${t.padEnd(16)} ${v.dropped}/${v.pairs} dropped (${v.equivalent} as equivalent), ${v.t0Kept} kept by T0`);
 console.log(`latency: pair mean ${report.latencyMs.pairMean.toFixed(1)} ms, T1 pair p50 ${report.latencyMs.t1PairP50.toFixed(1)} ms, p95 ${report.latencyMs.t1PairP95.toFixed(1)} ms, note ${report.latencyMs.noteMean.toFixed(3)} ms, model load ${loadMs.toFixed(0)} ms`);
 console.log(`notes: ${noteRight}/${NOTES.length} right`);
 console.log(`rss: ${report.rssMB.start} MB at start, ${report.rssMB.loaded} MB with models, ${report.rssMB.end} MB at end`);
+if (failed) { console.error(`drop precision under ${MIN_PRECISION * 100}%`); process.exit(1); }
