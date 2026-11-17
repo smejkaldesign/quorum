@@ -5,8 +5,9 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = path.join(path.dirname(new URL(import.meta.url).pathname), '..');
+const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = JSON.parse(readFileSync(path.join(root, 'decide/models.json'), 'utf8'));
 const sha = (buf) => createHash('sha256').update(buf).digest('hex');
 const print = process.argv.includes('--print');

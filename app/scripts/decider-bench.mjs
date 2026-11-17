@@ -10,6 +10,7 @@
 // lag runs where the model files are absent (CI).
 import { fork } from 'node:child_process';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
+import { fileURLToPath } from 'node:url';
 
 const args = process.argv.slice(2);
 const opt = (name, def) => { const i = args.indexOf(`--${name}`); return i < 0 ? def : args[i + 1]; };
@@ -45,7 +46,7 @@ globalThis.gc?.();
 const heapStart = process.memoryUsage().heapUsed;
 const lag = monitorEventLoopDelay({ resolution: 5 });
 lag.enable();
-const child = fork(new URL(import.meta.url).pathname, ['--child', '--rounds', String(rounds), ...(fake ? ['--fake'] : [])], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
+const child = fork(fileURLToPath(import.meta.url), ['--child', '--rounds', String(rounds), ...(fake ? ['--fake'] : [])], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
 // main keeps doing small work while the child runs, as it does while the engine sweeps
 const tick = setInterval(() => { JSON.stringify({ at: Date.now(), list: Array.from({ length: 200 }, (_, i) => i) }); }, 10);
 const report = await new Promise((resolve, reject) => { child.on('message', resolve); child.on('exit', (code) => code && reject(new Error(`child exited ${code}`))); });

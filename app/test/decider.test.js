@@ -2,9 +2,10 @@
 // deterministic and its verdicts land in a local log, and tiers() reports each tier's state. Fake models stand in for
 // the bundled ones; the last block runs the real models when scripts/fetch-models.mjs has put them on disk.
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { AUDIT_RATE, audited, createPairGate } from '../decide/gate.js';
 import { MAX_FAILURES, createDecider } from '../decide/index.js';
@@ -62,6 +63,19 @@ describe('decider tiers fail open', () => {
     const d = createDecider({ load: async () => fake() });
     expect(d.worthReading(null)).toMatchObject({ read: false, tier: 't0' });
     expect(d.worthReading({ rel: 'x.md', get text() { throw new Error('gone'); } })).toEqual({ read: true, reason: null, tier: 'none' });
+  });
+});
+
+describe('the decider in a folder whose path has a space', () => {
+  it('loads its manifest and names the models folder as a real path', async () => {
+    const root = path.join(mkdtempSync(path.join(os.tmpdir(), 'decider-')), 'Quorum App');
+    mkdirSync(root, { recursive: true });
+    const app = path.join(import.meta.dirname, '..');
+    cpSync(path.join(app, 'decide'), path.join(root, 'decide'), { recursive: true });
+    for (const f of ['contradictionPairs.js', 'contradictionIndex.js']) cpSync(path.join(app, f), path.join(root, f));
+    const m = await import(pathToFileURL(path.join(root, 'decide/models.js')).href);
+    expect(m.MODELS_DIR).toBe(path.join(root, 'models'));
+    expect(m.missingFile()).toBe('embed/onnx/model_int8.onnx');
   });
 });
 

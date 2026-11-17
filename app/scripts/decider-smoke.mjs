@@ -4,6 +4,7 @@
 // usage: node scripts/decider-smoke.mjs [release/mac-arm64/Quorum.app]
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 if (process.argv[2] === '--inside') {
   const { createDecider } = await import(path.join(process.argv[3], 'decide/index.js'));
@@ -19,5 +20,5 @@ if (process.argv[2] === '--inside') {
 const appDir = path.resolve(process.argv[2] ?? 'release/mac-arm64/Quorum.app');
 const bin = path.join(appDir, 'Contents/MacOS/Quorum');
 const asar = path.join(appDir, 'Contents/Resources/app.asar');
-const out = execFileSync(bin, [new URL(import.meta.url).pathname, '--inside', asar], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, encoding: 'utf8', timeout: 120000 });
+const out = execFileSync(bin, [fileURLToPath(import.meta.url), '--inside', asar], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, encoding: 'utf8', timeout: 120000 });
 console.log(`decider smoke: ${out.trim()}`);

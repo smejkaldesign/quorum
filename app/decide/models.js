@@ -6,8 +6,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const here = path.dirname(new URL(import.meta.url).pathname);
+const here = path.dirname(fileURLToPath(import.meta.url));
 export const MODELS_DIR = path.join(here, '..', 'models').replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
 export const MANIFEST = JSON.parse(readFileSync(path.join(here, 'models.json'), 'utf8'));
 // tokens per text; claims are one sentence, and a cap keeps one long quote from costing a long run
