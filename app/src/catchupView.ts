@@ -82,6 +82,9 @@ export function summaryOf(last: CatchupLast) {
     line: `${checked}${why}`,
     added: addedText(last.added),
     ids: last.added?.ids ?? [],
+    // how long it ran: a crashed pass ran until its last save, which is after its last call; with no call done the last
+    // save is the one at its start, so the length is not known
+    took: last.endedAt != null && (last.end !== 'crashed' || last.done > 0) ? Math.max(0, last.endedAt - last.startedAt) : null,
   };
 }
 // the card shows for a pass that ended and was not dismissed

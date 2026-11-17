@@ -7,8 +7,9 @@ import { STOP_BODY, STOP_TITLE, needsConfirm } from './catchupView';
 
 // The AI working banner: the spinning mark, a shimmering line of what runs now, the time it has run and a progress bar.
 // Memory health's bulk batch banner and the agent activity banner (Home and Memory health) both draw it.
-export function WorkBanner({ state, text, startedAt, endedAt = null, progress = null, note = null, actions = null, children = null, onOpen, className = '' }: {
-  state: 'live' | 'success' | 'error'; text: string; startedAt: number; endedAt?: number | null; progress?: number | null; note?: ReactNode; actions?: ReactNode; children?: ReactNode; onOpen?: () => void; className?: string;
+// time: false hides the clock, for work whose length is not known
+export function WorkBanner({ state, text, startedAt, endedAt = null, time = true, progress = null, note = null, actions = null, children = null, onOpen, className = '' }: {
+  state: 'live' | 'success' | 'error'; text: string; startedAt: number; endedAt?: number | null; time?: boolean; progress?: number | null; note?: ReactNode; actions?: ReactNode; children?: ReactNode; onOpen?: () => void; className?: string;
 }) {
   const live = state === 'live';
   const [now, setNow] = useState(() => Date.now());
@@ -23,7 +24,7 @@ export function WorkBanner({ state, text, startedAt, endedAt = null, progress = 
         <span className="run-icon" aria-hidden="true">{live ? <i className="run-spin" /> : state === 'error' ? <IconClose width={17} height={17} /> : <IconCheck width={18} height={18} />}</span>
         <span className={`run-text${live ? ' shimmer' : ''}`} data-tip={text} {...open}>{text}</span>
         {/* the live region would read the clock out on every tick */}
-        <span className="run-time" aria-hidden="true">{took(Math.max(0, elapsed))}</span>
+        {time && <span className="run-time" aria-hidden="true">{took(Math.max(0, elapsed))}</span>}
         {actions && <span className="work-actions" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>{actions}</span>}
       </div>
       {progress != null && <div className="mh-batch-bar" aria-hidden="true"><i style={{ width: `${Math.max(0, Math.min(1, progress)) * 100}%` }} /></div>}

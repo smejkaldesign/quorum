@@ -113,7 +113,8 @@ export function CatchupSummary({ onShow }: { onShow: (ids: string[], label: stri
       state={s.state}
       text={`${s.head}. Ran ${ranAt(last.startedAt)}`}
       startedAt={last.startedAt}
-      endedAt={last.endedAt ?? last.startedAt}
+      endedAt={s.took == null ? null : last.startedAt + s.took}
+      time={s.took != null}
       note={<>{s.line}{s.added ? ` ${s.added}` : ''}</>}
       actions={<>
         {s.ids.length > 0 && <button className="act-pill" onClick={() => onShow(s.ids, label)}>Show these</button>}
