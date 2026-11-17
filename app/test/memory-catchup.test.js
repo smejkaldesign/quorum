@@ -285,7 +285,7 @@ describe('Check everything now with calls in parallel', () => {
     const activity = createAgentActivity({ emit: () => {}, setTimer: () => null, clearTimer: () => {} });
     const ctx = { notes: ix.snapshot(), resolve: (t, f) => ix.resolve(t, f), contradictions: { provider: agent.provider } };
     const catchup = createCatchup({ drafter, agent: lanes, activity, refresh: async () => { analyze(ctx); }, notes: () => 300, wait: async () => {}, busyWaitMs: 0, parallel: () => parallel });
-    return { catchup, asked, signals, most: () => most, open, activity };
+    return { catchup, asked, signals, most: () => most, open, activity, agent: lanes, calls: () => signals.length };
   }
 
   it('runs up to four calls at once, each with its own abort, and asks for each note and pair once', async () => {
@@ -298,6 +298,21 @@ describe('Check everything now with calls in parallel', () => {
     expect(s.signals.every((x) => x instanceof AbortSignal)).toBe(true);
     expect([...s.asked.values()].every((n) => n === 1)).toBe(true);
     expect([...s.asked.keys()].some((k) => k.startsWith('judge:'))).toBe(true);
+  });
+
+  it('stops every lane and aborts their calls when one lane fails, and makes no call after the pass ends', async () => {
+    const s = await parallelSetup(4);
+    // the third tick throws, as an engine that stopped would
+    let ticks = 0;
+    const tick = s.agent.tick;
+    s.agent.tick = (o) => (++ticks === 3 ? Promise.reject(new Error('engine stopped')) : tick(o));
+    await s.catchup.start();
+    const last = await s.catchup.done();
+    expect(last.end).toBe('failed');
+    const after = s.calls();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(s.calls()).toBe(after);
+    expect(s.open.size).toBe(0);
   });
 
   it('cancels every call that runs on Cancel', async () => {

@@ -141,7 +141,17 @@ export function createCatchup({ drafter, agent, activity, refresh = async () => 
       // a lane that stops lets the lanes that wait on it look again
       ended();
     }
-    await Promise.all(Array.from({ length: n }, (_, i) => lane(i)));
+    // a lane that fails ends the pass for every lane: the others stop before their next call and their calls are
+    // aborted, so no call runs after the pass reports it ended
+    const guarded = (i) => lane(i).catch((e) => {
+      end ??= 'failed';
+      log('memory catchup lane', e?.message);
+      r.stopped = true;
+      for (const c of r.ctls) c.abort();
+      ended();
+    });
+    await Promise.allSettled(Array.from({ length: n }, (_, i) => guarded(i)));
+    if (end === 'failed') return 'failed';
     return r.stopped ? 'cancelled' : end ?? 'cancelled';
   }
 
