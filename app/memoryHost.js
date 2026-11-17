@@ -11,9 +11,13 @@
 //             pass over the vault) also { bar, folders, terms }
 //   model(prompt, system) the model call the agent asked for; a cancelled call rejects with { cancelled: true }
 //   restart() a fresh port after the engine stopped (it crashed or ran out of memory); the next call uses it
+//   timeouts  how long a call may take before the engine is taken for hung: it is stopped and the call fails. A tick
+//             waits on the model (up to 5 minutes), so it gets longer
 import { ruleText } from './memoryEngine.js';
 
-export function createMemoryHost({ port, index = () => null, vault = () => null, mayRead = () => false, cond = () => ({}), model = async () => { throw new Error('No model'); }, restart = null, log = () => {} }) {
+export const CALL_TIMEOUTS = { tick: 7 * 60000, other: 3 * 60000 };
+
+export function createMemoryHost({ port, index = () => null, vault = () => null, mayRead = () => false, cond = () => ({}), model = async () => { throw new Error('No model'); }, restart = null, timeouts = CALL_TIMEOUTS, log = () => {} }) {
   let seq = 0;
   const calls = new Map();
   // the text of each note the engine holds, as last sent, so a sync sends only the notes whose text changed
@@ -28,13 +32,14 @@ export function createMemoryHost({ port, index = () => null, vault = () => null,
     sent = new Map();
     sentVault = null;
     p.on('message', (msg) => receive(p, msg));
-    p.on?.('exit', (code) => {
-      if (cur !== p) return;
-      log('memory engine', 'stopped', code);
-      for (const [, c] of calls) c.reject(new Error('The memory engine stopped'));
-      calls.clear();
-      cur = null;
-    });
+    p.on?.('exit', (code) => { if (cur === p) stopped(p, `exited with code ${code}`); });
+  }
+  // the engine exited or hung: every call that waits fails, and the next call starts a fresh engine
+  function stopped(p, why) {
+    log('memory engine', 'stopped', why);
+    if (cur === p) cur = null;
+    for (const [, c] of calls) { clearTimeout(c.timer); c.reject(new Error(`The memory engine stopped (${why})`)); }
+    calls.clear();
   }
   function receive(p, msg) {
     if (msg?.event === 'agent-start') { onStart?.(msg.payload); return; }
@@ -50,6 +55,7 @@ export function createMemoryHost({ port, index = () => null, vault = () => null,
     const c = calls.get(msg?.id);
     if (!c) return;
     calls.delete(msg.id);
+    clearTimeout(c.timer);
     if (msg.agent) agentView = msg.agent;
     if (msg.ok) c.resolve(msg.result); else c.reject(new Error(msg.error));
   }
@@ -60,9 +66,14 @@ export function createMemoryHost({ port, index = () => null, vault = () => null,
     if (!cur && restart) attach(restart());
     if (!cur) return Promise.reject(new Error('The memory engine is not running'));
     const id = ++seq;
+    const p = cur;
     return new Promise((resolve, reject) => {
-      calls.set(id, { resolve, reject });
-      cur.postMessage({ id, method, payload });
+      const ms = timeouts[method] ?? timeouts.other;
+      // a hung engine holds every sweep after it and the end of a catch-up: it is stopped, and the next call starts anew
+      const timer = setTimeout(() => { stopped(p, `${method} took more than ${Math.round(ms / 1000)} seconds`); p.kill?.(); p.terminate?.(); }, ms);
+      timer.unref?.();
+      calls.set(id, { resolve, reject, timer });
+      p.postMessage({ id, method, payload });
     });
   }
 

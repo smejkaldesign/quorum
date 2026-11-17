@@ -68,3 +68,17 @@ describe('the memory host after the engine stops', () => {
     expect(stored()).toBe(before);
   });
 });
+
+// a port that takes every message and never answers, as an engine stuck in a loop
+const hungPort = () => ({ killed: false, on() {}, postMessage() {}, kill() { this.killed = true; } });
+
+describe('a hung memory engine', () => {
+  it('fails the call after its timeout, stops the engine, and starts a fresh one for the next call', async () => {
+    const ports = [];
+    const host = createMemoryHost({ port: null, restart: () => { const p = hungPort(); ports.push(p); return p; }, timeouts: { other: 30, tick: 30 } });
+    await expect(host.sweep('full')).rejects.toThrow(/sweep took more than/);
+    expect(ports[0].killed).toBe(true);
+    await expect(host.refresh()).rejects.toThrow(/refresh took more than/);
+    expect(ports).toHaveLength(2);
+  });
+});
