@@ -28,6 +28,8 @@ const RESWEEPS = 2;
 const fmt = (n) => Number(n).toLocaleString('en-US');
 export const catchupLabel = (notes, done, total) => `Checking all ${fmt(notes)} ${notes === 1 ? 'note' : 'notes'}: ${fmt(done)} of ${fmt(total)} ${total === 1 ? 'call' : 'calls'}`;
 // the label once the pass knows its notes: the notes checked, saved ones included, of the notes to check
+// the label until the pass knows its totals
+export const readyLabel = (notes) => `Getting ready to check ${fmt(notes)} ${notes === 1 ? 'note' : 'notes'}`;
 export const notesLabel = (checked, of) => `Checked ${fmt(checked)} of ${fmt(of)} ${of === 1 ? 'note' : 'notes'}`;
 
 export function createCatchup({ drafter, agent, activity, refresh = async () => {}, bind = () => {}, after = async () => {}, notes = () => 0, emit = () => {}, saved = () => 0, left = null, review = () => null, store = null, wait = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); }), busyWaitMs = BUSY_WAIT_MS, log = () => {} }) {
@@ -50,7 +52,8 @@ export function createCatchup({ drafter, agent, activity, refresh = async () => 
   const show = (r) => {
     if (left) { const p = progressOf(r.of, { saved: r.saved, read: r.read, left: left() }); r.checked = p.checked; r.of = p.of; }
     if (r.of) r.work.progress(r.checked, r.of, notesLabel(r.checked, r.of));
-    else r.work.progress(r.done, r.total, catchupLabel(r.notes, r.done, r.total));
+    else if (r.total) r.work.progress(r.done, r.total, catchupLabel(r.notes, r.done, r.total));
+    else r.work.progress(0, 0, readyLabel(r.notes));
   };
 
   async function loop(r) {
@@ -99,7 +102,7 @@ export function createCatchup({ drafter, agent, activity, refresh = async () => 
     const r = { done: 0, total: 0, notes: notes(), stopped: false, ctl: null, work: null, read: 0, skipped: 0, checked: 0, of: 0, saved: 0, startedAt: Date.now(), before: null };
     try { r.saved = saved() ?? 0; r.before = review(); } catch (e) { log('memory catchup plan', e?.message); }
     r.checked = r.saved;
-    r.work = activity.start({ kind: 'catchup', label: catchupLabel(r.notes, 0, 0), cancellable: true, immediate: true, onCancel: () => { r.stopped = true; r.ctl?.abort(); } });
+    r.work = activity.start({ kind: 'catchup', label: readyLabel(r.notes), cancellable: true, immediate: true, onCancel: () => { r.stopped = true; r.ctl?.abort(); } });
     run = r;
     emit(status());
     const { startedAt } = r;
