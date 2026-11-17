@@ -1,7 +1,8 @@
 // The background download of the decision layer's models. The installer leaves them out; main starts this after launch
 // and it fetches each file in decide/models.json from its pinned revision over HTTPS into Quorum's data folder.
 //   - every file has a pinned SHA-256; a file with none stops the download before any request
-//   - a file is kept only when its SHA-256 matches; a mismatch deletes it and counts as a failed attempt
+//   - a file is kept only when its SHA-256 matches; a complete download that does not match is deleted, and that file
+//     stays failed until the next launch, so a bad mirror never costs one download after another
 //   - a partial file (.part) resumes with a Range request; a server that ignores the range sends the whole file again
 //   - failed attempts wait 5 s, 10 s, 20 s and so on up to 5 minutes; after the last one it tries again an hour later
 //   - while conditions() says no (Low Power Mode is on), it waits and checks again every 5 minutes, also mid-file
@@ -44,12 +45,15 @@ export function modelsLabel(s) {
 // enabled: decide/index.js DECIDER_ON; while it is false start() downloads nothing
 export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalThis.fetch, supported = modelsSupported(), enabled = true, conditions = async () => ({ ok: true }),
   retries = 6, backoffMs = 5000, maxBackoffMs = 5 * 60 * 1000, waitMs = 5 * 60 * 1000, retryLaterMs = 60 * 60 * 1000, checkEvery = 8 * MB,
-  sleep = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); }), onChange = () => {}, log = () => {} }) {
+  sleep = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); }), setTimer = (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return t; }, clearTimer = clearTimeout,
+  onChange = () => {}, log = () => {} }) {
   const files = Object.entries(manifest).flatMap(([id, m]) => Object.entries(m.files).map(([file, f]) => ({ id, file, url: fileUrl(m, file), sha256: f?.sha256 ?? '', size: f?.size ?? 0, dest: path.join(dir, id, file) })));
   const totalBytes = files.reduce((a, f) => a + f.size, 0);
   let st = { state: !enabled ? 'off' : supported ? 'idle' : 'unsupported', doneBytes: 0, totalBytes, why: null };
   let running = null;
   let stopped = false;
+  // files whose complete download failed its hash in this run of the app
+  const blocked = new Set();
   let emitted = 0;
   const status = () => ({ ...st, label: modelsLabel(st) });
   // progress goes out at most twice a second; a change of state goes out at once
@@ -101,7 +105,7 @@ export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalTh
       }
     } finally { await fh.close(); }
     if (paused) return false;
-    if (h.digest('hex') !== f.sha256) { await rm(part, { force: true }); throw new Error(`${f.id}/${f.file}: SHA-256 does not match the pinned hash`); }
+    if (h.digest('hex') !== f.sha256) { await rm(part, { force: true }); throw failure('hash_mismatch', `${f.id}/${f.file}: SHA-256 does not match the pinned hash`); }
     await rename(part, f.dest);
     return true;
   }
@@ -117,6 +121,7 @@ export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalTh
     const todo = [];
     for (const f of files) { if (existsSync(f.dest) && (await hashFile(f.dest)) === f.sha256) done += f.size; else todo.push(f); }
     set({ doneBytes: done });
+    if (todo.some((f) => blocked.has(f.dest))) { set({ state: 'failed', why: 'hash_mismatch' }); return; }
     for (const f of todo) {
       let attempt = 0;
       for (;;) {
@@ -126,10 +131,10 @@ export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalTh
         } catch (e) {
           attempt++;
           log('models', 'download failed', f.id, f.file, attempt, String(e?.message ?? e));
+          if (e?.code === 'hash_mismatch') { blocked.add(f.dest); set({ state: 'failed', why: 'hash_mismatch' }); return; }
           if (attempt >= retries) {
             set({ state: 'failed', why: e?.code ?? String(e?.message ?? e) });
-            const t = setTimeout(() => { start(); }, retryLaterMs);
-            t.unref?.();
+            setTimer(() => { start(); }, retryLaterMs);
             return;
           }
           await sleep(Math.min(maxBackoffMs, backoffMs * 2 ** (attempt - 1)));

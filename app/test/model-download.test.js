@@ -77,19 +77,27 @@ describe('model download', () => {
     expect(readFileSync(path.join(dir, 'embed/m.onnx'))).toEqual(A);
   });
 
-  it('retries with growing waits after errors and a hash mismatch, and never keeps a file that fails its hash', async () => {
+  it('retries with growing waits after errors', async () => {
     const dir = tmp();
-    const { d, sleeps } = await run({ dir, manifest: manifest(), fetch: server({ fail: 2, corrupt: 1 }).fetch, backoffMs: 1000 });
+    const { d, sleeps } = await run({ dir, manifest: manifest(), fetch: server({ fail: 3 }).fetch, backoffMs: 1000 });
     expect(d.status().state).toBe('ready');
-    expect(sleeps.slice(0, 3)).toEqual([1000, 2000, 4000]);
+    expect(sleeps).toEqual([1000, 2000, 4000]);
     expect(readFileSync(path.join(dir, 'embed/m.onnx'))).toEqual(A);
   });
 
-  it('fails without keeping a file when every attempt fails its hash', async () => {
+  it('marks a file whose complete download fails its hash as failed until the next launch', async () => {
     const dir = tmp();
-    const { d } = await run({ dir, manifest: manifest(), fetch: server({ corrupt: 99 }).fetch, retries: 3 });
-    expect(d.status()).toMatchObject({ state: 'failed' });
+    const s = server({ corrupt: 99 });
+    const timers = [];
+    const { d, sleeps } = await run({ dir, manifest: manifest(), fetch: s.fetch, setTimer: (fn, ms) => { timers.push(ms); return 1; } });
+    expect(d.status()).toMatchObject({ state: 'failed', why: 'hash_mismatch' });
+    expect(s.seen.filter((r) => r.url.endsWith('m.onnx'))).toHaveLength(1);
+    expect(sleeps).toEqual([]);
+    expect(timers).toEqual([]);
+    await d.start();
+    expect(s.seen.filter((r) => r.url.endsWith('m.onnx'))).toHaveLength(1);
     expect(existsSync(path.join(dir, 'embed/m.onnx'))).toBe(false);
+    expect(existsSync(path.join(dir, 'embed/m.onnx.part'))).toBe(false);
     expect(modelsLabel(d.status())).toBe('Local models: download failed. Quorum tries again later; until then every check goes to Claude.');
   });
 
