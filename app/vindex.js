@@ -55,6 +55,10 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     const cut = st.size > INDEX_MAX;
     try { raw = cut ? readHead(path.join(vault, rel)) : readFileSync(path.join(vault, rel), 'utf8'); } catch { files.delete(rel); return; }
     if (isDeniedText(raw)) { files.delete(rel); return; }
+    // a large note that grew only past its head (a session log gets a line at its end on every save) keeps its entry:
+    // the same head text and parse, so a save makes no new copy of 2 MB to index and then collect
+    const prev = files.get(rel);
+    if (cut && prev?.cut && !prev.flagged && prev.text === raw) { prev.mtime = st.mtimeMs; prev.size = st.size; return; }
     const flagged = isExcludedText(raw);
     const text = flagged ? redact(raw) : raw;
     // the lowercased path and text, kept for search so a query does not lowercase the whole vault again

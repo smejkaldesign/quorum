@@ -1,6 +1,6 @@
 // The memory engine (memoryEngine.js) and the vault index's cut for large notes (vindex.js INDEX_MAX). Every note is
 // made up; no model is called.
-import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -51,6 +51,23 @@ describe('large notes', () => {
     const done = rewriteLinks({ vault, mapping, sources, resolve: ix.resolve, allRels: ['logs/2026-11-16.md', 'notes/renamed.md'], aliasesOf: ix.aliasesOf });
     expect(done.links).toBe(1);
     expect(readFileSync(path.join(vault, 'logs/2026-11-16.md'), 'utf8').endsWith('See [[renamed]] here.\n')).toBe(true);
+  });
+
+  it('keeps the indexed head of a large note that grows only past its head, with no new copy of it', () => {
+    const vault = tmp();
+    const line = 'A session line.\n';
+    const file = path.join(vault, 'log.md');
+    writeFileSync(file, `# Log\n\n${line.repeat(Math.ceil((INDEX_MAX * 1.5) / line.length))}`);
+    const ix = createVaultIndex({ vault, isExcludedPath: () => false, isExcludedText: () => false, redact: (t) => t, onChange: () => {} });
+    ix.sync();
+    const before = ix.snapshot()[0];
+    appendFileSync(file, 'One more line at the end.\n');
+    ix.syncPaths(['log.md']);
+    const after = ix.snapshot()[0];
+    expect(after.size).toBeGreaterThan(before.size);
+    // the same string and the same parse: the index made no new copy of the 2 MB head
+    expect(after.text).toBe(before.text);
+    expect(after.note).toBe(before.note);
   });
 
   it('gives the rules the head of a note past MAX_RULE_TEXT, with its full length', () => {
