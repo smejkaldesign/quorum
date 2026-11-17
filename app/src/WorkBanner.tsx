@@ -57,12 +57,13 @@ export function AgentActivityBanner({ onOpen, className = '' }: { onOpen?: () =>
   const [asking, setAsking] = useState<string | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const current = a?.id ?? null;
-  useEffect(() => { setAsking((x) => stopFlow(x, { type: 'activity', current }).asking); }, [current]);
+  // read at each render, so a dialog opened for an activity that ended shows for no other one (ids are never reused)
+  const asked = stopFlow(asking, { type: 'activity', current }).asking;
   if (!a) return null;
   const progress = a.progress ? a.progress.done / a.progress.total : null;
   const count = a.progress && a.kind === 'batch' ? ` (${a.progress.done} of ${a.progress.total})` : '';
   const cancel = async (id: string) => { setStopping(id); try { await window.quorum.agentActivityCancel(id); } catch { setStopping(null); } };
-  const step = (e: StopEvent) => { const r = stopFlow(asking, e); setAsking(r.asking); if (r.cancel) cancel(r.cancel); };
+  const step = (e: StopEvent) => { const r = stopFlow(asked, e); setAsking(r.asking); if (r.cancel) cancel(r.cancel); };
   const close = (stop: boolean) => { step(stop ? { type: 'stop', current: a.id } : { type: 'keep' }); window.setTimeout(() => cancelRef.current?.focus(), 0); };
   return (
     <>
@@ -78,7 +79,7 @@ export function AgentActivityBanner({ onOpen, className = '' }: { onOpen?: () =>
       actions={a.cancellable || stopping === a.id ? <button ref={cancelRef} className="act-pill run-dismiss" aria-disabled={stopping === a.id} onClick={() => { if (stopping !== a.id) step({ type: 'cancel', activity: a, now: Date.now() }); }}>{stopping === a.id ? 'Stopping' : 'Cancel'}</button> : null}
     />
     {/* outside the banner, so the live region does not read the dialog out */}
-    {asking === a.id && (
+    {asked === a.id && (
         <Modal titleId="catchup-stop-title" title={STOP_TITLE} role="alertdialog" describedBy="catchup-stop-body" onClose={() => close(false)}>
           <p id="catchup-stop-body">{STOP_BODY}</p>
           <ModalActions>
