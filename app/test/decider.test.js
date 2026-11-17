@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AUDIT_RATE, audited, createPairGate } from '../decide/gate.js';
 import { MAX_FAILURES, createDecider } from '../decide/index.js';
 import { loadModels, missingFile } from '../decide/models.js';
-import { noteRule, pairRule } from '../decide/rules.js';
+import { figures, noteRule, pairRule } from '../decide/rules.js';
 import { FINDING, NOTES, PAIRS } from './fixtures/deciderPairs.js';
 
 const c = (quote, value, polarity = 'positive') => ({ rel: 'x.md', quote, subject: 'atlas', attribute: 'database', value, polarity });
@@ -23,7 +23,7 @@ const fake = ({ cos = 0.5, nli = { contradiction: 0.01, entailment: 0.01, neutra
 // scores T1 reads as the same fact: entailment both ways, no contradiction, high similarity
 const SAME = { cos: 0.97, nli: { contradiction: 0.001, entailment: 0.99, neutral: 0.009 } };
 const pairA = c('Atlas stores uploads in a bucket.', 'bucket');
-const pairB = c('Atlas standups are on Tuesday.', 'tuesday');
+const pairB = c('Atlas standups happen in the morning.', 'morning');
 const tier = (d, id) => d.tiers().find((t) => t.id === id);
 
 describe('decider tiers fail open', () => {
@@ -111,6 +111,17 @@ describe('decider decisions', () => {
     expect(noteRule({ rel: 'x.md', text: '---\nowner: data team\n---' }).read).toBe(true);
     // tags and aliases name the note; they hold no claim
     expect(noteRule({ rel: 'x.md', text: '---\ntags: [inbox]\naliases: []\n---\n' }).read).toBe(false);
+  });
+
+  it('reads whole month and weekday names, quarters and slashed dates as figures, and no word prefix', () => {
+    expect([...figures('Marcus')]).toEqual([]);
+    expect([...figures('maybe decided marketing, the mayor and a junior engineer, Sunil and Octavia')]).toEqual([]);
+    expect(figures('March 3')).toEqual(new Set(['mar 3']));
+    expect(figures('Sept. 4')).toEqual(new Set(['sep 4']));
+    expect(figures('every Tuesday')).toEqual(new Set(['tue']));
+    expect(figures('in Q3')).toEqual(new Set(['q3']));
+    expect(figures('on 3/14')).toEqual(new Set(['3/14']));
+    expect(figures('may')).toEqual(new Set(['may']));
   });
 
   it('answers the fixture notes', () => {

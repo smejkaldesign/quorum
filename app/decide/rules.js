@@ -31,14 +31,20 @@ export function noteRule(note) {
   return { read: true, reason: null };
 }
 
-const MONTHS = 'jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec';
-// the numbers and dates a value names, normalized: "$1,200" -> "1200", "March 3" -> "mar 3"
+// whole month and weekday names and their abbreviations, each mapped to one key: "Sept" -> "sep", "Tuesday" -> "tue"
+const NAMES = [['jan', 'jan|january'], ['feb', 'feb|february'], ['mar', 'mar|march'], ['apr', 'apr|april'], ['may', 'may'], ['jun', 'jun|june'], ['jul', 'jul|july'], ['aug', 'aug|august'], ['sep', 'sep|sept|september'], ['oct', 'oct|october'], ['nov', 'nov|november'], ['dec', 'dec|december'],
+  ['mon', 'mon|monday'], ['tue', 'tue|tues|tuesday'], ['wed', 'wed|wednesday'], ['thu', 'thu|thur|thurs|thursday'], ['fri', 'fri|friday'], ['sat', 'sat|saturday'], ['sun', 'sun|sunday']];
+const KEY = new Map(NAMES.flatMap(([k, forms]) => forms.split('|').map((f) => [f, k])));
+const NAME = `(${[...KEY.keys()].sort((x, y) => y.length - x.length).join('|')})`;
+// the numbers and dates a text names, normalized: "$1,200" -> "1200", "March 3" -> "mar 3", "Q3" -> "q3", "3/14" stays
 export function figures(v) {
-  const s = normValue(v);
+  let s = normValue(v);
   const out = new Set();
-  for (const m of s.matchAll(new RegExp(`\\b(${MONTHS})[a-z]*\\.?\\s+(\\d{1,2})\\b`, 'g'))) out.add(`${m[1]} ${Number(m[2])}`);
-  for (const m of s.matchAll(/\d{4}-\d{2}-\d{2}|\d+(?:[.,]\d+)*/g)) out.add(m[0].includes('-') ? m[0] : m[0].replace(/,/g, ''));
-  for (const m of s.matchAll(new RegExp(`\\b(${MONTHS})[a-z]*\\b`, 'g'))) out.add(m[1]);
+  s = s.replace(new RegExp(`\\b${NAME}\\.?\\s+(\\d{1,2})\\b`, 'g'), (_, n, d) => { out.add(`${KEY.get(n)} ${Number(d)}`); return ' '; });
+  s = s.replace(/\bq([1-4])\b/g, (_, q) => { out.add(`q${q}`); return ' '; });
+  s = s.replace(/\b\d{4}-\d{2}-\d{2}\b|\b\d+\/\d+(\/\d+)?\b/g, (m) => { out.add(m); return ' '; });
+  for (const m of s.matchAll(/\d+(?:[.,]\d+)*/g)) out.add(m[0].replace(/,/g, ''));
+  for (const m of s.matchAll(new RegExp(`\\b${NAME}\\b`, 'g'))) out.add(KEY.get(m[1]));
   return out;
 }
 
