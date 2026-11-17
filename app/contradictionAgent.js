@@ -100,6 +100,8 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
   // the note paths and pair keys of the model call that runs. A sweep during the call finds no stored answer for them
   // yet; without this set it would queue them again and the next tick would make the same call a second time
   const inflight = new Set();
+  // pairs whose batched call failed or left them out: the next calls send each of them alone
+  const single = new Set();
   const tried = (id, h) => { const f = load().failed[id]; return f?.hash === h && now() - f.at < RETRY_MS; };
 
   // the provider the rule reads in one sweep. begin() clears the queues; each answer is for the text given now
@@ -169,13 +171,15 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
     try {
       const reply = await model(ask.prompt, ask.system, opts);
       const res = onReply(reply);
-      // failed: the ids of a batch the reply could not settle ([[id, why]]); only those wait a day
-      if (res.ok) { for (const [id] of ids) delete s.failed[id]; const h = new Map(ids); for (const [id, why] of res.failed ?? []) s.failed[id] = { hash: h.get(id), at: now(), why }; } else fail(res.why);
+      // failed: the ids of a batch the reply could not settle ([[id, why]]); only those wait a day. soft: a failed call
+      // whose ids are asked for again one a call, so none of them is marked yet
+      if (res.ok) { for (const [id] of ids) delete s.failed[id]; const h = new Map(ids); for (const [id, why] of res.failed ?? []) s.failed[id] = { hash: h.get(id), at: now(), why }; } else if (!res.soft) fail(res.why);
       save();
       return res;
     } catch (e) {
       if (e?.cancelled) { if (charge && s.day === day && s.count > 0) s.count--; save(); return { ok: false, cancelled: true, why: 'Cancelled' }; }
       const why = String(e?.message ?? e).slice(0, 200);
+      if (opts?.soft) { save(); return { ok: false, soft: true, why }; }
       fail(why);
       save();
       return { ok: false, why };
@@ -203,12 +207,17 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
       const keys = items.map((x) => x.key);
       const done = [];
       const failed = [];
+      const missing = [];
+      // a call of several pairs that fails is not held against its pairs: each is asked for again in a call of its own
+      const soft = items.length > 1;
       onStart({ kind: 'judge', notes: items.length });
       const p = call(items.map((x) => [x.key, x.h]), judgeBatchPrompt(items), (reply) => {
         const r = checkJudgeBatch(items, reply);
-        if (r.why) return { ok: false, why: r.why };
+        if (r.why) return { ok: false, why: r.why, soft };
         for (const x of items) {
           const v = r.byId.get(x.id);
+          // a pair the reply left out is asked for again, alone; a verdict that fails its check waits a day
+          if (v.missing && soft) { missing.push(x); continue; }
           if (!v.label) { failed.push([x.key, v.why]); continue; }
           s.judged[x.key] = { hash: x.h, at: now(), label: v.label, quotes: v.quotes, reason: v.reason };
           // an audited pair the gate would have dropped: its verdict goes to the gate's log
@@ -216,12 +225,16 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
           done.push(x);
         }
         // a reply that settles none of its pairs is a failed call
-        return done.length ? { ok: true, failed } : { ok: false, why: failed[0]?.[1] ?? 'The judge settled no pair' };
-      }, !uncapped, { kind: 'judge', lane }).then((res) => {
-        log('contradiction judge', `${keys.length} pairs`, res.ok ? `${done.length} judged, ${failed.length} dropped` : res.why);
+        if (!done.length && !missing.length) return { ok: false, why: failed[0]?.[1] ?? 'The judge settled no pair', soft };
+        return { ok: true, failed };
+      }, !uncapped, { kind: 'judge', lane, soft }).then((res) => {
+        log('contradiction judge', `${keys.length} pairs`, res.ok ? `${done.length} judged, ${failed.length} dropped, ${missing.length} asked again` : res.why);
         if (res.cancelled) return { cancelled: keys };
-        if (!res.ok) return { judgeDropped: keys, why: res.why };
-        return { judged: done.map((x) => x.key), labels: done.map((x) => s.judged[x.key].label), rels: [...new Set(done.flatMap((x) => x.notes.map((n) => n.rel)))], judgeDropped: failed.map(([k]) => k) };
+        if (!res.ok && res.soft) { alone(items); return { judgeRetry: keys, why: res.why }; }
+        if (!res.ok) { for (const k of keys) single.delete(k); return { judgeDropped: keys, why: res.why }; }
+        alone(missing);
+        for (const x of items) if (!missing.includes(x)) single.delete(x.key);
+        return { judged: done.map((x) => x.key), labels: done.map((x) => s.judged[x.key].label), rels: [...new Set(done.flatMap((x) => x.notes.map((n) => n.rel)))], judgeDropped: failed.map(([k]) => k), ...(missing.length ? { judgeRequeued: missing.map((x) => x.key) } : {}) };
       }).finally(() => { running.delete(p); });
       running.add(p);
       return p;
@@ -275,6 +288,10 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
   // JUDGE_CHARS. Each pair asks the gate first; a pair it drops is stored as judged 'same' by its tier and sent to no
   // one, and a pair it sends on (an audit among them) joins the call. A pair is in the in-flight set while the gate reads
   // it, so a sweep meanwhile does not queue it again
+  // pairs to ask for again, each in a call of its own: back in the queue, marked so the next batch holds them alone
+  function alone(items) {
+    for (const x of items) { single.add(x.key); if (!wantJudge.has(x.key)) wantJudge.set(x.key, { p: x.p, notes: x.notes, h: x.h }); }
+  }
   async function gatedBatch(s) {
     const out = [];
     let used = 0;
@@ -284,8 +301,9 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
       const size = judgePrompt(j.p, j.notes).prompt.length + 40;
       if (out.length && used + size > JUDGE_CHARS) break;
       if (!wantJudge.has(j.p.key)) continue;
-      // a pair on the same two notes as a pair of this call waits for the next call
+      // a pair on the same two notes as a pair of this call waits for the next call, and a pair asked for again goes alone
       if (out.some((x) => notePair(x.p) === notePair(j.p))) continue;
+      if (out.length && (single.has(j.p.key) || single.has(out[0].p.key))) continue;
       wantJudge.delete(j.p.key);
       if (gate) {
         inflight.add(j.p.key);
@@ -295,6 +313,7 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
       }
       out.push(j);
       used += size;
+      if (single.has(j.p.key)) break;
     }
     if (dropped) { save(); log('contradiction gate', `${dropped} pairs kept from the judge`); }
     return out;

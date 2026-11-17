@@ -383,7 +383,7 @@ describe('stage 4 resolve and stage 5 fixes', () => {
     expect(batches.flat()).toHaveLength(many.length + 3);
   });
 
-  it('stores the verdicts a batched reply settles and holds back only the pairs it did not', async () => {
+  it('stores the verdicts a batched reply settles and asks again for a pair it left out', async () => {
     const notes1 = [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: 'b.md', text: '#\n\nAtlas uses Y.\n' }];
     const notes2 = [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: 'c.md', text: '#\n\nAtlas uses Z.\n' }];
     const p1 = { key: 'k1', a: claim({}), b: claim({ rel: 'b.md' }) };
@@ -399,11 +399,38 @@ describe('stage 4 resolve and stage 5 fixes', () => {
     expect(a.provider.judgeOf(p2, notes2)).toBeNull();
     const res = await a.tick({ uncapped: true });
     expect(seen).toEqual([2]);
-    expect(res).toMatchObject({ judged: ['k1'], judgeDropped: ['k2'] });
+    expect(res).toMatchObject({ judged: ['k1'], judgeRequeued: ['k2'] });
     a.provider.begin();
     expect(a.provider.judgeOf(p1, notes1)).toBe('contradiction');
-    // the pair the reply did not settle waits a day, as a failed call does
+    // the pair the reply left out is not marked failed: it is asked for again, alone
     expect(a.provider.judgeOf(p2, notes2)).toBeNull();
+    expect(a.pendingCalls()).toBe(1);
+    await a.tick({ uncapped: true });
+    expect(seen).toEqual([2, 1]);
+  });
+
+  it('asks again one pair a call after a batched call fails, and marks only a pair that fails alone', async () => {
+    const notes = (r) => [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: r, text: '#\n\nAtlas uses Y.\n' }];
+    const pairs = ['b.md', 'c.md', 'd.md'].map((r, i) => ({ key: `k${i + 1}`, a: claim({}), b: claim({ rel: r }) }));
+    const seen = [];
+    const a = agent({ model: async (prompt) => {
+      const n = prompt.split('<pair id="').length - 1;
+      seen.push(n);
+      if (n > 1) return 'not json';
+      if (prompt.includes('d.md (line')) throw new Error('timed out');
+      const rel = ['b.md', 'c.md'].find((r) => prompt.includes(`${r} (line`));
+      return JSON.stringify({ verdicts: [{ pair: 'p1', lines: [3, 3], label: 'same', quotes: [{ path: 'a.md', line: 3, text: 'Atlas uses X.' }, { path: rel, line: 3, text: 'Atlas uses Y.' }], reason: 'r' }] });
+    } });
+    a.provider.begin();
+    pairs.forEach((p, i) => a.provider.judgeOf(p, notes(['b.md', 'c.md', 'd.md'][i])));
+    expect(await a.tick({ uncapped: true })).toMatchObject({ judgeRetry: ['k1', 'k2', 'k3'] });
+    for (let i = 0; i < 3; i++) await a.tick({ uncapped: true });
+    expect(seen).toEqual([3, 1, 1, 1]);
+    a.provider.begin();
+    expect(a.provider.judgeOf(pairs[0], notes('b.md'))).toBe('same');
+    expect(a.provider.judgeOf(pairs[1], notes('c.md'))).toBe('same');
+    // the pair that failed on its own waits a day
+    expect(a.provider.judgeOf(pairs[2], notes('d.md'))).toBeNull();
     expect(a.pendingCalls()).toBe(0);
   });
 
