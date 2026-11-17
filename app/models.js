@@ -65,7 +65,9 @@ export function claudeText({ prompt, system, model, cwd, onDelta = null, timeout
     const proc = spawn('claude', [
       '-p', '--output-format', onDelta ? 'stream-json' : 'text', ...(onDelta ? ['--verbose', '--include-partial-messages'] : []),
       '--model', model, '--tools', '', '--no-session-persistence',
-      '--strict-mcp-config', '--setting-sources', 'user', '--system-prompt', system,
+      // the person's hooks stay off: each call is its own Claude Code session, so a SessionStart or SessionEnd hook would
+      // run on every call, add its text to the prompt and could write to their files
+      '--strict-mcp-config', '--setting-sources', 'user', '--settings', '{"disableAllHooks":true}', '--system-prompt', system,
     ], { env, cwd });
     liveClaude.add(proc);
     const timer = timeoutMs ? setTimeout(() => { proc.kill(); reject(new Error(`Claude Code took more than ${Math.round(timeoutMs / 1000)} seconds`)); }, timeoutMs) : null;
