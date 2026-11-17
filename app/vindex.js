@@ -1,7 +1,7 @@
 // Live index of the vault: every note parsed once, then kept current by a file watcher, so the graph, backlinks,
 // search and renames all read the same picture and edits Claude makes show up in Quorum within a beat.
 // Files stay the source of truth; this is a cache that rebuilds from disk.
-import { readFileSync, statSync, watch } from 'node:fs';
+import { closeSync, openSync, readFileSync, readSync, statSync, watch } from 'node:fs';
 import path from 'node:path';
 import { createResolver, parseNote } from './linkparse.js';
 import { SKIP, graphConfig, noteDate, walk } from './vault.js';
@@ -11,6 +11,20 @@ import { isGenerated } from './linkRules.js';
 // the folders walk() skips, as a test on a watcher path (the same list, so the two can never disagree)
 const IGNORED = new RegExp(`(^|/)(${[...SKIP].map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(/|$)`);
 const BATCH = 200;
+// a note larger than this is indexed by its first INDEX_MAX bytes, cut at a line end: its title, frontmatter, links and
+// search text come from that head. A session log that grows to 100 MB was read, parsed and lowercased whole on every
+// save, which held the main process for seconds and kept 400 MB of copies of it in the index
+export const INDEX_MAX = 2 * 1024 * 1024;
+export function readHead(abs, max = INDEX_MAX) {
+  const fd = openSync(abs, 'r');
+  try {
+    const buf = Buffer.alloc(max);
+    const n = readSync(fd, buf, 0, max, 0);
+    // a newline byte never sits inside a UTF-8 character, so the cut keeps every character whole
+    const end = buf.lastIndexOf(0x0a, n - 1);
+    return buf.toString('utf8', 0, end > 0 ? end : n);
+  } finally { closeSync(fd); }
+}
 
 // isExcludedPath keeps a file out by its path; isDeniedText keeps a note out by what its frontmatter says (a denied
 // key); isExcludedText flags and redacts opted-out lines but keeps the note. renamed() gives the person's own names for
@@ -38,12 +52,13 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   function load(rel, st) {
     health = null;
     let raw;
-    try { raw = readFileSync(path.join(vault, rel), 'utf8'); } catch { files.delete(rel); return; }
+    const cut = st.size > INDEX_MAX;
+    try { raw = cut ? readHead(path.join(vault, rel)) : readFileSync(path.join(vault, rel), 'utf8'); } catch { files.delete(rel); return; }
     if (isDeniedText(raw)) { files.delete(rel); return; }
     const flagged = isExcludedText(raw);
     const text = flagged ? redact(raw) : raw;
     // the lowercased path and text, kept for search so a query does not lowercase the whole vault again
-    files.set(rel, { mtime: st.mtimeMs, size: st.size, note: parseNote(rel, text), text, hay: `${rel.toLowerCase()}\n${text.toLowerCase()}`, flagged, t: noteDate(vault, rel, text) });
+    files.set(rel, { mtime: st.mtimeMs, size: st.size, note: parseNote(rel, text), text, hay: `${rel.toLowerCase()}\n${text.toLowerCase()}`, flagged, t: noteDate(vault, rel, text), ...(cut ? { cut } : {}) });
   }
 
   // a frontmatter name: counts as an alias, since auto-memory notes link to each other by that slug
@@ -338,6 +353,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     rels: () => [...files.keys()],
     // every note as the review rules read it (rules/index.js): its path, text, parsed note, file time, and how many
     // notes link to it and how many links it has to other notes
-    snapshot: () => [...files].map(([rel, f]) => ({ rel, text: f.text, note: f.note, mtime: f.mtime, size: f.size, inbound: new Set((backward.get(rel) ?? []).map((b) => b.from)).size, outbound: (forward.get(rel) ?? []).length })),
+    // cut: the note is larger than INDEX_MAX and text is its head only
+    snapshot: () => [...files].map(([rel, f]) => ({ rel, text: f.text, note: f.note, mtime: f.mtime, size: f.size, ...(f.cut ? { cut: true } : {}), inbound: new Set((backward.get(rel) ?? []).map((b) => b.from)).size, outbound: (forward.get(rel) ?? []).length })),
   };
 }
