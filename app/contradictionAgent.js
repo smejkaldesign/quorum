@@ -10,9 +10,9 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { QUIET_MS } from './memoryDraft.js';
-import { hashText, indexNote } from './contradictionIndex.js';
+import { AUTHORITY, hashText, indexNote } from './contradictionIndex.js';
 import { checkClaimsBatch, claimPrompt, excerptOf, stillTrue } from './contradictionClaims.js';
-import { checkJudge, judgePrompt } from './contradictionResolve.js';
+import { JUDGE_BATCH, JUDGE_CHARS, checkJudgeBatch, judgeBatchPrompt, judgePrompt } from './contradictionResolve.js';
 
 const RETRY_MS = 24 * 3600000;
 // one claim call reads the excerpts of several notes (contradictionClaims.js excerptOf), up to about 8k input tokens
@@ -40,6 +40,31 @@ export function packBatches(entries, { chars = BATCH_CHARS, notes = BATCH_NOTES 
   return out;
 }
 const today = (t) => new Date(t).toISOString().slice(0, 10);
+
+// how much a pair is worth judging first, lower first: a decision record on either side, two claims with different
+// dates, and a decided claim. A pass that is cancelled has then judged the pairs most likely to matter
+export function judgeRank(p) {
+  const decision = p.a.authority === AUTHORITY.decision || p.b.authority === AUTHORITY.decision ? 0 : 4;
+  const dated = p.a.date && p.b.date && p.a.date !== p.b.date ? 0 : 2;
+  const decided = p.a.modality === 'decided' || p.b.modality === 'decided' ? 0 : 1;
+  return decision + dated + decided;
+}
+// the pairs of each judge call, strongest first: up to JUDGE_BATCH pairs while the prompt stays under JUDGE_CHARS.
+// entries: [{ p, notes }]
+export function judgeBatches(entries, { chars = JUDGE_CHARS, pairs = JUDGE_BATCH } = {}) {
+  const sorted = [...entries].sort((x, y) => judgeRank(x.p) - judgeRank(y.p) || String(x.p.key).localeCompare(String(y.p.key)));
+  const out = [];
+  let cur = [];
+  let used = 0;
+  for (const e of sorted) {
+    const n = judgePrompt(e.p, e.notes).prompt.length + 40;
+    if (cur.length && (used + n > chars || cur.length >= pairs)) { out.push(cur); cur = []; used = 0; }
+    cur.push(e);
+    used += n;
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
 
 export function createContradictionAgent({ file, model, modelId = 'claude', enabled = () => false, cap = () => 40, busy = () => false, idleMs = () => Infinity, readable = () => true, now = () => Date.now(), log = () => {} }) {
   let state = null;
@@ -135,7 +160,8 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
     try {
       const reply = await model(ask.prompt, ask.system, opts);
       const res = onReply(reply);
-      if (res.ok) for (const [id] of ids) delete s.failed[id]; else fail(res.why);
+      // failed: the ids of a batch the reply could not settle ([[id, why]]); only those wait a day
+      if (res.ok) { for (const [id] of ids) delete s.failed[id]; const h = new Map(ids); for (const [id, why] of res.failed ?? []) s.failed[id] = { hash: h.get(id), at: now(), why }; } else fail(res.why);
       save();
       return res;
     } catch (e) {
@@ -154,16 +180,33 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
     const why = waiting({ uncapped });
     if (why) return { skipped: why };
     const s = load();
-    for (const [key, j] of wantJudge) {
-      wantJudge.delete(key);
-      if (!j.notes.every((x) => readable(x.rel, x.text))) continue;
-      onStart({ kind: 'judge', notes: j.notes.length });
-      const p = call([[key, j.h]], judgePrompt(j.p, j.notes), (reply) => {
-        const r = checkJudge(j.p, j.notes, reply);
-        if (!r.label) return { ok: false, why: r.why };
-        s.judged[key] = { hash: j.h, at: now(), label: r.label, quotes: r.quotes, reason: r.reason };
-        return { ok: true };
-      }, !uncapped, { kind: 'judge', lane }).then((res) => { log('contradiction judge', key, res.ok ? s.judged[key].label : res.why); if (res.cancelled) return { cancelled: [key] }; return res.ok ? { judged: key, rels: j.notes.map((x) => x.rel), label: s.judged[key].label } : { dropped: key, why: res.why }; }).finally(() => { running.delete(p); });
+    // a pair the read gate keeps out is never sent and leaves the queue
+    for (const [key, j] of wantJudge) if (!j.notes.every((x) => readable(x.rel, x.text))) wantJudge.delete(key);
+    const [pairs] = judgeBatches([...wantJudge.values()]);
+    if (pairs) {
+      for (const j of pairs) wantJudge.delete(j.p.key);
+      const items = pairs.map((j, i) => ({ id: `p${i + 1}`, key: j.p.key, p: j.p, notes: j.notes, h: j.h }));
+      const keys = items.map((x) => x.key);
+      const done = [];
+      const failed = [];
+      onStart({ kind: 'judge', notes: items.length });
+      const p = call(items.map((x) => [x.key, x.h]), judgeBatchPrompt(items), (reply) => {
+        const r = checkJudgeBatch(items, reply);
+        if (r.why) return { ok: false, why: r.why };
+        for (const x of items) {
+          const v = r.byId.get(x.id);
+          if (!v.label) { failed.push([x.key, v.why]); continue; }
+          s.judged[x.key] = { hash: x.h, at: now(), label: v.label, quotes: v.quotes, reason: v.reason };
+          done.push(x);
+        }
+        // a reply that settles none of its pairs is a failed call
+        return done.length ? { ok: true, failed } : { ok: false, why: failed[0]?.[1] ?? 'The judge settled no pair' };
+      }, !uncapped, { kind: 'judge', lane }).then((res) => {
+        log('contradiction judge', `${keys.length} pairs`, res.ok ? `${done.length} judged, ${failed.length} dropped` : res.why);
+        if (res.cancelled) return { cancelled: keys };
+        if (!res.ok) return { judgeDropped: keys, why: res.why };
+        return { judged: done.map((x) => x.key), labels: done.map((x) => s.judged[x.key].label), rels: [...new Set(done.flatMap((x) => x.notes.map((n) => n.rel)))], judgeDropped: failed.map(([k]) => k) };
+      }).finally(() => { running.delete(p); });
       running.add(p);
       return p;
     }
@@ -191,7 +234,7 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
   // the model calls the agent still has to make for what the latest sweep asked: a call per pair to judge and per batch of
   // notes to read
   function pendingCalls() {
-    const judge = [...wantJudge.values()].filter((j) => j.notes.every((x) => readable(x.rel, x.text))).length;
+    const judge = judgeBatches([...wantJudge.values()].filter((j) => j.notes.every((x) => readable(x.rel, x.text)))).length;
     return judge + packBatches([...wantClaims.values()].filter((w) => readable(w.rel, w.text))).length;
   }
   // the claim calls a first full pass makes over these notes ([{ rel, text, rank }], stage 1's notes to read), leaving

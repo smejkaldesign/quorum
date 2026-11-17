@@ -23,7 +23,7 @@ const { createVaultIndex } = await load('vindex.js');
 const { analyze } = await load('rules/contradictions.js');
 const { packBatches } = await load('contradictionAgent.js');
 const { claimPrompt, excerptOf } = await load('contradictionClaims.js');
-const { JUDGE_IN_TOKENS, JUDGE_OUT_TOKENS, OUT_TOKENS_PER_NOTE, dollars, passCost, tokensOf } = await load('memoryModels.js');
+const { CACHE_WRITE, CALL_OVERHEAD_TOKENS, JUDGE_BATCH, JUDGE_OUT_TOKENS, JUDGE_PAIR_TOKENS, OUT_TOKENS_PER_NOTE, dollars, judgeCalls, passCost, tokensOf } = await load('memoryModels.js');
 
 const ix = createVaultIndex({ vault: path.resolve(vaultArg), isExcludedPath: () => false, isExcludedText: () => false, redact: (t) => t, onChange: () => {} });
 ix.sync();
@@ -51,15 +51,18 @@ const batches = packBatches(left);
 const newChars = batches.reduce((n, b) => { const p = claimPrompt(b); return n + p.prompt.length + p.system.length; }, 0);
 
 const pairs = Math.round(left.length * pairsPerNote);
-const oldIn = tokensOf(oldChars) + pairs * 2400;
+// before: one pair a call with the instructions in each prompt (about 700 tokens), plus Claude Code's own prompt
+const oldIn = Math.round(tokensOf(oldChars) + (oldBatches.length + pairs) * CALL_OVERHEAD_TOKENS * CACHE_WRITE + pairs * 700);
 const oldOut = a.toRead.length * OUT_TOKENS_PER_NOTE + pairs * JUDGE_OUT_TOKENS;
 const oldUsd = dollars('sonnet', oldIn, oldOut);
-const now = passCost({ promptChars: newChars, notes: left.length }, pairs);
+const now = passCost({ promptChars: newChars, notes: left.length, calls: batches.length }, pairs);
+const jc = judgeCalls(pairs);
 const wall = (calls, p) => Math.round((calls * seconds) / p / 60);
 const r = (v) => Math.round(v * 100) / 100;
 console.log(`notes ${a.notes}; stage 1 sends ${a.toRead.length} to claim reading`);
 console.log(`before: ${oldBatches.length} claim calls, ${tokensOf(oldChars).toLocaleString('en-US')} input tokens (${Math.round(tokensOf(oldChars) / oldBatches.length).toLocaleString('en-US')} a call), all on Sonnet`);
 console.log(`after: ${batches.length} claim calls for ${left.length} notes (${a.toRead.length - left.length} with no line to read), ${tokensOf(newChars).toLocaleString('en-US')} input tokens (${Math.round(tokensOf(newChars) / Math.max(1, batches.length)).toLocaleString('en-US')} a call), on Haiku`);
-console.log(`judge calls, estimated at ${pairsPerNote} pairs per note read: ${pairs}, ${JUDGE_IN_TOKENS} input tokens each on Sonnet (before: about 2,400 with the instructions in each prompt)`);
+console.log(`pairs to judge, estimated at ${pairsPerNote} a note read: ${pairs}; before one a call (${pairs} calls), after up to ${JUDGE_BATCH} a call (${jc} calls), about ${JUDGE_PAIR_TOKENS} input tokens a pair on Sonnet`);
+console.log(`every call adds ${CALL_OVERHEAD_TOKENS} tokens of Claude Code's own prompt, written to the cache at ${CACHE_WRITE} times the input price; input tokens in all, at that weight: before ${oldIn.toLocaleString('en-US')}, after ${now.inputTokens.toLocaleString('en-US')}`);
 console.log(`cost at API rates, claims and judge: before $${r(oldUsd)}, after $${r(now.usd)}`);
-console.log(`wall time at ${seconds} s a call: before ${wall(oldBatches.length + pairs, 1)} min one at a time; after ${wall(batches.length + pairs, 1)} min one at a time, ${wall(batches.length + pairs, parallel)} min with ${parallel} at once`);
+console.log(`wall time at ${seconds} s a call: before ${wall(oldBatches.length + pairs, 1)} min one at a time; after ${wall(batches.length + jc, 1)} min one at a time, ${wall(batches.length + jc, parallel)} min with ${parallel} at once`);

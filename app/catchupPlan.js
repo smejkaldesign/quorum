@@ -3,7 +3,7 @@
 // Plain Node, so the tests drive it directly.
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { costLabel, passCost } from './memoryModels.js';
+import { costLabel, judgeCalls, passCost } from './memoryModels.js';
 
 // with no pass to learn from: about how long one model call takes (the first catch-up on a 1,800-note vault made
 // 1,230 calls in 5.5 hours, 16 seconds a call, one at a time), and how many pairs to judge each note read brings
@@ -31,8 +31,10 @@ export function planOf({ saved = 0, read = 0, claimCalls = 0, draftCalls = 0, cl
   const perNote = claimed >= HISTORY_NOTES ? judged / claimed : PAIRS_PER_NOTE;
   const pairs = Math.round(read * perNote);
   const perCall = secondsPerCall(last);
-  const { usd } = passCost({ promptChars, notes: read }, pairs);
-  return { toCheck: saved + read, saved, pairs, seconds: Math.round(((claimCalls + draftCalls + pairs) * perCall) / Math.max(1, parallel)), perCall, cost: usd, costLabel: costLabel(usd) };
+  const { usd } = passCost({ promptChars, notes: read, calls: claimCalls }, pairs);
+  // the pairs go to the judge several to a call
+  const calls = claimCalls + draftCalls + judgeCalls(pairs);
+  return { toCheck: saved + read, saved, pairs, seconds: Math.round((calls * perCall) / Math.max(1, parallel)), perCall, cost: usd, costLabel: costLabel(usd) };
 }
 
 // the notes checked of the notes to check, counting the notes saved from earlier passes. left: the notes the agent

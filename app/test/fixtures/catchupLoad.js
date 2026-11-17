@@ -40,8 +40,9 @@ export async function runCatchupLoad({ mode = 'engine', notes = 2000, big = 0, g
   // each id the model was asked about, with how many times
   const asked = new Map();
   const count = (prompt) => {
-    const j = prompt.match(/Claim A in (\S+) \(line \d+\)[\s\S]*Claim B in (\S+) \(line \d+\)/);
-    const ids = j ? [`judge:${[j[1], j[2]].sort().join('|')}`] : prompt.split('<note path="').slice(1).map((b) => `claims:${b.slice(0, b.indexOf('"'))}`);
+    // a judge call names each of its pairs by their two claim lines
+    const pairs = prompt.split('<pair id="').slice(1);
+    const ids = pairs.length ? pairs.map((b) => `judge:${b.split('\n').slice(1, 3).join('|')}`) : prompt.split('<note path="').slice(1).map((b) => `claims:${b.slice(0, b.indexOf('"'))}`);
     for (const id of ids) asked.set(id, (asked.get(id) ?? 0) + 1);
   };
   let calls = 0;

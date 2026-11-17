@@ -267,8 +267,8 @@ describe('Check everything now with calls in parallel', () => {
       const mine = signal;
       signals.push(mine);
       for (const b of prompt.split('<note path="').slice(1)) { const rel = b.slice(0, b.indexOf('"')); asked.set(rel, (asked.get(rel) ?? 0) + 1); }
-      const judge = /Claim A in/.test(prompt);
-      if (judge) asked.set(prompt, (asked.get(prompt) ?? 0) + 1);
+      const judge = prompt.includes('<pair id="');
+      for (const b of prompt.split('<pair id="').slice(1)) { const k = `judge:${b.split('\n').slice(1, 3).join('|')}`; asked.set(k, (asked.get(k) ?? 0) + 1); }
       expect(opts.kind).toBe(judge ? 'judge' : 'claims');
       open.add(mine);
       most = Math.max(most, open.size);
@@ -296,7 +296,7 @@ describe('Check everything now with calls in parallel', () => {
     expect(new Set(s.signals).size).toBe(s.signals.length);
     expect(s.signals.every((x) => x instanceof AbortSignal)).toBe(true);
     expect([...s.asked.values()].every((n) => n === 1)).toBe(true);
-    expect([...s.asked.keys()].some((k) => k.includes('Claim A in'))).toBe(true);
+    expect([...s.asked.keys()].some((k) => k.startsWith('judge:'))).toBe(true);
   });
 
   it('cancels every call that runs on Cancel', async () => {

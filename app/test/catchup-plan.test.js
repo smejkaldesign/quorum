@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PAIRS_PER_NOTE, SECONDS_PER_CALL, createLastRunStore, diffReview, planOf, progressOf, secondsPerCall } from '../catchupPlan.js';
-import { PRICES, costLabel, dollars, passCost } from '../memoryModels.js';
+import { CACHE_WRITE, CALL_OVERHEAD_TOKENS, JUDGE_PAIR_TOKENS, JUDGE_SYSTEM_TOKENS, PRICES, costLabel, dollars, judgeCalls, passCost } from '../memoryModels.js';
 import { CONFIRM_AFTER_MS, addedText, stopFlow, duration, needsConfirm, planRows, planSentence, progressShare, progressText, showSummary, summaryOf } from '../src/catchupView.ts';
 
 let dirs = [];
@@ -16,16 +16,20 @@ describe('the plan before a pass', () => {
   it('prices a pass at API rates: Haiku for the claims, Sonnet for the pairs', () => {
     expect(dollars('haiku', 1e6, 0)).toBe(PRICES.haiku.input);
     expect(dollars('sonnet', 0, 1e6)).toBe(PRICES.sonnet.output);
-    const c = passCost({ promptChars: 4e6, notes: 1000 }, 100);
-    expect(c.inputTokens).toBe(1e6 + 100 * 700);
-    expect(c.usd).toBeCloseTo(dollars('haiku', 1e6, 1000 * 180) + dollars('sonnet', 100 * 700, 100 * 150), 6);
+    // every call carries Claude Code's own prompt; 100 pairs go to the judge in 13 calls of up to 8
+    const c = passCost({ promptChars: 4e6, notes: 1000, calls: 40 }, 100);
+    expect(c.judgeCalls).toBe(13);
+    const claimIn = Math.round(1e6 + 40 * CALL_OVERHEAD_TOKENS * CACHE_WRITE);
+    const judgeIn = Math.round(100 * JUDGE_PAIR_TOKENS + 13 * (JUDGE_SYSTEM_TOKENS + CALL_OVERHEAD_TOKENS * CACHE_WRITE));
+    expect(c.inputTokens).toBe(claimIn + judgeIn);
+    expect(c.usd).toBeCloseTo(dollars('haiku', claimIn, 1000 * 180) + dollars('sonnet', judgeIn, 100 * 150), 6);
     expect(costLabel(0.4213)).toBe('About $0.42 at API rates');
     expect(costLabel(0.004)).toBe('Less than $0.01 at API rates');
     expect(costLabel(0)).toBeNull();
     const p = planOf({ read: 1000, claimCalls: 40, promptChars: 4e6 }, null, 4);
     expect(p.costLabel).toMatch(/^About \$\d+\.\d\d at API rates$/);
     // four calls at once take a quarter of the time
-    expect(p.seconds).toBe(Math.round(((40 + p.pairs) * SECONDS_PER_CALL) / 4));
+    expect(p.seconds).toBe(Math.round(((40 + judgeCalls(p.pairs)) * SECONDS_PER_CALL) / 4));
     expect(planRows({ notes: 1, read: 1000, claimCalls: 40, draftCalls: 0, calls: 40, drafting: true, costLabel: p.costLabel }).find((r) => r[0] === 'Cost')[1]).toBe(`${p.costLabel}, an estimate`);
     // a pass that ran four calls at once took a quarter of the wall time per call
     expect(secondsPerCall({ done: 100, startedAt: 0, endedAt: 400000, parallel: 4 })).toBe(16);
@@ -36,7 +40,7 @@ describe('the plan before a pass', () => {
     expect(p.toCheck).toBe(400);
     expect(p.saved).toBe(300);
     expect(p.pairs).toBe(Math.round(100 * PAIRS_PER_NOTE));
-    expect(p.seconds).toBe((10 + 4 + p.pairs) * SECONDS_PER_CALL);
+    expect(p.seconds).toBe((10 + 4 + judgeCalls(p.pairs)) * SECONDS_PER_CALL);
   });
   it('learns the pairs per note from the stored verdicts once enough notes were read', () => {
     expect(planOf({ read: 100, claimed: 200, judged: 20 }).pairs).toBe(10);

@@ -16,8 +16,8 @@ import { authorityOf, indexNote, modalityOf, noteDate } from '../contradictionIn
 import { WHOLE_NOTE, checkClaims, checkClaimsBatch, claimPrompt, excerptOf, quoteMatches, structuredClaims } from '../contradictionClaims.js';
 import { JUDGE_SYSTEM, judgePrompt } from '../contradictionResolve.js';
 import { MAX_PAIRS_PER_GROUP, acronymOf, attributeKey, normKey, pairClaims, resolveSubject, sameValue, subjectIndex } from '../contradictionPairs.js';
-import { annotateLine, autoCriteria, checkJudge, resolvePair, ruleBar, unannotateLine, wilson } from '../contradictionResolve.js';
-import { BATCH_CHARS, BATCH_NOTES, createContradictionAgent, packBatches } from '../contradictionAgent.js';
+import { JUDGE_BATCH, JUDGE_BATCH_SYSTEM, annotateLine, autoCriteria, checkJudge, checkJudgeBatch, judgeBatchPrompt, resolvePair, ruleBar, unannotateLine, wilson } from '../contradictionResolve.js';
+import { BATCH_CHARS, BATCH_NOTES, createContradictionAgent, judgeBatches, judgeRank, packBatches } from '../contradictionAgent.js';
 import { analyze, run } from '../rules/contradictions.js';
 import { gateItem } from '../qualityGate.js';
 
@@ -41,11 +41,14 @@ function vault() {
 const sent = [];
 async function fakeModel(prompt) {
   sent.push(prompt);
-  const judge = prompt.match(/Claim A in (\S+) \(line (\d+)\): "(.*)"\nClaim B in (\S+) \(line (\d+)\): "(.*)"/);
-  if (judge) {
-    const [, ra, la, qa, rb, lb, qb] = judge;
-    const label = JUDGE[[ra, rb].sort().join('|')] ?? 'same';
-    return JSON.stringify({ label, quotes: [{ path: ra, line: +la, text: qa }, { path: rb, line: +lb, text: qb }], reason: 'test' });
+  // a judge prompt holds one or more pairs, each with its id
+  if (prompt.includes('<pair id="')) {
+    const verdicts = prompt.split('<pair id="').slice(1).map((block) => {
+      const [, ra, la, qa, rb, lb, qb] = block.match(/Claim A in (\S+) \(line (\d+)\): "(.*)"\nClaim B in (\S+) \(line (\d+)\): "(.*)"/);
+      const label = JUDGE[[ra, rb].sort().join('|')] ?? 'same';
+      return { pair: block.slice(0, block.indexOf('"')), label, quotes: [{ path: ra, line: +la, text: qa }, { path: rb, line: +lb, text: qb }], reason: 'test' };
+    });
+    return JSON.stringify({ verdicts });
   }
   const claims = [];
   for (const block of prompt.split('<note path="').slice(1)) {
@@ -307,6 +310,61 @@ describe('stage 4 resolve and stage 5 fixes', () => {
     expect(checkJudge(p, notes, reply('contradiction', 'Atlas uses Z.')).why).toMatch(/quote/);
   });
 
+  it('judges several pairs in one call and keeps only the verdicts whose quotes check', () => {
+    const p1 = { key: 'k1', a: claim({}), b: claim({ rel: 'b.md' }) };
+    const p2 = { key: 'k2', a: claim({}), b: claim({ rel: 'c.md' }) };
+    const notes1 = [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: 'b.md', text: '#\n\nAtlas uses Y.\n' }];
+    const notes2 = [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: 'c.md', text: '#\n\nAtlas uses Z.\n' }];
+    const items = [{ id: 'p1', p: p1, notes: notes1 }, { id: 'p2', p: p2, notes: notes2 }];
+    const ask = judgeBatchPrompt(items);
+    expect(ask.system).toBe(JUDGE_BATCH_SYSTEM);
+    expect(ask.prompt.split('<pair id="')).toHaveLength(3);
+    const v = (pair, path, text) => ({ pair, label: 'contradiction', quotes: [{ path: 'a.md', line: 3, text: 'Atlas uses X.' }, { path, line: 3, text }], reason: 'r' });
+    const r = checkJudgeBatch(items, JSON.stringify({ verdicts: [v('p1', 'b.md', 'Atlas uses Y.'), v('p2', 'c.md', 'Atlas uses Q.')] }));
+    expect(r.byId.get('p1').label).toBe('contradiction');
+    expect(r.byId.get('p2').why).toMatch(/quote/);
+    expect(checkJudgeBatch(items, JSON.stringify({ verdicts: [v('p1', 'b.md', 'Atlas uses Y.')] })).byId.get('p2').why).toMatch(/no verdict/);
+    expect(checkJudgeBatch(items, 'no json').why).toMatch(/verdicts/);
+  });
+
+  it('packs pairs into judge calls, strongest first: decision records, different dates, decided claims', () => {
+    const pair = (key, a, b) => ({ p: { key, a: claim({ ...a }), b: claim({ rel: 'b.md', ...b }) }, notes: [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: 'b.md', text: '#\n\nAtlas uses Y.\n' }] });
+    const weak = pair('weak', { authority: 3, date: null, modality: 'stated' }, { authority: 3, date: null, modality: 'stated' });
+    const dated = pair('dated', { authority: 3, date: '2026-01-01', modality: 'stated' }, { authority: 3, date: '2026-03-01', modality: 'stated' });
+    const record = pair('record', { authority: 1, date: '2026-01-01', modality: 'decided' }, { authority: 2, date: '2026-03-01', modality: 'stated' });
+    expect(judgeRank(record.p)).toBeLessThan(judgeRank(dated.p));
+    expect(judgeRank(dated.p)).toBeLessThan(judgeRank(weak.p));
+    const many = Array.from({ length: JUDGE_BATCH + 3 }, (_, i) => pair(`w${i}`, { authority: 3 }, { authority: 3 }));
+    const batches = judgeBatches([weak, ...many, dated, record]);
+    expect(batches[0].slice(0, 2).map((x) => x.p.key)).toEqual(['record', 'dated']);
+    expect(batches[0]).toHaveLength(JUDGE_BATCH);
+    expect(batches.flat()).toHaveLength(many.length + 3);
+  });
+
+  it('stores the verdicts a batched reply settles and holds back only the pairs it did not', async () => {
+    const notes1 = [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: 'b.md', text: '#\n\nAtlas uses Y.\n' }];
+    const notes2 = [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: 'c.md', text: '#\n\nAtlas uses Z.\n' }];
+    const p1 = { key: 'k1', a: claim({}), b: claim({ rel: 'b.md' }) };
+    const p2 = { key: 'k2', a: claim({}), b: claim({ rel: 'c.md' }) };
+    const seen = [];
+    const a = agent({ model: async (prompt) => {
+      seen.push(prompt.split('<pair id="').length - 1);
+      const id = prompt.includes('b.md (line') && prompt.indexOf('b.md (line') < prompt.indexOf('c.md (line') ? 'p1' : 'p2';
+      return JSON.stringify({ verdicts: [{ pair: id, label: 'contradiction', quotes: [{ path: 'a.md', line: 3, text: 'Atlas uses X.' }, { path: 'b.md', line: 3, text: 'Atlas uses Y.' }], reason: 'r' }] });
+    } });
+    a.provider.begin();
+    expect(a.provider.judgeOf(p1, notes1)).toBeNull();
+    expect(a.provider.judgeOf(p2, notes2)).toBeNull();
+    const res = await a.tick({ uncapped: true });
+    expect(seen).toEqual([2]);
+    expect(res).toMatchObject({ judged: ['k1'], judgeDropped: ['k2'] });
+    a.provider.begin();
+    expect(a.provider.judgeOf(p1, notes1)).toBe('contradiction');
+    // the pair the reply did not settle waits a day, as a failed call does
+    expect(a.provider.judgeOf(p2, notes2)).toBeNull();
+    expect(a.pendingCalls()).toBe(0);
+  });
+
   it('measures the bar from the decision log over the auto slice', () => {
     expect(wilson(150, 150)).toBeGreaterThan(0.97);
     expect(wilson(147, 150)).toBeLessThan(0.95);
@@ -412,8 +470,9 @@ describe('the pipeline on the synthetic vault', () => {
     const count = (id) => asked.set(id, (asked.get(id) ?? 0) + 1);
     let release = null;
     const slow = async (prompt, system) => {
-      const judge = prompt.match(/Claim A in (\S+) \(line \d+\)[\s\S]*Claim B in (\S+) \(line \d+\)/);
-      if (judge) count(`judge:${[judge[1], judge[2]].sort().join('|')}`);
+      // a judge call names each of its pairs by their two claim lines
+      const pairs = prompt.split('<pair id="').slice(1);
+      if (pairs.length) for (const b of pairs) count(`judge:${b.split('\n').slice(1, 3).join('|')}`);
       else for (const block of prompt.split('<note path="').slice(1)) count(`claims:${block.slice(0, block.indexOf('"'))}`);
       await new Promise((r) => { release = r; });
       return fakeModel(prompt, system);
