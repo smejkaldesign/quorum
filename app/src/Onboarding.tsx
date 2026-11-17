@@ -8,6 +8,7 @@ import { IconCalendar, IconCheck, IconFolder, IconFolderOpen, IconLock, IconMic,
 import { isCloud } from './edition';
 import { useNotetaker } from './flags';
 import { DRAFTS_NEEDED, catchupCost, useCatchupEstimate } from './Catchup';
+import { planSentence } from './catchupView';
 import { Toggle } from './controls';
 import { detectProvider, KEY_NAMES, KEY_PROVIDERS, SOURCE_NAMES, type KeyProvider } from './modelSource';
 import { SetupForm, answersFrom, draftFrom, draftIsEmpty, emptyDraft, type SetupDraft } from './SetupForm';
@@ -185,7 +186,7 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext, catchup, onCatchu
       {brain && checking !== null && <p className="muted onb-check" role="status">{checking ? 'Quorum is checking your memory. This can take a few minutes and runs in the background.' : 'Quorum checked your memory. Its suggestions are in Memory health.'}</p>}
       {brain && (
         <div className={`onb-choice ${catchup ? 'on' : ''}`}>
-          <div><strong>Check my whole memory now</strong><em>{catchupCost(estimate)} It starts when you open Quorum, writes nothing to your notes, and what it finds waits in Memory health.{estimate && !estimate.drafting ? ` ${DRAFTS_NEEDED}` : ''}</em></div>
+          <div><strong>Check my whole memory now</strong><em>{catchupCost(estimate)}{estimate ? ` ${planSentence(estimate)}` : ''} It starts when you open Quorum, writes nothing to your notes, and what it finds waits in Memory health.{estimate && !estimate.drafting ? ` ${DRAFTS_NEEDED}` : ''}</em></div>
           <Toggle on={catchup} onChange={onCatchup} label="Check my whole memory now" />
         </div>
       )}

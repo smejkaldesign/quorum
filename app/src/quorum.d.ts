@@ -282,8 +282,13 @@ export type RuleRecord = { id: string; label: string; approved: number; archived
 // long memory work in the background (agentActivity.js), shown once it has run 30 seconds
 export type AgentActivity = { id: string; kind: 'check' | 'sweep' | 'batch' | 'draft' | 'catchup'; label: string; startedAt: number; progress: { done: number; total: number } | null; cancellable: boolean; more: number };
 // Check everything now (memoryCatchup.js): what a catch-up pass would cost, and the pass that runs or ran last
-export type CatchupEstimate = { notes: number; read: number; claimCalls: number; draftCalls: number; calls: number; drafting: boolean };
-export type CatchupStatus = { running: true; done: number; total: number; notes: number; id: string } | { running: false; last: { end: 'done' | 'cancelled' | 'off' | 'failed'; done: number; total: number; notes: number; startedAt: number; endedAt: number } | null };
+// saved: notes read in earlier passes; toCheck: saved plus the notes still to read; pairs and seconds are estimates
+export type CatchupEstimate = { notes: number; read: number; claimCalls: number; draftCalls: number; calls: number; drafting: boolean; saved?: number; toCheck?: number; pairs?: number; seconds?: number };
+// what a pass added to Needs review, and the item ids for the filter in Memory health
+export type CatchupAdded = { contradictions: number; drafts: number; other: number; ids: string[] };
+// checked and of: the notes checked (saved ones included) of the notes to check. 'crashed': Quorum quit or crashed while it ran
+export type CatchupLast = { end: 'done' | 'cancelled' | 'off' | 'failed' | 'crashed'; done: number; total: number; notes: number; startedAt: number; endedAt: number | null; checked?: number; of?: number; saved?: number; added?: CatchupAdded | null; dismissed?: boolean };
+export type CatchupStatus = { running: true; done: number; total: number; notes: number; id: string; checked?: number; of?: number; saved?: number; startedAt?: number } | { running: false; last: CatchupLast | null };
 // an item the quality gate holds back from Needs review (qualityGate.js): under Check these first in a bulk plan, or out of view
 export type GateHold = { bucket: 'check' | 'quiet'; why: string | null; title: string; line: string; kind: string };
 export type IgnoreRule = { id: string; ruleId: string; field: 'folder' | 'key' | 'target'; value: string; title: string; at: number };
@@ -499,6 +504,7 @@ declare global {
       memoryCatchupStatus(): Promise<CatchupStatus>;
       memoryCatchupStart(): Promise<CatchupStatus & { turnedOn: boolean }>;
       memoryCatchupCancel(): Promise<boolean>;
+      memoryCatchupDismiss(): Promise<boolean>;
       onMemoryCatchup(cb: (s: CatchupStatus) => void): Unsub;
       onAgentActivity(cb: (state: AgentActivity | null) => void): Unsub;
       memoryReject(rel: string): Promise<boolean>;
