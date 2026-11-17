@@ -3,7 +3,11 @@
 // runtime, a timestamp and its entitlements, and electron-builder then signs and notarizes the app. Without one,
 // the whole app is signed with the local development certificate, or ad hoc as a last resort (then macOS asks for
 // mic and Accessibility again after every rebuild).
+//
+// It also copies cli/learned.mjs next to the CLI in Resources/cli. The file has to sit in app.asar too, since keeper.js
+// imports it, and electron-builder leaves every file an extraResources entry names out of app.asar.
 const { execFileSync } = require('node:child_process');
+const { copyFileSync } = require('node:fs');
 const path = require('node:path');
 
 function identities() {
@@ -14,6 +18,7 @@ exports.default = async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') return;
   const app = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
   const helper = path.join(app, 'Contents/Resources/QuorumHelper');
+  copyFileSync(path.join(__dirname, 'cli/learned.mjs'), path.join(app, 'Contents/Resources/cli/learned.mjs'));
   const found = identities();
   const devId = found.match(/"(Developer ID Application: [^"]+)"/)?.[1];
   if (devId) {

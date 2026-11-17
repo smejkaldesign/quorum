@@ -103,10 +103,6 @@
       {
         "from": "cli/quorum.mjs",
         "to": "cli/quorum.mjs"
-      },
-      {
-        "from": "cli/learned.mjs",
-        "to": "cli/learned.mjs"
       }
     ],
     "mac": {
