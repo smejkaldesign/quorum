@@ -2,8 +2,9 @@
 // wires it, and measures the thread that plays main: its event loop delay and its heap. Used by
 // test/memory-responsive.test.js and scripts/memory-catchup-bench.mjs. Never calls a real model.
 //
-// mode 'engine': the memory engine runs in a worker thread through memoryHost.js, and the pass sweeps once at the end
-//   (main.js today). mode 'main': the rules, the pipeline and the agent run on the measured thread and a save sweep runs
+// mode 'engine': the memory engine runs in a worker thread through memoryHost.js, and the pass runs with the hooks and
+//   the save sweeps main.js builds (memoryWiring.js). Every call also saves a note, as the person or a session log
+//   does, so a hook that sweeps between calls shows in the sweep count. mode 'main': the rules, the pipeline and the agent run on the measured thread and a save sweep runs
 //   after every call, a few milliseconds after it ends (main.js before the memory engine), for the before numbers.
 // grow: characters appended to the big log note after every call, as a session log that keeps growing
 // vault: an existing vault to read instead of a generated one. It is only read: grow is ignored and nothing is written there
@@ -18,6 +19,7 @@ import { createAgentActivity } from '../../agentActivity.js';
 import { createCatchup } from '../../memoryCatchup.js';
 import { createDrafter } from '../../memoryDraft.js';
 import { createMemoryHost } from '../../memoryHost.js';
+import { catchupHooks, createSaveSweeps, slotBinder } from '../../memoryWiring.js';
 import { createMemorySweep, scanTags } from '../../memorySweep.js';
 import { analyze } from '../../rules/contradictions.js';
 import { synthModel, writeSynthVault } from './synthVault.js';
@@ -47,6 +49,7 @@ export async function runCatchupLoad({ mode = 'engine', notes = 2000, big = 0, g
     count(prompt);
     await new Promise((r) => setTimeout(r, delay));
     if (grow && big) { appendFileSync(path.join(vault, 'logs/2026-11-16.md'), 'x'.repeat(grow - 1) + '\n'); vindex.syncPaths(['logs/2026-11-16.md']); }
+    saved?.(prompt);
     return synthModel(prompt);
   };
   const cond = () => ({ enabled: true, cap: 0, busy: false, idleMs: 0, drafts: true, bar: null, folders: {}, terms: [] });
@@ -57,13 +60,21 @@ export async function runCatchupLoad({ mode = 'engine', notes = 2000, big = 0, g
   let finish = async () => {};
   let close = () => {};
   let sweepRuns = 0;
+  let saved = null;
+  let hooks = null;
+  let running = () => false;
   if (mode === 'engine') {
     const worker = new Worker(WORKER, { workerData: { dataDir: data } });
     const host = createMemoryHost({ port: worker, index: () => vindex, vault: () => vault, mayRead: () => true, cond, model });
     agent = host.agent;
-    refresh = () => host.refresh();
-    finish = async () => { sweepRuns++; await host.sweep('first'); };
-    close = () => worker.terminate();
+    // main.js sweep, counted
+    const sweep = async (kind, only) => { sweepRuns++; return host.sweep(kind, only); };
+    // a save waits SAVE_DELAY_MS in the app; here a few milliseconds, so a save that does not wait sweeps during the run
+    const saves = createSaveSweeps({ sweep, hold: () => running(), delayMs: 2 });
+    saved = (prompt) => { const m = prompt.match(/<note path="([^"]+)"/); if (m) saves.add([m[1]]); };
+    const slots = { draft: null, claims: null };
+    hooks = catchupHooks({ engine: host, ready: () => true, sweep, gate: async () => {}, saves, kind: () => 'first', bind: slotBinder({ get: (k) => slots[k], set: (k, c) => { slots[k] = c; } }) });
+    close = () => { saves.clear(); worker.terminate(); };
   } else {
     const { createContradictionAgent } = await import(agentModule);
     agent = createContradictionAgent({ file: path.join(data, 'contra.json'), model, enabled: () => true, cap: () => 0, idleMs: () => 0, readable: () => true });
@@ -76,7 +87,8 @@ export async function runCatchupLoad({ mode = 'engine', notes = 2000, big = 0, g
   const drafter = createDrafter({ file: path.join(data, 'drafts.json'), model, items: () => [], evidence: () => null, enabled: () => true, cap: () => 0, idleMs: () => 0 });
   const activity = createAgentActivity({ emit: () => {}, setTimer: () => null, clearTimer: () => {} });
   let emits = 0;
-  const catchup = createCatchup({ drafter, agent, activity, refresh, after, finish, notes: () => notes, emit: () => { emits++; }, wait: async () => {}, busyWaitMs: 0 });
+  const catchup = createCatchup({ drafter, agent, activity, ...(hooks ?? { refresh, after, finish }), notes: () => notes, emit: () => { emits++; }, wait: async () => {}, busyWaitMs: 0 });
+  running = () => catchup.running();
 
   await settle();
   const heapStart = heap();

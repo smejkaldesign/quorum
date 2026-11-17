@@ -76,6 +76,7 @@ import { RULE_LABELS, RULES } from './rules/index.js';
 import { relatedLine } from './rules/nearDuplicates.js';
 import { DAILY_CAP, WRONG_NOTE_FIX, createDrafter, draftKind, evidenceRels, fallbackItem, unlinkItem, withDraft } from './memoryDraft.js';
 import { createMemoryHost } from './memoryHost.js';
+import { catchupHooks, createSaveSweeps, slotBinder } from './memoryWiring.js';
 import { annotateLine, ruleBar } from './contradictionResolve.js';
 import { ignoreProposals, ignored, ruleRecords } from './ruleRecords.js';
 import { demotions, kindOf, logGate, ruleDemotion, runGate, signature, weakLink } from './qualityGate.js';
@@ -2513,21 +2514,11 @@ async function sweepNow(kind, only, { after }) {
     return s.last;
   } catch (e) { log('memory sweep', e?.message); return null; }
 }
-let saveTimer = null;
-const saveRels = new Set();
 const recordingNow = () => meeting.capturing || meeting.armed;
-// a recording writes its note every few seconds; the notes saved during it are checked once it ends
-function sweepOnSave(rels) {
-  for (const r of rels ?? []) saveRels.add(r);
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    saveTimer = null;
-    // a catch-up sweeps once when it ends (memoryCatchup.js finish), and that sweep covers these saves
-    if (recordingNow() || catchup.running()) { sweepOnSave([]); return; }
-    if (!saveRels.size) return;
-    const only = [...saveRels]; saveRels.clear(); sweep('save', only);
-  }, 3000);
-}
+// the notes saved in the last few seconds are checked together (memoryWiring.js). They wait while a meeting is
+// recorded, since it writes its note every few seconds, and while a catch-up runs, since it sweeps once when it ends
+const saves = createSaveSweeps({ sweep, hold: () => recordingNow() || catchup.running() });
+const sweepOnSave = (rels) => saves.add(rels);
 function sweepTick() {
   const b = brain();
   if (!b || !vindex) return;
@@ -2618,9 +2609,7 @@ function openIndex() {
   vindex?.stop();
   vindex = null;
   // saves waiting for a check belong to the vault that was open
-  clearTimeout(saveTimer);
-  saveTimer = null;
-  saveRels.clear();
+  saves.clear();
   const b = brain();
   if (!b) return;
   // the first change the index reports is its first full read; the review rules sweep once it is in
@@ -3657,33 +3646,21 @@ setInterval(() => { draftTick(); }, 60000).unref?.();
 // cap, one model call at a time, with the drafter's and the contradiction agent's timeouts and gates. It needs Let the
 // agent draft fixes, writes nothing to the vault and stops by itself. Onboarding offers it once the vault connects, and
 // Settings > Memory has the button; the control socket starts it on an existing install (scripts/memory-catchup.mjs)
-const catchupOwns = { draft: null, claims: null };
 const catchup = createCatchup({
   drafter,
   agent: contradictionAgent,
   activity: agentActivity,
-  // stage 1 to 4 over the whole vault with the agent's provider, so its queues hold every note still to read
-  refresh: async () => { if (brain() && vindex) await memoryEngine.refresh(); },
-  // the pass's call holds the same abort slot as a scheduled call, so the two never run at once; a slot another call
-  // holds is left alone
-  bind: (kind, ctl) => {
-    const cur = kind === 'draft' ? draftAbort : contradictionAbort;
-    if (ctl ? cur : cur !== catchupOwns[kind]) return;
-    catchupOwns[kind] = ctl;
-    if (kind === 'draft') draftAbort = ctl; else contradictionAbort = ctl;
-  },
-  // nothing runs between calls: the saves of the pass and of the person wait for the one sweep at the end
-  after: async () => {},
-  // one full sweep and one gate run, so what the pass found reaches Needs review once. The saves that waited are in it
-  finish: async () => {
-    const b = brain();
-    if (!b || !vindex) return;
-    clearTimeout(saveTimer);
-    saveTimer = null;
-    saveRels.clear();
-    await sweep(memorySweep.state(b.vault)?.lastFull ? 'full' : 'first', null, { after: false });
-    await gateNow();
-  },
+  // refresh, bind, after and finish (memoryWiring.js): the pass's calls hold main's abort slots, nothing runs between
+  // calls, and the pass ends with one full sweep and one gate run
+  ...catchupHooks({
+    engine: memoryEngine,
+    ready: () => !!brain() && !!vindex,
+    sweep,
+    gate: () => gateNow(),
+    saves,
+    kind: () => (memorySweep.state(brain()?.vault ?? '')?.lastFull ? 'full' : 'first'),
+    bind: slotBinder({ get: (k) => (k === 'draft' ? draftAbort : contradictionAbort), set: (k, ctl) => { if (k === 'draft') draftAbort = ctl; else contradictionAbort = ctl; } }),
+  }),
   notes: () => vindex?.rels().length ?? 0,
   emit: (st) => toUI('memory-catchup', st),
   // the notes read in earlier passes, the notes still queued, and Needs review before and after, for the note count
