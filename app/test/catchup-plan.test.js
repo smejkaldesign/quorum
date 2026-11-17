@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PAIRS_PER_NOTE, SECONDS_PER_CALL, createLastRunStore, diffReview, planOf, progressOf, secondsPerCall } from '../catchupPlan.js';
-import { CONFIRM_AFTER_MS, STOP_BODY, STOP_TITLE, addedText, duration, needsConfirm, planRows, planSentence, progressShare, progressText, showSummary, summaryOf } from '../src/catchupView.ts';
+import { CONFIRM_AFTER_MS, addedText, stopFlow, duration, needsConfirm, planRows, planSentence, progressShare, progressText, showSummary, summaryOf } from '../src/catchupView.ts';
 
 let dirs = [];
 afterEach(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); dirs = []; });
@@ -85,8 +85,38 @@ describe('the words the app shows', () => {
     expect(needsConfirm(0, CONFIRM_AFTER_MS)).toBe(false);
     expect(needsConfirm(0, CONFIRM_AFTER_MS + 1)).toBe(true);
     expect(needsConfirm(null, 10 * CONFIRM_AFTER_MS)).toBe(false);
-    expect(STOP_TITLE).toBe('Stop the check?');
-    expect(STOP_BODY).toBe('What it found so far is kept. The rest runs later under the daily limit, or when you start the check again.');
+  });
+  it('runs Cancel, the dialog, Escape and Stop on the banner', () => {
+    const check = { id: 'catchup:1', kind: 'catchup', startedAt: 0 };
+    // in the first minute Cancel stops at once
+    expect(stopFlow(null, { type: 'cancel', activity: check, now: 30000 })).toEqual({ asking: null, cancel: 'catchup:1' });
+    // later it opens the dialog for that check and stops nothing yet
+    const open = stopFlow(null, { type: 'cancel', activity: check, now: CONFIRM_AFTER_MS + 5000 });
+    expect(open).toEqual({ asking: 'catchup:1', cancel: null });
+    // Escape and Keep checking close it and stop nothing
+    expect(stopFlow(open.asking, { type: 'keep' })).toEqual({ asking: null, cancel: null });
+    // Stop cancels the check it was opened for
+    expect(stopFlow(open.asking, { type: 'stop', current: 'catchup:1' })).toEqual({ asking: null, cancel: 'catchup:1' });
+    // other long work stops at once
+    expect(stopFlow(null, { type: 'cancel', activity: { id: 'draft:1', kind: 'draft', startedAt: 0 }, now: 10 * CONFIRM_AFTER_MS })).toEqual({ asking: null, cancel: 'draft:1' });
+  });
+  it('never stops other work from a dialog opened for a check that ended', () => {
+    // the check ended and other work took the banner: the dialog closes
+    expect(stopFlow('catchup:1', { type: 'activity', current: 'draft:2' }).asking).toBeNull();
+    expect(stopFlow('catchup:1', { type: 'activity', current: null }).asking).toBeNull();
+    expect(stopFlow('catchup:1', { type: 'activity', current: 'catchup:1' }).asking).toBe('catchup:1');
+    // a Stop that arrives anyway cancels nothing
+    expect(stopFlow('catchup:1', { type: 'stop', current: 'draft:2' })).toEqual({ asking: null, cancel: null });
+  });
+  it('says how many notes could not be read', () => {
+    const s = summaryOf({ end: 'done', done: 30, total: 30, notes: 500, startedAt: 0, endedAt: 1000, checked: 380, of: 400, skipped: 20 });
+    expect(s.line).toBe('Checked 380 of 400 notes. 20 notes could not be read. The agent tries them again after a day.');
+  });
+  it('hides the time of a crashed check that made no call', () => {
+    const base = { end: 'crashed', total: 30, notes: 500, startedAt: 1000, endedAt: 1001 };
+    expect(summaryOf({ ...base, done: 0 }).took).toBeNull();
+    expect(summaryOf({ ...base, done: 4, endedAt: 61000 }).took).toBe(60000);
+    expect(summaryOf({ ...base, end: 'done', done: 4, endedAt: null }).took).toBeNull();
   });
   it('rounds a length of time to minutes and hours', () => {
     expect(duration(20)).toBe('under a minute');

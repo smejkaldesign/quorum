@@ -44,6 +44,7 @@ function setup(opts = {}) {
     calls.push(kind);
     if (opts.hold) await new Promise((resolve, reject) => { gate = resolve; signal?.addEventListener('abort', () => reject(Object.assign(new Error('Cancelled'), { cancelled: true }))); });
     if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { cancelled: true });
+    if (kind === 'claims' && opts.failClaims) return 'not an answer';
     return kind === 'draft' ? GOOD_DRAFT : JSON.stringify({ claims: [] });
   };
   const now = () => Date.UTC(2026, 10, 16, 12);
@@ -203,5 +204,47 @@ describe('Check everything now', () => {
     items = [...items, { id: 'r:find:c', type: 'contradiction', drafted: false }, { id: 'r:link:zephyr', type: 'other', drafted: true }];
     const last = await s.catchup.done();
     expect(last.added).toEqual({ contradictions: 1, drafts: 1, other: 0, ids: ['r:find:c', 'r:link:zephyr'] });
+  });
+  it('saves a cancelled pass as cancelled, with what it added', async () => {
+    const dir = tmp();
+    const file = path.join(dir, 'last.json');
+    let items = [];
+    const s = setup({ hold: true, cap: 40, catchup: () => ({ store: createLastRunStore(file), review: () => items }) });
+    await s.catchup.start();
+    await new Promise((r) => setTimeout(r, 0));
+    items = [{ id: 'r:find:c', type: 'contradiction', drafted: false }];
+    expect(s.catchup.cancel()).toBe(true);
+    const last = await s.catchup.done();
+    expect(last).toMatchObject({ end: 'cancelled', added: { contradictions: 1, drafts: 0, other: 0, ids: ['r:find:c'] } });
+    expect(createLastRunStore(file).load()).toMatchObject({ end: 'cancelled', added: { contradictions: 1 } });
+  });
+
+  it('counts the notes of a failed claim call as skipped, so checked and skipped add up to the notes to check', async () => {
+    const dir = tmp();
+    const s = setup({ failClaims: true, catchup: counted(path.join(dir, 'last.json')) });
+    await s.catchup.start();
+    const last = await s.catchup.done();
+    expect(last.end).toBe('done');
+    expect(last.skipped).toBeGreaterThan(0);
+    expect(last.checked).toBeLessThan(last.of);
+    expect(last.checked + last.skipped).toBe(last.of);
+  });
+
+  it('waits for the vault to read before it tells what a crashed pass added', () => {
+    const dir = tmp();
+    const file = path.join(dir, 'last.json');
+    const store = createLastRunStore(file, () => 5000);
+    store.saveBefore([]);
+    store.save({ end: 'running', done: 1, total: 4, notes: 12, startedAt: 1000 });
+    let items = null;
+    const s = setup({ catchup: () => ({ store: createLastRunStore(file), review: () => items }) });
+    // the vault has not read yet: nothing is told, and the start list is kept for later
+    const first = s.catchup.status();
+    expect(first.last.end).toBe('crashed');
+    expect(first.last.added).toBeUndefined();
+    expect(existsSync(path.join(dir, 'last-before.json'))).toBe(true);
+    items = [{ id: 'r:link:x', type: 'other', drafted: false }];
+    expect(s.catchup.status().last.added).toEqual({ contradictions: 0, drafts: 0, other: 1, ids: ['r:link:x'] });
+    expect(existsSync(path.join(dir, 'last-before.json'))).toBe(false);
   });
 });
