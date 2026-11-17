@@ -1,8 +1,8 @@
 // The local decision layer (decide/): every tier fails open, T1 drops only pairs it marks equivalent, the 5% audit sample is
 // deterministic and its verdicts land in a local log, and tiers() reports each tier's state. Fake models stand in for
 // the bundled ones; the last block runs the real models when scripts/fetch-models.mjs has put them on disk.
-import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -63,6 +63,17 @@ describe('decider tiers fail open', () => {
     const d = createDecider({ load: async () => fake() });
     expect(d.worthReading(null)).toMatchObject({ read: false, tier: 't0' });
     expect(d.worthReading({ rel: 'x.md', get text() { throw new Error('gone'); } })).toEqual({ read: true, reason: null, tier: 'none' });
+  });
+});
+
+describe('fetch-models', () => {
+  it('fails before any download when a file has no SHA-256 pinned', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'decider-'));
+    const manifest = path.join(dir, 'models.json');
+    writeFileSync(manifest, JSON.stringify({ embed: { repo: 'example/none', revision: 'abc', files: { 'tokenizer.json': { sha256: '', size: 1 } } } }));
+    const r = spawnSync(process.execPath, [path.join(import.meta.dirname, '../scripts/fetch-models.mjs'), '--manifest', manifest, '--dir', path.join(dir, 'models')], { encoding: 'utf8', timeout: 30000 });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain('no SHA-256 pinned for embed/tokenizer.json');
   });
 });
 
