@@ -110,7 +110,11 @@ export function createDecider({ dir, load = () => loadModels(dir ? { dir } : {})
         return { drop: false, equivalent: false, score: contra, tier: 't1', reason: null, sim, entail, oneWay };
       } catch (e) {
         t1.failures++; t1.streak++; t1.error = String(e?.message ?? e);
-        if (t1.streak >= MAX_FAILURES) { t1.state = 'off'; models = null; }
+        if (t1.streak >= MAX_FAILURES) {
+          const m = models;
+          t1.state = 'off'; models = null; vectors.clear(); clearTimeout(idle); idle = null;
+          Promise.resolve().then(() => m?.release?.()).catch((err) => log('decider', 't1 release failed', String(err?.message ?? err)));
+        }
         log('decider', 't1 failed', t1.error, t1.state);
         return pass('t0', 't1 failed');
       } finally {

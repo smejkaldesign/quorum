@@ -72,12 +72,15 @@ describe('decider tiers fail open', () => {
     expect(tier(d, 't1').failures).toBe(1);
   });
 
-  it('turns T1 off after repeated errors and stops calling it', async () => {
-    const m = { embed: vi.fn(async () => { throw new Error('bad tensor'); }), nli: vi.fn(async () => { throw new Error('bad tensor'); }) };
+  it('turns T1 off after repeated errors, frees the models and stops calling them', async () => {
+    const m = { embed: vi.fn(async () => { throw new Error('bad tensor'); }), nli: vi.fn(async () => { throw new Error('bad tensor'); }), release: vi.fn(async () => {}) };
     const d = createDecider({ load: async () => m });
     for (let i = 0; i < MAX_FAILURES + 2; i++) expect((await d.relatedPair(pairA, pairB)).drop).toBe(false);
     expect(tier(d, 't1')).toMatchObject({ state: 'off', failures: MAX_FAILURES });
     expect(m.embed).toHaveBeenCalledTimes(MAX_FAILURES);
+    // the sessions leave memory when T1 turns off
+    await new Promise((r) => setImmediate(r));
+    expect(m.release).toHaveBeenCalledTimes(1);
   });
 
   it('reads a note when the rules cannot judge it', () => {
