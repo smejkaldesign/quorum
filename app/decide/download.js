@@ -84,6 +84,8 @@ export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalTh
     const part = `${f.dest}.part`;
     mkdirSync(path.dirname(f.dest), { recursive: true });
     let have = existsSync(part) ? statSync(part).size : 0;
+    // a partial file at full size: an earlier run stopped after the last byte and before the rename
+    if (have === f.size && (await hash(part)) === f.sha256) { await rename(part, f.dest); stamp(f); return true; }
     if (have >= f.size) { await rm(part, { force: true }); have = 0; }
     let h = createHash('sha256');
     if (have) await new Promise((resolve, reject) => createReadStream(part).on('data', (c) => h.update(c)).on('end', resolve).on('error', reject));

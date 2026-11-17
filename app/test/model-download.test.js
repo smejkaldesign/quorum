@@ -87,6 +87,25 @@ describe('model download', () => {
     expect(readFileSync(path.join(dir, 'embed/m.onnx'))).toEqual(A);
   });
 
+  it('keeps a partial file that is already complete when its hash matches, and starts over when it does not', async () => {
+    const dir = tmp();
+    mkdirSync(path.join(dir, 'embed'), { recursive: true });
+    writeFileSync(path.join(dir, 'embed/m.onnx.part'), A);
+    const s = server();
+    const { d } = await run({ dir, manifest: manifest(), fetch: s.fetch });
+    expect(d.status().state).toBe('ready');
+    expect(s.seen.filter((r) => r.url.endsWith('m.onnx'))).toEqual([]);
+    expect(readFileSync(path.join(dir, 'embed/m.onnx'))).toEqual(A);
+    const bad = tmp();
+    mkdirSync(path.join(bad, 'embed'), { recursive: true });
+    writeFileSync(path.join(bad, 'embed/m.onnx.part'), Buffer.from('z'.repeat(A.length)));
+    const s2 = server();
+    const r2 = await run({ dir: bad, manifest: manifest(), fetch: s2.fetch });
+    expect(r2.d.status().state).toBe('ready');
+    expect(s2.seen.find((r) => r.url.endsWith('m.onnx')).range).toBe(null);
+    expect(readFileSync(path.join(bad, 'embed/m.onnx'))).toEqual(A);
+  });
+
   it('starts over when the server ignores the Range request', async () => {
     const dir = tmp();
     mkdirSync(path.join(dir, 'embed'), { recursive: true });
