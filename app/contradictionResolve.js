@@ -158,37 +158,74 @@ const around = (text, c) => {
   const to = Math.min(lines.length, c.lineEnd + CONTEXT);
   return lines.slice(from - 1, to).map((l, i) => `${from + i}: ${l}`).join('\n');
 };
+// the instructions are the same on every call, so they sit in the system prompt and every call starts with the same text
 export const JUDGE_SYSTEM = [
   'You judge whether two claims from a notes vault disagree. You read only the excerpts given below; you have no tools and change nothing.',
-  'Quotes are the exact text of one numbered line, or an exact part of it, with the note path and line number. Copy them character for character.',
-  'Answer with one JSON object and nothing else.',
+  'Both claims are about the same subject and attribute. Pick one label:',
+  'contradiction: both cannot hold at the same time for the same scope.',
+  'refinement: one adds detail to the other and they do not conflict.',
+  'different_times: each was true at its own date, and the newer one updates the older one.',
+  'different_scope: they speak of different projects, environments, teams or people.',
+  'same: they say the same thing in different words.',
+  'Quote at least one line from each excerpt that supports the label. Quotes are the exact text of one numbered line, or an exact part of it, with the note path and line number. Copy them character for character.',
+  'Answer with one JSON object and nothing else: { "label": "<label>", "quotes": [{ "path": "<note path>", "line": <line number>, "text": "<exact text>" }], "reason": "<one sentence>" }',
 ].join('\n');
+// the same instructions for several pairs in one call, each pair under its id
+export const JUDGE_BATCH_SYSTEM = [
+  ...JUDGE_SYSTEM.split('\n').slice(0, -1).map((l) => l.replace('two claims from a notes vault disagree', 'the two claims of each pair below disagree').replace('Both claims are about', 'The two claims of a pair are about')),
+  'Judge each pair on its own excerpts. Answer with one JSON object and nothing else, one verdict per pair, with the line numbers of its claim A and claim B: { "verdicts": [{ "pair": "<pair id>", "lines": [<claim A line>, <claim B line>], "label": "<label>", "quotes": [{ "path": "<note path>", "line": <line number>, "text": "<exact text>" }], "reason": "<one sentence>" }] }',
+].join('\n');
+// several pairs to one call: JUDGE_BATCH pairs at most, and JUDGE_CHARS characters of prompt
+export const JUDGE_BATCH = 8;
+export const JUDGE_CHARS = 16000;
 
-// the judge prompt for a pair. notes: [{ rel, text }] for the two notes
+// the judge prompt for a pair: the two claims and CONTEXT lines on either side of each quote, never the whole notes.
+// notes: [{ rel, text }] for the two notes
 export function judgePrompt(p, notes) {
   const textOf = (rel) => notes.find((n) => n.rel === rel)?.text ?? '';
   const side = (c) => `<excerpt path="${c.rel}" date="${c.date ?? 'unknown'}">\n${around(textOf(c.rel), c)}\n</excerpt>`;
   const ask = [
     `Claim A in ${p.a.rel} (line ${p.a.line}): "${p.a.quote}"`,
     `Claim B in ${p.b.rel} (line ${p.b.line}): "${p.b.quote}"`,
-    'Both are about the same subject and attribute. Pick one label:',
-    'contradiction: both cannot hold at the same time for the same scope.',
-    'refinement: one adds detail to the other and they do not conflict.',
-    'different_times: each was true at its own date, and the newer one updates the older one.',
-    'different_scope: they speak of different projects, environments, teams or people.',
-    'same: they say the same thing in different words.',
-    'Quote at least one line from each excerpt that supports the label.',
-    'Answer: { "label": "<label>", "quotes": [{ "path": "<note path>", "line": <line number>, "text": "<exact text>" }], "reason": "<one sentence>" }',
   ];
   return { system: JUDGE_SYSTEM, prompt: `${ask.join('\n')}\n\n${side(p.a)}\n\n${side(p.b)}` };
 }
 
+// the prompt for several pairs: each pair's two claims and their excerpts, under an id. items: [{ id, p, notes }]
+export function judgeBatchPrompt(items) {
+  const blocks = items.map(({ id, p, notes }) => `<pair id="${id}">\n${judgePrompt(p, notes).prompt}\n</pair>`);
+  return { system: JUDGE_BATCH_SYSTEM, prompt: blocks.join('\n\n') };
+}
+// a reply for several pairs, checked pair by pair as checkJudge does. Answers { byId: Map(id -> { label, quotes,
+// reason } or { why }) } or { why } when the reply holds no verdicts. A pair with no verdict, or one that fails its check,
+// gets a why; the others keep theirs
+export function checkJudgeBatch(items, reply) {
+  const j = parseJson(reply);
+  if (!Array.isArray(j?.verdicts)) return { why: 'The judge did not answer with verdicts' };
+  const byId = new Map();
+  for (const { id, p, notes } of items) {
+    const v = j.verdicts.find((x) => String(x?.pair) === String(id));
+    if (!v) { byId.set(id, { why: 'The judge gave no verdict for this pair', missing: true }); continue; }
+    // a verdict names its pair by id and by the line numbers of its two claims, so a verdict filed under the wrong id
+    // of two pairs on the same notes does not pass
+    const lines = Array.isArray(v.lines) ? v.lines.map(Number) : [];
+    if (lines[0] !== p.a.line || lines[1] !== p.b.line) { byId.set(id, { why: 'The verdict does not name the lines of its pair' }); continue; }
+    byId.set(id, checkVerdict(p, notes, v));
+  }
+  return { byId };
+}
+
 // the judge's reply checked: a known label and a matching quote from each side. Answers { label, quotes } or { why }
 export function checkJudge(p, notes, reply) {
-  const j = parseJson(reply);
+  return checkVerdict(p, notes, parseJson(reply));
+}
+function checkVerdict(p, notes, j) {
   if (!j || !LABELS.includes(j.label)) return { why: 'The judge did not answer with a label' };
   const quotes = verifyQuotes(j.quotes, notes);
   if (!quotes.length || quotes.some((q) => !q.ok)) return { why: 'A quote from the judge does not match its note' };
   if (!quotes.some((q) => q.path === p.a.rel) || !quotes.some((q) => q.path === p.b.rel)) return { why: 'The judge did not quote both notes' };
+  // every quote sits in the excerpt the pair showed: its claim's lines and CONTEXT lines on either side
+  const inWindow = (q, c) => q.path === c.rel && q.line >= c.line - CONTEXT && q.line <= (c.lineEnd ?? c.line) + CONTEXT;
+  if (!quotes.every((q) => inWindow(q, p.a) || inWindow(q, p.b))) return { why: 'A quote from the judge is outside the lines of its pair' };
   return { label: j.label, quotes, reason: typeof j.reason === 'string' ? j.reason.slice(0, 300) : '' };
 }

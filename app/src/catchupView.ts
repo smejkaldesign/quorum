@@ -42,6 +42,13 @@ export function duration(seconds: number) {
   return `about ${count(h, 'hour', 'hours')}${m ? ` ${count(m, 'minute', 'minutes')}` : ''}`;
 }
 
+// what the pass costs in calls, from main's estimate: the claim calls, the judge calls for the estimated pairs and the
+// drafts that wait
+const callCount = (n: number) => `${fmt(n)} ${n === 1 ? 'call' : 'calls'}`;
+export function catchupCost(e: CatchupEstimate | null) {
+  return e ? `This uses your Claude plan for about ${callCount(e.calls)} and runs in the background.` : 'This uses your Claude plan and runs in the background.';
+}
+
 // the plan shown before a pass starts, one row per fact. Pairs and time are estimates and say so
 export function planRows(e: CatchupEstimate): [string, string][] {
   const saved = e.saved ?? 0;
@@ -51,6 +58,8 @@ export function planRows(e: CatchupEstimate): [string, string][] {
   if (e.draftCalls) rows.push(['Fixes to draft', count(e.draftCalls, 'model call', 'model calls')]);
   if (e.pairs != null) rows.push(['Pairs to judge', `About ${fmt(e.pairs)}, an estimate`]);
   if (e.seconds != null) { const d = duration(e.seconds); rows.push(['Time', `${d[0].toUpperCase()}${d.slice(1)}, an estimate`]); }
+  // what the model calls would cost at API rates; on a Claude Code sign-in they count against the plan's limits instead
+  if (e.costLabel) rows.push(['API-rate equivalent', `${e.costLabel}, an estimate. A Claude plan is not billed per token; the check uses the plan's usage.`]);
   return rows;
 }
 // the same plan in one sentence, for onboarding

@@ -5,19 +5,56 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PAIRS_PER_NOTE, SECONDS_PER_CALL, createLastRunStore, diffReview, planOf, progressOf, secondsPerCall } from '../catchupPlan.js';
-import { CONFIRM_AFTER_MS, addedText, stopFlow, duration, needsConfirm, planRows, planSentence, progressShare, progressText, showSummary, summaryOf } from '../src/catchupView.ts';
+import { CACHE_WRITE, CALL_OVERHEAD_TOKENS, JUDGE_PAIR_TOKENS, JUDGE_SYSTEM_TOKENS, MEASURED, MEMORY_MODELS, claimMeasure, PRICES, costLabel, dollars, judgeCalls, passCost } from '../memoryModels.js';
+import { CONFIRM_AFTER_MS, addedText, catchupCost, stopFlow, duration, needsConfirm, planRows, planSentence, progressShare, progressText, showSummary, summaryOf } from '../src/catchupView.ts';
 
 let dirs = [];
 afterEach(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); dirs = []; });
 const tmp = () => { const d = mkdtempSync(path.join(tmpdir(), 'qplan-')); dirs.push(d); return d; };
 
 describe('the plan before a pass', () => {
+  it('prices a pass at API rates with the model of each stage', () => {
+    expect(dollars('haiku', 1e6, 0)).toBe(PRICES.haiku.input);
+    expect(dollars('sonnet', 0, 1e6)).toBe(PRICES.sonnet.output);
+    // every call carries Claude Code's own prompt; 100 pairs go to the judge in 13 calls of up to 8
+    const c = passCost({ promptChars: 4e6, notes: 1000, calls: 40 }, 100);
+    expect(c.judgeCalls).toBe(13);
+    const claimIn = Math.round(1e6 + 40 * CALL_OVERHEAD_TOKENS * CACHE_WRITE);
+    const judgeIn = Math.round(100 * JUDGE_PAIR_TOKENS + 13 * (JUDGE_SYSTEM_TOKENS + CALL_OVERHEAD_TOKENS * CACHE_WRITE));
+    expect(c.inputTokens).toBe(claimIn + judgeIn);
+    expect(c.usd).toBeCloseTo(dollars(MEMORY_MODELS.claims, claimIn, 1000 * claimMeasure().outPerNote) + dollars(MEMORY_MODELS.judge, judgeIn, 100 * 150), 6);
+    // the other model or answer, from the measured table
+    expect(passCost({ notes: 10 }, 0, { model: 'haiku', answer: 'compact' }).outputTokens).toBe(10 * MEASURED['haiku/compact'].outPerNote);
+    expect(costLabel(0.4213)).toBe('About $0.42 at API rates');
+    expect(costLabel(0.004)).toBe('Less than $0.01 at API rates');
+    expect(costLabel(0)).toBeNull();
+    const p = planOf({ read: 1000, claimCalls: 40, promptChars: 4e6 }, null, 4);
+    expect(p.costLabel).toMatch(/^About \$\d+(\.\d\d)? at API rates$/);
+    // four calls at once take a quarter of the time
+    expect(p.seconds).toBe(Math.round(((40 + judgeCalls(p.pairs)) * SECONDS_PER_CALL) / 4));
+    expect(planRows({ notes: 1, read: 1000, claimCalls: 40, draftCalls: 0, calls: 40, drafting: true, costLabel: p.costLabel }).find((r) => r[0] === 'API-rate equivalent')[1]).toBe(`${p.costLabel}, an estimate. A Claude plan is not billed per token; the check uses the plan's usage.`);
+    // the drafts are in the figure too
+    expect(planOf({ read: 1000, claimCalls: 40, draftCalls: 10, promptChars: 4e6 }, null, 4).cost).toBeGreaterThan(p.cost);
+    // a pass that ran four calls at once took a quarter of the wall time per call
+    expect(secondsPerCall({ done: 100, startedAt: 0, endedAt: 400000, parallel: 4 })).toBe(16);
+  });
+
   it('counts the notes to check with the saved ones, and estimates pairs and time from defaults', () => {
     const p = planOf({ saved: 300, read: 100, claimCalls: 10, draftCalls: 4 });
     expect(p.toCheck).toBe(400);
     expect(p.saved).toBe(300);
     expect(p.pairs).toBe(Math.round(100 * PAIRS_PER_NOTE));
-    expect(p.seconds).toBe((10 + 4 + p.pairs) * SECONDS_PER_CALL);
+    expect(p.seconds).toBe((10 + 4 + judgeCalls(p.pairs)) * SECONDS_PER_CALL);
+  });
+  it('counts every call a pass makes: claims, judge calls for the estimated pairs, and drafts', () => {
+    const p = planOf({ read: 100, claimCalls: 6, draftCalls: 3, claimed: 200, judged: 100 });
+    expect(p.pairs).toBe(50);
+    expect(p.calls).toBe(6 + 3 + judgeCalls(50));
+    expect(catchupCost({ notes: 1, read: 100, claimCalls: 6, draftCalls: 3, calls: p.calls, drafting: true })).toBe(`This uses your Claude plan for about ${p.calls} calls and runs in the background.`);
+  });
+  it('takes the pairs the local gate keeps from the judge out of the pairs to judge', () => {
+    expect(planOf({ read: 100, claimed: 200, judged: 100, gated: 25 }).pairs).toBe(38);
+    expect(planOf({ read: 100, claimed: 200, judged: 20, gated: 10 }).pairs).toBe(10);
   });
   it('learns the pairs per note from the stored verdicts once enough notes were read', () => {
     expect(planOf({ read: 100, claimed: 200, judged: 20 }).pairs).toBe(10);

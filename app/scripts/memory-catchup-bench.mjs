@@ -15,7 +15,7 @@ const args = process.argv.slice(2);
 const opt = (name, def) => { const i = args.indexOf(`--${name}`); return i < 0 ? def : args[i + 1]; };
 const r = await runCatchupLoad({
   mode: opt('mode', 'engine'), notes: Number(opt('notes', 2000)), big: Number(opt('big', 0)), grow: Number(opt('grow', 0)),
-  delay: Number(opt('delay', 5)), agentModule: opt('agent', '../../contradictionAgent.js'), vault: opt('vault', null),
+  delay: Number(opt('delay', 5)), agentModule: opt('agent', '../../contradictionAgent.js'), vault: opt('vault', null), gcSamples: args.includes('--gc-samples'),
 });
 console.log(JSON.stringify(r, (k, v) => (typeof v === 'number' && !Number.isInteger(v) ? Math.round(v * 10) / 10 : v), 1));
 process.exit(0);

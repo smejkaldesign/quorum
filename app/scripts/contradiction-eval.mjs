@@ -38,8 +38,11 @@ const findings = run(ctx);
 const count = (list, key) => list.reduce((m, x) => { const k = key(x); m[k] = (m[k] ?? 0) + 1; return m; }, {});
 const open = a.results.filter((r) => !r.res.closed && !r.res.pending);
 
-const batches = packBatches(a.toRead);
-const chars = a.toRead.reduce((n, x) => n + Math.min(12000, x.text.length), 0);
+// the claim calls read each note's excerpt (contradictionClaims.js excerptOf)
+const { excerptOf } = await load('contradictionClaims.js');
+const toRead = a.toRead.map((x) => ({ ...x, chars: excerptOf(x).length })).filter((x) => x.chars);
+const batches = packBatches(toRead);
+const chars = toRead.reduce((n, x) => n + x.chars, 0);
 console.log(`notes ${a.notes}; stage 1 sends ${a.worth} to claim extraction, plus ${a.linked} that link to one of them`);
 console.log(`first pass: ${batches.length} claim calls of up to ${BATCH_CHARS} characters (about ${Math.round(chars / 4 / 1000)}k input tokens in all), ${Math.ceil(batches.length / DAILY_CAP)} days at ${DAILY_CAP} calls a day before judge calls`);
 console.log(`structured claims ${a.claims.length}`, count(a.claims, (c) => c.extractor));

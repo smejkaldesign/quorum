@@ -7,6 +7,7 @@
 //   does, so a hook that sweeps between calls shows in the sweep count. mode 'main': the rules, the pipeline and the agent run on the measured thread and a save sweep runs
 //   after every call, a few milliseconds after it ends (main.js before the memory engine), for the before numbers.
 // grow: characters appended to the big log note after every call, as a session log that keeps growing
+// parallel: model calls at once (4 in engine mode, as main runs a catch-up; 1 for the before numbers)
 // vault: an existing vault to read instead of a generated one. It is only read: grow is ignored and nothing is written there
 import { appendFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,7 +29,7 @@ const WORKER = new URL('../../memoryWorker.js', import.meta.url);
 const heap = () => getHeapStatistics().used_heap_size;
 const settle = async () => { for (let i = 0; i < 3; i++) { globalThis.gc?.(); await new Promise((r) => setTimeout(r, 20)); } };
 
-export async function runCatchupLoad({ mode = 'engine', notes = 2000, big = 0, grow = 0, delay = 5, agentModule = '../../contradictionAgent.js', samples = 8, vault: existing = null } = {}) {
+export async function runCatchupLoad({ mode = 'engine', notes = 2000, big = 0, grow = 0, delay = 5, agentModule = '../../contradictionAgent.js', samples = 8, vault: existing = null, parallel = mode === 'engine' ? 4 : 1, gcSamples = false } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'qload-'));
   const vault = existing ?? path.join(root, 'vault');
   const data = path.join(root, 'data');
@@ -39,8 +40,9 @@ export async function runCatchupLoad({ mode = 'engine', notes = 2000, big = 0, g
   // each id the model was asked about, with how many times
   const asked = new Map();
   const count = (prompt) => {
-    const j = prompt.match(/Claim A in (\S+) \(line \d+\)[\s\S]*Claim B in (\S+) \(line \d+\)/);
-    const ids = j ? [`judge:${[j[1], j[2]].sort().join('|')}`] : prompt.split('<note path="').slice(1).map((b) => `claims:${b.slice(0, b.indexOf('"'))}`);
+    // a judge call names each of its pairs by their two claim lines
+    const pairs = prompt.split('<pair id="').slice(1);
+    const ids = pairs.length ? pairs.map((b) => `judge:${b.split('\n').slice(1, 3).join('|')}`) : prompt.split('<note path="').slice(1).map((b) => `claims:${b.slice(0, b.indexOf('"'))}`);
     for (const id of ids) asked.set(id, (asked.get(id) ?? 0) + 1);
   };
   let calls = 0;
@@ -87,16 +89,23 @@ export async function runCatchupLoad({ mode = 'engine', notes = 2000, big = 0, g
   const drafter = createDrafter({ file: path.join(data, 'drafts.json'), model, items: () => [], evidence: () => null, enabled: () => true, cap: () => 0, idleMs: () => 0 });
   const activity = createAgentActivity({ emit: () => {}, setTimer: () => null, clearTimer: () => {} });
   let emits = 0;
-  const catchup = createCatchup({ drafter, agent, activity, ...(hooks ?? { refresh, after, finish }), notes: () => notes, emit: () => { emits++; }, wait: async () => {}, busyWaitMs: 0 });
+  const catchup = createCatchup({ drafter, agent, activity, ...(hooks ?? { refresh, after, finish }), notes: () => notes, emit: () => { emits++; }, wait: async () => {}, busyWaitMs: 0, parallel: () => parallel });
   running = () => catchup.running();
 
   await settle();
   const heapStart = heap();
   const heaps = [];
+  // the loop delay of this process with nothing to do, measured the same way just before the pass: what the machine's
+  // own load adds, so the test can judge the pass by what it adds on top
+  const idle = monitorEventLoopDelay({ resolution: 5 });
+  idle.enable();
+  await new Promise((r) => setTimeout(r, 500));
+  idle.disable();
   const lag = monitorEventLoopDelay({ resolution: 5 });
   lag.enable();
   const t0 = Date.now();
-  let sampler = setInterval(() => heaps.push(heap()), 50);
+  // gcSamples: each sample after a forced collection, so the samples show what the heap keeps, not what is due for one
+  let sampler = setInterval(() => { if (gcSamples) globalThis.gc?.(); heaps.push(heap()); }, gcSamples ? 200 : 50);
   await catchup.start();
   const last = await catchup.done();
   clearInterval(sampler);
@@ -117,7 +126,7 @@ export async function runCatchupLoad({ mode = 'engine', notes = 2000, big = 0, g
   return {
     mode, notes, calls, end: last.end, done: last.done, ms, emits, sweeps: sweepRuns,
     items: asked.size, repeats, callsPerItem: asked.size ? [...asked.values()].reduce((a, b) => a + b, 0) / asked.size : 0,
-    lagP95: lag.percentile(95) / 1e6, lagMax: lag.max / 1e6,
+    lagP95: lag.percentile(95) / 1e6, lagMax: lag.max / 1e6, idleLagP95: idle.percentile(95) / 1e6,
     heapStartMB: heapStart / 1e6, heapEndMB: heapEnd / 1e6, heapPeaksMB: peaks.map((p) => Math.round(p / 1e5) / 10), heapLowsMB: lows.map((p) => Math.round(p / 1e5) / 10),
   };
 }

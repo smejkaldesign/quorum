@@ -41,10 +41,13 @@ export function writeSynthVault(dir, { notes = 2000, big = 0 } = {}) {
 const CLAIM = /^(\d+): (?:We decided )?(Project P\d+) (database|owner) is (.+)\.$/;
 // the fake model for both prompts. A claim prompt lists each note's lines with their numbers
 export function synthModel(prompt) {
-  const judge = prompt.match(/Claim A in (\S+) \(line (\d+)\): "(.*)"\nClaim B in (\S+) \(line (\d+)\): "(.*)"/);
-  if (judge) {
-    const [, ra, la, qa, rb, lb, qb] = judge;
-    return JSON.stringify({ label: 'contradiction', quotes: [{ path: ra, line: +la, text: qa }, { path: rb, line: +lb, text: qb }], reason: 'The two lines give different values.' });
+  // a judge prompt holds one or more pairs, each with its id
+  if (prompt.includes('<pair id="')) {
+    const verdicts = prompt.split('<pair id="').slice(1).map((block) => {
+      const [, ra, la, qa, rb, lb, qb] = block.match(/Claim A in (\S+) \(line (\d+)\): "(.*)"\nClaim B in (\S+) \(line (\d+)\): "(.*)"/);
+      return { pair: block.slice(0, block.indexOf('"')), lines: [+la, +lb], label: 'contradiction', quotes: [{ path: ra, line: +la, text: qa }, { path: rb, line: +lb, text: qb }], reason: 'The two lines give different values.' };
+    });
+    return JSON.stringify({ verdicts });
   }
   const claims = [];
   for (const block of prompt.split('<note path="').slice(1)) {

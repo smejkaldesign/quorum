@@ -13,10 +13,11 @@ import { createResolver, parseNote } from '../linkparse.js';
 import { buildPlan, checkFirst, effects } from '../batchPlan.js';
 import { findingItem, itemLine } from '../reviewItems.js';
 import { authorityOf, indexNote, modalityOf, noteDate } from '../contradictionIndex.js';
-import { checkClaims, checkClaimsBatch, claimPrompt, quoteMatches, structuredClaims } from '../contradictionClaims.js';
+import { WHOLE_NOTE, checkClaims, checkClaimsBatch, claimPrompt, excerptOf, quoteMatches, structuredClaims } from '../contradictionClaims.js';
+import { JUDGE_SYSTEM, judgePrompt } from '../contradictionResolve.js';
 import { MAX_PAIRS_PER_GROUP, acronymOf, attributeKey, normKey, pairClaims, resolveSubject, sameValue, subjectIndex } from '../contradictionPairs.js';
-import { annotateLine, autoCriteria, checkJudge, resolvePair, ruleBar, unannotateLine, wilson } from '../contradictionResolve.js';
-import { BATCH_CHARS, createContradictionAgent, packBatches } from '../contradictionAgent.js';
+import { JUDGE_BATCH, JUDGE_BATCH_SYSTEM, annotateLine, autoCriteria, checkJudge, checkJudgeBatch, judgeBatchPrompt, resolvePair, ruleBar, unannotateLine, wilson } from '../contradictionResolve.js';
+import { BATCH_CHARS, BATCH_NOTES, createContradictionAgent, judgeBatches, judgeRank, packBatches } from '../contradictionAgent.js';
 import { analyze, run } from '../rules/contradictions.js';
 import { gateItem } from '../qualityGate.js';
 
@@ -40,11 +41,14 @@ function vault() {
 const sent = [];
 async function fakeModel(prompt) {
   sent.push(prompt);
-  const judge = prompt.match(/Claim A in (\S+) \(line (\d+)\): "(.*)"\nClaim B in (\S+) \(line (\d+)\): "(.*)"/);
-  if (judge) {
-    const [, ra, la, qa, rb, lb, qb] = judge;
-    const label = JUDGE[[ra, rb].sort().join('|')] ?? 'same';
-    return JSON.stringify({ label, quotes: [{ path: ra, line: +la, text: qa }, { path: rb, line: +lb, text: qb }], reason: 'test' });
+  // a judge prompt holds one or more pairs, each with its id
+  if (prompt.includes('<pair id="')) {
+    const verdicts = prompt.split('<pair id="').slice(1).map((block) => {
+      const [, ra, la, qa, rb, lb, qb] = block.match(/Claim A in (\S+) \(line (\d+)\): "(.*)"\nClaim B in (\S+) \(line (\d+)\): "(.*)"/);
+      const label = JUDGE[[ra, rb].sort().join('|')] ?? 'same';
+      return { pair: block.slice(0, block.indexOf('"')), lines: [+la, +lb], label, quotes: [{ path: ra, line: +la, text: qa }, { path: rb, line: +lb, text: qb }], reason: 'test' };
+    });
+    return JSON.stringify({ verdicts });
   }
   const claims = [];
   for (const block of prompt.split('<note path="').slice(1)) {
@@ -104,6 +108,55 @@ describe('stage 1 index', () => {
 });
 
 describe('stage 2 claims', () => {
+  // a long note: filler around one decision line, one dated line and a frontmatter status
+  const filler = (from, n) => Array.from({ length: n }, (_, i) => `Filler line ${from + i} about the weather and nothing else at all.`);
+  const longNote = () => {
+    const body = ['---', 'status: active', 'type: project', '---', '# Orion', '', ...filler(7, 80), 'We decided Orion will ship on Fridays.', ...filler(88, 80), 'On 2026-04-01 the Orion launch moved.', ...filler(169, 80)];
+    return note('projects/orion.md', body.join('\n'));
+  };
+
+  it('sends a long note as the lines stage 1 found, with their numbers in the note and one line on either side', () => {
+    const n = longNote();
+    expect(n.text.length).toBeGreaterThan(WHOLE_NOTE);
+    const ex = excerptOf(n);
+    const rows = ex.split('\n');
+    expect(rows).toContain('2: status: active');
+    expect(rows).toContain('5: # Orion');
+    expect(rows).toContain('87: We decided Orion will ship on Fridays.');
+    expect(rows).toContain('86: Filler line 86 about the weather and nothing else at all.');
+    expect(rows).toContain('88: Filler line 88 about the weather and nothing else at all.');
+    expect(rows).not.toContain('85: Filler line 85 about the weather and nothing else at all.');
+    expect(rows).toContain('168: On 2026-04-01 the Orion launch moved.');
+    expect(rows).toContain('...');
+    expect(ex.length).toBeLessThan(n.text.length / 5);
+    // a quote from the excerpt is checked against the note's own line
+    const r = checkClaims(n, JSON.stringify({ claims: [{ subject: 'Orion', attribute: 'release day', value: 'Fridays', quote: 'We decided Orion will ship on Fridays.', line: 87 }] }), 'haiku');
+    expect(r.claims).toHaveLength(1);
+    expect(r.claims[0]).toMatchObject({ line: 87, extractor: 'model:haiku' });
+    // a line number the excerpt does not hold fails the check as before
+    expect(checkClaims(n, JSON.stringify({ claims: [{ subject: 'Orion', attribute: 'release day', value: 'Fridays', quote: 'We decided Orion will ship on Fridays.', line: 30 }] })).claims).toHaveLength(0);
+  });
+
+  it('sends a note up to 12,000 characters whole, and a longer note with no marker by its first lines', () => {
+    const short = note('projects/a.md', '# A\n\nA runs on SQLite.\n');
+    expect(excerptOf(short)).toBe('1: # A\n3: A runs on SQLite.');
+    const plain = note('notes/plain.md', ['# Plain', '', ...filler(3, 250)].join('\n'));
+    const rows = excerptOf(plain).split('\n');
+    expect(rows[0]).toBe('1: # Plain');
+    expect(rows.length).toBeLessThan(20);
+  });
+
+  it('keeps the instructions in the system prompt, so every call starts with the same text', () => {
+    const a = claimPrompt([note('projects/a.md', '# A\n\nA runs on SQLite.\n')]);
+    const b = claimPrompt([note('projects/b.md', '# B\n\nB runs on Postgres.\n'), note('projects/c.md', '# C\n\nC.\n')]);
+    expect(a.system).toBe(b.system);
+    expect(a.prompt.startsWith('<note path="projects/a.md"')).toBe(true);
+    const pair = { a: { rel: 'a.md', line: 3, lineEnd: 3, quote: 'Atlas uses X.', date: null }, b: { rel: 'b.md', line: 3, lineEnd: 3, quote: 'Atlas uses Y.', date: null } };
+    const j = judgePrompt(pair, [{ rel: 'a.md', text: '# A\n\nAtlas uses X.\n' }, { rel: 'b.md', text: '# B\n\nAtlas uses Y.\n' }]);
+    expect(j.system).toBe(JUDGE_SYSTEM);
+    expect(j.prompt.startsWith('Claim A in a.md (line 3)')).toBe(true);
+  });
+
   it('reads frontmatter keys and key: value lines with no model', () => {
     const c = structuredClaims(note('decisions/2026-05-01-x.md', '---\ntype: decision\nowner: Ops\n---\n# X\n\n- [[juliet]] status: paused\n- **Region:** eu-west-1 since 2026-05-03\n- https: example\n\n```\nkey: value\n```\n'));
     expect(c.map((x) => [x.extractor, x.subject, x.attribute, x.value, x.line, x.modality])).toEqual([
@@ -119,8 +172,8 @@ describe('stage 2 claims', () => {
     const a = note('projects/a.md', '# A\n\nA runs on SQLite.\n');
     const b = note('projects/b.md', '# B\n\nB runs on Postgres.\n');
     const p = claimPrompt([a, b]).prompt;
-    expect(p).toContain('<note path="projects/a.md">\n1: # A');
-    expect(p).toContain('<note path="projects/b.md">\n1: # B');
+    expect(p).toContain('<note path="projects/a.md" title="A">\n1: # A');
+    expect(p).toContain('<note path="projects/b.md" title="B">\n1: # B');
     const reply = JSON.stringify({ claims: [
       { path: 'projects/a.md', subject: 'A', attribute: 'database', value: 'SQLite', quote: 'A runs on SQLite.', line: 3 },
       { path: 'projects/b.md', subject: 'B', attribute: 'database', value: 'Postgres', quote: 'B runs on Postgres.', line: 3 },
@@ -135,13 +188,36 @@ describe('stage 2 claims', () => {
     expect(checkClaimsBatch([a, b], 'nothing').why).toMatch(/did not answer/);
   });
 
+  it('reads the compact answer: one line per claim under its note, each quote checked against the note', () => {
+    const a = note('projects/a.md', '# A\n\nWe decided A runs on SQLite.\n');
+    const b = note('projects/b.md', '# B\n\nB runs on Postgres since 2026-02-01.\n');
+    const reply = [
+      '@ projects/a.md',
+      '3 | A | database | SQLite | + | d | - | - | A runs on SQLite',
+      '@ projects/b.md',
+      '3 | B | database | Postgres | + | s | 2026-02-01 | - | B runs on Postgres',
+      '3 | B | database | MySQL | + | s | - | - | B runs on MySQL',
+      'a line that is no claim',
+    ].join('\n');
+    const r = checkClaimsBatch([a, b], reply, 'haiku');
+    expect(r.byRel.get('projects/a.md').claims[0]).toMatchObject({ value: 'SQLite', modality: 'decided', line: 3, extractor: 'model:haiku' });
+    expect(r.byRel.get('projects/b.md').claims.map((c) => c.value)).toEqual(['Postgres']);
+    expect(r.byRel.get('projects/b.md').claims[0].date).toBe('2026-02-01');
+    expect(r.byRel.get('projects/b.md').dropped).toBe(1);
+    // "none" is an answer with no claims; an empty reply is no answer
+    expect(checkClaimsBatch([a], 'none').why).toBeUndefined();
+    expect(checkClaimsBatch([a], '').why).toMatch(/did not answer/);
+    expect(checkClaimsBatch([a], 'I cannot help with that.').why).toMatch(/did not answer/);
+  });
+
   it('packs notes into calls by priority up to the budget', () => {
-    const e = (rel, rank, n) => ({ rel, rank, text: 'x'.repeat(n) });
-    const batches = packBatches([e('c', 3, 12000), e('a', 1, 12000), e('b', 2, 30000), e('d', 4, 12000), e('e', 5, 100)]);
+    // chars: the length of each note's excerpt
+    const e = (rel, rank, chars) => ({ rel, rank, text: 'x', chars });
+    const batches = packBatches([e('c', 3, 14000), e('a', 1, 14000), e('b', 2, 14000), e('d', 4, 14000), e('e', 5, 100)]);
     expect(batches.map((b) => b.map((x) => x.rel))).toEqual([['a', 'b', 'c'], ['d', 'e']]);
-    // a note over the budget is cut to 12,000 characters and still gets its own call
+    // a note over the budget still gets its own call
     expect(packBatches([e('big', 1, 90000)]).length).toBe(1);
-    expect(packBatches(Array.from({ length: 45 }, (_, i) => e(`n${i}`, 1, 10))).length).toBe(3);
+    expect(packBatches(Array.from({ length: BATCH_NOTES * 2 + 5 }, (_, i) => e(`n${i}`, 1, 10))).length).toBe(3);
     expect(BATCH_CHARS).toBeLessThanOrEqual(48000);
   });
 
@@ -256,6 +332,159 @@ describe('stage 4 resolve and stage 5 fixes', () => {
     expect(checkJudge(p, notes, reply('contradiction', 'Atlas uses Z.')).why).toMatch(/quote/);
   });
 
+  it('judges several pairs in one call and keeps only the verdicts whose quotes check', () => {
+    const p1 = { key: 'k1', a: claim({}), b: claim({ rel: 'b.md' }) };
+    const p2 = { key: 'k2', a: claim({}), b: claim({ rel: 'c.md' }) };
+    const notes1 = [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: 'b.md', text: '#\n\nAtlas uses Y.\n' }];
+    const notes2 = [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: 'c.md', text: '#\n\nAtlas uses Z.\n' }];
+    const items = [{ id: 'p1', p: p1, notes: notes1 }, { id: 'p2', p: p2, notes: notes2 }];
+    const ask = judgeBatchPrompt(items);
+    expect(ask.system).toBe(JUDGE_BATCH_SYSTEM);
+    expect(ask.prompt.split('<pair id="')).toHaveLength(3);
+    const v = (pair, path, text) => ({ pair, lines: [3, 3], label: 'contradiction', quotes: [{ path: 'a.md', line: 3, text: 'Atlas uses X.' }, { path, line: 3, text }], reason: 'r' });
+    const r = checkJudgeBatch(items, JSON.stringify({ verdicts: [v('p1', 'b.md', 'Atlas uses Y.'), v('p2', 'c.md', 'Atlas uses Q.')] }));
+    expect(r.byId.get('p1').label).toBe('contradiction');
+    expect(r.byId.get('p2').why).toMatch(/quote/);
+    expect(checkJudgeBatch(items, JSON.stringify({ verdicts: [v('p1', 'b.md', 'Atlas uses Y.')] })).byId.get('p2').why).toMatch(/no verdict/);
+    expect(checkJudgeBatch(items, 'no json').why).toMatch(/verdicts/);
+  });
+
+  it('rejects a verdict filed under the id of another pair on the same two notes', () => {
+    const text = (x) => `#\n\nAtlas uses ${x}.\nfiller\nfiller\nfiller\nfiller\nfiller\nfiller\nBeacon runs ${x}.\n`;
+    const notes = [{ rel: 'a.md', text: text('X') }, { rel: 'b.md', text: text('Y') }];
+    const p1 = { key: 'k1', a: claim({ line: 3, quote: 'Atlas uses X.' }), b: claim({ rel: 'b.md', line: 3, quote: 'Atlas uses Y.' }) };
+    const p2 = { key: 'k2', a: claim({ line: 10, quote: 'Beacon runs X.' }), b: claim({ rel: 'b.md', line: 10, quote: 'Beacon runs Y.' }) };
+    const items = [{ id: 'p1', p: p1, notes }, { id: 'p2', p: p2, notes }];
+    const v = (pair, lines, la, ta, lb, tb) => ({ pair, lines, label: 'contradiction', quotes: [{ path: 'a.md', line: la, text: ta }, { path: 'b.md', line: lb, text: tb }], reason: 'r' });
+    // the verdict of pair 2 written under p1 and the other way round: both are rejected
+    const swapped = checkJudgeBatch(items, JSON.stringify({ verdicts: [v('p1', [10, 10], 10, 'Beacon runs X.', 10, 'Beacon runs Y.'), v('p2', [3, 3], 3, 'Atlas uses X.', 3, 'Atlas uses Y.')] }));
+    expect(swapped.byId.get('p1').why).toMatch(/lines of its pair/);
+    expect(swapped.byId.get('p2').why).toMatch(/lines of its pair/);
+    // the right lines named, but quotes from the other pair's lines: rejected too
+    const stray = checkJudgeBatch(items, JSON.stringify({ verdicts: [v('p1', [3, 3], 10, 'Beacon runs X.', 10, 'Beacon runs Y.')] }));
+    expect(stray.byId.get('p1').why).toMatch(/outside the lines/);
+    const right = checkJudgeBatch(items, JSON.stringify({ verdicts: [v('p1', [3, 3], 3, 'Atlas uses X.', 3, 'Atlas uses Y.')] }));
+    expect(right.byId.get('p1').label).toBe('contradiction');
+    // two pairs on the same two notes never share a judge call
+    expect(judgeBatches([{ p: p1, notes }, { p: p2, notes }]).map((b) => b.length)).toEqual([1, 1]);
+  });
+
+  it('packs pairs into judge calls, strongest first: decision records, different dates, decided claims', () => {
+    const pair = (key, a, b) => ({ p: { key, a: claim({ ...a }), b: claim({ rel: `${key}.md`, ...b }) }, notes: [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: `${key}.md`, text: '#\n\nAtlas uses Y.\n' }] });
+    const weak = pair('weak', { authority: 3, date: null, modality: 'stated' }, { authority: 3, date: null, modality: 'stated' });
+    const dated = pair('dated', { authority: 3, date: '2026-01-01', modality: 'stated' }, { authority: 3, date: '2026-03-01', modality: 'stated' });
+    const record = pair('record', { authority: 1, date: '2026-01-01', modality: 'decided' }, { authority: 2, date: '2026-03-01', modality: 'stated' });
+    expect(judgeRank(record.p)).toBeLessThan(judgeRank(dated.p));
+    expect(judgeRank(dated.p)).toBeLessThan(judgeRank(weak.p));
+    const many = Array.from({ length: JUDGE_BATCH + 3 }, (_, i) => pair(`w${i}`, { authority: 3 }, { authority: 3 }));
+    const batches = judgeBatches([weak, ...many, dated, record]);
+    expect(batches[0].slice(0, 2).map((x) => x.p.key)).toEqual(['record', 'dated']);
+    expect(batches[0]).toHaveLength(JUDGE_BATCH);
+    expect(batches.flat()).toHaveLength(many.length + 3);
+  });
+
+  it('stores the verdicts a batched reply settles and asks again for a pair it left out', async () => {
+    const notes1 = [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: 'b.md', text: '#\n\nAtlas uses Y.\n' }];
+    const notes2 = [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: 'c.md', text: '#\n\nAtlas uses Z.\n' }];
+    const p1 = { key: 'k1', a: claim({}), b: claim({ rel: 'b.md' }) };
+    const p2 = { key: 'k2', a: claim({}), b: claim({ rel: 'c.md' }) };
+    const seen = [];
+    const a = agent({ model: async (prompt) => {
+      seen.push(prompt.split('<pair id="').length - 1);
+      const id = prompt.includes('b.md (line') && prompt.indexOf('b.md (line') < prompt.indexOf('c.md (line') ? 'p1' : 'p2';
+      return JSON.stringify({ verdicts: [{ pair: id, lines: [3, 3], label: 'contradiction', quotes: [{ path: 'a.md', line: 3, text: 'Atlas uses X.' }, { path: 'b.md', line: 3, text: 'Atlas uses Y.' }], reason: 'r' }] });
+    } });
+    a.provider.begin();
+    expect(a.provider.judgeOf(p1, notes1)).toBeNull();
+    expect(a.provider.judgeOf(p2, notes2)).toBeNull();
+    const res = await a.tick({ uncapped: true });
+    expect(seen).toEqual([2]);
+    expect(res).toMatchObject({ judged: ['k1'], judgeRequeued: ['k2'] });
+    a.provider.begin();
+    expect(a.provider.judgeOf(p1, notes1)).toBe('contradiction');
+    // the pair the reply left out is not marked failed: it is asked for again, alone
+    expect(a.provider.judgeOf(p2, notes2)).toBeNull();
+    expect(a.pendingCalls()).toBe(1);
+    await a.tick({ uncapped: true });
+    expect(seen).toEqual([2, 1]);
+  });
+
+  it('asks again one pair a call after a batched call fails, and marks only a pair that fails alone', async () => {
+    const notes = (r) => [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: r, text: '#\n\nAtlas uses Y.\n' }];
+    const pairs = ['b.md', 'c.md', 'd.md'].map((r, i) => ({ key: `k${i + 1}`, a: claim({}), b: claim({ rel: r }) }));
+    const seen = [];
+    const a = agent({ model: async (prompt) => {
+      const n = prompt.split('<pair id="').length - 1;
+      seen.push(n);
+      if (n > 1) return 'not json';
+      if (prompt.includes('d.md (line')) throw new Error('timed out');
+      const rel = ['b.md', 'c.md'].find((r) => prompt.includes(`${r} (line`));
+      return JSON.stringify({ verdicts: [{ pair: 'p1', lines: [3, 3], label: 'same', quotes: [{ path: 'a.md', line: 3, text: 'Atlas uses X.' }, { path: rel, line: 3, text: 'Atlas uses Y.' }], reason: 'r' }] });
+    } });
+    a.provider.begin();
+    pairs.forEach((p, i) => a.provider.judgeOf(p, notes(['b.md', 'c.md', 'd.md'][i])));
+    expect(await a.tick({ uncapped: true })).toMatchObject({ judgeRetry: ['k1', 'k2', 'k3'] });
+    for (let i = 0; i < 3; i++) await a.tick({ uncapped: true });
+    expect(seen).toEqual([3, 1, 1, 1]);
+    a.provider.begin();
+    expect(a.provider.judgeOf(pairs[0], notes('b.md'))).toBe('same');
+    expect(a.provider.judgeOf(pairs[1], notes('c.md'))).toBe('same');
+    // the pair that failed on its own waits a day
+    expect(a.provider.judgeOf(pairs[2], notes('d.md'))).toBeNull();
+    expect(a.pendingCalls()).toBe(0);
+  });
+
+  it('keeps the pairs of a judge call in flight while the gate reads the rest, so a sweep then queues none again', async () => {
+    const notes = (r) => [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: r, text: '#\n\nAtlas uses Y.\n' }];
+    const p1 = { key: 'k1', a: claim({ authority: 1 }), b: claim({ rel: 'b.md' }) };
+    const p2 = { key: 'k2', a: claim({}), b: claim({ rel: 'c.md' }) };
+    let release;
+    const slow = new Promise((r) => { release = r; });
+    const gate = { check: async (p) => { if (p.key === 'k2') await slow; return { send: true, audit: false, drop: false, tier: 't0' }; }, record: () => false };
+    const a = agent({ gate, model: async () => JSON.stringify({ verdicts: [] }) });
+    a.provider.begin();
+    a.provider.judgeOf(p1, notes('b.md'));
+    a.provider.judgeOf(p2, notes('c.md'));
+    const pending = a.tick({ uncapped: true });
+    await new Promise((r) => setTimeout(r, 0));
+    // a save sweep while the gate reads k2: k1 is already in the call
+    a.provider.begin();
+    a.provider.judgeOf(p1, notes('b.md'));
+    a.provider.judgeOf(p2, notes('c.md'));
+    expect(a.status().judge).toBe(0);
+    release();
+    await pending;
+  });
+
+  it('asks the local decider before it queues a note and the gate before it sends a pair', async () => {
+    const notes1 = [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: 'b.md', text: '#\n\nAtlas uses Y.\n' }];
+    const notes2 = [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: 'c.md', text: '#\n\nAtlas uses Z.\n' }];
+    const p1 = { key: 'k1', a: claim({}), b: claim({ rel: 'b.md' }) };
+    const p2 = { key: 'k2', a: claim({}), b: claim({ rel: 'c.md' }) };
+    const recorded = [];
+    const gate = { check: async (p) => (p.key === 'k1' ? { send: false, audit: false, drop: true, tier: 't1' } : { send: true, audit: true, drop: true, tier: 't1' }), record: (key, label) => { recorded.push([key, label]); return true; }, stats: () => ({ audited: recorded.length, misses: 0, missRate: null }) };
+    const decider = { worthReading: (n) => ({ read: !n.rel.startsWith('empty'), reason: null, tier: 't0' }), tiers: () => ({ t0: 'ready' }) };
+    const sent = [];
+    const a = agent({ decider, gate, model: async (prompt) => {
+      sent.push(prompt.split('<pair id="').length - 1);
+      return JSON.stringify({ verdicts: [{ pair: 'p1', lines: [3, 3], label: 'contradiction', quotes: [{ path: 'a.md', line: 3, text: 'Atlas uses X.' }, { path: 'c.md', line: 3, text: 'Atlas uses Z.' }], reason: 'r' }] });
+    } });
+    a.provider.begin();
+    a.provider.claimsOf(note('empty/blank.md', '# Blank\n\nWe decided nothing on 2026-01-01.\n'), { worth: true });
+    a.provider.claimsOf(note('projects/full.md', '# Full\n\nWe decided Full ships on 2026-01-01.\n'), { worth: true });
+    expect(a.status().claims).toBe(1);
+    a.provider.judgeOf(p1, notes1);
+    a.provider.judgeOf(p2, notes2);
+    const res = await a.tick({ uncapped: true });
+    // the gate kept k1 from the judge and stored it as the same fact; k2 went as an audit and its label was logged
+    expect(sent).toEqual([1]);
+    expect(res).toMatchObject({ judged: ['k2'] });
+    expect(recorded).toEqual([['k2', 'contradiction']]);
+    a.provider.begin();
+    expect(a.provider.judgeOf(p1, notes1)).toBe('same');
+    expect(a.status()).toMatchObject({ tiers: { t0: 'ready' }, audit: { audited: 1 } });
+  });
+
   it('measures the bar from the decision log over the auto slice', () => {
     expect(wilson(150, 150)).toBeGreaterThan(0.97);
     expect(wilson(147, 150)).toBeLessThan(0.95);
@@ -301,14 +530,14 @@ describe('the pipeline on the synthetic vault', () => {
     const got = Object.fromEntries(found.map((f) => [pairName(f), { rule: f.facts[0].slice(5), auto: f.autoFix }]));
     expect(Object.keys(got).sort()).toEqual(Object.keys(EXPECTED).sort());
     for (const [k, v] of Object.entries(EXPECTED)) expect(got[k], k).toEqual({ rule: v.rule, auto: v.auto });
-    // the confidential note never reached the model, and the notes went in calls of at most 20
+    // the confidential note never reached the model, and the notes went in calls of at most BATCH_NOTES
     expect(sent.some((s) => s.includes('projects/kilo.md'))).toBe(false);
     const calls = sent.filter((s) => s.includes('<note path='));
     const read = calls.reduce((n, s) => n + s.split('<note path=').length - 1, 0);
-    expect(calls.length).toBe(Math.ceil(read / 20));
+    expect(calls.length).toBe(Math.ceil(read / BATCH_NOTES));
     // projects/india.md has no date, decision or status; it is read because it links to a note that is
-    expect(sent.some((s) => s.includes('<note path="projects/india.md">'))).toBe(true);
-    expect(sent.some((s) => s.includes('<note path="products/nimbus-cloud-edition.md">'))).toBe(true);
+    expect(sent.some((s) => s.includes('<note path="projects/india.md" '))).toBe(true);
+    expect(sent.some((s) => s.includes('<note path="products/nimbus-cloud-edition.md" '))).toBe(true);
     // both quotes show on the item
     const beacon = found.find((f) => f.notes[0] === 'projects/beacon.md');
     expect(beacon.evidence[0]).toBe('Older: projects/beacon.md line 7 (2026-02-01): “Beacon stores its data in Postgres.”');
@@ -361,8 +590,9 @@ describe('the pipeline on the synthetic vault', () => {
     const count = (id) => asked.set(id, (asked.get(id) ?? 0) + 1);
     let release = null;
     const slow = async (prompt, system) => {
-      const judge = prompt.match(/Claim A in (\S+) \(line \d+\)[\s\S]*Claim B in (\S+) \(line \d+\)/);
-      if (judge) count(`judge:${[judge[1], judge[2]].sort().join('|')}`);
+      // a judge call names each of its pairs by their two claim lines
+      const pairs = prompt.split('<pair id="').slice(1);
+      if (pairs.length) for (const b of pairs) count(`judge:${b.split('\n').slice(1, 3).join('|')}`);
       else for (const block of prompt.split('<note path="').slice(1)) count(`claims:${block.slice(0, block.indexOf('"'))}`);
       await new Promise((r) => { release = r; });
       return fakeModel(prompt, system);
@@ -394,7 +624,7 @@ describe('the pipeline on the synthetic vault', () => {
     const ctx = { notes, resolve, contradictions: { provider: a.provider } };
     run(ctx);
     expect(await a.tick({ onStart: (w) => starts.push(w) })).toMatchObject({ cancelled: expect.any(Array) });
-    expect(starts).toEqual([{ kind: 'claims', notes: 20 }]);
+    expect(starts).toEqual([{ kind: 'claims', notes: expect.any(Number) }]);
     expect(a.status().used).toBe(0);
     cancel = false;
     run(ctx);

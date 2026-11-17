@@ -9,7 +9,8 @@
 //   mayRead(rel, text) the read gate: a note the agent may read
 //   cond(heavy) the settings the engine needs now: { enabled, cap, busy, idleMs, drafts }, and with heavy (a sweep or a
 //             pass over the vault) also { bar, folders, terms }
-//   model(prompt, system) the model call the agent asked for; a cancelled call rejects with { cancelled: true }
+//   model(prompt, system, { kind, signal }) the model call the agent asked for: kind 'claims' or 'judge', signal the
+//             abort a catch-up gave the call (null on the daily-cap path); a cancelled call rejects with { cancelled: true }
 //   restart() a fresh port after the engine stopped (it crashed or ran out of memory); the next call uses it
 //   timeouts  how long a call may take before the engine is taken for hung: it is stopped and the call fails. A tick
 //             waits on the model (up to 5 minutes), so it gets longer
@@ -27,7 +28,9 @@ export function createMemoryHost({ port, index = () => null, vault = () => null,
   let sent = new Map();
   let sentVault = null;
   let agentView = { status: { used: 0, cap: 0, waiting: 'off', running: false, inflight: 0, claims: 0, judge: 0 }, pendingCalls: 0, pendingNotes: 0 };
-  let onStart = null;
+  // each tick that waits, by lane: its onStart and the abort signal its model call takes
+  let laneSeq = 0;
+  const lanes = new Map();
   let cur = null;
 
   function attach(p) {
@@ -67,11 +70,12 @@ export function createMemoryHost({ port, index = () => null, vault = () => null,
     calls.clear();
   }
   function receive(p, msg) {
-    if (msg?.event === 'agent-start') { onStart?.(msg.payload); return; }
+    if (msg?.event === 'agent-start') { lanes.get(msg.payload?.lane)?.onStart?.(msg.payload); return; }
     if (msg?.event === 'log') { log(...(msg.payload ?? [])); return; }
     if (msg?.ask != null) {
       if (msg.method !== 'model') { p.postMessage({ answer: msg.ask, ok: false, error: `Unknown ask ${msg.method}` }); return; }
-      Promise.resolve().then(() => model(msg.payload?.prompt, msg.payload?.system)).then(
+      const signal = lanes.get(msg.payload?.lane)?.signal ?? null;
+      Promise.resolve().then(() => model(msg.payload?.prompt, msg.payload?.system, { kind: msg.payload?.kind ?? null, signal })).then(
         (result) => p.postMessage({ answer: msg.ask, ok: true, result }),
         (e) => p.postMessage({ answer: msg.ask, ok: false, error: String(e?.message ?? e), cancelled: !!e?.cancelled }),
       );
@@ -129,10 +133,13 @@ export function createMemoryHost({ port, index = () => null, vault = () => null,
     status: () => agentView.status,
     pendingCalls: () => agentView.pendingCalls,
     pendingNotes: () => agentView.pendingNotes,
-    async tick({ onStart: start = () => {}, uncapped = false } = {}) {
+    // parallel: how many calls a catch-up runs at once; signal: the abort of this call (a catch-up gives each of its
+    // calls its own), else main's model call uses its own slot
+    async tick({ onStart: start = () => {}, uncapped = false, parallel = 1, signal = null } = {}) {
       await sync();
-      onStart = start;
-      try { return await call('tick', { uncapped, cond: cond() }); } finally { onStart = null; }
+      const lane = ++laneSeq;
+      lanes.set(lane, { onStart: start, signal });
+      try { return await call('tick', { uncapped, parallel, lane, cond: cond() }); } finally { lanes.delete(lane); }
     },
   };
 

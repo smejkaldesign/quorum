@@ -76,6 +76,7 @@ import { RULE_LABELS, RULES } from './rules/index.js';
 import { approveLitter, commitNotes, prepareCompact } from './vaultHygiene.js';
 import { relatedLine } from './rules/nearDuplicates.js';
 import { DAILY_CAP, WRONG_NOTE_FIX, createDrafter, draftKind, evidenceRels, fallbackItem, unlinkItem, withDraft } from './memoryDraft.js';
+import { MEMORY_MODELS } from './memoryModels.js';
 import { catchupHooks, createSaveSweeps, forkEngine, slotBinder, startMemoryEngine } from './memoryWiring.js';
 import { createModelDownload, macConditions } from './decide/download.js';
 import { DECIDER_ON } from './decide/index.js';
@@ -84,7 +85,7 @@ import { annotateLine, ruleBar } from './contradictionResolve.js';
 import { ignoreProposals, ignored, ruleRecords } from './ruleRecords.js';
 import { demotions, kindOf, logGate, ruleDemotion, runGate, signature, weakLink } from './qualityGate.js';
 import { createAgentActivity } from './agentActivity.js';
-import { createCatchup } from './memoryCatchup.js';
+import { DEFAULT_PARALLEL, MAX_PARALLEL, createCatchup } from './memoryCatchup.js';
 import { createLastRunStore, planOf } from './catchupPlan.js';
 import { rule as CONTRADICTION_RULE } from './rules/contradictions.js';
 import { createElsewhere, withFound } from './linkElsewhere.js';
@@ -1456,6 +1457,8 @@ ipcMain.handle('set-settings', (_e, next) => {
   // confidential
   if (typeof next.memoryDrafts === 'boolean') { settings.memoryDrafts = next.memoryDrafts; store.settings.save(); }
   if (typeof next.memoryDraftConfidential === 'boolean') { settings.memoryDraftConfidential = next.memoryDraftConfidential; store.settings.save(); }
+  // Settings > Memory: how many model calls Check everything now runs at once
+  if (Number.isFinite(next.memoryCatchupParallel)) { settings.memoryCatchupParallel = Math.max(1, Math.min(MAX_PARALLEL, Math.round(next.memoryCatchupParallel))); store.settings.save(); }
   if (Number.isFinite(next.memoryDraftCap)) { settings.memoryDraftCap = Math.max(1, Math.min(500, Math.round(next.memoryDraftCap))); store.settings.save(); }
   // provider MCPs the person disconnected from Quorum, by connector id
   if (Array.isArray(next.mcpIgnored)) {
@@ -3591,7 +3594,8 @@ function memoryCond(heavy = false) {
   const out = {
     enabled: settings.memoryDrafts === true && !sweepPaused() && !!b && !!vindex,
     cap: Math.max(0, (settings.memoryDraftCap ?? DAILY_CAP) - drafter.status().used),
-    busy: recordingNow() || !!draftAbort || fixRunList().some((r) => r.status === 'queued' || r.status === 'running'),
+    // a catch-up's draft does not hold its claim calls back: its calls run side by side (memoryCatchup.js parallel)
+    busy: recordingNow() || (!!draftAbort && !catchup.running()) || fixRunList().some((r) => r.status === 'queued' || r.status === 'running'),
     idleMs: powerMonitor.getSystemIdleTime() * 1000,
     drafts: settings.memoryDrafts === true,
   };
@@ -3607,7 +3611,9 @@ const memoryEngine = startMemoryEngine({
   mayRead: (rel, text) => !!brain() && agentMayRead(brain().vault, rel, text),
   cond: memoryCond,
   // one call reads up to 20 notes, so it gets more time than a draft
-  model: (prompt, system) => claudeText({ prompt, system, model: 'sonnet', cwd: tmpdir(), timeoutMs: 300000, signal: contradictionAbort?.signal ?? null }),
+  // the model of each kind of call is set in memoryModels.js (MEMORY_MODELS). A catch-up call brings its own abort; a scheduled call
+  // uses the contradiction slot
+  model: (prompt, system, { kind = 'claims', signal = null } = {}) => claudeText({ prompt, system, model: MEMORY_MODELS[kind] ?? MEMORY_MODELS.judge, cwd: tmpdir(), timeoutMs: 300000, signal: signal ?? contradictionAbort?.signal ?? null }),
   log,
 });
 // the decision layer's models download in the background into the data folder after launch (decide/download.js);
@@ -3653,6 +3659,7 @@ setInterval(() => { draftTick(); }, 60000).unref?.();
 // cap, one model call at a time, with the drafter's and the contradiction agent's timeouts and gates. It needs Let the
 // agent draft fixes, writes nothing to the vault and stops by itself. Onboarding offers it once the vault connects, and
 // Settings > Memory has the button; the control socket starts it on an existing install (scripts/memory-catchup.mjs)
+const catchupParallel = () => settings.memoryCatchupParallel ?? DEFAULT_PARALLEL;
 const catchup = createCatchup({
   drafter,
   agent: contradictionAgent,
@@ -3668,6 +3675,7 @@ const catchup = createCatchup({
     kind: () => (memorySweep.state(brain()?.vault ?? '')?.lastFull ? 'full' : 'first'),
     bind: slotBinder({ get: (k) => (k === 'draft' ? draftAbort : contradictionAbort), set: (k, ctl) => { if (k === 'draft') draftAbort = ctl; else contradictionAbort = ctl; } }),
   }),
+  parallel: catchupParallel,
   notes: () => vindex?.rels().length ?? 0,
   emit: (st) => toUI('memory-catchup', st),
   // the notes read in earlier passes, the notes still queued, and Needs review before and after, for the note count
@@ -3697,8 +3705,9 @@ async function catchupEstimate() {
   const est = { notes: vindex.rels().length, read: claims.notes, claimCalls: claims.calls, draftCalls: drafts, calls: claims.calls + drafts, drafting: settings.memoryDrafts === true };
   // the plan shown before a pass: the notes to check, those saved from earlier passes, and estimates of the pairs to
   // judge and the time, from the last pass when there is one
-  const p = planOf({ saved: claims.saved, read: claims.notes, claimCalls: claims.calls, draftCalls: drafts, claimed: claims.claimed, judged: claims.judged }, catchup.status().last);
-  return { ...est, saved: claims.saved, toCheck: p.toCheck, pairs: p.pairs, seconds: p.seconds };
+  const p = planOf({ saved: claims.saved, read: claims.notes, claimCalls: claims.calls, draftCalls: drafts, claimed: claims.claimed, judged: claims.judged, gated: claims.gated, promptChars: claims.promptChars }, catchup.status().last, catchupParallel());
+  // calls: every call of the pass, judge calls for the estimated pairs included
+  return { ...est, calls: p.calls, saved: claims.saved, toCheck: p.toCheck, pairs: p.pairs, seconds: p.seconds, cost: p.cost, costLabel: p.costLabel };
 }
 // starts a catch-up. It needs Let the agent draft fixes; turning the pass on turns that on too, and the answer says so
 async function startCatchup() {

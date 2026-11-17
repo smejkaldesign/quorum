@@ -3,9 +3,11 @@
 // Plain Node, so the tests drive it directly.
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { claimMeasure, costLabel, judgeCalls, passCost } from './memoryModels.js';
 
-// with no pass to learn from: about how long one model call takes, and how many pairs to judge each note read brings
-export const SECONDS_PER_CALL = 40;
+// with no pass to learn from: how long one model call takes (a claim call of the model and answer memoryModels.js sets,
+// measured on 100 notes), and how many pairs to judge each note read brings
+export const SECONDS_PER_CALL = claimMeasure().seconds;
 export const PAIRS_PER_NOTE = 0.5;
 // the stored claims and verdicts give the pairs per note once this many notes were read
 const HISTORY_NOTES = 50;
@@ -13,20 +15,30 @@ const HISTORY_NOTES = 50;
 const HISTORY_CALLS = 5;
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
-// the seconds one call took in the last pass, or the default
+// the seconds one call took in the last pass, or the default. A pass that ran calls in parallel took less wall time per
+// call than one call takes, so its time per call is multiplied back by how many ran at once
 export function secondsPerCall(last) {
   if (!last || !(last.done >= HISTORY_CALLS) || !(last.endedAt > last.startedAt)) return SECONDS_PER_CALL;
-  return clamp(Math.round((last.endedAt - last.startedAt) / last.done / 1000), 5, 300);
+  return clamp(Math.round(((last.endedAt - last.startedAt) * (last.parallel ?? 1)) / last.done / 1000), 5, 300);
 }
 
 // the plan for a pass from main's estimate: saved, the notes whose claims are stored from earlier passes; read, the
-// notes still to read; claimed and judged, the notes and pairs the agent has stored, for the pairs per note. Pairs and
-// seconds are estimates: a pair to judge is only known once both of its notes are read
-export function planOf({ saved = 0, read = 0, claimCalls = 0, draftCalls = 0, claimed = 0, judged = 0 } = {}, last = null) {
+// notes still to read; claimed and judged, the notes and pairs the agent has stored, for the pairs per note;
+// promptChars, the characters the claim calls send; parallel, the calls the pass runs at once. Pairs, seconds and the
+// cost are estimates: a pair to judge is only known once both of its notes are read. The cost is at API rates
+// (memoryModels.js), drafts included at a typical size
+export function planOf({ saved = 0, read = 0, claimCalls = 0, draftCalls = 0, claimed = 0, judged = 0, gated = 0, promptChars = 0 } = {}, last = null, parallel = 1) {
   const perNote = claimed >= HISTORY_NOTES ? judged / claimed : PAIRS_PER_NOTE;
-  const pairs = Math.round(read * perNote);
+  // gated: the stored pairs the local gate kept from the judge (decide/gate.js); once enough pairs are stored, the
+  // estimate takes the same share out of the pairs to judge
+  const kept = judged >= HISTORY_NOTES ? 1 - gated / judged : 1;
+  const pairs = Math.round(read * perNote * kept);
   const perCall = secondsPerCall(last);
-  return { toCheck: saved + read, saved, pairs, seconds: Math.round((claimCalls + draftCalls + pairs) * perCall), perCall };
+  const { usd } = passCost({ promptChars, notes: read, calls: claimCalls }, pairs, { drafts: draftCalls });
+  // the pairs go to the judge several to a call
+  const calls = claimCalls + draftCalls + judgeCalls(pairs);
+  // calls: every call the pass makes, the claim calls, the judge calls for the estimated pairs and the drafts
+  return { toCheck: saved + read, saved, pairs, calls, seconds: Math.round((calls * perCall) / Math.max(1, parallel)), perCall, cost: usd, costLabel: costLabel(usd) };
 }
 
 // the notes checked of the notes to check, counting the notes saved from earlier passes. left: the notes the agent
