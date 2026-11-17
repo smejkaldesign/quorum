@@ -13,7 +13,8 @@ const read = (rel) => { execFileSync('npx', ['asar', 'extract-file', asar, rel],
 
 const seen = new Set();
 const missing = [];
-const queue = ['main.js', 'preload.cjs'];
+// memoryWorker.js is started by path (utilityProcess.fork), so no import reaches it
+const queue = ['main.js', 'preload.cjs', 'memoryWorker.js'];
 while (queue.length) {
   const rel = queue.shift();
   if (seen.has(rel)) continue;

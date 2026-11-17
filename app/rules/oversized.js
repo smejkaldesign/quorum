@@ -9,13 +9,16 @@ export const FLOOR = 60000;
 
 export function run({ notes }) {
   const live = notes.filter((n) => !skipped(n) && !DATED.test(baseOf(n.rel)) && !ENTRY_NAME.test(baseOf(n.rel)));
-  const limit = Math.max(FLOOR, percentile(live.map((n) => n.text.length), 0.99));
+  // chars: the note's full length when the rules read only its head (memoryEngine.js MAX_RULE_TEXT)
+  const sizeOf = (n) => n.chars ?? n.text.length;
+  const limit = Math.max(FLOOR, percentile(live.map(sizeOf), 0.99));
   const out = [];
   for (const n of live) {
-    const size = n.text.length;
+    const size = sizeOf(n);
     if (size <= limit) continue;
     const parts = (n.note?.headings ?? []).filter((h) => h.level === 2).length;
-    const words = n.text.split(/\s+/).filter(Boolean).length;
+    // the words of the head, scaled to the whole note when only the head was read
+    const words = Math.round(n.text.split(/\s+/).filter(Boolean).length * (n.text.length ? size / n.text.length : 1));
     out.push(finding(rule, {
       key: n.rel, target: n.rel, notes: [n.rel],
       title: `${quote(n.note?.title ?? n.rel)} is ${Math.round(size / 1000)}k characters long`,
