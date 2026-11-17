@@ -173,7 +173,7 @@ export const JUDGE_SYSTEM = [
 // the same instructions for several pairs in one call, each pair under its id
 export const JUDGE_BATCH_SYSTEM = [
   ...JUDGE_SYSTEM.split('\n').slice(0, -1).map((l) => l.replace('two claims from a notes vault disagree', 'the two claims of each pair below disagree').replace('Both claims are about', 'The two claims of a pair are about')),
-  'Judge each pair on its own excerpts. Answer with one JSON object and nothing else, one verdict per pair: { "verdicts": [{ "pair": "<pair id>", "label": "<label>", "quotes": [{ "path": "<note path>", "line": <line number>, "text": "<exact text>" }], "reason": "<one sentence>" }] }',
+  'Judge each pair on its own excerpts. Answer with one JSON object and nothing else, one verdict per pair, with the line numbers of its claim A and claim B: { "verdicts": [{ "pair": "<pair id>", "lines": [<claim A line>, <claim B line>], "label": "<label>", "quotes": [{ "path": "<note path>", "line": <line number>, "text": "<exact text>" }], "reason": "<one sentence>" }] }',
 ].join('\n');
 // several pairs to one call: JUDGE_BATCH pairs at most, and JUDGE_CHARS characters of prompt
 export const JUDGE_BATCH = 8;
@@ -205,7 +205,12 @@ export function checkJudgeBatch(items, reply) {
   const byId = new Map();
   for (const { id, p, notes } of items) {
     const v = j.verdicts.find((x) => String(x?.pair) === String(id));
-    byId.set(id, v ? checkVerdict(p, notes, v) : { why: 'The judge gave no verdict for this pair' });
+    if (!v) { byId.set(id, { why: 'The judge gave no verdict for this pair', missing: true }); continue; }
+    // a verdict names its pair by id and by the line numbers of its two claims, so a verdict filed under the wrong id
+    // of two pairs on the same notes does not pass
+    const lines = Array.isArray(v.lines) ? v.lines.map(Number) : [];
+    if (lines[0] !== p.a.line || lines[1] !== p.b.line) { byId.set(id, { why: 'The verdict does not name the lines of its pair' }); continue; }
+    byId.set(id, checkVerdict(p, notes, v));
   }
   return { byId };
 }
@@ -219,5 +224,8 @@ function checkVerdict(p, notes, j) {
   const quotes = verifyQuotes(j.quotes, notes);
   if (!quotes.length || quotes.some((q) => !q.ok)) return { why: 'A quote from the judge does not match its note' };
   if (!quotes.some((q) => q.path === p.a.rel) || !quotes.some((q) => q.path === p.b.rel)) return { why: 'The judge did not quote both notes' };
+  // every quote sits in the excerpt the pair showed: its claim's lines and CONTEXT lines on either side
+  const inWindow = (q, c) => q.path === c.rel && q.line >= c.line - CONTEXT && q.line <= (c.lineEnd ?? c.line) + CONTEXT;
+  if (!quotes.every((q) => inWindow(q, p.a) || inWindow(q, p.b))) return { why: 'A quote from the judge is outside the lines of its pair' };
   return { label: j.label, quotes, reason: typeof j.reason === 'string' ? j.reason.slice(0, 300) : '' };
 }

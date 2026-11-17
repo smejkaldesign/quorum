@@ -45,7 +45,7 @@ export function synthModel(prompt) {
   if (prompt.includes('<pair id="')) {
     const verdicts = prompt.split('<pair id="').slice(1).map((block) => {
       const [, ra, la, qa, rb, lb, qb] = block.match(/Claim A in (\S+) \(line (\d+)\): "(.*)"\nClaim B in (\S+) \(line (\d+)\): "(.*)"/);
-      return { pair: block.slice(0, block.indexOf('"')), label: 'contradiction', quotes: [{ path: ra, line: +la, text: qa }, { path: rb, line: +lb, text: qb }], reason: 'The two lines give different values.' };
+      return { pair: block.slice(0, block.indexOf('"')), lines: [+la, +lb], label: 'contradiction', quotes: [{ path: ra, line: +la, text: qa }, { path: rb, line: +lb, text: qb }], reason: 'The two lines give different values.' };
     });
     return JSON.stringify({ verdicts });
   }

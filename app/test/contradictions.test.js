@@ -46,7 +46,7 @@ async function fakeModel(prompt) {
     const verdicts = prompt.split('<pair id="').slice(1).map((block) => {
       const [, ra, la, qa, rb, lb, qb] = block.match(/Claim A in (\S+) \(line (\d+)\): "(.*)"\nClaim B in (\S+) \(line (\d+)\): "(.*)"/);
       const label = JUDGE[[ra, rb].sort().join('|')] ?? 'same';
-      return { pair: block.slice(0, block.indexOf('"')), label, quotes: [{ path: ra, line: +la, text: qa }, { path: rb, line: +lb, text: qb }], reason: 'test' };
+      return { pair: block.slice(0, block.indexOf('"')), lines: [+la, +lb], label, quotes: [{ path: ra, line: +la, text: qa }, { path: rb, line: +lb, text: qb }], reason: 'test' };
     });
     return JSON.stringify({ verdicts });
   }
@@ -341,7 +341,7 @@ describe('stage 4 resolve and stage 5 fixes', () => {
     const ask = judgeBatchPrompt(items);
     expect(ask.system).toBe(JUDGE_BATCH_SYSTEM);
     expect(ask.prompt.split('<pair id="')).toHaveLength(3);
-    const v = (pair, path, text) => ({ pair, label: 'contradiction', quotes: [{ path: 'a.md', line: 3, text: 'Atlas uses X.' }, { path, line: 3, text }], reason: 'r' });
+    const v = (pair, path, text) => ({ pair, lines: [3, 3], label: 'contradiction', quotes: [{ path: 'a.md', line: 3, text: 'Atlas uses X.' }, { path, line: 3, text }], reason: 'r' });
     const r = checkJudgeBatch(items, JSON.stringify({ verdicts: [v('p1', 'b.md', 'Atlas uses Y.'), v('p2', 'c.md', 'Atlas uses Q.')] }));
     expect(r.byId.get('p1').label).toBe('contradiction');
     expect(r.byId.get('p2').why).toMatch(/quote/);
@@ -349,8 +349,28 @@ describe('stage 4 resolve and stage 5 fixes', () => {
     expect(checkJudgeBatch(items, 'no json').why).toMatch(/verdicts/);
   });
 
+  it('rejects a verdict filed under the id of another pair on the same two notes', () => {
+    const text = (x) => `#\n\nAtlas uses ${x}.\nfiller\nfiller\nfiller\nfiller\nfiller\nfiller\nBeacon runs ${x}.\n`;
+    const notes = [{ rel: 'a.md', text: text('X') }, { rel: 'b.md', text: text('Y') }];
+    const p1 = { key: 'k1', a: claim({ line: 3, quote: 'Atlas uses X.' }), b: claim({ rel: 'b.md', line: 3, quote: 'Atlas uses Y.' }) };
+    const p2 = { key: 'k2', a: claim({ line: 10, quote: 'Beacon runs X.' }), b: claim({ rel: 'b.md', line: 10, quote: 'Beacon runs Y.' }) };
+    const items = [{ id: 'p1', p: p1, notes }, { id: 'p2', p: p2, notes }];
+    const v = (pair, lines, la, ta, lb, tb) => ({ pair, lines, label: 'contradiction', quotes: [{ path: 'a.md', line: la, text: ta }, { path: 'b.md', line: lb, text: tb }], reason: 'r' });
+    // the verdict of pair 2 written under p1 and the other way round: both are rejected
+    const swapped = checkJudgeBatch(items, JSON.stringify({ verdicts: [v('p1', [10, 10], 10, 'Beacon runs X.', 10, 'Beacon runs Y.'), v('p2', [3, 3], 3, 'Atlas uses X.', 3, 'Atlas uses Y.')] }));
+    expect(swapped.byId.get('p1').why).toMatch(/lines of its pair/);
+    expect(swapped.byId.get('p2').why).toMatch(/lines of its pair/);
+    // the right lines named, but quotes from the other pair's lines: rejected too
+    const stray = checkJudgeBatch(items, JSON.stringify({ verdicts: [v('p1', [3, 3], 10, 'Beacon runs X.', 10, 'Beacon runs Y.')] }));
+    expect(stray.byId.get('p1').why).toMatch(/outside the lines/);
+    const right = checkJudgeBatch(items, JSON.stringify({ verdicts: [v('p1', [3, 3], 3, 'Atlas uses X.', 3, 'Atlas uses Y.')] }));
+    expect(right.byId.get('p1').label).toBe('contradiction');
+    // two pairs on the same two notes never share a judge call
+    expect(judgeBatches([{ p: p1, notes }, { p: p2, notes }]).map((b) => b.length)).toEqual([1, 1]);
+  });
+
   it('packs pairs into judge calls, strongest first: decision records, different dates, decided claims', () => {
-    const pair = (key, a, b) => ({ p: { key, a: claim({ ...a }), b: claim({ rel: 'b.md', ...b }) }, notes: [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: 'b.md', text: '#\n\nAtlas uses Y.\n' }] });
+    const pair = (key, a, b) => ({ p: { key, a: claim({ ...a }), b: claim({ rel: `${key}.md`, ...b }) }, notes: [{ rel: 'a.md', text: '#\n\nAtlas uses X.\n' }, { rel: `${key}.md`, text: '#\n\nAtlas uses Y.\n' }] });
     const weak = pair('weak', { authority: 3, date: null, modality: 'stated' }, { authority: 3, date: null, modality: 'stated' });
     const dated = pair('dated', { authority: 3, date: '2026-01-01', modality: 'stated' }, { authority: 3, date: '2026-03-01', modality: 'stated' });
     const record = pair('record', { authority: 1, date: '2026-01-01', modality: 'decided' }, { authority: 2, date: '2026-03-01', modality: 'stated' });
@@ -372,7 +392,7 @@ describe('stage 4 resolve and stage 5 fixes', () => {
     const a = agent({ model: async (prompt) => {
       seen.push(prompt.split('<pair id="').length - 1);
       const id = prompt.includes('b.md (line') && prompt.indexOf('b.md (line') < prompt.indexOf('c.md (line') ? 'p1' : 'p2';
-      return JSON.stringify({ verdicts: [{ pair: id, label: 'contradiction', quotes: [{ path: 'a.md', line: 3, text: 'Atlas uses X.' }, { path: 'b.md', line: 3, text: 'Atlas uses Y.' }], reason: 'r' }] });
+      return JSON.stringify({ verdicts: [{ pair: id, lines: [3, 3], label: 'contradiction', quotes: [{ path: 'a.md', line: 3, text: 'Atlas uses X.' }, { path: 'b.md', line: 3, text: 'Atlas uses Y.' }], reason: 'r' }] });
     } });
     a.provider.begin();
     expect(a.provider.judgeOf(p1, notes1)).toBeNull();
@@ -398,7 +418,7 @@ describe('stage 4 resolve and stage 5 fixes', () => {
     const sent = [];
     const a = agent({ decider, gate, model: async (prompt) => {
       sent.push(prompt.split('<pair id="').length - 1);
-      return JSON.stringify({ verdicts: [{ pair: 'p1', label: 'contradiction', quotes: [{ path: 'a.md', line: 3, text: 'Atlas uses X.' }, { path: 'c.md', line: 3, text: 'Atlas uses Z.' }], reason: 'r' }] });
+      return JSON.stringify({ verdicts: [{ pair: 'p1', lines: [3, 3], label: 'contradiction', quotes: [{ path: 'a.md', line: 3, text: 'Atlas uses X.' }, { path: 'c.md', line: 3, text: 'Atlas uses Z.' }], reason: 'r' }] });
     } });
     a.provider.begin();
     a.provider.claimsOf(note('empty/blank.md', '# Blank\n\nWe decided nothing on 2026-01-01.\n'), { worth: true });

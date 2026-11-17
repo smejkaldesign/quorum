@@ -51,19 +51,24 @@ export function judgeRank(p) {
 }
 // the pairs of each judge call, strongest first: up to JUDGE_BATCH pairs while the prompt stays under JUDGE_CHARS.
 // entries: [{ p, notes }]
+const notePair = (p) => [p.a.rel, p.b.rel].sort().join('\n');
 export function judgeBatches(entries, { chars = JUDGE_CHARS, pairs = JUDGE_BATCH } = {}) {
   const sorted = [...entries].sort((x, y) => judgeRank(x.p) - judgeRank(y.p) || String(x.p.key).localeCompare(String(y.p.key)));
+  const later = [];
   const out = [];
   let cur = [];
   let used = 0;
   for (const e of sorted) {
     const n = judgePrompt(e.p, e.notes).prompt.length + 40;
+    // two pairs on the same two notes never share a call, so their verdicts cannot be swapped
+    if (cur.some((x) => notePair(x.p) === notePair(e.p))) { later.push(e); continue; }
     if (cur.length && (used + n > chars || cur.length >= pairs)) { out.push(cur); cur = []; used = 0; }
     cur.push(e);
     used += n;
   }
   if (cur.length) out.push(cur);
-  return out;
+  // the pairs held back for sharing notes with a pair of their call go in the calls after
+  return later.length ? [...out, ...judgeBatches(later, { chars, pairs })] : out;
 }
 
 // decider and gate: the local decision layer (decide/index.js createDecider, decide/gate.js createPairGate). The decider
@@ -279,6 +284,8 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
       const size = judgePrompt(j.p, j.notes).prompt.length + 40;
       if (out.length && used + size > JUDGE_CHARS) break;
       if (!wantJudge.has(j.p.key)) continue;
+      // a pair on the same two notes as a pair of this call waits for the next call
+      if (out.some((x) => notePair(x.p) === notePair(j.p))) continue;
       wantJudge.delete(j.p.key);
       if (gate) {
         inflight.add(j.p.key);
