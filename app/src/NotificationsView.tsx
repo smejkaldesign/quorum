@@ -265,6 +265,8 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
     const waits = fixes.map((k) => waitFix(k));
     const started = fixes.length ? await window.quorum.fixStart(fixes).catch(() => [] as FixRun[]) : [];
     const ran = (k: string) => started.some((r) => r.key === k.toLowerCase() || !!r.items?.some((i) => i.kind === 'link' && i.key === k.toLowerCase()));
+    waits.forEach((w, n) => { if (!ran(fixes[n])) w.off(); });
+    if (fixes.length && !started.length) toast(fixes.length === 1 ? 'That item no longer needs a fix' : 'None of those items could start a fix', 'error');
     toastWhenFixed(fixes.flatMap((k, n) => (ran(k) ? [{ key: k, target: picked.find((r) => r.review!.key === k)!.target.title, done: waits[n] }] : [])));
     for (const r of picked) {
       if (verdict === 'approve' && r.review!.kind === 'link') continue;

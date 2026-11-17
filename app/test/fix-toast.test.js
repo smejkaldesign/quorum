@@ -8,7 +8,7 @@ const { toastWhenFixed, waitFix } = await import('../src/fixToast');
 let listeners;
 let marked;
 const emit = (run) => { for (const f of [...listeners]) f(run); };
-const run = (key, status, extra = {}) => ({ id: `fix:${key}`, key, target: key, status, items: undefined, ...extra });
+const run = (key, status, extra = {}) => ({ id: `fix:${key}`, key, target: key, status, endedAt: Date.now(), items: undefined, ...extra });
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
 beforeEach(() => {
@@ -51,7 +51,7 @@ describe('toastWhenFixed', () => {
   it('hears a link the agent fixes, which runs as a batch of one', async () => {
     const done = waitFix('Gamma');
     toastWhenFixed([{ key: 'Gamma', target: 'Gamma', done }]);
-    emit({ id: 'batch:1', key: 'batch:1', kind: 'batch', status: 'success', items: [{ kind: 'link', key: 'gamma' }] });
+    emit({ id: 'batch:1', key: 'batch:1', kind: 'batch', status: 'success', endedAt: Date.now(), items: [{ kind: 'link', key: 'gamma' }] });
     await settle();
     expect(toast).toHaveBeenCalledWith('Fixed “Gamma”.');
   });
@@ -66,5 +66,33 @@ describe('toastWhenFixed', () => {
     await settle(); await settle();
     expect(toast).toHaveBeenCalledWith('Fixed 1. Could not fix “B”: You cancelled the batch. It is back in Needs review.', 'error');
     expect(marked).toEqual([['r:link:b', false]]);
+  });
+});
+
+describe('waitFix and outcomeOf', () => {
+  it('a batch that skipped the item: the toast says it could not be fixed, with the reason', async () => {
+    const done = waitFix('delta');
+    toastWhenFixed([{ key: 'delta', target: 'Delta', done }]);
+    emit({ id: 'batch:2', key: 'batch:2', kind: 'batch', status: 'success', endedAt: Date.now(), items: [{ kind: 'link', key: 'delta', status: 'error', error: 'No note matches it' }] });
+    await settle(); await settle();
+    expect(toast).toHaveBeenCalledWith('Could not fix “Delta”: No note matches it. It is back in Needs review.', 'error');
+  });
+
+  it('ignores a run that ended before the wait began (Undo and Dismiss send old runs again)', async () => {
+    const done = waitFix('eps');
+    toastWhenFixed([{ key: 'eps', target: 'Eps', done }]);
+    emit(run('eps', 'success', { endedAt: Date.now() - 60_000 }));
+    await settle();
+    expect(toast).not.toHaveBeenCalled();
+    emit(run('eps', 'success', { endedAt: Date.now() }));
+    await settle();
+    expect(toast).toHaveBeenCalledWith('Fixed “Eps”.');
+  });
+
+  it('off drops the listener for an Approve that started nothing', () => {
+    const w = waitFix('zeta');
+    expect(listeners.size).toBe(1);
+    w.off();
+    expect(listeners.size).toBe(0);
   });
 });

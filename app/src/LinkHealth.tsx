@@ -149,12 +149,15 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
       : tab === 'unread' ? lively.filter(unreadOf) : lively;
   const unreadN = lively.filter(unreadOf).length;
   // the newest bulk Approve's banner: two or more items. One item approved on its own shows its progress in its row
-  const lastBatch = runs.filter((r) => r.batch).sort((a, b) => b.queuedAt - a.queuedAt)[0]?.batch ?? null;
-  const bulkList = lastBatch ? runs.filter((r) => r.batch === lastBatch && !r.undoneAt).flatMap((r) => (r.kind === 'batch' ? batchItems(r) : [r])) : [];
+  const listOf = (b: string) => runs.filter((r) => r.batch === b && !r.undoneAt).flatMap((r) => (r.kind === 'batch' ? batchItems(r) : [r]));
+  const lastBatch = [...new Set(runs.filter((r) => r.batch).sort((a, b) => b.queuedAt - a.queuedAt).map((r) => r.batch!))].find((b) => listOf(b).length > 1) ?? null;
+  const bulkList = lastBatch ? listOf(lastBatch) : [];
   const bulkOne = runs.find((r) => r.batch === lastBatch && r.kind === 'batch');
   const bulkShown = !!lastBatch && lastBatch !== hiddenBatch && bulkList.length > 1;
-  // while the newest batch runs, its progress shows here (bulk) or in its row (one item), never in a second banner
-  const batchLive = bulkList.some((r) => r.status === 'queued' || r.status === 'running');
+  // the running planned batch shows here (bulk) or in its row (one item), never in a second banner. Fixes run one at a
+  // time, so at most one batch runs
+  const planNow = runs.find((r) => r.kind === 'batch' && r.status === 'running');
+  const batchLive = !!planNow && ((bulkShown && planNow.batch === lastBatch) || (planNow.items?.length ?? 0) < 2);
   const list = entries.flatMap((e) => ('issue' in e ? [e.issue] : []));
   const idOf = (e: Entry) => ('issue' in e ? e.issue.key : e.run.id);
   const openN = reviewN;
@@ -205,6 +208,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
       catch (e) { firstError ||= String(e).replace(/^.*Error:\s*/, ''); setApproving((ks) => { const n = new Set(ks); n.delete(i.key); return n; }); }
     }
     setBusy(false);
+    for (const [k, w] of waits) if (!heard.some((i) => i.key === k)) w.off();
     toastWhenFixed(heard.flatMap((i) => { const done = waits.get(i.key); return done ? [{ key: i.key, target: i.target, done }] : []; }));
     const failed = issues.length - lines.length;
     const one = issues.length === 1 ? `“${issues[0].target}”` : `${issues.length} issues`;
@@ -489,7 +493,7 @@ function BatchBanner({ runs, error, onCancel, onDismiss }: { runs: FixRun[]; err
         <button className={`icon-btn conn-fold${open ? ' open' : ''}`} aria-expanded={open} aria-label={open ? 'Hide items' : 'Show items'} onClick={() => setOpen((o) => !o)}><IconChevron width={14} height={14} /></button>
         {/* Cancel stops the batch before its next step; a batch puts back every note it changed, and items not started stay in Needs review */}
         {live
-          ? <button className="act-pill run-dismiss" aria-disabled={stopping} onClick={() => { if (stopping) return; setStopping(true); onCancel().catch(() => setStopping(false)); }}>{stopping ? 'Stopping' : 'Cancel'}</button>
+          ? <button className="act-pill run-dismiss" aria-disabled={stopping} onClick={() => { if (stopping) return; setStopping(true); onCancel().then((n) => { if (!n) setStopping(false); }, () => setStopping(false)); }}>{stopping ? 'Stopping' : 'Cancel'}</button>
           : <button className="act-pill run-dismiss" onClick={onDismiss}>Dismiss</button>}
       </>}
     >

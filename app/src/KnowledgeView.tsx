@@ -16,6 +16,7 @@ import { reportMemoryNote } from './navHistory';
 import { toast } from './Toasts';
 import type { FixRun } from './quorum';
 import { IssueDrawer, LinkHealth, acceptIssue, dismissIssue, leftOf, migrateLeft, toastWhenFixed, waitFix } from './LinkHealth';
+import { outcomeOf } from './fixToast';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
 import { IconChevron, IconClose, IconCollapse, IconExpand, IconFolder, IconGraph, IconNewFolder, IconNewNote, IconHistory, IconLink, IconLock, IconMore, IconReset, IconSearch, IconSidebar, IconSliders, IconSort } from './icons';
@@ -315,8 +316,9 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
           toastWhenFixed([{ key: item.issue.key, target: item.issue.target, done }]);
           const run = await done;
           setFixShown((f) => (f && f.issue.key === run.key ? { ...f, run } : f));
-          flash(run.status === 'success' ? run.outcome ?? 'Fixed' : run.error ?? 'Could not fix it');
-        } catch (e) { setFixShown(null); throw e; } finally { off(); }
+          const out = outcomeOf(run, item.issue.key);
+          flash(out.ok ? run.outcome ?? 'Fixed' : out.error ?? 'Could not fix it');
+        } catch (e) { done.off(); setFixShown(null); throw e; } finally { off(); }
       } else { flash(await dismissIssue(item.issue)); toast(`Archived “${item.issue.target}” without fixing it. It is under Archived in Memory health.`); }
       countIssues();
       await reloadOpen(preview.rel);
