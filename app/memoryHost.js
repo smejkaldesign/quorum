@@ -53,7 +53,8 @@ export function createMemoryHost({ port, index = () => null, vault = () => null,
     if (msg.agent) agentView = msg.agent;
     if (msg.ok) c.resolve(msg.result); else c.reject(new Error(msg.error));
   }
-  attach(port);
+  // main passes no port: the first call starts the engine through restart()
+  if (port) attach(port);
 
   function call(method, payload = {}) {
     if (!cur && restart) attach(restart());
