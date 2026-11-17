@@ -76,6 +76,20 @@ describe('the litter scan', () => {
     expect(scanLitter(v).map((d) => d.rel)).toEqual(['qrules-p0QwE7', 'qrules-Zx9k2P']);
     expect(stillLitter(v, ['qrules-a8Bc2D', 'qrules-Zx9k2P'])).toEqual(['qrules-Zx9k2P']);
   });
+  it('flags a build folder only when it holds code alone and git tracks none of it, and checks again on Approve', async () => {
+    const v = repo();
+    put(v, 'web/dist/app.js', 'console.log(1);');
+    put(v, 'web/dist/app.js.map', '{}');
+    put(v, 'talks/dist/slides.pdf', '%PDF-1.4');
+    put(v, 'photos/coverage/cover.png', 'png');
+    put(v, 'site/dist/index.js', 'x');
+    g(v, 'add', 'site/dist/index.js');
+    g(v, 'commit', '-q', '-m', 'track build');
+    expect(scanLitter(v).map((d) => d.rel)).toEqual(['web/dist']);
+    put(v, 'web/dist/report.pdf', '%PDF-1.4');
+    expect(stillLitter(v, ['web/dist'])).toEqual([]);
+    expect(await trashLitter(v, ['web/dist', 'site/dist'], async () => { throw new Error('nothing should move'); })).toEqual([]);
+  });
   it('checks each folder again on Approve and moves only what is still litter to the Trash', async () => {
     const v = fresh();
     temp(v, ['qrules-a8Bc2D', 'qrules-Zx9k2P', 'qrules-p0QwE7']);

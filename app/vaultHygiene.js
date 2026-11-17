@@ -10,7 +10,8 @@ import { compactText } from './rules/hygiene.js';
 // TemporaryDirectory.* (Python), vitest-*, jest_*, tmp- or tmp_ with a random suffix, *.lock folders, and the
 // name-XXXXXX form mkdtemp gives, which counts only when the suffix mixes lower case, upper case and digits and three or
 // more sibling folders share the name before it (a test suite leaves many). Each rule names its kind and the
-// .gitignore pattern that covers it. A folder with any Markdown file or any file git tracks is never litter
+// .gitignore pattern that covers it. A folder with any Markdown file or any file git tracks is never litter, and a
+// build folder must hold code only (no document, image or data file)
 const mixed = (s) => /\d/.test(s) && /[a-z]/.test(s) && /[A-Z]/.test(s);
 const MKDTEMP = /^([a-z][a-z0-9]*(?:-[a-z0-9]+)*)-([A-Za-z0-9]{6})$/;
 export const SIBLINGS = 3;
@@ -27,9 +28,12 @@ export function litterKind(name) {
   return null;
 }
 
-// the size and file count of a folder. md: it holds a Markdown file, and the walk stops there. budget: entries left to
-// read in this sweep; a folder past it counts as unread, so it is never litter
-function measure(abs, budget) {
+// files a person keeps: documents, images, data and notes. A build folder that holds one is never litter
+const KEPT_FILE = /\.(md|markdown|txt|rtf|pdf|docx?|odt|pages|key|numbers|xlsx?|csv|pptx?|png|jpe?g|gif|webp|heic|tiff?|bmp|svg|mp4|mov|mp3|m4a|wav)$/i;
+
+// the size and file count of a folder. md: it holds a Markdown file (or, with codeOnly, any file a person keeps), and the
+// walk stops there. budget: entries left to read in this sweep; a folder past it counts as unread, so it is never litter
+function measure(abs, budget, codeOnly = false) {
   let bytes = 0;
   let files = 0;
   const stack = [abs];
@@ -42,7 +46,7 @@ function measure(abs, budget) {
       const p = path.join(d, e.name);
       if (e.isDirectory()) { stack.push(p); continue; }
       if (!e.isFile()) continue;
-      if (/\.md$/i.test(e.name)) return { bytes, files, md: true };
+      if (/\.md$/i.test(e.name) || (codeOnly && KEPT_FILE.test(e.name))) return { bytes, files, md: true };
       files++;
       try { bytes += statSync(p).size; } catch {}
     }
@@ -81,7 +85,7 @@ export function scanLitter(vault, { maxEntries = 400000, exec = execFileSync } =
       const r = rel ? `${rel}/${e.name}` : e.name;
       const k = litterKind(e.name);
       if (!k) { budget.left--; stack.push(r); continue; }
-      const m = measure(path.join(vault, r), budget);
+      const m = measure(path.join(vault, r), budget, k.kind === 'build');
       if (m.md || m.cut) continue;
       found.push({ rel: r, kind: k.kind, group: k.group ? `${rel}\0${k.group}` : null, bytes: m.bytes, files: m.files });
     }
@@ -191,7 +195,7 @@ function writeJson(file, value) {
 // the folders among dirs that are still litter when Approve runs: there, a litter name, no Markdown file and no file git
 // tracks. One git call for all of them
 export function stillLitter(vault, dirs, { exec = execFileSync } = {}) {
-  const live = dirs.filter((rel) => litterKind(path.basename(rel)) && existsSync(path.join(vault, rel)) && (() => { const m = measure(path.join(vault, rel), { left: 400000 }); return !m.md && !m.cut; })());
+  const live = dirs.filter((rel) => litterKind(path.basename(rel)) && existsSync(path.join(vault, rel)) && (() => { const m = measure(path.join(vault, rel), { left: 400000 }, litterKind(path.basename(rel)).kind === 'build'); return !m.md && !m.cut; })());
   const tracked = trackedIn(vault, live, { exec });
   if (!tracked) return [];
   return live.filter((rel) => !tracked.has(rel));
