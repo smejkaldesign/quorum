@@ -73,7 +73,7 @@ import { isOff, skipped } from './rules/common.js';
 import { folderMarkOf } from './rules/confidential.js';
 import { createMemorySweep, dueSweep, rescanTags, scanTags } from './memorySweep.js';
 import { RULE_LABELS, RULES } from './rules/index.js';
-import { addIgnores, backupNote, commitNotes, compactNote, trashLitter } from './vaultHygiene.js';
+import { addIgnores, commitNotes, prepareCompact, trashLitter } from './vaultHygiene.js';
 import { relatedLine } from './rules/nearDuplicates.js';
 import { DAILY_CAP, WRONG_NOTE_FIX, createDrafter, draftKind, evidenceRels, fallbackItem, unlinkItem, withDraft } from './memoryDraft.js';
 import { catchupHooks, createSaveSweeps, forkEngine, slotBinder, startMemoryEngine } from './memoryWiring.js';
@@ -3960,12 +3960,9 @@ async function runOp(item, o, { step, keep, written, vault }) {
     writeAtomic(abs, annotateLine(readFileSync(abs, 'utf8'), o));
   } else if (o.op === 'compact') {
     await step(`Saving a backup copy of ${o.rel}`);
-    const text = readFileSync(abs, 'utf8');
-    const c = compactNote(text);
-    if (!c.removed) throw new Error(`“${o.rel}” no longer repeats a block, so Quorum did not change it`);
-    const backup = backupNote(DATA_DIR, vault, o.rel);
+    const c = prepareCompact(DATA_DIR, vault, o.rel, o.hash);
     // the batch keeps the text from before, so Undo in the activity history puts the note back as it was
-    await step(`Saved the backup copy at ${backup}. Removing ${c.removed} repeated ${c.removed === 1 ? 'copy' : 'copies'} from ${o.rel}`);
+    await step(`Saved the backup copy at ${c.backup}. Removing ${c.removed} repeated ${c.removed === 1 ? 'copy' : 'copies'} from ${o.rel}`);
     keep(o.rel);
     writeAtomic(abs, c.text);
   } else if (o.op === 'addlink') {

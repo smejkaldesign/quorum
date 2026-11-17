@@ -9,7 +9,7 @@
 //      commits them on the current branch. A branch behind its upstream or a merge in progress stops it.
 // The folder walk and git status run once per full sweep in the memory engine (vaultHygiene.js scanHygiene) and reach
 // this rule as ctx.hygiene. This module reads no files, so the tests and the planner use the same functions.
-import { finding, plural, quote } from './common.js';
+import { finding, noteHash, plural, quote } from './common.js';
 import { secretKind } from './secrets.js';
 
 export const rule = { id: 'note.hygiene', version: 1, label: 'Vault upkeep: temp folders, runaway notes and uncommitted notes' };
@@ -150,7 +150,8 @@ function runawayFindings(notes, h) {
     const name = quote(x.note?.title ?? x.rel);
     const copies = reps.reduce((s, r) => s + r.count - 2, 0);
     const why = [big ? `is ${mb(size)}` : null, grew ? `grew from ${mb(before)} to ${mb(size)} in a week` : null].filter(Boolean).join(' and ');
-    const fix = reps.length ? { kind: 'compact', copies, blocks: reps.length } : null;
+    // the note's hash at the check: Approve refuses when the note changed since (vaultHygiene.js fileHash)
+    const fix = reps.length ? { kind: 'compact', copies, blocks: reps.length, hash: noteHash(x.text, x.chars ?? x.text.length) } : null;
     out.push(finding(rule, {
       key: `runaway:${x.rel}`, target: x.rel, notes: [x.rel],
       title: reps.length ? `${name} repeats ${reps.length === 1 ? `one block ${n(reps[0].count)} times` : `${reps.length} blocks ${n(reps.reduce((s, r) => s + r.count, 0))} times`}` : `${name} ${why}`,

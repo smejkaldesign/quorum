@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DOT_PATH, SECRET_NAME, compactText } from './rules/hygiene.js';
+import { noteHash, ruleText } from './rules/common.js';
 
 // Folder names tools and tests leave. Only names a known tool gives, so a folder a person named is never one:
 // TemporaryDirectory.* (Python), vitest-*, jest_*, tmp- or tmp_ with a random suffix, *.lock folders, and the
@@ -228,6 +229,18 @@ export function backupNote(dataDir, vault, rel, now = Date.now()) {
   return to;
 }
 export const compactNote = (text) => compactText(text);
+// the hash of a note's text as the hygiene rule saw it (rules/common.js noteHash over the text the rules read)
+export const fileHash = (text) => noteHash(ruleText(text), String(text).length);
+export const CHANGED = 'This note changed since the check. Check again.';
+// what a compact step writes: refuses when the note changed since the check (hash) or no longer repeats a block, and
+// saves the backup copy before it answers. Answers { text, removed, backup }; the caller writes text
+export function prepareCompact(dataDir, vault, rel, hash, now = Date.now()) {
+  const text = readFileSync(path.join(vault, rel), 'utf8');
+  if (hash && fileHash(text) !== hash) throw new Error(`“${rel}”: ${CHANGED}`);
+  const c = compactText(text);
+  if (!c.removed) throw new Error(`“${rel}” no longer repeats a block, so Quorum did not change it`);
+  return { text: c.text, removed: c.removed, backup: backupNote(dataDir, vault, rel, now) };
+}
 
 // stages and commits paths on the current branch, after the same checks the rule made: a branch checked out, nothing in
 // progress, not behind its upstream. Only the given paths go in the commit; anything else staged stays staged. Paths in

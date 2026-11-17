@@ -8,7 +8,7 @@ import { findingItem, itemLine } from '../reviewItems.js';
 import { approveFinding } from '../reviewApprove.js';
 import { effects, groupOf } from '../batchPlan.js';
 import { compactText, repeatedBlocks, run, rule } from '../rules/hygiene.js';
-import { addIgnores, backupNote, commitNotes, gitState, litterKind, recordSizes, scanHygiene, scanLitter, stillLitter, trashLitter } from '../vaultHygiene.js';
+import { CHANGED, addIgnores, backupNote, commitNotes, fileHash, gitState, litterKind, prepareCompact, recordSizes, scanHygiene, scanLitter, stillLitter, trashLitter } from '../vaultHygiene.js';
 
 // Synthetic vaults in the OS temp folder. Every name and line is made up.
 const NOW = Date.UTC(2026, 10, 16);
@@ -206,6 +206,22 @@ describe('runaway notes', () => {
     const h1 = recordSizes({ 'a.md': [[NOW - 9 * DAY, 1], [NOW - 3600000, 40]] }, [n], NOW).history;
     expect(h1['a.md']).toEqual([[NOW - 3600000, 40]]);
     expect(recordSizes(h1, [n], NOW + 7 * 3600000).history['a.md']).toEqual([[NOW - 3600000, 40], [NOW + 7 * 3600000, 50]]);
+  });
+  it('refuses on Approve when the note changed since the check, and backs up before it compacts', () => {
+    const v = fresh();
+    const data = fresh('qhyg-data-');
+    const text = `# Log\n${Array.from({ length: 30 }, () => block()).join('\n')}`;
+    put(v, 'ops/log.md', text);
+    const [f] = run({ notes: [note('ops/log.md', text)], hygiene: null, now: NOW });
+    expect(f.fix.hash).toBe(fileHash(text));
+    put(v, 'ops/log.md', `${text}\nA line the person added.\n`);
+    expect(() => prepareCompact(data, v, 'ops/log.md', f.fix.hash)).toThrow(`“ops/log.md”: ${CHANGED}`);
+    expect(readdirSync(data)).toEqual([]);
+    put(v, 'ops/log.md', text);
+    const c = prepareCompact(data, v, 'ops/log.md', f.fix.hash);
+    expect(c.removed).toBe(28);
+    expect(readFileSync(c.backup, 'utf8')).toBe(text);
+    expect(c.backup.startsWith(path.join(data, 'hygiene-backups'))).toBe(true);
   });
   it('writes a backup copy to the data folder', () => {
     const v = fresh();

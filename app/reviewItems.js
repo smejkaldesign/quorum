@@ -71,7 +71,7 @@ export function findingItem(f) {
   if (x.kind === 'tag' || x.kind === 'move-tag') ops.push({ op: 'tag', rel: f.rel, value: x.value });
   if (x.kind === 'move' || x.kind === 'move-tag') ops.push({ op: 'move', rel: f.rel, to: x.to });
   if (x.kind === 'trashdirs') ops.push({ op: 'trashdirs', dirs: x.dirs, ignore: x.ignore ?? [], gitignore: x.gitignore ?? null, bytes: x.bytes ?? 0, line: x.line });
-  if (x.kind === 'compact') ops.push({ op: 'compact', rel: f.rel, copies: x.copies });
+  if (x.kind === 'compact') ops.push({ op: 'compact', rel: f.rel, copies: x.copies, hash: x.hash });
   if (x.kind === 'commit') ops.push({ op: 'commit', paths: x.paths, message: x.message, branch: x.branch });
   return { ...base, ops };
 }

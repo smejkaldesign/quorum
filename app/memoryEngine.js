@@ -16,17 +16,10 @@ import { createContradictionAgent } from './contradictionAgent.js';
 import { createMemorySweep, rescanTags, scanTags } from './memorySweep.js';
 import { analyze as contradictionPass } from './rules/contradictions.js';
 import { scanHygiene } from './vaultHygiene.js';
+import { MAX_RULE_TEXT, ruleText } from './rules/common.js';
 
-export const MAX_RULE_TEXT = 1000000;
-
-// the text the rules read for a note: the whole text, or its head cut at a line end. Main cuts it before it sends the
-// note, so the copy that reaches the engine holds no reference to the whole text
-export function ruleText(text) {
-  const t = String(text ?? '');
-  if (t.length <= MAX_RULE_TEXT) return t;
-  const cut = t.lastIndexOf('\n', MAX_RULE_TEXT);
-  return cut > 0 ? t.slice(0, cut) : t.slice(0, MAX_RULE_TEXT);
-}
+// the text cut the rules read (rules/common.js), exported here for the callers that already import it
+export { MAX_RULE_TEXT, ruleText };
 
 export function createMemoryEngine({ dataDir, ask = async () => { throw new Error('No model'); }, emit = () => {}, log = () => {}, now = () => Date.now() }) {
   let vault = null;

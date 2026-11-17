@@ -18,6 +18,25 @@ const TEMPLATE_SYNTAX = /\{\{[^}]*\}\}|<%[\s\S]*?%>/;
 export const isTemplate = (rel, props = {}) => TEMPLATE_FOLDER.test(rel) || Object.values(props).some((v) => (Array.isArray(v) ? v : [v]).some((x) => TEMPLATE_SYNTAX.test(String(x ?? ''))));
 // generated reports and templates: no rule reads them
 export const skipped = (n) => isGenerated(n.rel, n.note?.props ?? {}) || isTemplate(n.rel, n.note?.props ?? {});
+export const MAX_RULE_TEXT = 1000000;
+
+// A note longer than MAX_RULE_TEXT reaches the rules as its head (memoryEngine.js).
+// the text the rules read for a note: the whole text, or its head cut at a line end. Main cuts it before it sends the
+// note, so the copy that reaches the engine holds no reference to the whole text
+export function ruleText(text) {
+  const t = String(text ?? '');
+  if (t.length <= MAX_RULE_TEXT) return t;
+  const cut = t.lastIndexOf('\n', MAX_RULE_TEXT);
+  return cut > 0 ? t.slice(0, cut) : t.slice(0, MAX_RULE_TEXT);
+}
+
+// a short hash of a note's text as the rules read it, with its full length: FNV-1a over the text
+export function noteHash(text, chars = String(text ?? '').length) {
+  const t = String(text ?? '');
+  let h = 0x811c9dc5;
+  for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return `${h.toString(16).padStart(8, '0')}:${chars}`;
+}
 export const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 export const quote = (t) => `“${t}”`;
 // a note that opens a folder or the vault (index, README, CLAUDE): it lists other notes and follows no folder schema
