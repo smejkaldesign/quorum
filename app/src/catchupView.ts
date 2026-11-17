@@ -52,7 +52,7 @@ export function planRows(e: CatchupEstimate): [string, string][] {
   if (e.pairs != null) rows.push(['Pairs to judge', `About ${fmt(e.pairs)}, an estimate`]);
   if (e.seconds != null) { const d = duration(e.seconds); rows.push(['Time', `${d[0].toUpperCase()}${d.slice(1)}, an estimate`]); }
   // what the model calls would cost at API rates; on a Claude Code sign-in they count against the plan's limits instead
-  if (e.costLabel) rows.push(['Cost', `${e.costLabel}, an estimate`]);
+  if (e.costLabel) rows.push(['API-rate equivalent', `${e.costLabel}, an estimate. A Claude plan is not billed per token; the check uses the plan's usage.`]);
   return rows;
 }
 // the same plan in one sentence, for onboarding

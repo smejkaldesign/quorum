@@ -32,7 +32,9 @@ describe('the plan before a pass', () => {
     expect(p.costLabel).toMatch(/^About \$\d+(\.\d\d)? at API rates$/);
     // four calls at once take a quarter of the time
     expect(p.seconds).toBe(Math.round(((40 + judgeCalls(p.pairs)) * SECONDS_PER_CALL) / 4));
-    expect(planRows({ notes: 1, read: 1000, claimCalls: 40, draftCalls: 0, calls: 40, drafting: true, costLabel: p.costLabel }).find((r) => r[0] === 'Cost')[1]).toBe(`${p.costLabel}, an estimate`);
+    expect(planRows({ notes: 1, read: 1000, claimCalls: 40, draftCalls: 0, calls: 40, drafting: true, costLabel: p.costLabel }).find((r) => r[0] === 'API-rate equivalent')[1]).toBe(`${p.costLabel}, an estimate. A Claude plan is not billed per token; the check uses the plan's usage.`);
+    // the drafts are in the figure too
+    expect(planOf({ read: 1000, claimCalls: 40, draftCalls: 10, promptChars: 4e6 }, null, 4).cost).toBeGreaterThan(p.cost);
     // a pass that ran four calls at once took a quarter of the wall time per call
     expect(secondsPerCall({ done: 100, startedAt: 0, endedAt: 400000, parallel: 4 })).toBe(16);
   });

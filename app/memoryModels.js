@@ -37,6 +37,9 @@ export const JUDGE_SYSTEM_TOKENS = 330;
 export const JUDGE_OUT_TOKENS = 150;
 export const JUDGE_BATCH = 8;
 export const JUDGE_SECONDS = 33;
+// a draft call (memoryDraft.js) reads the notes of one item and writes one fix
+export const DRAFT_IN_TOKENS = 3000;
+export const DRAFT_OUT_TOKENS = 800;
 export const CALL_OVERHEAD_TOKENS = 1463;
 export const CACHE_WRITE = 1.25;
 
@@ -49,16 +52,18 @@ export function dollars(alias, input, output) {
 }
 
 export const judgeCalls = (pairs) => Math.ceil(pairs / JUDGE_BATCH);
-// what a pass costs at API rates. claims: { promptChars, notes, calls } of the claim calls; pairs: the pairs to judge.
-// inputTokens counts Claude Code's part at the cache-write price, as input tokens of equal cost
-export function passCost({ promptChars = 0, notes = 0, calls = 0 } = {}, pairs = 0, { model = MEMORY_MODELS.claims, answer = CLAIM_ANSWER } = {}) {
+// what a pass costs at API rates. claims: { promptChars, notes, calls } of the claim calls; pairs: the pairs to judge;
+// drafts: the draft calls. inputTokens counts Claude Code's part at the cache-write price, as input tokens of equal cost
+export function passCost({ promptChars = 0, notes = 0, calls = 0 } = {}, pairs = 0, { model = MEMORY_MODELS.claims, answer = CLAIM_ANSWER, drafts = 0 } = {}) {
   const claimIn = Math.round(tokensOf(promptChars) + calls * CALL_OVERHEAD_TOKENS * CACHE_WRITE);
   const claimOut = notes * claimMeasure(model, answer).outPerNote;
   const jc = judgeCalls(pairs);
   const judgeIn = Math.round(pairs * JUDGE_PAIR_TOKENS + jc * (JUDGE_SYSTEM_TOKENS + CALL_OVERHEAD_TOKENS * CACHE_WRITE));
   const judgeOut = pairs * JUDGE_OUT_TOKENS;
-  const usd = dollars(model, claimIn, claimOut) + dollars(MEMORY_MODELS.judge, judgeIn, judgeOut);
-  return { inputTokens: claimIn + judgeIn, outputTokens: claimOut + judgeOut, judgeCalls: jc, usd };
+  const draftIn = Math.round(drafts * (DRAFT_IN_TOKENS + CALL_OVERHEAD_TOKENS * CACHE_WRITE));
+  const draftOut = drafts * DRAFT_OUT_TOKENS;
+  const usd = dollars(model, claimIn, claimOut) + dollars(MEMORY_MODELS.judge, judgeIn, judgeOut) + dollars(MEMORY_MODELS.draft, draftIn, draftOut);
+  return { inputTokens: claimIn + judgeIn + draftIn, outputTokens: claimOut + judgeOut + draftOut, judgeCalls: jc, usd };
 }
 
 // "About $0.42 at API rates", or "Less than $0.01 at API rates" for a tiny pass

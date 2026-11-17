@@ -26,7 +26,7 @@ export function secondsPerCall(last) {
 // notes still to read; claimed and judged, the notes and pairs the agent has stored, for the pairs per note;
 // promptChars, the characters the claim calls send; parallel, the calls the pass runs at once. Pairs, seconds and the
 // cost are estimates: a pair to judge is only known once both of its notes are read. The cost is at API rates
-// (memoryModels.js); drafts are left out of it, since a draft's size depends on its item
+// (memoryModels.js), drafts included at a typical size
 export function planOf({ saved = 0, read = 0, claimCalls = 0, draftCalls = 0, claimed = 0, judged = 0, gated = 0, promptChars = 0 } = {}, last = null, parallel = 1) {
   const perNote = claimed >= HISTORY_NOTES ? judged / claimed : PAIRS_PER_NOTE;
   // gated: the stored pairs the local gate kept from the judge (decide/gate.js); once enough pairs are stored, the
@@ -34,7 +34,7 @@ export function planOf({ saved = 0, read = 0, claimCalls = 0, draftCalls = 0, cl
   const kept = judged >= HISTORY_NOTES ? 1 - gated / judged : 1;
   const pairs = Math.round(read * perNote * kept);
   const perCall = secondsPerCall(last);
-  const { usd } = passCost({ promptChars, notes: read, calls: claimCalls }, pairs);
+  const { usd } = passCost({ promptChars, notes: read, calls: claimCalls }, pairs, { drafts: draftCalls });
   // the pairs go to the judge several to a call
   const calls = claimCalls + draftCalls + judgeCalls(pairs);
   return { toCheck: saved + read, saved, pairs, seconds: Math.round((calls * perCall) / Math.max(1, parallel)), perCall, cost: usd, costLabel: costLabel(usd) };
