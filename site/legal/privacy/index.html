@@ -56,6 +56,7 @@
         <li>Access code. During the beta, the app checks your access code with our relay when you enter it. After that it reports once a day: the code, a random install id created on your Mac, the edition and the app version. We use this to count active installs. We keep each install's record for 12 months after its last report.</li>
         <li>Features. Once an hour the app asks our relay which features are turned on. The request carries no code, install id or account.</li>
         <li>Updates. The app checks GitHub Releases for new versions and downloads them from there. GitHub receives your IP address under GitHub's privacy statement.</li>
+        <li>Local models. Quorum downloads two open models once from Hugging Face (huggingface.co); the request carries your IP address and an app user agent, and no note content.</li>
       </ul>
       <p>Our relay's host receives your IP address with each request. Relay logs are deleted within 30 days.</p>
 

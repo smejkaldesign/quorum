@@ -47,6 +47,14 @@ describe('model download', () => {
     expect(existsSync(path.join(dir, 'embed/m.onnx.part'))).toBe(false);
   });
 
+  it('names itself in every request with the app version and sends nothing else about the person', async () => {
+    const s = server({ fail: 1 });
+    await run({ dir: tmp(), manifest: manifest(), fetch: s.fetch, userAgent: 'Quorum/1.2.3' });
+    expect(s.seen.length).toBeGreaterThan(2);
+    for (const r of s.seen) expect(Object.keys(r.headers).filter((k) => k !== 'Range')).toEqual(['User-Agent']);
+    for (const r of s.seen) expect(r.headers['User-Agent']).toBe('Quorum/1.2.3');
+  });
+
   it('keeps files already on disk with the right hash and downloads nothing', async () => {
     const dir = tmp();
     mkdirSync(path.join(dir, 'embed'), { recursive: true }); mkdirSync(path.join(dir, 'nli'), { recursive: true });

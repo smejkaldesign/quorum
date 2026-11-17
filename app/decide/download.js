@@ -45,7 +45,8 @@ export function modelsLabel(s) {
 }
 
 // enabled: decide/index.js DECIDER_ON; while it is false start() downloads nothing
-export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalThis.fetch, supported = modelsSupported(), enabled = true, conditions = async () => ({ ok: true }),
+// userAgent: the one header besides Range that a request carries, Quorum/<version> in the app
+export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalThis.fetch, userAgent = 'Quorum', supported = modelsSupported(), enabled = true, conditions = async () => ({ ok: true }),
   retries = 6, backoffMs = 5000, maxBackoffMs = 5 * 60 * 1000, waitMs = 5 * 60 * 1000, retryLaterMs = 60 * 60 * 1000, checkEvery = 8 * MB,
   hash = hashFile, sleep = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); }), setTimer = (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return t; }, clearTimer = clearTimeout,
   onChange = () => {}, log = () => {} }) {
@@ -90,7 +91,7 @@ export function createModelDownload({ dir, manifest = MANIFEST, fetch = globalTh
     let h = createHash('sha256');
     if (have) await new Promise((resolve, reject) => createReadStream(part).on('data', (c) => h.update(c)).on('end', resolve).on('error', reject));
     const ctl = new AbortController();
-    const res = await fetch(f.url, { headers: have ? { Range: `bytes=${have}-` } : {}, signal: ctl.signal, redirect: 'follow' });
+    const res = await fetch(f.url, { headers: { 'User-Agent': userAgent, ...(have ? { Range: `bytes=${have}-` } : {}) }, signal: ctl.signal, redirect: 'follow' });
     if (!allowedHost(res.url || f.url)) { await res.body?.cancel().catch(() => {}); throw failure('host_refused', `${f.id}/${f.file}: redirected to ${res.url}`); }
     if (!res.ok) throw new Error(`${f.id}/${f.file}: the server answered ${res.status}`);
     if (have && res.status !== 206) { h = createHash('sha256'); have = 0; }

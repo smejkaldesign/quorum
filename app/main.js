@@ -3613,7 +3613,7 @@ const memoryEngine = startMemoryEngine({
 // the decision layer's models download in the background into the data folder after launch (decide/download.js);
 // Settings > Memory shows the status. Until they are on disk and verified, every check goes to Claude
 // net.request goes through Chromium's network stack, so the macOS proxy and PAC settings apply (decide/netFetch.js)
-const modelDownload = createModelDownload({ dir: path.join(DATA_DIR, 'models'), enabled: DECIDER_ON, fetch: netFetch(net), conditions: macConditions, onChange: (s) => toUI('models-status', s), log });
+const modelDownload = createModelDownload({ dir: path.join(DATA_DIR, 'models'), enabled: DECIDER_ON, fetch: netFetch(net), userAgent: `Quorum/${app.getVersion()}`, conditions: macConditions, onChange: (s) => toUI('models-status', s), log });
 ipcMain.handle('models-status', () => modelDownload.status());
 const contradictionAgent = memoryEngine.agent;
 // each drafting run is agent activity; Cancel stops the model call, and the item is drafted again later

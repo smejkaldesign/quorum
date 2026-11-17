@@ -16,7 +16,7 @@ export function LocalModelsCard() {
       <h3>Local models</h3>
       <div className="set-card">
         <Row icon={<IconDownload width={18} height={18} />} title={s.label}
-          desc="Two small models that check pairs of notes on this Mac before Quorum asks Claude. Until they are ready, every check goes to Claude." />
+          desc="Two small models that check pairs of notes on this Mac before Quorum asks Claude. Until they are ready, every check goes to Claude. Quorum downloads the two open models once from Hugging Face (huggingface.co); the request carries your IP address and an app user agent, and no note content." />
       </div>
     </>
   );
