@@ -18,15 +18,30 @@ export const TIMEOUT_MS = 5000;
 // T1 stops after this many failures in a row, so a broken runtime costs a few timeouts and then nothing
 export const MAX_FAILURES = 3;
 const CACHE = 5000;
+// the models leave memory after this long without a pair to score, and load again (about half a second) for the next one
+export const IDLE_MS = 10 * 60 * 1000;
 
 const textOf = (c) => String(c?.quote || [c?.subject, c?.attribute, c?.value].filter(Boolean).join(' ')).trim();
 const within = (p, ms) => new Promise((resolve, reject) => { const t = setTimeout(() => reject(new Error(`no answer in ${ms} ms`)), ms); p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); }); });
 
-export function createDecider({ load = loadModels, thresholds = THRESHOLDS, timeoutMs = TIMEOUT_MS, log = () => {}, now = Date.now } = {}) {
-  const t1 = { state: 'idle', error: null, loadMs: null, calls: 0, drops: 0, failures: 0, streak: 0 };
+export function createDecider({ load = loadModels, thresholds = THRESHOLDS, timeoutMs = TIMEOUT_MS, idleMs = IDLE_MS, log = () => {}, now = Date.now } = {}) {
+  const t1 = { state: 'idle', error: null, loadMs: null, calls: 0, drops: 0, failures: 0, streak: 0, unloads: 0 };
   let models = null;
   let loading = null;
+  let busy = 0;
+  let idle = null;
   const vectors = new Map();
+
+  const unload = () => {
+    idle = null;
+    if (busy || !models) return;
+    const m = models;
+    models = null; loading = null; vectors.clear();
+    t1.state = 'idle'; t1.unloads++;
+    log('decider', 't1 unloaded');
+    Promise.resolve().then(() => m.release?.()).catch((e) => log('decider', 't1 release failed', String(e?.message ?? e)));
+  };
+  const rest = () => { clearTimeout(idle); idle = setTimeout(unload, idleMs); idle.unref?.(); };
 
   const ensure = () => {
     if (models || t1.state === 'missing' || t1.state === 'off') return Promise.resolve(models);
@@ -70,6 +85,7 @@ export function createDecider({ load = loadModels, thresholds = THRESHOLDS, time
       const ta = textOf(a);
       const tb = textOf(b);
       if (!ta || !tb) return pass('t0', 'no text');
+      busy++;
       try {
         if (!(await ensure())) return pass('t0', 't1 missing');
         if (t1.state !== 'ready') return pass('t0', `t1 ${t1.state}`);
@@ -88,6 +104,9 @@ export function createDecider({ load = loadModels, thresholds = THRESHOLDS, time
         if (t1.streak >= MAX_FAILURES) { t1.state = 'off'; models = null; }
         log('decider', 't1 failed', t1.error, t1.state);
         return pass('t0', 't1 failed');
+      } finally {
+        busy--;
+        if (models) rest();
       }
     },
 
@@ -96,7 +115,7 @@ export function createDecider({ load = loadModels, thresholds = THRESHOLDS, time
 
     tiers: () => [
       { id: 't0', name: 'Rules', state: 'ready' },
-      { id: 't1', name: 'Bundled models', state: t1.state, error: t1.error, loadMs: t1.loadMs, calls: t1.calls, drops: t1.drops, failures: t1.failures },
+      { id: 't1', name: 'Bundled models', state: t1.state, error: t1.error, loadMs: t1.loadMs, calls: t1.calls, drops: t1.drops, failures: t1.failures, unloads: t1.unloads },
     ],
   };
 }

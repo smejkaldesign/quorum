@@ -56,6 +56,8 @@ export async function loadModels({ dir = MODELS_DIR, threads = 2 } = {}) {
   const labels = json(dir, 'nli', 'config.json').id2label;
   const order = [0, 1, 2].map((i) => labels[i]);
   return {
+    // frees both sessions; the decider calls it after an idle period
+    release: () => Promise.all([embedS.release(), nliS.release()]),
     async embed(texts) {
       const out = await embedS.run(batch(ort, texts.map((t) => capped(embedT.encode(String(t)))), true));
       const h = out.last_hidden_state;

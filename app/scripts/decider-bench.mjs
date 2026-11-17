@@ -2,7 +2,7 @@
 // The decision layer's performance budget: a child process plays the memory engine's utility process and runs the
 // decider over the synthetic pairs (test/fixtures/deciderPairs.js), each text made new per round so no vector comes
 // from the cache. The parent plays main and measures its own event loop delay and heap while the child works. Prints
-// one JSON line: per-pair latency, the child's RSS, main's lag and heap. No Claude call, no vault content.
+// one JSON line: per-pair latency, the child's RSS while it scores and after the models unload, main's lag and heap. No Claude call, no vault content.
 //
 //   node --expose-gc scripts/decider-bench.mjs [--rounds 4] [--fake]
 //
@@ -25,7 +25,8 @@ if (args.includes('--child')) {
   const hold = (ms) => { const end = performance.now() + ms; while (performance.now() < end); };
   const stand = { embed: async (t) => { hold(25); return t.map(() => Float32Array.from({ length: 384 }, () => 1 / Math.sqrt(384))); }, nli: async (p) => { hold(25); return p.map(() => ({ contradiction: 0.5, entailment: 0.1, neutral: 0.4 })); } };
   const rss0 = process.memoryUsage().rss;
-  const d = createDecider({ load: fake ? async () => stand : () => loadModels() });
+  // a short idle period, so the run also measures what the engine holds after the models leave memory
+  const d = createDecider({ load: fake ? async () => stand : () => loadModels(), idleMs: 1000 });
   const at = performance.now();
   await d.warm();
   const loadMs = performance.now() - at;
@@ -38,7 +39,12 @@ if (args.includes('--child')) {
     if (out.tier === 't1') ms.push(performance.now() - t);
     peak = Math.max(peak, process.memoryUsage().rss);
   }
-  process.send({ pairs: ms.length, pairMeanMs: ms.reduce((a, x) => a + x, 0) / (ms.length || 1), pairP50Ms: pct(ms, 0.5), pairP95Ms: pct(ms, 0.95), loadMs, engineRssStartMB: rss0 / 1e6, engineRssPeakMB: peak / 1e6, tiers: d.tiers() });
+  const active = process.memoryUsage().rss;
+  await new Promise((r) => setTimeout(r, 1500));
+  globalThis.gc?.();
+  await new Promise((r) => setTimeout(r, 1000));
+  const idleRss = process.memoryUsage().rss;
+  process.send({ pairs: ms.length, pairMeanMs: ms.reduce((a, x) => a + x, 0) / (ms.length || 1), pairP50Ms: pct(ms, 0.5), pairP95Ms: pct(ms, 0.95), loadMs, engineRssStartMB: rss0 / 1e6, engineRssPeakMB: peak / 1e6, engineRssActiveMB: active / 1e6, engineRssIdleMB: idleRss / 1e6, tiers: d.tiers() });
   process.exit(0);
 }
 
@@ -46,7 +52,7 @@ globalThis.gc?.();
 const heapStart = process.memoryUsage().heapUsed;
 const lag = monitorEventLoopDelay({ resolution: 5 });
 lag.enable();
-const child = fork(fileURLToPath(import.meta.url), ['--child', '--rounds', String(rounds), ...(fake ? ['--fake'] : [])], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
+const child = fork(fileURLToPath(import.meta.url), ['--child', '--rounds', String(rounds), ...(fake ? ['--fake'] : [])], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'], execArgv: ['--expose-gc'] });
 // main keeps doing small work while the child runs, as it does while the engine sweeps
 const tick = setInterval(() => { JSON.stringify({ at: Date.now(), list: Array.from({ length: 200 }, (_, i) => i) }); }, 10);
 const report = await new Promise((resolve, reject) => { child.on('message', resolve); child.on('exit', (code) => code && reject(new Error(`child exited ${code}`))); });

@@ -170,6 +170,19 @@ describe('decider decisions', () => {
     for (const n of NOTES) expect(noteRule(n).read, n.rel).toBe(n.truth);
   });
 
+  it('unloads the models after an idle period and loads them again for the next pair', async () => {
+    const made = [];
+    const load = vi.fn(async () => { const m = { ...fake(SAME), release: vi.fn(async () => {}) }; made.push(m); return m; });
+    const d = createDecider({ load, idleMs: 40 });
+    expect((await d.relatedPair(pairA, pairB)).drop).toBe(true);
+    expect(tier(d, 't1').state).toBe('ready');
+    await new Promise((r) => setTimeout(r, 120));
+    expect(made[0].release).toHaveBeenCalledTimes(1);
+    expect(tier(d, 't1')).toMatchObject({ state: 'idle', unloads: 1 });
+    expect((await d.relatedPair(pairA, pairB)).drop).toBe(true);
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
   it('reports both tiers', async () => {
     const d = createDecider({ load: async () => fake(SAME) });
     expect(d.tiers().map((t) => [t.id, t.state])).toEqual([['t0', 'ready'], ['t1', 'idle']]);
