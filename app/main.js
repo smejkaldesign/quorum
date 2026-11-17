@@ -3893,7 +3893,9 @@ async function runOp(item, o, { step, keep, written, vault }) {
     const moved = await trashLitter(vault, o.dirs, (abs) => shell.trashItem(abs));
     if (!moved.length) throw new Error('None of the folders are litter any more, so Quorum moved nothing');
     if (o.gitignore && o.ignore?.length) {
-      const added = addIgnores(o.gitignore, o.ignore.filter((p) => moved.some((d) => p === `/${d}/`)));
+      // anchored patterns for the folders moved, in the vault's own .gitignore (vaultHygiene.js gitState)
+      const gone = new Set(moved.map((d) => `/${d}/`));
+      const added = addIgnores(o.gitignore, o.ignore.filter((p) => gone.has(p)));
       if (added.length) await step(`Adding ${added.length} ${added.length === 1 ? 'pattern' : 'patterns'} to ${path.basename(o.gitignore)}`);
     }
     vindex.sync();

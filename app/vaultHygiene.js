@@ -140,10 +140,9 @@ export function gitState(vault, { exec = execFileSync, skip = () => false } = {}
   const merging = existsSync(path.join(gitDir, 'MERGE_HEAD')) ? 'merge'
     : existsSync(path.join(gitDir, 'rebase-merge')) || existsSync(path.join(gitDir, 'rebase-apply')) ? 'rebase'
       : existsSync(path.join(gitDir, 'CHERRY_PICK_HEAD')) ? 'cherry-pick' : null;
-  // the .gitignore an ignore entry goes in: the vault's own, else the repository's
+  // the .gitignore an ignore entry goes in: the vault's own only. Quorum never writes to a .gitignore above the vault
   const own = path.join(vault, '.gitignore');
-  const root = path.join(top, '.gitignore');
-  const gitignore = existsSync(own) ? own : existsSync(root) ? root : null;
+  const gitignore = existsSync(own) ? own : null;
   return { repo: true, top, prefix, branch, upstream, behind, merging, gitignore, dirty };
 }
 

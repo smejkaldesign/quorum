@@ -109,14 +109,14 @@ describe('the litter scan', () => {
     expect(existsSync(path.join(v, 'project-finale'))).toBe(true);
   });
   it('writes one grouped item that says what Approve does, with git ignore patterns when the vault has a .gitignore', () => {
-    const litter = [
-      ...Array.from({ length: 3593 }, (_, i) => ({ rel: `qrules-a${String(i).padStart(4, '0')}Z`, kind: 'temp', ignore: 'qrules-??????/', bytes: 26800, files: 3 })),
-    ];
+    const litter = Array.from({ length: 3593 }, (_, i) => ({ rel: `qrules-a${String(i).padStart(4, '0')}Z`, kind: 'temp', ignore: `/qrules-a${String(i).padStart(4, '0')}Z/`, bytes: 26800, files: 3 }));
     const [f] = run({ notes: [], hygiene: { litter, git: { repo: true, gitignore: '/v/.gitignore', dirty: [] } }, now: NOW });
     expect(f.ruleId).toBe(rule.id);
     expect(f.proposal).toBe('Move 3,593 temp folders (92 MB) from test runs to the Trash and ignore them in git.');
     expect(f.title).toBe('3,593 temp folders from test runs take 92 MB of the vault');
-    expect(f.fix).toMatchObject({ kind: 'trashdirs', ignore: ['qrules-??????/'], gitignore: '/v/.gitignore' });
+    expect(f.fix).toMatchObject({ kind: 'trashdirs', gitignore: '/v/.gitignore' });
+    expect(f.fix.ignore).toHaveLength(3593);
+    expect(f.fix.ignore[0]).toBe('/qrules-a0000Z/');
     const item = findingItem(f);
     expect(item.title).toBe(f.title);
     expect(itemLine(item)).toBe('Move 3,593 temp folders (92 MB) from test runs to the Trash and ignore them in git');
@@ -125,14 +125,24 @@ describe('the litter scan', () => {
     expect(noGit.proposal).toBe('Move 1 temp folder (26 KB) from test runs to the Trash.');
     expect(noGit.fix.ignore).toEqual([]);
   });
-  it('adds each ignore pattern once', () => {
+  it('adds each anchored pattern once', () => {
     const v = fresh();
     put(v, '.gitignore', '.DS_Store');
-    expect(addIgnores(path.join(v, '.gitignore'), ['qrules-??????/', '*.lock/'])).toEqual(['qrules-??????/', '*.lock/']);
-    expect(addIgnores(path.join(v, '.gitignore'), ['qrules-??????/'])).toEqual([]);
+    expect(addIgnores(path.join(v, '.gitignore'), ['/qrules-a8Bc2D/', '/tools/TemporaryDirectory.k3j2l1/'])).toEqual(['/qrules-a8Bc2D/', '/tools/TemporaryDirectory.k3j2l1/']);
+    expect(addIgnores(path.join(v, '.gitignore'), ['/qrules-a8Bc2D/'])).toEqual([]);
     const text = readFileSync(path.join(v, '.gitignore'), 'utf8');
     expect(text.startsWith('.DS_Store\n')).toBe(true);
-    expect(text.match(/qrules-\?{6}\//g)).toHaveLength(1);
+    expect(text.match(/^\/qrules-a8Bc2D\/$/gm)).toHaveLength(1);
+  });
+  it('writes only to the vault’s own .gitignore, never the repository’s', () => {
+    const top = repo();
+    put(top, 'MyBrain/notes/n.md', '# N\n');
+    expect(gitState(path.join(top, 'MyBrain')).gitignore).toBeNull();
+    const [f] = run({ notes: [], hygiene: { litter: [{ rel: 'qrules-a8Bc2D', kind: 'temp', ignore: '/qrules-a8Bc2D/', bytes: 10 }], git: gitState(path.join(top, 'MyBrain')) }, now: NOW });
+    expect(f.fix.ignore).toEqual([]);
+    expect(f.proposal).not.toMatch(/ignore/);
+    put(top, 'MyBrain/.gitignore', '');
+    expect(gitState(path.join(top, 'MyBrain')).gitignore).toBe(path.join(top, 'MyBrain', '.gitignore'));
   });
 });
 
