@@ -1,12 +1,13 @@
 // Main's side of the memory engine (memoryHost.js) against the real engine in a worker thread. Every note is made up;
-// no model is called.
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+// the model is a fake.
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createVaultIndex } from '../vindex.js';
 import { createMemoryHost } from '../memoryHost.js';
+import { synthModel, writeSynthVault } from './fixtures/synthVault.js';
 
 const WORKER = new URL('../memoryWorker.js', import.meta.url);
 let dirs = [];
@@ -34,5 +35,36 @@ describe('the memory host', () => {
     const r = await host.sweep('first');
     expect(forks).toBe(1);
     expect(r.state.last.notes).toBe(5);
+  });
+});
+
+describe('the memory host after the engine stops', () => {
+  it('sends a fresh engine every note, so its sweep sees the whole vault and no stored claim is dropped', async () => {
+    const vault = tmp();
+    const data = tmp();
+    writeSynthVault(vault, { notes: 60 });
+    const ix = createVaultIndex({ vault, isExcludedPath: () => false, isExcludedText: () => false, redact: (t) => t, onChange: () => {} });
+    ix.sync();
+    const workers = [];
+    const host = createMemoryHost({
+      port: null, restart: () => { const w = new Worker(WORKER, { workerData: { dataDir: data } }); workers.push(w); return w; },
+      index: () => ix, vault: () => vault, mayRead: () => true, model: async (prompt) => synthModel(prompt),
+      cond: () => ({ enabled: true, cap: 0, busy: false, idleMs: 0, drafts: true, bar: null, folders: {}, terms: [] }),
+    });
+    hosts.push(host);
+    await host.refresh();
+    for (let i = 0; i < 3; i++) await host.agent.tick({ uncapped: true });
+    const stored = () => Object.keys(JSON.parse(readFileSync(path.join(data, 'memory-contradictions.json'), 'utf8')).claims).length;
+    const before = stored();
+    expect(before).toBeGreaterThan(20);
+    // the engine dies (a crash or out of memory); the next call starts a new one
+    const gone = new Promise((r) => workers[0].once('exit', r));
+    await workers[0].terminate();
+    await gone;
+    const r = await host.sweep('full');
+    expect(workers).toHaveLength(2);
+    expect(r.state.last.notes).toBe(ix.rels().length);
+    await host.refresh();
+    expect(stored()).toBe(before);
   });
 });

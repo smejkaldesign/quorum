@@ -94,8 +94,14 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
       const r = new Set(rels);
       const k = new Set(keys);
       let n = 0;
-      for (const rel of Object.keys(s.claims)) if (!r.has(rel)) { delete s.claims[rel]; n++; }
-      for (const key of Object.keys(s.judged)) if (!k.has(key) && !wantJudge.has(key) && !inflight.has(key)) { delete s.judged[key]; n++; }
+      // a sweep that names less than half of the notes with stored claims is taken for a vault read only in part (an
+      // engine that restarted, a folder that is offline): claims and verdicts each cost a model call, so they stay
+      const gone = Object.keys(s.claims).filter((rel) => !r.has(rel));
+      const partial = gone.length > 20 && gone.length * 2 > Object.keys(s.claims).length;
+      if (!partial) {
+        for (const rel of gone) { delete s.claims[rel]; n++; }
+        for (const key of Object.keys(s.judged)) if (!k.has(key) && !wantJudge.has(key) && !inflight.has(key)) { delete s.judged[key]; n++; }
+      }
       // a failure only blocks a retry for a day, so an older one is kept no longer
       for (const [id, f] of Object.entries(s.failed)) if (!(now() - f.at < RETRY_MS)) { delete s.failed[id]; n++; }
       if (n) save();

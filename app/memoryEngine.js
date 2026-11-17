@@ -35,6 +35,8 @@ export function createMemoryEngine({ dataDir, ask = async () => { throw new Erro
   let resolve = () => null;
   let list = [];
   let tagScan = null;
+  // how many notes main's index held at the last sync. The engine sweeps and prunes only when it holds them all
+  let expected = 0;
   // what main says holds now: { enabled, cap, busy, idleMs, drafts, bar, folders, terms, confidentialFolders }
   let cond = { enabled: false, cap: 0, busy: false, idleMs: Infinity, drafts: false, bar: null, folders: {}, terms: [] };
   const sweeps = createMemorySweep({ file: path.join(dataDir, 'memory-findings.json'), now });
@@ -58,7 +60,12 @@ export function createMemoryEngine({ dataDir, ask = async () => { throw new Erro
   const lower = (t) => String(t).toLowerCase();
   // suggest.js isExcluded, on the term list main sends
   const excluded = (rel) => { const terms = cond.terms ?? []; if (!terms.length) return false; const l = lower(rel); return terms.some((t) => l.includes(t)); };
-  const contradictions = () => ({ provider: cond.drafts === true ? agent.provider : null, bar: cond.bar ?? null });
+  const complete = () => notes.size >= expected;
+  const need = () => { if (!complete()) throw new Error(`The memory engine holds ${notes.size} of ${expected} notes`); };
+  // the agent's provider, with its prune of stored claims and verdicts left out while the engine misses notes: a
+  // claim costs a model call, so it is never dropped for a note the engine was not sent
+  const provider = { ...agent.provider, end: (rels, keys) => (complete() ? agent.provider.end(rels, keys) : log('memory engine', 'prune skipped', notes.size, expected)) };
+  const contradictions = () => ({ provider: cond.drafts === true ? provider : null, bar: cond.bar ?? null });
   const agentView = () => ({ status: agent.status(), pendingCalls: agent.pendingCalls(), pendingNotes: agent.pendingNotes() });
 
   // meta: [[rel, mtime, size, inbound, outbound, mayRead]] for every note the index holds now; full: the notes whose
@@ -82,6 +89,7 @@ export function createMemoryEngine({ dataDir, ask = async () => { throw new Erro
     }
     if (next.size !== notes.size) changed = true;
     notes = next;
+    expected = meta.length;
     if (changed) relink();
     return { notes: notes.size };
   }
@@ -91,6 +99,7 @@ export function createMemoryEngine({ dataDir, ask = async () => { throw new Erro
   function sweep({ kind, only = null, cond: c = null }) {
     if (c) cond = { ...cond, ...c };
     if (!vault) return null;
+    need();
     const tags = kind === 'save' && only && tagScan?.vault === vault ? rescanTags(vault, tagScan.tags, only, excluded) : scanTags(vault, excluded);
     tagScan = { vault, tags };
     const ctx = { notes: list, resolve, tags, folders: cond.folders ?? {}, contradictions: contradictions() };
@@ -102,6 +111,7 @@ export function createMemoryEngine({ dataDir, ask = async () => { throw new Erro
   function refresh({ cond: c = null } = {}) {
     if (c) cond = { ...cond, ...c };
     if (!vault) return agentView();
+    need();
     contradictionPass({ notes: list, resolve, contradictions: contradictions() });
     return agentView();
   }

@@ -67,11 +67,13 @@ export function createMemoryHost({ port, index = () => null, vault = () => null,
   }
 
   // the notes as the index holds them now. A note whose text is the same object as last time is sent as its numbers
-  // only; the rest go whole, with text past MAX_RULE_TEXT cut off
-  function sync() {
+  // only; the rest go whole, with text past MAX_RULE_TEXT cut off. A fresh engine (after a crash) starts before the
+  // diff, so it gets every note. An engine that answers with fewer notes than the index holds is sent every note again
+  async function sync(again = true) {
     const ix = index();
     const v = vault();
-    if (!ix || !v) return Promise.resolve(null);
+    if (!ix || !v) return null;
+    if (!cur && restart) attach(restart());
     if (sentVault !== v) { sent = new Map(); sentVault = v; }
     const meta = [];
     const full = [];
@@ -83,7 +85,9 @@ export function createMemoryHost({ port, index = () => null, vault = () => null,
       if (sent.get(n.rel) !== n.text) full.push({ rel: n.rel, text: ruleText(n.text), note: n.note, chars: n.cut ? n.size : String(n.text ?? '').length });
     }
     sent = next;
-    return call('sync', { vault: v, meta, full, cond: cond() });
+    const r = await call('sync', { vault: v, meta, full, cond: cond() });
+    if (again && r && r.notes < meta.length) { log('memory engine', 'missing notes', r.notes, meta.length); sent = new Map(); return sync(false); }
+    return r;
   }
 
   const agent = {
