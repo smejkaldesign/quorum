@@ -6,52 +6,70 @@ import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, read
 import path from 'node:path';
 import { compactText } from './rules/hygiene.js';
 
-// Folder names tools and tests leave. Each rule names its kind, the .gitignore pattern that covers it, and whether a
-// folder of that name may hold Markdown nobody links to (a temp folder) or must hold none at all (a build folder, where
-// the same name can be a folder of notes)
-const RANDOM6 = /^(.+?)[-_.]([A-Za-z0-9]{6})$/;
-// six characters that read as random: a digit and a letter, or both cases, so a word like "finale" is never one
-const looksRandom = (s) => (/\d/.test(s) && /[A-Za-z]/.test(s)) || (/[a-z]/.test(s) && /[A-Z]/.test(s));
+// Folder names tools and tests leave. Only names a known tool gives, so a folder a person named is never one:
+// TemporaryDirectory.* (Python), vitest-*, jest_*, tmp- or tmp_ with a random suffix, *.lock folders, and the
+// name-XXXXXX form mkdtemp gives, which counts only when the suffix mixes lower case, upper case and digits and three or
+// more sibling folders share the name before it (a test suite leaves many). Each rule names its kind and the
+// .gitignore pattern that covers it. A folder with any Markdown file or any file git tracks is never litter
+const mixed = (s) => /\d/.test(s) && /[a-z]/.test(s) && /[A-Z]/.test(s);
+const MKDTEMP = /^([a-z][a-z0-9]*(?:-[a-z0-9]+)*)-([A-Za-z0-9]{6})$/;
+export const SIBLINGS = 3;
 const BUILD_NAMES = new Set(['node_modules', 'dist', '.next', '.turbo', '.cache', '__pycache__', '.pytest_cache', '.parcel-cache', 'coverage', '.nyc_output', 'out-tsc']);
 export function litterKind(name) {
-  if (/^TemporaryDirectory\.[A-Za-z0-9_]+$/.test(name)) return { kind: 'temp', ignore: 'TemporaryDirectory.*/', strict: false };
-  if (/^tmp[A-Za-z0-9_]{6,}$/.test(name) && looksRandom(name.slice(3))) return { kind: 'temp', ignore: 'tmp*/', strict: false };
-  const m = name.match(RANDOM6);
-  if (m && looksRandom(m[2]) && /^[A-Za-z][\w.-]*$/.test(m[1])) return { kind: 'temp', ignore: `${m[1]}${name[m[1].length]}??????/`, strict: false };
-  if (/\.lock$/.test(name)) return { kind: 'lock', ignore: '*.lock/', strict: false };
-  if (BUILD_NAMES.has(name)) return { kind: 'build', ignore: `${name}/`, strict: true };
+  if (/^TemporaryDirectory\.\w+$/.test(name)) return { kind: 'temp' };
+  if (/^vitest-[\w.-]+$/.test(name)) return { kind: 'temp' };
+  if (/^jest_[\w.-]+$/.test(name)) return { kind: 'temp' };
+  if (/^tmp[-_][A-Za-z0-9]{6,}$/.test(name) && /\d/.test(name.slice(4)) && /[A-Za-z]/.test(name.slice(4))) return { kind: 'temp' };
+  const m = name.match(MKDTEMP);
+  if (m && mixed(m[2])) return { kind: 'temp', group: m[1] };
+  if (/\.lock$/.test(name)) return { kind: 'lock' };
+  if (BUILD_NAMES.has(name)) return { kind: 'build' };
   return null;
 }
 
-// the size and file count of a folder, and the Markdown files in it. budget: entries left to read in this sweep; a
-// folder past it counts what was read
+// the size and file count of a folder. md: it holds a Markdown file, and the walk stops there. budget: entries left to
+// read in this sweep; a folder past it counts as unread, so it is never litter
 function measure(abs, budget) {
   let bytes = 0;
   let files = 0;
-  const md = [];
   const stack = [abs];
-  while (stack.length && budget.left > 0) {
+  while (stack.length) {
     const d = stack.pop();
     let ents;
     try { ents = readdirSync(d, { withFileTypes: true }); } catch { continue; }
     for (const e of ents) {
-      if (--budget.left <= 0) break;
+      if (--budget.left <= 0) return { bytes, files, md: false, cut: true };
       const p = path.join(d, e.name);
       if (e.isDirectory()) { stack.push(p); continue; }
       if (!e.isFile()) continue;
+      if (/\.md$/i.test(e.name)) return { bytes, files, md: true };
       files++;
       try { bytes += statSync(p).size; } catch {}
-      if (/\.md$/i.test(e.name)) md.push(p);
     }
   }
-  return { bytes, files, md };
+  return { bytes, files, md: false };
 }
 
-// the litter folders of a vault: a folder whose name a tool gives (litterKind) and that holds no note another note links
-// to (a build folder holds no Markdown at all). linked: the vault-relative notes some note links to. A litter folder is
-// not walked further, and .git and .obsidian never are
-export function scanLitter(vault, linked = new Set(), { maxEntries = 400000 } = {}) {
-  const out = [];
+// the folders among dirs that hold a file git tracks: one git ls-files of the vault folder. An empty set outside a
+// repository; null when git could not answer, so the caller flags nothing
+export function trackedIn(vault, dirs, { exec = execFileSync } = {}) {
+  const hits = new Set();
+  if (!dirs.length) return hits;
+  try { git(vault, ['rev-parse', '--is-inside-work-tree'], exec); } catch { return hits; }
+  let out;
+  try { out = git(vault, ['ls-files', '-z'], exec); } catch { return null; }
+  const want = new Set(dirs);
+  // each tracked file's folders, nearest first, until one is a folder asked about
+  for (const f of out.split('\0')) {
+    for (let i = f.lastIndexOf('/'); i > 0; i = f.lastIndexOf('/', i - 1)) { const d = f.slice(0, i); if (want.has(d)) { hits.add(d); break; } }
+  }
+  return hits;
+}
+
+// the litter folders of a vault (litterKind) that hold no Markdown file and no file git tracks. A litter folder is not
+// walked further, and .git and .obsidian never are
+export function scanLitter(vault, { maxEntries = 400000, exec = execFileSync } = {}) {
+  const found = [];
   const budget = { left: maxEntries };
   const stack = [''];
   while (stack.length && budget.left > 0) {
@@ -64,12 +82,17 @@ export function scanLitter(vault, linked = new Set(), { maxEntries = 400000 } = 
       const k = litterKind(e.name);
       if (!k) { budget.left--; stack.push(r); continue; }
       const m = measure(path.join(vault, r), budget);
-      const mdRels = m.md.map((p) => path.relative(vault, p).split(path.sep).join('/'));
-      if (k.strict ? mdRels.length : mdRels.some((x) => linked.has(x))) continue;
-      out.push({ rel: r, kind: k.kind, ignore: k.ignore, bytes: m.bytes, files: m.files });
+      if (m.md || m.cut) continue;
+      found.push({ rel: r, kind: k.kind, group: k.group ? `${rel}\0${k.group}` : null, bytes: m.bytes, files: m.files });
     }
   }
-  return out.sort((a, b) => a.rel.localeCompare(b.rel));
+  // the name-XXXXXX form counts only with enough siblings of the same name
+  const groups = new Map();
+  for (const d of found) if (d.group) groups.set(d.group, (groups.get(d.group) ?? 0) + 1);
+  const named = found.filter((d) => !d.group || groups.get(d.group) >= SIBLINGS);
+  const tracked = trackedIn(vault, named.map((d) => d.rel), { exec });
+  if (!tracked) return [];
+  return named.filter((d) => !tracked.has(d.rel)).map(({ group, ...d }) => ({ ...d, ignore: `/${d.rel}/` })).sort((a, b) => a.rel.localeCompare(b.rel));
 }
 
 // input: text for git's stdin, for a path list too long for the command line
@@ -151,8 +174,7 @@ export function scanHygiene({ vault, notes, file = null, now = Date.now(), exec 
     all[vault] = sizes.history;
     try { writeJson(file, all); } catch {}
   }
-  const linked = new Set(notes.filter((x) => x.inbound > 0).map((x) => x.rel));
-  const litter = scanLitter(vault, linked);
+  const litter = scanLitter(vault, { exec });
   const inLitter = (rel) => litter.some((d) => rel === d.rel || rel.startsWith(`${d.rel}/`));
   const g = gitState(vault, { exec, skip: inLitter });
   return { litter, git: g, history: sizes.before };
@@ -166,14 +188,20 @@ function writeJson(file, value) {
 
 // ---- the steps Approve runs ----
 
-// a folder still litter when Approve runs: it exists, still has a litter name, and still holds no linked note
-export function stillLitter(vault, rel, linked = new Set()) {
-  const abs = path.join(vault, rel);
-  const k = litterKind(path.basename(rel));
-  if (!k || !existsSync(abs)) return false;
-  const m = measure(abs, { left: 400000 });
-  const md = m.md.map((p) => path.relative(vault, p).split(path.sep).join('/'));
-  return k.strict ? md.length === 0 : !md.some((x) => linked.has(x));
+// the folders among dirs that are still litter when Approve runs: there, a litter name, no Markdown file and no file git
+// tracks. One git call for all of them
+export function stillLitter(vault, dirs, { exec = execFileSync } = {}) {
+  const live = dirs.filter((rel) => litterKind(path.basename(rel)) && existsSync(path.join(vault, rel)) && (() => { const m = measure(path.join(vault, rel), { left: 400000 }); return !m.md && !m.cut; })());
+  const tracked = trackedIn(vault, live, { exec });
+  if (!tracked) return [];
+  return live.filter((rel) => !tracked.has(rel));
+}
+
+// moves the folders that are still litter to the Trash. trash(abs): shell.trashItem in the app. Answers the folders moved
+export async function trashLitter(vault, dirs, trash, { exec = execFileSync } = {}) {
+  const moved = [];
+  for (const rel of stillLitter(vault, dirs, { exec })) { await trash(path.join(vault, rel)); moved.push(rel); }
+  return moved;
 }
 
 // the ignore patterns not yet in a .gitignore, appended under one comment line. Answers the patterns it added

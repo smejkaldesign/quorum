@@ -8,7 +8,7 @@ import { findingItem, itemLine } from '../reviewItems.js';
 import { approveFinding } from '../reviewApprove.js';
 import { effects, groupOf } from '../batchPlan.js';
 import { compactText, repeatedBlocks, run, rule } from '../rules/hygiene.js';
-import { addIgnores, backupNote, commitNotes, gitState, litterKind, recordSizes, scanHygiene, scanLitter, stillLitter } from '../vaultHygiene.js';
+import { addIgnores, backupNote, commitNotes, gitState, litterKind, recordSizes, scanHygiene, scanLitter, stillLitter, trashLitter } from '../vaultHygiene.js';
 
 // Synthetic vaults in the OS temp folder. Every name and line is made up.
 const NOW = Date.UTC(2026, 10, 16);
@@ -37,33 +37,57 @@ const block = () => '## Auto capture\n\n- hook ran, nothing new\n';
 const entry = (i) => `## Day ${i}\n\nWeight: ${170 + (i % 9)}\n`;
 
 describe('litter folder names', () => {
-  it('matches the names tools and tests give, and leaves real folders alone', () => {
-    expect(litterKind('qrules-a8Bc2D')).toMatchObject({ kind: 'temp', ignore: 'qrules-??????/' });
-    expect(litterKind('vault_x9k2pQ')).toMatchObject({ kind: 'temp', ignore: 'vault_??????/' });
-    expect(litterKind('TemporaryDirectory.k3j2l1')).toMatchObject({ kind: 'temp', ignore: 'TemporaryDirectory.*/' });
-    expect(litterKind('tmpa8x2kq91')).toMatchObject({ kind: 'temp' });
-    expect(litterKind('index.lock')).toMatchObject({ kind: 'lock', ignore: '*.lock/' });
-    expect(litterKind('node_modules')).toMatchObject({ kind: 'build', strict: true });
-    for (const name of ['project-finale', 'notes', 'build', 'out', 'sessions', '2026-11-16', 'q3-review', 'design-system']) expect(litterKind(name)).toBeNull();
+  it('matches only names known tools give, and leaves folders a person named alone', () => {
+    expect(litterKind('qrules-a8Bc2D')).toMatchObject({ kind: 'temp', group: 'qrules' });
+    expect(litterKind('TemporaryDirectory.k3j2l1')).toMatchObject({ kind: 'temp' });
+    expect(litterKind('vitest-run-4f2a')).toMatchObject({ kind: 'temp' });
+    expect(litterKind('jest_dx')).toMatchObject({ kind: 'temp' });
+    expect(litterKind('tmp-a8x2kq91')).toMatchObject({ kind: 'temp' });
+    expect(litterKind('index.lock')).toMatchObject({ kind: 'lock' });
+    expect(litterKind('dist')).toMatchObject({ kind: 'build' });
+    for (const name of ['archive-2025Q4', 'Clients-Acme01', 'Project_ABC123', 'tmpNotes2', 'project-finale', 'notes', 'build', 'out', 'sessions', '2026-11-16', 'q3-review', 'design-system', 'vault_x9k2pQ', 'tmp-notes']) expect(litterKind(name)).toBeNull();
   });
 });
 
 describe('the litter scan', () => {
-  it('finds temp folders at any depth with no linked note, and keeps folders a note links into', () => {
+  const temp = (v, names) => { for (const n of names) put(v, `${n}/data.json`, '{"a":1}'); };
+  it('finds temp folders at any depth with no Markdown and no tracked file', () => {
     const v = fresh();
-    put(v, 'qrules-a8Bc2D/scratch.md', '# Scratch\n');
-    put(v, 'qrules-a8Bc2D/data.json', '{"a":1}');
+    temp(v, ['qrules-a8Bc2D', 'qrules-Zx9k2P', 'qrules-p0QwE7']);
     put(v, 'tools/runs/TemporaryDirectory.k3j2l1/out.txt', 'x'.repeat(2048));
-    put(v, 'kept-Zx9k2P/plan.md', '# Plan\n');
-    put(v, 'web/node_modules/pkg/index.js', 'module.exports = 1;');
-    put(v, 'dist/readme.md', '# A note in a dist folder\n');
+    put(v, 'qrules-Lm3nB8/scratch.md', '# Scratch\n');
+    put(v, 'web/dist/app.js', 'console.log(1);');
     put(v, 'project-finale/notes.md', '# Finale\n');
-    const found = scanLitter(v, new Set(['kept-Zx9k2P/plan.md']));
-    expect(found.map((d) => [d.rel, d.kind])).toEqual([['qrules-a8Bc2D', 'temp'], ['tools/runs/TemporaryDirectory.k3j2l1', 'temp'], ['web/node_modules', 'build']]);
-    expect(found[1].bytes).toBe(2048);
-    expect(stillLitter(v, 'qrules-a8Bc2D', new Set())).toBe(true);
-    expect(stillLitter(v, 'qrules-a8Bc2D', new Set(['qrules-a8Bc2D/scratch.md']))).toBe(false);
-    expect(stillLitter(v, 'project-finale')).toBe(false);
+    const found = scanLitter(v);
+    expect(found.map((d) => [d.rel, d.kind])).toEqual([['qrules-a8Bc2D', 'temp'], ['qrules-p0QwE7', 'temp'], ['qrules-Zx9k2P', 'temp'], ['tools/runs/TemporaryDirectory.k3j2l1', 'temp'], ['web/dist', 'build']]);
+    expect(found.find((d) => d.kind === 'temp' && d.rel.startsWith('tools')).bytes).toBe(2048);
+    expect(found[0].ignore).toBe('/qrules-a8Bc2D/');
+  });
+  it('needs three or more siblings for the name-XXXXXX form, so one folder like design-iOS17a stays', () => {
+    const v = fresh();
+    temp(v, ['design-iOS17a', 'qrules-a8Bc2D', 'qrules-Zx9k2P']);
+    expect(scanLitter(v)).toEqual([]);
+  });
+  it('never flags a folder with a file git tracks', () => {
+    const v = repo();
+    temp(v, ['qrules-a8Bc2D', 'qrules-Zx9k2P', 'qrules-p0QwE7']);
+    g(v, 'add', 'qrules-a8Bc2D/data.json');
+    g(v, 'commit', '-q', '-m', 'track one');
+    expect(scanLitter(v).map((d) => d.rel)).toEqual(['qrules-p0QwE7', 'qrules-Zx9k2P']);
+    expect(stillLitter(v, ['qrules-a8Bc2D', 'qrules-Zx9k2P'])).toEqual(['qrules-Zx9k2P']);
+  });
+  it('checks each folder again on Approve and moves only what is still litter to the Trash', async () => {
+    const v = fresh();
+    temp(v, ['qrules-a8Bc2D', 'qrules-Zx9k2P', 'qrules-p0QwE7']);
+    put(v, 'qrules-p0QwE7/now-a-note.md', '# Written since the check\n');
+    rmSync(path.join(v, 'qrules-Zx9k2P'), { recursive: true });
+    put(v, 'project-finale/data.json', '{}');
+    const trashed = [];
+    const moved = await trashLitter(v, ['qrules-a8Bc2D', 'qrules-Zx9k2P', 'qrules-p0QwE7', 'project-finale'], async (abs) => { trashed.push(abs); rmSync(abs, { recursive: true }); });
+    expect(moved).toEqual(['qrules-a8Bc2D']);
+    expect(trashed).toEqual([path.join(v, 'qrules-a8Bc2D')]);
+    expect(existsSync(path.join(v, 'qrules-p0QwE7/now-a-note.md'))).toBe(true);
+    expect(existsSync(path.join(v, 'project-finale'))).toBe(true);
   });
   it('writes one grouped item that says what Approve does, with git ignore patterns when the vault has a .gitignore', () => {
     const litter = [
@@ -221,14 +245,15 @@ describe('uncommitted notes', () => {
     const plain = fresh();
     expect(gitState(plain)).toEqual({ repo: false });
     const v = repo();
+    for (const d of ['qrules-a8Bc2D', 'qrules-Zx9k2P', 'qrules-p0QwE7', 'qrules-Rt5yU1']) { put(v, `${d}/x.txt`, 'temp\n'); old(path.join(v, `${d}/x.txt`), 30); }
     put(v, 'qrules-a8Bc2D/x.md', '# temp\n');
     put(v, 'notes/n.md', '# N\n');
     old(path.join(v, 'qrules-a8Bc2D/x.md'), 30);
     old(path.join(v, 'notes/n.md'), 30);
     const data = fresh('qhyg-data-');
     const h = scanHygiene({ vault: v, notes: [{ rel: 'notes/n.md', size: 6, inbound: 0 }], file: path.join(data, 'memory-hygiene.json'), now: NOW });
-    expect(h.litter.map((d) => d.rel)).toEqual(['qrules-a8Bc2D']);
-    expect(h.git.dirty.map((d) => d.rel)).toEqual(['notes/n.md']);
+    expect(h.litter.map((d) => d.rel)).toEqual(['qrules-p0QwE7', 'qrules-Rt5yU1', 'qrules-Zx9k2P']);
+    expect(h.git.dirty.map((d) => d.rel).sort()).toEqual(['notes/n.md', 'qrules-a8Bc2D/x.md']);
     expect(existsSync(path.join(data, 'memory-hygiene.json'))).toBe(true);
     expect(readdirSync(data)).toEqual(['memory-hygiene.json']);
   });

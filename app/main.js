@@ -73,7 +73,7 @@ import { isOff, skipped } from './rules/common.js';
 import { folderMarkOf } from './rules/confidential.js';
 import { createMemorySweep, dueSweep, rescanTags, scanTags } from './memorySweep.js';
 import { RULE_LABELS, RULES } from './rules/index.js';
-import { addIgnores, backupNote, commitNotes, compactNote, stillLitter } from './vaultHygiene.js';
+import { addIgnores, backupNote, commitNotes, compactNote, trashLitter } from './vaultHygiene.js';
 import { relatedLine } from './rules/nearDuplicates.js';
 import { DAILY_CAP, WRONG_NOTE_FIX, createDrafter, draftKind, evidenceRels, fallbackItem, unlinkItem, withDraft } from './memoryDraft.js';
 import { catchupHooks, createSaveSweeps, forkEngine, slotBinder, startMemoryEngine } from './memoryWiring.js';
@@ -3888,19 +3888,12 @@ async function runOp(item, o, { step, keep, written, vault }) {
   }
   if (o.op === 'keep') { await step(`Keeping ${item.kind === 'pastfix' ? `the earlier fix on ${item.title}` : item.title} as it is`); return; }
   if (o.op === 'trashdirs') {
-    // each folder is checked again first: still there, still a litter name, still no note in it that a note links to
+    // each folder is checked again first: still there, still a litter name, no Markdown file and no file git tracks
     await step(`Moving ${o.dirs.length.toLocaleString('en-US')} ${o.dirs.length === 1 ? 'folder' : 'folders'} to the Trash`);
-    const inside = (rel) => o.dirs.some((d) => rel.startsWith(`${d}/`));
-    const linked = new Set(vindex.rels().filter((r) => inside(r) && vindex.backlinks(r).some((bl) => !inside(bl.rel))));
-    let moved = 0;
-    for (const d of o.dirs) {
-      if (!stillLitter(vault, d, linked)) continue;
-      await shell.trashItem(path.join(vault, d));
-      moved++;
-    }
-    if (!moved) throw new Error('None of the folders are litter any more, so Quorum moved nothing');
+    const moved = await trashLitter(vault, o.dirs, (abs) => shell.trashItem(abs));
+    if (!moved.length) throw new Error('None of the folders are litter any more, so Quorum moved nothing');
     if (o.gitignore && o.ignore?.length) {
-      const added = addIgnores(o.gitignore, o.ignore);
+      const added = addIgnores(o.gitignore, o.ignore.filter((p) => moved.some((d) => p === `/${d}/`)));
       if (added.length) await step(`Adding ${added.length} ${added.length === 1 ? 'pattern' : 'patterns'} to ${path.basename(o.gitignore)}`);
     }
     vindex.sync();
