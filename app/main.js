@@ -81,7 +81,8 @@ import { ignoreProposals, ignored, ruleRecords } from './ruleRecords.js';
 import { demotions, kindOf, logGate, ruleDemotion, runGate, signature, weakLink } from './qualityGate.js';
 import { createAgentActivity } from './agentActivity.js';
 import { createCatchup } from './memoryCatchup.js';
-import { analyze as contradictionPass } from './rules/contradictions.js';
+import { createLastRunStore, planOf } from './catchupPlan.js';
+import { analyze as contradictionPass, rule as CONTRADICTION_RULE } from './rules/contradictions.js';
 import { createElsewhere, withFound } from './linkElsewhere.js';
 import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
@@ -3657,8 +3658,23 @@ const catchup = createCatchup({
   },
   notes: () => vindex?.rels().length ?? 0,
   emit: (st) => toUI('memory-catchup', st),
+  // the notes read in earlier passes, the notes still queued, and Needs review before and after, for the note count
+  // and the last-run card in Memory health
+  saved: () => catchupEstimate()?.saved ?? 0,
+  left: () => contradictionAgent.pendingNotes(),
+  review: () => catchupReview(),
+  store: createLastRunStore(path.join(DATA_DIR, 'memory-catchup-last.json')),
   log,
 });
+// Needs review as Memory health lists it, each item marked a contradiction or not and drafted or not, so the last-run
+// card can tell what a pass added
+function catchupReview() {
+  if (!brain() || !vindex) return null;
+  const st = feedState();
+  const contra = new Set(findingsNow().filter((f) => f.ruleId === CONTRADICTION_RULE.id).map((f) => `${ROW.finding}${f.key}`));
+  const { items } = needsReview(feedRows(feedSources()), { archived: Object.keys(st.archived), done: Object.keys(st.done ?? {}), kept: Object.keys(st.kept ?? {}), prefs: settings.notifications ?? {} });
+  return items.map((r) => ({ id: r.id, type: contra.has(r.id) ? 'contradiction' : 'other', drafted: !!r.draft }));
+}
 // what a catch-up would cost now: stage 1's notes to read packed into claim calls, leaving out notes whose claims are
 // stored, plus the drafts and second drafts that wait. Judge calls are counted as the pass finds pairs
 function catchupEstimate() {
@@ -3667,7 +3683,11 @@ function catchupEstimate() {
   const a = contradictionPass({ notes: vindex.snapshot(), resolve: (t, from) => vindex.resolve(t, from) });
   const claims = contradictionAgent.estimate(a.toRead);
   const drafts = drafter.pendingCalls();
-  return { notes: vindex.rels().length, read: claims.notes, claimCalls: claims.calls, draftCalls: drafts, calls: claims.calls + drafts, drafting: settings.memoryDrafts === true };
+  const est = { notes: vindex.rels().length, read: claims.notes, claimCalls: claims.calls, draftCalls: drafts, calls: claims.calls + drafts, drafting: settings.memoryDrafts === true };
+  // the plan shown before a pass: the notes to check, those saved from earlier passes, and estimates of the pairs to
+  // judge and the time, from the last pass when there is one
+  const p = planOf({ saved: claims.saved, read: claims.notes, claimCalls: claims.calls, draftCalls: drafts, claimed: claims.claimed, judged: claims.judged }, catchup.status().last);
+  return { ...est, saved: claims.saved, toCheck: p.toCheck, pairs: p.pairs, seconds: p.seconds };
 }
 // starts a catch-up. It needs Let the agent draft fixes; turning the pass on turns that on too, and the answer says so
 async function startCatchup() {
@@ -3685,6 +3705,7 @@ ipcMain.handle('memory-catchup-estimate', () => catchupEstimate());
 ipcMain.handle('memory-catchup-status', () => catchup.status());
 ipcMain.handle('memory-catchup-start', () => startCatchup());
 ipcMain.handle('memory-catchup-cancel', () => catchup.cancel());
+ipcMain.handle('memory-catchup-dismiss', () => catchup.dismiss());
 // Ignore rules (ruleRecords.js): kept in Quorum's settings per vault, never in the vault. Quorum proposes one after the
 // same rule's findings were archived three or more times with a shared folder, frontmatter key or target
 function ignoreStore(name) {

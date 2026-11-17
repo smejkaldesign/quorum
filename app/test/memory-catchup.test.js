@@ -1,6 +1,6 @@
 // Check everything now (memoryCatchup.js) on the synthetic contradiction vault (test/fixtures/contradictions) and a
 // synthetic missing-note item. Every note, name and line is made up. The model is always a fake.
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -9,7 +9,8 @@ import { createContradictionAgent } from '../contradictionAgent.js';
 import { createDrafter, evidenceRels } from '../memoryDraft.js';
 import { createAgentActivity } from '../agentActivity.js';
 import { analyze } from '../rules/contradictions.js';
-import { catchupLabel, createCatchup } from '../memoryCatchup.js';
+import { catchupLabel, createCatchup, notesLabel } from '../memoryCatchup.js';
+import { createLastRunStore } from '../catchupPlan.js';
 
 const DIR = path.join(path.dirname(new URL(import.meta.url).pathname), 'fixtures/contradictions');
 const walk = (dir, base = '') => readdirSync(dir).flatMap((f) => (statSync(path.join(dir, f)).isDirectory() ? walk(path.join(dir, f), `${base}${f}/`) : [`${base}${f}`]));
@@ -43,6 +44,7 @@ function setup(opts = {}) {
     calls.push(kind);
     if (opts.hold) await new Promise((resolve, reject) => { gate = resolve; signal?.addEventListener('abort', () => reject(Object.assign(new Error('Cancelled'), { cancelled: true }))); });
     if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { cancelled: true });
+    if (kind === 'claims' && opts.failClaims) return 'not an answer';
     return kind === 'draft' ? GOOD_DRAFT : JSON.stringify({ claims: [] });
   };
   const now = () => Date.UTC(2026, 10, 16, 12);
@@ -52,7 +54,7 @@ function setup(opts = {}) {
   const shown = [];
   const activity = createAgentActivity({ emit: (s) => shown.push(s), setTimer: () => null, clearTimer: () => {} });
   const ctx = { notes: v.notes, resolve: v.resolve, contradictions: { provider: agent.provider } };
-  const catchup = createCatchup({ drafter, agent, activity, refresh: async () => { analyze(ctx); }, bind: (kind, ctl) => { signals[kind] = ctl; }, notes: () => v.notes.length, wait: async () => {}, busyWaitMs: 0 });
+  const catchup = createCatchup({ drafter, agent, activity, refresh: async () => { analyze(ctx); }, bind: (kind, ctl) => { signals[kind] = ctl; }, notes: () => v.notes.length, wait: async () => {}, busyWaitMs: 0, ...(opts.catchup?.({ agent, v }) ?? {}) });
   return { catchup, drafter, agent, activity, calls, shown, v, release: () => gate?.(), ctx };
 }
 
@@ -143,5 +145,106 @@ describe('Check everything now', () => {
     await s.catchup.start();
     await s.catchup.done();
     expect(s.agent.estimate(a.toRead).calls).toBe(0);
+  });
+  // the note count counts the notes saved from earlier passes, and the last pass is kept in the data folder
+  const counted = (file, review = () => []) => ({ agent, v }) => ({
+    saved: () => agent.estimate(analyze({ notes: v.notes, resolve: v.resolve }).toRead).saved,
+    left: () => agent.pendingNotes(),
+    review,
+    store: createLastRunStore(file),
+  });
+
+  it('counts notes checked of the notes to check, so a second pass starts at the notes saved by the first', async () => {
+    const dir = tmp();
+    const file = path.join(dir, 'last.json');
+    const s = setup({ catchup: counted(file) });
+    await s.catchup.start();
+    const first = await s.catchup.done();
+    expect(first.of).toBeGreaterThan(0);
+    expect(first.checked).toBe(first.of);
+    expect(first.saved).toBe(0);
+    const labels = s.shown.filter((x) => x?.progress).map((x) => x.label);
+    expect(labels[labels.length - 1]).toBe(notesLabel(first.checked, first.of));
+    // a new pass on the same stored claims: nothing reads 0 of N, the saved notes count from the start
+    const again = createCatchup({ drafter: s.drafter, agent: s.agent, activity: s.activity, refresh: async () => { analyze(s.ctx); }, notes: () => s.v.notes.length, wait: async () => {}, busyWaitMs: 0, ...counted(file)({ agent: s.agent, v: s.v }) });
+    const st = await again.start();
+    expect(st.running).toBe(true);
+    expect(st.saved).toBe(first.of);
+    expect(st.checked).toBe(first.of);
+    const second = await again.done();
+    expect(second.checked).toBe(first.of);
+    // the last pass reads again from the data folder
+    expect(createLastRunStore(file).load()).toMatchObject({ end: 'done', checked: first.of, of: first.of });
+    // the start list is written once and removed when the pass ends; the saves carry counts only
+    expect(existsSync(path.join(dir, 'last-before.json'))).toBe(false);
+    expect(JSON.parse(readFileSync(file, 'utf8')).before).toBeUndefined();
+  });
+
+  it('keeps the last pass after a restart, shows a pass a crash stopped as crashed, and Dismiss sticks', async () => {
+    const dir = tmp();
+    const file = path.join(dir, 'last.json');
+    const store = createLastRunStore(file, () => 5000);
+    store.saveBefore([{ id: 'r:find:a', type: 'other', drafted: false }]);
+    store.save({ end: 'running', done: 3, total: 9, notes: 12, checked: 4, of: 10, saved: 1, startedAt: 1000 });
+    const items = [{ id: 'r:find:a', type: 'other', drafted: true }, { id: 'r:find:b', type: 'contradiction', drafted: false }];
+    const s = setup({ catchup: () => ({ store: createLastRunStore(file), review: () => items }) });
+    const st = s.catchup.status();
+    expect(st.running).toBe(false);
+    expect(st.last).toMatchObject({ end: 'crashed', checked: 4, of: 10, startedAt: 1000, endedAt: 5000 });
+    expect(st.last.added).toMatchObject({ contradictions: 1, drafts: 1, other: 0 });
+    expect(st.last.before).toBeUndefined();
+    expect(s.catchup.dismiss()).toBe(true);
+    expect(createLastRunStore(file).load()).toMatchObject({ end: 'crashed', dismissed: true });
+  });
+
+  it('tells what a pass added to Needs review', async () => {
+    let items = [{ id: 'r:link:x', type: 'other', drafted: false }];
+    const s = setup({ catchup: () => ({ review: () => items }) });
+    await s.catchup.start();
+    items = [...items, { id: 'r:find:c', type: 'contradiction', drafted: false }, { id: 'r:link:zephyr', type: 'other', drafted: true }];
+    const last = await s.catchup.done();
+    expect(last.added).toEqual({ contradictions: 1, drafts: 1, other: 0, ids: ['r:find:c', 'r:link:zephyr'] });
+  });
+  it('saves a cancelled pass as cancelled, with what it added', async () => {
+    const dir = tmp();
+    const file = path.join(dir, 'last.json');
+    let items = [];
+    const s = setup({ hold: true, cap: 40, catchup: () => ({ store: createLastRunStore(file), review: () => items }) });
+    await s.catchup.start();
+    await new Promise((r) => setTimeout(r, 0));
+    items = [{ id: 'r:find:c', type: 'contradiction', drafted: false }];
+    expect(s.catchup.cancel()).toBe(true);
+    const last = await s.catchup.done();
+    expect(last).toMatchObject({ end: 'cancelled', added: { contradictions: 1, drafts: 0, other: 0, ids: ['r:find:c'] } });
+    expect(createLastRunStore(file).load()).toMatchObject({ end: 'cancelled', added: { contradictions: 1 } });
+  });
+
+  it('counts the notes of a failed claim call as skipped, so checked and skipped add up to the notes to check', async () => {
+    const dir = tmp();
+    const s = setup({ failClaims: true, catchup: counted(path.join(dir, 'last.json')) });
+    await s.catchup.start();
+    const last = await s.catchup.done();
+    expect(last.end).toBe('done');
+    expect(last.skipped).toBeGreaterThan(0);
+    expect(last.checked).toBeLessThan(last.of);
+    expect(last.checked + last.skipped).toBe(last.of);
+  });
+
+  it('waits for the vault to read before it tells what a crashed pass added', () => {
+    const dir = tmp();
+    const file = path.join(dir, 'last.json');
+    const store = createLastRunStore(file, () => 5000);
+    store.saveBefore([]);
+    store.save({ end: 'running', done: 1, total: 4, notes: 12, startedAt: 1000 });
+    let items = null;
+    const s = setup({ catchup: () => ({ store: createLastRunStore(file), review: () => items }) });
+    // the vault has not read yet: nothing is told, and the start list is kept for later
+    const first = s.catchup.status();
+    expect(first.last.end).toBe('crashed');
+    expect(first.last.added).toBeUndefined();
+    expect(existsSync(path.join(dir, 'last-before.json'))).toBe(true);
+    items = [{ id: 'r:link:x', type: 'other', drafted: false }];
+    expect(s.catchup.status().last.added).toEqual({ contradictions: 0, drafts: 0, other: 1, ids: ['r:link:x'] });
+    expect(existsSync(path.join(dir, 'last-before.json'))).toBe(false);
   });
 });

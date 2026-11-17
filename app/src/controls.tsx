@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { FOCUSABLE, trapTarget } from './focusTrap';
 
 export function Row({ icon, title, desc, children }: { icon: ReactNode; title: ReactNode; desc: ReactNode; children?: ReactNode }) {
   return (
@@ -40,7 +41,14 @@ export function Modal({ titleId, title, className, role = 'dialog', describedBy,
   return (
     <div className="palette-scrim" onMouseDown={onClose && ((e) => { if (e.target === e.currentTarget && !locked) onClose(); })}
       onKeyDown={onClose && escape ? (e) => { if (e.key === 'Escape' && !locked) { e.stopPropagation(); onClose(); } } : undefined}>
-      <div className={className ? `modal ${className}` : 'modal'} role={role} aria-modal="true" aria-labelledby={titleId} aria-describedby={describedBy}>
+      {/* Tab stays inside the dialog (focusTrap.ts) */}
+      <div className={className ? `modal ${className}` : 'modal'} role={role} aria-modal="true" aria-labelledby={titleId} aria-describedby={describedBy}
+        onKeyDown={(e) => {
+          if (e.key !== 'Tab') return;
+          const items = [...e.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE)];
+          const next = trapTarget(items, document.activeElement as HTMLElement | null, e.shiftKey);
+          if (next) { e.preventDefault(); next.focus(); }
+        }}>
         <h2 id={titleId}>{title}</h2>
         {children}
       </div>
