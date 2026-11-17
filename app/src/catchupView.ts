@@ -94,10 +94,12 @@ export function addedText(a: CatchupLast['added']) {
 export function summaryOf(last: CatchupLast) {
   const checked = last.of ? `Checked ${fmt(last.checked ?? 0)} of ${count(last.of, 'note', 'notes')}.` : `Made ${count(last.done, 'model call', 'model calls')}.`;
   const why = last.end === 'crashed' ? ' Quorum closed while it ran. What it checked until then is saved.' : '';
+  // notes whose call failed: not checked, and asked for again after a day
+  const skipped = last.skipped ? ` ${count(last.skipped, 'note', 'notes')} could not be read. The agent tries ${last.skipped === 1 ? 'it' : 'them'} again after a day.` : '';
   return {
     head: HEAD[last.end] ?? HEAD.failed,
     state: last.end === 'failed' || last.end === 'crashed' ? ('error' as const) : ('success' as const),
-    line: `${checked}${why}`,
+    line: `${checked}${skipped}${why}`,
     added: addedText(last.added),
     ids: last.added?.ids ?? [],
     // how long it ran: a crashed pass ran until its last save, which is after its last call; with no call done the last

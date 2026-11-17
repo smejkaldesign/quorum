@@ -287,8 +287,8 @@ export type CatchupEstimate = { notes: number; read: number; claimCalls: number;
 // what a pass added to Needs review, and the item ids for the filter in Memory health
 export type CatchupAdded = { contradictions: number; drafts: number; other: number; ids: string[] };
 // checked and of: the notes checked (saved ones included) of the notes to check. 'crashed': Quorum quit or crashed while it ran
-export type CatchupLast = { end: 'done' | 'cancelled' | 'off' | 'failed' | 'crashed'; done: number; total: number; notes: number; startedAt: number; endedAt: number | null; checked?: number; of?: number; saved?: number; added?: CatchupAdded | null; dismissed?: boolean };
-export type CatchupStatus = { running: true; done: number; total: number; notes: number; id: string; checked?: number; of?: number; saved?: number; startedAt?: number } | { running: false; last: CatchupLast | null };
+export type CatchupLast = { end: 'done' | 'cancelled' | 'off' | 'failed' | 'crashed'; done: number; total: number; notes: number; startedAt: number; endedAt: number | null; checked?: number; of?: number; saved?: number; skipped?: number; added?: CatchupAdded | null; dismissed?: boolean };
+export type CatchupStatus = { running: true; done: number; total: number; notes: number; id: string; checked?: number; of?: number; saved?: number; skipped?: number; startedAt?: number } | { running: false; last: CatchupLast | null };
 // an item the quality gate holds back from Needs review (qualityGate.js): under Check these first in a bulk plan, or out of view
 export type GateHold = { bucket: 'check' | 'quiet'; why: string | null; title: string; line: string; kind: string };
 export type IgnoreRule = { id: string; ruleId: string; field: 'folder' | 'key' | 'target'; value: string; title: string; at: number };

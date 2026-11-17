@@ -44,8 +44,8 @@ export function createCatchup({ drafter, agent, activity, refresh = async () => 
     store?.clearBefore?.();
   };
   const shown = (l) => (l ? Object.fromEntries(Object.entries(l).filter(([k]) => k !== 'before')) : null);
-  const status = () => { if (run) return { running: true, done: run.done, total: run.total, notes: run.notes, id: run.work.id, checked: run.checked, of: run.of, saved: run.saved, startedAt: run.startedAt }; settle(); return { running: false, last: shown(last) }; };
-  const record = (r, end) => ({ end, done: r.done, total: r.total, notes: r.notes, checked: r.checked, of: r.of, saved: r.saved, startedAt: r.startedAt });
+  const status = () => { if (run) return { running: true, done: run.done, total: run.total, notes: run.notes, id: run.work.id, checked: run.checked, of: run.of, saved: run.saved, skipped: run.skipped, startedAt: run.startedAt }; settle(); return { running: false, last: shown(last) }; };
+  const record = (r, end) => ({ end, done: r.done, total: r.total, notes: r.notes, checked: r.checked, of: r.of, saved: r.saved, skipped: r.skipped, startedAt: r.startedAt });
   // the bar and the label: the notes checked when the pass knows them, the calls otherwise
   const show = (r) => {
     if (left) { const p = progressOf(r.of, { saved: r.saved, read: r.read, left: left() }); r.checked = p.checked; r.of = p.of; }
@@ -82,6 +82,8 @@ export function createCatchup({ drafter, agent, activity, refresh = async () => 
       empty = 0;
       r.done++;
       if (kind === 'claims' && Array.isArray(res?.extracted)) r.read += res.extracted.length;
+      // a claim call that failed: its notes leave the queue unread, and the agent asks for them again after a day
+      if (kind === 'claims' && Array.isArray(res?.dropped)) r.skipped += res.dropped.length;
       try { await after(res, kind); } catch (e) { log('memory catchup after', e?.message); }
       r.total = Math.max(r.total, r.done + remaining());
       show(r);
@@ -94,7 +96,7 @@ export function createCatchup({ drafter, agent, activity, refresh = async () => 
   // starts a pass. Answers its status; a pass that runs already is left as it is
   async function start() {
     if (run) return status();
-    const r = { done: 0, total: 0, notes: notes(), stopped: false, ctl: null, work: null, read: 0, checked: 0, of: 0, saved: 0, startedAt: Date.now(), before: null };
+    const r = { done: 0, total: 0, notes: notes(), stopped: false, ctl: null, work: null, read: 0, skipped: 0, checked: 0, of: 0, saved: 0, startedAt: Date.now(), before: null };
     try { r.saved = saved() ?? 0; r.before = review(); } catch (e) { log('memory catchup plan', e?.message); }
     r.checked = r.saved;
     r.work = activity.start({ kind: 'catchup', label: catchupLabel(r.notes, 0, 0), cancellable: true, immediate: true, onCancel: () => { r.stopped = true; r.ctl?.abort(); } });
