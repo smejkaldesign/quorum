@@ -3,7 +3,8 @@
 // nli-deberta-v3-xsmall (int8) gives contradiction, entailment and neutral probabilities for a pair of sentences.
 // The files come from decide/models.json, fetched into models/ at package time (scripts/fetch-models.mjs). In a packaged
 // app they sit in app.asar.unpacked, since the runtime reads them with its own file calls.
-import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +20,21 @@ const ONNX = { embed: 'onnx/model_int8.onnx', nli: 'onnx/model_qint8_arm64.onnx'
 export function missingFile(dir = MODELS_DIR) {
   for (const [id, m] of Object.entries(MANIFEST)) for (const f of Object.keys(m.files)) if (!existsSync(path.join(dir, id, f))) return `${id}/${f}`;
   return null;
+}
+
+export const hashFile = (file) => new Promise((resolve, reject) => { const h = createHash('sha256'); createReadStream(file).on('data', (c) => h.update(c)).on('end', () => resolve(h.digest('hex'))).on('error', reject); });
+// files whose hash matched, by path, size and modified time, so a load after an idle unload does not read them again
+const verified = new Map();
+// throws unless every file matches the SHA-256 the manifest pins
+export async function verifyFiles(dir = MODELS_DIR) {
+  for (const [id, m] of Object.entries(MANIFEST)) for (const [f, { sha256 }] of Object.entries(m.files)) {
+    const file = path.join(dir, id, f);
+    const st = statSync(file);
+    const stamp = `${st.size}:${st.mtimeMs}:${sha256}`;
+    if (verified.get(file) === stamp) continue;
+    if (!sha256 || (await hashFile(file)) !== sha256) throw new Error(`model file ${id}/${f} does not match its pinned SHA-256`);
+    verified.set(file, stamp);
+  }
 }
 
 const json = (dir, id, f) => JSON.parse(readFileSync(path.join(dir, id, f), 'utf8'));
@@ -39,11 +55,12 @@ function batch(ort, encs, withTypes) {
 // an encoding cut to MAX_TOKENS that still ends with the closing special token
 const capped = (e) => (e.ids.length <= MAX_TOKENS ? e : { ids: [...cut(e.ids).slice(0, -1), e.ids[e.ids.length - 1]] });
 
-// loads both models. Answers { embed(texts) -> Float32Array[], nli(pairs) -> [{ contradiction, entailment, neutral }] }.
+// checks every file's SHA-256, then loads both models. Answers { embed(texts) -> Float32Array[], nli(pairs) -> [{ contradiction, entailment, neutral }] }.
 // Throws when a file or the runtime is missing; the decider then reports T1 as missing and passes every item on
 export async function loadModels({ dir = MODELS_DIR, threads = 2 } = {}) {
   const gone = missingFile(dir);
   if (gone) throw new Error(`model file missing: ${gone}`);
+  await verifyFiles(dir);
   const require = createRequire(import.meta.url);
   const ort = require('onnxruntime-node');
   const { Tokenizer } = await import('@huggingface/tokenizers');

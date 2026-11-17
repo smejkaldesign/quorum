@@ -24,11 +24,16 @@ export const IDLE_MS = 10 * 60 * 1000;
 const textOf = (c) => String(c?.quote || [c?.subject, c?.attribute, c?.value].filter(Boolean).join(' ')).trim();
 const within = (p, ms) => new Promise((resolve, reject) => { const t = setTimeout(() => reject(new Error(`no answer in ${ms} ms`)), ms); p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); }); });
 
-export function createDecider({ load = loadModels, thresholds = THRESHOLDS, timeoutMs = TIMEOUT_MS, idleMs = IDLE_MS, log = () => {}, now = Date.now } = {}) {
+// after the models were missing or failed their hash check, look again this often: the download may have finished
+export const RETRY_MS = 60 * 1000;
+
+// dir: the folder that holds the models (Quorum's data folder in the app). load: replaces loadModels in tests
+export function createDecider({ dir, load = () => loadModels(dir ? { dir } : {}), retryMs = RETRY_MS, thresholds = THRESHOLDS, timeoutMs = TIMEOUT_MS, idleMs = IDLE_MS, log = () => {}, now = Date.now } = {}) {
   const t1 = { state: 'idle', error: null, loadMs: null, calls: 0, drops: 0, failures: 0, streak: 0, unloads: 0 };
   let models = null;
   let loading = null;
   let busy = 0;
+  let retryAt = 0;
   let idle = null;
   const vectors = new Map();
 
@@ -44,7 +49,7 @@ export function createDecider({ load = loadModels, thresholds = THRESHOLDS, time
   const rest = () => { clearTimeout(idle); idle = setTimeout(unload, idleMs); idle.unref?.(); };
 
   const ensure = () => {
-    if (models || t1.state === 'missing' || t1.state === 'off') return Promise.resolve(models);
+    if (models || t1.state === 'off' || (t1.state === 'missing' && now() < retryAt)) return Promise.resolve(models);
     loading ??= (async () => {
       t1.state = 'loading';
       const at = now();
@@ -53,7 +58,7 @@ export function createDecider({ load = loadModels, thresholds = THRESHOLDS, time
         t1.state = 'ready'; t1.loadMs = now() - at;
         log('decider', 't1 ready', t1.loadMs);
       } catch (e) {
-        t1.state = 'missing'; t1.error = String(e?.message ?? e);
+        t1.state = 'missing'; t1.error = String(e?.message ?? e); retryAt = now() + retryMs; loading = null;
         log('decider', 't1 missing', t1.error);
       }
       return models;

@@ -77,6 +77,7 @@ import { approveLitter, commitNotes, prepareCompact } from './vaultHygiene.js';
 import { relatedLine } from './rules/nearDuplicates.js';
 import { DAILY_CAP, WRONG_NOTE_FIX, createDrafter, draftKind, evidenceRels, fallbackItem, unlinkItem, withDraft } from './memoryDraft.js';
 import { catchupHooks, createSaveSweeps, forkEngine, slotBinder, startMemoryEngine } from './memoryWiring.js';
+import { createModelDownload, macConditions } from './decide/download.js';
 import { annotateLine, ruleBar } from './contradictionResolve.js';
 import { ignoreProposals, ignored, ruleRecords } from './ruleRecords.js';
 import { demotions, kindOf, logGate, ruleDemotion, runGate, signature, weakLink } from './qualityGate.js';
@@ -3607,6 +3608,10 @@ const memoryEngine = startMemoryEngine({
   model: (prompt, system) => claudeText({ prompt, system, model: 'sonnet', cwd: tmpdir(), timeoutMs: 300000, signal: contradictionAbort?.signal ?? null }),
   log,
 });
+// the decision layer's models download in the background into the data folder after launch (decide/download.js);
+// Settings > Memory shows the status. Until they are on disk and verified, every check goes to Claude
+const modelDownload = createModelDownload({ dir: path.join(DATA_DIR, 'models'), conditions: macConditions, onChange: (s) => toUI('models-status', s), log });
+ipcMain.handle('models-status', () => modelDownload.status());
 const contradictionAgent = memoryEngine.agent;
 // each drafting run is agent activity; Cancel stops the model call, and the item is drafted again later
 let draftAbort = null;
@@ -5399,6 +5404,8 @@ app.whenReady().then(() => {
   updater.autoUpdater.logger = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
   updates = createUpdater({ autoUpdater: updater.autoUpdater, feed: feedFor({ edition: EDITION, packaged: packagedMeta }), current: app.getVersion(), enabled: app.isPackaged, emit: (s) => { toUI('update', s); updateTray(); }, log });
   updates.start();
+  // half a minute after launch, so the window and the first sync go first
+  setTimeout(() => { modelDownload.start(); }, 30000).unref?.();
   store.attachments.clear();
   store.meetings.ensureRoot();
   writeState();

@@ -9,7 +9,7 @@ import { pathToFileURL } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { AUDIT_RATE, audited, createPairGate } from '../decide/gate.js';
 import { MAX_FAILURES, createDecider } from '../decide/index.js';
-import { loadModels, missingFile } from '../decide/models.js';
+import { MANIFEST, loadModels, missingFile } from '../decide/models.js';
 import { figures, noteRule, pairRule } from '../decide/rules.js';
 import { FINDING, NOTES, PAIRS } from './fixtures/deciderPairs.js';
 
@@ -34,6 +34,27 @@ describe('decider tiers fail open', () => {
     expect(r).toMatchObject({ drop: false, equivalent: false, tier: 't0' });
     expect(tier(d, 't1')).toMatchObject({ state: 'missing', error: 'model file missing: nli/config.json' });
     expect(await d.warm()).toBe(false);
+  });
+
+  it('refuses model files whose SHA-256 does not match the manifest', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'decider-'));
+    for (const [id, m] of Object.entries(MANIFEST)) for (const f of Object.keys(m.files)) { mkdirSync(path.dirname(path.join(dir, id, f)), { recursive: true }); writeFileSync(path.join(dir, id, f), 'not the model'); }
+    await expect(loadModels({ dir })).rejects.toThrow(/SHA-256/);
+    const d = createDecider({ dir });
+    expect((await d.relatedPair(pairA, pairB)).drop).toBe(false);
+    expect(tier(d, 't1').state).toBe('missing');
+  });
+
+  it('looks for the models again after a while, so a download that finishes later turns T1 on', async () => {
+    let there = false;
+    const load = vi.fn(async () => { if (!there) throw new Error('model file missing: embed/onnx/model_int8.onnx'); return fake(SAME); });
+    const d = createDecider({ load, retryMs: 30 });
+    expect((await d.relatedPair(pairA, pairB)).drop).toBe(false);
+    there = true;
+    expect((await d.relatedPair(pairA, pairB)).drop).toBe(false);
+    await new Promise((r) => setTimeout(r, 50));
+    expect((await d.relatedPair(pairA, pairB)).drop).toBe(true);
+    expect(load).toHaveBeenCalledTimes(2);
   });
 
   it('loads the models once for many pairs, even when the load fails', async () => {
