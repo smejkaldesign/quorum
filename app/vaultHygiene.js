@@ -9,11 +9,15 @@ import { noteHash, ruleText } from './rules/common.js';
 
 // Folder names tools and tests leave. Only names a known tool gives, so a folder a person named is never one:
 // TemporaryDirectory.* (Python), vitest-*, jest_*, tmp- or tmp_ with a random suffix, *.lock folders, and the
-// name-XXXXXX form mkdtemp gives, which counts only when the suffix mixes lower case, upper case and digits and three or
-// more sibling folders share the name before it (a test suite leaves many). Each rule names its kind and the
+// name-XXXXXX form mkdtemp gives, which counts only when the suffix reads as random (mixed below) and three or more
+// sibling folders share the name before it (a test suite leaves many). Each rule names its kind and the
 // .gitignore pattern that covers it. A folder with any Markdown file or any file git tracks is never litter, and a
 // build folder must hold code only (no document, image or data file)
-const mixed = (s) => /\d/.test(s) && /[a-z]/.test(s) && /[A-Z]/.test(s);
+// a random suffix: lower case, upper case and digits, switching between them at four or more of its five steps (a8Bc2D).
+// A word with a version (iOS17a) switches fewer times
+const cls = (c) => (/\d/.test(c) ? 'd' : c === c.toLowerCase() ? 'l' : 'u');
+const switches = (s) => { let n = 0; for (let i = 1; i < s.length; i++) if (cls(s[i]) !== cls(s[i - 1])) n++; return n; };
+const mixed = (s) => /\d/.test(s) && /[a-z]/.test(s) && /[A-Z]/.test(s) && switches(s) >= 4;
 const MKDTEMP = /^([a-z][a-z0-9]*(?:-[a-z0-9]+)*)-([A-Za-z0-9]{6})$/;
 export const SIBLINGS = 3;
 // folders the walk never enters: git's own, installed packages and virtual environments

@@ -51,7 +51,7 @@ describe('litter folder names', () => {
     expect(litterKind('index.lock')).toMatchObject({ kind: 'lock' });
     expect(litterKind('dist')).toMatchObject({ kind: 'build' });
     expect(litterKind('node_modules')).toBeNull();
-    for (const name of ['archive-2025Q4', 'Clients-Acme01', 'Project_ABC123', 'tmpNotes2', 'project-finale', 'notes', 'build', 'out', 'sessions', '2026-11-16', 'q3-review', 'design-system', 'vault_x9k2pQ', 'tmp-notes']) expect(litterKind(name)).toBeNull();
+    for (const name of ['archive-2025Q4', 'Clients-Acme01', 'Project_ABC123', 'tmpNotes2', 'design-iOS17a', 'Notes.v2beta', 'Meeting-Notes', 'finale', 'project-finale', 'notes', 'build', 'out', 'sessions', '2026-11-16', 'q3-review', 'design-system', 'vault_x9k2pQ', 'tmp-notes']) expect(litterKind(name)).toBeNull();
   });
 });
 
