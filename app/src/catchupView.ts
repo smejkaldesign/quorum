@@ -5,7 +5,7 @@ import type { CatchupEstimate, CatchupLast, CatchupStatus } from './quorum';
 
 // a date and time the way Memory health shows them (MemoryUpdates.tsx when)
 export const ranAt = (at: number) => new Date(at).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
-const fmt = (n: number) => n.toLocaleString('en-US');
+export const fmt = (n: number) => n.toLocaleString('en-US');
 const count = (n: number, one: string, many: string) => `${fmt(n)} ${n === 1 ? one : many}`;
 
 // Cancel stops a pass at once in its first minute; after that it asks first

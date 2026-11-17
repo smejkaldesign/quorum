@@ -2,12 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import type { CatchupEstimate, CatchupStatus } from './quorum';
 import { Modal, ModalActions } from './controls';
 import { WorkBanner } from './WorkBanner';
-import { planRows, progressText, ranAt, showSummary, summaryOf } from './catchupView';
+import { fmt, planRows, progressText, ranAt, showSummary, summaryOf } from './catchupView';
 
 // Check everything now (memoryCatchup.js): one pass over every note the agent has not read yet, past the daily limit.
 // Onboarding offers it once the vault connects, and Settings > Memory has the button
 export const DRAFTS_NEEDED = 'It also turns on Let the agent draft fixes, which the check needs.';
-const calls = (n: number) => `${n} ${n === 1 ? 'call' : 'calls'}`;
+const calls = (n: number) => `${fmt(n)} ${n === 1 ? 'call' : 'calls'}`;
 // what the pass costs, from the estimate main computes from stage 1 and the drafts that wait
 export function catchupCost(e: CatchupEstimate | null) {
   return e ? `This uses your Claude plan for about ${calls(e.calls)} and runs in the background.` : 'This uses your Claude plan and runs in the background.';
@@ -45,7 +45,7 @@ export function catchupResult(st: CatchupStatus | null) {
   if (!st || st.running || !st.last) return null;
   const { end, done, total } = st.last;
   if (end === 'done') return `The last check made ${calls(done)}. What it found is in Needs review.`;
-  if (end === 'cancelled') return `You stopped the last check after ${done} of ${calls(total)}. The rest runs under the daily limit.`;
+  if (end === 'cancelled') return `You stopped the last check after ${fmt(done)} of ${calls(total)}. The rest runs under the daily limit.`;
   if (end === 'off') return 'The last check stopped because Let the agent draft fixes or background checks are off.';
   if (end === 'crashed') return 'The last check stopped early when Quorum closed. What it checked is saved, and the rest runs under the daily limit.';
   return 'The last check stopped on an error. The rest runs under the daily limit.';

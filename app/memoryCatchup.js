@@ -25,9 +25,9 @@ export const BUSY_WAIT_MS = 5000;
 // how many times the pass reads the vault again when both queues look empty, before it calls the pass done
 const RESWEEPS = 2;
 
-export const catchupLabel = (notes, done, total) => `Checking all ${notes} ${notes === 1 ? 'note' : 'notes'}: ${done} of ${total} ${total === 1 ? 'call' : 'calls'}`;
-// the label once the pass knows its notes: the notes checked, saved ones included, of the notes to check
 const fmt = (n) => Number(n).toLocaleString('en-US');
+export const catchupLabel = (notes, done, total) => `Checking all ${fmt(notes)} ${notes === 1 ? 'note' : 'notes'}: ${fmt(done)} of ${fmt(total)} ${total === 1 ? 'call' : 'calls'}`;
+// the label once the pass knows its notes: the notes checked, saved ones included, of the notes to check
 export const notesLabel = (checked, of) => `Checked ${fmt(checked)} of ${fmt(of)} ${of === 1 ? 'note' : 'notes'}`;
 
 export function createCatchup({ drafter, agent, activity, refresh = async () => {}, bind = () => {}, after = async () => {}, notes = () => 0, emit = () => {}, saved = () => 0, left = null, review = () => null, store = null, wait = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); }), busyWaitMs = BUSY_WAIT_MS, log = () => {} }) {
