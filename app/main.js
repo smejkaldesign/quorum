@@ -75,8 +75,7 @@ import { createMemorySweep, dueSweep, rescanTags, scanTags } from './memorySweep
 import { RULE_LABELS, RULES } from './rules/index.js';
 import { relatedLine } from './rules/nearDuplicates.js';
 import { DAILY_CAP, WRONG_NOTE_FIX, createDrafter, draftKind, evidenceRels, fallbackItem, unlinkItem, withDraft } from './memoryDraft.js';
-import { createMemoryHost } from './memoryHost.js';
-import { catchupHooks, createSaveSweeps, slotBinder } from './memoryWiring.js';
+import { catchupHooks, createSaveSweeps, forkEngine, slotBinder, startMemoryEngine } from './memoryWiring.js';
 import { annotateLine, ruleBar } from './contradictionResolve.js';
 import { ignoreProposals, ignored, ruleRecords } from './ruleRecords.js';
 import { demotions, kindOf, logGate, ruleDemotion, runGate, signature, weakLink } from './qualityGate.js';
@@ -3581,7 +3580,6 @@ const drafter = createDrafter({
 // The agent's queues, its stored claims and verdicts, the sweeps and the whole-vault pipeline run in the memory engine
 // (memoryEngine.js), a utility process with its own heap (memoryWorker.js), so neither a long sweep nor a large note
 // stops the windows. Main keeps the vault index, the settings, the abort slots and the model calls (memoryHost.js)
-const forkMemoryEngine = () => utilityProcess.fork(path.join(here, 'memoryWorker.js'), [DATA_DIR], { serviceName: 'Quorum memory' });
 // heavy: the decision log's bar, the confidential folders and the opt-out terms, for a sweep or a pass over the vault
 function memoryCond(heavy = false) {
   const b = brain();
@@ -3597,9 +3595,8 @@ function memoryCond(heavy = false) {
   try { bar = ruleBar(decisionLog.list(b.vault)); } catch {}
   return { ...out, bar, folders: confFolders(b.vault), terms: suggester.terms() };
 }
-const memoryEngine = createMemoryHost({
-  port: null,
-  restart: forkMemoryEngine,
+const memoryEngine = startMemoryEngine({
+  fork: forkEngine(utilityProcess, here, DATA_DIR),
   index: () => vindex,
   vault: () => brain()?.vault ?? null,
   mayRead: (rel, text) => !!brain() && agentMayRead(brain().vault, rel, text),

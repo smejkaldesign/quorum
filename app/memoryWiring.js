@@ -1,6 +1,8 @@
 // How main ties the memory engine to saves and to Check everything now. main.js builds these with its own state; the
 // responsiveness test (test/memory-responsive.test.js) builds the same ones, so a change here is measured there.
-// Plain Node, no Electron.
+// Plain Node, no Electron: main passes Electron's utilityProcess in.
+import path from 'node:path';
+import { createMemoryHost } from './memoryHost.js';
 
 // The save sweeps: the notes saved in the last delayMs are checked together. hold(): a recording or a catch-up runs, so
 // the saves wait (a recording writes its note every few seconds; a catch-up sweeps once when it ends)
@@ -59,3 +61,12 @@ export function catchupHooks({ engine, ready, sweep, gate, saves, kind, bind }) 
     },
   };
 }
+
+// The memory engine as main starts it: no port at first, so the first call forks the engine through fork(). fork:
+// forkEngine below in the app, a worker thread in the tests. The other options go to createMemoryHost as they are
+export function startMemoryEngine({ fork, ...opts }) {
+  return createMemoryHost({ ...opts, port: null, restart: fork });
+}
+// the engine in an Electron utility process, with its own heap. utilityProcess: Electron's; dir: the folder that holds
+// memoryWorker.js; dataDir: Quorum's data folder, where the engine keeps its files
+export const forkEngine = (utilityProcess, dir, dataDir) => () => utilityProcess.fork(path.join(dir, 'memoryWorker.js'), [dataDir], { serviceName: 'Quorum memory' });
