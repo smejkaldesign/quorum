@@ -5,9 +5,10 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node
 import path from 'node:path';
 import { costLabel, judgeCalls, passCost } from './memoryModels.js';
 
-// with no pass to learn from: about how long one model call takes (the first catch-up on a 1,800-note vault made
-// 1,230 calls in 5.5 hours, 16 seconds a call, one at a time), and how many pairs to judge each note read brings
-export const SECONDS_PER_CALL = 16;
+// with no pass to learn from: about how long one model call takes, and how many pairs to judge each note read brings.
+// Measured on 100 notes: a Haiku claim call of up to 30 excerpts took 86 seconds (its answer is long), a Sonnet call of
+// 20 whole notes 31 seconds; a pass is mostly claim calls, so the default sits between them
+export const SECONDS_PER_CALL = 60;
 export const PAIRS_PER_NOTE = 0.5;
 // the stored claims and verdicts give the pairs per note once this many notes were read
 const HISTORY_NOTES = 50;

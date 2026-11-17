@@ -10,14 +10,14 @@ export const PRICES = {
   haiku: { model: 'Claude Haiku 5.5', input: 0.1, output: 0.5 },
   sonnet: { model: 'Claude Sonnet 5.5', input: 2, output: 10 },
 };
-// characters per token for English notes, and the answer each call writes: a note read brings a few claims of about
-// 60 tokens each, a judge answers one label with two quotes and a reason per pair. A judge call holds up to
+// characters per token for English notes, and the answer each call writes: a note read brings about 6 claims of about
+// 75 tokens each (Haiku listed 650 claims for 100 notes, Sonnet 489), a judge answers one label with two quotes and a reason per pair. A judge call holds up to
 // JUDGE_BATCH pairs (contradictionResolve.js) of about JUDGE_PAIR_TOKENS each, after its system prompt. Every
 // `claude -p` call also carries CALL_OVERHEAD_TOKENS of Claude Code's own prompt (measured with hooks off). Measured
 // on two Haiku calls: Claude Code caches the system prompt, which later calls read from the cache, and writes the rest
 // of each prompt, its own part included, to the cache at CACHE_WRITE times the input price
 export const CHARS_PER_TOKEN = 4;
-export const OUT_TOKENS_PER_NOTE = 180;
+export const OUT_TOKENS_PER_NOTE = 450;
 export const JUDGE_PAIR_TOKENS = 400;
 export const JUDGE_SYSTEM_TOKENS = 330;
 export const JUDGE_OUT_TOKENS = 150;

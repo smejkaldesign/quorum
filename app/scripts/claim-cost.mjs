@@ -4,19 +4,24 @@
 // agent before excerpts: up to 12,000 characters of each note, 20 notes a call, all on Sonnet). Prints counts only,
 // never note names or text. It never writes: the index is built in memory.
 //
-//   node scripts/claim-cost.mjs <vault> [--seconds 16] [--parallel 4] [--pairs-per-note 0.5]
+//   node scripts/claim-cost.mjs <vault> [--claim-seconds 86] [--judge-seconds 31] [--old-seconds 31] [--parallel 4]
+//     [--pairs-per-note 0.5]
 //
-// --seconds is the time one call takes, --parallel how many calls a catch-up runs at once, for the wall time.
+// The seconds a call takes, measured on 100 notes: 86 for a Haiku claim call of up to 30 excerpts, 31 for a Sonnet call of
+// 20 whole notes (the old claim call; the judge call is taken as the same). --parallel is how many calls a catch-up runs
+// at once, for the wall time.
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const args = process.argv.slice(2);
 const flag = (name, def) => { const i = args.indexOf(name); if (i < 0) return def; const v = args[i + 1]; args.splice(i, 2); return Number(v); };
-const seconds = flag('--seconds', 16);
+const claimSeconds = flag('--claim-seconds', 86);
+const judgeSeconds = flag('--judge-seconds', 31);
+const oldSeconds = flag('--old-seconds', 31);
 const parallel = flag('--parallel', 4);
 const pairsPerNote = flag('--pairs-per-note', 0.5);
 const [vaultArg] = args;
-if (!vaultArg) { console.error('usage: node scripts/claim-cost.mjs <vault> [--seconds 16] [--parallel 4] [--pairs-per-note 0.5]'); process.exit(2); }
+if (!vaultArg) { console.error('usage: node scripts/claim-cost.mjs <vault> [--claim-seconds 86] [--judge-seconds 31] [--old-seconds 31] [--parallel 4] [--pairs-per-note 0.5]'); process.exit(2); }
 const appDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const load = (f) => import(pathToFileURL(path.join(appDir, f)).href);
 const { createVaultIndex } = await load('vindex.js');
@@ -57,7 +62,7 @@ const oldOut = a.toRead.length * OUT_TOKENS_PER_NOTE + pairs * JUDGE_OUT_TOKENS;
 const oldUsd = dollars('sonnet', oldIn, oldOut);
 const now = passCost({ promptChars: newChars, notes: left.length, calls: batches.length }, pairs);
 const jc = judgeCalls(pairs);
-const wall = (calls, p) => Math.round((calls * seconds) / p / 60);
+const minutes = (s, p) => Math.round(s / p / 60);
 const r = (v) => Math.round(v * 100) / 100;
 console.log(`notes ${a.notes}; stage 1 sends ${a.toRead.length} to claim reading`);
 console.log(`before: ${oldBatches.length} claim calls, ${tokensOf(oldChars).toLocaleString('en-US')} input tokens (${Math.round(tokensOf(oldChars) / oldBatches.length).toLocaleString('en-US')} a call), all on Sonnet`);
@@ -65,4 +70,6 @@ console.log(`after: ${batches.length} claim calls for ${left.length} notes (${a.
 console.log(`pairs to judge, estimated at ${pairsPerNote} a note read: ${pairs}; before one a call (${pairs} calls), after up to ${JUDGE_BATCH} a call (${jc} calls), about ${JUDGE_PAIR_TOKENS} input tokens a pair on Sonnet`);
 console.log(`every call adds ${CALL_OVERHEAD_TOKENS} tokens of Claude Code's own prompt, written to the cache at ${CACHE_WRITE} times the input price; input tokens in all, at that weight: before ${oldIn.toLocaleString('en-US')}, after ${now.inputTokens.toLocaleString('en-US')}`);
 console.log(`cost at API rates, claims and judge: before $${r(oldUsd)}, after $${r(now.usd)}`);
-console.log(`wall time at ${seconds} s a call: before ${wall(oldBatches.length + pairs, 1)} min one at a time; after ${wall(batches.length + jc, 1)} min one at a time, ${wall(batches.length + jc, parallel)} min with ${parallel} at once`);
+const before = (oldBatches.length + pairs) * oldSeconds;
+const after = batches.length * claimSeconds + jc * judgeSeconds;
+console.log(`wall time: before ${minutes(before, 1)} min one at a time; after ${minutes(after, 1)} min one at a time, ${minutes(after, parallel)} min with ${parallel} at once`);

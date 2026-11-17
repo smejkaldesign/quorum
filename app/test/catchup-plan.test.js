@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PAIRS_PER_NOTE, SECONDS_PER_CALL, createLastRunStore, diffReview, planOf, progressOf, secondsPerCall } from '../catchupPlan.js';
-import { CACHE_WRITE, CALL_OVERHEAD_TOKENS, JUDGE_PAIR_TOKENS, JUDGE_SYSTEM_TOKENS, PRICES, costLabel, dollars, judgeCalls, passCost } from '../memoryModels.js';
+import { CACHE_WRITE, CALL_OVERHEAD_TOKENS, JUDGE_PAIR_TOKENS, OUT_TOKENS_PER_NOTE, JUDGE_SYSTEM_TOKENS, PRICES, costLabel, dollars, judgeCalls, passCost } from '../memoryModels.js';
 import { CONFIRM_AFTER_MS, addedText, stopFlow, duration, needsConfirm, planRows, planSentence, progressShare, progressText, showSummary, summaryOf } from '../src/catchupView.ts';
 
 let dirs = [];
@@ -22,7 +22,7 @@ describe('the plan before a pass', () => {
     const claimIn = Math.round(1e6 + 40 * CALL_OVERHEAD_TOKENS * CACHE_WRITE);
     const judgeIn = Math.round(100 * JUDGE_PAIR_TOKENS + 13 * (JUDGE_SYSTEM_TOKENS + CALL_OVERHEAD_TOKENS * CACHE_WRITE));
     expect(c.inputTokens).toBe(claimIn + judgeIn);
-    expect(c.usd).toBeCloseTo(dollars('haiku', claimIn, 1000 * 180) + dollars('sonnet', judgeIn, 100 * 150), 6);
+    expect(c.usd).toBeCloseTo(dollars('haiku', claimIn, 1000 * OUT_TOKENS_PER_NOTE) + dollars('sonnet', judgeIn, 100 * 150), 6);
     expect(costLabel(0.4213)).toBe('About $0.42 at API rates');
     expect(costLabel(0.004)).toBe('Less than $0.01 at API rates');
     expect(costLabel(0)).toBeNull();
