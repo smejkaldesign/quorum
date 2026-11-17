@@ -389,7 +389,8 @@ export function IssueParts({ parts }: { parts: [string, string][] }) {
 }
 
 // the time a run has taken, in seconds under a minute
-export const took = (ms: number) => (ms < 1000 ? `${Math.max(ms, 1)} ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60000)} min ${Math.round((ms % 60000) / 1000)} s`);
+// how long work took: ms, s, min and s, then h and min from an hour on
+export const took = (ms: number) => (ms < 1000 ? `${Math.max(ms, 1)} ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)} s` : ms < 3600000 ? `${Math.floor(ms / 60000)} min ${Math.round((ms % 60000) / 1000)} s` : `${Math.floor(ms / 3600000)} h ${Math.floor((ms % 3600000) / 60000)} min`);
 
 // A fix run in progress, then its outcome: the step running now (shimmering) and the time so far, with the steps folded
 // under a chevron; when it ends, a short outcome in green or red with the time it took and a Dismiss button. A banner
