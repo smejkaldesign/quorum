@@ -73,6 +73,7 @@ import { isOff, skipped } from './rules/common.js';
 import { folderMarkOf } from './rules/confidential.js';
 import { createMemorySweep, dueSweep, rescanTags, scanTags } from './memorySweep.js';
 import { RULE_LABELS, RULES } from './rules/index.js';
+import { addIgnores, backupNote, commitNotes, compactNote, stillLitter } from './vaultHygiene.js';
 import { relatedLine } from './rules/nearDuplicates.js';
 import { DAILY_CAP, WRONG_NOTE_FIX, createDrafter, draftKind, evidenceRels, fallbackItem, unlinkItem, withDraft } from './memoryDraft.js';
 import { catchupHooks, createSaveSweeps, forkEngine, slotBinder, startMemoryEngine } from './memoryWiring.js';
@@ -2572,7 +2573,8 @@ function findingsNow() {
     const archived = last?.decision === 'archived' && last.fingerprint === fingerprint(f.ruleId, f.target, findingSources(f));
     if (last?.decision === 'archived' && !archived) reopened.push({ ...findingRecord(f), decision: 'reopened', actor: 'quorum', note: 'The evidence changed after it was archived' });
     const approve = f.fix ? null : approveFinding(f, { rels, title: (rel) => vindex?.note(rel)?.title ?? null, skip: (rel) => skipped({ rel, note: vindex?.note(rel) }) });
-    return { ...f, archived, abs: path.join(b.vault, f.rel), ...(approve ? { approve } : {}) };
+    // a finding on the vault as a whole (rules/hygiene.js) has no note and opens the vault folder
+    return { ...f, archived, abs: f.rel ? path.join(b.vault, f.rel) : b.vault, ...(approve ? { approve } : {}) };
   });
   if (reopened.length) { try { decisionLog.recordMany(b.vault, reopened); } catch (e) { log('decision log', e?.message); } }
   return out;
@@ -3885,6 +3887,30 @@ async function runOp(item, o, { step, keep, written, vault }) {
     return;
   }
   if (o.op === 'keep') { await step(`Keeping ${item.kind === 'pastfix' ? `the earlier fix on ${item.title}` : item.title} as it is`); return; }
+  if (o.op === 'trashdirs') {
+    // each folder is checked again first: still there, still a litter name, still no note in it that a note links to
+    await step(`Moving ${o.dirs.length.toLocaleString('en-US')} ${o.dirs.length === 1 ? 'folder' : 'folders'} to the Trash`);
+    const inside = (rel) => o.dirs.some((d) => rel.startsWith(`${d}/`));
+    const linked = new Set(vindex.rels().filter((r) => inside(r) && vindex.backlinks(r).some((bl) => !inside(bl.rel))));
+    let moved = 0;
+    for (const d of o.dirs) {
+      if (!stillLitter(vault, d, linked)) continue;
+      await shell.trashItem(path.join(vault, d));
+      moved++;
+    }
+    if (!moved) throw new Error('None of the folders are litter any more, so Quorum moved nothing');
+    if (o.gitignore && o.ignore?.length) {
+      const added = addIgnores(o.gitignore, o.ignore);
+      if (added.length) await step(`Adding ${added.length} ${added.length === 1 ? 'pattern' : 'patterns'} to ${path.basename(o.gitignore)}`);
+    }
+    vindex.sync();
+    return;
+  }
+  if (o.op === 'commit') {
+    await step(`Committing ${o.paths.length.toLocaleString('en-US')} ${o.paths.length === 1 ? 'note' : 'notes'} on ${o.branch}`);
+    commitNotes(vault, o.paths, o.message);
+    return;
+  }
   if (o.op === 'unlink') {
     // links an earlier fix left pointing at a note that is gone, or a dead link whose draft found the wrong note: each
     // is replaced by its words
@@ -3936,6 +3962,14 @@ async function runOp(item, o, { step, keep, written, vault }) {
     await step(`Adding “${o.add.trim()}” to line ${o.line} of ${o.rel}`);
     keep(o.rel);
     writeAtomic(abs, annotateLine(readFileSync(abs, 'utf8'), o));
+  } else if (o.op === 'compact') {
+    await step(`Saving a backup copy of ${o.rel} and removing its repeated blocks`);
+    const text = readFileSync(abs, 'utf8');
+    const c = compactNote(text);
+    if (!c.removed) throw new Error(`“${o.rel}” no longer repeats a block, so Quorum did not change it`);
+    backupNote(DATA_DIR, vault, o.rel);
+    keep(o.rel);
+    writeAtomic(abs, c.text);
   } else if (o.op === 'addlink') {
     await step(`Linking ${o.note} from ${o.rel}`);
     keep(o.rel);

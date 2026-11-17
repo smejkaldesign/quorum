@@ -15,6 +15,7 @@ import { createResolver } from './linkparse.js';
 import { createContradictionAgent } from './contradictionAgent.js';
 import { createMemorySweep, rescanTags, scanTags } from './memorySweep.js';
 import { analyze as contradictionPass } from './rules/contradictions.js';
+import { scanHygiene } from './vaultHygiene.js';
 
 export const MAX_RULE_TEXT = 1000000;
 
@@ -35,6 +36,8 @@ export function createMemoryEngine({ dataDir, ask = async () => { throw new Erro
   let resolve = () => null;
   let list = [];
   let tagScan = null;
+  // the last hygiene scan (vaultHygiene.js), with the vault it read
+  let hygiene = null;
   // how many notes main's index held at the last sync. The engine sweeps and prunes only when it holds them all
   let expected = 0;
   // what main says holds now: { enabled, cap, busy, idleMs, drafts, bar, folders, terms, confidentialFolders }
@@ -102,7 +105,11 @@ export function createMemoryEngine({ dataDir, ask = async () => { throw new Erro
     need();
     const tags = kind === 'save' && only && tagScan?.vault === vault ? rescanTags(vault, tagScan.tags, only, excluded) : scanTags(vault, excluded);
     tagScan = { vault, tags };
-    const ctx = { notes: list, resolve, tags, folders: cond.folders ?? {}, contradictions: contradictions() };
+    // the hygiene rule's folder walk and git status run once per full sweep; the other sweeps reuse the last scan
+    if (kind === 'full' || kind === 'first' || hygiene?.vault !== vault) {
+      try { hygiene = { vault, ...scanHygiene({ vault, notes: list, file: path.join(dataDir, 'memory-hygiene.json'), now: now() }) }; } catch (e) { log('memory engine', 'hygiene scan', e?.message); hygiene = null; }
+    }
+    const ctx = { notes: list, resolve, tags, folders: cond.folders ?? {}, contradictions: contradictions(), hygiene };
     const s = sweeps.run(vault, kind, ctx, { only });
     return { state: s, tags };
   }

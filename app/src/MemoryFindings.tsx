@@ -31,7 +31,7 @@ export function MemoryFindings({ findings, drafts = {}, archived, q, unread, onA
   const approve = async (f: MemoryFinding) => { setBusy(true); try { await onApprove(f); } finally { setBusy(false); } };
   const fold = (k: string) => setUnfolded((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
-  const open = (f: MemoryFinding) => { if (unread.has(findingId(f.key))) onRead([findingId(f.key)]); openNote(f.abs); };
+  const open = (f: MemoryFinding) => { if (unread.has(findingId(f.key))) onRead([findingId(f.key)]); if (f.notes.length) openNote(f.abs); };
   return (
     <div className="mh-findings">
       {[...groups].map(([label, list]) => (
