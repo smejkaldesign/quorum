@@ -173,9 +173,13 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
   // gate keeps out
   function estimate(entries) {
     const s = load();
-    const left = (entries ?? []).filter((e) => { const h = hashText(e.text); return s.claims[e.rel]?.hash !== h && !tried(e.rel, h) && readable(e.rel, e.text); });
-    return { notes: left.length, calls: packBatches(left).length };
+    let saved = 0;
+    const left = (entries ?? []).filter((e) => { const h = hashText(e.text); if (s.claims[e.rel]?.hash === h) { saved++; return false; } return !tried(e.rel, h) && readable(e.rel, e.text); });
+    // saved: the notes read in an earlier pass; claimed and judged: every note and pair stored, for the pairs per note
+    return { notes: left.length, calls: packBatches(left).length, saved, claimed: Object.keys(s.claims).length, judged: Object.keys(s.judged).length };
   }
+  // the notes the latest sweep queued to read that the read gate lets through, for the note count of a catch-up pass
+  const pendingNotes = () => [...wantClaims.values()].filter((w) => readable(w.rel, w.text)).length;
   const status = () => ({ used: used(), cap: cap(), waiting: waiting(), running: !!running, ...provider.pending() });
-  return { provider, tick, status, waiting, pendingCalls, estimate };
+  return { provider, tick, status, waiting, pendingCalls, pendingNotes, estimate };
 }
