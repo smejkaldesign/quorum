@@ -42,6 +42,13 @@ export function duration(seconds: number) {
   return `about ${count(h, 'hour', 'hours')}${m ? ` ${count(m, 'minute', 'minutes')}` : ''}`;
 }
 
+// what the pass costs in calls, from main's estimate: the claim calls, the judge calls for the estimated pairs and the
+// drafts that wait
+const callCount = (n: number) => `${fmt(n)} ${n === 1 ? 'call' : 'calls'}`;
+export function catchupCost(e: CatchupEstimate | null) {
+  return e ? `This uses your Claude plan for about ${callCount(e.calls)} and runs in the background.` : 'This uses your Claude plan and runs in the background.';
+}
+
 // the plan shown before a pass starts, one row per fact. Pairs and time are estimates and say so
 export function planRows(e: CatchupEstimate): [string, string][] {
   const saved = e.saved ?? 0;

@@ -3706,7 +3706,8 @@ async function catchupEstimate() {
   // the plan shown before a pass: the notes to check, those saved from earlier passes, and estimates of the pairs to
   // judge and the time, from the last pass when there is one
   const p = planOf({ saved: claims.saved, read: claims.notes, claimCalls: claims.calls, draftCalls: drafts, claimed: claims.claimed, judged: claims.judged, gated: claims.gated, promptChars: claims.promptChars }, catchup.status().last, catchupParallel());
-  return { ...est, saved: claims.saved, toCheck: p.toCheck, pairs: p.pairs, seconds: p.seconds, cost: p.cost, costLabel: p.costLabel };
+  // calls: every call of the pass, judge calls for the estimated pairs included
+  return { ...est, calls: p.calls, saved: claims.saved, toCheck: p.toCheck, pairs: p.pairs, seconds: p.seconds, cost: p.cost, costLabel: p.costLabel };
 }
 // starts a catch-up. It needs Let the agent draft fixes; turning the pass on turns that on too, and the answer says so
 async function startCatchup() {

@@ -37,7 +37,8 @@ export function planOf({ saved = 0, read = 0, claimCalls = 0, draftCalls = 0, cl
   const { usd } = passCost({ promptChars, notes: read, calls: claimCalls }, pairs, { drafts: draftCalls });
   // the pairs go to the judge several to a call
   const calls = claimCalls + draftCalls + judgeCalls(pairs);
-  return { toCheck: saved + read, saved, pairs, seconds: Math.round((calls * perCall) / Math.max(1, parallel)), perCall, cost: usd, costLabel: costLabel(usd) };
+  // calls: every call the pass makes, the claim calls, the judge calls for the estimated pairs and the drafts
+  return { toCheck: saved + read, saved, pairs, calls, seconds: Math.round((calls * perCall) / Math.max(1, parallel)), perCall, cost: usd, costLabel: costLabel(usd) };
 }
 
 // the notes checked of the notes to check, counting the notes saved from earlier passes. left: the notes the agent

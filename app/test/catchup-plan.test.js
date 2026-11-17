@@ -6,7 +6,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PAIRS_PER_NOTE, SECONDS_PER_CALL, createLastRunStore, diffReview, planOf, progressOf, secondsPerCall } from '../catchupPlan.js';
 import { CACHE_WRITE, CALL_OVERHEAD_TOKENS, JUDGE_PAIR_TOKENS, JUDGE_SYSTEM_TOKENS, MEASURED, MEMORY_MODELS, claimMeasure, PRICES, costLabel, dollars, judgeCalls, passCost } from '../memoryModels.js';
-import { CONFIRM_AFTER_MS, addedText, stopFlow, duration, needsConfirm, planRows, planSentence, progressShare, progressText, showSummary, summaryOf } from '../src/catchupView.ts';
+import { CONFIRM_AFTER_MS, addedText, catchupCost, stopFlow, duration, needsConfirm, planRows, planSentence, progressShare, progressText, showSummary, summaryOf } from '../src/catchupView.ts';
 
 let dirs = [];
 afterEach(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); dirs = []; });
@@ -45,6 +45,12 @@ describe('the plan before a pass', () => {
     expect(p.saved).toBe(300);
     expect(p.pairs).toBe(Math.round(100 * PAIRS_PER_NOTE));
     expect(p.seconds).toBe((10 + 4 + judgeCalls(p.pairs)) * SECONDS_PER_CALL);
+  });
+  it('counts every call a pass makes: claims, judge calls for the estimated pairs, and drafts', () => {
+    const p = planOf({ read: 100, claimCalls: 6, draftCalls: 3, claimed: 200, judged: 100 });
+    expect(p.pairs).toBe(50);
+    expect(p.calls).toBe(6 + 3 + judgeCalls(50));
+    expect(catchupCost({ notes: 1, read: 100, claimCalls: 6, draftCalls: 3, calls: p.calls, drafting: true })).toBe(`This uses your Claude plan for about ${p.calls} calls and runs in the background.`);
   });
   it('takes the pairs the local gate keeps from the judge out of the pairs to judge', () => {
     expect(planOf({ read: 100, claimed: 200, judged: 100, gated: 25 }).pairs).toBe(38);
