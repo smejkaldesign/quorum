@@ -51,11 +51,10 @@ export function handleCallback(req, res, { log = () => {} } = {}) {
 }
 
 // the redirect both callback routes answer with (this file's platforms, oauth.js's personal connectors): the app's
-// loopback with the code, state or error the provider sent, bounded in length, plus any extra values the caller adds
-export function bounceToLoopback(url, res, extra = {}) {
+// loopback with the code, state or error the provider sent, bounded in length
+export function bounceToLoopback(url, res) {
   const out = new URL(`http://127.0.0.1:${loopbackFor(url.searchParams.get('state'))}/callback`);
   for (const k of ['code', 'state', 'error', 'error_description']) { const v = url.searchParams.get(k); if (v) out.searchParams.set(k, v.slice(0, 2048)); }
-  for (const [k, v] of Object.entries(extra)) if (v) out.searchParams.set(k, v);
   res.writeHead(302, { location: out.toString(), 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
   res.end();
 }

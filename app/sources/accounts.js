@@ -67,16 +67,12 @@ async function relayPost(relayFetch, route, body) {
   return data;
 }
 
-// code for tokens: Google directly with its Desktop pair, the others through the relay. A relay provider without PKCE
-// (Notion, Slack) sends the state, the relay's binding from the callback and the verifier, which the relay checks
-// against the challenge at the end of the state
-export async function exchangeCode(id, { clients, code, verifier, redirectUri, relayFetch, fetchImpl = fetch, state = null, binding = null }) {
+// code for tokens: Google directly with its Desktop pair, the others through the relay
+export async function exchangeCode(id, { clients, code, verifier, redirectUri, relayFetch, fetchImpl = fetch }) {
   const app = OAUTH_APPS[id];
   if (app.exchange === 'direct') { const t = await googleExchange(clients.google, { code, verifier, redirectUri }, fetchImpl); return { ...t, account: t.email ?? null }; }
-  return relayPost(relayFetch, 'token', { provider: id, code, code_verifier: verifier, redirect_uri: redirectUri, ...(app.pkce ? {} : { state, binding }) });
+  return relayPost(relayFetch, 'token', { provider: id, code, code_verifier: app.pkce ? verifier : undefined, redirect_uri: redirectUri });
 }
-// the state for one sign-in; for a relay provider without PKCE it ends in .c<challenge> for the relay's check
-export const stateFor = (id, challenge) => (OAUTH_APPS[id].exchange === 'relay' && !OAUTH_APPS[id].pkce ? `${newState()}.c${challenge}` : newState());
 
 export async function refreshTokens(id, tokens, { clients, relayFetch, fetchImpl = fetch }) {
   const app = OAUTH_APPS[id];
@@ -139,7 +135,7 @@ export async function connectAccount(id, { clients, open, relayBase, relayFetch,
   const app = OAUTH_APPS[id];
   if (!configured(id, clients)) throw new Error(`${app.name} is not available in this build yet.`);
   const { verifier, challenge } = pkce();
-  const state = stateFor(id, challenge);
+  const state = newState();
   const redirectUri = redirectFor(id, relayBase);
   const waiting = loopback({ state });
   await open(httpsOnly(authorizeUrl(id, { clientId: clients[app.client].clientId, redirectUri, state, challenge })));
@@ -150,7 +146,7 @@ export async function connectAccount(id, { clients, open, relayBase, relayFetch,
   if (q.state !== state) fail('The sign-in answer did not match the request.');
   if (!q.code) fail('The sign-in did not return a code.');
   let tokens;
-  try { tokens = await exchangeCode(id, { clients, code: q.code, verifier, redirectUri, relayFetch, fetchImpl, state, binding: q.binding ?? null }); } catch (err) { fail(err.message); }
+  try { tokens = await exchangeCode(id, { clients, code: q.code, verifier, redirectUri, relayFetch, fetchImpl }); } catch (err) { fail(err.message); }
   if (!tokens?.accessToken) fail(`${app.name} did not return a token.`);
   if (app.exchange === 'direct' && !tokens.refreshToken) fail(`${app.name} did not issue a refresh token. Remove Quorum under your Google Account, Third-party access, then connect again.`);
   const account = await accountLabel(id, tokens, fetchImpl);
