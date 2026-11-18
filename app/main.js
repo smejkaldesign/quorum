@@ -36,10 +36,6 @@ import { createKeeper } from './keeper.js';
 import { createVersionStore } from './memoryVersions.js';
 import { createLiveRuns, stopAndRestore } from './liveRuns.js';
 import { lineDiff, noteBody } from './memoryReview.js';
-import { contextBudget } from './context-budget.js';
-import { skillUsage, stashSkill } from './skill-usage.js';
-import { createBrainCheck, fingerprint as checkPrint } from './brain-check.js';
-import { INSTRUCTIONS_LIMIT, connectorsAllowed } from './agent.js';
 import { wouldBlock } from './guardrails.js';
 import { createPredicates } from './guardrails-predicates.js';
 import { KEPT_KEYS, carryKeys, reconcile, withChoice } from './shareChoice.js';
@@ -289,58 +285,8 @@ ipcMain.handle('keeper-status', () => keeper.status());
 ipcMain.handle('keeper-set', (_e, patch) => keeper.set(patch ?? {}));
 ipcMain.handle('keeper-remove-claude', () => keeper.removeClaude());
 ipcMain.handle('keeper-run', (_e, opts) => keeper.run({ reason: 'manual', allowCreate: opts?.allowCreate === true }));
-ipcMain.handle('keeper-plugin', (_e, id, owner) => keeper.setPlugin(String(id), owner));
 ipcMain.handle('keeper-errors-open', () => { if (existsSync(KEEPER_ERRORS)) shell.openPath(KEEPER_ERRORS); });
 ipcMain.handle('keeper-errors-clear', () => keeper.clearErrors());
-// the report plugins read and show; each answers only while its plugin row is Quorum's, read from the last scan
-const pluginOn = (id) => keeper.cachedPlugins().find((p) => p.id === id)?.owner === 'quorum';
-// the instructions file Quorum's agent puts into its prompt itself, as agent.js agentArgs does: the included
-// Instructions item, and only while Skills and Agents are off (with either on, Claude Code loads CLAUDE.md itself)
-const agentInstructions = () => { const p = agentContext().powers; return p.instructions && !(p.skills || p.agents) ? p.instructions : null; };
-ipcMain.handle('plugin-context', () => { const b = brain(); return b && pluginOn('context') ? contextBudget({ root: b.root, vault: b.vault, instructions: agentInstructions() }) : null; });
-// transcripts are read on this Mac for skill names and dates only; counts per file are kept in memory between scans
-const skillScans = new Map();
-ipcMain.handle('plugin-skills', () => { const b = brain(); return b && pluginOn('skills') ? skillUsage({ root: b.root, cache: skillScans }) : null; });
-ipcMain.handle('plugin-skill-stash', (_e, dir, on) => {
-  const b = brain();
-  if (!b || !pluginOn('skills')) throw new Error('Skill usage is off');
-  const r = stashSkill(b.root, dir, on === true);
-  if (r.changed) log('skills', `${on === true ? 'stashed' : 'unstashed'} ${r.path}`);
-  return skillUsage({ root: b.root, cache: skillScans });
-});
-// the brain check asks each question the way a chat question in the Agent OS is asked, on the person's own provider,
-// with the same search hints and with the vault's instructions loaded whether or not Instructions is included in
-// Memory. A provider without tools gets the instructions in its system prompt and answers without reading notes
-const brainInstructions = (root) => agentContext().powers.instructions ?? ['CLAUDE.md', 'AGENTS.md'].map((f) => path.join(root, f)).find(existsSync) ?? null;
-async function brainAsk(question) {
-  const b = brain();
-  if (!b) throw new Error('Connect your Agent OS first');
-  const ctx = agentContext();
-  const instructions = brainInstructions(b.root);
-  if (roleProvider('agent') === 'claude-code') {
-    const hints = await searchHints(question, ctx, b.root);
-    const r = await watchAgent('Brain check question', () => runModel({
-      source: modelSource(), providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question, transcript: '', root: b.root,
-      extra: { ...ctx, powers: { ...ctx.powers, instructions }, hints, connectors: null }, model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: [], history: [], onStep: () => {},
-    }));
-    return r.text;
-  }
-  let rules = '';
-  try { rules = instructions ? readFileSync(instructions, 'utf8').slice(0, INSTRUCTIONS_LIMIT) : ''; } catch {}
-  const system = [`You are Quorum, ${OWNER}'s assistant. Answer in 2-5 short sentences, plain and literal.`, rules && `Operating instructions of this Agent OS:\n${rules}`].filter(Boolean).join('\n\n');
-  return suggester.redactLines(await runClaude(question, system, settings.model, { role: 'agent' }));
-}
-const brainCheck = createBrainCheck({
-  file: path.join(DATA_DIR, 'brain-check.json'), ask: brainAsk, onChange: () => toUI('brain-check', null),
-  print: () => { const b = brain(); return b ? checkPrint({ model: `${roleProvider('agent') ?? 'none'}:${settings.model}`, root: b.root, instructions: brainInstructions(b.root) }) : null; },
-});
-ipcMain.handle('brain-check-status', () => { const b = brain(); return b ? brainCheck.status(b.root) : null; });
-ipcMain.handle('brain-check-save', (_e, checks) => { const b = brain(); if (!b) throw new Error('Connect your Agent OS first'); return brainCheck.setChecks(b.root, checks); });
-ipcMain.handle('brain-check-run', () => {
-  const b = brain();
-  if (!b || !pluginOn('brain-check')) throw new Error('Brain check is off');
-  return brainCheck.run(b.root);
-});
 let helper;
 const asset = (name) => path.join(here, 'assets', name);
 // a meeting can have several capture segments (STOP, GO, STOP...); STOP deletes all of them
@@ -938,7 +884,7 @@ async function runSummary() {
 }
 
 // Agent OS connection. POC: the user points Quorum at a folder; Quorum recognizes an agent OS
-// (CLAUDE.md / AGENTS.md), an Obsidian vault, and the search script. Later this becomes a connector.
+// (CLAUDE.md / AGENTS.md) and an Obsidian vault. Later this becomes a connector.
 function inspectBrain(folder) {
   const has = (...p) => existsSync(path.join(...p));
   let root = folder;
@@ -956,7 +902,6 @@ function inspectBrain(folder) {
     markers: {
       agentOS: has(root, 'CLAUDE.md') ? 'CLAUDE.md' : has(root, 'AGENTS.md') ? 'AGENTS.md' : null,
       obsidian: has(vault, '.obsidian'),
-      search: has(vault, 'scripts/search-memory.py'),
       safetyHooks: has(root, '.claude/hooks/output-secret-tripwire.py'),
     },
   };
@@ -986,8 +931,10 @@ const suggester = createSuggester({
     return a?.worth ? a.worth.probability >= 0.25 : null;
   },
   getTranscript: () => meeting.transcript,
-  // QUORUM_VAULT points saves and searches somewhere else for testing, without touching settings.json
+  // QUORUM_VAULT points saves somewhere else for testing, without touching settings.json
   getSettings: () => (process.env.QUORUM_VAULT ? { ...settings, vaultPath: process.env.QUORUM_VAULT } : settings),
+  // Quorum's own note index (vindex.js), the same one vault-search reads
+  search: (q) => { const b = brain(); return b && vindex ? vindex.search(String(q), 20).map((h) => ({ ...h, abs: path.join(b.vault, h.rel) })) : []; },
 });
 
 // consent first: nothing records until Quorum's notice is confirmed in the chat
@@ -1565,150 +1512,33 @@ ipcMain.handle('set-settings', (_e, next) => {
   }
   return settings;
 });
-// only what Quorum actually uses today, found by file and folder names only; no note is read and no model is involved
-// (meeting notes have their own folder setting above, so they aren't listed here)
-const USABLE = new Set(['guards', 'index', 'folder', 'search', 'graph', 'instructions', 'skills', 'agents', 'mcp']);
-function scanBrain(root, vault) {
-  const found = [];
-  const add = (kind, label, abs, detail) => { if (existsSync(abs)) found.push({ id: `${kind}:${abs}`, kind, label, path: abs, detail }); };
-  const count = (dir, test) => { try { return readdirSync(dir).filter(test).length; } catch { return 0; } };
-  // the guardrails row: Quorum's rules plus what this Agent OS offers, reviewed on the Guardrails page
-  { const rules = guardrails.rules(); const on = rules.filter((r) => r.enabled).length; const review = rules.filter((r) => r.source === 'agent-os' && !r.decision).length; found.push({ id: 'guards:quorum', kind: 'guards', label: 'Guardrails', path: existsSync(path.join(root, '.claude/hooks')) ? path.join(root, '.claude/hooks') : root, detail: `${on} rule${on === 1 ? '' : 's'} on${review ? ` · ${review} to review` : ''}` }); }
-  add('index', 'Memory index', path.join(vault, 'index.md'), 'index.md');
-  // the rest of the Agent OS's power-ups, shown so the user sees what Quorum found; today they inform, they don't run
-  const instructions = ['CLAUDE.md', 'AGENTS.md'].map((f) => path.join(root, f)).find(existsSync);
-  if (instructions) add('instructions', 'Agent instructions', instructions, path.basename(instructions));
-  const dirs = (p) => count(path.join(root, p), (f) => !f.startsWith('.'));
-  const skills = dirs('.claude/skills');
-  if (skills) add('skills', 'Skills', path.join(root, '.claude/skills'), `${skills} skill${skills === 1 ? '' : 's'}`);
-  const agents = dirs('.claude/agents');
-  if (agents) add('agents', 'Agents', path.join(root, '.claude/agents'), `${agents} agent${agents === 1 ? '' : 's'}`);
-  try { const n = Object.keys(JSON.parse(readFileSync(path.join(root, '.mcp.json'), 'utf8')).mcpServers ?? {}).length; if (n) add('mcp', 'MCP servers', path.join(root, '.mcp.json'), `${n} server${n === 1 ? '' : 's'}`); } catch {}
-  // the Agent OS's own search; its embeddings come from Ollama on this Mac, so a query never leaves it
-  const search = [path.join(vault, 'scripts/search-memory.py'), path.join(root, 'scripts/search-memory.py')].find(existsSync);
-  if (search) {
-    const vectors = existsSync(path.join(vault, 'memory/vectors.sqlite'));
-    add('search', vectors ? 'Semantic search' : 'Keyword search', search, vectors ? 'local embeddings' : 'keyword index');
-    const graph = [path.join(vault, 'scripts/graph_links.py'), path.join(root, 'scripts/graph_links.py')].find(existsSync);
-    if (graph) add('graph', 'Link graph', graph, 'wikilinks');
-  }
-  return found;
-}
 // the read tools for connected Slack, Notion and GitHub accounts (connectors/tools/), for the quorum MCP server over
 // the control socket and for the chat, with the person's own tokens and the opted-out customer filter
 const connectorTools = createConnectorTools({
   accessToken: (id) => accounts.accessToken(id), connected: (id) => !!settings.accounts?.[id]?.connected,
   isExcluded: (t) => suggester.isExcluded(t), redact: (t) => suggester.redactLines(t), log,
 });
-// what Quorum gets from Power-ups: the index to start from, and any folders you added
+// what chat gets besides the vault: the index and the folders saved as included in settings.memory, and the connector
+// read tools for connected accounts, through this app's own quorum MCP server limited to those tools
 function agentContext() {
-  const inc = memoryState().items.filter((i) => i.include === true && existsSync(i.path));
-  // the vault's own search runs only while the Search plugin is left with the vault; handed to Quorum, she uses her own index
-  const search = keeper.cachedPlugins().find((p) => p.id === 'search')?.owner === 'quorum' ? null : inc.find((i) => i.kind === 'search')?.path ?? null;
-  const on = (k) => inc.find((i) => i.kind === k) ?? null;
-  // the four that change how Claude Code itself runs (agent.js agentArgs)
-  const powers = { instructions: on('instructions')?.path ?? null, skills: !!on('skills'), agents: !!on('agents'), mcp: on('mcp')?.path ?? null };
-  // the connector read tools for connected accounts, through this app's own quorum MCP server limited to those tools
+  const inc = (settings.memory?.items ?? []).filter((i) => i.include === true && existsSync(i.path));
   const tools = connectorTools.available();
-  const connectors = tools.length && connectorsAllowed(powers) ? { tools, name: CONNECTOR_SERVER, server: { command: RUNTIME, args: [CLI, 'mcp'], env: { ...RUNTIME_ENV, QUORUM_MCP_TOOLS: 'connectors' } } } : null;
-  return { index: on('index')?.path ?? null, dirs: inc.filter((i) => i.kind === 'folder').map((i) => i.path), search, graph: !!search && inc.some((i) => i.kind === 'graph'), powers, connectors };
-}
-// an agent run that may write vault notes with its own tools (the Skills, Agents or MCP power-ups; the base tools only
-// read) is watched, so each note it changes keeps a version and shows as an update in the Memory tab
-// (memoryVersions.js). Withheld folders are left out of the watch
-function watchAgent(reason, fn) {
-  const b = brain();
-  const p = agentContext().powers;
-  if (!b || !(p.skills || p.agents || p.mcp)) return fn();
-  // the run names no files until it ends, so the Memory tab shows it as working in the whole vault
-  const id = liveRuns.start({ who: 'agent', label: 'Agent', wholeVault: true });
-  return memoryVersions.watch(b.vault, { who: 'agent', reason, skip: (rel) => excludedPath(rel) }, fn).finally(() => liveRuns.end(id));
+  const connectors = tools.length ? { tools, name: CONNECTOR_SERVER, server: { command: RUNTIME, args: [CLI, 'mcp'], env: { ...RUNTIME_ENV, QUORUM_MCP_TOOLS: 'connectors' } } } : null;
+  return { index: inc.find((i) => i.kind === 'index')?.path ?? null, dirs: inc.filter((i) => i.kind === 'folder').map((i) => i.path), connectors };
 }
 // Cloud: the knowledge bases the person can read (ee/kbSearch.js), searched alongside the Agent OS; null in the local edition
 let kbSearch = null;
 // kb: false leaves the knowledge bases out; a note question edits that note, so it gets the Agent OS only
-async function agentExtra(question, root, { kb = true } = {}) {
+async function agentExtra(question, { kb = true } = {}) {
   const ctx = agentContext();
-  if (ctx.search) toUI('agent-step', { text: 'Searching your Agent OS' });
   const kbOn = kb && !!kbSearch?.available();
   if (kbOn) toUI('agent-step', { text: 'Searching your knowledge bases' });
-  const [hints, kbContext] = await Promise.all([searchHints(question, ctx, root), kbOn ? kbSearch.forChat(question) : null]);
-  return { ...ctx, hints, kb: kbContext };
-}
-// runs the Agent OS's search before Quorum starts so she opens the likely notes first; a slow or broken search just means no hints
-function searchHints(question, ctx, root) {
-  if (!ctx.search) return Promise.resolve([]);
-  return new Promise((resolve) => {
-    const env = { ...process.env };
-    delete env.ANTHROPIC_API_KEY;
-    execFile('python3', [ctx.search, question.slice(0, 300), '-n', '6', '--mode', 'keyword', ...(ctx.graph ? ['--related'] : [])], { cwd: root, env, timeout: 6000, maxBuffer: 1 << 20 }, (err, out) => {
-      if (err && !out) return resolve([]);
-      const paths = [...String(out).matchAll(/^\d+\. \[(\S+?\.md)(?::\d+)?/gm)].map((m) => m[1]);
-      resolve([...new Set(paths)].filter((rel) => existsSync(path.join(root, rel)) && !suggester.isExcluded(rel)).slice(0, 8));
-    });
-  });
+  return { ...ctx, kb: kbOn ? await kbSearch.forChat(question) : null };
 }
 const saveSettings = store.settings.save;
 // quick checks are native: they run on whichever System One provider the workspace connected, and skip quietly without one
 const decisionProvider = () => connectedProvider(settings.workspace?.decisions?.provider);
 const decide = async (...args) => { const p = await decisionProvider(); return p ? decideRaw(p, ...args) : null; };
-const memoryState = () => settings.memory ?? { items: [], excluded: [] };
-// a refresh only adds what's new, and drops anything Quorum can't use; anything you excluded stays out until you add it back by hand
-let scanRun = 0;
-async function refreshMemory() {
-  const b = brain();
-  if (!b) return memoryState();
-  const run = ++scanRun;
-  const m = memoryState();
-  const kept = m.items.filter((i) => USABLE.has(i.kind) && existsSync(i.path));
-  const known = new Set([...kept.map((i) => i.id), ...m.excluded]);
-  const fresh = scanBrain(b.root, b.vault).filter((i) => !known.has(i.id)).map((i) => ({ ...i, include: null }));
-  // long enough to see it working and cancel it
-  await new Promise((r) => setTimeout(r, 900));
-  if (run !== scanRun) return { ...m, cancelled: true };
-  settings.memory = { ...m, items: [...kept, ...fresh], scannedAt: new Date().toISOString() };
-  saveSettings();
-  return { ...settings.memory, added: fresh.length, removed: m.items.length - kept.length };
-}
-ipcMain.handle('memory-get', () => (settings.memory ? settings.memory : refreshMemory()));
-ipcMain.handle('memory-refresh', () => refreshMemory());
-ipcMain.handle('memory-refresh-cancel', () => { scanRun++; });
-ipcMain.handle('memory-add', async () => {
-  const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], defaultPath: brain()?.root });
-  const m = memoryState();
-  if (r.canceled || !r.filePaths[0]) return m;
-  const abs = r.filePaths[0];
-  const id = `folder:${abs}`;
-  settings.memory = { ...m, excluded: m.excluded.filter((x) => x !== id), items: m.items.some((i) => i.id === id) ? m.items : [...m.items, { id, kind: 'folder', label: path.basename(abs), path: abs, detail: abs.replace(homedir(), '~'), include: null, manual: true }] };
-  saveSettings();
-  return settings.memory;
-});
-ipcMain.handle('memory-include', (_e, id) => {
-  const m = memoryState();
-  settings.memory = { ...m, items: m.items.map((i) => (i.id === id ? { ...i, include: true } : i)) };
-  saveSettings();
-  return settings.memory;
-});
-// excluding removes the item from Quorum's list after you confirm; the file or folder on disk is never touched
-ipcMain.handle('memory-exclude', async (_e, id) => {
-  const m = memoryState();
-  const item = m.items.find((i) => i.id === id);
-  if (!item || item.kind === 'guards') return m;
-  const { response } = await dialog.showMessageBox(win, {
-    type: 'warning', buttons: ['Exclude', 'Cancel'], defaultId: 1, cancelId: 1,
-    message: `Exclude ${item.label} from Quorum?`,
-    detail: `Quorum stops using ${item.detail.split(' · ')[0]} and removes it from this list. Nothing is deleted from your Mac, and a refresh won't add it back. You can add it again with Add.`,
-  });
-  if (response !== 0) return m;
-  settings.memory = { ...m, items: m.items.filter((i) => i.id !== id), excluded: [...m.excluded, id] };
-  saveSettings();
-  return settings.memory;
-});
-ipcMain.handle('memory-open', (_e, id) => {
-  const item = memoryState().items.find((i) => i.id === id);
-  if (!item) return;
-  if (statSync(item.path).isDirectory()) shell.openPath(item.path); else shell.showItemInFolder(item.path);
-});
 
 ipcMain.handle('pick-photo', async () => {
   const r = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'heic', 'webp', 'gif'] }] });
@@ -1990,7 +1820,7 @@ ipcMain.handle('note-ask', async (_e, file, question, history, files, chatId) =>
   const source = modelSource();
   // the note body is in the prompt, so a provider without tools can still answer about it and propose edits; only Claude Code can read the rest of the Agent OS or attachments
   const r = roleProvider('agent') === 'claude-code'
-    ? await watchAgent('Question about a meeting note', async () => runModel({ source, providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question: prompt, transcript: '', root: b.root, extra: await agentExtra(String(question), b.root, { kb: false }), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached, history: (history ?? []).slice(-6), onStep: (text) => toUI('agent-step', { text }), onDelta: (text) => toUI('note-delta', { text }) }).finally(() => unstage(attached)))
+    ? await runModel({ source, providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question: prompt, transcript: '', root: b.root, extra: await agentExtra(String(question), { kb: false }), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached, history: (history ?? []).slice(-6), onStep: (text) => toUI('agent-step', { text }), onDelta: (text) => toUI('note-delta', { text }) }).finally(() => unstage(attached))
     : await noteAskWithoutTools(prompt, history, attached);
   const m = r.text.match(/<updated-note>\n?([\s\S]*?)\n?<\/updated-note>/);
   const answer = r.text.replace(/<updated-note>[\s\S]*?<\/updated-note>/, '').trim();
@@ -2480,7 +2310,7 @@ ipcMain.handle('meeting-ask', async (_e, ev, question, history, chatId) => {
     `Question: ${String(question)}`,
   ].join('\n\n');
   const r = roleProvider('agent') === 'claude-code'
-    ? await watchAgent('Question about an upcoming meeting', async () => runModel({ source: modelSource(), providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question: suggester.redactLines(prompt), transcript: '', root: b.root, extra: await agentExtra(String(question), b.root, { kb: false }), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: [], history: (history ?? []).slice(-6), onStep: (text) => toUI('agent-step', { text }), onDelta: (text) => toUI('note-delta', { text }) }))
+    ? await runModel({ source: modelSource(), providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question: suggester.redactLines(prompt), transcript: '', root: b.root, extra: await agentExtra(String(question), { kb: false }), model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: [], history: (history ?? []).slice(-6), onStep: (text) => toUI('agent-step', { text }), onDelta: (text) => toUI('note-delta', { text }) })
     : await noteAskWithoutTools(suggester.redactLines(prompt), history, []);
   // the chat belongs to its calendar event: it nests under the event's row on Home until the event is over
   const id = String(ev?.id ?? '');
@@ -4548,12 +4378,12 @@ ipcMain.handle('ask', async (_e, question, files) => {
     saveChat(question, text, [], []);
     return { text, sources: [], steps: [] };
   }
-  const extra = await agentExtra(String(question), b.root);
-  const r = await watchAgent('Chat question', () => runModel({
+  const extra = await agentExtra(String(question));
+  const r = await runModel({
     source, providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(),
     question, transcript, root: b.root, extra, model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: attached,
     history: chatHistory.slice(-4), onStep: (text) => { steps.push(text); toUI('agent-step', { text }); }, onDelta: (text) => toUI('agent-delta', { text }),
-  }).finally(() => unstage(attached)));
+  }).finally(() => unstage(attached));
   chatHistory.push({ q: question, a: r.text });
   const fileCards = r.files.map((abs, i) => ({ n: i + 1, abs, rel: path.relative(b.root, abs), title: noteTitle(abs), ...noteLink(abs) }));
   // knowledge base notes the answer cited open in the Knowledge tab

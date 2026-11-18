@@ -148,7 +148,7 @@ Quorum writes into a folder, and the folder is the product. On first launch it c
     └── zoom/                 Zoom cloud recordings and transcripts (Cloud edition)
 ```
 
-Quorum looks for a few markers by file name and turns features on when it finds them: `CLAUDE.md` (agent root), `.obsidian` (vault), `index.md` (memory index), `scripts/search-memory.py` (search). Without a marker the feature stays off and nothing breaks.
+Quorum finds the folder's layout by two markers: `CLAUDE.md` or `AGENTS.md` marks the agent root, and `.obsidian` marks the vault. Without them Quorum uses the folder you picked. Chat answers by reading your notes with Claude Code's Read, Grep and Glob tools and Quorum's own settings. It does not load the folder's CLAUDE.md, skills, agents or MCP servers, and it does not run the folder's search script. Guard hooks you include on the Guardrails page do run on each read. Live meeting suggestions search Quorum's own index of your notes.
 
 Three things make the folder safe to hand to an agent:
 

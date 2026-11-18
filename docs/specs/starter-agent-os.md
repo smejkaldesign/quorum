@@ -19,7 +19,7 @@ Default model memory in a chat product holds a few hundred facts with no structu
 2. **Maintains `index.md`.** After every change: one line per note, grouped by folder, stale lines removed. Past a size the agent can read in one pass, it splits by folder under a top-level index.
 3. **Maintains `CLAUDE.md`.** Layout and rules. Facts learned from meetings (people, projects, decisions) stay in `.quorum/learned.md`; a short copy goes into CLAUDE.md only when the person turns that on. Every change lands in a dated `## Changelog` entry the user can see and revert.
 4. **Applies the guard rules.** The rules from `app/guards/read-guard.py` (secret-looking file names, private folders, `confidential:` frontmatter) decide what enters the index, the search layer and the learned facts.
-5. **Keeps a search layer.** A full-text index over the notes, exposed on the Mac as the `scripts/search-memory.py` that `scanBrain` in `app/main.js` already runs. A query never leaves the Mac.
+5. **Keeps a search layer.** Quorum's own full-text index over the notes (`app/vindex.js`), which the Memory tab and live meeting suggestions search. Quorum does not run a search script from the folder. A query never leaves the Mac.
 6. **Ships skills and guards.** Guard hooks in `.claude/hooks/`, a `.claude/skills/` set for the template's audience, and `.claude/settings.json` wiring them, updated with the template version.
 7. **Files meetings.** When a meeting note lands: an index line, links from the people and project notes it names, a daily note line, updated learned facts. The meeting note body is never rewritten.
 
@@ -77,7 +77,7 @@ Each template is `supabase/templates/<name>/template.json` (version, folders, fi
 ## Acceptance criteria
 
 1. A new user with no folder sees both choices at "connect a folder", free first; the free choice creates the local starter folder with no account.
-2. Choosing the service, signing in and picking a template pulls the folder to the chosen path within 60 seconds; `scanBrain` detects index, instructions, guards, skills and search.
+2. Choosing the service, signing in and picking a template pulls the folder to the chosen path within 60 seconds, and Quorum recognizes it as the connected Agent OS.
 3. Adding a local note yields a matching `index.md` line within one runner cycle (under 5 minutes with the app open); deleting it removes the line.
 4. A note with `confidential: personal` never appears in the index, search results or `CLAUDE.md` (fixture per template).
 5. A file matching the secret pattern is never pushed; the sync log shows it skipped.
@@ -119,7 +119,7 @@ Approved by Eric. Three additions to the spec above:
 ## Phased build order
 
 1. **Templates and creation.** `template.json`, four templates including "Maintain my existing vault", pull to Mac, both upsell moments.
-2. **Index and guards.** Runner on the Mac, guard rules, index maintenance, search index and local `search-memory.py`.
+2. **Index and guards.** Runner on the Mac, guard rules, index maintenance and Quorum's own search index.
 3. **Filing from meetings.** Links, daily lines, learned facts with changelog.
 4. **Existing vault hardening.** Fixture vaults from Obsidian and repo layouts; conflict handling for hand edits.
 5. **Later option, unscheduled.** Server-side runner with per-workspace encrypted keys, passthrough billing and caps.

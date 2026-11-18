@@ -2,7 +2,7 @@
 // fetch, rate limit waits, the connection and opted-out rules in createConnectorTools, and how the in-app chat's
 // command line gets the tools. No real provider is called.
 import { describe, expect, it } from 'vitest';
-import { agentArgs, connectorsAllowed } from '../agent.js';
+import { agentArgs } from '../agent.js';
 import { CONNECTOR_SERVER, CONNECTOR_TOOLS, toolsFor } from '../cli/connectorTools.mjs';
 import { createGithub } from '../connectors/tools/github.js';
 import { rateLimitWait, request } from '../connectors/tools/http.js';
@@ -300,19 +300,19 @@ describe('the in-app chat gets the connector tools', () => {
   const server = { command: '/app/Quorum', args: ['/app/cli/quorum.mjs', 'mcp'], env: { ELECTRON_RUN_AS_NODE: '1', QUORUM_MCP_TOOLS: 'connectors' } };
   it('adds Quorum\'s own server and allows each connected tool by name', () => {
     const connectors = { tools: ['slack_search', 'github_file'], name: CONNECTOR_SERVER, server };
-    const a = agentArgs({ ...base, system: 'S', extra: { dirs: [], powers: { instructions: '/v/CLAUDE.md' }, connectors }, readFile: () => '# rules' });
+    const a = agentArgs({ ...base, system: 'S', extra: { dirs: [], connectors } });
     expect(a.slice(a.indexOf('--allowedTools') + 1, a.indexOf('--setting-sources'))).toEqual(['Read', 'Grep', 'Glob', 'mcp__quorum-connectors__slack_search', 'mcp__quorum-connectors__github_file']);
     const configs = a.slice(a.indexOf('--mcp-config') + 1, a.indexOf('--no-session-persistence'));
     expect(configs.map((c) => JSON.parse(c))).toEqual([{ mcpServers: { 'quorum-connectors': server } }]);
     expect(a[a.indexOf('--tools') + 1]).toBe('Read,Grep,Glob');
   });
-  it('leaves the tools out of a run that can change the vault through Skills, Agents or the vault\'s MCP servers', () => {
+  it('keeps the tools when an older saved Memory list included vault power-ups', () => {
     const connectors = { tools: ['slack_search'], name: CONNECTOR_SERVER, server };
     for (const powers of [{ skills: true }, { agents: true }, { mcp: '/v/.mcp.json' }]) {
-      const a = agentArgs({ ...base, extra: { dirs: [], powers, connectors }, readFile: () => JSON.stringify({ mcpServers: { plane: {} } }) });
-      expect(a.join(' ')).not.toContain('quorum-connectors');
+      const a = agentArgs({ ...base, extra: { dirs: [], powers, connectors } });
+      expect(a).toContain('mcp__quorum-connectors__slack_search');
+      expect(a[a.indexOf('--tools') + 1]).toBe('Read,Grep,Glob');
     }
-    expect(connectorsAllowed({ instructions: '/v/CLAUDE.md' })).toBe(true);
   });
   it('adds nothing when no account is connected', () => {
     const a = agentArgs({ ...base, extra: { dirs: [], connectors: null } });

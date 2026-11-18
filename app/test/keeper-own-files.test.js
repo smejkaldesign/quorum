@@ -106,7 +106,9 @@ describe('the keeper and files Quorum did not make', () => {
     put(dir, `${meetings}/2026-11-11-sync.md`, NOTE('Sync', '2026-11-11'));
     const r2 = await k2.run();
     expect(text(dir, 'index.md')).not.toContain('[[2026-11-11-sync]]');
-    expect(r2.left).toContain(people);
+    // jobs nobody chose stay with the person's own setup in a folder they connected, so no people note is touched
+    expect(text(dir, people)).not.toContain('[[2026-11-11-sync]]');
+    expect(r2.left).toEqual([]);
   });
 });
 

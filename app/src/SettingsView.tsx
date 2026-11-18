@@ -363,7 +363,7 @@ function SecondBrain({ part, brain, onConnect, onDisconnect, onBrain, onViewConn
       )}
       {confirm && (
         <ConfirmModal title={`Disconnect ${brain?.made === 'quorum' ? 'QuorumBrain' : brain?.name ?? 'this folder'}?`} action="Disconnect"
-          body="Quorum stops reading this folder. Answers, memory power-ups and guardrails that came from it stop working, and a meetings folder found inside it has to be chosen again. Nothing is deleted, but this cannot be undone: connecting a folder again means a new import."
+          body="Quorum stops reading this folder. Answers and guardrails that came from it stop working, and a meetings folder found inside it has to be chosen again. Nothing is deleted, but this cannot be undone: connecting a folder again means a new import."
           onDone={(ok) => { setConfirm(false); if (ok) onDisconnect(); }} />
       )}
     </>
