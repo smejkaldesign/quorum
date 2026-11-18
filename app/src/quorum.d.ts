@@ -123,7 +123,7 @@ export type ScreenContextStatus = { available?: boolean; on: boolean; granted: b
 export type SetupRecord = { version: number; name: string; answers: SetupAnswers; createdAt: string; updatedAt?: string };
 // the workspace vault: where teammates' shared notes land on this Mac, with their provenance bonds
 export type TeamVault = { root: string; notes: number; behind: number; last: { written: number; behind: number; removed: number; skipped: number } };
-export type Brain = { root: string; vault: string; name: string; made?: 'quorum' | null; markers: { agentOS: string | null; obsidian: boolean; search: boolean; safetyHooks: boolean } };
+export type Brain = { root: string; vault: string; name: string; made?: 'quorum' | null; markers: { agentOS: string | null; obsidian: boolean; safetyHooks: boolean } };
 // hosted edition: who is signed in, which organization they are in, and whether notes sync
 export type Role = 'owner' | 'admin' | 'member';
 // teamEnabled is the Teams page's switch (migration 0019): off, the workspace is one person's and no team-level page shows

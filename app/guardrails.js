@@ -1,7 +1,7 @@
 // Guardrails: the one rule set behind what an agent may read from the Agent OS and what it may say about it. Four
 // built-in rules ship on; the connected Agent OS can offer more (its guard hooks, opt-out lists, the rules its
 // CLAUDE.md states, the frontmatter conventions its notes follow and the folders Obsidian excludes), which the person
-// reviews one by one and includes the way memory power-ups are reviewed; the person adds their own; and in Cloud a
+// reviews and includes one by one; the person adds their own; and in Cloud a
 // workspace's admins add rules that reach every member's Mac and cannot be turned off there. Every rule carries a
 // scope: individual (built-in, Agent OS and personal rules, the person's own in both editions) or organization
 // (workspace rules, set by admins for the organization or team). compile() turns the effective list into what each

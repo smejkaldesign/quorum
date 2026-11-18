@@ -884,7 +884,7 @@ async function runSummary() {
 }
 
 // Agent OS connection. POC: the user points Quorum at a folder; Quorum recognizes an agent OS
-// (CLAUDE.md / AGENTS.md), an Obsidian vault, and the search script. Later this becomes a connector.
+// (CLAUDE.md / AGENTS.md) and an Obsidian vault. Later this becomes a connector.
 function inspectBrain(folder) {
   const has = (...p) => existsSync(path.join(...p));
   let root = folder;
@@ -902,7 +902,6 @@ function inspectBrain(folder) {
     markers: {
       agentOS: has(root, 'CLAUDE.md') ? 'CLAUDE.md' : has(root, 'AGENTS.md') ? 'AGENTS.md' : null,
       obsidian: has(vault, '.obsidian'),
-      search: has(vault, 'scripts/search-memory.py'),
       safetyHooks: has(root, '.claude/hooks/output-secret-tripwire.py'),
     },
   };
@@ -932,8 +931,10 @@ const suggester = createSuggester({
     return a?.worth ? a.worth.probability >= 0.25 : null;
   },
   getTranscript: () => meeting.transcript,
-  // QUORUM_VAULT points saves and searches somewhere else for testing, without touching settings.json
+  // QUORUM_VAULT points saves somewhere else for testing, without touching settings.json
   getSettings: () => (process.env.QUORUM_VAULT ? { ...settings, vaultPath: process.env.QUORUM_VAULT } : settings),
+  // Quorum's own note index (vindex.js), the same one vault-search reads
+  search: (q) => { const b = brain(); return b && vindex ? vindex.search(String(q), 20).map((h) => ({ ...h, abs: path.join(b.vault, h.rel) })) : []; },
 });
 
 // consent first: nothing records until Quorum's notice is confirmed in the chat
