@@ -496,7 +496,7 @@ function CreateDialog({ wsAdmin, onMade, onDone }: { wsAdmin: boolean; onMade: (
       {hasKbSync() && (
         <label className="kb-person"><input type="checkbox" checked={github} disabled={busy} onChange={(e) => setGithub(e.target.checked)} /><span>Connect a GitHub repository next</span></label>
       )}
-      {error && <p className="set-error" role="alert">{error}</p>}
+      {error && <p className="error" role="alert">{error}</p>}
       <ModalActions>
         <button className="pill" disabled={busy} onClick={onDone}>Cancel</button>
         <button className="pill primary" disabled={busy || !name.trim()} onClick={go}>{busy ? 'Creating…' : 'Create'}</button>
