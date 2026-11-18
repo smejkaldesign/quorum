@@ -5453,6 +5453,7 @@ async function control({ cmd, args = {} }) {
     // Check everything now from a script (scripts/memory-catchup.mjs): estimate, start, status or cancel
     case 'memory-catchup': {
       const action = String(args.action ?? 'status');
+      if ((action === 'start' || action === 'cancel') && settings.access === 'read') throw new Error('Quorum is set to read only. Change Access to Read and write in Settings > AI tools.');
       if (action === 'estimate') return catchupEstimate();
       if (action === 'start') return startCatchup();
       if (action === 'cancel') return { cancelled: catchup.cancel() };

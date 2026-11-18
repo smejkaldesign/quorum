@@ -34,7 +34,7 @@ export const APP_TOOLS = [
   },
   {
     name: 'memory_check_start', write: true, gated: false,
-    description: 'Check everything now, the same as the button in Settings > Memory: the memory agent reads every note and adds what it finds to Needs review. It changes no notes. It runs on the person\'s Claude Code sign-in and turns on Let the agent draft fixes if that is off.',
+    description: 'Check everything now, the same as the button in Settings > Memory: the memory agent reads every note and adds what it finds to Needs review. It changes no notes. It runs on the person\'s Claude Code sign-in, and needs Settings > Memory > Let the agent draft fixes turned on.',
     inputSchema: { type: 'object', properties: {} },
   },
   {

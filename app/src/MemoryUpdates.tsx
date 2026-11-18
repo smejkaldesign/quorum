@@ -152,7 +152,7 @@ export function MemoryUpdatesCard({ settings, onSettings }: { settings: Settings
           <Toggle on={settings.memoryAutoApply === true} onChange={(v) => save({ memoryAutoApply: v })} />
         </Row>
         <Row icon={<IconListCheck width={18} height={18} />} title="Let AI tools change memory and knowledge bases"
-          desc="Claude Code, Codex and other AI tools connected through the quorum MCP can approve and archive items in Needs review, undo fixes and create knowledge bases, through the same steps as the buttons here. Each fix shows which tool approved it and keeps its Undo. Reading Needs review, marking items read and Check everything now work without this. Off by default.">
+          desc="Claude Code, Codex and other AI tools connected through the quorum MCP can approve and archive items in Needs review, undo fixes and create knowledge bases, through the same steps as the buttons here. Each fix shows which tool approved it and keeps its Undo. Reading Needs review, marking items read and starting Check everything now work without this; a tool can start the check only while Let the agent draft fixes is on, and never turns it on. Off by default.">
           <Toggle on={settings.memoryAgentActions === true} onChange={(v) => save({ memoryAgentActions: v })} />
         </Row>
         <Row icon={<IconListCheck width={18} height={18} />} title="Let the agent draft fixes"

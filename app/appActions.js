@@ -30,6 +30,7 @@ export function actorLabel(actor) {
 export const READ_ONLY = 'Quorum is set to read only, so AI tools cannot change anything. Change Access to Read and write in Quorum under Settings > AI tools.';
 // the refusal names what was blocked and the switch that allows it
 export const gateOff = (blocked) => `AI tools cannot ${blocked} yet. In Quorum, turn on Settings > Memory > ${AGENT_SETTING}, then try again.`;
+export const DRAFTS_OFF = 'Check everything now runs the memory agent, which is off. In Quorum, turn on Settings > Memory > Let the agent draft fixes, then try again.';
 const CLOUD = 'Knowledge bases are part of Quorum Cloud, and this copy of Quorum has none or is signed out.';
 const PLANNED = new Set(['link', 'finding', 'past-fix']);
 const clamp = (n, lo, hi, d) => (Number.isFinite(Number(n)) ? Math.min(hi, Math.max(lo, Math.round(Number(n)))) : d);
@@ -125,6 +126,8 @@ export function createAppActions({ call, settings, kbHosted = () => null, kbSync
       return { marked: await call('activity-mark', rows.map((r) => ({ id: r.id, abs: r.target?.abs ?? '' })), unread === true) };
     },
     async memory_check_start() {
+      // the button turns on Let the agent draft fixes when it is off; a tool never changes that setting for the person
+      if (settings()?.memoryDrafts !== true) throw new Error(DRAFTS_OFF);
       const r = await call('memory-catchup-start');
       say(`${who()} started Check everything now`);
       return r;

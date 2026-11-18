@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createDecisionLog } from '../decisionLog.js';
-import { READ_ONLY, gateOff, actorLabel, agentActor, createAppActions, currentActor, outsideActor } from '../appActions.js';
+import { DRAFTS_OFF, READ_ONLY, gateOff, actorLabel, agentActor, createAppActions, currentActor, outsideActor } from '../appActions.js';
 import { APP_TOOLS } from '../cli/appTools.mjs';
 
 const row = (id, kind, extra = {}) => ({
@@ -15,7 +15,7 @@ const row = (id, kind, extra = {}) => ({
 });
 const ROWS = [row('r:link:alpha', 'link'), row('r:find:beta', 'finding'), row('r:ignore:gamma', 'ignore'), row('r:link:acme', 'link'), row('r:link:secret', 'link', { target: { abs: '/v/p/secret.md', rel: '02-personal/secret.md', title: 'secret' } })];
 
-function setup({ settings = { memoryAgentActions: true }, handlers = {}, kbHosted = null, kbSync = null } = {}) {
+function setup({ settings = { memoryAgentActions: true, memoryDrafts: true }, handlers = {}, kbHosted = null, kbSync = null } = {}) {
   const calls = [];
   const toasts = [];
   const base = {
@@ -73,6 +73,13 @@ describe('the read-only setting and the AI setting', () => {
 });
 
 describe('approving through the buttons\' handlers', () => {
+  it('starts Check everything now only while the memory agent is on, and never turns it on', async () => {
+    const off = setup({ settings: { memoryAgentActions: true, memoryDrafts: false } });
+    await expect(off.actions.run('memory_check_start', {})).rejects.toThrow(DRAFTS_OFF);
+    expect(off.calls).toEqual([]);
+    const on = setup();
+    expect(await on.actions.run('memory_check_start', {})).toEqual({ running: true, done: 0, total: 3 });
+  });
   it('approves one item the way its Approve button does, as the MCP client', async () => {
     const { actions, calls, toasts } = setup();
     const r = await actions.run('review_approve', { ids: ['r:link:alpha'] }, 'claude-code');
