@@ -63,7 +63,7 @@ Notion does not review public integrations unless they are listed in its marketp
 
 1. Open `https://api.slack.com/apps`, Create New App, From scratch. Name Quorum, development workspace: Smejkal Design.
 2. OAuth and Permissions, Redirect URLs: add `https://relay.quorum.watch/v1/oauth/slack/callback` and save.
-3. OAuth and Permissions, User Token Scopes: `channels:read`, `groups:read`, `chat:write`, `users:read`, `channels:history`, `groups:history`, `search:read`, `files:read` (no `im:` or `mpim:` scopes). Leave Bot Token Scopes empty; Quorum acts with the person's own user token.
+3. OAuth and Permissions, User Token Scopes: `channels:read`, `groups:read`, `chat:write`, `users:read`, `channels:history`, `groups:history`, `search:read` (no `im:` or `mpim:` scopes). Leave Bot Token Scopes empty; Quorum acts with the person's own user token.
 4. Optional: turn on token rotation under OAuth and Permissions. The app and relay already handle the refresh token it adds.
 5. Manage Distribution: complete the checklist and activate public distribution, so people outside the development workspace can connect.
 6. Basic Information, App Credentials: copy the Client ID and the Client Secret.
