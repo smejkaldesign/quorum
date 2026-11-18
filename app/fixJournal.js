@@ -4,7 +4,7 @@
 // started, each note it is about to write (keep), the re-check, and how it ended. A run that was still queued or running
 // when Quorum quit is recovered on the next start: the notes it wrote go back from its undo record and it is marked
 // Failed with a plain reason. Journals and undo records are deleted only when their run drops off the run list.
-import { appendFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { sha } from './fixUndo.js';
 import { writeAtomic } from './relink.js';
@@ -35,6 +35,34 @@ export function hashNotes(vault, rels) {
   const out = {};
   for (const rel of new Set(rels)) { const t = readText(vault, rel); out[rel] = t == null ? null : sha(t); }
   return out;
+}
+
+// fn(text) of a note, kept by the note's modified time and size: a note that did not change is not read again. Answers
+// (vault, rel, fresh) -> fn(text), or null for a note that is not there; fresh reads the note again
+export function noteMemo(fn) {
+  const kept = new Map();
+  return (vault, rel, fresh = false) => {
+    const abs = vaultTarget(vault, rel);
+    const st = abs ? statSync(abs, { throwIfNoEntry: false }) : null;
+    if (!st?.isFile()) { if (abs) kept.delete(abs); return null; }
+    const hit = kept.get(abs);
+    if (!fresh && hit && hit.m === st.mtimeMs && hit.s === st.size) return hit.v;
+    let t;
+    try { t = readFileSync(abs, 'utf8'); } catch { kept.delete(abs); return null; }
+    const v = fn(t);
+    kept.set(abs, { m: st.mtimeMs, s: st.size, v });
+    return v;
+  };
+}
+// hashNotes with each hash kept by noteMemo, for the review items main builds on every refresh. fresh: read every
+// note again
+export function createNoteHashes() {
+  const one = noteMemo(sha);
+  return (vault, rels, { fresh = false } = {}) => {
+    const out = {};
+    for (const rel of new Set(rels)) out[rel] = one(vault, rel, fresh);
+    return out;
+  };
 }
 
 // the notes whose text is not what it was when the issue was found

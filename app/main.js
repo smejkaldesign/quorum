@@ -12,7 +12,8 @@ import { openSpeech, SPEECH_ENGINES } from './speech/provider.js';
 import { createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTree } from './vault.js';
 import { createVaultIndex } from './vindex.js';
 import { applyUndo, sha, undoRecord } from './fixUndo.js';
-import { changedSince, createFixJournal, fixCheck, hashNotes, recoveryReason, rollback } from './fixJournal.js';
+import { changedSince, createFixJournal, createNoteHashes, fixCheck, hashNotes, noteMemo, recoveryReason, rollback } from './fixJournal.js';
+import { createGateStore, gatePasses } from './gateRun.js';
 import { addAlias, linkSources, retargetLinks, rewriteLinks, unlinkTarget, writeAtomic } from './relink.js';
 import store from './store/index.js';
 import { registerSources } from './sources/index.js';
@@ -83,7 +84,7 @@ import { DECIDER_ON } from './decide/index.js';
 import { netFetch } from './decide/netFetch.js';
 import { annotateLine, ruleBar } from './contradictionResolve.js';
 import { ignoreProposals, ignored, ruleRecords } from './ruleRecords.js';
-import { demotions, kindOf, logGate, ruleDemotion, runGate, signature, weakLink } from './qualityGate.js';
+import { demotions, kindOf, logGate, ruleDemotion, signature, weakLink } from './qualityGate.js';
 import { createAgentActivity } from './agentActivity.js';
 import { DEFAULT_PARALLEL, MAX_PARALLEL, createCatchup } from './memoryCatchup.js';
 import { createLastRunStore, planOf } from './catchupPlan.js';
@@ -3186,8 +3187,10 @@ function keepPastFix(id) {
 // of every note checked before the first write, the links checked again after the last, and the whole batch put back
 // when any step fails. The plan itself stays in memory; a batch cut short by a quit is recovered like any run
 const batchPlans = new Map();
-// the items waiting in Needs review, or the ones with these row ids. Each carries the hash of every note it touches
-function reviewItems({ ids = null, drafts = true } = {}) {
+// the items waiting in Needs review, or the ones with these row ids. Each carries the hash of every note it touches,
+// kept by each note's modified time and size (noteHashes); fresh reads every note again
+const noteHashes = createNoteHashes();
+function reviewItems({ ids = null, drafts = true, fresh = false } = {}) {
   const b = brain();
   if (!b || !vindex) return [];
   const want = ids ? new Set(ids.map(String)) : null;
@@ -3201,19 +3204,19 @@ function reviewItems({ ids = null, drafts = true } = {}) {
     if (skip(`${ROW.link}${key}`, left.has(key))) continue;
     const issue = issueOf(withMarks(m, left, declined));
     const finding = findingOf(issue);
-    out.push({ ...linkItem(issue, { noteOf: (rel) => vindex.note(rel) }), hashes: hashNotes(b.vault, [...issue.sources, ...(issue.candidate ? [issue.candidate.rel] : [])]), approved: finding.proposedFix, finding });
+    out.push({ ...linkItem(issue, { noteOf: (rel) => vindex.note(rel) }), hashes: noteHashes(b.vault, [...issue.sources, ...(issue.candidate ? [issue.candidate.rel] : [])], { fresh }), approved: finding.proposedFix, finding });
   }
   const st = feedState();
   for (const row of pastFixRows()) {
     const id = `${ROW.pastfix}${row.run.id}`;
     if (skip(id, !!st.archived[id])) continue;
     const item = pastFixItem(row);
-    out.push({ ...item, wrong: row.res?.main ?? null, hashes: hashNotes(b.vault, notesOf(item)) });
+    out.push({ ...item, wrong: row.res?.main ?? null, hashes: noteHashes(b.vault, notesOf(item), { fresh }) });
   }
   for (const f of findingsNow()) {
     if (skip(`${ROW.finding}${f.key}`, f.archived)) continue;
     const item = findingItem(f);
-    out.push({ ...item, hashes: hashNotes(b.vault, [...new Set([...f.notes, ...notesOf(item)])]), finding: findingRecord(f) });
+    out.push({ ...item, hashes: noteHashes(b.vault, [...new Set([...f.notes, ...notesOf(item)])], { fresh }), finding: findingRecord(f) });
   }
   return drafts ? out.map(drafted) : out;
 }
@@ -3226,47 +3229,57 @@ function reviewItems({ ids = null, drafts = true } = {}) {
 // gate log (scripts/gate-report.mjs reads it)
 const gateFile = path.join(DATA_DIR, 'memory-gate.json');
 const gateLogFile = path.join(DATA_DIR, 'memory-gate-log.jsonl');
+const gateStore = createGateStore(gateFile, { log: (...a) => log('memory gate', ...a) });
 let gateState = null;
 let gateRunning = false;
 let gateTimer = null;
 function gateFor(vault) {
   if (gateState?.vault === vault) return gateState;
-  let all = {};
-  try { all = JSON.parse(readFileSync(gateFile, 'utf8')) ?? {}; } catch {}
-  const saved = all[vault];
+  const saved = gateStore.get(vault);
   gateState = saved?.verdicts ? { vault, at: saved.at ?? 0, verdicts: new Map(Object.entries(saved.verdicts)) } : { vault, at: 0, verdicts: null };
   return gateState;
 }
-// runs the gate passes now and keeps the verdicts. Answers the counts. work: the memory check's agent activity, which
-// shows each pass and can cancel before the verdicts are saved
+// a note Quorum wrote from links alone, kept by the note's modified time and size
+const stubOf = noteMemo((t) => t.includes(STUB_TEXT));
+// runs the gate passes now and keeps the verdicts (gateRun.js). Answers the counts. work: the memory check's agent
+// activity, which shows each pass and can cancel before the verdicts are saved; a memory check and a vault with no
+// verdicts yet build every item twice, a run after a sweep or a fix builds again only the items that changed. The
+// verdicts are written, the gate log gets its line and the window refreshes only when a verdict changed
 async function gateNow(work = null) {
   const b = brain();
   if (!b || !vindex || gateRunning) return null;
   gateRunning = true;
   try {
     const t0 = Date.now();
+    const kept = work ? null : gateFor(b.vault).verdicts;
     work?.progress(1, 3, 'Checking each suggestion');
     await tick();
     const first = reviewItems();
     if (work?.cancelled) return null;
-    work?.progress(2, 3, 'Checking each suggestion again, with every note read again');
-    await tick();
-    vindex.sync();
-    pastFixState?.plans.clear();
-    const second = reviewItems();
+    const again = async (items) => {
+      work?.progress(2, 3, 'Checking each suggestion again, with every note read again');
+      await tick();
+      if (!items) {
+        vindex.sync();
+        pastFixState?.plans.clear();
+        return reviewItems({ fresh: true });
+      }
+      // the index already held the notes as they are: the items stay as built, with their notes read again
+      if (!vindex.syncPaths([...new Set(items.flatMap((i) => Object.keys(i.hashes ?? {})))]).length) return items.map((i) => ({ ...i, hashes: noteHashes(b.vault, Object.keys(i.hashes ?? {}), { fresh: true }) }));
+      for (const i of items) if (i.kind === 'pastfix') pastFixState?.plans.delete(i.key);
+      return reviewItems({ ids: items.map((i) => i.id), fresh: true });
+    };
+    const r = await gatePasses({ first, kept, again, records: decisionLog.list(b.vault), isStub: (rel) => !!stubOf(b.vault, rel) });
     if (work?.cancelled || brain()?.vault !== b.vault) return null;
-    const g = runGate([first, second], decisionLog.list(b.vault), { isStub: (rel) => (readVault(b.vault, rel) ?? '').includes(STUB_TEXT) });
-    const sigs = new Map(first.map((i) => [i.id, signature(i)]));
-    const verdicts = new Map([...g.verdicts].map(([id, v]) => [id, { ...v, sig: sigs.get(id) }]));
+    const { g, verdicts } = r;
     gateState = { vault: b.vault, at: Date.now(), verdicts };
-    heldCache.map = null;
-    let all = {};
-    try { all = JSON.parse(readFileSync(gateFile, 'utf8')) ?? {}; } catch {}
-    all[b.vault] = { at: gateState.at, verdicts: Object.fromEntries(verdicts) };
-    try { writeFileSync(gateFile, JSON.stringify(all)); } catch (e) { log('memory gate', e?.message); }
-    logGate(gateLogFile, b.vault, g, { passes: 2 });
-    log('memory gate', `${g.counts.show + g.counts.check} shown in Needs review (${g.counts.check} of them under Check these first)`, `${g.counts.quiet} not shown`, `${Date.now() - t0} ms`);
-    toUI('memory-updates', null);
+    if (!r.same) {
+      heldCache.map = null;
+      await gateStore.put(b.vault, { at: gateState.at, verdicts: Object.fromEntries(verdicts) });
+      logGate(gateLogFile, b.vault, g, { passes: 2 });
+      toUI('memory-updates', null);
+    }
+    log('memory gate', `${g.counts.show + g.counts.check} shown in Needs review (${g.counts.check} of them under Check these first)`, `${g.counts.quiet} not shown`, `${r.rebuilt} checked again`, r.same ? 'no change' : 'changed', `${Date.now() - t0} ms`);
     return g.counts;
   } catch (e) { log('memory gate', e?.message); return null; } finally { gateRunning = false; }
 }
@@ -3438,7 +3451,7 @@ function withStoredDraft(item) {
   let next = withDraft(item, d, (rel) => readVault(b.vault, rel), (rel) => vindex.aliasesOf(rel));
   const why = next.draft?.kind === 'merge' && next.ops.length ? mergeBreaksLinks(next.draft.keep, next.draft.drop) : null;
   if (why) next = { ...next, ops: [], hold: why };
-  return next.ops.length ? { ...next, hashes: { ...(item.hashes ?? {}), ...hashNotes(b.vault, notesOf(next)) } } : next;
+  return next.ops.length ? { ...next, hashes: { ...(item.hashes ?? {}), ...noteHashes(b.vault, notesOf(next)) } } : next;
 }
 // a merge keeps links working only when every link to the dropped note opens the kept note once the dropped note's
 // name and aliases are on it. A link by path or a name another note also has would break, so the merge waits
