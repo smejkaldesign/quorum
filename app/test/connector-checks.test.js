@@ -116,7 +116,7 @@ describe('the page a sign-in ends on', () => {
     expect(doneText('granola', 'Granola')).toBe('Quorum is importing your Granola meetings now. You can close this tab.');
     expect(doneText('notion', 'Notion')).toBe('Quorum is connected to Notion. You can close this tab.');
     expect(doneText('slack', 'Slack')).not.toMatch(/meetings/);
-    expect(doneText('github', 'GitHub')).toMatch(/Next, choose the repositories/);
+    expect(doneText('github', 'GitHub')).toBe('Quorum is connected to GitHub. Quorum reads only the repositories you choose. You can close this tab.');
     expect(doneText('google-calendar', 'Google Calendar')).toMatch(/upcoming meetings show on Home/);
   });
   it('Back to Quorum opens the app on that connector, in the scheme this copy registered', () => {

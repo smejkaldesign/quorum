@@ -162,7 +162,7 @@ export function doneText(connector, name) {
   const n = name || x?.name;
   if (x?.kind === 'mcp-source') return `Quorum is importing your ${n} meetings now. You can close this tab.`;
   if (x?.id === 'google-calendar') return 'Quorum is connected to Google Calendar. Your upcoming meetings show on Home. You can close this tab.';
-  if (x?.id === 'github') return 'Quorum is connected to GitHub. Next, choose the repositories Quorum may read. You can close this tab.';
+  if (x?.id === 'github') return 'Quorum is connected to GitHub. Quorum reads only the repositories you choose. You can close this tab.';
   return n ? `Quorum is connected to ${n}. You can close this tab.` : 'You can close this tab and go back to Quorum.';
 }
 // q.connector is the library id of the connector that signed in; Back to Quorum opens the app on its page
