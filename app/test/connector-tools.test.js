@@ -179,11 +179,12 @@ describe('GitHub', () => {
   it('reads a text file at a ref, lists a folder, and refuses binary and large files', async () => {
     const file = (content, size) => json({ type: 'file', path: 'README.md', size, encoding: 'base64', content: Buffer.from(content).toString('base64'), html_url: 'https://g/r' });
     let next = file('# Hello\n', 8);
-    const { fetchImpl, calls } = stubFetch([[(u) => u.pathname.startsWith('/repos/'), () => next]]);
+    const { fetchImpl, calls: all } = stubFetch([...installs, [(u) => u.pathname.startsWith('/repos/'), () => next]]);
+    const calls = () => all.filter((c) => c.url.includes('/repos/'));
     const gh = createGithub({ token: TOKEN, fetchImpl, wait: noWait });
     expect(await gh.file({ repo: 'acme/api', path: '/docs/README.md', ref: 'v1.0' })).toEqual({ repo: 'acme/api', path: 'README.md', ref: 'v1.0', size: 8, link: 'https://g/r', text: '# Hello\n' });
-    expect(new URL(calls[0].url).pathname).toBe('/repos/acme/api/contents/docs/README.md');
-    expect(new URL(calls[0].url).searchParams.get('ref')).toBe('v1.0');
+    expect(new URL(calls()[0].url).pathname).toBe('/repos/acme/api/contents/docs/README.md');
+    expect(new URL(calls()[0].url).searchParams.get('ref')).toBe('v1.0');
     next = json([{ name: 'src', type: 'dir', path: 'src' }, { name: 'a.md', type: 'file', path: 'a.md', size: 3 }]);
     expect((await gh.file({ repo: 'acme/api' })).entries).toEqual([{ name: 'src', type: 'dir', path: 'src', size: null }, { name: 'a.md', type: 'file', path: 'a.md', size: 3 }]);
     next = file('\x00\x01PNG', 5);
@@ -191,6 +192,9 @@ describe('GitHub', () => {
     next = file('x', 300 * 1024);
     await expect(gh.file({ repo: 'acme/api', path: 'big.json' })).rejects.toThrow('up to 200 KB');
     await expect(gh.file({ repo: 'acme/api', path: '../x' })).rejects.toThrow('above the repository');
+    await expect(gh.file({ repo: 'acme/secret', path: 'a.md' })).rejects.toThrow('not installed on acme/secret');
+    for (const repo of ['../x', 'acme/..', './x', 'acme/.']) await expect(gh.file({ repo })).rejects.toThrow('owner/name');
+    expect(calls().filter((c) => !c.url.includes('/repos/acme/api/'))).toEqual([]);
   });
 });
 

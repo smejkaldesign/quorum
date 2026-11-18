@@ -10,7 +10,8 @@ const RECONNECT = 'GitHub needs to be connected again. In Quorum, open Settings 
 const NOT_INSTALLED = (repo) => `The Quorum GitHub App is not installed on ${repo}. Add the repository under Settings > Connectors > GitHub, Manage repositories.`;
 
 const clamp = (n, lo, hi, d) => (Number.isFinite(Number(n)) ? Math.min(hi, Math.max(lo, Math.round(Number(n)))) : d);
-const REPO = /^[\w.-]+\/[\w.-]+$/;
+// owner/name, neither part . or .., so the path can never leave /repos/
+const REPO = /^(?!\.{1,2}\/)[\w.-]+\/(?!\.{1,2}$)[\w.-]+$/;
 
 export function createGithub({ token, fetchImpl, wait }) {
   async function call(route, { accept = 'application/vnd.github+json' } = {}) {
@@ -76,6 +77,8 @@ export function createGithub({ token, fetchImpl, wait }) {
       if (!REPO.test(String(repo ?? ''))) throw new ProviderError('repo must be owner/name.');
       const clean = String(p ?? '').replace(/^\/+|\/+$/g, '');
       if (clean.split('/').some((s) => s === '..')) throw new ProviderError('path cannot go above the repository.');
+      const { repos } = await installed();
+      if (!repos.some((r) => r.full_name.toLowerCase() === String(repo).toLowerCase())) throw new ProviderError(NOT_INSTALLED(repo));
       const route = `/repos/${repo}/contents/${clean.split('/').filter(Boolean).map(encodeURIComponent).join('/')}${ref ? `?ref=${encodeURIComponent(ref)}` : ''}`;
       const d = await call(route);
       if (Array.isArray(d)) return { repo, path: clean, ref: ref ?? null, entries: d.map((e) => ({ name: e.name, type: e.type, path: e.path, size: e.type === 'file' ? e.size : null })) };
