@@ -15,12 +15,14 @@ insert into auth.users (id, email, aud, role) values
   ('00000000-0000-4000-8000-0000000000a2', 'pk-admin@example.com', 'authenticated', 'authenticated'),
   ('00000000-0000-4000-8000-0000000000a3', 'pk-member@example.com', 'authenticated', 'authenticated'),
   ('00000000-0000-4000-8000-0000000000a4', 'pk-other@example.com', 'authenticated', 'authenticated'),
-  ('00000000-0000-4000-8000-0000000000a5', 'pk-outsider@example.com', 'authenticated', 'authenticated');
+  ('00000000-0000-4000-8000-0000000000a5', 'pk-outsider@example.com', 'authenticated', 'authenticated'),
+  ('00000000-0000-4000-8000-0000000000a6', 'pk-third@example.com', 'authenticated', 'authenticated');
 insert into public.workspaces (id, user_id, name, team_enabled, plan) values ('01KF0000000000000000000PWS', '00000000-0000-4000-8000-0000000000a1', 'Personal KB Team', true, 'paid');
 insert into public.members (id, user_id, workspace_id, role) values
   ('01KF0000000000000000000PM2', '00000000-0000-4000-8000-0000000000a2', '01KF0000000000000000000PWS', 'admin'),
   ('01KF0000000000000000000PM3', '00000000-0000-4000-8000-0000000000a3', '01KF0000000000000000000PWS', 'member'),
-  ('01KF0000000000000000000PM4', '00000000-0000-4000-8000-0000000000a4', '01KF0000000000000000000PWS', 'member');
+  ('01KF0000000000000000000PM4', '00000000-0000-4000-8000-0000000000a4', '01KF0000000000000000000PWS', 'member'),
+  ('01KF0000000000000000000PM6', '00000000-0000-4000-8000-0000000000a6', '01KF0000000000000000000PWS', 'member');
 
 create function pg_temp.as_user(u uuid) returns void language sql as $$
   select set_config('request.jwt.claims', json_build_object('sub', u::text, 'role', 'authenticated')::text, true), set_config('role', 'authenticated', true);
@@ -63,6 +65,23 @@ insert into ids select 'kb4', public.kb_create('01KF0000000000000000000PWS', 'QA
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a1');
 insert into ids select 'team', public.kb_create('01KF0000000000000000000PWS', 'QA') ->> 'id';
 select pg_temp.check(not (public.kb_shape(pg_temp.id('team')::text) ->> 'personal')::boolean, 'a workspace KB is not personal');
+
+-- 2b. three members sync the same repository file into personal KBs of the same name: each keeps the same path, a
+-- person's own notes still never share a path, and a workspace note may use it too
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a6');
+insert into ids select 'kb6', public.kb_create('01KF0000000000000000000PWS', 'QA', personal => true) ->> 'id';
+select pg_temp.as_admin_role();
+insert into public.notes (id, user_id, workspace_id, path, frontmatter, body, hash, kb_id) values
+  ('01KF000000000000000000PR03', '00000000-0000-4000-8000-0000000000a3', '01KF0000000000000000000PWS', 'Knowledge bases/QA/Guide.md', '{"visibility": "public", "kb_source": "github:octo/shared-app:Guide.md"}', '# Guide', 'r3', pg_temp.id('kb3')),
+  ('01KF000000000000000000PR04', '00000000-0000-4000-8000-0000000000a4', '01KF0000000000000000000PWS', 'Knowledge bases/QA/Guide.md', '{"visibility": "public", "kb_source": "github:octo/shared-app:Guide.md"}', '# Guide', 'r4', pg_temp.id('kb4')),
+  ('01KF000000000000000000PR06', '00000000-0000-4000-8000-0000000000a6', '01KF0000000000000000000PWS', 'Knowledge bases/QA/Guide.md', '{"visibility": "public", "kb_source": "github:octo/shared-app:Guide.md"}', '# Guide', 'r6', pg_temp.id('kb6'));
+select pg_temp.check((select count(*) from public.notes where path = 'Knowledge bases/QA/Guide.md' and personal_kb) = 3, 'three personal KBs hold the same path');
+select pg_temp.expect_error($$insert into public.notes (id, user_id, workspace_id, path, frontmatter, body, hash) values ('01KF000000000000000000PR13', '00000000-0000-4000-8000-0000000000a3', '01KF0000000000000000000PWS', 'Knowledge bases/QA/Guide.md', '{}', 'x', 'x')$$, 'duplicate key');
+insert into public.notes (id, user_id, workspace_id, path, frontmatter, body, hash, kb_id)
+  values ('01KF000000000000000000PR01', '00000000-0000-4000-8000-0000000000a1', '01KF0000000000000000000PWS', 'Knowledge bases/QA/Guide.md', '{"visibility": "public"}', '# Team guide', 'r1', pg_temp.id('team'));
+select pg_temp.check((select not personal_kb from public.notes where id = '01KF000000000000000000PR01'), 'a workspace KB note may use the path too');
+select pg_temp.expect_error($$insert into public.notes (id, user_id, workspace_id, path, frontmatter, body, hash) values ('01KF000000000000000000PR12', '00000000-0000-4000-8000-0000000000a2', '01KF0000000000000000000PWS', 'Knowledge bases/QA/Guide.md', '{}', 'x', 'x')$$, 'duplicate key');
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a1');
 
 -- 3. nobody else reads it: not the workspace owner, not a workspace admin, not another member
 select pg_temp.check(not exists (select 1 from jsonb_array_elements(public.kb_list('01KF0000000000000000000PWS')) e where (e ->> 'personal')::boolean), 'the owner lists no personal KB');
@@ -227,6 +246,7 @@ select pg_temp.check(not exists (select 1 from public.knowledge_bases where id =
 select pg_temp.check(not exists (select 1 from public.kb_attachments where id = pg_temp.id('att3')), 'with its attachment');
 select pg_temp.check((select deleted_at is not null from public.notes where id = '01KF000000000000000000PN02'), 'the synced note is soft deleted');
 select pg_temp.check((select deleted_at is null and kb_id is null from public.notes where id = '01KF000000000000000000PN01'), 'the placed note stays with its author');
+select pg_temp.check((select path = 'Knowledge bases/QA/Guide (2).md' and not personal_kb from public.notes where id = '01KF000000000000000000PR03'), 'a note that stays moves off a path a workspace note holds');
 select pg_temp.check(not exists (select 1 from public.contributions where note_id = '01KF000000000000000000PN01'), 'and is not back in the queue');
 select pg_temp.check((select revoke_pending and ended_reason = 'left' from public.kb_sync_grants where user_id = '00000000-0000-4000-8000-0000000000a3'), 'the grant waits for its revoke');
 select pg_temp.check(exists (select 1 from public.kb_attachments where id = pg_temp.id('att4')), 'the other member''s sync of the same repository stays');
@@ -251,6 +271,7 @@ select pg_temp.check(not exists (select 1 from public.knowledge_bases where id =
 select pg_temp.check((select deleted_at is not null from public.notes where id = '01KF000000000000000000PN03'), 'its synced note is soft deleted');
 select pg_temp.check((select body from public.notes where id = '01KF000000000000000000PN03') = '', 'and its text is cleared');
 select pg_temp.check((select deleted_at is not null and body = '' from public.notes where id = '01KF000000000000000000PN08'), 'a note imported from its source is soft deleted');
+select pg_temp.check((select path = 'Knowledge bases/QA/Guide (3).md' from public.notes where id = '01KF000000000000000000PR04'), 'the next one takes the next free path');
 select pg_temp.check((select deleted_at is null and body = '# Elsewhere' and kb_id is null from public.notes where id = '01KF000000000000000000PN06'), 'a note imported elsewhere and moved in stays');
 select pg_temp.check((select deleted_at is null and body = '# Other sync' from public.notes where id = '01KF000000000000000000PN07'), 'a note another KB''s sync wrote stays');
 

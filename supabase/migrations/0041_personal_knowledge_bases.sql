@@ -27,6 +27,11 @@
 --    sync or import into them. Workspace owners and admins keep their own personal KBs either way. kb_create,
 --    kb_sync_attach and a note joining a member's personal KB check it. Turning either off pauses the affected synced
 --    folders with paused_by 'policy' and keeps every KB and note; turning it back on resumes them.
+-- 7. Note paths. A path was unique in its workspace (0001), so two people syncing one repository into personal KBs of
+--    the same name collided. A note in a personal KB now carries notes.personal_kb, and its path is unique among its
+--    author's notes only; every other note keeps the workspace-wide rule, and a person's own notes never share a path.
+--    Each Mac writes its person's own notes into the vault at their path and everyone else's under the team folder,
+--    so no vault gets two files at one path.
 
 alter table public.knowledge_bases add column personal_user_id uuid references auth.users (id) on delete cascade;
 alter table public.knowledge_bases add constraint knowledge_bases_personal_check
@@ -42,12 +47,42 @@ language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.knowledge_bases k where k.id = kb_is_personal.kb_id and k.personal_user_id is not null);
 $$;
 
+-- notes.personal_kb follows the note's KB on every write, after notes_kb_check (0024, 0029) settled kb_id
+create or replace function public.notes_personal_kb_flag() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  new.personal_kb := new.kb_id is not null and public.kb_is_personal(new.kb_id);
+  return new;
+end $$;
+create trigger notes_personal_kb_flag before insert or update on public.notes for each row execute function public.notes_personal_kb_flag();
+
+-- a path for a note leaving a personal KB that no other live workspace note holds: the same path, or "name (2).md"
+-- and on
+create or replace function public.kb_free_path(ws public.ulid, note_id public.ulid, path text) returns text
+language plpgsql stable security definer set search_path = public as $$
+declare base text := regexp_replace(kb_free_path.path, '\.md$', ''); cand text := kb_free_path.path; i integer := 1;
+begin
+  while exists (select 1 from public.notes n where n.workspace_id = ws and n.path = cand and n.deleted_at is null and not n.personal_kb and n.id <> note_id)
+     or exists (select 1 from public.notes n where n.workspace_id = ws and n.path = cand and n.deleted_at is null and n.id <> note_id
+                and n.user_id = (select x.user_id from public.notes x where x.id = note_id)) loop
+    i := i + 1;
+    cand := base || ' (' || i || ').md';
+  end loop;
+  return cand;
+end $$;
+
 -- whether a name is free for a new or renamed KB: among the workspace's KBs, or among the owner's personal KBs
 create or replace function public.kb_name_taken(ws public.ulid, owner uuid, name text, except_id public.ulid) returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.knowledge_bases x
     where x.workspace_id = ws and x.personal_user_id is not distinct from owner and x.id is distinct from except_id and lower(btrim(x.name)) = lower(btrim(kb_name_taken.name)));
 $$;
+
+-- 7. paths unique per author inside personal KBs
+alter table public.notes add column personal_kb boolean not null default false;
+drop index public.notes_workspace_path;
+create unique index notes_workspace_path on public.notes (workspace_id, path) where deleted_at is null and not personal_kb;
+create unique index notes_author_path on public.notes (workspace_id, user_id, path) where deleted_at is null;
 
 -- 6. the workspace's policy for members' personal KBs
 alter table public.workspaces add column personal_kbs boolean not null default true;
@@ -369,6 +404,10 @@ begin
         (k.source ->> 'kind' = 'github' and starts_with(coalesce(n.frontmatter ->> 'kb_source', ''), (k.source ->> 'url') || '/blob/')
           and (k.source ->> 'subpath' is null or strpos(n.frontmatter ->> 'kb_source', '/' || (k.source ->> 'subpath') || '/') > 0))
         or (k.source ->> 'kind' = 'zip' and k.source ->> 'name' is not null and starts_with(coalesce(n.frontmatter ->> 'kb_source', ''), (k.source ->> 'name') || '.zip/')))));
+  -- the notes that stay become workspace notes again; one whose path another note took meanwhile moves to a free one
+  update public.notes n set path = public.kb_free_path(n.workspace_id, n.id, n.path)
+    where n.kb_id = k.id and n.deleted_at is null
+      and exists (select 1 from public.notes o where o.workspace_id = n.workspace_id and o.path = n.path and o.deleted_at is null and not o.personal_kb and o.id <> n.id);
   delete from public.knowledge_bases x where x.id = k.id;
   perform set_config('quorum.kb_system', '', true);
 end $$;
@@ -577,7 +616,7 @@ do $$ declare f text; begin
   end loop;
   foreach f in array array[
     'kb_is_personal(public.ulid)', 'kb_name_taken(public.ulid, uuid, text, public.ulid)', 'kb_personal_refusal(public.ulid, text)', 'kb_source_provider(text)', 'kb_personal_policy_apply(public.ulid)', 'can_read_kb_as(public.ulid, uuid)', 'can_admin_kb_as(public.ulid, uuid)',
-    'can_edit_kb_as(public.ulid, uuid)', 'kb_access_personal_check()', 'notes_personal_kb_owner()', 'kb_personal_drop(public.ulid)', 'note_contribution_apply(public.notes)', 'note_contribution_sync()', 'note_personal_kb_moved()',
+    'can_edit_kb_as(public.ulid, uuid)', 'kb_access_personal_check()', 'notes_personal_kb_owner()', 'notes_personal_kb_flag()', 'kb_free_path(public.ulid, public.ulid, text)', 'kb_personal_drop(public.ulid)', 'note_contribution_apply(public.notes)', 'note_contribution_sync()', 'note_personal_kb_moved()',
     'member_left_end_personal_kbs()'] loop
     execute format('revoke all on function public.%s from public, anon, authenticated', f);
   end loop;
