@@ -40,7 +40,7 @@ describe('calibrated precision', () => {
   });
   it('counts decisions per kind', () => {
     const t = tallies([rec('link.missing', 'approved', { action: 'alias' }), rec('link.missing', 'archived', { action: 'alias' }), rec('link.missing', 'reopened', { action: 'alias' }), rec('note.stale', 'undone')]);
-    expect(t['link:alias']).toEqual({ approved: 1, auto: 0, archived: 1, undone: 0, recent: { approved: 1, archived: 1, undone: 0 } });
+    expect(t['link:alias']).toEqual({ approved: 1, auto: 0, archived: 1, undone: 0, agent: { approved: 0, archived: 0, undone: 0 }, recent: { approved: 1, archived: 1, undone: 0 } });
     expect(t['finding:note.stale'].undone).toBe(1);
   });
 });
@@ -167,5 +167,20 @@ describe('gate log', () => {
       expect(lines[0].items[0]).toMatchObject({ id: 'r:link:a', kind: 'link:alias', bucket: 'show' });
       expect(lines[0].vault).not.toContain('vault');
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('decisions AI tools made', () => {
+  const rec = (decision, actor, at) => ({ ruleId: 'link.missing', proposedFix: { action: 'relink', gateKind: 'link:relink' }, decision, actor, at });
+  it('count under agent only, so they neither demote a kind nor lift a demotion', () => {
+    const person = Array.from({ length: WINDOW }, (_, i) => rec('archived', 'you', i));
+    const agent = Array.from({ length: WINDOW }, (_, i) => rec('approved', 'claude-code', 100 + i));
+    const t = tallies([...person, ...agent])['link:relink'];
+    expect(t.agent).toEqual({ approved: WINDOW, archived: 0, undone: 0 });
+    expect([t.approved, t.archived, t.recent.approved]).toEqual([0, WINDOW, 0]);
+    expect(Object.keys(demotions(person))).toEqual(['link:relink']);
+    expect(demotions([...person, ...agent])).toEqual(demotions(person));
+    const archivedByTool = Array.from({ length: WINDOW }, (_, i) => rec('archived', 'codex', i));
+    expect(demotions(archivedByTool)).toEqual({});
   });
 });

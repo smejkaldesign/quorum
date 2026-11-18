@@ -111,7 +111,7 @@ export function Row({ row, me, picked, busy, onPick, onOpen, onOpenFile, onMark,
         <span className="nf-who">{row.who === 'you' ? <span className="nf-you-avatar" aria-label="You" data-tip={me.name}><Avatar name={me.name} photo={me.photo} size={32} /></span> : <img src={markProd} alt={row.review ? 'Quorum, needs review' : 'Quorum'} width={32} height={32} />}</span>
         <span className="nf-main">
           <span className="nf-head"><strong className="conn-title nf-title" data-tip={row.review || row.run ? row.summary.line : undefined}>{row.summary.line}</strong>{row.unread && !row.archived && <i className="nf-dot" role="img" aria-label="Unread" data-tip="Unread" />}</span>
-          {(row.review || row.run) && <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span></span>}
+          {(row.review || row.run) && <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>{row.run?.by && <> <span className="nf-sep" aria-hidden="true">•</span> Approved by {row.run.by}</>}</span>}
           {!row.review && !row.run && <span className="nf-sub"><span className="nf-when" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>{row.summary.sub && <> <span className="nf-sep" aria-hidden="true">•</span> {row.summary.sub}</>}</span>}
         </span>
         <span className={`nf-side${row.review || row.run ? ' mh-side' : ''}`}>

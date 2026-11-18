@@ -438,7 +438,7 @@ function RunRow({ run, unread, picked, onPick }: { run: FixRun; unread: boolean;
         <span className="nf-who"><img src={markReview} alt="" width={32} height={32} /></span>
         <span className="nf-main">
           <span className="nf-head"><strong className="conn-title nf-title" data-tip={line}>{line}</strong>{unread && <i className="nf-dot" role="img" aria-label="Unread" data-tip="Unread" />}</span>
-          <span className="nf-sub"><span className="nf-when" title={new Date(run.endedAt ?? run.queuedAt).toLocaleString()}>{ago(run.endedAt ?? run.queuedAt)}</span></span>
+          <span className="nf-sub"><span className="nf-when" title={new Date(run.endedAt ?? run.queuedAt).toLocaleString()}>{ago(run.endedAt ?? run.queuedAt)}</span>{run.by && <> <span className="nf-sep" aria-hidden="true">•</span> Approved by {run.by}</>}</span>
         </span>
         <span className="nf-side mh-side">
           <StatusSwap status={runStatus(run)}>{run.status === 'success' && <UndoMenu run={run} />}</StatusSwap>
@@ -471,7 +471,7 @@ function BatchBanner({ runs, error, onCancel, onDismiss }: { runs: FixRun[]; err
   const finished = ok + bad;
   const now = items.find((x) => x.run.status === 'running');
   const live = finished < items.length;
-  const cancelled = !ok && items.some((x) => x.run.error?.startsWith('You cancelled the batch'));
+  const cancelled = !ok && items.some((x) => x.run.error?.endsWith('cancelled the batch'));
   const text = live
     ? `Fixing ${finished + 1} of ${items.length}${now ? `: “${now.title}”${now.run.steps.length ? `, ${now.run.steps[now.run.steps.length - 1].label.toLowerCase()}` : ''}` : ''}`
     : cancelled ? `Cancelled. ${items.length} ${items.length === 1 ? 'item is' : 'items are'} back in Needs review` : `Fixed ${ok} of ${items.length}${bad ? `. ${bad} could not be fixed` : ''}`;

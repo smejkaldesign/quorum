@@ -122,6 +122,7 @@ contextBridge.exposeInMainWorld('quorum', {
   confidentialMarks: () => ipcRenderer.invoke('confidential-marks'),
   confidentialMark: (rel, isDir, value) => ipcRenderer.invoke('confidential-mark', rel, isDir, value),
   onFixRun: on('fix-run'),
+  onAgentAction: on('agent-action'),
   vaultFixLink: (target, toRel) => ipcRenderer.invoke('vault-fix-link', target, toRel),
   vaultAddAlias: (rel, alias) => ipcRenderer.invoke('vault-add-alias', rel, alias),
   vaultOutgoing: (rel) => ipcRenderer.invoke('vault-outgoing', rel),
