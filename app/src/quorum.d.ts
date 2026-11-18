@@ -287,6 +287,8 @@ export type FeedQuery = { tab?: FeedTab; review?: boolean; kinds?: FeedKind[]; q
 // a feed query that returns each item as its id and unread mark only
 export type FeedMark = { id: string; unread: boolean };
 export type FeedPage = { items: FeedRow[]; total: number; more: boolean; counts: { review: number; unread: number; all: number; archived?: number }; dot: boolean };
+// the bell's dot and counts and Needs review for Memory health, in one read (main.js feed-counts)
+export type FeedCounts = { dot: boolean; counts: FeedPage['counts']; review: { total: number; files: Record<string, number>; folders: Record<string, number> } };
 export type NotificationPrefs = { noteUpdates?: boolean; memoryChanges?: boolean; reviews?: boolean; guardrails?: boolean };
 export type NoteLinkTarget = { rel?: string; anchor: string | null; missing?: boolean; id?: string };
 export type NoteDoc = { hand?: boolean; parts?: { note: string; summary: string; split: boolean }; file: string; rel: string; title: string; date?: string; people: string[]; body: string; app: string; url: string; source?: string | null; views?: NoteViews; visibility: Visibility; withheld: boolean; link: string; summarizable?: boolean; transcript?: { id: number; channel: 'me' | 'them'; who: string; text: string }[]; platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null; sourceUrl?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; event?: EventRef | null };
@@ -451,6 +453,8 @@ declare global {
       vaultLinkHealth(fresh?: boolean): Promise<MissingLink[]>;
       // Needs review for Memory health: the items waiting, and the same items by the note they are about and its folders
       memoryReviewCount(): Promise<{ total: number; files: Record<string, number>; folders: Record<string, number> }>;
+      feedCounts(): Promise<FeedCounts>;
+      onFeedChanged(cb: () => void): () => void;
       vaultLinksLeft(keys: string[], on?: boolean): Promise<number>;
       vaultLinkDecide(key: string, verdict: 'approve' | 'dismiss'): Promise<string>;
       fixStart(keys: string[]): Promise<FixRun[]>;
