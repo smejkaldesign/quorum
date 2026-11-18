@@ -2,7 +2,7 @@
 // instance: is this path in a denied folder, does its name look like a secret, does its frontmatter carry a denied
 // key. main.js and scripts/perf-bench.mjs share them, so the bench times what the app runs.
 import path from 'node:path';
-import { SECRET_NAMES, frontmatterKeys } from './guardrails.js';
+import { SECRET_NAMES, markingKeys } from './guardrails.js';
 
 export function createPredicates({ guardrails, brain }) {
   // the pattern is compiled once per rule set; the index asks for every note it walks
@@ -24,7 +24,7 @@ export function createPredicates({ guardrails, brain }) {
     // only the frontmatter block counts, the same as the read guard: a body line that starts with the key is no mark
     isConfidentialText: (text) => {
       const denied = guardrails.compiled().frontmatterKeys;
-      return denied.length > 0 && frontmatterKeys(String(text).slice(0, 4000)).some((k) => denied.includes(k));
+      return denied.length > 0 && markingKeys(String(text).slice(0, 4000)).some((k) => denied.includes(k));
     },
   };
 }

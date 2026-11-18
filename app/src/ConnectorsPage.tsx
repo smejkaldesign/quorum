@@ -1,18 +1,25 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { AgentSchedule, Brain, CalendarSettings, McpOverlap, McpOverlapServer, MeetingSourceInfo, OAuthAccount, PlatformInfo, SourceJob } from './quorum';
+import type { AgentSchedule, Brain, CalendarSettings, McpInheritedServer, McpOverlap, McpOverlapServer, MeetingSourceInfo, OAuthAccount, OAuthCheck, PlatformInfo, SourceJob } from './quorum';
+import { CHECKABLE, installSummary } from '../connectors/oauthApps';
+import { CONNECTOR_RETURN } from './connectorsNav';
+import { libraryAreas } from './libraryFilter';
+import { createInstallsReader, type InstallsView } from './githubInstalls';
+import { useSession } from './session';
 import { TRADEOFFS } from '../sources/agent-import';
-import { CATEGORIES, CONNECTORS_CHANGED, aboutFor, connectorsFor, featuresFor, isConnected, mcpPathsOf, type LibraryConnector } from '../connectors/library';
+import { AREAS, CONNECTORS_CHANGED, CONNECTOR_BY_ID, aboutFor, areaOf, areaOfCategory, connectorsFor, featuresFor, isConnected, mcpPathsOf, type LibraryConnector } from '../connectors/library';
 import { BLOCKED_SENTENCE, ORG_LABEL, ORG_SENTENCE, UNAPPROVED_LABEL, approvalOf, canConnect, hasLocalPart, hiddenFromList, isGoverned, type Approval } from '../connectors/approval';
 import { SyncedFolderConnections, useConnectorPolicy } from './edition';
 import { useFlag } from './flags';
-import { McpPaths, McpStatus, useMcpOverlap } from './McpPaths';
-import { useMenu } from './controls';
-import { IconCheck, IconChevron, IconExternal, IconFolder, IconGrid, IconMore, IconReset } from './icons';
+import { useMcpOverlap } from './McpPaths';
+import { ModalActions, useMenu } from './controls';
+import { IconCheck, IconChevron, IconExternal, IconGrid, IconMore, IconPlus, IconReset } from './icons';
+import { BRAND_LOGOS, brandSrc } from './brandLogos';
 
-// Settings › Connectors: four fixed groups (your notes, calendar, meeting notes, AI), each row saying whether it is
-// connected and offering one action, and a detail page per connector. Connectors not built yet are named on one line
-// at the bottom and offer nothing. Meeting-notes sources run through sources/index.js; Apple Calendar is the macOS
+// Settings › Connectors: the Agent OS folder, then the connectors this person connected, under their areas (meeting
+// notes, calendar, files, work, AI), and the MCP servers their agent already has (Inherited MCPs). Add connector opens
+// the library, every connector by area, with the ones not available to this person hidden by default. Each connector
+// has a detail page. Meeting-notes sources run through sources/index.js; Apple Calendar is the macOS
 // permission; Claude Code is the quorum MCP server registration; the Accounts group is the personal OAuth connectors
 // (sources/accounts.js), one sign-in each through Quorum's registered apps. The meeting apps that listen on this Mac appear only
 // with the meeting-capture flag on; with it off, Zoom stays as its cloud recordings import.
@@ -58,20 +65,40 @@ const ago = (iso: string | null) => {
 const elapsed = (from: number) => { const s = Math.max(0, Math.round((Date.now() - from) / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 const plural = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`;
 
-// the rows on the page, by group. `cat` is the library category a deep link names (openConnectors({ library }))
-const GROUPS: { title: string; cat: string; ids: string[] }[] = [
-  { title: 'Calendar', cat: 'calendar', ids: ['apple-calendar', 'google-calendar'] },
-  { title: 'Meeting notes', cat: 'meeting-notes', ids: ['granola', 'zoom', 'google-meet', 'teams'] },
-  { title: 'Accounts', cat: 'accounts', ids: ['google-drive', 'notion', 'slack', 'github'] },
-  { title: 'AI', cat: 'ai', ids: ['claude-code'] },
-];
-// the connectors not built yet named first on the More coming line, when they are still not built
-const MORE_FIRST = ['linear', 'gmail', 'fireflies', 'hubspot', 'jira'];
-const MORE_NAMED = 6;
 const PRICING = 'https://quorum.watch/#pricing';
 
 // detail is which connector's page is open; SettingsView owns it so the page title can turn into breadcrumbs
-export function ConnectorsPage({ detail, onDetail, brain, onFolder, onNotes, focus }: { detail: string | null; onDetail: (id: string | null) => void; brain: Brain | null; onFolder: () => void; onNotes: () => void; focus?: { cat: string | true; n: number } | null }) {
+// Quorum's app connector next to the provider's MCP: the explanation and the recommendation as the section's text, then
+// the table alone. On a connector's page with no MCP in the agent, one line says so
+function McpCompareSection({ connector: x, overlap, appOn }: { connector: LibraryConnector; overlap: McpOverlap; appOn: boolean }) {
+  const p = mcpPathsOf(x);
+  if (!p) return null;
+  const has = !!overlap.matches[x.id]?.length;
+  const off = !!overlap.off[x.id]?.length;
+  return (
+    <>
+      <h4>App connector and MCP</h4>
+      <p className="conn-lede conn-section-lede">{p.explain} {p.recommend}</p>
+      <div className="set-card conn-table mcp-paths-card">
+        {has || off ? (
+          <table className="mcp-paths-table">
+            <thead><tr><th /><th scope="col"><span className="mcp-col">App connector{appOn && <Dot on />}</span></th><th scope="col"><span className="mcp-col">{x.name} MCP{has && <Dot on tip="On in your agent" />}</span></th></tr></thead>
+            <tbody>{p.rows.map((r) => <tr key={r.id}><th scope="row">{r.label}</th><td>{r.connector}</td><td>{r.mcp}</td></tr>)}</tbody>
+          </table>
+        ) : <p className="src-status">Your agent has no {x.name} MCP set up.{p.alone ? ` ${p.alone}` : ''}</p>}
+      </div>
+    </>
+  );
+}
+
+// the breadcrumb name of a Connectors detail page: a connector, or a provider's MCP server (mcp:<connector id>)
+export const MCP_PAGE = 'mcp:';
+export function connectorDetailName(id: string): string | null {
+  if (id.startsWith(MCP_PAGE)) { const x = CONNECTOR_BY_ID[id.slice(MCP_PAGE.length)]; return x ? `${x.name} MCP` : null; }
+  return CONNECTOR_BY_ID[id]?.name ?? null;
+}
+
+export function ConnectorsPage({ detail, onDetail, library, onLibrary, brain, focus }: { detail: string | null; onDetail: (id: string | null) => void; library: boolean; onLibrary: (open: boolean) => void; brain: Brain | null; onFolder: () => void; onNotes: () => void; focus?: { cat: string | true; n: number } | null }) {
   const [live, setLive] = useState<Live>({ sources: [], cal: null, mcp: null, providers: [], platforms: [], accounts: [] });
   const { list: libraryList, byId } = useLibrary();
   // a connect refused for the wrong account opens the detail page, which offers signing in with another account
@@ -79,6 +106,8 @@ export function ConnectorsPage({ detail, onDetail, brain, onFolder, onNotes, foc
   const [icons, setIcons] = useState<Record<string, string | null>>({});
   // the first answer from the main process takes a moment (the Claude Code check shells out); until then a skeleton
   const [loaded, setLoaded] = useState(false);
+  // the library area a link pointed at ("Connect a calendar"); SettingsView opens the library itself
+  const [browseArea, setBrowseArea] = useState<string | null>(null);
   // Cloud on a team with "approved connectors only" on: connectors the workspace did not enable are hidden unless
   // already connected (connectors/approval.js). null everywhere else, which leaves the page as it was
   const { policy, report } = useConnectorPolicy();
@@ -105,18 +134,28 @@ export function ConnectorsPage({ detail, onDetail, brain, onFolder, onNotes, foc
   }, [live.sources, live.platforms]);
   // the workspace counts which of its connectors this member has connected (migration 0030 member_integrations)
   useEffect(() => { if (loaded) report(libraryList.filter((x) => isGoverned(x) && accountConnected(x, live)).map((x) => x.id)); }, [loaded, live, libraryList, report]);
-  // a deep link naming a group scrolls to it once the rows are in
+  // a deep link naming a library category ("Connect a calendar") opens the library at that area
   useEffect(() => {
-    if (!focus || focus.cat === true || !loaded || detail) return;
-    document.querySelector(`[data-conn-group="${focus.cat}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-  }, [focus, loaded, detail]);
-  if (detail && byId[detail]) return <ConnectorDetail connector={byId[detail]} icon={icons[detail] ?? null} live={live} onChange={load} initialError={refused?.id === detail ? refused.error : ''} approval={approval(byId[detail])} overlap={overlap} checking={checking} onCheck={check} />;
+    if (!focus || focus.cat === true) return;
+    setBrowseArea(areaOfCategory(focus.cat));
+  }, [focus]);
+  // the MCP servers that count: on in the agent, and matching a connector Quorum offers today
+  // MCPs the person disconnected from Quorum stay out of the list; their page offers Connect again
+  const [ignored, setIgnored] = useState<string[]>([]);
+  useEffect(() => { window.quorum.getSettings().then((st) => setIgnored(st.mcpIgnored ?? [])).catch(() => {}); }, []);
+  const ignore = (id: string, on: boolean) => {
+    const next = on ? [...new Set([...ignored, id])] : ignored.filter((x) => x !== id);
+    setIgnored(next);
+    window.quorum.setSettings({ mcpIgnored: next }).catch(() => {});
+  };
+  const agentMcps = (overlap?.servers ?? []).filter((m) => m.on && m.provider && byId[m.provider]?.status === 'available' && !ignored.includes(m.provider));
+  if (detail?.startsWith(MCP_PAGE) && byId[detail.slice(MCP_PAGE.length)]) {
+    const x = byId[detail.slice(MCP_PAGE.length)];
+    return <McpDetail connector={x} icon={icons[x.id] ?? null} servers={overlap?.matches[x.id] ?? []} overlap={overlap} checking={checking} onCheck={check} appOn={isConnected(x, live)} ignored={ignored.includes(x.id)} onIgnore={(on) => ignore(x.id, on)} onOpenConnector={() => onDetail(x.id)} />;
+  }
+  if (detail && byId[detail]) return <ConnectorDetail mcpIgnored={ignored.includes(detail)} connector={byId[detail]} icon={icons[detail] ?? null} live={live} onChange={load} initialError={refused?.id === detail ? refused.error : ''} approval={approval(byId[detail])} overlap={overlap} checking={checking} onCheck={check} />;
   // what the library offers today (with meeting capture off, Meet and Teams are not built as imports yet), and
   // anything still connected whatever its status, so it can be disconnected
-  const listed = (id: string) => !!byId[id] && (byId[id].status !== 'soon' || isConnected(byId[id], live)) && !hiddenFromList(byId[id], approval(byId[id]));
-  const soon = libraryList.filter((x) => x.status === 'soon');
-  const named = [...MORE_FIRST.map((id) => soon.find((x) => x.id === id)).filter((x): x is LibraryConnector => !!x), ...soon.filter((x) => !MORE_FIRST.includes(x.id))].slice(0, MORE_NAMED).map((x) => x.name);
-  const others = soon.length - named.length;
   const openRefused = (id: string, error: string) => { setRefused({ id, error }); onDetail(id); };
   if (!loaded) {
     return (
@@ -126,38 +165,163 @@ export function ConnectorsPage({ detail, onDetail, brain, onFolder, onNotes, foc
       </div>
     );
   }
+  if (library) return <ConnectorLibrary list={libraryList} icons={icons} live={live} approval={approval} overlap={overlap} focusArea={browseArea} onOpen={onDetail} />;
+  // the connectors this person connected, or that their workspace runs for them, by area
+  const shown = (x: LibraryConnector) => (accountConnected(x, live) || isConnected(x, live) || approval(x) === 'org') && !hiddenFromList(x, approval(x));
+  const areas = AREAS.map((a) => ({ ...a, items: libraryList.filter((x) => areaOf(x) === a.id && shown(x)), mcps: agentMcps.filter((m) => areaOf(byId[m.provider!]) === a.id) })).filter((a) => a.items.length || a.mcps.length);
   return (
     <>
-      <div className="conn-group">
-        <h4>Your notes</h4>
-        <div className="set-card conn-card">
-          <div className="conn-row">
-            <div className="conn-line" role="button" tabIndex={0} onClick={onNotes} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onNotes(); } }}>
-              <span className="conn-logo blank" style={{ width: 28, height: 28 }}><IconFolder width={15} height={15} /></span>
-              <strong className="conn-title">Agent OS folder</strong>
-              <Status on={!!brain} />
-              {brain && <span className="conn-meta" title={brain.vault || brain.root}>{home(brain.vault || brain.root)}</span>}
-              {!brain && <span className="conn-actions" onClick={(e) => e.stopPropagation()}><button className="pill primary" onClick={onFolder}>Choose folder</button></span>}
-              <IconChevron className="right conn-chev" width={14} height={14} />
-            </div>
+      {/* in the page title's row, at the right */}
+      <TitleActions><button className="pill primary conn-add" onClick={() => { setBrowseArea(null); onLibrary(true); }}><IconPlus width={16} height={16} /> Add connector</button></TitleActions>
+      {areas.map((a) => (
+        <div key={a.id} className="conn-group" data-conn-group={a.id}>
+          <h4>{a.name}</h4>
+          <div className="set-card conn-card">
+            {a.items.map((x) => <ConnectorRow key={x.id} connector={x} icon={icons[x.id] ?? null} live={live} approval={approval(x)} mcp={overlap?.matches[x.id]} onChange={load} onOpen={() => onDetail(x.id)} onWrongAccount={(e) => openRefused(x.id, e)} />)}
+            {a.mcps.map((m) => <McpRow key={m.name} connector={byId[m.provider!]} icon={icons[m.provider!] ?? null} server={m} onOpen={() => onDetail(`${MCP_PAGE}${m.provider}`)} onSync={check} onDisconnect={() => ignore(m.provider!, true)} />)}
           </div>
         </div>
+      ))}
+      {!areas.length && <p className="conn-empty">No connectors yet. Add one to bring in your meetings, calendar, files and work.</p>}
+      {policy && <p className="conn-more">{policy.enabled.length ? 'Your workspace lists the connectors an admin approved.' : 'Your workspace allows only connectors an admin approved, and none are approved yet.'}</p>}
+    </>
+  );
+}
+
+const WHERE: Record<McpOverlapServer['where'][number], string> = { 'claude-list': 'Claude Code', 'claude-user': 'Claude Code', 'claude-project': 'Claude Code, this folder', vault: 'Agent OS folder' };
+const whereOf = (s: McpOverlapServer) => [...new Set(s.where.map((w) => WHERE[w]))].join(' · ');
+// a connection's state as a dot beside its name; the word is in the tooltip
+const Dot = ({ on, tip }: { on: boolean; tip?: string }) => <i className={`conn-dot${on ? ' on' : ''}`} role="img" aria-label={tip ?? (on ? 'Connected' : 'Not connected')} data-tip={tip ?? (on ? 'Connected' : 'Not connected')} />;
+// the agent has this provider's MCP server: green when it is on, grey when it is set up and turned off
+function McpBadge({ connector: x, overlap }: { connector: LibraryConnector; overlap: McpOverlap | null }) {
+  const on = !!overlap?.matches[x.id]?.length;
+  const off = !on && !!overlap?.off[x.id]?.length;
+  if (!on && !off) return null;
+  return <em className={`soon ${on ? 'green' : 'grey'}`} data-tip={on ? `Your agent's ${x.name} MCP is connected` : `Your agent has ${x.name}'s MCP set up, turned off`}>Agent has MCP</em>;
+}
+// the library's order within an area: the most used tools first
+const POPULAR = ['zoom', 'google-calendar', 'slack', 'google-drive', 'notion', 'github', 'gmail', 'granola', 'teams', 'google-meet', 'outlook', 'jira', 'linear', 'hubspot', 'salesforce', 'asana', 'google-docs', 'claude-code', 'chatgpt', 'claude', 'figma', 'trello', 'clickup', 'monday', 'onedrive', 'onenote', 'zapier', 'fireflies', 'otter', 'fathom', 'read-ai', 'tldv', 'wispr', 'apple-calendar', 'codex', 'cursor', 'gemini', 'copilot', 'attio', 'pipedrive', 'affinity', 'gainsight', 'mailchimp', 'replit', 'lovable', 'v0', 'manus', 'grok'];
+const rank = (id: string) => { const i = POPULAR.indexOf(id); return i < 0 ? POPULAR.length : i; };
+
+// A provider's own MCP server in the person's agent, listed in its connector's area. Only servers that match a connector
+// Quorum offers are listed, and not ones the person disconnected from Quorum. Quorum does not call these servers: the
+// agent does. The row opens the MCP's page; its menu has Sync and Disconnect like any connector
+function McpRow({ connector: x, icon, server, onOpen, onSync, onDisconnect }: { connector: LibraryConnector; icon: string | null; server: McpInheritedServer; onOpen: () => void; onSync: () => void; onDisconnect: () => void }) {
+  return (
+    <div className="conn-row">
+      <div className="conn-line" role="button" tabIndex={0} onClick={onOpen} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}>
+        <Logo id={x.id} icon={icon} />
+        <strong className="conn-title">{x.name} MCP</strong>
+        <Dot on tip={`On in ${whereOf(server)}`} />
+        <span className="conn-meta">{whereOf(server)}</span>
+        <McpMenu name={`${x.name} MCP`} onSync={onSync} onDisconnect={onDisconnect} />
+        <IconChevron className="right conn-chev" width={14} height={14} />
       </div>
-      {GROUPS.map((g) => {
-        const items = g.ids.filter(listed).map((id) => byId[id]);
-        if (!items.length) return null;
+    </div>
+  );
+}
+
+const MCP_DISCONNECT = (n: string) => `Quorum stops counting your agent's ${n} MCP: it leaves your Connectors and Quorum will not route requests to it once routing ships. Quorum does not read from this MCP today, so nothing else changes. Your agent keeps the server; your Claude Code settings stay as they are.`;
+function McpMenu({ name, onSync, onDisconnect, syncButton = false, syncing = false }: { name: string; onSync: () => void; onDisconnect: () => void; syncButton?: boolean; syncing?: boolean }) {
+  const [open, setOpen] = useMenu();
+  const [confirm, setConfirm] = useState(false);
+  return (
+    <span className="conn-actions" onClick={(e) => e.stopPropagation()}>
+      {syncButton && <button className="pill" disabled={syncing} onClick={onSync}>{syncing ? 'Syncing…' : 'Sync'}</button>}
+      <span className="menu-wrap">
+        <button className="icon-btn" aria-label={`${name} options`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o: boolean) => !o)}><IconMore width={16} height={16} /></button>
+        {open && (
+          <div className="menu" role="menu">
+            {!syncButton && <button role="menuitem" disabled={syncing} onClick={() => { setOpen(false); onSync(); }}><IconReset width={15} height={15} /> Sync</button>}
+            <button role="menuitem" className="danger" onClick={() => { setOpen(false); setConfirm(true); }}>Disconnect</button>
+          </div>
+        )}
+      </span>
+      {confirm && <ConfirmDisconnect name={name} text={MCP_DISCONNECT(name.replace(/ MCP$/, ''))} busy={false} onCancel={() => setConfirm(false)} onConfirm={() => { setConfirm(false); onDisconnect(); }} />}
+    </span>
+  );
+}
+
+// A provider MCP's page: where the agent has it, then how it compares with Quorum's app connector
+function McpDetail({ connector: x, icon, servers, overlap, checking, onCheck, appOn, ignored, onIgnore, onOpenConnector }: { connector: LibraryConnector; icon: string | null; servers: McpOverlapServer[]; overlap: McpOverlap | null; checking: boolean; onCheck: () => void; appOn: boolean; ignored: boolean; onIgnore: (on: boolean) => void; onOpenConnector: () => void }) {
+  const on = servers.length > 0 && !ignored;
+  return (
+    <div className="conn-detail">
+      <div className="set-card conn-detail-card">
+        <Logo id={x.id} icon={icon} size={44} />
+        <div className="conn-detail-title">
+          <h3>{x.name} MCP{on && <Dot on tip="On in your agent" />}</h3>
+          <p>{x.name}'s own MCP server, set up in your agent. Your agent calls it when it needs {x.name} data. Quorum sees that it is there and does not read through it.</p>
+        </div>
+        <div className="conn-detail-cta">
+          {ignored ? <button className="pill primary" onClick={() => onIgnore(false)}>Connect</button>
+            : servers.length ? <McpMenu name={`${x.name} MCP`} syncButton syncing={checking} onSync={onCheck} onDisconnect={() => onIgnore(true)} />
+            : <button className="pill" disabled={checking} onClick={onCheck}>{checking ? 'Syncing…' : 'Sync'}</button>}
+        </div>
+      </div>
+      {ignored && <div className="conn-alert" role="status"><strong>Disconnected from Quorum</strong><span>Quorum does not count this MCP. Your agent still has it. Connect counts it again.</span></div>}
+      <h4>Details</h4>
+      <div className="set-card conn-table">
+        {!servers.length && <p className="src-status">Your agent does not have this MCP server right now.</p>}
+        {servers.map((m) => (
+          <div key={m.name}>
+            <div className="conn-kv"><span>Server</span><span>{m.name}</span></div>
+            <div className="conn-kv"><span>Set up in</span><span>{whereOf(m)}</span></div>
+            <div className="conn-kv"><span>Address</span><span>{m.url ?? [m.command, ...m.args].filter(Boolean).join(' ')}</span></div>
+          </div>
+        ))}
+        <div className="conn-kv"><span>Connector</span><span><button className="link-btn plain" onClick={onOpenConnector}>{x.name}</button></span></div>
+      </div>
+      {overlap && <McpCompareSection connector={x} overlap={overlap} appOn={appOn} />}
+    </div>
+  );
+}
+
+// Add connector: every connector by area. The connectors this person cannot connect (not built yet, not in this
+// build, Cloud only on the Local edition, or not approved by their workspace) are hidden for everyone until Show
+// hidden, on the title row, is checked; the choice lasts for this launch
+function ConnectorLibrary({ list, icons, live, approval, overlap, focusArea, onOpen }: { list: readonly LibraryConnector[]; icons: Record<string, string | null>; live: Live; approval: (x: LibraryConnector) => Approval; overlap: McpOverlap | null; focusArea: string | null; onOpen: (id: string) => void }) {
+  const [showHidden, setShowHidden] = useSession('connectorsShowHidden', false);
+  const notAvailable = (x: LibraryConnector) => {
+    const ap = approval(x);
+    return x.status === 'soon' || unavailable(x, live) || needsCloud(x, live) || hiddenFromList(x, ap) || (!canConnect(ap) && !hasLocalPart(x) && ap !== 'org');
+  };
+  const ready = (x: LibraryConnector) => isConnected(x, live) || !notAvailable(x);
+  useEffect(() => { if (focusArea) document.querySelector(`[data-lib-area="${focusArea}"]`)?.scrollIntoView({ block: 'start' }); }, [focusArea]);
+  return (
+    <>
+      <TitleActions>
+        <label className="conn-show-hidden"><input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />Show hidden</label>
+      </TitleActions>
+      {libraryAreas(list, AREAS, { areaOf, ready, rank, showHidden }).map(({ area: a, items }) => {
         return (
-          <div key={g.title} className="conn-group" data-conn-group={g.cat}>
-            <h4>{g.title}</h4>
+          <div key={a.id} className="conn-group" data-lib-area={a.id}>
+            <h4>{a.name}</h4>
+            <p className="conn-lede">{a.blurb}</p>
             <div className="set-card conn-card">
-              {items.map((x) => <ConnectorRow key={x.id} connector={x} icon={icons[x.id] ?? null} live={live} approval={approval(x)} mcp={overlap?.matches[x.id]} onChange={load} onOpen={() => onDetail(x.id)} onWrongAccount={(e) => openRefused(x.id, e)} />)}
+              {items.map((x) => {
+                const on = isConnected(x, live);
+                const ap = approval(x);
+                const state = on ? null : x.status === 'soon' ? <em className="soon grey">Soon</em> : needsCloud(x, live) ? <em className="soon grey">Cloud</em>
+                  : unavailable(x, live) ? <span className="conn-off">Not available yet</span> : ap === 'unapproved' ? <span className="conn-off">{UNAPPROVED_LABEL}</span>
+                  : <span className="conn-actions"><button className="pill small-pill" onClick={(e) => { e.stopPropagation(); onOpen(x.id); }}>Connect</button></span>;
+                return (
+                  <div key={x.id} className={`conn-row${notAvailable(x) && !on ? ' conn-dim' : ''}`}>
+                    <div className="conn-line" role="button" tabIndex={0} onClick={() => onOpen(x.id)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(x.id); } }}>
+                      <Logo id={x.id} icon={icons[x.id] ?? null} />
+                      <strong className="conn-title">{x.name}</strong>
+                      {on && <Dot on />}
+                      <McpBadge connector={x} overlap={overlap} />
+                      <span className="conn-desc">{x.description}</span>
+                      {state}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         );
       })}
-      <SyncedFolderConnections />
-      {policy && <p className="conn-more">{policy.enabled.length ? 'Your workspace lists the connectors an admin approved.' : 'Your workspace allows only connectors an admin approved, and none are approved yet.'}</p>}
-      {named.length > 0 && <p className="conn-more">More coming: {others > 0 ? `${named.join(', ')} and ${others} more.` : `${named.slice(0, -1).join(', ')}${named.length > 1 ? ' and ' : ''}${named[named.length - 1]}.`}</p>}
     </>
   );
 }
@@ -191,43 +355,84 @@ const metaLine = (x: LibraryConnector, live: Live) => {
   return null;
 };
 
-function Logo({ icon, size = 28 }: { icon: string | null; size?: number }) {
+const APP_ICON_FIRST = new Set(['zoom']);
+// a connector's mark: its brand logo, drawn for a dark background, else the installed app's icon or the site icon
+function Logo({ id, icon, size = 28 }: { id?: string; icon: string | null; size?: number }) {
+  // Zoom's mark is a wordmark, too small at this size: its installed app icon reads better
+  const brand = id && !(APP_ICON_FIRST.has(id) && icon) ? BRAND_LOGOS[id] : undefined;
+  if (brand) icon = brandSrc(brand);
   return icon ? <img className="conn-logo" src={icon} alt="" style={{ width: size, height: size }} /> : <span className="conn-logo blank" style={{ width: size, height: size }}><IconGrid width={14} height={14} /></span>;
 }
 
-// what a connected connector offers: the row's far-right controls and the detail page's buttons
-function Actions({ connector: x, live, busy, act, compact }: { connector: LibraryConnector; live: Live; busy: boolean; act: Act; compact?: boolean }) {
-  const [open, setOpen] = useMenu();
+// What Disconnect means for each kind of connector, said in the confirm before it runs
+function disconnectOf(x: LibraryConnector, live: Live): { text: string; run: () => Promise<unknown> } | null {
   const src = sourceFor(x, live);
-  const running = src?.job?.status === 'running';
+  if (x.kind === 'mcp-source' && src) return { text: `Quorum stops importing ${x.name} notes and signs out of ${x.name}. Notes already imported stay in your vault.`, run: () => window.quorum.sourceDisconnect(src.id) };
+  if (x.id === 'apple-calendar') return { text: 'Quorum stops reading the Calendar app. Upcoming meetings leave Home and new notes lose their meeting title and people.', run: () => window.quorum.calendarSet({ enabled: false }) };
+  if (x.account) return { text: `Quorum removes its ${x.name} sign-in from this Mac and revokes it with ${x.name}. The ${x.name} features stop until you connect again.`, run: () => window.quorum.oauthDisconnect(x.id) };
+  if (x.id === 'claude-code') return { text: 'Quorum removes its MCP server from Claude Code. Claude Code can no longer search your notes and meetings through Quorum.', run: () => window.quorum.mcpRemove() };
+  if (x.kind === 'meeting-app' && x.app && platformFor(x, live)?.connected) return { text: `Quorum stops importing ${x.name} cloud recordings and signs out of your ${x.name} account. Recordings already imported stay in your vault.`, run: () => window.quorum.platformDisconnect(x.app!) };
+  return null;
+}
+// Sync for a connector that brings things in: a meeting-notes source imports now, a meeting app imports its recordings
+function syncOf(x: LibraryConnector, live: Live): { run: () => Promise<unknown>; running: boolean } | null {
+  const src = sourceFor(x, live);
+  if (x.kind === 'mcp-source' && src) return { run: () => window.quorum.sourceSync(src.id), running: src.job?.status === 'running' };
+  const plat = platformFor(x, live);
+  if (x.kind === 'meeting-app' && x.app && plat?.connected) return { run: () => window.quorum.platformSync(x.app!), running: plat.job?.status === 'running' };
+  // Google Calendar reads upcoming events again, past the cache, and Up next follows. The action's busy state disables
+  // the button while it runs; a failed read comes back as the page's alert
+  if (x.id === 'google-calendar' && googleFor(x, live)?.connected) return { run: () => window.quorum.calendarSync(), running: false };
+  return null;
+}
+
+// A confirm before a Disconnect: what it changes, then Cancel and Disconnect
+export function ConfirmDisconnect({ name, text, busy, onCancel, onConfirm }: { name: string; text: string; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  return createPortal(
+    <div className="palette-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCancel(); }}>
+      <div className="modal" role="alertdialog" aria-modal="true" aria-labelledby="disc-title" onKeyDown={(e) => { if (e.key === 'Escape' && !busy) onCancel(); }}>
+        <h2 id="disc-title">Disconnect {name}?</h2>
+        <p>{text}</p>
+        <ModalActions>
+          <button className="pill" autoFocus disabled={busy} onClick={onCancel}>Cancel</button>
+          <button className="pill danger-pill" disabled={busy} onClick={onConfirm}>{busy ? 'Disconnecting…' : 'Disconnect'}</button>
+        </ModalActions>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// what a connected connector offers: Sync where something syncs (in the menu on a row, as a button beside the menu on
+// its page), lead (Check connection on an account's page), the connector's own items, and Disconnect behind a confirm
+function Actions({ connector: x, live, busy, act, syncButton = false, onSync, lead = null, manageLabel = 'Choose repositories' }: { connector: LibraryConnector; live: Live; busy: boolean; act: Act; syncButton?: boolean; onSync?: () => void; lead?: ReactNode; manageLabel?: string }) {
+  const [open, setOpen] = useMenu();
+  const [confirm, setConfirm] = useState(false);
+  const src = sourceFor(x, live);
+  const sync = syncOf(x, live);
+  const disc = disconnectOf(x, live);
+  const runSync = () => { onSync?.(); if (sync) act(sync.run); };
   return (
     <span className="conn-actions" onClick={(e) => e.stopPropagation()}>
-      {x.kind === 'mcp-source' && src && (compact
-        ? <button className={`icon-btn${running ? ' conn-spin' : ''}`} aria-label="Sync now" data-tip={running ? 'Syncing' : 'Sync now'} data-tip-pos="left" disabled={busy || running} onClick={() => act(() => window.quorum.sourceSync(src.id))}><IconReset width={16} height={16} /></button>
-        : <button className="pill" disabled={busy || running} onClick={() => act(() => window.quorum.sourceSync(src.id))}>{running ? 'Syncing…' : 'Sync now'}</button>)}
+      {lead}
+      {syncButton && sync && <button className="pill" disabled={busy || sync.running} onClick={runSync}>{sync.running ? 'Syncing…' : 'Sync'}</button>}
       <span className="menu-wrap">
         <button className="icon-btn" aria-label={`${x.name} options`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o: boolean) => !o)}><IconMore width={16} height={16} /></button>
         {open && (
           <div className="menu" role="menu">
+            {!syncButton && sync && <button role="menuitem" disabled={busy || sync.running} onClick={() => { setOpen(false); runSync(); }}><IconReset width={15} height={15} /> {sync.running ? 'Syncing…' : 'Sync'}</button>}
             {src?.folderPath && <button role="menuitem" onClick={() => { setOpen(false); window.quorum.meetingSourceOpen(src.folderPath!); }}><IconExternal width={15} height={15} /> Show notes folder</button>}
-            {x.kind === 'mcp-source' && src && <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.sourceDisconnect(src.id)); }}>Disconnect</button>}
-            {x.id === 'apple-calendar' && <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.calendarSet({ enabled: false })); }}>Disconnect</button>}
-            {accountFor(x, live)?.manageUrl && <button role="menuitem" onClick={() => { setOpen(false); window.quorum.openExternal(accountFor(x, live)!.manageUrl!); }}><IconExternal width={15} height={15} /> Choose repositories</button>}
-            {x.account && <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.oauthDisconnect(x.id)); }}>Disconnect</button>}
-            {x.id === 'claude-code' && <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.mcpRemove()); }}>Remove from Claude Code</button>}
-            {x.kind === 'meeting-app' && x.app && <>
-              {!cloudOnly(x) && <button role="menuitem" onClick={() => { setOpen(false); act(async () => { await window.quorum.meetingProviderCheck(); await new Promise((r) => setTimeout(r, 1500)); }); }}><IconReset width={15} height={15} /> Check again</button>}
-              {!cloudOnly(x) && <button role="menuitem" onClick={() => { setOpen(false); window.quorum.axSettingsOpen(); }}>Accessibility settings</button>}
-              {platformFor(x, live)?.connected && <>
-                <div className="menu-sep" />
-                <button role="menuitem" onClick={() => { setOpen(false); act(() => window.quorum.platformSync(x.app!)); }}><IconReset width={15} height={15} /> Import recordings now</button>
-                <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.platformDisconnect(x.app!)); }}>Disconnect {x.name} account</button>
-              </>}
-              {!cloudOnly(x) && <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.meetingProviderSet(x.app!, false)); }}>Stop listening</button>}
+            {accountFor(x, live)?.manageUrl && <button role="menuitem" onClick={() => { setOpen(false); window.quorum.openExternal(accountFor(x, live)!.manageUrl!); }}><IconExternal width={15} height={15} /> {manageLabel}</button>}
+            {x.kind === 'meeting-app' && x.app && !cloudOnly(x) && <>
+              <button role="menuitem" onClick={() => { setOpen(false); act(async () => { await window.quorum.meetingProviderCheck(); await new Promise((r) => setTimeout(r, 1500)); }); }}><IconReset width={15} height={15} /> Check again</button>
+              <button role="menuitem" onClick={() => { setOpen(false); window.quorum.axSettingsOpen(); }}>Accessibility settings</button>
+              <button role="menuitem" className="danger" onClick={() => { setOpen(false); act(() => window.quorum.meetingProviderSet(x.app!, false)); }}>Stop listening</button>
             </>}
+            {disc && <button role="menuitem" className="danger" onClick={() => { setOpen(false); setConfirm(true); }}>Disconnect</button>}
           </div>
         )}
       </span>
+      {confirm && disc && <ConfirmDisconnect name={x.name} text={disc.text} busy={busy} onCancel={() => setConfirm(false)} onConfirm={() => act(async () => { await disc.run(); setConfirm(false); })} />}
     </span>
   );
 }
@@ -246,27 +451,69 @@ function ConnectorRow({ connector: x, icon, live, approval, mcp, onChange, onOpe
   const org = approval === 'org' && !on;
   const personal = canConnect(approval) || hasLocalPart(x);
   const meta = approval === 'unapproved' ? UNAPPROVED_LABEL : on ? metaLine(x, live) : off ? 'Not available yet' : null;
+  // the chevron folds the row open to its details; a click anywhere else on the row opens the connector's page
+  const [open, setOpen] = useState(false);
+  const mcpOn = !!mcp?.length;
   return (
     <div className="conn-row">
       <div className="conn-line" role="button" tabIndex={0} onClick={onOpen} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}>
-        <Logo icon={icon} />
+        <Logo id={x.id} icon={icon} />
         <strong className="conn-title">{x.name}</strong>
+        {org ? <Dot on tip={ORG_LABEL} /> : <Dot on={on} />}
         {cloud && <em className="soon grey">Cloud</em>}
         {approval === 'approved' && <em className="soon grey">Workspace</em>}
-        {org ? <span className="conn-ok"><i />{ORG_LABEL}</span> : <Status on={on} />}
-        {meta && <span className="conn-meta">{meta}</span>}
-        {on ? <Actions connector={x} live={live} busy={busy} act={act} compact />
+        <span className="conn-fill" />
+        {mcpOn && <em className="soon green" data-tip={`Your agent's ${x.name} MCP is connected`}>Agent has MCP</em>}
+        {on ? <Actions connector={x} live={live} busy={busy} act={act}/>
           : <span className="conn-actions" onClick={(e) => e.stopPropagation()}>{cloud ? <button className="pill" onClick={() => window.quorum.openExternal(PRICING)}>See Cloud</button> : off || !personal ? null : <ConnectButton connector={x} live={live} busy={busy} act={act} onWrongAccount={onWrongAccount} />}</span>}
-        <IconChevron className="right conn-chev" width={14} height={14} />
+        <button className={`icon-btn conn-fold${open ? ' open' : ''}`} aria-expanded={open} aria-label={open ? `Hide ${x.name} details` : `Show ${x.name} details`} onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}><IconChevron width={14} height={14} /></button>
       </div>
-      {src?.job && <div className="conn-sub"><JobLine job={src.job} oneLine /></div>}
-      {!!mcp?.length && <div className="conn-sub"><McpPaths connector={x} servers={mcp} open={!!mcpPathsOf(x)?.ingest} /></div>}
+      {running && src?.job && <div className="conn-sub"><JobLine job={src.job} oneLine /></div>}
+      {open && (
+        <div className="conn-sub conn-fold-body">
+          <span>{meta ?? (on ? 'Connected' : 'Not connected')}</span>
+          {!running && src?.job && <JobLine job={src.job} oneLine />}
+          {mcpOn && <span>Your agent also has {x.name}'s MCP: {mcp!.map((m) => m.name).join(', ')}</span>}
+        </div>
+      )}
       {error && <p className="set-error conn-sub one-line" title={error}>{error}</p>}
     </div>
   );
 }
 
-function ConnectorDetail({ connector: x, icon, live, onChange, initialError = '', approval = 'open', overlap = null, checking = false, onCheck = () => {} }: { connector: LibraryConnector; icon: string | null; live: Live; onChange: () => Promise<void>; initialError?: string; approval?: Approval; overlap?: McpOverlap | null; checking?: boolean; onCheck?: () => void }) {
+// Check connection on an account connector's page: the provider's identity call through the main process
+function useAccountCheck(id: string) {
+  // the result is kept with its connector id, so another connector's page starts without one
+  const [checked, setChecked] = useState<{ id: string; result: OAuthCheck } | null>(null);
+  const [checking, setChecking] = useState(false);
+  const run = async () => {
+    setChecking(true);
+    const r = await window.quorum.oauthCheck(id).catch((err: Error) => ({ error: err.message }));
+    setChecked({ id, result: 'ok' in r ? r : { ok: false, reconnect: false, error: r.error, checkedAt: new Date().toISOString() } });
+    setChecking(false);
+  };
+  return { checked: checked?.id === id ? checked.result : null, checking, run, clear: () => setChecked(null) };
+}
+
+// where the GitHub App is installed, read again when the window gets focus and when a connector link brought the app
+// forward (CONNECTOR_RETURN, which skips the wait between reads). Reads share one request (githubInstalls.ts)
+function useGithubInstalls(on: boolean): InstallsView {
+  const [view, setView] = useState<InstallsView>({ installs: null, error: null });
+  useEffect(() => {
+    if (!on) return;
+    const reader = createInstallsReader(() => window.quorum.oauthGithubInstallations());
+    const off = reader.subscribe(setView);
+    reader.read();
+    const focus = () => { reader.read(); };
+    const back = (e: Event) => { if ((e as CustomEvent<string>).detail === 'github') reader.read({ force: true }); };
+    window.addEventListener('focus', focus);
+    window.addEventListener(CONNECTOR_RETURN, back);
+    return () => { off(); window.removeEventListener('focus', focus); window.removeEventListener(CONNECTOR_RETURN, back); };
+  }, [on]);
+  return on ? view : { installs: null, error: null };
+}
+
+function ConnectorDetail({ connector: x, icon, live, onChange, initialError = '', approval = 'open', overlap = null, onCheck = () => {}, mcpIgnored = false }: { connector: LibraryConnector; icon: string | null; live: Live; onChange: () => Promise<void>; initialError?: string; approval?: Approval; overlap?: McpOverlap | null; checking?: boolean; onCheck?: () => void; mcpIgnored?: boolean }) {
   const blocked = approval === 'blocked';
   // a personal connect or reconnect needs an open or approved connector; listening on this Mac is never governed
   const refusal = canConnect(approval) ? null : approval === 'org' ? ORG_SENTENCE(x.name) : BLOCKED_SENTENCE;
@@ -281,18 +528,28 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
   const running = src?.job?.status === 'running';
   const [, tick] = useState(0);
   useEffect(() => { if (!running) return; const t = setInterval(() => tick((n) => n + 1), 1000); return () => clearInterval(t); }, [running]);
-  const cat = CATEGORIES.find((c) => c.id === x.category);
+  const area = AREAS.find((a) => a.id === areaOf(x));
   const google = googleFor(x, live);
   const acct = accountFor(x, live);
+  // the account connectors have nothing to sync yet: their page checks the connection instead
+  const checkable = on && !!acct && CHECKABLE.has(x.id);
+  const check = useAccountCheck(x.id);
+  const checkFailed = check.checked && !check.checked.ok ? check.checked : null;
+  const { installs, error: installsError } = useGithubInstalls(x.id === 'github' && on);
+  const installed = installSummary(installs);
   const off = !on && unavailable(x, live);
   const status = soon ? 'Soon' : on ? 'Connected' : off ? 'Not available yet' : x.id === 'apple-calendar' && live.cal?.status === 'denied' ? 'Access is off in System Settings'
     : prov && !prov.enabled ? 'Not listening' : prov && !prov.installed ? `${x.name} isn't installed on this Mac` : prov && prov.access === false ? 'Needs Accessibility access' : 'Not connected';
   // one message for the page: the latest action's error wins, else the last failed import
-  const alert = error || (src?.job?.status === 'failed' ? src.job.error : null) || (acct?.error ?? null) || null;
+  const alert = error || (src?.job?.status === 'failed' ? src.job.error : null) || (acct?.error ?? null) || checkFailed?.error || null;
   const accountProblem = !!alert && /No \w+ account for|account for this sign-in|different account|Use the account your/i.test(alert);
+  // the alert's first sentence is its title; the line under it carries only the rest
+  const cut = alert ? alert.indexOf('. ') : -1;
+  const alertTitle = !alert ? '' : accountProblem ? 'Sign in with a different account' : (cut > 0 ? alert.slice(0, cut) : alert).replace(/\.$/, '');
+  const alertRest = !alert ? '' : accountProblem ? alert : cut > 0 ? alert.slice(cut + 2) : '';
   const rows: [string, ReactNode][] = [
     ...(on ? [] : [['Status', status] as [string, ReactNode]]),
-    ['Category', cat?.name ?? x.category],
+    ['Area', area?.name ?? x.category],
     ['Connection', connectionType(x)],
   ];
   if (x.kind === 'mcp-source' && src) {
@@ -317,6 +574,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
   if (x.account) rows.push(
     ...(acct?.connected && acct.account ? [['Account', acct.account] as [string, ReactNode]] : []),
     ...(acct?.connected && acct.connectedAt ? [['Connected', `${ago(acct.connectedAt)} (${new Date(acct.connectedAt).toLocaleString()})`] as [string, ReactNode]] : []),
+    ...(x.id === 'github' && on ? [['Repositories', installs ? installed ?? 'Not installed on any repository yet' : installsError ?? 'Not read yet'] as [string, ReactNode]] : []),
     ['Access', acct?.scope ?? 'Set by the provider\'s consent screen'],
     ['Tokens', x.id.startsWith('google-') ? 'Stored in this Mac\'s Keychain. Disconnect removes them, and revokes Quorum\'s Google access once no other Google connector uses the same account' : 'Stored in this Mac\'s Keychain. Disconnect revokes them with the provider and removes them'],
   );
@@ -329,23 +587,51 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
     ['Cloud recordings', (() => { const plat = platformFor(x, live); return !plat ? 'Part of Quorum Cloud: sign in to connect your account' : !plat.available ? 'Not available in this build' : plat.connected ? `Connected as ${plat.account ?? plat.accountName ?? 'your account'} · ${plural(plat.notes, 'recording')} imported · last checked ${ago(plat.lastSyncAt)}` : 'Not connected'; })()],
   );
   if (x.id === 'claude-code' && live.mcp) rows.push(['Registered with', <code>{live.mcp.command}</code>]);
+  // what to do once connected: bring in what the connection reaches so far
+  const plat = platformFor(x, live);
+  const steps: { title: string; text: string; label: string; busyLabel: string; running: boolean; run: () => void }[] = [];
+  if (plat?.connected && x.app) steps.push({ title: 'Import your recordings', text: `Bring in the ${x.name} cloud recordings made so far. New ones arrive on their own after this.`, label: 'Import', busyLabel: 'Importing…', running: plat.job?.status === 'running', run: () => act(() => window.quorum.platformSync(x.app!)) });
+  if (x.kind === 'mcp-source' && src) steps.push({ title: 'Import your notes', text: `Bring in your ${x.name} notes now instead of waiting for the next sync.`, label: 'Import', busyLabel: 'Importing…', running: !!running, run: () => act(() => window.quorum.sourceSync(src.id)) });
+  if (acct?.manageUrl) steps.push(installed
+    ? { title: 'Change repositories', text: `${installed}. Add or remove repositories on GitHub.`, label: 'Change', busyLabel: 'Change', running: false, run: () => window.quorum.openExternal(acct.manageUrl!) }
+    : { title: 'Choose repositories', text: 'Pick the repositories Quorum may read. It reads nothing until you do.', label: 'Choose', busyLabel: 'Choose', running: false, run: () => window.quorum.openExternal(acct.manageUrl!) });
+  const checkButton = checkable ? <button className="pill" disabled={busy || check.checking} onClick={check.run}>{check.checking ? 'Checking…' : 'Check connection'}</button> : null;
+  // a refused token: sign in again from the alert; a good sign-in clears the failed check
+  const reconnect = checkFailed?.reconnect && personal
+    ? <button className="pill" disabled={busy} onClick={() => act(async () => { const r = await startConnect(x); if (!r.error) check.clear(); return r; })}>{busy ? connectLabel(x, true, true) : 'Reconnect'}</button>
+    : null;
   rows.push(['Website', <button className="link-btn plain" onClick={() => window.quorum.openExternal(`https://${x.domain}`)}>{x.domain}<IconExternal width={13} height={13} /></button>]);
   return (
     <div className="conn-detail">
-      <div className="conn-detail-head">
-        <Logo icon={icon} size={44} />
+      <div className="set-card conn-detail-card">
+        <Logo id={x.id} icon={icon} size={44} />
         <div className="conn-detail-title">
-          <h3>{x.name}{soon && <em className="soon grey">Soon</em>}</h3>
+          <h3>{x.name}{on && <Dot on />}{soon && <em className="soon grey">Soon</em>}</h3>
           <p>{aboutFor(x, capture(x))}</p>
         </div>
+        <div className="conn-detail-cta">
+          {on ? <Actions connector={x} live={live} busy={busy} act={act} syncButton onSync={onCheck} lead={checkButton} manageLabel={installed ? 'Change repositories' : 'Choose repositories'} />
+            : !soon && !off && personal && !(accountProblem && x.kind === 'mcp-source') ? <ConnectButton connector={x} live={live} busy={busy} act={act} />
+            : <span data-tip={soon || off ? 'Coming soon' : refusal ?? 'Not available'}><button className="pill primary" disabled>Connect</button></span>}
+        </div>
       </div>
-      <TitleActions>
-        {!soon && !on && !off && personal && !(accountProblem && x.kind === 'mcp-source') && <ConnectButton connector={x} live={live} busy={busy} act={act} />}
-        {on && <Actions connector={x} live={live} busy={busy} act={act} compact />}
-      </TitleActions>
       {(blocked || approval === 'unapproved') && <div className="conn-alert" role="status"><strong>{UNAPPROVED_LABEL}</strong><span>{blocked ? BLOCKED_SENTENCE : 'You connected this yourself. It keeps working until you disconnect it. Connecting it again needs an owner or admin to approve it.'}</span></div>}
       {approval === 'org' && <div className="conn-alert" role="status"><strong>{ORG_LABEL}</strong><span>{ORG_SENTENCE(x.name)}</span></div>}
-      {alert && <div className="conn-alert" role="alert"><strong>{accountProblem ? 'Sign in with a different account' : alert.split('. ')[0].replace(/\.$/, '')}</strong><span>{alert}</span></div>}
+      {alert && <div className="conn-alert" role="alert"><strong>{alertTitle}</strong>{alertRest && <span>{alertRest}</span>}{alert === checkFailed?.error && reconnect}</div>}
+      {on && steps.length > 0 && (
+        <>
+          <h4>Next steps</h4>
+          <div className="set-card conn-steps">
+            {steps.map((st) => (
+              <div key={st.label} className="conn-step">
+                <span><strong>{st.title}</strong><span>{st.text}</span></span>
+                <button className="pill" disabled={busy || st.running} onClick={st.run}>{st.running ? st.busyLabel : st.label}</button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      {(on || (prov && !cloudOnly(x)) || (!!src?.job && src.job.status === 'running') || (accountProblem && x.kind === 'mcp-source')) && <>
       <h4>Connectivity</h4>
       <div className={`set-card conn-jobcard${on ? ' on' : ''}`}>
         {on && !prov && <span className="conn-ok conn-badge"><i />Connected{src && !src.syncNotes ? ' · sync off' : ''}</span>}
@@ -355,8 +641,9 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
           ? <DifferentAccount connector={x} busy={busy} act={act} />
           : src?.job && src.job.status !== 'failed'
             ? <JobLine job={src.job} />
-            : <p className="src-status">{on ? (src ? `Last sync ${ago(src.lastSyncAt)}. Next automatic sync within 30 minutes while Quorum runs.` : google ? `Connected as ${google.account ?? 'your Google account'}. Home reads upcoming events every few minutes while Quorum runs.` : acct ? `Connected as ${acct.account ?? `your ${x.name} account`}. The ${x.name} features in the list below use this account as they ship.` : 'Connected on this Mac.') : soon || off ? 'Not available yet.' : 'Not connected yet.'}</p>}
+            : <p className="src-status" role="status">{on ? (src ? `Last sync ${ago(src.lastSyncAt)}. Next automatic sync within 30 minutes while Quorum runs.` : google ? `Connected as ${google.account ?? 'your Google account'}. Home reads upcoming events every few minutes while Quorum runs.` : acct && check.checked?.ok ? `Connected as ${check.checked.account ?? acct.account ?? `your ${x.name} account`}, checked ${ago(check.checked.checkedAt)}.` : acct && checkFailed ? `Last check failed ${ago(checkFailed.checkedAt)}.` : acct ? `Connected as ${acct.account ?? `your ${x.name} account`}. The ${x.name} features in the list below use this account as they ship.` : 'Connected on this Mac.') : soon || off ? 'Not available yet.' : 'Not connected yet.'}</p>}
       </div>
+      </>}
       {on ? (
         <div className="conn-tabs" role="tablist">
           <button role="tab" aria-selected={tab === 'details'} className={tab === 'details' ? 'on' : ''} onClick={() => setTab('details')}>Details</button>
@@ -390,12 +677,8 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
           {rows.map(([k, v]) => <div key={k} className="conn-kv"><span>{k}</span><span>{v}</span></div>)}
         </div>
       )}
-      {overlap && mcpPathsOf(x) && (
-        <>
-          <h4>Your agent's MCP</h4>
-          <div className="set-card conn-table mcp-paths-card"><McpStatus connector={x} overlap={overlap} checking={checking} onCheck={onCheck} /></div>
-        </>
-      )}
+      {overlap && !mcpIgnored && <McpCompareSection connector={x} overlap={overlap} appOn={on} />}
+      {x.id === 'github' && <SyncedFolderConnections />}
       {x.kind === 'mcp-source' && src?.agent && src.agent.runners.length > 0 && (!on || src.agent.schedule !== 'off') && <AgentImport source={src} busy={busy} act={act} />}
       <h4>Enables</h4>
       <div className="set-card conn-features">
@@ -424,7 +707,7 @@ const startConnect = async (x: LibraryConnector, fresh = false): Promise<{ ok?: 
   return { error: 'Not available yet.' };
 };
 const connectLabel = (x: LibraryConnector, busy: boolean, full: boolean) =>
-  busy ? (x.kind === 'mcp-source' || x.kind === 'oauth' ? 'Finish in your browser…' : x.kind === 'macos' ? 'Waiting for macOS…' : cloudOnly(x) ? 'Finish in your browser…' : x.kind === 'meeting-app' ? 'Checking…' : 'Adding…') : x.kind === 'macos' ? 'Allow' : x.kind === 'quorum-mcp' ? 'Add' : cloudOnly(x) ? `Connect ${x.name} account` : x.kind === 'meeting-app' ? 'Start listening' : full ? `Connect ${x.name}` : 'Connect';
+  busy ? (x.kind === 'mcp-source' || x.kind === 'oauth' ? 'Finish in your browser…' : x.kind === 'macos' ? 'Waiting for macOS…' : cloudOnly(x) ? 'Finish in your browser…' : x.kind === 'meeting-app' ? 'Checking…' : 'Adding…') : x.kind === 'meeting-app' && !cloudOnly(x) ? 'Start listening' : full ? `Connect ${x.name}` : 'Connect';
 
 // the connector's controls live on the title row, next to the breadcrumbs, which SettingsView renders
 function TitleActions({ children }: { children: ReactNode }) {
@@ -439,7 +722,7 @@ function ConnectButton({ connector: x, live, busy, act, onWrongAccount }: { conn
   if (prov?.enabled && prov.installed && prov.access === false) return <button className="pill" onClick={() => window.quorum.axSettingsOpen()}>Open System Settings</button>;
   if (prov?.enabled && !prov.installed) return <button className="pill" disabled={busy} onClick={() => act(async () => { await window.quorum.meetingProviderCheck(); await new Promise((r) => setTimeout(r, 1500)); })}>{busy ? 'Checking…' : 'Check again'}</button>;
   const fresh = x.kind === 'mcp-source' && !!sourceFor(x, live)?.freshNext;
-  return <button className="pill primary" disabled={busy} onClick={() => act(async () => { const r = await startConnect(x, fresh); if (r.wrongAccount && r.error && onWrongAccount) { onWrongAccount(r.error); return null; } return r; })}>{busy ? connectLabel(x, true, true) : fresh ? 'Connect with a different account' : connectLabel(x, false, true)}</button>;
+  return <button className="pill primary" disabled={busy} onClick={() => act(async () => { const r = await startConnect(x, fresh); if (r.wrongAccount && r.error && onWrongAccount) { onWrongAccount(r.error); return null; } return r; })}>{busy ? connectLabel(x, true, true) : fresh ? 'Connect with a different account' : connectLabel(x, false, false)}</button>;
 }
 
 // the fallback for a source the person's agent already has: the agent imports through the source's MCP server on the

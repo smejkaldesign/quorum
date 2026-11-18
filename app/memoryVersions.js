@@ -192,7 +192,10 @@ export function createVersionStore({ dir, now = () => Date.now(), maxVersions = 
     }
   }
 
-  return { record, list, read: readVersion, restore, undo, reject, approve, opened, dots, review, watch, home };
+  // every file with a history, keyed by its path in the vault, for the Notifications view
+  const files = (vault) => load(vault).files;
+
+  return { record, list, read: readVersion, restore, undo, reject, approve, opened, dots, review, watch, home, files };
 }
 
 // the text of every markdown note in a vault, keyed by its path inside the vault. Notes over 2 MB are left out

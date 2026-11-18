@@ -8,18 +8,25 @@ on:
   pull_request_target:
     types: [opened, closed, synchronize]
 
-permissions:
-  actions: write
-  contents: write
-  pull-requests: write
-  statuses: write
+# pull_request_target is required: on a fork's pull_request the token is read-only and the action could neither
+# comment nor record a signature. This workflow never checks out or runs pull request code; the action reads the
+# PR's commits and comments through the API only. Keep it that way: no actions/checkout, no run steps.
+permissions: {}
 
 jobs:
   cla:
     runs-on: ubuntu-latest
+    # contents: write for the cla-signatures branch, pull-requests: write for the comments. actions: read lets the
+    # action find its last run after a signature; it can no longer re-run that run (that needs actions: write), so a
+    # maintainer re-runs the failed CLA check by hand once the contributor has signed. The action sets no commit
+    # statuses, so it gets no statuses scope.
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
     if: (github.event.comment.body == 'recheck' || github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') || github.event_name == 'pull_request_target'
     steps:
-      - uses: contributor-assistant/github-action@v2.6.1
+      - uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

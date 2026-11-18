@@ -31,6 +31,12 @@ function mdTarget(newRel, oldHref, fromRel) {
  * sources: rels of notes linking to any of them, from the index's backlinks, taken before the move
  * resolve: the index resolver from before the move; allRels: every note after the move
  */
+// the notes that may link to the notes that move: their backlinks, plus every note the index read only the head of,
+// since a link past its head is in no backlink. rewriteLinks reads each one whole from disk
+export function linkSources(index, moving) {
+  return [...new Set([...moving.flatMap((r) => index.backlinks(r).map((b) => b.rel)), ...(index.cutRels?.() ?? [])])];
+}
+
 export function rewriteLinks({ vault, mapping, sources, resolve, allRels, aliasesOf }) {
   const baseCount = new Map();
   for (const rel of allRels) { const b = path.posix.basename(noExt(rel)).toLowerCase(); baseCount.set(b, (baseCount.get(b) ?? 0) + 1); }
@@ -70,7 +76,10 @@ export function rewriteLinks({ vault, mapping, sources, resolve, allRels, aliase
 // point every link written as `target` (case-insensitive) in the given notes at an existing note instead
 // add a name to a note's aliases: list, leaving the rest of the file byte-for-byte; one edit fixes every link to it
 export function addAlias(abs, alias) {
-  const raw = readFileSync(abs, 'utf8');
+  writeAtomic(abs, aliasText(readFileSync(abs, 'utf8'), alias));
+}
+// a note's text with alias added to its aliases: list
+export function aliasText(raw, alias) {
   const m = raw.match(/^---\n([\s\S]*?)\n---/);
   let fm;
   if (!m) fm = null;
@@ -82,8 +91,7 @@ export function addAlias(abs, alias) {
     lines.splice(i, 0, `  - ${alias}`);
     fm = lines.join('\n');
   } else fm = `${m[1]}\naliases:\n  - ${alias}`;
-  const next = fm === null ? `---\naliases:\n  - ${alias}\n---\n${raw}` : `---\n${fm}\n---${raw.slice(m[0].length)}`;
-  writeAtomic(abs, next);
+  return fm === null ? `---\naliases:\n  - ${alias}\n---\n${raw}` : `---\n${fm}\n---${raw.slice(m[0].length)}`;
 }
 
 export function retargetLinks({ vault, sources, target, toRel, toName, allRels }) {
@@ -105,6 +113,28 @@ export function retargetLinks({ vault, sources, target, toRel, toName, allRels }
       if (link.kind !== 'wiki' || noExt(link.target).toLowerCase() !== want) continue;
       const next = `${link.embed ? '!' : ''}[[${written}${link.anchor ? `#${link.anchor}` : ''}${link.display !== null ? `|${link.display}` : ''}]]`;
       if (lines[link.line]?.includes(link.raw)) { lines[link.line] = lines[link.line].replace(link.raw, next); changed++; }
+    }
+    if (changed) { writeAtomic(abs, lines.join('\n')); files++; links += changed; }
+  }
+  return { files, links };
+}
+
+// take every link to a missing note out of the linking notes and keep its words: [[a/b|Label]] becomes Label,
+// [[a/b#x]] becomes b. Answers with how many links in how many notes changed
+export function unlinkTarget({ vault, sources, target }) {
+  const want = noExt(target).toLowerCase();
+  let files = 0;
+  let links = 0;
+  for (const from of sources) {
+    const abs = path.join(vault, from);
+    let raw;
+    try { raw = readFileSync(abs, 'utf8'); } catch { continue; }
+    const lines = raw.split('\n');
+    let changed = 0;
+    for (const link of parseNote(from, raw).links) {
+      if (link.kind !== 'wiki' || noExt(link.target).toLowerCase() !== want) continue;
+      const words = link.display !== null && link.display !== '' ? link.display : path.posix.basename(noExt(link.target));
+      if (lines[link.line]?.includes(link.raw)) { lines[link.line] = lines[link.line].replace(link.raw, words); changed++; }
     }
     if (changed) { writeAtomic(abs, lines.join('\n')); files++; links += changed; }
   }

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { PLATFORMS, createPlatforms, fileNameFor, recordingNote, transcriptFile, vttToText } from '../ee/platforms.js';
+import { ZOOM_DEV, ZOOM_REDIRECT, createPlatforms, fileNameFor, platformClients, recordingNote, transcriptFile, vttToText } from '../ee/platforms.js';
 
 const VTT = `WEBVTT\r\n\r\n1\r\n00:00:01.000 --> 00:00:03.500\r\nAlex Rivera: Hi there.\r\n\r\n2\r\n00:00:03.600 --> 00:00:05.000\r\nAlex Rivera: Can you hear me?\r\n\r\n3\r\n00:00:06.000 --> 00:00:08.000\r\nDana Whitfield: Yes, loud and clear.\r\n\r\n4\r\n00:01:10.000 --> 00:01:12.000\r\nAlex Rivera: Let's start.\r\n`;
 
@@ -57,6 +57,33 @@ function world({ recordings = [], vtt = VTT, tokenStatus = 200 } = {}) {
 }
 const recording = (over = {}) => ({ uuid: 'uuid-1', id: 111, topic: 'Weekly Sync', start_time: new Date(Date.now() - 2 * 86400000).toISOString(), duration: 30, share_url: 'https://zoom.us/rec/share/1', recording_files: [{ file_type: 'MP4', download_url: 'https://download.zoom.example/mp4' }, { file_type: 'TRANSCRIPT', status: 'completed', download_url: 'https://download.zoom.example/vtt' }], ...over });
 
+const CLIENTS = { zoom: { clientId: 'zoom-client', redirectUri: 'https://relay.example/v1/connect/zoom/callback' } };
+
+describe('zoom client resolution', () => {
+  it('a build from source falls back to the development app', () => {
+    expect(platformClients({ env: {}, packaged: {}, dev: true }).zoom).toEqual(ZOOM_DEV);
+  });
+  it('a packaged build reads the release values and never the development app', () => {
+    const packaged = { quorumOAuth: { zoom: { clientId: 'prod-id', redirectUri: 'https://relay.example/v1/connect/zoom/callback' } } };
+    expect(platformClients({ env: {}, packaged }).zoom).toEqual({ clientId: 'prod-id', redirectUri: 'https://relay.example/v1/connect/zoom/callback' });
+    expect(platformClients({ env: {}, packaged: { quorumOAuth: { zoom: { clientId: 'prod-id' } } } }).zoom).toEqual({ clientId: 'prod-id', redirectUri: ZOOM_REDIRECT });
+    expect(ZOOM_REDIRECT).toBe('https://relay.quorum.watch/v1/connect/zoom/callback');
+  });
+  it('a packaged build without a client id has no Zoom app', () => {
+    expect(platformClients({ env: {}, packaged: {} }).zoom).toEqual({ clientId: null, redirectUri: ZOOM_REDIRECT });
+  });
+  it('the shell overrides both', () => {
+    const env = { QUORUM_ZOOM_CLIENT_ID: 'shell-id', QUORUM_ZOOM_REDIRECT_URI: 'https://shell.example/cb' };
+    expect(platformClients({ env, packaged: { quorumOAuth: { zoom: { clientId: 'prod-id' } } }, dev: true }).zoom).toEqual({ clientId: 'shell-id', redirectUri: 'https://shell.example/cb' });
+  });
+  it('lists Zoom as unavailable and refuses to connect without a client id', async () => {
+    const w = world();
+    const p = createPlatforms({ account: w.account, settings: {}, meetingsDir: () => null, fetchImpl: w.fetchImpl, store: w.store });
+    expect(p.list()[0]).toMatchObject({ id: 'zoom', available: false });
+    expect(await p.connect('zoom')).toEqual({ error: 'Zoom connections are not available in this build.' });
+  });
+});
+
 describe('zoom platform connection', () => {
   let dir;
   beforeEach(() => { dir = mkdtempSync(path.join(tmpdir(), 'quorum-platforms-')); });
@@ -70,18 +97,18 @@ describe('zoom platform connection', () => {
     const loopback = async () => {
       const url = new URL(opened[0]);
       expect(url.origin + url.pathname).toBe('https://zoom.us/oauth/authorize');
-      expect(url.searchParams.get('client_id')).toBe(PLATFORMS.zoom.clientId);
-      expect(url.searchParams.get('redirect_uri')).toBe(PLATFORMS.zoom.redirectUri);
+      expect(url.searchParams.get('client_id')).toBe(CLIENTS.zoom.clientId);
+      expect(url.searchParams.get('redirect_uri')).toBe(CLIENTS.zoom.redirectUri);
       expect(url.searchParams.get('code_challenge_method')).toBe('S256');
       expect(url.searchParams.get('state')).toMatch(/\.p47832$/);
       return { code: 'code-1', state: url.searchParams.get('state'), finish: (r) => { page = r; } };
     };
-    const p = createPlatforms({ account: w.account, settings, meetingsDir: () => dir, fetchImpl: w.fetchImpl, store: w.store, openExternal: async (u) => { opened.push(u); }, loopback: () => new Promise((r) => setTimeout(() => r(loopback()), 0)) });
+    const p = createPlatforms({ clients: CLIENTS, account: w.account, settings, meetingsDir: () => dir, fetchImpl: w.fetchImpl, store: w.store, openExternal: async (u) => { opened.push(u); }, loopback: () => new Promise((r) => setTimeout(() => r(loopback()), 0)) });
     expect(await p.connect('zoom')).toEqual({ ok: true });
     expect(page).toEqual({ name: 'Zoom' });
     const token = w.calls.find((c) => c.url.endsWith('/v1/connect/zoom/token'));
     expect(token.auth).toBe('Bearer session-tok');
-    expect(token.body).toMatchObject({ workspaceId: 'ws1', grant: 'code', code: 'code-1', redirectUri: PLATFORMS.zoom.redirectUri });
+    expect(token.body).toMatchObject({ workspaceId: 'ws1', grant: 'code', code: 'code-1', redirectUri: CLIENTS.zoom.redirectUri });
     expect(token.body.codeVerifier).toMatch(/^[A-Za-z0-9_-]{40,}$/);
     expect(w.saved['platform-zoom'].accessToken).toBe('zoom-at-1');
     const reg = w.calls.find((c) => c.url.endsWith('/v1/connect/zoom/account'));
@@ -106,7 +133,7 @@ describe('zoom platform connection', () => {
     w.saved['platform-zoom'] = { accessToken: 'zoom-at-1', refreshToken: 'zoom-rt', expiresAt: Date.now() + 3600000 };
     mkdirSync(path.join(dir, 'zoom'), { recursive: true });
     writeFileSync(path.join(dir, 'zoom', 'old.md'), '---\nsource_id: uuid-1\ntitle: "Weekly Sync"\nsource: zoom\n---\n');
-    const p = createPlatforms({ account: w.account, settings, meetingsDir: () => dir, fetchImpl: w.fetchImpl, store: w.store });
+    const p = createPlatforms({ clients: CLIENTS, account: w.account, settings, meetingsDir: () => dir, fetchImpl: w.fetchImpl, store: w.store });
     const r = await p.sync('zoom');
     expect(r).toMatchObject({ listed: 2, imported: 0, skipped: 1, waiting: 1 });
     expect(existsSync(path.join(dir, 'zoom', 'transcripts'))).toBe(false);
@@ -119,7 +146,7 @@ describe('zoom platform connection', () => {
     const settings = { platforms: { zoom: { connected: true } } };
     w.saved['platform-zoom'] = { accessToken: 'stale', refreshToken: 'zoom-rt', expiresAt: Date.now() + 3600000 };
     w.setToken('zoom-at-2');
-    const p = createPlatforms({ account: w.account, settings, meetingsDir: () => dir, fetchImpl: w.fetchImpl, store: w.store });
+    const p = createPlatforms({ clients: CLIENTS, account: w.account, settings, meetingsDir: () => dir, fetchImpl: w.fetchImpl, store: w.store });
     const r = await p.sync('zoom');
     expect(r.listed).toBe(0);
     const refresh = w.calls.find((c) => c.url.endsWith('/v1/connect/zoom/token'));
@@ -130,7 +157,7 @@ describe('zoom platform connection', () => {
   it('passes the relay\'s refusal through in plain words and keeps nothing', async () => {
     const w = world({ tokenStatus: 402 });
     const settings = {};
-    const p = createPlatforms({ account: w.account, settings, meetingsDir: () => dir, fetchImpl: w.fetchImpl, store: w.store, loopback: async () => ({ code: 'c', state: 'wrong' }) });
+    const p = createPlatforms({ clients: CLIENTS, account: w.account, settings, meetingsDir: () => dir, fetchImpl: w.fetchImpl, store: w.store, loopback: async () => ({ code: 'c', state: 'wrong' }) });
     expect((await p.connect('zoom')).error).toMatch(/did not match/);
     expect(w.saved['platform-zoom']).toBeUndefined();
     expect(settings.platforms?.zoom?.connected ?? false).toBe(false);
@@ -139,11 +166,11 @@ describe('zoom platform connection', () => {
   it('refuses when signed out and forgets the account on disconnect', async () => {
     const w = world();
     const signedOut = { ...w.account, state: () => ({ signedIn: false }) };
-    const p = createPlatforms({ account: signedOut, settings: {}, meetingsDir: () => dir, fetchImpl: w.fetchImpl, store: w.store });
+    const p = createPlatforms({ clients: CLIENTS, account: signedOut, settings: {}, meetingsDir: () => dir, fetchImpl: w.fetchImpl, store: w.store });
     expect(await p.connect('zoom')).toEqual({ error: 'Sign in first.' });
     const settings = { platforms: { zoom: { connected: true, accountId: 'acc1', account: 'alex@example.com' } } };
     w.saved['platform-zoom'] = { accessToken: 'x' };
-    const q = createPlatforms({ account: w.account, settings, meetingsDir: () => dir, fetchImpl: w.fetchImpl, store: w.store });
+    const q = createPlatforms({ clients: CLIENTS, account: w.account, settings, meetingsDir: () => dir, fetchImpl: w.fetchImpl, store: w.store });
     expect(await q.disconnect('zoom')).toEqual({ ok: true });
     expect(w.saved['platform-zoom']).toBeUndefined();
     expect(settings.platforms.zoom).toMatchObject({ connected: false, account: null, accountId: null });

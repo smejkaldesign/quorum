@@ -16,7 +16,10 @@
 // is skipped; a backlog left by days with the app closed runs in one pass at launch.
 // Each job (index, daily, links, facts) is a plugin (plugins.js): the keeper writes only the jobs Quorum owns, never
 // touches a file whose first lines say it is generated, names daily notes the way the vault already does, and holds a
-// run that would create more than CREATE_LIMIT new files until the user says to go ahead
+// run that would create more than CREATE_LIMIT new files until the user says to go ahead.
+// A note Quorum made with no recording and almost no real words (noteJunk.js) is not filed: it is listed in
+// keeper.json as junk for the Notifications view to ask about, until the person moves it to the Trash or keeps it.
+// A kept note is recorded in .quorum/kept-notes.json and never asked about again
 import { createHash } from 'node:crypto';
 import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -24,10 +27,14 @@ import { parseFrontmatter } from './linkparse.js';
 import { writeAtomic } from './relink.js';
 import { SETUP_FILE, plan, readSetup, slug } from './starter.js';
 import { LEARNED_CLOSE, LEARNED_FILE, LEARNED_OPEN, blockAt, learnedFileIn, learnedLines } from './cli/learned.mjs';
-import { DAILY_DEFAULT, choose, dailyName, dailyPattern, detect, isGenerated, owns, resolvePlugins, scanContext } from './plugins.js';
+import { junkOf } from './noteJunk.js';
+import { DAILY_DEFAULT, choose, dailyName, dailyPattern, isGenerated, owns, resolvePlugins } from './plugins.js';
 
 export const KEEPER_FILE = path.join('.quorum', 'keeper.json');
 export const CHANGELOG = path.join('.quorum', 'changelog.md');
+// the notes the person kept after upkeep flagged them as junk, by quorum_id (else path). A file of its own, so a
+// decision written while a run is going is never lost when the run saves keeper.json
+export const KEPT_FILE = path.join('.quorum', 'kept-notes.json');
 export { LEARNED_CLOSE, LEARNED_FILE, LEARNED_OPEN, learnedFileIn, learnedLines } from './cli/learned.mjs';
 export const LEARNED_BUDGET = 2000;
 // CLAUDE.md is loaded in every session, so the copy there, when the user turns it on, holds the newest CLAUDE_FACTS
@@ -56,6 +63,8 @@ const today = (d = new Date()) => d.toISOString().slice(0, 10);
 // the areas by name, under either naming (02-people or people): the first top-level folder whose name, without a
 // numeric prefix, ends in the word
 const AREA_RE = { people: /people$/i, projects: /projects?$/i, daily: /daily$/i, meetings: /meetings?$/i };
+const readKept = (vault) => { try { const v = JSON.parse(readFileSync(path.join(vault, KEPT_FILE), 'utf8')); return v && typeof v === 'object' ? v : {}; } catch { return {}; } };
+
 export function folders(vault) {
   const out = {};
   let names;
@@ -83,6 +92,23 @@ export function notePath(p) {
   return /^(claude|agents|index)\.md$/i.test(rel) ? null : rel;
 }
 const read =(p) => { try { return readFileSync(p, 'utf8'); } catch { return null; } };
+
+// whether a meeting note is junk upkeep should ask about: only a note Quorum made (source quorum, not an agent
+// import), and only one with no recording. Only a typed note (type: note) can be junk: a meeting note Quorum wrote
+// has no type and came from a recording. Returns the note's
+// key for the kept list, its title and the reason, or null
+export function junkNote(rel, text) {
+  const { props, end } = parseFrontmatter(text);
+  const source = String(props.source ?? '');
+  if (!/^quorum(-dev)?$/.test(source) || props.imported_by === 'agent') return null;
+  const recorded = props.recorded === true || props.recorded === 'true' || props.type !== 'note' || !!props.transcript;
+  const rest = text.slice(end).replace(/^-{3}\r?\n/, '');
+  const h1 = rest.match(/^\s*#\s+(.+)$/m);
+  const title = (typeof props.title === 'string' && props.title.trim()) || h1?.[1]?.trim() || '';
+  const body = h1 ? rest.replace(h1[0], '') : rest;
+  const j = junkOf({ title, body, hasRecording: recorded, hasTranscript: /^#{1,3}\s+Transcript\b/im.test(body) });
+  return j ? { key: String(props.quorum_id ?? '').trim() || rel, title: title || path.posix.basename(rel, '.md'), reason: j.reason } : null;
+}
 // the last n bytes of a file, from the first whole line in them
 function tail(p, n) {
   let fd = null;
@@ -261,7 +287,7 @@ export function linkMentions(text, links) {
   return fm + body;
 }
 
-export function createKeeper({ onStep = () => {}, brain, settings, saveSettings = () => {}, guards = () => null, wouldBlock = () => null, runText = null, hasModel = () => false, owner = () => '', log = () => {}, onChange = () => {}, errorLog = null, versions = null, live = null }) {
+export function createKeeper({ onStep = () => {}, brain, settings, saveSettings = () => {}, guards = () => null, wouldBlock = () => null, runText = null, hasModel = () => false, owner = () => '', log = () => {}, onChange = () => {}, errorLog = null, versions = null, live = null, onGuarded = () => {} }) {
   // factsBudget and factsNote are null until the user picks one
   // meetingsIndex writes the meeting index lines to <meetings folder>/index.md while the vault owns the root index
   // editVault lets the keeper edit files Quorum did not make, and factsInClaude turns on the copy in CLAUDE.md; both are
@@ -289,7 +315,6 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
   };
   let running = null;
   let queued = null;
-  let lastRows = null;
   let timer = null;
   let lastRun = null;
 
@@ -357,13 +382,14 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
   // the plugin rows for this vault, and the daily naming it uses. The rows are the only record of whether facts are on;
   // the older facts switch, saved as off before plugins existed, reads as the vault owning facts until the user picks
   // on the plugin row, which clears it
+  // connectBrain saves brainMade null for a folder the person connected; that folder keeps unsaved jobs with its own setup
   const registry = (b) => {
     const f = folders(b.vault);
-    const ctx = scanContext(b.root, b.vault, f);
-    let rows = resolvePlugins(detect(ctx), settings.plugins);
-    if (settings.keeper?.facts === false && !settings.plugins?.facts) rows = rows.map((r) => (r.id === 'facts' ? { ...r, owner: 'vault', overridden: false, isNew: false } : r));
-    lastRows = rows;
-    return { vault: b.vault, f, rows, daily: f.daily ? dailyPattern(ctx.daily).template : DAILY_DEFAULT, made: starterMade(b) };
+    let rows = resolvePlugins(settings.plugins, { built: settings.brainMade !== null });
+    if (settings.keeper?.facts === false && !settings.plugins?.facts) rows = rows.map((r) => (r.id === 'facts' ? { ...r, owner: 'vault' } : r));
+    let daily = [];
+    if (f.daily) { try { daily = readdirSync(path.join(b.vault, f.daily)).filter((n) => !n.startsWith('.')).sort(); } catch {} }
+    return { vault: b.vault, f, rows, daily: f.daily ? dailyPattern(daily).template : DAILY_DEFAULT, made: starterMade(b) };
   };
   // the files the starter wrote, vault-relative, when Quorum built the folder; a folder the person connected has none
   // worked out again only when setup.json changes (a rerun of the setup adds files)
@@ -776,6 +802,16 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
           const why = compiled ? wouldBlock(compiled, rel, text.slice(0, 2000)) : null;
           pending.push({ rel, text, h, why });
         }
+        // junk notes wait for the person's decision before they are filed into the memory
+        const kept = readKept(vault);
+        const junk = {};
+        for (const n of [...filed, ...pending]) {
+          const j = junkNote(n.rel, n.text);
+          if (!j || kept[j.key]) continue;
+          junk[n.rel] = { key: j.key, title: j.title, reason: j.reason, at: st.junk?.[n.rel]?.at ?? new Date().toISOString() };
+        }
+        if (Object.keys(junk).length) st.junk = junk; else delete st.junk;
+        for (let i = pending.length - 1; i >= 0; i--) if (junk[pending[i].rel]) { pending.splice(i, 1); result.junk = (result.junk ?? 0) + 1; }
         st.partial ??= {};
         result.changed += tidyFacts(vault, reg, st).length;
         for (const n of pending) n.creates = n.why ? [] : createsFor(vault, reg, st, n);
@@ -792,6 +828,7 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
         for (const n of pending) {
           if (n.why) {
             st.done[n.rel] = n.h; result.skipped++;
+            try { onGuarded(n.rel, String(n.why)); } catch {}
             st.trail ??= {};
           if (!result.trailPruned) { for (const k of Object.keys(st.trail)) if (!existsSync(path.join(vault, k))) delete st.trail[k]; result.trailPruned = true; }
             const before = Array.isArray(st.trail[n.rel]) ? st.trail[n.rel] : [];
@@ -856,9 +893,6 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
   // a note just written: filed shortly, once the burst of writes settles
   const schedule = (reason = 'note') => { clearTimeout(timer); timer = setTimeout(() => { timer = null; run({ reason }).catch(() => {}); }, 2500); };
 
-  const plugins = () => { const b = brain(); return b ? registry(b).rows : []; };
-  // the rows from the last scan, for callers on a hot path (each question asks about search); scans once if none yet
-  const cachedPlugins = () => lastRows ?? plugins();
   const status = () => {
     const b = brain();
     const c = conf();
@@ -933,15 +967,11 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
     onChange({ ...(lastRun ?? {}), changed: changed.length, reason: 'settings' });
     return status();
   }
-  // one plugin row handed to Quorum or to the vault. A held run planned with the old owners no longer applies, so it
-  // is cleared and a new pass is scheduled
-  // a report plugin writes nothing in the vault, so its pick is saved and nothing else: no held run is cleared and no
-  // pass is scheduled
+  // one job handed to Quorum or to the vault. A held run planned with the old owners no longer applies, so it is
+  // cleared and a new pass is scheduled
   const setPlugin = (id, to) => {
     const b = brain();
-    const rows = plugins();
-    settings.plugins = choose(settings.plugins, rows, id, to);
-    if (rows.find((r) => r.id === id)?.report) { saveSettings(); return status(); }
+    settings.plugins = choose(settings.plugins, id, to);
     if (id === 'facts' && settings.keeper && 'facts' in settings.keeper) { settings.keeper = { ...settings.keeper }; delete settings.keeper.facts; }
     saveSettings();
     if (b) { const st = loadState(b.vault); if (st.held) { delete st.held; saveState(b.vault, st); } }
@@ -1002,5 +1032,39 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
     const runs = Array.isArray(t) ? t : t ? [t] : [];
     return { on: conf().on, running: !!running, filed: !!st.done?.[rel], runs };
   };
-  return { run, schedule, halt, status, set, setPlugin, removeClaude, plugins, cachedPlugins, conf, clearErrors, errorLog, noteTrail };
+  // every note's upkeep runs at once, keyed by its path in the vault, for the Notifications view
+  const trails = () => {
+    const b = brain();
+    const t = b ? loadState(b.vault).trail ?? {} : {};
+    return Object.fromEntries(Object.entries(t).map(([rel, r]) => [rel, Array.isArray(r) ? r : r ? [r] : []]));
+  };
+  // the junk notes waiting for a decision, for the Notifications view: the ones still on disk and not kept since
+  const junk = () => {
+    const b = brain();
+    if (!b) return [];
+    const kept = readKept(b.vault);
+    return Object.entries(loadState(b.vault).junk ?? {})
+      .filter(([rel, j]) => !kept[j.key] && existsSync(path.join(b.vault, rel)))
+      .map(([rel, j]) => ({ rel, abs: path.join(b.vault, rel), title: j.title, reason: j.reason, at: j.at }));
+  };
+  // the person kept a note: it is never flagged again, and the next run files it
+  const keepJunk = (rel, key = null) => {
+    const b = brain();
+    if (!b) return false;
+    const text = read(path.join(b.vault, rel));
+    const k = key ?? (text != null ? junkNote(rel, text)?.key : null) ?? loadState(b.vault).junk?.[rel]?.key ?? rel;
+    const kept = readKept(b.vault);
+    kept[k] = new Date().toISOString();
+    mkdirSync(path.join(b.vault, '.quorum'), { recursive: true });
+    writeAtomic(path.join(b.vault, KEPT_FILE), JSON.stringify(kept, null, 2) + '\n');
+    schedule('kept');
+    return true;
+  };
+  // the person moved a junk note to the Trash: the changelog says so, the way it names every file upkeep touches
+  const trashedJunk = (rel, title) => {
+    const b = brain();
+    if (!b) return;
+    appendChangelog(b.vault, 'Moved to the Trash', `- ${rel}\n\n“${title}” looked empty, and you chose to remove it. It is in the macOS Trash.\n\n`);
+  };
+  return { run, schedule, halt, status, set, setPlugin, removeClaude, conf, clearErrors, errorLog, noteTrail, trails, junk, keepJunk, trashedJunk };
 }

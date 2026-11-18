@@ -29,6 +29,10 @@ function at(dayOffset: number, hour: number, minute = 0) {
   d.setHours(hour, minute, 0, 0);
   return d;
 }
+const mockDenials = [
+  { id: 'd1', t: at(0, 8, 41).toISOString(), tool: 'Read', path: 'Board/2026-q4-pack.md', surface: 'agent' as const, reason: 'Quorum read guard: Board/ is private to this Agent OS.', guard: 'personal:1', guardLabel: 'Board materials' },
+  { id: 'd2', t: at(-1, 15, 12).toISOString(), tool: 'Grep', path: 'People/compensation.md', surface: 'agent' as const, reason: 'Quorum read guard: this note is marked confidential in its frontmatter.', guard: 'built-in:confidential', guardLabel: 'Notes marked confidential' },
+];
 
 function calendarEvents(): CalendarEvent[] {
   const event = (id: string, title: string, start: Date, minutes: number, platform: CalendarEvent['platform']): CalendarEvent =>
@@ -190,8 +194,8 @@ const sample: Partial<Bridge> = {
   knowledgeTeamOpen: async () => ({}),
   onboardingSetupSuggest: async () => ({ available: true, suggestion: { template: 'founder' as const, role: 'Product designer', goals: 'Ship the first version', projects: ['Quorum'], people: ['Ada Lovelace'], organize: 'areas' as const } }),
   setupRead: async () => ({ version: 1, name: 'My Agent OS', answers: { template: 'founder' as const, role: 'Product designer', goals: 'Ship the first version', projects: ['Quorum'], people: ['Ada Lovelace'], organize: 'areas' as const }, createdAt: new Date().toISOString() }),
-  setupRerun: async () => ({ root: VAULT, vault: VAULT, name: 'Acme Notes', made: 'quorum' as const, written: [], markers: { agentOS: null, obsidian: true, search: true, safetyHooks: true } }),
-  brain: async () => ({ root: VAULT, vault: VAULT, name: 'Acme Notes', made: 'quorum' as const, markers: { agentOS: null, obsidian: true, search: true, safetyHooks: true } }),
+  setupRerun: async () => ({ root: VAULT, vault: VAULT, name: 'Acme Notes', made: 'quorum' as const, written: [], markers: { agentOS: null, obsidian: true, safetyHooks: true } }),
+  brain: async () => ({ root: VAULT, vault: VAULT, name: 'Acme Notes', made: 'quorum' as const, markers: { agentOS: null, obsidian: true, safetyHooks: true } }),
   user: async () => ({ name: 'Maya Chen', email: 'maya@example.com', photo: null }),
   getSettings: async () => ({ autoListen: false, model: 'sonnet', modelSource: 'claude-code', suggestions: false }),
   calendar: async () => ({ connected: true, status: 'granted', events: calendarEvents(), days: 7, showAll: false, hidden: 3 }),
@@ -223,9 +227,10 @@ const sample: Partial<Bridge> = {
     ],
     scanned: { notes: 212, at: Date.now() - 60000, truncated: false },
     skipped: [{ name: 'vault-reindex.sh', reason: 'does something else (memory, sessions, formatting or notifications), not a guard' }, { name: 'session-end.sh', reason: 'no sign that it guards reads or output' }],
-    denials: [{ t: at(0, 8, 41).toISOString(), tool: 'Read', path: `${VAULT}/Board/2026-q4-pack.md`, reason: 'Quorum read guard: Board/ is private to this Agent OS.' }, { t: at(-1, 15, 12).toISOString(), tool: 'Grep', path: `${VAULT}/People/compensation.md`, reason: 'Quorum read guard: this note is marked confidential in its frontmatter.' }],
+    denials: mockDenials,
     summary: { on: 7, toReview: 2, denyDirs: 3, terms: 14 },
   }),
+  guardrailDenials: async () => mockDenials,
   guardrailsTest: async (rel: string) => ({ blocked: /board|personal/i.test(rel) ? `${rel.split('/')[0]}/ is private` : null }),
   // #update in the preview URL shows the Update button, for screenshots of that state
   updateStatus: async () => ({ status: location.hash.includes('update') ? 'ready' : 'idle', current: '0.2.7', version: location.hash.includes('update') ? '0.2.8' : null, percent: 0, notes: null, checkedAt: Date.now() - 600000, error: null }),

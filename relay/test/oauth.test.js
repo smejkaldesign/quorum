@@ -10,6 +10,8 @@ const config = (over = {}) => ({
   ...over,
 });
 const redirect = (p) => `https://relay.example.com/v1/oauth/${p}/callback`;
+// a well formed PKCE verifier
+const V = 'v'.repeat(43);
 
 function fakeReq({ method = 'POST', url = '/v1/oauth/token', body = null, headers = {} } = {}) {
   const listeners = {};
@@ -92,11 +94,11 @@ describe('POST /v1/oauth/token', () => {
   });
   it('sends GitHub the code verifier and the secret, and refreshes with the refresh token', async () => {
     const p = provider({ access_token: 'gho', scope: 'repo,read:user', token_type: 'bearer' });
-    const res = await run(handleOAuthToken, fakeReq({ body: { provider: 'github', code: 'c', code_verifier: 'ver', redirect_uri: redirect('github') } }), { fetchImpl: p.fetchImpl });
+    const res = await run(handleOAuthToken, fakeReq({ body: { provider: 'github', code: 'c', code_verifier: V, redirect_uri: redirect('github') } }), { fetchImpl: p.fetchImpl });
     assert.equal(res.status, 200);
     assert.equal(out(res).accessToken, 'gho');
     const sent = new URLSearchParams(p.calls[0].init.body);
-    assert.equal(sent.get('code_verifier'), 'ver');
+    assert.equal(sent.get('code_verifier'), V);
     assert.equal(sent.get('client_secret'), 'gh-secret');
     const r2 = await run(handleOAuthToken, fakeReq({ body: { provider: 'github', grant_type: 'refresh_token', refresh_token: 'ghr' } }), { fetchImpl: p.fetchImpl });
     assert.equal(r2.status, 200);
@@ -149,17 +151,26 @@ describe('POST /v1/oauth/token', () => {
     }
   });
   it('treats a null or unreadable provider answer as a refusal', async () => {
-    const res = await run(handleOAuthToken, fakeReq({ body: { provider: 'github', code: 'c', redirect_uri: redirect('github') } }), { fetchImpl: provider(null).fetchImpl });
+    const res = await run(handleOAuthToken, fakeReq({ body: { provider: 'github', code: 'c', code_verifier: V, redirect_uri: redirect('github') } }), { fetchImpl: provider(null).fetchImpl });
     assert.equal(res.status, 400);
     assert.match(out(res).error, /did not accept/);
+  });
+  it('refuses a GitHub code with a missing or malformed verifier before calling GitHub', async () => {
+    const p = provider({ access_token: 'gho' });
+    for (const v of [undefined, 'short', `${V}!`]) {
+      const res = await run(handleOAuthToken, fakeReq({ body: { provider: 'github', code: 'c', code_verifier: v, redirect_uri: redirect('github') } }), { fetchImpl: p.fetchImpl });
+      assert.equal(res.status, 400, String(v));
+      assert.match(out(res).error, /verifier/);
+    }
+    assert.equal(p.calls.length, 0);
   });
   it('never writes a token, code, verifier or secret to the log', async () => {
     const lines = [];
     const log = (event, fields) => lines.push(JSON.stringify({ event, ...fields }));
     const ok = provider({ access_token: 'secret-access', refresh_token: 'secret-refresh' });
-    await run(handleOAuthToken, fakeReq({ body: { provider: 'github', code: 'secret-code', code_verifier: 'secret-verifier', redirect_uri: redirect('github') } }), { fetchImpl: ok.fetchImpl, log });
+    await run(handleOAuthToken, fakeReq({ body: { provider: 'github', code: 'secret-code', code_verifier: `secret-verifier-${V}`, redirect_uri: redirect('github') } }), { fetchImpl: ok.fetchImpl, log });
     const refused = provider({ error: 'bad_verification_code', error_description: 'secret-code is bad' }, 200);
-    await run(handleOAuthToken, fakeReq({ body: { provider: 'github', code: 'secret-code', redirect_uri: redirect('github') } }), { fetchImpl: refused.fetchImpl, log });
+    await run(handleOAuthToken, fakeReq({ body: { provider: 'github', code: 'secret-code', code_verifier: `secret-verifier-${V}`, redirect_uri: redirect('github') } }), { fetchImpl: refused.fetchImpl, log });
     await run(handleOAuthRevoke, fakeReq({ url: '/v1/oauth/revoke', body: { provider: 'github', token: 'secret-access' } }), { fetchImpl: provider({}, 204).fetchImpl, log });
     assert.ok(lines.length >= 3);
     for (const l of lines) assert.doesNotMatch(l, /secret|gh-secret|notion-secret/);

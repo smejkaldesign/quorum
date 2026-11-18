@@ -93,7 +93,8 @@ export function UpNext({ hidden = false, inline = false, floating = false, chats
     loadCal();
     const t = setInterval(loadCal, 5 * 60000);
     const off = window.quorum.onSettings(() => loadCal());
-    return () => { clearInterval(t); clearTimeout(retry.current); off(); };
+    const offSync = window.quorum.onCalendarChanged(() => loadCal());
+    return () => { clearInterval(t); clearTimeout(retry.current); off(); offSync(); };
   }, [loadCal, inline]);
 
   // Up next: every call in the chosen days, the first one until Show more

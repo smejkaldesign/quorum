@@ -5,6 +5,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import http from 'node:http';
+import { connectorLink } from '../connectors/appLink.js';
+import { CONNECTOR_BY_ID } from '../connectors/library.js';
 
 export const LOOPBACK_PORT = 47832;
 export const LOOPBACK_REDIRECT = `http://127.0.0.1:${LOOPBACK_PORT}/callback`;
@@ -68,6 +70,16 @@ export async function discover(resourceUrl, { fetchImpl = fetch, wwwAuthenticate
   };
 }
 
+// the browser only opens an https sign-in page, whatever a service's metadata names; plain http only for a server on
+// this Mac (127.0.0.1, ::1 or localhost)
+const LOCAL_HOSTS = new Set(['127.0.0.1', '[::1]', 'localhost']);
+export function httpsOnly(url) {
+  let u;
+  try { u = new URL(String(url)); } catch { throw new Error('The sign-in page address is not valid.'); }
+  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && LOCAL_HOSTS.has(u.hostname))) throw new Error('The sign-in page must use https.');
+  return u.toString();
+}
+
 // a public client (no secret) when the server allows it, so nothing secret needs keeping for the registration
 export async function register(meta, { redirectUri = LOOPBACK_REDIRECT, clientName = CLIENT_NAME, fetchImpl = fetch } = {}) {
   if (!meta.registrationEndpoint) throw new Error('The service does not allow apps to register themselves.');
@@ -88,8 +100,7 @@ export async function register(meta, { redirectUri = LOOPBACK_REDIRECT, clientNa
 // prompt=select_account asks the sign-in page to offer an account chooser instead of reusing the browser's session;
 // servers that do not know the parameter ignore it
 export function authorizeUrl(meta, { clientId, redirectUri, challenge, state, scopes = meta.scopes, prompt = 'select_account' }) {
-  const u = new URL(meta.authorizationEndpoint);
-  if (u.protocol !== 'https:' && !/^(127\.0\.0\.1|localhost)$/.test(u.hostname)) throw new Error('The sign-in page must use https');
+  const u = new URL(httpsOnly(meta.authorizationEndpoint));
   u.searchParams.set('response_type', 'code');
   u.searchParams.set('client_id', clientId);
   u.searchParams.set('redirect_uri', redirectUri);
@@ -126,7 +137,8 @@ export const refresh = (meta, client, refreshToken, fetchImpl = fetch) =>
 let pending = null;
 // ends a sign-in still waiting (a panel closed or its Cancel), which frees the port; the wait rejects with code canceled
 export const cancelLoopback = () => { const p = pending; if (!p) return false; p(Object.assign(new Error('The sign-in was cancelled.'), { code: 'canceled' })); return true; };
-export function awaitLoopback({ port = LOOPBACK_PORT, path = '/callback', timeoutMs = 5 * 60 * 1000, page = loopbackPage } = {}) {
+// With state, a visit carrying any other state gets a 400 and the wait goes on, so another page cannot end the sign-in.
+export function awaitLoopback({ port = LOOPBACK_PORT, path = '/callback', timeoutMs = 5 * 60 * 1000, page = loopbackPage, state = null } = {}) {
   pending?.();
   return new Promise((resolve, reject) => {
     let done = false;
@@ -134,6 +146,7 @@ export function awaitLoopback({ port = LOOPBACK_PORT, path = '/callback', timeou
       const u = new URL(req.url, `http://127.0.0.1:${port}`);
       if (u.pathname !== path) { res.writeHead(404); res.end(); return; }
       const q = Object.fromEntries(u.searchParams.entries());
+      if (done || (state !== null && q.state !== state)) { res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }); res.end('This sign-in answer does not belong to the sign-in Quorum is waiting for.'); return; }
       // the tab waits for the outcome (token exchange, account check); after 45 s it gets a neutral page
       let answered = false;
       const answer = (html) => { if (answered) return; answered = true; clearTimeout(fallback); res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(html); };
@@ -154,13 +167,25 @@ export function awaitLoopback({ port = LOOPBACK_PORT, path = '/callback', timeou
 // glow with grain, owl wordmark), one line of outcome, one line of what to do
 const OWL = (() => { try { return readFileSync(new URL('../assets/quorum-owl.svg', import.meta.url), 'utf8').replace(/<\?xml[^>]*>/, '').replace('<svg ', '<svg class="owl" aria-hidden="true" '); } catch { return ''; } })();
 const NOISE = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.12 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E") 0 0 / 180px 180px repeat`;
+// what the tab says once a sign-in worked, by what the connector does
+export function doneText(connector, name) {
+  const x = connector && Object.hasOwn(CONNECTOR_BY_ID, connector) ? CONNECTOR_BY_ID[connector] : null;
+  const n = name || x?.name;
+  if (x?.kind === 'mcp-source') return `Quorum is importing your ${n} meetings now. You can close this tab.`;
+  if (x?.id === 'google-calendar') return 'Quorum is connected to Google Calendar. Your upcoming meetings show on Home. You can close this tab.';
+  if (x?.id === 'github') return 'Quorum is connected to GitHub. Quorum reads only the repositories you choose. You can close this tab.';
+  return n ? `Quorum is connected to ${n}. You can close this tab.` : 'You can close this tab and go back to Quorum.';
+}
+// q.connector is the library id of the connector that signed in; Back to Quorum opens the app on its page, or on the
+// Connectors list when the page does not know the connector (the 45 second fallback)
 export const loopbackPage = (q) => {
-  const esc = (s) => String(s ?? '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+  const esc = (s) => String(s ?? '').replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]));
+  const back = connectorLink(q.connector && Object.hasOwn(CONNECTOR_BY_ID, q.connector) ? q.connector : null);
   const failed = q.error || q.failed;
   const reason = failed ? String(q.failed || q.error_description || q.error).trim() : '';
   const cut = reason.indexOf('. ');
   const title = q.pending ? 'Almost there' : failed ? esc(cut > 0 ? reason.slice(0, cut) : reason.replace(/\.$/, '')) : `Connected${q.name ? ` to ${esc(q.name)}` : ''}`;
-  const body = q.pending ? 'Go back to Quorum to see the result.' : failed ? esc(cut > 0 ? reason.slice(cut + 2) : 'Go back to Quorum to try again.') : 'You can close this tab and go back to Quorum. Your meetings are on their way.';
+  const body = q.pending ? 'Go back to Quorum to see the result.' : failed ? esc(cut > 0 ? reason.slice(cut + 2) : 'Go back to Quorum to try again.') : esc(doneText(q.connector, q.name));
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Quorum</title>
 <style>
 html,body{height:100%;margin:0}body{background:#0b0b0c;color:#f2f2f3;font:16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",Helvetica,Arial,sans-serif}
@@ -180,20 +205,20 @@ h1{font:400 44px/1.1 "New York",ui-serif,Georgia,serif;margin:0 0 14px;letter-sp
 @media (prefers-reduced-motion: reduce){.glow::before,.glow::after{animation:none}}
 </style></head>
 <body><div class="frame"><div class="glow"></div><div class="shade"></div><header><a href="https://quorum.watch" aria-label="Quorum home">${OWL}<span>Quorum</span></a></header>
-<main><div class="card"><div class="icon">${failed ? '!' : q.pending ? '…' : '✓'}</div><h1>${title}</h1><p>${body}</p><a class="btn" href="https://quorum.watch">Go to Quorum.watch</a></div></main></div></body></html>`;
+<main><div class="card"><div class="icon">${failed ? '!' : q.pending ? '…' : '✓'}</div><h1>${title}</h1><p>${body}</p>${back ? `<a class="btn" href="${esc(back)}">Back to Quorum</a>` : ''}</div></main></div></body></html>`;
 };
 
 // the whole flow: metadata, client (reused when one is saved), browser, loopback, token exchange
-export async function connect({ resourceUrl, open, clients, fetchImpl = fetch, redirectUri = LOOPBACK_REDIRECT, loopback = awaitLoopback, verify = null, name = null }) {
+export async function connect({ resourceUrl, open, clients, fetchImpl = fetch, redirectUri = LOOPBACK_REDIRECT, loopback = awaitLoopback, verify = null, name = null, connector = null }) {
   const meta = await discover(resourceUrl, { fetchImpl });
   let client = await clients.get(meta.issuer);
   if (!client || client.redirectUri !== redirectUri) { client = await register(meta, { redirectUri, fetchImpl }); await clients.set(meta.issuer, client); }
   const { verifier, challenge } = pkce();
   const state = newState();
-  const waiting = loopback();
+  const waiting = loopback({ state });
   await open(authorizeUrl(meta, { clientId: client.clientId, redirectUri, challenge, state }));
   const q = await waiting;
-  const tell = (r) => { try { q.finish?.({ name, ...r }); } catch {} };
+  const tell = (r) => { try { q.finish?.({ name, connector, ...r }); } catch {} };
   const fail = (message, code) => { tell({ failed: message }); const e = new Error(message); if (code) e.code = code; throw e; };
   if (q.error) fail(q.error_description || q.error);
   if (q.state !== state) fail('The sign-in answer did not match the request.');

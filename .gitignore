@@ -23,3 +23,5 @@ site/updates/cloud/*
 __pycache__/
 # context-mode writes this into the working folder; it is never part of the repo
 app/CLAUDE.md
+# the decision layer models, fetched at package time by scripts/fetch-models.mjs
+app/models/

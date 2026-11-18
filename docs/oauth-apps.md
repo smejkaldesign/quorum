@@ -63,7 +63,7 @@ Notion does not review public integrations unless they are listed in its marketp
 
 1. Open `https://api.slack.com/apps`, Create New App, From scratch. Name Quorum, development workspace: Smejkal Design.
 2. OAuth and Permissions, Redirect URLs: add `https://relay.quorum.watch/v1/oauth/slack/callback` and save.
-3. OAuth and Permissions, User Token Scopes: `channels:read`, `groups:read`, `chat:write`, `users:read`. Leave Bot Token Scopes empty; Quorum acts with the person's own user token.
+3. OAuth and Permissions, User Token Scopes: `channels:read`, `groups:read`, `chat:write`, `users:read`, `channels:history`, `groups:history`, `search:read` (no `im:` or `mpim:` scopes). Leave Bot Token Scopes empty; Quorum acts with the person's own user token.
 4. Optional: turn on token rotation under OAuth and Permissions. The app and relay already handle the refresh token it adds.
 5. Manage Distribution: complete the checklist and activate public distribution, so people outside the development workspace can connect.
 6. Basic Information, App Credentials: copy the Client ID and the Client Secret.
@@ -104,9 +104,11 @@ The client ids are public. They go into the build; the secrets for Notion, Slack
 | `QUORUM_GITHUB_APP_SLUG` | repository variable; shell or repo `.env` for a dev build | the Choose repositories link |
 | `QUORUM_GOOGLE_PICKER_API_KEY` | repository secret; shell or repo `.env` for a dev build | the Google Picker behind Add from Google Drive |
 | `QUORUM_GOOGLE_PICKER_APP_ID` | optional repository variable; shell or repo `.env` for a dev build | the Picker's app id when it is not the client id's project number |
+| `QUORUM_ZOOM_CLIENT_ID` | repository variable; shell for a dev build | Zoom cloud recordings (Cloud edition). The production Zoom app's client id; a build from source falls back to the development app, a packaged build never does |
+| `QUORUM_ZOOM_REDIRECT_URI` | optional repository variable; shell for a dev build | the redirect registered on that Zoom app; the default is `https://relay.quorum.watch/v1/connect/zoom/callback` in a packaged build |
 | `QUORUM_RELAY_URL` | optional; shell for a dev build | a relay other than `wss://relay.quorum.watch` |
 
-The release workflow writes the new ids into the packaged `package.json` as `quorumOAuth.<provider>.clientId` (and `quorumOAuth.github.slug`, and `quorumOAuth.googlePicker.apiKey` and `.appId`), the same way it writes `quorumGoogle`.
+The release workflow writes the new ids into the packaged `package.json` as `quorumOAuth.<provider>.clientId` (and `quorumOAuth.github.slug`, `quorumOAuth.zoom.redirectUri`, and `quorumOAuth.googlePicker.apiKey` and `.appId`), the same way it writes `quorumGoogle`.
 
 ### Relay (Railway, service relay)
 

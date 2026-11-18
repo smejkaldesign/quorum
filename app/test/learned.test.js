@@ -16,6 +16,8 @@ function vault() {
   put(dir, 'CLAUDE.md', '# Agent OS\n\nRules.\n');
   return dir;
 }
+// a saved choice that leaves the index job with the vault
+const VAULT_INDEX = { index: { owner: 'vault' } };
 const keeperFor = (dir, over = {}) => {
   const settings = { keeper: { on: true, ...(over.keeper ?? {}) }, ...(over.settings ?? {}) };
   return { settings, k: createKeeper({ brain: () => ({ root: dir, vault: dir }), settings, hasModel: () => true, runText: async () => '- Ada owns the launch page', errorLog: over.errorLog ?? null, ...(over.opts ?? {}) }) };
@@ -77,11 +79,10 @@ describe('keeper learned facts', () => {
   });
   it('keeps facts in .quorum/learned.md and leaves a list already in CLAUDE.md as it is', async () => {
     const dir = vault();
-    put(dir, 'MEMORY.md', '# Memory\n');
     const before = addLearned(RULES, [fact('earlier fact', '2026-10-01').slice(2)]).text;
     put(dir, 'CLAUDE.md', before);
-    const { k } = keeperFor(dir);
-    // the vault owns facts until the user hands them over: nothing is written
+    const { k } = keeperFor(dir, { settings: { plugins: { facts: { owner: 'vault' } } } });
+    // a saved vault owner keeps facts off until the user hands them over: nothing is written
     expect(k.status().plugins.find((p) => p.id === 'facts').owner).toBe('vault');
     await k.run();
     expect(existsSync(path.join(dir, LEARNED_FILE))).toBe(false);
@@ -374,8 +375,7 @@ describe('learned facts in a vault note', () => {
     expect(k.status().learned.linked).toBe(false);
     const dir2 = vault();
     put(dir2, 'index.md', '# Index\n');
-    put(dir2, 'scripts/build-index.py', 'print(1)\n');
-    const { k: k2 } = keeperFor(dir2, { keeper: { factsTarget: 'note' } });
+    const { k: k2 } = keeperFor(dir2, { keeper: { factsTarget: 'note' }, settings: { plugins: { index: { owner: 'vault' } } } });
     expect(k2.status().plugins.find((p) => p.id === 'index').owner).toBe('vault');
     await k2.run();
     expect(readFileSync(path.join(dir2, 'index.md'), 'utf8')).toBe('# Index\n');
@@ -490,8 +490,7 @@ describe('learned facts, review fixes', () => {
     const { k } = keeperFor(dir, { keeper: { factsTarget: 'note' } });
     expect(k.status().learned).toMatchObject({ linked: true, indexGenerated: false });
     const dir2 = vault();
-    put(dir2, 'scripts/build-index.py', 'print(1)\n');
-    expect(keeperFor(dir2, { keeper: { factsTarget: 'note' } }).k.status().learned).toMatchObject({ linked: false, indexGenerated: false });
+    expect(keeperFor(dir2, { keeper: { factsTarget: 'note' }, settings: { plugins: VAULT_INDEX } }).k.status().learned).toMatchObject({ linked: false, indexGenerated: false });
   });
 });
 
@@ -500,13 +499,12 @@ describe('a vault that generates its own index.md', () => {
   function wikiVault() {
     const dir = vault();
     put(dir, 'index.md', GEN);
-    put(dir, 'scripts/wiki-index.py', 'print("rewrites index.md")\n');
     put(dir, '08-meetings/2026-11-11-review.md', NOTE('Review', '2026-11-11'));
     return dir;
   }
   it('leaves index.md unchanged and logs the skip once per run', async () => {
     const dir = wikiVault();
-    const { k } = keeperFor(dir);
+    const { k } = keeperFor(dir, { settings: { plugins: VAULT_INDEX } });
     expect(k.status().plugins.find((p) => p.id === 'index').owner).toBe('vault');
     const r = await k.run();
     expect(r.filed).toBe(2);
@@ -520,6 +518,15 @@ describe('a vault that generates its own index.md', () => {
     await k.run();
     expect(readFileSync(path.join(dir, CHANGELOG), 'utf8').match(/Index skipped/g)).toHaveLength(1);
   });
+  it('with nothing saved, leaves a generated index.md alone and makes no meetings index', async () => {
+    const dir = wikiVault();
+    const { k } = keeperFor(dir);
+    expect(k.status().plugins.find((p) => p.id === 'index').owner).toBe('quorum');
+    await k.run();
+    expect(readFileSync(path.join(dir, 'index.md'), 'utf8')).toBe(GEN);
+    expect(existsSync(path.join(dir, '08-meetings/index.md'))).toBe(false);
+    expect(readFileSync(path.join(dir, CHANGELOG), 'utf8')).toContain('index.md is marked as generated');
+  });
   it('logs the skip when Quorum owns the index job but index.md is marked generated', async () => {
     const dir = vault();
     put(dir, 'index.md', GEN);
@@ -531,7 +538,7 @@ describe('a vault that generates its own index.md', () => {
   });
   it('writes the index lines to the meetings folder index when turned on', async () => {
     const dir = wikiVault();
-    const { k } = keeperFor(dir);
+    const { k } = keeperFor(dir, { settings: { plugins: VAULT_INDEX } });
     expect(k.status().meetingsIndex).toBe(false);
     k.set({ meetingsIndex: true });
     expect(k.status().meetingsIndex).toBe(true);
@@ -545,14 +552,14 @@ describe('a vault that generates its own index.md', () => {
   it('leaves a generated meetings index alone and counts a missing one in the create limit', async () => {
     const dir = wikiVault();
     put(dir, '08-meetings/index.md', GEN);
-    const { k } = keeperFor(dir, { keeper: { meetingsIndex: true } });
+    const { k } = keeperFor(dir, { keeper: { meetingsIndex: true }, settings: { plugins: VAULT_INDEX } });
     await k.run();
     expect(readFileSync(path.join(dir, '08-meetings/index.md'), 'utf8')).toBe(GEN);
     const dir2 = mkdtempSync(path.join(tmpdir(), 'learned-mi-held-'));
     put(dir2, 'index.md', GEN);
     mkdirSync(path.join(dir2, '01-daily'));
     for (let i = 1; i <= CREATE_LIMIT; i++) { const d = `2026-10-${String(i).padStart(2, '0')}`; put(dir2, `08-meetings/${d}-m.md`, NOTE(`M${i}`, d)); }
-    const { k: k2 } = keeperFor(dir2, { keeper: { meetingsIndex: true } });
+    const { k: k2 } = keeperFor(dir2, { keeper: { meetingsIndex: true }, settings: { plugins: VAULT_INDEX } });
     const r = await k2.run();
     expect(r.held.count).toBe(CREATE_LIMIT + 1);
     expect(existsSync(path.join(dir2, '08-meetings/index.md'))).toBe(false);
@@ -607,12 +614,11 @@ describe('meetings index backfill and skip log', () => {
   function wikiVault() {
     const dir = vault();
     put(dir, 'index.md', GEN);
-    put(dir, 'scripts/wiki-index.py', 'print("rewrites index.md")\n');
     return dir;
   }
   it('fills the meetings index with the meetings filed before it was turned on, once', async () => {
     const dir = wikiVault();
-    const { k } = keeperFor(dir);
+    const { k } = keeperFor(dir, { settings: { plugins: VAULT_INDEX } });
     await k.run();
     expect(existsSync(path.join(dir, '08-meetings/index.md'))).toBe(false);
     k.set({ meetingsIndex: true });
@@ -630,7 +636,7 @@ describe('meetings index backfill and skip log', () => {
   });
   it('leaves a generated meetings index alone during the backfill', async () => {
     const dir = wikiVault();
-    const { k } = keeperFor(dir);
+    const { k } = keeperFor(dir, { settings: { plugins: VAULT_INDEX } });
     await k.run();
     put(dir, '08-meetings/index.md', GEN);
     k.set({ meetingsIndex: true });
@@ -641,7 +647,7 @@ describe('meetings index backfill and skip log', () => {
   it('holds the backfill with the rest of a held run', async () => {
     const dir = wikiVault();
     mkdirSync(path.join(dir, '01-daily'));
-    const { k } = keeperFor(dir);
+    const { k } = keeperFor(dir, { settings: { plugins: VAULT_INDEX } });
     await k.run();
     k.set({ meetingsIndex: true });
     for (let i = 1; i <= CREATE_LIMIT; i++) { const d = `2026-10-${String(i).padStart(2, '0')}`; put(dir, `08-meetings/${d}-m.md`, NOTE(`M${i}`, d)); }
@@ -656,7 +662,7 @@ describe('meetings index backfill and skip log', () => {
   });
   it('logs the skip once per change of where the lines go', async () => {
     const dir = wikiVault();
-    const { k } = keeperFor(dir);
+    const { k } = keeperFor(dir, { settings: { plugins: VAULT_INDEX } });
     await k.run();
     put(dir, '08-meetings/2026-11-11-review.md', NOTE('Review', '2026-11-11'));
     await k.run();

@@ -15,7 +15,7 @@ const src = path.join(__dirname, 'node_modules/electron/dist/Electron.app');
 const dest = path.join(__dirname, '.dev/Quorum Dev.app');
 const stamp = path.join(__dirname, '.dev/electron-version');
 // bump the suffix when the plist below changes, so the copy gets rebuilt
-const version = `${readFileSync(path.join(__dirname, 'node_modules/electron/package.json'), 'utf8').match(/"version":\s*"([^"]+)"/)[1]}+cal`;
+const version = `${readFileSync(path.join(__dirname, 'node_modules/electron/package.json'), 'utf8').match(/"version":\s*"([^"]+)"/)[1]}+cal+url`;
 
 if (!existsSync(dest) || !existsSync(stamp) || readFileSync(stamp, 'utf8') !== version) {
   rmSync(dest, { recursive: true, force: true });
@@ -24,6 +24,8 @@ if (!existsSync(dest) || !existsSync(stamp) || readFileSync(stamp, 'utf8') !== v
   for (const key of ['CFBundleName', 'CFBundleDisplayName']) execFileSync('plutil', ['-replace', key, '-string', 'Quorum Dev', plist]);
   execFileSync('plutil', ['-replace', 'CFBundleIdentifier', '-string', 'design.smejkal.quorum.dev', plist]);
   execFileSync('plutil', ['-replace', 'NSCalendarsFullAccessUsageDescription', '-string', 'Quorum shows your upcoming meetings on Home.', plist]);
+  // quorum-dev:// links (Back to Quorum after a sign-in) open this copy; the installed app keeps quorum://
+  execFileSync('plutil', ['-replace', 'CFBundleURLTypes', '-json', '[{"CFBundleURLName":"Quorum Dev","CFBundleURLSchemes":["quorum-dev"]}]', plist]);
   execFileSync('codesign', ['--force', '--deep', '--sign', '-', dest]);
   writeFileSync(stamp, version);
 }
@@ -43,8 +45,8 @@ try {
   }
 } catch {}
 
-// the development copy runs in the development environment (edition.js ENV) unless the shell sets QUORUM_ENV itself.
+// the development copy always runs in the development environment (edition.js ENV), whatever the shell sets.
 // The app dies with this wrapper: a signal here is passed on, so a plain kill of the wrapper takes the window with it
-const child = spawn(bin, [...(process.env.QUORUM_CDP ? ['--remote-debugging-port=' + process.env.QUORUM_CDP] : []), __dirname], { stdio: 'inherit', env: { QUORUM_ENV: 'development', ...process.env } });
+const child = spawn(bin, [...(process.env.QUORUM_CDP ? ['--remote-debugging-port=' + process.env.QUORUM_CDP] : []), __dirname], { stdio: 'inherit', env: { ...process.env, QUORUM_ENV: 'development' } });
 child.on('exit', (code) => process.exit(code ?? 0));
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { try { child.kill('SIGTERM'); } catch {} setTimeout(() => process.exit(0), 1500).unref(); });

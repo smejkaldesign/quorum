@@ -1,0 +1,278 @@
+// The Notifications view's list: every event Quorum's agents and the person left on notes and memories, and every
+// guardrail block, in one feed.
+//
+// The main process gathers the raw records (each note's activity log and upkeep runs, the meeting notes imported from
+// connected apps, each memory's versions and updates, the guardrail denials, and the read marks); this module turns
+// them into rows with their summary (notificationSummary.js), the review items and the unread state, then filters,
+// sorts and pages them. It reads no files, so the rules are tested on their own (test/activity-feed.test.js).
+//
+// History: the rows that come from records kept before Notifications started (older versions, upkeep runs and
+// imports) are marked backfill and start out read, so the first opening lists the past without lighting the bell.
+import { detailsOf, summaryOf, titleOf } from './notificationSummary.js';
+import { issueMeta, issueOf } from './memoryHealth.js';
+
+// the event types the Type filter offers, in the order it shows them
+export const FEED_KINDS = [
+  ['note-written', 'Wrote a note'],
+  ['note-updated', 'Updated a note'],
+  ['filed', 'Filed and linked'],
+  ['referenced', 'Referenced'],
+  ['memory-created', 'Created a memory'],
+  ['memory-updated', 'Updated a memory'],
+  ['imported', 'Imported'],
+  ['guardrail', 'Guardrail blocked'],
+  ['memory-health', 'Memory health'],
+  ['you', 'Your changes'],
+];
+export const FEED_TABS = ['all', 'unread', 'archived'];
+// Urgency is a future sort: it needs a score per row (how old a waiting review is, how large a change, how sensitive
+// the file a guard protected) before it can order the list
+export const FEED_SORTS = ['unread', 'recent', 'az'];
+
+// a file's name as the person reads it, for the places that only have a path
+export const labelOf = (rel) => titleOf({ rel });
+
+const DAY = 86400000;
+// how long a finished fix shows its outcome in place before it moves to Archived
+export const ARCHIVE_AFTER = 8000;
+const time = (v) => (typeof v === 'number' ? v : new Date(v ?? 0).getTime() || 0);
+const youText = (t) => String(t ?? '').startsWith('You');
+const noteKind = (e) => {
+  if (youText(e.text)) return 'you';
+  if (e.kind === 'filed') return 'filed';
+  if (e.kind === 'referenced') return 'referenced';
+  return 'note-updated';
+};
+const memoryKind = (v) => {
+  if (v.who === 'you' || v.who === 'human') return 'you';
+  if (v.who === 'import') return 'imported';
+  return v.created ? 'memory-created' : 'memory-updated';
+};
+// which Settings > Notifications switch covers a row
+const prefOf = (row) => (row.review ? 'reviews' : row.kind === 'guardrail' ? 'guardrails' : row.target.kind === 'memory' ? 'memoryChanges' : 'noteUpdates');
+const prefOn = (prefs, key) => prefs?.[key] !== false;
+
+// every row from the raw records, newest first.
+//   notes:    { abs, rel, title?, events, runs, seenAt, reviewedAt, rejectedAt, agentWritten, writtenAt, writtenFrom,
+//               imported?: { at, source, sourceName, date } }
+//   memories: { abs, rel, title?, note?, gone?, versions, updates, seenAt }
+//   denials:  { id, t, path, tool, surface, reason, guard, guardLabel }[]
+//   junk:     { abs, rel, title, reason, at }[], the notes upkeep found with no recording and no real words
+//   findings: the review rules' findings (memorySweep.js), each with abs and archived
+//   links:    the open Memory health issues (vindex.js linkHealth, minus the ones declined), each with abs, the path
+//             of its first linking note
+//   pastFixes: the fixes that ran and that the current rules flag (fixRecheck.js): { run, res, plan, abs }
+//   held:     row id -> { bucket, why } for each item the quality gate (qualityGate.js) keeps out of view
+//   state:    { since, read: { [id]: at }, unread: { [id]: at } }; since is when Notifications started keeping its
+//             own marks, read and unread are the person's marks on single rows
+// drafts: row id -> the agent's draft of that item's fix (memoryDraft.js); ignores: the ignore rules Quorum proposes
+// (ruleRecords.js)
+export function feedRows({ notes = [], memories = [], denials = [], junk = [], links = [], runs = [], pastFixes = [], findings = [], drafts = {}, ignores = [], held = new Map(), state = {}, guardFile = null }) {
+  const rows = [];
+  const since = time(state.since);
+  const read = state.read ?? {};
+  const unreadMark = state.unread ?? {};
+  // a row is unread when the agent made it after the file was last seen, it is not from before Notifications began,
+  // and the person has not marked it; a mark on the row wins either way
+  const push = (row, seen) => {
+    // a Memory health issue older than Notifications starts out read too; it still waits in Needs review
+    row.backfill = (!!since && row.at < since && (!row.review || row.review.kind === 'link')) || (row.review?.kind === 'finding' && row.initial);
+    const fresh = row.who !== 'you' && row.at > time(seen) && !row.backfill;
+    row.unread = unreadMark[row.id] ? true : read[row.id] ? false : fresh;
+    rows.push(row);
+  };
+  for (const n of notes) {
+    const target = { kind: 'note', abs: n.abs, rel: n.rel, title: n.title ?? titleOf({ rel: n.rel }) };
+    const events = n.events ?? [];
+    events.forEach((e) => {
+      const kind = noteKind(e);
+      const at = time(e.at);
+      push({ id: `n:${n.abs}:${at}:${e.kind}`, at, kind, event: e.kind, who: kind === 'you' ? 'you' : 'agent', target, files: [], detail: { text: e.text } }, n.seenAt);
+    });
+    for (const r of n.runs ?? []) {
+      const at = time(r.at);
+      push({ id: `t:${n.rel}:${at}`, at, kind: 'filed', event: 'filed', who: 'agent', target, files: r.files ?? [], detail: { who: 'keeper', skipped: r.skipped ?? null } }, n.seenAt);
+    }
+    if (n.imported) {
+      const at = time(n.imported.at);
+      push({ id: `i:${n.abs}`, at, kind: 'imported', event: 'imported-note', who: 'agent', target, files: [], detail: { who: 'import', source: n.imported.source, sourceName: n.imported.sourceName, date: n.imported.date ?? null } }, n.seenAt);
+    }
+    if (n.agentWritten && !n.reviewedAt && !n.rejectedAt) {
+      const at = time(n.writtenAt);
+      const editedAfter = events.some((e) => e.kind === 'edited' && time(e.at) > at);
+      push({ id: `r:note:${n.abs}`, at, kind: 'note-written', event: 'review', who: 'agent', target, files: [], detail: { writtenFrom: n.writtenFrom ?? null, editedAfter }, review: { kind: 'note' } }, n.seenAt);
+    }
+  }
+  for (const m of memories) {
+    const target = { kind: m.note ? 'note' : 'memory', abs: m.abs, rel: m.rel, title: m.title ?? titleOf({ rel: m.rel }), gone: !!m.gone };
+    const updates = new Map((m.updates ?? []).map((u) => [u.id, u]));
+    for (const v of m.versions ?? []) {
+      const kind = memoryKind(v);
+      const u = updates.get(v.id);
+      push({
+        id: `m:${m.rel}:${v.id}`, at: time(v.at), kind, event: 'version', who: kind === 'you' ? 'you' : 'agent', target, files: [],
+        detail: { who: v.who, reason: v.reason || null, created: !!v.created, removed: !!v.removed, changes: u?.changes ?? null, approved: u ? !!u.approved : null, auto: !!u?.auto },
+      }, m.seenAt);
+    }
+    // the updates waiting for approval make one review item per file: approving or rejecting acts on all of them
+    const waiting = (m.updates ?? []).filter((u) => !u.approved);
+    if (waiting.length && !m.gone) {
+      const at = Math.max(...waiting.map((u) => time(u.at)));
+      const last = waiting.reduce((a, u) => (time(u.at) > time(a.at) ? u : a), waiting[0]);
+      push({
+        id: `r:memory:${m.rel}`, at, kind: 'memory-updated', event: 'review', who: 'agent', target, files: [],
+        detail: { changes: waiting.reduce((s, u) => s + (u.changes ?? 0), 0), reason: last.reason || null }, review: { kind: 'memory', count: waiting.length },
+      }, m.seenAt);
+    }
+  }
+  // a junk note asks whether to move it to the Trash; it reads as a change to the note in the Type filter
+  for (const j of junk) {
+    const at = time(j.at);
+    push({ id: `r:junk:${j.abs}`, at, kind: 'note-updated', event: 'review', who: 'agent', target: { kind: 'note', abs: j.abs, rel: j.rel, title: j.title ?? titleOf({ rel: j.rel }) }, files: [], detail: { reason: j.reason ?? null }, review: { kind: 'junk-note' } }, null);
+  }
+  // each open Memory health issue asks to take its recommended action; it opens on its first linking note
+  for (const m of links) {
+    const i = issueOf(m);
+    push({
+      id: `r:link:${i.key}`, at: time(m.lastAt), kind: 'memory-health', event: 'review', who: 'agent',
+      target: { kind: 'link', abs: m.abs ?? '', rel: i.path, title: i.target }, files: [],
+      detail: { title: i.title, problem: i.problem, solution: i.solution, value: i.value, recommend: i.recommend, meta: issueMeta(i), category: i.category, links: i.links, notes: i.notes, folder: i.folder?.folder ?? null, draft: drafts[`r:link:${i.key}`] ?? null },
+      review: { kind: 'link', key: i.key, ...(m.left ? { left: true } : {}) }, draft: drafts[`r:link:${i.key}`] ?? null,
+    }, null);
+  }
+  // each finding of a review rule (rules/index.js) waits for a person: Approve runs its fix, the change its rule allows
+  // (reviewApprove.js), or keeps it as it is; Dismiss sets it aside. Findings from the first sweep of a vault start out read
+  for (const f of findings) {
+    push({
+      id: `r:find:${f.key}`, at: time(f.at), kind: 'memory-health', event: 'review', who: 'agent', initial: !!f.initial,
+      target: { kind: 'memory', abs: f.abs ?? '', rel: f.rel, title: f.title }, files: [],
+      detail: { title: f.title, problem: f.problem, solution: f.proposal, recommend: drafts[`r:find:${f.key}`] ? f.proposal : f.approve?.says ?? f.proposal, keep: !drafts[`r:find:${f.key}`] && f.approve?.kind === 'keep', rule: f.rule, meta: [['Check', f.rule], ...(f.meta ?? []), ...(f.evidence ?? []).map((e, i) => [i ? `Evidence ${i + 1}` : 'Evidence', e])], draft: drafts[`r:find:${f.key}`] ?? null },
+      review: { kind: 'finding', key: f.key, ...(f.fix || f.approve || drafts[`r:find:${f.key}`] ? { fix: true } : {}), ...(f.archived ? { left: true } : {}) }, draft: drafts[`r:find:${f.key}`] ?? null,
+    }, null);
+  }
+  // each fix run Quorum carried out on an approved Memory health issue: its row shows it working, then its outcome
+  for (const run of runs.filter((x) => !x.undoneAt)) {
+    const at = time(run.endedAt ?? run.startedAt ?? run.queuedAt);
+    push({
+      id: `f:${run.id}`, at, kind: 'memory-health', event: 'fix', who: 'agent', target: { kind: 'link', abs: '', rel: run.rel ?? '', title: run.target }, files: [],
+      detail: { problem: run.problem, solution: run.solution, value: run.value, recommend: run.recommendation, meta: run.meta ?? [] }, run,
+    }, null);
+  }
+  // each past fix the current rules would not make waits as its corrective fix. When Quorum cannot undo it exactly,
+  // plan.approve (reviewApprove.js) says what Approve does instead: git, remove, draft or keep
+  for (const { run, res, plan, abs } of pastFixes) {
+    push({
+      id: `r:pastfix:${run.id}`, at: time(run.endedAt ?? run.queuedAt), kind: 'memory-health', event: 'review', who: 'agent',
+      target: { kind: 'memory', abs: abs ?? '', rel: res.main ?? run.rel ?? '', title: run.target }, files: [],
+      detail: { outcome: run.outcome, reasons: res.reasons.map((r) => r.text), evidence: res.evidence ?? [], undo: plan.why, approve: plan.approve ?? null, ranAt: run.endedAt ?? null },
+      review: { kind: 'past-fix', key: run.id, undo: !!plan.ok || !!plan.approve, ...(plan.approve ? { approve: plan.approve.kind } : {}) },
+    }, null);
+  }
+  // an ignore rule Quorum proposes after the same kind of finding was archived again and again; Approve stores it
+  for (const g of ignores) {
+    push({
+      id: `r:ignore:${g.id}`, at: time(g.at), kind: 'memory-health', event: 'review', who: 'agent',
+      target: { kind: 'memory', abs: '', rel: g.value, title: g.title }, files: [],
+      detail: { title: g.title, rule: g.rule, field: g.field, value: g.value, count: g.count, findings: g.findings },
+      review: { kind: 'ignore', key: g.id },
+    }, null);
+  }
+  const guardTarget = { kind: 'guardrail', abs: guardFile ?? '', rel: 'Guardrails', title: 'Guardrails' };
+  for (const g of denials) {
+    const at = time(g.t);
+    push({ id: `g:${g.id ?? at}`, at, kind: 'guardrail', event: 'denial', who: 'agent', target: guardTarget, files: [], detail: { path: g.path ?? '', tool: g.tool ?? '', surface: g.surface ?? null, reason: g.reason ?? '', guard: g.guard ?? null, guardLabel: g.guardLabel ?? null } }, null);
+  }
+  // an item the quality gate (qualityGate.js) keeps out of view (keep-only with nothing to act on, or still being
+  // checked) is left out of every tab here.
+  // A Retroactive improvement shows under its own title
+  for (const r of rows) {
+    if (held.has(r.id)) r.held = held.get(r.id);
+    if (r.review?.kind === 'past-fix' && r.detail?.approve?.retro) r.detail.title = 'Retroactive improvement';
+    r.summary = summaryOf(r);
+  }
+  return rows.sort((a, b) => b.at - a.at || a.id.localeCompare(b.id));
+}
+
+const matches = (row, words) => {
+  if (!words.length) return true;
+  const hay = `${row.summary.line} ${row.summary.sub ?? ''} ${row.detail?.problem ?? ''} ${row.target.title} ${row.target.rel} ${row.files.map((f) => f.title ?? f.label).join(' ')} ${row.detail?.path ?? ''}`.toLowerCase();
+  return words.every((w) => hay.includes(w));
+};
+const SORTS = {
+  // what is new first, then the rest, each newest first
+  unread: (a, b) => Number(b.unread) - Number(a.unread) || b.at - a.at,
+  recent: (a, b) => b.at - a.at,
+  az: (a, b) => a.target.title.localeCompare(b.target.title, undefined, { sensitivity: 'base' }) || b.at - a.at,
+};
+
+// one page of a tab. All and Unread leave out the rows whose switch is off; the Needs review filter keeps only the
+// items waiting for a decision, and lists them all whatever the switches say. kinds narrows to event types, q to rows
+// whose words match. counts and dot are for the bell and the labels, and use the switches the same way
+// archived holds the ids the person archived: they leave All, Unread, Needs review and the dot, and list under Archived
+// idsOnly returns each item as its id and unread mark, for a caller that only needs the marks (Memory health)
+// done holds the archived ids an Approve finished (a past fix or finding kept as it is, or a finding fixed): they list
+// under Archived as Accepted
+export function feedPage(rows, { tab = 'all', review = false, kinds = [], q = '', sort = 'unread', offset = 0, limit = 50, prefs = {}, locale, archived = [], done: doneIds = [], kept: keptIds = [], idsOnly = false } = {}) {
+  // decided items archive on their own: an issue set aside unfixed (Dismissed), and a fix a few seconds after it ends
+  // (Accepted or Failed), unless the person brought it back with Unarchive
+  const back = new Set(keptIds);
+  const now0 = Date.now();
+  const decided = (r) => !back.has(r.id) && (!!r.review?.left || (!!r.run && (r.run.status === 'success' || r.run.status === 'error') && now0 - (r.run.endedAt ?? now0) >= ARCHIVE_AFTER));
+  const gone = new Set([...archived, ...rows.filter(decided).map((r) => r.id)]);
+  // a run's banner shows until it is dismissed, by hand or a day after it finished
+  const now = Date.now();
+  const banner = (r) => !!r.run && (r.run.status === 'queued' || r.run.status === 'running' || (!r.run.dismissedAt && now - (r.run.endedAt ?? now) < DAY));
+  // an issue being fixed keeps its row and its place, loading, with its run attached; the run gets its own row once it
+  // ends. A live run whose issue is not listed keeps its own row
+  const live = new Map(rows.filter((r) => r.run && (r.run.status === 'queued' || r.run.status === 'running')).map((r) => [r.run.key, r.run]));
+  const issueKeys = new Set(rows.filter((r) => r.review?.kind === 'link' && !gone.has(r.id)).map((r) => r.review.key));
+  const kept = rows
+    .filter((r) => !gone.has(r.id) && !r.held && !(r.run && live.get(r.run.key) === r.run && issueKeys.has(r.run.key)))
+    .map((r) => (r.run ? { ...r, run: { ...r.run, showBanner: banner(r) } } : r.review?.kind === 'link' && live.has(r.review.key) ? { ...r, fixRun: { ...live.get(r.review.key), showBanner: true } } : r));
+  const doneSet = new Set(doneIds);
+  const shelf = rows.filter((r) => gone.has(r.id)).map((r) => ({ ...r, archived: true, ...(doneSet.has(r.id) ? { done: true } : {}) }));
+  const shown = (r) => prefOn(prefs, prefOf(r));
+  const unread = kept.filter((r) => r.unread && shown(r));
+  const reviews = kept.filter((r) => r.review);
+  const waiting = reviews.filter((r) => !r.fixRun);
+  const all = kept.filter(shown);
+  let list = tab === 'archived' ? shelf : tab === 'unread' ? unread : all;
+  // Needs review lists the items waiting for a decision, and the ones being fixed right now; an accepted item no longer
+  // needs review, so a finished fix lists under All and Unread only. The count is the waiting items
+  if (review && tab !== 'archived') list = tab === 'unread' ? reviews.filter((r) => r.unread) : reviews;
+  const kindSet = new Set(kinds);
+  const words = String(q ?? '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  list = list.filter((r) => (!kindSet.size || kindSet.has(r.kind)) && matches(r, words));
+  list = [...list].sort(SORTS[sort] ?? SORTS.unread);
+  const start = Math.max(0, offset | 0);
+  const end = start + Math.max(0, limit | 0);
+  return {
+    items: list.slice(start, end).map((r) => (idsOnly ? { id: r.id, unread: r.unread } : { ...r, details: detailsOf(r, { locale }) })),
+    total: list.length,
+    more: end < list.length,
+    counts: { all: all.length, unread: unread.length, review: waiting.length, archived: shelf.length, held: rows.filter((r) => r.held && !gone.has(r.id)).length },
+    dot: unread.length > 0 || waiting.some(shown),
+  };
+}
+
+// Needs review for Memory health: the items a person still has to decide on, one list for every count that shows it
+// (the Memory health button, the folder counts in the notes tree, the Needs review toggle in Memory health). It is the
+// Notifications Needs review list narrowed to Memory health, so it holds the same items: missing links, findings
+// (contradictions among them), past fixes and Retroactive improvements, and the rules Quorum proposes, each after the
+// quality gate, with an archived or decided item left out and an item being fixed left out of the count. Each item
+// counts toward the note it is about and every folder above that note; an item about no note (a proposed rule, a note
+// at the top of the vault) counts in the total only
+export function needsReview(rows, opts = {}) {
+  const page = feedPage(rows, { ...opts, tab: 'all', review: true, kinds: ['memory-health'], q: '', offset: 0, limit: 1e6, idsOnly: false });
+  const items = page.items.filter((r) => !r.fixRun);
+  const files = {};
+  const folders = {};
+  for (const r of items) {
+    const rel = r.review?.kind === 'ignore' ? '' : String(r.target?.rel ?? '');
+    if (!/\.md$/i.test(rel)) continue;
+    files[rel] = (files[rel] ?? 0) + 1;
+    const parts = rel.split('/');
+    for (let k = 1; k < parts.length; k++) { const f = parts.slice(0, k).join('/'); folders[f] = (folders[f] ?? 0) + 1; }
+  }
+  return { items, total: items.length, files, folders };
+}

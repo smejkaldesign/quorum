@@ -154,6 +154,12 @@ export function duplicateItem(vault, rel) {
   return path.relative(vault, to);
 }
 
+// the path a note would have in the vault, whether or not it is there now; null outside the vault
+export function vaultTarget(vault, rel) {
+  const abs = inside(vault, rel);
+  return abs && abs !== vault ? abs : null;
+}
+
 export function vaultPath(vault, rel) {
   const abs = inside(vault, rel);
   return abs && abs !== vault && existsSync(abs) ? abs : null;

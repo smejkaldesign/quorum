@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { KbImportProgress, KbImportSource, Result } from '../../src/quorum';
 import { IconFolder } from '../../src/icons';
-import { checkGithubUrl, importSummary, progressLabel, progressShare, type KbImportResult } from './kbTree';
+import { checkGithubUrl, importSummary, progressLabel, progressShare, SCOPE_LABEL, type KbImportResult, type KbScope } from './kbTree';
+import { ModalActions, Segmented } from '../../src/controls';
 
 // Shared pieces of the knowledge base screens: a call that never rejects, the import (which another change adds to
 // the main process, so the screens check for it before offering it), and the delete confirmation.
@@ -148,14 +149,25 @@ export function KbConfirm({ title, body, action, onDone }: { title: string; body
       <div className="modal" role="alertdialog" aria-modal="true" aria-labelledby="kb-confirm-title" aria-describedby="kb-confirm-body">
         <h2 id="kb-confirm-title">{title}</h2>
         <p id="kb-confirm-body">{body}</p>
-        <div className="modal-actions">
-          <span />
-          <span className="modal-actions-end">
-            <button className="pill" autoFocus onClick={() => onDone(false)}>Cancel</button>
-            <button className="pill danger-pill" onClick={() => onDone(true)}>{action}</button>
-          </span>
-        </div>
+        <ModalActions>
+          <button className="pill" autoFocus onClick={() => onDone(false)}>Cancel</button>
+          <button className="pill danger-pill" onClick={() => onDone(true)}>{action}</button>
+        </ModalActions>
       </div>
     </div>
+  );
+}
+
+// Only me or Workspace; a member gets Only me alone, and the line under it says who reads the KB
+export function ScopePicker({ scopes, scope, disabled, onChange }: { scopes: KbScope[]; scope: KbScope; disabled?: boolean; onChange: (s: KbScope) => void }) {
+  return (
+    <>
+      {scopes.length > 1 && (
+        <Segmented kind="radio" label="Who reads it" options={scopes.map((s) => ({ id: s, label: SCOPE_LABEL[s] }))} value={scope} onChange={onChange} disabled={disabled} />
+      )}
+      <p className="kb-hint muted">{scope === 'personal'
+        ? 'Only you can read and manage it. Workspace owners and admins cannot see it. You can sync a GitHub repository or Drive folder into it.'
+        : 'Everyone in the workspace reads it. You can narrow its readers after it is created.'}</p>
+    </>
   );
 }

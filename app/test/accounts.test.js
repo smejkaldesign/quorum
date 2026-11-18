@@ -51,7 +51,7 @@ describe('authorize URLs', () => {
   it('relay providers redirect to the relay callback; Slack asks for user scopes, Notion for a user owner, GitHub for no scope', () => {
     expect(redirectFor('slack', RELAY)).toBe('https://relay.example.com/v1/oauth/slack/callback');
     const s = new URL(authorizeUrl('slack', { clientId: 'sid', redirectUri: redirectFor('slack', RELAY), state: 's', challenge: 'ch' }));
-    expect(s.searchParams.get('user_scope')).toBe('channels:read,groups:read,chat:write,users:read');
+    expect(s.searchParams.get('user_scope')).toBe('channels:read,groups:read,chat:write,users:read,channels:history,groups:history,search:read');
     expect(s.searchParams.get('code_challenge')).toBeNull();
     const n = new URL(authorizeUrl('notion', { clientId: 'nid', redirectUri: redirectFor('notion', RELAY), state: 's' }));
     expect(n.searchParams.get('owner')).toBe('user');
@@ -79,7 +79,7 @@ describe('connectAccount', () => {
     expect(r.calls[0].body).toMatchObject({ provider: 'github', code: 'good', redirect_uri: `${RELAY}/v1/oauth/github/callback` });
     expect(r.calls[0].body.code_verifier).toMatch(/^[\w-]{43}$/);
     expect(JSON.stringify(r.calls[0].body)).not.toMatch(/secret/);
-    expect(b.finished).toEqual([{ name: 'GitHub' }]);
+    expect(b.finished).toEqual([{ name: 'GitHub', connector: 'github' }]);
   });
   it('exchanges Google Drive directly with the Desktop pair and takes the email from the id token', async () => {
     const b = browser();

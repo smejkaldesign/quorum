@@ -1,13 +1,14 @@
 // Guardrails: the one rule set behind what an agent may read from the Agent OS and what it may say about it. Four
 // built-in rules ship on; the connected Agent OS can offer more (its guard hooks, opt-out lists, the rules its
 // CLAUDE.md states, the frontmatter conventions its notes follow and the folders Obsidian excludes), which the person
-// reviews one by one and includes the way memory power-ups are reviewed; the person adds their own; and in Cloud a
+// reviews and includes one by one; the person adds their own; and in Cloud a
 // workspace's admins add rules that reach every member's Mac and cannot be turned off there. Every rule carries a
 // scope: individual (built-in, Agent OS and personal rules, the person's own in both editions) or organization
 // (workspace rules, set by admins for the organization or team). compile() turns the effective list into what each
 // enforcement point consumes: the read guard's flags and hook list, the deny folders, and the term filter the
 // suggester, the transcript redactor and the MCP server share. Pure Node; the app passes in settings and the root.
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { appendFileSync, existsSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { open, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -26,10 +27,10 @@ export const SECRET_NAMES = String.raw`(^|/)(\.env(\..*)?|.*\.(pem|key|p12|pfx|k
 export const PRIVATE_FOLDER = /personal|private/i;
 
 export const BUILT_IN = [
-  { id: 'built-in:secrets', kind: 'secret', label: 'Secret-looking files', what: 'Files named like keys, tokens, .env files and credentials are never read.', value: SECRET_NAMES },
-  { id: 'built-in:private-folders', kind: 'path', label: 'Private folders', what: 'Folders named personal or private, plus .git and node_modules, are never read or searched.', value: 'personal|private' },
-  { id: 'built-in:confidential', kind: 'frontmatter', label: 'Notes marked confidential', what: 'A note with confidential: in its frontmatter is never read, synced or shared.', value: 'confidential' },
-  { id: 'built-in:opt-outs', kind: 'term', label: 'Opted-out people and companies', what: 'Lines naming anyone on your opt-out list (Settings, Admin, General) are withheld from transcripts, answers and the MCP server.', value: '' },
+  { id: 'built-in:secrets', kind: 'secret', label: 'Block files that look like keys or passwords', what: 'Files named like keys, tokens, .env files and credentials are never read.', value: SECRET_NAMES },
+  { id: 'built-in:private-folders', kind: 'path', label: 'Block private folders', what: 'Folders named personal or private, plus .git and node_modules, are never read or searched.', value: 'personal|private' },
+  { id: 'built-in:confidential', kind: 'frontmatter', label: 'Block notes marked confidential', what: 'A note with confidential: in its frontmatter is never read, synced or shared.', value: 'confidential' },
+  { id: 'built-in:opt-outs', kind: 'term', label: 'Hide opted-out people and companies', what: 'Lines naming anyone on your opt-out list (Settings, Admin, General) are withheld from transcripts, answers and the MCP server.', value: '' },
 ];
 
 // hook classification: by what the script does and where it runs, never by its file name alone
@@ -93,6 +94,11 @@ export function frontmatterPairs(text) {
   return out;
 }
 export const frontmatterKeys = (text) => frontmatterPairs(text).map((p) => p.key);
+// a value that says the note is not private: a key set to one of these does not mark the note, so `confidential: false`
+// keeps a note readable. Any other value, an empty one included, marks it
+export const OFF_VALUE = /^(false|no|off|none|public|0)$/i;
+// the keys in a note's frontmatter that mark it private
+export const markingKeys = (text) => frontmatterPairs(text).filter((p) => !OFF_VALUE.test(p.value.trim())).map((p) => p.key);
 
 // what a note's frontmatter says about keeping it off limits: the marker keys it carries, and the value keys set to an
 // open value, which count against offering that key as a rule
@@ -299,7 +305,9 @@ export function effective(state = {}, discovery = { candidates: [] }) {
 }
 
 // what each enforcement point consumes. denyDirs are relative to the root; frontmatterKeys are matched case-insensitively
-export function compile(rules, { root = null, privateDirs = () => [] } = {}) {
+// confidentialDirs: the folders a person marked confidential, relative to the root; they are denied like a note with
+// confidential: in its frontmatter, so they follow the built-in confidential rule
+export function compile(rules, { root = null, privateDirs = () => [], confidentialDirs = [] } = {}) {
   const on = rules.filter((r) => r.enabled);
   const denyDirs = new Set();
   const frontmatterKeys = new Set();
@@ -316,6 +324,7 @@ export function compile(rules, { root = null, privateDirs = () => [] } = {}) {
       else for (const t of String(r.value).split(/[\n,]/).map((s) => s.trim().toLowerCase()).filter((s) => s.length >= 3)) terms.add(t);
     } else if (r.kind === 'hook') hooks.push({ path: r.path ?? r.value, stage: r.stage ?? 'pre' });
   }
+  if (on.some((r) => r.id === 'built-in:confidential')) for (const d of confidentialDirs) if (d) denyDirs.add(String(d).replace(/^\/+|\/+$/g, ''));
   const secretsOn = on.some((r) => r.id === 'built-in:secrets');
   return {
     denyDirs: [...denyDirs], frontmatterKeys: [...frontmatterKeys], secretPattern, secretsOff: !secretsOn && !secretPattern,
@@ -334,15 +343,61 @@ export function wouldBlock(compiled, rel, head = '') {
   if (head.startsWith('---')) {
     const end = head.indexOf('\n---', 3);
     const block = head.slice(3, end > 0 ? end : undefined);
-    for (const k of compiled.frontmatterKeys) if (new RegExp(`^\\s*${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:`, 'im').test(block)) return `marked ${k}: in its frontmatter`;
+    const marked = new Set(markingKeys(`---${block}\n---`));
+    for (const k of compiled.frontmatterKeys) if (marked.has(k)) return `marked ${k}: in its frontmatter`;
   }
   return null;
 }
 
-const readDenials = (file, n = 30) => { try { return readFileSync(file, 'utf8').trim().split('\n').slice(-n).map((l) => JSON.parse(l)).reverse(); } catch { return []; } };
+// the denial log: one JSON line per refused read, appended by the read guard hook (guards/read-guard.py, a separate
+// process) and by the app itself (recordDenial). The list keeps the newest DENIALS_CAP entries; the file is cut back
+// to that when it grows past it by a margin, so a busy agent does not rewrite it on every read
+export const DENIALS_CAP = 200;
+const DENIALS_SLACK = 50;
+
+// what the reason text says, for lines written before the hook named the rule kind and the matched value
+export function denialKindOf(entry) {
+  if (entry.kind && entry.kind !== 'unknown') return { kind: entry.kind, match: entry.match ?? null };
+  const r = String(entry.reason ?? '');
+  let m;
+  if ((m = r.match(/marked (\S+?):? in its frontmatter/))) return { kind: 'frontmatter', match: m[1].replace(/:$/, '') };
+  if (/secret or credential/.test(r)) return { kind: 'secret', match: null };
+  if ((m = r.match(/(\S+)\/ is private/))) return { kind: 'path', match: m[1] };
+  return { kind: 'unknown', match: null };
+}
+
+// each line on its own, so one torn or foreign line drops only itself
+export function parseDenialLines(text) {
+  const out = [];
+  for (const line of String(text ?? '').split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const e = JSON.parse(line);
+      if (e && typeof e === 'object' && typeof e.t === 'string') out.push({ ...e, id: createHash('sha1').update(line).digest('hex').slice(0, 16) });
+    } catch {}
+  }
+  return out;
+}
+
+const splitList = (v) => String(v ?? '').split(/[\n,]/).map((s) => s.trim().replace(/^\/+|\/+$/g, '').replace(/:$/, '').toLowerCase()).filter(Boolean);
+const testPattern = (pattern, rel) => { try { return new RegExp(pattern, 'i').test(rel); } catch { return false; } };
+
+// which rule refused: a built-in one when it covers the match, else the first other rule of that kind that does
+export function guardOf(entry, rules, { privateDirs = [] } = {}) {
+  const { kind, match } = denialKindOf(entry);
+  const on = rules.filter((r) => r.enabled && r.kind === kind);
+  const builtIn = (id) => on.find((r) => r.id === id);
+  const m = String(match ?? '').toLowerCase();
+  let rule = null;
+  if (kind === 'path') rule = (['.git', 'node_modules', ...privateDirs.map((d) => d.toLowerCase())].includes(m) && builtIn('built-in:private-folders')) || on.find((r) => r.id !== 'built-in:private-folders' && splitList(r.value).includes(m)) || builtIn('built-in:private-folders');
+  else if (kind === 'secret') rule = (testPattern(SECRET_NAMES, entry.path ?? '') && builtIn('built-in:secrets')) || on.find((r) => r.id !== 'built-in:secrets' && testPattern(r.value, entry.path ?? '')) || builtIn('built-in:secrets');
+  else if (kind === 'frontmatter') rule = on.find((r) => splitList(r.value).includes(m)) ?? null;
+  const fallback = BUILT_IN.find((b) => b.kind === kind);
+  return { guard: rule?.id ?? fallback?.id ?? 'unknown', guardLabel: rule?.label ?? fallback?.label ?? 'Guardrail' };
+}
 
 // the app's handle: state in settings.guardrails, discovery cached per root, the compiled set cached until something changes
-export function createGuardrails({ settings, saveSettings = () => {}, brain = () => null, privateDirs = () => [], denialLog = null, log = () => {} }) {
+export function createGuardrails({ settings, saveSettings = () => {}, brain = () => null, privateDirs = () => [], confidentialDirs = () => [], denialLog = null, log = () => {} }) {
   const state = () => (settings.guardrails ??= { builtIns: {}, agentOs: {}, rules: [], workspace: [] });
   let quick = { root: null, at: 0, result: { candidates: [], skipped: [] } };
   let compiledCache = { key: '', value: null };
@@ -377,9 +432,10 @@ export function createGuardrails({ settings, saveSettings = () => {}, brain = ()
   const compiled = () => {
     const b = brain();
     const list = rules();
-    const key = JSON.stringify([b?.root, list.map((r) => [r.id, r.enabled, r.value])]);
+    const marked = confidentialDirs();
+    const key = JSON.stringify([b?.root, list.map((r) => [r.id, r.enabled, r.value]), marked]);
     if (compiledCache.key === key && compiledCache.value) return compiledCache.value;
-    const value = compile(list, { root: b?.root ?? null, privateDirs });
+    const value = compile(list, { root: b?.root ?? null, privateDirs, confidentialDirs: marked });
     compiledCache = { key, value };
     // the CLI and the suggester read this snapshot from settings.json, so they apply the same rules without the app
     const snapshot = { denyDirs: value.denyDirs, frontmatterKeys: value.frontmatterKeys, terms: value.terms, termFiles: value.termFiles, secretPattern: value.secretPattern, secretsOff: value.secretsOff, optOutsOn: value.optOutsOn };
@@ -387,6 +443,34 @@ export function createGuardrails({ settings, saveSettings = () => {}, brain = ()
     return value;
   };
   const save = () => { compiledCache = { key: '', value: null }; saveSettings(); };
+  const readLog = () => { try { return parseDenialLines(readFileSync(denialLog, 'utf8')); } catch { return []; } };
+  // newest first, each with the rule that refused it and where it happened; trims the file back to the cap
+  const denials = ({ since = null, limit = DENIALS_CAP } = {}) => {
+    if (!denialLog) return [];
+    const all = readLog();
+    if (all.length > DENIALS_CAP + DENIALS_SLACK) {
+      try { const tmp = `${denialLog}.tmp`; writeFileSync(tmp, all.slice(-DENIALS_CAP).map(({ id, ...e }) => JSON.stringify(e)).join('\n') + '\n'); renameSync(tmp, denialLog); } catch (e) { log('guardrails denials trim', e?.message ?? e); }
+    }
+    const b = brain();
+    const list = rules();
+    const dirs = b ? privateDirs(b.root) : [];
+    const after = since == null ? null : typeof since === 'number' ? since : Date.parse(String(since));
+    const n = Math.max(1, Math.min(DENIALS_CAP, Number(limit) || DENIALS_CAP));
+    // reversed first so entries written in the same second keep newest first through the stable sort
+    return all.slice(-DENIALS_CAP).reverse()
+      .filter((e) => after == null || Number.isNaN(after) || Date.parse(e.t) > after)
+      .sort((x, y) => Date.parse(y.t) - Date.parse(x.t))
+      .slice(0, n)
+      .map((e) => ({ id: e.id, t: e.t, path: String(e.path ?? ''), tool: String(e.tool ?? ''), surface: String(e.surface ?? 'agent'), reason: String(e.reason ?? ''), ...guardOf(e, list, { privateDirs: dirs }) }));
+  };
+  // a refusal made inside the app (the keeper leaving a note out). The same path, rule and surface already in the log
+  // is not written twice, so a note that stays confidential shows once
+  const recordDenial = ({ path: rel, reason, surface, tool = '' }) => {
+    if (!denialLog || !rel || !reason) return false;
+    const { kind, match } = denialKindOf({ reason });
+    if (readLog().some((e) => e.path === rel && e.surface === surface && e.reason === reason)) return false;
+    try { appendFileSync(denialLog, JSON.stringify({ t: new Date().toISOString(), tool, path: rel, reason, kind, match, surface }) + '\n'); return true; } catch (e) { log('guardrails denial', e?.message ?? e); return false; }
+  };
   // the page's payload; a first call after a connect scans the vault, and the page asks for a fresh scan when it opens
   const get = async ({ fresh = false } = {}) => {
     if (remote) { try { const r = await remote(); if (Array.isArray(r)) { state().workspace = r; } } catch (e) { log('guardrails workspace', e?.message ?? e); } }
@@ -399,12 +483,12 @@ export function createGuardrails({ settings, saveSettings = () => {}, brain = ()
       rules: list.map(({ decision, ...r }) => ({ ...r, decision: decision ?? null })),
       skipped: d.skipped,
       scanned: { notes: d.notes ?? 0, at: d.at ?? null, truncated: d.truncated === true },
-      denials: denialLog ? readDenials(denialLog) : [],
+      denials: denials({ limit: 50 }),
       summary: { on: list.filter((r) => r.enabled).length, toReview: list.filter((r) => r.source === 'agent-os' && r.decision === null).length, denyDirs: c.denyDirs.length, terms: c.allTerms().length },
     };
   };
   return {
-    get, compiled, rules, discovery, scan,
+    get, compiled, rules, discovery, scan, denials, recordDenial,
     setRemote: (fn) => { remote = fn; },
     set: (id, patch) => {
       const s = state();

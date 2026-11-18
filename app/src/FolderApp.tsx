@@ -2,41 +2,48 @@ import { useEffect, useSyncExternalStore } from 'react';
 import markProd from '../assets/quorum-mark.png';
 import markDev from '../assets/quorum-mark-dev.png';
 import { AppLogo, sourceApp } from './AppChip';
+import { IconFolder, IconFolderOpen } from './icons';
+import { type SyncedFolder, sourceAt, sourceLabel, syncTip, syncedFolderAt } from './syncedFolders';
 
-// Which vault folders a meeting notetaker writes into (main.js meeting-folder-apps): Quorum's own notes folder, the dev
-// copy's, and each source folder such as granola or zoom. Loaded once per launch and shared by every tree row.
-let apps: Record<string, string> = {};
+// The vault folders that sync with something (main.js synced-folders): the meetings folder Quorum writes to and each
+// meeting source folder. Loaded once per launch and shared by every tree row.
+let folders: SyncedFolder[] = [];
 let loading = false;
 const subs = new Set<() => void>();
 const subscribe = (f: () => void) => { subs.add(f); return () => { subs.delete(f); }; };
+const nameOf = (app: string) => sourceApp(app).name;
 
-function useFolderApps() {
+function useSyncedFolders() {
   useEffect(() => {
     if (loading) return;
     loading = true;
-    window.quorum.meetingFolderApps().then((list) => {
-      apps = Object.fromEntries(list.map((f) => [f.rel, f.app]));
+    window.quorum.syncedFolders().then((list) => {
+      folders = list;
       subs.forEach((f) => f());
     }).catch(() => { loading = false; });
   }, []);
-  return useSyncExternalStore(subscribe, () => apps, () => apps);
+  return useSyncExternalStore(subscribe, () => folders, () => folders);
 }
 
-// the notetakers that write into a folder or any folder inside it, as logos beside it in the Memory tree
+// A folder row's icon: open or closed, green with a tooltip naming what it syncs with when the folder is synced
+export function FolderIcon({ rel, open }: { rel: string; open: boolean }) {
+  const synced = syncedFolderAt(useSyncedFolders(), rel);
+  const Icon = open ? IconFolderOpen : IconFolder;
+  if (!synced) return <Icon className="kb-folder" width={16} height={16} />;
+  const tip = syncTip(synced, nameOf);
+  return <Icon className="kb-folder synced" width={16} height={16} role="img" aria-hidden={false} aria-label={tip} data-tip={tip} />;
+}
+
+// the logo of the meeting source that syncs with this exact folder; a parent folder shows none
 export function FolderApp({ rel }: { rel: string }) {
-  const all = useFolderApps();
-  const here = [...new Set(Object.entries(all).filter(([r]) => r === rel || r.startsWith(`${rel}/`)).map(([, app]) => app))];
-  if (!here.length) return null;
+  const app = sourceAt(useSyncedFolders(), rel);
+  if (!app) return null;
+  const label = sourceLabel(app, nameOf);
   return (
     <span className="folder-apps">
-      {here.map((app) => {
-        const label = app === 'quorum' ? 'Quorum' : app === 'quorum-dev' ? 'Quorum Dev' : sourceApp(app).name;
-        return (
-          <span key={app} className="folder-app" data-tip={`Notes from ${label}`} aria-label={`Notes from ${label}`}>
-            {app === 'quorum' || app === 'quorum-dev' ? <img className="app-logo own" src={app === 'quorum' ? markProd : markDev} alt="" /> : <AppLogo {...sourceApp(app)} />}
-          </span>
-        );
-      })}
+      <span className="folder-app" data-tip={`Notes from ${label}`} aria-label={`Notes from ${label}`}>
+        {app === 'quorum' || app === 'quorum-dev' ? <img className="app-logo own" src={app === 'quorum' ? markProd : markDev} alt="" /> : <AppLogo {...sourceApp(app)} />}
+      </span>
     </span>
   );
 }

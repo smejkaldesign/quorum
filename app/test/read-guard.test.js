@@ -73,6 +73,20 @@ describe('read guard', () => {
     expect(run({ tool_name: 'Grep', tool_input: { pattern: 'TODO', path: root } })).toBeNull();
   });
 
+  it('returns matching lines from one checked note at a time, and lists matches over a folder', () => {
+    const search = (input) => run({ tool_name: 'Grep', tool_input: { pattern: 'plan', ...input } });
+    for (const input of [{ output_mode: 'content' }, { output_mode: 'content', path: root }, { output_mode: 'content', path: 'notes' }]) {
+      expect(search(input)?.permissionDecision).toBe('deny');
+    }
+    expect(search({ output_mode: 'content', path: 'notes/plan.md' })?.permissionDecision).toBe('deny');
+    expect(search({ output_mode: 'content', path: 'private/notes.md' })?.permissionDecision).toBe('deny');
+    expect(search({ output_mode: 'content', path: 'id_rsa' })?.permissionDecision).toBe('deny');
+    expect(search({ output_mode: 'content', path: 'notes/plain.md' })).toBeNull();
+    expect(search({ path: root })).toBeNull();
+    expect(search({ output_mode: 'files_with_matches' })).toBeNull();
+    expect(search({ output_mode: 'count', path: 'notes' })).toBeNull();
+  });
+
   it('ignores tools other than Read, Grep and Glob', () => {
     expect(run({ tool_name: 'Edit', tool_input: { file_path: path.join(root, '.env') } })).toBeNull();
   });
@@ -107,5 +121,20 @@ describe('read guard with compiled guardrails', () => {
     expect(runWith(['--secret-pattern', String.raw`\.sqlite$`, '--log-denied', denied], { tool_name: 'Read', tool_input: { file_path: path.join(root, 'notes/brain.sqlite') } })).toMatchObject({ permissionDecision: 'deny' });
     const lines = readFileSync(denied, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     expect(lines.at(-1)).toMatchObject({ tool: 'Read', path: 'notes/brain.sqlite', reason: expect.stringContaining('secret') });
+  });
+});
+
+describe('a frontmatter key set to an off value', () => {
+  it('lets a note marked confidential: false through, and still stops confidential: personal or an empty value', () => {
+    writeFileSync(path.join(root, 'notes/open.md'), '---\ntitle: Research\nconfidential: false\n---\n# Research\n');
+    writeFileSync(path.join(root, 'notes/quoted.md'), '---\nconfidential: "no"\n---\n# Quoted\n');
+    writeFileSync(path.join(root, 'notes/personal.md'), '---\nconfidential: personal\n---\n# Money\n');
+    writeFileSync(path.join(root, 'notes/blank.md'), '---\nconfidential:\n---\n# Blank\n');
+    const flags = ['--frontmatter-key', 'confidential'];
+    const at = (f) => runWith(flags, { tool_name: 'Read', tool_input: { file_path: path.join(root, f) } });
+    expect(at('notes/open.md')).toBeNull();
+    expect(at('notes/quoted.md')).toBeNull();
+    expect(at('notes/personal.md')).toMatchObject({ permissionDecision: 'deny' });
+    expect(at('notes/blank.md')).toMatchObject({ permissionDecision: 'deny' });
   });
 });

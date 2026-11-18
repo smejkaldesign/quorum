@@ -5,6 +5,8 @@ name: Release
 # cloud-mac.yml. Publishing the draft is a manual step, so the notes can be read first; electron-updater ignores drafts.
 # Installed Local apps read latest-mac.yml from GitHub Releases; installed Cloud apps read cloud-mac.yml from
 # releases/latest/download (scripts/package-cloud.mjs), so one published release updates both.
+# A manual run (workflow_dispatch) on a branch builds, signs and notarizes both editions and uploads them as run
+# artifacts only; the draft job runs for tags alone, so a manual run is the dry run.
 #
 # Repository secrets (docs/release-checklist.md has the gh commands):
 #   CSC_LINK, CSC_KEY_PASSWORD            Developer ID Application certificate as a base64 .p12 and its password.
@@ -24,13 +26,18 @@ name: Release
 #   QUORUM_GITHUB_APP_CLIENT_ID,          into the packaged package.json as quorumOAuth. A connector without its id
 #   QUORUM_GITHUB_APP_SLUG                shows Not available yet. The secrets live on the relay, never in the app.
 #   QUORUM_GOOGLE_PICKER_APP_ID           Optional. The Google Cloud project number; the default is the number in the Google client id.
+#   QUORUM_ZOOM_CLIENT_ID                 The production Zoom app's public client id, written into the packaged package.json as
+#                                         quorumOAuth.zoom. Without it the Cloud edition shows Zoom as not available; the
+#                                         development app is used only in builds from source. The secret lives on the relay.
+#   QUORUM_ZOOM_REDIRECT_URI              Optional. The redirect registered on that Zoom app; the default is
+#                                         https://relay.quorum.watch/v1/connect/zoom/callback.
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
 
-permissions:
-  contents: write
+# nothing by default; each job asks for what it uses, and only the draft job can write to the repository
+permissions: {}
 
 concurrency:
   group: release-${{ github.ref }}
@@ -40,37 +47,43 @@ jobs:
   mac:
     # the helper uses the macOS 26 Speech framework (SpeechAnalyzer), which the macOS 15 image's SDK does not have
     runs-on: macos-26
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         edition: [local, cloud]
+    # No secret sits in the job env. Each one is passed only to the step that writes or signs with it, so npm ci, the
+    # tests and the other steps run without them. The HAS_* flags record whether a secret is set without holding it.
     env:
-      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-      GOOGLE_CLIENT_ID: ${{ secrets.QUORUM_GOOGLE_CLIENT_ID }}
-      GOOGLE_CLIENT_SECRET: ${{ secrets.QUORUM_GOOGLE_CLIENT_SECRET }}
+      HAS_CSC: ${{ secrets.CSC_LINK != '' }}
+      HAS_ASC_KEY: ${{ secrets.APPLE_API_KEY_ID != '' }}
+      HAS_GOOGLE_CLIENT: ${{ secrets.QUORUM_GOOGLE_CLIENT_SECRET != '' }}
+      HAS_GOOGLE_PICKER: ${{ secrets.QUORUM_GOOGLE_PICKER_API_KEY != '' }}
       QUORUM_SUPABASE_URL: ${{ vars.QUORUM_SUPABASE_URL }}
       QUORUM_SUPABASE_ANON_KEY: ${{ vars.QUORUM_SUPABASE_ANON_KEY }}
       NOTION_CLIENT_ID: ${{ vars.QUORUM_NOTION_CLIENT_ID }}
       SLACK_CLIENT_ID: ${{ vars.QUORUM_SLACK_CLIENT_ID }}
       GITHUB_APP_CLIENT_ID: ${{ vars.QUORUM_GITHUB_APP_CLIENT_ID }}
       GITHUB_APP_SLUG: ${{ vars.QUORUM_GITHUB_APP_SLUG }}
-      GOOGLE_PICKER_API_KEY: ${{ secrets.QUORUM_GOOGLE_PICKER_API_KEY }}
       GOOGLE_PICKER_APP_ID: ${{ vars.QUORUM_GOOGLE_PICKER_APP_ID }}
+      ZOOM_CLIENT_ID: ${{ vars.QUORUM_ZOOM_CLIENT_ID }}
+      ZOOM_REDIRECT_URI: ${{ vars.QUORUM_ZOOM_REDIRECT_URI }}
     steps:
       - name: Cloud edition needs its Supabase project
         if: matrix.edition == 'cloud' && (env.QUORUM_SUPABASE_URL == '' || env.QUORUM_SUPABASE_ANON_KEY == '')
         run: |
           echo "::warning::QUORUM_SUPABASE_URL and QUORUM_SUPABASE_ANON_KEY are not set as repository variables; the Cloud edition is not built."
           echo "SKIP=1" >> "$GITHUB_ENV"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         if: env.SKIP != '1'
-      - uses: actions/setup-node@v4
+        with:
+          persist-credentials: false
+      # no npm cache: a release build never restores a cache that another workflow could have written
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         if: env.SKIP != '1'
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: app/package-lock.json
 
       - name: The tag names the version in app/package.json
         if: env.SKIP != '1' && startsWith(github.ref, 'refs/tags/v')
@@ -83,67 +96,81 @@ jobs:
         if: env.SKIP != '1'
         run: swift build -c release
         working-directory: helper
+      # No dependency install script runs. The lockfile's scripts are not needed for a macOS build: onnxruntime-node
+      # ships its macOS binaries in the package (its script only fetches Linux CUDA files), fsevents ships a prebuilt
+      # binary, electron-winstaller is for Windows, and electron-builder downloads its own copy of Electron.
       - name: Install
         if: env.SKIP != '1'
-        run: npm ci
+        run: npm ci --ignore-scripts
         working-directory: app
       - name: Typecheck, test, founder content guard
         if: env.SKIP != '1'
         run: npm run typecheck && npm test && npm run check:content
         working-directory: app
 
-      # electron-builder reads APPLE_API_KEY as a path to the .p8; the secret holds the file's contents
-      - name: Write the App Store Connect key
-        if: env.SKIP != '1' && env.APPLE_API_KEY_ID != ''
+      # the installed app cannot read a .env, so the Google client rides in its package.json the way the Cloud build's Supabase values do
+      - name: Add the Google Calendar client
+        if: env.SKIP != '1' && env.HAS_GOOGLE_CLIENT == 'true'
         env:
-          APPLE_API_KEY_CONTENTS: ${{ secrets.APPLE_API_KEY }}
-        run: |
-          printf '%s' "$APPLE_API_KEY_CONTENTS" > "$RUNNER_TEMP/AuthKey_$APPLE_API_KEY_ID.p8"
-          echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey_$APPLE_API_KEY_ID.p8" >> "$GITHUB_ENV"
-      # electron-builder treats an empty CSC_LINK as a certificate path (it resolves to the project folder and fails with
-      # "not a file"), so the two variables exist only when the secrets do
-      - name: Signing certificate
+          GOOGLE_CLIENT_ID: ${{ secrets.QUORUM_GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.QUORUM_GOOGLE_CLIENT_SECRET }}
+        run: node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.quorumGoogle={clientId:process.env.GOOGLE_CLIENT_ID||undefined,clientSecret:process.env.GOOGLE_CLIENT_SECRET};fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');console.log('quorumGoogle set')"
+        working-directory: app
+      - name: Add the personal connector client ids
+        if: env.SKIP != '1' && (env.NOTION_CLIENT_ID != '' || env.SLACK_CLIENT_ID != '' || env.GITHUB_APP_CLIENT_ID != '' || env.HAS_GOOGLE_PICKER == 'true' || env.ZOOM_CLIENT_ID != '')
+        env:
+          GOOGLE_PICKER_API_KEY: ${{ secrets.QUORUM_GOOGLE_PICKER_API_KEY }}
+        run: node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));const id=(v)=>v?{clientId:v}:undefined;p.quorumOAuth={notion:id(process.env.NOTION_CLIENT_ID),slack:id(process.env.SLACK_CLIENT_ID),github:process.env.GITHUB_APP_CLIENT_ID?{clientId:process.env.GITHUB_APP_CLIENT_ID,slug:process.env.GITHUB_APP_SLUG||undefined}:undefined,zoom:process.env.ZOOM_CLIENT_ID?{clientId:process.env.ZOOM_CLIENT_ID,redirectUri:process.env.ZOOM_REDIRECT_URI||undefined}:undefined,googlePicker:process.env.GOOGLE_PICKER_API_KEY?{apiKey:process.env.GOOGLE_PICKER_API_KEY,appId:process.env.GOOGLE_PICKER_APP_ID||undefined}:undefined};fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');console.log('quorumOAuth set')"
+        working-directory: app
+      - name: Signing mode
         if: env.SKIP != '1'
-        env:
-          CSC_LINK_SECRET: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD_SECRET: ${{ secrets.CSC_KEY_PASSWORD }}
         run: |
-          if [ -n "$CSC_LINK_SECRET" ]; then
-            echo "CSC_LINK=$CSC_LINK_SECRET" >> "$GITHUB_ENV"
-            echo "CSC_KEY_PASSWORD=$CSC_KEY_PASSWORD_SECRET" >> "$GITHUB_ENV"
+          if [ "$HAS_CSC" = true ]; then
             echo "::notice::Developer ID certificate present; the app will be signed and notarized."
           else
             echo "::warning::CSC_LINK is not set; the app is signed ad hoc and not notarized. Set CSC_LINK and CSC_KEY_PASSWORD for a release build."
           fi
 
-      # the installed app cannot read a .env, so the Google client rides in its package.json the way the Cloud build's Supabase values do
-      - name: Add the Google Calendar client
-        if: env.SKIP != '1' && env.GOOGLE_CLIENT_SECRET != ''
-        run: node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.quorumGoogle={clientId:process.env.GOOGLE_CLIENT_ID||undefined,clientSecret:process.env.GOOGLE_CLIENT_SECRET};fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');console.log('quorumGoogle set')"
-        working-directory: app
-      - name: Add the personal connector client ids
-        if: env.SKIP != '1' && (env.NOTION_CLIENT_ID != '' || env.SLACK_CLIENT_ID != '' || env.GITHUB_APP_CLIENT_ID != '' || env.GOOGLE_PICKER_API_KEY != '')
-        run: node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));const id=(v)=>v?{clientId:v}:undefined;p.quorumOAuth={notion:id(process.env.NOTION_CLIENT_ID),slack:id(process.env.SLACK_CLIENT_ID),github:process.env.GITHUB_APP_CLIENT_ID?{clientId:process.env.GITHUB_APP_CLIENT_ID,slug:process.env.GITHUB_APP_SLUG||undefined}:undefined,googlePicker:process.env.GOOGLE_PICKER_API_KEY?{apiKey:process.env.GOOGLE_PICKER_API_KEY,appId:process.env.GOOGLE_PICKER_APP_ID||undefined}:undefined};fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');console.log('quorumOAuth set')"
-        working-directory: app
+      # The certificate and the App Store Connect key reach only the two package steps and the notarize step.
+      # with-signing.sh unsets empty values and writes the .p8 to a private file that it removes when the step ends.
       - name: Package the Local edition
         if: env.SKIP != '1' && matrix.edition == 'local'
-        run: npm run package
+        run: bash ../.github/scripts/with-signing.sh npm run package
         working-directory: app
         env:
           QUORUM_EDITION: local
           # with no certificate electron-builder must not go looking for one in the runner's keychain
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_CONTENTS: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      - name: Check the Zoom client id
+        if: env.SKIP != '1' && matrix.edition == 'cloud' && env.ZOOM_CLIENT_ID == ''
+        run: echo "::warning::QUORUM_ZOOM_CLIENT_ID is not set as a repository variable; the Cloud edition shows Zoom as not available."
       - name: Package the Cloud edition
         if: env.SKIP != '1' && matrix.edition == 'cloud'
-        run: npm run package:cloud
+        run: bash ../.github/scripts/with-signing.sh npm run package:cloud
         working-directory: app
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_CONTENTS: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
 
       - name: Notarize and staple the DMG
-        if: env.SKIP != '1' && env.CSC_LINK != '' && env.APPLE_API_KEY_ID != ''
-        run: zsh scripts/notarize-dmg.sh
+        if: env.SKIP != '1' && env.HAS_CSC == 'true' && env.HAS_ASC_KEY == 'true'
+        run: bash ../.github/scripts/with-signing.sh zsh scripts/notarize-dmg.sh
         working-directory: app
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_CONTENTS: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
 
       - name: Collect artifacts
         if: env.SKIP != '1'
@@ -152,7 +179,7 @@ jobs:
           cp release/*.dmg release/*.zip release/*.blockmap release/*-mac.yml out/ 2>/dev/null || true
           ls -la out
         working-directory: app
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: env.SKIP != '1'
         with:
           name: quorum-mac-${{ matrix.edition }}
@@ -164,8 +191,10 @@ jobs:
     needs: mac
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: quorum-mac-*
           merge-multiple: true
@@ -173,10 +202,10 @@ jobs:
       - name: Checksums
         run: |
           cd out && ls -la
-          shasum -a 256 *.dmg *.zip > SHA256SUMS.txt
+          shasum -a 256 -- *.dmg *.zip > SHA256SUMS.txt
           cat SHA256SUMS.txt
       - name: Draft the GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           draft: true
           generate_release_notes: true

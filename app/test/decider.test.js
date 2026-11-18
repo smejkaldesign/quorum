@@ -1,0 +1,274 @@
+// The local decision layer (decide/): every tier fails open, T1 drops only pairs it marks equivalent, the 5% audit sample is
+// deterministic and its verdicts land in a local log, and tiers() reports each tier's state. Fake models stand in for
+// the bundled ones; the last block runs the real models when scripts/fetch-models.mjs has put them on disk.
+import { execFileSync, spawnSync } from 'node:child_process';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { describe, expect, it, vi } from 'vitest';
+import { AUDIT_RATE, audited, createPairGate } from '../decide/gate.js';
+import { MAX_FAILURES, createDecider } from '../decide/index.js';
+import { MANIFEST, loadModels, missingFile } from '../decide/models.js';
+import { figures, noteRule, pairRule } from '../decide/rules.js';
+import { FINDING, NOTES, PAIRS } from './fixtures/deciderPairs.js';
+
+const c = (quote, value, polarity = 'positive') => ({ rel: 'x.md', quote, subject: 'atlas', attribute: 'database', value, polarity });
+// fake models answering fixed scores: cos is the cosine both vectors give, nli the probabilities both directions give
+const fake = ({ cos = 0.5, nli = { contradiction: 0.01, entailment: 0.01, neutral: 0.98 } } = {}) => {
+  const a = Float32Array.from([1, 0]);
+  const b = Float32Array.from([cos, Math.sqrt(1 - cos * cos)]);
+  let n = 0;
+  return { embed: vi.fn(async (texts) => texts.map(() => (n++ % 2 ? b : a))), nli: vi.fn(async (pairs) => pairs.map(() => nli)) };
+};
+// scores T1 reads as the same fact: entailment both ways, no contradiction, high similarity
+const SAME = { cos: 0.97, nli: { contradiction: 0.001, entailment: 0.99, neutral: 0.009 } };
+const pairA = c('Atlas stores uploads in a bucket.', 'bucket');
+const pairB = c('Atlas standups happen in the morning.', 'morning');
+const tier = (d, id) => d.tiers().find((t) => t.id === id);
+
+describe('decider tiers fail open', () => {
+  it('passes every pair on when the models cannot load, and reports T1 missing', async () => {
+    const d = createDecider({ load: async () => { throw new Error('model file missing: nli/config.json'); } });
+    const r = await d.relatedPair(pairA, pairB);
+    expect(r).toMatchObject({ drop: false, equivalent: false, tier: 't0' });
+    expect(tier(d, 't1')).toMatchObject({ state: 'missing', error: 'model file missing: nli/config.json' });
+    expect(await d.warm()).toBe(false);
+  });
+
+  it('refuses model files whose SHA-256 does not match the manifest', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'decider-'));
+    for (const [id, m] of Object.entries(MANIFEST)) for (const f of Object.keys(m.files)) { mkdirSync(path.dirname(path.join(dir, id, f)), { recursive: true }); writeFileSync(path.join(dir, id, f), 'not the model'); }
+    await expect(loadModels({ dir })).rejects.toThrow(/SHA-256/);
+    const d = createDecider({ dir });
+    expect((await d.relatedPair(pairA, pairB)).drop).toBe(false);
+    expect(tier(d, 't1').state).toBe('missing');
+  });
+
+  it('looks for the models again after a while, so a download that finishes later turns T1 on', async () => {
+    let there = false;
+    const load = vi.fn(async () => { if (!there) throw new Error('model file missing: embed/onnx/model_int8.onnx'); return fake(SAME); });
+    const d = createDecider({ load, retryMs: 30 });
+    expect((await d.relatedPair(pairA, pairB)).drop).toBe(false);
+    there = true;
+    expect((await d.relatedPair(pairA, pairB)).drop).toBe(false);
+    await new Promise((r) => setTimeout(r, 50));
+    expect((await d.relatedPair(pairA, pairB)).drop).toBe(true);
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it('loads the models once for many pairs, even when the load fails', async () => {
+    const load = vi.fn(async () => { throw new Error('no runtime'); });
+    const d = createDecider({ load });
+    await Promise.all([d.relatedPair(pairA, pairB), d.relatedPair(pairB, pairA)]);
+    await d.relatedPair(pairA, pairB);
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes a pair on when the models run past the time limit', async () => {
+    const d = createDecider({ load: async () => ({ embed: () => new Promise(() => {}), nli: () => new Promise(() => {}) }), timeoutMs: 20 });
+    const r = await d.relatedPair(pairA, pairB);
+    expect(r).toMatchObject({ drop: false, tier: 't0', reason: 't1 failed' });
+    expect(tier(d, 't1').failures).toBe(1);
+  });
+
+  it('turns T1 off after repeated errors, frees the models and stops calling them', async () => {
+    const m = { embed: vi.fn(async () => { throw new Error('bad tensor'); }), nli: vi.fn(async () => { throw new Error('bad tensor'); }), release: vi.fn(async () => {}) };
+    const d = createDecider({ load: async () => m });
+    for (let i = 0; i < MAX_FAILURES + 2; i++) expect((await d.relatedPair(pairA, pairB)).drop).toBe(false);
+    expect(tier(d, 't1')).toMatchObject({ state: 'off', failures: MAX_FAILURES });
+    expect(m.embed).toHaveBeenCalledTimes(MAX_FAILURES);
+    // the sessions leave memory when T1 turns off
+    await new Promise((r) => setImmediate(r));
+    expect(m.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads a note when the rules cannot judge it', () => {
+    const d = createDecider({ load: async () => fake() });
+    expect(d.worthReading(null)).toMatchObject({ read: false, tier: 't0' });
+    expect(d.worthReading({ rel: 'x.md', get text() { throw new Error('gone'); } })).toEqual({ read: true, reason: null, tier: 'none' });
+  });
+});
+
+describe('fetch-models', () => {
+  it('fails before any download when a file has no SHA-256 pinned', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'decider-'));
+    const manifest = path.join(dir, 'models.json');
+    writeFileSync(manifest, JSON.stringify({ embed: { repo: 'example/none', revision: 'abc', files: { 'tokenizer.json': { sha256: '', size: 1 } } } }));
+    const r = spawnSync(process.execPath, [path.join(import.meta.dirname, '../scripts/fetch-models.mjs'), '--manifest', manifest, '--dir', path.join(dir, 'models')], { encoding: 'utf8', timeout: 30000 });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain('no SHA-256 pinned for embed/tokenizer.json');
+  });
+});
+
+describe('the decider in a folder whose path has a space', () => {
+  it('loads its manifest and names the models folder as a real path', async () => {
+    const root = path.join(mkdtempSync(path.join(os.tmpdir(), 'decider-')), 'Quorum App');
+    mkdirSync(root, { recursive: true });
+    const app = path.join(import.meta.dirname, '..');
+    cpSync(path.join(app, 'decide'), path.join(root, 'decide'), { recursive: true });
+    for (const f of ['contradictionPairs.js', 'contradictionIndex.js']) cpSync(path.join(app, f), path.join(root, f));
+    const m = await import(pathToFileURL(path.join(root, 'decide/models.js')).href);
+    expect(m.MODELS_DIR).toBe(path.join(root, 'models'));
+    expect(m.missingFile()).toBe('embed/onnx/model_int8.onnx');
+  });
+});
+
+describe('decider decisions', () => {
+  it('marks an equivalent pair and drops it, and answers no label', async () => {
+    const same = await createDecider({ load: async () => fake(SAME) }).relatedPair(pairA, pairB);
+    expect(same).toMatchObject({ drop: true, equivalent: true, tier: 't1' });
+    expect(same).not.toHaveProperty('label');
+  });
+
+  it('keeps unrelated pairs, contradictions, refinements and entailment the similarity does not back', async () => {
+    const keep = async (o, nli) => { const m = fake(o); if (nli) m.nli = async () => nli; return createDecider({ load: async () => m }).relatedPair(pairA, pairB); };
+    // low contradiction and low similarity: refinements score like this too, so it is never dropped
+    expect(await keep({ cos: 0.5 })).toMatchObject({ drop: false, tier: 't1' });
+    expect((await keep({ cos: 0.97, nli: { contradiction: 0.4, entailment: 0.5, neutral: 0.1 } })).drop).toBe(false);
+    // one direction entails, the other is neutral: a refinement Quorum shows
+    expect((await keep({ cos: 0.97 }, [{ contradiction: 0.001, entailment: 0.99, neutral: 0.009 }, { contradiction: 0.001, entailment: 0.01, neutral: 0.989 }])).drop).toBe(false);
+    // entailment both ways that the embedding model does not agree with
+    expect((await keep({ ...SAME, cos: 0.6 })).drop).toBe(false);
+  });
+
+  it('lets T0 keep a changed figure or a flipped polarity without asking the models', async () => {
+    const m = fake({ cos: 0.1 });
+    const d = createDecider({ load: async () => m });
+    expect(await d.relatedPair(c('Launch is March 3.', 'March 3'), c('Launch is April 10.', 'April 10'))).toMatchObject({ drop: false, tier: 't0', reason: 'figures differ' });
+    expect(await d.relatedPair(c('Free plan has folders.', 'folders'), c('Free plan has no folders.', 'folders', 'negative'))).toMatchObject({ drop: false, tier: 't0', reason: 'polarity' });
+    expect(m.embed).not.toHaveBeenCalled();
+    expect(pairRule(c('', 'Postgres'), c('', 'postgres.'))).toMatchObject({ equivalent: true });
+  });
+
+  it('keeps a pair whose quotes differ in a figure or a negation even when the values match', async () => {
+    const m = fake(SAME);
+    const d = createDecider({ load: async () => m });
+    expect(await d.relatedPair(c('Atlas runs Postgres 15.', 'Postgres'), c('Atlas runs Postgres 16.', 'Postgres'))).toMatchObject({ drop: false, tier: 't0', reason: 'figures differ' });
+    expect(await d.relatedPair(c('The free plan includes team folders.', 'team folders'), c('The free plan does not include team folders.', 'team folders'))).toMatchObject({ drop: false, tier: 't0', reason: 'negation' });
+    expect(await d.relatedPair(c('Exports never include comments.', 'comments'), c('Exports include comments.', 'comments'))).toMatchObject({ drop: false, tier: 't0', reason: 'negation' });
+    expect(m.embed).not.toHaveBeenCalled();
+  });
+
+  it('keeps spelled-out numbers that differ, and a past use against a present one', () => {
+    expect(pairRule(c('The flow has three screens.', 'three screens'), c('The flow has five screens.', 'five screens'))).toMatchObject({ keep: true, reason: 'figures differ' });
+    expect(pairRule(c('Billing runs twice a month.', 'twice a month'), c('Billing runs once a month.', 'once a month'))).toMatchObject({ keep: true });
+    expect(pairRule(c('Atlas used Redis for caching.', 'Redis'), c('Atlas uses Redis for caching.', 'Redis'))).toMatchObject({ keep: true, equivalent: false, reason: 'tense' });
+    expect(pairRule(c('Orion previously shipped weekly.', 'weekly'), c('Orion ships weekly.', 'weekly'))).toMatchObject({ keep: true, equivalent: false });
+    expect(pairRule(c('Atlas uses Redis.', 'Redis'), c('Redis is what Atlas uses.', 'Redis'))).toMatchObject({ keep: false, equivalent: true });
+  });
+
+  it('embeds each text once', async () => {
+    const m = fake({ cos: 0.9 });
+    const d = createDecider({ load: async () => m });
+    await d.relatedPair(pairA, pairB);
+    await d.relatedPair(pairB, pairA);
+    expect(m.embed.mock.calls.flatMap((x) => x[0])).toHaveLength(2);
+  });
+
+  it('reads every note with a figure, a date or a decision, however short, templated or full of links', () => {
+    for (const text of ['Decided: launch Orion on April 10.', 'Ship it Friday.', 'Budget 4000', 'We agreed.', '# {{title}}\n\nDecided: Atlas moves to Postgres.\n\n{{attendees}}', '- [[Atlas]]\n- [[Orion]]\n- Due 2026-12-01']) {
+      expect(noteRule({ rel: 'x.md', text }).read, text).toBe(true);
+    }
+  });
+
+  it('reads a note whose only content is its properties', () => {
+    expect(noteRule({ rel: 'x.md', text: '---\ndecision: Atlas uses Postgres\nstatus: accepted\n---\n' }).read).toBe(true);
+    expect(noteRule({ rel: 'x.md', text: '---\nowner: data team\n---' }).read).toBe(true);
+    // tags and aliases name the note; they hold no claim
+    expect(noteRule({ rel: 'x.md', text: '---\ntags: [inbox]\naliases: []\n---\n' }).read).toBe(false);
+  });
+
+  it('reads whole month and weekday names, quarters and slashed dates as figures, and no word prefix', () => {
+    expect([...figures('Marcus')]).toEqual([]);
+    expect([...figures('maybe decided marketing, the mayor and a junior engineer, Sunil and Octavia')]).toEqual([]);
+    expect(figures('March 3')).toEqual(new Set(['mar 3']));
+    expect(figures('Sept. 4')).toEqual(new Set(['sep 4']));
+    expect(figures('every Tuesday')).toEqual(new Set(['tue']));
+    expect(figures('in Q3')).toEqual(new Set(['q3']));
+    expect(figures('on 3/14')).toEqual(new Set(['3/14']));
+    expect(figures('may')).toEqual(new Set(['may']));
+  });
+
+  it('answers the fixture notes', () => {
+    for (const n of NOTES) expect(noteRule(n).read, n.rel).toBe(n.truth);
+  });
+
+  it('unloads the models after an idle period and loads them again for the next pair', async () => {
+    const made = [];
+    const load = vi.fn(async () => { const m = { ...fake(SAME), release: vi.fn(async () => {}) }; made.push(m); return m; });
+    const d = createDecider({ load, idleMs: 40 });
+    expect((await d.relatedPair(pairA, pairB)).drop).toBe(true);
+    expect(tier(d, 't1').state).toBe('ready');
+    await new Promise((r) => setTimeout(r, 120));
+    expect(made[0].release).toHaveBeenCalledTimes(1);
+    expect(tier(d, 't1')).toMatchObject({ state: 'idle', unloads: 1 });
+    expect((await d.relatedPair(pairA, pairB)).drop).toBe(true);
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports both tiers', async () => {
+    const d = createDecider({ load: async () => fake(SAME) });
+    expect(d.tiers().map((t) => [t.id, t.state])).toEqual([['t0', 'ready'], ['t1', 'idle']]);
+    await d.warm();
+    expect(tier(d, 't1')).toMatchObject({ state: 'ready', calls: 0, drops: 0, failures: 0 });
+    await d.relatedPair(pairA, pairB);
+    expect(tier(d, 't1')).toMatchObject({ calls: 1, drops: 1 });
+  });
+});
+
+describe('the 5% audit of dropped pairs', () => {
+  it('samples about 5% of keys, the same keys every time', () => {
+    const keys = Array.from({ length: 20000 }, (_, i) => `pair-${i}`);
+    const picked = keys.filter((k) => audited(k));
+    expect(picked.length / keys.length).toBeGreaterThan(AUDIT_RATE - 0.01);
+    expect(picked.length / keys.length).toBeLessThan(AUDIT_RATE + 0.01);
+    expect(keys.filter((k) => audited(k))).toEqual(picked);
+  });
+
+  it('sends a sampled drop to Claude and logs its verdict, and holds back the rest', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'decider-'));
+    const file = path.join(dir, 'decider-audit.jsonl');
+    const gate = createPairGate({ decider: createDecider({ load: async () => fake(SAME) }), file, now: () => 1000 });
+    const inKey = Array.from({ length: 500 }, (_, i) => `k${i}`).find((k) => audited(k));
+    const outKey = Array.from({ length: 500 }, (_, i) => `k${i}`).find((k) => !audited(k));
+    expect(await gate.check({ key: outKey, a: pairA, b: pairB })).toMatchObject({ send: false, audit: false, drop: true });
+    expect(await gate.check({ key: inKey, a: pairA, b: pairB })).toMatchObject({ send: true, audit: true, drop: true });
+    expect(gate.record(outKey, 'contradiction')).toBe(false);
+    expect(gate.record(inKey, 'contradiction')).toBe(true);
+    expect(gate.record(inKey, 'contradiction')).toBe(false);
+    const rows = readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    expect(rows).toEqual([{ at: 1000, key: inKey, tier: 't1', equivalent: true, score: 0.001, label: 'contradiction', miss: true }]);
+    expect(gate.stats()).toEqual({ audited: 1, misses: 1, missRate: 1 });
+  });
+
+  it('sends every kept pair, and every pair when the decider throws', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'decider-'));
+    const keepGate = createPairGate({ decider: createDecider({ load: async () => fake({ cos: 0.5 }) }), file: path.join(dir, 'a.jsonl') });
+    expect(await keepGate.check({ key: 'k', a: pairA, b: pairB })).toMatchObject({ send: true, audit: false, drop: false });
+    const broken = createPairGate({ decider: { relatedPair: async () => { throw new Error('boom'); } }, file: path.join(dir, 'b.jsonl') });
+    expect(await broken.check({ key: 'k', a: pairA, b: pairB })).toMatchObject({ send: true, drop: false, tier: 'none' });
+    expect(broken.stats()).toEqual({ audited: 0, misses: 0, missRate: null });
+  });
+});
+
+describe('main stays responsive while the decider runs in another process', () => {
+  it('keeps main event loop delay low while a child scores pairs', () => {
+    const r = JSON.parse(execFileSync(process.execPath, ['--expose-gc', path.join(import.meta.dirname, '../scripts/decider-bench.mjs'), '--fake', '--rounds', '1'], { encoding: 'utf8', timeout: 60000 }));
+    expect(r.pairs).toBeGreaterThan(30);
+    expect(r.lagP95).toBeLessThan(100);
+    expect(r.heapEndMB - r.heapStartMB).toBeLessThan(10);
+  }, 70000);
+});
+
+describe.skipIf(missingFile() !== null)('the bundled models', () => {
+  it('never drops a fixture pair whose truth makes a finding, and drops some closable ones', async () => {
+    const models = await loadModels();
+    const d = createDecider({ load: async () => models });
+    const rows = [];
+    for (const p of PAIRS) rows.push({ truth: p.truth, ...(await d.relatedPair(p.a, p.b)) });
+    expect(rows.filter((r) => r.drop && FINDING.has(r.truth))).toEqual([]);
+    expect(rows.filter((r) => r.drop).length).toBeGreaterThan(5);
+    expect(rows.filter((r) => r.drop && r.truth !== 'same')).toEqual([]);
+  }, 60000);
+});

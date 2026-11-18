@@ -11,6 +11,8 @@ export const PROVIDERS = {
   zoom: { tokenUrl: 'https://zoom.us/oauth/token', meUrl: 'https://api.zoom.us/v2/users/me', events: ['recording.completed', 'recording.transcript_completed'] },
 };
 export const LOOPBACK_PORT = 47832;
+// the only loopback ports a callback may send the browser to: the one the app listens on for every sign-in
+export const LOOPBACK_PORTS = [LOOPBACK_PORT];
 const MAX_BODY = 512 * 1024;
 
 const json = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); };
@@ -19,6 +21,8 @@ const fail = (res, err, log, what) => {
   log(`${what}_failed`, { status, message: err.message });
   json(res, status, { error: err instanceof RelayError ? err.message : 'Connections are unavailable right now.', code: err.code ?? 'server' });
 };
+// an RFC 7636 code verifier: 43 to 128 unreserved characters
+export const isVerifier = (v) => typeof v === 'string' && /^[A-Za-z0-9._~-]{43,128}$/.test(v);
 const providerOf = (pathname) => pathname.split('/')[3] ?? '';
 const requireProvider = (name) => { if (!PROVIDERS[name]) throw new RelayError('bad_request', 'Unknown platform.', 404); return PROVIDERS[name]; };
 const requireCredentials = (config, name) => {
@@ -27,11 +31,12 @@ const requireCredentials = (config, name) => {
   return c;
 };
 
-// the app's loopback listener; the state the app made ends in .p<port> when it listens somewhere other than the default
+// the app's loopback listener; the state the app made may end in .p<port>, which counts only for a port in
+// LOOPBACK_PORTS, so a crafted state cannot send a code to another local listener
 export function loopbackFor(state) {
   const m = /\.p(\d{4,5})$/.exec(String(state ?? ''));
   const port = m ? Number(m[1]) : LOOPBACK_PORT;
-  return port >= 1024 && port <= 65535 ? port : LOOPBACK_PORT;
+  return LOOPBACK_PORTS.includes(port) ? port : LOOPBACK_PORT;
 }
 
 // GET /v1/connect/<provider>/callback: the platform lands here with code and state (or an error) and the browser is
@@ -86,6 +91,7 @@ export async function handleToken(req, res, deps) {
       ? { grant_type: 'refresh_token', refresh_token: String(body.refreshToken ?? '') }
       : { grant_type: 'authorization_code', code: String(body.code ?? ''), redirect_uri: String(body.redirectUri ?? ''), code_verifier: String(body.codeVerifier ?? '') });
     if (body.grant === 'refresh' ? !body.refreshToken : !(body.code && body.codeVerifier && body.redirectUri)) throw new RelayError('bad_request', 'The sign-in details are incomplete.', 400);
+    if (body.grant !== 'refresh' && !isVerifier(body.codeVerifier)) throw new RelayError('bad_request', 'The sign-in verifier is not valid.', 400);
     const r = await fetchImpl(p.tokenUrl, {
       method: 'POST',
       headers: { authorization: `Basic ${Buffer.from(`${creds.clientId}:${creds.clientSecret}`).toString('base64')}`, 'content-type': 'application/x-www-form-urlencoded' },

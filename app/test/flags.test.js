@@ -36,8 +36,8 @@ describe('precedence', () => {
   });
 
   it('starts from the built-in defaults: capture and live assist off, manual listening and screen context on', () => {
-    expect(DEFAULTS).toEqual({ 'meeting-capture': false, 'live-assist': false, 'manual-listen': true, 'screen-context': true, dictation: false });
-    expect(REQUIRES).toEqual({ 'screen-context': 'manual-listen', 'meeting-capture': 'manual-listen', 'live-assist': 'manual-listen', dictation: 'manual-listen' });
+    expect(DEFAULTS).toEqual({ 'meeting-capture': false, 'live-assist': false, 'manual-listen': true, 'screen-context': true, dictation: false, guardrails: true, 'guardrails-custom': false, 'personal-api': false });
+    expect(REQUIRES).toEqual({ 'screen-context': 'manual-listen', 'meeting-capture': 'manual-listen', 'live-assist': 'manual-listen', dictation: 'manual-listen', 'guardrails-custom': 'guardrails' });
     const { flags } = make();
     expect(flags.get('manual-listen')).toBe(true);
     expect(flags.get('meeting-capture')).toBe(false);
@@ -50,6 +50,12 @@ describe('a flag that needs another', () => {
     const r = resolveFlags({ env: { QUORUM_FLAGS: 'manual-listen=0' } });
     expect(r['screen-context']).toEqual({ enabled: false, source: 'defaults', own: true, blockedBy: 'manual-listen', requires: 'manual-listen' });
     expect(resolveFlags({})['screen-context']).toEqual({ enabled: true, source: 'defaults', requires: 'manual-listen' });
+  });
+
+  it('keeps custom guardrails off while the Guardrails page is off, even when switched on', () => {
+    expect(resolveFlags({ env: { QUORUM_FLAGS: 'guardrails=0,guardrails-custom=1' } })['guardrails-custom']).toMatchObject({ enabled: false, blockedBy: 'guardrails' });
+    expect(resolveFlags({ env: { QUORUM_FLAGS: 'guardrails-custom=1' } })['guardrails-custom']).toMatchObject({ enabled: true, requires: 'guardrails' });
+    expect(resolveFlags({}).guardrails).toEqual({ enabled: true, source: 'defaults' });
   });
 
   it('follows a chain, treats a missing parent as off, and stops on a loop', () => {

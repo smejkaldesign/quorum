@@ -7,18 +7,23 @@ import { relayFetch, unreachable } from './relayUrl.js';
 
 export const REFRESH_EVERY = 60 * 60 * 1000;
 
-// every flag the app reads, with the value it holds before the relay answers. Keys match the seed rows in 0021.
+// every flag the app reads, with the value it holds before the relay answers. Keys match the seed rows in 0021 and the
+// migrations after it that add flags.
 export const DEFAULTS = Object.freeze({
   'meeting-capture': false,
   'live-assist': false,
   'manual-listen': true,
   'screen-context': true,
   dictation: false,
+  guardrails: true,
+  'guardrails-custom': false,
+  'personal-api': false,
 });
 // the parent each flag needs, as 0021 seeds it; the relay's answer adds or replaces entries. A flag whose parent is
 // off reads as off, whatever its own switch says
-// (0021, 0022 and 0023). Every notetaker surface needs manual listening, so turning listening off turns them all off
-export const REQUIRES = Object.freeze({ 'screen-context': 'manual-listen', 'meeting-capture': 'manual-listen', 'live-assist': 'manual-listen', dictation: 'manual-listen' });
+// (0021, 0022, 0023 and 0040). Every notetaker surface needs manual listening, so turning listening off turns them all
+// off. Custom guardrails live on the Guardrails page, so they need it shown
+export const REQUIRES = Object.freeze({ 'screen-context': 'manual-listen', 'meeting-capture': 'manual-listen', 'live-assist': 'manual-listen', dictation: 'manual-listen', 'guardrails-custom': 'guardrails' });
 
 // QUORUM_FLAGS="meeting-capture=1,live-assist=0": one assignment per flag; 1, true, on and yes turn it on, 0, false,
 // off and no turn it off; anything else is ignored. A bare key means on.

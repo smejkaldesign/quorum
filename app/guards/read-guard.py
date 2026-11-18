@@ -2,7 +2,8 @@
 """Quorum's built-in read guard: a Claude Code PreToolUse hook for Read, Grep and Glob.
 
 Denies reads of secret-looking files, of folders the user marked private, and of notes whose
-frontmatter carries a `confidential:` key. Ships with the app, so every Agent OS gets it even
+frontmatter carries a `confidential:` key. A Grep that returns matching lines searches one file at a
+time. Ships with the app, so every Agent OS gets it even
 when the connected repo has no guard hooks of its own.
 
 usage: read-guard.py --root <agent os root> [--deny <relative dir>]... [--frontmatter-key <key>]...
@@ -28,11 +29,13 @@ ALWAYS_DENY_DIRS = (".git", "node_modules")
 DENIED_LOG = None
 
 
-def deny(reason, tool="", target=""):
+# kind and match name the rule that refused (a folder, the secret pattern, a frontmatter key), so the app can show which
+# guardrail it was without parsing the reason
+def deny(reason, tool="", target="", kind="", match=""):
     if DENIED_LOG:
         try:
             with open(DENIED_LOG, "a", encoding="utf-8") as f:
-                f.write(json.dumps({"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "tool": tool, "path": target, "reason": reason}) + "\n")
+                f.write(json.dumps({"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "tool": tool, "path": target, "reason": reason, "kind": kind, "match": match, "surface": "agent"}) + "\n")
         except OSError:
             pass
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}))
@@ -87,7 +90,8 @@ def in_dir(rel, d):
 
 
 def frontmatter_key(abs_path, keys):
-    """The first of `keys` present in the note's frontmatter, or None."""
+    """The first of `keys` that marks the note in its frontmatter, or None. A key set to false, no, off, none, public or 0
+    does not mark it, so `confidential: false` keeps a note readable; any other value, an empty one included, does."""
     try:
         with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
             head = f.read(2048)
@@ -98,7 +102,8 @@ def frontmatter_key(abs_path, keys):
     end = head.find("\n---", 3)
     block = head[3:end if end > 0 else len(head)]
     for k in keys:
-        if re.search(r"^\s*" + re.escape(k) + r"\s*:", block, re.M | re.I):
+        m = re.search(r"^\s*" + re.escape(k) + r"\s*:(.*)$", block, re.M | re.I)
+        if m and not re.fullmatch(r"\s*[\"']?(false|no|off|none|public|0)[\"']?\s*", m.group(1), re.I):
             return k
     return None
 
@@ -122,21 +127,31 @@ def main():
         rel = "."
     for d in ALWAYS_DENY_DIRS + tuple(deny_dirs):
         if in_dir(rel, d):
-            deny(f"Quorum read guard: {d}/ is private to this Agent OS.", tool, rel)
+            deny(f"Quorum read guard: {d}/ is private to this Agent OS.", tool, rel, "path", d)
     if secret_re is not None and secret_re.search(rel):
-        deny("Quorum read guard: that file looks like a secret or credential.", tool, rel)
+        deny("Quorum read guard: that file looks like a secret or credential.", tool, rel, "secret")
     if tool == "Read":
         abs_path = target if os.path.isabs(target) else os.path.join(root, target)
         hit = frontmatter_key(abs_path, keys)
         if hit:
-            deny(f"Quorum read guard: this note is marked {hit} in its frontmatter.", tool, rel)
+            deny(f"Quorum read guard: this note is marked {hit} in its frontmatter.", tool, rel, "frontmatter", hit)
         log_read(log, abs_path)
+    # a Grep that returns matching lines reads them, so it reads one note at a time and that note passes the Read checks.
+    # Over a folder it would quote lines from private folders, credential files and confidential notes inside it;
+    # listing the files that match is still allowed, and each one is then read through Read
+    if tool == "Grep" and str(inp.get("output_mode") or "files_with_matches") == "content":
+        abs_path = os.path.realpath(target if os.path.isabs(target) else os.path.join(root, target or "."))
+        if not os.path.isfile(abs_path):
+            deny("Quorum read guard: matching lines come from one note at a time. Search with output_mode files_with_matches, then Read the notes it lists.", tool, rel, "scope", "content")
+        hit = frontmatter_key(abs_path, keys)
+        if hit:
+            deny(f"Quorum read guard: this note is marked {hit} in its frontmatter.", tool, rel, "frontmatter", hit)
     # a Grep or Glob rooted above a private folder would still match files inside it, so the pattern must not name one
     if tool in ("Grep", "Glob"):
         pat = str(inp.get("pattern") or "") + " " + str(inp.get("glob") or "")
         for d in deny_dirs:
             if d.lower() in pat.lower():
-                deny(f"Quorum read guard: {d}/ is private to this Agent OS.", tool, rel)
+                deny(f"Quorum read guard: {d}/ is private to this Agent OS.", tool, rel, "path", d)
     sys.exit(0)
 
 

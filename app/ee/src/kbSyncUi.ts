@@ -10,7 +10,7 @@ export const providerName = (p: string): string => (p === 'github' ? 'GitHub' : 
 
 // one status per row, as the connector rows have: what the worker last reported, in words
 export function syncStatus(a: Pick<KbSyncAttachment, 'status' | 'connected' | 'last_synced_at' | 'paused_by'>): { label: string; tone: SyncTone } {
-  if (a.status === 'paused') return { label: a.paused_by === 'plan' ? 'Paused, plan ended' : 'Paused', tone: 'paused' };
+  if (a.status === 'paused') return { label: a.paused_by === 'plan' ? 'Paused, plan ended' : a.paused_by === 'policy' ? 'Paused by your workspace' : 'Paused', tone: 'paused' };
   if (a.status === 'needs_auth' || !a.connected) return { label: 'Needs attention', tone: 'warn' };
   if (a.status === 'error') return { label: 'Needs attention', tone: 'warn' };
   if (a.status === 'pending') return { label: a.last_synced_at ? 'Sync queued' : 'Waiting for the first sync', tone: 'busy' };
@@ -49,10 +49,11 @@ export function remoteLine(a: Pick<KbSyncAttachment, 'provider' | 'remote_kind' 
 export const noteCount = (n: number): string => (n === 1 ? '1 note' : `${n} notes`);
 
 // which actions a row offers: Sync now while it runs or failed, Resume while an admin paused it, Pause otherwise;
-// Remove always. A pause because the workspace's plan ended lifts itself when the plan is active again
+// Remove always. A pause because the workspace's plan ended lifts itself when the plan is active again, and so does a
+// pause because the workspace stopped allowing it in a personal KB (0041) when the workspace allows it again
 export function syncActions(a: Pick<KbSyncAttachment, 'status' | 'connected' | 'paused_by'>): { syncNow: boolean; pause: boolean; resume: boolean } {
   const paused = a.status === 'paused';
-  return { syncNow: !paused && a.connected && a.status !== 'needs_auth', pause: !paused, resume: paused && a.paused_by !== 'plan' };
+  return { syncNow: !paused && a.connected && a.status !== 'needs_auth', pause: !paused, resume: paused && a.paused_by !== 'plan' && a.paused_by !== 'policy' };
 }
 
 // a GitHub address the relay can sync, read by the parser the main process uses (ee/githubUrl.js)

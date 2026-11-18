@@ -1,6 +1,12 @@
 // how the quorum command reaches the running app: a Unix socket in Quorum's own folder that only this user can open, no network port
 import net from 'node:net';
-import { chmodSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, rmSync } from 'node:fs';
+
+// the data folder holds auth.json, settings, sessions and the control socket, so it stays 0700 for this user only
+export function privateDir(dir) {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  chmodSync(dir, 0o700);
+}
 
 export function startControl(sockPath, handle, log) {
   rmSync(sockPath, { force: true });
@@ -25,6 +31,8 @@ export function startControl(sockPath, handle, log) {
     conn.on('error', () => {});
   });
   server.on('error', (e) => log('control socket', e.message));
-  server.listen(sockPath, () => chmodSync(sockPath, 0o600));
+  // the umask keeps group and others out of the socket from the moment it exists; listen creates it synchronously
+  const umask = process.umask(0o077);
+  try { server.listen(sockPath, () => chmodSync(sockPath, 0o600)); } finally { process.umask(umask); }
   return () => { server.close(); rmSync(sockPath, { force: true }); };
 }

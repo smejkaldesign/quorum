@@ -3,7 +3,8 @@ import { BackButton } from './BackButton';
 import { Component, Suspense, lazy, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { NoteLinkTarget, AccountState, Brain, HelperEvent, MeetingMeta, Notes, NotesDraft, Settings, Source, SpeakersEvent, SummaryEvent, UpdateState, WhoAsk } from './quorum';
 import { Markdown } from './Markdown';
-import { useSession } from './session';
+import { readSession, useSession } from './session';
+import { requestHomePage, shownHomePage, shownMemoryNote, useNavHistory, type Place } from './navHistory';
 import { BetaGate } from './BetaGate';
 // the views a session may never open load on first use, so the window paints from a smaller bundle and the popup
 // window never parses them at all
@@ -26,12 +27,14 @@ import { useExclusiveMenu } from './menuBus';
 import type { KbCommand } from './KnowledgeView';
 import { Composer } from './Composer';
 import { requestKbOpen, type KbOpenTarget } from './kbOpen';
-import type { ConnectorsTarget, OpenSettingsDetail, SettingsPageId } from './connectorsNav';
+import { openConnectorLink, type ConnectorsTarget, type OpenSettingsDetail, type SettingsPageId } from './connectorsNav';
 import { IconPen, PrivateNotes, usePrivateNotes } from './PrivateNotes';
 import { Avatar, SpeakerName, similarCounts, type SpeakerInfo } from './Speaker';
 import { useNotetaker } from './flags';
 import { type RecordChoice } from './noteRecord';
 import { RecLevel } from './RecLevel';
+import { NotificationBell, NotificationsView } from './NotificationsView';
+import { Toaster } from './Toasts';
 import { IconFolderOpen, IconPerson, IconClose, IconHome, IconGraph, IconBrain, IconSearch, IconFolder, IconDoc, IconChat, IconChevron, IconDownload, IconNotes, IconStop, IconPause, IconPlay, IconRecord, Wave } from './icons';
 
 // one speaker turn as main.js built it; a turn that grows arrives again with the same id and replace: true
@@ -176,6 +179,10 @@ const SUGGESTIONS = ['Summarize so far', 'What did I commit to?', 'Any open ques
 export function App() {
   // the notetaker flags (flags.ts): the main process refuses on its own; these keep the controls out of sight
   const nt = useNotetaker();
+  // navigation history (navHistory.ts): the entry points below record the place they leave, and Back on the opened page returns there
+  const nav = useNavHistory(() => herePlace(), (p) => restorePlace(p));
+  // set when App closes the note view itself (a call, a tab, another note); only the note's own Back reads the history
+  const appLeave = useRef(false);
   const [phase, setPhase] = useState<Phase>('idle');
   // New note: the note view on a fresh Untitled note (file null) or an existing one, optionally recording from the start.
   // Opened from the header's Record, the Home card, the tray, and a `quorum:new-note` window event ({ file? } detail)
@@ -187,10 +194,11 @@ export function App() {
   // a new note opens the recording page, not recording yet; an existing note's file still opens the note view
   const [draftOpen, setDraftOpen] = useState(false);
   const [draftTitle, setDraftTitle] = useState('');
-  const openNoteView = (file: string | null = null, record: RecordChoice | null = null) => {
+  const openNoteView = (file: string | null = null, record: RecordChoice | null = null, mark = true) => {
     if (phaseRef.current !== 'idle') return;
+    if (mark) nav.mark();
     if (!file && !record) { setNote(null); setView('main'); setDraftOpen(true); return; }
-    setNote((n) => (n ? (n.leave ? n : { ...n, leave: Date.now(), next: { file, record } }) : { file, fresh: !file, record, n: Date.now(), leave: 0 }));
+    setNote((n) => { if (!n) return { file, fresh: !file, record, n: Date.now(), leave: 0 }; if (n.leave) return n; appLeave.current = true; return { ...n, leave: Date.now(), next: { file, record } }; });
   };
   useEffect(() => {
     const onEvent = (e: Event) => { const f = (e as CustomEvent<{ file?: string } | undefined>).detail?.file; openNoteView(typeof f === 'string' ? f : null); };
@@ -199,6 +207,7 @@ export function App() {
     const onRecordInto = (e: Event) => {
       const d = (e as CustomEvent<{ title?: string; notes?: string; started?: () => void }>).detail ?? {};
       if (phaseRef.current !== 'idle') return;
+      nav.mark();
       d.started?.();
       setDraftTitle(d.title ?? '');
       if (d.notes?.trim()) myNotesRef.current.change(d.notes);
@@ -237,7 +246,7 @@ export function App() {
   const [convoOpen, setConvoOpen] = useState(false);
   // a meeting page opens on Home, from Up next on any tab
   useEffect(() => {
-    const go = () => { setView('main'); setTab('home'); setConvoOpen(false); };
+    const go = () => { nav.mark(); setView('main'); setTab('home'); setConvoOpen(false); };
     window.addEventListener(OPEN_EVENT, go);
     return () => window.removeEventListener(OPEN_EVENT, go);
   }, []);
@@ -249,11 +258,12 @@ export function App() {
   const convoRef = useRef(false);
   convoRef.current = convoOpen;
   const phaseRef = useRef<Phase>('idle');
-  const [view, setView] = useSession<'main' | 'settings'>('view', 'main');
+  const [view, setView] = useSession<'main' | 'settings' | 'notifications'>('view', 'main');
   const [kbCommand, setKbCommand] = useState<KbCommand>(null);
   // a cited note opens in Quorum's Memory view
   const openInQuorum = (abs: string) => {
     if (!brain || !abs.startsWith(`${brain.vault}/`)) { window.quorum.openNote(abs); return; }
+    nav.mark();
     setView('main');
     setTab('memory');
     setKbCommand({ kind: 'open', rel: abs.slice(brain.vault.length + 1), n: Date.now() });
@@ -264,6 +274,12 @@ export function App() {
     window.quorum.noteLinksReady?.().catch(() => {});
     return () => off?.();
   }, []);
+  // connector links from the OS (Back to Quorum after a sign-in) open that connector's page the same way
+  useEffect(() => {
+    const off = window.quorum.onConnectorLink?.((t) => openConnectorLink(t.id));
+    window.quorum.connectorLinksReady?.().catch(() => {});
+    return () => off?.();
+  }, []);
   // a note page's folder button opens that note in the Memory tab
   useEffect(() => {
     const open = (e: Event) => openInQuorum(String((e as CustomEvent).detail ?? ''));
@@ -271,22 +287,27 @@ export function App() {
     const graph = (e: Event) => {
       const abs = String((e as CustomEvent).detail ?? '');
       if (!brain || !abs.startsWith(`${brain.vault}/`)) return;
+      nav.mark();
       setView('main'); setTab('memory');
       setKbCommand({ kind: 'graph', rel: abs.slice(brain.vault.length + 1), n: Date.now() });
     };
     window.addEventListener('quorum:open-memory', open);
     window.addEventListener('quorum:open-graph', graph);
     // quorum://note links, from the OS or from a link inside a note
-    const link = (e: Event) => { const t = (e as CustomEvent<NoteLinkTarget>).detail; setView('main'); setTab('memory'); setKbCommand(t.missing ? { kind: 'missing', id: t.id ?? '', n: Date.now() } : { kind: 'open', rel: t.rel!, anchor: t.anchor, n: Date.now() }); };
+    const link = (e: Event) => { const t = (e as CustomEvent<NoteLinkTarget>).detail; nav.mark(); setView('main'); setTab('memory'); setKbCommand(t.missing ? { kind: 'missing', id: t.id ?? '', n: Date.now() } : { kind: 'open', rel: t.rel!, anchor: t.anchor, n: Date.now() }); };
     window.addEventListener('quorum:note-link', link);
-    return () => { window.removeEventListener('quorum:open-memory', open); window.removeEventListener('quorum:open-graph', graph); window.removeEventListener('quorum:note-link', link); };
+    // View on a Memory health row in Notifications: the Memory tab, on the note with the issue marked
+    const health = (e: Event) => { nav.mark(); setView('main'); setTab('memory'); setKbCommand({ kind: 'health', key: String((e as CustomEvent).detail ?? ''), n: Date.now() }); };
+    window.addEventListener('quorum:open-health', health);
+    return () => { window.removeEventListener('quorum:open-memory', open); window.removeEventListener('quorum:open-graph', graph); window.removeEventListener('quorum:note-link', link); window.removeEventListener('quorum:open-health', health); };
   });
   // a cited knowledge base note opens in the Knowledge tab
   const openKbNote = useCallback((t: KbOpenTarget) => {
+    nav.mark();
     setView('main');
     setTab('knowledge');
     requestKbOpen(t);
-  }, [setView, setTab]);
+  }, [nav, setView, setTab]);
   useEffect(() => {
     const off = window.quorum.onKbOpen?.(openKbNote);
     window.quorum.kbOpenReady?.();
@@ -316,7 +337,7 @@ export function App() {
   const [gated, setGated] = useState<boolean | null>(null);
   useEffect(() => { Promise.resolve(window.quorum.betaStatus?.()).then((s) => setGated(s?.gate === true)).catch(() => setGated(false)); }, []);
   const [settingsPage, setSettingsPage] = useState<({ page: SettingsPageId; n: number } & ConnectorsTarget) | null>(null);
-  const openSettings = (page: SettingsPageId, target: ConnectorsTarget = {}) => { setSettingsPage({ page, ...target, n: Date.now() }); setView('settings'); };
+  const openSettings = (page: SettingsPageId, target: ConnectorsTarget = {}) => { nav.mark(); setSettingsPage({ page, ...target, n: Date.now() }); setView('settings'); };
   // the composer sits in three views, so its "Choose a model source" button asks for Settings through a window event
   useEffect(() => {
     const open = (e: Event) => { const d = (e as CustomEvent<OpenSettingsDetail>).detail; if (!d || typeof d === 'string') openSettings(d ?? 'preferences'); else openSettings(d.page, { connector: d.connector, library: d.library }); };
@@ -416,7 +437,7 @@ export function App() {
       window.quorum.onSummary(setSoFar),
       window.quorum.onState((s) => {
         // a call session taking over while a note is open: the note view saves and gives way to the call UI
-        if (s.phase !== 'idle' && !('intoNote' in s && s.intoNote)) setNote((n) => (n && !n.leave ? { ...n, leave: Date.now(), next: null } : n));
+        if (s.phase !== 'idle' && !('intoNote' in s && s.intoNote)) setNote((n) => { if (!n || n.leave) return n; appLeave.current = true; return { ...n, leave: Date.now(), next: null }; });
         // a recording into a note belongs to the note view: Home's chat, live lines and your notes are left alone
         if ('intoNote' in s && s.intoNote) return;
         if (s.phase === 'starting') { setPhase('starting'); setStartingChat(s.chatName ?? null); addLog(s.chatName ? `posting Quorum's notice in the ${s.chatName}…` : 'starting…'); return; }
@@ -554,6 +575,7 @@ export function App() {
   }
   async function startRecord(notes?: string) {
     if (count !== null || phaseRef.current !== 'idle') return;
+    nav.mark();
     setRecordError(null);
     await countdown();
     await beginRecording(notes);
@@ -562,7 +584,7 @@ export function App() {
     setAnnounce(true);
     const r = await window.quorum.recordSession().catch((err) => ({ error: String(err) }));
     if ('error' in r) { setAnnounce(false); setRecordError(r.error); setTimeout(() => setRecordError(null), 5000); return; }
-    setNote((n) => (n && !n.leave ? { ...n, leave: Date.now(), next: null } : n));
+    setNote((n) => { if (!n || n.leave) return n; appLeave.current = true; return { ...n, leave: Date.now(), next: null }; });
     // what was typed on the new note before Record carries into the recording
     const typed = notes ?? myNotesRef.current.text;
     if (typed.trim()) window.quorum.privateNotesSet(typed);
@@ -576,8 +598,31 @@ export function App() {
   const drafting = view === 'main' && draftOpen && phase === 'idle';
   // a new note stays on screen from Record through the countdown and the start, so nothing else shows in between
   const showLive = view === 'main' && phase !== 'blocked' && ((liveOpen && phase !== 'idle') || draftOpen);
-  const closeNote = () => setNote((n) => (n && !n.leave ? { ...n, leave: Date.now(), next: null } : n));
-  const go = (fn: () => void) => () => { setLiveOpen(false); setDraftOpen(false); closeNote(); fn(); };
+  const closeNote = () => setNote((n) => { if (!n || n.leave) return n; appLeave.current = true; return { ...n, leave: Date.now(), next: null }; });
+  // a header tab clears the history: Back on a page opened from there returns to that tab
+  const go = (fn: () => void) => () => { nav.clear(); setLiveOpen(false); setDraftOpen(false); closeNote(); fn(); };
+  // the place on screen, as the history records it
+  function herePlace(): Place {
+    if (view === 'notifications') return { kind: 'notifications' };
+    if (view === 'settings') return { kind: 'settings', page: readSession<string>('settingsPage') ?? settingsPage?.page ?? 'preferences' };
+    if (showLive) return { kind: 'live' };
+    if (note) return { kind: 'note', file: note.file };
+    if (tab === 'memory') return { kind: 'memory', rel: shownMemoryNote() };
+    if (tab === 'knowledge') return { kind: 'knowledge' };
+    if (tab === 'home') return convoOpen ? { kind: 'home', page: null, convo: true } : { kind: 'home', page: shownHomePage() };
+    return { kind: 'call', tab };
+  }
+  // Back puts that place on screen again without recording a new step
+  function restorePlace(p: Place) {
+    if (p.kind === 'notifications') { setView('notifications'); return; }
+    if (p.kind === 'settings') { setSettingsPage({ page: p.page as SettingsPageId, n: Date.now() }); setView('settings'); return; }
+    setView('main');
+    if (p.kind === 'live') return;
+    if (p.kind === 'note') { if (p.file && note?.file !== p.file) openNoteView(p.file, null, false); return; }
+    if (p.kind === 'home') { setTab('home'); setConvoOpen(!!p.convo); requestHomePage(p.page); return; }
+    if (p.kind === 'memory') { setTab('memory'); if (p.rel) setKbCommand({ kind: 'open', rel: p.rel, n: Date.now() }); return; }
+    setTab(p.kind === 'knowledge' ? 'knowledge' : (p.tab as Tab));
+  }
   const status = {
     idle: { label: count !== null ? String(count) : recordError ?? 'Record', icon: <IconRecord width={17} height={17} /> },
     starting: { label: announce ? 'Recording' : 'Starting…', icon: <RecLevel live={false} /> },
@@ -599,27 +644,39 @@ export function App() {
 
   // the recording's note and a hand note open under the header, so the tabs and Record stay in reach
   // Save on a new note that was never recorded: the typed text becomes a note in the Agent OS
-  async function saveDraft(title = '') {
+  // keep is Save anyway on a draft that looked empty: upkeep then leaves it off its junk list
+  async function saveDraft(title = '', keep = false) {
     const body = mine.text.trim();
     if (!body && !title) return;
     // without a typed title it saves untitled; closing it hands it to the naming pass, which writes a title and a summary
     const r = await window.quorum.handNoteSave({ id: `draft-${Date.now()}`, file: null, title, body, hash: null, fresh: true });
     if ('error' in r || 'conflict' in r) return;
+    if (keep) await window.quorum.noteKeep(r.file);
     window.quorum.handNoteDone(r.file);
     mine.reset();
     setDraftOpen(false);
   }
   const closeReview = () => { setDraftTitle(''); setPhase('idle'); resetMeeting(); setLiveOpen(false); setTab('home'); };
+  // Back on the recording page or a new note: close it the way it always did, then return to where it was opened from
+  const closeLive = phase === 'review' ? () => { closeReview(); nav.back(); }
+    : drafting ? () => { mine.reset(); setDraftTitle(''); setDraftOpen(false); nav.back(); }
+    : () => { setLiveOpen(false); nav.back(); };
   const liveArea = (
     <div className="body wide flush live-body">
       <LazyView name="your notes" onClose={phase === 'review' ? closeReview : () => setLiveOpen(false)}>
         <EndView key={draftTitle || 'note'} initialTitle={draftTitle} embedded ready={drafting} onSaveDraft={saveDraft} onContinue={nt.manualListen ? () => { recordAgain(); } : undefined} onRecord={nt.manualListen ? () => { startRecord(); } : undefined} recordBusy={phase !== 'idle' || count !== null} live={inCall(phase)} paused={phase === 'paused'} who={ask} onAnswer={(a) => { setAsk(null); window.quorum.sessionSummarize(a ?? {}); }} notes={notes} draft={notesDraft} meta={meta} summarizing={summarizing}
           transcript={lines.map((l) => ({ ...l, who: who(l) }))} partial={liveWords ? [partial.me, partial.them].filter(Boolean).join(' ') : ''} participants={participants} onSpeaker={setSpeaker} me={nt.meetingCapture ? me : undefined} asker={me}
-          privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={phase === 'review' ? closeReview : drafting ? () => { mine.reset(); setDraftTitle(''); setDraftOpen(false); } : () => setLiveOpen(false)} />
+          privateNotes={mine.text} onPrivateNotes={mine.change} flushPrivateNotes={mine.flush} onClose={closeLive} />
       </LazyView>
     </div>
   );
-  const closeHandNote = () => setNote((n) => (n?.next ? { file: n.next.file, fresh: !n.next.file, record: n.next.record, n: Date.now(), leave: 0 } : null));
+  // the note's own Back returns to the recorded place; a close App asked for (a call, a tab, the next note) only closes
+  const closeHandNote = () => {
+    const fromApp = appLeave.current;
+    appLeave.current = false;
+    setNote((n) => (n?.next ? { file: n.next.file, fresh: !n.next.file, record: n.next.record, n: Date.now(), leave: 0 } : null));
+    if (!fromApp) nav.back();
+  };
   const noteArea = note && (
     <div className="body wide flush live-body">
       <LazyView name="your note" onClose={closeHandNote}><NoteView key={note.n} embedded file={note.file} fresh={note.fresh} record={note.record} canRecord={nt.manualListen} screenOffered={screenOffered} leave={note.leave}
@@ -629,6 +686,7 @@ export function App() {
 
   return (
     <div className={`panel ${view === 'main' && tab === 'home' && convoOpen ? 'convo-wide' : ''}`}>
+      <Toaster />
       <header className="bar">
         <div className="brand static"><img src={mark} alt={window.quorum.isDev ? 'Quorum Dev' : 'Quorum'} /></div>
         <nav className="tabs" aria-label="Views">
@@ -664,7 +722,7 @@ export function App() {
                 With Screen on offer it opens the Record popover; otherwise it opens a new note that starts transcribing */}
             {(nt.manualListen || phase !== 'idle') && (
             <button className={`status listen ${phase === 'blocked' ? 'off-call' : phase === 'review' ? 'idle' : phase}${count !== null ? ' counting' : ''}${announce ? ' announce' : ''}${recordError ? ' rec-error' : ''}`}
-              onClick={phase === 'idle' ? () => { startRecord(); } : phase === 'review' ? () => { closeNote(); setView('main'); setLiveOpen(true); recordAgain(); } : phase === 'blocked' ? undefined : () => { closeNote(); setView('main'); setLiveOpen(true); }}
+              onClick={phase === 'idle' ? () => { startRecord(); } : phase === 'review' ? () => { nav.mark(); closeNote(); setView('main'); setLiveOpen(true); recordAgain(); } : phase === 'blocked' ? undefined : () => { nav.mark(); closeNote(); setView('main'); setLiveOpen(true); }}
               data-tip={phase === 'blocked' ? 'Someone on your never-listen list is in this call' : phase === 'review' ? 'Record more into this note' : phase !== 'idle' ? 'Open the recording' : undefined} aria-label={status.label}>
               <span className="listen-hint" aria-live="polite">{status.label}</span>{status.icon}
             </button>
@@ -676,6 +734,7 @@ export function App() {
             )}
             <span className="rec-sep" aria-hidden="true" />
           </div>
+          <NotificationBell active={view === 'notifications'} onOpen={() => { nav.clear(); setView('notifications'); }} />
           <AppMenu brain={brain} me={me} active={view === 'settings'} onMemory={() => openSettings('memory')} onSettings={() => openSettings('preferences')} next={closeRef} />
           <button ref={closeRef} className="icon-btn close-win" aria-label="Close window" onClick={() => window.quorum.hideWindow()}>
             <IconClose width={17} height={17} />
@@ -689,12 +748,16 @@ export function App() {
       {note && <div className="note-host" hidden={view !== 'main' || showLive}>{noteArea}</div>}
       {view === 'settings' ? (
         <div className="body wide flush">
-          <Suspense fallback={null}><SettingsView open={settingsPage} brain={brain} settings={settings} onSettings={setSettings} onConnect={async () => setBrain(await window.quorum.connectBrain())} onDisconnect={async () => setBrain(await window.quorum.disconnectBrain())} onBrain={setBrain} onBack={() => setView('main')} /></Suspense>
+          <Suspense fallback={null}><SettingsView open={settingsPage} brain={brain} settings={settings} onSettings={setSettings} onConnect={async () => setBrain(await window.quorum.connectBrain())} onDisconnect={async () => setBrain(await window.quorum.disconnectBrain())} onBrain={setBrain} onBack={() => { if (!nav.back()) setView('main'); }} /></Suspense>
+        </div>
+      ) : view === 'notifications' ? (
+        <div className="body wide">
+          <NotificationsView me={{ name: me?.name || 'You', photo: me?.photo ?? null }} onOpenNote={(abs) => { openNoteView(abs); setView('main'); }} onOpenGuardrails={() => openSettings('guardrails')} />
         </div>
       ) : showLive ? liveArea : note ? null : <>
       {tab === 'home' && !convoOpen && (
         <div className="body wide">
-          <HistoryView brain={brain} focusAsk={focusAsk} onAsk={(q, f) => { setConvoOpen(true); send(q, f); }} onOpenChat={openChat} onFiltered={setHistFiltered} />
+          <HistoryView brain={brain} focusAsk={focusAsk} onAsk={(q, f) => { setConvoOpen(true); send(q, f); }} onOpenChat={openChat} onFiltered={setHistFiltered} onMark={nav.mark} onBack={nav.back} />
         </div>
       )}
 
@@ -926,6 +989,6 @@ const TranscriptRow = memo(function TranscriptRow({ line, tail, name, meName, me
 // the wizard's account step is the same card as Settings › Workspace, so sign-in state is shared; the local edition
 // has no account and says so in the same slot
 function OnboardingShell({ brain, onBrain, onDone }: { brain: Brain | null; onBrain: (b: Brain | null) => void; onDone: () => void }) {
-  const slot = <AccountArea fallback={<p className="onb-muted">Sign in from Settings › Workspace once you are in.</p>} local={<p className="onb-muted">Local edition. Everything stays on this Mac.</p>} />;
+  const slot = <AccountArea fallback={<p className="onb-muted">Sign in from Settings › Workspace once you are in.</p>} local={<p className="onb-muted">Local edition. Your meetings and notes stay on this Mac.</p>} />;
   return <Suspense fallback={null}><Onboarding brain={brain} onBrain={onBrain} onDone={onDone} accountSlot={isCloud ? slot : undefined} /></Suspense>;
 }

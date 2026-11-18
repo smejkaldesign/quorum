@@ -50,7 +50,7 @@ function localStackStatus() {
 
 // Which Supabase project this process talks to (docs/self-hosting.md, Development). In order:
 //  1. QUORUM_SUPABASE_URL and QUORUM_SUPABASE_ANON_KEY already in the shell environment ('shell')
-//  2. production, or a development copy with settings.devUseProduction on: the repo root's .env ('production')
+//  2. production, or a development copy with settings.devUseProduction or QUORUM_USE_PRODUCTION=1: the repo root's .env ('production')
 //  3. development: .env.development when present ('development'), else the local stack ('local')
 // Production never falls back to the local stack: without .env it stays unconfigured.
 function packagedCloudConfig() {
@@ -59,7 +59,7 @@ function packagedCloudConfig() {
 
 export function resolveCloudConfig(settings = {}) {
   const env = ENV;
-  const useProduction = isDevelopment && settings.devUseProduction === true;
+  const useProduction = isDevelopment && (settings.devUseProduction === true || process.env.QUORUM_USE_PRODUCTION === '1');
   const base = { env, useProduction, url: null, key: null };
   if (process.env.QUORUM_SUPABASE_URL && process.env.QUORUM_SUPABASE_ANON_KEY) return { ...base, source: 'shell', url: process.env.QUORUM_SUPABASE_URL, key: process.env.QUORUM_SUPABASE_ANON_KEY };
   if (!isDevelopment || useProduction) {
@@ -336,6 +336,34 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
       return snapshot();
     }),
     'members-list': guard(membersList),
+    // the danger zone (migration 0039): whether this account runs Quorum and which workspaces it owns, both read on the
+    // server, so the buttons and their tooltips follow the same rules the delete functions enforce
+    'account-delete-status': signedInGuard(async () => {
+      const { data, error } = await client.rpc('account_delete_status');
+      if (error) return fail(error, 'Quorum could not check this account.');
+      return { email: state.email, platformOwner: data?.platform_owner === true, owned: (data?.owned ?? []).map((w) => ({ id: w.id, name: w.name })) };
+    }),
+    // deletes the hosted account and what it synced, then signs out on this Mac. Local files are not touched
+    'account-delete': signedInGuard(async (typed) => {
+      if (String(typed ?? '').trim().toLowerCase() !== String(state.email ?? '').toLowerCase()) return { error: 'Type your email address to confirm.' };
+      const { error } = await client.rpc('delete_my_account');
+      if (error) return fail(error, 'Your account could not be deleted.');
+      try { await client.auth.signOut({ scope: 'local' }); } catch (err) { log('account sign-out', err?.message ?? err); }
+      if (settings.workspaceId) { settings.workspaceId = null; saveSettings?.(); }
+      signedOut(); emit();
+      return { ok: true };
+    }),
+    // deletes the chosen workspace, which the caller owns, with everything synced to it; members lose access
+    'org-delete': signedInGuard(async (workspaceId, typed) => {
+      if (String(typed ?? '').trim().toLowerCase() !== String(state.email ?? '').toLowerCase()) return { error: 'Type your email address to confirm.' };
+      const ws = String(workspaceId ?? state.workspace?.id ?? '');
+      if (!ws) return NO_WORKSPACE;
+      const { error } = await client.rpc('delete_workspace', { ws });
+      if (error) return fail(error, 'The workspace could not be deleted.');
+      if (settings.workspaceId === ws) { settings.workspaceId = null; saveSettings?.(); }
+      await refresh();
+      return { ok: true };
+    }),
     'member-invite': signedInGuard(async (email, role = 'member') => {
       if (!state.workspace) return NO_WORKSPACE;
       const { error } = await client.rpc('invite_member', { ws: state.workspace.id, email: String(email ?? '').trim().toLowerCase(), role: role === 'admin' ? 'admin' : 'member' });

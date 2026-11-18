@@ -1,21 +1,71 @@
 // Live index of the vault: every note parsed once, then kept current by a file watcher, so the graph, backlinks,
 // search and renames all read the same picture and edits Claude makes show up in Quorum within a beat.
 // Files stay the source of truth; this is a cache that rebuilds from disk.
-import { readFileSync, statSync, watch } from 'node:fs';
+import { closeSync, openSync, readFileSync, readSync, statSync, watch } from 'node:fs';
 import path from 'node:path';
 import { createResolver, parseNote } from './linkparse.js';
 import { SKIP, graphConfig, noteDate, walk } from './vault.js';
 import { clusterAssign, clusterLabels, groupInfo, wrapperFolders } from './clusters.js';
+import { isGenerated, linkReport, reportLine } from './linkRules.js';
 
 // the folders walk() skips, as a test on a watcher path (the same list, so the two can never disagree)
 const IGNORED = new RegExp(`(^|/)(${[...SKIP].map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(/|$)`);
 const BATCH = 200;
+// the only characters at or above U+0080 whose lowercase holds ASCII: U+0130 (to i plus a combining dot) and the Kelvin
+// sign U+212A (to k). The search test checks this list against every code point
+export const EXOTIC = /[\u0130\u212a]/;
+const NON_ASCII = /[\u0080-\uffff]/;
+const escapeRe = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// how often w occurs in s without overlaps (as s.split(w).length - 1 counts), stopping at max, and where it first is
+function countOf(s, w, max) {
+  let n = 0, first = -1, at = s.indexOf(w);
+  while (at >= 0 && n < max) { if (!n) first = at; n++; at = s.indexOf(w, at + w.length); }
+  return [n, first];
+}
+// the same count with a case-insensitive RegExp of the word on the original text
+function countRe(s, re, max) {
+  re.lastIndex = 0;
+  let n = 0, first = -1, m;
+  while (n < max && (m = re.exec(s))) { if (!n) first = m.index; n++; }
+  return [n, first];
+}
+// line n of a text (0-based, split on \n), without splitting the whole text
+function nthLine(text, n) {
+  let start = 0;
+  for (let i = 0; i < n; i++) { const nl = text.indexOf('\n', start); if (nl < 0) return ''; start = nl + 1; }
+  const end = text.indexOf('\n', start);
+  return text.slice(start, end < 0 ? text.length : end);
+}
+// how many \n come before position at
+function lineAt(text, at) {
+  let n = 0;
+  for (let i = text.indexOf('\n'); i >= 0 && i < at; i = text.indexOf('\n', i + 1)) n++;
+  return n;
+}
+// a note larger than this is indexed by its first INDEX_MAX bytes, cut at a line end: its title, frontmatter, links and
+// search text come from that head. A session log that grows to 100 MB was read, parsed and lowercased whole on every
+// save, which held the main process for seconds and kept 400 MB of copies of it in the index
+export const INDEX_MAX = 2 * 1024 * 1024;
+export function readHead(abs, max = INDEX_MAX) {
+  const fd = openSync(abs, 'r');
+  try {
+    const buf = Buffer.alloc(max);
+    const n = readSync(fd, buf, 0, max, 0);
+    // a newline byte never sits inside a UTF-8 character, so the cut keeps every character whole
+    const end = buf.lastIndexOf(0x0a, n - 1);
+    return buf.toString('utf8', 0, end > 0 ? end : n);
+  } finally { closeSync(fd); }
+}
 
 // isExcludedPath keeps a file out by its path; isDeniedText keeps a note out by what its frontmatter says (a denied
-// key); isExcludedText flags and redacts opted-out lines but keeps the note. renamed() gives the person's own names for
+// key); isExcludedText flags and redacts opted-out lines but keeps the note. onPaths hears each batch the watcher
+// names before onChange. renamed() gives the person's own names for
 // graph clusters, by cluster key; forget(keys) is told which of them no longer match a cluster
-export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => false, isExcludedText, redact, onChange, renamed = () => ({}), forget = () => {}, log = () => {} }) {
+export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => false, isExcludedText, redact, onChange, onPaths = () => {}, renamed = () => ({}), forget = () => {}, log = () => {} }) {
   const files = new Map(); // rel -> { mtime, size, note, text, flagged, t }
+  // linkHealth's answer: the missing links scored against every note, worked out again only after the index changed,
+  // since Notifications and Memory health ask for it on every refresh. Callers read it and never change it
+  let health = null;
   let resolve = () => null;
   let forward = new Map(); // rel -> [{ to, link }]
   let backward = new Map(); // rel -> [{ from, link }]
@@ -32,13 +82,19 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   // opted-out text never enters the index: lines that name one are replaced before parsing,
   // and the note is flagged so the redaction queue can find it
   function load(rel, st) {
+    health = null;
     let raw;
-    try { raw = readFileSync(path.join(vault, rel), 'utf8'); } catch { files.delete(rel); return; }
+    const cut = st.size > INDEX_MAX;
+    try { raw = cut ? readHead(path.join(vault, rel)) : readFileSync(path.join(vault, rel), 'utf8'); } catch { files.delete(rel); return; }
     if (isDeniedText(raw)) { files.delete(rel); return; }
+    // a large note that grew only past its head (a session log gets a line at its end on every save) keeps its entry:
+    // the same head text and parse, so a save makes no new copy of 2 MB to index and then collect
+    const prev = files.get(rel);
+    if (cut && prev?.cut && !prev.flagged && prev.text === raw) { prev.mtime = st.mtimeMs; prev.size = st.size; return; }
     const flagged = isExcludedText(raw);
     const text = flagged ? redact(raw) : raw;
-    // the lowercased path and text, kept for search so a query does not lowercase the whole vault again
-    files.set(rel, { mtime: st.mtimeMs, size: st.size, note: parseNote(rel, text), text, hay: `${rel.toLowerCase()}\n${text.toLowerCase()}`, flagged, t: noteDate(vault, rel, text) });
+    // exotic: the note holds a character whose lowercase is ASCII, so search lowercases it (see search)
+    files.set(rel, { mtime: st.mtimeMs, size: st.size, note: parseNote(rel, text), text, flagged, t: noteDate(vault, rel, text), ...(cut ? { cut } : {}), ...(EXOTIC.test(text) ? { exotic: true } : {}) });
   }
 
   // a frontmatter name: counts as an alias, since auto-memory notes link to each other by that slug
@@ -49,6 +105,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   }
 
   function relink() {
+    health = null;
     const rels = [...files.keys()];
     resolve = createResolver(rels, aliasesOf);
     forward = new Map();
@@ -96,12 +153,12 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
       try { st = statSync(path.join(vault, rel)); } catch {}
       if (st?.isDirectory()) { everything = true; break; }
       if (!st) {
-        if (rel.endsWith('.md')) { if (files.delete(rel)) changed.push(rel); }
+        if (rel.endsWith('.md')) { if (files.delete(rel)) { health = null; changed.push(rel); } }
         else if (dirs.has(rel)) { everything = true; break; }
         continue;
       }
       if (!rel.endsWith('.md')) continue;
-      if (isExcludedPath(rel)) { if (files.delete(rel)) changed.push(rel); continue; }
+      if (isExcludedPath(rel)) { if (files.delete(rel)) { health = null; changed.push(rel); } continue; }
       const f = files.get(rel);
       if (!f || f.mtime !== st.mtimeMs || f.size !== st.size) { load(rel, st); changed.push(rel); }
     }
@@ -140,10 +197,20 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
         timer = setTimeout(() => {
           const rels = [...pending];
           pending.clear();
+          // every path the watcher named, before the index filters them (main's tree cache reads these), or null for all
+          try { onPaths(everything ? null : rels); } catch (err) { log('vault paths', String(err)); }
           const changed = everything ? sync() : syncPaths(rels);
           everything = false;
           if (changed.length) onChange(changed);
         }, 250);
+      });
+      // a watcher that fails reports nothing more: the index and the tree cache stop counting on it
+      watcher.on('error', (err) => {
+        log('vault watch', String(err));
+        try { watcher?.close(); } catch { /* closed */ }
+        watcher = null;
+        clearTimeout(timer);
+        try { onPaths(null); } catch { /* the cache drops on its own next read */ }
       });
     } catch (err) { log('vault watch failed', String(err)); }
   }
@@ -151,7 +218,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   function stop() { stopped = true; watcher?.close(); clearTimeout(timer); }
 
   const titleOf = (rel) => files.get(rel)?.note.title ?? path.basename(rel, '.md');
-  const lineOf = (rel, n) => (files.get(rel)?.text.split('\n')[n] ?? '').trim();
+  const lineOf = (rel, n) => { const t = files.get(rel)?.text; return t === undefined ? '' : nthLine(t, n).trim(); };
 
   // unresolved links become ghost nodes, one per missing name, like Obsidian: a link to nothing is information
   function graph() {
@@ -210,29 +277,83 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     };
   }
 
-  // every missing link target, with who links to it, plus the closest real notes as fix suggestions
+  // every missing link target, with who links to it, the closest real notes as fix suggestions, and the text around
+  // each link. Memory health (memoryHealth.js) picks a fix from these: point the link at a note that is clearly the one
+  // meant, write the missing note when the linking notes say enough about it, or take the dead link out
   function linkHealth() {
+    health ??= scoreLinks();
+    return health;
+  }
+  function scoreLinks() {
     const byName = new Map();
+    // a generated report or log restates links found elsewhere: it is never a source (linkRules.js GENERATED_RULES)
+    const generated = (rel) => isGenerated(rel, files.get(rel)?.note.props);
+    // a note or a line that reports on links (a drift report, a lint log) shows link names as examples or findings
+    // about other notes: those are never sources either (linkRules.js linkReport, reportLine)
+    const reports = new Map();
+    const split = new Map();
+    const linesOf = (rel) => split.get(rel) ?? split.set(rel, (files.get(rel)?.text ?? '').split('\n')).get(rel);
+    const reportNote = (rel) => reports.get(rel) ?? reports.set(rel, linkReport(files.get(rel)?.text ?? '', files.get(rel)?.note.title)).get(rel);
     for (const [rel, missing] of unresolved) for (const link of missing) {
+      if (generated(rel) || reportNote(rel) || reportLine(linesOf(rel)[link.line], link.raw)) continue;
       const name = link.target.replace(/\.md$/i, '').trim();
       if (!name) continue;
       const key = name.toLowerCase();
-      const e = byName.get(key) ?? byName.set(key, { target: name, sources: new Set(), links: 0 }).get(key);
+      const e = byName.get(key) ?? byName.set(key, { target: name, sources: new Set(), links: 0, at: [] }).get(key);
       e.sources.add(rel);
       e.links++;
+      e.at.push({ rel, line: link.line });
     }
     // compare names loosely: no date prefix, no Claude memory type prefix (feedback_, reference_...), no punctuation
-    const norm = (x) => x.toLowerCase().replace(/\.md$/, '').replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/^(feedback|reference|project|user)_/, '').replace(/[^a-z0-9]+/g, '');
-    const index = [...files.keys()].map((rel) => ({ rel, key: norm(path.basename(rel)), alias: aliasesOf(rel).map(norm), title: norm(files.get(rel).note.title) }));
-    // links counts every link to the target, lastAt is the newest change among the notes that hold them
-    return [...byName.values()].map(({ target, sources, links }) => {
-      const k = norm(target.split('/').pop());
-      const candidates = k.length < 3 ? [] : index
-        .map((n) => ({ rel: n.rel, score: n.key === k || n.alias.includes(k) || n.title === k ? 3 : n.key.includes(k) || k.includes(n.key) ? (Math.min(k.length, n.key.length) / Math.max(k.length, n.key.length) > 0.6 ? 2 : 0) : 0 }))
-        .filter((c) => c.score > 0).sort((a, b) => b.score - a.score || a.rel.length - b.rel.length).slice(0, 3)
-        .map((c) => ({ rel: c.rel, title: titleOf(c.rel), name: typeof files.get(c.rel).note.props.name === 'string' ? files.get(c.rel).note.props.name : null, exact: c.score === 3 }));
+    const norm = (x) => x.toLowerCase().replace(/\.md$/, '').replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/^(feedback|reference|project|user)[_-]/, '').replace(/[^a-z0-9]+/g, '');
+    // the words of a name, without dates, numbers and filler words, for matching names that differ in a date or a word
+    const STOP = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'to', 'for', 'in', 'on', 'with', 'md', 'note', 'notes', 'feedback', 'reference', 'project', 'user']);
+    const words = (x) => [...new Set(String(x).toLowerCase().replace(/\.md$/, '').split(/[^a-z0-9]+/).filter((w) => w.length > 1 && !STOP.has(w) && !/^\d+$/.test(w)))];
+    // words that name a kind of document: two notes that share only these are different documents, and a PRD is not the
+    // code review of the same feature
+    const KIND = new Set(['prd', 'spec', 'review', 'code', 'report', 'retro', 'retrospective', 'plan', 'brief', 'research', 'analysis', 'summary', 'notes', 'doc', 'docs', 'page', 'deep', 'dive', 'kickoff', 'recap', 'audit', 'proposal', 'requirements', 'presentation', 'deck', 'draft', 'v1', 'v2', 'v3', 'synthesis', 'findings', 'teardown', 'guide', 'playbook', 'index']);
+    const kinds = (ws) => new Set([...ws].filter((w) => KIND.has(w)));
+    const dirOf = (rel) => (rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '');
+    const index = [...files.keys()].filter((rel) => !generated(rel)).map((rel) => ({ rel, key: norm(path.basename(rel)), alias: aliasesOf(rel).map(norm), title: norm(files.get(rel).note.title), words: new Set([...words(path.basename(rel)), ...words(files.get(rel).note.title)]) }));
+    // a link's line as plain words: the link itself becomes its text, list marks and markup go
+    const plain = (t) => t.replace(/!?\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]*))?\]\]/g, (_, a, b) => b ?? a.split('/').pop()).replace(/^\s*(?:[-*+]|\d+\.)\s+/, '').replace(/[*`>#]+/g, '').replace(/\s+/g, ' ').trim();
+    return [...byName.values()].map(({ target, sources, links, at }) => {
+      const last = target.split('/').pop();
+      const k = norm(last);
+      const tw = words(last);
+      const srcDirs = new Set([...sources].map(dirOf));
+      // the notes the linking notes already link to or from: a candidate among them sits in the same part of the graph
+      const near = new Set();
+      for (const s of sources) {
+        for (const o of forward.get(s) ?? []) near.add(o.to);
+        for (const b of backward.get(s) ?? []) near.add(b.from);
+      }
+      const scored = k.length < 3 && tw.length === 0 ? [] : index.map((n) => {
+        // a linking note is never the fix for its own link
+        if (sources.has(n.rel)) return null;
+        if (n.key === k || n.alias.includes(k) || n.title === k) return { n, exact: true, score: 1, shared: tw };
+        const shared = tw.filter((w) => n.words.has(w));
+        if (shared.length < 2 && !(shared.length === 1 && tw.length === 1 && n.words.size === 1)) return null;
+        const union = new Set([...tw, ...n.words]).size;
+        // the topic words (not kind words) the names share, and how much of the link's topic they cover
+        const topic = tw.filter((w) => !KIND.has(w));
+        const sharedTopic = shared.filter((w) => !KIND.has(w));
+        const tk = kinds(tw);
+        const nk = kinds(n.words);
+        const kindClash = tk.size > 0 && nk.size > 0 && ![...tk].some((w) => nk.has(w));
+        if (sharedTopic.length < 2 && !(sharedTopic.length === 1 && topic.length === 1)) return null;
+        return { n, exact: false, score: shared.length / union, shared: sharedTopic, cover: topic.length ? sharedTopic.length / topic.length : 0, kindClash };
+      }).filter(Boolean);
+      const candidates = scored
+        .map((c) => ({ ...c, neighbor: near.has(c.n.rel), sameFolder: srcDirs.has(dirOf(c.n.rel)) }))
+        .sort((a, b) => Number(b.exact) - Number(a.exact) || Number(a.kindClash) - Number(b.kindClash) || (b.cover ?? 0) - (a.cover ?? 0) || (b.score + (b.neighbor ? 0.2 : 0) + (b.sameFolder ? 0.1 : 0)) - (a.score + (a.neighbor ? 0.2 : 0) + (a.sameFolder ? 0.1 : 0)) || a.n.rel.length - b.n.rel.length)
+        .slice(0, 3)
+        .map((c) => ({ rel: c.n.rel, title: titleOf(c.n.rel), name: typeof files.get(c.n.rel).note.props.name === 'string' ? files.get(c.n.rel).note.props.name : null, exact: c.exact, score: Math.round(c.score * 100) / 100, cover: c.exact ? 1 : Math.round((c.cover ?? 0) * 100) / 100, kindClash: !!c.kindClash, shared: c.shared, neighbor: c.neighbor, sameFolder: c.sameFolder }));
+      const contexts = at.slice(0, 6).map(({ rel, line }) => ({ rel, title: titleOf(rel), text: plain(lineOf(rel, line)).slice(0, 280) })).filter((c) => c.text);
       const lastAt = Math.max(0, ...[...sources].map((r) => files.get(r)?.mtime ?? 0)) || null;
-      return { target, sources: [...sources], count: sources.size, links, lastAt, candidates };
+      // each linking note's confidential mark, so a note written from them stays as private as they are
+      const confidential = [...sources].map((r) => files.get(r)?.note.props.confidential).filter((v) => v != null && !(Array.isArray(v) && !v.length));
+      return { target, sources: [...sources], count: sources.size, links, lastAt, candidates, contexts, confidential };
     }).sort((a, b) => b.count - a.count || a.target.localeCompare(b.target));
   }
 
@@ -249,27 +370,42 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     });
   }
 
-  // words must all appear; title and path hits rank above body hits; snippets come from redacted text
+  // words must all appear; title and path hits rank above body hits; snippets come from redacted text. The index keeps
+  // no lowercased copy of the notes: an ASCII word is matched with a case-insensitive RegExp on the text, which finds
+  // the same places as the lowercased text does unless the note is exotic; an exotic note, or a query with a word
+  // outside ASCII, lowercases the note for that query. The score counts at most 20 matches, where its cap of 5 is
   function search(q, limit = 30) {
     const words = q.toLowerCase().split(/\s+/).filter(Boolean);
     if (!words.length) return [];
+    const ascii = !words.some((w) => NON_ASCII.test(w));
+    const res = ascii ? words.map((w) => new RegExp(escapeRe(w), 'gi')) : null;
     const hits = [];
     for (const [rel, f] of files) {
       const title = f.note.title.toLowerCase();
-      const hay = f.hay ?? `${rel.toLowerCase()}\n${f.text.toLowerCase()}`;
-      if (!words.every((w) => hay.includes(w) || title.includes(w))) continue;
-      let score = 0;
-      for (const w of words) { if (title.includes(w)) score += 10; if (rel.toLowerCase().includes(w)) score += 4; }
-      const lines = f.text.split('\n');
-      const n = lines.findIndex((l) => words.some((w) => l.toLowerCase().includes(w)));
-      score += Math.min(5, words.reduce((s, w) => s + (hay.split(w).length - 1), 0) / 4);
-      hits.push({ rel, title: f.note.title, score, line: n, snippet: n >= 0 ? lines[n].trim().slice(0, 200) : '' });
+      const relLow = rel.toLowerCase();
+      const low = ascii && !f.exotic ? null : f.text.toLowerCase();
+      let score = 0, total = 0, first = -1, ok = true;
+      for (let i = 0; i < words.length; i++) {
+        const w = words[i];
+        const [inRel] = countOf(relLow, w, Math.max(1, 20 - total));
+        total += inRel;
+        const [inText, at] = low !== null ? countOf(low, w, Math.max(1, 20 - total)) : countRe(f.text, res[i], Math.max(1, 20 - total));
+        total += inText;
+        if (!inRel && !inText && !title.includes(w)) { ok = false; break; }
+        if (at >= 0 && (first < 0 || at < first)) first = at;
+        if (title.includes(w)) score += 10;
+        if (inRel) score += 4;
+      }
+      if (!ok) continue;
+      score += Math.min(5, total / 4);
+      const n = first < 0 ? -1 : lineAt(low ?? f.text, first);
+      hits.push({ rel, title: f.note.title, score, line: n, snippet: n >= 0 ? nthLine(f.text, n).trim().slice(0, 200) : '' });
     }
     return hits.sort((a, b) => b.score - a.score || a.rel.localeCompare(b.rel)).slice(0, limit);
   }
 
   // after a rule change: forget everything and read the folder again, so a note that is now denied drops out
-  function rebuild() { files.clear(); forward = new Map(); backward = new Map(); unresolved = new Map(); const changed = sync(); if (changed.length) onChange?.(changed); return changed; }
+  function rebuild() { health = null; files.clear(); forward = new Map(); backward = new Map(); unresolved = new Map(); const changed = sync(); if (changed.length) onChange?.(changed); return changed; }
 
   return {
     start, stop, sync, syncPaths, rebuild, graph, backlinks, outgoing, search, resolve: (target, from) => resolve(target, from),
@@ -281,6 +417,14 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     // the missing links of one note with the line each is on (0-based), for the Memory health review
     missingIn: (rel) => (unresolved.get(rel) ?? []).map((l) => ({ target: l.target.replace(/\.md$/i, '').trim(), line: l.line })),
     size: () => files.size,
+    // the watcher is running, so every change from here on is reported
+    watching: () => !!watcher && !stopped,
     rels: () => [...files.keys()],
+    // the notes indexed by their head only (INDEX_MAX): a link past the head is in none of the backlinks
+    cutRels: () => [...files].filter(([, f]) => f.cut).map(([rel]) => rel),
+    // every note as the review rules read it (rules/index.js): its path, text, parsed note, file time, and how many
+    // notes link to it and how many links it has to other notes
+    // cut: the note is larger than INDEX_MAX and text is its head only
+    snapshot: () => [...files].map(([rel, f]) => ({ rel, text: f.text, note: f.note, mtime: f.mtime, size: f.size, ...(f.cut ? { cut: true } : {}), inbound: new Set((backward.get(rel) ?? []).map((b) => b.from)).size, outbound: (forward.get(rel) ?? []).length })),
   };
 }

@@ -1,6 +1,7 @@
 // One parser for every view: graph, backlinks, search, rename. Follows Obsidian's link rules so links resolve
 // the same way here as they did there.
 import path from 'node:path';
+import { cleanTitle } from './linkRules.js';
 
 const LINK_RE = /(!?)\[\[([^\]|#\n]*)(#[^\]|\n]*)?(?:\|([^\]\n]*))?\]\]|(!?)\[([^\]\n]*)\]\(([^)\s]+?)(#[^)\s]*)?\)/g;
 const TAG_RE = /(^|[\s(])#([A-Za-z][\w/-]*)/g;
@@ -44,7 +45,8 @@ export function parseNote(rel, text) {
     const h = line.match(HEADING_RE);
     if (h) headings.push({ level: h[1].length, text: h[2], line: i + offset });
     // `[[example]]` inside inline code is syntax being shown, not a link
-    const prose = line.replace(/`[^`]*`/g, (c) => ' '.repeat(c.length));
+    // a span opened by two or more backticks closes on the same number, so ``[[a]]`` is code too
+    const prose = line.replace(/(`+)[\s\S]*?\1/g, (c) => ' '.repeat(c.length));
     for (const m of prose.matchAll(LINK_RE)) {
       if (m[2] !== undefined) {
         links.push({ embed: m[1] === '!', target: m[2].trim(), anchor: (m[3] ?? '').slice(1), display: m[4] ?? null, kind: 'wiki', line: i + offset, raw: m[0] });
@@ -59,7 +61,8 @@ export function parseNote(rel, text) {
     }
     for (const m of prose.matchAll(TAG_RE)) tags.add(m[2].toLowerCase());
   });
-  const title = (typeof props.title === 'string' && props.title) || headings.find((h) => h.level === 1)?.text || path.basename(rel, '.md');
+  // a title holds one line: a note saved as one long line (or with its line breaks written as \n) keeps a short title
+  const title = cleanTitle((typeof props.title === 'string' && props.title) || headings.find((h) => h.level === 1)?.text) || path.basename(rel, '.md');
   return { title, props, aliases: list(props.aliases).map(String), tags: [...tags], headings, links, bodyStart: end };
 }
 

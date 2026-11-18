@@ -99,6 +99,7 @@ export const meetings = {
 
 // every conversation is kept locally so it shows up in History
 export const chats = {
+  dir: CHATS,
   list: () => (existsSync(CHATS) ? readdirSync(CHATS).filter((f) => f.endsWith('.json')).map((f) => { try { return JSON.parse(readFileSync(path.join(CHATS, f), 'utf8')); } catch { return null; } }).filter(Boolean) : []),
   read: (id) => { const file = path.join(CHATS, `${String(id).replace(/[^\w-]/g, '')}.json`); return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null; },
   write: (c) => { mkdirSync(CHATS, { recursive: true }); writeFileSync(path.join(CHATS, `${c.id}.json`), JSON.stringify(c, null, 2)); },

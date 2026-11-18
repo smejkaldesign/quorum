@@ -4,6 +4,7 @@
 // `transcript: none` so the next sync does not ask again.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { oneLine } from '../frontmatter.js';
 
 export const SUBFOLDER = 'transcripts';
 const ID_LINE = /^(?:granola_id|source_id):\s*"?([^"\n]+)"?\s*$/m;
@@ -33,10 +34,10 @@ export function transcriptMarkdown({ id, title, date, source, recorder }, text) 
   return [
     '---',
     `type: transcript`,
-    `transcript_of: ${id}`,
+    `transcript_of: ${oneLine(id)}`,
     `title: ${JSON.stringify(`${title || 'Untitled meeting'} (transcript)`)}`,
-    ...(date ? [`date: ${date}`] : []),
-    `source: ${source}`,
+    ...(date ? [`date: ${oneLine(date)}`] : []),
+    `source: ${oneLine(source)}`,
     ...(recorder ? [`recorder: ${JSON.stringify(recorder)}`] : []),
     'visibility: private',
     '---',
