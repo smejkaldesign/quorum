@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GENERATED_RULES, cleanTitle, contextNote, createPlan, generatedRule, genericTarget, linkReport, reportLine } from '../linkRules.js';
 import { createElsewhere, folderIndex, withFound } from '../linkElsewhere.js';
 import { createVaultIndex } from '../vindex.js';
@@ -126,6 +126,20 @@ describe('the existence check before writing a note', () => {
     expect(f.find('tool-notes')).toMatchObject({ kind: 'file', where: 'context/tool-notes.md' });
     expect(f.find('nothing-here')).toBeNull();
   });
+  it('walks again in the background once the walk is five minutes old, answering from the old walk meanwhile', async () => {
+    const root = fresh();
+    put('vault/a.md', '# a');
+    const f = createElsewhere(opts({ vault: path.join(root, 'vault'), gitTop: () => root }));
+    expect(f.find('later-folder')).toBeNull();
+    put('vault/later-folder/x.md', '# x');
+    const now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 5 * 60000 + 1);
+    try {
+      expect(f.find('later-folder')).toBeNull();
+      for (let i = 0; i < 50 && !f.find('later-folder'); i++) await new Promise((r) => setTimeout(r, 5));
+      expect(f.find('later-folder')).toEqual({ kind: 'folder', where: 'later-folder' });
+    } finally { clock.mockRestore(); }
+  });
   it('finds skills in the skill folders it is given', () => {
     const root = fresh();
     put('home-skills/learn-loop/SKILL.md', '# x');
@@ -133,30 +147,93 @@ describe('the existence check before writing a note', () => {
     const f = createElsewhere(opts({ vault: path.join(root, 'vault'), skillRoots: [path.join(root, 'home-skills')] }));
     expect(f.find('learn-loop')).toMatchObject({ kind: 'skill' });
   });
-  it('finds notes on other local branches, and skips the check without git', () => {
+  it('finds notes on other local branches, and skips the check without git', async () => {
     const root = fresh();
     put('vault/a.md', '# a');
     let reads = 0;
+    let changes = 0;
     const f = createElsewhere(opts({
-      vault: path.join(root, 'vault'), gitTop: () => root,
-      listBranches: () => [{ name: 'topic/review', sha: 'abc' }],
-      listTree: (_root, sha, prefix) => { reads++; expect([sha, prefix]).toEqual(['abc', 'vault']); return ['vault/knowledge/merge-notes-review.md', 'vault/x.txt']; },
+      vault: path.join(root, 'vault'), gitTop: () => root, onChange: () => { changes++; },
+      listBranches: async () => [{ name: 'topic/review', sha: 'abc' }],
+      listTree: async (_root, sha, prefix) => { reads++; expect([sha, prefix]).toEqual(['abc', 'vault']); return ['vault/knowledge/merge-notes-review.md', 'vault/x.txt']; },
     }));
+    await f.refresh();
     expect(f.find('merge-notes-review')).toEqual({ kind: 'branch', where: 'knowledge/merge-notes-review.md', branch: 'topic/review' });
     f.find('merge-notes-review');
     expect(reads).toBe(1);
+    expect(changes).toBe(1);
     expect(createElsewhere(opts({ vault: path.join(root, 'vault') })).find('merge-notes-review')).toBeNull();
   });
-  it('reads the branch list once for many links, and again after reset', () => {
+  it('answers from the last read while git runs in the background, and tells when the answer changed', async () => {
+    const root = fresh();
+    put('vault/a.md', '# a');
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    let changes = 0;
+    const f = createElsewhere(opts({ vault: path.join(root, 'vault'), gitTop: () => root, onChange: () => { changes++; }, listBranches: () => [{ name: 'b', sha: 's1' }], listTree: async () => { await gate; return ['vault/late.md']; } }));
+    expect(f.find('late')).toBeNull();
+    release();
+    await f.refresh();
+    expect(f.find('late')).toMatchObject({ kind: 'branch', branch: 'b' });
+    expect(changes).toBe(1);
+  });
+  it('reads the branch list once for many links, and again after reset', async () => {
     const root = fresh();
     put('vault/a.md', '# a');
     let lists = 0;
     const f = createElsewhere(opts({ vault: path.join(root, 'vault'), gitTop: () => root, listBranches: () => { lists++; return []; }, listTree: () => [] }));
     for (const t of ['one', 'two', 'three', 'four']) f.find(t);
+    await f.refresh();
     expect(lists).toBe(1);
     f.reset();
     f.find('one');
+    await f.refresh();
     expect(lists).toBe(2);
+  });
+  it('reads again after a reset that came while a read was running', async () => {
+    const root = fresh();
+    put('vault/a.md', '# a');
+    let heads = [{ name: 'old', sha: 's-old' }];
+    let release;
+    const slow = new Promise((r) => { release = r; });
+    let first = true;
+    const f = createElsewhere(opts({
+      vault: path.join(root, 'vault'), gitTop: () => root,
+      listBranches: async () => { const list = heads; if (first) { first = false; await slow; } return list; },
+      listTree: async (_root, sha) => [`vault/${sha}.md`],
+    }));
+    const running = f.refresh();
+    await new Promise((r) => setTimeout(r, 1));
+    heads = [{ name: 'new', sha: 's-new' }];
+    f.reset();
+    const fresh2 = f.refresh();
+    expect(fresh2).not.toBe(running);
+    release();
+    await fresh2;
+    expect(f.find('s-new')).toMatchObject({ branch: 'new' });
+    expect(f.find('s-old')).toBeNull();
+  });
+  it('lists the notes again only on branches whose head moved, a few at a time', async () => {
+    const root = fresh();
+    put('vault/a.md', '# a');
+    let heads = Array.from({ length: 12 }, (_, i) => ({ name: `b${i}`, sha: `s${i}` }));
+    const read = [];
+    let running = 0;
+    let most = 0;
+    const f = createElsewhere(opts({
+      vault: path.join(root, 'vault'), gitTop: () => root, listBranches: () => heads,
+      listTree: async (_root, sha) => { read.push(sha); running++; most = Math.max(most, running); await new Promise((r) => setTimeout(r, 2)); running--; return [`vault/${sha}.md`]; },
+    }));
+    await f.refresh();
+    expect(read.length).toBe(12);
+    expect(most).toBeLessThanOrEqual(4);
+    heads = heads.map((b) => (b.name === 'b3' ? { ...b, sha: 'moved' } : b));
+    f.reset();
+    await f.refresh();
+    expect(read.slice(12)).toEqual(['moved']);
+    expect(f.find('moved')).toMatchObject({ branch: 'b3' });
+    expect(f.find('s3')).toBeNull();
+    expect(f.find('s4')).toMatchObject({ branch: 'b4' });
   });
   it('points a link to a folder at its index note, and leaves a link to a skill or a branch note for review', () => {
     expect(folderIndex('p/checks', ['p/checks/index.md', 'p/checks/x.md'])).toBe('p/checks/index.md');

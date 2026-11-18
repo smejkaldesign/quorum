@@ -9,7 +9,7 @@ import { appScheme, createConnectorLinks, setLinkScheme } from './connectors/app
 import { createAgentLink } from './agentLink.js';
 import { checkConnection } from './connectionCheck.js';
 import { openSpeech, SPEECH_ENGINES } from './speech/provider.js';
-import { createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTree } from './vault.js';
+import { SKIP as TREE_SKIP, createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTree } from './vault.js';
 import { createVaultIndex } from './vindex.js';
 import { applyUndo, sha, undoRecord } from './fixUndo.js';
 import { changedSince, createFixJournal, fixCheck, hashNotes, recoveryReason, rollback } from './fixJournal.js';
@@ -50,7 +50,7 @@ import { privateDir, startControl } from './control.js';
 import { PROVIDERS as DECISION_PROVIDERS, connectedProvider, decide as decideRaw, removeDecisionsKey, setDecisionsKey } from './decisions.js';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, watchFile, writeFileSync } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -89,6 +89,9 @@ import { DEFAULT_PARALLEL, MAX_PARALLEL, createCatchup } from './memoryCatchup.j
 import { createLastRunStore, planOf } from './catchupPlan.js';
 import { rule as CONTRADICTION_RULE } from './rules/contradictions.js';
 import { createElsewhere, withFound } from './linkElsewhere.js';
+import { createFeedCache } from './feedCache.js';
+import { createTreeCache } from './treeCache.js';
+import { open as openAsync, stat as statAsync } from 'node:fs/promises';
 import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
 import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, relatedOf, seriesKey, seriesOf } from './meetingBrief.js';
@@ -102,12 +105,69 @@ const packagedMeta = (() => { try { return JSON.parse(readFileSync(path.join(her
 // way (a dropped file, a link) is refused, so it never reaches the vault, settings or files through window.quorum
 const APP_PAGE = pathToFileURL(path.join(here, 'dist/index.html')).href;
 const fromApp = (e) => String(e?.senderFrame?.url ?? '').split(/[?#]/)[0] === APP_PAGE;
+// The Notifications feed is built once per change (feedCache.js, feedBuild below). Any IPC call outside FEED_READS may
+// change what it shows, so it marks the feed changed before and after it runs; the reads listed here never do.
+// TREE_WRITES also drop the kept notes tree (vault-tree below)
+const FEED_READS = new Set([
+  'activity-feed', 'feed-counts', 'memory-review-count', 'vault-tree', 'vault-graph', 'vault-search', 'vault-note', 'vault-backlinks', 'vault-outgoing', 'vault-resolve',
+  'vault-file-issues', 'vault-link-health', 'vault-links-left', 'agent-activity-get', 'live-runs', 'keeper-status', 'memory-dots', 'memory-versions', 'memory-version',
+  'fix-runs', 'guardrail-denials', 'guardrails-get', 'get-settings', 'confidential-marks', 'note-activity', 'history', 'brain', 'user', 'record-status', 'models-status',
+  'update-status', 'env-status', 'calendar-status', 'meeting-sources', 'meetings-sources', 'meetings-dir', 'source-icons', 'library-icons', 'synced-folders',
+  'read-note', 'memory-review', 'meeting-brief', 'meeting-providers', 'memory-findings', 'memory-gate', 'memory-draft-status', 'memory-ignore-list', 'memory-rule-records',
+  'memory-catchup-status', 'note-chats', 'read-chat', 'event-chats', 'calendar', 'oauth-accounts', 'mcp-status', 'cli-status', 'agents-status', 'claude-status',
+  'model-source-status', 'decisions-status', 'screen-context-status', 'ax-status', 'kb-list', 'kb-notes', 'kb-files', 'kb-files-usage', 'kb-file-data', 'kb-hosted',
+  'kb-hosted-note', 'kb-drive-status', 'kb-sync-list', 'kb-sync-grants', 'kb-import-progress',
+]);
+const TREE_WRITES = new Set([
+  'vault-new-note', 'vault-new-folder', 'vault-move', 'vault-rename', 'vault-trash', 'vault-duplicate', 'set-settings', 'guardrails-add', 'guardrails-remove', 'guardrails-set',
+  'confidential-mark', 'connect-brain', 'disconnect-brain', 'onboarding-create-vault',
+]);
+const feedCache = createFeedCache({ build: () => feedBuild(), key: () => feedKey() });
+// the notes tree, kept while the index's watcher runs (treeCache.js); TREE_WRITES drop it
+const treeCache = createTreeCache({
+  walk: (vault) => vaultTree(vault, excludedPath),
+  statOf: (vault, rel) => { try { return statSync(path.join(vault, rel)); } catch { return null; } },
+  skip: (rel) => rel.split('/').some((seg) => seg.startsWith('.') || TREE_SKIP.has(seg)),
+});
+function dropTree() { treeCache.drop(); }
+function treePaths(rels) { treeCache.paths(rels); }
+// one feed-changed event to the window for a burst of changes it would not otherwise hear of: an action an AI tool ran
+// over the control socket, or a block the guardrail hook process wrote (feedEvents.ts listens)
+let feedChangedTimer = null;
+function feedChangedSoon() {
+  if (feedChangedTimer) return;
+  feedChangedTimer = setTimeout(() => { feedChangedTimer = null; toUI('feed-changed', null); }, 300);
+}
+// the app actions (handleAction) tell the window once they ran, whoever called them
+const feedNotify = (name, fn) => {
+  if (FEED_READS.has(name)) return fn;
+  return (...args) => {
+    const r = fn(...args);
+    if (r && typeof r.then === 'function') r.then(feedChangedSoon, feedChangedSoon);
+    else feedChangedSoon();
+    return r;
+  };
+};
+const feedTouched = (name, fn) => {
+  if (FEED_READS.has(name)) return fn;
+  const tree = TREE_WRITES.has(name);
+  const after = () => { feedCache.touch(); if (tree) dropTree(); };
+  return (...args) => {
+    after();
+    const r = fn(...args);
+    if (r && typeof r.then === 'function') r.then(after, after);
+    return r;
+  };
+};
 for (const method of ['handle', 'handleOnce']) {
   const register = ipcMain[method].bind(ipcMain);
-  ipcMain[method] = (channel, fn) => register(channel, (e, ...args) => {
-    if (!fromApp(e)) { console.log('[quorum] refused IPC from', String(e?.senderFrame?.url ?? 'unknown').slice(0, 120), channel); throw new Error('Refused'); }
-    return fn(e, ...args);
-  });
+  ipcMain[method] = (channel, fn) => {
+    const run = feedTouched(channel, fn);
+    return register(channel, (e, ...args) => {
+      if (!fromApp(e)) { console.log('[quorum] refused IPC from', String(e?.senderFrame?.url ?? 'unknown').slice(0, 120), channel); throw new Error('Refused'); }
+      return run(e, ...args);
+    });
+  };
 }
 {
   const listen = ipcMain.on.bind(ipcMain);
@@ -299,7 +359,7 @@ const meeting = { armed: false, capturing: false, id: null, dirs: [], dir: null,
 const log = (...a) => console.log('[quorum]', ...a);
 // the handlers AI tools call over the control socket (appActions.js): the same functions the app's buttons call
 const actionHandlers = new Map();
-const handleAction = (name, fn) => { actionHandlers.set(name, fn); ipcMain.handle(name, fn); };
+const handleAction = (name, fn) => { const run = feedNotify(name, fn); actionHandlers.set(name, feedTouched(name, run)); ipcMain.handle(name, run); };
 // a fix an AI tool approved keeps its name, so Memory health and Notifications show who approved it
 // the error a cancelled batch ends with; the window finds it by its ending
 const cancelText = (run) => `${run.cancelBy ?? 'You'} cancelled the batch`;
@@ -315,7 +375,13 @@ let callGates = sessionGates(baseGates, { callSession: true });
 const refreshGates = () => { baseGates = notetakerGates(flagsApi ? flagsApi.all() : undefined); callGates = sessionGates(baseGates, { callSession: true }); };
 const gate = () => (meeting.armed && !meeting.solo ? callGates : baseGates);
 // windows can be gone mid-quit while the helper or agent is still reporting
-const toUI = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
+// every other event to the window also marks the Notifications feed changed; these are progress and live state only
+const UI_QUIET = new Set(['log', 'level', 'state', 'helper-event', 'agent-step', 'agent-delta', 'note-delta', 'notes-delta', 'summary', 'export-progress', 'agent-activity', 'keeper-step', 'record', 'speakers', 'call-speakers', 'focus-composer', 'kb-open', 'models-status', 'update', 'agent-action', 'live-runs', 'feed-changed']);
+const toUI = (channel, payload) => {
+  if (!UI_QUIET.has(channel)) feedCache.touch();
+  if (channel === 'brain-changed') dropTree();
+  if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+};
 // Agent activity (agentActivity.js): the memory work that runs longer than 30 seconds (the first memory check, a full
 // sweep, a bulk batch, a drafting run), as one state Home and Memory health both read, with Cancel
 const agentActivity = createAgentActivity({ emit: (s) => toUI('agent-activity', s) });
@@ -1607,15 +1673,28 @@ const platformCache = createPlatformCache(path.join(DATA_DIR, 'meeting-events.js
 // A meeting note's frontmatter, parsed from the first 16 KB, kept until the file's time or size changes: Home, meeting
 // pages and questions list the meetings often, and most notes never change between two of those
 const headCache = new Map();
+const HEAD_BYTES = 16384;
+const headOf = (buf) => readFrontmatter(buf.toString('utf8').slice(0, 4000));
+// While a Notifications feed build runs (feedBuild), the files the build before it read are already stat'ed with async
+// fs, and the heads and titles of the ones that changed read again, so the build reads only files it had not seen
+let feedStats = null; // abs -> Stats, or null for a file that is gone, during a build
+const feedSeen = new Set();
+function statFor(file) {
+  if (feedStats) {
+    feedSeen.add(file);
+    if (feedStats.has(file)) { const st = feedStats.get(file); if (st) return st; throw Object.assign(new Error(`ENOENT: ${file}`), { code: 'ENOENT' }); }
+  }
+  return statSync(file);
+}
+const existsFor = (file) => { if (!feedStats) return existsSync(file); try { statFor(file); return true; } catch { return false; } };
 function noteHead(file) {
-  const st = statSync(file);
+  const st = statFor(file);
   const kept = headCache.get(file);
   if (kept && kept.mtimeMs === st.mtimeMs && kept.size === st.size) return kept.fm;
-  const buf = Buffer.alloc(Math.min(st.size, 16384));
+  const buf = Buffer.alloc(Math.min(st.size, HEAD_BYTES));
   const fd = openSync(file, 'r');
   try { readSync(fd, buf, 0, buf.length, 0); } finally { closeSync(fd); }
-  const text = buf.toString('utf8');
-  const fm = readFrontmatter(text.slice(0, 4000));
+  const fm = headOf(buf);
   headCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, fm });
   return fm;
 }
@@ -1750,7 +1829,7 @@ async function matchMeetingApps() {
 const meetingRoots = () => { const root = meetingsDir(); return root ? [root, ...meetingSources().map((s) => s.path)] : []; };
 const meetingFileIn = (roots, file) => {
   const abs = path.resolve(String(file));
-  return roots.some((r) => abs.startsWith(r + path.sep)) && abs.endsWith('.md') && existsSync(abs) ? abs : null;
+  return roots.some((r) => abs.startsWith(r + path.sep)) && abs.endsWith('.md') && existsFor(abs) ? abs : null;
 };
 const meetingFile = (file) => meetingFileIn(meetingRoots(), file);
 
@@ -1979,18 +2058,22 @@ const feedStateSave = () => {
 // a file's title for the list: its frontmatter title, else its first heading, else its name without date and id.
 // Kept per file until the file changes
 const titleCache = new Map();
-function fileTitle(abs, rel) {
-  let st;
-  try { st = statSync(abs); } catch { return titleOf({ rel }); }
-  const kept = titleCache.get(abs);
-  if (kept && kept.mtimeMs === st.mtimeMs) return kept.title;
-  let head = '';
-  try { const buf = Buffer.alloc(Math.min(st.size, 4096)); const fd = openSync(abs, 'r'); try { readSync(fd, buf, 0, buf.length, 0); } finally { closeSync(fd); } head = buf.toString('utf8'); } catch { /* unreadable */ }
+const TITLE_BYTES = 4096;
+function titleFrom(head, rel) {
   let fm = {};
   try { fm = readFrontmatter(head); } catch { /* no frontmatter */ }
   const h1 = head.replace(/^---\n[\s\S]*?\n---\n/, '').match(/^#\s+(.+)$/m)?.[1];
-  const title = titleOf({ title: typeof fm.title === 'string' ? fm.title : '', h1, rel });
-  titleCache.set(abs, { mtimeMs: st.mtimeMs, title });
+  return titleOf({ title: typeof fm.title === 'string' ? fm.title : '', h1, rel });
+}
+function fileTitle(abs, rel) {
+  let st;
+  try { st = statFor(abs); } catch { return titleOf({ rel }); }
+  const kept = titleCache.get(abs);
+  if (kept && kept.mtimeMs === st.mtimeMs && kept.rel === rel) return kept.title;
+  let head = '';
+  try { const buf = Buffer.alloc(Math.min(st.size, TITLE_BYTES)); const fd = openSync(abs, 'r'); try { readSync(fd, buf, 0, buf.length, 0); } finally { closeSync(fd); } head = buf.toString('utf8'); } catch { /* unreadable */ }
+  const title = titleFrom(head, rel);
+  titleCache.set(abs, { mtimeMs: st.mtimeMs, rel, title });
   return title;
 }
 const sourceName = (id) => String(id).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
@@ -2008,7 +2091,7 @@ function feedSources() {
   for (const m of meetingIndex()) {
     if (!m.source || /^quorum/.test(m.source) || m.written) continue;
     let at;
-    try { const st = statSync(m.file); at = st.birthtimeMs || st.mtimeMs; } catch { continue; }
+    try { const st = statFor(m.file); at = st.birthtimeMs || st.mtimeMs; } catch { continue; }
     imports.set(path.resolve(m.file), { at, source: m.source, sourceName: sourceName(m.source), date: m.date || null });
   }
   const roots = meetingRoots();
@@ -2021,7 +2104,7 @@ function feedSources() {
     const s = seen[abs] ?? {};
     // when Quorum wrote it: its first logged step, else the file's own time
     let writtenAt = own.length ? own[own.length - 1].at : null;
-    if (!writtenAt) { try { writtenAt = statSync(abs).mtimeMs; } catch { writtenAt = 0; } }
+    if (!writtenAt) { try { writtenAt = statFor(abs).mtimeMs; } catch { writtenAt = 0; } }
     let fm = {};
     try { fm = noteHead(abs); } catch { /* unreadable */ }
     const writtenFrom = fm.imported_by === 'agent' ? 'import' : fm.recorded === true || fm.recorded === 'true' ? 'recording' : null;
@@ -2029,7 +2112,7 @@ function feedSources() {
   });
   const memories = Object.entries(memoryVersions.files(b.vault)).map(([rel, rec]) => {
     const abs = path.join(b.vault, rel);
-    return { abs, rel, title: fileTitle(abs, rel), note: !!meetingFileIn(roots, abs), gone: !existsSync(abs), versions: rec.versions ?? [], updates: rec.updates ?? [], seenAt: seen[abs]?.seenAt ?? null };
+    return { abs, rel, title: fileTitle(abs, rel), note: !!meetingFileIn(roots, abs), gone: !existsFor(abs), versions: rec.versions ?? [], updates: rec.updates ?? [], seenAt: seen[abs]?.seenAt ?? null };
   });
   const linkItems = linkIssues();
   reopenChanged(linkItems);
@@ -2041,20 +2124,62 @@ function feedSources() {
   const runs = fixRunList().filter((r) => r.vault === v && (r.endedAt ?? r.queuedAt) > Date.now() - 7 * 86400000);
   return { notes, memories, denials, junk: keeper.junk(), links, runs, pastFixes: pastFixRows(), findings: findingsNow(), drafts: draftViews(), ignores: ignoreRows(), held: gateHeld(), state, guardFile: DENIAL_LOG };
 }
-handleAction('activity-feed', (_e, query) => {
+// the files the last build read, stat'ed 16 at a time; a file whose head or title is kept but out of date is read again
+async function feedPrefetch(files) {
+  const stats = new Map();
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(16, files.length) }, async () => {
+    while (next < files.length) {
+      const file = files[next++];
+      let st = null;
+      try { st = await statAsync(file); } catch { /* gone */ }
+      stats.set(file, st);
+      if (!st?.isFile()) continue;
+      const head = headCache.get(file);
+      const title = titleCache.get(file);
+      const headOld = head && !(head.mtimeMs === st.mtimeMs && head.size === st.size);
+      const titleOld = title && title.mtimeMs !== st.mtimeMs;
+      if (!headOld && !titleOld) continue;
+      let buf;
+      try {
+        const fh = await openAsync(file, 'r');
+        try { buf = Buffer.alloc(Math.min(st.size, HEAD_BYTES)); await fh.read(buf, 0, buf.length, 0); } finally { await fh.close(); }
+      } catch { continue; }
+      try { if (headOld) headCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, fm: headOf(buf) }); } catch { headCache.delete(file); }
+      if (titleOld) titleCache.set(file, { mtimeMs: st.mtimeMs, rel: title.rel, title: titleFrom(buf.toString('utf8', 0, Math.min(buf.length, TITLE_BYTES)), title.rel) });
+    }
+  }));
+  return stats;
+}
+// one build of the feed rows: the files are stat'ed first with async fs, then the rows are put together
+async function feedBuild() {
+  const files = [...feedSeen];
+  feedSeen.clear();
+  feedStats = await feedPrefetch(files);
+  try { return feedRows(feedSources()); } finally { feedStats = null; }
+}
+// the guardrail log is written by the agent's hook process, which sends no event: a new block rebuilds the feed
+const feedKey = () => { try { const st = statSync(DENIAL_LOG); return `${st.mtimeMs}:${st.size}`; } catch { return ''; } };
+watchFile(DENIAL_LOG, { interval: 5000, persistent: false }, (cur, prev) => { if (cur.mtimeMs !== prev.mtimeMs || cur.size !== prev.size) feedChangedSoon(); });
+const feedMarks = () => { const st = feedState(); return { archived: Object.keys(st.archived), done: Object.keys(st.done ?? {}), kept: Object.keys(st.kept ?? {}), prefs: settings.notifications ?? {} }; };
+// the bell's dot and counts and Needs review for Memory health, worked out once per build of the rows
+const feedCounts = () => feedCache.derived('counts', (rows) => {
+  const marks = feedMarks();
+  const page = feedPage(rows, { tab: 'all', limit: 0, ...marks });
+  const { total, files, folders } = needsReview(rows, marks);
+  return { dot: page.dot, counts: page.counts, review: { total, files, folders } };
+});
+ipcMain.handle('feed-counts', () => feedCounts());
+handleAction('activity-feed', async (_e, query) => {
   const q = query ?? {};
-  return feedPage(feedRows(feedSources()), {
+  return feedPage(await feedCache.get(), {
     tab: ['unread', 'archived'].includes(q.tab) ? q.tab : 'all', archived: Object.keys(feedState().archived), done: Object.keys(feedState().done ?? {}), kept: Object.keys(feedState().kept ?? {}), review: q.review === true, kinds: Array.isArray(q.kinds) ? q.kinds.map(String) : [], q: String(q.q ?? ''),
     sort: String(q.sort ?? 'unread'), offset: Number(q.offset) || 0, limit: Number(q.limit ?? 50), prefs: settings.notifications ?? {}, idsOnly: q.idsOnly === true,
   });
 });
 // Needs review for Memory health (activityFeed.js needsReview): the one count the Memory health button, the folder
 // counts in the notes tree and the Needs review toggle all show, with the same marks Notifications reads
-ipcMain.handle('memory-review-count', () => {
-  const st = feedState();
-  const { total, files, folders } = needsReview(feedRows(feedSources()), { archived: Object.keys(st.archived), done: Object.keys(st.done ?? {}), kept: Object.keys(st.kept ?? {}), prefs: settings.notifications ?? {} });
-  return { total, files, folders };
-});
+ipcMain.handle('memory-review-count', async () => (await feedCounts()).review);
 // a file in the feed, by its path: a saved note, or a note inside the vault
 const feedFile = (abs) => {
   const b = brain();
@@ -2490,14 +2615,16 @@ function openIndex() {
     vault: b.vault, isExcludedPath: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isDeniedText: isConfidentialText, isExcludedText: suggester.isExcluded, redact: suggester.redactLines,
     onChange: (rels) => { toUI('vault-changed', rels); if (!built) { built = true; setTimeout(sweepTick, 5000); } else sweepOnSave(rels); }, renamed: () => settings.clusterNames?.[b.vault] ?? {},
     forget: (keys) => { const mine = settings.clusterNames?.[b.vault]; if (!mine) return; for (const k of keys) delete mine[k]; store.settings.save(); }, log: (...a) => log('index', ...a),
+    onPaths: treePaths,
   });
+  dropTree();
   vindex.start();
   // the keeper files whatever arrived while the app was closed, once the folder is open
   setTimeout(() => keeper.run({ reason: 'launch' }).catch(() => {}), 4000);
   // the hosted edition's sync watches the same vault for files to push; the vault changed, so it moves with it
   account.sync.live();
 }
-ipcMain.handle('vault-tree', () => (brain() ? vaultTree(brain().vault, excludedPath) : []));
+ipcMain.handle('vault-tree', () => { const b = brain(); return b ? treeCache.get(b.vault, !!vindex?.watching()) : []; });
 // hosted edition: sign-in, workspaces, members and push sync live in ee/ (account.js, sync.js) and load only when EDITION is
 // 'cloud'. The local edition gets a stub whose pushes do nothing, so the call sites below stay the same in both editions.
 // sync never pushes private folders, notes marked confidential, or anything the opt-out list withholds
@@ -2611,12 +2738,13 @@ function diskNoteNames() {
 // a missing link whose note is on disk but hidden from Quorum
 const onDisk = (target) => { const t = String(target).toLowerCase().replace(/\.md$/, ''); const names = diskNoteNames(); return names.has(t) || names.has(t.split('/').pop()); };
 // what a missing link names outside this checkout's notes: a folder, script, skill, file or a note on another branch
-// (linkElsewhere.js), one finder per vault
+// (linkElsewhere.js), one finder per vault. It reads the other branches in the background; when that changes what it
+// finds, Memory health and Notifications refresh
 let elsewhere = null;
 function elsewhereFinder() {
   const v = brain()?.vault;
   if (!v) return null;
-  if (elsewhere?.vault !== v) elsewhere = { vault: v, finder: createElsewhere({ vault: v }) };
+  if (elsewhere?.vault !== v) elsewhere = { vault: v, finder: createElsewhere({ vault: v, log, onChange: () => toUI('memory-updates', null) }) };
   return elsewhere.finder;
 }
 // the missing links Memory health reports: the ones whose note is truly not in the vault, each marked with what its
@@ -2693,6 +2821,7 @@ function reopenChanged(items) {
   for (const m of items) { const k = m.target.toLowerCase(); if (left.has(k)) current.set(k, fingerprint(LINK_RULE, m.target, m.sources)); }
   const keys = decisionLog.changedArchives(v, current);
   if (!keys.length) return;
+  feedCache.touch();
   setLinksLeft(keys, false);
   clearDeclined(keys);
   const st = feedState();
@@ -2806,6 +2935,7 @@ async function decideLink(key, verdict, step = async () => {}, keep = () => {}, 
   if (onDisk(name)) throw new Error('A note with that name is already in the vault, so Quorum did not write another one');
   const finder = elsewhereFinder();
   finder?.reset();
+  await finder?.refresh();
   const hit = finder?.find(name);
   if (hit) throw new Error(`${hit.kind === 'branch' ? `A note with that name is on the branch ${hit.branch}` : `A ${hit.kind} with that name is at ${hit.where}`}, so Quorum did not write a note`);
   await step(`Writing ${folder ? `${folder}/` : ''}${name}.md from ${draft?.text ? 'the agent\'s draft' : 'what the linking notes say'}`);
@@ -3098,15 +3228,21 @@ function pastFixCheck() {
   const b = brain();
   const vault = pastFixVault();
   if (!b || !vault) return null;
-  if (pastFixState?.vault === b.vault) return pastFixState;
+  // until the finder's first read of the other branches is in, a recheck could miss a note on a branch: it is shown but
+  // not kept, and runs again once the branches are read
+  const finder = elsewhereFinder();
+  const settled = !finder || finder.ready();
+  if (pastFixState?.vault === b.vault && (pastFixState.settled || !settled)) return pastFixState;
+  if (!settled) finder.refresh();
   let all = {};
   try { all = JSON.parse(readFileSync(pastFixFile, 'utf8')) ?? {}; } catch {}
-  const finder = elsewhereFinder();
   let cache = { version: PAST_FIX_VERSION, results: {} };
   try { cache = recheckAll(fixRunList().filter((r) => r.vault === b.vault), { vault, find: (n) => finder?.find(n) ?? null }, all[b.vault] ?? null, PAST_FIX_VERSION); } catch (e) { log('past fixes', e?.message); }
-  all[b.vault] = cache;
-  try { writeFileSync(pastFixFile, JSON.stringify(all)); } catch (e) { log('past fixes', e?.message); }
-  pastFixState = { vault: b.vault, cache, plans: new Map() };
+  if (settled) {
+    all[b.vault] = cache;
+    try { writeFileSync(pastFixFile, JSON.stringify(all)); } catch (e) { log('past fixes', e?.message); }
+  }
+  pastFixState = { vault: b.vault, cache, plans: new Map(), settled };
   return pastFixState;
 }
 // how a flagged fix can be undone right now; kept a few seconds, since the feed reloads often
