@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { AgentSchedule, Brain, CalendarSettings, GithubInstallations, McpInheritedServer, McpOverlap, McpOverlapServer, MeetingSourceInfo, OAuthAccount, OAuthCheck, PlatformInfo, SourceJob } from './quorum';
+import type { AgentSchedule, Brain, CalendarSettings, McpInheritedServer, McpOverlap, McpOverlapServer, MeetingSourceInfo, OAuthAccount, OAuthCheck, PlatformInfo, SourceJob } from './quorum';
 import { CHECKABLE, installSummary } from '../connectors/oauthApps';
 import { CONNECTOR_RETURN } from './connectorsNav';
 import { libraryAreas } from './libraryFilter';
+import { createInstallsReader, type InstallsView } from './githubInstalls';
 import { useSession } from './session';
 import { TRADEOFFS } from '../sources/agent-import';
 import { AREAS, CONNECTORS_CHANGED, CONNECTOR_BY_ID, aboutFor, areaOf, areaOfCategory, connectorsFor, featuresFor, isConnected, mcpPathsOf, type LibraryConnector } from '../connectors/library';
@@ -494,23 +495,21 @@ function useAccountCheck(id: string) {
 }
 
 // where the GitHub App is installed, read again when the window gets focus and when a connector link brought the app
-// forward (CONNECTOR_RETURN). A read that fails keeps what the page showed
-function useGithubInstalls(on: boolean) {
-  const [installs, setInstalls] = useState<GithubInstallations | null>(null);
+// forward (CONNECTOR_RETURN, which skips the wait between reads). Reads share one request (githubInstalls.ts)
+function useGithubInstalls(on: boolean): InstallsView {
+  const [view, setView] = useState<InstallsView>({ installs: null, error: null });
   useEffect(() => {
     if (!on) return;
-    let live = true;
-    const read = () => window.quorum.oauthGithubInstallations().then((r) => {
-      if (!live || !('installations' in r)) return;
-      setInstalls((prev) => (r.stale ? prev ?? (r.checkedAt ? r : null) : r));
-    }).catch(() => {});
-    read();
-    const back = (e: Event) => { if ((e as CustomEvent<string>).detail === 'github') read(); };
-    window.addEventListener('focus', read);
+    const reader = createInstallsReader(() => window.quorum.oauthGithubInstallations());
+    const off = reader.subscribe(setView);
+    reader.read();
+    const focus = () => { reader.read(); };
+    const back = (e: Event) => { if ((e as CustomEvent<string>).detail === 'github') reader.read({ force: true }); };
+    window.addEventListener('focus', focus);
     window.addEventListener(CONNECTOR_RETURN, back);
-    return () => { live = false; window.removeEventListener('focus', read); window.removeEventListener(CONNECTOR_RETURN, back); };
+    return () => { off(); window.removeEventListener('focus', focus); window.removeEventListener(CONNECTOR_RETURN, back); };
   }, [on]);
-  return on ? installs : null;
+  return on ? view : { installs: null, error: null };
 }
 
 function ConnectorDetail({ connector: x, icon, live, onChange, initialError = '', approval = 'open', overlap = null, onCheck = () => {}, mcpIgnored = false }: { connector: LibraryConnector; icon: string | null; live: Live; onChange: () => Promise<void>; initialError?: string; approval?: Approval; overlap?: McpOverlap | null; checking?: boolean; onCheck?: () => void; mcpIgnored?: boolean }) {
@@ -535,7 +534,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
   const checkable = on && !!acct && CHECKABLE.has(x.id);
   const check = useAccountCheck(x.id);
   const checkFailed = check.checked && !check.checked.ok ? check.checked : null;
-  const installs = useGithubInstalls(x.id === 'github' && on);
+  const { installs, error: installsError } = useGithubInstalls(x.id === 'github' && on);
   const installed = installSummary(installs);
   const off = !on && unavailable(x, live);
   const status = soon ? 'Soon' : on ? 'Connected' : off ? 'Not available yet' : x.id === 'apple-calendar' && live.cal?.status === 'denied' ? 'Access is off in System Settings'
@@ -570,7 +569,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
   if (x.account) rows.push(
     ...(acct?.connected && acct.account ? [['Account', acct.account] as [string, ReactNode]] : []),
     ...(acct?.connected && acct.connectedAt ? [['Connected', `${ago(acct.connectedAt)} (${new Date(acct.connectedAt).toLocaleString()})`] as [string, ReactNode]] : []),
-    ...(x.id === 'github' && on ? [['Repositories', installs ? installed ?? 'Not installed on any repository yet' : 'Not read yet'] as [string, ReactNode]] : []),
+    ...(x.id === 'github' && on ? [['Repositories', installs ? installed ?? 'Not installed on any repository yet' : installsError ?? 'Not read yet'] as [string, ReactNode]] : []),
     ['Access', acct?.scope ?? 'Set by the provider\'s consent screen'],
     ['Tokens', x.id.startsWith('google-') ? 'Stored in this Mac\'s Keychain. Disconnect removes them, and revokes Quorum\'s Google access once no other Google connector uses the same account' : 'Stored in this Mac\'s Keychain. Disconnect revokes them with the provider and removes them'],
   );
