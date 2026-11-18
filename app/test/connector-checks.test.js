@@ -108,6 +108,12 @@ describe('GitHub installations', () => {
     const r = await accountsWith('github', stub(() => json({}, 429))).githubInstallations();
     expect(r).toMatchObject({ installations: [], stale: true, checkedAt: null });
   });
+  it('a secondary rate limit (403 with retry-after, calls left) is busy, and a plain 403 is not', async () => {
+    const secondary = await accountsWith('github', stub(() => json({ message: 'You have exceeded a secondary rate limit' }, 403, { 'retry-after': '60', 'x-ratelimit-remaining': '4000' }))).check('github');
+    expect(secondary.error).toMatch(/limiting requests/);
+    const forbidden = await accountsWith('github', stub(() => json({ message: 'Resource not accessible' }, 403, { 'x-ratelimit-remaining': '4000' }))).check('github');
+    expect(forbidden.error).toMatch(/answered with an error \(403\)/);
+  });
 });
 
 describe('the page a sign-in ends on', () => {
