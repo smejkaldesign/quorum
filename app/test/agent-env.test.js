@@ -11,9 +11,9 @@ const dir = mkdtempSync(path.join(tmpdir(), 'qenv-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 const BASE = {
-  HOME: '/Users/p', PATH: '/usr/bin:/bin', USER: 'p', SHELL: '/bin/zsh', TMPDIR: '/tmp/', LANG: 'en_US.UTF-8', LC_ALL: 'C', TERM: 'xterm',
+  HOME: '/tmp/home-p', PATH: '/usr/bin:/bin', USER: 'p', SHELL: '/bin/zsh', TMPDIR: '/tmp/', LANG: 'en_US.UTF-8', LC_ALL: 'C', TERM: 'xterm',
   HTTPS_PROXY: 'http://proxy:8080', no_proxy: 'localhost',
-  ANTHROPIC_BASE_URL: 'https://gw.example.com', CLAUDE_CONFIG_DIR: '/Users/p/.claude', CODEX_HOME: '/Users/p/.codex',
+  ANTHROPIC_BASE_URL: 'https://gw.example.com', CLAUDE_CONFIG_DIR: '/tmp/home-p/.claude', CODEX_HOME: '/tmp/home-p/.codex',
   QUORUM_GOOGLE_CLIENT_SECRET: 'x', QUORUM_SUPABASE_ANON_KEY: 'x', QUORUM_ENV: 'development', SUPABASE_SERVICE_ROLE_KEY: 'x',
   VITE_SUPABASE_URL: 'x', GOOGLE_CLIENT_SECRET: 'x', GOOGLE_PICKER_API_KEY: 'x', ELECTRON_RUN_AS_NODE: '1', STRIPE_SECRET_KEY: 'x',
 };
