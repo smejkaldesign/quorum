@@ -27,7 +27,7 @@ export function actorLabel(actor) {
   return NAMES[actor] ?? String(actor).split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 }
 
-export const READ_ONLY = 'Quorum is set to read only, so AI tools cannot change anything. Change it in Quorum under Settings > Connectors.';
+export const READ_ONLY = 'Quorum is set to read only, so AI tools cannot change anything. Change Access to Read and write in Quorum under Settings > AI tools.';
 export const GATE_OFF = `AI tools cannot approve, dismiss or undo memory changes yet. In Quorum, turn on Settings > Memory > ${AGENT_SETTING}, then try again.`;
 const CLOUD = 'Knowledge bases are part of Quorum Cloud, and this copy of Quorum has none or is signed out.';
 const PLANNED = new Set(['link', 'finding', 'past-fix']);
