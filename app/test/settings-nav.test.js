@@ -14,7 +14,7 @@ describe('the Admin button', () => {
 describe('which nav shows', () => {
   it('follows from the page: workspace pages open the Admin nav, the rest the account nav', () => {
     for (const p of WORKSPACE_PAGES) expect(modeOf(p)).toBe('admin');
-    for (const p of ['preferences', 'memory', 'agent-os', 'calendar', 'meetings', 'voice']) expect(modeOf(p)).toBe('account');
+    for (const p of ['preferences', 'memory', 'calendar', 'meetings', 'voice']) expect(modeOf(p)).toBe('account');
     for (const p of ['developers', 'guardrails', 'connectors']) expect(modeOf(p)).toBe('admin');
   });
 

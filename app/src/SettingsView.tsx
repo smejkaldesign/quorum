@@ -32,7 +32,6 @@ type Nav = { id: Page; label: string; icon: (p: { width?: number; height?: numbe
 const ACCOUNT: Nav[] = [
   { id: 'preferences', label: 'Preferences', icon: IconSliders },
   { id: 'memory', label: 'Memory', icon: IconBrain },
-  { id: 'agent-os', label: 'Agent OS', icon: IconFolder },
   { id: 'calendar', label: 'Calendar', icon: IconCalendar },
   { id: 'meetings', label: 'Meetings', icon: IconMic },
   { id: 'voice', label: 'Voice typing', icon: IconKeyboard },
@@ -208,15 +207,8 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
           ) : page === 'memory' ? (
             <>
               <SecondBrain part="folder" brain={brain} onConnect={onConnect} onDisconnect={onDisconnect} onBrain={onBrain} onViewConnector={goConnector} />
-              {brain && <MemoryUpdatesCard settings={settings} onSettings={onSettings} advanced={<><MemoryRulesCard /><LocalModelsCard /></>} />}
+              {brain && <MemoryUpdatesCard settings={settings} onSettings={onSettings} after={<MemoryScan brain={brain} />} advanced={<><KeeperCard brain={brain} part="reports" /><MemoryRulesCard /><LocalModelsCard /></>} />}
             </>
-          ) : page === 'agent-os' ? (
-            brain
-              ? <><KeeperCard brain={brain} part="plugins" /><MemoryScan /></>
-              : <EmptyState icon={<IconFolder width={22} height={22} />} title="No folder connected">
-                  <p>Upkeep, plugins and power-ups work on the folder you connect under Memory.</p>
-                  <button className="pill" onClick={() => go('memory')}>Open Memory</button>
-                </EmptyState>
           ) : page === 'members' ? <MembersArea />
             : page === 'org-connectors' ? <WorkspaceConnectorsArea local={<OrgConnectorsLocal onGo={go} />} />
             : page === 'org-voice' ? <WorkspaceVoiceArea local={<OrgVoiceLocal onGo={go} />} />
@@ -691,99 +683,13 @@ function UploadCustomers({ list, onAdd, onClose }: { list: OptOut[]; onAdd: (mor
   );
 }
 
-// the ••• on an included capability: open it, read more, or take it out of Quorum (the files stay)
-function MemMenu({ it, onAbout, onDelete }: { it: MemoryItem; onAbout: () => void; onDelete: () => void }) {
-  const [open, setOpen] = useMenu();
-  const locked = it.kind === 'guards';
-  return (
-    <span className="menu-wrap" onClick={(e) => e.stopPropagation()}>
-      <button className="icon-btn" aria-label={`${it.label} options`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}><IconMore /></button>
-      {open && (
-        <div className="menu end" role="menu">
-          {locked
-            ? <button role="menuitem" onClick={() => { setOpen(false); window.dispatchEvent(new CustomEvent('quorum-open-settings', { detail: 'guardrails' })); }}><IconShield width={15} height={15} /> Open Guardrails</button>
-            : <button role="menuitem" onClick={() => { setOpen(false); window.quorum.memoryOpen(it.id); }}><IconExternal width={15} height={15} /> View</button>}
-          <button role="menuitem" onClick={() => { setOpen(false); onAbout(); }}><IconInfo width={15} height={15} /> About</button>
-          <div className="menu-sep" />
-          {locked
-            ? <span data-tip="Rules are managed on the Guardrails page" data-tip-pos="left"><button role="menuitem" className="danger" disabled><IconTrash width={15} height={15} /> Delete</button></span>
-            : <button role="menuitem" className="danger" onClick={() => { setOpen(false); onDelete(); }}><IconTrash width={15} height={15} /> Delete</button>}
-        </div>
-      )}
-    </span>
-  );
-}
-
-const ABOUT: Record<string, string[]> = {
-  guards: [
-    'The rules behind what Quorum\'s agent may read from your Agent OS and say about it: built-in rules, guards found in your Agent OS that you included, your own rules, and your workspace\'s rules.',
-    'Review and change them on the Guardrails page. Every rule only ever denies, so the rules add up.',
-  ],
-  index: [
-    'The catalog at the top of your Agent OS. Quorum reads it first to jump to the right folder and note instead of searching everything.',
-  ],
-  search: [
-    "Before Quorum answers, Quorum runs your Agent OS's own search with your question and hands Quorum the best matching notes to read first.",
-    'With embeddings, the matching runs on this Mac, so your question never leaves it.',
-  ],
-  graph: [
-    'Search also follows the links between notes one step from each match, so related notes that use different words still turn up.',
-  ],
-  folder: [
-    'Quorum can read the notes in this folder when it answers. The guards still apply to every file.',
-  ],
-  instructions: [
-    'The operating instructions at the root of your Agent OS (CLAUDE.md or AGENTS.md). Included, they go into every answer as instructions to follow where they apply.',
-  ],
-  skills: [
-    'Skills your Agent OS defines under .claude/skills. Included, Claude Code loads the vault\'s project settings for the run, which brings the skills and the vault\'s own hooks, and Quorum may run a skill when a question calls for it. Quorum still only reads files.',
-  ],
-  agents: [
-    'Agent definitions under .claude/agents. Included, Quorum may hand a sub-question to one of them during an answer, under the same read-only limits.',
-  ],
-  mcp: [
-    'MCP servers from your Agent OS\'s .mcp.json. Included, Claude Code starts them for the run with your own credentials, and their tools are available to the answer. A server\'s tools can act on the outside world; include only servers you trust Quorum with.',
-  ],
-};
-
-function AboutCapability({ it, onClose }: { it: MemoryItem; onClose: () => void }) {
-  const status = it.kind === 'guards' ? it.detail : it.include ? 'Included' : 'Not included yet';
-  return (
-    <Modal titleId="about-title" title={it.label} onClose={onClose}>
-      {(ABOUT[it.kind] ?? ABOUT.folder).map((t) => <p key={t}>{t}</p>)}
-      <dl className="about-facts">
-        <dt>Status</dt><dd>{status}</dd>
-        <dt>Location</dt><dd>{it.path.replace(/^\/Users\/[^/]+/, '~')}</dd>
-      </dl>
-      {it.kind !== 'guards' && <p className="about-note">Deleting it takes it out of Quorum. The files stay in your Agent OS.</p>}
-      <ModalActions>
-        <button className="pill" onClick={() => window.quorum.memoryOpen(it.id)}>View</button>
-        <button className="pill primary" autoFocus onClick={onClose}>Done</button>
-      </ModalActions>
-    </Modal>
-  );
-}
-
-// kinds the scan reports but Quorum cannot act on yet; they never enter the review list
-const INERT_KINDS = new Set<string>([]);
-// what each roadmap kind will do once it works, next to what was found
-function soonWhy(it: MemoryItem): string {
-  switch (it.kind) {
-    case 'instructions': return `Found ${it.detail}. Quorum will follow it when it answers`;
-    case 'skills': return `${it.detail} found. Quorum will run them on request`;
-    case 'agents': return `${it.detail} found. Quorum will hand work to them`;
-    case 'mcp': return `${it.detail} found in .mcp.json. Quorum will reach them when it answers`;
-    default: return it.detail;
-  }
-}
-
 // why each kind is worth including, folded together with what the scan found
 function why(it: MemoryItem): string {
   const n = it.detail.match(/\d+/)?.[0] ?? '';
   switch (it.kind) {
     case 'guards': return `${it.detail} · review and add rules on the Guardrails page`;
     case 'index': return `Quorum starts from ${it.detail.split(' · ')[0]} to find notes faster`;
-    case 'search': return it.detail === 'local embeddings' ? 'Finds related notes first, with embeddings on this Mac' : 'Finds matching notes before Quorum starts';
+    case 'search': return it.detail === 'local embeddings' ? 'Finds related notes first, with embeddings on this Mac' : 'Finds matching notes before Quorum answers';
     case 'graph': return 'Search also pulls in notes linked to each match';
     case 'instructions': return `Quorum follows ${it.detail} when it answers`;
     case 'skills': return `${it.detail}; Quorum can run one when a question calls for it`;
@@ -798,18 +704,11 @@ const KIND_ICON: Record<string, (p: { width?: number; height?: number; filled?: 
 };
 
 // additional context from the Agent OS: found by a local scan of file names, reviewed one by one
-function MemoryScan() {
+function MemoryScan({ brain }: { brain: Brain }) {
   const [m, setM] = useState<Memory | null>(null);
   const [scanning, setScanning] = useState(false);
-  const [about, setAbout] = useState<MemoryItem | null>(null);
   useEffect(() => { window.quorum.memoryGet().then(setM); }, []);
   if (!m) return null;
-  // only what changes an answer is up for review: the index, search, the link graph, folders, guards. Instructions,
-  // skills, agents and MCP servers are detected but unused today, so they are mentioned in one line and never offered
-  const acts = (i: MemoryItem) => !INERT_KINDS.has(i.kind);
-  const included = m.items.filter((i) => acts(i) && (i.include === true || i.kind === 'guards'));
-  const pending = m.items.filter((i) => acts(i) && i.include === null && i.kind !== 'guards');
-  const soon = m.items.filter((i) => !acts(i));
   const refresh = async () => {
     setScanning(true);
     const r = await window.quorum.memoryRefresh();
@@ -817,59 +716,36 @@ function MemoryScan() {
     if (r.cancelled) return;
     setM(r);
   };
+  // each part of the folder Quorum can use when it answers is one switch; guards always apply and link to Guardrails
   const row = (it: MemoryItem) => {
     const Icon = KIND_ICON[it.kind] ?? IconFolder;
-    const undecided = it.include === null && it.kind !== 'guards';
     const on = it.kind === 'guards' || it.include === true;
     const icon = it.kind === 'folder' && on ? <IconFolderFill width={18} height={18} className="ok" /> : <Icon width={18} height={18} {...(it.kind === 'guards' || it.kind === 'index' ? { filled: on } : {})} className={on ? 'ok' : undefined} />;
     return (
       <Row key={it.id} icon={icon} desc={why(it)}
         title={<button className="mem-title" onClick={() => (it.kind === 'guards' ? window.dispatchEvent(new CustomEvent('quorum-open-settings', { detail: 'guardrails' })) : window.quorum.memoryOpen(it.id))}>{it.label}{it.kind === 'guards' ? <IconChevron className="right" width={14} height={14} /> : <IconExternal width={14} height={14} />}</button>}>
-        <span className={`mem-actions ${undecided ? '' : 'decided'}`}>
-          {undecided && <span className="new-badge">New</span>}
-          <button className="icon-btn mem-yes" aria-label={`Include ${it.label}`} data-tip="Include" tabIndex={undecided ? 0 : -1} aria-hidden={!undecided} onClick={async () => setM(await window.quorum.memoryInclude(it.id))}><IconCheck width={17} height={17} /></button>
-          {undecided
-            ? <button className="icon-btn mem-no" aria-label={`Exclude ${it.label}`} data-tip="Exclude" onClick={async () => setM(await window.quorum.memoryExclude(it.id))}><IconClose width={15} height={15} /></button>
-            : <MemMenu it={it} onAbout={() => setAbout(it)} onDelete={async () => setM(await window.quorum.memoryExclude(it.id))} />}
-        </span>
+        {it.kind !== 'guards' && <Toggle on={on} onChange={async (v) => setM(await (v ? window.quorum.memoryInclude(it.id) : window.quorum.memoryExclude(it.id)))} />}
       </Row>
     );
   };
   return (
     <>
       <div className="set-head">
-        <h3>Power-ups</h3>
+        <h3>When Quorum answers</h3>
         <span className="set-head-actions">
           {scanning
             ? <button className="icon-btn scan-btn scanning" aria-label="Cancel refresh" data-tip="Cancel refresh" onClick={() => window.quorum.memoryRefreshCancel()}>
                 <span className="brand-spin" aria-hidden="true" /><IconClose className="scan-x-ic" width={13} height={13} />
               </button>
-            : <button className="icon-btn scan-btn" aria-label="Refresh" data-tip="Find new context" onClick={refresh}><IconReset width={16} height={16} /></button>}
-          <button className="pill small-pill with-icon" onClick={async () => setM(await window.quorum.memoryAdd())}><IconPlus width={15} height={15} />Add</button>
+            : <button className="icon-btn scan-btn" aria-label="Refresh" data-tip="Look for new files" onClick={refresh}><IconReset width={16} height={16} /></button>}
+          <button className="pill small-pill with-icon" onClick={async () => setM(await window.quorum.memoryAdd())}><IconPlus width={15} height={15} />Add folder</button>
         </span>
       </div>
-      {included.length > 0 && <div className="set-card mem-card">{included.map(row)}</div>}
-
-      {pending.length > 0 && (
-        <>
-          <h3>Found in your Agent OS</h3>
-          <div className="set-card mem-card">{pending.map(row)}</div>
-        </>
-      )}
-      {soon.length > 0 && (
-        <>
-          <h3>On the roadmap</h3>
-          <div className="set-card mem-card">
-            {soon.map((it) => { const Icon = KIND_ICON[it.kind] ?? IconFolder; return (
-              <Row key={it.id} icon={<Icon width={18} height={18} />} title={<>{it.label}<em className="soon grey">Soon</em></>} desc={soonWhy(it)}>
-                <button className="icon-btn" aria-label={`About ${it.label}`} data-tip="About" onClick={() => setAbout(it)}><IconInfo width={16} height={16} /></button>
-              </Row>
-            ); })}
-          </div>
-        </>
-      )}
-      {!m.items.length && <p className="set-review">Nothing yet. Refresh to scan your Agent OS, or Add a folder.</p>}
-      {about && <AboutCapability it={about} onClose={() => setAbout(null)} />}
+      <div className="set-card mem-card">
+        {m.items.map(row)}
+        <KeeperCard brain={brain} part="search" />
+        {!m.items.length && <Row icon={<IconReset width={18} height={18} />} title="Nothing found yet" desc="Refresh to look through your folder, or add a folder." />}
+      </div>
     </>
   );
 }
@@ -914,6 +790,18 @@ function KnowledgePage() {
 const PLUGIN_ICON: Record<string, (p: { width?: number; height?: number; className?: string }) => ReactNode> = {
   index: IconFork, daily: IconCalendar, links: IconPeople, facts: IconBrain, search: IconSearch, context: IconScale, skills: IconStack, 'brain-check': IconListCheck,
 };
+// what each job does for the memory Quorum keeps, in one line
+const PLUGIN_TITLE: Record<string, string> = { index: 'Meeting index', daily: 'Daily notes', links: 'People and project links', facts: 'Learned facts', search: "Use Quorum's search", context: 'Context size check', skills: 'Skill usage', 'brain-check': 'Memory quiz' };
+const PLUGIN_VALUE: Record<string, string> = {
+  index: 'Lists every meeting in index.md so you and your AI can find it.',
+  daily: "Adds each meeting to that day's daily note.",
+  links: 'Links each meeting from the people and project notes it mentions.',
+  facts: 'Saves up to three facts per meeting that your AI can recall later.',
+  search: 'Quorum finds the notes behind each answer. Off: it uses your own search script.',
+  context: 'Warns when the files Claude Code loads every session grow too large.',
+  skills: 'Shows which skills ran lately, so you can drop the ones you never use.',
+  'brain-check': 'Asks a few questions with known answers to test what your memory returns.',
+};
 const PLUGIN_PANEL: Record<string, () => ReactNode> = { context: () => <ContextPanel />, skills: () => <SkillsPanel />, 'brain-check': () => <BrainCheckPanel /> };
 // the vault note's path. It saves on blur or Enter only, since each save moves the list to the new path; a path the
 // keeper refuses (outside the folder, in a dot folder or the meetings folder) leaves the saved one and says why. Paths
@@ -943,7 +831,7 @@ function NotePathField({ value, onSave }: { value: string; onSave: (v: string) =
     </label>
   );
 }
-function KeeperCard({ brain, part }: { brain: Brain; part: 'upkeep' | 'plugins' }) {
+function KeeperCard({ brain, part }: { brain: Brain; part: 'upkeep' | 'reports' | 'search' }) {
   const [k, setK] = useState<KeeperStatus | null>(null);
   const [busy, setBusy] = useState(false);
   // picking Default when it would move lines out of the list asks first
@@ -963,31 +851,28 @@ function KeeperCard({ brain, part }: { brain: Brain; part: 'upkeep' | 'plugins' 
     setK(await window.quorum.keeperPlugin(p.id, owner));
     if (p.id === 'brain-check' && owner === 'quorum') window.quorum.brainCheckRun().catch(() => {});
   };
-  // the learned list against its budget, and its share of the file it sits in
-  const usage = (l: NonNullable<KeeperStatus['learned']>) => `${l.chars.toLocaleString()} of ${l.budget.toLocaleString()} characters in ${l.file}${l.fileChars ? `, ${Math.round((l.chars / l.fileChars) * 100)}% of the file` : ''}`;
   const factsOn = k.plugins.find((p) => p.id === 'facts')?.owner === 'quorum';
+  // one switch per job: on, Quorum does it; off, Quorum leaves it to the folder. The subtitle says what it does for
+  // memory, and names the file that already does the job when the scan found one
   const plugin = (p: KeeperPlugin) => {
     const Icon = PLUGIN_ICON[p.id] ?? IconFolder;
     const on = p.owner === 'quorum';
-    const found = p.evidence.map((e) => `${e.path} (${e.why})`).join(', ');
-    const pdesc = p.evidence.length
-      ? (on ? `Quorum does this. Your Agent OS also has ${found}` : `Used already in your Agent OS: ${found}. ${p.report ? 'Quorum leaves this to it.' : 'Quorum reads and links, and writes nothing for this.'}`)
-      : on ? `${p.does}${p.id === 'facts' && !k.model ? '. Needs a model source in AI settings' : p.id === 'facts' && k.learned ? `. ${usage(k.learned)}` : ''}`
-      : p.report ? `Off. ${p.does}.` : 'Off. Quorum writes nothing for this.';
-    const full = p.note ? `${pdesc}${/[.]$/.test(pdesc) ? '' : '.'} ${p.note}` : pdesc;
+    const found = p.evidence[0]?.path;
+    const pdesc = `${PLUGIN_VALUE[p.id] ?? p.does}${p.id === 'facts' && on && !k.model ? ' Needs a model source in AI settings.' : ''}${found ? ` Your setup already does this: ${found}.` : ''}`;
     return (
       <Fragment key={p.id}>
-        <Row icon={<Icon width={18} height={18} className={on ? 'ok' : undefined} />} title={p.title} desc={full}>
-          {p.isNew && <span className="new-badge">New</span>}
-          {p.isNew && <button className="pill small-pill" onClick={() => pick(p, 'vault')}>Keep as is</button>}
+        <Row icon={<Icon width={18} height={18} className={on ? 'ok' : undefined} />} title={PLUGIN_TITLE[p.id] ?? p.title} desc={pdesc}>
           <Toggle on={on} disabled={p.always && !p.evidence.length} onChange={(v) => pick(p, v ? 'quorum' : 'vault')} />
         </Row>
         {on && PLUGIN_PANEL[p.id]?.()}
       </Fragment>
     );
   };
-  const writers = k.plugins.filter((p) => !p.report);
   const reports = k.plugins.filter((p) => p.report);
+  const writers = k.plugins.filter((p) => !p.report && p.id !== 'search');
+  const search = k.plugins.find((p) => p.id === 'search');
+  if (part === 'search') return search && search.evidence.length ? plugin(search) : null;
+  if (part === 'reports') return reports.length ? <><h3>Reports</h3><div className="set-card">{reports.map(plugin)}</div></> : null;
   if (part === 'upkeep') return (
     <>
       <h3>Memory</h3>
@@ -1005,26 +890,22 @@ function KeeperCard({ brain, part }: { brain: Brain; part: 'upkeep' | 'plugins' 
         )}
         {k.on && k.held && (
           <Row icon={<IconInfo width={18} height={18} />} title={`Waiting to create ${k.held.count} new files`}
-            desc={`The last run would have added ${k.held.count} files, such as ${k.held.sample.slice(0, 3).join(', ')}. Nothing was written. Turn off a plugin below, or create them.`}>
+            desc={`The last run would have added ${k.held.count} files, such as ${k.held.sample.slice(0, 3).join(', ')}. Nothing was written. Turn off a job below, or create them.`}>
             <button className="pill small-pill" disabled={busy || k.running} onClick={() => run(true)}>Create them</button>
           </Row>
         )}
       </div>
-    </>
-  );
-  return (
-    <>
-      {k.plugins.length > 0 && (
+      {k.on && (
         <>
-          <h3>Plugins</h3>
+          <h3>What it writes</h3>
           <div className="set-card">
             {k.on && (
               <Row icon={<IconNotes width={18} height={18} />} title="Edit notes Quorum did not create"
-                desc={`Off by default. Quorum then writes only to files it made: its meeting notes, the meetings index, daily notes it started and .quorum. Turn this on to let it add meeting lines to your index.md, daily, people and project notes, and a learned facts note you picked.${!k.editVault && k.last?.left?.length ? ` The last run left ${k.last.left.length} ${k.last.left.length === 1 ? 'note' : 'notes'} as ${k.last.left.length === 1 ? 'it was' : 'they were'}.` : ''}`}>
+                desc={`Lets the jobs below add meeting lines to notes you wrote. Off: Quorum writes only to files it created.${!k.editVault && k.last?.left?.length ? ` The last run left ${k.last.left.length} ${k.last.left.length === 1 ? 'note' : 'notes'} as ${k.last.left.length === 1 ? 'it was' : 'they were'}.` : ''}`}>
                 <Toggle on={k.editVault} onChange={async (on) => setK(await window.quorum.keeperSet({ editVault: on }))} />
               </Row>
             )}
-            {k.on ? writers.map(plugin) : <Row icon={<IconReset width={18} height={18} />} title="Upkeep is off" desc="Quorum writes nothing for these jobs while Auto maintain memories from new meetings is off. Turn it on under Meetings to choose which ones it does. The reports below work either way." />}
+            {writers.map(plugin)}
             {k.on && k.folders.meetings && k.plugins.find((p) => p.id === 'index')?.owner === 'vault' && (
               <Row icon={<IconFork width={18} height={18} />} title={`Write meeting index lines to ${k.folders.meetings}/index.md`}
                 desc="Your Agent OS keeps index.md, so Quorum leaves it alone. This keeps one line per meeting in the meetings folder instead, which your index can link to.">
@@ -1080,7 +961,6 @@ function KeeperCard({ brain, part }: { brain: Brain; part: 'upkeep' | 'plugins' 
                 body={k.learned.claude.block === 'list' ? `The facts move to ${k.learned.file}. The rest of CLAUDE.md stays as it is.` : 'The rest of CLAUDE.md stays as it is.'}
                 action="Remove" onDone={async (ok) => { setAskRemove(false); if (ok) setK(await window.quorum.keeperRemoveClaude()); }} />
             )}
-            {reports.map(plugin)}
           </div>
         </>
       )}

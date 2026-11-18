@@ -111,7 +111,7 @@ export function VersionBar({ version, busy, locked, onRestore, onClose }: { vers
 
 // Settings > Memory: Quorum's own memory settings. The main card holds the switches people change; Advanced holds the
 // limits, the dot timer, and the rules and local model status passed in as advanced
-export function MemoryUpdatesCard({ settings, onSettings, advanced }: { settings: Settings; onSettings: (s: Settings) => void; advanced?: ReactNode }) {
+export function MemoryUpdatesCard({ settings, onSettings, after, advanced }: { settings: Settings; onSettings: (s: Settings) => void; after?: ReactNode; advanced?: ReactNode }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const saved = settings.memoryDotDays ?? 30;
   const save = async (patch: Partial<Settings>) => onSettings(await window.quorum.setSettings(patch));
@@ -164,6 +164,7 @@ export function MemoryUpdatesCard({ settings, onSettings, advanced }: { settings
           <Toggle on={settings.memoryHighlight !== false} onChange={(v) => save({ memoryHighlight: v })} />
         </Row>
       </div>
+      {after}
       <button className="set-advanced" aria-expanded={showAdvanced} onClick={() => setShowAdvanced((v) => !v)}>
         <IconChevron width={14} height={14} className={showAdvanced ? undefined : 'right'} />Advanced
       </button>
