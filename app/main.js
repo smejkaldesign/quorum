@@ -2384,9 +2384,10 @@ async function sweepNow(kind, only, { after }) {
   } catch (e) { log('memory sweep', e?.message); return null; }
 }
 const recordingNow = () => meeting.capturing || meeting.armed;
-// the notes saved in the last few seconds are checked together (memoryWiring.js). They wait while a meeting is
-// recorded, since it writes its note every few seconds, and while a catch-up runs, since it sweeps once when it ends
-const saves = createSaveSweeps({ sweep, hold: () => recordingNow() || catchup.running() });
+// the notes saved in the last few seconds are checked together, at most once a minute per vault (memoryWiring.js). They
+// wait while a meeting is recorded, since it writes its note every few seconds, and while a catch-up runs, since it
+// sweeps once when it ends
+const saves = createSaveSweeps({ sweep, hold: () => recordingNow() || catchup.running(), key: () => brain()?.vault ?? null });
 const sweepOnSave = (rels) => saves.add(rels);
 function sweepTick() {
   const b = brain();

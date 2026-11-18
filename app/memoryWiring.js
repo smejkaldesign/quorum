@@ -4,25 +4,44 @@
 import path from 'node:path';
 import { createMemoryHost } from './memoryHost.js';
 
-// The save sweeps: the notes saved in the last delayMs are checked together. hold(): a recording or a catch-up runs, so
-// the saves wait (a recording writes its note every few seconds; a catch-up sweeps once when it ends)
+// The save sweeps: the notes saved in the last delayMs are checked together. A vault gets at most one save sweep per
+// gapMs, so a note rewritten on every turn (a session log) does not start a sweep each time: the saves in between wait
+// and go in the next one, and a last one runs once the saves stop. A run of saves that never pauses still gets a sweep
+// gapMs after its first save. hold(): a recording or a catch-up runs, so the saves wait (a recording writes its note
+// every few seconds; a catch-up sweeps once when it ends). key(): the open vault
 export const SAVE_DELAY_MS = 3000;
-export function createSaveSweeps({ sweep, hold = () => false, delayMs = SAVE_DELAY_MS }) {
+export const SAVE_GAP_MS = 60000;
+export function createSaveSweeps({ sweep, hold = () => false, delayMs = SAVE_DELAY_MS, gapMs = SAVE_GAP_MS, key = () => null, now = () => Date.now() }) {
   let timer = null;
   const rels = new Set();
+  let first = 0;
+  let latest = 0;
+  const ran = new Map();
+  function arm(ms) {
+    clearTimeout(timer);
+    timer = setTimeout(fire, Math.max(0, ms));
+    timer.unref?.();
+  }
+  function due() {
+    const last = ran.get(key()) ?? -Infinity;
+    return Math.max(last + gapMs, Math.min(latest + delayMs, first + gapMs)) - now();
+  }
   function fire() {
     timer = null;
-    if (hold()) { add([]); return; }
+    if (hold()) { arm(delayMs); return; }
     if (!rels.size) return;
     const only = [...rels];
     rels.clear();
+    ran.set(key(), now());
     sweep('save', only);
   }
   function add(list) {
+    const t = now();
+    if (!rels.size) first = t;
+    latest = t;
     for (const r of list ?? []) rels.add(r);
-    clearTimeout(timer);
-    timer = setTimeout(fire, delayMs);
-    timer.unref?.();
+    if (!rels.size) { arm(delayMs); return; }
+    arm(due());
   }
   // the saves that wait are dropped: the vault changed, or a full sweep covers them
   function clear() { clearTimeout(timer); timer = null; rels.clear(); }
