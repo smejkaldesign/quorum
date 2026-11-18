@@ -16,7 +16,8 @@
 -- 4. The review queue never sees a personal KB's notes: a note in one has no contribution row (a contribution an
 --    admin could read, or a pending one an admin could open, is deleted when the note joins), the same way hosted KB
 --    notes stay out of it (0034).
--- 5. The owner deletes a personal KB; workspace owners and admins cannot. Deleting it soft deletes the notes its own
+-- 5. Every refusal for a KB the caller cannot read says it no longer exists, so a refusal does not confirm that a
+--    personal KB exists. The owner deletes a personal KB; workspace owners and admins cannot. Deleting it soft deletes the notes its own
 --    synced folders wrote and the notes imported from its source, so each Mac removes them; every other note the owner
 --    placed in it goes back to being the owner's own note. A member who leaves the workspace takes their personal KBs with them the same
 --    way, after 0032 ended their sync grants. Deleting an account (0039) no longer hands the notes of the person's
@@ -151,6 +152,143 @@ begin
   else insert into public.kb_access (kb_id, principal, team_id, role, created_by) values (k, 'team', kb_create.team_id, 'reader', auth.uid());
   end if;
   return public.kb_shape(k);
+end $$;
+
+-- a KB the caller cannot read answers as gone, so no refusal says that someone's personal KB exists: 0034's
+-- kb_arrange_check (folder writes), 0024's kb_note_assign, 0032's kb_attachments_list and 0033's kb_sync_attach check
+-- reading before managing
+create or replace function public.kb_arrange_check(kb_id public.ulid, refusal text) returns void
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.can_read_kb(kb_arrange_check.kb_id) then raise exception 'That knowledge base no longer exists'; end if;
+  if public.kb_is_hosted(kb_arrange_check.kb_id) then perform public.kb_hosted_write_check(kb_arrange_check.kb_id);
+  elsif not public.can_admin_kb(kb_arrange_check.kb_id) then raise exception '%', refusal;
+  end if;
+end $$;
+
+create or replace function public.kb_note_assign(note_id public.ulid, kb_id public.ulid, folder_id public.ulid default null) returns jsonb
+language plpgsql security definer set search_path = public as $$
+#variable_conflict use_column
+declare n public.notes;
+begin
+  select * into n from public.notes x where x.id = kb_note_assign.note_id and x.deleted_at is null;
+  if n.id is null or not public.note_readable(n.id) then raise exception 'That note no longer exists'; end if;
+  if kb_note_assign.kb_id is not null and not public.can_read_kb(kb_note_assign.kb_id) then raise exception 'That knowledge base no longer exists'; end if;
+  if kb_note_assign.kb_id is not null and not public.can_admin_kb(kb_note_assign.kb_id) then raise exception 'Only the knowledge base''s admins can add notes to it'; end if;
+  if kb_note_assign.kb_id is null and kb_note_assign.folder_id is not null then raise exception 'Pick a knowledge base for that folder'; end if;
+  if kb_note_assign.kb_id is not null and n.user_id <> auth.uid() and not public.is_admin(n.workspace_id) then raise exception 'Only the note''s author or a workspace admin can move this note'; end if;
+  update public.notes x set kb_id = kb_note_assign.kb_id, folder_id = kb_note_assign.folder_id where x.id = n.id returning * into n;
+  return jsonb_build_object('note_id', n.id, 'kb_id', n.kb_id, 'folder_id', n.folder_id, 'updated_at', n.updated_at);
+end $$;
+
+create or replace function public.kb_sync_attach(uid uuid, kb_id public.ulid, folder_id public.ulid, provider text, remote_id text, remote_kind text,
+  options jsonb, name text, url text, token text default null, client text default 'quorum', shared_with_mac boolean default false, account text default null,
+  attach_id text default null) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  k public.knowledge_bases;
+  w public.workspaces;
+  integ public.workspace_integrations;
+  g public.kb_sync_grants;
+  a public.kb_attachments;
+  p text := lower(trim(coalesce(kb_sync_attach.provider, '')));
+  rid text := trim(coalesce(kb_sync_attach.remote_id, ''));
+  tok text := coalesce(kb_sync_attach.token, '');
+  opts jsonb := coalesce(kb_sync_attach.options, '{}'::jsonb);
+  sid uuid;
+  old_grant public.kb_sync_grants;
+begin
+  perform public.kb_sync_service_only();
+  -- the same attach sent again (a retry after a timeout) answers the attachment it made, and changes nothing
+  if kb_sync_attach.attach_id is not null then
+    if char_length(kb_sync_attach.attach_id) > 80 then raise exception 'That attach id is too long'; end if;
+    select * into a from public.kb_attachments x where x.attach_id = kb_sync_attach.attach_id;
+    if a.id is not null then
+      if a.attached_by is distinct from uid then raise exception 'That attach id is taken'; end if;
+      return public.kb_attachment_row(a);
+    end if;
+  end if;
+  select * into k from public.knowledge_bases x where x.id = kb_sync_attach.kb_id;
+  if k.id is null then raise exception 'That knowledge base no longer exists'; end if;
+  if not public.can_read_kb_as(k.id, uid) then raise exception 'That knowledge base no longer exists'; end if;
+  if not public.can_admin_kb_as(k.id, uid) then raise exception 'Only the knowledge base''s admins can sync folders into it'; end if;
+  if kb_sync_attach.folder_id is not null and not exists (select 1 from public.kb_folders f where f.id = kb_sync_attach.folder_id and f.kb_id = k.id) then
+    raise exception 'That folder is not in this knowledge base';
+  end if;
+  if p not in ('google-drive', 'github') then raise exception 'That connector cannot sync folders yet'; end if;
+  if kb_sync_attach.remote_kind not in ('folder', 'file') then raise exception 'Pick a folder or a file'; end if;
+  if p = 'github' and kb_sync_attach.remote_kind <> 'folder' then raise exception 'A GitHub repository syncs as a folder'; end if;
+  if rid = '' or char_length(rid) > 300 then raise exception 'That item could not be read'; end if;
+  if p = 'github' and rid !~ '^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$' then raise exception 'That repository address is not valid'; end if;
+  if jsonb_typeof(opts) <> 'object' then raise exception 'The sync options must be an object'; end if;
+  opts := jsonb_strip_nulls(jsonb_build_object('branch', nullif(trim(coalesce(opts ->> 'branch', '')), ''), 'path', nullif(trim(both '/' from coalesce(opts ->> 'path', '')), '')));
+  if coalesce(kb_sync_attach.client, 'quorum') not in ('quorum', 'workspace') then raise exception 'Unknown OAuth client'; end if;
+  if char_length(tok) > 4096 then raise exception 'That token is too long'; end if;
+
+  select * into w from public.workspaces x where x.id = k.workspace_id and x.deleted_at is null;
+  if w.id is null then raise exception 'That workspace no longer exists'; end if;
+  select * into integ from public.workspace_integrations x where x.workspace_id = w.id and x.provider = p;
+  if integ.id is not null and not integ.enabled then raise exception 'This connector is turned off for the workspace'; end if;
+  if integ.id is null and w.team_enabled and w.approved_connectors_only then
+    raise exception 'Your workspace allows only connectors an admin approved. Ask an owner or admin to enable this one.';
+  end if;
+  if kb_sync_attach.client = 'workspace' and (integ.id is null or integ.mode <> 'org' or coalesce(integ.config ->> 'auth', '') <> 'oauth_client' or integ.secret_id is null) then
+    raise exception 'The workspace has no OAuth client for this connector';
+  end if;
+
+  select * into g from public.kb_sync_grants x where x.workspace_id = w.id and x.user_id = uid and x.provider = p and x.ended_at is null for update;
+  if tok = '' and g.id is null then raise exception 'Sign in to the provider first'; end if;
+  if tok <> '' and g.id is not null and (g.client <> kb_sync_attach.client) then
+    -- a token from another client cannot refresh under the stored one: a new grant starts, the admin's other
+    -- attachments move to it, and the old grant then ends (revoked when it is a grant of its own)
+    old_grant := g;
+    update public.kb_sync_grants x set ended_at = now(), ended_reason = 'removed' where x.id = g.id;
+    g := null;
+  end if;
+  if tok <> '' and g.id is not null then
+    perform vault.update_secret(g.secret_id, tok);
+    update public.kb_sync_grants x set account = coalesce(kb_sync_attach.account, x.account), shared_with_mac = coalesce(kb_sync_attach.shared_with_mac, x.shared_with_mac),
+      integration_id = integ.id where x.id = g.id returning * into g;
+    update public.kb_attachments x set status = 'pending', error = null, next_run_at = now(), failures = 0 where x.grant_id = g.id and x.status = 'needs_auth';
+  elsif tok <> '' then
+    insert into public.kb_sync_grants (workspace_id, user_id, provider, client, integration_id, shared_with_mac, account)
+      values (w.id, uid, p, coalesce(kb_sync_attach.client, 'quorum'), integ.id, coalesce(kb_sync_attach.shared_with_mac, false), kb_sync_attach.account)
+      returning * into g;
+    sid := vault.create_secret(tok, 'kb_sync_grant:' || g.id, p || ' sync grant in workspace ' || w.id);
+    update public.kb_sync_grants x set secret_id = sid where x.id = g.id returning * into g;
+  end if;
+  if old_grant.id is not null then
+    update public.kb_attachments x set grant_id = g.id, status = case when x.status = 'paused' then x.status else 'pending' end, next_run_at = now(), failures = 0
+      where x.grant_id = old_grant.id;
+    if public.kb_sync_revokes(old_grant, 'removed') and old_grant.secret_id is not null then
+      update public.kb_sync_grants x set revoke_pending = true, revoke_after = now() where x.id = old_grant.id;
+    else
+      delete from public.kb_sync_grants x where x.id = old_grant.id;
+    end if;
+  end if;
+
+  select * into a from public.kb_attachments x where x.kb_id = k.id and x.provider = p and x.remote_id = rid
+    and coalesce(x.options ->> 'branch', '') = coalesce(opts ->> 'branch', '') and coalesce(x.options ->> 'path', '') = coalesce(opts ->> 'path', '');
+  if a.id is not null then
+    -- attaching the same item again moves it under this admin's grant and runs it now
+    update public.kb_attachments x set grant_id = g.id, attached_by = uid, integration_id = integ.id, status = 'pending', error = null, next_run_at = now(), failures = 0,
+      attach_id = coalesce(kb_sync_attach.attach_id, x.attach_id),
+      name = coalesce(nullif(btrim(kb_sync_attach.name), ''), x.name), url = coalesce(kb_sync_attach.url, x.url)
+      where x.id = a.id returning * into a;
+  else
+    insert into public.kb_attachments (workspace_id, kb_id, folder_id, provider, integration_id, grant_id, remote_id, remote_kind, options, name, url, attached_by, attach_id)
+      values (w.id, k.id, kb_sync_attach.folder_id, p, integ.id, g.id, rid, kb_sync_attach.remote_kind, opts, left(coalesce(nullif(btrim(kb_sync_attach.name), ''), rid), 200), kb_sync_attach.url, uid, kb_sync_attach.attach_id)
+      returning * into a;
+  end if;
+  return public.kb_attachment_row(a);
+end $$;
+
+create or replace function public.kb_attachments_list(kb_id public.ulid) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.can_read_kb(kb_attachments_list.kb_id) then raise exception 'That knowledge base no longer exists'; end if;
+  if not public.can_admin_kb(kb_attachments_list.kb_id) then raise exception 'Only the knowledge base''s admins can see its synced folders'; end if;
+  return coalesce((select jsonb_agg(public.kb_attachment_row(a) order by a.created_at) from public.kb_attachments a where a.kb_id = kb_attachments_list.kb_id), '[]'::jsonb);
 end $$;
 
 -- 0034's kb_rename with names checked among the KB's own kind (the workspace's KBs, or the owner's personal KBs)

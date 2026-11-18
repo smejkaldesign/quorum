@@ -88,7 +88,7 @@ select pg_temp.as_user('00000000-0000-4000-8000-0000000000a1');
 select pg_temp.expect_error(format($$select public.kb_set_access(%L, '[{"principal": "workspace", "role": "reader"}]')$$, pg_temp.id('kb3')), 'no longer exists');
 select pg_temp.expect_error(format($$select public.kb_rename(%L, 'Mine now')$$, pg_temp.id('kb3')), 'no longer exists');
 select pg_temp.expect_error(format($$select public.kb_delete(%L)$$, pg_temp.id('kb3')), 'no longer exists');
-select pg_temp.expect_error(format($$select public.kb_folder_create(%L, null, 'Peek')$$, pg_temp.id('kb3')), 'admins');
+select pg_temp.expect_error(format($$select public.kb_folder_create(%L, null, 'Peek')$$, pg_temp.id('kb3')), 'no longer exists');
 select pg_temp.expect_error($$select public.kb_create('01KF0000000000000000000PWS', 'qa')$$, 'already exists');
 
 -- 5. its notes: only the owner reads them, and none reaches the review queue
@@ -113,6 +113,11 @@ select pg_temp.check((select count(*) from public.notes where id = '01KF00000000
 select pg_temp.check((select count(*) from public.contributions where note_id = '01KF000000000000000000PN01') = 0, 'nor sees a contribution for it');
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a1');
 select pg_temp.check((select count(*) from public.notes where id = '01KF000000000000000000PN01') = 0, 'the workspace owner does not read it');
+select pg_temp.as_admin_role();
+insert into public.notes (id, user_id, workspace_id, path, frontmatter, body, hash)
+  values ('01KF000000000000000000PN09', '00000000-0000-4000-8000-0000000000a1', '01KF0000000000000000000PWS', 'Owner/Plan.md', '{"visibility": "public"}', '# Plan', 'h9');
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a1');
+select pg_temp.expect_error(format($$select public.kb_note_assign('01KF000000000000000000PN09', %L)$$, pg_temp.id('kb3')), 'no longer exists');
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a3');
 select pg_temp.check((select count(*) from public.notes where id = '01KF000000000000000000PN01') = 1, 'its owner reads it');
 -- moved out to a workspace KB it admins and back: it is queued again when it leaves, and leaves the queue when it returns
@@ -133,8 +138,8 @@ select pg_temp.as_service();
 insert into ids select 'att3', public.kb_sync_attach('00000000-0000-4000-8000-0000000000a3', pg_temp.id('kb3'), null, 'github', 'octo/shared-app', 'folder', '{}', 'octo/shared-app', 'https://github.com/octo/shared-app', 'gh-rt-p3', 'quorum', false) ->> 'id';
 insert into ids select 'att4', public.kb_sync_attach('00000000-0000-4000-8000-0000000000a4', pg_temp.id('kb4'), null, 'github', 'octo/shared-app', 'folder', '{}', 'octo/shared-app', 'https://github.com/octo/shared-app', 'gh-rt-p4', 'quorum', false) ->> 'id';
 select pg_temp.check(pg_temp.id('att3') is not null and pg_temp.id('att4') is not null and pg_temp.id('att3') <> pg_temp.id('att4'), 'two personal KBs sync one repository');
-select pg_temp.expect_error(format($$select public.kb_sync_attach('00000000-0000-4000-8000-0000000000a4', %L, null, 'github', 'octo/other', 'folder', '{}', 'x', null, 'gh-rt-x')$$, pg_temp.id('kb3')), 'only the knowledge base''s admins');
-select pg_temp.expect_error(format($$select public.kb_sync_attach('00000000-0000-4000-8000-0000000000a1', %L, null, 'github', 'octo/other', 'folder', '{}', 'x', null, 'gh-rt-x')$$, pg_temp.id('kb3')), 'only the knowledge base''s admins');
+select pg_temp.expect_error(format($$select public.kb_sync_attach('00000000-0000-4000-8000-0000000000a4', %L, null, 'github', 'octo/other', 'folder', '{}', 'x', null, 'gh-rt-x')$$, pg_temp.id('kb3')), 'no longer exists');
+select pg_temp.expect_error(format($$select public.kb_sync_attach('00000000-0000-4000-8000-0000000000a1', %L, null, 'github', 'octo/other', 'folder', '{}', 'x', null, 'gh-rt-x')$$, pg_temp.id('kb3')), 'no longer exists');
 select pg_temp.as_admin_role();
 update public.kb_attachments set next_run_at = now() - interval '1 minute' where id in (pg_temp.id('att3'), pg_temp.id('att4'));
 select pg_temp.as_service();
@@ -148,7 +153,7 @@ insert into public.notes (id, user_id, workspace_id, path, frontmatter, body, ha
 select pg_temp.check(not exists (select 1 from public.contributions where note_id = '01KF000000000000000000PN02'), 'a synced note opens no contribution');
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a1');
 select pg_temp.check((select count(*) from public.kb_attachments where kb_id = pg_temp.id('kb3')) = 0, 'the workspace owner sees no attachment of it');
-select pg_temp.expect_error(format($$select public.kb_attachments_list(%L)$$, pg_temp.id('kb3')), 'only the knowledge base''s admins');
+select pg_temp.expect_error(format($$select public.kb_attachments_list(%L)$$, pg_temp.id('kb3')), 'no longer exists');
 select pg_temp.check((select count(*) from public.notes where id = '01KF000000000000000000PN02') = 0, 'nor its synced note');
 select pg_temp.check((select count(*) from public.kb_note_search where kb_id = pg_temp.id('kb3')) = 0, 'nor its search rows');
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a4');
