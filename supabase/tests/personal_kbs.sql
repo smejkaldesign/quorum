@@ -83,6 +83,12 @@ select pg_temp.check(public.can_read_kb(pg_temp.id('team')), 'its owner reads th
 -- 4. it cannot be shared, and only its owner renames or deletes it
 select pg_temp.expect_error(format($$select public.kb_set_access(%L, '[{"principal": "workspace", "role": "reader"}]')$$, pg_temp.id('kb3')), 'only for the person who made it');
 select pg_temp.expect_error(format($$select public.kb_set_access(%L, '[{"principal": "user", "user_id": "00000000-0000-4000-8000-0000000000a4", "role": "reader"}]')$$, pg_temp.id('kb3')), 'only for the person who made it');
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a1');
+insert into ids select 'tm', public.team_create('01KF0000000000000000000PWS', 'QA team') ->> 'id';
+select public.team_member_set(pg_temp.id('tm'), '00000000-0000-4000-8000-0000000000a3');
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a3');
+select pg_temp.expect_error(format($$select public.kb_set_access(%L, jsonb_build_array(jsonb_build_object('principal', 'team', 'team_id', %L, 'role', 'reader')))$$, pg_temp.id('kb3'), pg_temp.id('tm')), 'only for the person who made it');
+select pg_temp.check(not exists (select 1 from public.kb_access where kb_id = pg_temp.id('kb3') and principal <> 'user'), 'no team row joins it');
 select pg_temp.check(public.kb_rename(pg_temp.id('kb3'), 'QA notes') ->> 'name' = 'QA notes', 'its owner renames it');
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a1');
 select pg_temp.expect_error(format($$select public.kb_set_access(%L, '[{"principal": "workspace", "role": "reader"}]')$$, pg_temp.id('kb3')), 'no longer exists');
@@ -156,6 +162,12 @@ select pg_temp.check((select count(*) from public.kb_attachments where kb_id = p
 select pg_temp.expect_error(format($$select public.kb_attachments_list(%L)$$, pg_temp.id('kb3')), 'no longer exists');
 select pg_temp.check((select count(*) from public.notes where id = '01KF000000000000000000PN02') = 0, 'nor its synced note');
 select pg_temp.check((select count(*) from public.kb_note_search where kb_id = pg_temp.id('kb3')) = 0, 'nor its search rows');
+select pg_temp.check(not exists (select 1 from public.kb_search('01KF0000000000000000000PWS', 'Shared app') where kb_id = pg_temp.id('kb3')), 'the workspace owner''s search does not return it');
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a2');
+select pg_temp.check(not exists (select 1 from public.kb_search('01KF0000000000000000000PWS', 'Shared app') where kb_id = pg_temp.id('kb3')), 'a workspace admin''s search does not return it');
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a3');
+select pg_temp.check(exists (select 1 from public.kb_search('01KF0000000000000000000PWS', 'Shared app') where kb_id = pg_temp.id('kb3')), 'its owner''s search returns it');
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a1');
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a4');
 select pg_temp.check((select count(*) from public.notes where id = '01KF000000000000000000PN02') = 0, 'another member reads none of it');
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a3');
