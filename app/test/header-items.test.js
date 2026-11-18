@@ -94,6 +94,11 @@ describe('the shared connected check', () => {
     expect(isConnected(CONNECTOR_BY_ID['apple-calendar'], { cal: { enabled: true, status: 'denied' } })).toBe(false);
     expect(isConnected(CONNECTOR_BY_ID['google-calendar'], { cal: { google: { connected: true } } })).toBe(true);
     expect(isConnected(CONNECTOR_BY_ID['claude-code'], { mcp: { added: true } })).toBe(true);
+    expect(isConnected(CONNECTOR_BY_ID.codex, { codex: { added: true, error: null } })).toBe(true);
+    expect(isConnected(CONNECTOR_BY_ID.codex, { codex: { added: true, error: 'bad entry' } })).toBe(false);
+    expect(isConnected(CONNECTOR_BY_ID.codex, {})).toBe(false);
+    expect(CONNECTOR_BY_ID.codex.status).toBe('available');
+    expect(CONNECTOR_BY_ID.gemini.kind).toBe('ai-tool');
     expect(isConnected(CONNECTOR_BY_ID.zoom, { providers: [{ id: 'zoom', enabled: true, installed: true, access: null }] })).toBe(true);
     expect(isConnected(CONNECTOR_BY_ID.slack, {})).toBe(false);
   });
