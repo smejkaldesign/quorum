@@ -67,7 +67,7 @@ export async function connect({ client, open, loopback = awaitLoopback, fetchImp
   if (!client?.clientSecret) throw new Error('Google Calendar needs the app\'s Google client secret. Set QUORUM_GOOGLE_CLIENT_SECRET (docs/self-hosting.md, Google Calendar).');
   const { verifier, challenge } = pkce();
   const state = newState();
-  const waiting = loopback();
+  const waiting = loopback({ state });
   await open(authorizeUrl({ clientId: client.clientId, challenge, state, redirectUri }));
   const q = await waiting;
   const tell = (r) => { try { q.finish?.({ name: 'Google Calendar', connector: 'google-calendar', ...r }); } catch {} };

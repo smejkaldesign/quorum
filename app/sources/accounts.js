@@ -9,7 +9,7 @@ import { CLIENT_ID_ENV, GITHUB_APP_SLUG_ENV, OAUTH_APPS, isOAuthApp } from '../c
 import { pickerConfig } from './drive.js';
 import { envLookup } from './env.js';
 import { exchange as googleExchange, googleClient, refresh as googleRefresh, revoke as googleRevoke } from './gcal.js';
-import { LOOPBACK_REDIRECT, awaitLoopback, json, newState, pkce } from './oauth.js';
+import { LOOPBACK_REDIRECT, awaitLoopback, httpsOnly, json, newState, pkce } from './oauth.js';
 
 export const tokenKey = (id) => `account-${id}`;
 
@@ -137,8 +137,8 @@ export async function connectAccount(id, { clients, open, relayBase, relayFetch,
   const { verifier, challenge } = pkce();
   const state = newState();
   const redirectUri = redirectFor(id, relayBase);
-  const waiting = loopback();
-  await open(authorizeUrl(id, { clientId: clients[app.client].clientId, redirectUri, state, challenge }));
+  const waiting = loopback({ state });
+  await open(httpsOnly(authorizeUrl(id, { clientId: clients[app.client].clientId, redirectUri, state, challenge })));
   const q = await waiting;
   const tell = (r) => { try { q.finish?.({ name: app.name, connector: id, ...r }); } catch {} };
   const fail = (message) => { tell({ failed: message }); throw new Error(message); };

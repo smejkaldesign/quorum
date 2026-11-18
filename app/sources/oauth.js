@@ -70,6 +70,14 @@ export async function discover(resourceUrl, { fetchImpl = fetch, wwwAuthenticate
   };
 }
 
+// the browser only ever opens an https sign-in page, whatever a service's metadata names
+export function httpsOnly(url) {
+  let u;
+  try { u = new URL(String(url)); } catch { throw new Error('The sign-in page address is not valid.'); }
+  if (u.protocol !== 'https:') throw new Error('The sign-in page must use https.');
+  return u.toString();
+}
+
 // a public client (no secret) when the server allows it, so nothing secret needs keeping for the registration
 export async function register(meta, { redirectUri = LOOPBACK_REDIRECT, clientName = CLIENT_NAME, fetchImpl = fetch } = {}) {
   if (!meta.registrationEndpoint) throw new Error('The service does not allow apps to register themselves.');
@@ -90,8 +98,7 @@ export async function register(meta, { redirectUri = LOOPBACK_REDIRECT, clientNa
 // prompt=select_account asks the sign-in page to offer an account chooser instead of reusing the browser's session;
 // servers that do not know the parameter ignore it
 export function authorizeUrl(meta, { clientId, redirectUri, challenge, state, scopes = meta.scopes, prompt = 'select_account' }) {
-  const u = new URL(meta.authorizationEndpoint);
-  if (u.protocol !== 'https:' && !/^(127\.0\.0\.1|localhost)$/.test(u.hostname)) throw new Error('The sign-in page must use https');
+  const u = new URL(httpsOnly(meta.authorizationEndpoint));
   u.searchParams.set('response_type', 'code');
   u.searchParams.set('client_id', clientId);
   u.searchParams.set('redirect_uri', redirectUri);
@@ -128,7 +135,8 @@ export const refresh = (meta, client, refreshToken, fetchImpl = fetch) =>
 let pending = null;
 // ends a sign-in still waiting (a panel closed or its Cancel), which frees the port; the wait rejects with code canceled
 export const cancelLoopback = () => { const p = pending; if (!p) return false; p(Object.assign(new Error('The sign-in was cancelled.'), { code: 'canceled' })); return true; };
-export function awaitLoopback({ port = LOOPBACK_PORT, path = '/callback', timeoutMs = 5 * 60 * 1000, page = loopbackPage } = {}) {
+// With state, a visit carrying any other state gets a 400 and the wait goes on, so another page cannot end the sign-in.
+export function awaitLoopback({ port = LOOPBACK_PORT, path = '/callback', timeoutMs = 5 * 60 * 1000, page = loopbackPage, state = null } = {}) {
   pending?.();
   return new Promise((resolve, reject) => {
     let done = false;
@@ -136,6 +144,7 @@ export function awaitLoopback({ port = LOOPBACK_PORT, path = '/callback', timeou
       const u = new URL(req.url, `http://127.0.0.1:${port}`);
       if (u.pathname !== path) { res.writeHead(404); res.end(); return; }
       const q = Object.fromEntries(u.searchParams.entries());
+      if (done || (state !== null && q.state !== state)) { res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }); res.end('This sign-in answer does not belong to the sign-in Quorum is waiting for.'); return; }
       // the tab waits for the outcome (token exchange, account check); after 45 s it gets a neutral page
       let answered = false;
       const answer = (html) => { if (answered) return; answered = true; clearTimeout(fallback); res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(html); };
@@ -204,7 +213,7 @@ export async function connect({ resourceUrl, open, clients, fetchImpl = fetch, r
   if (!client || client.redirectUri !== redirectUri) { client = await register(meta, { redirectUri, fetchImpl }); await clients.set(meta.issuer, client); }
   const { verifier, challenge } = pkce();
   const state = newState();
-  const waiting = loopback();
+  const waiting = loopback({ state });
   await open(authorizeUrl(meta, { clientId: client.clientId, redirectUri, challenge, state }));
   const q = await waiting;
   const tell = (r) => { try { q.finish?.({ name, connector, ...r }); } catch {} };
