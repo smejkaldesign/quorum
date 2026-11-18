@@ -56,6 +56,8 @@ export function KbBrowser({ me, query, wsAdmin = false, children }: { me: string
   const [creating, setCreating] = useState(false);
   const [dropping, setDropping] = useState<Kb | null>(null);
   const refs = useRef(new Map<string, HTMLButtonElement>());
+  const addRef = useRef<HTMLButtonElement>(null);
+  const teamRef = useRef<HTMLButtonElement>(null);
 
   // one read of the list at a time counts: a later read's answer replaces an earlier one's, never the other way
   const listSeq = useRef(0);
@@ -182,10 +184,14 @@ export function KbBrowser({ me, query, wsAdmin = false, children }: { me: string
     setDropping(null);
     setError('');
     const r = await kbCall(() => window.quorum.kbDelete(kb.id), 'The knowledge base could not be deleted.');
-    if (r.error) { setError(r.error); return; }
+    if (r.error) { setError(r.error); focusRow(rowKey(kb.id, null)); return; }
     announceKbChange();
     if (sel?.kbId === kb.id) select(null);
-    setKbs((list) => (list ?? []).filter((k) => k.id !== kb.id));
+    const list = kbs ?? [];
+    const i = list.findIndex((k) => k.id === kb.id);
+    const next = list[i + 1] ?? list[i - 1] ?? null;
+    setKbs(list.filter((k) => k.id !== kb.id));
+    if (next) focusRow(rowKey(next.id, null)); else requestAnimationFrame(() => teamRef.current?.focus());
   };
   const made = (kb: Kb, github: boolean) => {
     setCreating(false);
@@ -193,7 +199,7 @@ export function KbBrowser({ me, query, wsAdmin = false, children }: { me: string
     setKbs((list) => [...(list ?? []).filter((k) => k.id !== kb.id), kb]);
     openKeys([rowKey(kb.id, null)]);
     select({ kbId: kb.id, folderId: null });
-    if (github) setSyncing({ kbId: kb.id, folderId: null, source: 'github' });
+    if (github) setSyncing({ kbId: kb.id, folderId: null, source: 'github' }); else focusRow(rowKey(kb.id, null));
   };
 
   const openNote = async (n: KbNote, kbId: string | null = sel?.kbId ?? null) => {
@@ -302,13 +308,13 @@ export function KbBrowser({ me, query, wsAdmin = false, children }: { me: string
       <div className="kbt">
         <aside className="tk-side kbt-side">
           <div className="tk-tree">
-            <button className={`tk-item ${sel ? '' : 'sel'}`} aria-current={sel ? undefined : 'page'} onClick={showTeam}>
+            <button ref={teamRef} className={`tk-item ${sel ? '' : 'sel'}`} aria-current={sel ? undefined : 'page'} onClick={showTeam}>
               <IconBrain width={14} height={14} /><span className="tk-item-text"><span>Team knowledge</span></span>
             </button>
             <div ref={setSlot} className="kbt-slot" />
             <div className="kbt-head-row">
               <h4 className="kbt-head" id="kbt-label">Knowledge bases</h4>
-              <button className="icon-btn" aria-label="New knowledge base" data-tip="New knowledge base" onClick={() => setCreating(true)}><IconPlus width={14} height={14} /></button>
+              <button ref={addRef} className="icon-btn" aria-label="New knowledge base" data-tip="New knowledge base" onClick={() => setCreating(true)}><IconPlus width={14} height={14} /></button>
             </div>
             {listError && <p className="error kbt-note" role="alert">{listError}</p>}
             {kbs && !kbs.length && <p className="tk-empty kbt-note">No knowledge bases you can read yet.</p>}
@@ -394,7 +400,7 @@ export function KbBrowser({ me, query, wsAdmin = false, children }: { me: string
           <SyncDialog kb={kbOf(syncing.kbId)!} folderId={syncing.folderId} source={syncing.source} onChanged={() => loadNotes(syncing.kbId)}
             onDone={() => { const d = syncing; setSyncing(null); focusRow(rowKey(d.kbId, d.folderId)); }} />
         )}
-        {creating && <CreateDialog wsAdmin={wsAdmin} onMade={made} onDone={() => setCreating(false)} />}
+        {creating && <CreateDialog wsAdmin={wsAdmin} onMade={made} onDone={() => { setCreating(false); requestAnimationFrame(() => addRef.current?.focus()); }} />}
         {dropping && (
           <KbConfirm title={`Delete ${dropping.name}?`} body="Its folders and synced folders are deleted, and the notes synced or imported into it are removed from your Mac. Notes you moved into it stay yours. This cannot be undone." action="Delete"
             onDone={(ok) => { const d = dropping; if (ok) dropKb(d); else { setDropping(null); focusRow(rowKey(d.id, null)); } }} />
