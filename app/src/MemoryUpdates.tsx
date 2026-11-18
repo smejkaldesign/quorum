@@ -3,7 +3,7 @@ import type { LiveRun, MemoryVersion, Settings } from './quorum';
 import { Row, Segmented, Toggle } from './controls';
 import { Section } from './NoteTools';
 import { useCatchupControl } from './Catchup';
-import { IconArrowDown, IconArrowUp, IconCheck, IconClock, IconClose, IconHighlight, IconListCheck, IconStop } from './icons';
+import { IconArrowDown, IconArrowUp, IconCheck, IconChevron, IconClock, IconClose, IconHighlight, IconListCheck, IconStop } from './icons';
 
 // Review of the changes Quorum's agents make to vault notes (memoryVersions.js) and of the issues Memory health finds
 // (memoryHealth.js): the banner over an open note, the banner while a run is writing it, the versions in its side
@@ -109,9 +109,10 @@ export function VersionBar({ version, busy, locked, onRestore, onClose }: { vers
   );
 }
 
-// Settings > Memory: whether agent changes are approved when made, whether changed text starts highlighted, and how
-// long a blue dot stays in the tree
-export function MemoryUpdatesCard({ settings, onSettings }: { settings: Settings; onSettings: (s: Settings) => void }) {
+// Settings > Memory: Quorum's own memory settings. The main card holds the switches people change; Advanced holds the
+// limits, the dot timer, and the rules and local model status passed in as advanced
+export function MemoryUpdatesCard({ settings, onSettings, advanced }: { settings: Settings; onSettings: (s: Settings) => void; advanced?: ReactNode }) {
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const saved = settings.memoryDotDays ?? 30;
   const save = async (patch: Partial<Settings>) => onSettings(await window.quorum.setSettings(patch));
   // a whole number from 1 to 365 is saved; anything else puts the saved number back
@@ -135,66 +136,76 @@ export function MemoryUpdatesCard({ settings, onSettings }: { settings: Settings
     <>
       <h3>Memory updates</h3>
       <div className="set-card">
-        <Row icon={<IconListCheck width={18} height={18} />} title="Auto-approve memory updates"
-          desc="Changes Quorum's agents make to your notes count as approved when they are made. Turn this off to accept each change in the Memory tab.">
-          <Toggle on={settings.memoryAutoApprove !== false} onChange={(v) => save({ memoryAutoApprove: v })} />
-        </Row>
-        <Row icon={<IconHighlight width={18} height={18} />} title="Highlight changed text"
-          desc="An open note shows the text its updates changed in green, or blue once approved. The highlight button on the note turns it off for that view.">
-          <Toggle on={settings.memoryHighlight !== false} onChange={(v) => save({ memoryHighlight: v })} />
-        </Row>
         <Row icon={<IconListCheck width={18} height={18} />} title="Check memory in the background"
           desc="Memory health looks for out-of-date, duplicate, oversized and unlinked notes, frontmatter that does not fit its folder, misplaced confidential marks and written secrets. It checks every 3.5 hours and once a day while you are away. Turn this off to pause those checks; notes you save are still checked.">
           <Toggle on={settings.memorySweeps !== false} onChange={(v) => save({ memorySweeps: v })} />
+        </Row>
+        <Row icon={<IconListCheck width={18} height={18} />} title="Check everything now" desc={catchup.desc}>
+          {catchup.control}
+        </Row>
+        <Row icon={<IconListCheck width={18} height={18} />} title="Auto-approve memory updates"
+          desc="Changes Quorum's agents make to your notes count as approved when they are made. Turn this off to accept each change in the Memory tab.">
+          <Toggle on={settings.memoryAutoApprove !== false} onChange={(v) => save({ memoryAutoApprove: v })} />
         </Row>
         <Row icon={<IconListCheck width={18} height={18} />} title="Apply memory fixes on its own"
           desc="After each check, Quorum applies every Memory health fix that needs no review of its own as one batch, and lists it in Notifications with Undo. Fixes that conflict or need a review stay in Needs review. Off by default.">
           <Toggle on={settings.memoryAutoApply === true} onChange={(v) => save({ memoryAutoApply: v })} />
         </Row>
-        <Row icon={<IconListCheck width={18} height={18} />} title="Let AI tools change memory and knowledge bases"
-          desc="Claude Code, Codex and other AI tools connected through the quorum MCP can approve and archive items in Needs review, undo fixes and create knowledge bases, through the same steps as the buttons here. Each fix shows which tool approved it and keeps its Undo. Reading Needs review, marking items read and starting Check everything now work without this; a tool can start the check only while Let the agent draft fixes is on, and never turns it on. Off by default.">
-          <Toggle on={settings.memoryAgentActions === true} onChange={(v) => save({ memoryAgentActions: v })} />
-        </Row>
         <Row icon={<IconListCheck width={18} height={18} />} title="Let the agent draft fixes"
           desc="For fixes the rules cannot decide (a missing note to write, a weak relink or alias, two notes that repeat each other), the agent reads those notes and drafts the fix with quoted lines and a confidence. It runs on your own Claude Code sign-in, reads only the notes Quorum gives it, and changes nothing until you approve. It waits while you record or type. Off by default.">
           <Toggle on={settings.memoryDrafts === true} onChange={(v) => save({ memoryDrafts: v })} />
         </Row>
-        <Row icon={<IconListCheck width={18} height={18} />} title="Check everything now" desc={catchup.desc}>
-          {catchup.control}
+        <Row icon={<IconListCheck width={18} height={18} />} title="Let AI tools change memory and knowledge bases"
+          desc="Claude Code, Codex and other AI tools connected through the quorum MCP can approve and archive items in Needs review, undo fixes and create knowledge bases, through the same steps as the buttons here. Each fix shows which tool approved it and keeps its Undo. Reading Needs review, marking items read and starting Check everything now work without this; a tool can start the check only while Let the agent draft fixes is on, and never turns it on. Off by default.">
+          <Toggle on={settings.memoryAgentActions === true} onChange={(v) => save({ memoryAgentActions: v })} />
         </Row>
-        {settings.memoryDrafts === true && (
-          <>
-            <Row icon={<IconClock width={18} height={18} />} title="Drafts per day"
-              desc="The agent stops drafting for the day after this many drafts.">
-              <label className="mu-days">
-                <input key={cap} type="number" min={1} max={500} defaultValue={cap} aria-label="Drafts per day"
-                  onBlur={(e) => commitCap(e.currentTarget)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
-                <span>drafts</span>
-              </label>
-            </Row>
-            <Row icon={<IconClock width={18} height={18} />} title="Calls at once in Check everything now"
-              desc="How many model calls the check runs side by side. More finishes sooner; each call counts against your Claude Code plan's limits. Drafts per day does not apply to the check.">
-              <label className="mu-days">
-                <input key={parallel} type="number" min={1} max={6} defaultValue={parallel} aria-label="Calls at once in Check everything now"
-                  onBlur={(e) => commitParallel(e.currentTarget)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
-                <span>calls</span>
-              </label>
-            </Row>
-            <Row icon={<IconListCheck width={18} height={18} />} title="Let the agent read confidential notes"
-              desc="Off: a note marked confidential, or in a folder marked confidential, is never sent to the agent, and a fix that needs one gets no draft. Folders the read guard blocks are never sent.">
-              <Toggle on={settings.memoryDraftConfidential === true} onChange={(v) => save({ memoryDraftConfidential: v })} />
-            </Row>
-          </>
-        )}
-        <Row icon={<IconClock width={18} height={18} />} title="Hide update dots after"
-          desc="A blue dot in the Memory tree goes away when you open the note or after this many days. A green dot stays until you accept its updates.">
-          <label className="mu-days">
-            <input key={saved} type="number" min={1} max={365} defaultValue={saved} aria-label="Days before update dots hide"
-              onBlur={(e) => commit(e.currentTarget)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
-            <span>days</span>
-          </label>
+        <Row icon={<IconHighlight width={18} height={18} />} title="Highlight changed text"
+          desc="An open note shows the text its updates changed in green, or blue once approved. The highlight button on the note turns it off for that view.">
+          <Toggle on={settings.memoryHighlight !== false} onChange={(v) => save({ memoryHighlight: v })} />
         </Row>
       </div>
+      <button className="set-advanced" aria-expanded={showAdvanced} onClick={() => setShowAdvanced((v) => !v)}>
+        <IconChevron width={14} height={14} className={showAdvanced ? undefined : 'right'} />Advanced
+      </button>
+      {showAdvanced && (
+        <>
+          <div className="set-card">
+            <Row icon={<IconClock width={18} height={18} />} title="Hide update dots after"
+              desc="A blue dot in the Memory tree goes away when you open the note or after this many days. A green dot stays until you accept its updates.">
+              <label className="mu-days">
+                <input key={saved} type="number" min={1} max={365} defaultValue={saved} aria-label="Days before update dots hide"
+                  onBlur={(e) => commit(e.currentTarget)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+                <span>days</span>
+              </label>
+            </Row>
+            {settings.memoryDrafts === true && (
+              <>
+                <Row icon={<IconClock width={18} height={18} />} title="Drafts per day"
+                  desc="The agent stops drafting for the day after this many drafts.">
+                  <label className="mu-days">
+                    <input key={cap} type="number" min={1} max={500} defaultValue={cap} aria-label="Drafts per day"
+                      onBlur={(e) => commitCap(e.currentTarget)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+                    <span>drafts</span>
+                  </label>
+                </Row>
+                <Row icon={<IconClock width={18} height={18} />} title="Calls at once in Check everything now"
+                  desc="How many model calls the check runs side by side. More finishes sooner; each call counts against your Claude Code plan's limits. Drafts per day does not apply to the check.">
+                  <label className="mu-days">
+                    <input key={parallel} type="number" min={1} max={6} defaultValue={parallel} aria-label="Calls at once in Check everything now"
+                      onBlur={(e) => commitParallel(e.currentTarget)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+                    <span>calls</span>
+                  </label>
+                </Row>
+                <Row icon={<IconListCheck width={18} height={18} />} title="Let the agent read confidential notes"
+                  desc="Off: a note marked confidential, or in a folder marked confidential, is never sent to the agent, and a fix that needs one gets no draft. Folders the read guard blocks are never sent.">
+                  <Toggle on={settings.memoryDraftConfidential === true} onChange={(v) => save({ memoryDraftConfidential: v })} />
+                </Row>
+              </>
+            )}
+          </div>
+          {advanced}
+        </>
+      )}
     </>
   );
 }

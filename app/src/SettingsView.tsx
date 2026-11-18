@@ -32,6 +32,7 @@ type Nav = { id: Page; label: string; icon: (p: { width?: number; height?: numbe
 const ACCOUNT: Nav[] = [
   { id: 'preferences', label: 'Preferences', icon: IconSliders },
   { id: 'memory', label: 'Memory', icon: IconBrain },
+  { id: 'agent-os', label: 'Agent OS', icon: IconFolder },
   { id: 'calendar', label: 'Calendar', icon: IconCalendar },
   { id: 'meetings', label: 'Meetings', icon: IconMic },
   { id: 'voice', label: 'Voice typing', icon: IconKeyboard },
@@ -205,12 +206,16 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
           ) : page === 'billing' ? (
             <BillingArea />
           ) : page === 'memory' ? (
+            brain
+              ? <MemoryUpdatesCard settings={settings} onSettings={onSettings} advanced={<><MemoryRulesCard /><LocalModelsCard /></>} />
+              : <EmptyState icon={<IconBrain width={22} height={22} />} title="No Agent OS folder connected">
+                  <p>Memory settings apply to the folder Quorum keeps. Connect one under Agent OS.</p>
+                  <button className="pill" onClick={() => go('agent-os')}>Open Agent OS</button>
+                </EmptyState>
+          ) : page === 'agent-os' ? (
             <>
               <SecondBrain brain={brain} onConnect={onConnect} onDisconnect={onDisconnect} onBrain={onBrain} onViewConnector={goConnector} />
               {brain && <KeeperCard brain={brain} />}
-              {brain && <MemoryUpdatesCard settings={settings} onSettings={onSettings} />}
-              {brain && <MemoryRulesCard />}
-              {brain && <LocalModelsCard />}
               {brain && <MemoryScan />}
             </>
           ) : page === 'members' ? <MembersArea />
@@ -222,7 +227,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
             : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} onConnector={goConnector} teamMeetings={EDITION === 'cloud' && account?.workspace?.teamEnabled === true} />
             : page === 'developers' ? <DevelopersPage />
             : page === 'notifications' ? <NotificationsPage settings={settings} set={set} />
-            : page === 'connectors' ? <ConnectorsPage detail={connectorDetail} onDetail={setConnectorDetail} library={connLib} onLibrary={setConnLib} brain={brain} onFolder={onConnect} onNotes={() => go('memory')} focus={connectorsFocus} />
+            : page === 'connectors' ? <ConnectorsPage detail={connectorDetail} onDetail={setConnectorDetail} library={connLib} onLibrary={setConnLib} brain={brain} onFolder={onConnect} onNotes={() => go('agent-os')} focus={connectorsFocus} />
             : <VoicePage settings={settings} onSettings={onSettings} dictionaryOnly={voice === 'dictionary'} screenRow={nt.screenContext} />}
         </div>
       </main>

@@ -5,11 +5,11 @@ import type { Role } from './quorum';
 // the team and workspace pages. Which nav
 // shows follows from the current page, so the one remembered page (useSession) also remembers the nav.
 export type NavMode = 'account' | 'admin';
-export type AccountPage = 'preferences' | 'memory' | 'calendar' | 'meetings' | 'voice';
+export type AccountPage = 'preferences' | 'memory' | 'agent-os' | 'calendar' | 'meetings' | 'voice';
 export type WorkspacePage = 'general' | 'notifications' | 'developers' | 'guardrails' | 'connectors' | 'teams' | 'billing' | 'knowledge' | 'members' | 'org-connectors' | 'org-voice' | 'org-guardrails';
 export type Page = AccountPage | WorkspacePage;
 
-export const ACCOUNT_PAGES: readonly AccountPage[] = ['preferences', 'memory', 'calendar', 'meetings', 'voice'];
+export const ACCOUNT_PAGES: readonly AccountPage[] = ['preferences', 'memory', 'agent-os', 'calendar', 'meetings', 'voice'];
 export const WORKSPACE_PAGES: readonly WorkspacePage[] = ['general', 'notifications', 'developers', 'guardrails', 'connectors', 'teams', 'billing', 'knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails'];
 // the admin pages every build lists for everyone, above the Workspace heading: General (sign-in and the workspace
 // basics), Notifications, AI settings, Guardrails, and Connectors last
