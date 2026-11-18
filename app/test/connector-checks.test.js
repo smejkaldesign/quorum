@@ -85,6 +85,11 @@ describe('GitHub installations', () => {
     expect(installSummary(await accountsWith('github', f).githubInstallations())).toBe('Installed on 41 repositories (smejster, smejkaldesign)');
     expect(installSummary({ installations: [{ owner: 'a', repositories: 1 }] })).toBe('Installed on 1 repository (a)');
   });
+  it('an installation with no repositories picked has no summary, so the step stays Choose repositories', async () => {
+    const r = await accountsWith('github', answer([{ id: 3, account: { login: 'smejster' }, repository_selection: 'selected' }], { 3: 0 })).githubInstallations();
+    expect(r.installations).toHaveLength(1);
+    expect(installSummary(r)).toBeNull();
+  });
   it('a rate limit keeps the last answer and marks it stale', async () => {
     let limited = false;
     const f = stub((url) => {

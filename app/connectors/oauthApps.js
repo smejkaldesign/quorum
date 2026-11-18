@@ -63,11 +63,12 @@ export const isOAuthApp = (id) => Object.hasOwn(OAUTH_APPS, id);
 // events instead and keeps Sync
 export const CHECKABLE = new Set(['notion', 'slack', 'github', 'google-drive']);
 
-// the GitHub App's installations (accounts.githubInstallations) in one line, or null when it is installed nowhere
+// the GitHub App's installations (accounts.githubInstallations) in one line, or null when it reaches no repository
 export function installSummary(s) {
   const list = s?.installations ?? [];
   if (!list.length) return null;
   const n = list.reduce((t, i) => t + (Number(i.repositories) || 0), 0);
+  if (!n) return null;
   const owners = [...new Set(list.map((i) => i.owner).filter(Boolean))];
   return `Installed on ${n} ${n === 1 ? 'repository' : 'repositories'}${owners.length ? ` (${owners.join(', ')})` : ''}`;
 }
