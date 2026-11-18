@@ -23,8 +23,8 @@ export const APP_TOOLS = [
     inputSchema: { type: 'object', properties: { ids }, required: ['ids'] },
   },
   {
-    name: 'review_dismiss', write: true, gated: true, blocked: 'dismiss Needs review items',
-    description: 'Dismiss Needs review items: each is set aside and nothing in the notes changes. Needs Settings > Memory, Let AI tools change memory and knowledge bases.',
+    name: 'review_dismiss', write: true, gated: true, blocked: 'archive Needs review items',
+    description: 'Archive Needs review items without fixing them, the same as Archive in Memory health: nothing in the notes changes. Needs Settings > Memory, Let AI tools change memory and knowledge bases.',
     inputSchema: { type: 'object', properties: { ids }, required: ['ids'] },
   },
   {

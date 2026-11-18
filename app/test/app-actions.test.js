@@ -101,6 +101,7 @@ describe('approving through the buttons\' handlers', () => {
     const { actions, calls, toasts } = setup();
     expect(await actions.run('review_dismiss', { ids: ['r:find:beta'] }, 'claude-code')).toEqual({ dismissed: 1, failed: [] });
     expect(calls.find((c) => c.name === 'activity-review').args[1]).toBe('dismiss');
+    expect(toasts[0]).toBe('Claude Code archived 1 item in Needs review without fixing them');
     expect((await actions.run('fix_undo', { id: 'fix:alpha:1' }, 'claude-code')).message).toContain('back in Needs review');
     expect(calls.at(-1)).toMatchObject({ name: 'fix-undo', args: ['fix:alpha:1'], actor: 'claude-code' });
     expect(toasts.at(-1)).toBe('Claude Code undid the fix. “alpha” is back in Needs review');

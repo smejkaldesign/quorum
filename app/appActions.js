@@ -117,7 +117,7 @@ export function createAppActions({ call, settings, kbHosted = () => null, kbSync
       const res = await call('activity-review', rows.map(answer), 'dismiss');
       const failed = failedOf(res);
       if (failed.length === rows.length) throw new Error(failed[0]);
-      say(`${who()} dismissed ${rows.length - failed.length} ${rows.length - failed.length === 1 ? 'item' : 'items'} in Needs review`);
+      say(`${who()} archived ${rows.length - failed.length} ${rows.length - failed.length === 1 ? 'item' : 'items'} in Needs review without fixing them`);
       return { dismissed: rows.length - failed.length, failed };
     },
     async review_mark_read({ ids, unread }) {
