@@ -1,10 +1,10 @@
 -- Personal knowledge bases (migration 0041): any member makes one, only its owner reads and manages it (workspace
 -- owners and admins included), it fills from a synced GitHub repository like a workspace KB, its notes stay out of the
--- review queue, and it goes when its owner leaves or deletes it. Needs a database with every migration applied. Runs
--- in one transaction that is rolled back:
---   docker exec -i supabase_db_quorum psql -U postgres -d postgres -v ON_ERROR_STOP=1 -f - < supabase/tests/personal_kbs.sql
--- On a stack that has migrations up to 0040 only, put the migration inside the same transaction:
---   { echo 'begin;'; cat supabase/migrations/0041_personal_knowledge_bases.sql; grep -v '^begin;$' supabase/tests/personal_kbs.sql; } | docker exec -i supabase_db_quorum psql -U postgres -d postgres -v ON_ERROR_STOP=1 -f -
+-- review queue, and it goes when its owner leaves or deletes it. Needs a database with every migration applied and
+-- the private object check (private_object.sql) loaded first. Runs in one transaction that is rolled back:
+--   { echo 'begin;'; cat supabase/tests/private_object.sql; grep -v '^begin;$' supabase/tests/personal_kbs.sql; } | docker exec -i supabase_db_quorum psql -U postgres -d postgres -v ON_ERROR_STOP=1 -f -
+-- On a stack that has migrations up to 0040 only, put the migration inside the same transaction too:
+--   { echo 'begin;'; cat supabase/migrations/0041_personal_knowledge_bases.sql supabase/tests/private_object.sql; grep -v '^begin;$' supabase/tests/personal_kbs.sql; } | docker exec -i supabase_db_quorum psql -U postgres -d postgres -v ON_ERROR_STOP=1 -f -
 -- A failed check stops the script with the check's message; the last line printed on success is "personal kbs: ok".
 begin;
 
@@ -191,6 +191,33 @@ select pg_temp.as_user('00000000-0000-4000-8000-0000000000a4');
 select pg_temp.check((select count(*) from public.notes where id = '01KF000000000000000000PN02') = 0, 'another member reads none of it');
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a3');
 select pg_temp.check(jsonb_array_length(public.kb_attachments_list(pg_temp.id('kb3'))) = 1, 'its owner lists the attachment');
+
+-- 6c. the private object check (private_object.sql): the workspace owner and a workspace admin cannot read, list,
+-- search, edit or infer p3's personal KB, its synced folder or its notes
+select pg_temp.as_admin_role();
+select pg_temp.assert_private(array['00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000a2']::uuid[], jsonb_build_array(
+  jsonb_build_object('what', 'read the KB row', 'sql', format('select 1 from public.knowledge_bases where id = %L', pg_temp.id('kb3'))),
+  jsonb_build_object('what', 'list the KB', 'sql', format('select 1 from jsonb_array_elements(public.kb_list(%L)) e where e ->> ''id'' = %L', '01KF0000000000000000000PWS', pg_temp.id('kb3'))),
+  jsonb_build_object('what', 'read its shape', 'sql', format('select 1 where public.kb_shape(%L) is not null', pg_temp.id('kb3'))),
+  jsonb_build_object('what', 'read its folders', 'sql', format('select 1 from public.kb_folders where kb_id = %L', pg_temp.id('kb3'))),
+  jsonb_build_object('what', 'read its access list', 'sql', format('select 1 from public.kb_access where kb_id = %L', pg_temp.id('kb3'))),
+  jsonb_build_object('what', 'read its notes', 'sql', format('select 1 from public.notes where kb_id = %L or id = %L', pg_temp.id('kb3'), '01KF000000000000000000PN02')),
+  jsonb_build_object('what', 'read its search rows', 'sql', format('select 1 from public.kb_note_search where kb_id = %L', pg_temp.id('kb3'))),
+  jsonb_build_object('what', 'search it', 'sql', format('select 1 from public.kb_search(%L, ''Shared app'') where kb_id = %L', '01KF0000000000000000000PWS', pg_temp.id('kb3'))),
+  jsonb_build_object('what', 'read its synced folder', 'sql', format('select 1 from public.kb_attachments where kb_id = %L', pg_temp.id('kb3'))),
+  jsonb_build_object('what', 'read its kept suggestions', 'sql', format('select 1 from public.kb_note_upstream where note_id = %L', '01KF000000000000000000PN02')),
+  jsonb_build_object('what', 'see its notes in the review queue', 'sql', format('select 1 from public.contributions where note_id = %L', '01KF000000000000000000PN02')),
+  jsonb_build_object('what', 'edit its note through the table', 'sql', format('update public.notes set body = ''x'' where id = %L', '01KF000000000000000000PN02')),
+  jsonb_build_object('what', 'rename the KB through the table', 'sql', format('update public.knowledge_bases set name = ''x'' where id = %L', pg_temp.id('kb3'))),
+  jsonb_build_object('what', 'rename the KB', 'sql', format('select public.kb_rename(%L, ''Mine'')', pg_temp.id('kb3')), 'expect', 'error', 'pattern', 'no longer exists'),
+  jsonb_build_object('what', 'share the KB', 'sql', format('select public.kb_set_access(%L, ''[{"principal": "workspace", "role": "reader"}]'')', pg_temp.id('kb3')), 'expect', 'error', 'pattern', 'no longer exists'),
+  jsonb_build_object('what', 'add a folder', 'sql', format('select public.kb_folder_create(%L, null, ''Peek'')', pg_temp.id('kb3')), 'expect', 'error', 'pattern', 'no longer exists'),
+  jsonb_build_object('what', 'list its synced folders', 'sql', format('select public.kb_attachments_list(%L)', pg_temp.id('kb3')), 'expect', 'error', 'pattern', 'no longer exists'),
+  jsonb_build_object('what', 'delete the KB', 'sql', format('select public.kb_delete(%L)', pg_temp.id('kb3')), 'expect', 'error', 'pattern', 'no longer exists'),
+  jsonb_build_object('what', 'make a workspace KB with its name', 'sql', format('select public.kb_create(%L, ''QA notes'')', '01KF0000000000000000000PWS'), 'expect', 'ok'),
+  jsonb_build_object('what', 'make a personal KB with its name', 'sql', format('select public.kb_create(%L, ''QA notes'', personal => true)', '01KF0000000000000000000PWS'), 'expect', 'ok')));
+select pg_temp.check(not exists (select 1 from public.knowledge_bases where name = 'QA notes' and id <> pg_temp.id('kb3')), 'the probes changed nothing');
+select pg_temp.check((select body from public.notes where id = '01KF000000000000000000PN02') = '# Shared app', 'the probes left the note as it was');
 
 -- 6b. the workspace's policy for members' personal KBs: only owners and admins set it; a source it drops pauses
 -- members' synced folders of that source, which cannot be resumed or attached again; an admin's own personal KB is exempt
