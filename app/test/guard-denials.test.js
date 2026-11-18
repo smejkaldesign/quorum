@@ -33,7 +33,7 @@ describe('recent denials', () => {
     const r = read('.env');
     expect(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision).toBe('deny');
     const [d] = guards().denials();
-    expect(d).toMatchObject({ path: '.env', tool: 'Read', surface: 'agent', guard: 'built-in:secrets', guardLabel: 'Secret-looking files' });
+    expect(d).toMatchObject({ path: '.env', tool: 'Read', surface: 'agent', guard: 'built-in:secrets', guardLabel: 'Block files that look like keys or passwords' });
     expect(typeof d.id).toBe('string');
     expect(Number.isNaN(Date.parse(d.t))).toBe(false);
   });

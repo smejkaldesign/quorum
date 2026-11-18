@@ -111,7 +111,7 @@ export function VersionBar({ version, busy, locked, onRestore, onClose }: { vers
 
 // Settings > Memory: Quorum's own memory settings. The main card holds the switches people change; Advanced holds the
 // limits, the dot timer, and the rules and local model status passed in as advanced
-export function MemoryUpdatesCard({ settings, onSettings, after, advanced }: { settings: Settings; onSettings: (s: Settings) => void; after?: ReactNode; advanced?: ReactNode }) {
+export function MemoryUpdatesCard({ settings, onSettings, advanced }: { settings: Settings; onSettings: (s: Settings) => void; advanced?: ReactNode }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const saved = settings.memoryDotDays ?? 30;
   const save = async (patch: Partial<Settings>) => onSettings(await window.quorum.setSettings(patch));
@@ -155,16 +155,11 @@ export function MemoryUpdatesCard({ settings, onSettings, after, advanced }: { s
           desc="For fixes the rules cannot decide (a missing note to write, a weak relink or alias, two notes that repeat each other), the agent reads those notes and drafts the fix with quoted lines and a confidence. It runs on your own Claude Code sign-in, reads only the notes Quorum gives it, and changes nothing until you approve. It waits while you record or type. Off by default.">
           <Toggle on={settings.memoryDrafts === true} onChange={(v) => save({ memoryDrafts: v })} />
         </Row>
-        <Row icon={<IconListCheck width={18} height={18} />} title="Let AI tools change memory and knowledge bases"
-          desc="Claude Code, Codex and other AI tools connected through the quorum MCP can approve and archive items in Needs review, undo fixes and create knowledge bases, through the same steps as the buttons here. Each fix shows which tool approved it and keeps its Undo. Reading Needs review, marking items read and starting Check everything now work without this; a tool can start the check only while Let the agent draft fixes is on, and never turns it on. Off by default.">
-          <Toggle on={settings.memoryAgentActions === true} onChange={(v) => save({ memoryAgentActions: v })} />
-        </Row>
         <Row icon={<IconHighlight width={18} height={18} />} title="Highlight changed text"
           desc="An open note shows the text its updates changed in green, or blue once approved. The highlight button on the note turns it off for that view.">
           <Toggle on={settings.memoryHighlight !== false} onChange={(v) => save({ memoryHighlight: v })} />
         </Row>
       </div>
-      {after}
       <button className="set-advanced" aria-expanded={showAdvanced} onClick={() => setShowAdvanced((v) => !v)}>
         <IconChevron width={14} height={14} className={showAdvanced ? undefined : 'right'} />Advanced
       </button>

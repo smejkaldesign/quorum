@@ -6,14 +6,14 @@ import type { Role } from './quorum';
 // shows follows from the current page, so the one remembered page (useSession) also remembers the nav.
 export type NavMode = 'account' | 'admin';
 export type AccountPage = 'preferences' | 'memory' | 'calendar' | 'meetings' | 'voice';
-export type WorkspacePage = 'general' | 'notifications' | 'developers' | 'guardrails' | 'connectors' | 'teams' | 'billing' | 'knowledge' | 'members' | 'org-connectors' | 'org-voice' | 'org-guardrails';
+export type WorkspacePage = 'general' | 'connectors' | 'notifications' | 'developers' | 'guardrails' | 'teams' | 'billing' | 'knowledge' | 'members' | 'org-connectors' | 'org-voice' | 'org-guardrails';
 export type Page = AccountPage | WorkspacePage;
 
 export const ACCOUNT_PAGES: readonly AccountPage[] = ['preferences', 'memory', 'calendar', 'meetings', 'voice'];
-export const WORKSPACE_PAGES: readonly WorkspacePage[] = ['general', 'notifications', 'developers', 'guardrails', 'connectors', 'teams', 'billing', 'knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails'];
+export const WORKSPACE_PAGES: readonly WorkspacePage[] = ['general', 'connectors', 'notifications', 'developers', 'guardrails', 'teams', 'billing', 'knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails'];
 // the admin pages every build lists for everyone, above the Workspace heading: General (sign-in and the workspace
-// basics), Notifications, AI settings, Guardrails, and Connectors last
-export const TOP_ADMIN_PAGES: readonly WorkspacePage[] = ['general', 'notifications', 'developers', 'guardrails', 'connectors'];
+// basics), Connectors, Notifications, AI tools and Guardrails
+export const TOP_ADMIN_PAGES: readonly WorkspacePage[] = ['general', 'connectors', 'notifications', 'developers', 'guardrails'];
 // the pages that exist only once a team is enabled on the workspace (migration 0019)
 export const TEAM_PAGES: readonly WorkspacePage[] = ['knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails'];
 

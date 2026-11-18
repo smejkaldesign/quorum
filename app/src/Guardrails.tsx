@@ -64,7 +64,7 @@ export function GuardrailsPage() {
         : <p className="set-lede">What Quorum's agent may never read from your Agent OS or say about it. These rules are built in and work in both editions. {builtIns.filter((r) => r.enabled).length} on.</p>}
       {error && <p className="set-error">{error}</p>}
 
-      <h3>Built in</h3>
+      {custom && <h3>Built in</h3>}
       <div className="set-card">{builtIns.map(ruleRow)}</div>
 
       {custom && (
