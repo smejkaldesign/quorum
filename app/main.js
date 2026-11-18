@@ -5474,7 +5474,7 @@ app.whenReady().then(() => {
   // installed builds check their feed on launch, every six hours and when the window comes back after an hour; the
   // window shows an Update button once a version is downloaded (updater.js). A development copy has nothing to update
   updater.autoUpdater.logger = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
-  updates = createUpdater({ autoUpdater: updater.autoUpdater, feed: feedFor({ edition: EDITION, packaged: packagedMeta }), current: app.getVersion(), enabled: app.isPackaged, emit: (s) => { toUI('update', s); updateTray(); }, log });
+  updates = createUpdater({ autoUpdater: updater.autoUpdater, feed: feedFor({ edition: EDITION, packaged: packagedMeta }), current: app.getVersion(), enabled: app.isPackaged, emit: (s) => { toUI('update', s); updateTray(); }, beforeInstall: () => { quitting = true; }, log });
   updates.start();
   // half a minute after launch, so the window and the first sync go first
   if (DECIDER_ON) setTimeout(() => { modelDownload.start(); }, 30000).unref?.();
