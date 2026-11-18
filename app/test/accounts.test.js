@@ -51,7 +51,7 @@ describe('authorize URLs', () => {
   it('relay providers redirect to the relay callback; Slack asks for user scopes, Notion for a user owner, GitHub for no scope', () => {
     expect(redirectFor('slack', RELAY)).toBe('https://relay.example.com/v1/oauth/slack/callback');
     const s = new URL(authorizeUrl('slack', { clientId: 'sid', redirectUri: redirectFor('slack', RELAY), state: 's', challenge: 'ch' }));
-    expect(s.searchParams.get('user_scope')).toBe('channels:read,groups:read,chat:write,users:read');
+    expect(s.searchParams.get('user_scope')).toBe('channels:read,groups:read,chat:write,users:read,channels:history,groups:history,search:read');
     expect(s.searchParams.get('code_challenge')).toBeNull();
     const n = new URL(authorizeUrl('notion', { clientId: 'nid', redirectUri: redirectFor('notion', RELAY), state: 's' }));
     expect(n.searchParams.get('owner')).toBe('user');
