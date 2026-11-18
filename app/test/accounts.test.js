@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -80,6 +81,16 @@ describe('connectAccount', () => {
     expect(r.calls[0].body.code_verifier).toMatch(/^[\w-]{43}$/);
     expect(JSON.stringify(r.calls[0].body)).not.toMatch(/secret/);
     expect(b.finished).toEqual([{ name: 'GitHub', connector: 'github' }]);
+  });
+  it('sends a Notion code with the state, the relay\'s binding and a verifier whose challenge ends the state', async () => {
+    const b = browser({ binding: 'sig' });
+    const r = relay(() => json({ accessToken: 'nt', refreshToken: null, expiresAt: null, account: 'Acme' }));
+    await connectAccount('notion', { clients, open: b.open, loopback: b.loopback, relayBase: RELAY, relayFetch: r.relayFetch, fetchImpl: noNetwork });
+    const state = b.url().searchParams.get('state');
+    const sent = r.calls[0].body;
+    expect(sent).toMatchObject({ provider: 'notion', code: 'good', state, binding: 'sig' });
+    expect(state.endsWith(`.c${createHash('sha256').update(sent.code_verifier).digest('base64url')}`)).toBe(true);
+    expect(b.url().searchParams.get('code_challenge')).toBeNull();
   });
   it('exchanges Google Drive directly with the Desktop pair and takes the email from the id token', async () => {
     const b = browser();

@@ -7,8 +7,14 @@
 //   POST /v1/oauth/revoke               { provider, token }: for providers whose revoke call needs the secret
 // Nothing is stored. Tokens, codes and verifiers never reach the log: the log carries the provider, the grant and the
 // provider's HTTP status only.
+// A code is redeemed only with proof that the app which started the sign-in asks for it. GitHub checks PKCE itself, so
+// the request must carry a well formed code_verifier. Notion and Slack apps here do not use PKCE (Notion has none;
+// Slack's makes the app a public client for good), so the relay checks an equivalent: the app's state ends in
+// .c<S256 challenge>, the callback signs code and state with the provider's client secret (binding), and the token
+// request must bring that binding and the verifier whose S256 hash is the challenge.
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { RelayError } from './lib/auth.js';
-import { bounceToLoopback } from './connect.js';
+import { bounceToLoopback, isVerifier } from './connect.js';
 import { clientAddress, createLimiter } from './platform.js';
 import { readJson } from './summary.js';
 
@@ -20,6 +26,7 @@ const expiry = (s, now) => (s ? now + Number(s) * 1000 : null);
 // account label the provider's token answer already carries
 export const OAUTH_PROVIDERS = {
   notion: {
+    pkce: false,
     token: (c, b) => ({
       url: 'https://api.notion.com/v1/oauth/token',
       init: { method: 'POST', headers: { authorization: basic(c), 'content-type': 'application/json', accept: 'application/json', 'notion-version': '2022-06-28' }, body: JSON.stringify(b.grant === 'refresh' ? { grant_type: 'refresh_token', refresh_token: b.refreshToken } : { grant_type: 'authorization_code', code: b.code, redirect_uri: b.redirectUri }) },
@@ -29,6 +36,7 @@ export const OAUTH_PROVIDERS = {
     revoke: (c, token) => ({ url: 'https://api.notion.com/v1/oauth/revoke', init: { method: 'POST', headers: { authorization: basic(c), 'content-type': 'application/json', 'notion-version': '2022-06-28' }, body: JSON.stringify({ token }) } }),
   },
   slack: {
+    pkce: false,
     // user scopes only: the user token sits under authed_user, with its own refresh token when rotation is on
     token: (c, b) => ({
       url: 'https://slack.com/api/oauth.v2.access',
@@ -42,6 +50,7 @@ export const OAUTH_PROVIDERS = {
     revoke: null,
   },
   github: {
+    pkce: true,
     token: (c, b) => ({
       url: 'https://github.com/login/oauth/access_token',
       init: { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body: form(b.grant === 'refresh' ? { client_id: c.clientId, client_secret: c.clientSecret, grant_type: 'refresh_token', refresh_token: b.refreshToken } : { client_id: c.clientId, client_secret: c.clientSecret, code: b.code, redirect_uri: b.redirectUri, code_verifier: b.codeVerifier }) },
@@ -77,15 +86,35 @@ export function allowedRedirects(config, provider) {
   return [...(base ? [`${base}/v1/oauth/${provider}/callback`] : []), ...(config.oauthExtraRedirects ?? [])];
 }
 
+const b64url = (buf) => buf.toString('base64url');
+// the S256 challenge the app put at the end of its state, for a provider without PKCE
+export const stateChallenge = (state) => /\.c([A-Za-z0-9_-]{43})$/.exec(String(state ?? ''))?.[1] ?? null;
+// the relay's signature over the code and state the provider returned, keyed by that provider's client secret
+export const bindingFor = (secret, provider, code, state) => b64url(createHmac('sha256', String(secret)).update(`quorum-oauth-binding\n${provider}\n${code}\n${state}`).digest());
+const sameText = (a, b) => { const x = Buffer.from(String(a)); const y = Buffer.from(String(b)); return x.length === y.length && timingSafeEqual(x, y); };
+
+// a code exchange for a provider without PKCE: the binding must match the code and state, and the verifier must hash
+// to the challenge in the state
+export function checkBinding(creds, b) {
+  const challenge = stateChallenge(b.state);
+  if (!challenge || !b.binding || !isVerifier(b.codeVerifier)) throw new RelayError('bad_request', 'The sign-in proof is missing. Update Quorum and connect again.', 400);
+  if (!sameText(b.binding, bindingFor(creds.clientSecret, b.provider, b.code, b.state))) throw new RelayError('bad_request', 'The sign-in proof does not match this code.', 400);
+  if (!sameText(b64url(createHash('sha256').update(b.codeVerifier).digest()), challenge)) throw new RelayError('bad_request', 'The sign-in verifier does not match.', 400);
+}
+
 // GET /v1/oauth/<provider>/callback: only the app's loopback can be the destination, so a forged state cannot send
-// the browser anywhere else
-export function handleOAuthCallback(req, res, { log = () => {} } = {}) {
+// the browser anywhere else. For a provider without PKCE the bounce also carries the binding
+export function handleOAuthCallback(req, res, { log = () => {}, config = null } = {}) {
   const url = new URL(req.url, 'http://relay');
   const provider = providerName(url.pathname.split('/')[3]);
   if (!Object.hasOwn(OAUTH_PROVIDERS, provider)) return json(res, 404, { error: 'Unknown provider.', code: 'bad_request' });
   if (req.method !== 'GET') return json(res, 405, { error: 'GET only.', code: 'bad_request' });
-  log('oauth_callback', { provider, ok: !!url.searchParams.get('code') });
-  bounceToLoopback(url, res);
+  const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
+  log('oauth_callback', { provider, ok: !!code });
+  const secret = config?.oauth?.[provider]?.clientSecret;
+  const binding = !OAUTH_PROVIDERS[provider].pkce && secret && code && state && stateChallenge(state) ? bindingFor(secret, provider, code.slice(0, 2048), state.slice(0, 2048)) : null;
+  bounceToLoopback(url, res, { binding });
 }
 
 // a JSON body that is an object, or a 400 with a plain message (null, an array or a bare value is not a request)
@@ -102,8 +131,9 @@ export function cleanTokenRequest(raw) {
     return { provider, grant: 'refresh', refreshToken };
   }
   const code = str(b.code), codeVerifier = str(b.code_verifier, 256), redirectUri = str(b.redirect_uri, 512);
+  const state = str(b.state, 2048), binding = str(b.binding, 256);
   if (!code || !redirectUri) throw new RelayError('bad_request', 'The sign-in details are incomplete.', 400);
-  return { provider, grant: 'code', code, codeVerifier: codeVerifier || null, redirectUri };
+  return { provider, grant: 'code', code, codeVerifier: codeVerifier || null, redirectUri, ...(state ? { state } : {}), ...(binding ? { binding } : {}) };
 }
 
 // two limits on the token and revoke routes (the callback is not counted): per caller address, plenty for people
@@ -131,6 +161,10 @@ export async function handleOAuthToken(req, res, { config, log = () => {}, fetch
     limits.provider(b.provider);
     if (b.grant === 'code' && !allowedRedirects(config, b.provider).includes(b.redirectUri)) throw new RelayError('bad_request', 'That redirect address is not allowed.', 400);
     const creds = requireCredentials(config, b.provider);
+    if (b.grant === 'code') {
+      if (p.pkce && !isVerifier(b.codeVerifier)) throw new RelayError('bad_request', 'The sign-in verifier is missing or not valid. Connect again.', 400);
+      if (!p.pkce) checkBinding(creds, b);
+    }
     const { url, init } = p.token(creds, b);
     const r = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(20000) });
     const t = await providerBody(r);

@@ -30,14 +30,16 @@ describe('callback bounce', () => {
     assert.equal(res.status, 302);
     assert.equal(res.headers.location, 'http://127.0.0.1:47832/callback?code=abc&state=xyz');
   });
-  it('honours a port in the state and forwards errors', () => {
-    assert.equal(loopbackFor('nonce.p49152'), 49152);
+  it('honours only the app\'s own port in the state and forwards errors', () => {
+    assert.equal(loopbackFor('nonce.p47832'), 47832);
+    assert.equal(loopbackFor('nonce.p49152'), 47832);
+    assert.equal(loopbackFor('nonce.p5555'), 47832);
     assert.equal(loopbackFor('nonce.p80'), 47832);
     assert.equal(loopbackFor('nonce.p99999'), 47832);
     assert.equal(loopbackFor(null), 47832);
     const res = fakeRes();
     handleCallback({ method: 'GET', url: '/v1/connect/zoom/callback?error=access_denied&error_description=User%20said%20no&state=n.p49152' }, res, {});
-    assert.equal(res.headers.location, 'http://127.0.0.1:49152/callback?state=n.p49152&error=access_denied&error_description=User+said+no');
+    assert.equal(res.headers.location, 'http://127.0.0.1:47832/callback?state=n.p49152&error=access_denied&error_description=User+said+no');
   });
   it('knows only the platforms it serves', () => {
     const res = fakeRes();
@@ -51,7 +53,7 @@ describe('token exchange', () => {
     const calls = [];
     const fetchImpl = async (url, init) => { calls.push({ url, init }); return { ok: true, status: 200, json: async () => ({ access_token: 'at', refresh_token: 'rt', expires_in: 3600, scope: 'user:read:user' }) }; };
     const res = fakeRes();
-    await handleToken(fakeReq({ method: 'POST', url: '/v1/connect/zoom/token', headers: { authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ workspaceId: WS, grant: 'code', code: 'c1', codeVerifier: 'v1', redirectUri: 'https://relay.quorum.watch/v1/connect/zoom/callback' }) }), res, deps({ fetchImpl }));
+    await handleToken(fakeReq({ method: 'POST', url: '/v1/connect/zoom/token', headers: { authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ workspaceId: WS, grant: 'code', code: 'c1', codeVerifier: 'v'.repeat(43), redirectUri: 'https://relay.quorum.watch/v1/connect/zoom/callback' }) }), res, deps({ fetchImpl }));
     assert.equal(res.status, 200, res.body);
     const t = out(res);
     assert.equal(t.accessToken, 'at');
@@ -61,7 +63,7 @@ describe('token exchange', () => {
     assert.equal(calls[0].init.headers.authorization, `Basic ${Buffer.from('cid:csecret').toString('base64')}`);
     const form = new URLSearchParams(calls[0].init.body);
     assert.equal(form.get('grant_type'), 'authorization_code');
-    assert.equal(form.get('code_verifier'), 'v1');
+    assert.equal(form.get('code_verifier'), 'v'.repeat(43));
     assert.equal(form.get('redirect_uri'), 'https://relay.quorum.watch/v1/connect/zoom/callback');
   });
   it('refreshes with the refresh token', async () => {
@@ -88,10 +90,20 @@ describe('token exchange', () => {
   it('turns a refusal from the platform into a plain message and never echoes the platform body', async () => {
     const fetchImpl = async () => ({ ok: false, status: 400, json: async () => ({ reason: 'Invalid authorization code', error: 'invalid_grant' }) });
     const res = fakeRes();
-    await handleToken(fakeReq({ method: 'POST', url: '/v1/connect/zoom/token', headers: { authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ workspaceId: WS, grant: 'code', code: 'bad', codeVerifier: 'v', redirectUri: 'https://r/cb' }) }), res, deps({ fetchImpl }));
+    await handleToken(fakeReq({ method: 'POST', url: '/v1/connect/zoom/token', headers: { authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ workspaceId: WS, grant: 'code', code: 'bad', codeVerifier: 'v'.repeat(43), redirectUri: 'https://r/cb' }) }), res, deps({ fetchImpl }));
     assert.equal(res.status, 400);
     assert.match(out(res).error, /did not accept the sign-in/);
     assert.doesNotMatch(res.body, /invalid_grant/);
+  });
+  it('refuses a code with a missing or malformed verifier before calling Zoom', async () => {
+    const calls = [];
+    const fetchImpl = async () => { calls.push(1); return { ok: true, status: 200, json: async () => ({ access_token: 'at' }) }; };
+    for (const codeVerifier of [undefined, 'short', `${'v'.repeat(43)} `]) {
+      const res = fakeRes();
+      await handleToken(fakeReq({ method: 'POST', url: '/v1/connect/zoom/token', headers: { authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ workspaceId: WS, grant: 'code', code: 'c1', codeVerifier, redirectUri: 'https://r/cb' }) }), res, deps({ fetchImpl }));
+      assert.equal(res.status, 400, String(codeVerifier));
+    }
+    assert.equal(calls.length, 0);
   });
   it('maps the platform token shape', () => {
     assert.deepEqual(tokenShape({ access_token: 'a' }, 1000), { accessToken: 'a', refreshToken: null, expiresAt: null, scope: null });

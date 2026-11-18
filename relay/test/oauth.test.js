@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { allowedRedirects, cleanTokenRequest, createOAuthLimits, handleOAuth, handleOAuthCallback, handleOAuthRevoke, handleOAuthToken, oauthStatus } from '../oauth.js';
+import { createHash } from 'node:crypto';
+import { allowedRedirects, bindingFor, cleanTokenRequest, createOAuthLimits, handleOAuth, handleOAuthCallback, handleOAuthRevoke, handleOAuthToken, oauthStatus } from '../oauth.js';
 import { clientAddress } from '../platform.js';
 
 const config = (over = {}) => ({
@@ -10,6 +11,11 @@ const config = (over = {}) => ({
   ...over,
 });
 const redirect = (p) => `https://relay.example.com/v1/oauth/${p}/callback`;
+// a PKCE verifier, and the proof a Notion or Slack exchange carries: the state with the verifier's challenge, and the
+// binding the callback signed for that code and state
+const V = 'v'.repeat(43);
+const challengeOf = (v) => createHash('sha256').update(v).digest('base64url');
+const proof = (provider, code, v = V) => { const state = `nonce.c${challengeOf(v)}`; return { code, state, binding: bindingFor(`${provider}-secret`, provider, code, state), code_verifier: v }; };
 
 function fakeReq({ method = 'POST', url = '/v1/oauth/token', body = null, headers = {} } = {}) {
   const listeners = {};
@@ -37,6 +43,19 @@ describe('oauth callback bounce', () => {
     handleOAuthCallback({ method: 'GET', url: '/v1/oauth/notion/callback?code=abc&state=xyz' }, res, {});
     assert.equal(res.status, 302);
     assert.equal(res.headers.location, 'http://127.0.0.1:47832/callback?code=abc&state=xyz');
+  });
+  it('signs the code and state for a provider without PKCE, and adds nothing for GitHub or a state without a challenge', () => {
+    const state = `nonce.c${challengeOf(V)}`;
+    const res = fakeRes();
+    handleOAuthCallback({ method: 'GET', url: `/v1/oauth/slack/callback?code=abc&state=${state}` }, res, { config: config() });
+    const loc = new URL(res.headers.location);
+    assert.equal(loc.searchParams.get('binding'), bindingFor('slack-secret', 'slack', 'abc', state));
+    const gh = fakeRes();
+    handleOAuthCallback({ method: 'GET', url: `/v1/oauth/github/callback?code=abc&state=${state}` }, gh, { config: config() });
+    assert.equal(new URL(gh.headers.location).searchParams.get('binding'), null);
+    const plain = fakeRes();
+    handleOAuthCallback({ method: 'GET', url: '/v1/oauth/notion/callback?code=abc&state=xyz' }, plain, { config: config() });
+    assert.equal(new URL(plain.headers.location).searchParams.get('binding'), null);
   });
   it('passes a provider error through and refuses providers outside the allowlist', () => {
     const res = fakeRes();
@@ -67,7 +86,7 @@ describe('token request checks', () => {
 describe('POST /v1/oauth/token', () => {
   it('exchanges a Notion code with the secret in Basic auth and returns the tokens with the account', async () => {
     const p = provider({ access_token: 'at', refresh_token: 'rt', expires_in: 3600, workspace_name: 'Acme', owner: { user: { person: { email: 'me@example.com' } } } });
-    const res = await run(handleOAuthToken, fakeReq({ body: { provider: 'notion', code: 'c1', code_verifier: 'v1', redirect_uri: redirect('notion') } }), { fetchImpl: p.fetchImpl });
+    const res = await run(handleOAuthToken, fakeReq({ body: { provider: 'notion', ...proof('notion', 'c1'), redirect_uri: redirect('notion') } }), { fetchImpl: p.fetchImpl });
     assert.equal(res.status, 200);
     assert.deepEqual(out(res), { accessToken: 'at', refreshToken: 'rt', expiresAt: 1000 + 3600 * 1000, scope: null, account: 'me@example.com' });
     assert.equal(p.calls[0].url, 'https://api.notion.com/v1/oauth/token');
@@ -77,7 +96,7 @@ describe('POST /v1/oauth/token', () => {
   });
   it('reads the Slack user token from authed_user and the team name as the account', async () => {
     const p = provider({ ok: true, team: { name: 'Acme' }, authed_user: { access_token: 'xoxp', refresh_token: 'xoxe', expires_in: 43200, scope: 'chat:write' } });
-    const res = await run(handleOAuthToken, fakeReq({ body: { provider: 'slack', code: 'c', redirect_uri: redirect('slack') } }), { fetchImpl: p.fetchImpl });
+    const res = await run(handleOAuthToken, fakeReq({ body: { provider: 'slack', ...proof('slack', 'c'), redirect_uri: redirect('slack') } }), { fetchImpl: p.fetchImpl });
     assert.equal(res.status, 200);
     assert.deepEqual(out(res), { accessToken: 'xoxp', refreshToken: 'xoxe', expiresAt: 1000 + 43200 * 1000, scope: 'chat:write', account: 'Acme' });
     const sent = new URLSearchParams(p.calls[0].init.body);
@@ -86,17 +105,17 @@ describe('POST /v1/oauth/token', () => {
   });
   it('treats a Slack ok:false answer as a refusal even with HTTP 200', async () => {
     const p = provider({ ok: false, error: 'invalid_code' });
-    const res = await run(handleOAuthToken, fakeReq({ body: { provider: 'slack', code: 'c', redirect_uri: redirect('slack') } }), { fetchImpl: p.fetchImpl });
+    const res = await run(handleOAuthToken, fakeReq({ body: { provider: 'slack', ...proof('slack', 'c'), redirect_uri: redirect('slack') } }), { fetchImpl: p.fetchImpl });
     assert.equal(res.status, 400);
     assert.equal(out(res).code, 'connector');
   });
   it('sends GitHub the code verifier and the secret, and refreshes with the refresh token', async () => {
     const p = provider({ access_token: 'gho', scope: 'repo,read:user', token_type: 'bearer' });
-    const res = await run(handleOAuthToken, fakeReq({ body: { provider: 'github', code: 'c', code_verifier: 'ver', redirect_uri: redirect('github') } }), { fetchImpl: p.fetchImpl });
+    const res = await run(handleOAuthToken, fakeReq({ body: { provider: 'github', code: 'c', code_verifier: V, redirect_uri: redirect('github') } }), { fetchImpl: p.fetchImpl });
     assert.equal(res.status, 200);
     assert.equal(out(res).accessToken, 'gho');
     const sent = new URLSearchParams(p.calls[0].init.body);
-    assert.equal(sent.get('code_verifier'), 'ver');
+    assert.equal(sent.get('code_verifier'), V);
     assert.equal(sent.get('client_secret'), 'gh-secret');
     const r2 = await run(handleOAuthToken, fakeReq({ body: { provider: 'github', grant_type: 'refresh_token', refresh_token: 'ghr' } }), { fetchImpl: p.fetchImpl });
     assert.equal(r2.status, 200);
@@ -117,14 +136,14 @@ describe('POST /v1/oauth/token', () => {
   });
   it('says the provider is not set up when the relay has no secret for it', async () => {
     const p = provider({ access_token: 'x' });
-    const res = await run(handleOAuthToken, fakeReq({ body: { provider: 'notion', code: 'c', redirect_uri: redirect('notion') } }), { fetchImpl: p.fetchImpl, config: config({ oauth: { notion: { clientId: 'id' } } }) });
+    const res = await run(handleOAuthToken, fakeReq({ body: { provider: 'notion', ...proof('notion', 'c'), redirect_uri: redirect('notion') } }), { fetchImpl: p.fetchImpl, config: config({ oauth: { notion: { clientId: 'id' } } }) });
     assert.equal(res.status, 503);
     assert.equal(p.calls.length, 0);
   });
   it('rate limits by address', async () => {
     const p = provider({ access_token: 'x' });
     const limits = createOAuthLimits({ perAddress: 2, perProvider: 100 });
-    const body = { provider: 'notion', code: 'c', redirect_uri: redirect('notion') };
+    const body = { provider: 'notion', ...proof('notion', 'c'), redirect_uri: redirect('notion') };
     for (let i = 0; i < 2; i++) assert.equal((await run(handleOAuthToken, fakeReq({ body }), { fetchImpl: p.fetchImpl, limits })).status, 200);
     assert.equal((await run(handleOAuthToken, fakeReq({ body }), { fetchImpl: p.fetchImpl, limits })).status, 429);
     // a client that prepends its own X-Forwarded-For entry is still counted by the address the proxy appended
@@ -134,10 +153,10 @@ describe('POST /v1/oauth/token', () => {
   it('caps each provider across all addresses, and counts the cap separately per provider', async () => {
     const p = provider({ access_token: 'x' });
     const limits = createOAuthLimits({ perAddress: 100, perProvider: 2 });
-    const body = { provider: 'notion', code: 'c', redirect_uri: redirect('notion') };
+    const body = { provider: 'notion', ...proof('notion', 'c'), redirect_uri: redirect('notion') };
     for (const ip of ['192.0.2.1', '192.0.2.2']) assert.equal((await run(handleOAuthToken, fakeReq({ body, headers: { 'x-forwarded-for': ip } }), { fetchImpl: p.fetchImpl, limits })).status, 200);
     assert.equal((await run(handleOAuthToken, fakeReq({ body, headers: { 'x-forwarded-for': '192.0.2.3' } }), { fetchImpl: p.fetchImpl, limits })).status, 429);
-    assert.equal((await run(handleOAuthToken, fakeReq({ body: { provider: 'slack', code: 'c', redirect_uri: redirect('slack') }, headers: { 'x-forwarded-for': '192.0.2.3' } }), { fetchImpl: provider({ ok: true, authed_user: { access_token: 'u' } }).fetchImpl, limits })).status, 200);
+    assert.equal((await run(handleOAuthToken, fakeReq({ body: { provider: 'slack', ...proof('slack', 'c'), redirect_uri: redirect('slack') }, headers: { 'x-forwarded-for': '192.0.2.3' } }), { fetchImpl: provider({ ok: true, authed_user: { access_token: 'u' } }).fetchImpl, limits })).status, 200);
   });
   it('answers a null or non-object body with a plain 400', async () => {
     for (const body of ['null', '[]', '"x"']) {
@@ -149,17 +168,41 @@ describe('POST /v1/oauth/token', () => {
     }
   });
   it('treats a null or unreadable provider answer as a refusal', async () => {
-    const res = await run(handleOAuthToken, fakeReq({ body: { provider: 'github', code: 'c', redirect_uri: redirect('github') } }), { fetchImpl: provider(null).fetchImpl });
+    const res = await run(handleOAuthToken, fakeReq({ body: { provider: 'github', code: 'c', code_verifier: V, redirect_uri: redirect('github') } }), { fetchImpl: provider(null).fetchImpl });
     assert.equal(res.status, 400);
     assert.match(out(res).error, /did not accept/);
+  });
+  it('refuses a GitHub code with a missing or malformed verifier before calling GitHub', async () => {
+    const p = provider({ access_token: 'gho' });
+    for (const v of [undefined, 'short', `${V}!`]) {
+      const res = await run(handleOAuthToken, fakeReq({ body: { provider: 'github', code: 'c', code_verifier: v, redirect_uri: redirect('github') } }), { fetchImpl: p.fetchImpl });
+      assert.equal(res.status, 400, String(v));
+      assert.match(out(res).error, /verifier/);
+    }
+    assert.equal(p.calls.length, 0);
+  });
+  it('refuses a Notion or Slack code without the proof, with a binding for another code, or with the wrong verifier', async () => {
+    const p = provider({ ok: true, access_token: 'x', authed_user: { access_token: 'u' } });
+    const good = proof('notion', 'c');
+    const cases = [
+      { provider: 'notion', code: 'c', redirect_uri: redirect('notion') },
+      { provider: 'notion', ...good, binding: undefined, redirect_uri: redirect('notion') },
+      { provider: 'notion', ...good, code: 'stolen', redirect_uri: redirect('notion') },
+      { provider: 'notion', ...good, code_verifier: 'w'.repeat(43), redirect_uri: redirect('notion') },
+      { provider: 'notion', ...good, state: 'nonce', redirect_uri: redirect('notion') },
+      { provider: 'slack', ...good, redirect_uri: redirect('slack') },
+    ];
+    for (const body of cases) assert.equal((await run(handleOAuthToken, fakeReq({ body }), { fetchImpl: p.fetchImpl })).status, 400, JSON.stringify(body));
+    assert.equal(p.calls.length, 0);
+    assert.equal((await run(handleOAuthToken, fakeReq({ body: { provider: 'notion', ...good, redirect_uri: redirect('notion') } }), { fetchImpl: p.fetchImpl })).status, 200);
   });
   it('never writes a token, code, verifier or secret to the log', async () => {
     const lines = [];
     const log = (event, fields) => lines.push(JSON.stringify({ event, ...fields }));
     const ok = provider({ access_token: 'secret-access', refresh_token: 'secret-refresh' });
-    await run(handleOAuthToken, fakeReq({ body: { provider: 'github', code: 'secret-code', code_verifier: 'secret-verifier', redirect_uri: redirect('github') } }), { fetchImpl: ok.fetchImpl, log });
+    await run(handleOAuthToken, fakeReq({ body: { provider: 'github', code: 'secret-code', code_verifier: `secret-verifier-${V}`, redirect_uri: redirect('github') } }), { fetchImpl: ok.fetchImpl, log });
     const refused = provider({ error: 'bad_verification_code', error_description: 'secret-code is bad' }, 200);
-    await run(handleOAuthToken, fakeReq({ body: { provider: 'github', code: 'secret-code', redirect_uri: redirect('github') } }), { fetchImpl: refused.fetchImpl, log });
+    await run(handleOAuthToken, fakeReq({ body: { provider: 'github', code: 'secret-code', code_verifier: `secret-verifier-${V}`, redirect_uri: redirect('github') } }), { fetchImpl: refused.fetchImpl, log });
     await run(handleOAuthRevoke, fakeReq({ url: '/v1/oauth/revoke', body: { provider: 'github', token: 'secret-access' } }), { fetchImpl: provider({}, 204).fetchImpl, log });
     assert.ok(lines.length >= 3);
     for (const l of lines) assert.doesNotMatch(l, /secret|gh-secret|notion-secret/);
