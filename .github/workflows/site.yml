@@ -20,34 +20,45 @@ concurrency:
   group: site-deploy
   cancel-in-progress: true
 
-# onnxruntime-node (the decision layer) downloads CUDA libraries on Linux x64 at install; the app only ships the macOS build
+# read-only token; the deploy goes through Railway, not the repository
+permissions:
+  contents: read
+
+# onnxruntime-node (the decision layer) downloads CUDA libraries on Linux x64 at install; the app only ships the macOS build.
+# The install runs with --ignore-scripts, so this only matters if a script ever runs again.
 env:
   ONNXRUNTIME_NODE_INSTALL: skip
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # HAS_RAILWAY_TOKEN records whether the secret is set; the token itself reaches only the deploy step
     env:
-      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      HAS_RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN != '' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # no npm cache: a deploy never restores a cache that another workflow could have written
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: app/package-lock.json
+      # no dependency install script runs; the preview build is plain Vite and needs none of them
       - name: Install
-        run: npm ci
+        run: npm ci --ignore-scripts
         working-directory: app
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
       - name: Build the app preview
         run: npm run build:site-preview
         working-directory: app
+      # @railway/cli is pinned and needs its own install script, which downloads the Railway binary
       - name: Deploy the site
-        if: env.RAILWAY_TOKEN != ''
+        if: env.HAS_RAILWAY_TOKEN == 'true'
         run: npm run -s stamp && npx --yes @railway/cli@4.31.0 up --service site --ci --no-gitignore
         working-directory: site
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       - name: Deploy skipped
-        if: env.RAILWAY_TOKEN == ''
+        if: env.HAS_RAILWAY_TOKEN != 'true'
         run: echo "::notice::RAILWAY_TOKEN is not set, so the site was not deployed. Run npm run deploy in site/ to publish."
