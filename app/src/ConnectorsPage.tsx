@@ -542,6 +542,10 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
   // one message for the page: the latest action's error wins, else the last failed import
   const alert = error || (src?.job?.status === 'failed' ? src.job.error : null) || (acct?.error ?? null) || checkFailed?.error || null;
   const accountProblem = !!alert && /No \w+ account for|account for this sign-in|different account|Use the account your/i.test(alert);
+  // the alert's first sentence is its title; the line under it carries only the rest
+  const cut = alert ? alert.indexOf('. ') : -1;
+  const alertTitle = !alert ? '' : accountProblem ? 'Sign in with a different account' : (cut > 0 ? alert.slice(0, cut) : alert).replace(/\.$/, '');
+  const alertRest = !alert ? '' : accountProblem ? alert : cut > 0 ? alert.slice(cut + 2) : '';
   const rows: [string, ReactNode][] = [
     ...(on ? [] : [['Status', status] as [string, ReactNode]]),
     ['Area', area?.name ?? x.category],
@@ -612,7 +616,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
       </div>
       {(blocked || approval === 'unapproved') && <div className="conn-alert" role="status"><strong>{UNAPPROVED_LABEL}</strong><span>{blocked ? BLOCKED_SENTENCE : 'You connected this yourself. It keeps working until you disconnect it. Connecting it again needs an owner or admin to approve it.'}</span></div>}
       {approval === 'org' && <div className="conn-alert" role="status"><strong>{ORG_LABEL}</strong><span>{ORG_SENTENCE(x.name)}</span></div>}
-      {alert && <div className="conn-alert" role="alert"><strong>{accountProblem ? 'Sign in with a different account' : alert.split('. ')[0].replace(/\.$/, '')}</strong><span>{alert}</span>{alert === checkFailed?.error && reconnect}</div>}
+      {alert && <div className="conn-alert" role="alert"><strong>{alertTitle}</strong>{alertRest && <span>{alertRest}</span>}{alert === checkFailed?.error && reconnect}</div>}
       {on && steps.length > 0 && (
         <>
           <h4>Next steps</h4>
