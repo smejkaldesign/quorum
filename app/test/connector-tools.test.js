@@ -192,6 +192,8 @@ describe('GitHub', () => {
     next = file('x', 300 * 1024);
     await expect(gh.file({ repo: 'acme/api', path: 'big.json' })).rejects.toThrow('up to 200 KB');
     await expect(gh.file({ repo: 'acme/api', path: '../x' })).rejects.toThrow('above the repository');
+    next = json({ type: 'file', path: '.keep', size: 0, encoding: 'base64', content: '' });
+    expect((await gh.file({ repo: 'acme/api', path: '.keep' })).text).toBe('');
     await expect(gh.file({ repo: 'acme/secret', path: 'a.md' })).rejects.toThrow('not installed on acme/secret');
     for (const repo of ['../x', 'acme/..', './x', 'acme/.']) await expect(gh.file({ repo })).rejects.toThrow('owner/name');
     expect(calls().filter((c) => !c.url.includes('/repos/acme/api/'))).toEqual([]);

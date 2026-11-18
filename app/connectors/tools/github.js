@@ -83,8 +83,8 @@ export function createGithub({ token, fetchImpl, wait }) {
       const d = await call(route);
       if (Array.isArray(d)) return { repo, path: clean, ref: ref ?? null, entries: d.map((e) => ({ name: e.name, type: e.type, path: e.path, size: e.type === 'file' ? e.size : null })) };
       if (d.type !== 'file') throw new ProviderError(`${clean} is a ${d.type ?? 'link'}, so Quorum does not read it.`);
-      if ((d.size ?? 0) > MAX_FILE_BYTES || !d.content) throw new ProviderError(`${clean} is ${Math.round((d.size ?? 0) / 1024)} KB. Quorum reads files up to ${MAX_FILE_BYTES / 1024} KB.`);
-      const bytes = Buffer.from(String(d.content), d.encoding === 'base64' ? 'base64' : 'utf8');
+      if ((d.size ?? 0) > MAX_FILE_BYTES || (d.content == null && (d.size ?? 0) > 0)) throw new ProviderError(`${clean} is ${Math.round((d.size ?? 0) / 1024)} KB. Quorum reads files up to ${MAX_FILE_BYTES / 1024} KB.`);
+      const bytes = Buffer.from(String(d.content ?? ''), d.encoding === 'base64' ? 'base64' : 'utf8');
       let text;
       try { if (bytes.includes(0)) throw new Error('binary'); text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
       catch { throw new ProviderError(`${clean} is a binary file, so Quorum does not read it.`); }
