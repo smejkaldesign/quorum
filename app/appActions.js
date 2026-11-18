@@ -15,16 +15,20 @@ const acting = new AsyncLocalStorage();
 export const currentActor = () => acting.getStore()?.actor ?? 'you';
 // work that outlives the tool call (the fix queue) runs as nobody in particular, so it never takes the caller's name
 export const outsideActor = (fn) => acting.exit(fn);
-// the MCP client's name as the CLI sends it (lowercase words joined by hyphens), or agent
+// the MCP client's name as the CLI sends it (lowercase words joined by hyphens), as mcp:<name>. The prefix keeps a tool's
+// actor apart from Quorum's own (you, auto, quorum, cli) whatever the client calls itself; a reserved or empty name is
+// mcp:agent
+const RESERVED = new Set(['you', 'auto', 'quorum', 'cli', 'agent', 'mcp']);
 export function agentActor(via) {
-  const v = String(via ?? '').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 40);
-  return v && v !== 'you' && v !== 'auto' ? v : 'agent';
+  const v = String(via ?? '').toLowerCase().replace(/[^a-z0-9-]/g, '').replace(/^-+|-+$/g, '').slice(0, 40);
+  return `mcp:${v && !RESERVED.has(v) ? v : 'agent'}`;
 }
-const NAMES = { 'claude-code': 'Claude Code', codex: 'Codex', cli: 'the quorum command', agent: 'an AI tool' };
+const NAMES = { 'claude-code': 'Claude Code', codex: 'Codex', agent: 'an AI tool' };
 export function actorLabel(actor) {
   if (!actor || actor === 'you') return 'you';
   if (actor === 'auto') return 'Quorum';
-  return NAMES[actor] ?? String(actor).split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  const name = String(actor).replace(/^mcp:/, '');
+  return NAMES[name] ?? name.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 }
 
 export const READ_ONLY = 'Quorum is set to read only, so AI tools cannot change anything. Change Access to Read and write in Quorum under Settings > AI tools.';

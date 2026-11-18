@@ -87,7 +87,7 @@ describe('approving through the buttons\' handlers', () => {
     const r = await actions.run('review_approve', { ids: ['r:link:alpha'] }, 'claude-code');
     const review = calls.find((c) => c.name === 'activity-review');
     expect(review.args).toEqual([[{ kind: 'link', abs: '/v/alpha.md', key: 'alpha' }], 'approve']);
-    expect(review.actor).toBe('claude-code');
+    expect(review.actor).toBe('mcp:claude-code');
     expect(r.run).toMatchObject({ id: 'fix:alpha:1', status: 'queued', by: 'Claude Code' });
     expect(toasts).toEqual(['Claude Code approved “Title r:link:alpha”']);
   });
@@ -100,14 +100,14 @@ describe('approving through the buttons\' handlers', () => {
     clock.t = 20000;
     await actions.run('review_approve', { ids: ['r:link:alpha'] }, 'claude-code');
     expect(toasts).toEqual(['Claude Code approved “Title r:link:alpha”', 'Claude Code approved 3 items in Needs review', 'Claude Code approved “Title r:link:alpha”']);
-    expect(new Set(keys)).toEqual(new Set(['claude-code:approved']));
+    expect(new Set(keys)).toEqual(new Set(['mcp:claude-code:approved']));
   });
   it('approves several as one bulk batch with Cancel, and answers a proposed rule on its own', async () => {
     const { actions, calls } = setup();
     const r = await actions.run('review_approve', { ids: ['r:link:alpha', 'r:find:beta', 'r:ignore:gamma'] }, 'codex');
     const plan = calls.find((c) => c.name === 'fix-plan-apply');
     expect(plan.args).toEqual([['r:link:alpha', 'r:find:beta'], [], {}, []]);
-    expect(plan.actor).toBe('codex');
+    expect(plan.actor).toBe('mcp:codex');
     expect(calls.find((c) => c.name === 'activity-review').args).toEqual([[{ kind: 'ignore', abs: '/v/gamma.md', key: 'gamma' }], 'approve']);
     expect(r).toMatchObject({ approved: ['r:link:alpha', 'r:ignore:gamma'], left: ['r:find:beta'], run: { id: 'batch:9', batch: 'batch:9' } });
     expect(await actions.run('fix_cancel', { batch: 'batch:9' })).toEqual({ cancelled: 2 });
@@ -123,11 +123,11 @@ describe('approving through the buttons\' handlers', () => {
     expect(calls.find((c) => c.name === 'activity-review').args[1]).toBe('dismiss');
     expect(toasts[0]).toBe('Claude Code archived 1 item in Needs review without fixing them');
     expect((await actions.run('fix_undo', { id: 'fix:alpha:1' }, 'claude-code')).message).toContain('back in Needs review');
-    expect(calls.at(-1)).toMatchObject({ name: 'fix-undo', args: ['fix:alpha:1'], actor: 'claude-code' });
+    expect(calls.at(-1)).toMatchObject({ name: 'fix-undo', args: ['fix:alpha:1'], actor: 'mcp:claude-code' });
     expect(toasts.at(-1)).toBe('Claude Code undid the fix. “alpha” is back in Needs review');
     await actions.run('fix_cancel', { batch: 'b' }, '');
-    await actions.run('memory_check_start', {}, 'cli');
-    expect(toasts.slice(-2)).toEqual(['An AI tool cancelled a batch of memory fixes', 'The quorum command started Check everything now']);
+    await actions.run('memory_check_start', {}, 'quorum');
+    expect(toasts.slice(-2)).toEqual(['An AI tool cancelled a batch of memory fixes', 'An AI tool started Check everything now']);
   });
 });
 
@@ -136,7 +136,7 @@ describe('who acted', () => {
     let inside = null, queued = null;
     const { actions } = setup({ handlers: { 'fix-cancel': () => { inside = currentActor(); queued = outsideActor(() => currentActor()); return 1; } } });
     await actions.run('fix_cancel', { batch: 'b' }, 'claude-code');
-    expect([inside, queued, currentActor()]).toEqual(['claude-code', 'you', 'you']);
+    expect([inside, queued, currentActor()]).toEqual(['mcp:claude-code', 'you', 'you']);
   });
   it('lands in the decision log as the client when a record takes the default actor', async () => {
     const log = createDecisionLog(mkdtempSync(path.join(tmpdir(), 'qact-')));
@@ -144,11 +144,12 @@ describe('who acted', () => {
     const { actions } = setup({ handlers: { 'fix-cancel': () => { record('approved'); return 1; } } });
     await actions.run('fix_cancel', { batch: 'b' }, 'claude-code');
     record('undone');
-    expect(log.list('/v').map((r) => [r.decision, r.actor])).toEqual([['approved', 'claude-code'], ['undone', 'you']]);
+    expect(log.list('/v').map((r) => [r.decision, r.actor])).toEqual([['approved', 'mcp:claude-code'], ['undone', 'you']]);
   });
   it('names clients the way the window shows them', () => {
-    expect([actorLabel('claude-code'), actorLabel('codex'), actorLabel('cursor-agent'), actorLabel('you'), actorLabel('auto')]).toEqual(['Claude Code', 'Codex', 'Cursor Agent', 'you', 'Quorum']);
-    expect([agentActor('claude-code'), agentActor(''), agentActor('you'), agentActor('Bad Name!')]).toEqual(['claude-code', 'agent', 'agent', 'badname']);
+    expect([actorLabel('mcp:claude-code'), actorLabel('mcp:codex'), actorLabel('mcp:cursor-agent'), actorLabel('mcp:agent'), actorLabel('you'), actorLabel('auto')]).toEqual(['Claude Code', 'Codex', 'Cursor Agent', 'an AI tool', 'you', 'Quorum']);
+    expect(['claude-code', '', 'Bad Name!'].map(agentActor)).toEqual(['mcp:claude-code', 'mcp:agent', 'mcp:badname']);
+    expect(['you', 'auto', 'quorum', 'cli', 'Quorum', '-auto-'].map(agentActor)).toEqual(Array(6).fill('mcp:agent'));
   });
 });
 
