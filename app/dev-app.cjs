@@ -45,8 +45,8 @@ try {
   }
 } catch {}
 
-// the development copy runs in the development environment (edition.js ENV) unless the shell sets QUORUM_ENV itself.
+// the development copy always runs in the development environment (edition.js ENV), whatever the shell sets.
 // The app dies with this wrapper: a signal here is passed on, so a plain kill of the wrapper takes the window with it
-const child = spawn(bin, [...(process.env.QUORUM_CDP ? ['--remote-debugging-port=' + process.env.QUORUM_CDP] : []), __dirname], { stdio: 'inherit', env: { QUORUM_ENV: 'development', ...process.env } });
+const child = spawn(bin, [...(process.env.QUORUM_CDP ? ['--remote-debugging-port=' + process.env.QUORUM_CDP] : []), __dirname], { stdio: 'inherit', env: { ...process.env, QUORUM_ENV: 'development' } });
 child.on('exit', (code) => process.exit(code ?? 0));
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { try { child.kill('SIGTERM'); } catch {} setTimeout(() => process.exit(0), 1500).unref(); });

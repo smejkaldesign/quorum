@@ -27,6 +27,7 @@
     "eval:decider": "node scripts/fetch-models.mjs && node scripts/decider-eval.mjs"
   },
   "devDependencies": {
+    "@electron/fuses": "1.8.0",
     "@eslint/js": "^10.0.1",
     "@tiptap/core": "3.32.0",
     "@tiptap/extension-list": "3.32.0",
@@ -107,13 +108,6 @@
       {
         "from": "../helper/.build/release/QuorumHelper",
         "to": "QuorumHelper"
-      },
-      {
-        "from": "cli",
-        "to": "cli",
-        "filter": [
-          "*.mjs"
-        ]
       }
     ],
     "mac": {
