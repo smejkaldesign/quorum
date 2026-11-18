@@ -3,7 +3,9 @@
 // usage: node scripts/check-package.mjs [release/mac-arm64/Quorum.app]
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
+import fuses from '@electron/fuses';
 
 const appDir = process.argv[2] ?? 'release/mac-arm64/Quorum.app';
 const asar = path.resolve(appDir, 'Contents/Resources/app.asar');
@@ -41,4 +43,11 @@ if (notUnpacked.length) { console.error(`package check: not unpacked from app.as
 const cli = path.resolve(appDir, 'Contents/Resources/cli');
 const cliMissing = [...readFileSync(path.join(cli, 'quorum.mjs'), 'utf8').matchAll(/import\s[^'"]*?from\s*['"](\.{1,2}\/[^'"]+)['"]/g)].map((m) => m[1]).filter((rel) => !existsSync(path.join(cli, rel)));
 if (cliMissing.length) { console.error(`package check: the CLI imports files missing from Resources/cli: ${cliMissing.join(', ')}`); process.exit(1); }
-console.log(`package check: ${seen.size} modules resolve inside app.asar; read guard and ONNX Runtime unpacked`);
+// the fuses after-pack.cjs flips: each must read back as set, and the app must carry the asar hash the integrity fuse checks
+const { FUSES } = createRequire(import.meta.url)('../after-pack.cjs');
+const ENABLE = 49, DISABLE = 48; // the fuse wire stores '1' and '0'
+const wire = await fuses.getCurrentFuseWire(path.resolve(appDir));
+const wrongFuses = Object.entries(FUSES).filter(([k, on]) => wire[k] !== (on ? ENABLE : DISABLE)).map(([k]) => fuses.FuseV1Options[k]);
+if (wrongFuses.length) { console.error(`package check: fuses not set as after-pack.cjs asks: ${wrongFuses.join(', ')}`); process.exit(1); }
+if (!readFileSync(path.resolve(appDir, 'Contents/Info.plist'), 'utf8').includes('ElectronAsarIntegrity')) { console.error('package check: Info.plist has no ElectronAsarIntegrity'); process.exit(1); }
+console.log(`package check: ${seen.size} modules resolve inside app.asar; read guard and ONNX Runtime unpacked; ${Object.keys(FUSES).length} fuses set`);
