@@ -230,6 +230,15 @@ select pg_temp.check(public.workspace_personal_kbs('01KF0000000000000000000PWS')
 select pg_temp.as_admin_role();
 select pg_temp.check((select status = 'paused' and paused_by = 'policy' from public.kb_attachments where id = pg_temp.id('att3')), 'every member''s sync is paused');
 select pg_temp.check((select status <> 'paused' from public.kb_attachments where id = pg_temp.id('att2')), 'the admin''s sync keeps running');
+-- a demoted admin is a member: their sync pauses for the policy at once, and resumes when they are an admin again
+update public.members set role = 'member' where id = '01KF0000000000000000000PM2';
+select pg_temp.check((select status = 'paused' and paused_by = 'policy' from public.kb_attachments where id = pg_temp.id('att2')), 'a demoted admin''s sync pauses');
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a2');
+select pg_temp.expect_error(format($$select public.kb_attachment_pause(%L, false)$$, pg_temp.id('att2')), 'does not allow members');
+select pg_temp.as_admin_role();
+update public.members set role = 'admin' where id = '01KF0000000000000000000PM2';
+select pg_temp.check((select status = 'pending' and paused_by is null from public.kb_attachments where id = pg_temp.id('att2')), 'promoted again, the sync resumes');
+select pg_temp.check((select status = 'paused' and paused_by = 'policy' from public.kb_attachments where id = pg_temp.id('att3')), 'a member''s sync stays paused through another person''s role change');
 select pg_temp.check(exists (select 1 from public.knowledge_bases where id = pg_temp.id('kb4')) and exists (select 1 from public.kb_attachments where id = pg_temp.id('att4')), 'nothing is deleted');
 -- back on with both sources: the policy pauses lift
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a1');

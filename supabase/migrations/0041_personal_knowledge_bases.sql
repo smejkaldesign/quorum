@@ -26,7 +26,8 @@
 --    make them, and workspaces.personal_kb_sources (GitHub and Google Drive by default) names the sources members may
 --    sync or import into them. Workspace owners and admins keep their own personal KBs either way. kb_create,
 --    kb_sync_attach and a note joining a member's personal KB check it. Turning either off pauses the affected synced
---    folders with paused_by 'policy' and keeps every KB and note; turning it back on resumes them.
+--    folders with paused_by 'policy' and keeps every KB and note; turning it back on resumes them. A role change
+--    applies it at once: a demoted admin's synced folders pause, and a promoted member's resume.
 -- 7. Note paths. A path was unique in its workspace (0001), so two people syncing one repository into personal KBs of
 --    the same name collided. A note in a personal KB now carries notes.personal_kb, and its path is unique among its
 --    author's notes only; every other note keeps the workspace-wide rule, and a person's own notes never share a path.
@@ -559,6 +560,17 @@ begin
     where w.id = a.workspace_id and a.workspace_id = ws and a.status = 'paused' and a.paused_by = 'policy' and public.kb_personal_refusal(a.kb_id, a.provider) is null;
 end $$;
 
+-- a role change moves a person in or out of the policy: a demoted admin's personal KB syncs pause when the policy
+-- refuses them, and they resume when the person is an owner or admin again
+create or replace function public.member_role_personal_policy() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  perform public.kb_personal_policy_apply(new.workspace_id);
+  return null;
+end $$;
+create trigger members_personal_policy after update of role on public.members for each row
+  when (new.role is distinct from old.role) execute function public.member_role_personal_policy();
+
 create or replace function public.workspace_personal_kbs_set(workspace_id public.ulid, enabled boolean, sources text[]) returns jsonb
 language plpgsql security definer set search_path = public as $$
 #variable_conflict use_column
@@ -615,7 +627,7 @@ do $$ declare f text; begin
     execute format('grant execute on function public.%s to authenticated, service_role', f);
   end loop;
   foreach f in array array[
-    'kb_is_personal(public.ulid)', 'kb_name_taken(public.ulid, uuid, text, public.ulid)', 'kb_personal_refusal(public.ulid, text)', 'kb_source_provider(text)', 'kb_personal_policy_apply(public.ulid)', 'can_read_kb_as(public.ulid, uuid)', 'can_admin_kb_as(public.ulid, uuid)',
+    'kb_is_personal(public.ulid)', 'kb_name_taken(public.ulid, uuid, text, public.ulid)', 'kb_personal_refusal(public.ulid, text)', 'kb_source_provider(text)', 'kb_personal_policy_apply(public.ulid)', 'member_role_personal_policy()', 'can_read_kb_as(public.ulid, uuid)', 'can_admin_kb_as(public.ulid, uuid)',
     'can_edit_kb_as(public.ulid, uuid)', 'kb_access_personal_check()', 'notes_personal_kb_owner()', 'notes_personal_kb_flag()', 'kb_free_path(public.ulid, public.ulid, text)', 'kb_personal_drop(public.ulid)', 'note_contribution_apply(public.notes)', 'note_contribution_sync()', 'note_personal_kb_moved()',
     'member_left_end_personal_kbs()'] loop
     execute format('revoke all on function public.%s from public, anon, authenticated', f);
