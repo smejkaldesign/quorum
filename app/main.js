@@ -175,6 +175,9 @@ function flushKbLinks() {
 // Quorum Dev for a development copy), so the installed app and a development copy run side by side. Only one of them
 // should watch a call, so a development copy leaves auto-listen off while the installed app is running (see below).
 privateDir(DATA_DIR);
+// the safeStorage key is the Keychain item "<name> Safe Storage", so the development copy keeps its own; every path
+// Quorum uses is set here or comes from appData, which does not depend on the name
+if (isDevelopment) app.setName('Quorum Dev');
 app.setPath('userData', DATA_DIR);
 app.setPath('sessionData', DATA_DIR);
 // a second launch in the same environment hands over: the running copy gets 'second-instance' and opens its window,
