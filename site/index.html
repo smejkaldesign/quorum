@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Quorum</title>
-  <meta name="description" content="Quorum combines your notes, the notes your meeting tools write, your calendar and your team's knowledge into one memory and keeps it current on its own, so you, your team and your AI agents get the right context.">
+  <meta name="description" content="Quorum combines your local notes, your meeting notes from tools like Granola and your team's knowledge bases into one memory, then keeps that memory current on its own.">
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#1a1a1b">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Quorum">
   <meta property="og:title" content="Quorum: self-maintained knowledge for teams and individuals">
-  <meta property="og:description" content="Quorum combines your notes, the notes your meeting tools write, your calendar and your team's knowledge into one memory and keeps it current on its own, so you, your team and your AI agents get the right context fast.">
+  <meta property="og:description" content="Quorum combines your local notes, your meeting notes from tools like Granola and your team's knowledge bases into one memory, then keeps that memory current on its own.">
   <meta property="og:url" content="https://quorum.watch/">
   <meta property="og:image" content="https://quorum.watch/assets/og.png?v=202611170425">
   <meta property="og:image:width" content="1200">
@@ -18,19 +18,10 @@
   <meta property="og:image:alt" content="Self-maintained knowledge for teams and individuals. Download for Mac or view on GitHub.">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Quorum: self-maintained knowledge for teams and individuals">
-  <meta name="twitter:description" content="Quorum combines your notes, the notes your meeting tools write, your calendar and your team's knowledge into one memory and keeps it current on its own.">
+  <meta name="twitter:description" content="Quorum combines your local notes, your meeting notes from tools like Granola and your team's knowledge bases into one memory, then keeps that memory current on its own.">
   <meta name="twitter:image" content="https://quorum.watch/assets/og.png?v=202611170425">
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-  <script>
-    // Launch switches. Off: the feature's links are disabled on the deployed site
-    // (script.js). Local always runs everything; add ?prelaunch to preview the deployed state.
-    (function () {
-      var ready = { download: true, github: true };
-      var local = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) && !/[?&]prelaunch\b/.test(location.search);
-      if (local) return;
-      for (var k in ready) if (!ready[k]) document.documentElement.classList.add("pre-" + k);
-    })();
-  </script>
+  <script src="launch.js?v=202611170425"></script>
   <link rel="stylesheet" href="styles.css?v=202611170425">
 </head>
 <body>
@@ -56,7 +47,7 @@
       <div class="glow" aria-hidden="true"></div>
       <div class="wrap">
         <h1>Self-maintained knowledge for teams and&nbsp;individuals.</h1>
-        <p class="lede">Quorum combines your notes, the notes your meeting tools write, your calendar and your team&rsquo;s knowledge into one memory and keeps it current on its own, so you, your team and your AI agents get the right context&nbsp;fast.</p>
+        <p class="lede">Quorum combines your local notes, your meeting notes from tools like Granola and your team&rsquo;s knowledge bases into one memory. It keeps that memory current on its own, and it moves the notes you choose between your Mac and your team, so you, your team and your AI tools work from the same&nbsp;context.</p>
         <p class="cta-label" id="hero-label">Early beta signups:</p>
         <form id="join" class="capture capture-hero" aria-labelledby="hero-label" aria-describedby="hero-note" data-source="hero" novalidate>
           <label class="visually-hidden" for="hero-email">Email address</label>
@@ -84,7 +75,7 @@
     <section class="section" id="models" aria-labelledby="models-title">
       <div class="wrap section-head">
         <h2 id="models-title">Bring the AI you already&nbsp;use.</h2>
-        <p class="section-lede">Connect the AI labs and open-source models you already work with, and choose which one handles each step. Your keys stay in your Mac&rsquo;s&nbsp;Keychain.</p>
+        <p class="section-lede">Run Quorum on your Claude Code, Codex or Antigravity sign-in, your own API key, any OpenAI-compatible endpoint or a local model, and choose which one handles each step. Your keys stay in your Mac&rsquo;s&nbsp;Keychain.</p>
       </div>
       <div class="providers">
         <ul class="visually-hidden" aria-label="Supported AI providers"><li>Claude Code</li><li>Anthropic</li><li>OpenAI</li><li>Gemini</li><li>Meta Llama</li><li>Mistral</li><li>DeepSeek</li><li>xAI</li><li>Qwen</li><li>Kimi</li><li>Cohere</li><li>Perplexity</li><li>NVIDIA</li><li>Hugging Face</li><li>Ollama</li><li>LM Studio</li><li>Groq</li><li>OpenRouter</li></ul>
@@ -94,7 +85,7 @@
         </div>
       </div>
       <div class="wrap">
-        <p class="note"><span class="pill">Coming with Cloud</span> Hosted models, including higher-accuracy transcription, with no API keys to manage.</p>
+        <p class="note"><span class="pill">Quorum Cloud</span> Hosted models and transcription, with no API keys to manage.</p>
       </div>
     </section>
 
@@ -105,18 +96,18 @@
           <ol class="steps">
             <li>
               <svg class="step-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-              <h3>Connect</h3>
-              <p>Connect the tools you already use: Granola for meeting notes, your calendar, and the folder where you keep your notes. Quorum imports what they write. For notes of your own, start listening in Quorum or&nbsp;dictate.</p>
+              <h3>Combine</h3>
+              <p>Connect the folder where you keep your notes, Granola for meeting notes, your calendar, and knowledge bases filled from a GitHub repository, a Google Drive folder or a zip. Quorum keeps all of it as plain markdown in one memory. To take notes of your own in a meeting, start a recording in&nbsp;Quorum.</p>
             </li>
             <li>
               <svg class="step-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
-              <h3>Write</h3>
-              <p>Quorum files each note as plain markdown in your local memory, next to your other agent memories, and updates related notes with what changed. You choose which notes your team&nbsp;sees.</p>
+              <h3>Maintain</h3>
+              <p>After each save and on a schedule, the memory agent looks for broken links, duplicates, stale facts and decisions that contradict each other. Each finding waits in Needs review. Approve applies the fix, and every fix has an&nbsp;Undo.</p>
             </li>
             <li>
               <svg class="step-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z"/></svg>
-              <h3>Ask</h3>
-              <p>Ask questions across everything Quorum knows, in Quorum or from the AI tools you already use through the Quorum MCP server or CLI. Bring your own keys to stay in control of&nbsp;costs.</p>
+              <h3>Share and ask</h3>
+              <p>Choose which notes go to your team&rsquo;s knowledge bases and which stay on your Mac. Ask across every knowledge base you can read, in Quorum, from Claude Code and Codex through the quorum MCP server, or with the quorum&nbsp;CLI.</p>
             </li>
           </ol>
         </div>
@@ -124,10 +115,23 @@
       </div>
     </section>
 
+    <section class="section" id="guardrails" aria-labelledby="guardrails-title">
+      <div class="wrap section-head">
+        <h2 id="guardrails-title">Guardrails for what your AI tools&nbsp;read.</h2>
+        <p class="section-lede">Rules keep some things away from your AI tools, the quorum MCP server and the CLI. Recent denials lists each time a rule blocked&nbsp;something.</p>
+      </div>
+      <ul class="grid guards">
+        <li><h3>Secret-looking files</h3><p>Files named like keys, tokens, .env files and credentials are never&nbsp;read.</p></li>
+        <li><h3>Private folders</h3><p>Folders named personal or private are never read or&nbsp;searched.</p></li>
+        <li><h3>Confidential notes</h3><p>A note marked confidential in its frontmatter is never read, synced or&nbsp;shared.</p></li>
+        <li><h3>Opted-out people</h3><p>Lines naming anyone on your opt-out list are withheld from transcripts, answers and the MCP&nbsp;server.</p></li>
+      </ul>
+    </section>
+
     <section class="section" id="pricing" aria-labelledby="pricing-title">
       <div class="wrap section-head">
         <h2 id="pricing-title">Get started for free.</h2>
-        <p class="section-lede">The same app in both editions. The difference is where things run.</p>
+        <p class="section-lede">The same app in both editions. Cloud adds sync, knowledge bases for your team and for you, and hosted&nbsp;models.</p>
       </div>
       <div class="grid plans">
         <article class="plan">
@@ -137,11 +141,11 @@
             <p class="plan-sub">Apache-2.0. Full app. Runs on your Mac.</p>
           </header>
           <ul class="features">
-            <li>Imports from Granola, your calendar and your notes folder</li>
-            <li>Notes as plain markdown in your Agent OS folder</li>
-            <li>Claude Code sign-in, your own API key, or a local model</li>
-            <li>Your keys stay in your Mac&rsquo;s Keychain</li>
-            <li>Import existing notes through the CLI and MCP server</li>
+            <li>Combines your notes folder, Granola and your calendar</li>
+            <li>Memory agent with Needs review, memory health and Undo</li>
+            <li>Guardrails for secrets, private folders, confidential notes and opted-out people</li>
+            <li>Claude Code, Codex or Antigravity sign-in, your own API key, or a local model</li>
+            <li>The quorum MCP server and CLI for your AI tools</li>
           </ul>
           <form class="capture" aria-describedby="capture-free-note" data-source="pricing-free" novalidate>
             <label class="visually-hidden" for="capture-free-email">Email address</label>
@@ -162,10 +166,10 @@
             <p class="plan-sub">Everything in Open source, hosted by Smejkal Design.</p>
           </header>
           <ul class="features">
-            <li>Zoom cloud recordings imported for you</li>
+            <li>Sync across your Macs</li>
+            <li>Team and personal knowledge bases, with teams, members and invites</li>
+            <li>A meetings knowledge base for your workspace, with Keep private on any meeting</li>
             <li>Starter Agent OS, built and maintained for you</li>
-            <li>Sync across Macs and the web</li>
-            <li>Team knowledge from a shared folder or git repository, with members and invites</li>
             <li>Hosted models and transcription, no API keys to manage</li>
           </ul>
           <form class="capture" aria-describedby="capture-note" data-source="pricing-cloud" novalidate>
@@ -191,11 +195,12 @@
     <section class="section" id="apps" aria-labelledby="apps-title">
       <div class="wrap apps-head">
         <h2 id="apps-title">Connects to where you&nbsp;work.</h2>
-        <p class="section-lede">Quorum reads the notes your meeting tools already write, your calendar and the folder where you keep your knowledge. It combines them into one memory and shares the parts you choose with your&nbsp;team.</p>
+        <p class="section-lede">Quorum reads the notes your meeting tools already write, your calendar, the folder where you keep your knowledge and your team&rsquo;s tools. Your AI tools can search Slack, Notion, GitHub and Granola through&nbsp;Quorum.</p>
       </div>
       <div class="wrap">
         <!-- The categories and tools of the app's connector library (app/connectors/library.js), tools that work today
-             first. A "soon" item is one the library lists as planned. -->
+             first. Live means a packaged build connects it: its OAuth client id is wired in release.yml, or it needs none.
+             Zoom, Meet and Teams stay soon while meeting capture is off and no Zoom client id ships. -->
         <div class="apps-panel connects">
           <div class="connect-table">
             <div class="connect-col">
@@ -221,9 +226,9 @@
             <div class="connect-col">
               <h3 id="cx-meetings">Meeting apps</h3>
               <ul aria-labelledby="cx-meetings">
-                <li class="live"><img src="assets/connectors/zoom.png" alt="" width="18" height="18" loading="lazy" decoding="async">Zoom</li>
-                <li class="live"><img src="assets/connectors/meet.png" alt="" width="18" height="18" loading="lazy" decoding="async">Google Meet</li>
-                <li class="live"><img src="assets/connectors/teams.png" alt="" width="18" height="18" loading="lazy" decoding="async">Microsoft Teams</li>
+                <li><img src="assets/connectors/zoom.png" alt="" width="18" height="18" loading="lazy" decoding="async">Zoom</li>
+                <li><img src="assets/connectors/meet.png" alt="" width="18" height="18" loading="lazy" decoding="async">Google Meet</li>
+                <li><img src="assets/connectors/teams.png" alt="" width="18" height="18" loading="lazy" decoding="async">Microsoft Teams</li>
               </ul>
             </div>
             <div class="connect-col">
@@ -271,7 +276,7 @@
               <h3 id="cx-ai">AI and automation</h3>
               <ul aria-labelledby="cx-ai">
                 <li class="live"><img src="assets/connectors/claudecode.png" alt="" width="18" height="18" loading="lazy" decoding="async">Claude Code</li>
-                <li><img src="assets/connectors/codex.png" alt="" width="18" height="18" loading="lazy" decoding="async">Codex</li>
+                <li class="live"><img src="assets/connectors/codex.png" alt="" width="18" height="18" loading="lazy" decoding="async">Codex</li>
                 <li><img src="assets/connectors/cursor.png" alt="" width="18" height="18" loading="lazy" decoding="async">Cursor</li>
                 <li><img src="assets/connectors/claude.png" alt="" width="18" height="18" loading="lazy" decoding="async">Claude</li>
                 <li><img src="assets/connectors/chatgpt.png" alt="" width="18" height="18" loading="lazy" decoding="async">ChatGPT</li>
@@ -287,7 +292,7 @@
               </ul>
             </div>
           </div>
-          <p class="connect-key">Names in white connect today. The rest are planned.</p>
+          <p class="connect-key">Names in white connect today. The rest are&nbsp;planned.</p>
         </div>
       </div>
     </section>
@@ -297,7 +302,7 @@
       <div class="wrap existing-grid">
         <div>
         <h2 id="existing-title">Already have an Agent OS?</h2>
-        <p>If you keep an Obsidian vault or a repo with a CLAUDE.md, Quorum connects to the folder you have and files your notes there. Cloud adds team sharing and access from every device.</p>
+        <p>If you keep an Obsidian vault or a repo with a CLAUDE.md, Quorum connects to the folder you have and files your notes there. It edits only the files it made unless you turn that on. Cloud adds team sharing and sync across your&nbsp;Macs.</p>
         </div>
         <div class="tree" data-tree aria-hidden="true"></div>
       </div>
