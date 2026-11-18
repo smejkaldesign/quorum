@@ -351,6 +351,8 @@ const log = (...a) => console.log('[quorum]', ...a);
 const actionHandlers = new Map();
 const handleAction = (name, fn) => { actionHandlers.set(name, fn); ipcMain.handle(name, fn); };
 // a fix an AI tool approved keeps its name, so Memory health and Notifications show who approved it
+// the error a cancelled batch ends with; the window finds it by its ending
+const cancelText = (run) => `${run.cancelBy ?? 'You'} cancelled the batch`;
 const byOf = (actor) => (actor && actor !== 'you' && actor !== 'auto' ? { actor, by: actorLabel(actor) } : {});
 // the notetaker flags (notetaker.js). The gates are worked out once from the resolved flags and kept until the flags
 // change (registerFlags' emit below), so a change from the admin app applies without a restart. Until registerFlags
@@ -3099,7 +3101,7 @@ async function pumpFixes() {
     // a note that still reads as the fix left it, and leaves one the person edited before the next start
     const stamp = () => { const h = hashNotes(run.vault, kept.map((k) => k.rel)); writeUndo(run, kept.map((k) => ({ ...k, after: h[k.rel] }))); };
     const step = async (label) => {
-      if (run.cancel) throw new Error('You cancelled the batch');
+      if (run.cancel) throw new Error(cancelText(run));
       if (work) work.progress((run.items ?? []).filter((i) => i.status === 'success').length, (run.items ?? []).length, label);
       if (kept.length) stamp();
       fixJournal.append(run.id, { step: 'step', label });
@@ -3169,13 +3171,15 @@ handleAction('fix-cancel', (_e, batch) => {
   const id = String(batch ?? '');
   if (!id) return 0;
   let n = 0;
+  const by = currentActor() === 'you' ? null : actorLabel(currentActor());
   for (const r of fixRunList()) {
     if (r.batch !== id) continue;
+    if (by && (r.status === 'queued' || r.status === 'running')) r.cancelBy = by;
     if (r.status === 'queued') {
       const at = fixQueue.indexOf(r);
       if (at >= 0) fixQueue.splice(at, 1);
       r.status = 'error';
-      r.error = 'You cancelled the batch';
+      r.error = cancelText(r);
       r.endedAt = Date.now();
       for (const it of r.items ?? []) it.status = 'error';
       batchPlans.delete(r.id);
@@ -3525,12 +3529,12 @@ async function agentResolve(item, run, step) {
     // a contradiction call that already runs finishes first, so the agent makes one model call at a time. Neither the
     // drafter nor the contradiction agent starts a new call while this batch runs (their busy)
     while (contradictionAbort && !run.cancel) await new Promise((r) => setTimeout(r, 250));
-    if (run.cancel) throw new Error('You cancelled the batch');
+    if (run.cancel) throw new Error(cancelText(run));
     const ctl = new AbortController();
     run.agentAbort = ctl;
     let res;
     try { res = await drafter.onDemand(base, notes, { signal: ctl.signal }); } finally { run.agentAbort = null; }
-    if (res.cancelled || run.cancel) throw new Error('You cancelled the batch');
+    if (res.cancelled || run.cancel) throw new Error(cancelText(run));
     if (!res.draft) return res;
     draft = res.draft;
   }

@@ -24,7 +24,12 @@ function setup({ settings = { memoryAgentActions: true, memoryDrafts: true }, ha
     'activity-feed': () => ({ items: ROWS }),
     'activity-review': (items) => ({ done: items.map((i) => i.abs), failed: [] }),
     'activity-mark': (rows) => rows.length,
-    'fix-runs': () => [{ id: 'fix:alpha:1', key: 'alpha', target: 'alpha', status: 'queued', queuedAt: 1, batch: null, by: 'Claude Code' }],
+    'fix-runs': () => [
+      { id: 'fix:alpha:1', key: 'alpha', target: 'alpha', status: 'queued', queuedAt: 1, batch: null, by: 'Claude Code' },
+      { id: 'batch:9', key: 'batch:9', target: '1 memory fix', status: 'running', queuedAt: 1, batch: 'batch:9', actor: 'mcp:codex', by: 'Codex' },
+      { id: 'batch:7', key: 'batch:7', target: '2 memory fixes', status: 'running', queuedAt: 1, batch: 'b', actor: 'mcp:claude-code', by: 'Claude Code' },
+      { id: 'batch:5', key: 'batch:5', target: '3 memory fixes', status: 'queued', queuedAt: 1, batch: 'mine' },
+    ],
     'fix-plan-apply': (ids) => ({ run: { id: 'batch:9', batch: 'batch:9', kind: 'batch', target: '1 memory fix', status: 'queued', queuedAt: 1, items: [{ id: ids[0] }] }, note: null }),
     'fix-cancel': () => 2,
     'fix-undo': () => 'Undid the fix. “alpha” is back in Needs review',
@@ -59,7 +64,7 @@ describe('the read-only setting and the AI setting', () => {
     const { actions, calls } = setup({ settings: { access: 'read', memoryAgentActions: true } });
     for (const t of APP_TOOLS.filter((x) => x.write)) await expect(actions.run(t.name, { ids: ['r:link:alpha'], id: 'x', batch: 'b', name: 'n', kb: 'k', url: 'u' })).rejects.toThrow(READ_ONLY);
     expect(calls).toEqual([]);
-    expect((await actions.run('fix_runs', {})).runs).toHaveLength(1);
+    expect((await actions.run('fix_runs', {})).runs).toHaveLength(4);
   });
   it('refuses approve, dismiss, undo and knowledge base writes until the person turns the setting on, and allows mark read', async () => {
     const { actions, calls } = setup({ settings: {} });
@@ -101,6 +106,14 @@ describe('approving through the buttons\' handlers', () => {
     await actions.run('review_approve', { ids: ['r:link:alpha'] }, 'claude-code');
     expect(toasts).toEqual(['Claude Code approved “Title r:link:alpha”', 'Claude Code approved 3 items in Needs review', 'Claude Code approved “Title r:link:alpha”']);
     expect(new Set(keys)).toEqual(new Set(['mcp:claude-code:approved']));
+  });
+  it('lets a tool cancel its own batch, and needs the setting for anyone else\'s', async () => {
+    const off = setup({ settings: { memoryAgentActions: false } });
+    expect(await off.actions.run('fix_cancel', { batch: 'b' }, 'claude-code')).toEqual({ cancelled: 2 });
+    await expect(off.actions.run('fix_cancel', { batch: 'mine' }, 'claude-code')).rejects.toThrow('AI tools cannot cancel a batch it did not start yet');
+    await expect(off.actions.run('fix_cancel', { batch: 'batch:9' }, 'claude-code')).rejects.toThrow('cancel a batch it did not start');
+    expect(off.calls.filter((c) => c.name === 'fix-cancel')).toHaveLength(1);
+    await expect(off.actions.run('fix_cancel', { batch: 'gone' }, 'claude-code')).rejects.toThrow('Nothing in that batch');
   });
   it('approves several as one bulk batch with Cancel, and answers a proposed rule on its own', async () => {
     const { actions, calls } = setup();

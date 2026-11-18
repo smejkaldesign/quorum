@@ -471,7 +471,7 @@ function BatchBanner({ runs, error, onCancel, onDismiss }: { runs: FixRun[]; err
   const finished = ok + bad;
   const now = items.find((x) => x.run.status === 'running');
   const live = finished < items.length;
-  const cancelled = !ok && items.some((x) => x.run.error?.startsWith('You cancelled the batch'));
+  const cancelled = !ok && items.some((x) => x.run.error?.endsWith('cancelled the batch'));
   const text = live
     ? `Fixing ${finished + 1} of ${items.length}${now ? `: “${now.title}”${now.run.steps.length ? `, ${now.run.steps[now.run.steps.length - 1].label.toLowerCase()}` : ''}` : ''}`
     : cancelled ? `Cancelled. ${items.length} ${items.length === 1 ? 'item is' : 'items are'} back in Needs review` : `Fixed ${ok} of ${items.length}${bad ? `. ${bad} could not be fixed` : ''}`;

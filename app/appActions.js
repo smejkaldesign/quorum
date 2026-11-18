@@ -151,6 +151,10 @@ export function createAppActions({ call, settings, kbHosted = () => null, kbSync
       return { runs: (await call('fix-runs')).slice(0, clamp(limit, 1, 100, 20)).map(runBrief) };
     },
     async fix_cancel({ batch }) {
+      // a tool may stop its own batch; one the person, Quorum or another tool started needs the setting
+      const live = (await call('fix-runs')).filter((r) => r.batch === String(batch ?? '') && (r.status === 'queued' || r.status === 'running'));
+      if (!live.length) throw new Error('Nothing in that batch is queued or running.');
+      if (live.some((r) => r.actor !== currentActor()) && settings()?.memoryAgentActions !== true) throw new Error(gateOff('cancel a batch it did not start'));
       const n = await call('fix-cancel', String(batch ?? ''));
       if (!n) throw new Error('Nothing in that batch is queued or running.');
       say(`${who()} cancelled a batch of memory fixes`);
