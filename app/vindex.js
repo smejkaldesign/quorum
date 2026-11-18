@@ -14,7 +14,7 @@ const BATCH = 200;
 // the only characters at or above U+0080 whose lowercase holds ASCII: U+0130 (to i plus a combining dot) and the Kelvin
 // sign U+212A (to k). The search test checks this list against every code point
 export const EXOTIC = /[\u0130\u212a]/;
-const NON_ASCII = /[^\x00-\x7f]/;
+const NON_ASCII = /[\u0080-\uffff]/;
 const escapeRe = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // how often w occurs in s without overlaps (as s.split(w).length - 1 counts), stopping at max, and where it first is
 function countOf(s, w, max) {
