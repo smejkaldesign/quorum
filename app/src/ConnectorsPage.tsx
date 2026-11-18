@@ -380,8 +380,9 @@ function syncOf(x: LibraryConnector, live: Live): { run: () => Promise<unknown>;
   if (x.kind === 'mcp-source' && src) return { run: () => window.quorum.sourceSync(src.id), running: src.job?.status === 'running' };
   const plat = platformFor(x, live);
   if (x.kind === 'meeting-app' && x.app && plat?.connected) return { run: () => window.quorum.platformSync(x.app!), running: plat.job?.status === 'running' };
-  // Google Calendar reads upcoming events again
-  if (x.id === 'google-calendar' && googleFor(x, live)?.connected) return { run: () => window.quorum.calendar(), running: false };
+  // Google Calendar reads upcoming events again, past the cache, and Up next follows. The action's busy state disables
+  // the button while it runs; a failed read comes back as the page's alert
+  if (x.id === 'google-calendar' && googleFor(x, live)?.connected) return { run: () => window.quorum.calendarSync(), running: false };
   return null;
 }
 

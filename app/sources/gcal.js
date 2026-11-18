@@ -178,11 +178,12 @@ export function createGoogleCalendar({ tokens, client, open, log = () => {}, fet
       lastError = null;
       return status();
     },
-    // events from now to `days` ahead; one read a minute at most, since Home, the guard and the invitee list all ask
-    async events(days) {
+    // events from now to `days` ahead; one read a minute at most, since Home, the guard and the invitee list all ask.
+    // fresh skips the cache (Sync on the connector's page)
+    async events(days, { fresh = false } = {}) {
       const s = current();
       if (!s?.connected) return { connected: false, events: [] };
-      if (cache.days >= days && Date.now() - cache.at < 60000) return { connected: true, events: cache.events.filter((e) => new Date(e.start) < new Date(Date.now() + days * 86400000)) };
+      if (!fresh && cache.days >= days && Date.now() - cache.at < 60000) return { connected: true, events: cache.events.filter((e) => new Date(e.start) < new Date(Date.now() + days * 86400000)) };
       const t = await tokens.get(SOURCE_ID);
       if (!t) { save(null); return { connected: false, events: [] }; }
       try {

@@ -127,6 +127,8 @@ describe('createGoogleCalendar', () => {
     expect(first.events.map((e) => e.title)).toEqual(['Design review']);
     await g.events(3);
     expect(reads).toBe(2); // one on connect, one for days 3; the third call came from the cache
+    await g.events(3, { fresh: true });
+    expect(reads).toBe(3);
     await g.disconnect();
     expect(g.status().connected).toBe(false);
     expect(await tokens.get('google-calendar')).toBeNull();

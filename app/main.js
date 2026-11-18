@@ -4612,6 +4612,13 @@ ipcMain.handle('calendar', async () => {
   return { connected: true, status, events, days: c.days, showAll: false, hidden };
 });
 ipcMain.handle('calendar-status', async () => ({ ...calSettings(), status: (await calAsk({ cmd: 'calStatus' })).status, google: gcal.status() }));
+// Sync on Google Calendar's page: a read past the one-minute cache, then Up next reads the calendar again
+ipcMain.handle('calendar-sync', async () => {
+  const win = calendarWindow(calSettings().days);
+  const r = await gcal.events(win.until ? win.days + 2 : win.days, { fresh: true });
+  toUI('calendar-changed');
+  return r.error ? { error: r.error } : { ok: true };
+});
 // personal OAuth connectors (sources/accounts.js): Quorum's registered apps for Google Drive, Notion, Slack and GitHub
 // in both editions. Tokens stay in the Keychain; settings.accounts keeps whether each is connected and its label. The
 // providers whose apps need a server-held secret exchange the code through the relay this copy already talks to

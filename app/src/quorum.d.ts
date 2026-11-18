@@ -546,6 +546,8 @@ declare global {
       memoryRefresh(): Promise<Memory>;
       calendar(): Promise<{ connected: boolean; status: string; events: CalendarEvent[]; days: number | 'week'; showAll: boolean; hidden: number }>;
       calendarStatus(): Promise<CalendarSettings>;
+      calendarSync(): Promise<{ ok: true } | { error: string }>;
+      onCalendarChanged(cb: () => void): Unsub;
       sourceIcons(): Promise<Record<string, string | null>>;
       // chat: the STOP/GO notice can be posted in the app's chat (Zoom); running: the app or a browser window for it is open right now
       meetingProviders(): Promise<{ id: string; name: string; installed: boolean; access: boolean | null; enabled: boolean; version: string | null; path: string; inCall: boolean; chat: boolean; running: boolean | null }[]>;

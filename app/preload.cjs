@@ -231,6 +231,8 @@ contextBridge.exposeInMainWorld('quorum', {
   connectorKeyTest: (id, key, baseUrl) => ipcRenderer.invoke('connector-key-test', id, key, baseUrl),
   calendar: () => ipcRenderer.invoke('calendar'),
   calendarStatus: () => ipcRenderer.invoke('calendar-status'),
+  calendarSync: () => ipcRenderer.invoke('calendar-sync'),
+  onCalendarChanged: on('calendar-changed'),
   calendarConnect: () => ipcRenderer.invoke('calendar-connect'),
   calendarSet: (next) => ipcRenderer.invoke('calendar-set', next),
   calendarPrivacy: () => ipcRenderer.invoke('calendar-privacy'),
