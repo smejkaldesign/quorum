@@ -438,7 +438,7 @@ function RunRow({ run, unread, picked, onPick }: { run: FixRun; unread: boolean;
         <span className="nf-who"><img src={markReview} alt="" width={32} height={32} /></span>
         <span className="nf-main">
           <span className="nf-head"><strong className="conn-title nf-title" data-tip={line}>{line}</strong>{unread && <i className="nf-dot" role="img" aria-label="Unread" data-tip="Unread" />}</span>
-          <span className="nf-sub"><span className="nf-when" title={new Date(run.endedAt ?? run.queuedAt).toLocaleString()}>{ago(run.endedAt ?? run.queuedAt)}</span></span>
+          <span className="nf-sub"><span className="nf-when" title={new Date(run.endedAt ?? run.queuedAt).toLocaleString()}>{ago(run.endedAt ?? run.queuedAt)}</span>{run.by && <> <span className="nf-sep" aria-hidden="true">•</span> Approved by {run.by}</>}</span>
         </span>
         <span className="nf-side mh-side">
           <StatusSwap status={runStatus(run)}>{run.status === 'success' && <UndoMenu run={run} />}</StatusSwap>

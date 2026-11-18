@@ -22,7 +22,9 @@ export function Toaster() {
       window.setTimeout(() => setList((xs) => xs.filter((x) => x.id !== t.id)), TOAST_MS);
     };
     window.addEventListener(EVENT, add);
-    return () => window.removeEventListener(EVENT, add);
+    // what an AI tool did through the quorum MCP (appActions.js), shown the way a button's confirmation is
+    const off = window.quorum?.onAgentAction?.((a) => toast(a.text, 'info'));
+    return () => { window.removeEventListener(EVENT, add); off?.(); };
   }, []);
   if (!list.length) return null;
   return (

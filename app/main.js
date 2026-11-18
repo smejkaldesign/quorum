@@ -21,6 +21,7 @@ import { createGoogleCalendar, mergeEvents, repoRoot } from './sources/gcal.js';
 import { createTokenStore } from './sources/tokens.js';
 import { connectAccount, createAccounts, oauthClients } from './sources/accounts.js';
 import { createConnectorTools } from './connectors/tools/index.js';
+import { actorLabel, createAppActions, currentActor, outsideActor } from './appActions.js';
 import { CONNECTOR_SERVER } from './cli/connectorTools.mjs';
 import { httpUrl, relayFetch, relayUrl } from './relayUrl.js';
 import { createViews } from './views.js';
@@ -346,6 +347,11 @@ const asset = (name) => path.join(here, 'assets', name);
 const meeting = { armed: false, capturing: false, id: null, dirs: [], dir: null, transcript: [], title: '', participants: 0, people: new Set(), terms: [], startedAt: null, endedAt: null, notes: null, summary: emptyState(), summaryAt: 0, privateNotes: '', invitees: [], saved: null };
 
 const log = (...a) => console.log('[quorum]', ...a);
+// the handlers AI tools call over the control socket (appActions.js): the same functions the app's buttons call
+const actionHandlers = new Map();
+const handleAction = (name, fn) => { actionHandlers.set(name, fn); ipcMain.handle(name, fn); };
+// a fix an AI tool approved keeps its name, so Memory health and Notifications show who approved it
+const byOf = (actor) => (actor && actor !== 'you' && actor !== 'auto' ? { actor, by: actorLabel(actor) } : {});
 // the notetaker flags (notetaker.js). The gates are worked out once from the resolved flags and kept until the flags
 // change (registerFlags' emit below), so a change from the admin app applies without a restart. Until registerFlags
 // runs, the built-in defaults answer. A session on a noticed call keeps meeting capture until it ends (sessionGates)
@@ -1469,6 +1475,8 @@ ipcMain.handle('set-settings', (_e, next) => {
   if (typeof next.memoryDraftConfidential === 'boolean') { settings.memoryDraftConfidential = next.memoryDraftConfidential; store.settings.save(); }
   // Settings > Memory: how many model calls Check everything now runs at once
   if (Number.isFinite(next.memoryCatchupParallel)) { settings.memoryCatchupParallel = Math.max(1, Math.min(MAX_PARALLEL, Math.round(next.memoryCatchupParallel))); store.settings.save(); }
+  // Settings > Memory: Let AI tools approve and undo memory changes (appActions.js), off by default
+  if (typeof next.memoryAgentActions === 'boolean') { settings.memoryAgentActions = next.memoryAgentActions; store.settings.save(); }
   if (Number.isFinite(next.memoryDraftCap)) { settings.memoryDraftCap = Math.max(1, Math.min(500, Math.round(next.memoryDraftCap))); store.settings.save(); }
   // provider MCPs the person disconnected from Quorum, by connector id
   if (Array.isArray(next.mcpIgnored)) {
@@ -2197,7 +2205,7 @@ function feedSources() {
   const runs = fixRunList().filter((r) => r.vault === v && (r.endedAt ?? r.queuedAt) > Date.now() - 7 * 86400000);
   return { notes, memories, denials, junk: keeper.junk(), links, runs, pastFixes: pastFixRows(), findings: findingsNow(), drafts: draftViews(), ignores: ignoreRows(), held: gateHeld(), state, guardFile: DENIAL_LOG };
 }
-ipcMain.handle('activity-feed', (_e, query) => {
+handleAction('activity-feed', (_e, query) => {
   const q = query ?? {};
   return feedPage(feedRows(feedSources()), {
     tab: ['unread', 'archived'].includes(q.tab) ? q.tab : 'all', archived: Object.keys(feedState().archived), done: Object.keys(feedState().done ?? {}), kept: Object.keys(feedState().kept ?? {}), review: q.review === true, kinds: Array.isArray(q.kinds) ? q.kinds.map(String) : [], q: String(q.q ?? ''),
@@ -2247,7 +2255,7 @@ ipcMain.handle('activity-archive', (_e, rows, on) => {
   archiveFindings(findKeys, on !== false);
   return n;
 });
-ipcMain.handle('activity-mark', (_e, rows, unread) => {
+handleAction('activity-mark', (_e, rows, unread) => {
   const b = brain();
   const st = feedState();
   const at = new Date().toISOString();
@@ -2269,7 +2277,7 @@ ipcMain.handle('activity-mark', (_e, rows, unread) => {
 // the text it had before them. A note Quorum wrote has no earlier text to go back to, so disapproving marks it
 // rejected and it leaves the review. A junk note approved goes to the macOS Trash, where it can be put back;
 // disapproved, it is kept and upkeep never asks about it again
-ipcMain.handle('activity-review', async (_e, items, verdict) => {
+handleAction('activity-review', async (_e, items, verdict) => {
   const b = brain();
   const ok = verdict === 'approve';
   const dismiss = verdict !== 'approve' && verdict !== 'revert';
@@ -2608,7 +2616,7 @@ function archiveFindings(keys, on) {
   const b = brain();
   if (!b || !keys.length) return 0;
   const byKey = new Map(memorySweep.findings(b.vault).map((f) => [f.key, f]));
-  const recs = keys.map((k) => byKey.get(k)).filter(Boolean).map((f) => ({ ...findingRecord(f), decision: on ? 'archived' : 'reopened', actor: 'you' }));
+  const recs = keys.map((k) => byKey.get(k)).filter(Boolean).map((f) => ({ ...findingRecord(f), decision: on ? 'archived' : 'reopened', actor: currentActor() }));
   try { decisionLog.recordMany(b.vault, recs); } catch (e) { log('decision log', e?.message); }
   return recs.length;
 }
@@ -2682,7 +2690,8 @@ if (EDITION === 'cloud') (await loadEE('knowledgeBases.js')).registerKnowledgeBa
 // teams inside a workspace: members, leads and each team's meetings knowledge base (ee/teams.js)
 if (EDITION === 'cloud') (await loadEE('teams.js')).registerTeams({ ipcMain, account, log });
 // knowledge bases hosted by Quorum: notes written in the Knowledge tab and their attachments (ee/kbHosted.js)
-if (EDITION === 'cloud') (await loadEE('kbHosted.js')).registerKbHosted({ ipcMain, account, log, cacheDir: path.join(DATA_DIR, 'kb-files'), openPath: (p) => shell.openPath(p), pickFile: async () => { const r = await dialog.showOpenDialog(win, { title: 'Attach a file', message: 'Choose an image or a PDF up to 25 MB.', properties: ['openFile'], filters: [{ name: 'Images and PDFs', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'pdf'] }] }); return r.canceled ? null : r.filePaths[0] ?? null; } });
+let kbHostedApi = null;
+if (EDITION === 'cloud') kbHostedApi = (await loadEE('kbHosted.js')).registerKbHosted({ ipcMain, account, log, cacheDir: path.join(DATA_DIR, 'kb-files'), openPath: (p) => shell.openPath(p), pickFile: async () => { const r = await dialog.showOpenDialog(win, { title: 'Attach a file', message: 'Choose an image or a PDF up to 25 MB.', properties: ['openFile'], filters: [{ name: 'Images and PDFs', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'pdf'] }] }); return r.canceled ? null : r.filePaths[0] ?? null; } });
 // knowledge base search for chat and for the quorum CLI and MCP server, as the signed-in person (ee/kbSearch.js)
 const kbModule = EDITION === 'cloud' ? await loadEE('kbSearch.js') : null;
 if (kbModule) kbSearch = kbModule.createKbSearch({ account, redact: (t) => suggester.redactLines(t), log });
@@ -2824,12 +2833,12 @@ const findingOf = (i) => ({
   evidence: { links: i.links, sources: i.sources, candidate: i.candidate?.rel ?? null, found: i.found ? { kind: i.found.kind, where: i.found.where } : null },
   proposedFix: { action: i.action, to: i.candidate?.rel ?? null, createIn: i.action === 'create' ? i.createIn : null, reviewOnly: i.reviewOnly, weak: !!i.candidate && !i.candidate.exact && Number(i.candidate.score ?? 0) < 0.5 },
 });
-function logFinding(finding, decision, actor = 'you', note = null) {
+function logFinding(finding, decision, actor = currentActor(), note = null) {
   const v = brain()?.vault;
   if (!v || !finding) return;
   try { decisionLog.record(v, { ...finding, decision, actor, note }); } catch (e) { log('decision log', e?.message); }
 }
-function logDecision(keys, decision, actor = 'you', note = null) {
+function logDecision(keys, decision, actor = currentActor(), note = null) {
   if (!keys.length) return;
   const all = linkIssues();
   for (const k of keys) {
@@ -3055,7 +3064,7 @@ function startFixes(keys, { bulk = keys.length > 1 } = {}) {
       steps: [], outcome: null, error: null, dismissedAt: null, batch,
       problem: i.problem, solution: i.solution, value: i.value, recommendation: i.recommend, meta: issueMeta(i),
       // each note the fix will touch, as it reads now: the fix refuses to write a note that changed after this
-      hashes: hashNotes(brain()?.vault ?? '', [...i.sources, ...(i.candidate ? [i.candidate.rel] : [])]),
+      hashes: hashNotes(brain()?.vault ?? '', [...i.sources, ...(i.candidate ? [i.candidate.rel] : [])]), ...byOf(currentActor()),
     };
     run.finding = findingOf(i);
     logFinding(run.finding, 'approved');
@@ -3066,9 +3075,9 @@ function startFixes(keys, { bulk = keys.length > 1 } = {}) {
     fixEmit(run);
   }
   fixRunsSave();
-  pumpFixes();
+  outsideActor(pumpFixes);
   // the wrong-note links and the agent's links run as one planned batch: journal, versions and Undo
-  if (planned.length) started.push(startPlanFor(planned, 'you', batch));
+  if (planned.length) started.push(startPlanFor(planned, currentActor(), batch));
   return started;
 }
 async function pumpFixes() {
@@ -3156,7 +3165,7 @@ async function pumpFixes() {
 ipcMain.handle('fix-start', (_e, keys) => startFixes(Array.isArray(keys) ? keys : []));
 // Cancel on a bulk Approve: its queued fixes end without running, so their issues stay in Needs review, and the running
 // one stops before its next step, where its rollback puts back every note it changed
-ipcMain.handle('fix-cancel', (_e, batch) => {
+handleAction('fix-cancel', (_e, batch) => {
   const id = String(batch ?? '');
   if (!id) return 0;
   let n = 0;
@@ -3192,7 +3201,7 @@ function saveUndo(run, kept) {
   writeUndo(run, files);
   return files.length > 0;
 }
-ipcMain.handle('fix-undo', async (_e, id) => {
+handleAction('fix-undo', async (_e, id) => {
   const run = fixRunList().find((r) => r.id === String(id));
   if (!run || run.status !== 'success' || run.undoneAt) throw new Error('There is nothing to undo on that fix');
   if (run.vault !== brain()?.vault) throw new Error('That fix was made in another vault');
@@ -3202,7 +3211,7 @@ ipcMain.handle('fix-undo', async (_e, id) => {
   const was = (saved.files ?? []).map((f) => ({ rel: f.rel, text: nowText(f.rel) }));
   const n = await applyUndo(run.vault, saved.files ?? [], (abs) => shell.trashItem(abs));
   // the undo is a version of its own, so the fixed text can be brought back from the history
-  for (const w of was) memoryVersions.record({ vault: run.vault, rel: w.rel, before: w.text, after: nowText(w.rel), who: 'you', reason: `Undid the Memory health fix on “${run.target}”`, agent: false });
+  for (const w of was) memoryVersions.record({ vault: run.vault, rel: w.rel, before: w.text, after: nowText(w.rel), who: currentActor() === 'you' ? 'you' : 'cli', reason: `Undid the Memory health fix on “${run.target}”${currentActor() === 'you' ? '' : ` (${actorLabel(currentActor())})`}`, agent: false });
   vindex?.sync();
   diskNamesCache.at = 0;
   run.undoneAt = Date.now();
@@ -3223,7 +3232,7 @@ ipcMain.handle('fix-undo', async (_e, id) => {
   return `Undid the fix. “${run.target}” is back in Needs review`;
 });
 // the runs of this vault from the last week, newest first
-ipcMain.handle('fix-runs', () => { const v = brain()?.vault; const week = Date.now() - 7 * 86400000; return fixRunList().filter((r) => r.vault === v && (r.endedAt ?? r.queuedAt) > week).map(withBanner); });
+handleAction('fix-runs', () => { const v = brain()?.vault; const week = Date.now() - 7 * 86400000; return fixRunList().filter((r) => r.vault === v && (r.endedAt ?? r.queuedAt) > week).map(withBanner); });
 ipcMain.handle('fix-dismiss', (_e, ids) => {
   const want = new Set((Array.isArray(ids) ? ids : [ids]).map(String));
   let n = 0;
@@ -3311,7 +3320,7 @@ function pastFixRows() {
   }
   return out;
 }
-function logPastFix(id, decision, note = null, plan = null, actor = 'you', gateKind = null) {
+function logPastFix(id, decision, note = null, plan = null, actor = currentActor(), gateKind = null) {
   const v = brain()?.vault;
   plan ??= pastFixState?.plans.get(id)?.plan ?? null;
   const run = fixRunList().find((r) => r.id === id);
@@ -3766,8 +3775,8 @@ async function startCatchup() {
   return { ...(await catchup.start()), turnedOn };
 }
 ipcMain.handle('memory-catchup-estimate', () => catchupEstimate());
-ipcMain.handle('memory-catchup-status', () => catchup.status());
-ipcMain.handle('memory-catchup-start', () => startCatchup());
+handleAction('memory-catchup-status', () => catchup.status());
+handleAction('memory-catchup-start', () => startCatchup());
 ipcMain.handle('memory-catchup-cancel', () => catchup.cancel());
 ipcMain.handle('memory-catchup-dismiss', () => catchup.dismiss());
 // Ignore rules (ruleRecords.js): kept in Quorum's settings per vault, never in the vault. Quorum proposes one after the
@@ -3890,7 +3899,7 @@ function planView(items, exclude = [], include = []) {
   };
 }
 // the decision record of an item, for the log
-function logItem(item, decision, actor = 'you') {
+function logItem(item, decision, actor = currentActor()) {
   const v = brain()?.vault;
   if (!v) return;
   // each record keeps the kind of fix the quality gate scored (qualityGate.js kindOf), for the live precision guard
@@ -3900,7 +3909,7 @@ function logItem(item, decision, actor = 'you') {
   else if (item.finding) { try { decisionLog.record(v, { ...item.finding, proposedFix: { ...item.finding.proposedFix, action: item.ops?.map((o) => o.op).join('+') ?? 'review', gateKind }, decision, actor }); } catch (e) { log('decision log', e?.message); } }
 }
 // queues a plan as one batch run. actor: you, or auto for Apply memory fixes on its own
-function startPlan(plan, items, { actor = 'you', batch = null } = {}) {
+function startPlan(plan, items, { actor = currentActor(), batch = null } = {}) {
   const b = brain();
   if (!b) throw new Error('No vault connected');
   const byId = new Map(items.map((i) => [i.id, i]));
@@ -3916,22 +3925,22 @@ function startPlan(plan, items, { actor = 'you', batch = null } = {}) {
     items: go.map((i) => ({ id: i.id, kind: i.kind, key: i.key, link: i.link ?? null, title: i.title, line: i.agent?.line ?? itemLine(i), status: 'queued', finding: i.finding ?? null, ...(i.keep ? { keep: true } : {}) })),
     groups, problem: `${n} ${n === 1 ? 'item' : 'items'} from Needs review, planned as one batch.`, solution: groups.map((g) => g.label).join('. '),
     value: 'One batch, one undo: Undo puts every note back as it was before the batch.', meta: groups.map((g) => ['Change', g.label]),
-    hashes: Object.assign({}, ...go.map((i) => i.hashes ?? {})),
+    hashes: Object.assign({}, ...go.map((i) => i.hashes ?? {})), ...byOf(actor),
   };
   batchPlans.set(id, { plan, items: go, actor });
   // an item the agent fixes is logged once the agent drafted its fix (runBatch), with the kind of fix it drafted
-  for (const i of go) if (!i.agent) logItem(i, actor === 'auto' ? 'auto' : 'approved', actor === 'auto' ? 'auto' : 'you');
+  for (const i of go) if (!i.agent) logItem(i, actor === 'auto' ? 'auto' : 'approved', actor);
   fixJournal.append(run.id, { step: 'queued', action: 'batch', items: go.map((i) => i.id), hashes: run.hashes });
   fixRunList().unshift(run);
   fixQueue.push(run);
   fixEmit(run);
   fixRunsSave();
-  pumpFixes();
+  outsideActor(pumpFixes);
   return run;
 }
 // plans and starts the items with these row ids; refuses with the reason the first one was left out
 // batch: the bulk Approve this plan belongs to, so its plain fixes and this run show and cancel as one
-function startPlanFor(ids, actor = 'you', batch = null) {
+function startPlanFor(ids, actor = currentActor(), batch = null) {
   const items = gatedItems({ ids });
   if (!items.length) throw new Error('That item is no longer in Needs review');
   const plan = buildPlan(items);
@@ -4062,7 +4071,7 @@ async function runBatch(run, step, keep) {
       const r = await agentResolve(it, run, step);
       if (r.item) {
         ready.push(r.item);
-        logItem(r.item, actor === 'auto' ? 'auto' : 'approved', actor === 'auto' ? 'auto' : 'you');
+        logItem(r.item, actor === 'auto' ? 'auto' : 'approved', actor ?? 'you');
         const ri = run.items.find((x) => x.id === it.id);
         if (ri) ri.line = itemLine(r.item);
         mark(it.id, 'queued');
@@ -4112,7 +4121,7 @@ async function runBatch(run, step, keep) {
     const c = issue.candidate;
     if (issue.reviewOnly || !['alias', 'relink'].includes(issue.action) || !c || gone.has(c.rel) || c.rel === item.wrong || (readVault(b.vault, c.rel) ?? '').includes(STUB_TEXT)) continue;
     await decideLink(issue.key, 'approve', step, keep, null, findingOf(issue).proposedFix);
-    logFinding(findingOf(issue), actor === 'auto' ? 'auto' : 'approved', actor === 'auto' ? 'auto' : 'you', 'The rules picked this fix after a corrective fix sent the link back');
+    logFinding(findingOf(issue), actor === 'auto' ? 'auto' : 'approved', actor ?? 'you', 'The rules picked this fix after a corrective fix sent the link back');
     for (const r of [...issue.sources, c.rel]) touched.add(r);
     reopened.delete(key);
     followed.push(issue.target);
@@ -4152,7 +4161,7 @@ function markDone(run, on) {
   feedStateSave();
   const items = (run.items ?? []).filter((i) => ids.includes(i.id) && i.kind === 'finding' && i.finding);
   if (on && items.length) {
-    const recs = items.map((i) => ({ ...i.finding, decision: 'archived', actor: run.auto ? 'auto' : 'you', note: 'Approved' }));
+    const recs = items.map((i) => ({ ...i.finding, decision: 'archived', actor: run.auto ? 'auto' : run.actor ?? 'you', note: 'Approved' }));
     try { decisionLog.recordMany(run.vault, recs); } catch (e) { log('decision log', e?.message); }
   }
 }
@@ -4166,7 +4175,7 @@ function undoBatch(run, rels) {
     if (it.skipped) continue;
     if (it.kind === 'link') { setLinksLeft([it.key], false); if (it.finding) logFinding(it.finding, 'undone'); }
     else if (it.kind === 'pastfix') logPastFix(it.key, 'undone');
-    else if (it.finding) { try { decisionLog.record(run.vault, { ...it.finding, decision: 'undone', actor: 'you' }); } catch (e) { log('decision log', e?.message); } }
+    else if (it.finding) { try { decisionLog.record(run.vault, { ...it.finding, decision: 'undone', actor: currentActor() }); } catch (e) { log('decision log', e?.message); } }
   }
   try { sweep('save', rels); } catch (e) { log('memory sweep', e?.message); }
 }
@@ -4208,7 +4217,7 @@ function savePlanNote(view) {
 }
 const idList = (xs) => (Array.isArray(xs) ? xs.map(String) : []);
 ipcMain.handle('fix-plan', (_e, ids, exclude, include) => planView(gatedItems({ ids: Array.isArray(ids) ? ids.map(String) : null }), idList(exclude), idList(include)));
-ipcMain.handle('fix-plan-apply', (_e, ids, exclude, opts, include) => {
+handleAction('fix-plan-apply', (_e, ids, exclude, opts, include) => {
   const items = gatedItems({ ids: Array.isArray(ids) ? ids.map(String) : null });
   const note = opts?.saveNote === true ? savePlanNote(planView(items, idList(exclude), idList(include))) : null;
   const plan = buildPlan(items, { exclude: [...planExclude(items, idList(exclude), idList(include))] });
@@ -5344,6 +5353,11 @@ if (!account.handlers?.['env-status']) {
 }
 
 // what the quorum command can ask the running app to do; read only turns off everything that changes something
+const appActions = createAppActions({
+  call: (name, ...a) => { const fn = actionHandlers.get(name); if (!fn) throw new Error(`Quorum has no ${name} here.`); return fn(null, ...a); },
+  settings: () => settings, kbHosted: () => kbHostedApi, kbSync: () => kbSync, accounts: () => accounts.list(), readTools: () => connectorTools.available(),
+  toast: (text) => toUI('agent-action', { text }), isExcluded: (t) => suggester.isExcluded(t), redact: (t) => suggester.redactLines(t), withheld: (rel) => !!rel && excludedPath(rel), log,
+});
 const CONTROL_WRITES = new Set(['start', 'stop', 'go', 'end', 'ask', 'note-new', 'note-append', 'note-edit', 'settings-set']);
 const CLI_SETTINGS = { model: ['opus', 'sonnet', 'haiku'], autoListen: [true, false], suggestions: [true, false] };
 function cliNote(rel) {
@@ -5379,6 +5393,8 @@ async function control({ cmd, args = {} }) {
     case 'granola_search': return sourcesApi.searchGranola(args, { isExcluded: suggester.isExcluded });
     // a read tool for a connected Slack, Notion or GitHub account, with the person's own token
     case 'connector_tool': return connectorTools.run(String(args.name ?? ''), args.args ?? {});
+    // a Memory health or Knowledge tool, through the handlers the buttons use; appActions.js checks read only and the setting
+    case 'app_action': return appActions.run(String(args.name ?? ''), args.args ?? {}, args.via ?? null);
     case 'start':
       // start acts on a noticed call, so it follows meeting-capture; stop, go and end work on any running session
       if (!gate().meetingCapture) throw new Error('Quorum does not watch for calls in this build. Start listening from the app for a note of your own.');

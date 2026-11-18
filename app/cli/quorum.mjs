@@ -8,6 +8,7 @@ import net from 'node:net';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
+import { APP_TOOLS, appTool } from './appTools.mjs';
 import { ACCOUNT_NAMES, connectorTool, howToConnect, isConnectorTool, toolsFor } from './connectorTools.mjs';
 import { learnedFileIn, learnedLines } from './learned.mjs';
 
@@ -273,14 +274,28 @@ const TOOLS = [
 // QUORUM_MCP_TOOLS=connectors, so it gets these tools and nothing else
 const ONLY_CONNECTORS = process.env.QUORUM_MCP_TOOLS === 'connectors';
 const connectedAccounts = () => Object.entries(settings().accounts ?? {}).filter(([, v]) => v?.connected).map(([k]) => k);
-const listedTools = () => [...(ONLY_CONNECTORS ? [] : TOOLS.map(({ run, ...t }) => t)), ...toolsFor(connectedAccounts()).map(({ name, description, inputSchema }) => ({ name, description, inputSchema }))];
+const listedTools = () => [
+  ...(ONLY_CONNECTORS ? [] : [...TOOLS.map(({ run, ...t }) => t), ...APP_TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }))]),
+  ...toolsFor(connectedAccounts()).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+];
 async function connectorCall(name, args) {
   const { account } = connectorTool(name);
   if (!connectedAccounts().includes(account)) throw new Error(howToConnect(account));
   try { return await ask('connector_tool', { name, args, via: client }, 90000); }
   catch (e) { throw new Error(e.message.startsWith('Quorum isn\'t open') ? `${name} reads ${ACCOUNT_NAMES[account]} through the Quorum app, which holds your ${ACCOUNT_NAMES[account]} sign-in, and Quorum is not open. Open Quorum and try again.` : e.message, { cause: e }); }
 }
-const toolRun = (name) => (isConnectorTool(name) ? (a) => connectorCall(name, a) : ONLY_CONNECTORS ? null : TOOLS.find((t) => t.name === name)?.run ?? null);
+// the Memory health and Knowledge tools (appTools.mjs) run in the app through the handlers its buttons use; the app
+// refuses a change while it is set to read only or the person has not let AI tools approve and undo
+async function appCall(name, args) {
+  try { return await ask('app_action', { name, args, via: client }); }
+  catch (e) { throw new Error(e.message.startsWith('Quorum isn\'t open') ? `${name} runs in the Quorum app, and Quorum is not open. Open Quorum and try again.` : e.message, { cause: e }); }
+}
+const toolRun = (name) => {
+  if (isConnectorTool(name)) return (a) => connectorCall(name, a);
+  if (ONLY_CONNECTORS) return null;
+  if (appTool(name)) return (a) => appCall(name, a);
+  return TOOLS.find((t) => t.name === name)?.run ?? null;
+};
 
 // a minimal MCP server over stdio: JSON-RPC, one message per line
 function serveMcp() {
@@ -291,7 +306,7 @@ function serveMcp() {
     const { id, method, params } = req;
     if (id === undefined) return;
     if (method === 'initialize') { client = String(params?.clientInfo?.name ?? 'mcp').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'mcp'; }
-    if (method === 'initialize') return send({ id, result: { protocolVersion: params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'quorum', version: '0.1.0' }, instructions: 'Quorum is the person\'s record of past meetings and conversations. Use it when they ask about an earlier meeting or call, what was decided, who said what, or something discussed weeks or months ago. Start with search_meetings (every word must match, so search by a person, project or topic), then get_meeting for the full note. Notes are filed in their vault, linked to people and projects. If your own Granola MCP is missing or fails, use granola_search. Meetings and lines naming an opted-out customer are withheld. live_transcript is the call recording now. list_chats and get_chat are past chats with Quorum. learned_facts lists the facts Quorum learned from meetings: roles, decisions, commitments. kb_search, kb_read and kb_list read Quorum Cloud knowledge bases. import_meeting saves a meeting from another app into the vault. slack_*, notion_* and github_* tools read the Slack, Notion and GitHub accounts the person connected in Quorum, with their own sign-in; they are listed only for connected accounts.' } });
+    if (method === 'initialize') return send({ id, result: { protocolVersion: params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'quorum', version: '0.1.0' }, instructions: 'Quorum is the person\'s record of past meetings and conversations. Use it when they ask about an earlier meeting or call, what was decided, who said what, or something discussed weeks or months ago. Start with search_meetings (every word must match, so search by a person, project or topic), then get_meeting for the full note. Notes are filed in their vault, linked to people and projects. If your own Granola MCP is missing or fails, use granola_search. Meetings and lines naming an opted-out customer are withheld. live_transcript is the call recording now. list_chats and get_chat are past chats with Quorum. learned_facts lists the facts Quorum learned from meetings: roles, decisions, commitments. kb_search, kb_read and kb_list read Quorum Cloud knowledge bases. import_meeting saves a meeting from another app into the vault. slack_*, notion_* and github_* tools read the Slack, Notion and GitHub accounts the person connected in Quorum, with their own sign-in; they are listed only for connected accounts. review_items, review_item, fix_runs and memory_check_status read Memory health; review_approve, review_dismiss, fix_undo, fix_cancel and the kb_ write tools act in the app the way its buttons do, and approving or undoing needs the person to turn on Let AI tools approve and undo memory changes in Settings > Memory.' } });
     if (method === 'ping') return send({ id, result: {} });
     if (method === 'tools/list') return send({ id, result: { tools: listedTools() } });
     if (method === 'tools/call') {
