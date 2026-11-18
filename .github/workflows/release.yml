@@ -202,7 +202,7 @@ jobs:
       - name: Checksums
         run: |
           cd out && ls -la
-          shasum -a 256 *.dmg *.zip > SHA256SUMS.txt
+          shasum -a 256 -- *.dmg *.zip > SHA256SUMS.txt
           cat SHA256SUMS.txt
       - name: Draft the GitHub release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
