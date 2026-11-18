@@ -206,28 +206,28 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
           ) : page === 'billing' ? (
             <BillingArea />
           ) : page === 'memory' ? (
-            brain
-              ? <MemoryUpdatesCard settings={settings} onSettings={onSettings} advanced={<><MemoryRulesCard /><LocalModelsCard /></>} />
-              : <EmptyState icon={<IconBrain width={22} height={22} />} title="No Agent OS folder connected">
-                  <p>Memory settings apply to the folder Quorum keeps. Connect one under Agent OS.</p>
-                  <button className="pill" onClick={() => go('agent-os')}>Open Agent OS</button>
-                </EmptyState>
-          ) : page === 'agent-os' ? (
             <>
-              <SecondBrain brain={brain} onConnect={onConnect} onDisconnect={onDisconnect} onBrain={onBrain} onViewConnector={goConnector} />
-              {brain && <KeeperCard brain={brain} />}
-              {brain && <MemoryScan />}
+              <SecondBrain part="folder" brain={brain} onConnect={onConnect} onDisconnect={onDisconnect} onBrain={onBrain} onViewConnector={goConnector} />
+              {brain && <MemoryUpdatesCard settings={settings} onSettings={onSettings} advanced={<><MemoryRulesCard /><LocalModelsCard /></>} />}
             </>
+          ) : page === 'agent-os' ? (
+            brain
+              ? <><KeeperCard brain={brain} part="plugins" /><MemoryScan /></>
+              : <EmptyState icon={<IconFolder width={22} height={22} />} title="No folder connected">
+                  <p>Upkeep, plugins and power-ups work on the folder you connect under Memory.</p>
+                  <button className="pill" onClick={() => go('memory')}>Open Memory</button>
+                </EmptyState>
           ) : page === 'members' ? <MembersArea />
             : page === 'org-connectors' ? <WorkspaceConnectorsArea local={<OrgConnectorsLocal onGo={go} />} />
             : page === 'org-voice' ? <WorkspaceVoiceArea local={<OrgVoiceLocal onGo={go} />} />
             : page === 'org-guardrails' ? <WorkspaceGuardrailsArea local={<p className="set-lede">Workspace guardrails come with Quorum Cloud: rules an admin sets once that every member's Quorum applies and cannot turn off. Your own rules live under Settings, Guardrails.</p>} />
             : page === 'guardrails' ? <GuardrailsPage />
             : page === 'calendar' ? <CalendarPage onConnector={goConnector} />
-            : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} onConnector={goConnector} teamMeetings={EDITION === 'cloud' && account?.workspace?.teamEnabled === true} />
+            : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} onConnector={goConnector} teamMeetings={EDITION === 'cloud' && account?.workspace?.teamEnabled === true}
+                folders={<><SecondBrain part="meetings" brain={brain} onConnect={onConnect} onDisconnect={onDisconnect} onBrain={onBrain} onViewConnector={goConnector} />{brain && <KeeperCard brain={brain} part="upkeep" />}</>} />
             : page === 'developers' ? <DevelopersPage />
             : page === 'notifications' ? <NotificationsPage settings={settings} set={set} />
-            : page === 'connectors' ? <ConnectorsPage detail={connectorDetail} onDetail={setConnectorDetail} library={connLib} onLibrary={setConnLib} brain={brain} onFolder={onConnect} onNotes={() => go('agent-os')} focus={connectorsFocus} />
+            : page === 'connectors' ? <ConnectorsPage detail={connectorDetail} onDetail={setConnectorDetail} library={connLib} onLibrary={setConnLib} brain={brain} onFolder={onConnect} onNotes={() => go('memory')} focus={connectorsFocus} />
             : <VoicePage settings={settings} onSettings={onSettings} dictionaryOnly={voice === 'dictionary'} screenRow={nt.screenContext} />}
         </div>
       </main>
@@ -256,7 +256,7 @@ function OrgVoiceLocal({ onGo }: { onGo: (p: Page) => void }) {
 }
 
 // the Agent OS, where Quorum saves notes, and meeting notes from other apps; Add takes a folder by hand when there's no connector for that app
-function SecondBrain({ brain, onConnect, onDisconnect, onBrain, onViewConnector }: { brain: Brain | null; onConnect: () => void; onDisconnect: () => void; onBrain?: (b: Brain) => void; onViewConnector: (id: string) => void }) {
+function SecondBrain({ part, brain, onConnect, onDisconnect, onBrain, onViewConnector }: { part: 'folder' | 'meetings'; brain: Brain | null; onConnect: () => void; onDisconnect: () => void; onBrain?: (b: Brain) => void; onViewConnector: (id: string) => void }) {
   // the setup interview again, on a folder Quorum built: prefilled with the saved answers
   const [setup, setSetup] = useState<SetupDraft | null>(null);
   const [applying, setApplying] = useState(false);
@@ -294,10 +294,10 @@ function SecondBrain({ brain, onConnect, onDisconnect, onBrain, onViewConnector 
   // notetakers Quorum can connect today that are not connected yet; each opens its connector page, where Connect lives
   const addable = CONNECTORS.filter((x) => x.category === 'meeting-notes' && x.status === 'available' && !connected[x.id]?.connected);
   const home = (p: string) => p.replace(/^\/Users\/[^/]+/, '~');
-  return (
+  if (part === 'meetings') return (
     <>
       <div className="set-head">
-        <h3>Context</h3>
+        <h3>Meeting notes folders</h3>
         <span className="set-head-actions menu-wrap" onClick={(e) => e.stopPropagation()}>
           <button className="pill small-pill with-icon" aria-haspopup="menu" aria-expanded={adding} onClick={() => setAdding((o) => !o)}><IconPlus width={15} height={15} />Add</button>
           {adding && (
@@ -309,6 +309,29 @@ function SecondBrain({ brain, onConnect, onDisconnect, onBrain, onViewConnector 
           )}
         </span>
       </div>
+      <div className="set-card">
+        <MeetingsRow />
+        {sources.map((src) => (
+          <Row key={src.id} icon={icons[src.key] ? <img className="set-app-icon" src={icons[src.key]!} alt="" /> : <IconFolder width={18} height={18} />}
+            title={<button className="mem-title" onClick={() => window.quorum.meetingSourceOpen(src.id)}>{src.name} meeting notes<IconExternal width={14} height={14} /></button>}
+            desc={`${src.rel} · ${src.notes} ${src.notes === 1 ? 'note' : 'notes'}`}>
+            {connected[src.key]?.connected && <span className="conn-ok"><i />{connected[src.key].syncNotes ? 'Connected' : 'Connected · sync off'}</span>}
+            <SourceRowMenu name={src.name} connector={connected[src.key] ? { id: src.key, ...connected[src.key] } : null}
+              onView={() => onViewConnector(src.key)}
+              onToggleSync={async (on) => { await window.quorum.sourceSetOption(src.key, { syncNotes: on }); load(); }}
+              onRemove={async () => { if (await window.quorum.meetingSourceRemove(src.id)) load(); }} />
+          </Row>
+        ))}
+        {!anyConnected && (
+          <ConnectHint connector="granola" title="Meeting notes from another app" desc="Granola today, more notetakers soon. Their notes land in the meetings folder with the source on each note.">
+            <button className="pill small-pill" onClick={() => openConnectors({ library: 'meeting-notes' })}>Browse connectors</button>
+          </ConnectHint>
+        )}
+      </div>
+    </>
+  );
+  return (
+    <>
       <div className="set-card">
         <Row icon={<IconBrain width={18} height={18} className={brain ? 'ok' : undefined} />}
           title={brain ? <button className="mem-title" onClick={() => window.quorum.openBrain('finder')}>{brain.made === 'quorum' ? 'QuorumBrain' : brain.name}<IconExternal width={14} height={14} /></button> : 'QuorumBrain'}
@@ -327,23 +350,6 @@ function SecondBrain({ brain, onConnect, onDisconnect, onBrain, onViewConnector 
               </span>
             )}
         </Row>
-        <MeetingsRow />
-        {sources.map((src) => (
-          <Row key={src.id} icon={icons[src.key] ? <img className="set-app-icon" src={icons[src.key]!} alt="" /> : <IconFolder width={18} height={18} />}
-            title={<button className="mem-title" onClick={() => window.quorum.meetingSourceOpen(src.id)}>{src.name} meeting notes<IconExternal width={14} height={14} /></button>}
-            desc={`${src.rel} · ${src.notes} ${src.notes === 1 ? 'note' : 'notes'}`}>
-            {connected[src.key]?.connected && <span className="conn-ok"><i />{connected[src.key].syncNotes ? 'Connected' : 'Connected · sync off'}</span>}
-            <SourceRowMenu name={src.name} connector={connected[src.key] ? { id: src.key, ...connected[src.key] } : null}
-              onView={() => onViewConnector(src.key)}
-              onToggleSync={async (on) => { await window.quorum.sourceSetOption(src.key, { syncNotes: on }); load(); }}
-              onRemove={async () => { if (await window.quorum.meetingSourceRemove(src.id)) load(); }} />
-          </Row>
-        ))}
-        {!anyConnected && (
-          <ConnectHint connector="granola" title="Meeting notes from another app" desc="Granola today, more notetakers soon. Their notes land in this folder with the source on each note.">
-            <button className="pill small-pill" onClick={() => openConnectors({ library: 'meeting-notes' })}>Browse connectors</button>
-          </ConnectHint>
-        )}
       </div>
       {setup && (
         <div className="palette-scrim" onClick={() => setSetup(null)}>
@@ -937,7 +943,7 @@ function NotePathField({ value, onSave }: { value: string; onSave: (v: string) =
     </label>
   );
 }
-function KeeperCard({ brain }: { brain: Brain }) {
+function KeeperCard({ brain, part }: { brain: Brain; part: 'upkeep' | 'plugins' }) {
   const [k, setK] = useState<KeeperStatus | null>(null);
   const [busy, setBusy] = useState(false);
   // picking Default when it would move lines out of the list asks first
@@ -982,11 +988,11 @@ function KeeperCard({ brain }: { brain: Brain }) {
   };
   const writers = k.plugins.filter((p) => !p.report);
   const reports = k.plugins.filter((p) => p.report);
-  return (
+  if (part === 'upkeep') return (
     <>
-      <h3>Upkeep</h3>
+      <h3>Memory</h3>
       <div className="set-card">
-        <Row icon={<IconReset width={18} height={18} className={k.on ? 'ok' : undefined} />} title="Keep this folder current" desc={desc}>
+        <Row icon={<IconReset width={18} height={18} className={k.on ? 'ok' : undefined} />} title="Auto maintain memories from new meetings" desc={desc}>
           {k.on && <button className="pill small-pill" disabled={busy || k.running} onClick={() => run()}>{busy || k.running ? 'Running…' : 'Run now'}</button>}
           <Toggle on={k.on} onChange={async (on) => setK(await window.quorum.keeperSet({ on }))} />
         </Row>
@@ -1004,6 +1010,10 @@ function KeeperCard({ brain }: { brain: Brain }) {
           </Row>
         )}
       </div>
+    </>
+  );
+  return (
+    <>
       {k.plugins.length > 0 && (
         <>
           <h3>Plugins</h3>
@@ -1014,7 +1024,7 @@ function KeeperCard({ brain }: { brain: Brain }) {
                 <Toggle on={k.editVault} onChange={async (on) => setK(await window.quorum.keeperSet({ editVault: on }))} />
               </Row>
             )}
-            {k.on ? writers.map(plugin) : <Row icon={<IconReset width={18} height={18} />} title="Upkeep is off" desc="Quorum writes nothing for these jobs while Keep this folder current is off. Turn it on to choose which ones it does. The reports below work either way." />}
+            {k.on ? writers.map(plugin) : <Row icon={<IconReset width={18} height={18} />} title="Upkeep is off" desc="Quorum writes nothing for these jobs while Auto maintain memories from new meetings is off. Turn it on under Meetings to choose which ones it does. The reports below work either way." />}
             {k.on && k.folders.meetings && k.plugins.find((p) => p.id === 'index')?.owner === 'vault' && (
               <Row icon={<IconFork width={18} height={18} />} title={`Write meeting index lines to ${k.folders.meetings}/index.md`}
                 desc="Your Agent OS keeps index.md, so Quorum leaves it alone. This keeps one line per meeting in the meetings folder instead, which your index can link to.">
@@ -1348,13 +1358,14 @@ const ECHO_DESC: Record<NonNullable<Transcription['echo']>, string> = {
   off: 'Call audio can show as you on speakers',
 };
 
-function MeetingsPage({ settings, onSettings, onConnector, teamMeetings }: { settings: Settings; onSettings: (s: Settings) => void; onConnector: (id: string) => void; teamMeetings: boolean }) {
+function MeetingsPage({ settings, onSettings, onConnector, teamMeetings, folders }: { settings: Settings; onSettings: (s: Settings) => void; onConnector: (id: string) => void; teamMeetings: boolean; folders: ReactNode }) {
   const t = settings.transcription ?? {};
   const saveTx = async (patch: Transcription) => onSettings(await window.quorum.setSettings({ transcription: patch }));
   // call detection and auto-listen follow meeting-capture; the transcription rows follow manual-listen (flags.ts)
   const nt = useNotetaker();
   return (
     <>
+      {folders}
       {nt.meetingCapture && <>
       <h3>Listening</h3>
       <div className="set-card">

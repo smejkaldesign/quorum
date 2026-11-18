@@ -735,7 +735,7 @@ export function App() {
             <span className="rec-sep" aria-hidden="true" />
           </div>
           <NotificationBell active={view === 'notifications'} onOpen={() => { nav.clear(); setView('notifications'); }} />
-          <AppMenu brain={brain} me={me} active={view === 'settings'} onMemory={() => openSettings('agent-os')} onSettings={() => openSettings('preferences')} next={closeRef} />
+          <AppMenu brain={brain} me={me} active={view === 'settings'} onMemory={() => openSettings('memory')} onSettings={() => openSettings('preferences')} next={closeRef} />
           <button ref={closeRef} className="icon-btn close-win" aria-label="Close window" onClick={() => window.quorum.hideWindow()}>
             <IconClose width={17} height={17} />
           </button>
