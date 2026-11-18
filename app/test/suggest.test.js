@@ -19,7 +19,7 @@ function make(hits) {
     getSettings: () => ({ vaultPath: vault, workspace: { optOuts: [{ name: 'Globex' }] } }),
     owner: 'Ana',
     noteLink: () => ({ app: 'quorum', url: null }),
-    search: (q) => { queries.push(q); return hits; },
+    search: (q) => { queries.push(q); return typeof hits === 'function' ? hits(q) : hits; },
   });
   return { s, cards, prompts, queries };
 }
@@ -41,5 +41,13 @@ describe('meeting suggestions', () => {
     const { s, cards } = make([{ rel: 'globex.md', abs, title: 'Globex pricing', line: -1, snippet: '' }]);
     await s.detect();
     expect(cards).toEqual([]);
+  });
+
+  it('tries the longest word alone when the whole query finds no note', async () => {
+    const abs = note('pricing-2.md', '# Pricing\n\nSeats cost $25.\n');
+    const { s, cards, queries } = make((q) => (q === 'pricing' ? [{ rel: 'pricing-2.md', abs, title: 'Pricing', line: 2, snippet: 'Seats cost $25.' }] : []));
+    await s.detect();
+    expect(queries).toEqual(['pricing plan', 'pricing']);
+    expect(cards.length).toBeGreaterThan(0);
   });
 });

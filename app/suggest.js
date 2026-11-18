@@ -57,9 +57,18 @@ export function createSuggester({ runClaude, toUI, log, getTranscript, getSettin
   }
 
   // the top notes for a query, with opted-out customers left out
+  // the index needs every word in a note, so a query that finds nothing is tried again with its two longest words, then
+  // its longest word
   function searchNotes(query) {
     let hits;
-    try { hits = search(query) ?? []; } catch { return []; }
+    try {
+      hits = search(query) ?? [];
+      const words = String(query).split(/\s+/).filter((w) => w.length > 2).sort((a, b) => b.length - a.length);
+      for (const fewer of [words.slice(0, 2), words.slice(0, 1)]) {
+        if (hits.length || !fewer.length || fewer.length >= words.length) continue;
+        hits = search(fewer.join(' ')) ?? [];
+      }
+    } catch { return []; }
     const seen = new Set();
     return hits
       .filter((h) => h?.rel && h.abs && !isExcluded(`${h.rel} ${h.title ?? ''} ${h.snippet ?? ''}`))
