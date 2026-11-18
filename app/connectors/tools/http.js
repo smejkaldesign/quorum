@@ -8,12 +8,13 @@ export class ProviderError extends Error {
 }
 
 // how long the provider asks us to wait, in ms, or null when the answer is not a rate limit. Slack and Notion answer
-// 429 with Retry-After; GitHub answers 403 or 429 with x-ratelimit-remaining 0 and the reset time
+// 429 with Retry-After; GitHub answers 403 or 429 with x-ratelimit-remaining 0 and the reset time, or 403 with
+// Retry-After for its secondary limits
 export function rateLimitWait(r, now = Date.now()) {
   const h = (k) => r.headers?.get?.(k) ?? null;
   const exhausted = h('x-ratelimit-remaining') === '0';
-  if (r.status !== 429 && !(r.status === 403 && exhausted)) return null;
   const after = h('retry-after');
+  if (r.status !== 429 && !(r.status === 403 && (exhausted || after !== null))) return null;
   if (after !== null && Number.isFinite(Number(after))) return Math.max(0, Number(after)) * 1000;
   const reset = Number(h('x-ratelimit-reset'));
   if (exhausted && Number.isFinite(reset) && reset > 0) return Math.max(0, reset * 1000 - now);

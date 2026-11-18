@@ -217,6 +217,7 @@ describe('rate limits', () => {
     const now = 1_700_000_000_000;
     expect(rateLimitWait(json({}, 403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(now / 1000 + 5) }), now)).toBe(5000);
     expect(rateLimitWait(json({}, 403), now)).toBe(null);
+    expect(rateLimitWait(json({}, 403, { 'retry-after': '30' }), now)).toBe(30000);
   });
   it('says a provider could not be reached without echoing the request', async () => {
     const fetchImpl = async () => { throw new Error(`connect failed with ${TOKEN}`); };
