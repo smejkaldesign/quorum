@@ -9,6 +9,9 @@
 //   kb-list          ()                                          -> { kbs: Kb[] }               readable KBs, default first
 //   kb-create        ({ name, kind?, personal? })                -> { kb: Kb }                  owners and admins; with
 //                                                                                               personal, any member (0041)
+//   kb-personal-policy     ()                                    -> { policy: PersonalPolicy }  the workspace's rule for
+//                                                                                               members' personal KBs
+//   kb-personal-policy-set ({ enabled, sources })                -> { policy: PersonalPolicy }  owners and admins only
 //   kb-rename        (kbId, name)                                -> { kb: Kb }
 //   kb-delete        (kbId)                                      -> { ok: true }                owners and admins; a
 //                                                                                               personal KB's owner only;
@@ -38,6 +41,9 @@
 //   AccessDraft { principal, userId?, teamId?, role? }   role defaults to reader; editor is for hosted KBs only;
 //               team principals are refused until teams exist. Workspace owners and admins read and manage every KB without a row here.
 //   Placement   { noteId, kbId, folderId, updatedAt }
+//   PersonalPolicy { enabled, sources: ('github' | 'google-drive')[], exempt }   enabled: members may use personal KBs;
+//               sources: what members may sync or import into one; exempt: the caller is a workspace owner or admin,
+//               whose own personal KBs the policy does not limit (0041)
 //   KbNote      { id, path, title, folderId, userId, updatedAt }
 //
 // Rights: workspace owners and admins create and delete workspace KBs and manage all of them; any member creates,
@@ -57,6 +63,13 @@ const SOURCE_KINDS = ['folder', 'git', 'github', 'zip', 'hosted'];
 const PAGE = 1000;
 export const ROLES = ['admin', 'editor', 'reader'];
 const PRINCIPALS = ['workspace', 'team', 'user'];
+export const PERSONAL_SOURCES = ['github', 'google-drive'];
+// an unreadable answer reads as the most closed policy, since the server enforces it either way
+export const shapePolicy = (p) => ({
+  enabled: p?.enabled === true,
+  sources: Array.isArray(p?.sources) ? PERSONAL_SOURCES.filter((s) => p.sources.includes(s)) : [],
+  exempt: p?.exempt === true,
+});
 
 // a name the server will take: trimmed, 1 to 120 characters; folder names also have no slashes
 export function checkName(name, { folder = false } = {}) {
@@ -180,6 +193,12 @@ export function createKnowledgeBases({ account, log = () => {} }) {
         return { kb: shapeKb(await rpc('kb_create', { workspace_id: ws(), name: n.name, kind, ...(personal ? { personal: true } : {}) })) };
       })();
     },
+    'kb-personal-policy': call(false, 'The workspace\'s rule for personal knowledge bases could not be read.', async () => ({ policy: shapePolicy(await rpc('workspace_personal_kbs', { workspace_id: ws() })) })),
+    'kb-personal-policy-set': call(true, 'The rule for personal knowledge bases could not be saved.', async (draft = {}) => {
+      const sources = Array.isArray(draft.sources) ? draft.sources : [];
+      if (sources.some((s) => !PERSONAL_SOURCES.includes(s))) return { error: 'A source is GitHub or Google Drive.' };
+      return { policy: shapePolicy(await rpc('workspace_personal_kbs_set', { workspace_id: ws(), enabled: draft.enabled !== false, sources: [...new Set(sources)] })) };
+    }),
     'kb-rename': call(false, 'The knowledge base could not be renamed.', async (kbId, name) => {
       const n = checkName(name); if (n.error) return n;
       return { kb: shapeKb(await rpc('kb_rename', { kb_id: need(kbId, 'knowledge base'), name: n.name })) };

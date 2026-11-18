@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Kb, KbKind, Member, Result, Team } from '../../src/quorum';
-import { Row, useMenu } from '../../src/controls';
-import { IconMore, IconPlus, IconStack } from '../../src/icons';
+import type { Kb, KbKind, KbPersonalPolicy, KbPersonalSource, Member, Result, Team } from '../../src/quorum';
+import { Row, Toggle, useMenu } from '../../src/controls';
+import { IconLock, IconMore, IconPlus, IconStack } from '../../src/icons';
 import { AccountCard, EE_MARKER, useAccount } from './Account';
 import { accountApi } from './accountMock';
 import { accessDraft, canDeleteKb, canImportInto, createScopes, isGrant, KIND_LABEL, readersOf, readersSummary, SCOPE_LABEL, sourceLine, type KbScope, type ReadersMode } from './kbTree';
@@ -13,7 +13,8 @@ import { announceKbChange, EMPTY_SOURCE, hasImport, ImportStatus, kbCall, KbConf
 // created. The default KB (the workspace's team source) is not offered for deletion. Folders and notes are managed in
 // the Knowledge tab. A member who admins a KB (a team's lead for the team's KBs, or a KB admin grant) sees those KBs
 // here to rename them and set their readers, without create, import or delete. A personal KB (Only me) is its maker's
-// alone: it shows here for them only, with no readers to set.
+// alone: it shows here for them only, with no readers to set. Owners and admins also set the workspace's rule for
+// members' personal KBs (0041): whether members may use them, and which sources members may sync into them.
 export function KnowledgeBasesPage() {
   const a = useAccount();
   if (!a) return null;
@@ -68,6 +69,7 @@ function Bases({ wsAdmin }: { wsAdmin: boolean }) {
       {!wsAdmin ? null : creating ? <Create wsAdmin={wsAdmin} onDone={(kb) => { setCreating(false); if (kb) load(); }} /> : (
         <p><button className="pill with-icon" onClick={() => { setCreating(true); setPanel(null); }}><IconPlus width={15} height={15} />New knowledge base</button></p>
       )}
+      {wsAdmin && <PersonalPolicy />}
       {deleting && <KbConfirm title={`Delete ${deleting.name}?`} body={deleting.personal ? 'Its folders and synced folders are deleted, and the notes synced or imported into it are removed from your Mac. Notes you moved into it stay yours. This cannot be undone.' : deleting.hosted ? `${deleting.writable ? '' : 'The workspace\'s plan ended, and the knowledge base stays readable while it is kept. '}Its folders, notes and attached files are deleted for everyone, and each Mac removes its copies. This cannot be undone.` : 'Its folders are deleted. Its notes stay with the people who wrote them and leave the knowledge base. This cannot be undone.'} action="Delete" onDone={(ok) => (ok ? remove(deleting) : setDeleting(null))} />}
     </div>
   );
@@ -307,5 +309,55 @@ function Create({ wsAdmin, onDone }: { wsAdmin: boolean; onDone: (kb: Kb | null)
       {error && <p className="set-error" role="alert">{error}</p>}
       <ImportStatus running={imp.running} progress={imp.progress} result={imp.result} error="" />
     </div>
+  );
+}
+
+const SOURCE_LABEL: Record<KbPersonalSource, string> = { github: 'GitHub', 'google-drive': 'Google Drive' };
+
+// the workspace's rule for members' personal KBs, saved as soon as it changes. Turning it off, or taking a source away,
+// pauses the members' synced folders it affects and deletes nothing; turning it back on resumes them
+function PersonalPolicy() {
+  const [policy, setPolicy] = useState<KbPersonalPolicy | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let live = true;
+    kbCall(() => window.quorum.kbPersonalPolicy(), 'The rule for personal knowledge bases could not be read.').then((r) => { if (!live) return; if (r.error) setError(r.error); else setPolicy(r.policy ?? null); });
+    return () => { live = false; };
+  }, []);
+  const save = async (next: KbPersonalPolicy) => {
+    const before = policy;
+    setPolicy(next); setBusy(true); setError('');
+    const r = await kbCall(() => window.quorum.kbPersonalPolicySet({ enabled: next.enabled, sources: next.sources }), 'The rule for personal knowledge bases could not be saved.');
+    setBusy(false);
+    if (r.error || !r.policy) { setError(r.error ?? 'The rule for personal knowledge bases could not be saved.'); setPolicy(before); } else setPolicy(r.policy);
+  };
+  return (
+    <>
+      <h3>Personal knowledge bases</h3>
+      <div className="set-card">
+        {policy === null && !error && <p className="set-hint">Loading…</p>}
+        {policy && (
+          <>
+            <Row icon={<IconLock width={18} height={18} />} title="Members can create personal knowledge bases"
+              desc={policy.enabled ? 'On: a member can make knowledge bases only they read. Owners and admins cannot see them.' : 'Off: members cannot make new ones, and their synced folders are paused. Their knowledge bases stay readable to them.'}>
+              <Toggle on={policy.enabled} disabled={busy} onChange={(on) => save({ ...policy, enabled: on })} label="Members can create personal knowledge bases" />
+            </Row>
+            <Row icon={<IconStack width={18} height={18} />} title="Sources members can sync" desc="A source you turn off pauses the members' synced folders from it.">
+              <span className="kb-form-row">
+                {(Object.keys(SOURCE_LABEL) as KbPersonalSource[]).map((src) => (
+                  <label key={src} className="kb-person">
+                    <input type="checkbox" checked={policy.sources.includes(src)} disabled={busy || !policy.enabled}
+                      onChange={(e) => save({ ...policy, sources: e.target.checked ? [...policy.sources, src] : policy.sources.filter((x) => x !== src) })} />
+                    <span>{SOURCE_LABEL[src]}</span>
+                  </label>
+                ))}
+              </span>
+            </Row>
+          </>
+        )}
+      </div>
+      {error && <p className="set-error" role="alert">{error}</p>}
+    </>
   );
 }

@@ -11,6 +11,7 @@ describe('synced folder sentences', () => {
     expect(syncStatus(row())).toEqual({ label: 'In sync', tone: 'ok' });
     expect(syncStatus(row({ status: 'paused' })).label).toBe('Paused');
     expect(syncStatus(row({ status: 'paused', paused_by: 'plan' })).label).toBe('Paused, plan ended');
+    expect(syncStatus(row({ status: 'paused', paused_by: 'policy' })).label).toBe('Paused by your workspace');
     expect(syncStatus(row({ status: 'error' }))).toEqual({ label: 'Needs attention', tone: 'warn' });
     expect(syncStatus(row({ status: 'needs_auth' })).tone).toBe('warn');
     expect(syncStatus(row({ status: 'active', connected: false })).tone).toBe('warn');
@@ -42,6 +43,7 @@ describe('synced folder sentences', () => {
     expect(syncActions(row())).toEqual({ syncNow: true, pause: true, resume: false });
     expect(syncActions(row({ status: 'paused' }))).toEqual({ syncNow: false, pause: false, resume: true });
     expect(syncActions(row({ status: 'paused', paused_by: 'plan' })).resume).toBe(false);
+    expect(syncActions(row({ status: 'paused', paused_by: 'policy' }))).toEqual({ syncNow: false, pause: false, resume: false });
     expect(syncActions(row({ status: 'needs_auth' })).syncNow).toBe(false);
     expect(syncActions(row({ connected: false })).syncNow).toBe(false);
   });

@@ -1,9 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import type { Kb, KbNote } from '../../src/quorum';
+import type { Kb, KbNote, KbPersonalPolicy } from '../../src/quorum';
 import { Markdown } from '../../src/Markdown';
 import { matchesQuery } from '../../src/mainTabs';
 import { IconBack, IconBrain, IconChevron, IconDoc, IconFolder, IconMore, IconPlus, IconStack } from '../../src/icons';
-import { canArrange, canDeleteKb, createScopes, descendantIds, findFolder, folderPath, moveCheck, moveTargets, notesIn, openPathTo, resolveKbLink, rowKey, treeKey, visibleRows, withFolder, withoutFolder, SCOPE_LABEL, type KbScope, type TreeRow } from './kbTree';
+import { canArrange, canDeleteKb, canMakePersonal, createScopes, kbSources, descendantIds, findFolder, folderPath, moveCheck, moveTargets, notesIn, openPathTo, resolveKbLink, rowKey, treeKey, visibleRows, withFolder, withoutFolder, SCOPE_LABEL, type KbScope, type TreeRow } from './kbTree';
 import { announceKbChange, KB_CHANGED, kbCall, KbConfirm, ScopePicker, useLatest } from './kbUi';
 import { DrivePanel, hasDrive } from './KbDrive';
 import { hasKbSync, SyncPanel, type SyncSource } from './KbSync';
@@ -19,7 +19,8 @@ import { Modal, ModalActions } from '../../src/controls';
 // knowledge view as it was; it stays mounted while a KB is open so its place is kept. An admin opening a synced note
 // sees what Quorum changed in its copy, and a suggestion kept from before the source changed (KbSuggestion). Anyone
 // makes a personal KB (Only me) here with the + next to the heading, and can start it from a GitHub repository; its
-// row carries an Only me badge and a Delete in its menu for its owner.
+// row carries an Only me badge and a Delete in its menu for its owner. The workspace's rule for members' personal KBs
+// (0041) decides whether a member sees the + and which sources a member's personal KB offers.
 
 type Sel = { kbId: string; folderId: string | null };
 type Edit = { mode: 'rename'; kbId: string; folderId: string | null; name: string } | { mode: 'new'; kbId: string; parentId: string | null; name: string };
@@ -55,6 +56,7 @@ export function KbBrowser({ me, query, wsAdmin = false, children }: { me: string
   const [dropKey, setDropKey] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [dropping, setDropping] = useState<Kb | null>(null);
+  const [policy, setPolicy] = useState<KbPersonalPolicy | null>(null);
   const refs = useRef(new Map<string, HTMLButtonElement>());
   const addRef = useRef<HTMLButtonElement>(null);
   const teamRef = useRef<HTMLButtonElement>(null);
@@ -97,16 +99,21 @@ export function KbBrowser({ me, query, wsAdmin = false, children }: { me: string
 
   // read the list again, and the open KB's notes, when the window comes back, when it becomes visible, and when
   // Settings changes a KB (an import, a rename, new readers)
-  const refresh = useLatest(() => { loadList(); if (selKbId) loadNotes(selKbId); });
+  const loadPolicy = useCallback(async () => {
+    const r = await kbCall(() => window.quorum.kbPersonalPolicy(), 'The workspace\'s rule for personal knowledge bases could not be read.');
+    if (!r.error && r.policy) setPolicy(r.policy);
+  }, []);
+  const refresh = useLatest(() => { loadList(); loadPolicy(); if (selKbId) loadNotes(selKbId); });
   useEffect(() => {
     loadList();
+    loadPolicy();
     const again = () => refresh.current();
     const visible = () => { if (document.visibilityState === 'visible') refresh.current(); };
     window.addEventListener('focus', again);
     window.addEventListener(KB_CHANGED, again);
     document.addEventListener('visibilitychange', visible);
     return () => { window.removeEventListener('focus', again); window.removeEventListener(KB_CHANGED, again); document.removeEventListener('visibilitychange', visible); };
-  }, [loadList, refresh]);
+  }, [loadList, loadPolicy, refresh]);
 
   useEffect(() => {
     if (!menuFor) return;
@@ -266,13 +273,15 @@ export function KbBrowser({ me, query, wsAdmin = false, children }: { me: string
       { label: 'Rename', run: () => setEdit({ mode: 'rename', kbId: row.kbId, folderId: row.folderId, name: row.name }) },
     ];
     // a KB hosted by Quorum is written in Quorum, so it takes no connector content
-    const hostedKb = !!kbOf(row.kbId)?.hosted;
-    if (hasDrive() && !hostedKb) items.push({ label: 'Add from Google Drive', run: () => setDriving({ kbId: row.kbId, folderId: row.folderId }) });
-    if (hasKbSync() && !hostedKb) {
-      items.push({ label: 'Sync a Drive folder', run: () => setSyncing({ kbId: row.kbId, folderId: row.folderId, source: 'google-drive' }) });
-      items.push({ label: 'Sync a GitHub repository', run: () => setSyncing({ kbId: row.kbId, folderId: row.folderId, source: 'github' }) });
-    }
     const rowKb = kbOf(row.kbId);
+    const hostedKb = !!rowKb?.hosted;
+    // a member's personal KB offers only the sources the workspace allows
+    const sources = rowKb ? kbSources(rowKb, policy, wsAdmin) : [];
+    if (hasDrive() && !hostedKb && sources.includes('google-drive')) items.push({ label: 'Add from Google Drive', run: () => setDriving({ kbId: row.kbId, folderId: row.folderId }) });
+    if (hasKbSync() && !hostedKb) {
+      if (sources.includes('google-drive')) items.push({ label: 'Sync a Drive folder', run: () => setSyncing({ kbId: row.kbId, folderId: row.folderId, source: 'google-drive' }) });
+      if (sources.includes('github')) items.push({ label: 'Sync a GitHub repository', run: () => setSyncing({ kbId: row.kbId, folderId: row.folderId, source: 'github' }) });
+    }
     if (row.kind === 'kb' && rowKb?.personal && canDeleteKb(rowKb, wsAdmin)) items.push({ label: 'Delete', danger: true, run: () => setDropping(rowKb) });
     if (row.kind === 'folder') {
       items.push({ label: 'Move to…', run: () => setMoving({ kbId: row.kbId, folderId: row.folderId! }) });
@@ -314,7 +323,7 @@ export function KbBrowser({ me, query, wsAdmin = false, children }: { me: string
             <div ref={setSlot} className="kbt-slot" />
             <div className="kbt-head-row">
               <h4 className="kbt-head" id="kbt-label">Knowledge bases</h4>
-              <button ref={addRef} className="icon-btn" aria-label="New knowledge base" data-tip="New knowledge base" onClick={() => setCreating(true)}><IconPlus width={14} height={14} /></button>
+              {canMakePersonal(policy, wsAdmin) && <button ref={addRef} className="icon-btn" aria-label="New knowledge base" data-tip="New knowledge base" onClick={() => setCreating(true)}><IconPlus width={14} height={14} /></button>}
             </div>
             {listError && <p className="error kbt-note" role="alert">{listError}</p>}
             {kbs && !kbs.length && <p className="tk-empty kbt-note">No knowledge bases you can read yet.</p>}
@@ -400,7 +409,7 @@ export function KbBrowser({ me, query, wsAdmin = false, children }: { me: string
           <SyncDialog kb={kbOf(syncing.kbId)!} folderId={syncing.folderId} source={syncing.source} onChanged={() => loadNotes(syncing.kbId)}
             onDone={() => { const d = syncing; setSyncing(null); focusRow(rowKey(d.kbId, d.folderId)); }} />
         )}
-        {creating && <CreateDialog wsAdmin={wsAdmin} onMade={made} onDone={() => { setCreating(false); requestAnimationFrame(() => addRef.current?.focus()); }} />}
+        {creating && <CreateDialog wsAdmin={wsAdmin} policy={policy} onMade={made} onDone={() => { setCreating(false); requestAnimationFrame(() => addRef.current?.focus()); }} />}
         {dropping && (
           <KbConfirm title={`Delete ${dropping.name}?`} body="Its folders and synced folders are deleted, and the notes synced or imported into it are removed from your Mac. Notes you moved into it stay yours. This cannot be undone." action="Delete"
             onDone={(ok) => { const d = dropping; if (ok) dropKb(d); else { setDropping(null); focusRow(rowKey(d.id, null)); } }} />
@@ -478,19 +487,20 @@ function SyncDialog({ kb, folderId, source, onChanged, onDone }: { kb: Kb; folde
 // a new KB from the tab: its name and who reads it. A member makes a personal KB only; an owner or admin may make a
 // workspace KB too (its kind, readers and import live under Settings › Admin › Knowledge). With GitHub sync on, it
 // can start from a repository: the sync dialog opens for the new KB
-function CreateDialog({ wsAdmin, onMade, onDone }: { wsAdmin: boolean; onMade: (kb: Kb, github: boolean) => void; onDone: () => void }) {
+function CreateDialog({ wsAdmin, policy, onMade, onDone }: { wsAdmin: boolean; policy: KbPersonalPolicy | null; onMade: (kb: Kb, github: boolean) => void; onDone: () => void }) {
   const scopes = createScopes(wsAdmin);
   const [scope, setScope] = useState<KbScope>('personal');
   const [name, setName] = useState('');
   const [github, setGithub] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const githubOk = hasKbSync() && kbSources({ personal: scope === 'personal' }, policy, wsAdmin).includes('github');
   const go = async () => {
     if (busy || !name.trim()) return;
     setBusy(true); setError('');
     const r = await kbCall(() => window.quorum.kbCreate({ name: name.trim(), ...(scope === 'personal' ? { personal: true } : {}) }), 'The knowledge base could not be created.');
     setBusy(false);
-    if (r.error || !r.kb) setError(r.error ?? 'The knowledge base could not be created.'); else onMade(r.kb, github && hasKbSync());
+    if (r.error || !r.kb) setError(r.error ?? 'The knowledge base could not be created.'); else onMade(r.kb, github && githubOk);
   };
   return (
     <Modal titleId="kbt-create-title" title="New knowledge base" className="kb-drive-modal" onClose={busy ? undefined : onDone} locked={busy}>
@@ -499,7 +509,7 @@ function CreateDialog({ wsAdmin, onMade, onDone }: { wsAdmin: boolean; onMade: (
       </div>
       <p className="kb-label">Who reads it</p>
       <ScopePicker scopes={scopes} scope={scope} disabled={busy} onChange={setScope} />
-      {hasKbSync() && (
+      {githubOk && (
         <label className="kb-person"><input type="checkbox" checked={github} disabled={busy} onChange={(e) => setGithub(e.target.checked)} /><span>Connect a GitHub repository next</span></label>
       )}
       {error && <p className="error" role="alert">{error}</p>}

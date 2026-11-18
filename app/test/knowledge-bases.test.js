@@ -8,7 +8,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 
 const home = mkdtempSync(path.join(tmpdir(), 'quorum-kb-home-'));
 process.env.HOME = home;
-const { accessRows, checkName, createKnowledgeBases, folderTree, shapeKb } = await import('../ee/knowledgeBases.js');
+const { accessRows, checkName, createKnowledgeBases, folderTree, shapeKb, shapePolicy } = await import('../ee/knowledgeBases.js');
 const { bondOf, createSync, parseFrontmatter, placeOf } = await import('../ee/sync.js');
 const { createRemote } = await import('../ee/store/remote.js');
 
@@ -102,6 +102,20 @@ describe('the IPC handlers', () => {
     expect((await h['kb-create']({ name: 'Wiki' })).error).toMatch(/Only owners and admins/);
     expect((await h['kb-create']({ name: 'Calls', kind: 'meetings', personal: true })).error).toMatch(/general one/);
     expect(f.calls).toEqual([['kb_create', { workspace_id: 'W', name: 'QA', kind: 'general', personal: true }]]);
+  });
+
+  it('read the workspace\'s rule for personal KBs, and let only owners and admins change it', async () => {
+    const answer = { enabled: false, sources: ['google-drive', 'dropbox'], exempt: false };
+    const m = fakeAccount({ role: 'member', answers: { workspace_personal_kbs: answer } });
+    expect((await createKnowledgeBases(m).handlers['kb-personal-policy']()).policy).toEqual({ enabled: false, sources: ['google-drive'], exempt: false });
+    expect((await createKnowledgeBases(m).handlers['kb-personal-policy-set']({ enabled: true, sources: [] })).error).toMatch(/Only owners and admins/);
+    expect(m.calls).toEqual([['workspace_personal_kbs', { workspace_id: 'W' }]]);
+    const a = fakeAccount({ answers: { workspace_personal_kbs_set: (args) => ({ enabled: args.enabled, sources: args.sources, exempt: true }) } });
+    const h = createKnowledgeBases(a).handlers;
+    expect((await h['kb-personal-policy-set']({ enabled: true, sources: ['zip'] })).error).toMatch(/GitHub or Google Drive/);
+    expect((await h['kb-personal-policy-set']({ enabled: false, sources: ['github', 'github'] })).policy).toEqual({ enabled: false, sources: ['github'], exempt: true });
+    expect(a.calls).toEqual([['workspace_personal_kbs_set', { workspace_id: 'W', enabled: false, sources: ['github'] }]]);
+    expect(shapePolicy(null)).toEqual({ enabled: false, sources: [], exempt: false });
   });
 
   it('send a member\'s delete to the server, which decides whose KB it is', async () => {
