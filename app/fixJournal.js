@@ -39,8 +39,14 @@ export function hashNotes(vault, rels) {
 
 // fn(text) of a note, kept by the note's modified time and size: a note that did not change is not read again. Answers
 // (vault, rel, fresh) -> fn(text), or null for a note that is not there; fresh reads the note again
+const memos = new Set();
+// drops what every noteMemo kept for these notes, so the next ask reads them again
+export function forgetNotes(vault, rels) {
+  for (const rel of rels) { const abs = vaultTarget(vault, rel); if (abs) for (const m of memos) m.delete(abs); }
+}
 export function noteMemo(fn) {
   const kept = new Map();
+  memos.add(kept);
   return (vault, rel, fresh = false) => {
     const abs = vaultTarget(vault, rel);
     const st = abs ? statSync(abs, { throwIfNoEntry: false }) : null;
@@ -65,9 +71,12 @@ export function createNoteHashes() {
   };
 }
 
-// the notes whose text is not what it was when the issue was found
+// the notes whose text is not what it was when the issue was found. A note can change and keep its modified time and
+// size, so what noteMemo kept for each of them goes, and the item is built again from the note as it reads now
 export function changedSince(vault, hashes = {}) {
-  return Object.entries(hashes).filter(([rel, h]) => { const t = readText(vault, rel); return (t == null ? null : sha(t)) !== h; }).map(([rel]) => rel);
+  const out = Object.entries(hashes).filter(([rel, h]) => { const t = readText(vault, rel); return (t == null ? null : sha(t)) !== h; }).map(([rel]) => rel);
+  if (out.length) forgetNotes(vault, out);
+  return out;
 }
 
 // the re-check after a fix: before and after map each touched note to the link targets it could not open (lowercased).

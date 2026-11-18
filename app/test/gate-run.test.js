@@ -4,10 +4,10 @@
 import { existsSync, mkdtempSync, readFileSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { createGateStore, gatePasses, sameVerdicts } from '../gateRun.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createGateStore, gatePasses, gateTriggers, sameVerdicts, verdictOf } from '../gateRun.js';
 import { runGate } from '../qualityGate.js';
-import { createNoteHashes, hashNotes, noteMemo } from '../fixJournal.js';
+import { changedSince, createNoteHashes, hashNotes, noteMemo } from '../fixJournal.js';
 
 const item = (n, extra = {}) => ({ id: `r:find:${n}`, kind: 'finding', ruleId: 'note.stale', key: String(n), ops: [{ op: 'annotate', rel: `n${n}.md`, text: `line ${n}` }], hashes: { [`n${n}.md`]: `h${n}` }, ...extra });
 const items = (k) => Array.from({ length: k }, (_, i) => item(i));
@@ -59,13 +59,36 @@ describe('gate passes', () => {
   });
 });
 
-describe('what starts a gate run in main.js', () => {
-  it('a sweep and a fix run start one; a read of the items never does', () => {
-    const main = readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '../main.js'), 'utf8');
-    const callers = [...main.matchAll(/(?<!function )scheduleGate\(/g)].map((m) => [...main.slice(0, m.index).matchAll(/^(?:async )?function (\w+)/gm)].at(-1)[1]);
-    expect(callers.sort()).toEqual(['pumpFixes', 'sweepNow']);
-    const gateOf = main.slice(main.indexOf('function gateOf('), main.indexOf('const gateChecking'));
-    expect(gateOf).not.toMatch(/gateNow|scheduleGate|setTimeout/);
+describe('what starts a gate run', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('a read of a stale verdict starts none; a new or confirmed draft, the drafts setting and a fallback each start one', async () => {
+    let runs = 0;
+    const t = gateTriggers(() => { runs++; });
+    const kept = (await gatePasses({ first: items(2), again: async () => items(2) })).verdicts;
+    // the agent drafted a fix for item 1, so its signature moved and its verdict reads as pending
+    const drafted = item(1, { draft: { kind: 'create', confirmed: true }, ops: [{ op: 'create', rel: 'n1.md', text: 'drafted' }] });
+    for (let i = 0; i < 5; i++) expect(verdictOf(kept, drafted, 'draft:create').reasons).toEqual(['pending']);
+    expect(verdictOf(kept, item(0), 'finding:note.stale')).toBe(kept.get('r:find:0'));
+    vi.advanceTimersByTime(10000);
+    expect(runs).toBe(0);
+    expect(t.pending()).toBe(false);
+    t.drafts({ drafted: 0, confirmed: 0, skipped: 'nothing' });
+    t.setting(true, true);
+    t.fallback({ cancelled: true });
+    t.fallback({ draft: { kind: 'create' } });
+    vi.advanceTimersByTime(10000);
+    expect(runs).toBe(0);
+    t.drafts({ drafted: 1 });
+    t.drafts({ confirmed: 1 });
+    vi.advanceTimersByTime(4000);
+    expect(runs).toBe(1);
+    t.setting(false, true);
+    vi.advanceTimersByTime(4000);
+    t.fallback({ draft: null, why: 'The agent found no note' });
+    vi.advanceTimersByTime(4000);
+    expect(runs).toBe(3);
   });
 });
 
@@ -106,5 +129,23 @@ describe('note hashes kept by modified time and size', () => {
     expect(memo(vault, 'missing.md')).toBe(null);
     expect(memo(vault, '../outside.md')).toBe(null);
     expect(existsSync(path.join(vault, 'missing.md'))).toBe(false);
+  });
+});
+
+describe('a fix refused for a changed note', () => {
+  it('drops the kept hash of a note that changed with the same modified time and size', () => {
+    const vault = mkdtempSync(path.join(tmpdir(), 'note-forget-'));
+    const abs = path.join(vault, 'a.md');
+    const when = new Date('2026-11-01T10:00:00Z');
+    writeFileSync(abs, 'one');
+    utimesSync(abs, when, when);
+    const hashes = createNoteHashes();
+    const first = hashes(vault, ['a.md']);
+    writeFileSync(abs, 'two');
+    utimesSync(abs, when, when);
+    expect(hashes(vault, ['a.md'])).toEqual(first);
+    expect(changedSince(vault, first)).toEqual(['a.md']);
+    expect(hashes(vault, ['a.md'])).toEqual(hashNotes(vault, ['a.md']));
+    expect(changedSince(vault, hashes(vault, ['a.md']))).toEqual([]);
   });
 });

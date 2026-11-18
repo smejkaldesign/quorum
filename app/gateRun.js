@@ -31,6 +31,34 @@ export async function gatePasses({ first, kept = null, again, records = [], isSt
   return { g, verdicts, rebuilt: kept ? changed.length : first.length, same: !!kept && sameVerdicts(kept, verdicts) };
 }
 
+// the verdict of an item now: its kept verdict while its fix and notes are the same, else pending until the next run.
+// Reading a verdict never starts a gate run; the events that change items do (gateTriggers)
+export const PENDING = { bucket: 'quiet', why: 'Quorum is still checking it.', reasons: ['pending'] };
+export function verdictOf(verdicts, item, kind) {
+  const v = verdicts?.get(item.id);
+  if (v && v.sig === signature(item)) return v;
+  return { ...PENDING, kind };
+}
+
+// the gate run main schedules delayMs after the events that change review items: a sweep, the end of a fix run, a draft
+// tick that drafted or confirmed a fix, Let the agent draft fixes turned on or off, and an agent call on Approve that
+// left a fallback. Several events in a row make one run
+export function gateTriggers(run, { delayMs = 4000 } = {}) {
+  let timer = null;
+  const schedule = (ms = delayMs) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { timer = null; run(); }, ms);
+    timer.unref?.();
+  };
+  return {
+    schedule,
+    pending: () => timer != null,
+    drafts: (r) => { if (r?.drafted || r?.confirmed) schedule(); },
+    setting: (was, now) => { if (was !== now) schedule(); },
+    fallback: (res) => { if (res && !res.draft && !res.cancelled) schedule(); },
+  };
+}
+
 export function sameVerdicts(a, b) {
   if (a.size !== b.size) return false;
   for (const [id, v] of b) { const w = a.get(id); if (!w || JSON.stringify(w) !== JSON.stringify(v)) return false; }

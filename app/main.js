@@ -13,7 +13,7 @@ import { createFolder, createNote, duplicateItem, moveItem, readVaultNote, renam
 import { createVaultIndex } from './vindex.js';
 import { applyUndo, sha, undoRecord } from './fixUndo.js';
 import { changedSince, createFixJournal, createNoteHashes, fixCheck, hashNotes, noteMemo, recoveryReason, rollback } from './fixJournal.js';
-import { createGateStore, gatePasses } from './gateRun.js';
+import { createGateStore, gatePasses, gateTriggers, verdictOf } from './gateRun.js';
 import { addAlias, linkSources, retargetLinks, rewriteLinks, unlinkTarget, writeAtomic } from './relink.js';
 import store from './store/index.js';
 import { registerSources } from './sources/index.js';
@@ -84,7 +84,7 @@ import { DECIDER_ON } from './decide/index.js';
 import { netFetch } from './decide/netFetch.js';
 import { annotateLine, ruleBar } from './contradictionResolve.js';
 import { ignoreProposals, ignored, ruleRecords } from './ruleRecords.js';
-import { demotions, kindOf, logGate, ruleDemotion, signature, weakLink } from './qualityGate.js';
+import { demotions, kindOf, logGate, ruleDemotion, weakLink } from './qualityGate.js';
 import { createAgentActivity } from './agentActivity.js';
 import { DEFAULT_PARALLEL, MAX_PARALLEL, createCatchup } from './memoryCatchup.js';
 import { createLastRunStore, planOf } from './catchupPlan.js';
@@ -1425,7 +1425,7 @@ ipcMain.handle('set-settings', (_e, next) => {
   }
   // Settings > Memory: Let the agent draft fixes (memoryDraft.js), its daily cap, and whether it may read notes marked
   // confidential
-  if (typeof next.memoryDrafts === 'boolean') { settings.memoryDrafts = next.memoryDrafts; store.settings.save(); }
+  if (typeof next.memoryDrafts === 'boolean') { const was = settings.memoryDrafts === true; settings.memoryDrafts = next.memoryDrafts; store.settings.save(); gateRuns.setting(was, next.memoryDrafts); }
   if (typeof next.memoryDraftConfidential === 'boolean') { settings.memoryDraftConfidential = next.memoryDraftConfidential; store.settings.save(); }
   // Settings > Memory: how many model calls Check everything now runs at once
   if (Number.isFinite(next.memoryCatchupParallel)) { settings.memoryCatchupParallel = Math.max(1, Math.min(MAX_PARALLEL, Math.round(next.memoryCatchupParallel))); store.settings.save(); }
@@ -3233,7 +3233,6 @@ const gateLogFile = path.join(DATA_DIR, 'memory-gate-log.jsonl');
 const gateStore = createGateStore(gateFile, { log: (...a) => log('memory gate', ...a) });
 let gateState = null;
 let gateRunning = false;
-let gateTimer = null;
 function gateFor(vault) {
   if (gateState?.vault === vault) return gateState;
   const saved = gateStore.get(vault);
@@ -3284,20 +3283,11 @@ async function gateNow(work = null) {
     return g.counts;
   } catch (e) { log('memory gate', e?.message); return null; } finally { gateRunning = false; }
 }
-function scheduleGate(ms = 4000) {
-  clearTimeout(gateTimer);
-  gateTimer = setTimeout(() => { gateTimer = null; gateNow(); }, ms);
-  gateTimer.unref?.();
-}
-const PENDING = { bucket: 'quiet', why: 'Quorum is still checking it.', reasons: ['pending'] };
+const gateRuns = gateTriggers(() => gateNow());
+const scheduleGate = (ms) => gateRuns.schedule(ms);
 // the verdict of an item now: its kept verdict while its fix and notes are the same, else pending until the next run.
 // Only a sweep and a fix run start a gate run; a read never does
-function gateOf(item) {
-  const st = gateFor(brain()?.vault ?? '');
-  const v = st.verdicts?.get(item.id);
-  if (v && v.sig === signature(item)) return v;
-  return { ...PENDING, kind: kindOf(item) };
-}
+const gateOf = (item) => verdictOf(gateFor(brain()?.vault ?? '').verdicts, item, kindOf(item));
 const gateChecking = () => !gateFor(brain()?.vault ?? '').verdicts;
 // the review items with their verdicts, and what the agent does for each on Approve (agentNeed). Without ids
 // (everything in Needs review), the items the gate keeps out of view are left out
@@ -3383,6 +3373,7 @@ async function agentResolve(item, run, step) {
     run.agentAbort = ctl;
     let res;
     try { res = await drafter.onDemand(base, notes, { signal: ctl.signal }); } finally { run.agentAbort = null; }
+    gateRuns.fallback(res);
     if (res.cancelled || run.cancel) throw new Error(cancelText(run));
     if (!res.draft) return res;
     draft = res.draft;
@@ -3540,6 +3531,7 @@ async function draftTick() {
   try {
     r = await drafter.tick();
     if (r?.drafted || r?.confirmed) toUI('memory-updates', null);
+    gateRuns.drafts(r);
   } catch (e) { log('memory draft', e?.message); return; } finally { draftAbort = null; work.end(); }
   if (r?.skipped === 'nothing') await contradictionTick();
 }
@@ -3624,7 +3616,7 @@ async function startCatchup() {
     if (!c?.installed || !c?.loggedIn) throw new Error('Sign in to Claude Code first. The check runs on your Claude Code sign-in.');
   }
   const turnedOn = settings.memoryDrafts !== true;
-  if (turnedOn) { settings.memoryDrafts = true; store.settings.save(); toUI('settings', settings); }
+  if (turnedOn) { settings.memoryDrafts = true; store.settings.save(); toUI('settings', settings); gateRuns.setting(false, true); }
   return { ...(await catchup.start()), turnedOn };
 }
 ipcMain.handle('memory-catchup-estimate', () => catchupEstimate());
