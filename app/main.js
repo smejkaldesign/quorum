@@ -5382,7 +5382,7 @@ function cliVersion(rel, before, reason) {
 const posixRel = (rel) => String(rel).split(path.sep).join('/');
 const NO_SESSION = 'No session is running. Start one in Quorum; quorum end closes it.';
 async function control({ cmd, args = {} }) {
-  if (CONTROL_WRITES.has(cmd) && settings.access === 'read') throw new Error('Quorum is set to read only. Change it in Settings > Connectors.');
+  if (CONTROL_WRITES.has(cmd) && settings.access === 'read') throw new Error('Quorum is set to read only. Change Access to Read and write in Quorum under Settings > AI tools.');
   const b = brain();
   switch (cmd) {
     case 'ping': return { app: app.isPackaged ? 'Quorum' : 'Quorum Dev', access: settings.access ?? 'write' };

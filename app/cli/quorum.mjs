@@ -217,7 +217,7 @@ function importMeeting({ source, id, title, date, participants = [], url = null,
   if (!sid || sid.length > 200) throw new Error('id is required: the meeting\'s id in the source app');
   // one line each: a line break would add frontmatter keys of its own (keep_private, visibility)
   if (/[\r\n]/.test(sid)) throw new Error('id must be one line');
-  if (settings().access === 'read') throw new Error('Quorum is set to read only (Settings, Connectors), so nothing can be imported.');
+  if (settings().access === 'read') throw new Error('Quorum is set to read only, so nothing can be imported. Change Access to Read and write in Quorum under Settings > AI tools.');
   const root = meetingsDir();
   if (!root) throw new Error('Quorum has no meeting notes folder yet. Connect an Agent OS in Quorum first.');
   const dir = path.join(root, src);
