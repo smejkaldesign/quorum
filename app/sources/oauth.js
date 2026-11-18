@@ -165,10 +165,11 @@ export function doneText(connector, name) {
   if (x?.id === 'github') return 'Quorum is connected to GitHub. Quorum reads only the repositories you choose. You can close this tab.';
   return n ? `Quorum is connected to ${n}. You can close this tab.` : 'You can close this tab and go back to Quorum.';
 }
-// q.connector is the library id of the connector that signed in; Back to Quorum opens the app on its page
+// q.connector is the library id of the connector that signed in; Back to Quorum opens the app on its page, or on the
+// Connectors list when the page does not know the connector (the 45 second fallback)
 export const loopbackPage = (q) => {
   const esc = (s) => String(s ?? '').replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]));
-  const back = q.connector && Object.hasOwn(CONNECTOR_BY_ID, q.connector) ? connectorLink(q.connector) : null;
+  const back = connectorLink(q.connector && Object.hasOwn(CONNECTOR_BY_ID, q.connector) ? q.connector : null);
   const failed = q.error || q.failed;
   const reason = failed ? String(q.failed || q.error_description || q.error).trim() : '';
   const cut = reason.indexOf('. ');

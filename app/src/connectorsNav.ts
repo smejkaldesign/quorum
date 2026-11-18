@@ -27,8 +27,9 @@ export function connectorsScroll(prev: string, next: string, top: number, saved:
 // the app was brought forward by a connector link (Back to Quorum after a sign-in); detail is the connector id, and
 // its page reads the provider again
 export const CONNECTOR_RETURN = 'quorum:connector-return';
-// a connector link from the OS opens that connector's page, then tells it to refresh
-export function openConnectorLink(id: string) {
+// a connector link from the OS opens that connector's page, then tells it to refresh; without an id, the list
+export function openConnectorLink(id: string | null) {
+  if (!id) { openConnectors(); return; }
   openConnectors({ connector: id });
   window.dispatchEvent(new CustomEvent<string>(CONNECTOR_RETURN, { detail: id }));
 }

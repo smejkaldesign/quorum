@@ -5,7 +5,7 @@ import { BY_ID, cleanConnectors, cleanProviders, needsKey, providerFor, provider
 import { connectorKey, removeConnectorKey, setConnectorKey, testSavedConnector } from './connectors/keys.js';
 import { createConnectGuard, guardIpc } from './connectors/connectGuard.js';
 import { createOverlap } from './connectors/mcpOverlap.js';
-import { appScheme, parseConnectorLink, setLinkScheme } from './connectors/appLink.js';
+import { appScheme, connectorRoute, setLinkScheme } from './connectors/appLink.js';
 import { createAgentLink } from './agentLink.js';
 import { checkConnection } from './connectionCheck.js';
 import { openSpeech, SPEECH_ENGINES } from './speech/provider.js';
@@ -129,12 +129,12 @@ app.on('open-url', (e, url) => { if (/^quorum:\/\/kb\//.test(url)) { e.preventDe
 // Links that arrive before the renderer asks for them (a launch from a link) wait in noteLinks
 const noteLinks = { queue: [], ready: false };
 app.on('open-url', (e, url) => { if (/^quorum:\/\/note\//.test(url)) { e.preventDefault(); noteLinks.queue.push(url); flushNoteLinks(); } });
-// <scheme>://connectors/<id> links (Back to Quorum on the page a sign-in ends on) open that connector's page in
-// Settings › Connectors. The scheme is this copy's own (connectors/appLink.js), so a dev sign-in returns to the dev copy.
+// <scheme>://connectors/<id> links (Back to Quorum on the page a sign-in ends on) open that connector's page, and a bare
+// <scheme>://connectors the list, in Settings › Connectors. The scheme is this copy's own (connectors/appLink.js), so a dev sign-in returns to the dev copy.
 // Links wait in connectorLinks until the renderer listens
 setLinkScheme(appScheme(app.isPackaged));
 const connectorLinks = { queue: [], ready: false };
-app.on('open-url', (e, url) => { const id = parseConnectorLink(url); if (id) { e.preventDefault(); connectorLinks.queue.push(id); flushConnectorLinks(); } });
+app.on('open-url', (e, url) => { const route = connectorRoute(url); if (route) { e.preventDefault(); connectorLinks.queue.push(route.id); flushConnectorLinks(); } });
 function flushConnectorLinks() {
   if (!connectorLinks.ready || !win || win.isDestroyed()) return;
   for (const id of connectorLinks.queue.splice(0)) { openMain(); toUI('connector-link', { id }); }

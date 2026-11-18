@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { appScheme, connectorLink, parseConnectorLink, setLinkScheme } from '../connectors/appLink.js';
+import { appScheme, connectorLink, connectorRoute, parseConnectorLink, setLinkScheme } from '../connectors/appLink.js';
 import { CHECKABLE, installSummary } from '../connectors/oauthApps.js';
 import { IDENTITY, createAccounts, tokenKey } from '../sources/accounts.js';
 import { doneText, loopbackPage } from '../sources/oauth.js';
@@ -131,11 +131,17 @@ describe('the page a sign-in ends on', () => {
     expect(loopbackPage({ name: 'GitHub', connector: 'github' })).toContain('href="quorum-dev://connectors/github"');
     expect(loopbackPage({ name: 'GitHub', connector: 'github' })).not.toContain('Go to Quorum.watch');
   });
-  it('a failure links back too; an unknown connector gets no button', () => {
+  it('a failure links back too; an unknown connector links to the Connectors list', () => {
     const failed = loopbackPage({ name: 'Slack', connector: 'slack', failed: 'Slack sign-in was cancelled.' });
     expect(failed).toContain('href="quorum://connectors/slack"');
     expect(failed).not.toContain('You can close this tab');
-    expect(loopbackPage({ name: 'X', connector: 'evil"><script>' })).not.toContain('class="btn"');
+    const unknown = loopbackPage({ name: 'X', connector: 'evil"><script>' });
+    expect(unknown).toContain('<a class="btn" href="quorum://connectors">Back to Quorum</a>');
+    expect(unknown).not.toContain('<script>');
+  });
+  it('the 45 second fallback, which knows no connector, links to the list in this copy\'s scheme', () => {
+    setLinkScheme('quorum-dev');
+    expect(loopbackPage({ pending: true })).toContain('<a class="btn" href="quorum-dev://connectors">Back to Quorum</a>');
   });
   it('escapes the interpolated name', () => {
     const page = loopbackPage({ name: '<img src=x onerror=alert(1)>' });
@@ -162,5 +168,15 @@ describe('connector links', () => {
     expect(parseConnectorLink('quorum://connectors/__proto__', 'quorum')).toBeNull();
     expect(parseConnectorLink('quorum://connectors/%E0%A4%A', 'quorum')).toBeNull();
     expect(parseConnectorLink('quorum://connectors/github/extra', 'quorum')).toBeNull();
+  });
+  it('a bare connectors link opens the list', () => {
+    expect(connectorLink(null, 'quorum-dev')).toBe('quorum-dev://connectors');
+    expect(connectorRoute('quorum://connectors', 'quorum')).toEqual({ id: null });
+    expect(connectorRoute('quorum://connectors/', 'quorum')).toEqual({ id: null });
+    expect(connectorRoute('quorum-dev://connectors?from=signin', 'quorum-dev')).toEqual({ id: null });
+    expect(connectorRoute('quorum://connectors/github', 'quorum')).toEqual({ id: 'github' });
+    expect(connectorRoute('quorum://connectors', 'quorum-dev')).toBeNull();
+    expect(connectorRoute('quorum://connectorsx', 'quorum')).toBeNull();
+    expect(connectorRoute('quorum://connectors/nope', 'quorum')).toBeNull();
   });
 });

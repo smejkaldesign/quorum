@@ -635,7 +635,7 @@ declare global {
       oauthDisconnect(id: string): Promise<OAuthAccount | { error: string }>;
       oauthCheck(id: string): Promise<OAuthCheck | { error: string }>;
       oauthGithubInstallations(): Promise<GithubInstallations | { error: string }>;
-      onConnectorLink(cb: (t: { id: string }) => void): Unsub;
+      onConnectorLink(cb: (t: { id: string | null }) => void): Unsub;
       connectorLinksReady(): Promise<void>;
       memoryRefreshCancel(): Promise<void>;
       memoryAdd(): Promise<Memory>;

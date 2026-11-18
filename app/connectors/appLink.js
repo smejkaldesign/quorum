@@ -11,13 +11,17 @@ let current = 'quorum';
 export const setLinkScheme = (scheme) => { current = scheme; };
 export const linkScheme = () => current;
 
-export const connectorLink = (id, scheme = current) => `${scheme}://connectors/${encodeURIComponent(id)}`;
+// a connector's page, or with no id the Connectors list
+export const connectorLink = (id, scheme = current) => (id ? `${scheme}://connectors/${encodeURIComponent(id)}` : `${scheme}://connectors`);
 
-// the connector a link names, or null for another route, another scheme or an id the library does not know
-export function parseConnectorLink(url, scheme = current) {
-  const m = /^([a-z][a-z0-9+.-]*):\/\/connectors\/([^/?#]+)\/?(?:[?#].*)?$/i.exec(String(url ?? ''));
+// what a connectors link opens: { id } for a connector's page, { id: null } for the list, or null for another route,
+// another scheme or an id the library does not know
+export function connectorRoute(url, scheme = current) {
+  const m = /^([a-z][a-z0-9+.-]*):\/\/connectors(?:\/([^/?#]*))?\/?(?:[?#].*)?$/i.exec(String(url ?? ''));
   if (!m || m[1].toLowerCase() !== scheme) return null;
+  if (!m[2]) return { id: null };
   let id;
   try { id = decodeURIComponent(m[2]); } catch { return null; }
-  return Object.hasOwn(CONNECTOR_BY_ID, id) ? id : null;
+  return Object.hasOwn(CONNECTOR_BY_ID, id) ? { id } : null;
 }
+export const parseConnectorLink = (url, scheme = current) => connectorRoute(url, scheme)?.id ?? null;
