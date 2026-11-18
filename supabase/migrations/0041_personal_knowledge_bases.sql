@@ -217,43 +217,53 @@ begin
   return jsonb_build_object('ok', true, 'objects', to_jsonb(objects));
 end $$;
 
--- 0034's trigger: a note in a personal KB stays out of the review queue, as a hosted KB's notes do
-create or replace function public.note_contribution_sync() returns trigger
+-- 0034's note_contribution_sync, split in two: the queue rule for one note (note_contribution_apply), and the trigger,
+-- which keeps a hosted KB's notes and a personal KB's notes out of the queue
+create or replace function public.note_contribution_apply(n public.notes) returns void
 language plpgsql security definer set search_path = public as $$
-declare pub boolean := coalesce(new.frontmatter ->> 'visibility', 'private') = 'public' and new.deleted_at is null;
-        conf boolean := coalesce(new.frontmatter ->> 'confidential', '') <> '';
+declare pub boolean := coalesce(n.frontmatter ->> 'visibility', 'private') = 'public' and n.deleted_at is null;
+        conf boolean := coalesce(n.frontmatter ->> 'confidential', '') <> '';
         ws_auto boolean;
         by_kb boolean;
+begin
+  if pub and not conf then
+    select coalesce(w.auto_include, false) into ws_auto from public.workspaces w where w.id = n.workspace_id;
+    by_kb := not coalesce(ws_auto, false) and n.kb_id is not null;
+    insert into public.contributions (workspace_id, note_id, author_id, status, reviewed_at, source)
+      values (n.workspace_id, n.id, n.user_id, case when ws_auto or by_kb then 'included' else 'pending' end, case when ws_auto or by_kb then now() else null end, case when by_kb then 'kb' else 'review' end)
+    on conflict (note_id) do update set status = case when contributions.status in ('included', 'declined') then contributions.status when excluded.status = 'included' then 'included' else 'pending' end,
+                                       reviewed_at = case when contributions.status in ('included', 'declined') then contributions.reviewed_at else excluded.reviewed_at end,
+                                       source = case when contributions.status in ('included', 'declined') then contributions.source else excluded.source end
+      where contributions.status = 'withdrawn' or contributions.status = 'pending';
+  else
+    update public.contributions c set status = 'withdrawn' where c.note_id = n.id and c.status <> 'withdrawn';
+  end if;
+end $$;
+
+create or replace function public.note_contribution_sync() returns trigger
+language plpgsql security definer set search_path = public as $$
 begin
   if new.kb_id is not null and public.kb_is_hosted(new.kb_id) then return new; end if;
   if new.kb_id is not null and public.kb_is_personal(new.kb_id) then
     delete from public.contributions c where c.note_id = new.id;
     return new;
   end if;
-  if pub and not conf then
-    select coalesce(w.auto_include, false) into ws_auto from public.workspaces w where w.id = new.workspace_id;
-    by_kb := not coalesce(ws_auto, false) and new.kb_id is not null;
-    insert into public.contributions (workspace_id, note_id, author_id, status, reviewed_at, source)
-      values (new.workspace_id, new.id, new.user_id, case when ws_auto or by_kb then 'included' else 'pending' end, case when ws_auto or by_kb then now() else null end, case when by_kb then 'kb' else 'review' end)
-    on conflict (note_id) do update set status = case when contributions.status in ('included', 'declined') then contributions.status when excluded.status = 'included' then 'included' else 'pending' end,
-                                       reviewed_at = case when contributions.status in ('included', 'declined') then contributions.reviewed_at else excluded.reviewed_at end,
-                                       source = case when contributions.status in ('included', 'declined') then contributions.source else excluded.source end
-      where contributions.status = 'withdrawn' or contributions.status = 'pending';
-  else
-    update public.contributions c set status = 'withdrawn' where c.note_id = new.id and c.status <> 'withdrawn';
-  end if;
+  perform public.note_contribution_apply(new);
   return new;
 end $$;
 
--- a note moved into a personal KB (kb_note_assign) loses its contribution, so no admin reads it through the queue
-create or replace function public.note_personal_kb_joined() returns trigger
+-- a note moved into a personal KB (kb_note_assign) loses its contribution, so no admin reads it through the queue; a
+-- note its owner moves out to a workspace KB or to no KB is queued again the way any shared note is
+create or replace function public.note_personal_kb_moved() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
-  if public.kb_is_personal(new.kb_id) then delete from public.contributions c where c.note_id = new.id; end if;
+  if new.kb_id is not null and public.kb_is_personal(new.kb_id) then delete from public.contributions c where c.note_id = new.id;
+  elsif old.kb_id is not null and public.kb_is_personal(old.kb_id) and not (new.kb_id is not null and public.kb_is_hosted(new.kb_id)) then perform public.note_contribution_apply(new);
+  end if;
   return new;
 end $$;
 create trigger notes_personal_kb after update of kb_id on public.notes for each row
-  when (new.kb_id is not null and new.kb_id is distinct from old.kb_id) execute function public.note_personal_kb_joined();
+  when (new.kb_id is distinct from old.kb_id) execute function public.note_personal_kb_moved();
 
 -- a member who leaves the workspace takes their personal KBs with them. A workspace or an account being deleted
 -- removes them through the foreign keys instead
@@ -313,7 +323,7 @@ do $$ declare f text; begin
   end loop;
   foreach f in array array[
     'kb_is_personal(public.ulid)', 'kb_name_taken(public.ulid, uuid, text, public.ulid)', 'can_read_kb_as(public.ulid, uuid)', 'can_admin_kb_as(public.ulid, uuid)',
-    'can_edit_kb_as(public.ulid, uuid)', 'kb_access_personal_check()', 'notes_personal_kb_owner()', 'kb_personal_drop(public.ulid)', 'note_contribution_sync()', 'note_personal_kb_joined()',
+    'can_edit_kb_as(public.ulid, uuid)', 'kb_access_personal_check()', 'notes_personal_kb_owner()', 'kb_personal_drop(public.ulid)', 'note_contribution_apply(public.notes)', 'note_contribution_sync()', 'note_personal_kb_moved()',
     'member_left_end_personal_kbs()'] loop
     execute format('revoke all on function public.%s from public, anon, authenticated', f);
   end loop;

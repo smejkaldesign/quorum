@@ -115,6 +115,16 @@ select pg_temp.as_user('00000000-0000-4000-8000-0000000000a1');
 select pg_temp.check((select count(*) from public.notes where id = '01KF000000000000000000PN01') = 0, 'the workspace owner does not read it');
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a3');
 select pg_temp.check((select count(*) from public.notes where id = '01KF000000000000000000PN01') = 1, 'its owner reads it');
+-- moved out to a workspace KB it admins and back: it is queued again when it leaves, and leaves the queue when it returns
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a1');
+select public.kb_set_access(pg_temp.id('team'), '[{"principal": "workspace", "role": "reader"}, {"principal": "user", "user_id": "00000000-0000-4000-8000-0000000000a3", "role": "admin"}]');
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a3');
+select public.kb_note_assign('01KF000000000000000000PN01', pg_temp.id('team'));
+select pg_temp.check((select status = 'included' and source = 'kb' from public.contributions where note_id = '01KF000000000000000000PN01'), 'moved to a workspace KB it is included as a KB note');
+select public.kb_note_assign('01KF000000000000000000PN01', null);
+select pg_temp.check((select status from public.contributions where note_id = '01KF000000000000000000PN01') = 'pending', 'taken out of every KB it waits for review');
+select public.kb_note_assign('01KF000000000000000000PN01', pg_temp.id('kb3'));
+select pg_temp.check(not exists (select 1 from public.contributions where note_id = '01KF000000000000000000PN01'), 'back in the personal KB it is out of the queue');
 
 -- 6. GitHub sync: each member attaches the same shared repository into their own KB; nobody attaches into another's
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a1');
