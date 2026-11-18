@@ -15,7 +15,10 @@ const known = (provider) => { if (!PROVIDERS[provider]) throw new Error(`unknown
 
 export async function decisionsKey(provider) {
   const p = known(provider);
-  if (cached[provider] === undefined) cached[provider] = (await secrets.get(svc(p))) || null;
+  if (cached[provider] !== undefined) return cached[provider];
+  const key = await secrets.get(svc(p));
+  if (key === undefined) return null; // stored but unreadable this time: asked again next call
+  cached[provider] = key || null;
   return cached[provider];
 }
 

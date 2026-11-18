@@ -12,7 +12,10 @@ const cache = {}; // per provider: undefined until looked up, null when there's 
 
 export async function connectorKey(id) {
   if (!needsKey(id)) return null;
-  if (cache[id] === undefined) cache[id] = (await secrets.get(service(id), LEGACY[id] ? [LEGACY[id]] : [])) || null;
+  if (cache[id] !== undefined) return cache[id];
+  const key = await secrets.get(service(id), LEGACY[id] ? [LEGACY[id]] : []);
+  if (key === undefined) return null; // stored but unreadable this time: asked again next call
+  cache[id] = key || null;
   return cache[id];
 }
 
