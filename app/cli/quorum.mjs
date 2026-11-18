@@ -135,10 +135,13 @@ function status() {
   return { brain: settings().brainRoot ?? null, meetingsFolder: meetingsDir(), meetings: bySource, chats: chats(1e6).length, recording: live().recording };
 }
 
-// one request to the running app; it answers on the same line-delimited JSON
-function ask(cmd, args = {}) {
+// one request to the running app; it answers on the same line-delimited JSON. An answer that takes longer than
+// timeoutMs is given up on (a question to the agent can take a few minutes)
+function ask(cmd, args = {}, timeoutMs = 240000) {
   return new Promise((resolve, reject) => {
     const sock = net.connect(path.join(HOME, 'quorum.sock'));
+    const timer = setTimeout(() => { sock.destroy(); reject(new Error('Quorum did not answer in time. Try again.')); }, timeoutMs);
+    sock.on('close', () => clearTimeout(timer));
     let buf = '';
     // whole characters only: a multibyte character can arrive split across two chunks
     sock.setEncoding('utf8');
@@ -274,7 +277,7 @@ const listedTools = () => [...(ONLY_CONNECTORS ? [] : TOOLS.map(({ run, ...t }) 
 async function connectorCall(name, args) {
   const { account } = connectorTool(name);
   if (!connectedAccounts().includes(account)) throw new Error(howToConnect(account));
-  try { return await ask('connector_tool', { name, args, via: client }); }
+  try { return await ask('connector_tool', { name, args, via: client }, 90000); }
   catch (e) { throw new Error(e.message.startsWith('Quorum isn\'t open') ? `${name} reads ${ACCOUNT_NAMES[account]} through the Quorum app, which holds your ${ACCOUNT_NAMES[account]} sign-in, and Quorum is not open. Open Quorum and try again.` : e.message, { cause: e }); }
 }
 const toolRun = (name) => (isConnectorTool(name) ? (a) => connectorCall(name, a) : ONLY_CONNECTORS ? null : TOOLS.find((t) => t.name === name)?.run ?? null);

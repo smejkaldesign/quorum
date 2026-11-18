@@ -6,6 +6,8 @@ const API = 'https://api.notion.com/v1/';
 const VERSION = '2022-06-28';
 export const MAX_DEPTH = 3;
 export const MAX_BLOCKS = 1000;
+// a page stops reading its blocks after this long and says it is cut short
+export const PAGE_BUDGET_MS = 25000;
 const RECONNECT = 'Notion needs to be connected again. In Quorum, open Settings > Connectors > Notion, choose Disconnect, then Connect.';
 const NOT_SHARED = 'Quorum cannot see that Notion page. In Notion, add Quorum to the page under its Connections menu, then try again.';
 
@@ -85,7 +87,7 @@ function blockLine(b, depth, n) {
   }
 }
 
-export function createNotion({ token, fetchImpl, wait }) {
+export function createNotion({ token, fetchImpl, wait, now = Date.now, budgetMs = PAGE_BUDGET_MS }) {
   async function call(route, { method = 'GET', body } = {}) {
     const r = await request('Notion', new URL(route, API).toString(), {
       method, headers: { authorization: `Bearer ${token}`, 'notion-version': VERSION, ...(body ? { 'content-type': 'application/json' } : {}) },
@@ -109,11 +111,13 @@ export function createNotion({ token, fetchImpl, wait }) {
       const page = await call(`pages/${pid}`);
       const props = Object.entries(page.properties ?? {}).filter(([, p]) => p?.type !== 'title').map(([k, p]) => [k, propertyText(p)]).filter(([, v]) => v !== '' && v !== null);
       let count = 0, truncated = false;
+      const started = now();
       const lines = [];
       async function walk(parent, depth) {
         let cursor;
         let n = 0;
         do {
+          if (now() - started > budgetMs) { truncated = true; return; }
           const d = await call(`blocks/${parent}/children?page_size=100${cursor ? `&start_cursor=${encodeURIComponent(cursor)}` : ''}`);
           for (const b of d.results ?? []) {
             if (count >= MAX_BLOCKS) { truncated = true; return; }
@@ -122,7 +126,9 @@ export function createNotion({ token, fetchImpl, wait }) {
             const line = blockLine(b, depth, n);
             if (line !== null) lines.push(line);
             const nested = b.has_children && b.type !== 'child_page' && b.type !== 'child_database';
-            if (nested && depth + 1 < MAX_DEPTH) await walk(b.id, line === null ? depth : depth + 1);
+            // a block that renders nothing (a table, a column list) keeps its children at its own depth
+            const next = line === null ? depth : depth + 1;
+            if (nested && next < MAX_DEPTH) await walk(b.id, next);
             else if (nested) truncated = true;
           }
           cursor = d.has_more ? d.next_cursor : null;

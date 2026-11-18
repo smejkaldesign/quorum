@@ -7,7 +7,7 @@ import { CONNECTOR_SERVER, CONNECTOR_TOOLS, toolsFor } from '../cli/connectorToo
 import { createGithub } from '../connectors/tools/github.js';
 import { rateLimitWait, request } from '../connectors/tools/http.js';
 import { createConnectorTools, screen } from '../connectors/tools/index.js';
-import { MAX_DEPTH, createNotion, pageId } from '../connectors/tools/notion.js';
+import { MAX_BLOCKS, MAX_DEPTH, createNotion, pageId } from '../connectors/tools/notion.js';
 import { createSlack, toTs } from '../connectors/tools/slack.js';
 
 const TOKEN = 'xoxp-test-token';
@@ -139,6 +139,28 @@ describe('Notion', () => {
     expect(MAX_DEPTH).toBe(3);
     expect(r.truncated).toBe(true);
     expect(calls.some((c) => c.url.includes('/blocks/b5/'))).toBe(false);
+  });
+  it('keeps table rows at depth two, stops at the block cap, and stops when the time budget runs out', async () => {
+    const id = 'c'.repeat(32);
+    const page = () => json({ id, properties: { Name: { type: 'title', title: [{ plain_text: 'T' }] } } });
+    const rt = (t) => [{ plain_text: t, annotations: {} }];
+    const tree = {
+      [id]: [{ id: 'l1', type: 'bulleted_list_item', has_children: true, bulleted_list_item: { rich_text: rt('a') } }],
+      l1: [{ id: 'l2', type: 'bulleted_list_item', has_children: true, bulleted_list_item: { rich_text: rt('b') } }],
+      l2: [{ id: 't1', type: 'table', has_children: true, table: {} }],
+      t1: [{ id: 'r1', type: 'table_row', table_row: { cells: [rt('x'), rt('y')] } }],
+    };
+    const { fetchImpl } = stubFetch([[path(`/v1/pages/${id}`), page], [(u) => u.pathname.startsWith('/v1/blocks/'), (u) => json({ results: tree[u.pathname.split('/')[3]], has_more: false })]]);
+    expect((await createNotion({ token: TOKEN, fetchImpl, wait: noWait }).page({ id })).markdown.split('\n').slice(2)).toEqual(['- a', '  - b', '    | x | y |']);
+    let served = 0;
+    const many = stubFetch([[path(`/v1/pages/${id}`), page], [(u) => u.pathname.startsWith('/v1/blocks/'), () => { served++; return json({ results: Array.from({ length: 100 }, (_, i) => ({ id: `p${served}-${i}`, type: 'paragraph', paragraph: { rich_text: rt('p') } })), has_more: true, next_cursor: `c${served}` }); }]]);
+    const capped = await createNotion({ token: TOKEN, fetchImpl: many.fetchImpl, wait: noWait }).page({ id });
+    expect([capped.truncated, capped.markdown.split('\n').filter((l) => l === 'p').length, served]).toEqual([true, MAX_BLOCKS, MAX_BLOCKS / 100 + 1]);
+    let clock = 0;
+    served = 0;
+    const slow = stubFetch([[path(`/v1/pages/${id}`), page], [(u) => u.pathname.startsWith('/v1/blocks/'), () => { served++; clock += 10000; return json({ results: [{ id: `s${served}`, type: 'paragraph', paragraph: { rich_text: rt('s') } }], has_more: true, next_cursor: 'n' }); }]]);
+    const cut = await createNotion({ token: TOKEN, fetchImpl: slow.fetchImpl, wait: noWait, now: () => clock, budgetMs: 25000 }).page({ id });
+    expect([cut.truncated, served]).toEqual([true, 3]);
   });
   it('says how to share a page Notion does not show to Quorum', async () => {
     const { fetchImpl } = stubFetch([[() => true, () => json({ code: 'object_not_found' }, 404)]]);
