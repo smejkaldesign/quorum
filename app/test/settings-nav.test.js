@@ -37,6 +37,13 @@ describe('which nav shows', () => {
   it('lists no workspace pages while signed out of a hosted account', () => {
     expect(workspacePages('cloud', true, true, 'owner', false)).toEqual(['general', 'connectors', 'notifications', 'developers', 'guardrails']);
   });
+
+  it('sends a remembered Organization or Teams page to General once signed out', () => {
+    const listed = workspacePages('cloud', true, true, 'owner', false);
+    expect(resolvePage('organization', true, listed)).toBe('general');
+    expect(resolvePage('teams', true, listed)).toBe('general');
+    expect(resolvePage('organization', true, workspacePages('cloud', true, false, 'owner'))).toBe('organization');
+  });
 });
 
 describe('resolving a remembered page', () => {
