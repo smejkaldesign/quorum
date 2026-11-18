@@ -14,7 +14,7 @@ export function feedFor({ edition, packaged }) {
   return { provider: 'github', owner: 'smejkaldesign', repo: 'quorum' };
 }
 
-export function createUpdater({ autoUpdater, feed, current, enabled = true, emit = () => {}, log = () => {}, now = () => Date.now(), timers = { setTimeout, setInterval, clearTimeout, clearInterval } }) {
+export function createUpdater({ autoUpdater, feed, current, enabled = true, emit = () => {}, log = () => {}, beforeInstall = () => {}, now = () => Date.now(), timers = { setTimeout, setInterval, clearTimeout, clearInterval } }) {
   let state = { status: enabled && feed ? 'idle' : 'off', current, version: null, percent: 0, notes: null, checkedAt: null, error: null };
   const set = (patch) => { state = { ...state, ...patch }; emit(state); };
   const notesOf = (info) => (typeof info?.releaseNotes === 'string' ? info.releaseNotes : Array.isArray(info?.releaseNotes) ? info.releaseNotes.map((n) => n?.note ?? '').join('\n') : null);
@@ -42,7 +42,9 @@ export function createUpdater({ autoUpdater, feed, current, enabled = true, emit
     check,
     // the window came to the front: one check an hour at most, so a Mac that sleeps through the interval still hears
     onFocus: () => { if (state.status === 'idle' && (!state.checkedAt || now() - state.checkedAt > FOCUS_CHECK_AFTER_MS)) check(); },
-    install: () => { if (state.status !== 'ready') return false; autoUpdater.quitAndInstall(); return true; },
+    // quitAndInstall closes the windows before the app's before-quit runs, so beforeInstall tells the app it is quitting
+    // first; without it the window's close handler hides the window and the quit stops there
+    install: () => { if (state.status !== 'ready') return false; beforeInstall(); autoUpdater.quitAndInstall(); return true; },
     start: () => {
       if (state.status === 'off') return () => {};
       handles = [timers.setTimeout(check, FIRST_CHECK_MS), timers.setInterval(check, CHECK_EVERY_MS)];

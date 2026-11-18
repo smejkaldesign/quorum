@@ -42,6 +42,15 @@ describe('createUpdater', () => {
     expect(auto.calls.at(-1)).toEqual(['install']);
     expect(seen).toContain('downloading');
   });
+  it('marks the app as quitting before it hands over to quitAndInstall', () => {
+    const auto = fakeAuto();
+    const u = createUpdater({ autoUpdater: auto, feed: { provider: 'github' }, current: '0.2.7', beforeInstall: () => auto.calls.push(['quitting']) });
+    expect(u.install()).toBe(false);
+    expect(auto.calls).not.toContainEqual(['quitting']);
+    auto.emit('update-downloaded', { version: '0.2.8' });
+    expect(u.install()).toBe(true);
+    expect(auto.calls.slice(-2)).toEqual([['quitting'], ['install']]);
+  });
   it('reports a failed check and an up-to-date answer, and checks again on focus after an hour', async () => {
     const auto = fakeAuto();
     let t = 0;
