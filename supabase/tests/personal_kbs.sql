@@ -98,6 +98,13 @@ insert into public.notes (id, user_id, workspace_id, path, frontmatter, body, ha
 select pg_temp.check((select status from public.contributions where note_id = '01KF000000000000000000PN01') = 'pending', 'a shared note starts pending in the queue');
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a2');
 select pg_temp.check((select count(*) from public.notes where id = '01KF000000000000000000PN01') = 1, 'a workspace admin can open a pending note');
+insert into ids select 'kb2', public.kb_create('01KF0000000000000000000PWS', 'Admin box', personal => true) ->> 'id';
+select pg_temp.expect_error(format($$select public.kb_note_assign('01KF000000000000000000PN01', %L)$$, pg_temp.id('kb2')), 'only your own notes');
+select pg_temp.check((select kb_id is null from public.notes where id = '01KF000000000000000000PN01'), 'a workspace admin cannot take a member''s note into their own personal KB');
+select pg_temp.check((select status from public.contributions where note_id = '01KF000000000000000000PN01') = 'pending', 'and the author''s contribution stays');
+select pg_temp.as_admin_role();
+select pg_temp.expect_error(format($$update public.notes set kb_id = %L where id = '01KF000000000000000000PN01'$$, pg_temp.id('kb2')), 'only your own notes');
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a2');
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a3');
 select public.kb_note_assign('01KF000000000000000000PN01', pg_temp.id('kb3'));
 select pg_temp.check(not exists (select 1 from public.contributions where note_id = '01KF000000000000000000PN01'), 'joining the personal KB takes it out of the queue');

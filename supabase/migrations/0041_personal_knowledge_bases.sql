@@ -86,6 +86,18 @@ begin
 end $$;
 create trigger kb_access_personal before insert or update on public.kb_access for each row execute function public.kb_access_personal_check();
 
+-- a personal KB holds its owner's notes only: nobody, a workspace owner or admin included, puts another person's note in
+-- one, and no hand-over gives one of its notes to someone else
+create or replace function public.notes_personal_kb_owner() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.kb_id is not null and exists (select 1 from public.knowledge_bases k where k.id = new.kb_id and k.personal_user_id is not null and k.personal_user_id <> new.user_id) then
+    raise exception 'Only your own notes can go in a personal knowledge base';
+  end if;
+  return new;
+end $$;
+create trigger notes_personal_kb_owner before insert or update of kb_id, user_id on public.notes for each row execute function public.notes_personal_kb_owner();
+
 -- 0034's kb_shape with one key: personal, true for a personal KB (only its owner ever reads one)
 create or replace function public.kb_shape(kb_id public.ulid) returns jsonb
 language sql stable security definer set search_path = public as $$
@@ -165,7 +177,8 @@ language plpgsql security definer set search_path = public as $$
 begin
   perform set_config('quorum.kb_system', 'on', true);
   update public.notes n set deleted_at = now(), updated_at = now(), body = ''
-    where n.kb_id = kb_personal_drop.kb_id and n.deleted_at is null and (n.frontmatter ? 'kb_attachment' or n.frontmatter ? 'kb_source');
+    where n.kb_id = kb_personal_drop.kb_id and n.deleted_at is null and (n.frontmatter ? 'kb_attachment' or n.frontmatter ? 'kb_source')
+      and n.user_id = (select k.personal_user_id from public.knowledge_bases k where k.id = kb_personal_drop.kb_id);
   delete from public.knowledge_bases k where k.id = kb_personal_drop.kb_id and k.personal_user_id is not null;
   perform set_config('quorum.kb_system', '', true);
 end $$;
@@ -290,7 +303,7 @@ do $$ declare f text; begin
   end loop;
   foreach f in array array[
     'kb_is_personal(public.ulid)', 'kb_name_taken(public.ulid, uuid, text, public.ulid)', 'can_read_kb_as(public.ulid, uuid)', 'can_admin_kb_as(public.ulid, uuid)',
-    'can_edit_kb_as(public.ulid, uuid)', 'kb_access_personal_check()', 'kb_personal_drop(public.ulid)', 'note_contribution_sync()', 'note_personal_kb_joined()',
+    'can_edit_kb_as(public.ulid, uuid)', 'kb_access_personal_check()', 'notes_personal_kb_owner()', 'kb_personal_drop(public.ulid)', 'note_contribution_sync()', 'note_personal_kb_joined()',
     'member_left_end_personal_kbs()'] loop
     execute format('revoke all on function public.%s from public, anon, authenticated', f);
   end loop;
