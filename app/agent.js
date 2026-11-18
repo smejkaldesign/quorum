@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { agentEnv, resolveBin } from './agentEnv.js';
 import { ACCOUNT_NAMES, CONNECTOR_SERVER, connectorTool } from './cli/connectorTools.mjs';
 import { DATA_DIR } from './edition.js';
 
@@ -86,9 +87,9 @@ export function runAgent({ question, history, transcript, root, model, owner, on
   ].filter(Boolean).join('\n\n');
 
   return new Promise((resolve, reject) => {
-    const env = { ...process.env };
+    const env = agentEnv();
     delete env.ANTHROPIC_API_KEY;
-    const proc = spawn('claude', agentArgs({ model, system, root, guards: guards ?? { denyDirs: privateDirs }, files, extra }), { cwd: root, env });
+    const proc = spawn(resolveBin('claude'), agentArgs({ model, system, root, guards: guards ?? { denyDirs: privateDirs }, files, extra }), { cwd: root, env });
     const timer = setTimeout(() => { proc.kill(); reject(new Error('took too long')); }, TIMEOUT_MS);
     let result = null;
     let err = '';
