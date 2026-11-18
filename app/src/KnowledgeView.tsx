@@ -831,7 +831,8 @@ function TreeLevel({ items, depth, ops }: { items: TreeItem[]; depth: number; op
 }
 
 type RowProps = { it: TreeItem; depth: number; isOpen: boolean; sel: boolean; drop: boolean; busy: boolean; dot: MemoryDots['files'][string] | undefined; issues: number; lock: string | undefined; target: string; ops: RefObject<TreeOps | null> };
-// a row renders again only when what it shows changed; a fresh tree from main has new objects with the same values
+// a row renders again only when what it shows changed; a fresh tree from main has new objects with the same values.
+// Rows compare only path, name and dir of it, so the handlers must not read any other field of it
 const sameRow = (a: RowProps, b: RowProps) => a.it.path === b.it.path && a.it.name === b.it.name && a.it.dir === b.it.dir && a.depth === b.depth && a.isOpen === b.isOpen && a.sel === b.sel
   && a.drop === b.drop && a.busy === b.busy && a.dot === b.dot && a.issues === b.issues && a.lock === b.lock && a.target === b.target;
 const TreeRow = memo(function TreeRow({ it, depth, isOpen, sel, drop, busy, dot, issues, lock, target, ops }: RowProps) {

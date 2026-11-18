@@ -50,7 +50,7 @@ import { privateDir, startControl } from './control.js';
 import { PROVIDERS as DECISION_PROVIDERS, connectedProvider, decide as decideRaw, removeDecisionsKey, setDecisionsKey } from './decisions.js';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, watchFile, writeFileSync } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -113,6 +113,10 @@ const FEED_READS = new Set([
   'vault-file-issues', 'vault-link-health', 'vault-links-left', 'agent-activity-get', 'live-runs', 'keeper-status', 'memory-dots', 'memory-versions', 'memory-version',
   'fix-runs', 'guardrail-denials', 'guardrails-get', 'get-settings', 'confidential-marks', 'note-activity', 'history', 'brain', 'user', 'record-status', 'models-status',
   'update-status', 'env-status', 'calendar-status', 'meeting-sources', 'meetings-sources', 'meetings-dir', 'source-icons', 'library-icons', 'synced-folders',
+  'read-note', 'memory-review', 'meeting-brief', 'meeting-providers', 'memory-findings', 'memory-gate', 'memory-draft-status', 'memory-ignore-list', 'memory-rule-records',
+  'memory-catchup-status', 'note-chats', 'read-chat', 'event-chats', 'calendar', 'oauth-accounts', 'mcp-status', 'cli-status', 'agents-status', 'claude-status',
+  'model-source-status', 'decisions-status', 'screen-context-status', 'ax-status', 'kb-list', 'kb-notes', 'kb-files', 'kb-files-usage', 'kb-file-data', 'kb-hosted',
+  'kb-hosted-note', 'kb-drive-status', 'kb-sync-list', 'kb-sync-grants', 'kb-import-progress',
 ]);
 const TREE_WRITES = new Set([
   'vault-new-note', 'vault-new-folder', 'vault-move', 'vault-rename', 'vault-trash', 'vault-duplicate', 'set-settings', 'guardrails-add', 'guardrails-remove', 'guardrails-set',
@@ -127,6 +131,23 @@ const treeCache = createTreeCache({
 });
 function dropTree() { treeCache.drop(); }
 function treePaths(rels) { treeCache.paths(rels); }
+// one feed-changed event to the window for a burst of changes it would not otherwise hear of: an action an AI tool ran
+// over the control socket, or a block the guardrail hook process wrote (feedEvents.ts listens)
+let feedChangedTimer = null;
+function feedChangedSoon() {
+  if (feedChangedTimer) return;
+  feedChangedTimer = setTimeout(() => { feedChangedTimer = null; toUI('feed-changed', null); }, 300);
+}
+// the app actions (handleAction) tell the window once they ran, whoever called them
+const feedNotify = (name, fn) => {
+  if (FEED_READS.has(name)) return fn;
+  return (...args) => {
+    const r = fn(...args);
+    if (r && typeof r.then === 'function') r.then(feedChangedSoon, feedChangedSoon);
+    else feedChangedSoon();
+    return r;
+  };
+};
 const feedTouched = (name, fn) => {
   if (FEED_READS.has(name)) return fn;
   const tree = TREE_WRITES.has(name);
@@ -338,7 +359,7 @@ const meeting = { armed: false, capturing: false, id: null, dirs: [], dir: null,
 const log = (...a) => console.log('[quorum]', ...a);
 // the handlers AI tools call over the control socket (appActions.js): the same functions the app's buttons call
 const actionHandlers = new Map();
-const handleAction = (name, fn) => { actionHandlers.set(name, feedTouched(name, fn)); ipcMain.handle(name, fn); };
+const handleAction = (name, fn) => { const run = feedNotify(name, fn); actionHandlers.set(name, feedTouched(name, run)); ipcMain.handle(name, run); };
 // a fix an AI tool approved keeps its name, so Memory health and Notifications show who approved it
 // the error a cancelled batch ends with; the window finds it by its ending
 const cancelText = (run) => `${run.cancelBy ?? 'You'} cancelled the batch`;
@@ -355,7 +376,7 @@ const refreshGates = () => { baseGates = notetakerGates(flagsApi ? flagsApi.all(
 const gate = () => (meeting.armed && !meeting.solo ? callGates : baseGates);
 // windows can be gone mid-quit while the helper or agent is still reporting
 // every other event to the window also marks the Notifications feed changed; these are progress and live state only
-const UI_QUIET = new Set(['log', 'level', 'state', 'helper-event', 'agent-step', 'agent-delta', 'note-delta', 'notes-delta', 'summary', 'export-progress', 'agent-activity', 'keeper-step', 'record', 'speakers', 'call-speakers', 'focus-composer', 'kb-open', 'models-status', 'update', 'agent-action', 'live-runs']);
+const UI_QUIET = new Set(['log', 'level', 'state', 'helper-event', 'agent-step', 'agent-delta', 'note-delta', 'notes-delta', 'summary', 'export-progress', 'agent-activity', 'keeper-step', 'record', 'speakers', 'call-speakers', 'focus-composer', 'kb-open', 'models-status', 'update', 'agent-action', 'live-runs', 'feed-changed']);
 const toUI = (channel, payload) => {
   if (!UI_QUIET.has(channel)) feedCache.touch();
   if (channel === 'brain-changed') dropTree();
@@ -2139,6 +2160,7 @@ async function feedBuild() {
 }
 // the guardrail log is written by the agent's hook process, which sends no event: a new block rebuilds the feed
 const feedKey = () => { try { const st = statSync(DENIAL_LOG); return `${st.mtimeMs}:${st.size}`; } catch { return ''; } };
+watchFile(DENIAL_LOG, { interval: 5000, persistent: false }, (cur, prev) => { if (cur.mtimeMs !== prev.mtimeMs || cur.size !== prev.size) feedChangedSoon(); });
 const feedMarks = () => { const st = feedState(); return { archived: Object.keys(st.archived), done: Object.keys(st.done ?? {}), kept: Object.keys(st.kept ?? {}), prefs: settings.notifications ?? {} }; };
 // the bell's dot and counts and Needs review for Memory health, worked out once per build of the rows
 const feedCounts = () => feedCache.derived('counts', (rows) => {

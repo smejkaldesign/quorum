@@ -34,6 +34,7 @@ function start() {
   q.onVaultChanged?.(later);
   q.onSettings?.(later);
   q.onFixRun?.(later);
+  q.onFeedChanged?.(later);
   window.addEventListener(ACTIVITY_CHANGED, fire);
   window.addEventListener('quorum:memory-seen', fire);
   window.addEventListener('focus', later);

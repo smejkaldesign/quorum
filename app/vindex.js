@@ -204,6 +204,14 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
           if (changed.length) onChange(changed);
         }, 250);
       });
+      // a watcher that fails reports nothing more: the index and the tree cache stop counting on it
+      watcher.on('error', (err) => {
+        log('vault watch', String(err));
+        try { watcher?.close(); } catch { /* closed */ }
+        watcher = null;
+        clearTimeout(timer);
+        try { onPaths(null); } catch { /* the cache drops on its own next read */ }
+      });
     } catch (err) { log('vault watch failed', String(err)); }
   }
 

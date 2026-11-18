@@ -190,6 +190,29 @@ describe('the existence check before writing a note', () => {
     await f.refresh();
     expect(lists).toBe(2);
   });
+  it('reads again after a reset that came while a read was running', async () => {
+    const root = fresh();
+    put('vault/a.md', '# a');
+    let heads = [{ name: 'old', sha: 's-old' }];
+    let release;
+    const slow = new Promise((r) => { release = r; });
+    let first = true;
+    const f = createElsewhere(opts({
+      vault: path.join(root, 'vault'), gitTop: () => root,
+      listBranches: async () => { const list = heads; if (first) { first = false; await slow; } return list; },
+      listTree: async (_root, sha) => [`vault/${sha}.md`],
+    }));
+    const running = f.refresh();
+    await new Promise((r) => setTimeout(r, 1));
+    heads = [{ name: 'new', sha: 's-new' }];
+    f.reset();
+    const fresh2 = f.refresh();
+    expect(fresh2).not.toBe(running);
+    release();
+    await fresh2;
+    expect(f.find('s-new')).toMatchObject({ branch: 'new' });
+    expect(f.find('s-old')).toBeNull();
+  });
   it('lists the notes again only on branches whose head moved, a few at a time', async () => {
     const root = fresh();
     put('vault/a.md', '# a');

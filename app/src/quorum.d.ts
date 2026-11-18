@@ -454,6 +454,7 @@ declare global {
       // Needs review for Memory health: the items waiting, and the same items by the note they are about and its folders
       memoryReviewCount(): Promise<{ total: number; files: Record<string, number>; folders: Record<string, number> }>;
       feedCounts(): Promise<FeedCounts>;
+      onFeedChanged(cb: () => void): () => void;
       vaultLinksLeft(keys: string[], on?: boolean): Promise<number>;
       vaultLinkDecide(key: string, verdict: 'approve' | 'dismiss'): Promise<string>;
       fixStart(keys: string[]): Promise<FixRun[]>;

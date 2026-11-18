@@ -67,7 +67,8 @@ export function createElsewhere({ vault: vaultIn, skillRoots = [path.join(os.hom
   let onBranches = { key: '', map: new Map(), at: 0 };
   // the note paths on each commit already read, by sha
   let bySha = new Map();
-  let reading = null;
+  let reading = null; // { gen, promise }
+  let resets = 0;
   // the branch notes have been read once, so find() answers for branches too
   let branchesRead = false;
 
@@ -150,9 +151,14 @@ export function createElsewhere({ vault: vaultIn, skillRoots = [path.join(os.hom
     for (const b of list) for (const rel of fresh.get(b.sha) ?? []) put(map, nameOf(rel), { kind: 'branch', where: rel, branch: b.name });
     done(key, map);
   }
+  // a read that started before the last reset() may answer from the old branch list, so one more read follows it
   function refresh() {
-    reading ??= readBranches().catch((e) => log('elsewhere branches', e?.message ?? e)).finally(() => { reading = null; });
-    return reading;
+    if (reading && reading.gen === resets) return reading.promise;
+    const gen = resets;
+    const before = reading?.promise ?? Promise.resolve();
+    const promise = before.then(() => readBranches()).catch((e) => log('elsewhere branches', e?.message ?? e)).finally(() => { if (reading?.promise === promise) reading = null; });
+    reading = { gen, promise };
+    return promise;
   }
   function branchNotes() {
     if (Date.now() - onBranches.at >= BRANCH_TTL) refresh();
@@ -166,7 +172,7 @@ export function createElsewhere({ vault: vaultIn, skillRoots = [path.join(os.hom
     return walkAll().get(name) ?? branchNotes().get(name) ?? null;
   }
   // reset keeps the branch answer until the next read replaces it, so the marks do not go and come back
-  return { find, refresh, ready: () => branchesRead, reset: () => { walked = { at: 0, map: new Map() }; topKept = undefined; onBranches = { ...onBranches, at: 0 }; } };
+  return { find, refresh, ready: () => branchesRead, reset: () => { walked = { at: 0, map: new Map() }; topKept = undefined; onBranches = { ...onBranches, at: 0 }; resets++; } };
 }
 
 // the index note of a folder: index.md, _index.md, README.md or a note named like the folder

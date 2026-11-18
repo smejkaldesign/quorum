@@ -100,6 +100,7 @@ contextBridge.exposeInMainWorld('quorum', {
   vaultLinkHealth: (fresh) => ipcRenderer.invoke('vault-link-health', fresh === true),
   memoryReviewCount: () => ipcRenderer.invoke('memory-review-count'),
   feedCounts: () => ipcRenderer.invoke('feed-counts'),
+  onFeedChanged: on('feed-changed'),
   vaultLinksLeft: (keys, on) => ipcRenderer.invoke('vault-links-left', keys, on !== false),
   vaultLinkDecide: (key, verdict) => ipcRenderer.invoke('vault-link-decide', key, verdict),
   fixStart: (keys) => ipcRenderer.invoke('fix-start', keys),
