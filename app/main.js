@@ -9,7 +9,7 @@ import { appScheme, createConnectorLinks, setLinkScheme } from './connectors/app
 import { createAgentLink } from './agentLink.js';
 import { checkConnection } from './connectionCheck.js';
 import { openSpeech, SPEECH_ENGINES } from './speech/provider.js';
-import { createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTree } from './vault.js';
+import { SKIP as TREE_SKIP, createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTree } from './vault.js';
 import { createVaultIndex } from './vindex.js';
 import { applyUndo, sha, undoRecord } from './fixUndo.js';
 import { changedSince, createFixJournal, fixCheck, hashNotes, recoveryReason, rollback } from './fixJournal.js';
@@ -90,6 +90,7 @@ import { createLastRunStore, planOf } from './catchupPlan.js';
 import { rule as CONTRADICTION_RULE } from './rules/contradictions.js';
 import { createElsewhere, withFound } from './linkElsewhere.js';
 import { createFeedCache } from './feedCache.js';
+import { createTreeCache } from './treeCache.js';
 import { open as openAsync, stat as statAsync } from 'node:fs/promises';
 import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
@@ -105,17 +106,31 @@ const packagedMeta = (() => { try { return JSON.parse(readFileSync(path.join(her
 const APP_PAGE = pathToFileURL(path.join(here, 'dist/index.html')).href;
 const fromApp = (e) => String(e?.senderFrame?.url ?? '').split(/[?#]/)[0] === APP_PAGE;
 // The Notifications feed is built once per change (feedCache.js, feedBuild below). Any IPC call outside FEED_READS may
-// change what it shows, so it marks the feed changed before and after it runs; the reads listed here never do
+// change what it shows, so it marks the feed changed before and after it runs; the reads listed here never do.
+// TREE_WRITES also drop the kept notes tree (vault-tree below)
 const FEED_READS = new Set([
   'activity-feed', 'feed-counts', 'memory-review-count', 'vault-tree', 'vault-graph', 'vault-search', 'vault-note', 'vault-backlinks', 'vault-outgoing', 'vault-resolve',
   'vault-file-issues', 'vault-link-health', 'vault-links-left', 'agent-activity-get', 'live-runs', 'keeper-status', 'memory-dots', 'memory-versions', 'memory-version',
   'fix-runs', 'guardrail-denials', 'guardrails-get', 'get-settings', 'confidential-marks', 'note-activity', 'history', 'brain', 'user', 'record-status', 'models-status',
   'update-status', 'env-status', 'calendar-status', 'meeting-sources', 'meetings-sources', 'meetings-dir', 'source-icons', 'library-icons', 'synced-folders',
 ]);
+const TREE_WRITES = new Set([
+  'vault-new-note', 'vault-new-folder', 'vault-move', 'vault-rename', 'vault-trash', 'vault-duplicate', 'set-settings', 'guardrails-add', 'guardrails-remove', 'guardrails-set',
+  'confidential-mark', 'connect-brain', 'disconnect-brain', 'onboarding-create-vault',
+]);
 const feedCache = createFeedCache({ build: () => feedBuild(), key: () => feedKey() });
+// the notes tree, kept while the index's watcher runs (treeCache.js); TREE_WRITES drop it
+const treeCache = createTreeCache({
+  walk: (vault) => vaultTree(vault, excludedPath),
+  statOf: (vault, rel) => { try { return statSync(path.join(vault, rel)); } catch { return null; } },
+  skip: (rel) => rel.split('/').some((seg) => seg.startsWith('.') || TREE_SKIP.has(seg)),
+});
+function dropTree() { treeCache.drop(); }
+function treePaths(rels) { treeCache.paths(rels); }
 const feedTouched = (name, fn) => {
   if (FEED_READS.has(name)) return fn;
-  const after = () => { feedCache.touch(); };
+  const tree = TREE_WRITES.has(name);
+  const after = () => { feedCache.touch(); if (tree) dropTree(); };
   return (...args) => {
     after();
     const r = fn(...args);
@@ -343,6 +358,7 @@ const gate = () => (meeting.armed && !meeting.solo ? callGates : baseGates);
 const UI_QUIET = new Set(['log', 'level', 'state', 'helper-event', 'agent-step', 'agent-delta', 'note-delta', 'notes-delta', 'summary', 'export-progress', 'agent-activity', 'keeper-step', 'record', 'speakers', 'call-speakers', 'focus-composer', 'kb-open', 'models-status', 'update', 'agent-action', 'live-runs']);
 const toUI = (channel, payload) => {
   if (!UI_QUIET.has(channel)) feedCache.touch();
+  if (channel === 'brain-changed') dropTree();
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 };
 // Agent activity (agentActivity.js): the memory work that runs longer than 30 seconds (the first memory check, a full
@@ -2577,14 +2593,16 @@ function openIndex() {
     vault: b.vault, isExcludedPath: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isDeniedText: isConfidentialText, isExcludedText: suggester.isExcluded, redact: suggester.redactLines,
     onChange: (rels) => { toUI('vault-changed', rels); if (!built) { built = true; setTimeout(sweepTick, 5000); } else sweepOnSave(rels); }, renamed: () => settings.clusterNames?.[b.vault] ?? {},
     forget: (keys) => { const mine = settings.clusterNames?.[b.vault]; if (!mine) return; for (const k of keys) delete mine[k]; store.settings.save(); }, log: (...a) => log('index', ...a),
+    onPaths: treePaths,
   });
+  dropTree();
   vindex.start();
   // the keeper files whatever arrived while the app was closed, once the folder is open
   setTimeout(() => keeper.run({ reason: 'launch' }).catch(() => {}), 4000);
   // the hosted edition's sync watches the same vault for files to push; the vault changed, so it moves with it
   account.sync.live();
 }
-ipcMain.handle('vault-tree', () => (brain() ? vaultTree(brain().vault, excludedPath) : []));
+ipcMain.handle('vault-tree', () => { const b = brain(); return b ? treeCache.get(b.vault, !!vindex?.watching()) : []; });
 // hosted edition: sign-in, workspaces, members and push sync live in ee/ (account.js, sync.js) and load only when EDITION is
 // 'cloud'. The local edition gets a stub whose pushes do nothing, so the call sites below stay the same in both editions.
 // sync never pushes private folders, notes marked confidential, or anything the opt-out list withholds

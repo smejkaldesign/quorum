@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { HeadingLinks, slugsOf } from './HeadingLinks';
 import { MemoryBell, MemoryNotifications } from './MemoryNotifications';
 import { FolderApp, FolderIcon } from './FolderApp';
@@ -19,6 +19,7 @@ import { IssueDrawer, LinkHealth, acceptIssue, dismissIssue, leftOf, migrateLeft
 import { outcomeOf } from './fixToast';
 import { Markdown } from './Markdown';
 import { useSession } from './session';
+import { feedCounts, onFeedChange } from './feedEvents';
 import { IconChevron, IconClose, IconCollapse, IconExpand, IconFolder, IconGraph, IconNewFolder, IconNewNote, IconHistory, IconLink, IconLock, IconMore, IconReset, IconSearch, IconSidebar, IconSliders, IconSort } from './icons';
 
 type Creating = { kind: 'note' | 'folder'; parent: string } | null;
@@ -120,41 +121,44 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     const t = setTimeout(() => setHealthShown(null), 240);
     return () => clearTimeout(t);
   }, [health]);
-  // the items waiting in Needs review (main's memory-review-count); the button goes red while there are any
+  // the items waiting in Needs review (main's feed-counts); the button goes red while there are any
   const [issues, setIssues] = useState(0);
   // the same items on the tree: a red dot on each note an item is about, and on each folder the number of items about
   // a note inside it
   const [issueMarks, setIssueMarks] = useState<{ files: Record<string, number>; folders: Record<string, number> }>({ files: {}, folders: {} });
   const migrated = useRef<Promise<void> | null>(null);
-  const countIssues = useCallback(async () => {
+  const countIssues = useCallback(async (fresh = false) => {
     migrated.current ??= migrateLeft().catch(() => {});
     await migrated.current;
-    const c = await window.quorum.memoryReviewCount().catch(() => null);
+    const c = (await feedCounts(fresh).catch(() => null))?.review;
     if (!c) return;
     setIssues(c.total);
-    setIssueMarks({ files: c.files, folders: c.folders });
+    setIssueMarks((m) => (sameCounts(m.files, c.files) && sameCounts(m.folders, c.folders) ? m : { files: c.files, folders: c.folders }));
   }, []);
-  useEffect(() => { countIssues(); }, [graph, countIssues]);
-  // an item decided anywhere else (Notifications), a gate run or a fix that ends moves the counts here too
-  useEffect(() => {
-    const go = () => { countIssues(); };
-    window.addEventListener('quorum:activity-changed', go);
-    const offs = [window.quorum.onMemoryUpdates(go), window.quorum.onFixRun(go)];
-    return () => { window.removeEventListener('quorum:activity-changed', go); offs.forEach((off) => off()); };
-  }, [countIssues]);
+  // an item decided anywhere else (Notifications), a gate run, a fix that ends or a vault change moves the counts here
+  // too (feedEvents.ts)
+  useEffect(() => { countIssues(); return onFeedChange(() => { countIssues(); }); }, [countIssues, brain]);
   useEffect(() => { if (command?.kind === 'open') { setMissing(null); openNote(command.rel).then(() => { if (command.anchor) scrollToAnchor(command.anchor); }); } else if (command?.kind === 'missing') { setPreview(null); setMissing(command.id); } else if (command?.kind === 'health' && !command.key) { setPreview(null); setPanel(false); setHealth({ focus: null }); } else if (command?.kind === 'health') { reviewKey(command.key); } else if (command?.kind === 'graph') { setPreview(null); setSelected(command.rel); setFocus(command.rel); } else if (command) { setScope({}); setPalette(command.kind); } }, [command]);
 
-  const load = useCallback(async () => {
-    const [t, g] = await Promise.all([window.quorum.vaultTree(), window.quorum.vaultGraph()]);
-    setTree(t);
-    window.quorum.memoryDots().then(setDots).catch(() => {});
-    window.quorum.confidentialMarks().then(setLocks).catch(() => {});
+  // the graph (about half a megabyte for a large vault) is read while it shows or the palette is open; a vault change
+  // while neither shows marks it stale, and it is read again when one opens
+  const graphStale = useRef(false);
+  const graphWanted = useRef(true);
+  const loadGraph = useCallback(async () => {
+    graphStale.current = false;
+    const g = await window.quorum.vaultGraph();
     setGraph(g);
     // your own tweaks win over the vault's graph.json until you reset them
     let saved: Partial<GraphView> = {};
     try { saved = JSON.parse(localStorage.getItem('quorum.graphView') ?? '{}'); } catch {}
     if (g) setView((v) => v ?? { ...g.settings, ...saved });
   }, []);
+  const loadTree = useCallback(async () => {
+    setTree(await window.quorum.vaultTree());
+    window.quorum.memoryDots().then(setDots).catch(() => {});
+    window.quorum.confidentialMarks().then(setLocks).catch(() => {});
+  }, []);
+  const load = useCallback(async () => { await Promise.all([loadTree(), loadGraph()]); }, [loadTree, loadGraph]);
 
   const tweak = (patch: Partial<GraphView>) => setView((v) => {
     if (!v) return v;
@@ -187,7 +191,8 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = null;
-        load();
+        loadTree();
+        if (graphWanted.current) loadGraph(); else graphStale.current = true;
         const open = previewRel.current;
         const openChanged = !!open && touched.has(open);
         touched.clear();
@@ -201,7 +206,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
       }, 400);
     });
     return () => { off(); if (timer) clearTimeout(timer); };
-  }, [load]);
+  }, [loadTree, loadGraph]);
   useEffect(() => { window.quorum.liveRuns().then(setLive).catch(() => {}); return window.quorum.onLiveRuns(setLive); }, []);
   // a note's versions or updates changed: new dots, and a fresh versions list for the open note. Main sends null when
   // it does not name the notes (a sweep or a gate run), and that leaves the open note's versions as they are
@@ -531,15 +536,22 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   const liveFolders = useMemo(() => new Set(live.folders), [live]);
   const vaultRun = live.runs.find((r) => r.wholeVault) ?? null;
 
+  const opsRef = useRef<TreeOps | null>(null);
+  const q0 = query.trim().toLowerCase();
   const ops: TreeOps = {
-    open: null, selected, creating, renaming, dropTarget, dots, marks: issueMarks, liveFiles, liveFolders, locks,
+    open: null, selected, creating, renaming, dropTarget, dots, marks: issueMarks, liveFiles, liveFolders, locks, self: opsRef,
     onToggle: (p) => { setSelected(p); setOpen((o) => { const n = new Set(o); if (n.has(p)) n.delete(p); else n.add(p); return n; }); },
     onOpen: openNote, onCreate: create, onRename: rename, onMenu: menu,
     onDragStart: (p) => { dragging.current = p; }, onDragOver: setDropTarget, onDrop: drop,
   };
 
+  const treeOps: TreeOps = { ...ops, open: q0 ? null : open };
+  opsRef.current = treeOps;
+  graphWanted.current = (missing === null && !preview) || !!palette;
+  useEffect(() => { if (graphWanted.current && graphStale.current) loadGraph(); }, [missing, preview, palette, loadGraph]);
+
   const focusName = focus ? graph?.nodes.find((n) => n.id === focus)?.name ?? null : null;
-  const q = query.trim().toLowerCase();
+  const q = q0;
   const sorted = useMemo(() => sortTree(tree, sort), [tree, sort]);
   const filtered = useMemo(() => (q ? filterTree(sorted, q) : sorted), [sorted, q]);
 
@@ -561,7 +573,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
           onDragLeave={(e) => { if (e.currentTarget === e.target) setDropTarget(null); }}
           onDrop={(e) => { e.preventDefault(); drop(''); }}>
           {creating && creating.parent === '' && <NewItemRow kind={creating.kind} depth={0} onDone={create} />}
-          <TreeLevel items={filtered} depth={0} ops={{ ...ops, open: q ? null : open }} />
+          <TreeLevel items={filtered} depth={0} ops={treeOps} />
         </div>
         <p className={`kb-soon ${!notice && vaultRun ? 'kb-live-note' : ''}`} role="status">{notice || (vaultRun ? `${vaultRun.label} is working in your vault. The notes it changes show when it finishes.` : 'Right-click to rename or delete · Drag to move')}</p>
       </aside>
@@ -683,7 +695,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
               {view && <Graph data={graph} view={view} query={query} focus={focus} timelapse={lapse} onOpen={openGraphNode} onTimelapseEnd={endLapse} onRenameCluster={renameCluster} live={liveFiles} />}
               {healthShown && (
                 <div className={`kb-takeover ${health ? 'in' : 'out'}`}>
-                  <LinkHealth focus={healthShown.focus} isLive={(rel) => !!live.files[rel]} onReview={reviewIssue} onClose={() => setHealth(null)} onChanged={() => { load(); countIssues(); }} />
+                  <LinkHealth focus={healthShown.focus} isLive={(rel) => !!live.files[rel]} onReview={reviewIssue} onClose={() => setHealth(null)} onChanged={() => { load(); countIssues(true); }} />
                 </div>
               )}
             </div>
@@ -780,6 +792,8 @@ function GraphPanel({ view, groups, onChange, onReset, onClose }: {
 
 type TreeOps = {
   open: Set<string> | null; selected: string; creating: Creating; renaming: string | null; dropTarget: string | null; dots: MemoryDots; marks: { files: Record<string, number>; folders: Record<string, number> }; liveFiles: Set<string>; liveFolders: Set<string>; locks: { folders: Record<string, string>; notes: Record<string, string> };
+  // the latest ops, for the rows' handlers: a row that did not change keeps its last render
+  self: RefObject<TreeOps | null>;
   onToggle: (p: string) => void; onOpen: (p: string) => void; onCreate: (name: string) => void;
   onRename: (it: TreeItem, name: string) => void; onMenu: (it: TreeItem, at?: { x: number; y: number }) => void;
   onDragStart: (p: string) => void; onDragOver: (p: string | null) => void; onDrop: (folder: string) => void;
@@ -792,40 +806,16 @@ function TreeLevel({ items, depth, ops }: { items: TreeItem[]; depth: number; op
         const isOpen = ops.open === null || ops.open.has(it.path);
         // drops onto a note land in that note's folder
         const target = it.dir ? it.path : it.path.split('/').slice(0, -1).join('/');
-        const dot = it.dir ? ops.dots.folders[it.path] : ops.dots.files[it.path];
-        const busy = it.dir ? ops.liveFolders.has(it.path) : ops.liveFiles.has(it.path);
-        const issues = (it.dir ? ops.marks.folders[it.path] : ops.marks.files[it.path]) ?? 0;
-        const issueTip = `${issues} Memory health ${issues === 1 ? 'issue' : 'issues'}${it.dir ? ' in this folder' : ''}`;
         return (
           <div key={it.path}>
             {ops.renaming === it.path ? (
               <RenameRow item={it} depth={depth} onDone={(name) => ops.onRename(it, name)} />
             ) : (
-              <div className={`kb-row ${dot || issues ? 'has-dot' : ''}${issues && it.dir ? ' has-count' : ''}`}>
-              <button role="treeitem" aria-expanded={it.dir ? isOpen : undefined} draggable
-                className={`kb-item ${ops.selected === it.path ? 'sel' : ''} ${it.dir ? 'dir' : ''} ${it.dir && ops.dropTarget === it.path ? 'drop' : ''} ${busy ? 'live' : ''}`}
-                aria-busy={busy || undefined}
-                style={{ paddingLeft: 10 + depth * 16 }}
-                onClick={() => (it.dir ? ops.onToggle(it.path) : ops.onOpen(it.path))}
-                onContextMenu={(e) => { e.preventDefault(); ops.onMenu(it); }}
-                onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; ops.onDragStart(it.path); }}
-                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); ops.onDragOver(target); }}
-                onDrop={(e) => { e.preventDefault(); e.stopPropagation(); ops.onDrop(target); }}>
-                {it.dir ? <FolderIcon rel={it.path} open={isOpen} /> : <span className="kb-spacer" />}
-                <span>{it.name}</span>
-                {(() => { const v = it.dir ? ops.locks.folders[it.path] : ops.locks.notes[it.path]; return v ? <IconLock className="kb-lock" width={12} height={12} role="img" aria-label={`Confidential: ${v}`} data-tip={`Confidential: ${v}`} /> : null; })()}
-                {it.dir && <FolderApp rel={it.path} />}
-              </button>
-              <button className="kb-more" aria-label={`More options for ${it.name}`} data-tip="More options"
-                onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); ops.onMenu(it, { x: r.left, y: r.bottom + 4 }); }}>
-                <IconMore width={16} height={16} />
-              </button>
-              {/* the issue mark sits at the far right of the row: a count on a folder, a red dot on a note */}
-              {issues > 0 && (it.dir
-                ? <span className="kb-issues" role="img" aria-label={issueTip} data-tip={issueTip}>{issues}</span>
-                : <span className="kb-dot red" role="img" aria-label={issueTip} data-tip={issueTip} />)}
-              {dot && !issues && <span className={`kb-dot ${dot}`} role="img" aria-label={dot === 'green' ? 'Updates to review' : 'Updated since you last opened it'} data-tip={dot === 'green' ? 'Updates to review' : 'Updated since you last opened it'} />}
-              </div>
+              <TreeRow it={it} depth={depth} isOpen={isOpen} sel={ops.selected === it.path} drop={it.dir && ops.dropTarget === it.path}
+                busy={it.dir ? ops.liveFolders.has(it.path) : ops.liveFiles.has(it.path)}
+                dot={it.dir ? ops.dots.folders[it.path] : ops.dots.files[it.path]}
+                issues={(it.dir ? ops.marks.folders[it.path] : ops.marks.files[it.path]) ?? 0}
+                lock={it.dir ? ops.locks.folders[it.path] : ops.locks.notes[it.path]} target={target} ops={ops.self} />
             )}
             {it.dir && isOpen && (
               <>
@@ -839,6 +829,44 @@ function TreeLevel({ items, depth, ops }: { items: TreeItem[]; depth: number; op
     </>
   );
 }
+
+type RowProps = { it: TreeItem; depth: number; isOpen: boolean; sel: boolean; drop: boolean; busy: boolean; dot: MemoryDots['files'][string] | undefined; issues: number; lock: string | undefined; target: string; ops: RefObject<TreeOps | null> };
+// a row renders again only when what it shows changed; a fresh tree from main has new objects with the same values
+const sameRow = (a: RowProps, b: RowProps) => a.it.path === b.it.path && a.it.name === b.it.name && a.it.dir === b.it.dir && a.depth === b.depth && a.isOpen === b.isOpen && a.sel === b.sel
+  && a.drop === b.drop && a.busy === b.busy && a.dot === b.dot && a.issues === b.issues && a.lock === b.lock && a.target === b.target;
+const TreeRow = memo(function TreeRow({ it, depth, isOpen, sel, drop, busy, dot, issues, lock, target, ops }: RowProps) {
+  const act = () => ops.current!;
+  const issueTip = `${issues} Memory health ${issues === 1 ? 'issue' : 'issues'}${it.dir ? ' in this folder' : ''}`;
+  return (
+    <div className={`kb-row ${dot || issues ? 'has-dot' : ''}${issues && it.dir ? ' has-count' : ''}`}>
+    <button role="treeitem" aria-expanded={it.dir ? isOpen : undefined} draggable
+      className={`kb-item ${sel ? 'sel' : ''} ${it.dir ? 'dir' : ''} ${drop ? 'drop' : ''} ${busy ? 'live' : ''}`}
+      aria-busy={busy || undefined}
+      style={{ paddingLeft: 10 + depth * 16 }}
+      onClick={() => (it.dir ? act().onToggle(it.path) : act().onOpen(it.path))}
+      onContextMenu={(e) => { e.preventDefault(); act().onMenu(it); }}
+      onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; act().onDragStart(it.path); }}
+      onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); act().onDragOver(target); }}
+      onDrop={(e) => { e.preventDefault(); e.stopPropagation(); act().onDrop(target); }}>
+      {it.dir ? <FolderIcon rel={it.path} open={isOpen} /> : <span className="kb-spacer" />}
+      <span>{it.name}</span>
+      {lock ? <IconLock className="kb-lock" width={12} height={12} role="img" aria-label={`Confidential: ${lock}`} data-tip={`Confidential: ${lock}`} /> : null}
+      {it.dir && <FolderApp rel={it.path} />}
+    </button>
+    <button className="kb-more" aria-label={`More options for ${it.name}`} data-tip="More options"
+      onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); act().onMenu(it, { x: r.left, y: r.bottom + 4 }); }}>
+      <IconMore width={16} height={16} />
+    </button>
+    {/* the issue mark sits at the far right of the row: a count on a folder, a red dot on a note */}
+    {issues > 0 && (it.dir
+      ? <span className="kb-issues" role="img" aria-label={issueTip} data-tip={issueTip}>{issues}</span>
+      : <span className="kb-dot red" role="img" aria-label={issueTip} data-tip={issueTip} />)}
+    {dot && !issues && <span className={`kb-dot ${dot}`} role="img" aria-label={dot === 'green' ? 'Updates to review' : 'Updated since you last opened it'} data-tip={dot === 'green' ? 'Updates to review' : 'Updated since you last opened it'} />}
+    </div>
+  );
+}, sameRow);
+
+const sameCounts = (a: Record<string, number>, b: Record<string, number>) => { const keys = Object.keys(a); return keys.length === Object.keys(b).length && keys.every((k) => a[k] === b[k]); };
 
 function RenameRow({ item, depth, onDone }: { item: TreeItem; depth: number; onDone: (name: string) => void }) {
   const ref = useRef<HTMLInputElement>(null);

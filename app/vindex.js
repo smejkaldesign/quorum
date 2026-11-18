@@ -409,6 +409,8 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     // the missing links of one note with the line each is on (0-based), for the Memory health review
     missingIn: (rel) => (unresolved.get(rel) ?? []).map((l) => ({ target: l.target.replace(/\.md$/i, '').trim(), line: l.line })),
     size: () => files.size,
+    // the watcher is running, so every change from here on is reported
+    watching: () => !!watcher && !stopped,
     rels: () => [...files.keys()],
     // the notes indexed by their head only (INDEX_MAX): a link past the head is in none of the backlinks
     cutRels: () => [...files].filter(([, f]) => f.cut).map(([rel]) => rel),
