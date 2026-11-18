@@ -1631,8 +1631,7 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .kbt-head { margin: 14px 8px 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
 .kbt-head-row { display: flex; align-items: center; justify-content: space-between; margin: 14px 2px 4px 8px; }
 .kbt-head-row .kbt-head { margin: 0; }
-.kbt-add { width: 24px; height: 24px; border-radius: 6px; }
-.kbt-badge { flex: none; margin-left: 2px; padding: 1px 6px; font-size: 10px; }
+.kbt-badge { flex: none; }
 .kbt-note { padding: 6px 8px; margin: 0; font-size: 13px; }
 .kbt-row { position: relative; display: flex; align-items: center; border-radius: 6px; }
 .kbt-row.drop { background: rgba(var(--brand-rgb), 0.16); box-shadow: inset 0 0 0 1px rgba(var(--brand-rgb), 0.5); }

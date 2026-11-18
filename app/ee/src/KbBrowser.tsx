@@ -308,7 +308,7 @@ export function KbBrowser({ me, query, wsAdmin = false, children }: { me: string
             <div ref={setSlot} className="kbt-slot" />
             <div className="kbt-head-row">
               <h4 className="kbt-head" id="kbt-label">Knowledge bases</h4>
-              <button className="icon-btn kbt-add" aria-label="New knowledge base" data-tip="New knowledge base" onClick={() => setCreating(true)}><IconPlus width={14} height={14} /></button>
+              <button className="icon-btn" aria-label="New knowledge base" data-tip="New knowledge base" onClick={() => setCreating(true)}><IconPlus width={14} height={14} /></button>
             </div>
             {listError && <p className="error kbt-note" role="alert">{listError}</p>}
             {kbs && !kbs.length && <p className="tk-empty kbt-note">No knowledge bases you can read yet.</p>}
