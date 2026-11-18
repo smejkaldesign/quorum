@@ -19,6 +19,7 @@ import type { FeedKind, FeedPage, FeedRow, FeedSort, FeedTab, FixRun } from './q
 import { Segmented } from './controls';
 import { BulkPlan } from './BulkPlan';
 import { NO_SELECTION, bulkView, dropAcross, keepOnPage, toggleAcross, toggleOne, togglePage, type BulkSel, type BulkView } from './bulkSelect';
+import { ACTIVITY_CHANGED, feedCounts, onFeedChange } from './feedEvents';
 
 // the left of the bulk bar, here and in Memory health: the checkbox for the page, the count (read out as it changes),
 // and Select all once the whole page is picked and more items match
@@ -44,7 +45,7 @@ const KINDS: [FeedKind, string][] = [
 const KIND_LABEL = Object.fromEntries(KINDS) as Record<FeedKind, string>;
 // Urgency is a future sort; it waits for a score per row (activityFeed.js)
 const SORTS: [FeedSort, string][] = [['unread', 'Unread first'], ['recent', 'Recent'], ['az', 'A to Z']];
-const CHANGED = 'quorum:activity-changed';
+const CHANGED = ACTIVITY_CHANGED;
 
 export const ago = (at: number) => {
   const s = Math.max(0, (Date.now() - at) / 1000);
@@ -55,20 +56,20 @@ export const ago = (at: number) => {
 };
 
 // runs fn now and again whenever the activity may have changed: upkeep finished, a memory changed, a file in the vault
-// changed, the Notifications switches changed, a note or memory was opened, or this view acted on a row. Once a
-// minute as well, so relative times and late writes catch up
+// changed, the Notifications switches changed, a note or memory was opened, or this view acted on a row (feedEvents.ts)
 function useActivityRefresh(fn: () => void) {
   const ref = useRef(fn);
   useEffect(() => { ref.current = fn; });
   useEffect(() => {
     const go = () => ref.current();
     go();
-    const offs = [window.quorum.onKeeper?.(go), window.quorum.onMemoryUpdates?.(go), window.quorum.onVaultChanged?.(go), window.quorum.onSettings?.(go), window.quorum.onFixRun?.(go)];
-    window.addEventListener(CHANGED, go);
-    window.addEventListener('quorum:memory-seen', go);
-    const t = window.setInterval(go, 60000);
-    return () => { offs.forEach((off) => off?.()); window.removeEventListener(CHANGED, go); window.removeEventListener('quorum:memory-seen', go); window.clearInterval(t); };
+    return onFeedChange(go);
   }, []);
+}
+// a clock for the relative times ("5min ago"), so they move on without reading the feed again
+function useMinuteTick() {
+  const [, setTick] = useState(0);
+  useEffect(() => { const t = window.setInterval(() => setTick((n) => n + 1), 60000); return () => window.clearInterval(t); }, []);
 }
 
 // the bell in the header, left of the avatar. Its blue dot shows while anything is unread or waits for review, for
@@ -76,7 +77,7 @@ function useActivityRefresh(fn: () => void) {
 export function NotificationBell({ active, onOpen }: { active: boolean; onOpen: () => void }) {
   const [dot, setDot] = useState(false);
   const [counts, setCounts] = useState({ review: 0, unread: 0 });
-  useActivityRefresh(() => { window.quorum.activityFeed({ tab: 'all', limit: 0 }).then((p) => { setDot(p.dot); setCounts(p.counts); }).catch(() => {}); });
+  useActivityRefresh(() => { feedCounts().then((p) => { setDot(p.dot); setCounts(p.counts); }).catch(() => {}); });
   const label = dot ? `Notifications, ${counts.review} to review, ${counts.unread} unread` : 'Notifications';
   return (
     <button className={`icon-btn bell-btn${active ? ' active' : ''}`} aria-label={label} data-tip="Notifications" onClick={onOpen}>
@@ -213,6 +214,7 @@ export function NotificationsView({ me, onOpenNote, onOpenGuardrails }: { me: { 
     }).catch(() => {});
   }, []);
   useActivityRefresh(load);
+  useMinuteTick();
   // a new tab, filter, sort or search ends Select all in the same render, so no action can take the old list's rows
   const queryKey = JSON.stringify([tab, review, kinds, sort, q]);
   const [bulkKey, setBulkKey] = useState(queryKey);
