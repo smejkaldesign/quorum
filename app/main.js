@@ -46,7 +46,7 @@ import { emptyState, finalNotes, mergeState, notesFromState, notesMarkdown, note
 import { buildTerms, orgOf, topNames } from './terms.js';
 import { MIX, TONES, addSound, addVoices, pickTone, spansOf, splitPiece } from './voices.js';
 import { applySpeakers, correctSpeaker, speakerOf, parseSpeakers, participantList, soloSpeakers, speakerView, speakersPrompt, speakersSystem } from './speakers.js';
-import { startControl } from './control.js';
+import { privateDir, startControl } from './control.js';
 import { PROVIDERS as DECISION_PROVIDERS, connectedProvider, decide as decideRaw, removeDecisionsKey, setDecisionsKey } from './decisions.js';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -174,6 +174,7 @@ function flushKbLinks() {
 // one copy per environment: the lock lives in the environment's own data folder (edition.js DATA_DIR: Quorum, or
 // Quorum Dev for a development copy), so the installed app and a development copy run side by side. Only one of them
 // should watch a call, so a development copy leaves auto-listen off while the installed app is running (see below).
+privateDir(DATA_DIR);
 app.setPath('userData', DATA_DIR);
 app.setPath('sessionData', DATA_DIR);
 // a second launch in the same environment hands over: the running copy gets 'second-instance' and opens its window,
