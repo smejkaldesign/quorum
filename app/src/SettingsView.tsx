@@ -13,10 +13,9 @@ import { useSession } from './session';
 import { EmptyState, Modal, ModalActions, Row, Toggle, useMenu } from './controls';
 import { AccountArea, BillingArea, DeleteAccountArea, DeleteOrgArea, EDITION, KnowledgeBasesArea, KnowledgeQueueArea, MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { TOP_ADMIN_PAGES, canAdmin, flagHiddenPages, modeOf, resolvePage, voiceMode, workspacePages, type Page } from './settingsNav';
-import { EnvSwitch } from './EnvSwitch';
-import { AgentRows, ConnectionCheckButton, ConnectionCheckList, useAgents, useConnectionCheck, type Agents } from './AgentLinks';
+import { AgentRows, ConnectionCheckButton, ConnectionCheckList, mcpLink, useAgents, useConnectionCheck } from './AgentLinks';
 import { MeetingSourcesRows } from './MeetingSources';
-import { useFlag, useFlags, useNotetaker } from './flags';
+import { useFlag, useNotetaker } from './flags';
 import { MemoryUpdatesCard } from './MemoryUpdates';
 import { MemoryRulesCard } from './MemoryRules';
 import { LocalModelsCard } from './LocalModels';
@@ -38,11 +37,12 @@ const ACCOUNT: Nav[] = [
 // the pages behind the Admin button; settingsNav.workspacePages decides which of them a build lists. The first two are
 // about the person; the rest sit under the Workspace heading
 const WORKSPACE: Nav[] = [
-  { id: 'general', label: 'General', icon: IconBuilding },
+  { id: 'general', label: 'General', icon: IconGlobe },
   { id: 'connectors', label: 'Connectors', icon: IconGrid },
   { id: 'notifications', label: 'Notifications', icon: IconBell },
   { id: 'developers', label: 'AI tools', icon: IconCode },
   { id: 'guardrails', label: 'Guardrails', icon: IconShield },
+  { id: 'organization', label: 'Organization', icon: IconBuilding },
   { id: 'teams', label: 'Teams', icon: IconPeople },
   { id: 'billing', label: 'Billing', icon: IconScale },
   { id: 'knowledge', label: 'Knowledge', icon: IconBrain },
@@ -89,7 +89,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   // a cloud build without hosted account config has no members to list, so the page leaves the nav; the team-level
   // pages come and go with the Teams page's switch
   const hosted = useHostedAccounts();
-  const listed = workspacePages(EDITION, hosted, account?.workspace?.teamEnabled === true, account?.workspace?.role);
+  const listed = workspacePages(EDITION, hosted, account?.workspace?.teamEnabled === true, account?.workspace?.role, account?.signedIn === true);
   const voice = voiceMode(nt.dictation, nt.manualListen);
   const guardrailsOn = useFlag('guardrails');
   const customGuardrails = useFlag('guardrails-custom');
@@ -177,11 +177,12 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
             : <h1 className={`set-title${page === 'connectors' ? ' crumbs' : ''}`}>{current.label}{current.soon && <Soon />}{page === 'connectors' && <span className="crumb-actions" id="conn-title-actions" />}</h1>}
           {page === 'preferences' && <p className="set-lede">Quorum works best knowing a little about you. Quorum uses this when it writes your meeting notes and answers questions.</p>}
           {page === 'knowledge' && <p className="set-lede">Company knowledge for your whole workspace, chosen by admins.</p>}
-          {page === 'general' && <p className="set-lede">Settings for everyone in your workspace. Quorum gives this context to every meeting summary and answer, so it's the same for each person.</p>}
+          {page === 'general' && <p className="set-lede">{(listed as string[]).includes('organization') ? 'Your Quorum account.' : 'Your Quorum account, and the company context Quorum gives every meeting summary and answer.'}</p>}
+          {page === 'organization' && <p className="set-lede">Your company, the words that stop and start Quorum in a call, and the people Quorum never records. Quorum uses this for everyone in the workspace.</p>}
           {page === 'teams' && <p className="set-lede">A workspace starts as yours alone. Turn on a team to invite members and build knowledge together.</p>}
           {page === 'billing' && <p className="set-lede">Your plan, the card it charges, and this month's usage against the hours it includes.</p>}
           {page === 'connectors' && !connectorDetail && !connLib && <p className="set-lede">The apps and MCP servers Quorum is connected to, by area.</p>}
-          {page === 'developers' && <p className="set-lede">Model providers, Claude Code and Terminal access, and API keys for your own scripts.</p>}
+          {page === 'developers' && <p className="set-lede">The AI tools Quorum works with, and how it uses them.</p>}
           {page === 'preferences' ? (
             <ProfilePage settings={settings} email={showEmail ? email : ''} emailLabel={emailLabel} name={user?.name ?? ''} onSettings={onSettings}>
               <h3>General</h3>
@@ -197,10 +198,11 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
           ) : page === 'knowledge' ? (
             <KnowledgePage />
           ) : page === 'general' ? (
-            <WorkspacePage settings={settings} onSettings={onSettings} onGo={go} billing={(listed as string[]).includes('billing')}
-              company={(listed as string[]).includes('teams') && account?.workspace?.teamEnabled === true ? null : <CompanyCard settings={settings} onSettings={onSettings} />} />
+            <WorkspacePage settings={settings} onSettings={onSettings} onGo={go} billing={(listed as string[]).includes('billing')} organization={(listed as string[]).includes('organization')} />
+          ) : page === 'organization' ? (
+            <OrganizationPage settings={settings} onSettings={onSettings} />
           ) : page === 'teams' ? (
-            <TeamsArea company={<CompanyCard settings={settings} onSettings={onSettings} />} />
+            <TeamsArea company={null} />
           ) : page === 'billing' ? (
             <BillingArea />
           ) : page === 'memory' ? (
@@ -575,18 +577,51 @@ export function CompanyCard({ settings, onSettings }: { settings: Settings; onSe
 
 // `company` is the CompanyCard while this page is its home: the Local edition, a Cloud build without a hosted account,
 // and a workspace whose team is off. Once a team is on, the card lives on the Teams page and this one gets null
-function WorkspacePage({ settings, onSettings, onGo, billing, company }: { settings: Settings; onSettings: (s: Settings) => void; onGo: (p: Page) => void; billing: boolean; company: ReactNode }) {
+// Admin > General: the account. Once Organization is listed (Cloud, signed in, owner or admin) the company settings
+// live there; otherwise they stay here, since the opt-out list works without a workspace
+function WorkspacePage({ settings, onSettings, onGo, billing, organization }: { settings: Settings; onSettings: (s: Settings) => void; onGo: (p: Page) => void; billing: boolean; organization: boolean }) {
+  return (
+    <>
+      <AccountArea local={<><h3>Account</h3><p className="muted">Local edition. Your meetings and notes stay on this Mac.</p></>}
+        unconfigured={<><h3>Account</h3><p className="muted">Hosted accounts are not set up in this build</p></>} />
+      <ProductionNote />
+      {billing && <p className="set-note">The plan, the card on file and this month's usage live under <button className="link-btn" onClick={() => onGo('billing')}>Billing</button>.</p>}
+      {!organization && <CompanySettings settings={settings} onSettings={onSettings} />}
+    </>
+  );
+}
+
+// a development copy pointed at production data says so in red, with the way back to its own data
+function ProductionNote() {
+  const [on, setOn] = useState(false);
+  useEffect(() => { window.quorum.envStatus().then((s) => setOn(!!s?.useProduction)).catch(() => {}); }, []);
+  if (!on) return null;
+  return (
+    <div className="set-card">
+      <Row icon={<IconInfo width={18} height={18} />} title="Connected to production" desc="This development copy reads and writes production data.">
+        <button className="pill small-pill" onClick={async () => { const s = await window.quorum.envSetProduction(false); setOn(!!s?.useProduction); }}>Use development data</button>
+      </Row>
+    </div>
+  );
+}
+
+// Admin > Organization: the company card, the stop and go words, the opt-out list, and deleting the workspace
+function OrganizationPage({ settings, onSettings }: { settings: Settings; onSettings: (s: Settings) => void }) {
+  return (
+    <>
+      <CompanySettings settings={settings} onSettings={onSettings} />
+      <DeleteOrgArea />
+    </>
+  );
+}
+
+function CompanySettings({ settings, onSettings }: { settings: Settings; onSettings: (s: Settings) => void }) {
   const w = settings.workspace ?? {};
   const save = async (patch: Partial<Workspace>) => onSettings(await window.quorum.setSettings({ workspace: patch }));
   const nt = useNotetaker();
   return (
     <>
-      <AccountArea local={<><h3>Account</h3><p className="muted">Local edition. Your meetings and notes stay on this Mac.</p></>}
-        unconfigured={<><h3>Account</h3><p className="muted">Hosted accounts are not set up in this build</p></>} />
-      {billing && <p className="set-note">The plan, the card on file and this month's usage live under <button className="link-btn" onClick={() => onGo('billing')}>Billing</button>.</p>}
-      <EnvSwitch />
-      {company}
-
+      <CompanyCard settings={settings} onSettings={onSettings} />
       {nt.meetingCapture && <>
       <h3>Meetings</h3>
       <div className="set-card form words">
@@ -597,8 +632,6 @@ function WorkspacePage({ settings, onSettings, onGo, billing, company }: { setti
       </div>
       <CustomerBlacklist list={w.optOuts ?? (w.neverListen ?? []).map((domain) => ({ domain }))} onChange={(optOuts) => save({ optOuts })} />
       </>}
-
-      <DeleteOrgArea />
     </>
   );
 }
@@ -888,7 +921,7 @@ function NotificationsPage({ settings, set }: { settings: Settings; set: (patch:
 
 // one connection for the whole workspace: a System One decision model (OpenAI decisions or TypeSafe Jev) for quick yes-or-no checks.
 // No backend yet, so the key sits in this Mac's Keychain
-function WorkspaceDecisions({ connectedBy }: { connectedBy?: string }) {
+function WorkspaceDecisions({ connectedBy, bare = false }: { connectedBy?: string; bare?: boolean }) {
   const [dk, setDk] = useState<DecisionsStatus | null>(null);
   const [more, setMore] = useMenu();
   const [pick, setPick] = useMenu();
@@ -898,8 +931,7 @@ function WorkspaceDecisions({ connectedBy }: { connectedBy?: string }) {
   const on = !!dk?.connected && !!dk.provider;
   const name = on && dk?.provider ? dk.providers[dk.provider].name : 'Decision checks';
   const ids = (Object.keys(dk?.providers ?? {}) as DecisionProvider[]);
-  return (
-    <div className="set-card">
+  const inner = (<>
       <Row icon={on && dk?.provider ? <ProviderMark provider={dk.provider} /> : <IconShield width={18} height={18} />} title={name}
         desc={on ? `Quick yes-or-no checks for everyone${connectedBy ? ` · set up by ${connectedBy}` : ''}` : 'Quick yes-or-no checks during calls: STOP said another way, what is worth a note, when to look for an answer'}>
         {on ? (
@@ -925,8 +957,8 @@ function WorkspaceDecisions({ connectedBy }: { connectedBy?: string }) {
         )}
       </Row>
       {keying && dk && <DecisionsKey provider={keying} info={dk.providers[keying]} onDone={(ok) => { setKeying(null); if (ok) refresh(); }} />}
-    </div>
-  );
+    </>);
+  return bare ? inner : <div className="set-card">{inner}</div>;
 }
 
 // the key is checked with one tiny question, then saved to the Keychain
@@ -955,48 +987,6 @@ function DecisionsKey({ provider, info, onDone }: { provider: DecisionProvider; 
 
 // Quorum reached from outside: the MCP server in Claude Code and Codex, and the quorum command in Terminal. Claude Code
 // as a model provider is a row in PersonalConnectors above
-function ClaudeCard() {
-  const agents = useAgents();
-  const check = useConnectionCheck(agents);
-  return (
-    <>
-      <div className="set-head"><h3>Connect to AI tools</h3></div>
-      <p className="mcp-lede">Give Claude Code, Codex and Terminal access to your notes and meetings through the quorum MCP server and command.</p>
-      <div className="set-card">
-        <McpRows agents={agents} />
-      </div>
-      <div className="conn-check-head">
-        <p className="mcp-lede">Check connection makes sure your agent can reach Quorum's meeting notes. It changes nothing in your Agent OS folder.</p>
-        <ConnectionCheckButton running={check.running} onRun={check.run} />
-      </div>
-      {check.result && <ConnectionCheckList result={check.result} running={check.running} onAction={check.act} />}
-    </>
-  );
-}
-
-// the agent rows (AgentLinks.tsx) and the Access choice. All run the CLI that ships beside the app; nothing listens on
-// a port
-function McpRows({ agents }: { agents: Agents }) {
-  const [access, setAccess] = useState<'read' | 'write'>('write');
-  useEffect(() => { window.quorum.getSettings().then((st) => setAccess(st.access ?? 'write')); }, []);
-  return (
-    <>
-        <AgentRows agents={agents} variant="settings" manual={(command) => (
-          <div className="row-extra">
-            <p className="copy-label">Or run Quorum in Terminal with its full path</p>
-            <CopyField value={command} />
-          </div>
-        )} />
-        <Row icon={<IconLock width={18} height={18} />} title="Access" desc="Your workspace admin will set this later">
-          <select className="set-select" aria-label="Access" value={access} onChange={async (e) => { const v = e.target.value as 'read' | 'write'; setAccess(v); await window.quorum.setSettings({ access: v }); }}>
-            <option value="write">Read and write</option>
-            <option value="read">Read only</option>
-          </select>
-        </Row>
-    </>
-  );
-}
-
 // a read-only value with a copy button; the check stays 5 seconds, then dissolves back to the copy icon
 function CopyField({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
@@ -1081,62 +1071,57 @@ function MeetingsPage({ settings, onSettings, onConnector, teamMeetings, folders
 }
 
 function DevelopersPage({ settings, onSettings }: { settings: Settings; onSettings: (s: Settings) => void }) {
+  const agents = useAgents();
+  const check = useConnectionCheck(agents);
+  const api = useFlag('personal-api');
   return (
     <>
-      <ClaudeCard />
-      <div className="set-card">
-      <Row icon={<IconBrain width={18} height={18} />} title="Let AI tools change memory and knowledge bases"
-        desc="Claude Code, Codex and other AI tools connected through the quorum MCP can approve and archive items in Needs review, undo fixes and create knowledge bases, through the same steps as the buttons here. Each fix shows which tool approved it and keeps its Undo. Reading Needs review, marking items read and starting Check everything now work without this; a tool can start the check only while Let the agent draft fixes is on, and never turns it on. Off by default.">
-        <Toggle on={settings.memoryAgentActions === true} onChange={async (v) => onSettings(await window.quorum.setSettings({ memoryAgentActions: v }))} />
-      </Row>
-      </div>
-      <h3>Decision checks</h3>
-      <WorkspaceDecisions connectedBy={settings.workspace?.decisions?.by} />
-      <PersonalConnectors />
-      <FlagsCard />
-      <h3>API</h3>
-      <p className="mcp-lede">Keys for scripts and tools to reach your notes.</p>
-      <div className="set-card">
-        <Row icon={<IconCode width={18} height={18} />} title={<>Personal API keys<Soon /></>} desc="Will issue keys that let your scripts and tools read and write your notes">
-          <button className="icon-btn" disabled aria-label="Manage API keys"><IconChevron className="right" /></button>
-        </Row>
-      </div>
+      <PersonalConnectors mcp={{ 'claude-code': mcpLink(agents, 'claude'), codex: mcpLink(agents, 'codex') }}
+        top={<AgentRows agents={agents} variant="settings" only={['cli']} manual={(command) => (
+          <div className="row-extra">
+            <p className="copy-label">Or run Quorum in Terminal with its full path</p>
+            <CopyField value={command} />
+          </div>
+        )} />}
+        below={<>
+          <div className="conn-check-head">
+            <p className="mcp-lede">Check connection makes sure your AI tools can reach Quorum's meeting notes. It changes nothing in your folder.</p>
+            <ConnectionCheckButton running={check.running} onRun={check.run} />
+          </div>
+          {check.result && <ConnectionCheckList result={check.result} running={check.running} onAction={check.act} />}
+        </>}
+        settingsRows={<>
+          <AccessRow />
+          <Row icon={<IconBrain width={18} height={18} />} title="Let AI tools change memory and knowledge bases"
+            desc="Lets Claude Code, Codex and other AI tools approve, archive and undo memory fixes and create knowledge bases. Off by default.">
+            <Toggle on={settings.memoryAgentActions === true} onChange={async (v) => onSettings(await window.quorum.setSettings({ memoryAgentActions: v }))} />
+          </Row>
+          <WorkspaceDecisions connectedBy={settings.workspace?.decisions?.by} bare />
+        </>} />
+      {api && <>
+        <h3>API</h3>
+        <p className="mcp-lede">Keys for scripts and tools to reach your notes.</p>
+        <div className="set-card">
+          <Row icon={<IconCode width={18} height={18} />} title={<>Personal API keys<Soon /></>} desc="Will issue keys that let your scripts and tools read and write your notes">
+            <button className="icon-btn" disabled aria-label="Manage API keys"><IconChevron className="right" /></button>
+          </Row>
+        </div>
+      </>}
     </>
   );
 }
 
-// the feature flags this copy runs with (app/flags.js): read-only here, the admin app sets them; each row names where
-// its value came from, and Refresh asks the relay now instead of waiting for the hourly read
-const FLAG_SOURCE: Record<string, string> = { env: 'QUORUM_FLAGS in the environment', relay: 'the relay', cache: 'the last relay answer, cached', defaults: 'built into this build' };
-function FlagsCard() {
-  const state = useFlags();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const refresh = async () => {
-    setBusy(true); setError(null);
-    try { const r = await window.quorum.flagsRefresh(); if (r.ok === false) setError(r.error || 'The flags could not be read.'); }
-    catch { setError('The flags could not be read.'); }
-    finally { setBusy(false); }
-  };
-  const shownError = error ?? state.error ?? null;
-  const entries = Object.entries(state.flags).sort(([a], [b]) => a.localeCompare(b));
+// read and write, or read only, for every AI tool that reaches Quorum through the MCP or the CLI
+function AccessRow() {
+  const [access, setAccess] = useState<'read' | 'write'>('write');
+  useEffect(() => { window.quorum.getSettings().then((st) => setAccess(st.access ?? 'write')); }, []);
   return (
-    <>
-      <div className="set-head">
-        <h3>Feature flags</h3>
-        <span className="set-head-actions"><button className="pill small-pill" disabled={busy} onClick={refresh}>{busy ? 'Reading…' : 'Refresh'}</button></span>
-      </div>
-      <p className="mcp-lede">Switches set in the admin app. A change takes effect as soon as this copy reads it, with no restart; screen-context needs manual-listen on. This copy reads them on launch and every hour{state.fetchedAt ? `; last read ${new Date(state.fetchedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '; not read from the relay yet'}.</p>
-      {shownError && <p className="set-error">{shownError} The values below are the last ones this copy had.</p>}
-      <div className="set-card">
-        {entries.length === 0 && <Row icon={<IconSliders width={18} height={18} />} title="No flags yet" desc="The relay has not answered and this build has no defaults" />}
-        {entries.map(([key, v]) => (
-          <Row key={key} icon={<IconSliders width={18} height={18} />} title={<code className="ac-code">{key}</code>} desc={`${v.enabled ? 'On' : 'Off'}, from ${FLAG_SOURCE[v.source] ?? v.source}${v.blockedBy ? `; off because ${v.blockedBy} is off` : v.requires ? `; needs ${v.requires}` : ''}`}>
-            <Toggle on={v.enabled} disabled onChange={() => {}} />
-          </Row>
-        ))}
-      </div>
-    </>
+    <Row icon={<IconLock width={18} height={18} />} title="Access" desc="What AI tools may do with your notes and meetings">
+      <select className="set-select" aria-label="Access" value={access} onChange={async (e) => { const v = e.target.value as 'read' | 'write'; setAccess(v); await window.quorum.setSettings({ access: v }); }}>
+        <option value="write">Read and write</option>
+        <option value="read">Read only</option>
+      </select>
+    </Row>
   );
 }
 
