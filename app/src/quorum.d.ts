@@ -225,7 +225,7 @@ export type KbAccess = { principal: 'workspace' | 'team' | 'user'; userId: strin
 export type KbAccessDraft = { principal: 'workspace' | 'team' | 'user'; userId?: string; teamId?: string; role?: KbRole };
 // folder and git are Mac-side sources; github and zip record where kb-import last read the KB from
 export type KbSource = { kind: 'folder' | 'git' | 'github' | 'zip' | 'hosted'; url: string | null; path: string | null; branch: string | null; subpath: string | null; name: string | null; importedAt: string | null };
-export type Kb = { id: string; name: string; kind: KbKind; teamId: string | null; isDefault: boolean; source: KbSource | null; role: KbRole; hosted?: boolean; writable?: boolean; createdAt: string | null; updatedAt: string | null; folders: KbFolderNode[]; access: KbAccess[] | null };
+export type Kb = { id: string; name: string; kind: KbKind; teamId: string | null; isDefault: boolean; personal?: boolean; source: KbSource | null; role: KbRole; hosted?: boolean; writable?: boolean; createdAt: string | null; updatedAt: string | null; folders: KbFolderNode[]; access: KbAccess[] | null };
 export type KbImportSource = { kind: 'github'; url: string; branch?: string } | { kind: 'zip'; path: string };
 export type KbImportRequest = { kbId?: string; name?: string; source?: KbImportSource; folderId?: string };
 export type KbImportSkipped = { path: string; reason: string };
@@ -722,7 +722,7 @@ declare global {
       teamDelete(teamId: string): Promise<Result & { ok?: true }>;
       teamMemberSet(draft: { teamId: string; userId: string; role?: TeamRole }): Promise<Result & { team?: Team }>;
       teamMemberRemove(draft: { teamId: string; userId: string }): Promise<Result & { team?: Team }>;
-      kbCreate(draft: { name: string; kind?: KbKind }): Promise<Result & { kb?: Kb }>;
+      kbCreate(draft: { name: string; kind?: KbKind; personal?: boolean }): Promise<Result & { kb?: Kb }>;
       kbRename(kbId: string, name: string): Promise<Result & { kb?: Kb }>;
       kbDelete(kbId: string): Promise<Result>;
       kbFolderCreate(draft: { kbId: string; parentId?: string | null; name: string; position?: number }): Promise<Result & { folder?: KbFolder }>;

@@ -7,9 +7,11 @@
 // refusal, or to the result shown here. Ids are ULID strings; user ids are auth UUIDs.
 //
 //   kb-list          ()                                          -> { kbs: Kb[] }               readable KBs, default first
-//   kb-create        ({ name, kind? })                           -> { kb: Kb }                  owners and admins only
+//   kb-create        ({ name, kind?, personal? })                -> { kb: Kb }                  owners and admins; with
+//                                                                                               personal, any member (0041)
 //   kb-rename        (kbId, name)                                -> { kb: Kb }
-//   kb-delete        (kbId)                                      -> { ok: true }                owners and admins only;
+//   kb-delete        (kbId)                                      -> { ok: true }                owners and admins; a
+//                                                                                               personal KB's owner only;
 //                                                                                               a hosted KB's files go too
 //   kb-folder-create ({ kbId, parentId?, name, position? })      -> { folder: Folder }
 //   kb-folder-rename (folderId, name)                            -> { folder: Folder }
@@ -22,8 +24,9 @@
 //   kb-notes         (kbId)                                      -> { notes: KbNote[] }         readable notes in a KB, all pages
 //   kb-suggestion, kb-suggestion-apply, kb-suggestion-dismiss    Quorum's edits kept as suggestions (ee/kbUpstream.js)
 //
-//   Kb          { id, name, kind: 'general' | 'meetings', teamId, isDefault, source, role: 'admin' | 'editor' | 'reader',
+//   Kb          { id, name, kind: 'general' | 'meetings', teamId, isDefault, personal, source, role: 'admin' | 'editor' | 'reader',
 //                 hosted, writable, createdAt, updatedAt, folders: FolderNode[], access: Access[] | null }
+//               personal is a KB only its owner reads and manages (0041); workspace owners and admins do not read it.
 //               folders is the tree; access is null unless role is admin. source is { kind, url, path, branch,
 //               subpath, name, importedAt } or null: kind folder or git is a Mac-side source (the default KB carries the 0020
 //               team source); kind github or zip is where kb-import (ee/kbImport.js) last read the KB from; kind
@@ -37,13 +40,13 @@
 //   Placement   { noteId, kbId, folderId, updatedAt }
 //   KbNote      { id, path, title, folderId, userId, updatedAt }
 //
-// Rights: workspace owners and admins create and delete KBs and manage all of them; a KB admin (role admin in its
-// access list) renames it, manages its folders and readers, and adds their own shared notes to it; moving another
-// member's note takes a workspace owner or admin; readers read. Only a note shared with the workspace (visibility
-// public, not confidential) sits in a KB: its author can always take it out, and a note that stops being shared, or
-// whose contribution is declined, leaves. With a team switched on, the workspace's default KB receives every note the
-// review queue includes. Pull sync (ee/sync.js) carries each note's kb_id and folder_id onto the local id map and
-// into a shared note's bond.
+// Rights: workspace owners and admins create and delete workspace KBs and manage all of them; any member creates,
+// fills and deletes their own personal KBs; a KB admin (role admin in its access list) renames it, manages its
+// folders and readers, and adds their own shared notes to it; moving another member's note takes a workspace owner or
+// admin; readers read. Only a note shared with the workspace (visibility public, not confidential) sits in a KB: its
+// author can always take it out, and a note that stops being shared, or whose contribution is declined, leaves. With
+// a team switched on, the workspace's default KB receives every note the review queue includes. Pull sync
+// (ee/sync.js) carries each note's kb_id and folder_id onto the local id map and into a shared note's bond.
 import { plain } from './account.js';
 import { createKbSuggestions } from './kbUpstream.js';
 
@@ -78,7 +81,7 @@ export function folderTree(rows = []) {
 export const shapeAccess = (a) => ({ principal: a.principal, userId: a.user_id ?? null, teamId: a.team_id ?? null, role: a.role, email: a.email ?? null, name: a.name ?? null });
 export const shapeFolder = (f) => (f ? { id: f.id, kbId: f.kb_id, parentId: f.parent_id ?? null, name: f.name, position: f.position ?? 0 } : null);
 export const shapeKb = (k) => ({
-  id: k.id, name: k.name, kind: KB_KINDS.includes(k.kind) ? k.kind : 'general', teamId: k.team_id ?? null, isDefault: !!k.is_default,
+  id: k.id, name: k.name, kind: KB_KINDS.includes(k.kind) ? k.kind : 'general', teamId: k.team_id ?? null, isDefault: !!k.is_default, personal: k.personal === true,
   source: k.source && typeof k.source === 'object' && SOURCE_KINDS.includes(k.source.kind)
     ? { kind: k.source.kind, url: k.source.url ?? null, path: k.source.path ?? null, branch: k.source.branch ?? null, subpath: k.source.subpath ?? null, name: k.source.name ?? null, importedAt: k.source.imported_at ?? null }
     : null,
@@ -166,19 +169,25 @@ export function createKnowledgeBases({ account, log = () => {} }) {
 
   const handlers = {
     'kb-list': call(false, 'The knowledge bases could not be read.', async () => ({ kbs: await listKbs() })),
-    'kb-create': call(true, 'The knowledge base could not be created.', async (draft = {}) => {
-      const n = checkName(draft.name); if (n.error) return n;
-      const kind = draft.kind ?? 'general';
-      if (!KB_KINDS.includes(kind)) return { error: 'A knowledge base is general or meetings.' };
-      return { kb: shapeKb(await rpc('kb_create', { workspace_id: ws(), name: n.name, kind })) };
-    }),
+    // a personal KB is any member's; a workspace KB is for owners and admins
+    'kb-create': async (draft = {}) => {
+      const personal = draft?.personal === true;
+      return call(!personal, 'The knowledge base could not be created.', async () => {
+        const n = checkName(draft.name); if (n.error) return n;
+        const kind = draft.kind ?? 'general';
+        if (!KB_KINDS.includes(kind)) return { error: 'A knowledge base is general or meetings.' };
+        if (personal && kind !== 'general') return { error: 'A personal knowledge base is a general one.' };
+        return { kb: shapeKb(await rpc('kb_create', { workspace_id: ws(), name: n.name, kind, ...(personal ? { personal: true } : {}) })) };
+      })();
+    },
     'kb-rename': call(false, 'The knowledge base could not be renamed.', async (kbId, name) => {
       const n = checkName(name); if (n.error) return n;
       return { kb: shapeKb(await rpc('kb_rename', { kb_id: need(kbId, 'knowledge base'), name: n.name })) };
     }),
     // the answer lists the Storage objects of the KB's files (a KB hosted by Quorum, 0034), pending uploads included;
-    // they go once the delete went through. One that does not go now stays in the trash for the relay's sweep
-    'kb-delete': call(true, 'The knowledge base could not be deleted.', async (kbId) => {
+    // they go once the delete went through. One that does not go now stays in the trash for the relay's sweep. A member
+    // deletes their own personal KB, so the server decides who may
+    'kb-delete': call(false, 'The knowledge base could not be deleted.', async (kbId) => {
       const r = await rpc('kb_delete', { kb_id: need(kbId, 'knowledge base') });
       await removeKbObjects(account.client(), r?.objects, log);
       return { ok: true };

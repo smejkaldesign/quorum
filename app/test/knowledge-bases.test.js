@@ -43,6 +43,9 @@ describe('what the renderer gets', () => {
     expect(kb).toMatchObject({ id: KB, name: 'Handbook', kind: 'general', isDefault: true, role: 'admin', source: { kind: 'git', url: 'https://example.com/kb.git', path: null } });
     expect(kb.access).toEqual([{ principal: 'workspace', userId: null, teamId: null, role: 'reader', email: null, name: null }]);
     expect(shapeKb({ id: 'x', name: 'n', kind: 'odd', role: 'owner', source: { kind: 'sync' }, access: null })).toMatchObject({ kind: 'general', role: 'reader', source: null, access: null, folders: [] });
+    expect(kb.personal).toBe(false);
+    expect(shapeKb({ ...ROW, personal: true }).personal).toBe(true);
+    expect(shapeKb({ ...ROW, personal: 'yes' }).personal).toBe(false);
   });
 
   it('checks names and access lists before the server sees them', () => {
@@ -81,13 +84,30 @@ describe('the IPC handlers', () => {
   it('stop before the server when signed out, without a workspace, or as a member creating a KB', async () => {
     expect((await createKnowledgeBases(fakeAccount({ signedIn: false })).handlers['kb-list']()).error).toMatch(/Sign in/);
     expect((await createKnowledgeBases(fakeAccount({ role: 'member' })).handlers['kb-create']({ name: 'X' })).error).toMatch(/Only owners and admins/);
-    expect((await createKnowledgeBases(fakeAccount({ role: 'member' })).handlers['kb-delete'](KB)).error).toMatch(/Only owners and admins/);
     const f = fakeAccount();
     expect((await createKnowledgeBases(f).handlers['kb-create']({ name: ' ' })).error).toMatch(/needs a name/);
     expect((await createKnowledgeBases(f).handlers['kb-create']({ name: 'X', kind: 'wiki' })).error).toMatch(/general or meetings/);
     expect((await createKnowledgeBases(f).handlers['kb-folder-move']({ folderId: 'F1', parentId: 'F1' })).error).toMatch(/inside itself/);
     expect((await createKnowledgeBases(f).handlers['kb-rename'](null, 'Name')).error).toMatch(/Pick the knowledge base/);
     expect(f.calls).toEqual([]);
+  });
+
+  it('let a member make a personal KB and leave every other create to owners and admins', async () => {
+    const mine = { ...ROW, id: 'P1', name: 'QA', is_default: false, source: null, personal: true, access: [{ principal: 'user', user_id: 'me', team_id: null, role: 'admin', email: 'me@example.com', name: null }] };
+    const f = fakeAccount({ role: 'member', answers: { kb_create: mine } });
+    const h = createKnowledgeBases(f).handlers;
+    const r = await h['kb-create']({ name: ' QA ', personal: true });
+    expect(r.kb).toMatchObject({ id: 'P1', name: 'QA', personal: true, role: 'admin' });
+    expect(r.kb.access).toEqual([{ principal: 'user', userId: 'me', teamId: null, role: 'admin', email: 'me@example.com', name: null }]);
+    expect((await h['kb-create']({ name: 'Wiki' })).error).toMatch(/Only owners and admins/);
+    expect((await h['kb-create']({ name: 'Calls', kind: 'meetings', personal: true })).error).toMatch(/general one/);
+    expect(f.calls).toEqual([['kb_create', { workspace_id: 'W', name: 'QA', kind: 'general', personal: true }]]);
+  });
+
+  it('send a member\'s delete to the server, which decides whose KB it is', async () => {
+    const f = fakeAccount({ role: 'member', answers: { kb_delete: new Error('That knowledge base no longer exists') } });
+    expect((await createKnowledgeBases(f).handlers['kb-delete'](KB)).error).toMatch(/no longer exists/);
+    expect(f.calls).toEqual([['kb_delete', { kb_id: KB }]]);
   });
 
   it('call the RPCs with the names and arguments the migration defines', async () => {

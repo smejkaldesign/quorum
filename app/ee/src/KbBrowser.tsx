@@ -3,8 +3,8 @@ import type { Kb, KbNote } from '../../src/quorum';
 import { Markdown } from '../../src/Markdown';
 import { matchesQuery } from '../../src/mainTabs';
 import { IconBack, IconBrain, IconChevron, IconDoc, IconFolder, IconMore, IconPlus, IconStack } from '../../src/icons';
-import { canArrange, descendantIds, findFolder, folderPath, moveCheck, moveTargets, notesIn, openPathTo, resolveKbLink, rowKey, treeKey, visibleRows, withFolder, withoutFolder, type TreeRow } from './kbTree';
-import { KB_CHANGED, kbCall, KbConfirm, useLatest } from './kbUi';
+import { canArrange, canDeleteKb, createScopes, descendantIds, findFolder, folderPath, moveCheck, moveTargets, notesIn, openPathTo, resolveKbLink, rowKey, treeKey, visibleRows, withFolder, withoutFolder, SCOPE_LABEL, type KbScope, type TreeRow } from './kbTree';
+import { announceKbChange, KB_CHANGED, kbCall, KbConfirm, ScopePicker, useLatest } from './kbUi';
 import { DrivePanel, hasDrive } from './KbDrive';
 import { hasKbSync, SyncPanel, type SyncSource } from './KbSync';
 import { KbSuggestionBanner } from './KbSuggestion';
@@ -17,7 +17,9 @@ import { Modal, ModalActions } from '../../src/controls';
 // KB the person can read with its folders inside; the selected folder's notes on the right. KB admins create, rename,
 // move (drag, or Move to) and delete folders. With the team entry selected the right side shows `children`, the team
 // knowledge view as it was; it stays mounted while a KB is open so its place is kept. An admin opening a synced note
-// sees what Quorum changed in its copy, and a suggestion kept from before the source changed (KbSuggestion).
+// sees what Quorum changed in its copy, and a suggestion kept from before the source changed (KbSuggestion). Anyone
+// makes a personal KB (Only me) here with the + next to the heading, and can start it from a GitHub repository; its
+// row carries an Only me badge and a Delete in its menu for its owner.
 
 type Sel = { kbId: string; folderId: string | null };
 type Edit = { mode: 'rename'; kbId: string; folderId: string | null; name: string } | { mode: 'new'; kbId: string; parentId: string | null; name: string };
@@ -32,7 +34,7 @@ const onDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(u
 export const TeamSideSlot = createContext<{ slot: HTMLElement | null; showTeam: () => void } | null>(null);
 export const useTeamSide = () => useContext(TeamSideSlot);
 
-export function KbBrowser({ me, query, children }: { me: string | null; query: string; children: ReactNode }) {
+export function KbBrowser({ me, query, wsAdmin = false, children }: { me: string | null; query: string; wsAdmin?: boolean; children: ReactNode }) {
   const [slot, setSlot] = useState<HTMLDivElement | null>(null);
   const [kbs, setKbs] = useState<Kb[] | null>(null);
   const [listError, setListError] = useState('');
@@ -51,6 +53,8 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
   const [driving, setDriving] = useState<{ kbId: string; folderId: string | null } | null>(null);
   const [syncing, setSyncing] = useState<{ kbId: string; folderId: string | null; source: SyncSource } | null>(null);
   const [dropKey, setDropKey] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [dropping, setDropping] = useState<Kb | null>(null);
   const refs = useRef(new Map<string, HTMLButtonElement>());
 
   // one read of the list at a time counts: a later read's answer replaces an earlier one's, never the other way
@@ -174,6 +178,24 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
     focusRow(rowKey(d.kbId, null));
   };
 
+  const dropKb = async (kb: Kb) => {
+    setDropping(null);
+    setError('');
+    const r = await kbCall(() => window.quorum.kbDelete(kb.id), 'The knowledge base could not be deleted.');
+    if (r.error) { setError(r.error); return; }
+    announceKbChange();
+    if (sel?.kbId === kb.id) select(null);
+    setKbs((list) => (list ?? []).filter((k) => k.id !== kb.id));
+  };
+  const made = (kb: Kb, github: boolean) => {
+    setCreating(false);
+    announceKbChange();
+    setKbs((list) => [...(list ?? []).filter((k) => k.id !== kb.id), kb]);
+    openKeys([rowKey(kb.id, null)]);
+    select({ kbId: kb.id, folderId: null });
+    if (github) setSyncing({ kbId: kb.id, folderId: null, source: 'github' });
+  };
+
   const openNote = async (n: KbNote, kbId: string | null = sel?.kbId ?? null) => {
     setError('');
     const inKb = kbId ? kbOf(kbId) : null;
@@ -244,6 +266,8 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
       items.push({ label: 'Sync a Drive folder', run: () => setSyncing({ kbId: row.kbId, folderId: row.folderId, source: 'google-drive' }) });
       items.push({ label: 'Sync a GitHub repository', run: () => setSyncing({ kbId: row.kbId, folderId: row.folderId, source: 'github' }) });
     }
+    const rowKb = kbOf(row.kbId);
+    if (row.kind === 'kb' && rowKb?.personal && canDeleteKb(rowKb, wsAdmin)) items.push({ label: 'Delete', danger: true, run: () => setDropping(rowKb) });
     if (row.kind === 'folder') {
       items.push({ label: 'Move to…', run: () => setMoving({ kbId: row.kbId, folderId: row.folderId! }) });
       items.push({ label: 'Delete', danger: true, run: () => setDeleting({ kbId: row.kbId, folderId: row.folderId!, name: row.name }) });
@@ -282,7 +306,10 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
               <IconBrain width={14} height={14} /><span className="tk-item-text"><span>Team knowledge</span></span>
             </button>
             <div ref={setSlot} className="kbt-slot" />
-            <h4 className="kbt-head" id="kbt-label">Knowledge bases</h4>
+            <div className="kbt-head-row">
+              <h4 className="kbt-head" id="kbt-label">Knowledge bases</h4>
+              <button className="icon-btn kbt-add" aria-label="New knowledge base" data-tip="New knowledge base" onClick={() => setCreating(true)}><IconPlus width={14} height={14} /></button>
+            </div>
             {listError && <p className="error kbt-note" role="alert">{listError}</p>}
             {kbs && !kbs.length && <p className="tk-empty kbt-note">No knowledge bases you can read yet.</p>}
             <div role="tree" aria-labelledby="kbt-label" onKeyDown={onTreeKey}>
@@ -313,6 +340,7 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
                           {row.hasChildren ? <IconChevron width={12} height={12} className={row.expanded ? '' : 'closed'} /> : <span className="kbt-spacer" />}
                           {row.kind === 'kb' ? <IconStack width={14} height={14} /> : <IconFolder width={14} height={14} />}
                           <span className="tk-item-text"><span>{row.name}</span></span>
+                          {row.kind === 'kb' && kb.personal && <span className="kb-badge kbt-badge">{SCOPE_LABEL.personal}</span>}
                         </button>
                       )}
                       {admin && !renaming && (
@@ -365,6 +393,11 @@ export function KbBrowser({ me, query, children }: { me: string | null; query: s
         {syncing && kbOf(syncing.kbId) && (
           <SyncDialog kb={kbOf(syncing.kbId)!} folderId={syncing.folderId} source={syncing.source} onChanged={() => loadNotes(syncing.kbId)}
             onDone={() => { const d = syncing; setSyncing(null); focusRow(rowKey(d.kbId, d.folderId)); }} />
+        )}
+        {creating && <CreateDialog wsAdmin={wsAdmin} onMade={made} onDone={() => setCreating(false)} />}
+        {dropping && (
+          <KbConfirm title={`Delete ${dropping.name}?`} body="Its folders and synced folders are deleted, and the notes synced or imported into it are removed from your Mac. Notes you moved into it stay yours. This cannot be undone." action="Delete"
+            onDone={(ok) => { const d = dropping; if (ok) dropKb(d); else { setDropping(null); focusRow(rowKey(d.id, null)); } }} />
         )}
         {deleting && (
           <KbConfirm title={`Delete ${deleting.name}?`} body="The folders inside it are deleted too. Its notes stay in the knowledge base, at the top level." action="Delete folder"
@@ -432,6 +465,42 @@ function SyncDialog({ kb, folderId, source, onChanged, onDone }: { kb: Kb; folde
   return (
     <Modal titleId="kbt-sync-title" title={source === 'github' ? 'Sync a GitHub repository' : 'Sync a Drive folder'} className="kb-drive-modal" onClose={onDone} escape={false}>
       <SyncPanel kb={kb} folderId={folderId} source={source} onChanged={onChanged} onDone={onDone} />
+    </Modal>
+  );
+}
+
+// a new KB from the tab: its name and who reads it. A member makes a personal KB only; an owner or admin may make a
+// workspace KB too (its kind, readers and import live under Settings › Admin › Knowledge). With GitHub sync on, it
+// can start from a repository: the sync dialog opens for the new KB
+function CreateDialog({ wsAdmin, onMade, onDone }: { wsAdmin: boolean; onMade: (kb: Kb, github: boolean) => void; onDone: () => void }) {
+  const scopes = createScopes(wsAdmin);
+  const [scope, setScope] = useState<KbScope>('personal');
+  const [name, setName] = useState('');
+  const [github, setGithub] = useState(hasKbSync());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const go = async () => {
+    if (busy || !name.trim()) return;
+    setBusy(true); setError('');
+    const r = await kbCall(() => window.quorum.kbCreate({ name: name.trim(), ...(scope === 'personal' ? { personal: true } : {}) }), 'The knowledge base could not be created.');
+    setBusy(false);
+    if (r.error || !r.kb) setError(r.error ?? 'The knowledge base could not be created.'); else onMade(r.kb, github && hasKbSync());
+  };
+  return (
+    <Modal titleId="kbt-create-title" title="New knowledge base" className="kb-drive-modal" onClose={busy ? undefined : onDone} locked={busy}>
+      <div className="kb-form-row">
+        <span className="set-field wide"><input autoFocus value={name} disabled={busy} onChange={(e) => setName(e.target.value)} placeholder="Name, for example QA" aria-label="Knowledge base name" onKeyDown={(e) => { if (e.key === 'Enter') go(); }} /></span>
+      </div>
+      <p className="kb-label">Who reads it</p>
+      <ScopePicker scopes={scopes} scope={scope} disabled={busy} onChange={setScope} />
+      {hasKbSync() && (
+        <label className="kb-person"><input type="checkbox" checked={github} disabled={busy} onChange={(e) => setGithub(e.target.checked)} /><span>Connect a GitHub repository next</span></label>
+      )}
+      {error && <p className="set-error" role="alert">{error}</p>}
+      <ModalActions>
+        <button className="pill" disabled={busy} onClick={onDone}>Cancel</button>
+        <button className="pill primary" disabled={busy || !name.trim()} onClick={go}>{busy ? 'Creating…' : 'Create'}</button>
+      </ModalActions>
     </Modal>
   );
 }

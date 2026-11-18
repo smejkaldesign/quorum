@@ -4,15 +4,16 @@ import { Row, useMenu } from '../../src/controls';
 import { IconMore, IconPlus, IconStack } from '../../src/icons';
 import { AccountCard, EE_MARKER, useAccount } from './Account';
 import { accountApi } from './accountMock';
-import { accessDraft, isGrant, KIND_LABEL, readersOf, readersSummary, sourceLine, type ReadersMode } from './kbTree';
+import { accessDraft, audienceLine, canDeleteKb, canImportInto, createScopes, isGrant, KIND_LABEL, readersOf, SCOPE_LABEL, sourceLine, type KbScope, type ReadersMode } from './kbTree';
 import { DrivePanel, hasDrive } from './KbDrive';
-import { announceKbChange, EMPTY_SOURCE, hasImport, ImportStatus, kbCall, KbConfirm, SourceFields, sourceOf, useImport, type SourceDraft } from './kbUi';
+import { announceKbChange, EMPTY_SOURCE, hasImport, ImportStatus, kbCall, KbConfirm, ScopePicker, SourceFields, sourceOf, useImport, type SourceDraft } from './kbUi';
 
 // Settings › Admin › Knowledge, Cloud: the workspace's knowledge bases. Owners and admins create one (empty, from a
 // GitHub repository or from a zip), rename it, set who reads it and delete it. A KB's kind is chosen when it is
 // created. The default KB (the workspace's team source) is not offered for deletion. Folders and notes are managed in
 // the Knowledge tab. A member who admins a KB (a team's lead for the team's KBs, or a KB admin grant) sees those KBs
-// here to rename them and set their readers, without create, import or delete.
+// here to rename them and set their readers, without create, import or delete. A personal KB (Only me) is its maker's
+// alone: it shows here for them only, with no readers to set.
 export function KnowledgeBasesPage() {
   const a = useAccount();
   if (!a) return null;
@@ -48,9 +49,9 @@ function Bases({ wsAdmin }: { wsAdmin: boolean }) {
         {kbs?.map((kb) => (
           <div key={kb.id} className="kb-admin-item">
             <Row icon={<IconStack width={18} height={18} />}
-              title={<>{kb.name}{kb.isDefault && <span className="kb-badge">Default</span>}</>}
-              desc={[KIND_LABEL[kb.kind], kb.teamId ? 'Team knowledge base' : '', readersSummary(kb.access), sourceLine(kb.source), kb.hosted && !kb.writable ? 'Read-only until the plan is renewed' : null].filter(Boolean).join(' · ')}>
-              <button className="pill small" aria-expanded={panel?.kind === 'readers' && panel.kbId === kb.id} onClick={() => setPanel(panel?.kind === 'readers' && panel.kbId === kb.id ? null : { kind: 'readers', kbId: kb.id })}>Readers</button>
+              title={<>{kb.name}{kb.isDefault && <span className="kb-badge">Default</span>}{kb.personal && <span className="kb-badge">{SCOPE_LABEL.personal}</span>}</>}
+              desc={[KIND_LABEL[kb.kind], kb.teamId ? 'Team knowledge base' : '', audienceLine(kb), sourceLine(kb.source), kb.hosted && !kb.writable ? 'Read-only until the plan is renewed' : null].filter(Boolean).join(' · ')}>
+              {!kb.personal && <button className="pill small" aria-expanded={panel?.kind === 'readers' && panel.kbId === kb.id} onClick={() => setPanel(panel?.kind === 'readers' && panel.kbId === kb.id ? null : { kind: 'readers', kbId: kb.id })}>Readers</button>}
               <KbMenu kb={kb} wsAdmin={wsAdmin} onPick={(kind) => (kind === 'delete' ? setDeleting(kb) : setPanel({ kind, kbId: kb.id }))} />
             </Row>
             {kb.kind === 'meetings' && <p className="kb-hint muted">Meetings: notes members record in Quorum are saved here, one folder per month. Each member chooses once per connector account whether its meetings are shared, and can keep any note private.</p>}
@@ -64,10 +65,10 @@ function Bases({ wsAdmin }: { wsAdmin: boolean }) {
         {kbs && !kbs.length && <p className="set-hint">{wsAdmin ? 'No knowledge bases yet. Create one to give the workspace a shared place for notes.' : 'Owners and admins manage knowledge bases, and team leads manage their team\'s. Browse the ones you can read in the Knowledge tab.'}</p>}
       </div>
       {error && <p className="set-error" role="alert">{error}</p>}
-      {!wsAdmin ? null : creating ? <Create onDone={(kb) => { setCreating(false); if (kb) load(); }} /> : (
+      {!wsAdmin ? null : creating ? <Create wsAdmin={wsAdmin} onDone={(kb) => { setCreating(false); if (kb) load(); }} /> : (
         <p><button className="pill with-icon" onClick={() => { setCreating(true); setPanel(null); }}><IconPlus width={15} height={15} />New knowledge base</button></p>
       )}
-      {deleting && <KbConfirm title={`Delete ${deleting.name}?`} body={deleting.hosted ? `${deleting.writable ? '' : 'The workspace\'s plan ended, and the knowledge base stays readable while it is kept. '}Its folders, notes and attached files are deleted for everyone, and each Mac removes its copies. This cannot be undone.` : 'Its folders are deleted. Its notes stay with the people who wrote them and leave the knowledge base. This cannot be undone.'} action="Delete" onDone={(ok) => (ok ? remove(deleting) : setDeleting(null))} />}
+      {deleting && <KbConfirm title={`Delete ${deleting.name}?`} body={deleting.personal ? 'Its folders and synced folders are deleted, and the notes synced or imported into it are removed from your Mac. Notes you moved into it stay yours. This cannot be undone.' : deleting.hosted ? `${deleting.writable ? '' : 'The workspace\'s plan ended, and the knowledge base stays readable while it is kept. '}Its folders, notes and attached files are deleted for everyone, and each Mac removes its copies. This cannot be undone.` : 'Its folders are deleted. Its notes stay with the people who wrote them and leave the knowledge base. This cannot be undone.'} action="Delete" onDone={(ok) => (ok ? remove(deleting) : setDeleting(null))} />}
     </div>
   );
 }
@@ -80,10 +81,10 @@ function KbMenu({ kb, wsAdmin, onPick }: { kb: Kb; wsAdmin: boolean; onPick: (ki
       {open && (
         <div className="menu" role="menu">
           <button role="menuitem" onClick={() => onPick('rename')}>Rename</button>
-          {wsAdmin && hasImport() && kb.source?.kind === 'github' && <button role="menuitem" onClick={() => onPick('refresh')}>Refresh from GitHub</button>}
-          {wsAdmin && hasImport() && !kb.hosted && <button role="menuitem" onClick={() => onPick('import')}>Import notes</button>}
+          {canImportInto(kb, wsAdmin) && hasImport() && kb.source?.kind === 'github' && <button role="menuitem" onClick={() => onPick('refresh')}>Refresh from GitHub</button>}
+          {canImportInto(kb, wsAdmin) && hasImport() && <button role="menuitem" onClick={() => onPick('import')}>Import notes</button>}
           {hasDrive() && kb.role === 'admin' && !kb.hosted && <button role="menuitem" onClick={() => onPick('drive')}>Add from Google Drive</button>}
-          {wsAdmin && !kb.isDefault && <button role="menuitem" className="danger-pill" onClick={() => onPick('delete')}>Delete</button>}
+          {canDeleteKb(kb, wsAdmin) && <button role="menuitem" className="danger-pill" onClick={() => onPick('delete')}>Delete</button>}
         </div>
       )}
     </span>
@@ -246,9 +247,12 @@ function Refresh({ kb, onDone, onImported }: { kb: Kb; onDone: () => void; onImp
 
 // a new KB: its name and kind, then where its notes come from. An import runs into the KB just created, so a failed
 // import leaves the KB in place and empty, and says so
-function Create({ onDone }: { onDone: (kb: Kb | null) => void }) {
+function Create({ wsAdmin, onDone }: { wsAdmin: boolean; onDone: (kb: Kb | null) => void }) {
   const [name, setName] = useState('');
   const [kind, setKind] = useState<KbKind>('general');
+  const scopes = createScopes(wsAdmin);
+  const [scope, setScope] = useState<KbScope>(scopes.includes('workspace') ? 'workspace' : 'personal');
+  const personal = scope === 'personal';
   const [draft, setDraft] = useState<SourceDraft>(EMPTY_SOURCE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -262,7 +266,7 @@ function Create({ onDone }: { onDone: (kb: Kb | null) => void }) {
     let kb = made;
     if (!kb) {
       const hosted = draft.kind === 'hosted';
-      const r = await kbCall(() => (hosted ? window.quorum.kbHostedCreate(name.trim()) : window.quorum.kbCreate({ name: name.trim(), kind })), 'The knowledge base could not be created.');
+      const r = await kbCall(() => (hosted ? window.quorum.kbHostedCreate(name.trim()) : window.quorum.kbCreate({ name: name.trim(), kind, ...(personal ? { personal: true } : {}) })), 'The knowledge base could not be created.');
       if (r.error || !r.kb) { setBusy(false); setError(r.error ?? 'The knowledge base could not be created.'); return; }
       kb = r.kb;
       setMade(kb);
@@ -280,13 +284,19 @@ function Create({ onDone }: { onDone: (kb: Kb | null) => void }) {
       <div className="kb-form-row">
         <span className="set-field wide"><input autoFocus value={name} disabled={running || !!made} onChange={(e) => setName(e.target.value)} placeholder="Name, for example Handbook" aria-label="Knowledge base name" onKeyDown={(e) => { if (e.key === 'Enter' && name.trim() && !running) go(); if (e.key === 'Escape' && !running) onDone(null); }} /></span>
       </div>
-      <p className="kb-label">Kind</p>
-      <div className="guard-kinds" role="radiogroup" aria-label="Kind">
-        {(Object.keys(KIND_LABEL) as KbKind[]).map((k) => <button key={k} role="radio" aria-checked={kind === k} disabled={running || !!made || (k === 'meetings' && draft.kind === 'hosted')} className={`pill ${kind === k ? 'primary' : ''}`} onClick={() => setKind(k)}>{KIND_LABEL[k]}</button>)}
-      </div>
-      <p className="kb-hint muted">{kind === 'meetings' ? 'A meetings knowledge base collects meeting notes for a team.' : 'A general knowledge base holds any notes the workspace shares.'} The kind cannot be changed after the knowledge base is created.</p>
+      <p className="kb-label">Who reads it</p>
+      <ScopePicker scopes={scopes} scope={scope} disabled={running || !!made} onChange={(s) => { setScope(s); if (s === 'personal') { setKind('general'); if (draft.kind === 'hosted') setDraft(EMPTY_SOURCE); } }} />
+      {!personal && (
+        <>
+          <p className="kb-label">Kind</p>
+          <div className="guard-kinds" role="radiogroup" aria-label="Kind">
+            {(Object.keys(KIND_LABEL) as KbKind[]).map((k) => <button key={k} role="radio" aria-checked={kind === k} disabled={running || !!made || (k === 'meetings' && draft.kind === 'hosted')} className={`pill ${kind === k ? 'primary' : ''}`} onClick={() => setKind(k)}>{KIND_LABEL[k]}</button>)}
+          </div>
+          <p className="kb-hint muted">{kind === 'meetings' ? 'A meetings knowledge base collects meeting notes for a team.' : 'A general knowledge base holds any notes the workspace shares.'} The kind cannot be changed after the knowledge base is created.</p>
+        </>
+      )}
       <p className="kb-label">Start with</p>
-      <SourceFields draft={draft} onChange={(d) => { setDraft(d); if (d.kind === 'hosted') setKind('general'); }} withEmpty={!made} withHosted={!made} disabled={running} />
+      <SourceFields draft={draft} onChange={(d) => { setDraft(d); if (d.kind === 'hosted') setKind('general'); }} withEmpty={!made} withHosted={!made && !personal} disabled={running} />
       {draft.kind === 'hosted' && <p className="kb-hint muted">Quorum stores its notes and attached files. Members you make editors write and arrange notes in the Knowledge tab; readers read them. Part of Quorum Cloud. If the plan ends, the knowledge base stays readable and cannot be changed until the plan is renewed.</p>}
       <div className="kb-form-row">
         {imp.result ? <button className="pill primary" onClick={() => onDone(made)}>Done</button> : (

@@ -243,6 +243,20 @@ export const canArrange = (kb: Pick<Kb, 'role' | 'hosted' | 'writable'>): boolea
 
 export const KIND_LABEL: Record<Kb['kind'], string> = { general: 'General', meetings: 'Meetings' };
 
+// who a new KB is for: only its maker (a personal KB, 0041) or the workspace. Any member makes a personal KB; a
+// workspace KB is for owners and admins
+export type KbScope = 'personal' | 'workspace';
+export const SCOPE_LABEL: Record<KbScope, string> = { personal: 'Only me', workspace: 'Workspace' };
+export const createScopes = (wsAdmin: boolean): KbScope[] => (wsAdmin ? ['personal', 'workspace'] : ['personal']);
+
+// who reads a KB in one line: a personal KB reads as its owner's alone, since nobody else ever sees it
+export const audienceLine = (kb: Pick<Kb, 'personal' | 'access'>): string => (kb.personal ? 'Only you' : readersSummary(kb.access));
+
+// whether the person may delete a KB, or import notes into it: a personal KB's owner (its only admin), or a workspace
+// owner or admin for a workspace KB. The default KB is never deleted
+export const canDeleteKb = (kb: Pick<Kb, 'personal' | 'role' | 'isDefault'>, wsAdmin: boolean): boolean => !kb.isDefault && (kb.personal ? kb.role === 'admin' : wsAdmin);
+export const canImportInto = (kb: Pick<Kb, 'personal' | 'role' | 'hosted'>, wsAdmin: boolean): boolean => !kb.hosted && (kb.personal ? kb.role === 'admin' : wsAdmin);
+
 // a GitHub repository address the import can take; the reason is the sentence to show
 // the import form's address check, with the same parser the import runs (ee/githubUrl.js); a /tree/<branch>/<folder>
 // address imports that folder

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  accessDraft, buildFolderTree, checkGithubUrl, descendantIds, driveSummary, flattenFolders, folderPath, importSummary, moveCheck, moveTargets,
+  accessDraft, audienceLine, buildFolderTree, canDeleteKb, canImportInto, createScopes, checkGithubUrl, descendantIds, driveSummary, flattenFolders, folderPath, importSummary, moveCheck, moveTargets,
   notesIn, openPathTo, progressLabel, progressShare, readersOf, readersSummary, resolveKbLink, sourceLine, treeKey, visibleRows, withFolder, withoutFolder,
 } from '../ee/src/kbTree.ts';
 
@@ -302,5 +302,32 @@ describe('following a link inside a KB note', () => {
     expect(resolveKbLink('policies/leave#Parental|leave policy', from('index.md', null), byKb).note.id).toBe('x');
     expect(resolveKbLink('../../setup', from('index.md', null), byKb)).toBeNull();
     expect(resolveKbLink('  ', from('index.md', null), byKb)).toBeNull();
+  });
+});
+
+describe('personal knowledge bases', () => {
+  const ws = [{ principal: 'workspace', userId: null, teamId: null, role: 'reader', email: null, name: null }];
+  it('offers a member Only me alone, and an owner or admin both', () => {
+    expect(createScopes(false)).toEqual(['personal']);
+    expect(createScopes(true)).toEqual(['personal', 'workspace']);
+  });
+
+  it('describes a personal KB as its owner\'s alone, whatever its access list holds', () => {
+    expect(audienceLine({ personal: true, access: [{ principal: 'user', userId: 'me', teamId: null, role: 'admin', email: null, name: null }] })).toBe('Only you');
+    expect(audienceLine({ personal: false, access: ws })).toBe('Whole workspace');
+    expect(audienceLine({ access: null })).toBe('Readers are visible to its admins');
+  });
+
+  it('lets the owner delete or import into a personal KB, and keeps workspace KBs to workspace admins', () => {
+    const mine = { personal: true, role: 'admin', isDefault: false, hosted: false };
+    const team = { personal: false, role: 'admin', isDefault: false, hosted: false };
+    expect(canDeleteKb(mine, false)).toBe(true);
+    expect(canImportInto(mine, false)).toBe(true);
+    expect(canDeleteKb({ ...mine, role: 'reader' }, true)).toBe(false);
+    expect(canDeleteKb(team, false)).toBe(false);
+    expect(canDeleteKb(team, true)).toBe(true);
+    expect(canDeleteKb({ ...team, isDefault: true }, true)).toBe(false);
+    expect(canImportInto(team, false)).toBe(false);
+    expect(canImportInto({ ...team, hosted: true }, true)).toBe(false);
   });
 });
