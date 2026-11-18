@@ -56,6 +56,11 @@ export type GuardrailsState = { rules: GuardrailRule[]; skipped: { name: string;
 export type UpdateState = { status: 'off' | 'idle' | 'checking' | 'downloading' | 'ready' | 'failed'; current: string; version: string | null; percent: number; notes: string | null; checkedAt: number | null; error: string | null };
 // a personal OAuth connector (sources/accounts.js); configured is false when this build has no client id for it
 export type OAuthAccount = { id: string; name: string; configured: boolean; connected: boolean; account: string | null; connectedAt: string | null; scope: string; manageUrl: string | null; error: string | null };
+// Check connection on an account connector: the account the provider names, or what went wrong and whether a
+// reconnect fixes it
+export type OAuthCheck = { ok: true; account: string | null; checkedAt: string } | { ok: false; reconnect: boolean; error: string; checkedAt: string };
+// where the GitHub App is installed; stale with an error when the last read failed and this is the one before it
+export type GithubInstallations = { installations: { id: number; owner: string | null; selection: string | null; repositories: number }[]; checkedAt: string | null; stale?: boolean; error?: string };
 // a provider MCP server the agent has (connectors/mcpOverlap.js), with secrets already replaced; where lists the
 // places it was found: claude-list (claude mcp list), claude-user, claude-project (~/.claude.json) and vault (.mcp.json)
 export type McpOverlapServer = { name: string; url: string | null; command: string | null; args: string[]; where: ('claude-list' | 'claude-user' | 'claude-project' | 'vault')[] };
@@ -65,8 +70,6 @@ export type McpOverlap = { at: string; read: { claudeList: boolean; claudeConfig
 export type McpInheritedServer = McpOverlapServer & { provider: string | null; on: boolean };
 export type GoogleCalendarStatus = { configured: boolean; connected: boolean; account: string | null; calendars: number; lastSyncAt: string | null; error: string | null };
 export type CalendarSettings = { source: 'mac'; days: number | 'week'; enabled?: boolean; showAll?: boolean; hidden?: string[]; status?: 'granted' | 'notDetermined' | 'denied' | 'unavailable' | 'off'; google?: GoogleCalendarStatus | null };
-export type MemoryItem = { id: string; kind: string; label: string; path: string; detail: string; include: boolean | null; manual?: boolean };
-export type Memory = { items: MemoryItem[]; excluded: string[]; scannedAt?: string; added?: number; removed?: number; cancelled?: boolean };
 export type Profile = { name?: string; title?: string; linkedin?: string; photo?: string };
 export type Voice = { locale?: string; sounds?: boolean; dictionary?: { heard: string; write: string }[] };
 export type OptOut = { name?: string; domain?: string };
@@ -92,7 +95,7 @@ export type Settings = {
   // which of Quorum's in-app notifications show in the bell's list and dot; each is on when missing
   notifications?: { noteUpdates?: boolean; memoryChanges?: boolean; reviews?: boolean; guardrails?: boolean };
   // connector ids whose provider MCP the person disconnected from Quorum (Settings > Connectors)
-  mcpIgnored?: string[]; meetingProviders?: Record<string, { enabled: boolean }>; autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean; transcription?: boolean }; meetingsKb?: { autoSave?: boolean }; managedModels?: boolean; screenContext?: boolean; memoryAutoApprove?: boolean; memoryDotDays?: number; memoryHighlight?: boolean; memorySweeps?: boolean; memoryAutoApply?: boolean; memoryDrafts?: boolean; memoryDraftCap?: number; memoryDraftConfidential?: boolean; memoryCatchupParallel?: number };
+  mcpIgnored?: string[]; meetingProviders?: Record<string, { enabled: boolean }>; autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean; transcription?: boolean }; meetingsKb?: { autoSave?: boolean }; managedModels?: boolean; screenContext?: boolean; memoryAutoApprove?: boolean; memoryDotDays?: number; memoryHighlight?: boolean; memorySweeps?: boolean; memoryAutoApply?: boolean; memoryDrafts?: boolean; memoryDraftCap?: number; memoryDraftConfidential?: boolean; memoryCatchupParallel?: number; memoryAgentActions?: boolean };
 export type OnboardingStatus = { firstRun: boolean; defaultVaultDir: string };
 export type OnboardingChecks = { permissions: { microphone: string; audio: string; accessibility: string; calendar: string }; claude: { installed: boolean; loggedIn?: boolean; email?: string; org?: string; plan?: string; version?: string; pending?: boolean }; model?: ModelSourceStatus | null };
 // the setup interview: a template plus a few answers that shape a Quorum-built Agent OS (starter.js)
@@ -104,10 +107,9 @@ export type SetupInput = Omit<SetupAnswers, 'projects' | 'people'> & { projects:
 // held: a run that would have created more new files than the keeper's limit, kept back until the user allows it
 export type KeeperHeld = { count: number; sample: string[] };
 export type KeeperRun = { filed: number; skipped: number; changed: number; reason: string; at: string; error: string | null; off?: boolean; marked?: string[]; left?: string[]; held?: KeeperHeld | null };
-// one upkeep job (app/plugins.js): owned by Quorum or by the vault, with the files that show the vault already does it
+// one upkeep job (app/plugins.js): owned by Quorum, or by the vault when a saved choice keeps it off
 export type PluginOwner = 'quorum' | 'vault';
-// report: the plugin reads and shows a result, and writes nothing in the vault on its own; note: one line on what it reads
-export type KeeperPlugin = { id: string; title: string; does: string; always: boolean; report: boolean; note: string | null; evidence: { path: string; why: string }[]; owner: PluginOwner; overridden: boolean; isNew: boolean };
+export type KeeperPlugin = { id: string; title: string; does: string; owner: PluginOwner };
 export type KeeperStatus = { on: boolean; editVault: boolean; meetingsIndex: boolean; facts: boolean; running: boolean; lastRunAt: string | null; filed: number; last: KeeperRun | null; folders: Partial<Record<'people' | 'projects' | 'daily' | 'meetings', string>>; model: boolean; held: KeeperHeld | null; plugins: KeeperPlugin[]; learned: KeeperLearned | null; errors: KeeperErrors };
 // where learned facts go and how much of the budget they use; errors are upkeep failures logged under Application Support
 // target is .quorum/learned.md or a vault note (note holds its path; linked says index.md links to it); budgetPick is the
@@ -116,29 +118,12 @@ export type LearnedTarget = 'learned' | 'note';
 export type KeeperClaude = { on: boolean; editable: boolean; block: 'copy' | 'pointer' | 'list' | null; lines: number; generated: boolean; facts: number; budget: number };
 export type KeeperLearned = { target: LearnedTarget; pick: LearnedTarget; file: string; note: string; noteHeld: boolean; linked: boolean; indexGenerated: boolean; budget: number; budgetPick: number | 'auto'; defaultBudget: number; defaultMoves: number; chars: number; fileChars: number; claude: KeeperClaude };
 export type KeeperErrors = { count: number; last: { at: string; where: string; message: string } | null; file: string | null };
-// the context budget plugin (app/context-budget.js). scope: user, project and memory load every session; nested loads
-// only when Claude works in that folder; paths only for matching files. importedBy names the file whose @import loads it. loaded is what Claude Code reads (MEMORY.md stops at 200 lines)
-export type ContextFile = { path: string; abs: string; scope: 'user' | 'project' | 'memory' | 'nested' | 'paths'; chars: number; lines: number; tokens: number; loaded: number; warn: string | null; cut?: number; learnedChars: number; importedBy: string | null };
-export type ContextBudget = {
-  files: ContextFile[]; total: { chars: number; tokens: number }; warnings: string[];
-  quorum: { path: string; chars: number; everySession: boolean; share: number | null; aside: { path: string; chars: number } | null } | null;
-  agent: { path: string; chars: number; limit: number; cut: number; learnedCut: boolean } | null;
-};
-// the skill usage plugin (app/skill-usage.js): runs counted from Claude Code transcripts on this Mac. unused is keyed
-// by window in days; coverageDays is how far back the transcripts go. Stashed skills carry disable-model-invocation
-export type SkillUse = { name: string; dir: string; path: string; runs: number; last: string | null; stashed: boolean; unused: Record<number, boolean>; namedBy: string[] };
-export type SkillUsage = { skills: SkillUse[]; transcripts: number; coverageDays: number; windows: number[] };
-// the brain check plugin (app/brain-check.js): questions with expected terms, run on the user's own model source
-export type BrainCheckItem = { id: string; prompt: string; expect: string[] };
-export type BrainCheckResult = BrainCheckItem & { answer: string; error: string | null; pass: boolean; missing: string[] };
-export type BrainCheckRun = { at: string; results: BrainCheckResult[] };
-export type BrainCheckStatus = { checks: BrainCheckItem[]; last: BrainCheckRun | null; previous: BrainCheckRun | null; running: boolean; done: number; changed: string[]; ready: number };
 // screen context: on-screen text as spelling hints; granted is the Screen Recording permission, null when unknown
 export type ScreenContextStatus = { available?: boolean; on: boolean; granted: boolean | null };
 export type SetupRecord = { version: number; name: string; answers: SetupAnswers; createdAt: string; updatedAt?: string };
 // the workspace vault: where teammates' shared notes land on this Mac, with their provenance bonds
 export type TeamVault = { root: string; notes: number; behind: number; last: { written: number; behind: number; removed: number; skipped: number } };
-export type Brain = { root: string; vault: string; name: string; made?: 'quorum' | null; markers: { agentOS: string | null; obsidian: boolean; search: boolean; safetyHooks: boolean } };
+export type Brain = { root: string; vault: string; name: string; made?: 'quorum' | null; markers: { agentOS: string | null; obsidian: boolean; safetyHooks: boolean } };
 // hosted edition: who is signed in, which organization they are in, and whether notes sync
 export type Role = 'owner' | 'admin' | 'member';
 // teamEnabled is the Teams page's switch (migration 0019): off, the workspace is one person's and no team-level page shows
@@ -275,7 +260,7 @@ export type FeedTab = 'all' | 'unread' | 'archived';
 export type FeedSort = 'unread' | 'recent' | 'az';
 export type FeedSummary = { line: string; sub: string | null; ask?: { question: string; suggest: 'approve' | 'reject'; why: string; problem: string; solution: string; value: string; recommendation: string }; problem?: string; solution?: string; value?: string; recommendation?: string };
 export type FixStep = { label: string; at: number; endedAt: number | null };
-export type FixRun = { id: string; key: string; target: string; title: string; rel: string; status: 'queued' | 'running' | 'success' | 'error'; queuedAt: number; startedAt: number | null; endedAt: number | null; steps: FixStep[]; outcome: string | null; error: string | null; dismissedAt: number | null; batch?: string | null; undoable?: boolean; undoneAt?: number | null; problem?: string; solution?: string; value?: string; recommendation?: string; meta?: [string, string][]; showBanner?: boolean; kind?: 'batch'; auto?: boolean; items?: BatchItem[]; groups?: { id: string; label: string; count: number }[] };
+export type FixRun = { id: string; key: string; target: string; title: string; rel: string; status: 'queued' | 'running' | 'success' | 'error'; queuedAt: number; startedAt: number | null; endedAt: number | null; steps: FixStep[]; outcome: string | null; error: string | null; dismissedAt: number | null; batch?: string | null; undoable?: boolean; undoneAt?: number | null; problem?: string; solution?: string; value?: string; recommendation?: string; meta?: [string, string][]; showBanner?: boolean; kind?: 'batch'; auto?: boolean; actor?: string; by?: string; items?: BatchItem[]; groups?: { id: string; label: string; count: number }[] };
 // one item of a batch run, with its own state while the batch works
 export type BatchItem = { id: string; kind: 'link' | 'pastfix' | 'finding'; key: string; link: string | null; title: string; line: string; status: 'queued' | 'running' | 'success' | 'error' };
 // the bulk plan sheet: groups of what the batch will do, each item ticked or not, and what was merged, skipped or held back
@@ -305,6 +290,8 @@ export type FeedQuery = { tab?: FeedTab; review?: boolean; kinds?: FeedKind[]; q
 // a feed query that returns each item as its id and unread mark only
 export type FeedMark = { id: string; unread: boolean };
 export type FeedPage = { items: FeedRow[]; total: number; more: boolean; counts: { review: number; unread: number; all: number; archived?: number }; dot: boolean };
+// the bell's dot and counts and Needs review for Memory health, in one read (main.js feed-counts)
+export type FeedCounts = { dot: boolean; counts: FeedPage['counts']; review: { total: number; files: Record<string, number>; folders: Record<string, number> } };
 export type NotificationPrefs = { noteUpdates?: boolean; memoryChanges?: boolean; reviews?: boolean; guardrails?: boolean };
 export type NoteLinkTarget = { rel?: string; anchor: string | null; missing?: boolean; id?: string };
 export type NoteDoc = { hand?: boolean; parts?: { note: string; summary: string; split: boolean }; file: string; rel: string; title: string; date?: string; people: string[]; body: string; app: string; url: string; source?: string | null; views?: NoteViews; visibility: Visibility; withheld: boolean; link: string; summarizable?: boolean; transcript?: { id: number; channel: 'me' | 'them'; who: string; text: string }[]; platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null; sourceUrl?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; event?: EventRef | null };
@@ -469,6 +456,8 @@ declare global {
       vaultLinkHealth(fresh?: boolean): Promise<MissingLink[]>;
       // Needs review for Memory health: the items waiting, and the same items by the note they are about and its folders
       memoryReviewCount(): Promise<{ total: number; files: Record<string, number>; folders: Record<string, number> }>;
+      feedCounts(): Promise<FeedCounts>;
+      onFeedChanged(cb: () => void): () => void;
       vaultLinksLeft(keys: string[], on?: boolean): Promise<number>;
       vaultLinkDecide(key: string, verdict: 'approve' | 'dismiss'): Promise<string>;
       fixStart(keys: string[]): Promise<FixRun[]>;
@@ -492,6 +481,7 @@ declare global {
       confidentialMarks(): Promise<{ folders: Record<string, string>; notes: Record<string, string>; values: string[] }>;
       confidentialMark(rel: string, isDir: boolean, value: string | null): Promise<string>;
       onFixRun(cb: (run: FixRun) => void): () => void;
+      onAgentAction(cb: (a: { text: string; key?: string | null }) => void): () => void;
       vaultFixLink(target: string, toRel: string): Promise<{ files: number; links: number }>;
       vaultAddAlias(rel: string, alias: string): Promise<boolean>;
       vaultOutgoing(rel: string): Promise<OutLink[]>;
@@ -540,10 +530,10 @@ declare global {
       getSettings(): Promise<Settings>;
       setSettings(s: Partial<Settings>): Promise<Settings>;
       pickPhoto(): Promise<Settings>;
-      memoryGet(): Promise<Memory>;
-      memoryRefresh(): Promise<Memory>;
       calendar(): Promise<{ connected: boolean; status: string; events: CalendarEvent[]; days: number | 'week'; showAll: boolean; hidden: number }>;
       calendarStatus(): Promise<CalendarSettings>;
+      calendarSync(): Promise<{ ok: true } | { error: string }>;
+      onCalendarChanged(cb: () => void): Unsub;
       sourceIcons(): Promise<Record<string, string | null>>;
       // chat: the STOP/GO notice can be posted in the app's chat (Zoom); running: the app or a browser window for it is open right now
       meetingProviders(): Promise<{ id: string; name: string; installed: boolean; access: boolean | null; enabled: boolean; version: string | null; path: string; inCall: boolean; chat: boolean; running: boolean | null }[]>;
@@ -629,11 +619,10 @@ declare global {
       oauthAccounts(): Promise<OAuthAccount[]>;
       oauthConnect(id: string): Promise<OAuthAccount | { error: string }>;
       oauthDisconnect(id: string): Promise<OAuthAccount | { error: string }>;
-      memoryRefreshCancel(): Promise<void>;
-      memoryAdd(): Promise<Memory>;
-      memoryInclude(id: string): Promise<Memory>;
-      memoryExclude(id: string): Promise<Memory>;
-      memoryOpen(id: string): Promise<void>;
+      oauthCheck(id: string): Promise<OAuthCheck | { error: string }>;
+      oauthGithubInstallations(): Promise<GithubInstallations | { error: string }>;
+      onConnectorLink(cb: (t: { id: string | null }) => void): Unsub;
+      connectorLinksReady(): Promise<void>;
       removePhoto(): Promise<Settings>;
       onboardingStatus(): Promise<OnboardingStatus>;
       onboardingChecks(): Promise<OnboardingChecks>;
@@ -649,16 +638,8 @@ declare global {
       keeperSet(patch: { on?: boolean; facts?: boolean; factsBudget?: number | 'auto'; factsTarget?: LearnedTarget; factsNote?: string; factsInClaude?: boolean; editVault?: boolean; meetingsIndex?: boolean }): Promise<KeeperStatus>;
       keeperRemoveClaude(): Promise<KeeperStatus>;
       keeperRun(opts?: { allowCreate?: boolean }): Promise<KeeperRun>;
-      keeperPlugin(id: string, owner: PluginOwner): Promise<KeeperStatus>;
       keeperErrorsOpen(): Promise<void>;
       keeperErrorsClear(): Promise<KeeperStatus>;
-      pluginContext(): Promise<ContextBudget | null>;
-      pluginSkills(): Promise<SkillUsage | null>;
-      pluginSkillStash(dir: string, on: boolean): Promise<SkillUsage>;
-      brainCheckStatus(): Promise<BrainCheckStatus | null>;
-      brainCheckSave(checks: BrainCheckItem[]): Promise<BrainCheckStatus>;
-      brainCheckRun(): Promise<BrainCheckStatus>;
-      onBrainCheck?(cb: () => void): Unsub;
       onKeeper?(cb: (r: KeeperRun) => void): Unsub;
       onboardingOpenPermission(which: 'microphone' | 'audio' | 'accessibility' | 'calendar'): Promise<void>;
       onboardingRequestMicrophone(): Promise<boolean>;

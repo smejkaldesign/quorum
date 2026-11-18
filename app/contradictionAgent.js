@@ -10,7 +10,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { QUIET_MS } from './memoryDraft.js';
-import { AUTHORITY, hashText, indexNote } from './contradictionIndex.js';
+import { AUTHORITY, hashText, indexNote, noteHash } from './contradictionIndex.js';
 import { checkClaimsBatch, claimPrompt, excerptOf, stillTrue } from './contradictionClaims.js';
 import { JUDGE_BATCH, JUDGE_CHARS, checkJudgeBatch, judgeBatchPrompt, judgePrompt } from './contradictionResolve.js';
 
@@ -106,11 +106,22 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
 
   // the provider the rule reads in one sweep. begin() clears the queues; each answer is for the text given now
   const provider = {
-    begin() { wantClaims = new Map(); wantJudge = new Map(); },
+    // keepPairs: a save sweep pairs only some subjects, so the pairs it does not pair again stay queued (see retain),
+    // less the ones answered, in flight or failed since, as judgeOf would leave them out
+    begin({ keepPairs = false } = {}) {
+      const prev = wantJudge;
+      wantClaims = new Map();
+      wantJudge = new Map();
+      if (!keepPairs) return;
+      const s = load();
+      for (const [key, w] of prev) if (s.judged[key]?.hash !== w.h && !inflight.has(key) && !tried(key, w.h)) wantJudge.set(key, w);
+    },
+    // drops the queued pairs keep(p) turns down: the ones a save sweep pairs again or whose notes changed
+    retain(keep) { for (const [key, w] of wantJudge) if (!keep(w.p)) wantJudge.delete(key); },
     // worth: the rule's word that the note should be read even when stage 1 alone would skip it (it links to a note
     // that is read)
     claimsOf(n, { worth = null } = {}) {
-      const h = hashText(n.text);
+      const h = noteHash(n.rel, n.text);
       const got = load().claims[n.rel];
       if (got?.hash === h) return stillTrue(got.claims, n.text);
       if (inflight.has(n.rel)) return [];
@@ -123,7 +134,7 @@ export function createContradictionAgent({ file, model, modelId = 'claude', enab
       return [];
     },
     judgeOf(p, notes) {
-      const h = notes.map((x) => hashText(x.text)).join(':');
+      const h = notes.map((x) => noteHash(x.rel, x.text)).join(':');
       const got = load().judged[p.key];
       if (got?.hash === h) return got.label;
       if (inflight.has(p.key)) return null;

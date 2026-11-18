@@ -14,7 +14,7 @@
 import { ancestors, finding, isOff, quote, skipped } from './common.js';
 import { hashText, indexNote, pruneIndexCache } from '../contradictionIndex.js';
 import { structuredClaims } from '../contradictionClaims.js';
-import { normValue, pairClaims, subjectIndex } from '../contradictionPairs.js';
+import { normValue, pairClaims, resolveSubject, subjectIndex } from '../contradictionPairs.js';
 import { PERSON_FOLDER, autoCriteria, inSlice, resolvePair } from '../contradictionResolve.js';
 
 export const rule = { id: 'note.contradiction', version: 1, label: 'Notes that disagree' };
@@ -31,41 +31,92 @@ const claimsOf = (n) => {
 };
 const one = (v) => (Array.isArray(v) ? v[0] : v);
 
+// the subject index and each resolved link, kept while the names of the vault's notes stay the same: subjectIndex and
+// the engine's link resolver read only the paths, titles, aliases and name fields of the notes
+let names = { sig: null };
+const namesSig = (all) => hashText(all.map((n) => `${n.rel}\u0000${skipped(n) ? 1 : 0}\u0000${n.note?.title ?? ''}\u0000${(n.note?.aliases ?? []).join('\u0001')}\u0000${n.note?.props?.name ?? ''}`).join('\n'));
+// a save sweep runs the rule over the whole vault when a note's path, title or aliases changed since the last run:
+// claims in notes the sweep does not check can then resolve to another subject (rules/index.js runRules)
+export function wide(ctx) { return namesSig(ctx.notes ?? []) !== names.sig; }
+function subjectsFor(all, live, resolve) {
+  const sig = namesSig(all);
+  if (names.sig !== sig) names = { sig, memo: new Map(), links: new Map(), sx: subjectIndex(live.map((n) => ({ rel: n.rel, title: n.note?.title, aliases: n.note?.aliases }))) };
+  const { links } = names;
+  const res = (target, from) => { const k = `${from}\u0000${target}`; if (links.has(k)) return links.get(k); const r = resolve(target, from); links.set(k, r); return r; };
+  return { sx: names.sx, res, of: (c) => resolveSubject(c, names.sx, res, names.memo)?.id ?? null };
+}
+// the subjects a save sweep pairs again: every subject a claim of a changed note names, and every subject of a claim
+// on the same line as a claim of those subjects, so each older line keeps all of its pairs (run below groups by it)
+function subjectsTouched(claims, of, touched) {
+  const bySubject = new Map();
+  const byLine = new Map();
+  const ids = claims.map((c) => {
+    const id = of(c);
+    if (id == null) return null;
+    (bySubject.get(id) ?? bySubject.set(id, []).get(id)).push(c);
+    const k = `${c.rel}\n${c.lineEnd ?? c.line}`;
+    (byLine.get(k) ?? byLine.set(k, new Set()).get(k)).add(id);
+    return id;
+  });
+  const out = new Set();
+  const queue = [];
+  const add = (id) => { if (id != null && !out.has(id)) { out.add(id); queue.push(id); } };
+  claims.forEach((c, i) => { if (touched.has(c.rel)) add(ids[i]); });
+  while (queue.length) for (const c of bySubject.get(queue.pop()) ?? []) for (const id of byLine.get(`${c.rel}\n${c.lineEnd ?? c.line}`)) add(id);
+  return { set: out, ids };
+}
+
 // the whole pipeline over the vault, for the rule and the read-only eval script. Answers every claim, every pair and
-// its resolution
-export function analyze(ctx) {
+// its resolution. only: the notes a save sweep checks; the answer then holds the pairs of the subjects those notes touch
+// (subjectsTouched), which are every pair a finding on those notes can come from, and toRead is null
+export function analyze(ctx, { only = null } = {}) {
   const provider = ctx.contradictions?.provider ?? null;
   const live = (ctx.notes ?? []).filter((n) => !skipped(n));
   const byRel = new Map(live.map((n) => [n.rel, n]));
   // a renamed or deleted note leaves both caches (ctx.notes is the whole vault on every sweep)
   pruneIndexCache(new Set(byRel.keys()));
   for (const rel of structured.keys()) if (!byRel.has(rel)) structured.delete(rel);
-  provider?.begin();
   const index = new Map(live.map((n) => [n.rel, indexNote(n)]));
   const resolve = ctx.resolve ?? (() => null);
+  const touched = only ? new Set(only) : null;
+  const { sx, res, of } = subjectsFor(ctx.notes ?? [], live, resolve);
   // stage 1 sends a note on when it has a decision phrase, a body date, a status or a marker; a note without one goes
   // too when it links to a note that goes, since it may speak of the same subject
   const read = new Set([...index.values()].filter((x) => x.worth).map((x) => x.rel));
-  const linked = new Set(live.filter((n) => !read.has(n.rel) && index.get(n.rel).readable && (n.note?.links ?? []).some((l) => read.has(resolve(l.target, n.rel)))).map((n) => n.rel));
+  const linked = touched && !provider ? new Set() : new Set(live.filter((n) => !read.has(n.rel) && index.get(n.rel).readable && (n.note?.links ?? []).some((l) => read.has(res(l.target, n.rel)))).map((n) => n.rel));
+  // a save sweep pairs again only the subjects its notes touch; a provider without retain gets the whole pass
+  const inc = touched && (!provider || typeof provider.retain === 'function');
+  provider?.begin(inc ? { keepPairs: true } : undefined);
   const claims = live.flatMap((n) => [...claimsOf(n), ...(provider ? provider.claimsOf(n, { worth: read.has(n.rel) || linked.has(n.rel) }) : [])]);
-  const sx = subjectIndex(live.map((n) => ({ rel: n.rel, title: n.note?.title, aliases: n.note?.aliases })));
-  const { pairs, groups } = pairClaims(claims, sx, resolve);
+  const scope = inc ? subjectsTouched(claims, of, touched) : null;
+  if (scope && provider) provider.retain((p) => !scope.set.has(p.subject) && !touched.has(p.a.rel) && !touched.has(p.b.rel));
+  const pairable = scope ? claims.filter((c, i) => scope.set.has(scope.ids[i])) : claims;
+  const { pairs, groups } = pairClaims(pairable, sx, res);
   const ix = (rel) => index.get(rel) ?? null;
-  const lineOf = (rel, n) => { const t = byRel.get(rel)?.text; return t == null ? null : (t.split('\n')[n - 1] ?? null)?.replace(/\r$/, '') ?? null; };
+  const lines = new Map();
+  const lineOf = (rel, n) => {
+    if (!lines.has(rel)) { const t = byRel.get(rel)?.text; lines.set(rel, t == null ? null : t.split('\n')); }
+    const l = lines.get(rel);
+    return l == null ? null : (l[n - 1] ?? null)?.replace(/\r$/, '') ?? null;
+  };
   const results = pairs.map((p) => {
-    let res = resolvePair(p, { ix, lineOf });
-    if (res.pending && provider) {
+    let r = resolvePair(p, { ix, lineOf });
+    if (r.pending && provider) {
       const label = provider.judgeOf(p, [byRel.get(p.a.rel), byRel.get(p.b.rel)].map((n) => ({ rel: n.rel, text: n.text })));
-      if (label) res = resolvePair(p, { ix, lineOf, judge: label });
+      if (label) r = resolvePair(p, { ix, lineOf, judge: label });
     }
-    return { p, res };
+    return { p, res: r };
   });
-  provider?.end([...byRel.keys()], pairs.map((p) => p.key));
-  return { notes: live.length, worth: read.size, linked: linked.size, toRead: live.filter((n) => read.has(n.rel) || linked.has(n.rel)).map((n) => ({ rel: n.rel, text: n.text, note: n.note, rank: index.get(n.rel).priority + (read.has(n.rel) ? 0 : 20) })), claims, pairs, groups, results, byRel };
+  // the agent's stored claims and verdicts are pruned only after a sweep of the whole vault
+  if (!inc) provider?.end([...byRel.keys()], pairs.map((p) => p.key));
+  const toRead = inc ? null : live.filter((n) => read.has(n.rel) || linked.has(n.rel)).map((n) => ({ rel: n.rel, text: n.text, note: n.note, rank: index.get(n.rel).priority + (read.has(n.rel) ? 0 : 20) }));
+  return { notes: live.length, worth: read.size, linked: linked.size, toRead, claims, pairs, groups, results, byRel };
 }
 
 export function run(ctx) {
-  const { results, byRel } = analyze(ctx);
+  const only = ctx.only ?? null;
+  const { results, byRel } = analyze(ctx, { only });
+  const touched = only ? new Set(only) : null;
   const tagged = new Set((ctx.tags ?? []).filter((t) => !isOff(t.value)).map((t) => t.rel));
   const folders = ctx.folders ?? {};
   const confidential = (rel) => tagged.has(rel) || ancestors(rel).some((d) => folders[d] && !isOff(folders[d])) || !isOff(byRel.get(rel)?.note?.props?.confidential);
@@ -84,6 +135,8 @@ export function run(ctx) {
   const out = [];
   for (const [first, ...rest] of byOlder.values()) {
     const { p, res } = first;
+    // a save sweep keeps only the findings on the notes it checks (rules/index.js), so the others are not built
+    if (touched && !touched.has(res.older.rel) && !touched.has(res.newer.rel)) continue;
     const { older, newer } = res;
     const criteria = autoCriteria(p, res, { textOf, confidential, person, bar: ctx.contradictions?.bar });
     const slice = inSlice(criteria);

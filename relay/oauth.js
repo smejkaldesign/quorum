@@ -7,8 +7,11 @@
 //   POST /v1/oauth/revoke               { provider, token }: for providers whose revoke call needs the secret
 // Nothing is stored. Tokens, codes and verifiers never reach the log: the log carries the provider, the grant and the
 // provider's HTTP status only.
+// GitHub checks PKCE itself, so a GitHub code exchange must carry a well formed code_verifier. Notion has no PKCE, and
+// Slack's would make the app a public client for good, so their codes are not bound to the app: what protects them is
+// the callback's fixed bounce to 127.0.0.1:47832 and the app's state check on that loopback.
 import { RelayError } from './lib/auth.js';
-import { bounceToLoopback } from './connect.js';
+import { bounceToLoopback, isVerifier } from './connect.js';
 import { clientAddress, createLimiter } from './platform.js';
 import { readJson } from './summary.js';
 
@@ -20,6 +23,7 @@ const expiry = (s, now) => (s ? now + Number(s) * 1000 : null);
 // account label the provider's token answer already carries
 export const OAUTH_PROVIDERS = {
   notion: {
+    pkce: false,
     token: (c, b) => ({
       url: 'https://api.notion.com/v1/oauth/token',
       init: { method: 'POST', headers: { authorization: basic(c), 'content-type': 'application/json', accept: 'application/json', 'notion-version': '2022-06-28' }, body: JSON.stringify(b.grant === 'refresh' ? { grant_type: 'refresh_token', refresh_token: b.refreshToken } : { grant_type: 'authorization_code', code: b.code, redirect_uri: b.redirectUri }) },
@@ -29,6 +33,7 @@ export const OAUTH_PROVIDERS = {
     revoke: (c, token) => ({ url: 'https://api.notion.com/v1/oauth/revoke', init: { method: 'POST', headers: { authorization: basic(c), 'content-type': 'application/json', 'notion-version': '2022-06-28' }, body: JSON.stringify({ token }) } }),
   },
   slack: {
+    pkce: false,
     // user scopes only: the user token sits under authed_user, with its own refresh token when rotation is on
     token: (c, b) => ({
       url: 'https://slack.com/api/oauth.v2.access',
@@ -42,6 +47,7 @@ export const OAUTH_PROVIDERS = {
     revoke: null,
   },
   github: {
+    pkce: true,
     token: (c, b) => ({
       url: 'https://github.com/login/oauth/access_token',
       init: { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body: form(b.grant === 'refresh' ? { client_id: c.clientId, client_secret: c.clientSecret, grant_type: 'refresh_token', refresh_token: b.refreshToken } : { client_id: c.clientId, client_secret: c.clientSecret, code: b.code, redirect_uri: b.redirectUri, code_verifier: b.codeVerifier }) },
@@ -131,6 +137,7 @@ export async function handleOAuthToken(req, res, { config, log = () => {}, fetch
     limits.provider(b.provider);
     if (b.grant === 'code' && !allowedRedirects(config, b.provider).includes(b.redirectUri)) throw new RelayError('bad_request', 'That redirect address is not allowed.', 400);
     const creds = requireCredentials(config, b.provider);
+    if (b.grant === 'code' && p.pkce && !isVerifier(b.codeVerifier)) throw new RelayError('bad_request', 'The sign-in verifier is missing or not valid. Connect again.', 400);
     const { url, init } = p.token(creds, b);
     const r = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(20000) });
     const t = await providerBody(r);

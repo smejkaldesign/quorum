@@ -27,7 +27,7 @@ import { useExclusiveMenu } from './menuBus';
 import type { KbCommand } from './KnowledgeView';
 import { Composer } from './Composer';
 import { requestKbOpen, type KbOpenTarget } from './kbOpen';
-import type { ConnectorsTarget, OpenSettingsDetail, SettingsPageId } from './connectorsNav';
+import { openConnectorLink, type ConnectorsTarget, type OpenSettingsDetail, type SettingsPageId } from './connectorsNav';
 import { IconPen, PrivateNotes, usePrivateNotes } from './PrivateNotes';
 import { Avatar, SpeakerName, similarCounts, type SpeakerInfo } from './Speaker';
 import { useNotetaker } from './flags';
@@ -272,6 +272,12 @@ export function App() {
   useEffect(() => {
     const off = window.quorum.onNoteLink?.((t) => window.dispatchEvent(new CustomEvent('quorum:note-link', { detail: t })));
     window.quorum.noteLinksReady?.().catch(() => {});
+    return () => off?.();
+  }, []);
+  // connector links from the OS (Back to Quorum after a sign-in) open that connector's page the same way
+  useEffect(() => {
+    const off = window.quorum.onConnectorLink?.((t) => openConnectorLink(t.id));
+    window.quorum.connectorLinksReady?.().catch(() => {});
     return () => off?.();
   }, []);
   // a note page's folder button opens that note in the Memory tab

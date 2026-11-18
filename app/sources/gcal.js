@@ -67,10 +67,10 @@ export async function connect({ client, open, loopback = awaitLoopback, fetchImp
   if (!client?.clientSecret) throw new Error('Google Calendar needs the app\'s Google client secret. Set QUORUM_GOOGLE_CLIENT_SECRET (docs/self-hosting.md, Google Calendar).');
   const { verifier, challenge } = pkce();
   const state = newState();
-  const waiting = loopback();
+  const waiting = loopback({ state });
   await open(authorizeUrl({ clientId: client.clientId, challenge, state, redirectUri }));
   const q = await waiting;
-  const tell = (r) => { try { q.finish?.({ name: 'Google Calendar', ...r }); } catch {} };
+  const tell = (r) => { try { q.finish?.({ name: 'Google Calendar', connector: 'google-calendar', ...r }); } catch {} };
   const fail = (message) => { tell({ failed: message }); throw new Error(message); };
   if (q.error) fail(q.error === 'access_denied' ? 'Google sign-in was cancelled.' : q.error_description || q.error);
   if (q.state !== state) fail('The sign-in answer did not match the request.');
@@ -178,11 +178,12 @@ export function createGoogleCalendar({ tokens, client, open, log = () => {}, fet
       lastError = null;
       return status();
     },
-    // events from now to `days` ahead; one read a minute at most, since Home, the guard and the invitee list all ask
-    async events(days) {
+    // events from now to `days` ahead; one read a minute at most, since Home, the guard and the invitee list all ask.
+    // fresh skips the cache (Sync on the connector's page)
+    async events(days, { fresh = false } = {}) {
       const s = current();
       if (!s?.connected) return { connected: false, events: [] };
-      if (cache.days >= days && Date.now() - cache.at < 60000) return { connected: true, events: cache.events.filter((e) => new Date(e.start) < new Date(Date.now() + days * 86400000)) };
+      if (!fresh && cache.days >= days && Date.now() - cache.at < 60000) return { connected: true, events: cache.events.filter((e) => new Date(e.start) < new Date(Date.now() + days * 86400000)) };
       const t = await tokens.get(SOURCE_ID);
       if (!t) { save(null); return { connected: false, events: [] }; }
       try {

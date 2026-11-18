@@ -5,6 +5,7 @@
 // config. The trade-offs are stated to the person before they choose it, in TRADEOFFS below, in plain words.
 import { spawn } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
+import { agentEnv, resolveBin } from '../agentEnv.js';
 
 export const SCHEDULES = ['off', 'hourly', 'daily'];
 export const TIMEOUT_MS = 20 * 60 * 1000;
@@ -91,8 +92,8 @@ export async function runImport({ runnerId, server, source, since, quorum, dir, 
   const before = countNotes(dir);
   const { code, out, err } = await new Promise((resolve, reject) => {
     // the runner bills the person's own sign-in, as the trade-offs say; an exported API key would change that
-    const clean = { ...env }; delete clean.ANTHROPIC_API_KEY; delete clean.OPENAI_API_KEY;
-    const proc = spawnImpl(cmd.bin, cmd.args, { env: clean, stdio: ['pipe', 'pipe', 'pipe'], ...(cwd && existsSync(cwd) ? { cwd } : {}) });
+    const clean = agentEnv(env); delete clean.ANTHROPIC_API_KEY; delete clean.OPENAI_API_KEY;
+    const proc = spawnImpl(resolveBin(cmd.bin), cmd.args, { env: clean, stdio: ['pipe', 'pipe', 'pipe'], ...(cwd && existsSync(cwd) ? { cwd } : {}) });
     let out = '', err = '';
     const timer = setTimeout(() => { proc.kill(); reject(new Error(`${runnerId} took longer than ${Math.round(timeoutMs / 60000)} minutes.`)); }, timeoutMs);
     proc.stdout.on('data', (d) => { out += d; for (const l of String(d).split('\n')) if (l.trim()) onLine(l); });

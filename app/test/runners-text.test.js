@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EventEmitter } from 'node:events';
+import path from 'node:path';
 import { agyArgs, agyText, codexArgs, codexText, parseAgyJson, parseCodexEvents, runnersStatus } from '../runners.js';
 
 const fakeSpawn = (behave) => (bin, args, opts) => {
@@ -38,7 +39,7 @@ describe('codexText', () => {
     const deltas = [];
     const text = await codexText({ prompt: 'Summarize this.', system: 'Be brief.', onDelta: (t) => deltas.push(t), spawnImpl });
     expect(text).toBe('## Summary\n\nThe team agreed.');
-    expect(seen.bin).toBe('codex');
+    expect(path.basename(seen.bin)).toBe('codex');
     expect(seen.args).toEqual(codexArgs());
     expect(seen.args).toContain('read-only');
     expect(seen.input).toContain('Instructions:\nBe brief.');
@@ -59,7 +60,7 @@ describe('agyText', () => {
     const spawnImpl = fakeSpawn((proc) => { seen = proc; proc.stdout.emit('data', '{"status":"SUCCESS","response":"Three decisions.\\n"}'); proc.emit('close', 0); });
     const text = await agyText({ prompt: 'List decisions.', system: 'Be literal.', spawnImpl });
     expect(text).toBe('Three decisions.');
-    expect(seen.bin).toBe('agy');
+    expect(path.basename(seen.bin)).toBe('agy');
     expect(seen.args).toEqual(agyArgs(seen.args[1]));
     expect(seen.args).toContain('--sandbox');
     expect(seen.opts.cwd).toBeTruthy();

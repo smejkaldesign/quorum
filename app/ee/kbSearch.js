@@ -22,9 +22,9 @@
 // citations are built from the redacted parts.
 import { kbSession, titleOf } from './knowledgeBases.js';
 
-// what one chat question may take from the knowledge bases: as many results as the Agent OS search hints (main.js
-// searchHints asks for six), each excerpt and the whole block capped in characters, and the same six seconds a search
-// gets before Quorum answers without it. When the passages are short, the top notes' bodies are read instead
+// what one chat question may take from the knowledge bases: six results, each excerpt and the whole block capped in
+// characters, and six seconds before Quorum answers without them. When the passages are short, the top notes' bodies
+// are read instead
 export const KB_CHAT = { results: 6, excerpt: 700, total: 6000, timeoutMs: 6000, shortSnippets: 300, bodies: 2, bodyExcerpt: 2500 };
 const MAX_RESULTS = 50;
 const PAGE = 1000;

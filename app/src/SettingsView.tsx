@@ -1,30 +1,28 @@
 import { ConfirmModal } from './ConfirmModal';
-import { Fragment, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { SetupForm, answersFrom, draftFrom, draftIsEmpty, emptyDraft, type SetupDraft } from './SetupForm';
-import type { AccountState, BetaState, Brain, CalendarSettings, DecisionProvider, DecisionsStatus, KeeperPlugin, KeeperStatus, LearnedTarget, Memory, MemoryItem, OptOut, Profile, ScreenContextStatus, Settings, TeamVault, Transcription, UpdateState, Voice, Workspace } from './quorum';
+import type { AccountState, BetaState, Brain, CalendarSettings, DecisionProvider, DecisionsStatus, KeeperStatus, OptOut, Profile, ScreenContextStatus, Settings, TeamVault, Transcription, UpdateState, Voice, Workspace } from './quorum';
 import { PersonalConnectors } from './Connectors';
 import { ConnectorsPage, connectorDetailName } from './ConnectorsPage';
 import { GuardrailsPage } from './Guardrails';
 import { CONNECTORS, CONNECTOR_BY_ID } from '../connectors/library';
 import { ConnectHint } from './ConnectHint';
-import { openConnectors, type ConnectorsTarget } from './connectorsNav';
+import { connectorsScroll, openConnectors, type ConnectorsTarget } from './connectorsNav';
 import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
 import { EmptyState, Modal, ModalActions, Row, Toggle, useMenu } from './controls';
-import { BrainCheckPanel, ContextPanel, SkillsPanel } from './PluginPanels';
 import { AccountArea, BillingArea, DeleteAccountArea, DeleteOrgArea, EDITION, KnowledgeBasesArea, KnowledgeQueueArea, MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { TOP_ADMIN_PAGES, canAdmin, flagHiddenPages, modeOf, resolvePage, voiceMode, workspacePages, type Page } from './settingsNav';
-import { EnvSwitch } from './EnvSwitch';
-import { AgentRows, ConnectionCheckButton, ConnectionCheckList, useAgents, useConnectionCheck, type Agents } from './AgentLinks';
+import { AgentRows, ConnectionCheckButton, ConnectionCheckList, mcpLink, useAgents, useConnectionCheck } from './AgentLinks';
 import { MeetingSourcesRows } from './MeetingSources';
-import { useFlag, useFlags, useNotetaker } from './flags';
+import { useFlag, useNotetaker } from './flags';
 import { MemoryUpdatesCard } from './MemoryUpdates';
 import { MemoryRulesCard } from './MemoryRules';
 import { LocalModelsCard } from './LocalModels';
 import {
   IconBell, IconBrain, IconBuilding, IconCalendar, IconChat, IconFolder, IconGrid, IconKeyboard, IconLock,
-  IconChevron, IconCode, IconExternal, IconGlobe, ProviderMark, IconMic, IconMore, IconNotes, IconPeople, IconPerson, IconPlus, IconPower, IconReset, IconSliders, IconStack, IconCheck, IconCopy, IconFolderFill, IconFork, IconShield, IconGraph, IconSearch, IconClose, Wave,
-  IconInfo, IconQuorum, IconUpload, IconListCheck, IconTrash, IconScale,
+  IconChevron, IconCode, IconExternal, IconGlobe, ProviderMark, IconMic, IconMore, IconNotes, IconPeople, IconPerson, IconPlus, IconPower, IconReset, IconSliders, IconStack, IconCheck, IconCopy, IconShield, IconSearch, IconClose, Wave,
+  IconInfo, IconQuorum, IconUpload, IconScale,
 } from './icons';
 
 type Nav = { id: Page; label: string; icon: (p: { width?: number; height?: number }) => ReactNode; soon?: boolean };
@@ -39,11 +37,12 @@ const ACCOUNT: Nav[] = [
 // the pages behind the Admin button; settingsNav.workspacePages decides which of them a build lists. The first two are
 // about the person; the rest sit under the Workspace heading
 const WORKSPACE: Nav[] = [
-  { id: 'general', label: 'General', icon: IconBuilding },
+  { id: 'general', label: 'General', icon: IconGlobe },
+  { id: 'connectors', label: 'Connectors', icon: IconGrid },
   { id: 'notifications', label: 'Notifications', icon: IconBell },
   { id: 'developers', label: 'AI tools', icon: IconCode },
   { id: 'guardrails', label: 'Guardrails', icon: IconShield },
-  { id: 'connectors', label: 'Connectors', icon: IconGrid },
+  { id: 'organization', label: 'Organization', icon: IconBuilding },
   { id: 'teams', label: 'Teams', icon: IconPeople },
   { id: 'billing', label: 'Billing', icon: IconScale },
   { id: 'knowledge', label: 'Knowledge', icon: IconBrain },
@@ -90,7 +89,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   // a cloud build without hosted account config has no members to list, so the page leaves the nav; the team-level
   // pages come and go with the Teams page's switch
   const hosted = useHostedAccounts();
-  const listed = workspacePages(EDITION, hosted, account?.workspace?.teamEnabled === true, account?.workspace?.role);
+  const listed = workspacePages(EDITION, hosted, account?.workspace?.teamEnabled === true, account?.workspace?.role, account?.signedIn === true);
   const voice = voiceMode(nt.dictation, nt.manualListen);
   const guardrailsOn = useFlag('guardrails');
   const customGuardrails = useFlag('guardrails-custom');
@@ -103,6 +102,20 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   // sign-in card lower on the page says what signing in adds. The local edition's only identity is the Claude Code sign-in
   const emailLabel = quorumEmail ? 'Email' : EDITION === 'cloud' ? 'Photo' : 'Signed in with Claude Code';
   const showEmail = !!quorumEmail || EDITION !== 'cloud';
+  // the content pane scrolls: a connector's page opens at its top with its heading focused, and Back to the list or
+  // the library returns to where it was (connectorsScroll)
+  const mainRef = useRef<HTMLElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const scrollView = page === 'connectors' ? (connectorDetail ? `connectors:detail:${connectorDetail}` : connLib ? 'connectors:library' : 'connectors:list') : page;
+  // top is the pane's scroll as of the last scroll event, so it still belongs to the view being left
+  const scrollState = useRef<{ view: string; top: number; saved: Record<string, number> }>({ view: scrollView, top: 0, saved: {} });
+  useLayoutEffect(() => {
+    const box = mainRef.current;
+    const { top, saved: kept } = connectorsScroll(scrollState.current.view, scrollView, scrollState.current.top, scrollState.current.saved);
+    scrollState.current = { view: scrollView, top: top ?? box?.scrollTop ?? 0, saved: kept };
+    if (box && top !== null) box.scrollTop = top;
+    if (scrollView.startsWith('connectors:detail:') && top !== null) titleRef.current?.focus({ preventScroll: true });
+  }, [scrollView]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onBack(); };
     window.addEventListener('keydown', onKey);
@@ -152,22 +165,24 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
         <button className="set-quit" onClick={() => window.quorum.quit()}><IconPower width={18} height={18} /> Quit Quorum</button>
       </aside>
 
-      <main className="set-main">
+      <main className="set-main" ref={mainRef} onScroll={(e) => { scrollState.current.top = e.currentTarget.scrollTop; }}>
         <div className="set-col">
           {page === 'connectors' && ((connectorDetail && connectorDetailName(connectorDetail)) || connLib)
-            ? <h1 className="set-title crumbs">
+            ? <h1 className="set-title crumbs" ref={titleRef} tabIndex={-1}>
                 <Crumb label="Connectors" onClick={() => { setConnectorDetail(null); setConnLib(false); }} />
                 {connLib && <>{CRUMB_SEP}{connectorDetail ? <Crumb label="Library" onClick={() => setConnectorDetail(null)} /> : <span className="crumb-here">Library</span>}</>}
                 {connectorDetail && <>{CRUMB_SEP}<span className="crumb-here">{connectorDetailName(connectorDetail)}</span></>}
+                {connLib && !connectorDetail && <span className="crumb-actions" id="conn-title-actions" />}
               </h1>
             : <h1 className={`set-title${page === 'connectors' ? ' crumbs' : ''}`}>{current.label}{current.soon && <Soon />}{page === 'connectors' && <span className="crumb-actions" id="conn-title-actions" />}</h1>}
           {page === 'preferences' && <p className="set-lede">Quorum works best knowing a little about you. Quorum uses this when it writes your meeting notes and answers questions.</p>}
           {page === 'knowledge' && <p className="set-lede">Company knowledge for your whole workspace, chosen by admins.</p>}
-          {page === 'general' && <p className="set-lede">Settings for everyone in your workspace. Quorum gives this context to every meeting summary and answer, so it's the same for each person.</p>}
+          {page === 'general' && <p className="set-lede">{(listed as string[]).includes('organization') ? 'Your Quorum account.' : 'Your Quorum account, and the company context Quorum gives every meeting summary and answer.'}</p>}
+          {page === 'organization' && <p className="set-lede">Your company, the words that stop and start Quorum in a call, and the people Quorum never records. Quorum uses this for everyone in the workspace.</p>}
           {page === 'teams' && <p className="set-lede">A workspace starts as yours alone. Turn on a team to invite members and build knowledge together.</p>}
           {page === 'billing' && <p className="set-lede">Your plan, the card it charges, and this month's usage against the hours it includes.</p>}
           {page === 'connectors' && !connectorDetail && !connLib && <p className="set-lede">The apps and MCP servers Quorum is connected to, by area.</p>}
-          {page === 'developers' && <p className="set-lede">Model providers, Claude Code and Terminal access, and API keys for your own scripts.</p>}
+          {page === 'developers' && <p className="set-lede">The AI tools Quorum works with, and how it uses them.</p>}
           {page === 'preferences' ? (
             <ProfilePage settings={settings} email={showEmail ? email : ''} emailLabel={emailLabel} name={user?.name ?? ''} onSettings={onSettings}>
               <h3>General</h3>
@@ -183,20 +198,17 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
           ) : page === 'knowledge' ? (
             <KnowledgePage />
           ) : page === 'general' ? (
-            <WorkspacePage settings={settings} onSettings={onSettings} onGo={go} billing={(listed as string[]).includes('billing')}
-              company={(listed as string[]).includes('teams') && account?.workspace?.teamEnabled === true ? null : <CompanyCard settings={settings} onSettings={onSettings} />} />
+            <WorkspacePage settings={settings} onSettings={onSettings} onGo={go} billing={(listed as string[]).includes('billing')} organization={(listed as string[]).includes('organization')} />
+          ) : page === 'organization' ? (
+            <OrganizationPage settings={settings} onSettings={onSettings} />
           ) : page === 'teams' ? (
-            <TeamsArea company={<CompanyCard settings={settings} onSettings={onSettings} />} />
+            <TeamsArea company={null} />
           ) : page === 'billing' ? (
             <BillingArea />
           ) : page === 'memory' ? (
             <>
-              <SecondBrain brain={brain} onConnect={onConnect} onDisconnect={onDisconnect} onBrain={onBrain} onViewConnector={goConnector} />
-              {brain && <KeeperCard brain={brain} />}
-              {brain && <MemoryUpdatesCard settings={settings} onSettings={onSettings} />}
-              {brain && <MemoryRulesCard />}
-              {brain && <LocalModelsCard />}
-              {brain && <MemoryScan />}
+              <SecondBrain part="folder" brain={brain} onConnect={onConnect} onDisconnect={onDisconnect} onBrain={onBrain} onViewConnector={goConnector} />
+              {brain && <MemoryUpdatesCard settings={settings} onSettings={onSettings} advanced={<><MemoryRulesCard /><LocalModelsCard /></>} />}
             </>
           ) : page === 'members' ? <MembersArea />
             : page === 'org-connectors' ? <WorkspaceConnectorsArea local={<OrgConnectorsLocal onGo={go} />} />
@@ -204,8 +216,9 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
             : page === 'org-guardrails' ? <WorkspaceGuardrailsArea local={<p className="set-lede">Workspace guardrails come with Quorum Cloud: rules an admin sets once that every member's Quorum applies and cannot turn off. Your own rules live under Settings, Guardrails.</p>} />
             : page === 'guardrails' ? <GuardrailsPage />
             : page === 'calendar' ? <CalendarPage onConnector={goConnector} />
-            : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} onConnector={goConnector} teamMeetings={EDITION === 'cloud' && account?.workspace?.teamEnabled === true} />
-            : page === 'developers' ? <DevelopersPage />
+            : page === 'meetings' ? <MeetingsPage settings={settings} onSettings={onSettings} onConnector={goConnector} teamMeetings={EDITION === 'cloud' && account?.workspace?.teamEnabled === true}
+                folders={<><SecondBrain part="meetings" brain={brain} onConnect={onConnect} onDisconnect={onDisconnect} onBrain={onBrain} onViewConnector={goConnector} />{brain && <KeeperCard brain={brain} />}</>} />
+            : page === 'developers' ? <DevelopersPage settings={settings} onSettings={onSettings} />
             : page === 'notifications' ? <NotificationsPage settings={settings} set={set} />
             : page === 'connectors' ? <ConnectorsPage detail={connectorDetail} onDetail={setConnectorDetail} library={connLib} onLibrary={setConnLib} brain={brain} onFolder={onConnect} onNotes={() => go('memory')} focus={connectorsFocus} />
             : <VoicePage settings={settings} onSettings={onSettings} dictionaryOnly={voice === 'dictionary'} screenRow={nt.screenContext} />}
@@ -236,7 +249,7 @@ function OrgVoiceLocal({ onGo }: { onGo: (p: Page) => void }) {
 }
 
 // the Agent OS, where Quorum saves notes, and meeting notes from other apps; Add takes a folder by hand when there's no connector for that app
-function SecondBrain({ brain, onConnect, onDisconnect, onBrain, onViewConnector }: { brain: Brain | null; onConnect: () => void; onDisconnect: () => void; onBrain?: (b: Brain) => void; onViewConnector: (id: string) => void }) {
+function SecondBrain({ part, brain, onConnect, onDisconnect, onBrain, onViewConnector }: { part: 'folder' | 'meetings'; brain: Brain | null; onConnect: () => void; onDisconnect: () => void; onBrain?: (b: Brain) => void; onViewConnector: (id: string) => void }) {
   // the setup interview again, on a folder Quorum built: prefilled with the saved answers
   const [setup, setSetup] = useState<SetupDraft | null>(null);
   const [applying, setApplying] = useState(false);
@@ -274,10 +287,10 @@ function SecondBrain({ brain, onConnect, onDisconnect, onBrain, onViewConnector 
   // notetakers Quorum can connect today that are not connected yet; each opens its connector page, where Connect lives
   const addable = CONNECTORS.filter((x) => x.category === 'meeting-notes' && x.status === 'available' && !connected[x.id]?.connected);
   const home = (p: string) => p.replace(/^\/Users\/[^/]+/, '~');
-  return (
+  if (part === 'meetings') return (
     <>
       <div className="set-head">
-        <h3>Context</h3>
+        <h3>Meeting notes folders</h3>
         <span className="set-head-actions menu-wrap" onClick={(e) => e.stopPropagation()}>
           <button className="pill small-pill with-icon" aria-haspopup="menu" aria-expanded={adding} onClick={() => setAdding((o) => !o)}><IconPlus width={15} height={15} />Add</button>
           {adding && (
@@ -289,6 +302,29 @@ function SecondBrain({ brain, onConnect, onDisconnect, onBrain, onViewConnector 
           )}
         </span>
       </div>
+      <div className="set-card">
+        <MeetingsRow />
+        {sources.map((src) => (
+          <Row key={src.id} icon={icons[src.key] ? <img className="set-app-icon" src={icons[src.key]!} alt="" /> : <IconFolder width={18} height={18} />}
+            title={<button className="mem-title" onClick={() => window.quorum.meetingSourceOpen(src.id)}>{src.name} meeting notes<IconExternal width={14} height={14} /></button>}
+            desc={`${src.rel} · ${src.notes} ${src.notes === 1 ? 'note' : 'notes'}`}>
+            {connected[src.key]?.connected && <span className="conn-ok"><i />{connected[src.key].syncNotes ? 'Connected' : 'Connected · sync off'}</span>}
+            <SourceRowMenu name={src.name} connector={connected[src.key] ? { id: src.key, ...connected[src.key] } : null}
+              onView={() => onViewConnector(src.key)}
+              onToggleSync={async (on) => { await window.quorum.sourceSetOption(src.key, { syncNotes: on }); load(); }}
+              onRemove={async () => { if (await window.quorum.meetingSourceRemove(src.id)) load(); }} />
+          </Row>
+        ))}
+        {!anyConnected && (
+          <ConnectHint connector="granola" title="Meeting notes from another app" desc="Granola today, more notetakers soon. Their notes land in the meetings folder with the source on each note.">
+            <button className="pill small-pill" onClick={() => openConnectors({ library: 'meeting-notes' })}>Browse connectors</button>
+          </ConnectHint>
+        )}
+      </div>
+    </>
+  );
+  return (
+    <>
       <div className="set-card">
         <Row icon={<IconBrain width={18} height={18} className={brain ? 'ok' : undefined} />}
           title={brain ? <button className="mem-title" onClick={() => window.quorum.openBrain('finder')}>{brain.made === 'quorum' ? 'QuorumBrain' : brain.name}<IconExternal width={14} height={14} /></button> : 'QuorumBrain'}
@@ -307,23 +343,6 @@ function SecondBrain({ brain, onConnect, onDisconnect, onBrain, onViewConnector 
               </span>
             )}
         </Row>
-        <MeetingsRow />
-        {sources.map((src) => (
-          <Row key={src.id} icon={icons[src.key] ? <img className="set-app-icon" src={icons[src.key]!} alt="" /> : <IconFolder width={18} height={18} />}
-            title={<button className="mem-title" onClick={() => window.quorum.meetingSourceOpen(src.id)}>{src.name} meeting notes<IconExternal width={14} height={14} /></button>}
-            desc={`${src.rel} · ${src.notes} ${src.notes === 1 ? 'note' : 'notes'}`}>
-            {connected[src.key]?.connected && <span className="conn-ok"><i />{connected[src.key].syncNotes ? 'Connected' : 'Connected · sync off'}</span>}
-            <SourceRowMenu name={src.name} connector={connected[src.key] ? { id: src.key, ...connected[src.key] } : null}
-              onView={() => onViewConnector(src.key)}
-              onToggleSync={async (on) => { await window.quorum.sourceSetOption(src.key, { syncNotes: on }); load(); }}
-              onRemove={async () => { if (await window.quorum.meetingSourceRemove(src.id)) load(); }} />
-          </Row>
-        ))}
-        {!anyConnected && (
-          <ConnectHint connector="granola" title="Meeting notes from another app" desc="Granola today, more notetakers soon. Their notes land in this folder with the source on each note.">
-            <button className="pill small-pill" onClick={() => openConnectors({ library: 'meeting-notes' })}>Browse connectors</button>
-          </ConnectHint>
-        )}
       </div>
       {setup && (
         <div className="palette-scrim" onClick={() => setSetup(null)}>
@@ -344,7 +363,7 @@ function SecondBrain({ brain, onConnect, onDisconnect, onBrain, onViewConnector 
       )}
       {confirm && (
         <ConfirmModal title={`Disconnect ${brain?.made === 'quorum' ? 'QuorumBrain' : brain?.name ?? 'this folder'}?`} action="Disconnect"
-          body="Quorum stops reading this folder. Answers, memory power-ups and guardrails that came from it stop working, and a meetings folder found inside it has to be chosen again. Nothing is deleted, but this cannot be undone: connecting a folder again means a new import."
+          body="Quorum stops reading this folder. Answers and guardrails that came from it stop working, and a meetings folder found inside it has to be chosen again. Nothing is deleted, but this cannot be undone: connecting a folder again means a new import."
           onDone={(ok) => { setConfirm(false); if (ok) onDisconnect(); }} />
       )}
     </>
@@ -558,21 +577,51 @@ export function CompanyCard({ settings, onSettings }: { settings: Settings; onSe
 
 // `company` is the CompanyCard while this page is its home: the Local edition, a Cloud build without a hosted account,
 // and a workspace whose team is off. Once a team is on, the card lives on the Teams page and this one gets null
-function WorkspacePage({ settings, onSettings, onGo, billing, company }: { settings: Settings; onSettings: (s: Settings) => void; onGo: (p: Page) => void; billing: boolean; company: ReactNode }) {
+// Admin > General: the account. Once Organization is listed (Cloud, signed in, owner or admin) the company settings
+// live there; otherwise they stay here, since the opt-out list works without a workspace
+function WorkspacePage({ settings, onSettings, onGo, billing, organization }: { settings: Settings; onSettings: (s: Settings) => void; onGo: (p: Page) => void; billing: boolean; organization: boolean }) {
+  return (
+    <>
+      <AccountArea local={<><h3>Account</h3><p className="muted">Local edition. Your meetings and notes stay on this Mac.</p></>}
+        unconfigured={<><h3>Account</h3><p className="muted">Hosted accounts are not set up in this build</p></>} />
+      <ProductionNote />
+      {billing && <p className="set-note">The plan, the card on file and this month's usage live under <button className="link-btn" onClick={() => onGo('billing')}>Billing</button>.</p>}
+      {!organization && <CompanySettings settings={settings} onSettings={onSettings} />}
+    </>
+  );
+}
+
+// a development copy pointed at production data says so in red, with the way back to its own data
+function ProductionNote() {
+  const [on, setOn] = useState(false);
+  useEffect(() => { window.quorum.envStatus().then((s) => setOn(!!s?.useProduction)).catch(() => {}); }, []);
+  if (!on) return null;
+  return (
+    <div className="set-card">
+      <Row icon={<IconInfo width={18} height={18} />} title="Connected to production" desc="This development copy reads and writes production data.">
+        <button className="pill small-pill" onClick={async () => { const s = await window.quorum.envSetProduction(false); setOn(!!s?.useProduction); }}>Use development data</button>
+      </Row>
+    </div>
+  );
+}
+
+// Admin > Organization: the company card, the stop and go words, the opt-out list, and deleting the workspace
+function OrganizationPage({ settings, onSettings }: { settings: Settings; onSettings: (s: Settings) => void }) {
+  return (
+    <>
+      <CompanySettings settings={settings} onSettings={onSettings} />
+      <DeleteOrgArea />
+    </>
+  );
+}
+
+function CompanySettings({ settings, onSettings }: { settings: Settings; onSettings: (s: Settings) => void }) {
   const w = settings.workspace ?? {};
   const save = async (patch: Partial<Workspace>) => onSettings(await window.quorum.setSettings({ workspace: patch }));
   const nt = useNotetaker();
   return (
     <>
-      <AccountArea local={<><h3>Account</h3><p className="muted">Local edition. Your meetings and notes stay on this Mac.</p></>}
-        unconfigured={<><h3>Account</h3><p className="muted">Hosted accounts are not set up in this build</p></>} />
-      {billing && <p className="set-note">The plan, the card on file and this month's usage live under <button className="link-btn" onClick={() => onGo('billing')}>Billing</button>.</p>}
-      <EnvSwitch />
-      {company}
-
-      <h3>Connections</h3>
-      <WorkspaceDecisions connectedBy={w.decisions?.by} />
-
+      <CompanyCard settings={settings} onSettings={onSettings} />
       {nt.meetingCapture && <>
       <h3>Meetings</h3>
       <div className="set-card form words">
@@ -583,8 +632,6 @@ function WorkspacePage({ settings, onSettings, onGo, billing, company }: { setti
       </div>
       <CustomerBlacklist list={w.optOuts ?? (w.neverListen ?? []).map((domain) => ({ domain }))} onChange={(optOuts) => save({ optOuts })} />
       </>}
-
-      <DeleteOrgArea />
     </>
   );
 }
@@ -665,189 +712,6 @@ function UploadCustomers({ list, onAdd, onClose }: { list: OptOut[]; onAdd: (mor
   );
 }
 
-// the ••• on an included capability: open it, read more, or take it out of Quorum (the files stay)
-function MemMenu({ it, onAbout, onDelete }: { it: MemoryItem; onAbout: () => void; onDelete: () => void }) {
-  const [open, setOpen] = useMenu();
-  const locked = it.kind === 'guards';
-  return (
-    <span className="menu-wrap" onClick={(e) => e.stopPropagation()}>
-      <button className="icon-btn" aria-label={`${it.label} options`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}><IconMore /></button>
-      {open && (
-        <div className="menu end" role="menu">
-          {locked
-            ? <button role="menuitem" onClick={() => { setOpen(false); window.dispatchEvent(new CustomEvent('quorum-open-settings', { detail: 'guardrails' })); }}><IconShield width={15} height={15} /> Open Guardrails</button>
-            : <button role="menuitem" onClick={() => { setOpen(false); window.quorum.memoryOpen(it.id); }}><IconExternal width={15} height={15} /> View</button>}
-          <button role="menuitem" onClick={() => { setOpen(false); onAbout(); }}><IconInfo width={15} height={15} /> About</button>
-          <div className="menu-sep" />
-          {locked
-            ? <span data-tip="Rules are managed on the Guardrails page" data-tip-pos="left"><button role="menuitem" className="danger" disabled><IconTrash width={15} height={15} /> Delete</button></span>
-            : <button role="menuitem" className="danger" onClick={() => { setOpen(false); onDelete(); }}><IconTrash width={15} height={15} /> Delete</button>}
-        </div>
-      )}
-    </span>
-  );
-}
-
-const ABOUT: Record<string, string[]> = {
-  guards: [
-    'The rules behind what Quorum\'s agent may read from your Agent OS and say about it: built-in rules, guards found in your Agent OS that you included, your own rules, and your workspace\'s rules.',
-    'Review and change them on the Guardrails page. Every rule only ever denies, so the rules add up.',
-  ],
-  index: [
-    'The catalog at the top of your Agent OS. Quorum reads it first to jump to the right folder and note instead of searching everything.',
-  ],
-  search: [
-    "Before Quorum answers, Quorum runs your Agent OS's own search with your question and hands Quorum the best matching notes to read first.",
-    'With embeddings, the matching runs on this Mac, so your question never leaves it.',
-  ],
-  graph: [
-    'Search also follows the links between notes one step from each match, so related notes that use different words still turn up.',
-  ],
-  folder: [
-    'Quorum can read the notes in this folder when it answers. The guards still apply to every file.',
-  ],
-  instructions: [
-    'The operating instructions at the root of your Agent OS (CLAUDE.md or AGENTS.md). Included, they go into every answer as instructions to follow where they apply.',
-  ],
-  skills: [
-    'Skills your Agent OS defines under .claude/skills. Included, Claude Code loads the vault\'s project settings for the run, which brings the skills and the vault\'s own hooks, and Quorum may run a skill when a question calls for it. Quorum still only reads files.',
-  ],
-  agents: [
-    'Agent definitions under .claude/agents. Included, Quorum may hand a sub-question to one of them during an answer, under the same read-only limits.',
-  ],
-  mcp: [
-    'MCP servers from your Agent OS\'s .mcp.json. Included, Claude Code starts them for the run with your own credentials, and their tools are available to the answer. A server\'s tools can act on the outside world; include only servers you trust Quorum with.',
-  ],
-};
-
-function AboutCapability({ it, onClose }: { it: MemoryItem; onClose: () => void }) {
-  const status = it.kind === 'guards' ? it.detail : it.include ? 'Included' : 'Not included yet';
-  return (
-    <Modal titleId="about-title" title={it.label} onClose={onClose}>
-      {(ABOUT[it.kind] ?? ABOUT.folder).map((t) => <p key={t}>{t}</p>)}
-      <dl className="about-facts">
-        <dt>Status</dt><dd>{status}</dd>
-        <dt>Location</dt><dd>{it.path.replace(/^\/Users\/[^/]+/, '~')}</dd>
-      </dl>
-      {it.kind !== 'guards' && <p className="about-note">Deleting it takes it out of Quorum. The files stay in your Agent OS.</p>}
-      <ModalActions>
-        <button className="pill" onClick={() => window.quorum.memoryOpen(it.id)}>View</button>
-        <button className="pill primary" autoFocus onClick={onClose}>Done</button>
-      </ModalActions>
-    </Modal>
-  );
-}
-
-// kinds the scan reports but Quorum cannot act on yet; they never enter the review list
-const INERT_KINDS = new Set<string>([]);
-// what each roadmap kind will do once it works, next to what was found
-function soonWhy(it: MemoryItem): string {
-  switch (it.kind) {
-    case 'instructions': return `Found ${it.detail}. Quorum will follow it when it answers`;
-    case 'skills': return `${it.detail} found. Quorum will run them on request`;
-    case 'agents': return `${it.detail} found. Quorum will hand work to them`;
-    case 'mcp': return `${it.detail} found in .mcp.json. Quorum will reach them when it answers`;
-    default: return it.detail;
-  }
-}
-
-// why each kind is worth including, folded together with what the scan found
-function why(it: MemoryItem): string {
-  const n = it.detail.match(/\d+/)?.[0] ?? '';
-  switch (it.kind) {
-    case 'guards': return `${it.detail} · review and add rules on the Guardrails page`;
-    case 'index': return `Quorum starts from ${it.detail.split(' · ')[0]} to find notes faster`;
-    case 'search': return it.detail === 'local embeddings' ? 'Finds related notes first, with embeddings on this Mac' : 'Finds matching notes before Quorum starts';
-    case 'graph': return 'Search also pulls in notes linked to each match';
-    case 'instructions': return `Quorum follows ${it.detail} when it answers`;
-    case 'skills': return `${it.detail}; Quorum can run one when a question calls for it`;
-    case 'agents': return `${it.detail}; Quorum can hand a sub-question to one`;
-    case 'mcp': return `${it.detail} in .mcp.json; their tools open to Quorum, with your credentials`;
-    default: return 'Quorum can read this folder when it answers';
-  }
-}
-
-const KIND_ICON: Record<string, (p: { width?: number; height?: number; filled?: boolean; className?: string }) => ReactNode> = {
-  instructions: IconBrain, agents: IconPeople, skills: IconGrid, guards: IconShield, vault: IconStack, meetings: IconFolder, index: IconFork, folder: IconFolder, search: IconSearch, graph: IconGraph, decisions: IconListCheck, mcp: IconCode,
-};
-
-// additional context from the Agent OS: found by a local scan of file names, reviewed one by one
-function MemoryScan() {
-  const [m, setM] = useState<Memory | null>(null);
-  const [scanning, setScanning] = useState(false);
-  const [about, setAbout] = useState<MemoryItem | null>(null);
-  useEffect(() => { window.quorum.memoryGet().then(setM); }, []);
-  if (!m) return null;
-  // only what changes an answer is up for review: the index, search, the link graph, folders, guards. Instructions,
-  // skills, agents and MCP servers are detected but unused today, so they are mentioned in one line and never offered
-  const acts = (i: MemoryItem) => !INERT_KINDS.has(i.kind);
-  const included = m.items.filter((i) => acts(i) && (i.include === true || i.kind === 'guards'));
-  const pending = m.items.filter((i) => acts(i) && i.include === null && i.kind !== 'guards');
-  const soon = m.items.filter((i) => !acts(i));
-  const refresh = async () => {
-    setScanning(true);
-    const r = await window.quorum.memoryRefresh();
-    setScanning(false);
-    if (r.cancelled) return;
-    setM(r);
-  };
-  const row = (it: MemoryItem) => {
-    const Icon = KIND_ICON[it.kind] ?? IconFolder;
-    const undecided = it.include === null && it.kind !== 'guards';
-    const on = it.kind === 'guards' || it.include === true;
-    const icon = it.kind === 'folder' && on ? <IconFolderFill width={18} height={18} className="ok" /> : <Icon width={18} height={18} {...(it.kind === 'guards' || it.kind === 'index' ? { filled: on } : {})} className={on ? 'ok' : undefined} />;
-    return (
-      <Row key={it.id} icon={icon} desc={why(it)}
-        title={<button className="mem-title" onClick={() => (it.kind === 'guards' ? window.dispatchEvent(new CustomEvent('quorum-open-settings', { detail: 'guardrails' })) : window.quorum.memoryOpen(it.id))}>{it.label}{it.kind === 'guards' ? <IconChevron className="right" width={14} height={14} /> : <IconExternal width={14} height={14} />}</button>}>
-        <span className={`mem-actions ${undecided ? '' : 'decided'}`}>
-          {undecided && <span className="new-badge">New</span>}
-          <button className="icon-btn mem-yes" aria-label={`Include ${it.label}`} data-tip="Include" tabIndex={undecided ? 0 : -1} aria-hidden={!undecided} onClick={async () => setM(await window.quorum.memoryInclude(it.id))}><IconCheck width={17} height={17} /></button>
-          {undecided
-            ? <button className="icon-btn mem-no" aria-label={`Exclude ${it.label}`} data-tip="Exclude" onClick={async () => setM(await window.quorum.memoryExclude(it.id))}><IconClose width={15} height={15} /></button>
-            : <MemMenu it={it} onAbout={() => setAbout(it)} onDelete={async () => setM(await window.quorum.memoryExclude(it.id))} />}
-        </span>
-      </Row>
-    );
-  };
-  return (
-    <>
-      <div className="set-head">
-        <h3>Power-ups</h3>
-        <span className="set-head-actions">
-          {scanning
-            ? <button className="icon-btn scan-btn scanning" aria-label="Cancel refresh" data-tip="Cancel refresh" onClick={() => window.quorum.memoryRefreshCancel()}>
-                <span className="brand-spin" aria-hidden="true" /><IconClose className="scan-x-ic" width={13} height={13} />
-              </button>
-            : <button className="icon-btn scan-btn" aria-label="Refresh" data-tip="Find new context" onClick={refresh}><IconReset width={16} height={16} /></button>}
-          <button className="pill small-pill with-icon" onClick={async () => setM(await window.quorum.memoryAdd())}><IconPlus width={15} height={15} />Add</button>
-        </span>
-      </div>
-      {included.length > 0 && <div className="set-card mem-card">{included.map(row)}</div>}
-
-      {pending.length > 0 && (
-        <>
-          <h3>Found in your Agent OS</h3>
-          <div className="set-card mem-card">{pending.map(row)}</div>
-        </>
-      )}
-      {soon.length > 0 && (
-        <>
-          <h3>On the roadmap</h3>
-          <div className="set-card mem-card">
-            {soon.map((it) => { const Icon = KIND_ICON[it.kind] ?? IconFolder; return (
-              <Row key={it.id} icon={<Icon width={18} height={18} />} title={<>{it.label}<em className="soon grey">Soon</em></>} desc={soonWhy(it)}>
-                <button className="icon-btn" aria-label={`About ${it.label}`} data-tip="About" onClick={() => setAbout(it)}><IconInfo width={16} height={16} /></button>
-              </Row>
-            ); })}
-          </div>
-        </>
-      )}
-      {!m.items.length && <p className="set-review">Nothing yet. Refresh to scan your Agent OS, or Add a folder.</p>}
-      {about && <AboutCapability it={about} onClose={() => setAbout(null)} />}
-    </>
-  );
-}
-
 // the workspace version of Memory: one company source, reviewed by admins, applied to everyone
 function KnowledgePage() {
   return (
@@ -880,93 +744,25 @@ function KnowledgePage() {
   );
 }
 
-// upkeep: the keeper (keeper.js) files each new meeting note into the index, the daily note and the people and project
-// notes it concerns, and writes learned facts with the person's own model source. On by default for a folder Quorum
-// built; a folder the person connected themselves turns it on here. Each job is a plugin row below: Quorum's by
-// default, and the vault's when the vault already does that job, with the files that show it. Report plugins write
-// nothing in the vault on their own, so they are listed whether upkeep is on or not, with their result under the row
-const PLUGIN_ICON: Record<string, (p: { width?: number; height?: number; className?: string }) => ReactNode> = {
-  index: IconFork, daily: IconCalendar, links: IconPeople, facts: IconBrain, search: IconSearch, context: IconScale, skills: IconStack, 'brain-check': IconListCheck,
-};
-const PLUGIN_PANEL: Record<string, () => ReactNode> = { context: () => <ContextPanel />, skills: () => <SkillsPanel />, 'brain-check': () => <BrainCheckPanel /> };
-// the vault note's path. It saves on blur or Enter only, since each save moves the list to the new path; a path the
-// keeper refuses (outside the folder, in a dot folder or the meetings folder) leaves the saved one and says why. Paths
-// are compared the way the keeper stores them, so ./notes/facts and notes/facts.md are the same path
-const normNote = (p: string) => { const t = p.normalize('NFC').trim().replace(/\\/g, '/').replace(/^(\.\/)+/, ''); return t && !/\.md$/i.test(t) ? `${t}.md` : t; };
-function NotePathField({ value, onSave }: { value: string; onSave: (v: string) => Promise<string> }) {
-  const [v, setV] = useState(value);
-  const [refused, setRefused] = useState(false);
-  useEffect(() => { setV(value); }, [value]);
-  const commit = async () => {
-    const t = normNote(v);
-    if (t === normNote(value)) return;
-    try {
-      const saved = await onSave(t);
-      setRefused(!!t && normNote(saved) !== t);
-      setV(saved);
-    } catch {
-      setRefused(true);
-      setV(value);
-    }
-  };
-  return (
-    <label className="set-field wide">
-      <input value={v} aria-label="Learned facts note" onChange={(e) => { setV(e.target.value); setRefused(false); }} onBlur={commit}
-        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
-      {refused && <span className="field-saved" aria-live="polite">Use a .md path inside the folder, outside dot folders and the meetings folder</span>}
-    </label>
-  );
-}
+// Auto maintain memories from new meetings: the keeper (keeper.js) files each new meeting into the notes Quorum created
+// (its meetings index, daily notes and learned facts) with the jobs' saved defaults. Quorum leaves the rest of the
+// folder to the person's own setup, so the jobs themselves are not shown
 function KeeperCard({ brain }: { brain: Brain }) {
   const [k, setK] = useState<KeeperStatus | null>(null);
   const [busy, setBusy] = useState(false);
-  // picking Default when it would move lines out of the list asks first
-  const [askDefault, setAskDefault] = useState(false);
-  const [askRemove, setAskRemove] = useState(false);
   const load = () => window.quorum.keeperStatus().then(setK).catch(() => setK(null));
   useEffect(() => { load(); return window.quorum.onKeeper?.(() => load()); }, [brain.root]);
   if (!k) return null;
   const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : null);
   const run = async (allowCreate = false) => { setBusy(true); try { await window.quorum.keeperRun(allowCreate ? { allowCreate } : undefined); } finally { setBusy(false); load(); } };
-  const marked = k.last?.marked?.length ?? 0;
-  const last = k.last && !k.last.off && !k.last.held ? `${k.last.filed} filed${k.last.skipped ? `, ${k.last.skipped} withheld` : ''}${marked ? `, ${marked} generated ${marked === 1 ? 'file' : 'files'} left alone` : ''}${k.last.error ? ` · ${k.last.error}` : ''}` : null;
-  const desc = !k.on ? 'Off. Quorum writes meeting notes here and changes nothing else.'
-    : k.lastRunAt ? `Last run ${when(k.lastRunAt)}${last ? `: ${last}` : ''}` : 'Index, daily note, people and project notes, after each meeting';
-  // turning the brain check on is one of the two moves that start a run (Run is the other); checks without terms are skipped
-  const pick = async (p: KeeperPlugin, owner: 'quorum' | 'vault') => {
-    setK(await window.quorum.keeperPlugin(p.id, owner));
-    if (p.id === 'brain-check' && owner === 'quorum') window.quorum.brainCheckRun().catch(() => {});
-  };
-  // the learned list against its budget, and its share of the file it sits in
-  const usage = (l: NonNullable<KeeperStatus['learned']>) => `${l.chars.toLocaleString()} of ${l.budget.toLocaleString()} characters in ${l.file}${l.fileChars ? `, ${Math.round((l.chars / l.fileChars) * 100)}% of the file` : ''}`;
-  const factsOn = k.plugins.find((p) => p.id === 'facts')?.owner === 'quorum';
-  const plugin = (p: KeeperPlugin) => {
-    const Icon = PLUGIN_ICON[p.id] ?? IconFolder;
-    const on = p.owner === 'quorum';
-    const found = p.evidence.map((e) => `${e.path} (${e.why})`).join(', ');
-    const pdesc = p.evidence.length
-      ? (on ? `Quorum does this. Your Agent OS also has ${found}` : `Used already in your Agent OS: ${found}. ${p.report ? 'Quorum leaves this to it.' : 'Quorum reads and links, and writes nothing for this.'}`)
-      : on ? `${p.does}${p.id === 'facts' && !k.model ? '. Needs a model source in AI settings' : p.id === 'facts' && k.learned ? `. ${usage(k.learned)}` : ''}`
-      : p.report ? `Off. ${p.does}.` : 'Off. Quorum writes nothing for this.';
-    const full = p.note ? `${pdesc}${/[.]$/.test(pdesc) ? '' : '.'} ${p.note}` : pdesc;
-    return (
-      <Fragment key={p.id}>
-        <Row icon={<Icon width={18} height={18} className={on ? 'ok' : undefined} />} title={p.title} desc={full}>
-          {p.isNew && <span className="new-badge">New</span>}
-          {p.isNew && <button className="pill small-pill" onClick={() => pick(p, 'vault')}>Keep as is</button>}
-          <Toggle on={on} disabled={p.always && !p.evidence.length} onChange={(v) => pick(p, v ? 'quorum' : 'vault')} />
-        </Row>
-        {on && PLUGIN_PANEL[p.id]?.()}
-      </Fragment>
-    );
-  };
-  const writers = k.plugins.filter((p) => !p.report);
-  const reports = k.plugins.filter((p) => p.report);
+  const last = k.last && !k.last.off && !k.last.held ? `${k.last.filed} filed${k.last.error ? ` · ${k.last.error}` : ''}` : null;
+  const desc = !k.on ? 'Off. Quorum saves meeting notes and changes nothing else.'
+    : k.lastRunAt ? `Last run ${when(k.lastRunAt)}${last ? `: ${last}` : ''}` : "After each meeting, updates the notes Quorum created: its meetings index, daily notes and learned facts.";
   return (
     <>
-      <h3>Upkeep</h3>
+      <h3>Memory</h3>
       <div className="set-card">
-        <Row icon={<IconReset width={18} height={18} className={k.on ? 'ok' : undefined} />} title="Keep this folder current" desc={desc}>
+        <Row icon={<IconReset width={18} height={18} className={k.on ? 'ok' : undefined} />} title="Auto maintain memories from new meetings" desc={desc}>
           {k.on && <button className="pill small-pill" disabled={busy || k.running} onClick={() => run()}>{busy || k.running ? 'Running…' : 'Run now'}</button>}
           <Toggle on={k.on} onChange={async (on) => setK(await window.quorum.keeperSet({ on }))} />
         </Row>
@@ -979,81 +775,11 @@ function KeeperCard({ brain }: { brain: Brain }) {
         )}
         {k.on && k.held && (
           <Row icon={<IconInfo width={18} height={18} />} title={`Waiting to create ${k.held.count} new files`}
-            desc={`The last run would have added ${k.held.count} files, such as ${k.held.sample.slice(0, 3).join(', ')}. Nothing was written. Turn off a plugin below, or create them.`}>
+            desc={`The last run would have added ${k.held.count} files, such as ${k.held.sample.slice(0, 3).join(', ')}. Nothing was written.`}>
             <button className="pill small-pill" disabled={busy || k.running} onClick={() => run(true)}>Create them</button>
           </Row>
         )}
       </div>
-      {k.plugins.length > 0 && (
-        <>
-          <h3>Plugins</h3>
-          <div className="set-card">
-            {k.on && (
-              <Row icon={<IconNotes width={18} height={18} />} title="Edit notes Quorum did not create"
-                desc={`Off by default. Quorum then writes only to files it made: its meeting notes, the meetings index, daily notes it started and .quorum. Turn this on to let it add meeting lines to your index.md, daily, people and project notes, and a learned facts note you picked.${!k.editVault && k.last?.left?.length ? ` The last run left ${k.last.left.length} ${k.last.left.length === 1 ? 'note' : 'notes'} as ${k.last.left.length === 1 ? 'it was' : 'they were'}.` : ''}`}>
-                <Toggle on={k.editVault} onChange={async (on) => setK(await window.quorum.keeperSet({ editVault: on }))} />
-              </Row>
-            )}
-            {k.on ? writers.map(plugin) : <Row icon={<IconReset width={18} height={18} />} title="Upkeep is off" desc="Quorum writes nothing for these jobs while Keep this folder current is off. Turn it on to choose which ones it does. The reports below work either way." />}
-            {k.on && k.folders.meetings && k.plugins.find((p) => p.id === 'index')?.owner === 'vault' && (
-              <Row icon={<IconFork width={18} height={18} />} title={`Write meeting index lines to ${k.folders.meetings}/index.md`}
-                desc="Your Agent OS keeps index.md, so Quorum leaves it alone. This keeps one line per meeting in the meetings folder instead, which your index can link to.">
-                <Toggle on={k.meetingsIndex} onChange={async (on) => setK(await window.quorum.keeperSet({ meetingsIndex: on }))} />
-              </Row>
-            )}
-            {k.on && factsOn && k.learned && (
-              <Row icon={<IconNotes width={18} height={18} />} title="Learned facts file"
-                desc={`${k.learned.target === 'note' ? `A note in your Agent OS. ${k.learned.linked ? 'index.md links to it' : k.learned.indexGenerated ? 'index.md is marked as generated, so Quorum adds no link to it' : 'index.md is kept by your Agent OS, so Quorum adds no link to it'}. ` : ''}Claude Code does not load this file on its own. Agents read it through the Quorum MCP server. The oldest lines move to the changelog past the budget`}>
-                <select className="set-select" aria-label="Learned facts file" value={k.learned.pick} onChange={async (e) => setK(await window.quorum.keeperSet({ factsTarget: e.target.value as LearnedTarget }))}>
-                  <option value="learned">.quorum/learned.md</option>
-                  <option value="note">A vault note</option>
-                </select>
-                <select className="set-select" aria-label="Budget" value={String(k.learned.budgetPick)} onChange={async (e) => {
-                  if (e.target.value === 'auto') { if (k.learned!.defaultMoves > 0) setAskDefault(true); else setK(await window.quorum.keeperSet({ factsBudget: 'auto' })); return; }
-                  setK(await window.quorum.keeperSet({ factsBudget: Number(e.target.value) }));
-                }}>
-                  <option value="auto">Default ({k.learned.defaultBudget.toLocaleString()} characters)</option>
-                  {[1000, 2000, 4000, 8000].map((n) => <option key={n} value={n}>{n.toLocaleString()} characters</option>)}
-                </select>
-              </Row>
-            )}
-            {k.on && factsOn && k.learned?.noteHeld && (
-              <Row icon={<IconInfo width={18} height={18} />} title="Learned facts go to .quorum/learned.md for now"
-                desc={`Quorum did not create ${k.learned.note}, so it writes the facts to .quorum/learned.md until you turn on Edit notes Quorum did not create, or pick a note path that does not exist yet.`} />
-            )}
-            {k.on && factsOn && (k.learned?.target === 'note' || k.learned?.noteHeld) && (
-              <Row icon={<IconNotes width={18} height={18} />} title="Learned facts note" desc="A path inside your Agent OS. Changing it moves the facts to the new note">
-                <NotePathField value={k.learned.note} onSave={async (p) => { const s = await window.quorum.keeperSet({ factsNote: p }); setK(s); return s.learned?.note ?? p; }} />
-              </Row>
-            )}
-            {k.on && factsOn && k.learned && (
-              <Row icon={<IconNotes width={18} height={18} />} title="Copy the newest facts into CLAUDE.md"
-                desc={`CLAUDE.md is loaded in every Claude Code session. When this is on, Quorum keeps the newest ${k.learned.claude.facts} facts there, up to ${k.learned.claude.budget.toLocaleString()} characters, and rewrites that block on each run. Off by default.${k.learned.claude.editable ? '' : ' Quorum did not create CLAUDE.md, so this also needs Edit notes Quorum did not create.'}`}>
-                <Toggle on={k.learned.claude.on} onChange={async (on) => setK(await window.quorum.keeperSet({ factsInClaude: on }))} />
-              </Row>
-            )}
-            {askDefault && k.learned && (
-              <ConfirmModal title={`Use the default of ${k.learned.defaultBudget.toLocaleString()} characters?`}
-                body={`${k.learned.defaultMoves} older ${k.learned.defaultMoves === 1 ? 'fact moves' : 'facts move'} from ${k.learned.file} to .quorum/changelog.md, where you can copy them back.`}
-                action="Use the default" onDone={async (ok) => { setAskDefault(false); if (ok) setK(await window.quorum.keeperSet({ factsBudget: 'auto' })); }} />
-            )}
-            {k.learned?.claude.block && !k.learned.claude.on && !k.learned.claude.generated && (
-              <Row icon={<IconTrash width={18} height={18} />} title="Remove the learned facts block from CLAUDE.md"
-                desc={k.learned.claude.block === 'list'
-                  ? `CLAUDE.md has a block of ${k.learned.claude.lines} learned ${k.learned.claude.lines === 1 ? 'fact' : 'facts'}, and Quorum no longer updates it. Removing it moves the facts to ${k.learned.file} and deletes only the text between Quorum's markers.`
-                  : "CLAUDE.md has a learned facts block that Quorum no longer updates. Removing it deletes only the text between Quorum's markers."}>
-                <button className="pill small-pill" onClick={() => setAskRemove(true)}>Remove</button>
-              </Row>
-            )}
-            {askRemove && k.learned && (
-              <ConfirmModal title="Remove the learned facts block from CLAUDE.md?"
-                body={k.learned.claude.block === 'list' ? `The facts move to ${k.learned.file}. The rest of CLAUDE.md stays as it is.` : 'The rest of CLAUDE.md stays as it is.'}
-                action="Remove" onDone={async (ok) => { setAskRemove(false); if (ok) setK(await window.quorum.keeperRemoveClaude()); }} />
-            )}
-            {reports.map(plugin)}
-          </div>
-        </>
-      )}
     </>
   );
 }
@@ -1195,7 +921,7 @@ function NotificationsPage({ settings, set }: { settings: Settings; set: (patch:
 
 // one connection for the whole workspace: a System One decision model (OpenAI decisions or TypeSafe Jev) for quick yes-or-no checks.
 // No backend yet, so the key sits in this Mac's Keychain
-function WorkspaceDecisions({ connectedBy }: { connectedBy?: string }) {
+function WorkspaceDecisions({ connectedBy, bare = false }: { connectedBy?: string; bare?: boolean }) {
   const [dk, setDk] = useState<DecisionsStatus | null>(null);
   const [more, setMore] = useMenu();
   const [pick, setPick] = useMenu();
@@ -1205,8 +931,7 @@ function WorkspaceDecisions({ connectedBy }: { connectedBy?: string }) {
   const on = !!dk?.connected && !!dk.provider;
   const name = on && dk?.provider ? dk.providers[dk.provider].name : 'Decision checks';
   const ids = (Object.keys(dk?.providers ?? {}) as DecisionProvider[]);
-  return (
-    <div className="set-card">
+  const inner = (<>
       <Row icon={on && dk?.provider ? <ProviderMark provider={dk.provider} /> : <IconShield width={18} height={18} />} title={name}
         desc={on ? `Quick yes-or-no checks for everyone${connectedBy ? ` · set up by ${connectedBy}` : ''}` : 'Quick yes-or-no checks during calls: STOP said another way, what is worth a note, when to look for an answer'}>
         {on ? (
@@ -1232,8 +957,8 @@ function WorkspaceDecisions({ connectedBy }: { connectedBy?: string }) {
         )}
       </Row>
       {keying && dk && <DecisionsKey provider={keying} info={dk.providers[keying]} onDone={(ok) => { setKeying(null); if (ok) refresh(); }} />}
-    </div>
-  );
+    </>);
+  return bare ? inner : <div className="set-card">{inner}</div>;
 }
 
 // the key is checked with one tiny question, then saved to the Keychain
@@ -1262,48 +987,6 @@ function DecisionsKey({ provider, info, onDone }: { provider: DecisionProvider; 
 
 // Quorum reached from outside: the MCP server in Claude Code and Codex, and the quorum command in Terminal. Claude Code
 // as a model provider is a row in PersonalConnectors above
-function ClaudeCard() {
-  const agents = useAgents();
-  const check = useConnectionCheck(agents);
-  return (
-    <>
-      <div className="set-head"><h3>Connect to AI tools</h3></div>
-      <p className="mcp-lede">Give Claude Code, Codex and Terminal access to your notes and meetings through the quorum MCP server and command.</p>
-      <div className="set-card">
-        <McpRows agents={agents} />
-      </div>
-      <div className="conn-check-head">
-        <p className="mcp-lede">Check connection makes sure your agent can reach Quorum's meeting notes. It changes nothing in your Agent OS folder.</p>
-        <ConnectionCheckButton running={check.running} onRun={check.run} />
-      </div>
-      {check.result && <ConnectionCheckList result={check.result} running={check.running} onAction={check.act} />}
-    </>
-  );
-}
-
-// the agent rows (AgentLinks.tsx) and the Access choice. All run the CLI that ships beside the app; nothing listens on
-// a port
-function McpRows({ agents }: { agents: Agents }) {
-  const [access, setAccess] = useState<'read' | 'write'>('write');
-  useEffect(() => { window.quorum.getSettings().then((st) => setAccess(st.access ?? 'write')); }, []);
-  return (
-    <>
-        <AgentRows agents={agents} variant="settings" manual={(command) => (
-          <div className="row-extra">
-            <p className="copy-label">Or run Quorum in Terminal with its full path</p>
-            <CopyField value={command} />
-          </div>
-        )} />
-        <Row icon={<IconLock width={18} height={18} />} title="Access" desc="Your workspace admin will set this later">
-          <select className="set-select" aria-label="Access" value={access} onChange={async (e) => { const v = e.target.value as 'read' | 'write'; setAccess(v); await window.quorum.setSettings({ access: v }); }}>
-            <option value="write">Read and write</option>
-            <option value="read">Read only</option>
-          </select>
-        </Row>
-    </>
-  );
-}
-
 // a read-only value with a copy button; the check stays 5 seconds, then dissolves back to the copy icon
 function CopyField({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
@@ -1328,13 +1011,14 @@ const ECHO_DESC: Record<NonNullable<Transcription['echo']>, string> = {
   off: 'Call audio can show as you on speakers',
 };
 
-function MeetingsPage({ settings, onSettings, onConnector, teamMeetings }: { settings: Settings; onSettings: (s: Settings) => void; onConnector: (id: string) => void; teamMeetings: boolean }) {
+function MeetingsPage({ settings, onSettings, onConnector, teamMeetings, folders }: { settings: Settings; onSettings: (s: Settings) => void; onConnector: (id: string) => void; teamMeetings: boolean; folders: ReactNode }) {
   const t = settings.transcription ?? {};
   const saveTx = async (patch: Transcription) => onSettings(await window.quorum.setSettings({ transcription: patch }));
   // call detection and auto-listen follow meeting-capture; the transcription rows follow manual-listen (flags.ts)
   const nt = useNotetaker();
   return (
     <>
+      {folders}
       {nt.meetingCapture && <>
       <h3>Listening</h3>
       <div className="set-card">
@@ -1386,55 +1070,58 @@ function MeetingsPage({ settings, onSettings, onConnector, teamMeetings }: { set
   );
 }
 
-function DevelopersPage() {
+function DevelopersPage({ settings, onSettings }: { settings: Settings; onSettings: (s: Settings) => void }) {
+  const agents = useAgents();
+  const check = useConnectionCheck(agents);
+  const api = useFlag('personal-api');
   return (
     <>
-      <ClaudeCard />
-      <PersonalConnectors />
-      <FlagsCard />
-      <h3>API</h3>
-      <p className="mcp-lede">Keys for scripts and tools to reach your notes.</p>
-      <div className="set-card">
-        <Row icon={<IconCode width={18} height={18} />} title={<>Personal API keys<Soon /></>} desc="Will issue keys that let your scripts and tools read and write your notes">
-          <button className="icon-btn" disabled aria-label="Manage API keys"><IconChevron className="right" /></button>
-        </Row>
-      </div>
+      <PersonalConnectors mcp={{ 'claude-code': mcpLink(agents, 'claude'), codex: mcpLink(agents, 'codex') }}
+        top={<AgentRows agents={agents} variant="settings" only={['cli']} manual={(command) => (
+          <div className="row-extra">
+            <p className="copy-label">Or run Quorum in Terminal with its full path</p>
+            <CopyField value={command} />
+          </div>
+        )} />}
+        below={<>
+          <div className="conn-check-head">
+            <p className="mcp-lede">Check connection makes sure your AI tools can reach Quorum's meeting notes. It changes nothing in your folder.</p>
+            <ConnectionCheckButton running={check.running} onRun={check.run} />
+          </div>
+          {check.result && <ConnectionCheckList result={check.result} running={check.running} onAction={check.act} />}
+        </>}
+        settingsRows={<>
+          <AccessRow />
+          <Row icon={<IconBrain width={18} height={18} />} title="Let AI tools change memory and knowledge bases"
+            desc="Lets Claude Code, Codex and other AI tools approve, archive and undo memory fixes and create knowledge bases. Off by default.">
+            <Toggle on={settings.memoryAgentActions === true} onChange={async (v) => onSettings(await window.quorum.setSettings({ memoryAgentActions: v }))} />
+          </Row>
+          <WorkspaceDecisions connectedBy={settings.workspace?.decisions?.by} bare />
+        </>} />
+      {api && <>
+        <h3>API</h3>
+        <p className="mcp-lede">Keys for scripts and tools to reach your notes.</p>
+        <div className="set-card">
+          <Row icon={<IconCode width={18} height={18} />} title={<>Personal API keys<Soon /></>} desc="Will issue keys that let your scripts and tools read and write your notes">
+            <button className="icon-btn" disabled aria-label="Manage API keys"><IconChevron className="right" /></button>
+          </Row>
+        </div>
+      </>}
     </>
   );
 }
 
-// the feature flags this copy runs with (app/flags.js): read-only here, the admin app sets them; each row names where
-// its value came from, and Refresh asks the relay now instead of waiting for the hourly read
-const FLAG_SOURCE: Record<string, string> = { env: 'QUORUM_FLAGS in the environment', relay: 'the relay', cache: 'the last relay answer, cached', defaults: 'built into this build' };
-function FlagsCard() {
-  const state = useFlags();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const refresh = async () => {
-    setBusy(true); setError(null);
-    try { const r = await window.quorum.flagsRefresh(); if (r.ok === false) setError(r.error || 'The flags could not be read.'); }
-    catch { setError('The flags could not be read.'); }
-    finally { setBusy(false); }
-  };
-  const shownError = error ?? state.error ?? null;
-  const entries = Object.entries(state.flags).sort(([a], [b]) => a.localeCompare(b));
+// read and write, or read only, for every AI tool that reaches Quorum through the MCP or the CLI
+function AccessRow() {
+  const [access, setAccess] = useState<'read' | 'write'>('write');
+  useEffect(() => { window.quorum.getSettings().then((st) => setAccess(st.access ?? 'write')); }, []);
   return (
-    <>
-      <div className="set-head">
-        <h3>Feature flags</h3>
-        <span className="set-head-actions"><button className="pill small-pill" disabled={busy} onClick={refresh}>{busy ? 'Reading…' : 'Refresh'}</button></span>
-      </div>
-      <p className="mcp-lede">Switches set in the admin app. A change takes effect as soon as this copy reads it, with no restart; screen-context needs manual-listen on. This copy reads them on launch and every hour{state.fetchedAt ? `; last read ${new Date(state.fetchedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '; not read from the relay yet'}.</p>
-      {shownError && <p className="set-error">{shownError} The values below are the last ones this copy had.</p>}
-      <div className="set-card">
-        {entries.length === 0 && <Row icon={<IconSliders width={18} height={18} />} title="No flags yet" desc="The relay has not answered and this build has no defaults" />}
-        {entries.map(([key, v]) => (
-          <Row key={key} icon={<IconSliders width={18} height={18} />} title={<code className="ac-code">{key}</code>} desc={`${v.enabled ? 'On' : 'Off'}, from ${FLAG_SOURCE[v.source] ?? v.source}${v.blockedBy ? `; off because ${v.blockedBy} is off` : v.requires ? `; needs ${v.requires}` : ''}`}>
-            <Toggle on={v.enabled} disabled onChange={() => {}} />
-          </Row>
-        ))}
-      </div>
-    </>
+    <Row icon={<IconLock width={18} height={18} />} title="Access" desc="What AI tools may do with your notes and meetings">
+      <select className="set-select" aria-label="Access" value={access} onChange={async (e) => { const v = e.target.value as 'read' | 'write'; setAccess(v); await window.quorum.setSettings({ access: v }); }}>
+        <option value="write">Read and write</option>
+        <option value="read">Read only</option>
+      </select>
+    </Row>
   );
 }
 

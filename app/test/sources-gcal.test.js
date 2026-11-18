@@ -98,7 +98,7 @@ describe('connect', () => {
     const fetchImpl = async (url, init) => { const p = new URLSearchParams(init.body); return p.get('code') === 'good' && p.get('code_verifier') ? json({ access_token: 'at', refresh_token: 'rt', expires_in: 3600, id_token: idToken('maya@example.com') }) : json({ error: 'invalid_grant' }, 400); };
     const t = await connect({ client, open: async (u) => { opened = u; }, loopback, fetchImpl });
     expect(t).toMatchObject({ accessToken: 'at', refreshToken: 'rt', email: 'maya@example.com' });
-    expect(finished).toEqual([{ name: 'Google Calendar' }]);
+    expect(finished).toEqual([{ name: 'Google Calendar', connector: 'google-calendar' }]);
   });
 });
 
@@ -127,6 +127,8 @@ describe('createGoogleCalendar', () => {
     expect(first.events.map((e) => e.title)).toEqual(['Design review']);
     await g.events(3);
     expect(reads).toBe(2); // one on connect, one for days 3; the third call came from the cache
+    await g.events(3, { fresh: true });
+    expect(reads).toBe(3);
     await g.disconnect();
     expect(g.status().connected).toBe(false);
     expect(await tokens.get('google-calendar')).toBeNull();

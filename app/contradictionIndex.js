@@ -69,11 +69,23 @@ export function frontmatterEnd(lines) {
   return 0;
 }
 
+// the hash of each note's text, kept per note: a sweep reads every note, and a text the engine still holds is not
+// hashed again
+const hashes = new Map();
+export function noteHash(rel, text) {
+  const t = String(text ?? '');
+  const hit = hashes.get(rel);
+  if (hit && hit.text === t) return hit.hash;
+  const hash = hashText(t);
+  hashes.set(rel, { text: t, hash });
+  return hash;
+}
+
 const cache = new Map();
 // the stage 1 index of one note. n: { rel, text, note } as the vault index gives it (note from linkparse.js parseNote)
 export function indexNote(n) {
   const text = String(n.text ?? '');
-  const hash = hashText(text);
+  const hash = noteHash(n.rel, text);
   const hit = cache.get(n.rel);
   if (hit?.hash === hash) return hit;
   const props = n.note?.props ?? {};
@@ -109,6 +121,6 @@ export function indexNote(n) {
   cache.set(n.rel, out);
   return out;
 }
-export const clearIndexCache = () => cache.clear();
+export const clearIndexCache = () => { cache.clear(); hashes.clear(); };
 // drops cached notes the vault no longer has. keep: a Set of rels
-export const pruneIndexCache = (keep) => { for (const rel of cache.keys()) if (!keep.has(rel)) cache.delete(rel); };
+export const pruneIndexCache = (keep) => { for (const m of [cache, hashes]) for (const rel of m.keys()) if (!keep.has(rel)) m.delete(rel); };

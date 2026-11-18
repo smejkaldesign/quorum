@@ -1,7 +1,7 @@
 // Guardrails: the one rule set behind what an agent may read from the Agent OS and what it may say about it. Four
 // built-in rules ship on; the connected Agent OS can offer more (its guard hooks, opt-out lists, the rules its
 // CLAUDE.md states, the frontmatter conventions its notes follow and the folders Obsidian excludes), which the person
-// reviews one by one and includes the way memory power-ups are reviewed; the person adds their own; and in Cloud a
+// reviews and includes one by one; the person adds their own; and in Cloud a
 // workspace's admins add rules that reach every member's Mac and cannot be turned off there. Every rule carries a
 // scope: individual (built-in, Agent OS and personal rules, the person's own in both editions) or organization
 // (workspace rules, set by admins for the organization or team). compile() turns the effective list into what each
@@ -27,10 +27,10 @@ export const SECRET_NAMES = String.raw`(^|/)(\.env(\..*)?|.*\.(pem|key|p12|pfx|k
 export const PRIVATE_FOLDER = /personal|private/i;
 
 export const BUILT_IN = [
-  { id: 'built-in:secrets', kind: 'secret', label: 'Secret-looking files', what: 'Files named like keys, tokens, .env files and credentials are never read.', value: SECRET_NAMES },
-  { id: 'built-in:private-folders', kind: 'path', label: 'Private folders', what: 'Folders named personal or private, plus .git and node_modules, are never read or searched.', value: 'personal|private' },
-  { id: 'built-in:confidential', kind: 'frontmatter', label: 'Notes marked confidential', what: 'A note with confidential: in its frontmatter is never read, synced or shared.', value: 'confidential' },
-  { id: 'built-in:opt-outs', kind: 'term', label: 'Opted-out people and companies', what: 'Lines naming anyone on your opt-out list (Settings, Admin, General) are withheld from transcripts, answers and the MCP server.', value: '' },
+  { id: 'built-in:secrets', kind: 'secret', label: 'Block files that look like keys or passwords', what: 'Files named like keys, tokens, .env files and credentials are never read.', value: SECRET_NAMES },
+  { id: 'built-in:private-folders', kind: 'path', label: 'Block private folders', what: 'Folders named personal or private, plus .git and node_modules, are never read or searched.', value: 'personal|private' },
+  { id: 'built-in:confidential', kind: 'frontmatter', label: 'Block notes marked confidential', what: 'A note with confidential: in its frontmatter is never read, synced or shared.', value: 'confidential' },
+  { id: 'built-in:opt-outs', kind: 'term', label: 'Hide opted-out people and companies', what: 'Lines naming anyone on your opt-out list (Settings, Admin, General) are withheld from transcripts, answers and the MCP server.', value: '' },
 ];
 
 // hook classification: by what the script does and where it runs, never by its file name alone

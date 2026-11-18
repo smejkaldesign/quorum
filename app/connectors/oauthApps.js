@@ -37,10 +37,11 @@ export const OAUTH_APPS = {
   slack: {
     name: 'Slack', client: 'slack', exchange: 'relay', pkce: false,
     authorize: 'https://slack.com/oauth/v2/authorize',
-    // user scopes: Quorum uses the person's own user token, in the channels they are already in
-    scopes: ['channels:read', 'groups:read', 'chat:write', 'users:read'], scopeParam: 'user_scope', scopeSep: ',',
+    // user scopes: Quorum uses the person's own user token, in the channels they are already in. The history and search
+    // scopes are for the read tools (connectors/tools/slack.js); there are no direct message scopes
+    scopes: ['channels:read', 'groups:read', 'chat:write', 'users:read', 'channels:history', 'groups:history', 'search:read'], scopeParam: 'user_scope', scopeSep: ',',
     params: {},
-    scopeNote: 'channels:read, groups:read, chat:write, users:read, with your own user token',
+    scopeNote: 'channels:read, groups:read, users:read, chat:write, channels:history, groups:history, search:read, with your own user token. No direct messages',
   },
   github: {
     // a GitHub App with user-to-server tokens: no OAuth scopes; the app's permissions (Contents and Metadata, read
@@ -59,3 +60,16 @@ export const CLIENT_ID_ENV = { google: 'QUORUM_GOOGLE_CLIENT_ID', notion: 'QUORU
 // the GitHub App's URL name, for the page where the person picks the repositories it may read
 export const GITHUB_APP_SLUG_ENV = 'QUORUM_GITHUB_APP_SLUG';
 export const isOAuthApp = (id) => Object.hasOwn(OAUTH_APPS, id);
+// the connectors whose account Check connection can test (sources/accounts.js IDENTITY); Google Calendar reads its
+// events instead and keeps Sync
+export const CHECKABLE = new Set(['notion', 'slack', 'github', 'google-drive']);
+
+// the GitHub App's installations (accounts.githubInstallations) in one line, or null when it reaches no repository
+export function installSummary(s) {
+  const list = s?.installations ?? [];
+  if (!list.length) return null;
+  const n = list.reduce((t, i) => t + (Number(i.repositories) || 0), 0);
+  if (!n) return null;
+  const owners = [...new Set(list.map((i) => i.owner).filter(Boolean))];
+  return `Installed on ${n} ${n === 1 ? 'repository' : 'repositories'}${owners.length ? ` (${owners.join(', ')})` : ''}`;
+}

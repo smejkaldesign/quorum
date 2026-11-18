@@ -3,3 +3,5 @@ export const OAUTH_APPS: Record<string, OAuthApp>;
 export const CLIENT_ID_ENV: Record<string, string>;
 export const GITHUB_APP_SLUG_ENV: string;
 export function isOAuthApp(id: string): boolean;
+export const CHECKABLE: Set<string>;
+export function installSummary(s: { installations?: { owner: string | null; repositories: number }[] } | null | undefined): string | null;

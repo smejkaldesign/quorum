@@ -197,7 +197,7 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
       try {
         // the sign-in has to be an account the service knows, or nothing is kept; the browser tab learns the outcome too
         const verify = adapterFor(src).verify ? (tokens) => adapterFor(src).verify(createMcp({ url: src.url, token: async () => tokens.accessToken, clientInfo: { name: 'Quorum', version } })) : null;
-        const { meta, tokens } = await oauthConnect({ resourceUrl: src.url, open, clients: store.clients, verify, name: src.name });
+        const { meta, tokens } = await oauthConnect({ resourceUrl: src.url, open, clients: store.clients, verify, name: src.name, connector: src.id });
         metaCache[src.url] = meta;
         await store.tokens.set(id, tokens);
         s.connected = true; s.method = 'connect'; s.connectedAt = new Date().toISOString(); s.freshNext = false; s.account = tokens.email ?? null; saveSettings();

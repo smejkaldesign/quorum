@@ -28,7 +28,7 @@ import { writeAtomic } from './relink.js';
 import { SETUP_FILE, plan, readSetup, slug } from './starter.js';
 import { LEARNED_CLOSE, LEARNED_FILE, LEARNED_OPEN, blockAt, learnedFileIn, learnedLines } from './cli/learned.mjs';
 import { junkOf } from './noteJunk.js';
-import { DAILY_DEFAULT, choose, dailyName, dailyPattern, detect, isGenerated, owns, resolvePlugins, scanContext } from './plugins.js';
+import { DAILY_DEFAULT, choose, dailyName, dailyPattern, isGenerated, owns, resolvePlugins } from './plugins.js';
 
 export const KEEPER_FILE = path.join('.quorum', 'keeper.json');
 export const CHANGELOG = path.join('.quorum', 'changelog.md');
@@ -315,7 +315,6 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
   };
   let running = null;
   let queued = null;
-  let lastRows = null;
   let timer = null;
   let lastRun = null;
 
@@ -383,13 +382,14 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
   // the plugin rows for this vault, and the daily naming it uses. The rows are the only record of whether facts are on;
   // the older facts switch, saved as off before plugins existed, reads as the vault owning facts until the user picks
   // on the plugin row, which clears it
+  // connectBrain saves brainMade null for a folder the person connected; that folder keeps unsaved jobs with its own setup
   const registry = (b) => {
     const f = folders(b.vault);
-    const ctx = scanContext(b.root, b.vault, f);
-    let rows = resolvePlugins(detect(ctx), settings.plugins);
-    if (settings.keeper?.facts === false && !settings.plugins?.facts) rows = rows.map((r) => (r.id === 'facts' ? { ...r, owner: 'vault', overridden: false, isNew: false } : r));
-    lastRows = rows;
-    return { vault: b.vault, f, rows, daily: f.daily ? dailyPattern(ctx.daily).template : DAILY_DEFAULT, made: starterMade(b) };
+    let rows = resolvePlugins(settings.plugins, { built: settings.brainMade !== null });
+    if (settings.keeper?.facts === false && !settings.plugins?.facts) rows = rows.map((r) => (r.id === 'facts' ? { ...r, owner: 'vault' } : r));
+    let daily = [];
+    if (f.daily) { try { daily = readdirSync(path.join(b.vault, f.daily)).filter((n) => !n.startsWith('.')).sort(); } catch {} }
+    return { vault: b.vault, f, rows, daily: f.daily ? dailyPattern(daily).template : DAILY_DEFAULT, made: starterMade(b) };
   };
   // the files the starter wrote, vault-relative, when Quorum built the folder; a folder the person connected has none
   // worked out again only when setup.json changes (a rerun of the setup adds files)
@@ -893,9 +893,6 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
   // a note just written: filed shortly, once the burst of writes settles
   const schedule = (reason = 'note') => { clearTimeout(timer); timer = setTimeout(() => { timer = null; run({ reason }).catch(() => {}); }, 2500); };
 
-  const plugins = () => { const b = brain(); return b ? registry(b).rows : []; };
-  // the rows from the last scan, for callers on a hot path (each question asks about search); scans once if none yet
-  const cachedPlugins = () => lastRows ?? plugins();
   const status = () => {
     const b = brain();
     const c = conf();
@@ -970,15 +967,11 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
     onChange({ ...(lastRun ?? {}), changed: changed.length, reason: 'settings' });
     return status();
   }
-  // one plugin row handed to Quorum or to the vault. A held run planned with the old owners no longer applies, so it
-  // is cleared and a new pass is scheduled
-  // a report plugin writes nothing in the vault, so its pick is saved and nothing else: no held run is cleared and no
-  // pass is scheduled
+  // one job handed to Quorum or to the vault. A held run planned with the old owners no longer applies, so it is
+  // cleared and a new pass is scheduled
   const setPlugin = (id, to) => {
     const b = brain();
-    const rows = plugins();
-    settings.plugins = choose(settings.plugins, rows, id, to);
-    if (rows.find((r) => r.id === id)?.report) { saveSettings(); return status(); }
+    settings.plugins = choose(settings.plugins, id, to);
     if (id === 'facts' && settings.keeper && 'facts' in settings.keeper) { settings.keeper = { ...settings.keeper }; delete settings.keeper.facts; }
     saveSettings();
     if (b) { const st = loadState(b.vault); if (st.held) { delete st.held; saveState(b.vault, st); } }
@@ -1073,5 +1066,5 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
     if (!b) return;
     appendChangelog(b.vault, 'Moved to the Trash', `- ${rel}\n\n“${title}” looked empty, and you chose to remove it. It is in the macOS Trash.\n\n`);
   };
-  return { run, schedule, halt, status, set, setPlugin, removeClaude, plugins, cachedPlugins, conf, clearErrors, errorLog, noteTrail, trails, junk, keepJunk, trashedJunk };
+  return { run, schedule, halt, status, set, setPlugin, removeClaude, conf, clearErrors, errorLog, noteTrail, trails, junk, keepJunk, trashedJunk };
 }

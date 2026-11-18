@@ -1,21 +1,21 @@
-// Provider keys on this Mac: one Keychain item per provider (service quorum-connector-<id>, account quorum). A key
-// stays in the Keychain and in this process; it is never logged, never written to settings and never returned over
+// Provider keys on this Mac: one entry per provider (quorum-connector-<id>) in Quorum's secret store (secrets.js). A key
+// stays in that store and in this process; it is never logged, never written to settings and never returned over
 // IPC except as the boolean "set". The Anthropic key saved by earlier builds under quorum-model-anthropic still reads
-import { execFile } from 'node:child_process';
 import { BY_ID, KEY_PROVIDER_IDS, needsBaseUrl, needsKey } from './catalog.js';
 import { isDevelopment } from '../edition.js';
+import { secrets } from '../secrets.js';
 
-// a development copy keeps its own Keychain items, so a key added while testing never shows up in the installed app
-const ACCOUNT = 'quorum';
+// a development copy keeps its own entries, so a key added while testing never shows up in the installed app
 const service = (id) => `${isDevelopment ? 'quorum-dev' : 'quorum'}-connector-${id}`;
 const LEGACY = isDevelopment ? {} : { anthropic: 'quorum-model-anthropic' };
-const security = (args) => new Promise((resolve) => execFile('/usr/bin/security', args, (err, out) => resolve(err ? null : out.trim())));
-const read = (svc) => security(['find-generic-password', '-s', svc, '-a', ACCOUNT, '-w']);
 const cache = {}; // per provider: undefined until looked up, null when there's no key
 
 export async function connectorKey(id) {
   if (!needsKey(id)) return null;
-  if (cache[id] === undefined) cache[id] = (await read(service(id))) || (LEGACY[id] ? await read(LEGACY[id]) : null) || null;
+  if (cache[id] !== undefined) return cache[id];
+  const key = await secrets.get(service(id), LEGACY[id] ? [LEGACY[id]] : []);
+  if (key === undefined) return null; // stored but unreadable this time: asked again next call
+  cache[id] = key || null;
   return cache[id];
 }
 
@@ -51,14 +51,13 @@ export async function setConnectorKey(id, key, baseUrl) {
   if (!needsKey(id)) return { error: 'That provider takes no key.' };
   const t = await testConnector({ provider: id, baseUrl, secret: key });
   if (t.error) return t;
-  const saved = await security(['add-generic-password', '-U', '-s', service(id), '-a', ACCOUNT, '-l', `${BY_ID[id].name} API key (Quorum)`, '-w', String(key).trim()]);
+  const saved = await secrets.set(service(id), String(key).trim());
   cache[id] = undefined;
-  return saved === null ? { error: "Couldn't save the key to your Keychain" } : { ok: true };
+  return saved ? { ok: true } : { error: "Couldn't save the key on this Mac" };
 }
 
 export async function removeConnectorKey(id) {
-  await security(['delete-generic-password', '-s', service(id), '-a', ACCOUNT]);
-  if (LEGACY[id]) await security(['delete-generic-password', '-s', LEGACY[id], '-a', ACCOUNT]);
+  await secrets.remove(service(id), LEGACY[id] ? [LEGACY[id]] : []);
   cache[id] = null;
 }
 

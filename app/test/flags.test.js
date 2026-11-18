@@ -36,7 +36,7 @@ describe('precedence', () => {
   });
 
   it('starts from the built-in defaults: capture and live assist off, manual listening and screen context on', () => {
-    expect(DEFAULTS).toEqual({ 'meeting-capture': false, 'live-assist': false, 'manual-listen': true, 'screen-context': true, dictation: false, guardrails: true, 'guardrails-custom': false });
+    expect(DEFAULTS).toEqual({ 'meeting-capture': false, 'live-assist': false, 'manual-listen': true, 'screen-context': true, dictation: false, guardrails: true, 'guardrails-custom': false, 'personal-api': false });
     expect(REQUIRES).toEqual({ 'screen-context': 'manual-listen', 'meeting-capture': 'manual-listen', 'live-assist': 'manual-listen', dictation: 'manual-listen', 'guardrails-custom': 'guardrails' });
     const { flags } = make();
     expect(flags.get('manual-listen')).toBe(true);

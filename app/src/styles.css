@@ -858,6 +858,9 @@ svg.err { color: var(--danger); }
 .set-col .set-head h3 { margin: 0; }
 .set-head-actions { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .set-head-actions em { font-style: normal; }
+.set-advanced { display: inline-flex; align-items: center; gap: 6px; margin: 24px 0 0; padding: 4px 0; border: 0; background: none; color: var(--muted); font-size: 14px; cursor: pointer; }
+.set-advanced:hover { color: var(--text); }
+.set-advanced svg.right { transform: rotate(-90deg); }
 .set-review { margin: 10px 0 12px; color: var(--muted); font-size: 14px; }
 .set-review.new { display: flex; align-items: center; gap: 10px; color: var(--go); }
 .new-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px 2px 6px; border-radius: 999px; background: rgba(60, 207, 110, 0.14); color: var(--go); font-size: 12px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; }
@@ -886,6 +889,8 @@ svg.err { color: var(--danger); }
 .set-zero strong { font-weight: 500; font-size: 16px; }
 .set-zero p { margin: 0 0 8px; max-width: 440px; color: var(--muted); font-size: 14px; line-height: 1.45; }
 .set-title { display: flex; align-items: center; gap: 14px; }
+/* focused when a connector's page opens, for screen readers; no ring on a heading */
+.set-title[tabindex="-1"]:focus { outline: none; }
 .set-title .soon { font-family: -apple-system, system-ui, sans-serif; font-size: 13px; padding: 4px 10px; }
 .switch.off { opacity: 0.45; cursor: default; }
 .set-field.wide { width: auto; flex: 1; }
@@ -1222,6 +1227,7 @@ h3 .soon, .set-zero strong .soon { font-size: 11px; margin-left: 8px; vertical-a
 .conn-alert { display: flex; flex-direction: column; gap: 3px; margin: 22px 0 6px; padding: 14px 16px; border-radius: 12px; border: 1px solid rgba(var(--issue-rgb), 0.35); background: rgba(var(--issue-rgb), 0.08); font-size: 13px; line-height: 1.45; }
 .conn-alert strong { color: #ff6961; font-weight: 600; }
 .conn-alert span { color: var(--text); }
+.conn-alert .pill { align-self: flex-start; margin-top: 8px; }
 .conn-jobcard .conn-alt { margin: 6px 0; }
 .conn-detail .conn-detail-head + h4 { margin-top: 26px; }
 
@@ -1257,6 +1263,8 @@ h3 .soon, .set-zero strong .soon { font-size: 11px; margin-left: 8px; vertical-a
 .crumb-actions .conn-actions { gap: 6px; }
 .crumb-actions .icon-btn { width: 36px; height: 36px; border: 1px solid var(--line-2); border-radius: 999px; transition: border-color 120ms ease; }
 .crumb-actions .icon-btn:hover { border-color: #fff; }
+.conn-show-hidden { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 400; color: var(--muted); cursor: pointer; }
+.conn-show-hidden input { margin: 0; width: 16px; height: 16px; accent-color: var(--brand); }
 
 .meta-pill.meta-source img { width: 18px; height: 18px; border-radius: 5px; }
 
@@ -1682,6 +1690,7 @@ button.meta-pill { font: inherit; cursor: pointer; }
 /* Check connection (AgentLinks.tsx): one line per check, the fix under each failure */
 .conn-check-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 4px 8px; }
 .conn-check-head .mcp-lede { margin: 0; }
+.conn-check-head .pill { flex-shrink: 0; white-space: nowrap; }
 .conn-check { list-style: none; margin: 0 4px 28px; padding: 0; display: grid; gap: 10px; }
 .onb-step .conn-check { margin: 4px 0 16px; }
 .conn-check-item { display: grid; grid-template-columns: 16px 1fr auto; gap: 10px; align-items: start; font-size: 13px; }

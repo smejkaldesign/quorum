@@ -13,14 +13,12 @@ Product gaps as of 2026-11-10. Each item says what is missing, what the app does
 
 - **Starter folder upkeep.** The keeper files each meeting note into the index, the daily note and the people and project notes it concerns, and writes learned facts with the person's own model source (`docs/specs/starter-agent-os.md`, Build status). Notes the person writes by hand are not indexed by it yet.
 
-- **Power-ups.** Settings, Memory, Power-ups lists what the scan found in the connected Agent OS and every item changes the answer once included: the index, search and the link graph feed the hints; folders are added to the read scope; instructions go into the system prompt; skills and agents load the vault's project settings for the run and open the Skill and Agent tools; MCP servers load from the vault's `.mcp.json` with their tools allowed by name (`app/agent.js`, `agentArgs`). Quorum's own guard hook runs on every variant.
-- **Optional markers.** The features below turn on only when the connected folder has the file. Without it the app degrades quietly.
+- **Chat stays out of the Agent OS setup.** A chat run uses Claude Code with Read, Grep and Glob, Quorum's own settings and Quorum's guard hook (`app/agent.js`, `agentArgs`). It does not load the vault's CLAUDE.md, skills, agents or MCP servers, and it does not run the vault's search script. Connector read tools load whenever an account is connected. An index or folder included in an earlier version stays in the read scope; there is no Settings page to change that list. Live meeting suggestions search Quorum's own note index (`app/vindex.js`).
+- **Optional markers.** The feature below turns on only when the connected folder has the file. Without it the app degrades quietly.
 
 | Feature | Marker | Without it | Fix |
 |---|---|---|---|
 | Opt-out redaction list | `scripts/embed-bench/excluded.txt` | No term redaction in transcripts or suggestions | Create the file, one term per line |
-| Link graph expansion | `scripts/graph_links.py` | Hints are keyword-only | Add the script, or leave the marker out |
-| Semantic search | a vector index next to the search script | Settings labels search as "Keyword search" | Fine as is |
 
 - **Meeting notes folder.** Saved notes land in `08-meetings/quorum/` under the vault. Imports from other note takers target a sibling folder, for example `08-meetings/granola/`.
 

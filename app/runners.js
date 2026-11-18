@@ -5,6 +5,7 @@
 // the agent role stays with Claude Code, whose hooks carry Quorum's read guard (docs/parity-gaps.md).
 import { execFile, spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
+import { agentEnv, resolveBin } from './agentEnv.js';
 
 export const TEXT_RUNNERS = {
   codex: { id: 'codex', name: 'Codex', bin: 'codex' },
@@ -52,9 +53,9 @@ export function parseAgyJson(text) {
 }
 
 const run = ({ bin, args, stdin, spawnImpl, cwd, timeoutMs = TIMEOUT_MS }) => new Promise((resolve, reject) => {
-  const env = { ...process.env };
+  const env = agentEnv();
   delete env.ANTHROPIC_API_KEY; delete env.OPENAI_API_KEY;
-  const proc = spawnImpl(bin, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const proc = spawnImpl(resolveBin(bin), args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
   let out = '', err = '';
   const timer = setTimeout(() => { proc.kill(); reject(new Error(`${bin} took longer than ${Math.round(timeoutMs / 60000)} minutes.`)); }, timeoutMs);
   proc.stdout.on('data', (d) => { out += d; });

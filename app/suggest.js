@@ -1,7 +1,7 @@
-// Quorum's proactive suggestions. v1 is connectorless: it searches the user's Agent OS (the vault).
-// Connectors (Figma, Glean, Jira) plug in later as more sources behind the same card.
-import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+// Quorum's proactive suggestions. v1 is connectorless: it searches the user's Agent OS (the vault) with Quorum's own
+// note index. Connectors (Figma, Glean, Jira) plug in later as more sources behind the same card.
+// search(query) returns the index's hits ({ rel, abs, title, line, snippet }), best first
+import { readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { extractJson } from './json.js';
@@ -9,9 +9,8 @@ import { toText } from './transcript.js';
 
 const DETECT_EVERY_MS = 20000;
 
-export function createSuggester({ runClaude, toUI, log, getTranscript, getSettings, owner, noteLink, gate }) {
+export function createSuggester({ runClaude, toUI, log, getTranscript, getSettings, owner, noteLink, gate, search = () => [] }) {
   const vault = () => getSettings().vaultPath || path.join(homedir(), 'Documents/GitHub/second-brain/MyBrain');
-  const repoRoot = () => path.dirname(vault());
   const byId = new Map();
   const offered = new Set();
   let lastDetect = 0;
@@ -57,55 +56,36 @@ export function createSuggester({ runClaude, toUI, log, getTranscript, getSettin
     return redactLines(toText(getTranscript().slice(-lastN), { me: owner, them: 'Others' }));
   }
 
-  function searchVault(query) {
-    return new Promise((resolve) => {
-      const script = path.join(vault(), 'scripts/search-memory.py');
-      if (!existsSync(script)) return resolve([]);
-      const proc = spawn('python3', [script, query, '-n', '8', '--mode', 'keyword'], { cwd: repoRoot() });
-      let out = '';
-      proc.stdout.on('data', (d) => { out += d; });
-      proc.on('error', () => resolve([]));
-      proc.on('close', () => resolve(parseHits(out)));
-    });
-  }
-
-  // search-memory.py prints "N. [<path>:<from>-<to>]" then indented snippet lines (>>>term<<< marks the match)
-  function parseHits(out) {
-    const hits = [];
-    let cur = null;
-    for (const line of out.split('\n')) {
-      const head = line.match(/^\d+\. \[(\S+?\.md)(?::(\d+)(?:-\d+)?)?\]/);
-      if (head) { cur = { rel: head[1], line: Number(head[2]) || 0, heading: '', snippet: '' }; hits.push(cur); continue; }
-      if (cur && /^\s{2,}\S/.test(line)) cur.snippet += `${line.trim().replace(/>>>|<<</g, '')} `;
-    }
+  // the top notes for a query, with opted-out customers left out
+  // the index needs every word in a note, so a query that finds nothing is tried again with its two longest words, then
+  // its longest word
+  function searchNotes(query) {
+    let hits;
+    try {
+      hits = search(query) ?? [];
+      const all = String(query).split(/\s+/).filter(Boolean);
+      const words = all.filter((w) => w.length > 2).sort((a, b) => b.length - a.length);
+      for (const fewer of [words.slice(0, 2), words.slice(0, 1)]) {
+        if (hits.length || !fewer.length || fewer.length >= all.length) continue;
+        hits = search(fewer.join(' ')) ?? [];
+      }
+    } catch { return []; }
     const seen = new Set();
     return hits
-      .filter((h) => !h.rel.includes('/memory/sessions/'))
-      .filter((h) => !isExcluded(`${h.rel} ${h.heading} ${h.snippet}`))
+      .filter((h) => h?.rel && h.abs && !h.rel.includes('memory/sessions/') && !isExcluded(`${h.rel} ${h.title ?? ''} ${h.snippet ?? ''}`))
       .filter((h) => (seen.has(h.rel) ? false : seen.add(h.rel)))
       .slice(0, 4)
-      .map((h) => {
-        const abs = path.join(repoRoot(), h.rel);
-        return { ...h, abs, title: titleOf(abs, h.rel), ...noteLink(abs) };
-      });
+      .map((h) => ({ rel: h.rel, abs: h.abs, line: h.line ?? -1, snippet: h.snippet ?? '', title: h.title || titleOf(h.rel), ...noteLink(h.abs) }));
   }
 
-  function titleOf(abs, rel) {
-    try {
-      const m = readFileSync(abs, 'utf8').match(/^#\s+(.+)$/m);
-      if (m) return m[1].trim();
-    } catch {}
-    return path.basename(rel, '.md').replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/-/g, ' ');
-  }
+  const titleOf = (rel) => path.basename(rel, '.md').replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/-/g, ' ');
 
-  // a window of the note around the hit, so the answer isn't built from a one-line snippet
+  // a window of the note around the hit (line is 0-based, -1 when only the title matched), so the answer isn't built
+  // from a one-line snippet
   function excerpt(hit) {
     let text;
-    try { text = readFileSync(hit.abs, 'utf8'); } catch { return hit.snippet; }
-    const probe = hit.heading ? text.indexOf(hit.heading) : -1;
-    // no heading in the search output, so seek by the line the index pointed at
-    const byLine = hit.line > 1 ? text.split('\n').slice(0, hit.line - 1).join('\n').length : 0;
-    const at = probe >= 0 ? probe : byLine;
+    try { text = readFileSync(hit.abs, 'utf8'); } catch { return redactLines(hit.snippet); }
+    const at = hit.line > 0 ? text.split('\n').slice(0, hit.line).join('\n').length : 0;
     return redactLines(text.slice(Math.max(0, at - 200), at + 1800));
   }
 
@@ -129,7 +109,7 @@ export function createSuggester({ runClaude, toUI, log, getTranscript, getSettin
         const key = `${s.kind}:${String(s.text).toLowerCase()}`;
         if (!s.text || !s.query || offered.has(key) || isExcluded(`${s.text} ${s.query}`)) continue;
         offered.add(key);
-        const hits = await searchVault(s.query);
+        const hits = searchNotes(s.query);
         if (!hits.length) { log(`suggestion skipped, no notes for "${s.query}"`); continue; }
         const id = `sg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         byId.set(id, { ...s, hits });

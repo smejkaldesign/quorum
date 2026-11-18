@@ -19,19 +19,30 @@ describe('which nav shows', () => {
   });
 
   it('lists the top pages alone in the Local edition, in a Cloud build without a hosted account, and for a member', () => {
-    expect(workspacePages('local', false)).toEqual(['general', 'notifications', 'developers', 'guardrails', 'connectors']);
-    expect(workspacePages('local', true, true)).toEqual(['general', 'notifications', 'developers', 'guardrails', 'connectors']);
-    expect(workspacePages('cloud', null)).toEqual(['general', 'notifications', 'developers', 'guardrails', 'connectors']);
-    expect(workspacePages('cloud', false)).toEqual(['general', 'notifications', 'developers', 'guardrails', 'connectors']);
-    expect(workspacePages('cloud', false, true)).toEqual(['general', 'notifications', 'developers', 'guardrails', 'connectors']);
-    expect(workspacePages('cloud', true, true, 'member')).toEqual(['general', 'notifications', 'developers', 'guardrails', 'connectors']);
+    expect(workspacePages('local', false)).toEqual(['general', 'connectors', 'notifications', 'developers', 'guardrails']);
+    expect(workspacePages('local', true, true)).toEqual(['general', 'connectors', 'notifications', 'developers', 'guardrails']);
+    expect(workspacePages('cloud', null)).toEqual(['general', 'connectors', 'notifications', 'developers', 'guardrails']);
+    expect(workspacePages('cloud', false)).toEqual(['general', 'connectors', 'notifications', 'developers', 'guardrails']);
+    expect(workspacePages('cloud', false, true)).toEqual(['general', 'connectors', 'notifications', 'developers', 'guardrails']);
+    expect(workspacePages('cloud', true, true, 'member')).toEqual(['general', 'connectors', 'notifications', 'developers', 'guardrails']);
   });
 
   it('adds Teams and Billing once a Cloud build reached a hosted account, and the team pages only with a team on', () => {
-    expect(workspacePages('cloud', true)).toEqual([...['general', 'notifications', 'developers', 'guardrails', 'connectors'], 'teams', 'billing']);
-    expect(workspacePages('cloud', true, false, 'admin')).toEqual([...['general', 'notifications', 'developers', 'guardrails', 'connectors'], 'teams', 'billing']);
-    expect(workspacePages('cloud', true, true, 'owner')).toEqual([...['general', 'notifications', 'developers', 'guardrails', 'connectors'], 'teams', 'billing', 'knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails']);
+    expect(workspacePages('cloud', true)).toEqual([...['general', 'connectors', 'notifications', 'developers', 'guardrails'], 'organization', 'teams', 'billing']);
+    expect(workspacePages('cloud', true, false, 'admin')).toEqual([...['general', 'connectors', 'notifications', 'developers', 'guardrails'], 'organization', 'teams', 'billing']);
+    expect(workspacePages('cloud', true, true, 'owner')).toEqual([...['general', 'connectors', 'notifications', 'developers', 'guardrails'], 'organization', 'teams', 'billing', 'knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails']);
     for (const p of TEAM_PAGES) expect(workspacePages('cloud', true, false)).not.toContain(p);
+  });
+
+  it('lists no workspace pages while signed out of a hosted account', () => {
+    expect(workspacePages('cloud', true, true, 'owner', false)).toEqual(['general', 'connectors', 'notifications', 'developers', 'guardrails']);
+  });
+
+  it('sends a remembered Organization or Teams page to General once signed out', () => {
+    const listed = workspacePages('cloud', true, true, 'owner', false);
+    expect(resolvePage('organization', true, listed)).toBe('general');
+    expect(resolvePage('teams', true, listed)).toBe('general');
+    expect(resolvePage('organization', true, workspacePages('cloud', true, false, 'owner'))).toBe('organization');
   });
 });
 
@@ -77,7 +88,7 @@ describe('resolving a remembered page', () => {
     expect(resolvePage('org-guardrails', true, ['general'])).toBe('general');
     expect(resolvePage('members', true, ['general', 'teams', 'billing', 'knowledge', 'members'])).toBe('members');
     expect(resolvePage('calendar', true, ['general'])).toBe('calendar');
-    expect(resolvePage('connectors', true, ['general', 'notifications', 'developers', 'guardrails', 'connectors'])).toBe('connectors');
+    expect(resolvePage('connectors', true, ['general', 'connectors', 'notifications', 'developers', 'guardrails'])).toBe('connectors');
   });
 
   it('maps the retired Profile and Platform pages and anything unknown to Preferences', () => {
