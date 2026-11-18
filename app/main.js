@@ -5,6 +5,7 @@ import { BY_ID, cleanConnectors, cleanProviders, needsKey, providerFor, provider
 import { connectorKey, removeConnectorKey, setConnectorKey, testSavedConnector } from './connectors/keys.js';
 import { createConnectGuard, guardIpc } from './connectors/connectGuard.js';
 import { createOverlap } from './connectors/mcpOverlap.js';
+import { appScheme, createConnectorLinks, setLinkScheme } from './connectors/appLink.js';
 import { createAgentLink } from './agentLink.js';
 import { checkConnection } from './connectionCheck.js';
 import { openSpeech, SPEECH_ENGINES } from './speech/provider.js';
@@ -128,6 +129,13 @@ app.on('open-url', (e, url) => { if (/^quorum:\/\/kb\//.test(url)) { e.preventDe
 // Links that arrive before the renderer asks for them (a launch from a link) wait in noteLinks
 const noteLinks = { queue: [], ready: false };
 app.on('open-url', (e, url) => { if (/^quorum:\/\/note\//.test(url)) { e.preventDefault(); noteLinks.queue.push(url); flushNoteLinks(); } });
+// <scheme>://connectors/<id> links (Back to Quorum on the page a sign-in ends on) open that connector's page, and a bare
+// <scheme>://connectors the list, in Settings › Connectors. The scheme is this copy's own (connectors/appLink.js), so a dev sign-in returns to the dev copy.
+// Links wait in connectorLinks until the renderer listens
+setLinkScheme(appScheme(app.isPackaged));
+const connectorLinks = createConnectorLinks({ windowReady: () => !!win && !win.isDestroyed(), deliver: (id) => { openMain(); toUI('connector-link', { id }); } });
+app.on('open-url', (e, url) => { if (connectorLinks.open(url)) e.preventDefault(); });
+ipcMain.handle('connector-links-ready', () => { connectorLinks.ready(); });
 function resolveNoteLink(url) {
   const m = String(url).match(/^quorum:\/\/note\/([^#?]+)(?:#(.*))?$/);
   if (!m) return null;
@@ -2645,8 +2653,9 @@ const { isPrivatePath, isSecretPath, isConfidentialText } = createPredicates({ g
 const account = EDITION === 'cloud'
   ? (await loadEE('account.js')).registerAccount({ ipcMain, settings, saveSettings, toUI, log, brain, meetingIndex, isExcluded: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isExcludedText: (t) => suggester.isExcluded(t) || isConfidentialText(t), openExternal: (u) => shell.openExternal(u), oauthRedirect: () => (app.isPackaged ? 'quorum://auth/callback' : 'http://127.0.0.1:47831/auth/callback') })
   : { sync: { pushNote() {}, pushMeetingNote() {}, pullNow() {}, live() {} }, meetingsKb: null };
-// the installed app owns the quorum:// scheme (package.json build.protocols); Google sign-in comes back on it
-if (app.isPackaged) app.setAsDefaultProtocolClient('quorum');
+// the installed app owns the quorum:// scheme (package.json build.protocols); Google sign-in comes back on it. A
+// development copy takes quorum-dev:// (declared in its Info.plist by dev-app.cjs) for its connector links
+app.setAsDefaultProtocolClient(appScheme(app.isPackaged));
 app.on('open-url', (e, url) => { e.preventDefault(); if (/^quorum:\/\/auth\//.test(url)) account.finishOAuth?.(url); });
 // every connect channel (oauth-connect, source-connect, platform-connect) runs this guard first: in Cloud it refuses a
 // connector the workspace did not approve, or one it runs with a shared identity (connectors/connectGuard.js)
@@ -4599,6 +4608,13 @@ ipcMain.handle('calendar', async () => {
   return { connected: true, status, events, days: c.days, showAll: false, hidden };
 });
 ipcMain.handle('calendar-status', async () => ({ ...calSettings(), status: (await calAsk({ cmd: 'calStatus' })).status, google: gcal.status() }));
+// Sync on Google Calendar's page: a read past the one-minute cache, then Up next reads the calendar again
+ipcMain.handle('calendar-sync', async () => {
+  const win = calendarWindow(calSettings().days);
+  const r = await gcal.events(win.until ? win.days + 2 : win.days, { fresh: true });
+  toUI('calendar-changed');
+  return r.error ? { error: r.error } : { ok: true };
+});
 // personal OAuth connectors (sources/accounts.js): Quorum's registered apps for Google Drive, Notion, Slack and GitHub
 // in both editions. Tokens stay in the Keychain; settings.accounts keeps whether each is connected and its label. The
 // providers whose apps need a server-held secret exchange the code through the relay this copy already talks to
@@ -4617,6 +4633,8 @@ const accounts = createAccounts({
 });
 const accountCall = async (fn) => { try { return await fn(); } catch (err) { return { error: err.message }; } };
 ipcMain.handle('oauth-accounts', () => accounts.list());
+ipcMain.handle('oauth-check', (_e, id) => accountCall(() => accounts.check(String(id ?? ''))));
+ipcMain.handle('oauth-github-installations', () => accountCall(() => accounts.githubInstallations()));
 connectIpc.handle('oauth-connect', (_e, id) => accountCall(() => accounts.connect(String(id ?? ''))));
 ipcMain.handle('oauth-disconnect', (_e, id) => accountCall(async () => { const r = await accounts.disconnect(String(id ?? '')); await kbSync?.disconnected(String(id ?? '')); return r; }));
 // Google Drive files attached to a knowledge base folder through the Google Picker (handlers and the IPC API in

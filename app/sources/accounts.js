@@ -95,6 +95,31 @@ export async function revokeTokens(id, tokens, { relayFetch, fetchImpl = fetch }
   } catch { return false; }
 }
 
+const GITHUB_HEADERS = { accept: 'application/vnd.github+json', 'user-agent': 'Quorum', 'x-github-api-version': '2022-11-28' };
+// each provider's identity call for Check connection, and the account label in its answer
+export const IDENTITY = {
+  notion: { url: 'https://api.notion.com/v1/users/me', headers: { 'notion-version': '2022-06-28' }, label: (b) => b?.bot?.workspace_name || b?.bot?.owner?.user?.name || b?.name || null },
+  slack: { url: 'https://slack.com/api/auth.test', method: 'POST', label: (b) => (b?.user && b?.team ? `${b.user} in ${b.team}` : b?.user || b?.team || null) },
+  github: { url: 'https://api.github.com/user', headers: GITHUB_HEADERS, label: (b) => b?.login ?? null },
+  'google-drive': { url: 'https://openidconnect.googleapis.com/v1/userinfo', label: (b) => b?.email ?? null },
+};
+// Slack answers 200 with ok: false; these errors mean the token no longer works
+const SLACK_REAUTH = new Set(['invalid_auth', 'not_authed', 'token_revoked', 'token_expired', 'account_inactive']);
+
+// one provider call with the account's token, sorted into a body or a problem: network, busy (rate limited), reauth
+// (the token is refused) or failed. The token goes only into the request header
+export async function callProvider(name, token, { url, method = 'GET', headers = {} }, fetchImpl = fetch) {
+  let r;
+  try { r = await fetchImpl(url, { method, headers: { authorization: `Bearer ${token}`, ...headers }, signal: AbortSignal.timeout(15000) }); }
+  catch { return { problem: 'network', error: `Quorum could not reach ${name}. Check your internet connection and try again.` }; }
+  const body = await json(r);
+  const code = typeof body?.error === 'string' ? body.error : null;
+  if (r.status === 429 || (r.status === 403 && (r.headers.get('x-ratelimit-remaining') === '0' || r.headers.has('retry-after'))) || code === 'ratelimited') return { problem: 'busy', error: `${name} is limiting requests right now. Try again in a few minutes.` };
+  if (r.status === 401 || SLACK_REAUTH.has(code)) return { problem: 'reauth', error: `${name} no longer accepts Quorum's sign-in. Reconnect ${name} to fix it.` };
+  if (!r.ok || body?.ok === false) return { problem: 'failed', error: `${name} answered with an error (${code ?? r.status}). Try again, or reconnect ${name} if it keeps happening.` };
+  return { body };
+}
+
 // the account label for providers whose token answer carries none
 export async function accountLabel(id, tokens, fetchImpl = fetch) {
   if (tokens.account) return tokens.account;
@@ -115,7 +140,7 @@ export async function connectAccount(id, { clients, open, relayBase, relayFetch,
   const waiting = loopback();
   await open(authorizeUrl(id, { clientId: clients[app.client].clientId, redirectUri, state, challenge }));
   const q = await waiting;
-  const tell = (r) => { try { q.finish?.({ name: app.name, ...r }); } catch {} };
+  const tell = (r) => { try { q.finish?.({ name: app.name, connector: id, ...r }); } catch {} };
   const fail = (message) => { tell({ failed: message }); throw new Error(message); };
   if (q.error) fail(q.error === 'access_denied' ? `${app.name} sign-in was cancelled.` : q.error_description || q.error);
   if (q.state !== state) fail('The sign-in answer did not match the request.');
@@ -155,7 +180,9 @@ export function createAccounts({ tokens, clients, relayBase, relayFetch, open, l
     const o = info(other);
     return o.connected && (!account || !o.account || o.account === account);
   });
-  return {
+  // the last GitHub installations read, kept for when a later read fails
+  let installs = null;
+  const api = {
     list: () => Object.keys(OAUTH_APPS).map(info),
     async connect(id) {
       known(id);
@@ -180,6 +207,7 @@ export function createAccounts({ tokens, clients, relayBase, relayFetch, open, l
       await tokens.set(tokenKey(id), null);
       save(id, null);
       errors[id] = null;
+      if (id === 'github') installs = null;
       log('account disconnected', id, revoked ? 'revoked' : 'local only');
       return info(id);
     },
@@ -212,5 +240,39 @@ export function createAccounts({ tokens, clients, relayBase, relayFetch, open, l
       refreshing.set(id, run);
       return run;
     },
+    // Check connection: the provider's identity call with the stored token, refreshed first when it is about to expire
+    async check(id) {
+      known(id);
+      const name = OAUTH_APPS[id].name;
+      if (!IDENTITY[id] || delegateOf(id)) throw new Error(`${name} has no connection check.`);
+      const checkedAt = new Date().toISOString();
+      const token = await api.accessToken(id);
+      if (!token) return { ok: false, reconnect: true, error: errors[id] || `${name} is not connected on this Mac. Connect it again.`, checkedAt };
+      const r = await callProvider(name, token, IDENTITY[id], fetchImpl);
+      if (r.error) { log('account check failed', id, r.problem); return { ok: false, reconnect: r.problem === 'reauth', error: r.error, checkedAt }; }
+      errors[id] = null;
+      log('account checked', id);
+      return { ok: true, account: IDENTITY[id].label(r.body) ?? state(id)?.account ?? null, checkedAt };
+    },
+    // where the GitHub App is installed for this person: each installation's owner and how many repositories it
+    // reaches. A failed read (rate limit, network) returns the last answer with stale set, so the page keeps it
+    async githubInstallations() {
+      const stale = (error) => ({ ...(installs ?? { installations: [], checkedAt: null }), stale: true, error });
+      const token = await api.accessToken('github');
+      if (!token) return stale(errors.github || 'GitHub is not connected on this Mac.');
+      const gh = (route) => callProvider('GitHub', token, { url: `https://api.github.com${route}`, headers: GITHUB_HEADERS }, fetchImpl);
+      const list = await gh('/user/installations?per_page=100');
+      if (list.error) { log('github installations not read', list.problem); return stale(list.error); }
+      const found = Array.isArray(list.body?.installations) ? list.body.installations : [];
+      const counts = await Promise.all(found.map((i) => gh(`/user/installations/${encodeURIComponent(i.id)}/repositories?per_page=1`)));
+      const failed = counts.find((c) => c.error);
+      if (failed) { log('github installations not read', failed.problem); return stale(failed.error); }
+      installs = {
+        installations: found.map((i, n) => ({ id: i.id, owner: i.account?.login ?? null, selection: i.repository_selection ?? null, repositories: Number(counts[n].body?.total_count) || 0 })),
+        checkedAt: new Date().toISOString(),
+      };
+      return installs;
+    },
   };
+  return api;
 }

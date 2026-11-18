@@ -886,6 +886,8 @@ svg.err { color: var(--danger); }
 .set-zero strong { font-weight: 500; font-size: 16px; }
 .set-zero p { margin: 0 0 8px; max-width: 440px; color: var(--muted); font-size: 14px; line-height: 1.45; }
 .set-title { display: flex; align-items: center; gap: 14px; }
+/* focused when a connector's page opens, for screen readers; no ring on a heading */
+.set-title[tabindex="-1"]:focus { outline: none; }
 .set-title .soon { font-family: -apple-system, system-ui, sans-serif; font-size: 13px; padding: 4px 10px; }
 .switch.off { opacity: 0.45; cursor: default; }
 .set-field.wide { width: auto; flex: 1; }
@@ -1222,6 +1224,7 @@ h3 .soon, .set-zero strong .soon { font-size: 11px; margin-left: 8px; vertical-a
 .conn-alert { display: flex; flex-direction: column; gap: 3px; margin: 22px 0 6px; padding: 14px 16px; border-radius: 12px; border: 1px solid rgba(var(--issue-rgb), 0.35); background: rgba(var(--issue-rgb), 0.08); font-size: 13px; line-height: 1.45; }
 .conn-alert strong { color: #ff6961; font-weight: 600; }
 .conn-alert span { color: var(--text); }
+.conn-alert .pill { align-self: flex-start; margin-top: 8px; }
 .conn-jobcard .conn-alt { margin: 6px 0; }
 .conn-detail .conn-detail-head + h4 { margin-top: 26px; }
 
@@ -1257,6 +1260,8 @@ h3 .soon, .set-zero strong .soon { font-size: 11px; margin-left: 8px; vertical-a
 .crumb-actions .conn-actions { gap: 6px; }
 .crumb-actions .icon-btn { width: 36px; height: 36px; border: 1px solid var(--line-2); border-radius: 999px; transition: border-color 120ms ease; }
 .crumb-actions .icon-btn:hover { border-color: #fff; }
+.conn-show-hidden { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 400; color: var(--muted); cursor: pointer; }
+.conn-show-hidden input { margin: 0; width: 16px; height: 16px; accent-color: var(--brand); }
 
 .meta-pill.meta-source img { width: 18px; height: 18px; border-radius: 5px; }
 

@@ -56,6 +56,11 @@ export type GuardrailsState = { rules: GuardrailRule[]; skipped: { name: string;
 export type UpdateState = { status: 'off' | 'idle' | 'checking' | 'downloading' | 'ready' | 'failed'; current: string; version: string | null; percent: number; notes: string | null; checkedAt: number | null; error: string | null };
 // a personal OAuth connector (sources/accounts.js); configured is false when this build has no client id for it
 export type OAuthAccount = { id: string; name: string; configured: boolean; connected: boolean; account: string | null; connectedAt: string | null; scope: string; manageUrl: string | null; error: string | null };
+// Check connection on an account connector: the account the provider names, or what went wrong and whether a
+// reconnect fixes it
+export type OAuthCheck = { ok: true; account: string | null; checkedAt: string } | { ok: false; reconnect: boolean; error: string; checkedAt: string };
+// where the GitHub App is installed; stale with an error when the last read failed and this is the one before it
+export type GithubInstallations = { installations: { id: number; owner: string | null; selection: string | null; repositories: number }[]; checkedAt: string | null; stale?: boolean; error?: string };
 // a provider MCP server the agent has (connectors/mcpOverlap.js), with secrets already replaced; where lists the
 // places it was found: claude-list (claude mcp list), claude-user, claude-project (~/.claude.json) and vault (.mcp.json)
 export type McpOverlapServer = { name: string; url: string | null; command: string | null; args: string[]; where: ('claude-list' | 'claude-user' | 'claude-project' | 'vault')[] };
@@ -541,6 +546,8 @@ declare global {
       memoryRefresh(): Promise<Memory>;
       calendar(): Promise<{ connected: boolean; status: string; events: CalendarEvent[]; days: number | 'week'; showAll: boolean; hidden: number }>;
       calendarStatus(): Promise<CalendarSettings>;
+      calendarSync(): Promise<{ ok: true } | { error: string }>;
+      onCalendarChanged(cb: () => void): Unsub;
       sourceIcons(): Promise<Record<string, string | null>>;
       // chat: the STOP/GO notice can be posted in the app's chat (Zoom); running: the app or a browser window for it is open right now
       meetingProviders(): Promise<{ id: string; name: string; installed: boolean; access: boolean | null; enabled: boolean; version: string | null; path: string; inCall: boolean; chat: boolean; running: boolean | null }[]>;
@@ -626,6 +633,10 @@ declare global {
       oauthAccounts(): Promise<OAuthAccount[]>;
       oauthConnect(id: string): Promise<OAuthAccount | { error: string }>;
       oauthDisconnect(id: string): Promise<OAuthAccount | { error: string }>;
+      oauthCheck(id: string): Promise<OAuthCheck | { error: string }>;
+      oauthGithubInstallations(): Promise<GithubInstallations | { error: string }>;
+      onConnectorLink(cb: (t: { id: string | null }) => void): Unsub;
+      connectorLinksReady(): Promise<void>;
       memoryRefreshCancel(): Promise<void>;
       memoryAdd(): Promise<Memory>;
       memoryInclude(id: string): Promise<Memory>;

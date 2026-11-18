@@ -15,7 +15,7 @@ const src = path.join(__dirname, 'node_modules/electron/dist/Electron.app');
 const dest = path.join(__dirname, '.dev/Quorum Dev.app');
 const stamp = path.join(__dirname, '.dev/electron-version');
 // bump the suffix when the plist below changes, so the copy gets rebuilt
-const version = `${readFileSync(path.join(__dirname, 'node_modules/electron/package.json'), 'utf8').match(/"version":\s*"([^"]+)"/)[1]}+cal`;
+const version = `${readFileSync(path.join(__dirname, 'node_modules/electron/package.json'), 'utf8').match(/"version":\s*"([^"]+)"/)[1]}+cal+url`;
 
 if (!existsSync(dest) || !existsSync(stamp) || readFileSync(stamp, 'utf8') !== version) {
   rmSync(dest, { recursive: true, force: true });
@@ -24,6 +24,8 @@ if (!existsSync(dest) || !existsSync(stamp) || readFileSync(stamp, 'utf8') !== v
   for (const key of ['CFBundleName', 'CFBundleDisplayName']) execFileSync('plutil', ['-replace', key, '-string', 'Quorum Dev', plist]);
   execFileSync('plutil', ['-replace', 'CFBundleIdentifier', '-string', 'design.smejkal.quorum.dev', plist]);
   execFileSync('plutil', ['-replace', 'NSCalendarsFullAccessUsageDescription', '-string', 'Quorum shows your upcoming meetings on Home.', plist]);
+  // quorum-dev:// links (Back to Quorum after a sign-in) open this copy; the installed app keeps quorum://
+  execFileSync('plutil', ['-replace', 'CFBundleURLTypes', '-json', '[{"CFBundleURLName":"Quorum Dev","CFBundleURLSchemes":["quorum-dev"]}]', plist]);
   execFileSync('codesign', ['--force', '--deep', '--sign', '-', dest]);
   writeFileSync(stamp, version);
 }
