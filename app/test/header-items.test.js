@@ -99,6 +99,8 @@ describe('the shared connected check', () => {
     expect(isConnected(CONNECTOR_BY_ID.codex, {})).toBe(false);
     expect(CONNECTOR_BY_ID.codex.status).toBe('available');
     expect(CONNECTOR_BY_ID.gemini.kind).toBe('ai-tool');
+    expect(isConnected(CONNECTOR_BY_ID.gemini, { gemini: true })).toBe(true);
+    expect(isConnected(CONNECTOR_BY_ID.gemini, {})).toBe(false);
     expect(isConnected(CONNECTOR_BY_ID.zoom, { providers: [{ id: 'zoom', enabled: true, installed: true, access: null }] })).toBe(true);
     expect(isConnected(CONNECTOR_BY_ID.slack, {})).toBe(false);
   });

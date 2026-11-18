@@ -24,7 +24,7 @@ import { BRAND_LOGOS, brandSrc } from './brandLogos';
 // (sources/accounts.js), one sign-in each through Quorum's registered apps. The meeting apps that listen on this Mac appear only
 // with the meeting-capture flag on; with it off, Zoom stays as its cloud recordings import.
 type Provider = Awaited<ReturnType<typeof window.quorum.meetingProviders>>[number];
-type Live = { sources: MeetingSourceInfo[]; cal: CalendarSettings | null; mcp: { added: boolean; command: string } | null; codex?: { added: boolean; error?: string | null } | null; providers: Provider[]; platforms: PlatformInfo[]; accounts: OAuthAccount[] };
+type Live = { sources: MeetingSourceInfo[]; cal: CalendarSettings | null; mcp: { added: boolean; command: string } | null; codex?: { added: boolean; error?: string | null } | null; gemini?: boolean; providers: Provider[]; platforms: PlatformInfo[]; accounts: OAuthAccount[] };
 type Act = (fn: () => Promise<unknown>) => Promise<void>;
 
 const sourceFor = (x: LibraryConnector, live: Live) => (x.source ? live.sources.find((s) => s.id === x.source) ?? null : null);
@@ -116,8 +116,10 @@ export function ConnectorsPage({ detail, onDetail, library, onLibrary, brain, fo
   const approval = (x: LibraryConnector): Approval => approvalOf(x, policy, accountConnected(x, live));
   const load = async () => {
     // the local edition has no platform handlers; the call fails and the list stays empty
-    const [sources, cal, mcp, providers, platforms, accounts, agents] = await Promise.all([window.quorum.sourcesList(), window.quorum.calendarStatus(), window.quorum.mcpStatus(), window.quorum.meetingProviders(), window.quorum.platformsList().catch(() => [] as PlatformInfo[]), window.quorum.oauthAccounts().catch(() => [] as OAuthAccount[]), window.quorum.agentsStatus().catch(() => null)]);
-    setLive({ sources, cal, mcp, providers, platforms, accounts, codex: agents?.codex ?? null });
+    const [sources, cal, mcp, providers, platforms, accounts, agents, models] = await Promise.all([window.quorum.sourcesList(), window.quorum.calendarStatus(), window.quorum.mcpStatus(), window.quorum.meetingProviders(), window.quorum.platformsList().catch(() => [] as PlatformInfo[]), window.quorum.oauthAccounts().catch(() => [] as OAuthAccount[]), window.quorum.agentsStatus().catch(() => null), window.quorum.modelSourceStatus().catch(() => null)]);
+    // Gemini runs a step through a Google key or the Antigravity sign-in
+    const gemini = !!models && (!!models.keys?.google || Object.values(models.providers ?? {}).some((p) => p === 'google' || p === 'antigravity'));
+    setLive({ sources, cal, mcp, providers, platforms, accounts, codex: agents?.codex ?? null, gemini });
     setLoaded(true);
   };
   useEffect(() => {
@@ -347,6 +349,7 @@ const metaLine = (x: LibraryConnector, live: Live) => {
   if (x.id === 'apple-calendar') return 'Upcoming meetings on Home';
   if (x.id === 'google-calendar') { const g = googleFor(x, live); return g?.connected ? `${g.account ?? 'Google account'} · ${plural(g.calendars, 'calendar')}` : null; }
   if (x.id === 'claude-code' || x.id === 'codex') return 'quorum MCP server added';
+  if (x.id === 'gemini') return 'Set up in AI tools';
   if (x.account) return accountFor(x, live)?.account ?? `${x.name} account`;
   const p = providerFor(x, live);
   if (p) { const plat = platformFor(x, live); return `${p.inCall ? 'In a call now' : 'Listening on this Mac'}${plat?.connected ? ` · ${plural(plat.notes, 'recording')} imported` : ''}`; }

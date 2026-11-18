@@ -192,6 +192,7 @@ export function isConnected(x, live, { explicit = false } = {}) {
   if (x.id === 'google-calendar') return !!live.cal?.google?.connected;
   if (x.id === 'claude-code') return !!live.mcp?.added;
   if (x.id === 'codex') return !!live.codex?.added && !live.codex.error;
+  if (x.id === 'gemini') return !!live.gemini;
   return false;
 }
 

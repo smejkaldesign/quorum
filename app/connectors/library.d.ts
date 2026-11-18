@@ -25,6 +25,7 @@ export type ConnectionLive = {
   cal?: { enabled?: boolean; status?: string; google?: { connected: boolean } | null } | null;
   mcp?: { added: boolean } | null;
   codex?: { added: boolean; error?: string | null } | null;
+  gemini?: boolean;
   added?: Record<string, { enabled: boolean }>;
 };
 export function isConnected(connector: LibraryConnector, live: ConnectionLive, opts?: { explicit?: boolean }): boolean;
