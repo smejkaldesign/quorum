@@ -10,7 +10,7 @@ const store = (seed = {}) => { const m = new Map(Object.entries(seed)); return {
 // a fetch that answers by URL and records each request
 const stub = (answer) => { const calls = []; const f = async (url, init = {}) => { calls.push({ url: String(url), init }); return answer(String(url), init); }; f.calls = calls; return f; };
 const accountsWith = (id, fetchImpl, { tokens = { accessToken: TOKEN }, logs = [], relayFetch } = {}) => createAccounts({
-  tokens: store(tokens ? { [tokenKey(id)]: tokens } : {}), clients: { github: { clientId: 'hid', slug: 'quorum-app' }, notion: { clientId: 'n' }, slack: { clientId: 's' } },
+  tokens: store(tokens ? { [tokenKey(id)]: tokens } : {}), clients: { google: { clientId: 'gid', clientSecret: 'gsec' }, github: { clientId: 'hid', slug: 'quorum-app' }, notion: { clientId: 'n' }, slack: { clientId: 's' } },
   relayBase: 'https://relay.example.com', relayFetch, open: async () => {}, fetchImpl, log: (...a) => logs.push(a.join(' ')),
   state: (x) => (x === id ? { connected: true, account: 'stored-label' } : null), save: () => {},
 });
@@ -60,6 +60,25 @@ describe('Check connection', () => {
   it('Google Calendar has no check; every checkable connector has an identity call', async () => {
     await expect(accountsWith('google-calendar', stub(() => json({}))).check('google-calendar')).rejects.toThrow(/no connection check/);
     expect(Object.keys(IDENTITY).sort()).toEqual([...CHECKABLE].sort());
+  });
+  it('Google Drive reads userinfo for the email, refreshing an expiring token with Google directly', async () => {
+    const f = stub((url, init) => {
+      if (url === 'https://oauth2.googleapis.com/token') { expect(String(init.body)).toContain('grant_type=refresh_token'); return json({ access_token: 'g-fresh', expires_in: 3600 }); }
+      return json({ sub: '1', email: 'eric@example.com' });
+    });
+    const relayFetch = async () => { throw new Error('Google never goes through the relay'); };
+    const r = await accountsWith('google-drive', f, { tokens: { accessToken: 'g-old', refreshToken: 'g-r', expiresAt: Date.now() + 1000 }, relayFetch }).check('google-drive');
+    expect(r).toMatchObject({ ok: true, account: 'eric@example.com' });
+    const who = f.calls.find((c) => c.url === 'https://openidconnect.googleapis.com/v1/userinfo');
+    expect(who.init.headers.authorization).toBe('Bearer g-fresh');
+  });
+  it('refuses an id that is not a connector, and a connector this Mac never connected asks for a connect without calling out', async () => {
+    const f = stub(() => { throw new Error('no network expected'); });
+    await expect(accountsWith('notion', f).check('wispr')).rejects.toThrow(/Unknown connector/);
+    const never = await accountsWith('slack', f, { tokens: null }).check('slack');
+    expect(never).toMatchObject({ ok: false, reconnect: true });
+    expect(never.error).toMatch(/Slack is not connected on this Mac/);
+    expect(f.calls).toHaveLength(0);
   });
 });
 
