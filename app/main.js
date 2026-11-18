@@ -5,7 +5,7 @@ import { BY_ID, cleanConnectors, cleanProviders, needsKey, providerFor, provider
 import { connectorKey, removeConnectorKey, setConnectorKey, testSavedConnector } from './connectors/keys.js';
 import { createConnectGuard, guardIpc } from './connectors/connectGuard.js';
 import { createOverlap } from './connectors/mcpOverlap.js';
-import { appScheme, connectorRoute, setLinkScheme } from './connectors/appLink.js';
+import { appScheme, createConnectorLinks, setLinkScheme } from './connectors/appLink.js';
 import { createAgentLink } from './agentLink.js';
 import { checkConnection } from './connectionCheck.js';
 import { openSpeech, SPEECH_ENGINES } from './speech/provider.js';
@@ -133,13 +133,9 @@ app.on('open-url', (e, url) => { if (/^quorum:\/\/note\//.test(url)) { e.prevent
 // <scheme>://connectors the list, in Settings › Connectors. The scheme is this copy's own (connectors/appLink.js), so a dev sign-in returns to the dev copy.
 // Links wait in connectorLinks until the renderer listens
 setLinkScheme(appScheme(app.isPackaged));
-const connectorLinks = { queue: [], ready: false };
-app.on('open-url', (e, url) => { const route = connectorRoute(url); if (route) { e.preventDefault(); connectorLinks.queue.push(route.id); flushConnectorLinks(); } });
-function flushConnectorLinks() {
-  if (!connectorLinks.ready || !win || win.isDestroyed()) return;
-  for (const id of connectorLinks.queue.splice(0)) { openMain(); toUI('connector-link', { id }); }
-}
-ipcMain.handle('connector-links-ready', () => { connectorLinks.ready = true; flushConnectorLinks(); });
+const connectorLinks = createConnectorLinks({ windowReady: () => !!win && !win.isDestroyed(), deliver: (id) => { openMain(); toUI('connector-link', { id }); } });
+app.on('open-url', (e, url) => { if (connectorLinks.open(url)) e.preventDefault(); });
+ipcMain.handle('connector-links-ready', () => { connectorLinks.ready(); });
 function resolveNoteLink(url) {
   const m = String(url).match(/^quorum:\/\/note\/([^#?]+)(?:#(.*))?$/);
   if (!m) return null;

@@ -25,3 +25,19 @@ export function connectorRoute(url, scheme = current) {
   return Object.hasOwn(CONNECTOR_BY_ID, id) ? { id } : null;
 }
 export const parseConnectorLink = (url, scheme = current) => connectorRoute(url, scheme)?.id ?? null;
+
+// connectors links wait here until the window exists and the renderer said it listens (a link can launch the app);
+// open(url) answers whether the link was a connectors link, deliver(id) brings the window forward on it
+export function createConnectorLinks({ deliver, windowReady, scheme = () => current }) {
+  const queue = [];
+  let listening = false;
+  const flush = () => {
+    if (!listening || !windowReady()) return;
+    for (const id of queue.splice(0)) deliver(id);
+  };
+  return {
+    open(url) { const route = connectorRoute(url, scheme()); if (!route) return false; queue.push(route.id); flush(); return true; },
+    ready() { listening = true; flush(); },
+    flush,
+  };
+}
