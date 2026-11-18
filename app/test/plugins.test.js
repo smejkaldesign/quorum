@@ -53,9 +53,13 @@ describe('generated notices and daily naming', () => {
 });
 
 describe('plugin owners', () => {
-  it('gives every job to Quorum when nothing is saved, whatever tooling the vault has', () => {
+  it('gives every job to Quorum when nothing is saved in a folder Quorum built', () => {
     expect(resolvePlugins().map((r) => [r.id, r.owner])).toEqual([['index', 'quorum'], ['daily', 'quorum'], ['links', 'quorum'], ['facts', 'quorum']]);
     expect(resolvePlugins({}).every((r) => owns([r], r.id))).toBe(true);
+  });
+  it("leaves every job with the person's own setup when nothing is saved in a folder they connected", () => {
+    expect(resolvePlugins({}, { built: false }).every((r) => r.owner === 'vault')).toBe(true);
+    expect(owns(resolvePlugins({ daily: { owner: 'quorum' } }, { built: false }), 'daily')).toBe(true);
   });
   it('keeps a saved vault owner, also one saved with the older evidence key', () => {
     const rows = resolvePlugins({ index: { owner: 'vault', ack: 'index.md:marked as generated' }, daily: { owner: 'quorum', ack: '' }, links: { owner: 'other' } });

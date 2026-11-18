@@ -63,15 +63,16 @@ export function createSuggester({ runClaude, toUI, log, getTranscript, getSettin
     let hits;
     try {
       hits = search(query) ?? [];
-      const words = String(query).split(/\s+/).filter((w) => w.length > 2).sort((a, b) => b.length - a.length);
+      const all = String(query).split(/\s+/).filter(Boolean);
+      const words = all.filter((w) => w.length > 2).sort((a, b) => b.length - a.length);
       for (const fewer of [words.slice(0, 2), words.slice(0, 1)]) {
-        if (hits.length || !fewer.length || fewer.length >= words.length) continue;
+        if (hits.length || !fewer.length || fewer.length >= all.length) continue;
         hits = search(fewer.join(' ')) ?? [];
       }
     } catch { return []; }
     const seen = new Set();
     return hits
-      .filter((h) => h?.rel && h.abs && !isExcluded(`${h.rel} ${h.title ?? ''} ${h.snippet ?? ''}`))
+      .filter((h) => h?.rel && h.abs && !h.rel.includes('memory/sessions/') && !isExcluded(`${h.rel} ${h.title ?? ''} ${h.snippet ?? ''}`))
       .filter((h) => (seen.has(h.rel) ? false : seen.add(h.rel)))
       .slice(0, 4)
       .map((h) => ({ rel: h.rel, abs: h.abs, line: h.line ?? -1, snippet: h.snippet ?? '', title: h.title || titleOf(h.rel), ...noteLink(h.abs) }));

@@ -50,4 +50,10 @@ describe('meeting suggestions', () => {
     expect(queries).toEqual(['pricing plan', 'pricing']);
     expect(cards.length).toBeGreaterThan(0);
   });
+
+  it('leaves session logs out of suggestions', async () => {
+    const { s, cards } = make([{ rel: 'memory/sessions/2026-11-17.md', abs: path.join(vault, 'memory/sessions/2026-11-17.md'), title: 'Session', line: 0, snippet: 'pricing plan' }]);
+    await s.detect();
+    expect(cards).toEqual([]);
+  });
 });

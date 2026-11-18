@@ -382,9 +382,10 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
   // the plugin rows for this vault, and the daily naming it uses. The rows are the only record of whether facts are on;
   // the older facts switch, saved as off before plugins existed, reads as the vault owning facts until the user picks
   // on the plugin row, which clears it
+  // connectBrain saves brainMade null for a folder the person connected; that folder keeps unsaved jobs with its own setup
   const registry = (b) => {
     const f = folders(b.vault);
-    let rows = resolvePlugins(settings.plugins);
+    let rows = resolvePlugins(settings.plugins, { built: settings.brainMade !== null });
     if (settings.keeper?.facts === false && !settings.plugins?.facts) rows = rows.map((r) => (r.id === 'facts' ? { ...r, owner: 'vault' } : r));
     let daily = [];
     if (f.daily) { try { daily = readdirSync(path.join(b.vault, f.daily)).filter((n) => !n.startsWith('.')).sort(); } catch {} }

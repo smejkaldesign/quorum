@@ -39,10 +39,11 @@ export const PLUGINS = [
   { id: 'facts', title: 'Learned facts', does: 'Up to three facts per meeting, written with your model source' },
 ];
 
-// the rows the keeper checks. saved is settings.plugins: { [id]: { owner } }. A saved owner of 'vault' keeps that job
-// off; any other saved value, or none, makes it Quorum's
-export function resolvePlugins(saved = {}) {
-  return PLUGINS.map((p) => ({ id: p.id, title: p.title, does: p.does, owner: saved?.[p.id]?.owner === 'vault' ? 'vault' : 'quorum' }));
+// the rows the keeper checks. saved is settings.plugins: { [id]: { owner } }. A saved owner wins. With none, a folder
+// Quorum built gives the job to Quorum, and a folder the person connected keeps it with the person's own setup
+export function resolvePlugins(saved = {}, { built = true } = {}) {
+  const ownerOf = (id) => { const o = saved?.[id]?.owner; return o === 'vault' || o === 'quorum' ? o : built ? 'quorum' : 'vault'; };
+  return PLUGINS.map((p) => ({ id: p.id, title: p.title, does: p.does, owner: ownerOf(p.id) }));
 }
 
 // a pick for one job, saved over the earlier one
