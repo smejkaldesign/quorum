@@ -213,6 +213,12 @@ insert into ids select 'att2', public.kb_sync_attach('00000000-0000-4000-8000-00
 select pg_temp.check(pg_temp.id('att2') is not null, 'a workspace admin syncs GitHub into their own personal KB');
 select pg_temp.as_admin_role();
 select pg_temp.expect_error(format($$insert into public.notes (id, user_id, workspace_id, path, frontmatter, body, hash, kb_id) values ('01KF000000000000000000PN10', '00000000-0000-4000-8000-0000000000a4', '01KF0000000000000000000PWS', 'Knowledge bases/QA/i.md', '{"visibility": "public", "kb_source": "https://github.com/octo/x/blob/main/i.md"}', '# i', 'h10', %L)$$, pg_temp.id('kb4')), 'does not allow GitHub');
+-- an existing note cannot take in a refused source either: a re-import of its text, or a new source, is refused;
+-- a change that leaves the source and the text alone goes through
+select pg_temp.expect_error($$update public.notes set body = '# Guide v2' where id = '01KF000000000000000000PR04'$$, 'does not allow GitHub');
+select pg_temp.expect_error($$update public.notes set frontmatter = frontmatter || '{"kb_source": "https://github.com/octo/x/blob/main/Guide.md"}' where id = '01KF000000000000000000PR04'$$, 'does not allow GitHub');
+update public.notes set frontmatter = frontmatter || '{"kb_checked_at": "2026-11-17T00:00:00Z"}' where id = '01KF000000000000000000PR04';
+select pg_temp.check((select frontmatter ->> 'kb_checked_at' is not null and body = '# Guide' from public.notes where id = '01KF000000000000000000PR04'), 'a change that keeps its source and text goes through');
 -- a plan that ends and comes back leaves the policy pause in place
 update public.workspaces set plan = 'free' where id = '01KF0000000000000000000PWS';
 update public.workspaces set plan = 'paid' where id = '01KF0000000000000000000PWS';

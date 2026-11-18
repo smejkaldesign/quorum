@@ -25,7 +25,8 @@
 -- 6. The workspace decides what members do with personal KBs: workspaces.personal_kbs (on by default) lets members
 --    make them, and workspaces.personal_kb_sources (GitHub and Google Drive by default) names the sources members may
 --    sync or import into them. Workspace owners and admins keep their own personal KBs either way. kb_create,
---    kb_sync_attach and a note joining a member's personal KB check it. Turning either off pauses the affected synced
+--    kb_sync_attach, a note joining a member's personal KB, and a note in one whose source or text a refused source
+--    would change check it. Turning either off pauses the affected synced
 --    folders with paused_by 'policy' and keeps every KB and note; turning it back on resumes them. A role change
 --    applies it at once: a demoted admin's synced folders pause, and a promoted member's resume.
 -- 7. Note paths. A path was unique in its workspace (0001), so two people syncing one repository into personal KBs of
@@ -164,14 +165,20 @@ begin
   if new.kb_id is not null and exists (select 1 from public.knowledge_bases k where k.id = new.kb_id and k.personal_user_id is not null and k.personal_user_id <> new.user_id) then
     raise exception 'Only your own notes can go in a personal knowledge base';
   end if;
-  -- a note joining a member's personal KB follows the workspace's policy (6)
-  if new.kb_id is not null and (tg_op = 'INSERT' or new.kb_id is distinct from old.kb_id) then
-    why := public.kb_personal_refusal(new.kb_id, public.kb_source_provider(new.frontmatter ->> 'kb_source'));
+  -- a member's personal KB follows the workspace's policy (6): for a note joining it, and for a live note in it whose
+  -- source changes or whose text changes while its source is refused (a re-import or a new copy of a refused source)
+  if new.kb_id is not null and new.deleted_at is null then
+    if tg_op = 'INSERT' or new.kb_id is distinct from old.kb_id then
+      why := public.kb_personal_refusal(new.kb_id, public.kb_source_provider(new.frontmatter ->> 'kb_source'));
+    elsif public.kb_source_provider(new.frontmatter ->> 'kb_source') is not null
+      and (new.frontmatter ->> 'kb_source' is distinct from old.frontmatter ->> 'kb_source' or new.body is distinct from old.body) then
+      why := public.kb_personal_refusal(new.kb_id, public.kb_source_provider(new.frontmatter ->> 'kb_source'));
+    end if;
     if why is not null then raise exception '%', why; end if;
   end if;
   return new;
 end $$;
-create trigger notes_personal_kb_owner before insert or update of kb_id, user_id on public.notes for each row execute function public.notes_personal_kb_owner();
+create trigger notes_personal_kb_owner before insert or update of kb_id, user_id, frontmatter, body on public.notes for each row execute function public.notes_personal_kb_owner();
 
 -- 0034's kb_shape with one key: personal, true for a personal KB (only its owner ever reads one)
 create or replace function public.kb_shape(kb_id public.ulid) returns jsonb
