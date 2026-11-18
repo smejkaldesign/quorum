@@ -27,7 +27,10 @@ export function toTs(v) {
   if (Number.isNaN(t)) throw new ProviderError('oldest must be an ISO date or a Slack ts.');
   return String(Math.floor(t / 1000));
 }
-const isDm = (c) => !!(c?.is_im || c?.is_mpim || /^D/.test(String(c?.id ?? '')));
+// a direct or group message: flagged as one, a D id, an mpdm- name, or a private conversation Slack says is neither a
+// channel nor a group (the fields are checked only when Slack sends them)
+const isDm = (c) => !!(c?.is_im || c?.is_mpim || /^D/.test(String(c?.id ?? '')) || /^mpdm-/.test(String(c?.name ?? ''))
+  || (c?.is_private && c?.is_channel === false && c?.is_group === false));
 
 // users: a Map the caller keeps between calls, id -> { name, at }
 export function createSlack({ token, fetchImpl, wait, users = new Map(), now = Date.now }) {

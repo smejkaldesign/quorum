@@ -42,6 +42,8 @@ describe('Slack', () => {
       [path('/api/search.messages'), () => json({ ok: true, messages: { total: 3, paging: { page: 1, pages: 1 }, matches: [
         { channel: { id: 'C1', name: 'general' }, user: 'U1', text: 'ship it <@U1> with <#C9|eng> <https://x.dev|docs>', ts: '1700000000.000100', permalink: 'https://s/p1' },
         { channel: { id: 'D1', is_im: true }, user: 'U1', text: 'private', ts: '1700000001.000100' },
+        { channel: { id: 'G7', name: 'mpdm-ana--bo-1' }, user: 'U1', text: 'group dm', ts: '1700000001.000200' },
+        { channel: { id: 'C8', name: 'chat', is_private: true, is_channel: false, is_group: false }, user: 'U1', text: 'group dm 2', ts: '1700000001.000300' },
         { channel: { id: 'C1', name: 'general' }, user: 'U1', text: 'again', ts: '1700000002.000100', permalink: 'https://s/p2' },
       ] } })],
       [path('/api/users.info'), () => json({ ok: true, user: { name: 'ana', profile: { display_name: 'Ana' } } })],
