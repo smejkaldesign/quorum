@@ -59,6 +59,16 @@ describe('gate passes', () => {
   });
 });
 
+describe('what starts a gate run in main.js', () => {
+  it('a sweep and a fix run start one; a read of the items never does', () => {
+    const main = readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '../main.js'), 'utf8');
+    const callers = [...main.matchAll(/(?<!function )scheduleGate\(/g)].map((m) => [...main.slice(0, m.index).matchAll(/^(?:async )?function (\w+)/gm)].at(-1)[1]);
+    expect(callers.sort()).toEqual(['pumpFixes', 'sweepNow']);
+    const gateOf = main.slice(main.indexOf('function gateOf('), main.indexOf('const gateChecking'));
+    expect(gateOf).not.toMatch(/gateNow|scheduleGate|setTimeout/);
+  });
+});
+
 describe('the gate store', () => {
   it('keeps every vault, writes the whole file through a temporary file and reads it back', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'gate-store-'));

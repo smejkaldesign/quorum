@@ -2995,6 +2995,7 @@ async function pumpFixes() {
     log('fix run', run.key, run.status, `${run.endedAt - run.startedAt} ms`);
     fixRunsSave();
     fixEmit(run);
+    scheduleGate(4000);
     toUI('memory-updates', null);
     setTimeout(() => toUI('memory-updates', null), ARCHIVE_AFTER + 300);
   }
@@ -3289,12 +3290,12 @@ function scheduleGate(ms = 4000) {
   gateTimer.unref?.();
 }
 const PENDING = { bucket: 'quiet', why: 'Quorum is still checking it.', reasons: ['pending'] };
-// the verdict of an item now: its kept verdict while its fix and notes are the same, else pending until the next run
+// the verdict of an item now: its kept verdict while its fix and notes are the same, else pending until the next run.
+// Only a sweep and a fix run start a gate run; a read never does
 function gateOf(item) {
   const st = gateFor(brain()?.vault ?? '');
   const v = st.verdicts?.get(item.id);
   if (v && v.sig === signature(item)) return v;
-  if (st.verdicts && !gateTimer) scheduleGate();
   return { ...PENDING, kind: kindOf(item) };
 }
 const gateChecking = () => !gateFor(brain()?.vault ?? '').verdicts;
