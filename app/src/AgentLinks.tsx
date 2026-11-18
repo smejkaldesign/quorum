@@ -60,7 +60,7 @@ export function cliDesc(s: AgentsStatus | null) {
 }
 
 // the three rows. Settings renders them as set rows; onboarding as its own choice lines
-export function AgentRows({ agents, variant, manual }: { agents: Agents; variant: 'settings' | 'onboarding'; manual?: (command: string) => ReactNode }) {
+export function AgentRows({ agents, variant, manual, only }: { agents: Agents; variant: 'settings' | 'onboarding'; manual?: (command: string) => ReactNode; only?: ('claude' | 'codex' | 'cli')[] }) {
   const { status: s, busy, msg } = agents;
   const [more, setMore] = useMenu();
   const claudeBtn = s?.claude.added && !s.claude.error
@@ -90,7 +90,7 @@ export function AgentRows({ agents, variant, manual }: { agents: Agents; variant
   ];
   return (
     <>
-      {rows.map((r) => (
+      {rows.filter((r) => !only || only.includes(r.id)).map((r) => (
         <div key={r.id}>
           {variant === 'settings'
             ? <Row icon={r.icon} title={r.title} desc={r.desc}>{r.ctrl}</Row>
@@ -101,6 +101,16 @@ export function AgentRows({ agents, variant, manual }: { agents: Agents; variant
       ))}
     </>
   );
+}
+
+// the quorum MCP registration for Claude Code or Codex, shown inside that tool's row in Settings > AI tools
+export type McpLink = { added: boolean; installed: boolean; busy: boolean; msg?: string; add: () => void; remove: () => void };
+export function mcpLink(agents: Agents, id: 'claude' | 'codex'): McpLink {
+  const st = agents.status?.[id];
+  return {
+    added: !!st?.added && !st.error, installed: !!st?.installed, busy: agents.busy === id, msg: agents.msg[id],
+    add: () => (id === 'claude' ? agents.addClaude() : agents.addCodex()), remove: id === 'claude' ? agents.removeClaude : agents.removeCodex,
+  };
 }
 
 const STATE_ICON: Record<ConnectionCheckItem['state'], ReactNode> = {

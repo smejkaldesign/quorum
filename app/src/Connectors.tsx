@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { ConnectorId, ConnectorRole, ModelSourceStatus, Providers, Settings } from './quorum';
-import { EmptyState, Modal, ModalActions, Row, useMenu } from './controls';
+import { Modal, ModalActions, Row, useMenu } from './controls';
 import { BY_ID, CATALOG, MODEL_ROLES, ROLES, ROLE_LABEL, canServe, modelName, needsBaseUrl, needsKey, rolesFor, type ConnectorManifest } from '../connectors/catalog';
 import { MODELS } from './Composer';
-import { IconChat, IconCheck, IconCode, IconExternal, IconGrid, IconMic, IconMore, IconNotes, IconPerson, IconPlus, IconReset, IconTrash, ProviderMark, Wave } from './icons';
+import { IconChat, IconCheck, IconClose, IconCode, IconExternal, IconGrid, IconMic, IconMore, IconNotes, IconPerson, IconPlus, IconReset, IconTrash, ProviderMark, Wave } from './icons';
 import { isCloud } from './edition';
+import type { McpLink } from './AgentLinks';
 import { INCLUDED_HOURS } from '../connectors/catalog';
 import { SPEECH_ENGINES } from '../speech/provider';
 
@@ -38,13 +39,16 @@ const ROLE_DESC: Record<ConnectorRole, string> = {
 
 // the add flow: the catalog in three groups, each provider once; Apple needs no adding and is always present
 const GROUPS: { label: string; ids: ConnectorId[] }[] = [
-  { label: 'Language models', ids: ['claude-code', 'anthropic', 'openai', 'google', 'ollama', 'openai_compatible'] },
+  { label: 'AI tools on this Mac', ids: ['claude-code', 'codex', 'antigravity'] },
+  { label: 'Language models', ids: ['anthropic', 'openai', 'google', 'ollama', 'openai_compatible'] },
   { label: 'Speech to text', ids: ['assemblyai', 'deepgram'] },
   { label: 'Voice', ids: ['elevenlabs'] },
 ];
 const ADD_LABEL: Partial<Record<ConnectorId, string>> = { 'claude-code': 'Claude Code sign-in', anthropic: 'Anthropic API key', google: 'Google Gemini', ollama: 'Ollama local model', openai_compatible: 'OpenAI-compatible endpoint' };
 const ADD_NOTE: Partial<Record<ConnectorId, string>> = {
   'claude-code': 'Your own claude.ai sign-in on this Mac; the only provider that reads your Agent OS',
+  codex: 'Your own Codex sign-in on this Mac; summary and notes',
+  antigravity: 'Your own Antigravity sign-in on this Mac; summary and notes',
   anthropic: 'A key from console.anthropic.com, kept in your Keychain',
   openai: 'A key from platform.openai.com; models, speech and voice',
   google: 'A key from aistudio.google.com; models and speech',
@@ -63,7 +67,9 @@ const effectiveOf = (st: ModelSourceStatus | null, role: ConnectorRole): Connect
 // Settings › Connectors, personal edition (docs/open-source-strategy.md: bring your own key). One list of the connected
 // providers; each key is proven with one read-only request, kept in the Keychain, and comes back only as "set". Below
 // the list, which connected provider handles each step
-export function PersonalConnectors() {
+// Settings > AI tools: top is the Quorum CLI row and the check under the list; mcp gives Claude Code and Codex their
+// quorum MCP control; settings holds the rows that go in the Settings card after the step choices
+export function PersonalConnectors({ top, below, mcp, settingsRows }: { top?: ReactNode; below?: ReactNode; mcp?: Partial<Record<ConnectorId, McpLink>>; settingsRows?: ReactNode }) {
   const [st, setSt] = useState<ModelSourceStatus | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [sheet, setSheet] = useState<{ kind: 'add'; id: ConnectorId | null } | { kind: 'default'; id: ConnectorId } | null>(null);
@@ -110,42 +116,36 @@ export function PersonalConnectors() {
   return (
     <>
       <div className="set-head">
-        <h3>Model selections</h3>
-        {st && !zero && <span className="set-head-actions"><button className="pill small-pill with-icon" onClick={() => setSheet({ kind: 'add', id: null })}><IconPlus width={15} height={15} />Add</button></span>}
+        <h3>Connected AI tools</h3>
+        {st && <span className="set-head-actions"><button className="pill small-pill with-icon" onClick={() => setSheet({ kind: 'add', id: null })}><IconPlus width={15} height={15} />Add</button></span>}
       </div>
-      <p className="mcp-lede">The AI accounts and keys Quorum can run on: your Claude Code sign-in, your own provider keys, or a local model. Below, pick which one handles each step.</p>
-      {!st ? null : zero ? (
-        <EmptyState icon={<IconGrid width={22} height={22} />} title="No AI provider yet">
-          <p>Quorum has no key of its own. Connect the AI you already use.</p>
-          <button className="pill primary" onClick={() => setSheet({ kind: 'add', id: null })}>Add AI provider</button>
-        </EmptyState>
-      ) : (
-        <>
-          <div className="set-card">
-            {rows.filter((id) => id !== 'apple').map((id) => (
-              <ProviderRow key={id} p={BY_ID[id]} st={st} settings={settings} defaults={defaults(id)} note={note?.id === id ? note : null}
-                onDefault={() => setSheet({ kind: 'default', id })} onTest={() => test(id)} onEdit={() => { setNote(null); setSheet({ kind: 'add', id }); }} onRemove={() => remove(id)} />
-            ))}
-          </div>
+      <p className="mcp-lede">The AI tools Quorum works with on this Mac. Claude Code and Codex can also read your notes and meetings through the quorum MCP.</p>
+      <div className="set-card">
+        {top}
+        {st && rows.filter((id) => id !== 'apple').map((id) => (
+          <ProviderRow key={id} p={BY_ID[id]} st={st} settings={settings} defaults={defaults(id)} note={note?.id === id ? note : null} mcp={mcp?.[id]}
+            onDefault={() => setSheet({ kind: 'default', id })} onTest={() => test(id)} onEdit={() => { setNote(null); setSheet({ kind: 'add', id }); }} onRemove={() => remove(id)} />
+        ))}
+        {zero && <Row icon={<IconGrid width={18} height={18} />} title="No AI provider yet" desc="Quorum has no key of its own. Add the AI you already use." />}
+      </div>
+      {below}
 
-          <h3>Which provider handles each step</h3>
-          <p className="mcp-lede">Each step runs on one of your connected providers.</p>
-          <div className="set-card even">
-            {ROLES.map((r) => (
-              <Row key={r.id} icon={ROLE_ICON[r.id]()} title={ROLE_LABEL[r.id]} desc={ROLE_DESC[r.id]}>
-                <select className="set-select" aria-label={ROLE_LABEL[r.id]} value={r.id === 'speech' && engine === 'managed' ? 'managed' : effective(r.id)} onChange={(e) => setRole(r.id, e.target.value)}>
-                  {r.id !== 'speech' && <option value="">{r.id === 'voice' ? 'Off' : 'Not set'}</option>}
-                  {r.id === 'speech' && managed.on && <option value="managed">Quorum managed{managed.hoursLeft != null ? ` · ${managed.hoursLeft} h left this period` : ''}</option>}
-                  {options(r.id).map((p) => <option key={p.id} value={p.id}>{p.name}{p.id === 'apple' ? ' on this Mac' : rows.includes(p.id) ? '' : ' (not connected)'}</option>)}
-                </select>
-              </Row>
-            ))}
-          </div>
-          {engine === 'managed' ? <p className="set-note">Calls stream to Quorum's speech engine and the running summary and final notes run on Quorum's models. Each seat includes {INCLUDED_HOURS} hours a month.</p>
-            : speech !== 'apple' ? <p className="set-note">Calls stream to {(speech && BY_ID[speech]?.name) || speech} on your own key, with your vocabulary as key terms. If it refuses or drops, the call continues on this Mac.</p>
-            : <p className="set-note">Apple transcribes on this Mac. A connected AssemblyAI or Deepgram key can take this step; ElevenLabs, OpenAI and Google speech arrive with their adapters.</p>}
-        </>
-      )}
+      <h3>Settings</h3>
+      <div className="set-card even">
+        {!zero && ROLES.map((r) => (
+          <Row key={r.id} icon={ROLE_ICON[r.id]()} title={ROLE_LABEL[r.id]} desc={ROLE_DESC[r.id]}>
+            <select className="set-select" aria-label={ROLE_LABEL[r.id]} value={r.id === 'speech' && engine === 'managed' ? 'managed' : effective(r.id)} onChange={(e) => setRole(r.id, e.target.value)}>
+              {r.id !== 'speech' && <option value="">{r.id === 'voice' ? 'Off' : 'Not set'}</option>}
+              {r.id === 'speech' && managed.on && <option value="managed">Quorum managed{managed.hoursLeft != null ? ` · ${managed.hoursLeft} h left this period` : ''}</option>}
+              {options(r.id).map((p) => <option key={p.id} value={p.id}>{p.name}{p.id === 'apple' ? ' on this Mac' : rows.includes(p.id) ? '' : ' (not connected)'}</option>)}
+            </select>
+          </Row>
+        ))}
+        {settingsRows}
+      </div>
+      {!zero && (engine === 'managed' ? <p className="set-note">Calls stream to Quorum's speech engine and the running summary and final notes run on Quorum's models. Each seat includes {INCLUDED_HOURS} hours a month.</p>
+        : speech !== 'apple' ? <p className="set-note">Calls stream to {(speech && BY_ID[speech]?.name) || speech} on your own key, with your vocabulary as key terms. If it refuses or drops, the call continues on this Mac.</p>
+        : <p className="set-note">Apple transcribes on this Mac. A connected AssemblyAI or Deepgram key can take this step; ElevenLabs, OpenAI and Google speech arrive with their adapters.</p>)}
       {sheet?.kind === 'add' && <ProviderSheet id={sheet.id} st={st} settings={settings} onPick={(id) => setSheet({ kind: 'add', id })} onRefresh={refresh} onDone={(changed) => { setSheet(null); if (changed) refresh(); }} />}
       {sheet?.kind === 'default' && <DefaultSheet p={BY_ID[sheet.id]} st={st} onDone={(changed) => { setSheet(null); if (changed) refresh(); }} />}
     </>
@@ -157,8 +157,8 @@ const host = (url?: string) => { try { return url ? new URL(url).host : ''; } ca
 
 // one connected provider: mark, name, the Default pill, and the grey subtext (the model it runs, where the credential
 // is); ••• menu with Set as default, Test, Edit, Docs, Remove. Apple, Claude Code and Ollama have nothing to remove
-function ProviderRow({ p, st, settings, defaults, note, onDefault, onTest, onEdit, onRemove }: {
-  p: ConnectorManifest; st: ModelSourceStatus; settings: Settings | null; defaults: ConnectorRole[]; note: { ok: boolean; text: string } | null;
+function ProviderRow({ p, st, settings, defaults, note, mcp, onDefault, onTest, onEdit, onRemove }: {
+  p: ConnectorManifest; st: ModelSourceStatus; settings: Settings | null; defaults: ConnectorRole[]; note: { ok: boolean; text: string } | null; mcp?: McpLink;
   onDefault: () => void; onTest: () => void; onEdit: () => void; onRemove: () => void;
 }) {
   const [more, setMore] = useMenu();
@@ -177,6 +177,9 @@ function ProviderRow({ p, st, settings, defaults, note, onDefault, onTest, onEdi
   return (
     <>
       <Row icon={<Mark id={p.id} />} title={<>{p.name}{p.id === 'claude-code' && c?.version && <em className="muted ver">v{c.version}</em>}{defaults.length > 0 && <em className="stub">Default for {defaults.map((r) => ROLE_LABEL[r]).join(', ')}</em>}</>} desc={sub}>
+        {mcp && (mcp.added
+          ? <span className="conn-ok"><i />MCP connected</span>
+          : <button className="pill small-pill" disabled={mcp.busy || !mcp.installed} onClick={mcp.add}>{mcp.busy ? 'Connecting…' : 'Connect MCP'}</button>)}
         <span className="menu-wrap" onClick={(e) => e.stopPropagation()}>
           <button className="icon-btn" aria-label={`${p.name} options`} aria-haspopup="menu" aria-expanded={more} data-tip="More options" onClick={() => setMore((o) => !o)}><IconMore /></button>
           {more && (
@@ -185,12 +188,14 @@ function ProviderRow({ p, st, settings, defaults, note, onDefault, onTest, onEdi
               {p.id !== 'apple' && <button role="menuitem" onClick={() => { setMore(false); onTest(); }}><IconReset width={15} height={15} /> {p.id === 'claude-code' ? 'Check again' : 'Test'}</button>}
               {p.id !== 'apple' && !isRunner(p.id) && <button role="menuitem" onClick={() => { setMore(false); onEdit(); }}><IconCode width={15} height={15} /> {editLabel}</button>}
               {p.id === 'claude-code' && <button role="menuitem" onClick={() => { setMore(false); window.quorum.claudeLogin(); }}><IconPerson width={15} height={15} /> Switch account</button>}
+              {mcp?.added && <button role="menuitem" disabled={mcp.busy} onClick={() => { setMore(false); mcp.remove(); }}><IconClose width={15} height={15} /> Disconnect MCP</button>}
               <button role="menuitem" onClick={() => { setMore(false); window.quorum.openExternal(p.docs); }}><IconExternal width={15} height={15} /> Docs</button>
               {needsKey(p.id) && <><div className="menu-sep" /><button role="menuitem" className="danger" onClick={() => { setMore(false); onRemove(); }}><IconTrash width={15} height={15} /> Remove</button></>}
             </div>
           )}
         </span>
       </Row>
+      {mcp?.msg && <p className="set-note mcp-msg">{mcp.msg}</p>}
       {note && <div className="row-extra conn-extra"><p className={note.ok ? 'set-ok' : 'set-error'}>{note.ok && <IconCheck width={14} height={14} className="ok" />} {note.text}</p></div>}
     </>
   );
@@ -259,6 +264,15 @@ function ProviderSheet({ id, st, settings, onPick, onRefresh, onDone }: {
   }
   const p = BY_ID[id];
   const existing = !!st && isConnected(st, id);
+  if (isRunner(id)) return (
+    <Scrim title={`Add ${p.name}`} onClose={() => onDone(false)}>
+      <p>{existing ? `${p.name} is installed on this Mac and listed under Connected AI tools.` : `${p.name} runs on your own sign-in. Install it on this Mac and sign in, then check again.`}</p>
+      <ModalActions>
+        <button className="pill" onClick={() => window.quorum.openExternal(p.docs)}>Docs</button>
+        <button className="pill primary" onClick={async () => { await onRefresh(); onDone(true); }}>{existing ? 'Done' : 'Check again'}</button>
+      </ModalActions>
+    </Scrim>
+  );
   return <Scrim title={`${existing ? 'Edit' : 'Add'} ${p.name}`} onClose={() => onDone(false)}><ProviderFields p={p} st={st} settings={settings} existing={existing} onRefresh={onRefresh} onDone={onDone} /></Scrim>;
 }
 
