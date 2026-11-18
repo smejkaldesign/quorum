@@ -22,6 +22,11 @@
 --    placed in it goes back to being the owner's own note. A member who leaves the workspace takes their personal KBs with them the same
 --    way, after 0032 ended their sync grants. Deleting an account (0039) no longer hands the notes of the person's
 --    personal KBs to the workspace owner; they go with the account.
+-- 6. The workspace decides what members do with personal KBs: workspaces.personal_kbs (on by default) lets members
+--    make them, and workspaces.personal_kb_sources (GitHub and Google Drive by default) names the sources members may
+--    sync or import into them. Workspace owners and admins keep their own personal KBs either way. kb_create,
+--    kb_sync_attach and a note joining a member's personal KB check it. Turning either off pauses the affected synced
+--    folders with paused_by 'policy' and keeps every KB and note; turning it back on resumes them.
 
 alter table public.knowledge_bases add column personal_user_id uuid references auth.users (id) on delete cascade;
 alter table public.knowledge_bases add constraint knowledge_bases_personal_check
@@ -42,6 +47,33 @@ create or replace function public.kb_name_taken(ws public.ulid, owner uuid, name
 language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.knowledge_bases x
     where x.workspace_id = ws and x.personal_user_id is not distinct from owner and x.id is distinct from except_id and lower(btrim(x.name)) = lower(btrim(kb_name_taken.name)));
+$$;
+
+-- 6. the workspace's policy for members' personal KBs
+alter table public.workspaces add column personal_kbs boolean not null default true;
+alter table public.workspaces add column personal_kb_sources text[] not null default '{github,google-drive}'
+  check (personal_kb_sources <@ array['github', 'google-drive']);
+alter table public.kb_attachments drop constraint kb_attachments_paused_by_check;
+alter table public.kb_attachments add constraint kb_attachments_paused_by_check check (paused_by is null or paused_by in ('admin', 'plan', 'policy'));
+
+-- why the workspace refuses a member's personal KB this source (null: the source does not matter), or null when it
+-- allows it. A KB that is not personal, and the personal KB of a workspace owner or admin, is never refused
+create or replace function public.kb_personal_refusal(kb_id public.ulid, provider text) returns text
+language sql stable security definer set search_path = public as $$
+  select case
+    when not w.personal_kbs then 'Your workspace does not allow members to use personal knowledge bases'
+    when kb_personal_refusal.provider is not null and not (kb_personal_refusal.provider = any (w.personal_kb_sources))
+      then 'Your workspace does not allow ' || case kb_personal_refusal.provider when 'github' then 'GitHub' when 'google-drive' then 'Google Drive' else kb_personal_refusal.provider end || ' in personal knowledge bases'
+    end
+  from public.knowledge_bases k join public.workspaces w on w.id = k.workspace_id
+  where k.id = kb_personal_refusal.kb_id and k.personal_user_id is not null
+    and not exists (select 1 from public.members m where m.workspace_id = k.workspace_id and m.user_id = k.personal_user_id and m.role in ('owner', 'admin') and m.deleted_at is null);
+$$;
+
+-- the source a note came from, as kbImport, kbDrive and the sync worker write kb_source
+create or replace function public.kb_source_provider(kb_source text) returns text
+language sql immutable set search_path = public as $$
+  select case when kb_source like 'google-drive:%' then 'google-drive' when kb_source like 'github:%' or kb_source like 'https://github.com/%' then 'github' end;
 $$;
 
 -- 0035's rules with personal KBs: the owner alone, while still a member
@@ -91,9 +123,15 @@ create trigger kb_access_personal before insert or update on public.kb_access fo
 -- one, and no hand-over gives one of its notes to someone else
 create or replace function public.notes_personal_kb_owner() returns trigger
 language plpgsql security definer set search_path = public as $$
+declare why text;
 begin
   if new.kb_id is not null and exists (select 1 from public.knowledge_bases k where k.id = new.kb_id and k.personal_user_id is not null and k.personal_user_id <> new.user_id) then
     raise exception 'Only your own notes can go in a personal knowledge base';
+  end if;
+  -- a note joining a member's personal KB follows the workspace's policy (6)
+  if new.kb_id is not null and (tg_op = 'INSERT' or new.kb_id is distinct from old.kb_id) then
+    why := public.kb_personal_refusal(new.kb_id, public.kb_source_provider(new.frontmatter ->> 'kb_source'));
+    if why is not null then raise exception '%', why; end if;
   end if;
   return new;
 end $$;
@@ -128,6 +166,9 @@ declare n text := btrim(coalesce(kb_create.name, '')); k public.ulid; mine boole
 begin
   if mine then
     if auth.uid() is null or not public.is_member(kb_create.workspace_id) then raise exception 'You are not a member of that workspace'; end if;
+    if not public.is_admin(kb_create.workspace_id) and not exists (select 1 from public.workspaces w where w.id = kb_create.workspace_id and w.personal_kbs) then
+      raise exception 'Your workspace does not allow members to use personal knowledge bases';
+    end if;
     if coalesce(kb_create.kind, 'general') <> 'general' then raise exception 'A personal knowledge base is a general one'; end if;
     if kb_create.team_id is not null then raise exception 'A personal knowledge base belongs to you, not a team'; end if;
   elsif not public.is_admin(kb_create.workspace_id) then raise exception 'Only owners and admins can create a knowledge base for the workspace';
@@ -212,6 +253,7 @@ begin
   if k.id is null then raise exception 'That knowledge base no longer exists'; end if;
   if not public.can_read_kb_as(k.id, uid) then raise exception 'That knowledge base no longer exists'; end if;
   if not public.can_admin_kb_as(k.id, uid) then raise exception 'Only the knowledge base''s admins can sync folders into it'; end if;
+  if public.kb_personal_refusal(k.id, p) is not null then raise exception '%', public.kb_personal_refusal(k.id, p); end if;
   if kb_sync_attach.folder_id is not null and not exists (select 1 from public.kb_folders f where f.id = kb_sync_attach.folder_id and f.kb_id = k.id) then
     raise exception 'That folder is not in this knowledge base';
   end if;
@@ -454,13 +496,87 @@ begin
   return jsonb_build_object('ok', true, 'kept', kept, 'objects', objects);
 end $$;
 
+-- 6. the policy as the app reads it: whether members may use personal KBs, the sources they may sync or import, and
+-- whether the caller is exempt (a workspace owner or admin)
+create or replace function public.workspace_personal_kbs(workspace_id public.ulid) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('enabled', w.personal_kbs, 'sources', to_jsonb(w.personal_kb_sources), 'exempt', public.is_admin(w.id))
+  from public.workspaces w where w.id = workspace_personal_kbs.workspace_id and public.is_member(w.id);
+$$;
+
+-- puts each synced folder of a member's personal KB in line with the policy: one the policy refuses is paused with
+-- paused_by 'policy', and one the policy paused that it allows again resumes (or waits for the plan, when it ended)
+create or replace function public.kb_personal_policy_apply(ws public.ulid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  update public.kb_attachments a set status = 'paused', paused_by = 'policy', error = public.kb_personal_refusal(a.kb_id, a.provider), lease_until = null
+    where a.workspace_id = ws and a.status <> 'paused' and public.kb_personal_refusal(a.kb_id, a.provider) is not null;
+  update public.kb_attachments a set
+      status = case when w.plan = 'free' then 'paused' when a.grant_id is null then 'needs_auth' else 'pending' end,
+      paused_by = case when w.plan = 'free' then 'plan' else null end,
+      error = case when w.plan = 'free' then public.kb_sync_plan_ended() else null end,
+      next_run_at = now(), failures = 0
+    from public.workspaces w
+    where w.id = a.workspace_id and a.workspace_id = ws and a.status = 'paused' and a.paused_by = 'policy' and public.kb_personal_refusal(a.kb_id, a.provider) is null;
+end $$;
+
+create or replace function public.workspace_personal_kbs_set(workspace_id public.ulid, enabled boolean, sources text[]) returns jsonb
+language plpgsql security definer set search_path = public as $$
+#variable_conflict use_column
+declare src text[] := array(select distinct x from unnest(coalesce(workspace_personal_kbs_set.sources, '{}')) x order by x);
+begin
+  if not public.is_admin(workspace_personal_kbs_set.workspace_id) then raise exception 'Only owners and admins can change what members do with personal knowledge bases'; end if;
+  if not src <@ array['github', 'google-drive'] then raise exception 'A source is GitHub or Google Drive'; end if;
+  update public.workspaces w set personal_kbs = coalesce(workspace_personal_kbs_set.enabled, true), personal_kb_sources = src
+    where w.id = workspace_personal_kbs_set.workspace_id and w.deleted_at is null;
+  if not found then raise exception 'That workspace does not exist'; end if;
+  perform public.kb_personal_policy_apply(workspace_personal_kbs_set.workspace_id);
+  return public.workspace_personal_kbs(workspace_personal_kbs_set.workspace_id);
+end $$;
+
+-- 0032's kb_attachment_pause: Resume refuses a synced folder the workspace's policy refuses
+create or replace function public.kb_attachment_pause(id public.ulid, paused boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare a public.kb_attachments := public.kb_attachment_of(kb_attachment_pause.id); why text;
+begin
+  if coalesce(kb_attachment_pause.paused, true) then
+    update public.kb_attachments x set status = 'paused', paused_by = 'admin', error = case when x.paused_by in ('plan', 'policy') then null else x.error end, lease_until = null
+      where x.id = a.id returning * into a;
+  elsif a.status = 'paused' then
+    if exists (select 1 from public.workspaces w where w.id = a.workspace_id and w.plan = 'free') then raise exception '%. Syncing resumes when the plan is active again.', public.kb_sync_plan_ended(); end if;
+    why := public.kb_personal_refusal(a.kb_id, a.provider);
+    if why is not null then raise exception '%', why; end if;
+    update public.kb_attachments x set status = case when x.grant_id is null then 'needs_auth' else 'pending' end, paused_by = null,
+      error = case when x.paused_by in ('plan', 'policy') then null else x.error end, next_run_at = now(), failures = 0
+      where x.id = a.id returning * into a;
+  end if;
+  return public.kb_attachment_row(a);
+end $$;
+
+-- 0032's kb_sync_plan_changed: a plan that is active again resumes what the plan paused, except what the policy refuses,
+-- which stays paused for the policy
+create or replace function public.kb_sync_plan_changed() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.plan = 'free' and old.plan is distinct from 'free' then
+    update public.kb_attachments a set status = 'paused', paused_by = 'plan', error = public.kb_sync_plan_ended(), lease_until = null
+      where a.workspace_id = new.id and a.status <> 'paused';
+  elsif old.plan = 'free' and new.plan is distinct from 'free' then
+    update public.kb_attachments a set status = case when a.grant_id is null then 'needs_auth' else 'pending' end, paused_by = null, error = null,
+      next_run_at = now(), failures = 0
+      where a.workspace_id = new.id and a.status = 'paused' and a.paused_by = 'plan';
+    perform public.kb_personal_policy_apply(new.id);
+  end if;
+  return new;
+end $$;
+
 do $$ declare f text; begin
-  foreach f in array array['kb_create(public.ulid, text, text, public.ulid, boolean)', 'kb_rename(public.ulid, text)', 'kb_delete(public.ulid)', 'kb_shape(public.ulid)'] loop
+  foreach f in array array['kb_create(public.ulid, text, text, public.ulid, boolean)', 'workspace_personal_kbs(public.ulid)', 'workspace_personal_kbs_set(public.ulid, boolean, text[])', 'kb_rename(public.ulid, text)', 'kb_delete(public.ulid)', 'kb_shape(public.ulid)'] loop
     execute format('revoke all on function public.%s from public, anon', f);
     execute format('grant execute on function public.%s to authenticated, service_role', f);
   end loop;
   foreach f in array array[
-    'kb_is_personal(public.ulid)', 'kb_name_taken(public.ulid, uuid, text, public.ulid)', 'can_read_kb_as(public.ulid, uuid)', 'can_admin_kb_as(public.ulid, uuid)',
+    'kb_is_personal(public.ulid)', 'kb_name_taken(public.ulid, uuid, text, public.ulid)', 'kb_personal_refusal(public.ulid, text)', 'kb_source_provider(text)', 'kb_personal_policy_apply(public.ulid)', 'can_read_kb_as(public.ulid, uuid)', 'can_admin_kb_as(public.ulid, uuid)',
     'can_edit_kb_as(public.ulid, uuid)', 'kb_access_personal_check()', 'notes_personal_kb_owner()', 'kb_personal_drop(public.ulid)', 'note_contribution_apply(public.notes)', 'note_contribution_sync()', 'note_personal_kb_moved()',
     'member_left_end_personal_kbs()'] loop
     execute format('revoke all on function public.%s from public, anon, authenticated', f);

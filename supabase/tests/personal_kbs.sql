@@ -173,6 +173,52 @@ select pg_temp.check((select count(*) from public.notes where id = '01KF00000000
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a3');
 select pg_temp.check(jsonb_array_length(public.kb_attachments_list(pg_temp.id('kb3'))) = 1, 'its owner lists the attachment');
 
+-- 6b. the workspace's policy for members' personal KBs: only owners and admins set it; a source it drops pauses
+-- members' synced folders of that source, which cannot be resumed or attached again; an admin's own personal KB is exempt
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a4');
+select pg_temp.check(public.workspace_personal_kbs('01KF0000000000000000000PWS') = '{"enabled": true, "sources": ["github", "google-drive"], "exempt": false}'::jsonb, 'personal KBs start on with both sources');
+select pg_temp.expect_error($$select public.workspace_personal_kbs_set('01KF0000000000000000000PWS', false, '{}')$$, 'only owners and admins');
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a5');
+select pg_temp.check(public.workspace_personal_kbs('01KF0000000000000000000PWS') is null, 'an outsider reads no policy');
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a1');
+select pg_temp.expect_error($$select public.workspace_personal_kbs_set('01KF0000000000000000000PWS', true, '{dropbox}')$$, 'GitHub or Google Drive');
+select pg_temp.check(public.workspace_personal_kbs_set('01KF0000000000000000000PWS', true, '{google-drive}') -> 'sources' = '["google-drive"]'::jsonb, 'an owner limits the sources');
+select pg_temp.as_admin_role();
+select pg_temp.check((select status = 'paused' and paused_by = 'policy' and error ~ 'GitHub' from public.kb_attachments where id = pg_temp.id('att4')), 'a member''s GitHub sync is paused for the policy');
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a4');
+select pg_temp.check(public.can_read_kb(pg_temp.id('kb4')), 'the member still reads their KB');
+select pg_temp.expect_error(format($$select public.kb_attachment_pause(%L, false)$$, pg_temp.id('att4')), 'does not allow GitHub');
+select pg_temp.as_service();
+select pg_temp.expect_error(format($$select public.kb_sync_attach('00000000-0000-4000-8000-0000000000a4', %L, null, 'github', 'octo/more', 'folder', '{}', 'x', null, 'gh-rt-y')$$, pg_temp.id('kb4')), 'does not allow GitHub');
+insert into ids select 'att2', public.kb_sync_attach('00000000-0000-4000-8000-0000000000a2', pg_temp.id('kb2'), null, 'github', 'octo/shared-app', 'folder', '{}', 'octo/shared-app', null, 'gh-rt-p2', 'quorum', false) ->> 'id';
+select pg_temp.check(pg_temp.id('att2') is not null, 'a workspace admin syncs GitHub into their own personal KB');
+select pg_temp.as_admin_role();
+select pg_temp.expect_error(format($$insert into public.notes (id, user_id, workspace_id, path, frontmatter, body, hash, kb_id) values ('01KF000000000000000000PN10', '00000000-0000-4000-8000-0000000000a4', '01KF0000000000000000000PWS', 'Knowledge bases/QA/i.md', '{"visibility": "public", "kb_source": "https://github.com/octo/x/blob/main/i.md"}', '# i', 'h10', %L)$$, pg_temp.id('kb4')), 'does not allow GitHub');
+-- a plan that ends and comes back leaves the policy pause in place
+update public.workspaces set plan = 'free' where id = '01KF0000000000000000000PWS';
+update public.workspaces set plan = 'paid' where id = '01KF0000000000000000000PWS';
+select pg_temp.check((select status = 'paused' and paused_by = 'policy' from public.kb_attachments where id = pg_temp.id('att4')), 'the plan coming back does not lift the policy pause');
+select pg_temp.check((select status <> 'paused' from public.kb_attachments where id = pg_temp.id('att2')), 'the admin''s sync resumes with the plan');
+-- members off: no new personal KB for a member, an admin still makes one, and nothing is deleted
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a1');
+select public.workspace_personal_kbs_set('01KF0000000000000000000PWS', false, '{github,google-drive}');
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a4');
+select pg_temp.expect_error($$select public.kb_create('01KF0000000000000000000PWS', 'More', personal => true)$$, 'does not allow members');
+select pg_temp.check(public.can_read_kb(pg_temp.id('kb4')), 'the member still reads their KB while it is off');
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a2');
+select pg_temp.check((public.kb_create('01KF0000000000000000000PWS', 'Admin two', personal => true) ->> 'personal')::boolean, 'a workspace admin still makes one');
+select pg_temp.check(public.workspace_personal_kbs('01KF0000000000000000000PWS') ->> 'exempt' = 'true', 'an admin reads that they are exempt');
+select pg_temp.as_admin_role();
+select pg_temp.check((select status = 'paused' and paused_by = 'policy' from public.kb_attachments where id = pg_temp.id('att3')), 'every member''s sync is paused');
+select pg_temp.check((select status <> 'paused' from public.kb_attachments where id = pg_temp.id('att2')), 'the admin''s sync keeps running');
+select pg_temp.check(exists (select 1 from public.knowledge_bases where id = pg_temp.id('kb4')) and exists (select 1 from public.kb_attachments where id = pg_temp.id('att4')), 'nothing is deleted');
+-- back on with both sources: the policy pauses lift
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000a1');
+select public.workspace_personal_kbs_set('01KF0000000000000000000PWS', true, '{github,google-drive}');
+select pg_temp.as_admin_role();
+select pg_temp.check((select status = 'pending' and paused_by is null and error is null from public.kb_attachments where id = pg_temp.id('att4')), 'a member''s sync resumes');
+select pg_temp.check((select status = 'pending' and paused_by is null from public.kb_attachments where id = pg_temp.id('att3')), 'and the other member''s');
+
 -- 7. the owner leaves the workspace: the KB goes, its synced note is soft deleted, the note they placed there goes back
 -- to being theirs, and the grant waits for its revoke
 select pg_temp.as_admin_role();
