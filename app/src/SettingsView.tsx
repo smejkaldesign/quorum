@@ -1,5 +1,5 @@
 import { ConfirmModal } from './ConfirmModal';
-import { Fragment, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { SetupForm, answersFrom, draftFrom, draftIsEmpty, emptyDraft, type SetupDraft } from './SetupForm';
 import type { AccountState, BetaState, Brain, CalendarSettings, DecisionProvider, DecisionsStatus, KeeperPlugin, KeeperStatus, LearnedTarget, Memory, MemoryItem, OptOut, Profile, ScreenContextStatus, Settings, TeamVault, Transcription, UpdateState, Voice, Workspace } from './quorum';
 import { PersonalConnectors } from './Connectors';
@@ -7,7 +7,7 @@ import { ConnectorsPage, connectorDetailName } from './ConnectorsPage';
 import { GuardrailsPage } from './Guardrails';
 import { CONNECTORS, CONNECTOR_BY_ID } from '../connectors/library';
 import { ConnectHint } from './ConnectHint';
-import { openConnectors, type ConnectorsTarget } from './connectorsNav';
+import { connectorsScroll, openConnectors, type ConnectorsTarget } from './connectorsNav';
 import { BY_ID } from '../connectors/catalog';
 import { useSession } from './session';
 import { EmptyState, Modal, ModalActions, Row, Toggle, useMenu } from './controls';
@@ -103,6 +103,20 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   // sign-in card lower on the page says what signing in adds. The local edition's only identity is the Claude Code sign-in
   const emailLabel = quorumEmail ? 'Email' : EDITION === 'cloud' ? 'Photo' : 'Signed in with Claude Code';
   const showEmail = !!quorumEmail || EDITION !== 'cloud';
+  // the content pane scrolls: a connector's page opens at its top with its heading focused, and Back to the list or
+  // the library returns to where it was (connectorsScroll)
+  const mainRef = useRef<HTMLElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const scrollView = page === 'connectors' ? (connectorDetail ? `connectors:detail:${connectorDetail}` : connLib ? 'connectors:library' : 'connectors:list') : page;
+  // top is the pane's scroll as of the last scroll event, so it still belongs to the view being left
+  const scrollState = useRef<{ view: string; top: number; saved: Record<string, number> }>({ view: scrollView, top: 0, saved: {} });
+  useLayoutEffect(() => {
+    const box = mainRef.current;
+    const { top, saved: kept } = connectorsScroll(scrollState.current.view, scrollView, scrollState.current.top, scrollState.current.saved);
+    scrollState.current = { view: scrollView, top: top ?? box?.scrollTop ?? 0, saved: kept };
+    if (box && top !== null) box.scrollTop = top;
+    if (scrollView.startsWith('connectors:detail:') && top !== null) titleRef.current?.focus({ preventScroll: true });
+  }, [scrollView]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onBack(); };
     window.addEventListener('keydown', onKey);
@@ -152,10 +166,10 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
         <button className="set-quit" onClick={() => window.quorum.quit()}><IconPower width={18} height={18} /> Quit Quorum</button>
       </aside>
 
-      <main className="set-main">
+      <main className="set-main" ref={mainRef} onScroll={(e) => { scrollState.current.top = e.currentTarget.scrollTop; }}>
         <div className="set-col">
           {page === 'connectors' && ((connectorDetail && connectorDetailName(connectorDetail)) || connLib)
-            ? <h1 className="set-title crumbs">
+            ? <h1 className="set-title crumbs" ref={titleRef} tabIndex={-1}>
                 <Crumb label="Connectors" onClick={() => { setConnectorDetail(null); setConnLib(false); }} />
                 {connLib && <>{CRUMB_SEP}{connectorDetail ? <Crumb label="Library" onClick={() => setConnectorDetail(null)} /> : <span className="crumb-here">Library</span>}</>}
                 {connectorDetail && <>{CRUMB_SEP}<span className="crumb-here">{connectorDetailName(connectorDetail)}</span></>}

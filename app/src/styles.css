@@ -886,6 +886,8 @@ svg.err { color: var(--danger); }
 .set-zero strong { font-weight: 500; font-size: 16px; }
 .set-zero p { margin: 0 0 8px; max-width: 440px; color: var(--muted); font-size: 14px; line-height: 1.45; }
 .set-title { display: flex; align-items: center; gap: 14px; }
+/* focused when a connector's page opens, for screen readers; no ring on a heading */
+.set-title[tabindex="-1"]:focus { outline: none; }
 .set-title .soon { font-family: -apple-system, system-ui, sans-serif; font-size: 13px; padding: 4px 10px; }
 .switch.off { opacity: 0.45; cursor: default; }
 .set-field.wide { width: auto; flex: 1; }
