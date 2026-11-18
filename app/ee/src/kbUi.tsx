@@ -166,7 +166,7 @@ export function ScopePicker({ scopes, scope, disabled, onChange }: { scopes: KbS
         <Segmented kind="radio" label="Who reads it" options={scopes.map((s) => ({ id: s, label: SCOPE_LABEL[s] }))} value={scope} onChange={onChange} disabled={disabled} />
       )}
       <p className="kb-hint muted">{scope === 'personal'
-        ? 'Only you can read and manage it. Workspace owners and admins do not see it. You can sync a GitHub repository or Drive folder into it, even one other people sync into their own.'
+        ? 'Only you can read and manage it. Workspace owners and admins cannot see it. You can sync a GitHub repository or Drive folder into it.'
         : 'Everyone in the workspace reads it. You can narrow its readers after it is created.'}</p>
     </>
   );
