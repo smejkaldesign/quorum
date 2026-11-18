@@ -141,7 +141,7 @@ export function createAppActions({ call, settings, kbHosted = () => null, kbSync
     },
     async fix_undo({ id }) {
       const text = await call('fix-undo', String(id ?? ''));
-      say(`${who()}: ${text}`);
+      say(`${who()} ${String(text).charAt(0).toLowerCase()}${String(text).slice(1)}`);
       return { undone: String(id), message: text };
     },
     async kb_create({ name, team }) {

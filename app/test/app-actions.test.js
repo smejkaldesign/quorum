@@ -103,7 +103,7 @@ describe('approving through the buttons\' handlers', () => {
     expect(calls.find((c) => c.name === 'activity-review').args[1]).toBe('dismiss');
     expect((await actions.run('fix_undo', { id: 'fix:alpha:1' }, 'claude-code')).message).toContain('back in Needs review');
     expect(calls.at(-1)).toMatchObject({ name: 'fix-undo', args: ['fix:alpha:1'], actor: 'claude-code' });
-    expect(toasts.at(-1)).toBe('Claude Code: Undid the fix. “alpha” is back in Needs review');
+    expect(toasts.at(-1)).toBe('Claude Code undid the fix. “alpha” is back in Needs review');
     await actions.run('fix_cancel', { batch: 'b' }, '');
     await actions.run('memory_check_start', {}, 'cli');
     expect(toasts.slice(-2)).toEqual(['An AI tool cancelled a batch of memory fixes', 'The quorum command started Check everything now']);
