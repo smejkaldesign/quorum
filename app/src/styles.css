@@ -1224,6 +1224,7 @@ h3 .soon, .set-zero strong .soon { font-size: 11px; margin-left: 8px; vertical-a
 .conn-alert { display: flex; flex-direction: column; gap: 3px; margin: 22px 0 6px; padding: 14px 16px; border-radius: 12px; border: 1px solid rgba(var(--issue-rgb), 0.35); background: rgba(var(--issue-rgb), 0.08); font-size: 13px; line-height: 1.45; }
 .conn-alert strong { color: #ff6961; font-weight: 600; }
 .conn-alert span { color: var(--text); }
+.conn-alert .pill { align-self: flex-start; margin-top: 8px; }
 .conn-jobcard .conn-alt { margin: 6px 0; }
 .conn-detail .conn-detail-head + h4 { margin-top: 26px; }
 
