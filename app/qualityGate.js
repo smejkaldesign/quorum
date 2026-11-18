@@ -108,14 +108,19 @@ export function kindOfRecord(r) {
 }
 
 // each kind's decisions from a decision log: approved (a person or Apply on its own), archived and undone. recent holds
-// the kind's last WINDOW decisions by a person, oldest first by time, for the live guard
+// the kind's last WINDOW decisions by a person, oldest first by time, for the live guard. A decision an AI tool made
+// through the quorum MCP (its actor is the tool's name) counts under agent only, so it never moves the precision a kind
+// is demoted or applied on its own by
+const QUORUM_ACTORS = new Set(['you', 'auto', 'quorum']);
+export const byPerson = (r) => !r?.actor || QUORUM_ACTORS.has(r.actor);
 export function tallies(records) {
   const out = {};
   const seq = {};
   (records ?? []).forEach((r, i) => {
     const k = kindOfRecord(r);
     if (!k) return;
-    const e = (out[k] ??= { approved: 0, auto: 0, archived: 0, undone: 0, recent: null });
+    const e = (out[k] ??= { approved: 0, auto: 0, archived: 0, undone: 0, agent: { approved: 0, archived: 0, undone: 0 }, recent: null });
+    if (!byPerson(r)) { if (r.decision in e.agent) e.agent[r.decision]++; return; }
     if (r.decision in e) e[r.decision]++;
     if (r.decision === 'approved' || r.decision === 'archived' || r.decision === 'undone') (seq[k] ??= []).push({ at: Number(r.at) || 0, i, decision: r.decision });
   });
