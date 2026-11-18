@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { KbImportProgress, KbImportSource, Result } from '../../src/quorum';
 import { IconFolder } from '../../src/icons';
-import { checkGithubUrl, importSummary, progressLabel, progressShare, type KbImportResult } from './kbTree';
-import { ModalActions } from '../../src/controls';
+import { checkGithubUrl, importSummary, progressLabel, progressShare, SCOPE_LABEL, type KbImportResult, type KbScope } from './kbTree';
+import { ModalActions, Segmented } from '../../src/controls';
 
 // Shared pieces of the knowledge base screens: a call that never rejects, the import (which another change adds to
 // the main process, so the screens check for it before offering it), and the delete confirmation.
@@ -155,5 +155,19 @@ export function KbConfirm({ title, body, action, onDone }: { title: string; body
         </ModalActions>
       </div>
     </div>
+  );
+}
+
+// Only me or Workspace; a member gets Only me alone, and the line under it says who reads the KB
+export function ScopePicker({ scopes, scope, disabled, onChange }: { scopes: KbScope[]; scope: KbScope; disabled?: boolean; onChange: (s: KbScope) => void }) {
+  return (
+    <>
+      {scopes.length > 1 && (
+        <Segmented kind="radio" label="Who reads it" options={scopes.map((s) => ({ id: s, label: SCOPE_LABEL[s] }))} value={scope} onChange={onChange} disabled={disabled} />
+      )}
+      <p className="kb-hint muted">{scope === 'personal'
+        ? 'Only you can read and manage it. Workspace owners and admins cannot see it. You can sync a GitHub repository or Drive folder into it.'
+        : 'Everyone in the workspace reads it. You can narrow its readers after it is created.'}</p>
+    </>
   );
 }
