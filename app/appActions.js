@@ -63,7 +63,8 @@ export function createAppActions({ call, settings, kbHosted = () => null, kbSync
   const answer = (r) => ({ kind: r.review.kind, abs: r.target?.abs ?? '', key: r.review.key });
   const failedOf = (res) => (res?.failed ?? []).map((f) => f.error);
   const say = (text) => { try { toast(text); } catch {} };
-  const who = () => actorLabel(currentActor());
+  // the actor at the start of a toast, capitalized: An AI tool approved, The quorum command started
+  const who = () => { const l = actorLabel(currentActor()); return l.charAt(0).toUpperCase() + l.slice(1); };
   const kbOr = (get) => { const k = get(); if (!k) throw new Error(CLOUD); return k.handlers; };
   const kbResult = (r) => { if (r?.error) throw new Error(r.error); if (r?.canceled) throw new Error('The GitHub sign-in was cancelled, so nothing was attached.'); return r; };
 
