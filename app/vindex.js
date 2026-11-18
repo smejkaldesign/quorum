@@ -11,6 +11,37 @@ import { isGenerated, linkReport, reportLine } from './linkRules.js';
 // the folders walk() skips, as a test on a watcher path (the same list, so the two can never disagree)
 const IGNORED = new RegExp(`(^|/)(${[...SKIP].map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(/|$)`);
 const BATCH = 200;
+// the only characters at or above U+0080 whose lowercase holds ASCII: U+0130 (to i plus a combining dot) and the Kelvin
+// sign U+212A (to k). The search test checks this list against every code point
+export const EXOTIC = /[\u0130\u212a]/;
+const NON_ASCII = /[^\x00-\x7f]/;
+const escapeRe = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// how often w occurs in s without overlaps (as s.split(w).length - 1 counts), stopping at max, and where it first is
+function countOf(s, w, max) {
+  let n = 0, first = -1, at = s.indexOf(w);
+  while (at >= 0 && n < max) { if (!n) first = at; n++; at = s.indexOf(w, at + w.length); }
+  return [n, first];
+}
+// the same count with a case-insensitive RegExp of the word on the original text
+function countRe(s, re, max) {
+  re.lastIndex = 0;
+  let n = 0, first = -1, m;
+  while (n < max && (m = re.exec(s))) { if (!n) first = m.index; n++; }
+  return [n, first];
+}
+// line n of a text (0-based, split on \n), without splitting the whole text
+function nthLine(text, n) {
+  let start = 0;
+  for (let i = 0; i < n; i++) { const nl = text.indexOf('\n', start); if (nl < 0) return ''; start = nl + 1; }
+  const end = text.indexOf('\n', start);
+  return text.slice(start, end < 0 ? text.length : end);
+}
+// how many \n come before position at
+function lineAt(text, at) {
+  let n = 0;
+  for (let i = text.indexOf('\n'); i >= 0 && i < at; i = text.indexOf('\n', i + 1)) n++;
+  return n;
+}
 // a note larger than this is indexed by its first INDEX_MAX bytes, cut at a line end: its title, frontmatter, links and
 // search text come from that head. A session log that grows to 100 MB was read, parsed and lowercased whole on every
 // save, which held the main process for seconds and kept 400 MB of copies of it in the index
@@ -27,9 +58,10 @@ export function readHead(abs, max = INDEX_MAX) {
 }
 
 // isExcludedPath keeps a file out by its path; isDeniedText keeps a note out by what its frontmatter says (a denied
-// key); isExcludedText flags and redacts opted-out lines but keeps the note. renamed() gives the person's own names for
+// key); isExcludedText flags and redacts opted-out lines but keeps the note. onPaths hears each batch the watcher
+// names before onChange. renamed() gives the person's own names for
 // graph clusters, by cluster key; forget(keys) is told which of them no longer match a cluster
-export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => false, isExcludedText, redact, onChange, renamed = () => ({}), forget = () => {}, log = () => {} }) {
+export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => false, isExcludedText, redact, onChange, onPaths = () => {}, renamed = () => ({}), forget = () => {}, log = () => {} }) {
   const files = new Map(); // rel -> { mtime, size, note, text, flagged, t }
   // linkHealth's answer: the missing links scored against every note, worked out again only after the index changed,
   // since Notifications and Memory health ask for it on every refresh. Callers read it and never change it
@@ -61,8 +93,8 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     if (cut && prev?.cut && !prev.flagged && prev.text === raw) { prev.mtime = st.mtimeMs; prev.size = st.size; return; }
     const flagged = isExcludedText(raw);
     const text = flagged ? redact(raw) : raw;
-    // the lowercased path and text, kept for search so a query does not lowercase the whole vault again
-    files.set(rel, { mtime: st.mtimeMs, size: st.size, note: parseNote(rel, text), text, hay: `${rel.toLowerCase()}\n${text.toLowerCase()}`, flagged, t: noteDate(vault, rel, text), ...(cut ? { cut } : {}) });
+    // exotic: the note holds a character whose lowercase is ASCII, so search lowercases it (see search)
+    files.set(rel, { mtime: st.mtimeMs, size: st.size, note: parseNote(rel, text), text, flagged, t: noteDate(vault, rel, text), ...(cut ? { cut } : {}), ...(EXOTIC.test(text) ? { exotic: true } : {}) });
   }
 
   // a frontmatter name: counts as an alias, since auto-memory notes link to each other by that slug
@@ -165,6 +197,8 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
         timer = setTimeout(() => {
           const rels = [...pending];
           pending.clear();
+          // every path the watcher named, before the index filters them (main's tree cache reads these), or null for all
+          try { onPaths(everything ? null : rels); } catch (err) { log('vault paths', String(err)); }
           const changed = everything ? sync() : syncPaths(rels);
           everything = false;
           if (changed.length) onChange(changed);
@@ -176,7 +210,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   function stop() { stopped = true; watcher?.close(); clearTimeout(timer); }
 
   const titleOf = (rel) => files.get(rel)?.note.title ?? path.basename(rel, '.md');
-  const lineOf = (rel, n) => (files.get(rel)?.text.split('\n')[n] ?? '').trim();
+  const lineOf = (rel, n) => { const t = files.get(rel)?.text; return t === undefined ? '' : nthLine(t, n).trim(); };
 
   // unresolved links become ghost nodes, one per missing name, like Obsidian: a link to nothing is information
   function graph() {
@@ -328,21 +362,36 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     });
   }
 
-  // words must all appear; title and path hits rank above body hits; snippets come from redacted text
+  // words must all appear; title and path hits rank above body hits; snippets come from redacted text. The index keeps
+  // no lowercased copy of the notes: an ASCII word is matched with a case-insensitive RegExp on the text, which finds
+  // the same places as the lowercased text does unless the note is exotic; an exotic note, or a query with a word
+  // outside ASCII, lowercases the note for that query. The score counts at most 20 matches, where its cap of 5 is
   function search(q, limit = 30) {
     const words = q.toLowerCase().split(/\s+/).filter(Boolean);
     if (!words.length) return [];
+    const ascii = !words.some((w) => NON_ASCII.test(w));
+    const res = ascii ? words.map((w) => new RegExp(escapeRe(w), 'gi')) : null;
     const hits = [];
     for (const [rel, f] of files) {
       const title = f.note.title.toLowerCase();
-      const hay = f.hay ?? `${rel.toLowerCase()}\n${f.text.toLowerCase()}`;
-      if (!words.every((w) => hay.includes(w) || title.includes(w))) continue;
-      let score = 0;
-      for (const w of words) { if (title.includes(w)) score += 10; if (rel.toLowerCase().includes(w)) score += 4; }
-      const lines = f.text.split('\n');
-      const n = lines.findIndex((l) => words.some((w) => l.toLowerCase().includes(w)));
-      score += Math.min(5, words.reduce((s, w) => s + (hay.split(w).length - 1), 0) / 4);
-      hits.push({ rel, title: f.note.title, score, line: n, snippet: n >= 0 ? lines[n].trim().slice(0, 200) : '' });
+      const relLow = rel.toLowerCase();
+      const low = ascii && !f.exotic ? null : f.text.toLowerCase();
+      let score = 0, total = 0, first = -1, ok = true;
+      for (let i = 0; i < words.length; i++) {
+        const w = words[i];
+        const [inRel] = countOf(relLow, w, Math.max(1, 20 - total));
+        total += inRel;
+        const [inText, at] = low !== null ? countOf(low, w, Math.max(1, 20 - total)) : countRe(f.text, res[i], Math.max(1, 20 - total));
+        total += inText;
+        if (!inRel && !inText && !title.includes(w)) { ok = false; break; }
+        if (at >= 0 && (first < 0 || at < first)) first = at;
+        if (title.includes(w)) score += 10;
+        if (inRel) score += 4;
+      }
+      if (!ok) continue;
+      score += Math.min(5, total / 4);
+      const n = first < 0 ? -1 : lineAt(low ?? f.text, first);
+      hits.push({ rel, title: f.note.title, score, line: n, snippet: n >= 0 ? nthLine(f.text, n).trim().slice(0, 200) : '' });
     }
     return hits.sort((a, b) => b.score - a.score || a.rel.localeCompare(b.rel)).slice(0, limit);
   }
