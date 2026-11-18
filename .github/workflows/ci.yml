@@ -6,7 +6,12 @@ on:
     branches: [main]
   pull_request:
 
-# onnxruntime-node (the decision layer) downloads CUDA libraries on Linux x64 at install; the app only ships the macOS build
+# read-only token by default; a job that needs more asks for it
+permissions:
+  contents: read
+
+# onnxruntime-node (the decision layer) downloads CUDA libraries on Linux x64 at install; the app only ships the macOS build.
+# Installs run with --ignore-scripts, so this only matters if a script ever runs again.
 env:
   ONNXRUNTIME_NODE_INSTALL: skip
 
@@ -15,6 +20,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
@@ -26,15 +33,21 @@ jobs:
       - name: Test helper
         run: swift test
         working-directory: helper
+      # No dependency install script runs. The lockfile's scripts are not needed here: onnxruntime-node ships its macOS
+      # binaries in the package (its script only fetches Linux CUDA files), fsevents ships a prebuilt binary,
+      # electron-winstaller is for Windows, and Electron downloads its binary on first use.
       - name: Install
-        run: npm ci
+        run: npm ci --ignore-scripts
         working-directory: app
       - name: Typecheck
         run: npm run typecheck
         working-directory: app
+      # the lint script runs its own npm ci in app/lint; the env var keeps install scripts off there too
       - name: Lint
         run: npm run lint
         working-directory: app
+        env:
+          npm_config_ignore_scripts: 'true'
       - name: Test
         run: npm test
         working-directory: app
@@ -59,24 +72,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       # the relay imports the speech engines and the notes prompts from app/, so the app's modules have to be there
       - name: App modules for the relay
-        run: npm ci
+        run: npm ci --ignore-scripts
         working-directory: app
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
       - name: Relay
-        run: npm ci && npm test
+        run: npm ci --ignore-scripts && npm test
         working-directory: relay
       # the image copies only what the root Dockerfile lists from app/; this imports the relay inside that same tree
       - name: Relay image imports
         run: npm run check:image
         working-directory: relay
       - name: Admin app
-        run: npm ci && npm run typecheck && npm test && npm run build
+        run: npm ci --ignore-scripts && npm run typecheck && npm test && npm run build
         working-directory: admin
         env:
           QUORUM_SUPABASE_URL: https://example.supabase.co
@@ -92,6 +107,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
