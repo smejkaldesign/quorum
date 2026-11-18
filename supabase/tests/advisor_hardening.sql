@@ -14,7 +14,6 @@ begin
     'public.add_workspace_owner()', 'public.auth_user_gate()', 'public.sync_profile()', 'public.kb_note_upstream_follow()',
     'public.workspace_connector_clear_overrides()', 'public.workspace_connector_drop_secret()', 'public.invites_daily_limit()',
     'public.kb_is_hosted(public.ulid)',
-    'public.is_public_mail_domain(text)',
     'public.platform_passkey_ok()', 'public.platform_issue_access_code(text, text, integer, text)', 'public.platform_access_codes()'] loop
     if has_function_privilege('anon', f, 'execute') or has_function_privilege('authenticated', f, 'execute') then
       raise exception '% should not be executable by anon or authenticated', f;
@@ -24,7 +23,8 @@ begin
 
   foreach f in array array[
     'public.is_member(public.ulid)', 'public.is_admin(public.ulid)', 'public.is_owner(public.ulid)', 'public.shares_workspace(uuid)',
-    'public.workspace_guardrails_set(public.ulid, jsonb)', 'public.platform_revoke_access_code(public.ulid)'] loop
+    'public.workspace_guardrails_set(public.ulid, jsonb)', 'public.platform_revoke_access_code(public.ulid)',
+    'public.is_public_mail_domain(text)'] loop
     if has_function_privilege('anon', f, 'execute') then raise exception '% should not be executable by anon', f; end if;
     if not has_function_privilege('authenticated', f, 'execute') then raise exception '% should stay executable by authenticated', f; end if;
   end loop;

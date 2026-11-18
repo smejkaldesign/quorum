@@ -25,9 +25,12 @@ begin
 end $$;
 
 -- Internal helpers. Each is called only from inside other security definer functions, which run as the function
--- owner, so the caller's role never needs EXECUTE. None is used by a policy, a view or a security invoker function.
+-- owner, so the caller's role never needs EXECUTE. None but is_public_mail_domain is used by a policy, a view, a
+-- check constraint or a security invoker function.
 revoke all on function public.kb_is_hosted(public.ulid) from public, anon, authenticated;
-revoke all on function public.is_public_mail_domain(text) from public, anon, authenticated;
+-- is_public_mail_domain backs the workspaces_domain_not_public check constraint, which runs as the writing role,
+-- so authenticated keeps EXECUTE; anon and public lose it.
+revoke all on function public.is_public_mail_domain(text) from public, anon;
 revoke all on function public.platform_passkey_ok() from public, anon, authenticated;
 revoke all on function public.platform_issue_access_code(text, text, integer, text) from public, anon, authenticated;
 -- Kept for authenticated although no client calls them: kb_shape and team_shape check can_read_kb or is_member
