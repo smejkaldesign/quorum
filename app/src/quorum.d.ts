@@ -70,8 +70,6 @@ export type McpOverlap = { at: string; read: { claudeList: boolean; claudeConfig
 export type McpInheritedServer = McpOverlapServer & { provider: string | null; on: boolean };
 export type GoogleCalendarStatus = { configured: boolean; connected: boolean; account: string | null; calendars: number; lastSyncAt: string | null; error: string | null };
 export type CalendarSettings = { source: 'mac'; days: number | 'week'; enabled?: boolean; showAll?: boolean; hidden?: string[]; status?: 'granted' | 'notDetermined' | 'denied' | 'unavailable' | 'off'; google?: GoogleCalendarStatus | null };
-export type MemoryItem = { id: string; kind: string; label: string; path: string; detail: string; include: boolean | null; manual?: boolean };
-export type Memory = { items: MemoryItem[]; excluded: string[]; scannedAt?: string; added?: number; removed?: number; cancelled?: boolean };
 export type Profile = { name?: string; title?: string; linkedin?: string; photo?: string };
 export type Voice = { locale?: string; sounds?: boolean; dictionary?: { heard: string; write: string }[] };
 export type OptOut = { name?: string; domain?: string };
@@ -109,10 +107,9 @@ export type SetupInput = Omit<SetupAnswers, 'projects' | 'people'> & { projects:
 // held: a run that would have created more new files than the keeper's limit, kept back until the user allows it
 export type KeeperHeld = { count: number; sample: string[] };
 export type KeeperRun = { filed: number; skipped: number; changed: number; reason: string; at: string; error: string | null; off?: boolean; marked?: string[]; left?: string[]; held?: KeeperHeld | null };
-// one upkeep job (app/plugins.js): owned by Quorum or by the vault, with the files that show the vault already does it
+// one upkeep job (app/plugins.js): owned by Quorum, or by the vault when a saved choice keeps it off
 export type PluginOwner = 'quorum' | 'vault';
-// report: the plugin reads and shows a result, and writes nothing in the vault on its own; note: one line on what it reads
-export type KeeperPlugin = { id: string; title: string; does: string; always: boolean; report: boolean; note: string | null; evidence: { path: string; why: string }[]; owner: PluginOwner; overridden: boolean; isNew: boolean };
+export type KeeperPlugin = { id: string; title: string; does: string; owner: PluginOwner };
 export type KeeperStatus = { on: boolean; editVault: boolean; meetingsIndex: boolean; facts: boolean; running: boolean; lastRunAt: string | null; filed: number; last: KeeperRun | null; folders: Partial<Record<'people' | 'projects' | 'daily' | 'meetings', string>>; model: boolean; held: KeeperHeld | null; plugins: KeeperPlugin[]; learned: KeeperLearned | null; errors: KeeperErrors };
 // where learned facts go and how much of the budget they use; errors are upkeep failures logged under Application Support
 // target is .quorum/learned.md or a vault note (note holds its path; linked says index.md links to it); budgetPick is the
@@ -121,23 +118,6 @@ export type LearnedTarget = 'learned' | 'note';
 export type KeeperClaude = { on: boolean; editable: boolean; block: 'copy' | 'pointer' | 'list' | null; lines: number; generated: boolean; facts: number; budget: number };
 export type KeeperLearned = { target: LearnedTarget; pick: LearnedTarget; file: string; note: string; noteHeld: boolean; linked: boolean; indexGenerated: boolean; budget: number; budgetPick: number | 'auto'; defaultBudget: number; defaultMoves: number; chars: number; fileChars: number; claude: KeeperClaude };
 export type KeeperErrors = { count: number; last: { at: string; where: string; message: string } | null; file: string | null };
-// the context budget plugin (app/context-budget.js). scope: user, project and memory load every session; nested loads
-// only when Claude works in that folder; paths only for matching files. importedBy names the file whose @import loads it. loaded is what Claude Code reads (MEMORY.md stops at 200 lines)
-export type ContextFile = { path: string; abs: string; scope: 'user' | 'project' | 'memory' | 'nested' | 'paths'; chars: number; lines: number; tokens: number; loaded: number; warn: string | null; cut?: number; learnedChars: number; importedBy: string | null };
-export type ContextBudget = {
-  files: ContextFile[]; total: { chars: number; tokens: number }; warnings: string[];
-  quorum: { path: string; chars: number; everySession: boolean; share: number | null; aside: { path: string; chars: number } | null } | null;
-  agent: { path: string; chars: number; limit: number; cut: number; learnedCut: boolean } | null;
-};
-// the skill usage plugin (app/skill-usage.js): runs counted from Claude Code transcripts on this Mac. unused is keyed
-// by window in days; coverageDays is how far back the transcripts go. Stashed skills carry disable-model-invocation
-export type SkillUse = { name: string; dir: string; path: string; runs: number; last: string | null; stashed: boolean; unused: Record<number, boolean>; namedBy: string[] };
-export type SkillUsage = { skills: SkillUse[]; transcripts: number; coverageDays: number; windows: number[] };
-// the brain check plugin (app/brain-check.js): questions with expected terms, run on the user's own model source
-export type BrainCheckItem = { id: string; prompt: string; expect: string[] };
-export type BrainCheckResult = BrainCheckItem & { answer: string; error: string | null; pass: boolean; missing: string[] };
-export type BrainCheckRun = { at: string; results: BrainCheckResult[] };
-export type BrainCheckStatus = { checks: BrainCheckItem[]; last: BrainCheckRun | null; previous: BrainCheckRun | null; running: boolean; done: number; changed: string[]; ready: number };
 // screen context: on-screen text as spelling hints; granted is the Screen Recording permission, null when unknown
 export type ScreenContextStatus = { available?: boolean; on: boolean; granted: boolean | null };
 export type SetupRecord = { version: number; name: string; answers: SetupAnswers; createdAt: string; updatedAt?: string };
@@ -543,8 +523,6 @@ declare global {
       getSettings(): Promise<Settings>;
       setSettings(s: Partial<Settings>): Promise<Settings>;
       pickPhoto(): Promise<Settings>;
-      memoryGet(): Promise<Memory>;
-      memoryRefresh(): Promise<Memory>;
       calendar(): Promise<{ connected: boolean; status: string; events: CalendarEvent[]; days: number | 'week'; showAll: boolean; hidden: number }>;
       calendarStatus(): Promise<CalendarSettings>;
       calendarSync(): Promise<{ ok: true } | { error: string }>;
@@ -638,11 +616,6 @@ declare global {
       oauthGithubInstallations(): Promise<GithubInstallations | { error: string }>;
       onConnectorLink(cb: (t: { id: string | null }) => void): Unsub;
       connectorLinksReady(): Promise<void>;
-      memoryRefreshCancel(): Promise<void>;
-      memoryAdd(): Promise<Memory>;
-      memoryInclude(id: string): Promise<Memory>;
-      memoryExclude(id: string): Promise<Memory>;
-      memoryOpen(id: string): Promise<void>;
       removePhoto(): Promise<Settings>;
       onboardingStatus(): Promise<OnboardingStatus>;
       onboardingChecks(): Promise<OnboardingChecks>;
@@ -658,16 +631,8 @@ declare global {
       keeperSet(patch: { on?: boolean; facts?: boolean; factsBudget?: number | 'auto'; factsTarget?: LearnedTarget; factsNote?: string; factsInClaude?: boolean; editVault?: boolean; meetingsIndex?: boolean }): Promise<KeeperStatus>;
       keeperRemoveClaude(): Promise<KeeperStatus>;
       keeperRun(opts?: { allowCreate?: boolean }): Promise<KeeperRun>;
-      keeperPlugin(id: string, owner: PluginOwner): Promise<KeeperStatus>;
       keeperErrorsOpen(): Promise<void>;
       keeperErrorsClear(): Promise<KeeperStatus>;
-      pluginContext(): Promise<ContextBudget | null>;
-      pluginSkills(): Promise<SkillUsage | null>;
-      pluginSkillStash(dir: string, on: boolean): Promise<SkillUsage>;
-      brainCheckStatus(): Promise<BrainCheckStatus | null>;
-      brainCheckSave(checks: BrainCheckItem[]): Promise<BrainCheckStatus>;
-      brainCheckRun(): Promise<BrainCheckStatus>;
-      onBrainCheck?(cb: () => void): Unsub;
       onKeeper?(cb: (r: KeeperRun) => void): Unsub;
       onboardingOpenPermission(which: 'microphone' | 'audio' | 'accessibility' | 'calendar'): Promise<void>;
       onboardingRequestMicrophone(): Promise<boolean>;
