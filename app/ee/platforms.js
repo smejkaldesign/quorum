@@ -230,7 +230,7 @@ export function createPlatforms({ account, clients = {}, settings, saveSettings 
     if (!p.clientId) return { error: `${p.name} connections are not available in this build.` };
     const { verifier, challenge } = pkce();
     const state = `${randomBytes(12).toString('base64url')}.p${LOOPBACK_PORT}`;
-    const waiting = loopback();
+    const waiting = loopback({ state });
     const u = new URL(p.authorize);
     u.searchParams.set('response_type', 'code');
     u.searchParams.set('client_id', p.clientId);

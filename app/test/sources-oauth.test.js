@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { authorizeUrl, connect, discover, metadataUrls, pkce, register } from '../sources/oauth.js';
+import { authorizeUrl, awaitLoopback, connect, discover, httpsOnly, metadataUrls, pkce, register } from '../sources/oauth.js';
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 const RESOURCE = { resource: 'https://mcp.example.com/mcp', authorization_servers: ['https://auth.example.com'], scopes_supported: ['mcp'] };
@@ -66,5 +66,43 @@ describe('oauth connect', () => {
     const clients = memClients();
     await expect(connect({ resourceUrl: 'https://mcp.example.com/mcp', open: async () => {}, clients, fetchImpl: fake(), loopback: async () => ({ code: 'good', state: 'wrong' }) })).rejects.toThrow(/did not match/);
     await expect(connect({ resourceUrl: 'https://mcp.example.com/mcp', open: async () => {}, clients, fetchImpl: fake(), loopback: async () => ({ error: 'access_denied', error_description: 'User said no' }) })).rejects.toThrow('User said no');
+  });
+});
+
+describe('the sign-in page address', () => {
+  it('opens only https, or http on this Mac, even when discovery names something else', () => {
+    expect(httpsOnly('https://auth.example.com/authorize?x=1')).toBe('https://auth.example.com/authorize?x=1');
+    for (const local of ['http://127.0.0.1:9000/authorize', 'http://[::1]:9000/authorize', 'http://localhost/authorize']) {
+      expect(httpsOnly(local)).toBe(local);
+      expect(new URL(authorizeUrl({ authorizationEndpoint: local, resource: RESOURCE.resource, scopes: [] }, { clientId: 'c', redirectUri: 'http://127.0.0.1:47832/callback', challenge: 'x', state: 's' })).searchParams.get('state')).toBe('s');
+    }
+    for (const bad of ['http://auth.example.com/authorize', 'http://127.0.0.2/authorize', 'http://localhost.evil.example/authorize', 'ftp://localhost/authorize', 'file:///etc/passwd', 'javascript:alert(1)', 'not a url']) {
+      expect(() => httpsOnly(bad)).toThrow();
+      expect(() => authorizeUrl({ authorizationEndpoint: bad, resource: RESOURCE.resource, scopes: [] }, { clientId: 'c', redirectUri: 'http://127.0.0.1:47832/callback', challenge: 'x', state: 's' })).toThrow();
+    }
+  });
+  it('refuses a connect whose metadata names an http sign-in page, before opening the browser', async () => {
+    const opened = [];
+    const insecure = async (url, init) => (url === 'https://auth.example.com/.well-known/oauth-authorization-server' ? json({ ...AS, authorization_endpoint: 'http://auth.example.com/authorize' }) : fake()(url, init));
+    const clients = { get: async () => null, set: async () => {} };
+    await expect(connect({ resourceUrl: 'https://mcp.example.com/mcp', open: async (u) => { opened.push(u); }, clients, fetchImpl: insecure, loopback: () => new Promise(() => {}) })).rejects.toThrow(/https/);
+    expect(opened).toEqual([]);
+  });
+});
+
+describe('the loopback wait', () => {
+  it('answers a visit with another state with 400 and keeps waiting for the real answer', async () => {
+    const port = 47500 + Math.floor(Math.random() * 400);
+    const waiting = awaitLoopback({ port, state: 'good-state' });
+    await new Promise((r) => setTimeout(r, 50));
+    const forged = await fetch(`http://127.0.0.1:${port}/callback?error=access_denied&state=other`);
+    expect(forged.status).toBe(400);
+    const missing = await fetch(`http://127.0.0.1:${port}/callback?error=access_denied`);
+    expect(missing.status).toBe(400);
+    const real = fetch(`http://127.0.0.1:${port}/callback?code=c1&state=good-state`);
+    const q = await waiting;
+    expect(q).toMatchObject({ code: 'c1', state: 'good-state' });
+    q.finish({});
+    expect((await real).status).toBe(200);
   });
 });
