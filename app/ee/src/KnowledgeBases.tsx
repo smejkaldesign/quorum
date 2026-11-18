@@ -4,7 +4,7 @@ import { Row, useMenu } from '../../src/controls';
 import { IconMore, IconPlus, IconStack } from '../../src/icons';
 import { AccountCard, EE_MARKER, useAccount } from './Account';
 import { accountApi } from './accountMock';
-import { accessDraft, audienceLine, canDeleteKb, canImportInto, createScopes, isGrant, KIND_LABEL, readersOf, SCOPE_LABEL, sourceLine, type KbScope, type ReadersMode } from './kbTree';
+import { accessDraft, canDeleteKb, canImportInto, createScopes, isGrant, KIND_LABEL, readersOf, readersSummary, SCOPE_LABEL, sourceLine, type KbScope, type ReadersMode } from './kbTree';
 import { DrivePanel, hasDrive } from './KbDrive';
 import { announceKbChange, EMPTY_SOURCE, hasImport, ImportStatus, kbCall, KbConfirm, ScopePicker, SourceFields, sourceOf, useImport, type SourceDraft } from './kbUi';
 
@@ -50,7 +50,7 @@ function Bases({ wsAdmin }: { wsAdmin: boolean }) {
           <div key={kb.id} className="kb-admin-item">
             <Row icon={<IconStack width={18} height={18} />}
               title={<>{kb.name}{kb.isDefault && <span className="kb-badge">Default</span>}{kb.personal && <span className="kb-badge">{SCOPE_LABEL.personal}</span>}</>}
-              desc={[KIND_LABEL[kb.kind], kb.teamId ? 'Team knowledge base' : '', audienceLine(kb), sourceLine(kb.source), kb.hosted && !kb.writable ? 'Read-only until the plan is renewed' : null].filter(Boolean).join(' · ')}>
+              desc={[KIND_LABEL[kb.kind], kb.teamId ? 'Team knowledge base' : '', kb.personal ? '' : readersSummary(kb.access), sourceLine(kb.source), kb.hosted && !kb.writable ? 'Read-only until the plan is renewed' : null].filter(Boolean).join(' · ')}>
               {!kb.personal && <button className="pill small" aria-expanded={panel?.kind === 'readers' && panel.kbId === kb.id} onClick={() => setPanel(panel?.kind === 'readers' && panel.kbId === kb.id ? null : { kind: 'readers', kbId: kb.id })}>Readers</button>}
               <KbMenu kb={kb} wsAdmin={wsAdmin} onPick={(kind) => (kind === 'delete' ? setDeleting(kb) : setPanel({ kind, kbId: kb.id }))} />
             </Row>

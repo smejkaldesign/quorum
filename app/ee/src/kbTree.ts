@@ -249,9 +249,6 @@ export type KbScope = 'personal' | 'workspace';
 export const SCOPE_LABEL: Record<KbScope, string> = { personal: 'Only me', workspace: 'Workspace' };
 export const createScopes = (wsAdmin: boolean): KbScope[] => (wsAdmin ? ['personal', 'workspace'] : ['personal']);
 
-// who reads a KB in one line: a personal KB reads as its owner's alone, since nobody else ever sees it
-export const audienceLine = (kb: Pick<Kb, 'personal' | 'access'>): string => (kb.personal ? 'Only you' : readersSummary(kb.access));
-
 // whether the person may delete a KB, or import notes into it: a personal KB's owner (its only admin), or a workspace
 // owner or admin for a workspace KB. The default KB is never deleted
 export const canDeleteKb = (kb: Pick<Kb, 'personal' | 'role' | 'isDefault'>, wsAdmin: boolean): boolean => !kb.isDefault && (kb.personal ? kb.role === 'admin' : wsAdmin);
