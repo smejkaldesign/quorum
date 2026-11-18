@@ -892,7 +892,6 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
   // a note just written: filed shortly, once the burst of writes settles
   const schedule = (reason = 'note') => { clearTimeout(timer); timer = setTimeout(() => { timer = null; run({ reason }).catch(() => {}); }, 2500); };
 
-  const plugins = () => { const b = brain(); return b ? registry(b).rows : []; };
   const status = () => {
     const b = brain();
     const c = conf();
@@ -1066,5 +1065,5 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
     if (!b) return;
     appendChangelog(b.vault, 'Moved to the Trash', `- ${rel}\n\n“${title}” looked empty, and you chose to remove it. It is in the macOS Trash.\n\n`);
   };
-  return { run, schedule, halt, status, set, setPlugin, removeClaude, plugins, conf, clearErrors, errorLog, noteTrail, trails, junk, keepJunk, trashedJunk };
+  return { run, schedule, halt, status, set, setPlugin, removeClaude, conf, clearErrors, errorLog, noteTrail, trails, junk, keepJunk, trashedJunk };
 }
