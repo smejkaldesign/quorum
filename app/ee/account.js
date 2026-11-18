@@ -50,7 +50,7 @@ function localStackStatus() {
 
 // Which Supabase project this process talks to (docs/self-hosting.md, Development). In order:
 //  1. QUORUM_SUPABASE_URL and QUORUM_SUPABASE_ANON_KEY already in the shell environment ('shell')
-//  2. production, or a development copy with settings.devUseProduction on: the repo root's .env ('production')
+//  2. production, or a development copy with settings.devUseProduction or QUORUM_USE_PRODUCTION=1: the repo root's .env ('production')
 //  3. development: .env.development when present ('development'), else the local stack ('local')
 // Production never falls back to the local stack: without .env it stays unconfigured.
 function packagedCloudConfig() {

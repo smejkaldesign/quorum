@@ -33,7 +33,7 @@ const ROLE_DESC: Record<ConnectorRole, string> = {
   speech: 'Turns call audio into the transcript',
   summary: 'Folds new turns into the running summary during a call',
   notes: 'Writes the saved note when a call ends',
-  agent: 'Answers your questions; only Claude Code can read your Agent OS',
+  agent: 'Answers your questions in chat',
   voice: 'Reads notes and answers aloud',
 };
 
@@ -126,6 +126,9 @@ export function PersonalConnectors({ top, below, mcp, settingsRows }: { top?: Re
           <ProviderRow key={id} p={BY_ID[id]} st={st} settings={settings} defaults={defaults(id)} note={note?.id === id ? note : null} mcp={mcp?.[id]}
             onDefault={() => setSheet({ kind: 'default', id })} onTest={() => test(id)} onEdit={() => { setNote(null); setSheet({ kind: 'add', id }); }} onRemove={() => remove(id)} />
         ))}
+        {st && (['claude-code', 'codex'] as ConnectorId[]).filter((id) => !rows.includes(id) && (mcp?.[id]?.installed || mcp?.[id]?.registered)).map((id) => (
+          <McpOnlyRow key={id} p={BY_ID[id]} mcp={mcp![id]!} />
+        ))}
         {zero && <Row icon={<IconGrid width={18} height={18} />} title="No AI provider yet" desc="Quorum has no key of its own. Add the AI you already use." />}
       </div>
       {below}
@@ -176,10 +179,8 @@ function ProviderRow({ p, st, settings, defaults, note, mcp, onDefault, onTest, 
   const editLabel = p.id === 'claude-code' || p.id === 'ollama' ? 'Edit model' : p.id === 'anthropic' ? 'Edit key or model' : p.id === 'openai_compatible' ? 'Edit key or endpoint' : 'Edit key';
   return (
     <>
-      <Row icon={<Mark id={p.id} />} title={<>{p.name}{p.id === 'claude-code' && c?.version && <em className="muted ver">v{c.version}</em>}{defaults.length > 0 && <em className="stub">Default for {defaults.map((r) => ROLE_LABEL[r]).join(', ')}</em>}</>} desc={sub}>
-        {mcp && (mcp.added
-          ? <span className="conn-ok"><i />MCP connected</span>
-          : <button className="pill small-pill" disabled={mcp.busy || !mcp.installed} onClick={mcp.add}>{mcp.busy ? 'Connecting…' : 'Connect MCP'}</button>)}
+      <Row icon={<Mark id={p.id} />} title={<>{p.name}{p.id === 'claude-code' && c?.version && <em className="muted ver">v{c.version}</em>}{defaults.length > 0 && <em className="stub" data-tip={`Default for ${defaults.map((r) => ROLE_LABEL[r]).join(', ')}`}>Default</em>}</>} desc={sub}>
+        {mcp && <McpControl name={p.name} mcp={mcp} />}
         <span className="menu-wrap" onClick={(e) => e.stopPropagation()}>
           <button className="icon-btn" aria-label={`${p.name} options`} aria-haspopup="menu" aria-expanded={more} data-tip="More options" onClick={() => setMore((o) => !o)}><IconMore /></button>
           {more && (
@@ -188,16 +189,60 @@ function ProviderRow({ p, st, settings, defaults, note, mcp, onDefault, onTest, 
               {p.id !== 'apple' && <button role="menuitem" onClick={() => { setMore(false); onTest(); }}><IconReset width={15} height={15} /> {p.id === 'claude-code' ? 'Check again' : 'Test'}</button>}
               {p.id !== 'apple' && !isRunner(p.id) && <button role="menuitem" onClick={() => { setMore(false); onEdit(); }}><IconCode width={15} height={15} /> {editLabel}</button>}
               {p.id === 'claude-code' && <button role="menuitem" onClick={() => { setMore(false); window.quorum.claudeLogin(); }}><IconPerson width={15} height={15} /> Switch account</button>}
-              {mcp?.added && <button role="menuitem" disabled={mcp.busy} onClick={() => { setMore(false); mcp.remove(); }}><IconClose width={15} height={15} /> Disconnect MCP</button>}
+              {mcp?.registered && <button role="menuitem" disabled={mcp.busy} onClick={() => { setMore(false); mcp.remove(); }}><IconClose width={15} height={15} /> Disconnect MCP</button>}
               <button role="menuitem" onClick={() => { setMore(false); window.quorum.openExternal(p.docs); }}><IconExternal width={15} height={15} /> Docs</button>
               {needsKey(p.id) && <><div className="menu-sep" /><button role="menuitem" className="danger" onClick={() => { setMore(false); onRemove(); }}><IconTrash width={15} height={15} /> Remove</button></>}
             </div>
           )}
         </span>
       </Row>
-      {mcp?.msg && <p className="set-note mcp-msg">{mcp.msg}</p>}
+      {mcp && <McpNotes mcp={mcp} />}
       {note && <div className="row-extra conn-extra"><p className={note.ok ? 'set-ok' : 'set-error'}>{note.ok && <IconCheck width={14} height={14} className="ok" />} {note.text}</p></div>}
     </>
+  );
+}
+
+// the quorum MCP for Claude Code or Codex inside its row: connected, or a button to connect or fix it
+function McpControl({ name, mcp }: { name: string; mcp: McpLink }) {
+  if (mcp.added) return <span className="conn-ok"><i />MCP connected</span>;
+  return (
+    <button className="pill small-pill" aria-label={`${mcp.error ? 'Fix' : 'Connect'} ${name} MCP`} disabled={mcp.busy || !mcp.installed}
+      data-tip={mcp.installed ? undefined : `${name} is not installed on this Mac`} onClick={mcp.add}>
+      {mcp.busy ? 'Connecting…' : mcp.error ? 'Fix MCP' : 'Connect MCP'}
+    </button>
+  );
+}
+function McpNotes({ mcp }: { mcp: McpLink }) {
+  return <>{mcp.error && <p className="set-error mcp-msg">{mcp.error}</p>}{mcp.msg && mcp.msg !== mcp.error && <p className="set-note mcp-msg">{mcp.msg}</p>}</>;
+}
+// Claude Code or Codex installed on this Mac but not signed in: Quorum does not run on it, and its MCP still works
+function McpOnlyRow({ p, mcp }: { p: ConnectorManifest; mcp: McpLink }) {
+  return (
+    <>
+      <Row icon={<Mark id={p.id} />} title={p.name} desc="Installed, not signed in, so Quorum does not run on it">
+        <McpControl name={p.name} mcp={mcp} />
+        {mcp.registered && <button className="pill small-pill" aria-label={`Disconnect ${p.name} MCP`} disabled={mcp.busy} onClick={mcp.remove}>Disconnect</button>}
+      </Row>
+      <McpNotes mcp={mcp} />
+    </>
+  );
+}
+// Claude Code, Codex and Antigravity run on their own sign-in. Check again rereads this Mac and keeps the sheet open
+// with the answer; Done appears once it is found
+function RunnerSheet({ p, existing, onRefresh, onDone }: { p: ConnectorManifest; existing: boolean; onRefresh: () => Promise<void>; onDone: (changed: boolean) => void }) {
+  const [checked, setChecked] = useState(false);
+  const [busy, setBusy] = useState(false);
+  return (
+    <Scrim title={`Add ${p.name}`} onClose={() => onDone(checked)}>
+      <p>{existing ? `${p.name} is installed on this Mac and listed under Connected AI tools.` : `${p.name} runs on your own sign-in. Install it on this Mac from its docs and sign in, then check again.`}</p>
+      {checked && !existing && <p className="set-error" role="status">{p.name} is not on this Mac yet.</p>}
+      <ModalActions>
+        <button className="pill" onClick={() => window.quorum.openExternal(p.docs)}>Docs</button>
+        {existing
+          ? <button className="pill primary" onClick={() => onDone(true)}>Done</button>
+          : <button className="pill primary" disabled={busy} onClick={async () => { setBusy(true); try { await onRefresh(); } finally { setBusy(false); setChecked(true); } }}>{busy ? 'Checking…' : 'Check again'}</button>}
+      </ModalActions>
+    </Scrim>
   );
 }
 
@@ -264,15 +309,7 @@ function ProviderSheet({ id, st, settings, onPick, onRefresh, onDone }: {
   }
   const p = BY_ID[id];
   const existing = !!st && isConnected(st, id);
-  if (isRunner(id)) return (
-    <Scrim title={`Add ${p.name}`} onClose={() => onDone(false)}>
-      <p>{existing ? `${p.name} is installed on this Mac and listed under Connected AI tools.` : `${p.name} runs on your own sign-in. Install it on this Mac and sign in, then check again.`}</p>
-      <ModalActions>
-        <button className="pill" onClick={() => window.quorum.openExternal(p.docs)}>Docs</button>
-        <button className="pill primary" onClick={async () => { await onRefresh(); onDone(true); }}>{existing ? 'Done' : 'Check again'}</button>
-      </ModalActions>
-    </Scrim>
-  );
+  if (isRunner(id)) return <RunnerSheet p={p} existing={existing} onRefresh={onRefresh} onDone={onDone} />;
   return <Scrim title={`${existing ? 'Edit' : 'Add'} ${p.name}`} onClose={() => onDone(false)}><ProviderFields p={p} st={st} settings={settings} existing={existing} onRefresh={onRefresh} onDone={onDone} /></Scrim>;
 }
 

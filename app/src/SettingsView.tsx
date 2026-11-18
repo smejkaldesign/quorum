@@ -177,7 +177,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
             : <h1 className={`set-title${page === 'connectors' ? ' crumbs' : ''}`}>{current.label}{current.soon && <Soon />}{page === 'connectors' && <span className="crumb-actions" id="conn-title-actions" />}</h1>}
           {page === 'preferences' && <p className="set-lede">Quorum works best knowing a little about you. Quorum uses this when it writes your meeting notes and answers questions.</p>}
           {page === 'knowledge' && <p className="set-lede">Company knowledge for your whole workspace, chosen by admins.</p>}
-          {page === 'general' && <p className="set-lede">Your Quorum account, and the company context Quorum gives every meeting summary and answer.</p>}
+          {page === 'general' && <p className="set-lede">{(listed as string[]).includes('organization') ? 'Your Quorum account.' : 'Your Quorum account, and the company context Quorum gives every meeting summary and answer.'}</p>}
           {page === 'organization' && <p className="set-lede">Your company, the words that stop and start Quorum in a call, and the people Quorum never records. Quorum uses this for everyone in the workspace.</p>}
           {page === 'teams' && <p className="set-lede">A workspace starts as yours alone. Turn on a team to invite members and build knowledge together.</p>}
           {page === 'billing' && <p className="set-lede">Your plan, the card it charges, and this month's usage against the hours it includes.</p>}
@@ -584,9 +584,24 @@ function WorkspacePage({ settings, onSettings, onGo, billing, organization }: { 
     <>
       <AccountArea local={<><h3>Account</h3><p className="muted">Local edition. Your meetings and notes stay on this Mac.</p></>}
         unconfigured={<><h3>Account</h3><p className="muted">Hosted accounts are not set up in this build</p></>} />
+      <ProductionNote />
       {billing && <p className="set-note">The plan, the card on file and this month's usage live under <button className="link-btn" onClick={() => onGo('billing')}>Billing</button>.</p>}
       {!organization && <CompanySettings settings={settings} onSettings={onSettings} />}
     </>
+  );
+}
+
+// a development copy pointed at production data says so in red, with the way back to its own data
+function ProductionNote() {
+  const [on, setOn] = useState(false);
+  useEffect(() => { window.quorum.envStatus().then((s) => setOn(!!s?.useProduction)).catch(() => {}); }, []);
+  if (!on) return null;
+  return (
+    <div className="set-card">
+      <Row icon={<IconInfo width={18} height={18} />} title="Connected to production" desc="This development copy reads and writes production data.">
+        <button className="pill small-pill" onClick={async () => { const s = await window.quorum.envSetProduction(false); setOn(!!s?.useProduction); }}>Use development data</button>
+      </Row>
+    </div>
   );
 }
 
@@ -1078,7 +1093,7 @@ function DevelopersPage({ settings, onSettings }: { settings: Settings; onSettin
         settingsRows={<>
           <AccessRow />
           <Row icon={<IconBrain width={18} height={18} />} title="Let AI tools change memory and knowledge bases"
-            desc="Claude Code, Codex and other AI tools connected through the quorum MCP can approve and archive items in Needs review, undo fixes and create knowledge bases, through the same steps as the buttons in Quorum. Each fix shows which tool approved it and keeps its Undo. Off by default.">
+            desc="Lets Claude Code, Codex and other AI tools approve, archive and undo memory fixes and create knowledge bases. Off by default.">
             <Toggle on={settings.memoryAgentActions === true} onChange={async (v) => onSettings(await window.quorum.setSettings({ memoryAgentActions: v }))} />
           </Row>
           <WorkspaceDecisions connectedBy={settings.workspace?.decisions?.by} bare />

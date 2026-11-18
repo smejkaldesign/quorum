@@ -78,7 +78,7 @@ npm run start:cloud             # the development copy, signed in against the lo
 
 Production never falls back to the local stack. Without `.env` it runs with hosted accounts unconfigured.
 
-**The developer switch.** Settings shows a "Use production data" toggle in development copies only. On, the development copy loads `.env` instead of its own config, keeps a separate session file (`auth-production.json`) and sync id map (`sync-ids-production.json`), and shows "Connected to production" in red while it is on. The setting is `devUseProduction` in the development copy's `settings.json`.
+**Production data in a development copy.** Launch a development copy with `QUORUM_USE_PRODUCTION=1`, or set `devUseProduction` in its `settings.json`. It then loads `.env` instead of its own config and keeps a separate session file (`auth-production.json`) and sync id map (`sync-ids-production.json`). Settings, Admin, General shows "Connected to production" while it is on, with a button that switches back to development data. Installed builds ignore both.
 
 ## Platform owner and the admin app
 

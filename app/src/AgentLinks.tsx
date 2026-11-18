@@ -104,11 +104,12 @@ export function AgentRows({ agents, variant, manual, only }: { agents: Agents; v
 }
 
 // the quorum MCP registration for Claude Code or Codex, shown inside that tool's row in Settings > AI tools
-export type McpLink = { added: boolean; installed: boolean; busy: boolean; msg?: string; add: () => void; remove: () => void };
+export type McpLink = { added: boolean; registered: boolean; error: string | null; installed: boolean; busy: boolean; msg?: string; add: () => void; remove: () => void };
 export function mcpLink(agents: Agents, id: 'claude' | 'codex'): McpLink {
   const st = agents.status?.[id];
   return {
-    added: !!st?.added && !st.error, installed: !!st?.installed, busy: agents.busy === id, msg: agents.msg[id],
+    added: !!st?.added && !st.error, registered: !!st?.added, error: st?.added && st.error ? st.error : null,
+    installed: !!st?.installed, busy: !!agents.busy, msg: agents.msg[id],
     add: () => (id === 'claude' ? agents.addClaude() : agents.addCodex()), remove: id === 'claude' ? agents.removeClaude : agents.removeCodex,
   };
 }
