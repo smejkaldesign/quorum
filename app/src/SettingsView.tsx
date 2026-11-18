@@ -173,6 +173,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
                 <Crumb label="Connectors" onClick={() => { setConnectorDetail(null); setConnLib(false); }} />
                 {connLib && <>{CRUMB_SEP}{connectorDetail ? <Crumb label="Library" onClick={() => setConnectorDetail(null)} /> : <span className="crumb-here">Library</span>}</>}
                 {connectorDetail && <>{CRUMB_SEP}<span className="crumb-here">{connectorDetailName(connectorDetail)}</span></>}
+                {connLib && !connectorDetail && <span className="crumb-actions" id="conn-title-actions" />}
               </h1>
             : <h1 className={`set-title${page === 'connectors' ? ' crumbs' : ''}`}>{current.label}{current.soon && <Soon />}{page === 'connectors' && <span className="crumb-actions" id="conn-title-actions" />}</h1>}
           {page === 'preferences' && <p className="set-lede">Quorum works best knowing a little about you. Quorum uses this when it writes your meeting notes and answers questions.</p>}

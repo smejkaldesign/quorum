@@ -1259,6 +1259,8 @@ h3 .soon, .set-zero strong .soon { font-size: 11px; margin-left: 8px; vertical-a
 .crumb-actions .conn-actions { gap: 6px; }
 .crumb-actions .icon-btn { width: 36px; height: 36px; border: 1px solid var(--line-2); border-radius: 999px; transition: border-color 120ms ease; }
 .crumb-actions .icon-btn:hover { border-color: #fff; }
+.conn-show-hidden { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 400; color: var(--muted); cursor: pointer; }
+.conn-show-hidden input { margin: 0; width: 16px; height: 16px; accent-color: var(--brand); }
 
 .meta-pill.meta-source img { width: 18px; height: 18px; border-radius: 5px; }
 

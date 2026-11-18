@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import type { AgentSchedule, Brain, CalendarSettings, GithubInstallations, McpInheritedServer, McpOverlap, McpOverlapServer, MeetingSourceInfo, OAuthAccount, OAuthCheck, PlatformInfo, SourceJob } from './quorum';
 import { CHECKABLE, installSummary } from '../connectors/oauthApps';
 import { CONNECTOR_RETURN } from './connectorsNav';
+import { libraryAreas } from './libraryFilter';
+import { useSession } from './session';
 import { TRADEOFFS } from '../sources/agent-import';
 import { AREAS, CONNECTORS_CHANGED, CONNECTOR_BY_ID, aboutFor, areaOf, areaOfCategory, connectorsFor, featuresFor, isConnected, mcpPathsOf, type LibraryConnector } from '../connectors/library';
 import { BLOCKED_SENTENCE, ORG_LABEL, ORG_SENTENCE, UNAPPROVED_LABEL, approvalOf, canConnect, hasLocalPart, hiddenFromList, isGoverned, type Approval } from '../connectors/approval';
@@ -162,8 +164,7 @@ export function ConnectorsPage({ detail, onDetail, library, onLibrary, brain, fo
       </div>
     );
   }
-  // individuals see the whole library; a team that approves its connectors sees only what it can use
-  if (library) return <ConnectorLibrary list={libraryList} icons={icons} live={live} approval={approval} overlap={overlap} focusArea={browseArea} hideUnavailable={!!policy} onOpen={onDetail} />;
+  if (library) return <ConnectorLibrary list={libraryList} icons={icons} live={live} approval={approval} overlap={overlap} focusArea={browseArea} onOpen={onDetail} />;
   // the connectors this person connected, or that their workspace runs for them, by area
   const shown = (x: LibraryConnector) => (accountConnected(x, live) || isConnected(x, live) || approval(x) === 'org') && !hiddenFromList(x, approval(x));
   const areas = AREAS.map((a) => ({ ...a, items: libraryList.filter((x) => areaOf(x) === a.id && shown(x)), mcps: agentMcps.filter((m) => areaOf(byId[m.provider!]) === a.id) })).filter((a) => a.items.length || a.mcps.length);
@@ -275,21 +276,23 @@ function McpDetail({ connector: x, icon, servers, overlap, checking, onCheck, ap
   );
 }
 
-// Add connector: every connector by area. Hide unavailable (on by default) leaves out the connectors this person cannot
-// connect: not built yet, not in this build, Cloud only on the Local edition, or not approved by their workspace
-function ConnectorLibrary({ list, icons, live, approval, overlap, focusArea, hideUnavailable: hide, onOpen }: { list: readonly LibraryConnector[]; icons: Record<string, string | null>; live: Live; approval: (x: LibraryConnector) => Approval; overlap: McpOverlap | null; focusArea: string | null; hideUnavailable: boolean; onOpen: (id: string) => void }) {
+// Add connector: every connector by area. The connectors this person cannot connect (not built yet, not in this
+// build, Cloud only on the Local edition, or not approved by their workspace) are hidden for everyone until Show
+// hidden, on the title row, is checked; the choice lasts for this launch
+function ConnectorLibrary({ list, icons, live, approval, overlap, focusArea, onOpen }: { list: readonly LibraryConnector[]; icons: Record<string, string | null>; live: Live; approval: (x: LibraryConnector) => Approval; overlap: McpOverlap | null; focusArea: string | null; onOpen: (id: string) => void }) {
+  const [showHidden, setShowHidden] = useSession('connectorsShowHidden', false);
   const notAvailable = (x: LibraryConnector) => {
     const ap = approval(x);
     return x.status === 'soon' || unavailable(x, live) || needsCloud(x, live) || hiddenFromList(x, ap) || (!canConnect(ap) && !hasLocalPart(x) && ap !== 'org');
   };
+  const ready = (x: LibraryConnector) => isConnected(x, live) || !notAvailable(x);
   useEffect(() => { if (focusArea) document.querySelector(`[data-lib-area="${focusArea}"]`)?.scrollIntoView({ block: 'start' }); }, [focusArea]);
   return (
     <>
-      {AREAS.map((a) => {
-        // what can be connected first, then the rest; each part from the most used tool to the least
-        const ready = (x: LibraryConnector) => isConnected(x, live) || !notAvailable(x);
-        const items = list.filter((x) => areaOf(x) === a.id && (!hide || ready(x))).sort((p, q) => Number(ready(q)) - Number(ready(p)) || rank(p.id) - rank(q.id));
-        if (!items.length) return null;
+      <TitleActions>
+        <label className="conn-show-hidden"><input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />Show hidden</label>
+      </TitleActions>
+      {libraryAreas(list, AREAS, { areaOf, ready, rank, showHidden }).map(({ area: a, items }) => {
         return (
           <div key={a.id} className="conn-group" data-lib-area={a.id}>
             <h4>{a.name}</h4>
