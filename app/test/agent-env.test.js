@@ -21,7 +21,11 @@ const BASE = {
 describe('agentEnv', () => {
   it('keeps what the CLIs need and drops Quorum\'s own names and the .env names', () => {
     const env = agentEnv(BASE, { names: new Set(['STRIPE_SECRET_KEY', 'PATH']) });
-    expect(Object.keys(env).sort()).toEqual(['ANTHROPIC_BASE_URL', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'HOME', 'HTTPS_PROXY', 'LANG', 'LC_ALL', 'PATH', 'SHELL', 'TERM', 'TMPDIR', 'USER', 'no_proxy']);
+    expect(Object.keys(env).sort()).toEqual(['ANTHROPIC_BASE_URL', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'HOME', 'HTTPS_PROXY', 'LANG', 'LC_ALL', 'PATH', 'QUORUM_ENV', 'SHELL', 'TERM', 'TMPDIR', 'USER', 'no_proxy']);
+  });
+  it('keeps the switches that pick the quorum CLI\'s data folder, edition and tools, even when a .env file names them', () => {
+    const env = agentEnv({ QUORUM_ENV: 'development', QUORUM_EDITION: 'cloud', QUORUM_MCP_TOOLS: 'connectors', QUORUM_GOOGLE_CLIENT_SECRET: 'x', QUORUM_SUPABASE_ANON_KEY: 'x' }, { names: new Set(['QUORUM_ENV']) });
+    expect(env).toEqual({ QUORUM_ENV: 'development', QUORUM_EDITION: 'cloud', QUORUM_MCP_TOOLS: 'connectors' });
   });
   it('reads only the names from the .env files of a build from source', () => {
     mkdirSync(path.join(dir, 'app'), { recursive: true });
@@ -60,6 +64,17 @@ describe('resolveBin', () => {
     expect(resolveBin('quorum-test-cli', { pathVar: `relative/dir${path.delimiter}${bin}` })).toBe(file);
     expect(resolveBin('quorum-test-cli', { pathVar: '' })).toBe(file);
     expect(resolveBin('quorum-missing-cli', { pathVar: bin })).toBe('quorum-missing-cli');
+  });
+  it('looks the CLI up again when the cached file is gone after a reinstall', () => {
+    const oldBin = path.join(dir, 'old'), newBin = path.join(dir, 'new');
+    mkdirSync(oldBin, { recursive: true }); mkdirSync(newBin, { recursive: true });
+    const oldFile = path.join(oldBin, 'moved-cli'), newFile = path.join(newBin, 'moved-cli');
+    writeFileSync(oldFile, '#!/bin/sh\n'); chmodSync(oldFile, 0o755);
+    forgetBins();
+    expect(resolveBin('moved-cli', { pathVar: `${oldBin}${path.delimiter}${newBin}` })).toBe(oldFile);
+    rmSync(oldFile);
+    writeFileSync(newFile, '#!/bin/sh\n'); chmodSync(newFile, 0o755);
+    expect(resolveBin('moved-cli', { pathVar: `${oldBin}${path.delimiter}${newBin}` })).toBe(newFile);
   });
   it('skips a file that is not executable', () => {
     const file = path.join(dir, 'plain-cli');
