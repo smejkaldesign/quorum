@@ -637,7 +637,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
           ? <DifferentAccount connector={x} busy={busy} act={act} />
           : src?.job && src.job.status !== 'failed'
             ? <JobLine job={src.job} />
-            : <p className="src-status">{on ? (src ? `Last sync ${ago(src.lastSyncAt)}. Next automatic sync within 30 minutes while Quorum runs.` : google ? `Connected as ${google.account ?? 'your Google account'}. Home reads upcoming events every few minutes while Quorum runs.` : acct && check.checked?.ok ? `Connected as ${check.checked.account ?? acct.account ?? `your ${x.name} account`}, checked ${ago(check.checked.checkedAt)}.` : acct ? `Connected as ${acct.account ?? `your ${x.name} account`}. The ${x.name} features in the list below use this account as they ship.` : 'Connected on this Mac.') : soon || off ? 'Not available yet.' : 'Not connected yet.'}</p>}
+            : <p className="src-status" role="status">{on ? (src ? `Last sync ${ago(src.lastSyncAt)}. Next automatic sync within 30 minutes while Quorum runs.` : google ? `Connected as ${google.account ?? 'your Google account'}. Home reads upcoming events every few minutes while Quorum runs.` : acct && check.checked?.ok ? `Connected as ${check.checked.account ?? acct.account ?? `your ${x.name} account`}, checked ${ago(check.checked.checkedAt)}.` : acct ? `Connected as ${acct.account ?? `your ${x.name} account`}. The ${x.name} features in the list below use this account as they ship.` : 'Connected on this Mac.') : soon || off ? 'Not available yet.' : 'Not connected yet.'}</p>}
       </div>
       </>}
       {on ? (
