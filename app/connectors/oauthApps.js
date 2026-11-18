@@ -37,10 +37,11 @@ export const OAUTH_APPS = {
   slack: {
     name: 'Slack', client: 'slack', exchange: 'relay', pkce: false,
     authorize: 'https://slack.com/oauth/v2/authorize',
-    // user scopes: Quorum uses the person's own user token, in the channels they are already in
-    scopes: ['channels:read', 'groups:read', 'chat:write', 'users:read'], scopeParam: 'user_scope', scopeSep: ',',
+    // user scopes: Quorum uses the person's own user token, in the channels they are already in. The history, search
+    // and files scopes are for the read tools (connectors/tools/slack.js); there are no direct message scopes
+    scopes: ['channels:read', 'groups:read', 'chat:write', 'users:read', 'channels:history', 'groups:history', 'search:read', 'files:read'], scopeParam: 'user_scope', scopeSep: ',',
     params: {},
-    scopeNote: 'channels:read, groups:read, chat:write, users:read, with your own user token',
+    scopeNote: 'channels:read, groups:read, users:read, chat:write, channels:history, groups:history, search:read, files:read, with your own user token. No direct messages',
   },
   github: {
     // a GitHub App with user-to-server tokens: no OAuth scopes; the app's permissions (Contents and Metadata, read

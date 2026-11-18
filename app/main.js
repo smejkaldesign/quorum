@@ -19,6 +19,8 @@ import { DATA_DIR, EDITION, ENV, loadEE, isDevelopment } from './edition.js';
 import { createGoogleCalendar, mergeEvents, repoRoot } from './sources/gcal.js';
 import { createTokenStore } from './sources/tokens.js';
 import { connectAccount, createAccounts, oauthClients } from './sources/accounts.js';
+import { createConnectorTools } from './connectors/tools/index.js';
+import { CONNECTOR_SERVER } from './cli/connectorTools.mjs';
 import { httpUrl, relayFetch, relayUrl } from './relayUrl.js';
 import { createViews } from './views.js';
 import { registerOnboarding } from './onboarding.js';
@@ -1574,6 +1576,12 @@ function scanBrain(root, vault) {
   }
   return found;
 }
+// the read tools for connected Slack, Notion and GitHub accounts (connectors/tools/), for the quorum MCP server over
+// the control socket and for the chat, with the person's own tokens and the opted-out customer filter
+const connectorTools = createConnectorTools({
+  accessToken: (id) => accounts.accessToken(id), connected: (id) => !!settings.accounts?.[id]?.connected,
+  isExcluded: (t) => suggester.isExcluded(t), redact: (t) => suggester.redactLines(t), log,
+});
 // what Quorum gets from Power-ups: the index to start from, and any folders you added
 function agentContext() {
   const inc = memoryState().items.filter((i) => i.include === true && existsSync(i.path));
@@ -1582,7 +1590,10 @@ function agentContext() {
   const on = (k) => inc.find((i) => i.kind === k) ?? null;
   // the four that change how Claude Code itself runs (agent.js agentArgs)
   const powers = { instructions: on('instructions')?.path ?? null, skills: !!on('skills'), agents: !!on('agents'), mcp: on('mcp')?.path ?? null };
-  return { index: on('index')?.path ?? null, dirs: inc.filter((i) => i.kind === 'folder').map((i) => i.path), search, graph: !!search && inc.some((i) => i.kind === 'graph'), powers };
+  // the connector read tools for connected accounts, through this app's own quorum MCP server limited to those tools
+  const tools = connectorTools.available();
+  const connectors = tools.length ? { tools, name: CONNECTOR_SERVER, server: { command: RUNTIME, args: [CLI, 'mcp'], env: { ...RUNTIME_ENV, QUORUM_MCP_TOOLS: 'connectors' } } } : null;
+  return { index: on('index')?.path ?? null, dirs: inc.filter((i) => i.kind === 'folder').map((i) => i.path), search, graph: !!search && inc.some((i) => i.kind === 'graph'), powers, connectors };
 }
 // an agent run that may write vault notes with its own tools (the Skills, Agents or MCP power-ups; the base tools only
 // read) is watched, so each note it changes keeps a version and shows as an update in the Memory tab
@@ -5348,6 +5359,8 @@ async function control({ cmd, args = {} }) {
     }
     // a live Granola search through the sign-in this app holds; opted-out customers are withheld before the answer leaves
     case 'granola_search': return sourcesApi.searchGranola(args, { isExcluded: suggester.isExcluded });
+    // a read tool for a connected Slack, Notion or GitHub account, with the person's own token
+    case 'connector_tool': return connectorTools.run(String(args.name ?? ''), args.args ?? {});
     case 'start':
       // start acts on a noticed call, so it follows meeting-capture; stop, go and end work on any running session
       if (!gate().meetingCapture) throw new Error('Quorum does not watch for calls in this build. Start listening from the app for a note of your own.');

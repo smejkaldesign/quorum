@@ -109,8 +109,11 @@
         "to": "QuorumHelper"
       },
       {
-        "from": "cli/quorum.mjs",
-        "to": "cli/quorum.mjs"
+        "from": "cli",
+        "to": "cli",
+        "filter": [
+          "*.mjs"
+        ]
       }
     ],
     "mac": {
