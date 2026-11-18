@@ -476,7 +476,7 @@ function CreateDialog({ wsAdmin, onMade, onDone }: { wsAdmin: boolean; onMade: (
   const scopes = createScopes(wsAdmin);
   const [scope, setScope] = useState<KbScope>('personal');
   const [name, setName] = useState('');
-  const [github, setGithub] = useState(hasKbSync());
+  const [github, setGithub] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const go = async () => {
