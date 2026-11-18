@@ -17,6 +17,7 @@ const ROWS = [row('r:link:alpha', 'link'), row('r:find:beta', 'finding'), row('r
 
 const clock = { t: 0 };
 function setup({ settings = { memoryAgentActions: true, memoryDrafts: true }, handlers = {}, kbHosted = null, kbSync = null } = {}) {
+  clock.t = 0;
   const calls = [];
   const toasts = [];
   const keys = [];
@@ -106,6 +107,15 @@ describe('approving through the buttons\' handlers', () => {
     await actions.run('review_approve', { ids: ['r:link:alpha'] }, 'claude-code');
     expect(toasts).toEqual(['Claude Code approved “Title r:link:alpha”', 'Claude Code approved 3 items in Needs review', 'Claude Code approved “Title r:link:alpha”']);
     expect(new Set(keys)).toEqual(new Set(['mcp:claude-code:approved']));
+  });
+  it('reports the run this approve started, never an older one on the same item', async () => {
+    const runs = [{ id: 'fix:alpha:old', key: 'alpha', target: 'alpha', status: 'success', queuedAt: 1000 }];
+    const { actions } = setup({ handlers: { 'fix-runs': () => runs, 'activity-review': (items) => { runs.unshift({ id: 'fix:alpha:new', key: 'alpha', target: 'alpha', status: 'queued', queuedAt: clock.t }); return { done: items.map((i) => i.abs), failed: [] }; } } });
+    clock.t = 5000;
+    expect((await actions.run('review_approve', { ids: ['r:link:alpha'] })).run.id).toBe('fix:alpha:new');
+    const quiet = setup({ handlers: { 'fix-runs': () => [{ id: 'fix:alpha:old', key: 'alpha', target: 'alpha', status: 'success', queuedAt: 1000 }] } });
+    clock.t = 5000;
+    expect((await quiet.actions.run('review_approve', { ids: ['r:link:alpha'] })).run).toBe(null);
   });
   it('lets a tool cancel its own batch, and needs the setting for anyone else\'s', async () => {
     const off = setup({ settings: { memoryAgentActions: false } });

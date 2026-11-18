@@ -100,10 +100,11 @@ export function createAppActions({ call, settings, kbHosted = () => null, kbSync
       const busy = rows.filter((r) => r.fixRun);
       if (busy.length) throw new Error(`Already being fixed: ${busy.map((r) => r.id).join(', ')}.`);
       if (rows.length === 1) {
+        const since = now();
         const res = await call('activity-review', [answer(rows[0])], 'approve');
         const failed = failedOf(res);
         if (failed.length) throw new Error(failed[0]);
-        const run = (await call('fix-runs')).find((x) => (x.key === rows[0].review.key || x.items?.some((i) => i.id === rows[0].id)) && (x.status === 'queued' || x.status === 'running' || x.status === 'success'));
+        const run = (await call('fix-runs')).find((x) => x.queuedAt >= since && (x.key === rows[0].review.key || x.items?.some((i) => i.id === rows[0].id)) && (x.status === 'queued' || x.status === 'running' || x.status === 'success'));
         count('approved', 1, q(brief(rows[0]).title));
         return { approved: [rows[0].id], run: run ? runBrief(run) : null };
       }
