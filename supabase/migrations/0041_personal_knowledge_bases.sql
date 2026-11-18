@@ -455,7 +455,7 @@ begin
 end $$;
 
 do $$ declare f text; begin
-  foreach f in array array['kb_create(public.ulid, text, text, public.ulid, boolean)', 'kb_rename(public.ulid, text)', 'kb_delete(public.ulid)', 'kb_shape(public.ulid)', 'delete_my_account()'] loop
+  foreach f in array array['kb_create(public.ulid, text, text, public.ulid, boolean)', 'kb_rename(public.ulid, text)', 'kb_delete(public.ulid)', 'kb_shape(public.ulid)'] loop
     execute format('revoke all on function public.%s from public, anon', f);
     execute format('grant execute on function public.%s to authenticated, service_role', f);
   end loop;
