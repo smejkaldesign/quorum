@@ -20,7 +20,7 @@ const strings = (v) => (typeof v === 'string' ? [v] : Array.isArray(v) ? v.flatM
 const deepMap = (v, f) => (typeof v === 'string' ? f(v) : Array.isArray(v) ? v.map((x) => deepMap(x, f)) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, deepMap(x, f)])) : v);
 
 export function screen(result, { isExcluded, redact }) {
-  if (isExcluded(`${result?.title ?? ''} ${result?.path ?? ''}`)) throw new Error(WITHHELD);
+  if (isExcluded(`${result?.title ?? ''}\n${result?.path ?? ''}\n${result?.channel ?? ''}`)) throw new Error(WITHHELD);
   const out = { ...result };
   for (const k of LISTS) if (Array.isArray(out[k])) out[k] = out[k].filter((item) => !isExcluded(strings(item).join('\n')));
   return deepMap(out, redact);

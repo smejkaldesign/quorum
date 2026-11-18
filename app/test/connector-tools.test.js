@@ -255,6 +255,7 @@ describe('createConnectorTools', () => {
     expect(screen({ title: 'Plan', markdown: '# Plan\nAcme pilot\nNext' }, rules).markdown).toBe('# Plan\n[withheld: opted-out customer]\nNext');
     expect(() => screen({ title: 'Acme notes', markdown: 'x' }, rules)).toThrow('withholds it');
     expect(() => screen({ path: 'clients/acme.md', text: 'x' }, rules)).toThrow('withholds it');
+    expect(() => screen({ channel: '#acme-pilot', channelId: 'C9', messages: [{ text: 'hello' }] }, rules)).toThrow('withholds it');
   });
   it('logs the tool and the outcome, never the token or the query', async () => {
     const { tools, lines } = make();
