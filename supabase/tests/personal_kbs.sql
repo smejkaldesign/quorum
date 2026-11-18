@@ -163,12 +163,23 @@ select pg_temp.as_admin_role();
 insert into public.notes (id, user_id, workspace_id, path, frontmatter, body, hash, kb_id)
   values ('01KF000000000000000000PN03', '00000000-0000-4000-8000-0000000000a4', '01KF0000000000000000000PWS', 'Knowledge bases/QA/README.md',
     jsonb_build_object('visibility', 'public', 'kb_source', 'github:octo/shared-app:README.md', 'kb_attachment', pg_temp.id('att4')), '# Shared app', 'h3', pg_temp.id('kb4'));
+insert into public.notes (id, user_id, workspace_id, path, frontmatter, body, hash, kb_id) values
+  ('01KF000000000000000000PN06', '00000000-0000-4000-8000-0000000000a4', '01KF0000000000000000000PWS', 'Elsewhere/a.md',
+    '{"visibility": "public", "kb_source": "https://github.com/octo/elsewhere/blob/main/a.md"}', '# Elsewhere', 'h6', pg_temp.id('kb4')),
+  ('01KF000000000000000000PN07', '00000000-0000-4000-8000-0000000000a4', '01KF0000000000000000000PWS', 'Elsewhere/b.md',
+    '{"visibility": "public", "kb_source": "github:octo/other:b.md", "kb_attachment": "01KF0000000000000000000OTH"}', '# Other sync', 'h7', pg_temp.id('kb4')),
+  ('01KF000000000000000000PN08', '00000000-0000-4000-8000-0000000000a4', '01KF0000000000000000000PWS', 'Knowledge bases/QA/docs/c.md',
+    '{"visibility": "public", "kb_source": "https://github.com/octo/shared-app/blob/main/docs/c.md"}', '# Imported', 'h8', pg_temp.id('kb4'));
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a4');
+select public.kb_source_set(pg_temp.id('kb4'), '{"kind": "github", "url": "https://github.com/octo/shared-app"}');
 select pg_temp.check((public.kb_delete(pg_temp.id('kb4')) ->> 'ok')::boolean, 'its owner deletes it');
 select pg_temp.as_admin_role();
 select pg_temp.check(not exists (select 1 from public.knowledge_bases where id = pg_temp.id('kb4')), 'the KB is gone');
 select pg_temp.check((select deleted_at is not null from public.notes where id = '01KF000000000000000000PN03'), 'its synced note is soft deleted');
 select pg_temp.check((select body from public.notes where id = '01KF000000000000000000PN03') = '', 'and its text is cleared');
+select pg_temp.check((select deleted_at is not null and body = '' from public.notes where id = '01KF000000000000000000PN08'), 'a note imported from its source is soft deleted');
+select pg_temp.check((select deleted_at is null and body = '# Elsewhere' and kb_id is null from public.notes where id = '01KF000000000000000000PN06'), 'a note imported elsewhere and moved in stays');
+select pg_temp.check((select deleted_at is null and body = '# Other sync' from public.notes where id = '01KF000000000000000000PN07'), 'a note another KB''s sync wrote stays');
 
 -- 9. deleting an account keeps a personal KB's notes out of the hand-over to the workspace owner
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000a4');

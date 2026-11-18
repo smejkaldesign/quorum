@@ -16,9 +16,9 @@
 -- 4. The review queue never sees a personal KB's notes: a note in one has no contribution row (a contribution an
 --    admin could read, or a pending one an admin could open, is deleted when the note joins), the same way hosted KB
 --    notes stay out of it (0034).
--- 5. The owner deletes a personal KB; workspace owners and admins cannot. Deleting it soft deletes the notes Quorum
---    copied into it from a source (synced or imported), so each Mac removes them; notes the owner placed in it go back
---    to being the owner's own notes. A member who leaves the workspace takes their personal KBs with them the same
+-- 5. The owner deletes a personal KB; workspace owners and admins cannot. Deleting it soft deletes the notes its own
+--    synced folders wrote and the notes imported from its source, so each Mac removes them; every other note the owner
+--    placed in it goes back to being the owner's own note. A member who leaves the workspace takes their personal KBs with them the same
 --    way, after 0032 ended their sync grants. Deleting an account (0039) no longer hands the notes of the person's
 --    personal KBs to the workspace owner; they go with the account.
 
@@ -170,16 +170,26 @@ begin
   return public.kb_shape(kb_rename.kb_id);
 end $$;
 
--- a personal KB goes: the notes Quorum copied into it from a source (a sync or an import) are soft deleted so every
--- copy goes, and their text is cleared so no one who later holds the row reads it. The KB's delete takes its folders, access list and attachments, which ends their grants (0032)
+-- a personal KB goes. The notes Quorum copied into it are soft deleted so every copy goes, and their text is cleared so
+-- no one who later holds the row reads it: the notes of its own synced folders, and the notes imported from its
+-- source (the same repository and folder, or the same zip, as app/ee/kbImport.js matches them). Every other note the
+-- owner placed in it stays theirs. The KB's delete takes its folders, access list and attachments, which ends their
+-- grants (0032)
 create or replace function public.kb_personal_drop(kb_id public.ulid) returns void
 language plpgsql security definer set search_path = public as $$
+declare k public.knowledge_bases;
 begin
+  select * into k from public.knowledge_bases x where x.id = kb_personal_drop.kb_id and x.personal_user_id is not null;
+  if k.id is null then return; end if;
   perform set_config('quorum.kb_system', 'on', true);
   update public.notes n set deleted_at = now(), updated_at = now(), body = ''
-    where n.kb_id = kb_personal_drop.kb_id and n.deleted_at is null and (n.frontmatter ? 'kb_attachment' or n.frontmatter ? 'kb_source')
-      and n.user_id = (select k.personal_user_id from public.knowledge_bases k where k.id = kb_personal_drop.kb_id);
-  delete from public.knowledge_bases k where k.id = kb_personal_drop.kb_id and k.personal_user_id is not null;
+    where n.kb_id = k.id and n.deleted_at is null and n.user_id = k.personal_user_id and (
+      (n.frontmatter ->> 'kb_attachment') in (select a.id::text from public.kb_attachments a where a.kb_id = k.id)
+      or (not (n.frontmatter ? 'kb_attachment') and (
+        (k.source ->> 'kind' = 'github' and starts_with(coalesce(n.frontmatter ->> 'kb_source', ''), (k.source ->> 'url') || '/blob/')
+          and (k.source ->> 'subpath' is null or strpos(n.frontmatter ->> 'kb_source', '/' || (k.source ->> 'subpath') || '/') > 0))
+        or (k.source ->> 'kind' = 'zip' and k.source ->> 'name' is not null and starts_with(coalesce(n.frontmatter ->> 'kb_source', ''), (k.source ->> 'name') || '.zip/')))));
+  delete from public.knowledge_bases x where x.id = k.id;
   perform set_config('quorum.kb_system', '', true);
 end $$;
 
