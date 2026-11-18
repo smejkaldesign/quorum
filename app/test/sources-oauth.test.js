@@ -70,9 +70,13 @@ describe('oauth connect', () => {
 });
 
 describe('the sign-in page address', () => {
-  it('opens only https, even when discovery names something else', () => {
+  it('opens only https, or http on this Mac, even when discovery names something else', () => {
     expect(httpsOnly('https://auth.example.com/authorize?x=1')).toBe('https://auth.example.com/authorize?x=1');
-    for (const bad of ['http://auth.example.com/authorize', 'http://127.0.0.1:9000/authorize', 'http://localhost/authorize', 'file:///etc/passwd', 'javascript:alert(1)', 'not a url']) {
+    for (const local of ['http://127.0.0.1:9000/authorize', 'http://[::1]:9000/authorize', 'http://localhost/authorize']) {
+      expect(httpsOnly(local)).toBe(local);
+      expect(new URL(authorizeUrl({ authorizationEndpoint: local, resource: RESOURCE.resource, scopes: [] }, { clientId: 'c', redirectUri: 'http://127.0.0.1:47832/callback', challenge: 'x', state: 's' })).searchParams.get('state')).toBe('s');
+    }
+    for (const bad of ['http://auth.example.com/authorize', 'http://127.0.0.2/authorize', 'http://localhost.evil.example/authorize', 'ftp://localhost/authorize', 'file:///etc/passwd', 'javascript:alert(1)', 'not a url']) {
       expect(() => httpsOnly(bad)).toThrow();
       expect(() => authorizeUrl({ authorizationEndpoint: bad, resource: RESOURCE.resource, scopes: [] }, { clientId: 'c', redirectUri: 'http://127.0.0.1:47832/callback', challenge: 'x', state: 's' })).toThrow();
     }

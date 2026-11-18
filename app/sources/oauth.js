@@ -70,11 +70,13 @@ export async function discover(resourceUrl, { fetchImpl = fetch, wwwAuthenticate
   };
 }
 
-// the browser only ever opens an https sign-in page, whatever a service's metadata names
+// the browser only opens an https sign-in page, whatever a service's metadata names; plain http only for a server on
+// this Mac (127.0.0.1, ::1 or localhost)
+const LOCAL_HOSTS = new Set(['127.0.0.1', '[::1]', 'localhost']);
 export function httpsOnly(url) {
   let u;
   try { u = new URL(String(url)); } catch { throw new Error('The sign-in page address is not valid.'); }
-  if (u.protocol !== 'https:') throw new Error('The sign-in page must use https.');
+  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && LOCAL_HOSTS.has(u.hostname))) throw new Error('The sign-in page must use https.');
   return u.toString();
 }
 
