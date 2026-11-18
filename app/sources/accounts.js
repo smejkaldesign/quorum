@@ -114,7 +114,7 @@ export async function callProvider(name, token, { url, method = 'GET', headers =
   catch { return { problem: 'network', error: `Quorum could not reach ${name}. Check your internet connection and try again.` }; }
   const body = await json(r);
   const code = typeof body?.error === 'string' ? body.error : null;
-  if (r.status === 429 || (r.status === 403 && r.headers.get('x-ratelimit-remaining') === '0') || code === 'ratelimited') return { problem: 'busy', error: `${name} asked Quorum to wait. Try again in a few minutes.` };
+  if (r.status === 429 || (r.status === 403 && r.headers.get('x-ratelimit-remaining') === '0') || code === 'ratelimited') return { problem: 'busy', error: `${name} is limiting requests right now. Try again in a few minutes.` };
   if (r.status === 401 || SLACK_REAUTH.has(code)) return { problem: 'reauth', error: `${name} no longer accepts Quorum's sign-in. Reconnect ${name} to fix it.` };
   if (!r.ok || body?.ok === false) return { problem: 'failed', error: `${name} answered with an error (${code ?? r.status}). Try again, or reconnect ${name} if it keeps happening.` };
   return { body };

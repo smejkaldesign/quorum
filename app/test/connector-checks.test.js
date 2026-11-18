@@ -101,7 +101,7 @@ describe('GitHub installations', () => {
     limited = true;
     const r = await accounts.githubInstallations();
     expect(r.stale).toBe(true);
-    expect(r.error).toMatch(/asked Quorum to wait/);
+    expect(r.error).toMatch(/GitHub is limiting requests right now/);
     expect(installSummary(r)).toBe('Installed on 5 repositories (smejster)');
   });
   it('a rate limit before any answer is stale with nothing to show', async () => {
