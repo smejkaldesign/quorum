@@ -30,7 +30,7 @@ function reference(notes, q, limit = 30) {
 
 const FIXTURE = {
   'Projects/Alpha Plan.md': '---\ntitle: Alpha\n---\n# Alpha Plan\n\nThe ALPHA plan covers the alpha launch.\nSee [[Beta]] and the the the.\n',
-  'projects/beta.md': '# Beta\r\nBeta notes with CRLF lines\r\nand a café visit — then more.\r\n',
+  'projects/beta.md': '# Beta\r\nBeta notes with CRLF lines\r\nand a café visit \u2014 then more.\r\n',
   'notes/kelvin.md': '# Kelvin\n\nTemperature in Kelvin and İstanbul trips.\nkelvin again\n',
   'notes/greek.md': '# Greek\n\nΟΔΟΣ and ΣΊΣΥΦΟΣ, odos.\nσ ς Σ\n',
   'notes/emoji.md': '# Emoji 🎉\n\nParty 🎉 time. C++ and (x) and a.b.c regex chars [x] $1 ^\n',
@@ -40,7 +40,7 @@ const FIXTURE = {
   'big.md': Array.from({ length: 3000 }, (_, i) => `Line ${i} with word${i % 7} and Mixed CASE text`).join('\n'),
   'unicode/ẞharp.md': '# Straße\n\nSTRASSE Straße ẞ ß\nDotless ı and I and i\n',
 };
-const QUERIES = ['alpha', 'ALPHA plan', 'the', 'the the', 'beta', 'crlf', 'café', 'CAFÉ', '—', 'kelvin', 'k', 'i', 'istanbul', 'i̇stanbul', 'σ', 'οδος', 'ς', 'odos',
+const QUERIES = ['alpha', 'ALPHA plan', 'the', 'the the', 'beta', 'crlf', 'café', 'CAFÉ', '\u2014', 'kelvin', 'k', 'i', 'istanbul', 'i̇stanbul', 'σ', 'οδος', 'ς', 'odos',
   '🎉', 'party', 'c++', '(x)', 'a.b.c', '[x]', '$1', '^', 'aa', 'aaa', 'zebra', 'crossing', 'projects', 'folder', 'word3', 'line 29', 'mixed case', 'straße', 'strasse', 'ß', 'ı', 'nothing',
   'missingword', '', '   ', 'md', '.md', '/'];
 
