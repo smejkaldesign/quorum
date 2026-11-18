@@ -28,10 +28,21 @@ describe('which nav shows', () => {
   });
 
   it('adds Teams and Billing once a Cloud build reached a hosted account, and the team pages only with a team on', () => {
-    expect(workspacePages('cloud', true)).toEqual([...['general', 'connectors', 'notifications', 'developers', 'guardrails'], 'teams', 'billing']);
-    expect(workspacePages('cloud', true, false, 'admin')).toEqual([...['general', 'connectors', 'notifications', 'developers', 'guardrails'], 'teams', 'billing']);
-    expect(workspacePages('cloud', true, true, 'owner')).toEqual([...['general', 'connectors', 'notifications', 'developers', 'guardrails'], 'teams', 'billing', 'knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails']);
+    expect(workspacePages('cloud', true)).toEqual([...['general', 'connectors', 'notifications', 'developers', 'guardrails'], 'organization', 'teams', 'billing']);
+    expect(workspacePages('cloud', true, false, 'admin')).toEqual([...['general', 'connectors', 'notifications', 'developers', 'guardrails'], 'organization', 'teams', 'billing']);
+    expect(workspacePages('cloud', true, true, 'owner')).toEqual([...['general', 'connectors', 'notifications', 'developers', 'guardrails'], 'organization', 'teams', 'billing', 'knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails']);
     for (const p of TEAM_PAGES) expect(workspacePages('cloud', true, false)).not.toContain(p);
+  });
+
+  it('lists no workspace pages while signed out of a hosted account', () => {
+    expect(workspacePages('cloud', true, true, 'owner', false)).toEqual(['general', 'connectors', 'notifications', 'developers', 'guardrails']);
+  });
+
+  it('sends a remembered Organization or Teams page to General once signed out', () => {
+    const listed = workspacePages('cloud', true, true, 'owner', false);
+    expect(resolvePage('organization', true, listed)).toBe('general');
+    expect(resolvePage('teams', true, listed)).toBe('general');
+    expect(resolvePage('organization', true, workspacePages('cloud', true, false, 'owner'))).toBe('organization');
   });
 });
 

@@ -1687,6 +1687,7 @@ button.meta-pill { font: inherit; cursor: pointer; }
 /* Check connection (AgentLinks.tsx): one line per check, the fix under each failure */
 .conn-check-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 4px 8px; }
 .conn-check-head .mcp-lede { margin: 0; }
+.conn-check-head .pill { flex-shrink: 0; white-space: nowrap; }
 .conn-check { list-style: none; margin: 0 4px 28px; padding: 0; display: grid; gap: 10px; }
 .onb-step .conn-check { margin: 4px 0 16px; }
 .conn-check-item { display: grid; grid-template-columns: 16px 1fr auto; gap: 10px; align-items: start; font-size: 13px; }
