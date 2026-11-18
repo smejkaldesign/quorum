@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createDecisionLog } from '../decisionLog.js';
-import { GATE_OFF, READ_ONLY, actorLabel, agentActor, createAppActions, currentActor, outsideActor } from '../appActions.js';
+import { READ_ONLY, gateOff, actorLabel, agentActor, createAppActions, currentActor, outsideActor } from '../appActions.js';
 import { APP_TOOLS } from '../cli/appTools.mjs';
 
 const row = (id, kind, extra = {}) => ({
@@ -61,8 +61,9 @@ describe('the read-only setting and the AI setting', () => {
   });
   it('refuses approve, dismiss, undo and knowledge base writes until the person turns the setting on, and allows mark read', async () => {
     const { actions, calls } = setup({ settings: {} });
-    for (const name of ['review_approve', 'review_dismiss', 'fix_undo', 'kb_create', 'kb_attach_github']) await expect(actions.run(name, { ids: ['r:link:alpha'], id: 'fix:1', name: 'KB', kb: 'k', url: 'u' })).rejects.toThrow(GATE_OFF);
-    expect(GATE_OFF).toContain('Settings > Memory > Let AI tools approve and undo memory changes');
+    for (const name of ['review_approve', 'review_dismiss', 'fix_undo', 'kb_create', 'kb_attach_github']) await expect(actions.run(name, { ids: ['r:link:alpha'], id: 'fix:1', name: 'KB', kb: 'k', url: 'u' })).rejects.toThrow('AI tools cannot ');
+    await expect(actions.run('kb_create', { name: 'KB' })).rejects.toThrow('AI tools cannot create knowledge bases yet. In Quorum, turn on Settings > Memory > Let AI tools change memory and knowledge bases, then try again.');
+    expect(gateOff('undo memory fixes')).toContain('cannot undo memory fixes');
     expect(calls).toEqual([]);
     expect(await actions.run('review_mark_read', { ids: ['r:link:alpha'] })).toEqual({ marked: 1 });
     expect(calls.map((c) => c.name)).toEqual(['activity-feed', 'activity-mark']);
@@ -146,7 +147,7 @@ describe('knowledge bases and connectors', () => {
     } };
     const { actions } = setup({ kbSync, settings: { memoryAgentActions: false } });
     expect(await actions.run('kb_list_attachments', { kb: 'kb1' })).toEqual({ attachments: [{ id: 'a1', kb: 'kb1' }] });
-    await expect(actions.run('kb_attach_github', { kb: 'kb1', url: 'https://github.com/a/b' })).rejects.toThrow(GATE_OFF);
+    await expect(actions.run('kb_attach_github', { kb: 'kb1', url: 'https://github.com/a/b' })).rejects.toThrow(gateOff('attach GitHub repositories to knowledge bases'));
     const on = setup({ kbSync }).actions;
     expect(await on.run('kb_attach_github', { kb: 'kb1', url: 'https://github.com/a/b', branch: 'main' })).toEqual({ attachment: { id: 'a1' } });
     expect(seen[0]).toEqual({ kbId: 'kb1', folderId: null, url: 'https://github.com/a/b', branch: 'main' });

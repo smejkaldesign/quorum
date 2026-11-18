@@ -151,7 +151,7 @@ export function MemoryUpdatesCard({ settings, onSettings }: { settings: Settings
           desc="After each check, Quorum applies every Memory health fix that needs no review of its own as one batch, and lists it in Notifications with Undo. Fixes that conflict or need a review stay in Needs review. Off by default.">
           <Toggle on={settings.memoryAutoApply === true} onChange={(v) => save({ memoryAutoApply: v })} />
         </Row>
-        <Row icon={<IconListCheck width={18} height={18} />} title="Let AI tools approve and undo memory changes"
+        <Row icon={<IconListCheck width={18} height={18} />} title="Let AI tools change memory and knowledge bases"
           desc="Claude Code, Codex and other AI tools connected through the quorum MCP can approve and dismiss items in Needs review, undo fixes and create knowledge bases, through the same steps as the buttons here. Each fix shows which tool approved it and keeps its Undo. Reading Needs review, marking items read and Check everything now work without this. Off by default.">
           <Toggle on={settings.memoryAgentActions === true} onChange={(v) => save({ memoryAgentActions: v })} />
         </Row>

@@ -4,7 +4,7 @@
 // updates as it would after a click. Plain Node, so the tests drive it with stubbed handlers.
 //
 // Safety: a write tool is refused while Quorum is set to read only. Approve, dismiss, undo and the knowledge base writes
-// also need Settings > Memory, Let AI tools approve and undo memory changes (settings.memoryAgentActions, off by
+// also need Settings > Memory, Let AI tools change memory and knowledge bases (settings.memoryAgentActions, off by
 // default). While a tool runs, its MCP client is the actor (currentActor), so the decision log records it and the fix
 // shows "Approved by Claude Code".
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -28,7 +28,8 @@ export function actorLabel(actor) {
 }
 
 export const READ_ONLY = 'Quorum is set to read only, so AI tools cannot change anything. Change Access to Read and write in Quorum under Settings > AI tools.';
-export const GATE_OFF = `AI tools cannot approve, dismiss or undo memory changes yet. In Quorum, turn on Settings > Memory > ${AGENT_SETTING}, then try again.`;
+// the refusal names what was blocked and the switch that allows it
+export const gateOff = (blocked) => `AI tools cannot ${blocked} yet. In Quorum, turn on Settings > Memory > ${AGENT_SETTING}, then try again.`;
 const CLOUD = 'Knowledge bases are part of Quorum Cloud, and this copy of Quorum has none or is signed out.';
 const PLANNED = new Set(['link', 'finding', 'past-fix']);
 const clamp = (n, lo, hi, d) => (Number.isFinite(Number(n)) ? Math.min(hi, Math.max(lo, Math.round(Number(n)))) : d);
@@ -164,7 +165,7 @@ export function createAppActions({ call, settings, kbHosted = () => null, kbSync
     if (!def || !tools[name]) throw new Error(`Unknown tool ${name}`);
     const s = settings() ?? {};
     if (def.write && s.access === 'read') throw new Error(READ_ONLY);
-    if (def.gated && s.memoryAgentActions !== true) throw new Error(GATE_OFF);
+    if (def.gated && s.memoryAgentActions !== true) throw new Error(gateOff(def.blocked));
     const actor = agentActor(via);
     return acting.run({ actor }, async () => {
       try {

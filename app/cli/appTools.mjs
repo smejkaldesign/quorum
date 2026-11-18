@@ -1,7 +1,7 @@
 // The tools that do what the person can do in Memory health and Knowledge, as the quorum MCP server lists them. Pure
 // data, shared by the CLI and the app: each call runs in the running app (appActions.js) through the same handlers as
 // the app's buttons. write: refused while Quorum is set to read only. gated: also needs Settings > Memory, Let AI tools
-// approve and undo memory changes.
+// change memory and knowledge bases.
 const str = (description) => ({ type: 'string', description });
 const num = (description) => ({ type: 'number', description });
 const ids = { type: 'array', items: { type: 'string' }, description: 'item ids from review_items' };
@@ -18,13 +18,13 @@ export const APP_TOOLS = [
     inputSchema: { type: 'object', properties: { id: str('item id from review_items') }, required: ['id'] },
   },
   {
-    name: 'review_approve', write: true, gated: true,
-    description: 'Approve Needs review items, the same as Approve in Memory health. One id runs that item\'s fix. Several ids run as one batch with one Undo, and the batch can be stopped with fix_cancel. Fixes run in the fix journal and save versions; undo one with fix_undo. Needs Settings > Memory, Let AI tools approve and undo memory changes.',
+    name: 'review_approve', write: true, gated: true, blocked: 'approve Needs review items',
+    description: 'Approve Needs review items, the same as Approve in Memory health. One id runs that item\'s fix. Several ids run as one batch with one Undo, and the batch can be stopped with fix_cancel. Fixes run in the fix journal and save versions; undo one with fix_undo. Needs Settings > Memory, Let AI tools change memory and knowledge bases.',
     inputSchema: { type: 'object', properties: { ids }, required: ['ids'] },
   },
   {
-    name: 'review_dismiss', write: true, gated: true,
-    description: 'Dismiss Needs review items: each is set aside and nothing in the notes changes. Needs Settings > Memory, Let AI tools approve and undo memory changes.',
+    name: 'review_dismiss', write: true, gated: true, blocked: 'dismiss Needs review items',
+    description: 'Dismiss Needs review items: each is set aside and nothing in the notes changes. Needs Settings > Memory, Let AI tools change memory and knowledge bases.',
     inputSchema: { type: 'object', properties: { ids }, required: ['ids'] },
   },
   {
@@ -53,18 +53,18 @@ export const APP_TOOLS = [
     inputSchema: { type: 'object', properties: { batch: str('batch id from review_approve or fix_runs') }, required: ['batch'] },
   },
   {
-    name: 'fix_undo', write: true, gated: true,
-    description: 'Undo a fix that ran, the same as Undo in Notifications: its notes go back to how they were and its items return to Needs review. Refused when a note changed after the fix. Needs Settings > Memory, Let AI tools approve and undo memory changes.',
+    name: 'fix_undo', write: true, gated: true, blocked: 'undo memory fixes',
+    description: 'Undo a fix that ran, the same as Undo in Notifications: its notes go back to how they were and its items return to Needs review. Refused when a note changed after the fix. Needs Settings > Memory, Let AI tools change memory and knowledge bases.',
     inputSchema: { type: 'object', properties: { id: str('fix id from fix_runs') }, required: ['id'] },
   },
   {
-    name: 'kb_create', write: true, gated: true,
-    description: 'Create a Quorum Cloud knowledge base in the person\'s workspace, optionally for one team. Needs the app signed in and Settings > Memory, Let AI tools approve and undo memory changes.',
+    name: 'kb_create', write: true, gated: true, blocked: 'create knowledge bases',
+    description: 'Create a Quorum Cloud knowledge base in the person\'s workspace, optionally for one team. Needs the app signed in and Settings > Memory, Let AI tools change memory and knowledge bases.',
     inputSchema: { type: 'object', properties: { name: str('up to 120 characters'), team: str('team id, for a team\'s knowledge base') }, required: ['name'] },
   },
   {
-    name: 'kb_attach_github', write: true, gated: true,
-    description: 'Keep a GitHub repository, or a folder in it, synced into a knowledge base, at its top level. The person must be an admin of the knowledge base. Quorum opens a GitHub sign-in in the browser for the person to finish. Needs Settings > Memory, Let AI tools approve and undo memory changes.',
+    name: 'kb_attach_github', write: true, gated: true, blocked: 'attach GitHub repositories to knowledge bases',
+    description: 'Keep a GitHub repository, or a folder in it, synced into a knowledge base, at its top level. The person must be an admin of the knowledge base. Quorum opens a GitHub sign-in in the browser for the person to finish. Needs Settings > Memory, Let AI tools change memory and knowledge bases.',
     inputSchema: { type: 'object', properties: { kb: str('knowledge base id from kb_list'), url: str('the repository or folder link on github.com'), branch: str('default branch when left out') }, required: ['kb', 'url'] },
   },
   {
@@ -80,4 +80,4 @@ export const APP_TOOLS = [
 ];
 
 export const appTool = (name) => APP_TOOLS.find((t) => t.name === name) ?? null;
-export const AGENT_SETTING = 'Let AI tools approve and undo memory changes';
+export const AGENT_SETTING = 'Let AI tools change memory and knowledge bases';

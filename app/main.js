@@ -1475,7 +1475,7 @@ ipcMain.handle('set-settings', (_e, next) => {
   if (typeof next.memoryDraftConfidential === 'boolean') { settings.memoryDraftConfidential = next.memoryDraftConfidential; store.settings.save(); }
   // Settings > Memory: how many model calls Check everything now runs at once
   if (Number.isFinite(next.memoryCatchupParallel)) { settings.memoryCatchupParallel = Math.max(1, Math.min(MAX_PARALLEL, Math.round(next.memoryCatchupParallel))); store.settings.save(); }
-  // Settings > Memory: Let AI tools approve and undo memory changes (appActions.js), off by default
+  // Settings > Memory: Let AI tools change memory and knowledge bases (appActions.js), off by default
   if (typeof next.memoryAgentActions === 'boolean') { settings.memoryAgentActions = next.memoryAgentActions; store.settings.save(); }
   if (Number.isFinite(next.memoryDraftCap)) { settings.memoryDraftCap = Math.max(1, Math.min(500, Math.round(next.memoryDraftCap))); store.settings.save(); }
   // provider MCPs the person disconnected from Quorum, by connector id
