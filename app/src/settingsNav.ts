@@ -6,11 +6,11 @@ import type { Role } from './quorum';
 // shows follows from the current page, so the one remembered page (useSession) also remembers the nav.
 export type NavMode = 'account' | 'admin';
 export type AccountPage = 'preferences' | 'memory' | 'calendar' | 'meetings' | 'voice';
-export type WorkspacePage = 'general' | 'connectors' | 'notifications' | 'developers' | 'guardrails' | 'teams' | 'billing' | 'knowledge' | 'members' | 'org-connectors' | 'org-voice' | 'org-guardrails';
+export type WorkspacePage = 'general' | 'connectors' | 'notifications' | 'developers' | 'guardrails' | 'organization' | 'teams' | 'billing' | 'knowledge' | 'members' | 'org-connectors' | 'org-voice' | 'org-guardrails';
 export type Page = AccountPage | WorkspacePage;
 
 export const ACCOUNT_PAGES: readonly AccountPage[] = ['preferences', 'memory', 'calendar', 'meetings', 'voice'];
-export const WORKSPACE_PAGES: readonly WorkspacePage[] = ['general', 'connectors', 'notifications', 'developers', 'guardrails', 'teams', 'billing', 'knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails'];
+export const WORKSPACE_PAGES: readonly WorkspacePage[] = ['general', 'connectors', 'notifications', 'developers', 'guardrails', 'organization', 'teams', 'billing', 'knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails'];
 // the admin pages every build lists for everyone, above the Workspace heading: General (sign-in and the workspace
 // basics), Connectors, Notifications, AI tools and Guardrails
 export const TOP_ADMIN_PAGES: readonly WorkspacePage[] = ['general', 'connectors', 'notifications', 'developers', 'guardrails'];
@@ -23,13 +23,13 @@ export const TEAM_PAGES: readonly WorkspacePage[] = ['knowledge', 'members', 'or
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export const canAdmin = (_edition: 'local' | 'cloud', _role: Role | null | undefined): boolean => true;
 
-// the admin pages a build lists. The Local edition has no workspace: the top pages alone. A Cloud build adds Teams and
-// Billing for owners and admins once it reached a hosted account, and the team-level pages only while the workspace
+// the admin pages a build lists. The Local edition has no workspace: the top pages alone. A Cloud build adds
+// Organization, Teams and Billing for owners and admins once they are signed in to a hosted account, and the team-level pages only while the workspace
 // has a team enabled. A member gets the top pages alone
-export const workspacePages = (edition: 'local' | 'cloud', hosted: boolean | null, teamEnabled = false, role?: Role | null): WorkspacePage[] =>
+export const workspacePages = (edition: 'local' | 'cloud', hosted: boolean | null, teamEnabled = false, role?: Role | null, signedIn = true): WorkspacePage[] =>
   WORKSPACE_PAGES.filter((p) => {
     if (TOP_ADMIN_PAGES.includes(p)) return true;
-    if (edition !== 'cloud' || hosted !== true || role === 'member') return false;
+    if (edition !== 'cloud' || hosted !== true || !signedIn || role === 'member') return false;
     return TEAM_PAGES.includes(p) ? teamEnabled : true;
   });
 

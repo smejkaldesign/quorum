@@ -13,7 +13,6 @@ import { useSession } from './session';
 import { EmptyState, Modal, ModalActions, Row, Toggle, useMenu } from './controls';
 import { AccountArea, BillingArea, DeleteAccountArea, DeleteOrgArea, EDITION, KnowledgeBasesArea, KnowledgeQueueArea, MembersArea, TeamsArea, WorkspaceConnectorsArea, WorkspaceGuardrailsArea, WorkspaceVoiceArea, useHostedAccounts } from './edition';
 import { TOP_ADMIN_PAGES, canAdmin, flagHiddenPages, modeOf, resolvePage, voiceMode, workspacePages, type Page } from './settingsNav';
-import { EnvSwitch } from './EnvSwitch';
 import { AgentRows, ConnectionCheckButton, ConnectionCheckList, mcpLink, useAgents, useConnectionCheck } from './AgentLinks';
 import { MeetingSourcesRows } from './MeetingSources';
 import { useFlag, useNotetaker } from './flags';
@@ -38,11 +37,12 @@ const ACCOUNT: Nav[] = [
 // the pages behind the Admin button; settingsNav.workspacePages decides which of them a build lists. The first two are
 // about the person; the rest sit under the Workspace heading
 const WORKSPACE: Nav[] = [
-  { id: 'general', label: 'General', icon: IconBuilding },
+  { id: 'general', label: 'General', icon: IconGlobe },
   { id: 'connectors', label: 'Connectors', icon: IconGrid },
   { id: 'notifications', label: 'Notifications', icon: IconBell },
   { id: 'developers', label: 'AI tools', icon: IconCode },
   { id: 'guardrails', label: 'Guardrails', icon: IconShield },
+  { id: 'organization', label: 'Organization', icon: IconBuilding },
   { id: 'teams', label: 'Teams', icon: IconPeople },
   { id: 'billing', label: 'Billing', icon: IconScale },
   { id: 'knowledge', label: 'Knowledge', icon: IconBrain },
@@ -89,7 +89,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
   // a cloud build without hosted account config has no members to list, so the page leaves the nav; the team-level
   // pages come and go with the Teams page's switch
   const hosted = useHostedAccounts();
-  const listed = workspacePages(EDITION, hosted, account?.workspace?.teamEnabled === true, account?.workspace?.role);
+  const listed = workspacePages(EDITION, hosted, account?.workspace?.teamEnabled === true, account?.workspace?.role, account?.signedIn === true);
   const voice = voiceMode(nt.dictation, nt.manualListen);
   const guardrailsOn = useFlag('guardrails');
   const customGuardrails = useFlag('guardrails-custom');
@@ -177,7 +177,8 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
             : <h1 className={`set-title${page === 'connectors' ? ' crumbs' : ''}`}>{current.label}{current.soon && <Soon />}{page === 'connectors' && <span className="crumb-actions" id="conn-title-actions" />}</h1>}
           {page === 'preferences' && <p className="set-lede">Quorum works best knowing a little about you. Quorum uses this when it writes your meeting notes and answers questions.</p>}
           {page === 'knowledge' && <p className="set-lede">Company knowledge for your whole workspace, chosen by admins.</p>}
-          {page === 'general' && <p className="set-lede">Settings for everyone in your workspace. Quorum gives this context to every meeting summary and answer, so it's the same for each person.</p>}
+          {page === 'general' && <p className="set-lede">Your Quorum account, and the company context Quorum gives every meeting summary and answer.</p>}
+          {page === 'organization' && <p className="set-lede">Your company, the words that stop and start Quorum in a call, and the people Quorum never records. Quorum uses this for everyone in the workspace.</p>}
           {page === 'teams' && <p className="set-lede">A workspace starts as yours alone. Turn on a team to invite members and build knowledge together.</p>}
           {page === 'billing' && <p className="set-lede">Your plan, the card it charges, and this month's usage against the hours it includes.</p>}
           {page === 'connectors' && !connectorDetail && !connLib && <p className="set-lede">The apps and MCP servers Quorum is connected to, by area.</p>}
@@ -197,10 +198,11 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
           ) : page === 'knowledge' ? (
             <KnowledgePage />
           ) : page === 'general' ? (
-            <WorkspacePage settings={settings} onSettings={onSettings} onGo={go} billing={(listed as string[]).includes('billing')}
-              company={(listed as string[]).includes('teams') && account?.workspace?.teamEnabled === true ? null : <CompanyCard settings={settings} onSettings={onSettings} />} />
+            <WorkspacePage settings={settings} onSettings={onSettings} onGo={go} billing={(listed as string[]).includes('billing')} organization={(listed as string[]).includes('organization')} />
+          ) : page === 'organization' ? (
+            <OrganizationPage settings={settings} onSettings={onSettings} />
           ) : page === 'teams' ? (
-            <TeamsArea company={<CompanyCard settings={settings} onSettings={onSettings} />} />
+            <TeamsArea company={null} />
           ) : page === 'billing' ? (
             <BillingArea />
           ) : page === 'memory' ? (
@@ -575,18 +577,36 @@ export function CompanyCard({ settings, onSettings }: { settings: Settings; onSe
 
 // `company` is the CompanyCard while this page is its home: the Local edition, a Cloud build without a hosted account,
 // and a workspace whose team is off. Once a team is on, the card lives on the Teams page and this one gets null
-function WorkspacePage({ settings, onSettings, onGo, billing, company }: { settings: Settings; onSettings: (s: Settings) => void; onGo: (p: Page) => void; billing: boolean; company: ReactNode }) {
-  const w = settings.workspace ?? {};
-  const save = async (patch: Partial<Workspace>) => onSettings(await window.quorum.setSettings({ workspace: patch }));
-  const nt = useNotetaker();
+// Admin > General: the account. Once Organization is listed (Cloud, signed in, owner or admin) the company settings
+// live there; otherwise they stay here, since the opt-out list works without a workspace
+function WorkspacePage({ settings, onSettings, onGo, billing, organization }: { settings: Settings; onSettings: (s: Settings) => void; onGo: (p: Page) => void; billing: boolean; organization: boolean }) {
   return (
     <>
       <AccountArea local={<><h3>Account</h3><p className="muted">Local edition. Your meetings and notes stay on this Mac.</p></>}
         unconfigured={<><h3>Account</h3><p className="muted">Hosted accounts are not set up in this build</p></>} />
       {billing && <p className="set-note">The plan, the card on file and this month's usage live under <button className="link-btn" onClick={() => onGo('billing')}>Billing</button>.</p>}
-      <EnvSwitch />
-      {company}
+      {!organization && <CompanySettings settings={settings} onSettings={onSettings} />}
+    </>
+  );
+}
 
+// Admin > Organization: the company card, the stop and go words, the opt-out list, and deleting the workspace
+function OrganizationPage({ settings, onSettings }: { settings: Settings; onSettings: (s: Settings) => void }) {
+  return (
+    <>
+      <CompanySettings settings={settings} onSettings={onSettings} />
+      <DeleteOrgArea />
+    </>
+  );
+}
+
+function CompanySettings({ settings, onSettings }: { settings: Settings; onSettings: (s: Settings) => void }) {
+  const w = settings.workspace ?? {};
+  const save = async (patch: Partial<Workspace>) => onSettings(await window.quorum.setSettings({ workspace: patch }));
+  const nt = useNotetaker();
+  return (
+    <>
+      <CompanyCard settings={settings} onSettings={onSettings} />
       {nt.meetingCapture && <>
       <h3>Meetings</h3>
       <div className="set-card form words">
@@ -597,8 +617,6 @@ function WorkspacePage({ settings, onSettings, onGo, billing, company }: { setti
       </div>
       <CustomerBlacklist list={w.optOuts ?? (w.neverListen ?? []).map((domain) => ({ domain }))} onChange={(optOuts) => save({ optOuts })} />
       </>}
-
-      <DeleteOrgArea />
     </>
   );
 }

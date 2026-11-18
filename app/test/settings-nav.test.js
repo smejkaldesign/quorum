@@ -28,10 +28,14 @@ describe('which nav shows', () => {
   });
 
   it('adds Teams and Billing once a Cloud build reached a hosted account, and the team pages only with a team on', () => {
-    expect(workspacePages('cloud', true)).toEqual([...['general', 'connectors', 'notifications', 'developers', 'guardrails'], 'teams', 'billing']);
-    expect(workspacePages('cloud', true, false, 'admin')).toEqual([...['general', 'connectors', 'notifications', 'developers', 'guardrails'], 'teams', 'billing']);
-    expect(workspacePages('cloud', true, true, 'owner')).toEqual([...['general', 'connectors', 'notifications', 'developers', 'guardrails'], 'teams', 'billing', 'knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails']);
+    expect(workspacePages('cloud', true)).toEqual([...['general', 'connectors', 'notifications', 'developers', 'guardrails'], 'organization', 'teams', 'billing']);
+    expect(workspacePages('cloud', true, false, 'admin')).toEqual([...['general', 'connectors', 'notifications', 'developers', 'guardrails'], 'organization', 'teams', 'billing']);
+    expect(workspacePages('cloud', true, true, 'owner')).toEqual([...['general', 'connectors', 'notifications', 'developers', 'guardrails'], 'organization', 'teams', 'billing', 'knowledge', 'members', 'org-connectors', 'org-voice', 'org-guardrails']);
     for (const p of TEAM_PAGES) expect(workspacePages('cloud', true, false)).not.toContain(p);
+  });
+
+  it('lists no workspace pages while signed out of a hosted account', () => {
+    expect(workspacePages('cloud', true, true, 'owner', false)).toEqual(['general', 'connectors', 'notifications', 'developers', 'guardrails']);
   });
 });
 

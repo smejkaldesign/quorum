@@ -59,7 +59,7 @@ function packagedCloudConfig() {
 
 export function resolveCloudConfig(settings = {}) {
   const env = ENV;
-  const useProduction = isDevelopment && settings.devUseProduction === true;
+  const useProduction = isDevelopment && (settings.devUseProduction === true || process.env.QUORUM_USE_PRODUCTION === '1');
   const base = { env, useProduction, url: null, key: null };
   if (process.env.QUORUM_SUPABASE_URL && process.env.QUORUM_SUPABASE_ANON_KEY) return { ...base, source: 'shell', url: process.env.QUORUM_SUPABASE_URL, key: process.env.QUORUM_SUPABASE_ANON_KEY };
   if (!isDevelopment || useProduction) {
