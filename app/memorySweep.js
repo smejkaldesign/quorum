@@ -80,11 +80,11 @@ export function createMemorySweep({ file, now = () => Date.now() }) {
     const scope = kind === 'save' ? only : kind === 'incremental' ? ctx.notes.filter((n) => n.mtime > since).map((n) => n.rel) : null;
     // a finding on a note that is gone goes with it
     const prev = s.findings.filter((f) => f.notes.every((rel) => live.has(rel)));
-    const { findings, ms } = scope && !scope.length ? { findings: [], ms: {} } : runRules(ctx, { only: scope });
+    const { findings, ms, whole = [] } = scope && !scope.length ? { findings: [], ms: {} } : runRules(ctx, { only: scope });
     const seen = new Map(prev.map((f) => [f.key, f]));
     const at = now();
     for (const f of findings) { const was = seen.get(f.key); f.at = was?.at ?? at; f.initial = was ? !!was.initial : kind === 'first'; }
-    s.findings = scope && !scope.length ? prev : mergeFindings(prev, findings, scope);
+    s.findings = scope && !scope.length ? prev : mergeFindings(prev, findings, scope, whole);
     if (kind === 'full' || kind === 'first') s.lastFull = at;
     if (kind !== 'save') s.lastIncremental = at;
     s.last = { kind, at, ms: Date.now() - t0, rules: ms, notes: scope ? scope.length : ctx.notes.length, found: s.findings.length };

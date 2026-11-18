@@ -34,8 +34,12 @@ const one = (v) => (Array.isArray(v) ? v[0] : v);
 // the subject index and each resolved link, kept while the names of the vault's notes stay the same: subjectIndex and
 // the engine's link resolver read only the paths, titles, aliases and name fields of the notes
 let names = { sig: null };
+const namesSig = (all) => hashText(all.map((n) => `${n.rel}\u0000${skipped(n) ? 1 : 0}\u0000${n.note?.title ?? ''}\u0000${(n.note?.aliases ?? []).join('\u0001')}\u0000${n.note?.props?.name ?? ''}`).join('\n'));
+// a save sweep runs the rule over the whole vault when a note's path, title or aliases changed since the last run:
+// claims in notes the sweep does not check can then resolve to another subject (rules/index.js runRules)
+export function wide(ctx) { return namesSig(ctx.notes ?? []) !== names.sig; }
 function subjectsFor(all, live, resolve) {
-  const sig = hashText(all.map((n) => `${n.rel}\u0000${skipped(n) ? 1 : 0}\u0000${n.note?.title ?? ''}\u0000${(n.note?.aliases ?? []).join('\u0001')}\u0000${n.note?.props?.name ?? ''}`).join('\n'));
+  const sig = namesSig(all);
   if (names.sig !== sig) names = { sig, memo: new Map(), links: new Map(), sx: subjectIndex(live.map((n) => ({ rel: n.rel, title: n.note?.title, aliases: n.note?.aliases }))) };
   const { links } = names;
   const res = (target, from) => { const k = `${from}\u0000${target}`; if (links.has(k)) return links.get(k); const r = resolve(target, from); links.set(k, r); return r; };

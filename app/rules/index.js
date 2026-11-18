@@ -24,24 +24,32 @@ export const RULES = [stale, duplicates, nearDuplicates, contradictions, frontma
 export const RULE_LABELS = Object.fromEntries(RULES.map((r) => [r.rule.id, r.rule.label]));
 
 // runs every rule over the vault. only: the notes that changed; findings that touch none of them are left out, so the
-// caller can merge them into what it already holds (mergeFindings). Answers the findings and each rule's time in ms
+// caller can merge them into what it already holds (mergeFindings). A rule whose wide(ctx) says the change reaches
+// other notes runs over the whole vault and keeps all its findings; whole lists those rules. Answers the findings, each
+// rule's time in ms and whole
 export function runRules(ctx, { only = null, rules = RULES } = {}) {
   const findings = [];
   const ms = {};
+  const whole = [];
   const want = only ? new Set(only) : null;
   for (const r of rules) {
     const t0 = performance.now();
+    let all;
+    try { all = !!want && !!r.wide?.(ctx); } catch { all = false; }
+    if (all) whole.push(r.rule.id);
     let found;
-    try { found = r.run({ now: Date.now(), ...ctx, only }); } catch { found = []; }
+    try { found = r.run({ now: Date.now(), ...ctx, only: all ? null : only }); } catch { found = []; }
     ms[r.rule.id] = Math.round((performance.now() - t0) * 10) / 10;
-    for (const f of found) if (!want || f.notes.some((rel) => want.has(rel))) findings.push(f);
+    for (const f of found) if (all || !want || f.notes.some((rel) => want.has(rel))) findings.push(f);
   }
-  return { findings, ms };
+  return { findings, ms, whole };
 }
 
-// the findings after a run on some notes: the earlier findings that touch none of them stay, the new ones join
-export function mergeFindings(prev, next, only) {
+// the findings after a run on some notes: the earlier findings that touch none of them stay, the new ones join. whole:
+// the rules that ran over the whole vault, whose earlier findings all go
+export function mergeFindings(prev, next, only, whole = []) {
   if (!only) return next;
   const touched = new Set(only);
-  return [...prev.filter((f) => !f.notes.some((rel) => touched.has(rel))), ...next];
+  const all = new Set(whole);
+  return [...prev.filter((f) => !all.has(f.ruleId) && !f.notes.some((rel) => touched.has(rel))), ...next];
 }

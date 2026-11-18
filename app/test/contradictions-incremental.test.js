@@ -1,12 +1,13 @@
 // A save sweep of the contradiction rule pairs again only the subjects its notes touch (rules/contradictions.js). Its
 // findings on those notes must be the ones a pass over the whole vault finds on them, on a generated vault
 // (test/fixtures/sweepVault.js) and after edits, renames and deletions, with and without the agent's stored claims.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createVaultIndex } from '../vindex.js';
-import { run } from '../rules/contradictions.js';
+import * as contradictions from '../rules/contradictions.js';
+import { mergeFindings, runRules } from '../rules/index.js';
 import { checkClaims } from '../contradictionClaims.js';
 import { hashText } from '../contradictionIndex.js';
 import { createContradictionAgent } from '../contradictionAgent.js';
@@ -25,6 +26,7 @@ function vaultOf() {
 }
 const on = (findings, only) => findings.filter((f) => f.notes.some((rel) => only.includes(rel)));
 // the findings on these notes from a save sweep, and from a pass over the whole vault
+const { run } = contradictions;
 const both = (ctx, only) => ({ inc: on(run({ ...ctx, only }), only), full: on(run(ctx), only) });
 
 describe('a save sweep of the contradiction rule', () => {
@@ -87,5 +89,56 @@ describe('a save sweep of the contradiction rule', () => {
         expect(a.provider.pending(), only.join(', ')).toEqual(b.provider.pending());
       }
     } finally { rmSync(v.root, { recursive: true, force: true }); }
+  });
+
+  // what memorySweep.js keeps after a save sweep: the findings it held, merged with the sweep's, against a full pass
+  describe('the findings held after a save sweep', () => {
+    const small = () => {
+      const root = mkdtempSync(path.join(tmpdir(), 'contra-names-'));
+      const put = (rel, text) => { mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }); writeFileSync(path.join(root, rel), text); };
+      put('meetings/2026-01-05-a.md', '---\ndate: 2026-01-05\n---\n# A\n\n- [[Atlas Platform]] status: active\n');
+      put('meetings/2026-03-05-b.md', '---\ndate: 2026-03-05\n---\n# B\n\n- [[Orion]] status: paused\n');
+      put('meetings/2026-04-05-c.md', '---\ndate: 2026-04-05\n---\n# C\n\n- [[Atlas Platform]] owner: Team Red\n- [[Vega]] owner: Team Blue\n');
+      put('projects/atlas.md', '---\naliases: [Orion]\n---\n# Atlas Platform\n\nSome text about the platform.\n');
+      put('projects/vega.md', '# Vega\n\nSome text about Vega.\n');
+      const ix = createVaultIndex({ vault: root, isExcludedPath: () => false, isExcludedText: () => false, redact: (t) => t, onChange: () => {} });
+      ix.sync();
+      const ctx = () => ({ notes: ix.snapshot(), resolve: (t, f) => ix.resolve(t, f), tags: [] });
+      const rules = [contradictions];
+      let held = runRules(ctx(), { rules }).findings;
+      // a save sweep of these notes, merged as memorySweep.js merges it; answers it with a full pass and the rules run wide
+      const save = (only) => {
+        const live = new Set(ctx().notes.map((n) => n.rel));
+        const r = runRules(ctx(), { only, rules });
+        held = mergeFindings(held.filter((f) => f.notes.every((rel) => live.has(rel))), r.findings, only, r.whole);
+        return { held: held.map((f) => f.key).sort(), full: runRules(ctx(), { rules }).findings.map((f) => f.key).sort(), whole: r.whole };
+      };
+      return { root, put, ix, save, sync: (rels) => ix.syncPaths(rels) };
+    };
+    const check = (r) => { expect(r.held).toEqual(r.full); };
+
+    it('matches a full pass when an alias goes, comes back, a title changes, a note is deleted or renamed', () => {
+      const v = small();
+      try {
+        v.put('projects/atlas.md', '# Atlas Platform\n\nSome text about the platform.\n'); v.sync(['projects/atlas.md']);
+        check(v.save(['projects/atlas.md']));
+        v.put('projects/atlas.md', '---\naliases: [Orion]\n---\n# Atlas Platform\n\nSome text about the platform.\n'); v.sync(['projects/atlas.md']);
+        const added = v.save(['projects/atlas.md']);
+        check(added);
+        expect(added.full.length).toBeGreaterThan(0);
+        expect(added.whole).toEqual(['note.contradiction']);
+        v.put('projects/vega.md', '---\naliases: [Atlas Platform]\n---\n# Vega Platform\n\nSome text about Vega.\n'); v.sync(['projects/vega.md']);
+        check(v.save(['projects/vega.md']));
+        rmSync(path.join(v.root, 'projects/atlas.md')); v.sync(['projects/atlas.md']);
+        check(v.save(['projects/atlas.md']));
+        renameSync(path.join(v.root, 'projects/vega.md'), path.join(v.root, 'projects/vega-two.md')); v.sync(['projects/vega.md', 'projects/vega-two.md']);
+        check(v.save(['projects/vega.md', 'projects/vega-two.md']));
+        // a value change leaves every name as it was: the sweep stays on the notes it checks
+        v.put('meetings/2026-04-05-c.md', '---\ndate: 2026-04-05\n---\n# C\n\n- [[Atlas Platform]] owner: Team Gold\n- [[Vega]] owner: Team Blue\n'); v.sync(['meetings/2026-04-05-c.md']);
+        const value = v.save(['meetings/2026-04-05-c.md']);
+        check(value);
+        expect(value.whole).toEqual([]);
+      } finally { rmSync(v.root, { recursive: true, force: true }); }
+    });
   });
 });
