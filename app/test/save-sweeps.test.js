@@ -2,7 +2,10 @@
 // at most one save sweep a minute however often a note is rewritten, every note saved since the last sweep goes in the
 // next one, and a last sweep runs once the saves stop.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SAVE_DELAY_MS, SAVE_GAP_MS, createSaveSweeps } from '../memoryWiring.js';
+import { mkdtempSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { SAVE_DELAY_MS, SAVE_GAP_MS, createSaveSweeps, savesKept } from '../memoryWiring.js';
 
 describe('save sweeps', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); });
@@ -69,5 +72,25 @@ describe('save sweeps', () => {
     held = false;
     vi.advanceTimersByTime(SAVE_DELAY_MS);
     expect(runs.map((r) => r.only)).toEqual([['a.md']]);
+  });
+
+  it('hands over the saves that wait when the vault closes, and keeps them per vault until it opens again', () => {
+    const { saves, runs } = make({ key: () => '/one' });
+    saves.add(['a.md']);
+    vi.advanceTimersByTime(SAVE_DELAY_MS);
+    saves.add(['b.md', 'c.md']);
+    const dir = mkdtempSync(path.join(tmpdir(), 'saves-kept-'));
+    const kept = savesKept(path.join(dir, 'waiting.json'));
+    kept.keep('/one', saves.take());
+    kept.keep('/two', ['x.md']);
+    kept.keep('/one', ['c.md', 'd.md']);
+    vi.advanceTimersByTime(2 * SAVE_GAP_MS);
+    expect(runs).toHaveLength(1);
+    expect(saves.pending()).toBe(0);
+    const again = savesKept(path.join(dir, 'waiting.json'));
+    expect(again.take('/one')).toEqual(['b.md', 'c.md', 'd.md']);
+    expect(again.take('/one')).toEqual([]);
+    expect(again.take('/two')).toEqual(['x.md']);
+    expect(readdirSync(dir)).toEqual(['waiting.json']);
   });
 });

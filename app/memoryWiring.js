@@ -1,6 +1,7 @@
 // How main ties the memory engine to saves and to Check everything now. main.js builds these with its own state; the
 // responsiveness test (test/memory-responsive.test.js) builds the same ones, so a change here is measured there.
 // Plain Node, no Electron: main passes Electron's utilityProcess in.
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createMemoryHost } from './memoryHost.js';
 
@@ -43,9 +44,32 @@ export function createSaveSweeps({ sweep, hold = () => false, delayMs = SAVE_DEL
     if (!rels.size) { arm(delayMs); return; }
     arm(due());
   }
-  // the saves that wait are dropped: the vault changed, or a full sweep covers them
+  // the saves that wait are dropped: a full sweep covers them
   function clear() { clearTimeout(timer); timer = null; rels.clear(); }
-  return { add, clear, pending: () => rels.size };
+  // the saves that wait, handed over and dropped here: the vault closes or Quorum quits, and savesKept holds them
+  function take() { const out = [...rels]; clear(); return out; }
+  return { add, clear, take, pending: () => rels.size };
+}
+
+// The saves still waiting when a vault closes or Quorum quits, per vault, in a file in Quorum's data folder, so the save
+// sweep after the vault opens again checks them
+export function savesKept(file) {
+  const read = () => { try { const j = JSON.parse(readFileSync(file, 'utf8')); return j && typeof j === 'object' && !Array.isArray(j) ? j : {}; } catch { return {}; } };
+  const write = (all) => { try { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(`${file}.tmp`, JSON.stringify(all)); renameSync(`${file}.tmp`, file); } catch {} };
+  return {
+    keep(vault, rels) {
+      if (!vault || !rels?.length) return;
+      const all = read();
+      all[vault] = [...new Set([...(all[vault] ?? []), ...rels])];
+      write(all);
+    },
+    take(vault) {
+      const all = read();
+      const out = Array.isArray(all[vault]) ? all[vault].filter((r) => typeof r === 'string') : [];
+      if (vault in all) { delete all[vault]; write(all); }
+      return out;
+    },
+  };
 }
 
 // A catch-up call holds the same abort slot as a scheduled call, so the two never run at once; a slot another call

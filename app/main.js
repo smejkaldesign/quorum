@@ -78,7 +78,7 @@ import { approveLitter, commitNotes, prepareCompact } from './vaultHygiene.js';
 import { relatedLine } from './rules/nearDuplicates.js';
 import { DAILY_CAP, WRONG_NOTE_FIX, createDrafter, draftKind, evidenceRels, fallbackItem, unlinkItem, withDraft } from './memoryDraft.js';
 import { MEMORY_MODELS } from './memoryModels.js';
-import { catchupHooks, createSaveSweeps, forkEngine, slotBinder, startMemoryEngine } from './memoryWiring.js';
+import { catchupHooks, createSaveSweeps, forkEngine, savesKept, slotBinder, startMemoryEngine } from './memoryWiring.js';
 import { createModelDownload, macConditions } from './decide/download.js';
 import { DECIDER_ON } from './decide/index.js';
 import { netFetch } from './decide/netFetch.js';
@@ -2390,6 +2390,10 @@ const recordingNow = () => meeting.capturing || meeting.armed;
 // sweeps once when it ends
 const saves = createSaveSweeps({ sweep, hold: () => recordingNow() || catchup.running(), key: () => brain()?.vault ?? null });
 const sweepOnSave = (rels) => saves.add(rels);
+// the saves that wait when the vault closes or Quorum quits are checked once the vault opens again
+const savesWaiting = savesKept(path.join(DATA_DIR, 'memory-saves-waiting.json'));
+let savesVault = null;
+const keepSaves = () => { if (savesVault) savesWaiting.keep(savesVault, saves.take()); else saves.clear(); };
 function sweepTick() {
   const b = brain();
   if (!b || !vindex) return;
@@ -2480,9 +2484,10 @@ ipcMain.handle('memory-sweep-now', () => memoryCheck(memorySweep.state(brain()?.
 function openIndex() {
   vindex?.stop();
   vindex = null;
-  // saves waiting for a check belong to the vault that was open
-  saves.clear();
+  // saves waiting for a check belong to the vault that was open; they wait in a file until it opens again
+  keepSaves();
   const b = brain();
+  savesVault = b?.vault ?? null;
   if (!b) return;
   // the first change the index reports is its first full read; the review rules sweep once it is in
   let built = false;
@@ -2490,7 +2495,7 @@ function openIndex() {
   // enters the index, and a rule change rebuilds it (the guardrails IPC handlers below)
   vindex = createVaultIndex({
     vault: b.vault, isExcludedPath: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isDeniedText: isConfidentialText, isExcludedText: suggester.isExcluded, redact: suggester.redactLines,
-    onChange: (rels) => { toUI('vault-changed', rels); if (!built) { built = true; setTimeout(sweepTick, 5000); } else sweepOnSave(rels); }, renamed: () => settings.clusterNames?.[b.vault] ?? {},
+    onChange: (rels) => { toUI('vault-changed', rels); if (!built) { built = true; setTimeout(sweepTick, 5000); const kept = savesWaiting.take(b.vault); if (kept.length) sweepOnSave(kept); } else sweepOnSave(rels); }, renamed: () => settings.clusterNames?.[b.vault] ?? {},
     forget: (keys) => { const mine = settings.clusterNames?.[b.vault]; if (!mine) return; for (const k of keys) delete mine[k]; store.settings.save(); }, log: (...a) => log('index', ...a),
   });
   vindex.start();
@@ -5326,6 +5331,7 @@ app.on('will-quit', () => {
   // only the copy that holds the lock owns the state file
   if (!app.hasSingleInstanceLock()) return;
   meeting.capturing = false; writeState(); stopControl?.();
+  keepSaves();
 });
 app.whenReady().then(() => {
   if (!app.hasSingleInstanceLock()) return;
