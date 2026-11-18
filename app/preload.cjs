@@ -262,6 +262,11 @@ contextBridge.exposeInMainWorld('quorum', {
   oauthAccounts: () => ipcRenderer.invoke('oauth-accounts'),
   oauthConnect: (id) => ipcRenderer.invoke('oauth-connect', id),
   oauthDisconnect: (id) => ipcRenderer.invoke('oauth-disconnect', id),
+  oauthCheck: (id) => ipcRenderer.invoke('oauth-check', id),
+  oauthGithubInstallations: () => ipcRenderer.invoke('oauth-github-installations'),
+  // quorum://connectors/<id> links from the OS (Back to Quorum after a sign-in)
+  onConnectorLink: on('connector-link'),
+  connectorLinksReady: () => ipcRenderer.invoke('connector-links-ready'),
   memoryRefresh: () => ipcRenderer.invoke('memory-refresh'),
   memoryRefreshCancel: () => ipcRenderer.invoke('memory-refresh-cancel'),
   memoryAdd: () => ipcRenderer.invoke('memory-add'),

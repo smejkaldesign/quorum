@@ -70,7 +70,7 @@ export async function connect({ client, open, loopback = awaitLoopback, fetchImp
   const waiting = loopback();
   await open(authorizeUrl({ clientId: client.clientId, challenge, state, redirectUri }));
   const q = await waiting;
-  const tell = (r) => { try { q.finish?.({ name: 'Google Calendar', ...r }); } catch {} };
+  const tell = (r) => { try { q.finish?.({ name: 'Google Calendar', connector: 'google-calendar', ...r }); } catch {} };
   const fail = (message) => { tell({ failed: message }); throw new Error(message); };
   if (q.error) fail(q.error === 'access_denied' ? 'Google sign-in was cancelled.' : q.error_description || q.error);
   if (q.state !== state) fail('The sign-in answer did not match the request.');

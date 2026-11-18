@@ -59,3 +59,15 @@ export const CLIENT_ID_ENV = { google: 'QUORUM_GOOGLE_CLIENT_ID', notion: 'QUORU
 // the GitHub App's URL name, for the page where the person picks the repositories it may read
 export const GITHUB_APP_SLUG_ENV = 'QUORUM_GITHUB_APP_SLUG';
 export const isOAuthApp = (id) => Object.hasOwn(OAUTH_APPS, id);
+// the connectors whose account Check connection can test (sources/accounts.js IDENTITY); Google Calendar reads its
+// events instead and keeps Sync
+export const CHECKABLE = new Set(['notion', 'slack', 'github', 'google-drive']);
+
+// the GitHub App's installations (accounts.githubInstallations) in one line, or null when it is installed nowhere
+export function installSummary(s) {
+  const list = s?.installations ?? [];
+  if (!list.length) return null;
+  const n = list.reduce((t, i) => t + (Number(i.repositories) || 0), 0);
+  const owners = [...new Set(list.map((i) => i.owner).filter(Boolean))];
+  return `Installed on ${n} ${n === 1 ? 'repository' : 'repositories'}${owners.length ? ` (${owners.join(', ')})` : ''}`;
+}

@@ -79,7 +79,7 @@ describe('connectAccount', () => {
     expect(r.calls[0].body).toMatchObject({ provider: 'github', code: 'good', redirect_uri: `${RELAY}/v1/oauth/github/callback` });
     expect(r.calls[0].body.code_verifier).toMatch(/^[\w-]{43}$/);
     expect(JSON.stringify(r.calls[0].body)).not.toMatch(/secret/);
-    expect(b.finished).toEqual([{ name: 'GitHub' }]);
+    expect(b.finished).toEqual([{ name: 'GitHub', connector: 'github' }]);
   });
   it('exchanges Google Drive directly with the Desktop pair and takes the email from the id token', async () => {
     const b = browser();
