@@ -37,7 +37,7 @@ import { lineDiff, noteBody } from './memoryReview.js';
 import { contextBudget } from './context-budget.js';
 import { skillUsage, stashSkill } from './skill-usage.js';
 import { createBrainCheck, fingerprint as checkPrint } from './brain-check.js';
-import { INSTRUCTIONS_LIMIT } from './agent.js';
+import { INSTRUCTIONS_LIMIT, connectorsAllowed } from './agent.js';
 import { wouldBlock } from './guardrails.js';
 import { createPredicates } from './guardrails-predicates.js';
 import { KEPT_KEYS, carryKeys, reconcile, withChoice } from './shareChoice.js';
@@ -312,7 +312,7 @@ async function brainAsk(question) {
     const hints = await searchHints(question, ctx, b.root);
     const r = await watchAgent('Brain check question', () => runModel({
       source: modelSource(), providers: providers(), role: 'agent', tools: true, guards: guardrails.compiled(), question, transcript: '', root: b.root,
-      extra: { ...ctx, powers: { ...ctx.powers, instructions }, hints }, model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: [], history: [], onStep: () => {},
+      extra: { ...ctx, powers: { ...ctx.powers, instructions }, hints, connectors: null }, model: settings.model, owner: OWNER, about: aboutMe(), redact: suggester.redactLines, files: [], history: [], onStep: () => {},
     }));
     return r.text;
   }
@@ -1592,7 +1592,7 @@ function agentContext() {
   const powers = { instructions: on('instructions')?.path ?? null, skills: !!on('skills'), agents: !!on('agents'), mcp: on('mcp')?.path ?? null };
   // the connector read tools for connected accounts, through this app's own quorum MCP server limited to those tools
   const tools = connectorTools.available();
-  const connectors = tools.length ? { tools, name: CONNECTOR_SERVER, server: { command: RUNTIME, args: [CLI, 'mcp'], env: { ...RUNTIME_ENV, QUORUM_MCP_TOOLS: 'connectors' } } } : null;
+  const connectors = tools.length && connectorsAllowed(powers) ? { tools, name: CONNECTOR_SERVER, server: { command: RUNTIME, args: [CLI, 'mcp'], env: { ...RUNTIME_ENV, QUORUM_MCP_TOOLS: 'connectors' } } } : null;
   return { index: on('index')?.path ?? null, dirs: inc.filter((i) => i.kind === 'folder').map((i) => i.path), search, graph: !!search && inc.some((i) => i.kind === 'graph'), powers, connectors };
 }
 // an agent run that may write vault notes with its own tools (the Skills, Agents or MCP power-ups; the base tools only
