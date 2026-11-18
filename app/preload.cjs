@@ -344,6 +344,8 @@ contextBridge.exposeInMainWorld('quorum', {
   teamMemberRemove: (draft) => ipcRenderer.invoke('team-member-remove', draft),
   kbCreate: (draft) => ipcRenderer.invoke('kb-create', draft),
   kbRename: (kbId, name) => ipcRenderer.invoke('kb-rename', kbId, name),
+  kbPersonalPolicy: () => ipcRenderer.invoke('kb-personal-policy'),
+  kbPersonalPolicySet: (draft) => ipcRenderer.invoke('kb-personal-policy-set', draft),
   kbDelete: (kbId) => ipcRenderer.invoke('kb-delete', kbId),
   kbFolderCreate: (draft) => ipcRenderer.invoke('kb-folder-create', draft),
   kbFolderRename: (folderId, name) => ipcRenderer.invoke('kb-folder-rename', folderId, name),

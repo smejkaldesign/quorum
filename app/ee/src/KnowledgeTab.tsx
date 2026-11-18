@@ -106,7 +106,7 @@ function TeamKnowledge({ workspace, admin, me }: { workspace: string; admin: boo
       </div>
       {error && <p className="error tk-error">{error}</p>}
       {state && showSetup && admin && <SourceCard state={state} onChange={(s) => { setState(s); setSetup(false); }} onClose={() => setSetup(false)} />}
-      <KbBrowser me={me} query={query}>
+      <KbBrowser me={me} query={query} wsAdmin={admin}>
         {!state ? (error ? <div className="tk-body"><p className="tk-empty">Team knowledge did not load. The knowledge bases on the left still work.</p></div> : null) : (
           <>
             {!showSetup && kind !== 'sync' && !state.local.exists && <MissingFolder state={state} admin={admin} onChange={(s) => setState(s)} />}

@@ -1,4 +1,4 @@
-import type { Kb, KbAccess, KbAccessDraft, KbFolder, KbFolderNode, KbImportProgress, KbImportSkipped, KbNote, KbSource } from '../../src/quorum';
+import type { Kb, KbAccess, KbAccessDraft, KbFolder, KbFolderNode, KbImportProgress, KbImportSkipped, KbNote, KbPersonalPolicy, KbPersonalSource, KbSource } from '../../src/quorum';
 import { parseGithubUrl } from '../githubUrl';
 
 // what a finished kb-import answers; removed counts notes a refresh took out because the source no longer has them
@@ -242,6 +242,29 @@ export function accessDraft(current: KbAccess[] | null, mode: ReadersMode, peopl
 export const canArrange = (kb: Pick<Kb, 'role' | 'hosted' | 'writable'>): boolean => (kb.hosted ? !!kb.writable : kb.role === 'admin');
 
 export const KIND_LABEL: Record<Kb['kind'], string> = { general: 'General', meetings: 'Meetings' };
+
+// who a new KB is for: only its maker (a personal KB, 0041) or the workspace. Any member makes a personal KB; a
+// workspace KB is for owners and admins
+export type KbScope = 'personal' | 'workspace';
+export const SCOPE_LABEL: Record<KbScope, string> = { personal: 'Only me', workspace: 'Workspace' };
+export const createScopes = (wsAdmin: boolean): KbScope[] => (wsAdmin ? ['personal', 'workspace'] : ['personal']);
+
+// whether the person may delete a KB, or import notes into it: a personal KB's owner (its only admin), or a workspace
+// owner or admin for a workspace KB. The default KB is never deleted
+export const canDeleteKb = (kb: Pick<Kb, 'personal' | 'role' | 'isDefault'>, wsAdmin: boolean): boolean => !kb.isDefault && (kb.personal ? kb.role === 'admin' : wsAdmin);
+export const canImportInto = (kb: Pick<Kb, 'personal' | 'role' | 'hosted'>, wsAdmin: boolean): boolean => !kb.hosted && (kb.personal ? kb.role === 'admin' : wsAdmin);
+
+// the workspace's rule for members' personal KBs (0041). A workspace owner or admin is never limited; a member makes a
+// personal KB only while the workspace allows it (null: not read yet, so nothing is offered)
+export const canMakePersonal = (policy: KbPersonalPolicy | null, wsAdmin: boolean): boolean => wsAdmin || policy?.enabled === true;
+// the sources a KB may sync or import from: every one for a workspace KB and for an owner's or admin's personal KB, and
+// what the workspace allows for a member's personal KB
+export const ALL_SOURCES: KbPersonalSource[] = ['google-drive', 'github'];
+export function kbSources(kb: Pick<Kb, 'personal'>, policy: KbPersonalPolicy | null, wsAdmin: boolean): KbPersonalSource[] {
+  if (!kb.personal || wsAdmin) return ALL_SOURCES;
+  if (!policy?.enabled) return [];
+  return ALL_SOURCES.filter((s) => policy.sources.includes(s));
+}
 
 // a GitHub repository address the import can take; the reason is the sentence to show
 // the import form's address check, with the same parser the import runs (ee/githubUrl.js); a /tree/<branch>/<folder>
