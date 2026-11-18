@@ -7,9 +7,12 @@
 //   file    a file kept in the vault's repo outside the vault folder
 //   branch  a note at the same place on another local git branch of the vault's repo (git ls-tree, best effort,
 //           skipped when the vault is not in a git repo)
-// Reads only; caches the walk for five minutes (reset() drops it) and the branch notes until a branch moves.
-import { execFileSync } from 'node:child_process';
+// Reads only; caches the walk for five minutes (reset() drops it). The branch notes are read in the background with
+// async git, a few branches at a time, and only for branches whose head moved (a commit's tree never changes); find()
+// answers from the last read and onChange hears when a read changed the answer. refresh() waits for a current read.
+import { execFile, execFileSync } from 'node:child_process';
 import { readdirSync, realpathSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -19,44 +22,66 @@ const MAX_ENTRIES = 200000;
 const MAX_BRANCHES = 40;
 const TTL = 5 * 60000;
 const BRANCH_TTL = 10000;
+const GIT_JOBS = 4;
 const posix = (p) => p.split(path.sep).join('/');
 // a link target as a name: lowercased, no .md, the last part of a path
 export const nameOf = (t) => String(t ?? '').trim().replace(/\/+$/, '').replace(/\.md$/i, '').split('/').pop().toLowerCase();
 
-const git = (cwd, args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: 5000, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
+const GIT_OPTS = { encoding: 'utf8', timeout: 5000, maxBuffer: 64 * 1024 * 1024 };
+const git = (cwd, args) => execFileSync('git', ['-C', cwd, ...args], { ...GIT_OPTS, stdio: ['ignore', 'pipe', 'ignore'] });
+const gitAsync = (cwd, args) => new Promise((resolve, reject) => {
+  const child = execFile('git', ['-C', cwd, ...args], GIT_OPTS, (err, out) => (err ? reject(err) : resolve(out)));
+  child.stdin?.end();
+});
+// runs fn over items, at most jobs at a time
+async function eachLimited(items, jobs, fn) {
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(jobs, items.length) }, async () => { while (next < items.length) { const i = next++; await fn(items[i], i); } }));
+}
 
 // vault: the vault folder. skillRoots: more folders whose sub-folders are skills (default ~/.claude/skills).
 // gitTop(vault) answers the repo root or null; listBranches and listTree read git, and are passed in by the tests
 const real = (p) => { try { return realpathSync(p); } catch { return path.resolve(p); } };
 
-export function createElsewhere({ vault: vaultIn, skillRoots = [path.join(os.homedir(), '.claude', 'skills')], useGit = true, gitTop, listBranches, listTree } = {}) {
+// listBranches and listTree may answer with a value or a promise
+export function createElsewhere({ vault: vaultIn, skillRoots = [path.join(os.homedir(), '.claude', 'skills')], useGit = true, gitTop, listBranches, listTree, onChange = () => {}, log = () => {} } = {}) {
   const vault = real(vaultIn);
+  // the repo root, read once (reset() reads it again)
+  let topKept;
   const top = () => {
-    if (gitTop) { const t = gitTop(vault); return t ? real(t) : null; }
-    if (!useGit) return null;
-    try { return real(git(vault, ['rev-parse', '--show-toplevel']).trim()); } catch { return null; }
+    if (topKept !== undefined) return topKept;
+    if (gitTop) { const t = gitTop(vault); topKept = t ? real(t) : null; }
+    else if (!useGit) topKept = null;
+    else { try { topKept = real(git(vault, ['rev-parse', '--show-toplevel']).trim()); } catch { topKept = null; } }
+    return topKept;
   };
-  const branches = listBranches ?? ((root) => {
+  const branches = listBranches ?? (async (root) => {
     let current = '';
-    try { current = git(root, ['symbolic-ref', '--short', '-q', 'HEAD']).trim(); } catch {}
-    return git(root, ['for-each-ref', '--format=%(refname:short) %(objectname)', 'refs/heads']).split('\n').filter(Boolean)
+    try { current = (await gitAsync(root, ['symbolic-ref', '--short', '-q', 'HEAD'])).trim(); } catch {}
+    return (await gitAsync(root, ['for-each-ref', '--format=%(refname:short) %(objectname)', 'refs/heads'])).split('\n').filter(Boolean)
       .map((l) => { const [name, sha] = l.split(' '); return { name, sha }; }).filter((b) => b.name !== current);
   });
-  const tree = listTree ?? ((root, sha, prefix) => git(root, ['ls-tree', '-r', '--name-only', sha, '--', prefix || '.']).split('\n').filter(Boolean));
+  const tree = listTree ?? (async (root, sha, prefix) => (await gitAsync(root, ['ls-tree', '-r', '--name-only', sha, '--', prefix || '.'])).split('\n').filter(Boolean));
 
   let walked = { at: 0, map: new Map() };
   let onBranches = { key: '', map: new Map(), at: 0 };
+  // the note paths on each commit already read, by sha
+  let bySha = new Map();
+  let reading = null;
+  // the branch notes have been read once, so find() answers for branches too
+  let branchesRead = false;
 
   const put = (map, name, hit) => { if (name && !map.has(name)) map.set(name, hit); };
-  function walkAll() {
-    if (Date.now() - walked.at < TTL) return walked.map;
+  // the walk as a generator: it yields each folder to read and takes back its entries (null when unreadable), so the
+  // first walk reads synchronously and the later ones read in the background
+  function* walkSteps() {
     const map = new Map();
     let n = 0;
     const root = top() ?? vault;
-    const visit = (dir, depth) => {
+    function* visit(dir, depth) {
       if (depth > 10 || n > MAX_ENTRIES) return;
-      let entries;
-      try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      const entries = yield dir;
+      if (!entries) return;
       for (const e of entries) {
         if (++n > MAX_ENTRIES) return;
         if (e.name.startsWith('.') || SKIP.has(e.name)) continue;
@@ -67,45 +92,71 @@ export function createElsewhere({ vault: vaultIn, skillRoots = [path.join(os.hom
           const skill = /(^|\/)skills$/i.test(posix(dir));
           if (skill) put(map, e.name.toLowerCase(), { kind: 'skill', where: posix(path.relative(root, abs)) });
           else if (inVault) put(map, e.name.toLowerCase(), { kind: 'folder', where: rel });
-          visit(abs, depth + 1);
+          yield* visit(abs, depth + 1);
         } else if (SCRIPT_RE.test(e.name)) put(map, e.name.replace(SCRIPT_RE, '').toLowerCase(), { kind: 'script', where: posix(path.relative(root, abs)) });
         else if (!inVault && /\.md$/i.test(e.name)) put(map, e.name.replace(/\.md$/i, '').toLowerCase(), { kind: 'file', where: posix(path.relative(root, abs)) });
       }
-    };
-    visit(root, 0);
+    }
+    yield* visit(root, 0);
     for (const s of skillRoots) {
-      let entries = [];
-      try { entries = readdirSync(s, { withFileTypes: true }); } catch {}
+      const entries = (yield s) ?? [];
       for (const e of entries) if (e.isDirectory() && !e.name.startsWith('.')) put(map, e.name.toLowerCase(), { kind: 'skill', where: posix(path.join(s, e.name)).replace(posix(os.homedir()), '~') });
     }
-    walked = { at: Date.now(), map };
     return map;
   }
-
-  // the branch list is read at most once per BRANCH_TTL: find() runs once per missing link, and each read starts git
-  // processes on the main thread
-  function branchNotes() {
-    if (Date.now() - onBranches.at < BRANCH_TTL) return onBranches.map;
-    const none = () => { onBranches = { key: '', map: new Map(), at: Date.now() }; return onBranches.map; };
-    const root = top();
-    if (!root) return none();
-    let list;
-    try { list = branches(root).slice(0, MAX_BRANCHES); } catch { return none(); }
-    const key = list.map((b) => `${b.name}@${b.sha}`).join(',');
-    if (key === onBranches.key) { onBranches.at = Date.now(); return onBranches.map; }
-    const prefix = posix(path.relative(root, vault));
-    const map = new Map();
-    for (const b of list) {
-      let files;
-      try { files = tree(root, b.sha, prefix); } catch { continue; }
-      for (const f of files) {
-        if (!/\.md$/i.test(f)) continue;
-        const rel = prefix && f.startsWith(`${prefix}/`) ? f.slice(prefix.length + 1) : f;
-        put(map, nameOf(rel), { kind: 'branch', where: rel, branch: b.name });
-      }
+  const opts = { withFileTypes: true };
+  function walkNow() {
+    const g = walkSteps();
+    let step = g.next();
+    while (!step.done) { let entries = null; try { entries = readdirSync(step.value, opts); } catch {} step = g.next(entries); }
+    return step.value;
+  }
+  async function walkLater() {
+    const g = walkSteps();
+    let step = g.next();
+    while (!step.done) { let entries = null; try { entries = await readdir(step.value, opts); } catch {} step = g.next(entries); }
+    return step.value;
+  }
+  let walking = null;
+  function walkAll() {
+    if (!walked.at) walked = { at: Date.now(), map: walkNow() };
+    else if (Date.now() - walked.at >= TTL && !walking) {
+      const since = walked.at;
+      walking = walkLater().then((map) => { if (walked.at === since) walked = { at: Date.now(), map }; }, (e) => log('elsewhere walk', e?.message ?? e)).finally(() => { walking = null; });
     }
-    onBranches = { key, map, at: Date.now() };
-    return map;
+    return walked.map;
+  }
+
+  // the branch list is read at most once per BRANCH_TTL: find() runs once per missing link. A read lists the
+  // branches, then lists the notes of each branch head not read before
+  async function readBranches() {
+    const done = (key, map) => { const moved = key !== onBranches.key; onBranches = { key, map, at: Date.now() }; branchesRead = true; if (moved) onChange(); };
+    const root = top();
+    if (!root) return done('', new Map());
+    let list;
+    try { list = (await branches(root)).slice(0, MAX_BRANCHES); } catch { return done('', new Map()); }
+    const key = list.map((b) => `${b.name}@${b.sha}`).join(',');
+    if (key === onBranches.key) { onBranches.at = Date.now(); branchesRead = true; return; }
+    const prefix = posix(path.relative(root, vault));
+    const fresh = new Map();
+    await eachLimited(list, GIT_JOBS, async (b) => {
+      if (bySha.has(b.sha)) { fresh.set(b.sha, bySha.get(b.sha)); return; }
+      let files;
+      try { files = await tree(root, b.sha, prefix); } catch { return; }
+      fresh.set(b.sha, files.filter((f) => /\.md$/i.test(f)).map((f) => (prefix && f.startsWith(`${prefix}/`) ? f.slice(prefix.length + 1) : f)));
+    });
+    bySha = fresh;
+    const map = new Map();
+    for (const b of list) for (const rel of fresh.get(b.sha) ?? []) put(map, nameOf(rel), { kind: 'branch', where: rel, branch: b.name });
+    done(key, map);
+  }
+  function refresh() {
+    reading ??= readBranches().catch((e) => log('elsewhere branches', e?.message ?? e)).finally(() => { reading = null; });
+    return reading;
+  }
+  function branchNotes() {
+    if (Date.now() - onBranches.at >= BRANCH_TTL) refresh();
+    return onBranches.map;
   }
 
   // what a link target names outside the notes of this checkout, or null
@@ -114,7 +165,8 @@ export function createElsewhere({ vault: vaultIn, skillRoots = [path.join(os.hom
     if (!name) return null;
     return walkAll().get(name) ?? branchNotes().get(name) ?? null;
   }
-  return { find, reset: () => { walked = { at: 0, map: new Map() }; onBranches = { key: '', map: new Map(), at: 0 }; } };
+  // reset keeps the branch answer until the next read replaces it, so the marks do not go and come back
+  return { find, refresh, ready: () => branchesRead, reset: () => { walked = { at: 0, map: new Map() }; topKept = undefined; onBranches = { ...onBranches, at: 0 }; } };
 }
 
 // the index note of a folder: index.md, _index.md, README.md or a note named like the folder

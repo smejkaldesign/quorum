@@ -2611,12 +2611,13 @@ function diskNoteNames() {
 // a missing link whose note is on disk but hidden from Quorum
 const onDisk = (target) => { const t = String(target).toLowerCase().replace(/\.md$/, ''); const names = diskNoteNames(); return names.has(t) || names.has(t.split('/').pop()); };
 // what a missing link names outside this checkout's notes: a folder, script, skill, file or a note on another branch
-// (linkElsewhere.js), one finder per vault
+// (linkElsewhere.js), one finder per vault. It reads the other branches in the background; when that changes what it
+// finds, Memory health and Notifications refresh
 let elsewhere = null;
 function elsewhereFinder() {
   const v = brain()?.vault;
   if (!v) return null;
-  if (elsewhere?.vault !== v) elsewhere = { vault: v, finder: createElsewhere({ vault: v }) };
+  if (elsewhere?.vault !== v) elsewhere = { vault: v, finder: createElsewhere({ vault: v, log, onChange: () => toUI('memory-updates', null) }) };
   return elsewhere.finder;
 }
 // the missing links Memory health reports: the ones whose note is truly not in the vault, each marked with what its
@@ -2806,6 +2807,7 @@ async function decideLink(key, verdict, step = async () => {}, keep = () => {}, 
   if (onDisk(name)) throw new Error('A note with that name is already in the vault, so Quorum did not write another one');
   const finder = elsewhereFinder();
   finder?.reset();
+  await finder?.refresh();
   const hit = finder?.find(name);
   if (hit) throw new Error(`${hit.kind === 'branch' ? `A note with that name is on the branch ${hit.branch}` : `A ${hit.kind} with that name is at ${hit.where}`}, so Quorum did not write a note`);
   await step(`Writing ${folder ? `${folder}/` : ''}${name}.md from ${draft?.text ? 'the agent\'s draft' : 'what the linking notes say'}`);
@@ -3098,15 +3100,21 @@ function pastFixCheck() {
   const b = brain();
   const vault = pastFixVault();
   if (!b || !vault) return null;
-  if (pastFixState?.vault === b.vault) return pastFixState;
+  // until the finder's first read of the other branches is in, a recheck could miss a note on a branch: it is shown but
+  // not kept, and runs again once the branches are read
+  const finder = elsewhereFinder();
+  const settled = !finder || finder.ready();
+  if (pastFixState?.vault === b.vault && (pastFixState.settled || !settled)) return pastFixState;
+  if (!settled) finder.refresh();
   let all = {};
   try { all = JSON.parse(readFileSync(pastFixFile, 'utf8')) ?? {}; } catch {}
-  const finder = elsewhereFinder();
   let cache = { version: PAST_FIX_VERSION, results: {} };
   try { cache = recheckAll(fixRunList().filter((r) => r.vault === b.vault), { vault, find: (n) => finder?.find(n) ?? null }, all[b.vault] ?? null, PAST_FIX_VERSION); } catch (e) { log('past fixes', e?.message); }
-  all[b.vault] = cache;
-  try { writeFileSync(pastFixFile, JSON.stringify(all)); } catch (e) { log('past fixes', e?.message); }
-  pastFixState = { vault: b.vault, cache, plans: new Map() };
+  if (settled) {
+    all[b.vault] = cache;
+    try { writeFileSync(pastFixFile, JSON.stringify(all)); } catch (e) { log('past fixes', e?.message); }
+  }
+  pastFixState = { vault: b.vault, cache, plans: new Map(), settled };
   return pastFixState;
 }
 // how a flagged fix can be undone right now; kept a few seconds, since the feed reloads often
