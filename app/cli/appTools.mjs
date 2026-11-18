@@ -1,19 +1,19 @@
 // The tools that do what the person can do in Memory health and Knowledge, as the quorum MCP server lists them. Pure
 // data, shared by the CLI and the app: each call runs in the running app (appActions.js) through the same handlers as
 // the app's buttons. write: refused while Quorum is set to read only. gated: also needs Settings > Memory, Let AI tools
-// change memory and knowledge bases.
+// change memory and knowledge bases. untrusted: the result carries note text, so the MCP server wraps it as data.
 const str = (description) => ({ type: 'string', description });
 const num = (description) => ({ type: 'number', description });
 const ids = { type: 'array', items: { type: 'string' }, description: 'item ids from review_items' };
 
 export const APP_TOOLS = [
   {
-    name: 'review_items', write: false, gated: false,
+    name: 'review_items', write: false, gated: false, untrusted: true,
     description: 'The items in Memory health, Needs review: missing links, review rule findings, past fixes to correct and rules Quorum proposes. Newest first, each with an id for the other review tools, the note it is about, the problem and what Approve does.',
     inputSchema: { type: 'object', properties: { kind: { type: 'string', enum: ['link', 'finding', 'past-fix', 'ignore'], description: 'only this kind' }, unread: { type: 'boolean', description: 'only unread items' }, query: str('only items whose text has every word'), limit: num('1 to 100, default 25'), offset: num('skip this many, default 0') } },
   },
   {
-    name: 'review_item', write: false, gated: false,
+    name: 'review_item', write: false, gated: false, untrusted: true,
     description: 'One Needs review item in full: the problem, the proposed fix, why, and the evidence.',
     inputSchema: { type: 'object', properties: { id: str('item id from review_items') }, required: ['id'] },
   },
@@ -38,12 +38,12 @@ export const APP_TOOLS = [
     inputSchema: { type: 'object', properties: {} },
   },
   {
-    name: 'memory_check_status', write: false, gated: false,
+    name: 'memory_check_status', write: false, gated: false, untrusted: true,
     description: 'Whether Check everything now is running, how far it is, and what it found.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
-    name: 'fix_runs', write: false, gated: false,
+    name: 'fix_runs', write: false, gated: false, untrusted: true,
     description: 'The Memory health fixes from the last week, newest first: each with an id for fix_undo, its batch for fix_cancel, its status, what it changed, who approved it, and whether it can be undone.',
     inputSchema: { type: 'object', properties: { limit: num('1 to 100, default 20') } },
   },
@@ -68,7 +68,7 @@ export const APP_TOOLS = [
     inputSchema: { type: 'object', properties: { kb: str('knowledge base id from kb_list'), url: str('the repository or folder link on github.com'), branch: str('default branch when left out') }, required: ['kb', 'url'] },
   },
   {
-    name: 'kb_list_attachments', write: false, gated: false,
+    name: 'kb_list_attachments', write: false, gated: false, untrusted: true,
     description: 'The folders synced into a knowledge base from Google Drive and GitHub, with their status.',
     inputSchema: { type: 'object', properties: { kb: str('knowledge base id from kb_list') }, required: ['kb'] },
   },
