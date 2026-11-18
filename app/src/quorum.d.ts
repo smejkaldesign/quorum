@@ -494,7 +494,7 @@ declare global {
       confidentialMarks(): Promise<{ folders: Record<string, string>; notes: Record<string, string>; values: string[] }>;
       confidentialMark(rel: string, isDir: boolean, value: string | null): Promise<string>;
       onFixRun(cb: (run: FixRun) => void): () => void;
-      onAgentAction(cb: (a: { text: string }) => void): () => void;
+      onAgentAction(cb: (a: { text: string; key?: string | null }) => void): () => void;
       vaultFixLink(target: string, toRel: string): Promise<{ files: number; links: number }>;
       vaultAddAlias(rel: string, alias: string): Promise<boolean>;
       vaultOutgoing(rel: string): Promise<OutLink[]>;

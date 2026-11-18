@@ -5,12 +5,13 @@ import { IconCheck, IconClose } from './icons';
 // 6 seconds, with a bar along its bottom that runs out over that time, and an X to close it sooner. Any part of the app
 // shows one with toast(); the Toaster mounted once in App draws them
 export const TOAST_MS = 6000;
-type Toast = { id: number; text: string; tone: 'ok' | 'info' | 'error' };
+type Toast = { id: number; text: string; tone: 'ok' | 'info' | 'error'; key?: string | null };
 const EVENT = 'quorum:toast';
 let next = 1;
 
-export function toast(text: string, tone: Toast['tone'] = 'ok') {
-  window.dispatchEvent(new CustomEvent<Toast>(EVENT, { detail: { id: next++, text, tone } }));
+// key: a toast with the same key replaces the one showing, so a count can go up in place
+export function toast(text: string, tone: Toast['tone'] = 'ok', key: string | null = null) {
+  window.dispatchEvent(new CustomEvent<Toast>(EVENT, { detail: { id: next++, text, tone, key } }));
 }
 
 export function Toaster() {
@@ -18,12 +19,12 @@ export function Toaster() {
   useEffect(() => {
     const add = (e: Event) => {
       const t = (e as CustomEvent<Toast>).detail;
-      setList((xs) => [...xs.slice(-3), t]);
+      setList((xs) => [...xs.filter((x) => !t.key || x.key !== t.key).slice(-3), t]);
       window.setTimeout(() => setList((xs) => xs.filter((x) => x.id !== t.id)), TOAST_MS);
     };
     window.addEventListener(EVENT, add);
     // what an AI tool did through the quorum MCP (appActions.js), shown the way a button's confirmation is
-    const off = window.quorum?.onAgentAction?.((a) => toast(a.text, 'info'));
+    const off = window.quorum?.onAgentAction?.((a) => toast(a.text, 'info', a.key ?? null));
     return () => { window.removeEventListener(EVENT, add); off?.(); };
   }, []);
   if (!list.length) return null;

@@ -32,6 +32,7 @@ export const READ_ONLY = 'Quorum is set to read only, so AI tools cannot change 
 export const gateOff = (blocked) => `AI tools cannot ${blocked} yet. In Quorum, turn on Settings > Memory > ${AGENT_SETTING}, then try again.`;
 export const DRAFTS_OFF = 'Check everything now runs the memory agent, which is off. In Quorum, turn on Settings > Memory > Let the agent draft fixes, then try again.';
 const CLOUD = 'Knowledge bases are part of Quorum Cloud, and this copy of Quorum has none or is signed out.';
+const TALLY_MS = 5000;
 const PLANNED = new Set(['link', 'finding', 'past-fix']);
 const clamp = (n, lo, hi, d) => (Number.isFinite(Number(n)) ? Math.min(hi, Math.max(lo, Math.round(Number(n)))) : d);
 const iso = (t) => (t ? new Date(t).toISOString() : null);
@@ -50,7 +51,7 @@ const runBrief = (r) => ({
 // the Cloud knowledge base handlers, or null. accounts(): accounts.list(). readTools(): the connector read tools that
 // are listed now. toast(text): a toast in the window. isExcluded, redact: the opted-out customer filter; withheld(rel):
 // a note in a withheld folder
-export function createAppActions({ call, settings, kbHosted = () => null, kbSync = () => null, accounts = () => [], readTools = () => [], toast = () => {}, isExcluded = () => false, redact = (t) => t, withheld = () => false, log = () => {} }) {
+export function createAppActions({ call, settings, kbHosted = () => null, kbSync = () => null, accounts = () => [], readTools = () => [], toast = () => {}, isExcluded = () => false, redact = (t) => t, withheld = () => false, log = () => {}, now = Date.now }) {
   const shown = (r) => !withheld(String(r.target?.rel ?? '')) && !isExcluded(strings([r.target?.title, r.target?.rel, r.detail?.title, r.detail?.problem]).join('\n'));
   const reviewRows = async () => ((await call('activity-feed', { review: true, kinds: ['memory-health'], sort: 'recent', offset: 0, limit: 1e6 }))?.items ?? []).filter((r) => r.review && shown(r));
   async function rowsFor(ids) {
@@ -63,7 +64,16 @@ export function createAppActions({ call, settings, kbHosted = () => null, kbSync
   }
   const answer = (r) => ({ kind: r.review.kind, abs: r.target?.abs ?? '', key: r.review.key });
   const failedOf = (res) => (res?.failed ?? []).map((f) => f.error);
-  const say = (text) => { try { toast(text); } catch {} };
+  const say = (text, key = null) => { try { toast(text, key); } catch {} };
+  // approvals and archives from one actor a few seconds apart show as one toast that counts them all
+  const tallies = new Map();
+  const count = (verb, n, one, tail = '') => {
+    const key = `${currentActor()}:${verb}`;
+    const t = tallies.get(key);
+    const total = t && now() - t.at < TALLY_MS ? t.total + n : n;
+    tallies.set(key, { total, at: now() });
+    say(total === 1 && one ? `${who()} ${verb} ${one}` : `${who()} ${verb} ${total} ${total === 1 ? 'item' : 'items'} in Needs review${tail}`, key);
+  };
   // the actor at the start of a toast, capitalized: An AI tool approved, The quorum command started
   const who = () => { const l = actorLabel(currentActor()); return l.charAt(0).toUpperCase() + l.slice(1); };
   const kbOr = (get) => { const k = get(); if (!k) throw new Error(CLOUD); return k.handlers; };
@@ -90,7 +100,7 @@ export function createAppActions({ call, settings, kbHosted = () => null, kbSync
         const failed = failedOf(res);
         if (failed.length) throw new Error(failed[0]);
         const run = (await call('fix-runs')).find((x) => (x.key === rows[0].review.key || x.items?.some((i) => i.id === rows[0].id)) && (x.status === 'queued' || x.status === 'running' || x.status === 'success'));
-        say(`${who()} approved ${q(brief(rows[0]).title)}`);
+        count('approved', 1, q(brief(rows[0]).title));
         return { approved: [rows[0].id], run: run ? runBrief(run) : null };
       }
       // several: the bulk Approve, one batch with one Undo and Cancel; a proposed rule has no fix to plan and is answered on its own
@@ -110,7 +120,7 @@ export function createAppActions({ call, settings, kbHosted = () => null, kbSync
         const bad = new Set((res?.failed ?? []).map((f) => f.abs));
         for (const r of others) (bad.has(r.target?.abs ?? '') ? out.left : out.approved).push(r.id);
       }
-      say(`${who()} approved ${out.approved.length} ${out.approved.length === 1 ? 'item' : 'items'} in Needs review`);
+      count('approved', out.approved.length, null);
       return out;
     },
     async review_dismiss({ ids }) {
@@ -118,7 +128,7 @@ export function createAppActions({ call, settings, kbHosted = () => null, kbSync
       const res = await call('activity-review', rows.map(answer), 'dismiss');
       const failed = failedOf(res);
       if (failed.length === rows.length) throw new Error(failed[0]);
-      say(`${who()} archived ${rows.length - failed.length} ${rows.length - failed.length === 1 ? 'item' : 'items'} in Needs review without fixing them`);
+      count('archived', rows.length - failed.length, null, ' without fixing them');
       return { dismissed: rows.length - failed.length, failed };
     },
     async review_mark_read({ ids, unread }) {

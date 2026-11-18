@@ -15,9 +15,11 @@ const row = (id, kind, extra = {}) => ({
 });
 const ROWS = [row('r:link:alpha', 'link'), row('r:find:beta', 'finding'), row('r:ignore:gamma', 'ignore'), row('r:link:acme', 'link'), row('r:link:secret', 'link', { target: { abs: '/v/p/secret.md', rel: '02-personal/secret.md', title: 'secret' } })];
 
+const clock = { t: 0 };
 function setup({ settings = { memoryAgentActions: true, memoryDrafts: true }, handlers = {}, kbHosted = null, kbSync = null } = {}) {
   const calls = [];
   const toasts = [];
+  const keys = [];
   const base = {
     'activity-feed': () => ({ items: ROWS }),
     'activity-review': (items) => ({ done: items.map((i) => i.abs), failed: [] }),
@@ -32,12 +34,12 @@ function setup({ settings = { memoryAgentActions: true, memoryDrafts: true }, ha
   };
   const call = async (name, ...args) => { calls.push({ name, args, actor: currentActor() }); return base[name](...args); };
   const actions = createAppActions({
-    call, settings: () => settings, kbHosted: () => kbHosted, kbSync: () => kbSync, toast: (t) => toasts.push(t),
+    call, settings: () => settings, kbHosted: () => kbHosted, kbSync: () => kbSync, toast: (t, key) => toasts.push(t) && keys.push(key), now: () => clock.t,
     accounts: () => [{ id: 'slack', name: 'Slack', configured: true, connected: true, account: 'Acme Co', error: null }, { id: 'notion', name: 'Notion', configured: true, connected: false }],
     readTools: () => ['slack_search', 'slack_thread'],
     isExcluded: (t) => /acme/i.test(t), redact: (t) => t.replace(/Acme/g, '[withheld]'), withheld: (rel) => rel.startsWith('02-personal/'),
   });
-  return { actions, calls, toasts };
+  return { actions, calls, toasts, keys };
 }
 
 describe('reading Needs review', () => {
@@ -88,6 +90,17 @@ describe('approving through the buttons\' handlers', () => {
     expect(review.actor).toBe('claude-code');
     expect(r.run).toMatchObject({ id: 'fix:alpha:1', status: 'queued', by: 'Claude Code' });
     expect(toasts).toEqual(['Claude Code approved “Title r:link:alpha”']);
+  });
+  it('counts approvals from one tool a few seconds apart in one toast', async () => {
+    const { actions, toasts, keys } = setup();
+    clock.t = 1000;
+    await actions.run('review_approve', { ids: ['r:link:alpha'] }, 'claude-code');
+    clock.t = 3000;
+    await actions.run('review_approve', { ids: ['r:link:alpha', 'r:find:beta', 'r:ignore:gamma'] }, 'claude-code');
+    clock.t = 20000;
+    await actions.run('review_approve', { ids: ['r:link:alpha'] }, 'claude-code');
+    expect(toasts).toEqual(['Claude Code approved “Title r:link:alpha”', 'Claude Code approved 3 items in Needs review', 'Claude Code approved “Title r:link:alpha”']);
+    expect(new Set(keys)).toEqual(new Set(['claude-code:approved']));
   });
   it('approves several as one bulk batch with Cancel, and answers a proposed rule on its own', async () => {
     const { actions, calls } = setup();

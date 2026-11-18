@@ -5356,7 +5356,7 @@ if (!account.handlers?.['env-status']) {
 const appActions = createAppActions({
   call: (name, ...a) => { const fn = actionHandlers.get(name); if (!fn) throw new Error(`Quorum has no ${name} here.`); return fn(null, ...a); },
   settings: () => settings, kbHosted: () => kbHostedApi, kbSync: () => kbSync, accounts: () => accounts.list(), readTools: () => connectorTools.available(),
-  toast: (text) => toUI('agent-action', { text }), isExcluded: (t) => suggester.isExcluded(t), redact: (t) => suggester.redactLines(t), withheld: (rel) => !!rel && excludedPath(rel), log,
+  toast: (text, key) => toUI('agent-action', { text, key }), isExcluded: (t) => suggester.isExcluded(t), redact: (t) => suggester.redactLines(t), withheld: (rel) => !!rel && excludedPath(rel), log,
 });
 const CONTROL_WRITES = new Set(['start', 'stop', 'go', 'end', 'ask', 'note-new', 'note-append', 'note-edit', 'settings-set']);
 const CLI_SETTINGS = { model: ['opus', 'sonnet', 'haiku'], autoListen: [true, false], suggestions: [true, false] };
