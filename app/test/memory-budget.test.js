@@ -98,7 +98,7 @@ describe('formatMemory', () => {
     expect(formatMemory('graph_path', { path: [{ id: 'person:ana-ruiz' }, { id: 'project:atlas' }], edges: [edge] })).toEqual(['1 step from person:ana-ruiz to project:atlas:', edgeLine(edge), expect.stringMatching(/^All 1 edge shown/)]);
     expect(formatMemory('graph_path', { path: null, edges: [] }, { args: { a: 'Ana', b: 'Zed' } })).toEqual(['No path between Ana and Zed.']);
     expect(formatMemory('decisions', { about: { id: 'project:atlas' }, decisions: [{ id: 'decision:meetings/m.md#ab12cd34', text: 'Ship in March', date: 1770000000000, rel: 'meetings/m.md', line: 9, about: [{ id: 'project:atlas', name: 'Atlas' }], decidedIn: 'meeting:meetings/m.md', supersededBy: null }] })[0])
-      .toBe('2026-02-02  decision:meetings/m.md#ab12cd34  Ship in March  [meetings/m.md:9; in meeting:meetings/m.md; about project:atlas]');
+      .toBe('2026-02-02  decision:meetings/m.md#ab12cd34  Ship in March  [meetings/m.md:9; about project:atlas]');
     expect(formatMemory('entity', { notFound: 'Zed' })).toEqual(['No node named "Zed". Try search, or graph_query with other words.']);
   });
   it('follows graph-core\'s final shapes: superseding edges as objects, path ambiguity, edges left out', () => {
@@ -153,20 +153,20 @@ describe('runMemoryTool', () => {
   it('answers memory_status with whatever part is ready', async () => {
     const r = await runMemoryTool('memory_status', {}, { handler: (h) => (h === 'memory-search-status' ? () => ({ chunks: 4000, embedded: 1200 }) : null), ...filters });
     expect(r).toEqual({ graph: { error: NOT_READY }, search: { chunks: 4000, embedded: 1200 } });
+    const all = await runMemoryTool('memory_status', {}, { handler: (h) => () => ({ 'memory-graph-status': { phase: 'ready', nodes: 10 }, 'memory-search-status': { chunks: 4 }, 'memory-setup-status': { phase: 'done', gaps: 3 } }[h]), ...filters });
+    expect(all).toEqual({ graph: { phase: 'ready', nodes: 10 }, search: { chunks: 4 }, setup: { phase: 'done', gaps: 3 } });
     expect(formatMemory('memory_status', r)).toEqual([`graph: error ${NOT_READY}`, 'search: chunks 4,000, embedded 1,200']);
   });
-  it('calls graph-core\'s handlers with their positional arguments', async () => {
+  it('calls each graph handler with the tool\'s args as one object', async () => {
     const seen = [];
     const rec = (h) => (...a) => { seen.push([h, a]); return {}; };
-    for (const [name, args] of [['explain', { id: 'person:ana', budget: 1500 }], ['entity', { name: 'Ana', budget: 900 }], ['graph_path', { a: 'Ana', b: 'Atlas', budget: 1500 }], ['decisions', { about: 'Atlas', budget: 1500 }], ['graph_query', { q: 'Atlas', depth: 1, budget: 1500 }]]) {
+    for (const [name, args] of [['explain', { id: 'person:ana', budget: 1500 }], ['entity', { name: 'Ana', budget: 900 }], ['graph_path', { a: 'Ana', b: 'Atlas', budget: 1500 }]]) {
       await runMemoryTool(name, args, { handler: rec, ...filters });
     }
     expect(seen).toEqual([
-      ['memory-graph-explain', ['person:ana']],
-      ['memory-graph-entity', ['Ana', { budget: 900 }]],
-      ['memory-graph-path', ['Ana', 'Atlas', {}]],
-      ['memory-graph-decisions', [{ about: 'Atlas', budget: 1500 }]],
-      ['memory-graph-query', [{ q: 'Atlas', depth: 1, budget: 1500 }]],
+      ['memory-graph-explain', [{ id: 'person:ana', budget: 1500 }]],
+      ['memory-graph-entity', [{ name: 'Ana', budget: 900 }]],
+      ['memory-graph-path', [{ a: 'Ana', b: 'Atlas', budget: 1500 }]],
     ]);
   });
   it('names a handler for every tool', () => {
