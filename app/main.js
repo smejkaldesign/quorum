@@ -24,7 +24,7 @@ import { createTokenStore } from './sources/tokens.js';
 import { connectAccount, createAccounts, oauthClients } from './sources/accounts.js';
 import { createConnectorTools } from './connectors/tools/index.js';
 import { actorLabel, createAppActions, currentActor, outsideActor } from './appActions.js';
-import { fromActionHandlers, runMemoryTool } from './cli/memoryTools.mjs';
+import { fromActionHandlers, runMemoryTool, withholdAnswer } from './cli/memoryTools.mjs';
 import { CONNECTOR_SERVER } from './cli/connectorTools.mjs';
 import { httpUrl, relayFetch, relayUrl } from './relayUrl.js';
 import { createErrorReports } from './errorReports.js';
@@ -128,7 +128,7 @@ const FEED_READS = new Set([
   'kb-hosted-note', 'kb-drive-status', 'kb-sync-list', 'kb-sync-grants', 'kb-import-progress',
   // memory graph reads
   'memory-graph-status', 'memory-graph-query', 'memory-graph-explain', 'memory-graph-entity', 'memory-graph-decisions', 'memory-graph-path',
-  'memory-search', 'memory-search-status',
+  'memory-search', 'memory-search-status', 'memory-setup-status',
 ]);
 const TREE_WRITES = new Set([
   'vault-new-note', 'vault-new-folder', 'vault-move', 'vault-rename', 'vault-trash', 'vault-duplicate', 'set-settings', 'guardrails-add', 'guardrails-remove', 'guardrails-set',
@@ -1587,6 +1587,7 @@ ipcMain.handle('set-settings', (_e, next) => {
       if (/^[A-Z]{2,12}$/.test(w)) clean[k] = w;
     }
     if ((clean.stopWord ?? chatWords().stop) === (clean.goWord ?? chatWords().go)) { delete clean.stopWord; delete clean.goWord; }
+    const optOutsBefore = JSON.stringify(optOuts());
     if (Array.isArray(next.workspace.optOuts)) {
       const seen = new Set();
       clean.optOuts = next.workspace.optOuts.map((o) => ({ name: String(o?.name ?? '').trim().slice(0, 80), domain: neverListEntry(o?.domain) ?? '' }))
@@ -1598,6 +1599,8 @@ ipcMain.handle('set-settings', (_e, next) => {
     store.settings.save();
     // a name added mid-call takes effect right away
     if (clean.optOuts && meetingActive) refreshGuard().then(() => { if (namedHere()) blockCall('name'); else if (shouldBlock(lastInfo.names)) blockCall(); });
+    // memory graph and search: a changed opt-out list reads the vault again, so a name it adds leaves memory.db too
+    if (clean.optOuts && JSON.stringify(optOuts()) !== optOutsBefore) setTimeout(() => vindex?.rebuild(), 0);
   }
   return settings;
 });
@@ -2507,13 +2510,16 @@ function openMemoryGraph(vault) {
 }
 const graphBudget = (b) => Math.max(100, Math.min(Number(b) || 1500, 50000));
 const graphArgs = (a) => { const o = a && typeof a === 'object' ? { ...a } : {}; if ('budget' in o) o.budget = graphBudget(o.budget); return o; };
-const graphRead = (fn) => { if (!memoryGraph) return null; try { return fn(memoryGraph); } catch (err) { log('memory graph read', String(err)); return { error: 'The memory graph could not answer that.' }; } };
+// the window gets what the MCP tools get: an item that names an opted-out customer (its id, name or path, slugs
+// included) is dropped and withheld lines are blanked
+const memoryOut = (r) => withholdAnswer(r, { withheld: excludedPath, isExcluded: suggester.isExcluded, redact: suggester.redactLines });
+const graphRead = (fn) => { if (!memoryGraph) return null; try { return memoryOut(fn(memoryGraph)); } catch (err) { log('memory graph read', String(err)); return { error: 'The memory graph could not answer that.' }; } };
 // as app actions too, so the control socket bridge calls them by name; each takes positional arguments from the window
 // or one object from the bridge ({ q, name, id, a, b, about, budget, ... })
 const graphObj = (x) => (x && typeof x === 'object' && !Array.isArray(x) ? x : null);
 handleAction('memory-graph-status', () => memoryGraph?.status() ?? { phase: 'off' });
 handleAction('memory-graph-query', (_e, args) => graphRead((g) => g.graphQuery(graphArgs(args))));
-handleAction('memory-graph-explain', (_e, ref) => graphRead((g) => g.explain(String(graphObj(ref) ? ref.id ?? ref.ref ?? ref.name ?? '' : ref ?? ''))));
+handleAction('memory-graph-explain', (_e, ref, opts) => graphRead((g) => (graphObj(ref) ? g.explain(String(ref.id ?? ref.ref ?? ref.name ?? ''), graphArgs(ref)) : g.explain(String(ref ?? ''), graphArgs(opts)))));
 handleAction('memory-graph-entity', (_e, name, opts) => graphRead((g) => (graphObj(name) ? g.entity(String(name.name ?? name.q ?? name.id ?? ''), graphArgs(name)) : g.entity(String(name ?? ''), graphArgs(opts)))));
 handleAction('memory-graph-decisions', (_e, args) => graphRead((g) => g.decisions(graphArgs(args))));
 handleAction('memory-graph-path', (_e, a, b, opts) => graphRead((g) => (graphObj(a) ? g.graphPath(String(a.a ?? ''), String(a.b ?? ''), graphArgs(a)) : g.graphPath(String(a ?? ''), String(b ?? ''), graphArgs(opts)))));
@@ -2726,7 +2732,7 @@ function recordApproved(items) {
   } catch (e) { log('memory graph', e?.message); }
   return ids;
 }
-ipcMain.handle('memory-setup-status', () => setupStatus());
+handleAction('memory-setup-status', () => setupStatus());
 // runs in the background and reports through memory-setup events; keeper: true or false sets the keeper first
 ipcMain.handle('memory-setup-run', (_e, opts) => {
   const b = brain();
@@ -3802,7 +3808,7 @@ const memoryEngine = startMemoryEngine({
 // the decision layer's models download in the background into the data folder after launch (decide/download.js);
 // Settings > Memory shows the status. Until they are on disk and verified, every check goes to Claude
 // net.request goes through Chromium's network stack, so the macOS proxy and PAC settings apply (decide/netFetch.js)
-const modelDownload = createModelDownload({ dir: path.join(DATA_DIR, 'models'), enabled: DECIDER_ON, fetch: netFetch(net), userAgent: `Quorum/${app.getVersion()}`, conditions: macConditions, onChange: (s) => toUI('models-status', s), log });
+const modelDownload = createModelDownload({ dir: path.join(DATA_DIR, 'models'), enabled: DECIDER_ON, fetch: netFetch(net), userAgent: `Quorum/${app.getVersion()}`, conditions: macConditions, onChange: (s) => { toUI('models-status', s); if (s?.state === 'ready') searchResume(); }, log });
 ipcMain.handle('models-status', () => modelDownload.status());
 // ---- Memory search (search/): hybrid search over heading-scoped chunks of the vault, in the vault's memory database.
 // It reads the vault index's text (opted-out lines already withheld, denied notes never in it), builds its FTS index on
@@ -3812,7 +3818,9 @@ ipcMain.handle('models-status', () => modelDownload.status());
 // actions (the MCP bridge calls them by name): memory-search, memory-search-status
 const memorySearch = createMemorySearch({ dataDir: DATA_DIR, vault: () => brain()?.vault ?? null, vindex: () => vindex, embedder: engineEmbedder((texts, maxTokens) => memoryEngine.embed(texts, maxTokens)), graph: () => memoryGraph?.store ?? null, paused: () => recordingNow(), log });
 function searchChanged(rels) { memorySearch.changed(rels).catch((e) => log('search', 'update failed', e?.message)); }
-handleAction('memory-search', (_e, opts) => memorySearch.search({ ...(opts && typeof opts === 'object' ? opts : {}), q: String(opts?.q ?? ''), budget: Math.min(Math.max(Number(opts?.budget) || 1500, 100), 20000), k: Math.min(Math.max(Number(opts?.k) || 20, 1), 100), signals: undefined }));
+// the local models finished downloading: the embed queue stops waiting
+function searchResume() { try { memorySearch.resume(); } catch { /* search not set up yet */ } }
+handleAction('memory-search', (_e, opts) => memorySearch.search({ ...(opts && typeof opts === 'object' ? opts : {}), q: String(opts?.q ?? ''), budget: Math.min(Math.max(Number(opts?.budget) || 1500, 100), 20000), k: Math.min(Math.max(Number(opts?.k) || 20, 1), 100), signals: undefined }).then(memoryOut));
 handleAction('memory-search-status', () => memorySearch.status());
 // ---- end memory search
 const contradictionAgent = memoryEngine.agent;

@@ -103,7 +103,7 @@ contextBridge.exposeInMainWorld('quorum', {
   // memory graph reads (graph/index.js), and its build progress
   memoryGraphStatus: () => ipcRenderer.invoke('memory-graph-status'),
   memoryGraphQuery: (args) => ipcRenderer.invoke('memory-graph-query', args),
-  memoryGraphExplain: (ref) => ipcRenderer.invoke('memory-graph-explain', ref),
+  memoryGraphExplain: (ref, opts) => ipcRenderer.invoke('memory-graph-explain', ref, opts),
   memoryGraphEntity: (name, opts) => ipcRenderer.invoke('memory-graph-entity', name, opts),
   memoryGraphDecisions: (args) => ipcRenderer.invoke('memory-graph-decisions', args),
   memoryGraphPath: (a, b, opts) => ipcRenderer.invoke('memory-graph-path', a, b, opts),

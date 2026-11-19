@@ -502,13 +502,13 @@ declare global {
       activityReview(items: { kind: 'note' | 'memory' | 'junk-note' | 'link' | 'past-fix' | 'finding' | 'ignore'; abs: string; key?: string }[], verdict: 'approve' | 'revert' | 'dismiss'): Promise<{ done: string[]; failed: { abs: string; error: string }[] }>;
       vaultSearch(q: string, limit?: number): Promise<SearchHit[]>;
       // memory search: hybrid search over the vault's chunks, trimmed to budget tokens
-      memorySearch(opts: { q: string; budget?: number; k?: number; folders?: string[]; kinds?: string[]; since?: string }): Promise<MemorySearchResult>;
+      memorySearch(opts: { q: string; budget?: number; k?: number; folders?: string[]; kinds?: string[]; since?: string }): Promise<MemorySearchResult | null>;
       memorySearchStatus(): Promise<MemorySearchStatus>;
       vaultBacklinks(rel: string): Promise<Backlink[]>;
       // memory graph reads (app/graph/); null when no vault is connected
       memoryGraphStatus(): Promise<MemoryGraphStatus>;
       memoryGraphQuery(args: { q?: string; seeds?: string[]; budget?: number; depth?: number; kinds?: MemoryEdgeKind[]; current?: boolean }): Promise<MemoryGraphResult<{ seeds: string[]; nodes: (MemoryNodeBrief & { score: number; depth: number })[]; edges: MemoryEdge[]; truncated: MemoryTruncated & { edgesShown: number; edgesTotal: number } }>>;
-      memoryGraphExplain(ref: string): Promise<MemoryGraphResult<{ node: MemoryNode; source: { rel: string } | null; aliases: string[]; community: { community: string; rank: number } | null; out: MemoryEdge[]; in: MemoryEdge[]; history: (MemoryEdge & { supersededBy: MemoryEdge | null })[] }>>;
+      memoryGraphExplain(ref: string, opts?: { budget?: number }): Promise<MemoryGraphResult<{ node: MemoryNode; source: { rel: string } | null; aliases: string[]; community: { community: string; rank: number } | null; out: MemoryEdge[]; in: MemoryEdge[]; history: (MemoryEdge & { supersededBy: MemoryEdge | null })[]; truncated: { shown: number; total: number; budgetNeeded: number; sections: Record<'out' | 'in' | 'history', { shown: number; total: number }> } }>>;
       memoryGraphEntity(name: string, opts?: { budget?: number }): Promise<MemoryGraphResult<MemoryEntity>>;
       memoryGraphDecisions(args: { about?: string; since?: string | number; current?: boolean; budget?: number }): Promise<MemoryGraphResult<{ about: MemoryNodeBrief | null; decisions: MemoryDecision[]; truncated: MemoryTruncated }>>;
       memoryGraphPath(a: string, b: string, opts?: { undirected?: boolean; kinds?: MemoryEdgeKind[]; current?: boolean; maxDepth?: number }): Promise<MemoryGraphResult<{ path: MemoryNodeBrief[] | null; edges: MemoryEdge[] }>>;

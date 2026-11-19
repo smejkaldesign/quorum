@@ -51,11 +51,18 @@ export const NOT_READY = 'The memory index is not ready yet. Quorum builds it af
 // what names an item: an item whose note is withheld, or whose name, id, path or aliases name an opted-out customer, is
 // dropped; in what is left, withheld lines are redacted from the text. withheld(rel) and isExcluded(text) are the app's
 // filters; redact(text) blanks the withheld lines
+// an id or path is a slug (company:acme-corp, people/acme-corp.md), so each is also checked with its dashes, underscores
+// and colons read as spaces
 const REL_KEYS = ['rel', 'source_rel', 'sourceRel'];
-const NAME_KEYS = ['id', 'name', 'title', 'rel', 'src', 'dst', 'aliases', 'source_rel', 'sourceRel'];
+const NAME_KEYS = ['id', 'name', 'title', 'rel', 'src', 'srcName', 'dst', 'dstName', 'aliases', 'source_rel', 'sourceRel'];
 const strings = (v) => (typeof v === 'string' ? [v] : Array.isArray(v) ? v.flatMap(strings) : v && typeof v === 'object' ? Object.values(v).flatMap(strings) : []);
-export const isHidden = (item, { withheld = () => false, isExcluded = () => false } = {}) => !!item && typeof item === 'object' && !Array.isArray(item)
-  && (REL_KEYS.some((k) => typeof item[k] === 'string' && withheld(item[k])) || isExcluded(strings(NAME_KEYS.map((k) => item[k])).join('\n')));
+const unslug = (t) => t.replace(/[-_:]+/g, ' ');
+export const isHidden = (item, { withheld = () => false, isExcluded = () => false } = {}) => {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+  if (REL_KEYS.some((k) => typeof item[k] === 'string' && withheld(item[k]))) return true;
+  const names = strings(NAME_KEYS.map((k) => item[k]));
+  return isExcluded(names.join('\n')) || isExcluded(names.map(unslug).join('\n'));
+};
 export function withhold(value, filters = {}) {
   const redact = filters.redact ?? ((t) => t);
   const walk = (v) => {
@@ -65,6 +72,15 @@ export function withhold(value, filters = {}) {
     return v;
   };
   return walk(value);
+}
+
+// one handler answer as it may leave the app (the window or an AI tool): an answer about one node that is withheld
+// gives nothing of it, and the rest goes through withhold
+export function withholdAnswer(r, filters = {}) {
+  if (!r || typeof r !== 'object' || Array.isArray(r) || r.error) return r;
+  const subject = r.node ?? r.entity ?? r.about;
+  if (isHidden(subject, filters)) return { error: 'That note is withheld.' };
+  return withhold(r, filters);
 }
 
 // what the app runs for memory_tool on the control socket. handler(name) is the registered graph or search handler of
@@ -93,6 +109,7 @@ export async function runMemoryTool(name, args = {}, { handler, ...filters }) {
   const r = await run(tool.handler);
   // a handler answers null while no vault is connected
   if (r == null) throw new Error(NOT_READY);
-  if (isHidden(r?.node ?? r?.entity, filters)) throw new Error('That note is withheld.');
-  return withhold(r, filters);
+  const out = withholdAnswer(r, filters);
+  if (out?.error) throw new Error(out.error);
+  return out;
 }
