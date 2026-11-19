@@ -3217,7 +3217,7 @@ const fixRunList = () => {
     // a fix still waiting or working when Quorum last quit never finished: it is marked Failed, the notes it wrote go
     // back from its undo record, and its issue is back in review
     const cut = fixRuns.filter((r) => r.status === 'queued' || r.status === 'running');
-    for (const r of cut) Object.assign(r, { status: 'error', error: 'Quorum quit before this fix finished. Approve it again to fix it.', endedAt: r.endedAt ?? Date.now() });
+    for (const r of cut) Object.assign(r, { status: 'error', error: 'Quorum quit before this fix finished. Approve it again to fix it.', interrupted: true, endedAt: r.endedAt ?? Date.now() });
     if (cut.length) setTimeout(() => { recoverRuns(cut).catch((e) => log('fix recover', e?.message)); }, 0);
   }
   return fixRuns;

@@ -5,6 +5,7 @@ import { batchCancelled, cancelError, cancelRuns, endFailed, holdFailed, lastFai
 import { newLinksCheck, rollback, writeCheckedNote } from '../fixJournal.js';
 import { holdsLink } from '../src/fixToast';
 import { createResolver } from '../linkparse.js';
+import { rollBackItems } from '../batchItems.js';
 
 // Memory health fix runs (issue 189): a failed fix ends its working state and waits, Stop puts back what the attempt
 // wrote, and a fix that would leave a new dead link fails before it writes
@@ -46,14 +47,25 @@ describe('no automatic retry loop', () => {
     // the same item failing again stays held; only the person's Approve runs it once more
     expect(holdFailed(items, [...runs, fix('orbit', 'error', { error: 'It broke', queuedAt: 9 })]).map((i) => i.id)).not.toContain('r:link:orbit');
   });
-  it('lets an item run again that was only put back because another item in its batch failed', () => {
-    const run = { ...batchOf('orbit', 'error', { status: 'error', error: 'It broke' }, { error: 'It broke' }), items: [
-      { id: 'r:link:orbit', kind: 'link', key: 'orbit', title: 'orbit', line: 'orbit', status: 'error', error: 'It broke' },
-      { id: 'r:link:atlas', kind: 'link', key: 'atlas', title: 'atlas', line: 'atlas', status: 'error', rolledBack: true },
-    ] };
-    expect(holdFailed([{ id: 'r:link:orbit' }, { id: 'r:link:atlas' }], [run]).map((i) => i.id)).toEqual(['r:link:atlas']);
-    // the row still says why it was put back
-    expect(lastFailures([run]).get('r:link:atlas')).toMatchObject({ error: 'It broke', own: false });
+  it('holds only the item whose own fix failed, never the items another item took down with it', () => {
+    const item = (key, extra) => ({ id: `r:link:${key}`, kind: 'link', key, title: key, line: key, ...extra });
+    const ids = ['orbit', 'atlas', 'later', 'own'].map((k) => ({ id: `r:link:${k}` }));
+    // orbit was running when the batch failed; atlas was fixed before it and put back; later never started; own failed
+    // on its own and kept its reason
+    const items = [item('atlas', { status: 'success' }), item('orbit', { status: 'running' }), item('later', { status: 'queued' }), item('own', { status: 'error', error: 'It broke' })];
+    rollBackItems(items);
+    const run = { ...batchOf('x', 'error', {}, { error: 'The fix left a new broken link' }), items };
+    expect(holdFailed(ids, [run]).map((i) => i.id)).toEqual(['r:link:atlas', 'r:link:later']);
+    // every row still says why it is back in review
+    expect(lastFailures([run]).get('r:link:atlas')).toMatchObject({ error: 'The fix left a new broken link', own: false });
+  });
+
+  it('holds every item the person cancelled, and no fix that Quorum quitting cut short', () => {
+    const runs = [fix('orbit', 'queued', { batch: 'b:3' }), fix('atlas', 'queued', { batch: 'b:3', queuedAt: 2 })];
+    cancelRuns(runs, 'b:3', { queue: [...runs] });
+    expect(holdFailed([{ id: 'r:link:orbit' }, { id: 'r:link:atlas' }], runs)).toEqual([]);
+    const quit = fix('solo', 'error', { error: 'Quorum quit before this fix finished. Approve it again to fix it.', interrupted: true });
+    expect(holdFailed([{ id: 'r:link:solo' }], [quit])).toEqual([{ id: 'r:link:solo' }]);
   });
 });
 
@@ -146,5 +158,29 @@ describe('writing a missing note from a draft', () => {
     expect(rel).toBe('05-knowledge/orbit.md');
     expect(keep).toEqual([['05-knowledge/orbit.md', true]]);
     expect(readFileSync(path.join(vault, rel), 'utf8')).toBe('See [[atlas]].\n');
+  });
+});
+
+// main.js needs Electron to load, so the fix flow's wiring is checked from its source: Stop reaches cancelRuns with the
+// run id it was given, a thrown fix ends through endFailed, and the missing note is written only by writeCheckedNote
+describe('the fix flow in main.js', () => {
+  const main = readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'main.js'), 'utf8');
+  const between = (a, b) => { const i = main.indexOf(a); const j = main.indexOf(b, i); expect(i).toBeGreaterThan(-1); expect(j).toBeGreaterThan(i); return main.slice(i, j); };
+  it('cancels by the id Stop sends, a run id or a batch id', () => {
+    const cancel = between("handleAction('fix-cancel'", '\n});');
+    expect(cancel).toMatch(/const id = String\(batch \?\? ''\)/);
+    expect(cancel).toMatch(/cancelRuns\(fixRunList\(\), id, \{/);
+    expect(cancel).toContain('queue: fixQueue');
+  });
+  it('ends a thrown fix through endFailed, so a Stop reads as cancelled', () => {
+    const pump = between('async function pumpFixes()', 'fixWorking = false;\n}');
+    expect(pump).toMatch(/catch \(e\) \{\n\s+endFailed\(run, e\);/);
+    expect(pump).toContain('throw cancelError(run)');
+  });
+  it('writes the missing note only through the checked write', () => {
+    const create = between("if (issue.action !== 'create')", "await step('Updating the vault index');");
+    expect(create).toContain('await writeCheckedNote({');
+    expect(create).not.toMatch(/createNote\(|writeAtomic\(/);
+    expect(create.indexOf('guard()')).toBeGreaterThan(create.indexOf('writeCheckedNote'));
   });
 });

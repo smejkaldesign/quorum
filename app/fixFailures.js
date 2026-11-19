@@ -44,13 +44,16 @@ export function cancelRuns(runs, id, { queue = [], by = null, ended = () => {}, 
 export const batchCancelled = (runs) => runs.some((r) => r.cancelled || String(r.error ?? '').endsWith('cancelled the batch'));
 
 // the items a run holds as [row id, link key or null, error, own]: a batch holds each of its items, a fix one link.
-// own: the item's own fix failed or was stopped, where a rolled-back item was fixed and put back for another's failure
+// own: the person cancelled it, or the item's own fix failed (its own reason, or the step running when the batch
+// failed). An item put back or never started because another item failed is not, and neither is a run cut short when
+// Quorum quit
 function heldBy(r) {
-  if (r.kind !== 'batch') return [[`${ROW.link}${r.key}`, r.key, r.error, true]];
+  if (r.kind !== 'batch') return [[`${ROW.link}${r.key}`, r.key, r.error, !!r.cancelled || !r.interrupted]];
   return (r.items ?? []).map((it) => {
     // an item fixed and then put back when the whole batch failed reads with the batch's reason
     const error = it.status === 'error' || r.status === 'error' ? (it.rolledBack ? r.error : it.error ?? r.error) : null;
-    return [it.id, it.kind === 'link' ? it.key : null, error, !it.rolledBack];
+    const own = !!r.cancelled || !!it.cause || (!it.rolledBack && !!it.error);
+    return [it.id, it.kind === 'link' ? it.key : null, error, own];
   });
 }
 
