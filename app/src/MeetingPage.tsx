@@ -1,6 +1,7 @@
 import { BackButton } from './BackButton';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { CalendarEvent, MeetingBrief } from './quorum';
+import type { CalendarEvent, MeetingBrief, MeetingPrep } from './quorum';
+import { useFlag } from './flags';
 import { CALENDAR_APP, PLATFORM_APP } from './AppChip';
 import { Markdown } from './Markdown';
 import { dayLabel } from './upNextList';
@@ -120,10 +121,74 @@ function useReveal(total: number, key: unknown) {
 
 const clock = (d: Date) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
+// what the prep section says when there is no note to show
+const PREP_EMPTY: Partial<Record<MeetingPrep['status'], string>> = {
+  'opted-out': 'No prep for this meeting. Someone invited is on your never-listen list.',
+  skipped: 'Quorum prepares notes ahead only for meetings with more people, or with someone new. You can still prepare one for this meeting.',
+  'no-model': 'Choose a model in Settings and Quorum writes a prep note from your vault.',
+  'no-vault': 'Connect your vault and Quorum writes a prep note from it.',
+  failed: 'Quorum could not write a prep note this time. Try again.',
+  missing: 'Quorum could not find this event in your calendar.',
+};
+
+// The prep note from the vault (main.js meeting-prep): who is invited and what the vault says about them, past
+// meetings, open items and talking points, each linked to its source note. Join stays the primary action and View in
+// Calendar the secondary one; the note itself opens like any other note in the vault
+function VaultPrep({ event: e, onOpenNote }: { event: CalendarEvent; onOpenNote: (file: string) => void }) {
+  const [prep, setPrep] = useState<MeetingPrep | null>(null);
+  const [writing, setWriting] = useState(false);
+  const write = (force: boolean) => {
+    setWriting(true);
+    return window.quorum.meetingPrep(e.id, force ? { force: true } : { generate: true }).then(setPrep).catch(() => setPrep({ status: 'failed' })).finally(() => setWriting(false));
+  };
+  useEffect(() => {
+    let live = true;
+    window.quorum.meetingPrep(e.id).then((r) => {
+      if (!live) return;
+      setPrep(r);
+      // a note not written yet, or one whose invite changed and that you have not edited, is written now
+      if (r.status === 'stale' || (r.status === 'changed' && !r.edited)) { setWriting(true); window.quorum.meetingPrep(e.id, { generate: true }).then((g) => { if (live) setPrep(g); }).catch(() => { if (live) setPrep({ status: 'failed' }); }).finally(() => { if (live) setWriting(false); }); }
+    }).catch(() => { if (live) setPrep({ status: 'failed' }); });
+    return () => { live = false; };
+  }, [e.id]);
+  const platform = e.platform ? PLATFORM_APP[e.platform] : null;
+  const has = prep?.status === 'ready' || prep?.status === 'changed';
+  // the heading and date line are the page's own; the saved note keeps them for the vault
+  const md = prep?.markdown ?? '';
+  const text = md.indexOf('## ') > 0 ? md.slice(md.indexOf('## ')) : md;
+  const onWiki = (target: string) => { const file = prep?.links?.[target]; if (file) onOpenNote(file); };
+  return (
+    <section className="mp-section mp-prep">
+      <div className="mp-head">
+        <h2>Meeting prep</h2>
+        <span className="mp-prep-actions">
+          {platform && e.join && <button className="act-pill primary" onClick={() => window.quorum.openExternal(e.join!)}>Join on {platform.short}</button>}
+          {(e.item || e.link) && <button className="act-pill" onClick={() => window.quorum.calendarOpen(e)}>View in Calendar</button>}
+        </span>
+      </div>
+      {!prep || writing ? <Skeleton lines={6} />
+        : has ? <>
+          {prep.status === 'changed' && <p className="muted">{prep.edited ? 'You edited this note. Prepare again writes a new one in its place.' : 'The invite changed since this note was written.'}</p>}
+          <Markdown text={text} onWiki={onWiki} />
+          <p className="mp-prep-foot">
+            {prep.file && <button className="up-all" onClick={() => onOpenNote(prep.file!)}>Open note</button>}
+            <button className="up-all" disabled={writing} onClick={() => write(true)}>Prepare again</button>
+          </p>
+        </>
+        : <>
+          <p className="mp-empty">{PREP_EMPTY[prep.status] ?? PREP_EMPTY.failed}</p>
+          {(prep.status === 'skipped' || prep.status === 'failed') && <p className="mp-prep-foot"><button className="up-all" disabled={writing} onClick={() => write(prep.status === 'skipped')}>Prepare a note</button></p>}
+        </>}
+    </section>
+  );
+}
+
 // The page an upcoming meeting opens to from Home or Up next: when it is, who is invited, its calendar and meeting
 // app, and for a recurring meeting, prep notes and a short description written from its past notes (main.js
 // meeting-brief). Fewer than three past meetings shows what will appear once there are.
 export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarEvent; onBack: () => void; onOpenNote: (file: string) => void }) {
+  const [prepEnabled, setPrepEnabled] = useState(false);
+  useEffect(() => { window.quorum.getSettings().then((s) => setPrepEnabled(s?.meetingPrep?.enabled === true)).catch(() => {}); }, []);
   const [data, setData] = useState<MeetingBrief | null>(null);
   const [writing, setWriting] = useState(false);
   const bar = useStuck();
@@ -141,6 +206,8 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
   const [saveError, setSaveError] = useState('');
   const [run, setRun] = useState<{ file: string; since: number } | null>(null);
   const [relatedAll, setRelatedAll] = useState(false);
+  // the vault prep note takes the place of the series' prep bullets when it is on
+  const vaultPrep = useFlag('meeting-prep') && prepEnabled;
   const keep = (v: string) => { setMine(v); try { if (v.trim()) localStorage.setItem(draftKey, v); else localStorage.removeItem(draftKey); } catch { /* ignore */ } };
   async function saveMine() {
     if (savingMine) return;
@@ -224,12 +291,12 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
         )}
 
         {tab === 'prep' && <>
-        <section className="mp-section mp-prep">
+        {vaultPrep ? <VaultPrep event={e} onOpenNote={onOpenNote} /> : <section className="mp-section mp-prep">
           <h2>Meeting prep notes</h2>
           {loading ? <Skeleton lines={4} />
             : brief?.prep ? <Markdown text={reveal(brief.prep)} />
             : <p className="mp-empty">{emptyText}</p>}
-        </section>
+        </section>}
 
         <section className="mp-section">
           <h2>About this meeting</h2>

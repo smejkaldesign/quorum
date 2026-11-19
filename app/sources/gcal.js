@@ -93,7 +93,7 @@ export function mapEvent(e, calendarId, calendarName = '') {
     start: new Date(e.start.dateTime).toISOString(),
     end: new Date(e.end.dateTime).toISOString(),
     calendar: calendarName,
-    attendees: (e.attendees ?? []).filter((a) => !a.resource).map((a) => ({ name: a.displayName ?? '', email: a.email ?? '' })),
+    attendees: (e.attendees ?? []).filter((a) => !a.resource).map((a) => ({ name: a.displayName ?? '', email: a.email ?? '', ...(a.self ? { self: true } : {}) })),
     organizer: e.organizer?.email ?? e.organizer?.displayName ?? '',
     item: null,
     link: e.htmlLink ?? null,

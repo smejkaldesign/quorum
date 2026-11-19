@@ -95,7 +95,7 @@ export type Settings = {
   // which of Quorum's in-app notifications show in the bell's list and dot; each is on when missing
   notifications?: { noteUpdates?: boolean; memoryChanges?: boolean; reviews?: boolean; guardrails?: boolean };
   // connector ids whose provider MCP the person disconnected from Quorum (Settings > Connectors)
-  mcpIgnored?: string[]; meetingProviders?: Record<string, { enabled: boolean }>; autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean; transcription?: boolean }; meetingsKb?: { autoSave?: boolean }; managedModels?: boolean; screenContext?: boolean; memoryAutoApprove?: boolean; memoryDotDays?: number; memoryHighlight?: boolean; memorySweeps?: boolean; memoryAutoApply?: boolean; memoryDrafts?: boolean; memoryDraftCap?: number; memoryDraftConfidential?: boolean; memoryCatchupParallel?: number; memoryAgentActions?: boolean };
+  mcpIgnored?: string[]; meetingProviders?: Record<string, { enabled: boolean }>; autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; meetingPrep?: MeetingPrepSettings; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean; transcription?: boolean }; meetingsKb?: { autoSave?: boolean }; managedModels?: boolean; screenContext?: boolean; memoryAutoApprove?: boolean; memoryDotDays?: number; memoryHighlight?: boolean; memorySweeps?: boolean; memoryAutoApply?: boolean; memoryDrafts?: boolean; memoryDraftCap?: number; memoryDraftConfidential?: boolean; memoryCatchupParallel?: number; memoryAgentActions?: boolean };
 export type OnboardingStatus = { firstRun: boolean; defaultVaultDir: string };
 export type OnboardingChecks = { permissions: { microphone: string; audio: string; accessibility: string; calendar: string }; claude: { installed: boolean; loggedIn?: boolean; email?: string; org?: string; plan?: string; version?: string; pending?: boolean }; model?: ModelSourceStatus | null };
 // the setup interview: a template plus a few answers that shape a Quorum-built Agent OS (starter.js)
@@ -247,6 +247,10 @@ export type Billing = { plan: Plan; seats: number; seatsIncluded: number; hourPa
 export type MemberInvite = { inviteId: string; email: string; role: Role; expiresAt: string };
 // the calendar event a note was matched to (meetingPlatforms.js eventRef)
 export type EventRef = { id: string | null; item: string | null; link: string | null; start: string; recurring: boolean; organizer: string; count: number };
+// the vault prep note for an upcoming event (main.js meeting-prep, meetingPrep.js). links maps each wiki link target in
+// the note to its file on disk. changed: the invite changed since the note was written, or the person edited it
+export type MeetingPrep = { status: 'off' | 'missing' | 'no-vault' | 'opted-out' | 'skipped' | 'stale' | 'no-model' | 'failed' | 'ready' | 'changed'; markdown?: string; rel?: string; file?: string; links?: Record<string, string>; edited?: boolean };
+export type MeetingPrepSettings = { enabled: boolean; ahead: 'today' | 2 | 4 | 8 | 24; minInvitees: 0 | 2 | 3 | 4 | 5; orNew: boolean };
 export type MeetingBrief = { related?: { file: string; title: string; date: string | null; shared: string[] }[]; past: { file: string; title: string; date: string | null; source: string; people: string[]; count: number }[]; brief: { prep: string; what: string; who: string; how: string } | null; status: 'few' | 'stale' | 'ready' | 'no-model' | 'failed' };
 export type MeetingRow = { written?: boolean; id: string; file: string; kind: 'meeting' | 'note'; source: string; title: string; date: string | null; people: string[]; count: number; visibility: Visibility; rel: string; link: string; app: string; url?: string | null; platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; event?: EventRef | null };
 export type ChatRow = { id: string; title: string; date: string; turns: number; meetingFile: string | null; meetingTitle: string | null; eventId?: string | null; eventEnd?: string | null };
@@ -594,6 +598,7 @@ declare global {
       calendarPrivacy(): Promise<void>;
       calendarOpen(ev: CalendarEvent): Promise<void>;
       meetingBrief(q: { title: string; organizer?: string; generate?: boolean }): Promise<MeetingBrief>;
+      meetingPrep(id: string, opts?: { generate?: boolean; force?: boolean }): Promise<MeetingPrep>;
       noteChat(file: string): Promise<{ id: string; turns: { q: string; a: string }[] } | null>;
       summaryOff(): Promise<void>;
       recordContinue(): Promise<{ ok: true } | { error: string }>;
