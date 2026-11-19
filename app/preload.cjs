@@ -246,6 +246,7 @@ contextBridge.exposeInMainWorld('quorum', {
   calendarPrivacy: () => ipcRenderer.invoke('calendar-privacy'),
   calendarOpen: (ev) => ipcRenderer.invoke('calendar-open', ev),
   meetingBrief: (q) => ipcRenderer.invoke('meeting-brief', q),
+  meetingPrep: (id, opts) => ipcRenderer.invoke('meeting-prep', id, opts),
   meetingAsk: (ev, question, history, chatId) => ipcRenderer.invoke('meeting-ask', ev, question, history, chatId),
   eventChat: (id) => ipcRenderer.invoke('event-chat', id),
   recordContinue: () => ipcRenderer.invoke('record-continue'),

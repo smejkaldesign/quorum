@@ -2273,6 +2273,8 @@ input::placeholder, textarea::placeholder { font-style: italic; }
 /* Related meetings: Show more at the right of the title */
 .mp-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .mp-head h2 { margin-bottom: 0; }
+.mp-prep-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.mp-prep-foot { display: flex; gap: 8px; margin-top: 12px; }
 /* an open chat rises into place, and Exit chat plays that in reverse before the chat list comes back */
 .note-thread.chat-open { animation: thread-in 220ms ease; }
 @keyframes thread-in { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }

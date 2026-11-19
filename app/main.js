@@ -35,7 +35,7 @@ import { NAME_SYSTEM, isUntitled, parseName } from './noteName.js';
 import { noteParts } from './noteParts.js';
 import { hashText, newNoteText, noteFileName, noteForEditor, rewriteNote, screenRead, splitNote, validFrontmatter, yamlStr } from './handnote.js';
 import { listBookmarks, moveBookmarks, openToday, openEdit, saveEdit, toggleBookmark } from './vaultEdit.js';
-import { createKeeper } from './keeper.js';
+import { createKeeper, folders } from './keeper.js';
 import { createVersionStore } from './memoryVersions.js';
 import { createLiveRuns, stopAndRestore } from './liveRuns.js';
 import { lineDiff, noteBody } from './memoryReview.js';
@@ -100,6 +100,8 @@ import { open as openAsync, stat as statAsync } from 'node:fs/promises';
 import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
 import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, relatedOf, seriesKey, seriesOf } from './meetingBrief.js';
+import { prepSettings } from './meetingPrep.js';
+import { createPrepCache, createPrepRunner } from './meetingPrepRun.js';
 import { collectExport, exportFileName, writeZip } from './exportNotes.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -1529,6 +1531,13 @@ ipcMain.handle('set-settings', (_e, next) => {
     settings.suggestions = next.suggestions;
     store.settings.save();
   }
+  // Settings > Calendar > Meeting prep: on or off, how far ahead, and the invitee filter (meetingPrep.js prepSettings)
+  if (next.meetingPrep && typeof next.meetingPrep === 'object') {
+    const was = prepConf().enabled;
+    settings.meetingPrep = prepSettings({ ...prepConf(), ...next.meetingPrep });
+    store.settings.save();
+    if (settings.meetingPrep.enabled && !was) setTimeout(() => { prepAhead(); }, 0);
+  }
   // Cloud with a team: whether new meeting notes go to the workspace's meetings knowledge base (ee/meetingsKb.js)
   if (next.meetingsKb && typeof next.meetingsKb === 'object' && typeof next.meetingsKb.autoSave === 'boolean') {
     if (account.meetingsKb) account.meetingsKb.setAutoSave(next.meetingsKb.autoSave);
@@ -2428,6 +2437,62 @@ async function meetingBriefFor(q, title, past, list) {
     return { past: list, brief, status: 'ready' };
   } catch (e) { log('meeting brief', e?.message); return { past: list, brief: null, status: 'failed' }; }
 }
+
+// Meeting prep (meetingPrep.js, meetingPrepRun.js): the note an upcoming event opens to, built from the vault and
+// written by the person's own model source, saved into the vault next to the daily note. Behind the meeting-prep flag
+// and the Settings switch (both off by default)
+const prepConf = () => prepSettings(settings.meetingPrep);
+const prepOn = () => flagsApi?.get('meeting-prep') === true && prepConf().enabled;
+// you, on an invite: Google's self flag, the email Claude Code or Google Calendar is signed in with, or your name
+function prepIsMe(a) {
+  const mine = [userCache?.email, gcal.status?.().account].map((x) => String(x ?? '').toLowerCase()).filter(Boolean);
+  return a.self === true || (!!a.email && mine.includes(a.email)) || (!!a.name && a.name.toLowerCase() === USER_NAME.toLowerCase());
+}
+const prep = createPrepRunner({
+  on: prepOn,
+  conf: prepConf,
+  brain() {
+    const b = brain();
+    if (!b || !vindex) return null;
+    return { vault: b.vault, agentDoc: () => { try { return b.markers?.agentOS ? readFileSync(path.join(b.root, b.markers.agentOS), 'utf8') : ''; } catch { return ''; } } };
+  },
+  snapshot: () => vindex.snapshot(),
+  search: (q, n) => vindex.search(q, n),
+  meetings: () => meetingIndex().map((m) => ({ rel: m.rel, title: m.title, date: m.date, people: m.people })),
+  isMe: prepIsMe,
+  mentionsOptOut,
+  onNeverList,
+  isExcluded: (t) => suggester.isExcluded(t),
+  redact: (t) => suggester.redactLines(t),
+  modelReady: () => modelSource() !== 'none',
+  runModel: (prompt, system) => runClaude(prompt, system, settings.model, { role: 'summary' }),
+  events: (days) => calendarEvents(days),
+  // the calls Up next lists: not hidden, on a meeting platform that is on
+  listed: (e, platform) => !!platform && providerOn(platform) && !calSettings().hidden.includes(e.id),
+  folders(vault) {
+    const md = meetingsDir();
+    return { daily: folders(vault).daily ?? null, meetings: md ? path.relative(vault, md).split(path.sep).join('/') || null : null };
+  },
+  owner: () => OWNER,
+  about: aboutMe,
+  write: writeAtomic,
+  cache: createPrepCache(path.join(DATA_DIR, 'meeting-preps.json')),
+  log,
+});
+const prepAhead = () => prep.prepAhead();
+// the raw event (with invitees and invite text) behind an Up next row, by its id
+async function rawEvent(id) {
+  const { events } = await calendarEvents(8);
+  return events.find((x) => x.id === String(id ?? '')) ?? null;
+}
+ipcMain.handle('meeting-prep', async (_e, id, opts) => {
+  if (!prepOn()) return { status: 'off' };
+  const e = await rawEvent(id);
+  if (!e || suggester.isExcluded(e.title)) return { status: 'missing' };
+  return prep.prepFor(e, { generate: opts?.generate === true, force: opts?.force === true });
+});
+setTimeout(() => { prepAhead(); }, 90000).unref?.();
+setInterval(() => { prepAhead(); }, 10 * 60000).unref?.();
 
 // questions about an upcoming meeting, from its page: the event, its prep notes and the series' recent notes are in
 // the prompt, and Claude Code can read the rest of the Agent OS. The chat is saved under the meeting's event id
@@ -4650,7 +4715,7 @@ async function calendarEvents(days) {
 const CALL_LINKS = [
   ['zoom', /https?:\/\/[\w.-]*zoom\.(?:us|com)\/(?:j|my|w|s)\/[^\s<>"']+/i],
   ['meet', /https?:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}\b[^\s<>"']*/i],
-  ['teams', /https?:\/\/(?:teams\.microsoft\.com\/l\/meetup-join|teams\.live\.com\/meet)[^\s<>"']+/i],
+  ['teams', /https?:\/\/(?:teams\.microsoft\.com\/l\/meetup-join|teams\.(?:live|microsoft)\.com\/meet\/)[^\s<>"']+/i],
 ];
 function callLink(e) {
   const text = `${e.url ?? ''}\n${e.location ?? ''}\n${e.notes ?? ''}`;

@@ -18,6 +18,7 @@ import { AgentRows, ConnectionCheckButton, ConnectionCheckList, mcpLink, useAgen
 import { MeetingSourcesRows } from './MeetingSources';
 import { useFlag, useNotetaker } from './flags';
 import { MemoryUpdatesCard } from './MemoryUpdates';
+import { MeetingPrepCard } from './MeetingPrepSettings';
 import { MemoryRulesCard } from './MemoryRules';
 import { LocalModelsCard } from './LocalModels';
 import {
@@ -867,6 +868,8 @@ function CalendarPage({ onConnector }: { onConnector: (id: string) => void }) {
           </select>
         </Row>
       </div>
+
+      <MeetingPrepCard />
 
       <h3>Meetings</h3>
       <div className="set-card">
