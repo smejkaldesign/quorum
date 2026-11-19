@@ -39,7 +39,9 @@ const intoEE = (file, spec) => {
   return target === path.join(app, 'ee') || target.startsWith(path.join(app, 'ee') + path.sep);
 };
 
-const STATIC = /(?:^|\n)\s*(?:import|export)\s[^'"\n]*?from\s*['"]([^'"]+)['"]|(?:^|\n)\s*import\s*['"]([^'"]+)['"]|\brequire\(\s*['"]([^'"]+)['"]\s*\)/g;
+// the names before `from` are a braced list (which the formatter splits over several lines) and/or bare names, `* as x`
+const NAMES = String.raw`(?:[\w$*\s,]*?\{[^}]*\}|[\w$*\s,]+?)`;
+const STATIC = new RegExp(String.raw`(?:^|\n)\s*(?:import|export)\s+${NAMES}\s*from\s*['"]([^'"]+)['"]|(?:^|\n)\s*import\s*['"]([^'"]+)['"]|\brequire\(\s*['"]([^'"]+)['"]\s*\)`, 'g');
 const DYNAMIC = /\bimport\(\s*['"`]([^'"`]+)['"`]\s*\)/g;
 
 for (const file of walk(app)) {
@@ -60,7 +62,7 @@ if (!/import\(`\.\/ee\/\$\{file\}`\)/.test(editionSrc)) problems.push('edition.j
 // rule 3: follow the renderer's runtime imports (type-only imports are erased) and flag any Node built-in they reach
 const BUILTIN = new Set(builtinModules.flatMap((m) => [m, m.split('/')[0]]));
 const isBuiltin = (spec) => spec.startsWith('node:') || BUILTIN.has(spec.split('/')[0]);
-const RUNTIME = /(?:^|\n)\s*(import|export)(?!\s+type\b)\s[^'"\n]*?from\s*['"]([^'"]+)['"]|(?:^|\n)\s*import\s*['"]([^'"]+)['"]|\bimport\(\s*['"]([^'"]+)['"]\s*\)/g;
+const RUNTIME = new RegExp(String.raw`(?:^|\n)\s*(import|export)(?!\s+type\b)\s+${NAMES}\s*from\s*['"]([^'"]+)['"]|(?:^|\n)\s*import\s*['"]([^'"]+)['"]|\bimport\(\s*['"]([^'"]+)['"]\s*\)`, 'g');
 const RESOLVE = ['', '.ts', '.tsx', '.mjs', '.js', '/index.ts', '/index.tsx', '/index.js'];
 const resolveRel = (from, spec) => {
   const base = path.resolve(path.dirname(from), spec);
