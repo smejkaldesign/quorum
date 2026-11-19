@@ -24,6 +24,7 @@ import { createTokenStore } from './sources/tokens.js';
 import { connectAccount, createAccounts, oauthClients } from './sources/accounts.js';
 import { createConnectorTools } from './connectors/tools/index.js';
 import { actorLabel, createAppActions, currentActor, outsideActor } from './appActions.js';
+import { runMemoryTool } from './cli/memoryTools.mjs';
 import { CONNECTOR_SERVER } from './cli/connectorTools.mjs';
 import { httpUrl, relayFetch, relayUrl } from './relayUrl.js';
 import { createErrorReports } from './errorReports.js';
@@ -5451,6 +5452,13 @@ async function control({ cmd, args = {} }) {
     case 'connector_tool': return connectorTools.run(String(args.name ?? ''), args.args ?? {});
     // a Memory health or Knowledge tool, through the handlers the buttons use; appActions.js checks read only and the setting
     case 'app_action': return appActions.run(String(args.name ?? ''), args.args ?? {}, args.via ?? null);
+    // memory graph and search tools (cli/memoryTools.mjs): each forwards to the graph or search handler of that name;
+    // all read only. A handler that is not registered yet answers that the index is not ready. Withheld notes and lines
+    // are taken out before the answer leaves the app
+    case 'memory_tool': return runMemoryTool(args.name, args.args ?? {}, {
+      handler: (h) => { const fn = actionHandlers.get(h); return fn ? (a) => fn(null, a) : null; },
+      withheld: excludedPath, isExcluded: suggester.isExcluded, redact: suggester.redactLines,
+    });
     case 'start':
       // start acts on a noticed call, so it follows meeting-capture; stop, go and end work on any running session
       if (!gate().meetingCapture) throw new Error('Quorum does not watch for calls in this build. Start listening from the app for a note of your own.');

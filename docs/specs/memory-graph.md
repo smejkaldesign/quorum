@@ -63,6 +63,8 @@ In `app/cli/` through the app bridge (`appTools.mjs`), each with a `budget` argu
 - `graph_query`, `graph_path`, `explain`, `entity`, `decisions`.
 - `memory_status`: setup progress, index counts, open gaps.
 
+The tools are defined in `app/cli/memoryTools.mjs` and run in the app through one control socket command, `memory_tool`, which calls the IPC handler each tool names (`memory-search`, `memory-search-status`, `memory-graph-query`, `-path`, `-explain`, `-entity`, `-decisions`, `-status`), answers "not ready" while a handler is missing, and withholds opted-out notes and lines. `app/cli/budget.mjs` (pure) turns each answer into lines: one per node, edge, passage or decision with source path and line, provenance and dates, strongest first, then a summary line. A name that matches several nodes returns the candidates. All are read only, so read only mode allows them; the in-app chat's connectors-only server does not list them. `quorum memory search|graph|path|explain|entity|decisions|status` runs them from Terminal.
+
 Update `about.mjs`, the instructions (under 2,048 characters), the README "For AI agents" section and the tool tests. Instructions tell agents to start with `entity`, `decisions` or `search` before reading files.
 
 ### Memory setup and the maintainer layer (agent: setup)
