@@ -5,7 +5,7 @@ import type { MissingLink } from './quorum';
 import markReview from '../assets/quorum-mark.png';
 import { CATEGORIES, HEALTH_SORTS, categoryCounts, countsLine, healthList, issueMeta, type HealthCategory, type HealthSort, type Issue } from '../memoryHealth.js';
 import { IconArchive, IconCheck, IconChevron, IconClose, IconReset, IconStop } from './icons';
-import { lastFailures } from '../fixFailures.js';
+import { batchCancelled, lastFailures } from '../fixFailures.js';
 import { FixError } from './FixError';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
 import { BulkPick, DismissButton, IssueParts, ReviewDetails, Row as FeedItem, RowMenu, RunBanner, StatusBadge, StatusSwap, UndoMenu, ViewButton, ago, runStatus } from './NotificationsView';
@@ -93,6 +93,8 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const [engineError, setEngineError] = useState<string | null>(null);
   // the issues whose Approve was pressed: a spinner in place of the button until their run takes over
   const [approving, setApproving] = useState<Set<string>>(new Set());
+  // the runs that failed while this page was open: their error is announced once, the kept ones read as status
+  const [endedHere, setEndedHere] = useState<Set<string>>(new Set());
   // the failed fixes whose error was dismissed; the error stays on its item until then
   const [seen, setSeen] = useState<Set<string>>(() => { try { return new Set(JSON.parse(localStorage.getItem(ERRORS_SEEN) ?? '[]')); } catch { return new Set(); } });
   const dismissError = (run: string, key: string) => setSeen((s) => {
@@ -129,7 +131,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   // a run's progress, and the list again once it ends
   // the Approve mark of every item the run holds gives way to the run: a batch reports under its own key, so its items
   // are read from the run, or their spinner would stay after the run ended
-  useEffect(() => window.quorum.onFixRun((r) => { setRuns((xs) => [r, ...xs.filter((x) => x.id !== r.id)]); setApproving((ks) => { const held = runKeys(r).filter((k) => ks.has(k)); if (!held.length) return ks; const n = new Set(ks); for (const k of held) n.delete(k); return n; }); if (r.status === 'success' || r.status === 'error') { load(); window.setTimeout(() => load(), 8300); } }), [load]);
+  useEffect(() => window.quorum.onFixRun((r) => { setRuns((xs) => [r, ...xs.filter((x) => x.id !== r.id)]); setApproving((ks) => { const held = runKeys(r).filter((k) => ks.has(k)); if (!held.length) return ks; const n = new Set(ks); for (const k of held) n.delete(k); return n; }); if (r.status === 'error') setEndedHere((s) => new Set([...s, r.id])); if (r.status === 'success' || r.status === 'error') { load(); window.setTimeout(() => load(), 8300); } }), [load]);
   // an issue answered in Notifications leaves this list too: both read the same issues
   useEffect(() => { const go = () => { load(); }; window.addEventListener(CHANGED, go); return () => window.removeEventListener(CHANGED, go); }, [load]);
   useEffect(() => { if (focus) document.getElementById(`lh-${focus.toLowerCase()}`)?.scrollIntoView({ block: 'center' }); }, [focus, items]);
@@ -313,9 +315,9 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
         </span>
       </div>
       {failShown && fail && (
-        <FixError title={fail.cancelled ? 'Fix cancelled.' : 'Fix failed.'} reason={fail.error} onDismiss={() => dismissError(fail.run, i.key)}
+        <FixError title={fail.cancelled ? 'Fix cancelled.' : 'Fix failed.'} reason={fail.error} fresh={endedHere.has(fail.run)} onDismiss={() => dismissError(fail.run, i.key)}
           actions={[
-            { label: 'Try again', primary: true, onClick: () => { if (!busy && !locked(i)) decide([i], 'approve'); } },
+            { label: 'Try again', primary: true, disabled: busy || locked(i), tip: locked(i) ? 'Waits until the run writing these notes finishes' : 'Waits until Quorum finishes the change in progress', onClick: () => decide([i], 'approve') },
             { label: 'Fix by hand', onClick: () => { dismissError(fail.run, i.key); onReview(i); } },
           ]} />
       )}
@@ -515,7 +517,7 @@ function BatchBanner({ runs, error, onCancel, onDismiss }: { runs: FixRun[]; err
   const finished = ok + bad;
   const now = items.find((x) => x.run.status === 'running');
   const live = finished < items.length;
-  const cancelled = !ok && items.some((x) => x.run.error?.endsWith('cancelled the batch'));
+  const cancelled = !ok && batchCancelled(items.map((x) => x.run));
   const text = live
     ? `Fixing ${finished + 1} of ${items.length}${now ? `: “${now.title}”${now.run.steps.length ? `, ${now.run.steps[now.run.steps.length - 1].label.toLowerCase()}` : ''}` : ''}`
     : cancelled ? `Cancelled. ${items.length} ${items.length === 1 ? 'item is' : 'items are'} back in Needs review` : batchSummary(items.map((x) => ({ title: x.title, status: x.run.status, error: x.run.error, rolledBack: x.run.rolledBack })));

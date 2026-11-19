@@ -9,7 +9,7 @@ import path from 'node:path';
 import { createResolver, parseNote } from './linkparse.js';
 import { sha } from './fixUndo.js';
 import { writeAtomic } from './relink.js';
-import { vaultPath, vaultTarget } from './vault.js';
+import { createNote, vaultPath, vaultTarget } from './vault.js';
 
 const safe = (id) => String(id).replace(/[^a-z0-9_-]/gi, '_').slice(0, 200);
 
@@ -104,6 +104,19 @@ export function newLinksCheck({ text, rel, resolve }) {
     return `The fix would leave a new broken link to “${l.target.replace(/\.md$/i, '').trim()}” in ${rel}, so Quorum did not write it`;
   }
   return null;
+}
+
+// writes a missing note from a fix's text, checked first: a link in the text that opens nothing throws before the note
+// exists. before() runs between the check and the write (the run's step and its guard); keep(rel, true) records the new
+// note for the run's rollback before its text is written. Answers the note's path
+export async function writeCheckedNote({ vault, folder, name, text, resolve, keep = () => {}, before = async () => {} }) {
+  const bad = newLinksCheck({ text, rel: `${folder ? `${folder}/` : ''}${name}.md`, resolve });
+  if (bad) throw new Error(bad);
+  await before();
+  const rel = createNote(vault, folder, name);
+  keep(rel, true);
+  writeAtomic(path.join(vault, rel), text);
+  return rel;
 }
 
 // puts back the notes a run wrote, from its undo record (files: { rel, before, after, gone }). A note whose text no longer

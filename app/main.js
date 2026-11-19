@@ -13,8 +13,8 @@ import { SKIP as TREE_SKIP, createFolder, createNote, duplicateItem, moveItem, r
 import { createVaultIndex } from './vindex.js';
 import { createMemoryGraph } from './graph/index.js';
 import { applyUndo, sha, undoRecord } from './fixUndo.js';
-import { changedSince, createFixJournal, createNoteHashes, fixCheck, hashNotes, newLinksCheck, noteMemo, recoveryReason, rollback } from './fixJournal.js';
-import { holdFailed } from './fixFailures.js';
+import { changedSince, createFixJournal, createNoteHashes, fixCheck, hashNotes, noteMemo, recoveryReason, rollback, writeCheckedNote } from './fixJournal.js';
+import { cancelError, cancelRuns, endFailed, holdFailed } from './fixFailures.js';
 import { createGateStore, gatePasses, gateTriggers, verdictOf } from './gateRun.js';
 import { addAlias, linkSources, relinkMoved, retargetLinks, rewriteLinks, unlinkTarget, writeAtomic } from './relink.js';
 import store from './store/index.js';
@@ -380,7 +380,6 @@ const actionHandlers = new Map();
 const handleAction = (name, fn) => { const run = feedNotify(name, fn); actionHandlers.set(name, feedTouched(name, run)); ipcMain.handle(name, run); };
 // a fix an AI tool approved keeps its name, so Memory health and Notifications show who approved it
 // the error a cancelled batch ends with; the window finds it by its ending
-const cancelText = (run) => `${run.cancelBy ?? 'You'} cancelled ${run.kind === 'batch' && (run.items?.length ?? 0) > 1 ? 'the batch' : 'the fix'}`;
 const byOf = (actor) => (actor && actor !== 'you' && actor !== 'auto' ? { actor, by: actorLabel(actor) } : {});
 // the notetaker flags (notetaker.js). The gates are worked out once from the resolved flags and kept until the flags
 // change (registerFlags' emit below), so a change from the admin app applies without a restart. Until registerFlags
@@ -3191,17 +3190,13 @@ async function decideLink(key, verdict, step = async () => {}, keep = () => {}, 
   await finder?.refresh();
   const hit = finder?.find(name);
   if (hit) throw new Error(`${hit.kind === 'branch' ? `A note with that name is on the branch ${hit.branch}` : `A ${hit.kind} with that name is at ${hit.where}`}, so Quorum did not write a note`);
-  // the text is checked before the note exists: a link in it that opens nothing fails the fix, which writes nothing
-  const text = `${frontBlock(contextNote(issue))}${draft.text.trim()}\n`;
+  // a drafted note keeps the frontmatter Quorum writes (the confidential mark of its sources) above the draft's text. The
+  // text is checked before the note exists: a link in it that opens nothing fails the fix, which writes nothing
   await step('Checking the links in the draft');
-  const bad = newLinksCheck({ text, rel: `${folder ? `${folder}/` : ''}${name}.md`, resolve: vindex.resolve });
-  if (bad) throw new Error(bad);
-  await step(`Writing ${folder ? `${folder}/` : ''}${name}.md from ${draft?.text ? 'the agent\'s draft' : 'what the linking notes say'}`);
-  guard();
-  const rel = createNote(b.vault, folder, name);
-  keep(rel, true);
-  // a drafted note keeps the frontmatter Quorum writes (the confidential mark of its sources) above the draft's text
-  writeAtomic(path.join(b.vault, rel), text);
+  const rel = await writeCheckedNote({
+    vault: b.vault, folder, name, text: `${frontBlock(contextNote(issue))}${draft.text.trim()}\n`, resolve: vindex.resolve, keep,
+    before: async () => { await step(`Writing ${folder ? `${folder}/` : ''}${name}.md from ${draft?.text ? 'the agent\'s draft' : 'what the linking notes say'}`); guard(); },
+  });
   await step('Updating the vault index');
   vindex.sync();
   await recheck({ made: rel });
@@ -3323,7 +3318,7 @@ async function pumpFixes() {
     // a note that still reads as the fix left it, and leaves one the person edited before the next start
     const stamp = () => { const h = hashNotes(run.vault, kept.map((k) => k.rel)); writeUndo(run, kept.map((k) => ({ ...k, after: h[k.rel] }))); };
     const step = async (label) => {
-      if (run.cancel) throw new Error(cancelText(run));
+      if (run.cancel) throw cancelError(run);
       if (work) work.progress((run.items ?? []).filter((i) => i.status === 'success').length, (run.items ?? []).length, label);
       if (kept.length) stamp();
       fixJournal.append(run.id, { step: 'step', label });
@@ -3353,9 +3348,7 @@ async function pumpFixes() {
       run.undoable = saveUndo(run, kept) || (run.kind === 'batch' && !!run.done?.length);
       if (run.kind === 'batch') afterBatch(run, kept);
     } catch (e) {
-      run.status = 'error';
-      run.error = e?.message ?? String(e);
-      if (run.cancel) run.cancelled = true;
+      endFailed(run, e);
       // a failure the batch could not keep to one item puts every item back: one it had fixed is marked rolled back, one
       // that failed on its own keeps its reason
       if (run.kind === 'batch') rollBackItems(run.items);
@@ -3398,25 +3391,11 @@ ipcMain.handle('fix-start', (_e, keys) => startFixes(Array.isArray(keys) ? keys 
 handleAction('fix-cancel', (_e, batch) => {
   const id = String(batch ?? '');
   if (!id) return 0;
-  let n = 0;
   const by = currentActor() === 'you' ? null : actorLabel(currentActor());
-  for (const r of fixRunList()) {
-    if (r.batch !== id && r.id !== id) continue;
-    if (by && (r.status === 'queued' || r.status === 'running')) r.cancelBy = by;
-    if (r.status === 'queued') {
-      const at = fixQueue.indexOf(r);
-      if (at >= 0) fixQueue.splice(at, 1);
-      r.status = 'error';
-      r.error = cancelText(r);
-      r.cancelled = true;
-      r.endedAt = Date.now();
-      for (const it of r.items ?? []) it.status = 'error';
-      batchPlans.delete(r.id);
-      fixJournal.append(r.id, { step: 'ended', status: r.status, error: r.error });
-      fixEmit(r);
-      n++;
-    } else if (r.status === 'running') { r.cancel = true; r.agentAbort?.abort(); n++; }
-  }
+  const n = cancelRuns(fixRunList(), id, {
+    queue: fixQueue, by,
+    ended: (r) => { batchPlans.delete(r.id); fixJournal.append(r.id, { step: 'ended', status: r.status, error: r.error }); fixEmit(r); },
+  });
   if (n) { fixRunsSave(); toUI('memory-updates', null); }
   return n;
 });
@@ -3766,13 +3745,13 @@ async function agentResolve(item, run, step) {
     // a contradiction call that already runs finishes first, so the agent makes one model call at a time. Neither the
     // drafter nor the contradiction agent starts a new call while this batch runs (their busy)
     while (contradictionAbort && !run.cancel) await new Promise((r) => setTimeout(r, 250));
-    if (run.cancel) throw new Error(cancelText(run));
+    if (run.cancel) throw cancelError(run);
     const ctl = new AbortController();
     run.agentAbort = ctl;
     let res;
     try { res = await drafter.onDemand(base, notes, { signal: ctl.signal }); } finally { run.agentAbort = null; }
     gateRuns.fallback(res);
-    if (res.cancelled || run.cancel) throw new Error(cancelText(run));
+    if (res.cancelled || run.cancel) throw cancelError(run);
     if (!res.draft) return res;
     draft = res.draft;
   }
