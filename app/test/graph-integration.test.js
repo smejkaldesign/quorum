@@ -15,17 +15,21 @@ async function setup(opts = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'memgraph-'));
   const vault = path.join(root, 'v');
   const info = writeGraphVault(vault, { notes: 120, people: 20, projects: 5, companies: 3, meetings: 30, padWords: 10, ...opts });
-  const ix = createVaultIndex({ vault, isExcludedPath: () => false, isExcludedText: (t) => SECRET.test(t), redact: (t) => t.split('\n').map((l) => (SECRET.test(l) ? '[withheld: opted-out customer]' : l)).join('\n'), onChange: () => {} });
+  // the graph hears the index the way main.js wires it: every sync reports through onIndexed
+  let live = null;
+  const ix = createVaultIndex({ vault, isExcludedPath: () => false, isExcludedText: (t) => SECRET.test(t), redact: (t) => t.split('\n').map((l) => (SECRET.test(l) ? '[withheld: opted-out customer]' : l)).join('\n'), onChange: () => {}, onIndexed: (rels) => live?.update(rels) });
   ix.sync();
   const dataDir = path.join(root, 'data');
-  const make = () => { const g = createMemoryGraph({ dataDir, vault, vindex: ix, isExcluded: (t) => SECRET.test(t) }); open.push(g); return g; };
+  const make = () => { const g = createMemoryGraph({ dataDir, vault, vindex: ix, isExcluded: (t) => SECRET.test(t) }); open.push(g); live = g; return g; };
   const g = make();
   await g.build();
-  const write = (rel, text) => { const abs = path.join(vault, rel); mkdirSync(path.dirname(abs), { recursive: true }); writeFileSync(abs, text); g.update(ix.syncPaths([rel])); };
+  const write = (rel, text) => { const abs = path.join(vault, rel); mkdirSync(path.dirname(abs), { recursive: true }); writeFileSync(abs, text); ix.syncPaths([rel]); };
   const edit = (rel, fn) => write(rel, fn(readFileSync(path.join(vault, rel), 'utf8')));
-  const move = (from, to) => { mkdirSync(path.dirname(path.join(vault, to)), { recursive: true }); renameSync(path.join(vault, from), path.join(vault, to)); g.update(ix.syncPaths([from, to])); };
-  const remove = (rel) => { rmSync(path.join(vault, rel)); g.update(ix.syncPaths([rel])); };
-  return { root, vault, ix, g, make, info, write, edit, move, remove };
+  const rename = (from, to) => { mkdirSync(path.dirname(path.join(vault, to)), { recursive: true }); renameSync(path.join(vault, from), path.join(vault, to)); };
+  // a move the watcher saw: vindex pairs it (onMoves) before it reads the paths again
+  const move = (from, to) => { rename(from, to); live.moved(ix.movesIn([from, to])); ix.syncPaths([from, to]); };
+  const remove = (rel) => { rmSync(path.join(vault, rel)); ix.syncPaths([rel]); };
+  return { root, vault, ix, g, make, info, write, edit, rename, move, remove };
 }
 afterEach(() => { while (open.length) open.pop().close(); });
 
@@ -106,6 +110,59 @@ describe('memory graph on a generated vault', () => {
     expect(after).toHaveLength(1);
     expect(after[0].date).toBeLessThan(before.date);
     expect(after[0].supersededBy).toBe(null);
+  });
+
+  it('keeps edges through a move vindex reports through onMoves, and says it was a move', async () => {
+    const { g, ix, rename } = await setup();
+    const approved = g.store.addEdge({ src: 'person:ana-ruiz', dst: 'project:project-b', kind: 'works_on', provenance: 'person', source_rel: '02-people/ana-ruiz.md' });
+    const seen = [];
+    g.onFileChange((c) => seen.push(c));
+    rename('02-people/ana-ruiz.md', 'people/ana-ruiz.md');
+    const pairs = ix.movesIn(['02-people/ana-ruiz.md', 'people/ana-ruiz.md']);
+    expect(pairs).toEqual([{ from: '02-people/ana-ruiz.md', to: 'people/ana-ruiz.md' }]);
+    g.moved(pairs);
+    ix.syncPaths(['02-people/ana-ruiz.md', 'people/ana-ruiz.md']);
+    expect(g.store.edge(approved)).toMatchObject({ src: 'person:ana-ruiz', provenance: 'person' });
+    expect(g.store.node('person:ana-ruiz').rel).toBe('people/ana-ruiz.md');
+    expect(g.store.edgesOf('person:ana-ruiz', { kinds: ['member_of', 'attended'] }).length).toBeGreaterThan(1);
+    expect(seen.filter((c) => c.type !== 'upsert' || c.rel !== 'people/ana-ruiz.md').map((c) => c.type)).toContain('move');
+    expect(seen.some((c) => c.type === 'remove')).toBe(false);
+  });
+
+  it('moves by the reported pair when the text changed on the way, as an in-app move that rewrites links does', async () => {
+    const { g, ix, vault, edit, rename } = await setup();
+    edit('02-people/ana-ruiz.md', (t) => t.replace('company: "[[Company 0]]"', 'company: "[[Company 1]]"'));
+    const approved = g.store.addEdge({ src: 'note:02-people/ana-ruiz.md', dst: 'note:notes/00/note-1.md', kind: 'links_to', provenance: 'person', source_rel: '02-people/ana-ruiz.md' });
+    rename('02-people/ana-ruiz.md', 'people/ana.md');
+    writeFileSync(path.join(vault, 'people/ana.md'), `${readFileSync(path.join(vault, 'people/ana.md'), 'utf8')}\nSee [[note-2]].\n`);
+    g.moved([{ from: '02-people/ana-ruiz.md', to: 'people/ana.md' }]);
+    ix.sync();
+    expect(g.store.edge(approved).src).toBe('note:people/ana.md');
+    // the person is now named by the new file, with the history of the old one
+    const ex = g.explain('person:ana');
+    expect(ex.history.map((e) => e.dst)).toEqual(['company:company-0']);
+    expect(g.store.node('person:ana-ruiz')).toBe(null);
+  });
+
+  it('pairs a burst of identical notes by what was reported, where the same text cannot tell them apart', async () => {
+    const { g, ix, write, rename } = await setup();
+    write('notes/twin-a.md', '# Twin\n');
+    write('notes/twin-b.md', '# Twin\n');
+    const a = g.store.addEdge({ src: 'note:notes/twin-a.md', dst: 'person:ana-ruiz', kind: 'mentions', provenance: 'person', source_rel: 'notes/twin-a.md' });
+    const b = g.store.addEdge({ src: 'note:notes/twin-b.md', dst: 'person:ben-ruiz', kind: 'mentions', provenance: 'person', source_rel: 'notes/twin-b.md' });
+    rename('notes/twin-a.md', 'archive/one.md');
+    rename('notes/twin-b.md', 'archive/two.md');
+    g.moved([{ from: 'notes/twin-a.md', to: 'archive/two.md' }, { from: 'notes/twin-b.md', to: 'archive/one.md' }]);
+    ix.syncPaths(['notes/twin-a.md', 'notes/twin-b.md', 'archive/one.md', 'archive/two.md']);
+    expect(g.store.edge(a).src).toBe('note:archive/two.md');
+    expect(g.store.edge(b).src).toBe('note:archive/one.md');
+  });
+
+  it('hears a sync Quorum runs after its own write', async () => {
+    const { g, ix, vault } = await setup();
+    writeFileSync(path.join(vault, 'notes/quorum-wrote.md'), '# Written\n\n[[ana-ruiz]]\n');
+    ix.sync();
+    expect(g.store.edgesOf('note:notes/quorum-wrote.md', { dir: 'out', kinds: ['mentions'] }).map((e) => e.dst)).toEqual(['person:ana-ruiz']);
   });
 
   it('resolves a link once the note it names is written', async () => {
