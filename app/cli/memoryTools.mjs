@@ -19,17 +19,17 @@ export const MEMORY_TOOLS = [
     inputSchema: { type: 'object', properties: { q: str('a name or a question'), budget, depth: { type: 'number', description: 'hops from the matched nodes, 1 to 3, default 2' }, kinds: { type: 'array', items: { type: 'string' }, description: 'only these edge kinds' }, current }, required: ['q'] },
   },
   {
-    name: 'graph_path', handler: 'memory-graph-path', call: ({ a, b, undirected }) => [a, b, undirected != null ? { undirected } : {}],
+    name: 'graph_path', handler: 'memory-graph-path',
     description: 'How two things connect: the shortest chain of edges between two nodes, each edge with its kind, provenance, source and dates. Takes names or node ids.',
     inputSchema: { type: 'object', properties: { a: str('a name or node id'), b: str('a name or node id'), undirected: { type: 'boolean', description: 'follow edges both ways (default true)' }, budget }, required: ['a', 'b'] },
   },
   {
-    name: 'explain', handler: 'memory-graph-explain', call: ({ id }) => [id],
+    name: 'explain', handler: 'memory-graph-explain',
     description: 'Why a node is in the graph: its source note, aliases, community, every incoming and outgoing edge with provenance and dates, and the facts it superseded or that superseded it.',
     inputSchema: { type: 'object', properties: { id: str('a node id such as person:jane-doe, or a name'), budget }, required: ['id'] },
   },
   {
-    name: 'entity', handler: 'memory-graph-entity', call: ({ name, budget: b }) => [name, { budget: b }],
+    name: 'entity', handler: 'memory-graph-entity',
     description: 'Everything about one person, project or company: its note, the meetings it was in, the decisions about it, the notes that mention it and the people around it, newest first.',
     inputSchema: { type: 'object', properties: { name: str('a name, alias or node id'), budget }, required: ['name'] },
   },
@@ -39,8 +39,8 @@ export const MEMORY_TOOLS = [
     inputSchema: { type: 'object', properties: { about: str('a project, person, company or topic; all decisions when left out'), since: str('ISO date: only decisions on or after it'), current, budget } },
   },
   {
-    name: 'memory_status', handler: 'memory-graph-status', status: 'memory-search-status', call: () => [],
-    description: 'How complete Quorum\'s memory of the vault is: setup progress, notes indexed, nodes and edges by kind, links resolved, passages and embeddings built, and the open gaps listed in Needs review.',
+    name: 'memory_status', handler: 'memory-graph-status', status: 'memory-search-status', setup: 'memory-setup-status',
+    description: 'How complete Quorum\'s memory of the vault is: setup progress and gaps from the memory scan, notes indexed, nodes and edges by kind, links resolved, passages and embeddings built, and the open gaps listed in Needs review.',
     inputSchema: { type: 'object', properties: {} },
   },
 ];
@@ -68,11 +68,10 @@ export function withhold(value, filters = {}) {
 }
 
 // what the app runs for memory_tool on the control socket. handler(name) is the registered graph or search handler of
-// that name, or null while the index is not built; it takes the arguments the tool's call() makes of the tool's args
-// (one args object when the tool has no call()). memory_status asks both the graph and the
-// search index and answers with what is ready
+// that name, or null while the index is not built; each takes the tool's args as one object. memory_status asks the
+// graph, the search index and the memory setup scan and answers with what is ready
 // the app side of the bridge: a tool's handler name to a function that calls the registered IPC handler with every
-// argument the tool's call() builds (graph_path passes from, to and options), with no IPC event
+// argument it is given, with no IPC event
 export const fromActionHandlers = (handlers) => (h) => { const fn = handlers.get(h); return fn ? (...a) => fn(null, ...a) : null; };
 
 export async function runMemoryTool(name, args = {}, { handler, ...filters }) {
@@ -81,14 +80,15 @@ export async function runMemoryTool(name, args = {}, { handler, ...filters }) {
   const run = async (h) => {
     const fn = handler(h);
     if (!fn) throw new Error(NOT_READY);
-    const r = await fn(...(tool.call ? tool.call(args) : [args]));
+    const r = await fn(args);
     if (r?.error) throw new Error(r.error);
     return r;
   };
   if (tool.name === 'memory_status') {
-    const [graph, search] = await Promise.all([run(tool.handler).catch((e) => ({ error: e.message })), run(tool.status).catch((e) => ({ error: e.message }))]);
-    if (graph.error && search.error) throw new Error(NOT_READY);
-    return withhold({ graph, search }, filters);
+    const part = (h) => run(h).catch((e) => ({ error: e.message }));
+    const [graph, search, setup] = await Promise.all([part(tool.handler), part(tool.status), part(tool.setup)]);
+    if (graph.error && search.error && setup.error) throw new Error(NOT_READY);
+    return withhold({ graph, search, ...(setup.error ? {} : { setup }) }, filters);
   }
   const r = await run(tool.handler);
   // a handler answers null while no vault is connected

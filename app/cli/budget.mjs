@@ -68,7 +68,8 @@ export function decisionLine(d) {
   const to = day(pick(d, 'valid_to', 'validTo'));
   const meta = [
     at(pick(d, 'rel', 'source_rel', 'sourceRel'), pick(d, 'line', 'source_line', 'sourceLine')),
-    pick(d, 'decidedIn', 'decided_in', 'meeting') ? `in ${ref(pick(d, 'decidedIn', 'decided_in', 'meeting'))}` : null,
+    // the meeting a decision was decided in, unless it is the note the line already names
+    pick(d, 'decidedIn', 'decided_in', 'meeting') && ref(pick(d, 'decidedIn', 'decided_in', 'meeting')) !== `meeting:${pick(d, 'rel', 'source_rel', 'sourceRel')}` ? `in ${ref(pick(d, 'decidedIn', 'decided_in', 'meeting'))}` : null,
     about.length ? `about ${about.join(', ')}` : null,
     pick(d, 'provenance'),
     by != null ? `superseded by ${ref(by)}${to ? ` on ${to}` : ''}` : to ? `ended ${to}` : null,
