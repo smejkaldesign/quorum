@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -23,7 +23,7 @@ describe('itemUndo', () => {
     put('a.md', 'A [[new]]');
     u.track('two', keep)('b.md');
     put('b.md', 'B [[wrong]]');
-    expect(u.alone('two')).toBe(true);
+    expect(u.blocked('two')).toBe(null);
     await u.restore('two', trash);
     expect(get('a.md')).toBe('A [[new]]');
     expect(get('b.md')).toBe('B [[old]]');
@@ -52,8 +52,8 @@ describe('itemUndo', () => {
     const u = itemUndo(vault);
     u.track('one', () => {})('a.md');
     u.track('two', () => {})('a.md');
-    expect(u.alone('two')).toBe(false);
-    expect(u.alone('one')).toBe(false);
+    expect(u.blocked('two')).toMatch(/Another item in this batch changed the same note/);
+    expect(u.blocked('one')).toMatch(/Another item/);
     expect(u.rels('two')).toEqual(['a.md']);
   });
   it('frees the notes of an item it put back, so a later item that writes them alone can be put back too', async () => {
@@ -62,7 +62,68 @@ describe('itemUndo', () => {
     u.track('one', () => {})('a.md');
     await u.restore('one', trash);
     u.track('two', () => {})('a.md');
-    expect(u.alone('two')).toBe(true);
+    expect(u.blocked('two')).toBe(null);
     expect(u.rels('one')).toEqual([]);
+  });
+  it('writes back a note the item trashed, at its path, with the real vault resolver', async () => {
+    put('notes/old.md', 'old text');
+    const u = itemUndo(vault);
+    u.track('one', () => {})('notes/old.md', false, true);
+    rmSync(path.join(vault, 'notes/old.md'));
+    rmSync(path.join(vault, 'notes'), { recursive: true });
+    u.seal('one');
+    expect(await u.restore('one', trash)).toEqual({ restored: ['notes/old.md'], skipped: [] });
+    expect(get('notes/old.md')).toBe('old text');
+  });
+  it('puts back a move: the note returns to its path and the moved copy goes to the Trash', async () => {
+    put('a.md', 'A');
+    const u = itemUndo(vault);
+    const k = u.track('one', () => {});
+    k('a.md', false, true);
+    k('archive/a.md', true);
+    put('archive/a.md', 'A');
+    rmSync(path.join(vault, 'a.md'));
+    u.seal('one');
+    const r = await u.restore('one', trash);
+    expect(r.restored.sort()).toEqual(['a.md', 'archive/a.md']);
+    expect(get('a.md')).toBe('A');
+    expect(get('archive/a.md')).toBe(null);
+  });
+  it('leaves a note alone when it changed after the item last wrote it', async () => {
+    put('a.md', 'before');
+    put('b.md', 'b before');
+    const u = itemUndo(vault);
+    const k = u.track('one', () => {});
+    k('a.md');
+    k('b.md');
+    put('a.md', 'fixed');
+    put('b.md', 'b fixed');
+    u.seal('one');
+    put('a.md', 'fixed, then a person typed here');
+    expect(await u.restore('one', trash)).toEqual({ restored: ['b.md'], skipped: ['a.md'] });
+    expect(get('a.md')).toBe('fixed, then a person typed here');
+    expect(get('b.md')).toBe('b before');
+  });
+  it('blocks a put-back alone when a note could not be read, and never trashes it', async () => {
+    mkdirSync(path.join(vault, 'odd.md'));
+    const u = itemUndo(vault);
+    u.track('one', () => {})('odd.md');
+    expect(u.blocked('one')).toMatch(/could not read “odd\.md”/);
+    await expect(u.restore('one', trash)).rejects.toThrow(/could not read/);
+    expect(existsSync(path.join(vault, 'odd.md'))).toBe(true);
+  });
+  it('blocks a note outside the vault', () => {
+    const u = itemUndo(vault);
+    u.track('one', () => {})('../outside.md');
+    expect(u.blocked('one')).toMatch(/could not read/);
+  });
+  it('writes with a temp file and rename, leaving no temp file behind', async () => {
+    put('a.md', 'A');
+    const u = itemUndo(vault);
+    u.track('one', () => {})('a.md');
+    put('a.md', 'B');
+    u.seal('one');
+    await u.restore('one', trash);
+    expect(readdirSync(vault)).toEqual(['a.md']);
   });
 });
