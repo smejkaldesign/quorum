@@ -380,15 +380,20 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
       return { ok: true };
     }),
     // Delete my data, the hosted half (migration 0047): the caller's notes, chats, meetings and personal KBs go, the
-    // account and every plan stay, then this Mac signs out. main.js then deletes what Quorum keeps on this Mac
+    // account and every plan stay, then this Mac signs out. main.js then deletes what Quorum keeps on this Mac. The
+    // account that runs Quorum keeps its hosted data (delete_my_data refuses it), so for it only this Mac is cleared:
+    // the server's own status decides, and the answer says localOnly
     'account-data-delete': signedInGuard(async (typed) => {
       if (String(typed ?? '').trim().toLowerCase() !== String(state.email ?? '').toLowerCase()) return { error: 'Type your email address to confirm.' };
-      const { error } = await client.rpc('delete_my_data');
+      const status = await client.rpc('account_delete_status');
+      if (status.error) return fail(status.error, 'Quorum could not check this account.');
+      const localOnly = status.data?.platform_owner === true;
+      const { error } = localOnly ? { error: null } : await client.rpc('delete_my_data');
       if (error) return fail(error, 'Your data could not be deleted.');
       state.sync = false;
       try { await client.auth.signOut({ scope: 'local' }); } catch (err) { log('account sign-out', err?.message ?? err); }
       signedOut(); emit();
-      return { ok: true };
+      return { ok: true, localOnly };
     }),
     // deletes the chosen workspace, which the caller owns, with everything synced to it; members lose access
     'org-delete': signedInGuard(async (workspaceId, typed) => {

@@ -19,13 +19,15 @@ export function useDataResetInfo(): DataResetInfo | null {
   return info;
 }
 
-// what the confirm says. hosted adds the Cloud half; the vault sentence names the folder that stays
-export function dataBody(info: DataResetInfo | null, hosted: boolean): string {
-  const cloud = hosted ? 'This deletes your private synced notes, chats, meetings and personal knowledge bases from Quorum Cloud. Your account, email and plan stay. Notes you shared with a workspace, a team or a knowledge base move to the workspace owner, so the team keeps them. In a workspace where you are the only member, everything synced to it goes, and the workspace and its plan stay. ' : '';
+// what the confirm says. hosted adds the Cloud half; ownerLocal is the account that runs Quorum, whose hosted data
+// stays and only this Mac is cleared; the vault sentence names the folder that stays
+export const OWNER_LOCAL_ONLY = 'Your hosted data and account stay; this clears only this Mac. ';
+export function dataBody(info: DataResetInfo | null, hosted: boolean, ownerLocal = false): string {
+  const cloud = ownerLocal ? `${OWNER_LOCAL_ONLY}Quorum signs you out. ` : hosted ? 'This deletes your private synced notes, chats, meetings and personal knowledge bases from Quorum Cloud. Your account, email and plan stay. Notes you shared with a workspace, a team or a knowledge base move to the workspace owner, so the team keeps them. In a workspace where you are the only member, everything synced to it goes, and the workspace and its plan stay. ' : '';
   const local = 'everything Quorum keeps on this Mac: settings, chats, meeting recordings and transcripts, the memory graph and search index, note versions, logs, caches, the sign-in, and the Keychain key that protects saved keys and tokens.';
   const models = info?.keepsModels ? ' Downloaded models stay, so Quorum does not download them again.' : '';
   const vault = info?.vault ? ` The vault folder at ${info.vault} stays as it is, with every note in it.` : ' Quorum has no vault folder connected; any vault folder on this Mac stays as it is.';
-  return `${cloud}${hosted ? 'Then it deletes' : 'This deletes'} ${local}${models}${vault} Quorum then restarts into setup. This cannot be undone.`;
+  return `${cloud}${hosted && !ownerLocal ? 'Then it deletes' : 'This deletes'} ${local}${models}${vault} Quorum then restarts into setup. This cannot be undone.`;
 }
 
 // the sheet for the phrase: what goes, a field to type the phrase into, and the delete button that stays off until it matches
@@ -59,10 +61,10 @@ export function PhraseConfirm({ info, onClose }: { info: DataResetInfo | null; o
   );
 }
 
-export function DeleteDataRow({ hosted, onOpen }: { hosted: boolean; onOpen: () => void }) {
+export function DeleteDataRow({ hosted, ownerLocal = false, onOpen }: { hosted: boolean; ownerLocal?: boolean; onOpen: () => void }) {
   return (
     <Row icon={<IconTrash width={18} height={18} />} title="Delete my data"
-      desc={hosted ? 'Removes your synced data and everything Quorum keeps on this Mac. Your account, plan and vault folder stay' : 'Removes everything Quorum keeps on this Mac and starts setup again. Your vault folder stays'}>
+      desc={ownerLocal ? 'Clears everything Quorum keeps on this Mac and signs you out. Your hosted data and account stay' : hosted ? 'Removes your synced data and everything Quorum keeps on this Mac. Your account, plan and vault folder stay' : 'Removes everything Quorum keeps on this Mac and starts setup again. Your vault folder stays'}>
       <button className="pill danger-pill" onClick={onOpen}>Delete my data</button>
     </Row>
   );

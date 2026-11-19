@@ -5165,7 +5165,8 @@ ipcMain.handle('reveal-brain', () => { if (settings.brainRoot) shell.openPath(se
 // forgetting the Agent OS leaves every file where it is; Quorum stops reading it, and a meetings folder found inside it is no longer found
 ipcMain.handle('disconnect-brain', () => { Object.assign(settings, { brainRoot: null, vaultPath: null, brainMade: null }); store.settings.save(); log('disconnected Agent OS'); suggester.reset(); openIndex(); brainChanged(); return null; });
 // Delete my data (Settings, Preferences, Danger zone; dataReset.js). Signed in to Cloud, the typed value is the email
-// and the hosted data goes first (ee/account.js, migration 0047); otherwise it is the phrase. Then the Keychain items
+// and the hosted data goes first (ee/account.js, migration 0047; the account that runs Quorum keeps its hosted data and
+// only signs out); otherwise it is the phrase. Then the Keychain items
 // and the data folder go, every vault folder Quorum knows stays, and Quorum starts again into onboarding. The relaunch
 // skips will-quit, so nothing writes the old settings or state back after the delete.
 const DELETE_PHRASE = 'delete my data';

@@ -83,7 +83,7 @@ function TypeEmailConfirm({ title, body, action, email, onConfirm, onClose }: { 
 
 // Settings, Preferences, Danger zone: Delete my data (migration 0047 and this Mac) and delete the hosted account. Shown
 // once signed in, else `fallback`; an owner of a workspace and the account that runs Quorum see Delete my account off,
-// with the reason as its tooltip, and the account that runs Quorum sees Delete my data off too
+// with the reason as its tooltip. For the account that runs Quorum, Delete my data clears this Mac only
 export function DeleteAccountZone({ fallback = null }: { fallback?: ReactNode }) {
   const { account, status } = useDeleteStatus();
   const info = useDataResetInfo();
@@ -99,7 +99,7 @@ export function DeleteAccountZone({ fallback = null }: { fallback?: ReactNode })
     <>
       <h3>Danger zone</h3>
       <div className="set-card danger">
-        {status && !status.platformOwner && <DeleteDataRow hosted onOpen={() => setDataOpen(true)} />}
+        {status && <DeleteDataRow hosted ownerLocal={status.platformOwner} onOpen={() => setDataOpen(true)} />}
         <Row icon={<IconPower width={18} height={18} />} title="Delete my account" desc={desc}>
           {status ? <Guarded tip={tip} label="Delete my account" onClick={() => setOpen(true)} /> : <button className="pill danger-pill" disabled>Delete my account</button>}
         </Row>
@@ -112,7 +112,7 @@ export function DeleteAccountZone({ fallback = null }: { fallback?: ReactNode })
       )}
       {/* on success Quorum quits and starts again, so only a refusal comes back */}
       {dataOpen && (
-        <TypeEmailConfirm title="Delete your data?" action="Delete my data" email={account.email} body={dataBody(info, true)}
+        <TypeEmailConfirm title={status?.platformOwner ? 'Clear Quorum on this Mac?' : 'Delete your data?'} action="Delete my data" email={account.email} body={dataBody(info, true, status?.platformOwner === true)}
           onClose={() => setDataOpen(false)}
           onConfirm={async (typed) => { const r = await window.quorum.dataDelete(typed); return r?.error ?? null; }} />
       )}
