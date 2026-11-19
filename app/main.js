@@ -3329,10 +3329,10 @@ function keepPastFix(id) {
   feedStateSave();
   logPastFix(id, 'archived', 'Kept the fix');
 }
-// Bulk plans (batchPlan.js): Approve on several items, Review everything, and Apply memory fixes on its own all turn the
-// review items (reviewItems.js) into one plan and run it as one batch: one run, one journal and undo record, the hash
-// of every note checked before the first write, the links checked again after the last, and the whole batch put back
-// when any step fails. The plan itself stays in memory; a batch cut short by a quit is recovered like any run
+// Bulk plans (batchPlan.js): Approve on several items and Apply memory fixes on its own both turn the review items
+// (reviewItems.js) into one plan and run it as one batch: one run, one journal and undo record, the hash of every note
+// checked before the first write, and the links checked again after the last. An item that fails puts back its own
+// notes (batchItems.js); a failure that cannot be kept to one item puts the whole batch back. The plan itself stays in memory; a batch cut short by a quit is recovered like any run
 const batchPlans = new Map();
 // the items waiting in Needs review, or the ones with these row ids. Each carries the hash of every note it touches,
 // kept by each note's modified time and size (noteHashes); fresh reads every note again
@@ -3436,7 +3436,7 @@ const scheduleGate = (ms) => gateRuns.schedule(ms);
 const gateOf = (item) => verdictOf(gateFor(brain()?.vault ?? '').verdicts, item, kindOf(item));
 const gateChecking = () => !gateFor(brain()?.vault ?? '').verdicts;
 // the review items with their verdicts, and what the agent does for each on Approve (agentNeed). Without ids
-// (everything in Needs review), the items the gate keeps out of view are left out
+// (Apply memory fixes on its own), the items the gate keeps out of view are left out
 function gatedItems({ ids = null, drafts = true } = {}) {
   const out = reviewItems({ ids, drafts }).map((i) => { const agent = agentNeed(i); return { ...i, gate: gateOf(i), ...(agent ? { agent } : {}) }; });
   return ids ? out : out.filter((i) => i.gate.bucket !== 'quiet');
@@ -4215,9 +4215,11 @@ function savePlanNote(view) {
   return rel;
 }
 const idList = (xs) => (Array.isArray(xs) ? xs.map(String) : []);
-ipcMain.handle('fix-plan', (_e, ids, exclude, include) => planView(gatedItems({ ids: Array.isArray(ids) ? ids.map(String) : null }), idList(exclude), idList(include)));
+// a bulk plan covers the rows picked; there is no plan for everything in Needs review
+const pickedIds = (ids) => { if (!Array.isArray(ids) || !ids.length) throw new Error('Pick the items to fix first'); return ids.map(String); };
+ipcMain.handle('fix-plan', (_e, ids, exclude, include) => planView(gatedItems({ ids: pickedIds(ids) }), idList(exclude), idList(include)));
 handleAction('fix-plan-apply', (_e, ids, exclude, opts, include) => {
-  const items = gatedItems({ ids: Array.isArray(ids) ? ids.map(String) : null });
+  const items = gatedItems({ ids: pickedIds(ids) });
   const note = opts?.saveNote === true ? savePlanNote(planView(items, idList(exclude), idList(include))) : null;
   const plan = buildPlan(items, { exclude: [...planExclude(items, idList(exclude), idList(include))] });
   const run = plan.ok.length ? startPlan(plan, items) : null;

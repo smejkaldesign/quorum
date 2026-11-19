@@ -12,9 +12,8 @@ const ticks = (picks: Map<string, boolean>) => ({ exclude: [...picks].filter(([,
 // loader, then shows what the batch will do as groups with counts, each folding open to its items, and what was merged,
 // skipped or held back and why. Unticking a group or an item plans again without it. Fixes a person should read first
 // (batchPlan.js checkFirst) list under Check these first, unticked until ticked. Apply runs the plan as one batch
-// with the progress banner; Cancel changes nothing. ids: the row ids picked, or null for everything in Needs review.
-// it also offers to save the plan as a note (off unless ticked)
-export function BulkPlan({ ids, onClose, onApplied }: { ids: string[] | null; onClose: () => void; onApplied: () => void }) {
+// with the progress banner; Cancel changes nothing. ids: the row ids picked. It also offers to save the plan as a note (off unless ticked)
+export function BulkPlan({ ids, onClose, onApplied }: { ids: string[]; onClose: () => void; onApplied: () => void }) {
   const [view, setView] = useState<PlanView | null>(null);
   // the ticks the person changed: id -> on. Main leaves out every check-first item that is not ticked here
   const [picks, setPicks] = useState<Map<string, boolean>>(new Map());

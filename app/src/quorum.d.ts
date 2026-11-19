@@ -477,8 +477,8 @@ declare global {
       fixRuns(): Promise<FixRun[]>;
       fixDismiss(ids: string[]): Promise<number>;
       fixUndo(id: string): Promise<string>;
-      fixPlan(ids: string[] | null, exclude: string[], include?: string[]): Promise<PlanView>;
-      fixPlanApply(ids: string[] | null, exclude: string[], opts?: { saveNote?: boolean }, include?: string[]): Promise<{ run: FixRun | null; note: string | null }>;
+      fixPlan(ids: string[], exclude: string[], include?: string[]): Promise<PlanView>;
+      fixPlanApply(ids: string[], exclude: string[], opts?: { saveNote?: boolean }, include?: string[]): Promise<{ run: FixRun | null; note: string | null }>;
       confidentialMarks(): Promise<{ folders: Record<string, string>; notes: Record<string, string>; values: string[] }>;
       confidentialMark(rel: string, isDir: boolean, value: string | null): Promise<string>;
       onFixRun(cb: (run: FixRun) => void): () => void;
