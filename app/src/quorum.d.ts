@@ -282,8 +282,8 @@ export type EventRef = { id: string | null; item: string | null; link: string | 
 // the note to its file on disk. changed: the invite changed since the note was written. edited: the person changed the
 // note, which Quorum then never writes over. dismissed: the person deleted it, and Quorum writes another only on request
 export type MeetingPrep = { status: 'off' | 'missing' | 'no-vault' | 'opted-out' | 'skipped' | 'stale' | 'no-model' | 'failed' | 'dismissed' | 'ready' | 'changed'; markdown?: string; rel?: string; file?: string; links?: Record<string, string>; edited?: boolean };
-export type MeetingPrepSettings = { enabled: boolean; ahead: 'today' | 2 | 4 | 8 | 24; minInvitees: 0 | 2 | 3 | 4 | 5; orNew: boolean };
-export type MeetingBrief = { related?: { file: string; title: string; date: string | null; shared: string[] }[]; past: { file: string; title: string; date: string | null; source: string; people: string[]; count: number }[]; brief: { prep: string; what: string; who: string; how: string } | null; status: 'few' | 'stale' | 'ready' | 'no-model' | 'failed' };
+export type MeetingPrepSettings = { enabled: boolean; ahead: 'today' | 2 | 4 | 8 | 24; minInvitees: 0 | 2 | 3 | 4 | 5; orNew: boolean; minPast: 0 | 1 | 2 | 3 | 4 | 5 };
+export type MeetingBrief = { related?: { file: string; title: string; date: string | null; shared: string[] }[]; past: { file: string; title: string; date: string | null; source: string; people: string[]; count: number }[]; brief: { prep: string; what: string; who: string; how: string; sources?: string; oneOff?: boolean } | null; status: 'few' | 'stale' | 'ready' | 'no-model' | 'failed' | 'opted-out'; min?: number; anyway?: boolean; links?: Record<string, string> };
 export type MeetingRow = { written?: boolean; id: string; file: string; kind: 'meeting' | 'note'; source: string; title: string; date: string | null; people: string[]; count: number; visibility: Visibility; rel: string; link: string; app: string; url?: string | null; platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; event?: EventRef | null };
 export type ChatRow = { id: string; title: string; date: string; turns: number; meetingFile: string | null; meetingTitle: string | null; eventId?: string | null; eventEnd?: string | null };
 export type Visibility = 'private' | 'public';
@@ -671,7 +671,7 @@ declare global {
       calendarSet(next: { days?: number | 'week'; enabled?: false; showAll?: boolean; hide?: string; unhideAll?: boolean }): Promise<CalendarSettings>;
       calendarPrivacy(): Promise<void>;
       calendarOpen(ev: CalendarEvent): Promise<void>;
-      meetingBrief(q: { title: string; organizer?: string; generate?: boolean }): Promise<MeetingBrief>;
+      meetingBrief(q: { title: string; organizer?: string; id?: string; generate?: boolean; anyway?: boolean; force?: boolean }): Promise<MeetingBrief>;
       meetingPrep(id: string, opts?: { generate?: boolean; force?: boolean }): Promise<MeetingPrep>;
       noteChat(file: string): Promise<{ id: string; turns: { q: string; a: string }[] } | null>;
       summaryOff(): Promise<void>;

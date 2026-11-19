@@ -4,10 +4,11 @@ import { Row, Toggle } from './controls';
 import { IconCalendar, IconNotes, IconPeople } from './icons';
 import { useFlag } from './flags';
 
-const DEFAULTS: MeetingPrepSettings = { enabled: false, ahead: 'today', minInvitees: 3, orNew: true };
+const DEFAULTS: MeetingPrepSettings = { enabled: false, ahead: 'today', minInvitees: 3, orNew: true, minPast: 3 };
 
 // Settings > Calendar > Meeting prep (main.js meeting-prep): on or off, how far ahead notes are prepared, and which
-// meetings get one ahead of time. Shown only while the meeting-prep flag is on
+// meetings get one ahead of time, and how many past meetings a meeting page needs before it writes prep notes by itself.
+// Shown only while the meeting-prep flag is on
 export function MeetingPrepCard() {
   const on = useFlag('meeting-prep');
   const [conf, setConf] = useState<MeetingPrepSettings | null>(null);
@@ -41,6 +42,12 @@ export function MeetingPrepCard() {
             <Toggle on={conf.orNew} disabled={!conf.enabled} onChange={(v) => save({ orNew: v })} />
           </Row>
         )}
+        <Row icon={<IconNotes width={18} height={18} />} title="Meetings that are not recurring yet" desc="A meeting page writes prep notes by itself after this many meetings. Before that, Generate anyway writes them from the invite and your vault">
+          <select className="set-select" value={conf.minPast} onChange={(e) => save({ minPast: Number(e.target.value) as MeetingPrepSettings['minPast'] })}>
+            <option value={0}>Every meeting</option>
+            {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>After {n} {n === 1 ? 'meeting' : 'meetings'}</option>)}
+          </select>
+        </Row>
       </div>
     </>
   );
