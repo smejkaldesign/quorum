@@ -91,6 +91,7 @@
       "guards/**",
       "rules/**",
       "decide/**",
+      "graph/**",
       "!node_modules/onnxruntime-node/bin/napi-v6/linux/**",
       "!node_modules/onnxruntime-node/bin/napi-v6/win32/**",
       "!node_modules/onnxruntime-node/bin/napi-v6/darwin/arm64/libonnxruntime.1.31.1.dylib",

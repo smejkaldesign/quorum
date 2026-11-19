@@ -353,6 +353,20 @@ export type HandNoteRef = { file: string; hash: string; rel: string; app: string
 export type HandNote = HandNoteRef & { title: string; body: string; readOnly: boolean; date: string | null };
 export type HandNoteSave = (HandNoteRef & { propsError?: string }) | { conflict: true } | { error: string };
 
+// memory graph (app/graph/store.js kinds; docs/specs/memory-graph.md)
+export type MemoryNodeKind = 'note' | 'person' | 'project' | 'company' | 'meeting' | 'decision' | 'topic' | 'tag' | 'folder';
+export type MemoryEdgeKind = 'links_to' | 'embeds' | 'mentions' | 'attended' | 'works_on' | 'member_of' | 'decided_in' | 'decision_about' | 'about' | 'tagged' | 'in_folder' | 'contradicts' | 'supersedes';
+export type MemoryNodeBrief = { id: string; kind: MemoryNodeKind; name: string; rel: string | null };
+export type MemoryNode = MemoryNodeBrief & { props: Record<string, unknown>; created_at: number; updated_at: number };
+export type MemoryEdge = { id: number; src: string; srcName: string; dst: string; dstName: string; kind: MemoryEdgeKind; provenance: 'explicit' | 'rule' | 'model' | 'person'; source_rel: string | null; source_line: number | null; confidence: number; valid_from: number | null; valid_to: number | null; superseded_by: number | null; props?: Record<string, unknown> };
+export type MemoryTruncated = { shown: number; total: number; budgetNeeded: number };
+export type MemoryGraphStatus = { phase: 'off' | 'idle' | 'building' | 'ready' | 'closed'; done?: number; total?: number; ms?: number | null; builtAt?: number | null; notes?: number; nodes?: number; edges?: number; byKind?: { nodes: Record<string, number>; edges: Record<string, number> } };
+export type MemoryDecision = { id: string; text: string; date: number | null; rel: string | null; line: number | null; about: { id: string; name: string }[]; decidedIn: { id: string; name: string } | null; supersededBy: { id: string; text: string } | null };
+export type MemoryDated = MemoryNodeBrief & { date: number | null; via: MemoryEdgeKind };
+export type MemoryEntity = { node: MemoryNodeBrief; rel: string | null; aliases: string[]; status: string | null; decisions: MemoryDecision[]; meetings: MemoryDated[]; people: MemoryDated[]; projects: MemoryDated[]; notes: MemoryDated[]; truncated: MemoryTruncated & { sections: Record<string, { shown: number; total: number }> } };
+// a name that matches several nodes is refused with the candidates; a name with no match says so
+export type MemoryGraphResult<T> = T | { ambiguous: MemoryNodeBrief[]; for?: 'a' | 'b' } | { notFound: string } | { error: string } | null;
+
 declare global {
   interface Window {
     quorum: {
@@ -453,6 +467,14 @@ declare global {
       activityReview(items: { kind: 'note' | 'memory' | 'junk-note' | 'link' | 'past-fix' | 'finding' | 'ignore'; abs: string; key?: string }[], verdict: 'approve' | 'revert' | 'dismiss'): Promise<{ done: string[]; failed: { abs: string; error: string }[] }>;
       vaultSearch(q: string, limit?: number): Promise<SearchHit[]>;
       vaultBacklinks(rel: string): Promise<Backlink[]>;
+      // memory graph reads (app/graph/); null when no vault is connected
+      memoryGraphStatus(): Promise<MemoryGraphStatus>;
+      memoryGraphQuery(args: { q?: string; seeds?: string[]; budget?: number; depth?: number; kinds?: MemoryEdgeKind[]; current?: boolean }): Promise<MemoryGraphResult<{ seeds: string[]; nodes: (MemoryNodeBrief & { score: number; depth: number })[]; edges: MemoryEdge[]; truncated: MemoryTruncated & { edgesShown: number; edgesTotal: number } }>>;
+      memoryGraphExplain(ref: string): Promise<MemoryGraphResult<{ node: MemoryNode; source: { rel: string } | null; aliases: string[]; community: { community: string; rank: number } | null; out: MemoryEdge[]; in: MemoryEdge[]; history: (MemoryEdge & { supersededBy: MemoryEdge | null })[] }>>;
+      memoryGraphEntity(name: string, opts?: { budget?: number }): Promise<MemoryGraphResult<MemoryEntity>>;
+      memoryGraphDecisions(args: { about?: string; since?: string | number; current?: boolean; budget?: number }): Promise<MemoryGraphResult<{ about: MemoryNodeBrief | null; decisions: MemoryDecision[]; truncated: MemoryTruncated }>>;
+      memoryGraphPath(a: string, b: string, opts?: { undirected?: boolean; kinds?: MemoryEdgeKind[]; current?: boolean; maxDepth?: number }): Promise<MemoryGraphResult<{ path: MemoryNodeBrief[] | null; edges: MemoryEdge[] }>>;
+      onMemoryGraph(fn: (s: MemoryGraphStatus) => void): () => void;
       vaultLinkHealth(fresh?: boolean): Promise<MissingLink[]>;
       // Needs review for Memory health: the items waiting, and the same items by the note they are about and its folders
       memoryReviewCount(): Promise<{ total: number; files: Record<string, number>; folders: Record<string, number> }>;
