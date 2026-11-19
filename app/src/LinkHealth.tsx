@@ -501,7 +501,10 @@ function BatchBanner({ runs, error, onCancel, onDismiss }: { runs: FixRun[]; err
           <ol className="run-steps mh-batch-list">
             {items.map((x) => {
               const st = x.run.status;
-              return <li key={x.k} className={st === 'running' ? 'now' : st === 'success' || st === 'error' ? 'done' : ''}><span className={st === 'running' ? 'shimmer' : ''} data-tip={x.title}>{x.title}</span><span className="run-time" data-tip={st === 'error' && x.run.error ? x.run.error : undefined}>{st === 'success' ? 'Fixed' : st === 'error' ? (x.run.rolledBack ? 'Put back' : 'Could not fix') : st === 'running' ? 'Fixing' : 'Waiting'}</span></li>;
+              // an item that failed on its own shows its reason under it; a put-back item shares the batch's reason above
+              const why = st === 'error' && !x.run.rolledBack && x.run.error ? x.run.error : null;
+              const whyId = `mh-batch-why-${x.k}`;
+              return <li key={x.k} className={st === 'running' ? 'now' : st === 'success' || st === 'error' ? 'done' : ''}><span className={st === 'running' ? 'shimmer' : ''} data-tip={x.title}>{x.title}</span><span className="run-time" aria-describedby={why ? whyId : undefined}>{st === 'success' ? 'Fixed' : st === 'error' ? (x.run.rolledBack ? 'Put back' : 'Could not fix') : st === 'running' ? 'Fixing' : 'Waiting'}</span>{why && <span className="mh-batch-why" id={whyId}>{why}</span>}</li>;
             })}
           </ol>
         </div>

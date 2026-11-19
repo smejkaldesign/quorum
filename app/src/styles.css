@@ -2709,6 +2709,8 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .mh-batch-bar { height: 3px; margin: 0 14px 10px; border-radius: 2px; background: var(--line-2); overflow: hidden; }
 .mh-batch-bar i { display: block; height: 100%; background: var(--ok); transition: width 400ms ease; }
 .mh-batch-list { max-height: 280px; overflow: auto; }
+.mh-batch-list li { flex-wrap: wrap; row-gap: 2px; }
+.mh-batch-list .mh-batch-why { flex-basis: 100%; font-size: 12px; line-height: 1.4; color: var(--muted); white-space: normal; overflow-wrap: anywhere; }
 .mh-batch-list .shimmer { background: linear-gradient(90deg, var(--text) 0%, var(--text) 40%, rgba(255, 255, 255, 0.35) 50%, var(--text) 60%, var(--text) 100%); background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 1.8s linear infinite; }
 /* an item waiting its turn in a bulk Approve: no shimmer, its buttons put away, the date reads Waiting */
 .mh-row.waiting .nf-title { color: var(--muted); }
