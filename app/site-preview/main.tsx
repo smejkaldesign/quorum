@@ -2,7 +2,8 @@
 // mock.ts. Built by `npm run build:site-preview` into site/app-preview/, which the home page shows in a frame.
 import './mock';
 import { createRoot } from 'react-dom/client';
-import { App, ErrorBoundary } from '../src/App';
+import { App } from '../src/App';
+import { ErrorBoundary } from '../src/ErrorBoundary';
 import '../src/styles.css';
 import './preview.css';
 import { installTooltips } from '../src/tooltips';
@@ -14,4 +15,4 @@ for (const type of ['wheel', 'keydown'] as const) window.addEventListener(type, 
 installTooltips();
 // ?crash=1 shows the crash page itself (a thrown render), for a look at it outside the desktop app
 const Crash = () => { throw new Error(new URLSearchParams(location.search).get('crash') === 'stale' ? 'Failed to fetch dynamically imported module: file:///…/dist/assets/Account-Bakdb2me.js' : 'Cannot read properties of undefined (reading map)'); };
-createRoot(document.getElementById('root')!).render(<ErrorBoundary>{new URLSearchParams(location.search).has('crash') ? <Crash /> : <App />}</ErrorBoundary>);
+createRoot(document.getElementById('root')!).render(<ErrorBoundary view="preview" whole>{new URLSearchParams(location.search).has('crash') ? <Crash /> : <App />}</ErrorBoundary>);

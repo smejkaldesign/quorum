@@ -92,6 +92,8 @@ export type RunnerStatus = { installed: boolean; version: string | null };
 export type ModelSourceStatus = { source: ModelSource; localModel: string; claude: ClaudeStatus | null; key: boolean; keys: Partial<Record<ConnectorId, boolean>>; ollama: { reachable: boolean; hasModel: boolean }; runners?: Partial<Record<'codex' | 'antigravity', RunnerStatus>>; providers: Providers; connectors: ProviderConnectors };
 // userName is how the main process names the recorder in notes; it falls back to the macOS account's full name, then the login
 export type Settings = {
+  // page crash reports to Quorum (errorReports.js); on unless set to false
+  errorReports?: boolean;
   // which of Quorum's in-app notifications show in the bell's list and dot; each is on when missing
   notifications?: { noteUpdates?: boolean; memoryChanges?: boolean; reviews?: boolean; guardrails?: boolean };
   // connector ids whose provider MCP the person disconnected from Quorum (Settings > Connectors)
@@ -768,6 +770,10 @@ declare global {
       onFlags(cb: (s: FlagsState) => void): Unsub;
       envStatus(): Promise<EnvStatus>;
       envSetProduction(on: boolean): Promise<EnvStatus>;
+      // a view that failed while drawing (ErrorBoundary.tsx); the main process scrubs it and sends it unless reports are off
+      reportError(r: { view: string; message: string; stack: string; componentStack: string; repeat: boolean }): Promise<boolean>;
+      // reloads the window's page without quitting Quorum
+      reloadWindow(): Promise<void>;
     };
   }
 }

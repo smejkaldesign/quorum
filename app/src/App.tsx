@@ -23,7 +23,7 @@ if (window.quorum.isDev) document.documentElement.dataset.dev = '';
 import { HistoryView } from './HistoryView';
 import { OPEN_EVENT, UpNext } from './UpNext';
 import { nextMenuIndex, updateBadge } from './headerItems';
-import { STALE_BUNDLE, crashKind, type CrashKind } from './crash';
+import { ErrorBoundary, STALE_BUNDLE } from './ErrorBoundary';
 import { useExclusiveMenu } from './menuBus';
 import type { KbCommand } from './KnowledgeView';
 import { Composer } from './Composer';
@@ -52,60 +52,6 @@ type Msg =
   | { kind: 'quorum'; text: string; pending?: boolean; steps?: string[]; sources?: Source[] }
   | { kind: 'suggest'; id: string; text: string; caption: string; state: 'open' | 'accepted' | 'dismissed' }
   | { kind: 'event'; text: string; tone: 'stop' | 'go' };
-
-export class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null; errorAt: number; reloadedAt: number | null }> {
-  state = { error: null as Error | null, errorAt: 0, reloadedAt: null as number | null };
-  static getDerivedStateFromError(error: Error) { return { error, errorAt: Date.now() }; }
-  componentDidCatch(error: Error) { console.error('render crash:', error.message, error.stack); }
-  render() {
-    if (!this.state.error) return this.props.children;
-    return <CrashPage error={this.state.error} kind={crashKind(this.state.error.message, this.state.reloadedAt, this.state.errorAt)} onReload={() => this.setState({ error: null, reloadedAt: Date.now() })} />;
-  }
-}
-
-// a view that failed while drawing, as a page: what happened in plain words, what is safe, what to do. A stale bundle
-// and a view that fails on every draw both need the window's page reloaded; Reload view only draws the view again
-function CrashPage({ error, kind, onReload }: { error: Error; kind: CrashKind; onReload: () => void }) {
-  return (
-    <div className="panel"><div className="crash" role="alert">
-      <CrashArt />
-      <h1>{kind === 'stale' ? 'Quorum updated underneath this view' : kind === 'repeat' ? 'This view fails every time it opens' : "Quorum couldn't draw this view"}</h1>
-      <p>{kind === 'stale'
-        ? "The app's files changed while this window was open, so a part of the view could not load. Reloading Quorum picks up the new version."
-        : kind === 'repeat'
-          ? 'It failed again right after reloading, so it needs a fix in Quorum. Reload Quorum to try once more.'
-          : 'A part of the app failed while it was drawing. Reloading usually puts it back. If it happens again, quit and reopen Quorum.'}</p>
-      <p>Your notes, transcripts and settings are not affected. Nothing was lost.</p>
-      {kind === 'once'
-        ? <button className="pill primary crash-reload" onClick={onReload}>Reload view</button>
-        : <button className="pill primary crash-reload" onClick={() => location.reload()}>Reload Quorum</button>}
-      <details className="crash-detail">
-        <summary>Technical detail</summary>
-        <code>{error.message}</code>
-      </details>
-    </div></div>
-  );
-}
-
-// three note cards, the front one slipped off its stack
-function CrashArt() {
-  return (
-    <svg className="crash-art" width="120" height="96" viewBox="0 0 120 96" fill="none" aria-hidden="true">
-      <rect x="30" y="10" width="60" height="72" rx="8" fill="#2a2a2d" stroke="#3a3a3e" />
-      <rect x="24" y="16" width="60" height="72" rx="8" fill="#303034" stroke="#444449" />
-      <g transform="rotate(-9 50 60)">
-        <rect x="20" y="24" width="60" height="72" rx="8" fill="#39393e" stroke="#55555b" />
-        <rect x="30" y="38" width="30" height="4" rx="2" fill="#8a8a92" />
-        <rect x="30" y="48" width="40" height="4" rx="2" fill="#5e5e66" />
-        <rect x="30" y="58" width="36" height="4" rx="2" fill="#5e5e66" />
-        <rect x="30" y="68" width="22" height="4" rx="2" fill="#5e5e66" />
-      </g>
-      <circle cx="96" cy="22" r="11" fill="#1f1f22" stroke="#7fdb83" />
-      <path d="M96 16v7" stroke="#7fdb83" strokeWidth="2" strokeLinecap="round" />
-      <circle cx="96" cy="27.5" r="1.3" fill="#7fdb83" />
-    </svg>
-  );
-}
 
 // the header's update item (headerItems.ts): nothing while idle, progress while a version downloads, then a button
 // that restarts Quorum into the new version
@@ -601,6 +547,8 @@ export function App() {
   const drafting = view === 'main' && draftOpen && phase === 'idle';
   // a new note stays on screen from Record through the countdown and the start, so nothing else shows in between
   const showLive = view === 'main' && phase !== 'blocked' && ((liveOpen && phase !== 'idle') || draftOpen);
+  // the page the main area's error boundary reports and resets on: moving to another view clears a crash
+  const viewId = view === 'main' ? `main/${showLive ? 'live' : note ? 'note' : convoOpen && tab === 'home' ? 'chat' : tab}` : view;
   const closeNote = () => setNote((n) => { if (!n || n.leave) return n; appLeave.current = true; return { ...n, leave: Date.now(), next: null }; });
   // a header tab clears the history: Back on a page opened from there returns to that tab
   const go = (fn: () => void) => () => { nav.clear(); setLiveOpen(false); setDraftOpen(false); closeNote(); fn(); };
@@ -749,6 +697,7 @@ export function App() {
 
       {/* a hand note stays mounted while Settings or a recording is in front, so its text is saved by its own Back */}
       {note && <div className="note-host" hidden={view !== 'main' || showLive}>{noteArea}</div>}
+      <ErrorBoundary view={viewId} resetKey={viewId}>
       {view === 'settings' ? (
         <div className="body wide flush">
           <Suspense fallback={null}><SettingsView open={settingsPage} brain={brain} settings={settings} onSettings={setSettings} onConnect={async () => setBrain(await window.quorum.connectBrain())} onDisconnect={async () => setBrain(await window.quorum.disconnectBrain())} onBrain={setBrain} onBack={() => { if (!nav.back()) setView('main'); }} /></Suspense>
@@ -894,6 +843,7 @@ export function App() {
         </div>
       )}
       </>}
+      </ErrorBoundary>
     </div>
   );
 }
@@ -958,7 +908,10 @@ function QuorumCard({ children }: { children: ReactNode }) {
 class LazyView extends Component<{ name: string; onClose: () => void; children: ReactNode }, { error: Error | null; attempt: number }> {
   state = { error: null as Error | null, attempt: 0 };
   static getDerivedStateFromError(error: Error) { return { error }; }
-  componentDidCatch(error: Error) { console.error('lazy view failed:', error.message); }
+  componentDidCatch(error: Error, info: { componentStack?: string | null }) {
+    console.error('lazy view failed:', error.message);
+    window.quorum?.reportError?.({ view: `lazy/${this.props.name}`, message: error.message, stack: error.stack ?? '', componentStack: info.componentStack ?? '', repeat: false }).catch?.(() => {});
+  }
   render() {
     const { error, attempt } = this.state;
     if (error) {
