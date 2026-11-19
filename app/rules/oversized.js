@@ -4,7 +4,7 @@
 // session logs) and index notes grow by design and are left out. A note with two or more second-level headings is offered
 // a split on Approve: each section goes into a note beside it, and the note keeps a link line under each heading.
 import { DATED, ENTRY_NAME, baseOf, dirOf, finding, percentile, plural, quote, skipped } from './common.js';
-import { sections } from './instructions.js';
+import { isInstruction, sections } from './instructions.js';
 import { normName } from './entities.js';
 
 export const rule = { id: 'note.oversized', version: 1, label: 'Notes too long to read in one go' };
@@ -12,7 +12,8 @@ export const FLOOR = 60000;
 
 export function run({ notes }) {
   const rels = new Set(notes.map((n) => n.rel));
-  const live = notes.filter((n) => !skipped(n) && !DATED.test(baseOf(n.rel)) && !ENTRY_NAME.test(baseOf(n.rel)));
+  // instruction files are the instruction rule's: a section split out of one stops loading into agent sessions
+  const live = notes.filter((n) => !skipped(n) && !DATED.test(baseOf(n.rel)) && !ENTRY_NAME.test(baseOf(n.rel)) && !isInstruction(n.rel));
   // chars: the note's full length when the rules read only its head (memoryEngine.js MAX_RULE_TEXT)
   const sizeOf = (n) => n.chars ?? n.text.length;
   const limit = Math.max(FLOOR, percentile(live.map(sizeOf), 0.99));

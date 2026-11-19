@@ -66,12 +66,12 @@ export const PRIORS = {
   // two notes that disagree (rules/contradictions.js): unmeasured on a real vault, so its items start under Check these
   // first until this vault's decisions lift it. An item with no fix shows too; Approve keeps both notes
   'finding:note.contradiction': { p: 0.7, n: 2, source: 'unmeasured' },
-  // the Memory setup gaps (memorySetup.js): a written note, a merge, a move and a split start under Check these first;
-  // a type, a link to a note that exists and a recorded hash show
+  // the Memory setup gaps (memorySetup.js): a written note, a merge, a move, a split and a type set on a folder's notes
+  // start under Check these first; a link to a note that exists and a recorded hash show
   'finding:note.missing-entity': { p: 0.7, n: 1, source: 'unmeasured' },
   'finding:note.entity-alias': { p: 0.7, n: 1, source: 'unmeasured' },
   'finding:note.meeting-links': { p: 0.9, n: 1, source: 'unmeasured' },
-  'finding:note.entity-type': { p: 0.95, n: 1, source: 'unmeasured' },
+  'finding:note.entity-type': { p: 0.7, n: 1, source: 'unmeasured' },
   'finding:note.unplaced': { p: 0.7, n: 1, source: 'unmeasured' },
   'finding:note.summary-stale': { p: 0.9, n: 1, source: 'unmeasured' },
   'finding:note.instructions': { p: 0.7, n: 1, source: 'unmeasured' },

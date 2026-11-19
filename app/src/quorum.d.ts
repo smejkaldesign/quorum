@@ -152,7 +152,8 @@ export type MemorySetupState = {
   report: MemorySetupReport | null;
   done: boolean;
 };
-export type MemorySetupStatus = MemorySetupState & { made: 'quorum' | null; keeper: { on: boolean; editVault: boolean }; graph: boolean };
+// keeperChoice: what the person chose for the keeper in setup, or null while they have not chosen (the card then offers it)
+export type MemorySetupStatus = MemorySetupState & { made: 'quorum' | null; keeper: { on: boolean; editVault: boolean }; keeperChoice: 'on' | 'off' | null; graph: boolean };
 export type Brain = { root: string; vault: string; name: string; made?: 'quorum' | null; markers: { agentOS: string | null; obsidian: boolean; safetyHooks: boolean } };
 // hosted edition: who is signed in, which organization they are in, and whether notes sync
 export type Role = 'owner' | 'admin' | 'member';
@@ -328,7 +329,7 @@ export type NoteLinkTarget = { rel?: string; anchor: string | null; missing?: bo
 export type NoteDoc = { hand?: boolean; parts?: { note: string; summary: string; split: boolean }; file: string; rel: string; title: string; date?: string; people: string[]; body: string; app: string; url: string; source?: string | null; views?: NoteViews; visibility: Visibility; withheld: boolean; link: string; summarizable?: boolean; transcript?: { id: number; channel: 'me' | 'them'; who: string; text: string }[]; platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null; sourceUrl?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; event?: EventRef | null };
 export type SavedChat = { id: string; title: string; turns: { q: string; a: string; sources?: Source[]; steps?: string[] }[] };
 // a review rule's finding (rules/index.js, memorySweep.js): review-only, with plain evidence lines
-export type MemoryFinding = { held?: GateHold; ruleId: string; ruleVersion: number; rule: string; key: string; target: string; notes: string[]; rel: string; abs: string; title: string; problem: string; proposal: string; evidence: string[]; facts: string[]; meta: [string, string][]; autoFix: boolean; at: number; initial?: boolean; archived: boolean; fix?: { kind: string }; approve?: { kind: 'setkey' | 'addlink' | 'keep'; says: string } };
+export type MemoryFinding = { held?: GateHold; ruleId: string; ruleVersion: number; rule: string; key: string; target: string; notes: string[]; rel: string; abs: string; title: string; problem: string; proposal: string; evidence: string[]; facts: string[]; meta: [string, string][]; autoFix: boolean; at: number; initial?: boolean; archived: boolean; fix?: { kind: string; pick?: boolean }; approve?: { kind: 'setkey' | 'addlink' | 'keep'; says: string } };
 export type MemorySweepInfo = { kind: string; at: number; ms: number; notes: number; found: number; rules: Record<string, number> };
 export type MissingLink = { held?: GateHold; approve?: { says: string; fallback?: string }; target: string; sources: string[]; count: number; links?: number; lastAt?: number | null; left?: boolean; declined?: string[]; contexts?: { rel: string; title?: string; text: string }[]; confidential?: unknown[]; found?: { kind: 'folder' | 'script' | 'skill' | 'file' | 'branch'; where: string; branch?: string; rel?: string | null }; candidates: { rel: string; title: string; name: string | null; exact: boolean; score?: number; cover?: number; kindClash?: boolean; shared?: string[]; neighbor?: boolean; sameFolder?: boolean }[] };
 export type Relocated = { rel: string; files: number; links: number };
@@ -499,7 +500,8 @@ declare global {
       activityFeed(query: FeedQuery): Promise<FeedPage>;
       activityMark(rows: { id: string; abs: string }[], unread?: boolean): Promise<number>;
       activityArchive(rows: { id: string }[], on?: boolean): Promise<number>;
-      activityReview(items: { kind: 'note' | 'memory' | 'junk-note' | 'link' | 'past-fix' | 'finding' | 'ignore'; abs: string; key?: string }[], verdict: 'approve' | 'revert' | 'dismiss'): Promise<{ done: string[]; failed: { abs: string; error: string }[] }>;
+      // only: for a grouped finding, the notes the person keeps ticked
+      activityReview(items: { kind: 'note' | 'memory' | 'junk-note' | 'link' | 'past-fix' | 'finding' | 'ignore'; abs: string; key?: string; only?: string[] }[], verdict: 'approve' | 'revert' | 'dismiss'): Promise<{ done: string[]; failed: { abs: string; error: string }[] }>;
       vaultSearch(q: string, limit?: number): Promise<SearchHit[]>;
       // memory search: hybrid search over the vault's chunks, trimmed to budget tokens
       memorySearch(opts: { q: string; budget?: number; k?: number; folders?: string[]; kinds?: string[]; since?: string }): Promise<MemorySearchResult | null>;
@@ -695,6 +697,8 @@ declare global {
       // memory setup (memorySetup.js): the scan on connect and from Settings, Memory
       memorySetupStatus(): Promise<MemorySetupStatus | null>;
       memorySetupRun(opts?: { keeper?: boolean }): Promise<MemorySetupStatus | null>;
+      // the keeper choice from the setup card; offer: true (finishing onboarding) records it only when none was made
+      memorySetupKeeper(opts: { on: boolean; offer?: boolean }): Promise<MemorySetupStatus | null>;
       onMemorySetup(cb: (s: MemorySetupState) => void): Unsub;
       screenContextStatus(): Promise<ScreenContextStatus>;
       screenContextSet(on: boolean): Promise<ScreenContextStatus>;

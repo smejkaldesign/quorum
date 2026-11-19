@@ -143,9 +143,9 @@ describe('graph build and updates', () => {
 describe('lookups never guess', () => {
   async function setup() {
     const v = tempVault();
-    v.put('people/Ana Ruiz.md', '# Ana Ruiz\n');
-    v.put('projects/Theory.md', '# Theory\n');
-    v.put('projects/Heron.md', '# Heron\n\nWith [[Ana Ruiz]].\n');
+    v.put('people/Ana Ruiz.md', '---\ntype: person\n---\n# Ana Ruiz\n');
+    v.put('projects/Theory.md', '---\ntype: project\n---\n# Theory\n');
+    v.put('projects/Heron.md', '---\ntype: project\n---\n# Heron\n\nWith [[Ana Ruiz]].\n');
     return graphOn(v);
   }
   it('a prefix needs three characters and comes back as candidates', async () => {
@@ -232,7 +232,7 @@ describe('search', () => {
   it('the kinds filter takes graph kinds', async () => {
     const v = tempVault();
     v.put('notes/sync.md', '---\ntype: meeting-note\n---\n# Sync\n\nfalcon plan\n');
-    v.put('contacts/Ben.md', '# Ben\n\nfalcon owner\n');
+    v.put('contacts/Ben.md', '---\ntype: person\n---\n# Ben\n\nfalcon owner\n');
     v.put('other.md', '# Other\n\nfalcon idea\n');
     const ix = createVaultIndex({ vault: v.vault, isExcludedPath: () => false, isExcludedText: () => false, redact: (t) => t, onChange: () => {} });
     ix.sync();

@@ -183,8 +183,8 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
     await after(on ? `Archived ${keys.length === 1 ? 'it' : keys.length}` : 'Moved back to review');
   };
   // Approve on a finding runs through the planner as one batch: its fix, the change its rule allows, or keep as is
-  const approveFinding = async (f: MemoryFinding) => {
-    const { failed } = await window.quorum.activityReview([{ kind: 'finding', abs: f.abs, key: f.key }], 'approve');
+  const approveFinding = async (f: MemoryFinding, only?: string[]) => {
+    const { failed } = await window.quorum.activityReview([{ kind: 'finding', abs: f.abs, key: f.key, ...(only ? { only } : {}) }], 'approve');
     if (failed.length) { toast(failed[0].error, 'error'); return; }
     toast(f.approve?.kind === 'keep' || (!f.approve && !f.fix) ? `Kept “${f.title}” as it is and marked it done.` : `Approved “${f.title}”. Quorum is applying it now.`);
     await after('Approved');

@@ -5,9 +5,10 @@
 // Approve writes the note from the vault's template for its kind, or a short default, with the notes that mention it
 // listed, and links the first mention in each of those notes to it.
 import { baseOf, finding, plural, quote } from './common.js';
-import { confidentialSet, frontmatterNames, kindFolder, kindOf, live, namesOf, normName } from './entities.js';
+import { cleanName, confidentialSet, entityKinds, folderKind, frontmatterNames, isName, kindFolder, kindOf, live, namesOf, normName } from './entities.js';
+import { matchesOf } from './entityAliases.js';
 
-export const rule = { id: 'note.missing-entity', version: 1, label: 'People and projects with no note' };
+export const rule = { id: 'note.missing-entity', version: 2, label: 'People and projects with no note' };
 export const MIN_MENTIONS = 3;
 // the notes a fix links the name from, at most
 export const MAX_LINKED = 20;
@@ -47,14 +48,19 @@ export function run(ctx) {
   };
   if (graph) {
     for (const kind of ['person', 'project']) for (const x of graph.nodes(kind)) {
-      if (x.rel) continue;
+      if (x.rel || !isName(cleanName(x.name))) continue;
       for (const rel of x.mentions) add(x.name, kind, rel);
     }
   } else {
     for (const n of all) for (const m of frontmatterNames(n)) add(m.name, m.kind, n.rel);
   }
+  // a name that is another name for a note of its kind is the alias rule's gap (rules/entityAliases.js), not a new note
+  const read = entityKinds(ctx);
+  const entityOf = (n) => read(n) ?? (['person', 'project'].includes(folderKind(n.rel)) ? folderKind(n.rel) : null);
+  const entities = all.filter((n) => entityOf(n));
   const out = [];
   for (const { name, kind, rels } of found.values()) {
+    if (matchesOf(entities, name, kind, { kindOf: entityOf, names: namesOf }).length) continue;
     const open = [...rels].filter((r) => byRel.has(r) && !secret(byRel.get(r))).sort();
     if (open.length < MIN_MENTIONS) continue;
     // the person the vault belongs to is in every meeting and needs no note from this rule

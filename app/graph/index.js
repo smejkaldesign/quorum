@@ -3,7 +3,7 @@
 // lines are already withheld and excluded or denied notes never arrive.
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { DEFAULT_CONVENTIONS, edgeKey, entityId, extractNote } from './extract.js';
+import { DEFAULT_CONVENTIONS, ENTITY_FOLDERS, edgeKey, entityId, extractNote, folderKind, noteKind } from './extract.js';
 import { createQuery } from './query.js';
 import { NOTE_IDENTITY, openStore } from './store.js';
 import { subjectOf, supersessions } from './temporal.js';
@@ -35,10 +35,30 @@ export function createMemoryGraph({ dataDir, vault, vindex, log = () => {}, isEx
   // what a node is called after its note moves
   const idFor = (n, to) => (n.kind === 'note' ? `note:${to}` : n.kind === 'decision' && n.id.includes('#') ? `decision:${to}${n.id.slice(n.id.indexOf('#'))}` : entityId(n.kind, to));
 
+  // ---- entity folder notes (extract.js noteKind) ----
+  // A note in a people, projects or companies folder is that entity when its type says so, when it is the folder's hub
+  // note, or when another note links it as one: an attended, works_on or member_of edge on its entity node, or an about
+  // edge from a meeting or a person. recheck holds the notes whose answer may have changed in this pass
+  const recheck = new Set();
+  const entityFolder = (rel) => { const k = folderKind(rel, conventions); return ENTITY_FOLDERS.has(k) ? k : null; };
+  const LINKING = ['attended', 'works_on', 'member_of', 'about'];
+  const linkedAs = (rel) => {
+    const k = entityFolder(rel);
+    if (!k) return null;
+    const by = store.edgesOf(entityId(k, rel), { dir: 'both', kinds: LINKING }).some((e) => e.source_rel && e.source_rel !== rel && (e.kind !== 'about' || /^(meeting|person):/.test(e.src)));
+    return by ? k : null;
+  };
+  const kindOf = (rel) => noteKind(rel, vindex.note?.(rel)?.props ?? {}, conventions, linkedAs(rel)).kind;
+  // whether the note's entity node in the store disagrees with what it is now
+  const stale = (rel) => { const k = entityFolder(rel); return !!k && (kindOf(rel) === k) !== store.nodesByRel(rel).some((n) => n.kind === k); };
+  const backers = (ids) => { for (const id of ids) { const r = store.node(id)?.rel; if (r) recheck.add(r); } };
+  // ---- end entity folder notes ----
+
   // the note's facts replace what it said before: kept edges keep their id and history, new ones are added and checked
   // for supersession, and the rest go
   function reindex(rel, text, hash) {
-    const ex = extractNote({ rel, text, note: vindex.note?.(rel) ?? null, resolve: (t, from) => vindex.resolve(t, from), conventions, isExcluded: hidden });
+    const ex = extractNote({ rel, text, note: vindex.note?.(rel) ?? null, resolve: (t, from) => vindex.resolve(t, from), conventions, isExcluded: hidden, linkedAs, kindOf });
+    for (const r of ex.refs) recheck.add(r);
     const backed = new Set(ex.nodes.filter((n) => n.rel).map((n) => n.id));
     const touched = new Set();
     for (const p of store.nodesByRel(rel)) {
@@ -96,6 +116,7 @@ export function createMemoryGraph({ dataDir, vault, vindex, log = () => {}, isEx
       touched.add(x.src); touched.add(x.dst);
       store.removeEdge(x.id);
     }
+    backers(touched);
     store.prune(touched);
     store.upsertFile({ rel, hash });
   }
@@ -171,7 +192,7 @@ export function createMemoryGraph({ dataDir, vault, vindex, log = () => {}, isEx
         if (moved.has(rel)) continue;
         each(rel, () => {
           for (const r of linkersOf(rel)) deps.add(r);
-          store.removeFile(rel);
+          backers(store.removeFile(rel) ?? []);
           hook({ type: 'remove', rel });
         });
       }
@@ -191,6 +212,16 @@ export function createMemoryGraph({ dataDir, vault, vindex, log = () => {}, isEx
         const t = textOf(rel);
         if (t !== null) each(rel, () => reindex(rel, t, sha(t)));
       }
+      // a folder note that became an entity or stopped being one is read again, and so are the notes that link it,
+      // whose mentions of it change too
+      for (let round = 0; round < 3 && recheck.size; round++) {
+        const now = [...recheck].filter((r) => textOf(r) !== null && stale(r));
+        recheck.clear();
+        const again = new Set(now);
+        for (const r of now) for (const l of linkersOf(r)) again.add(l);
+        for (const r of again) { const t = textOf(r); if (t !== null) each(r, () => reindex(r, t, sha(t))); }
+      }
+      recheck.clear();
     });
     for (const [from] of pairs) reported.delete(from);
   }

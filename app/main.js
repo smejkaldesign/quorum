@@ -72,7 +72,7 @@ import { batchItems, rollBackItems } from './batchItems.js';
 import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, fixVersions, recheckAll, undoPlan } from './fixRecheck.js';
 import { buildPlan, checkFirst, checkOrder, effects, groupLabel, groupOf, notesOf, planExclude } from './batchPlan.js';
 import { RETRO_TITLE, ROW, findingItem, itemLine, linkItem, pastFixItem } from './reviewItems.js';
-import { SETUP_OPS, approvedEdges, createMemorySetup, endEdges, graphFreshness, nodeIdOf, outsideInstructions, recordContradictions, resolveContradiction, runSetupOp, setupReport } from './memorySetup.js';
+import { SETUP_OPS, approvedEdges, createMemorySetup, endEdges, graphFreshness, nodeIdOf, outsideInstructions, pickItem, recordContradictions, resolveContradiction, runSetupOp, setupReport } from './memorySetup.js';
 import { approveFinding, approvePastFix, gitReader, retroCandidates, withLinkLine } from './reviewApprove.js';
 import { frontBlock, removeFrontmatterKey, withDate } from './frontmatter.js';
 import { createResolver } from './linkparse.js';
@@ -2291,7 +2291,10 @@ handleAction('activity-review', async (_e, items, verdict) => {
         // act on the note, then archive the finding
         // Approve runs the change its rule allows, or keeps it as it is, through the planner; the batch marks it done.
         // Only Archive logs archived, so a rule's record counts each once
-        if (ok) startPlanFor([`${ROW.finding}${String(it.key ?? '')}`]);
+        // only: the notes a grouped item keeps ticked (memorySetup.js pickItem); the others stay as they are
+        const id = `${ROW.finding}${String(it.key ?? '')}`;
+        const only = Array.isArray(it.only) ? { [id]: it.only.filter((r) => typeof r === 'string').slice(0, 5000) } : null;
+        if (ok) startPlanFor([id], currentActor(), null, only);
         else {
           archiveFindings([String(it.key ?? '')], true);
           const st = feedState();
@@ -2668,22 +2671,40 @@ const waitUntil = async (ok, { ms = 120000, every = 250, onTick = () => {} } = {
   while (!ok()) { if (Date.now() > end) return false; onTick(); await new Promise((r) => setTimeout(r, every)); }
   return true;
 };
+// a step that waited too long, or whose vault is no longer the one connected, stops the scan with its reason
+const sameVault = (vault) => { if (brain()?.vault !== vault) throw new Error('The vault changed during the scan. Check again to scan the vault connected now'); };
 const memorySetup = createMemorySetup({
   file: path.join(DATA_DIR, 'memory-setup.json'),
   emit: (s) => toUI('memory-setup', s),
   log,
   steps: {
-    index: async (progress) => { await waitUntil(() => !!vindex?.watching(), { onTick: () => progress(0, 0, `Reading the notes: ${(vindex?.size() ?? 0).toLocaleString('en-US')} so far`) }); },
-    graph: async (progress) => {
+    index: async (progress, { vault }) => {
+      sameVault(vault);
+      // the phase label stays put while the count moves; the window announces only a new phase
+      const ok = await waitUntil(() => !!vindex?.watching() || brain()?.vault !== vault, { onTick: () => progress(0, 0, `Reading the notes: ${(vindex?.size() ?? 0).toLocaleString('en-US')} so far`) });
+      sameVault(vault);
+      if (!ok) throw new Error('Reading the notes took more than 2 minutes. Check again once the vault has loaded');
+    },
+    graph: async (progress, { vault }) => {
+      sameVault(vault);
       if (!memoryGraph) return;
-      await waitUntil(() => !memoryGraph || ['ready', 'closed'].includes(memoryGraph.status().phase), { ms: 300000, onTick: () => { const p = memoryGraph?.status(); if (p?.total) progress(p.done, p.total, `Building the memory graph: ${p.done.toLocaleString('en-US')} of ${p.total.toLocaleString('en-US')} notes`); } });
+      const ok = await waitUntil(() => !memoryGraph || brain()?.vault !== vault || ['ready', 'closed'].includes(memoryGraph.status().phase), { ms: 300000, onTick: () => { const p = memoryGraph?.status(); if (p?.total) progress(p.done, p.total, `Building the memory graph: ${p.done.toLocaleString('en-US')} of ${p.total.toLocaleString('en-US')} notes`); } });
+      sameVault(vault);
+      if (!ok) throw new Error('Building the memory graph took more than 5 minutes. Check again once it is built');
     },
     // a memory check already running (the first check of a vault) is waited for instead of run twice
-    checks: async () => {
-      if (checkWork) { await waitUntil(() => !checkWork, { ms: 30 * 60000, every: 1000 }); return; }
-      await memoryCheck(memorySweep.state(brain()?.vault ?? '')?.lastFull ? 'full' : 'first');
+    checks: async (_p, { vault }) => {
+      sameVault(vault);
+      if (checkWork) {
+        const ok = await waitUntil(() => !checkWork, { ms: 30 * 60000, every: 1000 });
+        sameVault(vault);
+        if (!ok) throw new Error('The memory check took more than 30 minutes. Check again once it is done');
+        return;
+      }
+      await memoryCheck(memorySweep.state(vault)?.lastFull ? 'full' : 'first');
+      sameVault(vault);
     },
-    report: async () => setupReportNow(),
+    report: async (_p, { vault }) => { sameVault(vault); return setupReportNow(); },
   },
 });
 function setupReportNow() {
@@ -2709,7 +2730,9 @@ function setupStatus() {
   const b = brain();
   if (!b) return null;
   const k = keeper.status();
-  return { ...memorySetup.status(b.vault), made: b.made ?? null, keeper: { on: !!k.on, editVault: !!k.editVault }, graph: !!memoryGraph };
+  // a keeper turned off in Settings before setup counts as the person's choice too
+  const keeperChoice = memorySetup.keeperChoice(b.vault) ?? (settings.keeper?.on === false ? 'off' : null);
+  return { ...memorySetup.status(b.vault), keeperChoice, made: b.made ?? null, keeper: { on: !!k.on, editVault: !!k.editVault }, graph: !!memoryGraph };
 }
 // once per vault, after its index is in: the scan of a vault that has no report yet
 function scheduleSetup(vault) {
@@ -2737,8 +2760,19 @@ handleAction('memory-setup-status', () => setupStatus());
 ipcMain.handle('memory-setup-run', (_e, opts) => {
   const b = brain();
   if (!b) throw new Error('No vault connected');
-  if (typeof opts?.keeper === 'boolean') keeper.set({ on: opts.keeper });
+  if (typeof opts?.keeper === 'boolean') { memorySetup.chooseKeeper(b.vault, opts.keeper); keeper.set({ on: opts.keeper }); }
   memorySetup.run(b.vault).catch(() => {});
+  return setupStatus();
+});
+// the person's keeper choice from the setup card: on or off, kept per vault. offer: true is finishing onboarding with
+// the offer still selected, which turns the keeper on only when no choice was made on the card
+ipcMain.handle('memory-setup-keeper', (_e, opts) => {
+  const b = brain();
+  if (!b) throw new Error('No vault connected');
+  if (typeof opts?.on !== 'boolean') throw new Error('Choose on or off');
+  const offer = opts.offer === true;
+  if (offer && settings.keeper?.on === false) return setupStatus();
+  if (memorySetup.chooseKeeper(b.vault, opts.on, { offer })) keeper.set({ on: opts.on });
   return setupStatus();
 });
 FEED_READS.add('memory-setup-status');
@@ -4090,8 +4124,8 @@ function startPlan(plan, items, { actor = currentActor(), batch = null } = {}) {
 }
 // plans and starts the items with these row ids; refuses with the reason the first one was left out
 // batch: the bulk Approve this plan belongs to, so its plain fixes and this run show and cancel as one
-function startPlanFor(ids, actor = currentActor(), batch = null) {
-  const items = gatedItems({ ids });
+function startPlanFor(ids, actor = currentActor(), batch = null, only = null) {
+  const items = gatedItems({ ids }).map((i) => (only?.[i.id] ? pickItem(i, only[i.id]) : i));
   if (!items.length) throw new Error('That item is no longer in Needs review');
   const plan = buildPlan(items);
   if (!plan.ok.length) throw new Error((plan.held[0] ?? plan.skipped[0])?.reason ?? 'Nothing in the plan can run');
@@ -4148,7 +4182,7 @@ async function runOp(item, o, { step, keep, written, vault }) {
     if ((now == null ? null : sha(now)) !== o.expect) throw new Error(`“${o.rel}” changed after Quorum planned this batch, so Quorum did not write. Review the plan again`);
   }
   // memory setup: the ops its rules add (memorySetup.js)
-  if (item.kind === 'finding' && SETUP_OPS.has(o.op)) { await runSetupOp(item, o, { step, keep, vault }, { vindex, trash: (p) => shell.trashItem(p) }); return; }
+  if (item.kind === 'finding' && SETUP_OPS.has(o.op)) { await runSetupOp(item, o, { step, keep, vault, written }, { vindex, trash: (p) => shell.trashItem(p) }); return; }
   const past = item.kind === 'pastfix';
   if (o.op === 'restore') {
     await step(past ? `Putting back ${o.rel} as it read before the earlier fix` : item.relinkTo ? `Pointing the links to ${item.target} in ${o.rel} at ${item.relinkTo}` : `Writing ${o.rel} as the agent drafted it`);
