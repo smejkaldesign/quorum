@@ -11,6 +11,7 @@ import { checkConnection } from './connectionCheck.js';
 import { openSpeech, SPEECH_ENGINES } from './speech/provider.js';
 import { SKIP as TREE_SKIP, createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTree } from './vault.js';
 import { createVaultIndex } from './vindex.js';
+import { createMemoryGraph } from './graph/index.js';
 import { applyUndo, sha, undoRecord } from './fixUndo.js';
 import { changedSince, createFixJournal, createNoteHashes, fixCheck, hashNotes, noteMemo, recoveryReason, rollback } from './fixJournal.js';
 import { createGateStore, gatePasses, gateTriggers, verdictOf } from './gateRun.js';
@@ -118,6 +119,8 @@ const FEED_READS = new Set([
   'memory-catchup-status', 'note-chats', 'read-chat', 'event-chats', 'calendar', 'oauth-accounts', 'mcp-status', 'cli-status', 'agents-status', 'claude-status',
   'model-source-status', 'decisions-status', 'screen-context-status', 'ax-status', 'kb-list', 'kb-notes', 'kb-files', 'kb-files-usage', 'kb-file-data', 'kb-hosted',
   'kb-hosted-note', 'kb-drive-status', 'kb-sync-list', 'kb-sync-grants', 'kb-import-progress',
+  // memory graph reads
+  'memory-graph-status', 'memory-graph-query', 'memory-graph-explain', 'memory-graph-entity', 'memory-graph-decisions', 'memory-graph-path',
 ]);
 const TREE_WRITES = new Set([
   'vault-new-note', 'vault-new-folder', 'vault-move', 'vault-rename', 'vault-trash', 'vault-duplicate', 'set-settings', 'guardrails-add', 'guardrails-remove', 'guardrails-set',
@@ -2472,6 +2475,28 @@ const excludedPath = (rel) => suggester.isExcluded(rel);
 
 // one live index per connected vault; the watcher tells the UI what changed so it can refresh in place
 let vindex = null;
+// memory graph (graph/index.js): typed, sourced and dated connections derived from the vault index, in
+// DATA_DIR/memory/<vault hash>/memory.db. It reads vindex's text, so withheld lines and excluded notes never reach it.
+// openIndex opens it for the connected vault, builds it once the index is read, and hands it every change after that
+let memoryGraph = null;
+function closeMemoryGraph() { memoryGraph?.close(); memoryGraph = null; }
+function openMemoryGraph(vault) {
+  closeMemoryGraph();
+  try {
+    memoryGraph = createMemoryGraph({ dataDir: DATA_DIR, vault, vindex, isExcluded: (t) => suggester.isExcluded(t), log: (...a) => log('memory graph', ...a) });
+    memoryGraph.on('progress', (st) => toUI('memory-graph', st));
+    memoryGraph.on('ready', (st) => toUI('memory-graph', st));
+  } catch (err) { log('memory graph failed to open', String(err)); memoryGraph = null; }
+}
+const graphBudget = (b) => Math.max(100, Math.min(Number(b) || 1500, 50000));
+const graphArgs = (a) => { const o = a && typeof a === 'object' ? { ...a } : {}; if ('budget' in o) o.budget = graphBudget(o.budget); return o; };
+const graphRead = (fn) => { if (!memoryGraph) return null; try { return fn(memoryGraph); } catch (err) { log('memory graph read', String(err)); return { error: 'The memory graph could not answer that.' }; } };
+ipcMain.handle('memory-graph-status', () => memoryGraph?.status() ?? { phase: 'off' });
+ipcMain.handle('memory-graph-query', (_e, args) => graphRead((g) => g.graphQuery(graphArgs(args))));
+ipcMain.handle('memory-graph-explain', (_e, ref) => graphRead((g) => g.explain(String(ref ?? ''))));
+ipcMain.handle('memory-graph-entity', (_e, name, opts) => graphRead((g) => g.entity(String(name ?? ''), graphArgs(opts))));
+ipcMain.handle('memory-graph-decisions', (_e, args) => graphRead((g) => g.decisions(graphArgs(args))));
+ipcMain.handle('memory-graph-path', (_e, a, b, opts) => graphRead((g) => g.graphPath(String(a ?? ''), String(b ?? ''), graphArgs(opts))));
 // Memory health review rules (rules/index.js) on the cadence memorySweep.js sets: the notes that changed a few seconds
 // after a save, an incremental sweep every 3.5 hours, a full sweep once a day while the person is away
 const memorySweep = createMemorySweep({ file: path.join(DATA_DIR, 'memory-findings.json') });
@@ -2609,6 +2634,7 @@ ipcMain.handle('memory-sweep-now', () => memoryCheck(memorySweep.state(brain()?.
 function openIndex() {
   vindex?.stop();
   vindex = null;
+  closeMemoryGraph();
   // saves waiting for a check belong to the vault that was open; they wait in a file until it opens again
   keepSaves();
   const b = brain();
@@ -2620,12 +2646,14 @@ function openIndex() {
   // enters the index, and a rule change rebuilds it (the guardrails IPC handlers below)
   vindex = createVaultIndex({
     vault: b.vault, isExcludedPath: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isDeniedText: isConfidentialText, isExcludedText: suggester.isExcluded, redact: suggester.redactLines,
-    onChange: (rels) => { toUI('vault-changed', rels); if (!built) { built = true; setTimeout(sweepTick, 5000); const kept = savesWaiting.take(b.vault); if (kept.length) sweepOnSave(kept); } else sweepOnSave(rels); }, renamed: () => settings.clusterNames?.[b.vault] ?? {},
+    onChange: (rels) => { toUI('vault-changed', rels); memoryGraph?.update(rels); if (!built) { built = true; setTimeout(sweepTick, 5000); const kept = savesWaiting.take(b.vault); if (kept.length) sweepOnSave(kept); } else sweepOnSave(rels); }, renamed: () => settings.clusterNames?.[b.vault] ?? {},
     forget: (keys) => { const mine = settings.clusterNames?.[b.vault]; if (!mine) return; for (const k of keys) delete mine[k]; store.settings.save(); }, log: (...a) => log('index', ...a),
     onPaths: treePaths,
   });
   dropTree();
-  vindex.start();
+  openMemoryGraph(b.vault);
+  const graph = memoryGraph;
+  vindex.start().then(() => { if (graph && memoryGraph === graph) return graph.build(); }).catch((err) => log('memory graph build', String(err)));
   // the keeper files whatever arrived while the app was closed, once the folder is open
   setTimeout(() => keeper.run({ reason: 'launch' }).catch(() => {}), 4000);
   // the hosted edition's sync watches the same vault for files to push; the vault changed, so it moves with it

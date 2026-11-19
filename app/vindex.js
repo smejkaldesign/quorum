@@ -410,6 +410,8 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   return {
     start, stop, sync, syncPaths, rebuild, graph, backlinks, outgoing, search, resolve: (target, from) => resolve(target, from),
     note: (rel) => files.get(rel)?.note ?? null,
+    // the note's text as indexed: opted-out lines already withheld, and only the head of a note past INDEX_MAX
+    text: (rel) => files.get(rel)?.text ?? null,
     linkHealth,
     aliasesOf,
     flagged: () => [...files].filter(([, f]) => f.flagged).map(([rel]) => rel),
