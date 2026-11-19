@@ -160,7 +160,8 @@ export function createQuery(store) {
     const by = superseded ? store.edge(superseded.superseded_by) : null;
     return {
       id: d.id, text: d.props?.text ?? d.name, date: d.props?.date ?? null, rel: d.rel, line: d.props?.line ?? null,
-      about: about.filter(current).map((e) => ({ id: e.dst, name: nameOf(e.dst) })),
+      // a superseded decision keeps what it was about: its own edges are history then, not gone
+      about: [...new Map((about.some(current) ? about.filter(current) : about).map((e) => [e.dst, { id: e.dst, name: nameOf(e.dst) }])).values()],
       decidedIn: inMeeting ? { id: inMeeting.dst, name: nameOf(inMeeting.dst) } : null,
       supersededBy: by ? { id: by.src, text: store.node(by.src)?.props?.text ?? nameOf(by.src) } : null,
     };
