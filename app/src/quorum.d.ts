@@ -262,9 +262,10 @@ export type FeedTab = 'all' | 'unread' | 'archived';
 export type FeedSort = 'unread' | 'recent' | 'az';
 export type FeedSummary = { line: string; sub: string | null; ask?: { question: string; suggest: 'approve' | 'reject'; why: string; problem: string; solution: string; value: string; recommendation: string }; problem?: string; solution?: string; value?: string; recommendation?: string };
 export type FixStep = { label: string; at: number; endedAt: number | null };
-export type FixRun = { id: string; key: string; target: string; title: string; rel: string; status: 'queued' | 'running' | 'success' | 'error'; queuedAt: number; startedAt: number | null; endedAt: number | null; steps: FixStep[]; outcome: string | null; error: string | null; dismissedAt: number | null; batch?: string | null; undoable?: boolean; undoneAt?: number | null; problem?: string; solution?: string; value?: string; recommendation?: string; meta?: [string, string][]; showBanner?: boolean; kind?: 'batch'; auto?: boolean; actor?: string; by?: string; items?: BatchItem[]; groups?: { id: string; label: string; count: number }[] };
+export type FixRun = { id: string; key: string; target: string; title: string; rel: string; status: 'queued' | 'running' | 'success' | 'error'; queuedAt: number; startedAt: number | null; endedAt: number | null; steps: FixStep[]; outcome: string | null; error: string | null; dismissedAt: number | null; batch?: string | null; undoable?: boolean; undoneAt?: number | null; problem?: string; solution?: string; value?: string; recommendation?: string; meta?: [string, string][]; showBanner?: boolean; kind?: 'batch'; auto?: boolean; actor?: string; by?: string; items?: BatchItem[]; groups?: { id: string; label: string; count: number }[]; rolledBack?: boolean };
 // one item of a batch run, with its own state while the batch works
-export type BatchItem = { id: string; kind: 'link' | 'pastfix' | 'finding'; key: string; link: string | null; title: string; line: string; status: 'queued' | 'running' | 'success' | 'error' };
+// error: why the item failed on its own; rolledBack: it was fixed, then put back when the whole batch rolled back
+export type BatchItem = { id: string; kind: 'link' | 'pastfix' | 'finding'; key: string; link: string | null; title: string; line: string; status: 'queued' | 'running' | 'success' | 'error'; error?: string | null; skipped?: boolean; rolledBack?: boolean };
 // the bulk plan sheet: groups of what the batch will do, each item ticked or not, and what was merged, skipped or held back
 export type PlanItem = { id: string; title: string; kind: string; notes: string[]; line: string; on: boolean; draft?: MemoryDraft | null };
 // a fix the agent drafted (memoryDraft.js); every quote was checked against the line it names
@@ -478,8 +479,8 @@ declare global {
       fixRuns(): Promise<FixRun[]>;
       fixDismiss(ids: string[]): Promise<number>;
       fixUndo(id: string): Promise<string>;
-      fixPlan(ids: string[] | null, exclude: string[], include?: string[]): Promise<PlanView>;
-      fixPlanApply(ids: string[] | null, exclude: string[], opts?: { saveNote?: boolean }, include?: string[]): Promise<{ run: FixRun | null; note: string | null }>;
+      fixPlan(ids: string[], exclude: string[], include?: string[]): Promise<PlanView>;
+      fixPlanApply(ids: string[], exclude: string[], opts?: { saveNote?: boolean }, include?: string[]): Promise<{ run: FixRun | null; note: string | null }>;
       confidentialMarks(): Promise<{ folders: Record<string, string>; notes: Record<string, string>; values: string[] }>;
       confidentialMark(rel: string, isDir: boolean, value: string | null): Promise<string>;
       onFixRun(cb: (run: FixRun) => void): () => void;
