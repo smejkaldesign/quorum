@@ -7,10 +7,10 @@
 //   note.missing-entity  a name several notes mention with no note: write it from a template, link the mentions
 //   note.entity-alias    one person or project under two names: merge the notes, or add the alias
 //   note.meeting-links   meeting attendees in plain text: link them
-//   note.entity-type     person and project notes with no type: set it
+//   note.entity-type     notes the graph reads as people or projects with no type: set it, one item per folder
 //   note.unplaced        notes outside the folder for their kind: move them
 //   note.summary-stale   summaries whose sources changed: record the hashes, or mark them stale
-//   note.instructions    CLAUDE.md, AGENTS.md and similar: size budget, dead links, lines the graph holds as superseded
+//   note.instructions    CLAUDE.md, AGENTS.md and similar: size budget (listed, no fix), decisions a newer one replaced
 //
 // The fixes run through the fix run machinery like every other finding (main.js runOp, batchPlan.js, versions, Undo);
 // this module holds the steps of the ops the setup rules added (create, mention, alias, merge, split), and, after a
@@ -18,14 +18,15 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { aliasText, rewriteLinks, writeAtomic } from './relink.js';
-import { vaultPath, vaultTarget } from './vault.js';
+import { vaultPath, vaultTarget, walk } from './vault.js';
+import { sha } from './fixUndo.js';
 import { linkMentions } from './keeper.js';
 import { parseNote } from './linkparse.js';
 import { RULE_LABELS, SETUP_RULES } from './rules/index.js';
-import { kindOf, normName, PEOPLE_KEYS, PROJECT_KEYS } from './rules/entities.js';
+import { entityKinds, normName, PEOPLE_KEYS, PROJECT_KEYS } from './rules/entities.js';
 import { BUDGET, INSTRUCTION_NAME } from './rules/instructions.js';
 import { bodyOf, DAY } from './rules/common.js';
-import { entityId, noteKind } from './graph/extract.js';
+import { ENTITY_FOLDERS, entityId, folderKind, noteKind } from './graph/extract.js';
 
 // the ops this module runs for a finding item (main.js runOp hands them here)
 export const SETUP_OPS = new Set(['create', 'mention', 'alias', 'merge', 'split']);
@@ -102,11 +103,40 @@ export function splitText(text, parts, { from }) {
   return { text: lines.join('\n').replace(/\n{3,}/g, '\n\n'), notes };
 }
 
-// One step of a setup op in a batch. ctx: runOp's { step, keep, vault }; deps: { vindex, trash(abs) }. Each change
-// goes through keep first, so the batch's versions and Undo hold the text from before
-export async function runSetupOp(item, o, { step, keep, vault }, { vindex, trash }) {
+// The notes in the vault folder that the index leaves out (private, excluded, denied) whose text links to rel: a merge
+// cannot point their links at the kept note, so it does not run. Only a yes or no leaves this function
+export function unindexedLinkers(vault, rel, indexed) {
+  const name = base(rel).toLowerCase();
+  const full = noExt(rel).toLowerCase();
+  const out = [];
+  let all;
+  try { all = walk(vault, '', () => false, []); } catch { return out; }
+  for (const r of all) {
+    if (indexed.has(r) || r === rel) continue;
+    let t;
+    try { t = readFileSync(path.join(vault, r), 'utf8').toLowerCase(); } catch { continue; }
+    for (const m of t.matchAll(/!?\[\[([^\]|#]+)|\]\(([^)#\s]+?)(?:\.md)?(?:#[^)]*)?\)/g)) {
+      let target = m[1] ?? m[2] ?? '';
+      try { target = decodeURI(target); } catch { /* a stray % stays as written */ }
+      target = target.trim().replace(/\.md$/, '');
+      if (target === name || target === full || target.endsWith(`/${name}`)) { out.push(r); break; }
+    }
+  }
+  return out;
+}
+
+// One step of a setup op in a batch. ctx: runOp's { step, keep, vault, written, hashes }; deps: { vindex, trash(abs) }.
+// Each change goes through keep first, so the batch's versions and Undo hold the text from before. A note the item
+// read at the scan (hashes) and that changed since stops the step, unless an earlier step of the batch wrote it
+export async function runSetupOp(item, o, { step, keep, vault, written = new Set(), hashes = item?.hashes ?? null }, { vindex, trash }) {
   const read = (rel) => readFileSync(vaultPath(vault, rel), 'utf8');
   const need = (rel) => { if (!vaultPath(vault, rel)) throw new Error(`“${rel}” is no longer in the vault`); };
+  const fresh = (rel) => {
+    if (!hashes || !(rel in hashes) || written.has(rel)) return;
+    const abs = vaultPath(vault, rel);
+    const now = abs ? sha(readFileSync(abs, 'utf8')) : null;
+    if (now !== hashes[rel]) throw new Error(`“${rel}” changed after Quorum checked it, so Quorum did not write. Review it again`);
+  };
   if (o.op === 'create') {
     const abs = vaultTarget(vault, o.rel);
     if (!abs) throw new Error(`“${o.rel}” is outside the vault`);
@@ -117,6 +147,7 @@ export async function runSetupOp(item, o, { step, keep, vault }, { vindex, trash
     writeAtomic(abs, o.text ?? `# ${base(o.rel)}\n`);
   } else if (o.op === 'mention') {
     need(o.rel);
+    fresh(o.rel);
     const cur = read(o.rel);
     const next = linkMention(cur, o.name, o.target ?? base(o.to));
     if (next === cur) { await step(`${o.rel} links ${o.name} already`); return; }
@@ -125,15 +156,20 @@ export async function runSetupOp(item, o, { step, keep, vault }, { vindex, trash
     writeAtomic(vaultPath(vault, o.rel), next);
   } else if (o.op === 'alias') {
     need(o.rel);
+    fresh(o.rel);
     await step(`Adding ${o.alias} as an alias of ${o.rel}`);
     keep(o.rel);
     writeAtomic(vaultPath(vault, o.rel), aliasText(read(o.rel), o.alias));
   } else if (o.op === 'merge') {
     need(o.rel); need(o.drop);
+    fresh(o.rel); fresh(o.drop);
+    const hidden = unindexedLinkers(vault, o.drop, new Set(vindex.rels()));
+    if (hidden.length) throw new Error(`${hidden.length === 1 ? 'A note' : `${hidden.length} notes`} Quorum does not read ${hidden.length === 1 ? 'links' : 'link'} to “${o.drop}”, so Quorum did not merge it. Their links would open nothing`);
     await step(`Merging ${o.drop} into ${o.rel}`);
     const drop = read(o.drop);
     const dn = parseNote(o.drop, drop);
     const sources = [...new Set(vindex.backlinks(o.drop).map((b) => b.rel))].filter((r) => r !== o.rel && r !== o.drop);
+    for (const r of sources) fresh(r);
     for (const r of sources) keep(r);
     if (sources.length) {
       await step(`Pointing the links in ${sources.length} ${sources.length === 1 ? 'note' : 'notes'} at ${o.rel}`);
@@ -146,6 +182,9 @@ export async function runSetupOp(item, o, { step, keep, vault }, { vindex, trash
     await trash(vaultPath(vault, o.drop));
   } else if (o.op === 'split') {
     need(o.rel);
+    fresh(o.rel);
+    const targets = o.parts.map((p) => p.to.toLowerCase());
+    if (new Set(targets).size !== targets.length) throw new Error(`Two sections of ${o.rel} would go to the same note, so Quorum did not split it. Review it again`);
     const { text, notes } = splitText(read(o.rel), o.parts, { from: o.rel });
     for (const n of notes) if (existsSync(path.join(vault, n.rel))) throw new Error(`A note is already at “${n.rel}”, so Quorum did not split ${o.rel}`);
     await step(`Moving ${notes.length} ${notes.length === 1 ? 'section' : 'sections'} of ${o.rel} into notes beside it`);
@@ -161,11 +200,27 @@ export async function runSetupOp(item, o, { step, keep, vault }, { vindex, trash
   vindex.sync();
 }
 
+// A grouped item (rules/entityType.js, fix.pick) approved with some of its notes unticked: the item with only the ops,
+// notes and hashes of the notes the person kept. rels: the ticked notes, or null for all of them
+export function pickItem(item, rels) {
+  if (!rels) return item;
+  const keep = new Set(rels.map(String));
+  const ops = (item.ops ?? []).filter((o) => keep.has(o.rel));
+  if (!ops.length) throw new Error('Tick at least one note to approve');
+  const hashes = item.hashes ? Object.fromEntries(Object.entries(item.hashes).filter(([r]) => keep.has(r))) : item.hashes;
+  return { ...item, ops, notes: (item.notes ?? []).filter((r) => keep.has(r)), ...(hashes ? { hashes } : {}) };
+}
+
 // the graph node a note stands for: the person, project, meeting or decision node it backs, else its note node. A note
 // the graph has not read yet gets the id the graph's extraction gives it (graph/extract.js entityId)
 export function nodeIdOf(store, rel, props = {}) {
   const backed = (store?.nodesByRel?.(rel) ?? []).find((x) => x.kind !== 'note');
-  return backed?.id ?? entityId(noteKind(rel, props).kind, rel);
+  if (backed) return backed.id;
+  const k = noteKind(rel, props).kind;
+  if (k !== 'note') return entityId(k, rel);
+  // a note in a people or projects folder the person just linked as one: the edge is what makes it that entity
+  const f = folderKind(rel);
+  return ENTITY_FOLDERS.has(f) ? entityId(f, rel) : `note:${rel}`;
 }
 
 // The edges a batch's approved connections record, with person provenance: a mention links a note to the entity's
@@ -240,14 +295,15 @@ export function endEdges(store, ids, { at = Date.now() } = {}) {
   return ids.length;
 }
 
-// the facts the graph holds now, and how many of them hold a date in the last days: edges that state a relation
-// (attended, works_on, decided_in and the like), read with their valid_from. Through the store's connection
+// the dated facts the graph holds now, and how many of them hold a date in the last days: edges that state a relation
+// (attended, works_on, decided_in and the like) with a valid_from. A fact from an undated note says nothing about
+// when it was last true, so it counts in neither. Through the store's connection
 const FACT_KINDS = ['mentions', 'attended', 'works_on', 'member_of', 'decided_in', 'decision_about'];
 export function graphFreshness(store, since) {
   const db = store?.db?.();
   if (!db) return null;
   const marks = FACT_KINDS.map(() => '?').join(', ');
-  const r = db.prepare(`select count(*) as total, sum(case when valid_from >= ? then 1 else 0 end) as confirmed from edges where kind in (${marks}) and valid_to is null and superseded_by is null`).get(since, ...FACT_KINDS);
+  const r = db.prepare(`select count(*) as total, sum(case when valid_from >= ? then 1 else 0 end) as confirmed from edges where kind in (${marks}) and valid_from is not null and valid_to is null and superseded_by is null`).get(since, ...FACT_KINDS);
   return { total: Number(r?.total ?? 0), confirmed: Number(r?.confirmed ?? 0) };
 }
 
@@ -266,8 +322,9 @@ export function outsideInstructions({ root, vault, resolve = () => null }) {
   return out;
 }
 
-// Freshness: the share of current facts confirmed in the last FRESH_DAYS days (graph edges recorded or valid since
-// then; without the graph, notes updated or verified since then), open contradictions, and stale summaries
+// Freshness: the share of current dated facts confirmed in the last FRESH_DAYS days (graph edges valid since then;
+// without the graph or with no dated facts, notes updated or verified since then), open contradictions, and stale
+// summaries
 export function freshness({ notes = [], findings = [], graph = null, now = Date.now() }) {
   const since = now - FRESH_DAYS * DAY;
   let confirmed = null;
@@ -286,6 +343,7 @@ function entityCounts(notes, stats) {
   const by = stats?.byKind?.nodes ?? null;
   if (by && typeof by === 'object') return { people: by.person ?? 0, projects: by.project ?? 0, meetings: by.meeting ?? 0, decisions: by.decision ?? 0, source: 'graph' };
   const c = { person: 0, project: 0, meeting: 0, decision: 0 };
+  const kindOf = entityKinds({ notes });
   for (const n of notes) { const k = kindOf(n); if (k) c[k]++; }
   return { people: c.person, projects: c.project, meetings: c.meeting, decisions: c.decision, source: 'notes' };
 }
@@ -326,8 +384,10 @@ export function setupReport({ notes = [], missing = 0, findings = [], links = []
 }
 
 // The scan's run and its state, one vault at a time. steps: { index, graph, checks, report } (main.js): index and
-// graph wait for their builds and report progress, checks runs the review rules, report builds the report. The last
-// report per vault is kept in file, so Settings shows it after a restart
+// graph wait for their builds and report progress, checks runs the review rules, report builds the report. Each step
+// gets { vault } and throws when it cannot finish (a build that timed out, a vault that changed), so a partial scan
+// saves no report. The last report per vault is kept in file, so Settings shows it after a restart, and so is the
+// person's keeper choice from setup: 'on', 'off', or null while they have not chosen
 export const PHASES = [
   { id: 'index', label: 'Reading the notes' },
   { id: 'graph', label: 'Building the memory graph' },
@@ -338,10 +398,12 @@ export function createMemorySetup({ file, steps, emit = () => {}, log = () => {}
   let saved = {};
   try { saved = JSON.parse(readFileSync(file, 'utf8')) ?? {}; } catch { saved = {}; }
   let state = null;
+  const save = () => { try { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, JSON.stringify(saved)); } catch (e) { log('memory setup', e?.message); } };
+  const choice = (vault) => (saved[vault]?.keeper === 'on' || saved[vault]?.keeper === 'off' ? saved[vault].keeper : null);
   const view = (vault) => {
     const last = saved[vault] ?? null;
-    if (state && state.vault === vault) return { running: state.running, phase: state.phase, progress: state.progress, phases: PHASES, error: state.error, report: state.report ?? last?.report ?? null, done: !state.running && !!(state.report ?? last?.report) };
-    return { running: false, phase: null, progress: null, phases: PHASES, error: null, report: last?.report ?? null, done: !!last?.report };
+    if (state && state.vault === vault) return { running: state.running, phase: state.phase, progress: state.progress, phases: PHASES, error: state.error, report: state.report ?? last?.report ?? null, done: !state.running && !!(state.report ?? last?.report), keeperChoice: choice(vault) };
+    return { running: false, phase: null, progress: null, phases: PHASES, error: null, report: last?.report ?? null, done: !!last?.report, keeperChoice: choice(vault) };
   };
   const put = (patch) => { Object.assign(state, patch); emit(view(state.vault)); };
   async function run(vault, opts = {}) {
@@ -352,11 +414,11 @@ export function createMemorySetup({ file, steps, emit = () => {}, log = () => {}
       for (const [i, p] of PHASES.entries()) {
         put({ phase: p.id, progress: { done: i, total: PHASES.length, label: p.label } });
         const sub = (done, total, label = p.label) => put({ progress: { done: i + (total ? Math.min(1, done / total) : 0), total: PHASES.length, label } });
-        const out = await steps[p.id](sub, opts);
+        const out = await steps[p.id](sub, { ...opts, vault });
         if (p.id === 'report') state.report = out;
       }
-      saved[vault] = { report: state.report };
-      try { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, JSON.stringify(saved)); } catch (e) { log('memory setup', e?.message); }
+      saved[vault] = { ...(saved[vault] ?? {}), report: state.report };
+      save();
       put({ running: false, phase: 'done', progress: { done: PHASES.length, total: PHASES.length, label: 'Done' } });
     } catch (e) {
       log('memory setup', e?.message);
@@ -364,6 +426,13 @@ export function createMemorySetup({ file, steps, emit = () => {}, log = () => {}
     }
     return view(vault);
   }
-  return { run, status: (vault) => view(vault), at: now };
+  // the person's keeper choice from setup. offer: true records it only when they have not chosen yet, so finishing
+  // setup never overrides a choice made on the card. Answers whether it was recorded
+  function chooseKeeper(vault, on, { offer = false } = {}) {
+    if (!vault || (offer && choice(vault))) return false;
+    saved[vault] = { ...(saved[vault] ?? {}), keeper: on ? 'on' : 'off' };
+    save();
+    return true;
+  }
+  return { run, status: (vault) => view(vault), keeperChoice: choice, chooseKeeper, at: now };
 }
-

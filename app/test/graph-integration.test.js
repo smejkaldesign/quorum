@@ -73,7 +73,7 @@ describe('memory graph on a generated vault', () => {
 
   it('refuses a name that matches two things', async () => {
     const { g, write } = await setup();
-    write('companies/Project A.md', '# Project A\n');
+    write('companies/Project A.md', '---\ntype: company\n---\n# Project A\n');
     const r = g.entity('Project A');
     expect(r.ambiguous.map((c) => c.id).sort()).toEqual(['company:project-a', 'project:project-a']);
     expect(g.graphQuery({ q: 'Project A' }).ambiguous).toHaveLength(2);
@@ -230,5 +230,34 @@ describe('names that a tag shares', () => {
     t.write('02-people/Orca.md', '---\ntype: person\n---\n# Orca\n\nA person with the same name.\n');
     await t.g.update(['02-people/Orca.md']);
     expect(t.g.entity('Orca').ambiguous?.length).toBeGreaterThan(1);
+  });
+});
+
+describe('entity folder notes', () => {
+  it('reads a folder note as an entity once a meeting lists it, and as a note again once none does', async () => {
+    const t = await setup({ notes: 10, people: 3, projects: 2, companies: 1, meetings: 2 });
+    // the person note and a note that links it are read before any meeting names her
+    t.write('02-people/Zoe Park.md', '# Zoe Park\n\nNotes on Zoe.\n');
+    t.write('notes/zoe mention.md', 'Talked to [[Zoe Park]].\n');
+    t.write('04-projects/zoe-prd.md', '# Zoe PRD\n\nA spec.\n');
+    expect(t.g.store.node('person:zoe-park')).toBe(null);
+    expect(t.g.store.nodesByRel('04-projects/zoe-prd.md').map((n) => n.kind)).toEqual(['note']);
+    const rel = '08-meetings/2026-07-01 Zoe intro.md';
+    t.write(rel, '---\ndate: 2026-07-01\nattendees: [Zoe Park]\n---\n# Intro\n');
+    expect(t.g.store.node('person:zoe-park').rel).toBe('02-people/Zoe Park.md');
+    // the note that linked her before is read again: its link is now a mention of the person
+    expect(t.g.store.edgesOf('person:zoe-park', { dir: 'in', kinds: ['mentions'] }).map((e) => e.source_rel)).toEqual(['notes/zoe mention.md']);
+    t.write(rel, '---\ndate: 2026-07-01\n---\n# Intro\n');
+    expect(t.g.store.node('person:zoe-park')).toBe(null);
+    expect(t.g.store.nodesByRel('02-people/Zoe Park.md').map((n) => n.kind)).toEqual(['note']);
+  });
+
+  it('counts the projects a meeting or a type names, and leaves the specs and PRDs beside them as notes', async () => {
+    const t = await setup({ notes: 20, people: 6, projects: 4, companies: 2, meetings: 8, specs: 60 });
+    const kinds = t.g.status().byKind.nodes;
+    expect(kinds.project).toBe(4);
+    expect(kinds.company).toBe(2);
+    expect(kinds.person).toBe(6);
+    expect(t.g.store.nodesByRel(t.info.specRels[0]).map((n) => n.kind)).toEqual(['note']);
   });
 });

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseNote, createResolver } from '../linkparse.js';
@@ -17,7 +17,18 @@ import { ruleGraph } from '../rules/entities.js';
 import { noteHash } from '../rules/common.js';
 import { findingItem, itemLine } from '../reviewItems.js';
 import { buildPlan, checkOrder } from '../batchPlan.js';
-import { approvedEdges, createMemorySetup, endEdges, freshness, linkMention, mergeText, outsideInstructions, recordContradictions, resolveContradiction, runSetupOp, setupReport, splitText } from '../memorySetup.js';
+import { approvedEdges, createMemorySetup, endEdges, freshness, graphFreshness, linkMention, mergeText, nodeIdOf, outsideInstructions, pickItem, recordContradictions, resolveContradiction, runSetupOp, setupReport, splitText, unindexedLinkers } from '../memorySetup.js';
+import * as oversized from '../rules/oversized.js';
+import { isName } from '../rules/entities.js';
+import { itemUndo } from '../batchItemUndo.js';
+import { batchItems } from '../batchItems.js';
+import { applyUndo, undoRecord } from '../fixUndo.js';
+import { hashNotes } from '../fixJournal.js';
+import { walk } from '../vault.js';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { MemorySetupView } from '../src/MemorySetup.tsx';
+import { keeperRow, phaseName } from '../src/memorySetupView.ts';
 import { meetingEdges } from '../keeper.js';
 import { createVaultIndex } from '../vindex.js';
 import { createMemoryGraph } from '../graph/index.js';
@@ -111,9 +122,12 @@ describe('note.entity-alias', () => {
     expect(entityAliases.sameEntity('Ana Ruiz', 'Ana Ruiz')).toBe(false);
   });
   it('merges two notes for one person into the one more notes link to', () => {
-    const notes = [note('people/Ana Ruiz.md', '# Ana Ruiz\n\nLead.\n', { inbound: 4 }), note('people/ana-ruiz.md', '# ana-ruiz\n\nOther text.\n', { inbound: 1 })];
+    const notes = [note('people/Ana Ruiz.md', `${fm({ type: 'person' })}# Ana Ruiz\n\nLead.\n`, { inbound: 4 }), note('people/ana-ruiz.md', '# ana-ruiz\n\nOther text.\n', { inbound: 1 })];
     const [f] = entityAliases.run(ctx(notes));
     expect(f.fix.ops).toEqual([{ op: 'merge', rel: 'people/Ana Ruiz.md', drop: 'people/ana-ruiz.md', alias: 'ana-ruiz' }]);
+    // two folder notes that nothing names as a person are two notes
+    const plainPair = [note('people/Ana Ruiz.md', '# Ana Ruiz\n\nLead.\n'), note('people/ana-ruiz.md', '# ana-ruiz\n\nOther text.\n')];
+    expect(entityAliases.run(ctx(plainPair))).toEqual([]);
   });
   it('adds a mentioned short name as an alias, and leaves a name two notes could be', () => {
     const one = [note('people/ana-ruiz.md', '# Ana Ruiz\n'), note('m.md', `${fm({ people: '[Ana R.]' })}# M`)];
@@ -137,9 +151,17 @@ describe('note.meeting-links', () => {
 });
 
 describe('note.entity-type and note.unplaced', () => {
-  it('sets the type of a people note with none, and leaves index notes', () => {
-    const fs = entityType.run(ctx([note('people/ana.md', '# Ana\n'), note('people/index.md', '# People\n'), note('people/ben.md', `${fm({ type: 'person' })}# Ben`)]));
-    expect(fs.map((f) => f.fix.ops[0])).toEqual([{ op: 'setkey', rel: 'people/ana.md', key: 'type', value: 'person' }]);
+  it('sets the type of the people notes a meeting names, in one item per folder, and leaves the other folder notes', () => {
+    const notes = [
+      note('people/Ana Ruiz.md', '# Ana Ruiz\n'), note('people/Ben Ode.md', '# Ben Ode\n'), note('people/reading list.md', '# Reading list\n'),
+      note('people/index.md', '# People\n'), note('people/Cy Dale.md', `${fm({ type: 'person' })}# Cy Dale`),
+      note('meetings/kick.md', `${fm({ type: 'meeting', attendees: '[Ana Ruiz, Ben Ode, Cy Dale]' })}# Kick`),
+    ];
+    const fs = entityType.run(ctx(notes));
+    expect(fs).toHaveLength(1);
+    expect(fs[0].notes).toEqual(['people/Ana Ruiz.md', 'people/Ben Ode.md']);
+    expect(fs[0].fix).toMatchObject({ pick: true, ops: [{ op: 'setkey', rel: 'people/Ana Ruiz.md', key: 'type', value: 'person' }, { op: 'setkey', rel: 'people/Ben Ode.md', key: 'type', value: 'person' }] });
+    expect(fs[0].evidence[0]).toBe('people/Ana Ruiz.md: meetings/kick.md names it');
   });
   it('moves a typed note into its kind folder, and a root note into the folder its links go to', () => {
     const notes = [
@@ -167,20 +189,21 @@ describe('note.summary-stale', () => {
 
 describe('note.instructions', () => {
   const big = (n) => `# CLAUDE\n\nIntro.\n\n${Array.from({ length: n }, (_, i) => `## Part ${i}\n\n${'rule line. '.repeat(300)}\n`).join('\n')}`;
-  it('moves the largest sections out until the file fits its budget', () => {
+  it('lists a file over its budget with its largest sections, and offers no split: agents do not follow wikilinks', () => {
     const f = instructions.run(ctx([note('CLAUDE.md', big(6))])).find((x) => x.key.includes(':size:'));
-    const parts = f.fix.ops[0].parts;
-    expect(parts.length).toBeGreaterThan(0);
-    expect(parts[0].to).toBe('claude-part-0.md');
-    const { text } = splitText(big(6), parts, { from: 'CLAUDE.md' });
-    expect(text.length).toBeLessThanOrEqual(instructions.BUDGET);
+    expect(f.fix).toBeUndefined();
+    expect(f.proposal).toMatch(/do not follow wikilinks, so a rule moved into a linked note stops loading/);
+    expect(f.evidence.filter((e) => e.startsWith('Section '))).toHaveLength(3);
   });
-  it('removes links to notes that are gone, and marks lines the graph holds as superseded', () => {
-    const n = note('AGENTS.md', '# Agents\n\nSee [[Gone note]].\nAna leads Atlas.\n');
-    const store = fakeStore({ edges: [{ src: 'note:people/ana.md', dst: 'note:projects/atlas.md', kind: 'works_on', source_rel: 'AGENTS.md', source_line: 3, superseded_by: 9 }] });
-    const fs = instructions.run(ctx([n], { graph: ruleGraph(store) }));
-    expect(fs.find((f) => f.key.includes(':links:')).fix.ops[0]).toMatchObject({ op: 'unlink', target: 'Gone note', lines: { 'AGENTS.md': [3] } });
-    expect(fs.find((f) => f.key.includes(':graph:')).fix.ops[0]).toMatchObject({ op: 'annotate', line: 4, text: 'Ana leads Atlas.' });
+  it('leaves dead links to the broken link check, so one link is one item', () => {
+    const fs = instructions.run(ctx([note('AGENTS.md', '# Agents\n\nSee [[Gone note]].\n')]));
+    expect(fs).toEqual([]);
+  });
+  it('reads a note named instructions as an agent file only at the root or in .github', () => {
+    expect(instructions.isInstruction('instructions.md')).toBe(true);
+    expect(instructions.isInstruction('.github/instructions.md')).toBe(true);
+    expect(instructions.isInstruction('recipes/bread/instructions.md')).toBe(false);
+    expect(instructions.isInstruction('team/CLAUDE.md')).toBe(true);
   });
 });
 
@@ -254,7 +277,7 @@ describe('the graph edges', () => {
 
 describe('the report and the scan', () => {
   it('counts what the scan found and the fixes waiting', () => {
-    const notes = [note('people/ana.md', '# Ana', { outbound: 2, mtime: NOW - 200 * DAY }), note('meetings/m.md', `${fm({ type: 'meeting' })}# M`, { outbound: 1 })];
+    const notes = [note('people/ana.md', `${fm({ type: 'person' })}# Ana`, { outbound: 2, mtime: NOW - 200 * DAY }), note('meetings/m.md', `${fm({ type: 'meeting' })}# M`, { outbound: 1 })];
     const findings = [{ ruleId: 'note.entity-type', key: 'note.entity-type:people/ana.md', title: 'x', fix: { kind: 'ops', ops: [{ op: 'setkey' }] } }, { ruleId: 'note.contradiction', key: 'note.contradiction:k', title: 'y' }];
     const r = setupReport({ notes, missing: 1, findings, now: NOW });
     expect(r.counts.links).toEqual({ resolved: 3, total: 4 });
@@ -365,3 +388,301 @@ describe('with the memory graph built', () => {
   });
 });
 
+
+// ---- the review of the setup rules, keeper and card: one block per finding ----
+
+const keeperInput = (html) => html.match(/<input[^>]*aria-label="Update the vault after each meeting"[^>]*>/)?.[0] ?? '';
+describe('the keeper offer', () => {
+  it('shows the keeper selected and pending on a connected vault until the person chooses, and never offers again', () => {
+    expect(keeperRow({ offer: true, made: null, choice: null, on: false })).toEqual({ on: true, pending: true });
+    expect(keeperRow({ offer: true, made: null, choice: 'off', on: false })).toEqual({ on: false, pending: false });
+    expect(keeperRow({ offer: true, made: 'quorum', choice: null, on: true })).toEqual({ on: true, pending: false });
+    expect(keeperRow({ offer: false, made: null, choice: null, on: false })).toEqual({ on: false, pending: false });
+  });
+  it('keeps the choice per vault, and finishing setup never overrides a choice made on the card', () => {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), 'qms-keeper-')), 'setup.json');
+    const a = createMemorySetup({ file, steps: {} });
+    expect(a.status('/v').keeperChoice).toBe(null);
+    expect(a.chooseKeeper('/v', false)).toBe(true);
+    // finishing onboarding with the offer: recorded only when no choice was made
+    expect(a.chooseKeeper('/v', true, { offer: true })).toBe(false);
+    expect(a.chooseKeeper('/w', true, { offer: true })).toBe(true);
+    const b = createMemorySetup({ file, steps: {} });
+    expect(b.status('/v').keeperChoice).toBe('off');
+    expect(b.status('/w').keeperChoice).toBe('on');
+  });
+  it('renders the pending offer without writing anything, so mounting the card twice changes nothing', () => {
+    const calls = [];
+    const status = { running: false, phase: null, progress: null, phases: [], error: null, report: null, done: false, keeperChoice: null, made: null, keeper: { on: false, editVault: false }, graph: true };
+    for (let i = 0; i < 2; i++) {
+      const html = renderToStaticMarkup(createElement(MemorySetupView, { s: status, offerKeeper: true, heading: false, onRun: () => calls.push('run'), onKeeper: (on) => calls.push(on), onRetry: () => {} }));
+      expect(html).toContain('Update the vault after each meeting');
+      expect(html).toContain('Selected: it turns on when you finish setup.');
+      expect(keeperInput(html)).toContain('checked=""');
+    }
+    expect(calls).toEqual([]);
+    const off = renderToStaticMarkup(createElement(MemorySetupView, { s: { ...status, keeperChoice: 'off' }, offerKeeper: true, onRun() {}, onKeeper() {}, onRetry() {} }));
+    expect(off).not.toContain('Selected:');
+    expect(keeperInput(off)).not.toContain('checked=""');
+  });
+  it('never says nothing changes until you approve it, and uses plain titles', () => {
+    const status = { running: false, phase: null, progress: null, phases: [], error: null, report: null, done: false, keeperChoice: null, made: null, keeper: { on: true, editVault: false }, graph: true };
+    const html = renderToStaticMarkup(createElement(MemorySetupView, { s: status, onRun() {}, onKeeper() {}, onRetry() {} }));
+    expect(html).not.toMatch(/Nothing changes until you approve/);
+    expect(html).not.toMatch(/in step|crowd out/);
+    expect(html).toContain('The scan writes nothing to your notes.');
+  });
+});
+
+describe('the setup card states', () => {
+  const base = { running: true, phase: 'graph', progress: { done: 1.5, total: 4, label: 'Building the memory graph: 120 of 400 notes' }, phases: [{ id: 'index', label: 'Reading the notes' }, { id: 'graph', label: 'Building the memory graph' }], error: null, report: null, done: false, keeperChoice: 'on', made: null, keeper: { on: true, editVault: false }, graph: true };
+  const render = (props) => renderToStaticMarkup(createElement(MemorySetupView, { onRun() {}, onKeeper() {}, onRetry() {}, ...props }));
+  it('announces the phase only, and gives the bar its progressbar values', () => {
+    const html = render({ s: base });
+    expect(html).toContain('<span class="sr-only" aria-live="polite">Building the memory graph</span>');
+    expect(html).toMatch(/role="progressbar" aria-label="Building the memory graph" aria-valuemin="0" aria-valuemax="100" aria-valuenow="38"/);
+    expect(html).toMatch(/<div class="src-progress-text" aria-hidden="true">/);
+    expect(phaseName(base)).toBe('Building the memory graph');
+  });
+  it('shows an error as an alert, a loading row before the first status, and an error row when the status failed', () => {
+    expect(render({ s: { ...base, running: false, error: 'Building the memory graph took more than 5 minutes.' } })).toMatch(/role="alert">Building the memory graph took more than 5 minutes\./);
+    const loading = render({ s: null });
+    expect(loading).toContain('aria-busy="true"');
+    expect(loading).toContain('Loading the last scan');
+    const failed = render({ s: null, failed: 'The window lost its connection' });
+    expect(failed).toContain('<span role="alert">The window lost its connection</span>');
+    expect(failed).toContain('Try again');
+  });
+});
+
+describe('the scan steps', () => {
+  it('passes each step the vault, and saves no report when a step stops', async () => {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), 'qms-steps-')), 'setup.json');
+    const seen = [];
+    const steps = { index: async (_p, o) => seen.push(o.vault), graph: async () => { throw new Error('Building the memory graph took more than 5 minutes'); }, checks: async () => {}, report: async () => ({ at: 1 }) };
+    const m = createMemorySetup({ file, steps });
+    const st = await m.run('/v');
+    expect(seen).toEqual(['/v']);
+    expect(st).toMatchObject({ running: false, error: 'Building the memory graph took more than 5 minutes', report: null, done: false });
+    expect(existsSync(file)).toBe(false);
+  });
+});
+
+describe('split targets', () => {
+  it('refuses two sections that go to one note, and an oversized split never names one twice', async () => {
+    const vault = mkdtempSync(path.join(tmpdir(), 'qms-split-'));
+    const text = '# Big\n\n## Tools\n\nA\n\n## Tools!\n\nB\n';
+    writeFileSync(path.join(vault, 'big.md'), text);
+    const parts = [{ heading: 'Tools', start: 2, end: 6, to: 'big-tools.md' }, { heading: 'Tools!', start: 6, end: 9, to: 'big-tools.md' }];
+    const vindex = { sync() {}, rels: () => ['big.md'] };
+    await expect(runSetupOp({}, { op: 'split', rel: 'big.md', parts }, { step: async () => {}, keep: () => {}, vault }, { vindex })).rejects.toThrow(/Two sections of big.md would go to the same note/);
+    expect(readFileSync(path.join(vault, 'big.md'), 'utf8')).toBe(text);
+    const long = `# L\n\n${['Tools', 'Tools!', 'Tools?'].map((h) => `## ${h}\n\n${'word '.repeat(13000)}\n`).join('\n')}`;
+    const [f] = oversized.run(ctx([note('l.md', long), note('s.md', 'short')]));
+    const tos = f.fix.ops[0].parts.map((p) => p.to);
+    expect(new Set(tos).size).toBe(tos.length);
+  });
+  it('leaves instruction files to the instruction rule, so no split takes rules out of agent context', () => {
+    const long = `# G\n\n${['A', 'B'].map((h) => `## ${h}\n\n${'rule '.repeat(14000)}\n`).join('\n')}`;
+    expect(oversized.run(ctx([note('GEMINI.md', long), note('x.md', 'short')]))).toEqual([]);
+  });
+});
+
+describe('the out of date mark', () => {
+  const line3 = 'Decision: Database: Postgres';
+  const doc = `# Claude\n\nRules.\n${line3}\n`;
+  const decision = { id: 'decision:CLAUDE.md#a1', kind: 'decision', name: 'Database: Postgres', rel: 'CLAUDE.md', props: { text: 'Database: Postgres', key: 'database' } };
+  const edges = (extra = []) => [{ src: decision.id, dst: 'note:CLAUDE.md', kind: 'decided_in', source_rel: 'CLAUDE.md', source_line: 3, superseded_by: 7, valid_to: 5 }, ...extra];
+  const lost = { src: 'decision:new.md#b2', dst: decision.id, kind: 'supersedes', source_rel: 'new.md', source_line: 0 };
+  const run = (text, es) => instructions.run(ctx([note('CLAUDE.md', text)], { graph: ruleGraph(fakeStore({ nodes: [decision], edges: es })) })).filter((f) => f.key.includes(':graph:'));
+  it('marks a line that still states a decision this file lost to a newer one', () => {
+    const [f] = run(doc, edges([lost]));
+    expect(f.fix.ops[0]).toMatchObject({ op: 'annotate', line: 4, text: line3 });
+  });
+  it('leaves a line whose text changed since the edge was read, a decision nothing replaced, and contradictions', () => {
+    expect(run(`# Claude\n\nRules.\nShip on Friday.\n${line3}\n`, edges([lost]))).toEqual([]);
+    expect(run(doc, edges())).toEqual([]);
+    const contra = [{ src: 'note:new.md', dst: 'note:CLAUDE.md', kind: 'contradicts', source_rel: 'CLAUDE.md', source_line: 3, valid_to: 9 }];
+    expect(run(doc, contra)).toEqual([]);
+  });
+});
+
+describe('false positives', () => {
+  const store = (rels, aliases = {}) => ruleGraph(fakeStore({ nodes: rels.map((r) => ({ id: `note:${r}`, kind: 'note', name: r, rel: r, aliases: aliases[r] ?? [] })) }));
+  it('two meetings with one title are two meetings', () => {
+    const notes = [note('meetings/2026-03-04 Weekly sync.md', '# Weekly sync\n\nWe planned the launch.\n'), note('meetings/2026-03-11 Weekly sync.md', '# Weekly sync\n\nWe hired a designer.\n')];
+    const fs = duplicates.run(ctx(notes, { graph: store(notes.map((n) => n.rel), { [notes[0].rel]: ['weekly sync'], [notes[1].rel]: ['weekly sync'] }) }));
+    expect(fs).toEqual([]);
+  });
+  it('two notes under one name merge only when one sets it as an alias and the bodies share their words', () => {
+    const body = 'The billing service moves to the new queue in March and the team owns the runbook.';
+    const a = note('ops/billing.md', `${fm({ aliases: '[Payments]' })}# Billing\n\n${body}\n`);
+    const b = note('notes/Payments.md', `# Payments\n\n${body} Also the alerts.\n`);
+    const c = note('notes/Overview.md', '# Overview\n\nA list of reading.\n');
+    const d = note('ops/Overview two.md', `${fm({ title: 'Overview' })}# Overview\n\nBudget numbers for the year.\n`);
+    const graph = store([a.rel, b.rel, c.rel, d.rel]);
+    expect(duplicates.run(ctx([a, b], { graph })).map((f) => f.fix.ops[0].op)).toEqual(['merge']);
+    expect(duplicates.run(ctx([c, d], { graph }))).toEqual([]);
+    const off = note('notes/Payments.md', `# Payments\n\nLunch plans for Friday and a list of films.\n`);
+    expect(duplicates.run(ctx([a, off], { graph }))).toEqual([]);
+  });
+  it('the same file name in two project folders is not one project', () => {
+    const notes = [note('projects/alpha/overview.md', `${fm({ type: 'project' })}# Overview\n`), note('projects/beta/overview.md', `${fm({ type: 'project' })}# Overview\n`), note('projects/alpha/notes.md', '# Notes\n'), note('projects/beta/notes.md', '# Notes\n')];
+    expect(entityAliases.run(ctx(notes))).toEqual([]);
+  });
+  it('a short name that matches one person note is an alias item and never a new note too', () => {
+    const notes = [note('people/Ana Ruiz.md', `${fm({ type: 'person' })}# Ana Ruiz\n`), ...[1, 2, 3].map((i) => meeting(i, ['Ana R.', 'Bo Li']))];
+    const all = runRules(ctx(notes)).findings;
+    expect(all.filter((f) => f.ruleId === 'note.entity-alias').map((f) => f.fix.ops[0])).toEqual([{ op: 'alias', rel: 'people/Ana Ruiz.md', alias: 'Ana R.' }]);
+    expect(all.filter((f) => f.ruleId === 'note.missing-entity').map((f) => f.target)).toEqual(['people/Bo Li.md']);
+  });
+  it('emails, Everyone and speaker labels from the graph name nobody', () => {
+    for (const x of ['ana@acme.com', 'Everyone', 'TBD', 'Speaker 1', 'Unknown', 'Team']) expect(isName(x)).toBe(false);
+    const notes = [1, 2, 3].map((i) => note(`m${i}.md`, `# M${i}\n`));
+    const names = ['ana@acme.com', 'Everyone', 'Speaker 1'];
+    const store = fakeStore({ nodes: names.map((n, i) => ({ id: `person:x${i}`, kind: 'person', name: n, rel: null })), edges: names.flatMap((_, i) => notes.map((n) => ({ src: `person:x${i}`, dst: `note:${n.rel}`, kind: 'attended', source_rel: n.rel }))) });
+    expect(missingEntity.run(ctx(notes, { graph: ruleGraph(store) }))).toEqual([]);
+    expect(entityAliases.run(ctx(notes, { graph: ruleGraph(store) }))).toEqual([]);
+  });
+  it('a name that matches two person notes merges with neither', () => {
+    const p = (n) => note(`people/${n}.md`, `${fm({ type: 'person' })}# ${n}\n`);
+    expect(entityAliases.run(ctx([p('Ana R.'), p('Ana Ruiz'), p('Ana Rios')]))).toEqual([]);
+    expect(entityAliases.run(ctx([p('Ana R.'), p('Ana Ruiz')])).map((f) => f.fix.ops[0].op)).toEqual(['merge']);
+  });
+  it('root hub notes stay at the root', () => {
+    const inProjects = ['a', 'b', 'c'].map((x) => note(`04-projects/${x}.md`, `# ${x}`));
+    const hubs = [
+      note('Projects.md', '# Projects\n\nSee [[a]], [[b]] and [[c]] for now.\n'),
+      note('Roadmap.md', '# Roadmap\n\n- [[a]] first\n- [[b]] next\n- [[c]] later\n'),
+      note('Inbox.md', '# Inbox\n\n[[a]] [[b]] [[c]] [[Home page]]\n'),
+      note('Home page.md', '# Home\n\nStart at [[Inbox]].\n'),
+    ];
+    expect(unplaced.run(ctx([...inProjects, ...hubs]))).toEqual([]);
+  });
+  it('confidential notes are never moved or merged across the confidential line', () => {
+    const notes = [note('private/Ben.md', `${fm({ type: 'person' })}# Ben`), note('people/a.md', `${fm({ type: 'person' })}# A`)];
+    expect(unplaced.run(ctx(notes, { folders: { private: 'confidential' } }))).toEqual([]);
+    expect(unplaced.run(ctx(notes)).map((f) => f.fix.ops[0].to)).toEqual(['people/Ben.md']);
+    const body = 'Shared body text that is long enough to count as a duplicate of the other note. '.repeat(4);
+    const twins = [note('x/one.md', `${fm({ confidential: 'client' })}${body}`), note('y/two.md', body)];
+    expect(duplicates.run(ctx(twins))).toEqual([]);
+  });
+});
+
+describe('freshness from the graph', () => {
+  it('counts only dated facts, so undated notes do not read as unconfirmed', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'qms-fresh-'));
+    const store = openStore({ dir: root, vault: path.join(root, 'v') });
+    try {
+      const now = Date.UTC(2026, 10, 15);
+      for (let i = 0; i < 5; i++) store.addEdge({ src: `note:n${i}.md`, dst: 'person:ana', kind: 'mentions', provenance: 'rule', source_rel: `n${i}.md`, valid_from: null });
+      store.addEdge({ src: 'person:ana', dst: 'meeting:m.md', kind: 'attended', provenance: 'explicit', source_rel: 'm.md', valid_from: now - DAY });
+      store.addEdge({ src: 'person:ana', dst: 'meeting:old.md', kind: 'attended', provenance: 'explicit', source_rel: 'old.md', valid_from: now - 200 * DAY });
+      expect(graphFreshness(store, now - 90 * DAY)).toEqual({ total: 2, confirmed: 1 });
+    } finally { store.close(); }
+  });
+});
+
+describe('grouped items', () => {
+  it('keeps only the ticked notes, their ops and their hashes', () => {
+    const item = { id: 'r:find:x', ops: [{ op: 'setkey', rel: 'p/a.md' }, { op: 'setkey', rel: 'p/b.md' }], notes: ['p/a.md', 'p/b.md'], hashes: { 'p/a.md': 'h1', 'p/b.md': 'h2' } };
+    expect(pickItem(item, ['p/b.md'])).toMatchObject({ ops: [{ rel: 'p/b.md' }], notes: ['p/b.md'], hashes: { 'p/b.md': 'h2' } });
+    expect(pickItem(item, null)).toBe(item);
+    expect(() => pickItem(item, [])).toThrow('Tick at least one note to approve');
+  });
+  it('records an approved attended edge on the person node of a folder note nothing linked yet', () => {
+    expect(nodeIdOf(null, 'people/Ana Ruiz.md')).toBe('person:ana-ruiz');
+    expect(nodeIdOf(null, 'notes/x.md')).toBe('note:notes/x.md');
+  });
+});
+
+// the setup ops through the batch run's per-item path: batchItems with the real itemUndo, the vault hashes taken at
+// the scan, runSetupOp for each step, and Undo from the run's record
+describe('setup ops in a batch run', () => {
+  let vault;
+  const put = (rel, text) => { mkdirSync(path.dirname(path.join(vault, rel)), { recursive: true }); writeFileSync(path.join(vault, rel), text); };
+  const get = (rel) => (existsSync(path.join(vault, rel)) ? readFileSync(path.join(vault, rel), 'utf8') : null);
+  const load = () => walk(vault, '', () => false, []).map((rel) => note(rel, get(rel)));
+  const vindexOf = (hidden = []) => ({
+    rels: () => load().map((n) => n.rel).filter((r) => !hidden.includes(r)),
+    resolve: (t, f) => resolverOf(load())(t, f),
+    backlinks: (rel) => load().filter((n) => !hidden.includes(n.rel) && n.note.links.some((l) => resolverOf(load())(l.target, n.rel) === rel)).map((n) => ({ rel: n.rel })),
+    sync() {},
+  });
+  function batch(items, { trash = async (abs) => rmSync(abs), hidden = [] } = {}) {
+    const kept = [];
+    const keep = (rel, created = false, gone = false) => { if (kept.some((k) => k.rel === rel)) return; kept.push({ rel, before: created ? null : get(rel), ...(gone ? { gone: true } : {}) }); };
+    const status = new Map();
+    const undo = itemUndo(vault);
+    const b = batchItems({ items, undo, mark: (id, st, why) => status.set(id, { st, why }), release: (rels) => { for (const r of rels) { const i = kept.findIndex((k) => k.rel === r); if (i >= 0) kept.splice(i, 1); } }, journal: () => {}, trash });
+    const written = new Set();
+    const vindex = vindexOf(hidden);
+    const go = async () => {
+      const plan = buildPlan(items);
+      await b.runSteps(plan.steps, async (item, s) => { await runSetupOp(item, s.op, { step: async () => {}, keep: undo.track(item.id, keep), vault, written }, { vindex, trash }); });
+      return status;
+    };
+    return { go, kept, status };
+  }
+  const scan = (f) => { const item = findingItem(f); return { ...item, hashes: hashNotes(vault, [...new Set([...f.notes, ...item.ops.flatMap((o) => [o.rel, o.drop].filter(Boolean))])]) }; };
+  const mergeFinding = () => entityAliases.run(ctx(load()))[0];
+  beforeEach(() => {
+    vault = mkdtempSync(path.join(tmpdir(), 'qms-batch-'));
+    put('people/Ben Ode.md', `${fm({ type: 'person' })}# Ben Ode\n\nLeads the sync.\n`);
+    put('people/ben-ode.md', '# ben-ode\n\nPrefers mornings.\n');
+    put('Ref.md', '# Ref\n\nSee [[ben-ode]].\n');
+  });
+  afterEach(() => rmSync(vault, { recursive: true, force: true }));
+
+  it('refuses a note that changed after the scan and writes nothing', async () => {
+    const item = scan(mergeFinding());
+    put('people/ben-ode.md', '# ben-ode\n\nPrefers mornings. Edited after the scan.\n');
+    const t = batch([item]);
+    const st = await t.go();
+    expect(st.get(item.id)).toMatchObject({ st: 'error', why: expect.stringMatching(/“people\/ben-ode.md” changed after Quorum checked it/) });
+    expect(get('people/Ben Ode.md')).toBe(`${fm({ type: 'person' })}# Ben Ode\n\nLeads the sync.\n`);
+    expect(get('Ref.md')).toBe('# Ref\n\nSee [[ben-ode]].\n');
+  });
+  it('puts back a merge that fails partway, and keeps the other item fixed', async () => {
+    put('people/Cy Dale.md', `${fm({ type: 'person' })}# Cy Dale\n`);
+    const merge = scan(mergeFinding());
+    const alias = { ...findingItem({ ruleId: 'note.entity-alias', key: 'note.entity-alias:alias:x', notes: ['people/Cy Dale.md'], fix: { kind: 'ops', group: 'alias', ops: [{ op: 'alias', rel: 'people/Cy Dale.md', alias: 'Cy D.' }] } }), hashes: hashNotes(vault, ['people/Cy Dale.md']) };
+    const t = batch([alias, merge], { trash: async () => { throw new Error('The Trash is not available'); } });
+    const st = await t.go();
+    expect(st.get(merge.id)).toMatchObject({ st: 'error', why: 'The Trash is not available' });
+    expect(st.get(alias.id).st).toBe('success');
+    expect(get('Ref.md')).toBe('# Ref\n\nSee [[ben-ode]].\n');
+    expect(get('people/Ben Ode.md')).not.toContain('Prefers mornings');
+    expect(get('people/ben-ode.md')).toBe('# ben-ode\n\nPrefers mornings.\n');
+    expect(get('people/Cy Dale.md')).toContain('Cy D.');
+  });
+  it('puts back a split whose target appeared after the scan, alone', async () => {
+    put('big.md', '# Big\n\n## One\n\nA\n\n## Two\n\nB\n');
+    const split = { ...findingItem({ ruleId: 'note.oversized', key: 'note.oversized:big.md', notes: ['big.md'], fix: { kind: 'ops', group: 'split', ops: [{ op: 'split', rel: 'big.md', parts: [{ heading: 'One', start: 2, end: 6, to: 'big-one.md' }, { heading: 'Two', start: 6, end: 9, to: 'big-two.md' }] }] } }), hashes: hashNotes(vault, ['big.md']) };
+    put('big-two.md', '# Someone else wrote this\n');
+    const st = await batch([split]).go();
+    expect(st.get(split.id)).toMatchObject({ st: 'error', why: 'A note is already at “big-two.md”, so Quorum did not split big.md' });
+    expect(get('big.md')).toBe('# Big\n\n## One\n\nA\n\n## Two\n\nB\n');
+    expect(get('big-one.md')).toBe(null);
+  });
+  it('refuses a merge when a note the index leaves out links to the dropped note', async () => {
+    put('private/secret.md', '# Secret\n\nAsk [[ben-ode]].\n');
+    expect(unindexedLinkers(vault, 'people/ben-ode.md', new Set(['people/Ben Ode.md', 'people/ben-ode.md', 'Ref.md']))).toEqual(['private/secret.md']);
+    const item = scan(mergeFinding());
+    const st = await batch([item], { hidden: ['private/secret.md'] }).go();
+    expect(st.get(item.id)).toMatchObject({ st: 'error', why: expect.stringMatching(/A note Quorum does not read links to “people\/ben-ode.md”/) });
+    expect(get('people/ben-ode.md')).toBe('# ben-ode\n\nPrefers mornings.\n');
+  });
+  it('Undo puts back the merged note from the Trash, the kept note and the relinked note', async () => {
+    const item = scan(mergeFinding());
+    const t = batch([item]);
+    const st = await t.go();
+    expect(st.get(item.id).st).toBe('success');
+    expect(get('people/ben-ode.md')).toBe(null);
+    expect(get('Ref.md')).not.toContain('[[ben-ode]]');
+    await applyUndo(vault, undoRecord(vault, t.kept), async (abs) => rmSync(abs));
+    expect(get('people/ben-ode.md')).toBe('# ben-ode\n\nPrefers mornings.\n');
+    expect(get('people/Ben Ode.md')).toBe(`${fm({ type: 'person' })}# Ben Ode\n\nLeads the sync.\n`);
+    expect(get('Ref.md')).toBe('# Ref\n\nSee [[ben-ode]].\n');
+  });
+});

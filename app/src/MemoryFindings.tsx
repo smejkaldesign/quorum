@@ -8,7 +8,8 @@ import { DraftEvidence } from './MemoryDraft';
 // The review rules' findings in Memory health (rules/index.js): stale notes, duplicates, frontmatter, confidential
 // marks, secrets, oversized and orphan notes. One group per rule, in the same row pattern as the link issues. Approve
 // runs the finding's fix or the change its rule allows, or keeps the note as it is (reviewApprove.js); View opens the
-// note; Dismiss sets the finding aside until its evidence changes. A click on the row folds its details open.
+// note; Dismiss sets the finding aside until its evidence changes. A click on the row folds its details open. A grouped
+// finding (fix.pick: one type for a folder's notes) lists its notes with a tick each; Approve runs on the ticked ones.
 const openNote = (abs: string) => window.dispatchEvent(new CustomEvent('quorum:open-memory', { detail: abs }));
 export const findingId = (key: string) => `r:find:${key}`;
 // what Approve does on a finding, in one line: its own fix, the change its rule allows, or keep as is
@@ -16,9 +17,13 @@ const approveText = (f: MemoryFinding) => f.approve?.says ?? (f.fix ? f.proposal
 
 export function MemoryFindings({ findings, drafts = {}, archived, q, unread, onArchive, onApprove, onRead }: {
   findings: MemoryFinding[]; drafts?: Record<string, MemoryDraft>; archived: boolean; q: string; unread: Set<string>;
-  onArchive: (keys: string[], on: boolean) => Promise<void>; onApprove: (f: MemoryFinding) => Promise<void>; onRead: (ids: string[]) => void;
+  onArchive: (keys: string[], on: boolean) => Promise<void>; onApprove: (f: MemoryFinding, only?: string[]) => Promise<void>; onRead: (ids: string[]) => void;
 }) {
   const [unfolded, setUnfolded] = useState<Set<string>>(new Set());
+  // the notes a person unticked in a grouped finding, by finding key
+  const [unticked, setUnticked] = useState<Record<string, string[]>>({});
+  const ticked = (f: MemoryFinding) => f.notes.filter((r) => !(unticked[f.key] ?? []).includes(r));
+  const tick = (f: MemoryFinding, rel: string) => setUnticked((u) => { const cur = u[f.key] ?? []; return { ...u, [f.key]: cur.includes(rel) ? cur.filter((r) => r !== rel) : [...cur, rel] }; });
   const [busy, setBusy] = useState(false);
   const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const shown = findings.filter((f) => f.archived === archived && words.every((w) => `${f.title} ${f.rule} ${f.notes.join(' ')}`.toLowerCase().includes(w)));
@@ -28,7 +33,7 @@ export function MemoryFindings({ findings, drafts = {}, archived, q, unread, onA
   const act = async (keys: string[], on: boolean) => { setBusy(true); try { await onArchive(keys, on); } finally { setBusy(false); } };
   // a fix the agent drafted runs before the rule's own change
   const says = (f: MemoryFinding) => (drafts[findingId(f.key)] ? `Run the fix the agent drafted: ${drafts[findingId(f.key)].line ?? ''}` : approveText(f));
-  const approve = async (f: MemoryFinding) => { setBusy(true); try { await onApprove(f); } finally { setBusy(false); } };
+  const approve = async (f: MemoryFinding) => { setBusy(true); try { await onApprove(f, f.fix?.pick ? ticked(f) : undefined); } finally { setBusy(false); } };
   const fold = (k: string) => setUnfolded((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const open = (f: MemoryFinding) => { if (unread.has(findingId(f.key))) onRead([findingId(f.key)]); if (f.notes.length) openNote(f.abs); };
@@ -61,7 +66,7 @@ export function MemoryFindings({ findings, drafts = {}, archived, q, unread, onA
                         ? <RowMenu label="Move back to review" onPick={() => act([f.key], false)} />
                         : <>
                             <DismissButton disabled={busy} onDismiss={() => act([f.key], true)} />
-                            <button className="icon-btn mh-icon mh-yes" disabled={busy} aria-label="Approve" data-tip={`Approve: ${says(f)}`} onClick={() => approve(f)}><IconCheck width={16} height={16} /></button>
+                            <button className="icon-btn mh-icon mh-yes" disabled={busy || (!!f.fix?.pick && !ticked(f).length)} aria-label="Approve" data-tip={f.fix?.pick ? `Approve: ${says(f)} (${ticked(f).length} of ${f.notes.length} ticked)` : `Approve: ${says(f)}`} onClick={() => approve(f)}><IconCheck width={16} height={16} /></button>
                           </>}
                     </span>
                   </span>
@@ -75,6 +80,14 @@ export function MemoryFindings({ findings, drafts = {}, archived, q, unread, onA
                   <div className="conn-sub conn-fold-body nf-details mh-fold">
                     <ReviewDetails recommendation={says(f)} problem={f.problem} solution={f.proposal}
                       meta={[...f.evidence.map((e, i) => [i ? `Evidence ${i + 1}` : 'Evidence', e] as [string, string]), ...f.meta]} />
+                    {f.fix?.pick && !archived && (
+                      <fieldset className="mh-picks">
+                        <legend>Approve sets it on the ticked notes ({ticked(f).length} of {f.notes.length})</legend>
+                        {f.notes.map((rel) => (
+                          <label key={rel} className="mh-pick"><input type="checkbox" checked={!(unticked[f.key] ?? []).includes(rel)} onChange={() => tick(f, rel)} /><span>{rel}</span></label>
+                        ))}
+                      </fieldset>
+                    )}
                     {drafts[findingId(f.key)] && <DraftEvidence draft={drafts[findingId(f.key)]} />}
                   </div>
                 </div>

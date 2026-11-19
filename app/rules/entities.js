@@ -1,7 +1,7 @@
 // People, projects, meetings and decisions as the review rules see them: the folder conventions, the type a note's
 // frontmatter gives, the names a note goes by, the names notes mention in their frontmatter, and the memory graph's view
 // when it is built (graph/store.js). Plain functions, no Node or Electron imports.
-import { baseOf, dirOf, isOff, skipped } from './common.js';
+import { ENTRY_NAME, baseOf, dirOf, isOff, skipped } from './common.js';
 
 export const KINDS = ['person', 'project', 'meeting', 'decision'];
 // a folder named for a kind, at any depth, with an optional numeric prefix (02-people, 08-meetings)
@@ -19,10 +19,59 @@ const list = (v) => (Array.isArray(v) ? v : v == null || v === '' ? [] : [v]);
 
 // the kind a note's frontmatter type gives, or null
 export const typeOf = (n) => { const t = String(one(n.note?.props?.type) ?? '').trim().toLowerCase(); return KINDS.includes(t) ? t : null; };
-// the kind a note's folder gives, or null
+// the kind a note's folder names, or null. For people and projects that is where to look, not what the note is
 export const folderKind = (rel) => KINDS.find((k) => FOLDER_RE[k].test(dirOf(rel))) ?? null;
-// the kind of a note: its type, else its folder
-export const kindOf = (n) => typeOf(n) ?? folderKind(n.rel);
+// the kind of a note from what it says alone: its type, else a meetings or decisions folder. A note in a people or
+// projects folder is an entity only when entityKinds says so
+export const kindOf = (n) => { const t = typeOf(n); if (t) return t; const f = folderKind(n.rel); return f === 'meeting' || f === 'decision' ? f : null; };
+
+const seg = (s) => String(s).replace(/^\d+[-_ ]*/, '').toLowerCase().replace(/[-_\s]+/g, ' ').trim();
+const KIND_WORD = /^(people|persons?|contacts|team|crm|projects?|meetings?|decisions?|companies|company|clients|organizations|topics?)$/;
+// the hub note of an entity's own folder, named like the folder: projects/Atlas/Atlas.md (graph/extract.js isHub)
+export function isHub(rel) {
+  const parts = rel.split('/');
+  if (parts.length < 3) return false;
+  const parent = seg(parts[parts.length - 2]);
+  return seg(baseOf(rel)) === parent && !KIND_WORD.test(parent);
+}
+
+// The kind of every note the way the memory graph reads it (graph/extract.js noteKind): its type; a meetings or
+// decisions folder; and for a note in a people or projects folder, the folder's hub note or a note other notes name as
+// one. With the graph built, the graph says which notes back a person or project node; without it, a meeting's people
+// fields and a person's project fields name them. Answers (n) => kind or null, and why(n) for the evidence line
+const readers = new WeakMap();
+export function entityKinds(ctx) {
+  const notes = ctx.notes ?? [];
+  if (readers.has(notes) && readers.get(notes).graph === (ctx.graph ?? null)) return readers.get(notes).read;
+  const named = new Map();
+  if (ctx.graph) {
+    for (const kind of ['person', 'project']) for (const x of ctx.graph.nodes(kind)) if (x.rel) named.set(x.rel, { kind, why: 'graph' });
+  } else if (ctx.resolve) {
+    for (const n of notes) {
+      const k = kindOf(n);
+      if (k !== 'meeting' && k !== 'person') continue;
+      for (const m of frontmatterNames(n)) {
+        if (k === 'person' && m.kind === 'person') continue;
+        const to = ctx.resolve(m.name, n.rel);
+        if (to && to !== n.rel && folderKind(to) === m.kind && !named.has(to)) named.set(to, { kind: m.kind, why: `${n.rel} names it` });
+      }
+    }
+  }
+  const kinds = new Map();
+  const why = new Map();
+  for (const n of notes) {
+    const own = kindOf(n);
+    if (own) { kinds.set(n.rel, own); continue; }
+    const f = folderKind(n.rel);
+    if (f !== 'person' && f !== 'project') continue;
+    if (ENTRY_NAME.test(baseOf(n.rel))) continue;
+    const hit = named.get(n.rel);
+    if (hit?.kind === f) { kinds.set(n.rel, f); why.set(n.rel, hit.why); } else if (isHub(n.rel)) { kinds.set(n.rel, f); why.set(n.rel, 'hub'); }
+  }
+  const read = Object.assign((n) => kinds.get(n.rel) ?? null, { why: (n) => why.get(n.rel) ?? null });
+  readers.set(notes, { graph: ctx.graph ?? null, read });
+  return read;
+}
 
 // a name as written in frontmatter or a body: the link brackets, a display part, "(recorder)" and spacing taken off
 export function cleanName(v) {
@@ -32,9 +81,12 @@ export function cleanName(v) {
   s = s.replace(/\s*\((recorder|host|organizer|me)\)\s*$/i, '').replace(/\s+/g, ' ').trim();
   return s;
 }
-// whether a cleaned value reads as a name: letters, not an email, a path or a date, at most six words
+// values a calendar or a transcript puts where names go, which name nobody
+const NOT_NAMES = /^(everyone|everybody|team|the team|all|all hands|tbd|tba|n\/?a|none|unknown|guest|guests|me|myself|host|organizer|recorder|attendees?|participants?|speaker( \d+| [a-z])?|unknown speaker|external|others?)$/i;
+// whether a cleaned value reads as a name: letters, not an email, a path, a date or a placeholder, at most six words
 export function isName(s) {
   if (!s || s.length < 3 || s.length > 80) return false;
+  if (NOT_NAMES.test(s.trim())) return false;
   if (/@|\/|\\|^\d{4}-\d{2}-\d{2}|https?:/i.test(s)) return false;
   if (!/\p{L}/u.test(s)) return false;
   return s.split(' ').length <= 6;
@@ -92,6 +144,8 @@ export function kindFolder(notes, kind) {
 //   aliasesOf(rel)       the aliases of the note's nodes
 //   inbound(rel)         the other notes with a current edge into one of the note's nodes, other than folder and tag
 //   edgesFrom(rel)       every edge read from the note's lines, current and superseded, for the instruction file check
+//   node(id)             the node with its props, or null
+//   superseded(id)       whether a current supersedes edge points at the node: it lost to a newer fact
 //   linked(a, b, kinds)  whether a current edge of one of kinds joins the two notes
 const STRUCTURAL = new Set(['in_folder', 'tagged', 'about']);
 export function ruleGraph(store) {
@@ -114,6 +168,8 @@ export function ruleGraph(store) {
     aliasesOf: memo((rel) => uniq(idsOf(rel).flatMap((id) => safe(() => store.aliasesOf(id), [])))),
     inbound: memo((rel) => uniq(idsOf(rel).flatMap((id) => safe(() => store.edgesOf(id, { dir: 'in', current: true }), [])).filter((e) => !STRUCTURAL.has(e.kind)).map((e) => e.source_rel).filter((r) => r && r !== rel))),
     edgesFrom: (rel) => safe(() => store.edgesBySource(rel), []),
+    node: (id) => safe(() => store.node(id), null),
+    superseded: (id) => safe(() => store.edgesOf(id, { dir: 'in', kinds: ['supersedes'], current: true }), []).length > 0,
     linked: (a, b, kinds) => {
       const bs = new Set(idsOf(b));
       return idsOf(a).some((id) => safe(() => store.edgesOf(id, { dir: 'both', kinds, current: true }), []).some((e) => bs.has(e.src === id ? e.dst : e.src)));

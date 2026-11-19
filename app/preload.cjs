@@ -453,5 +453,6 @@ contextBridge.exposeInMainWorld('quorum', {
   // memory setup (memorySetup.js): the scan's state and report, a run in the background, and its progress
   memorySetupStatus: () => ipcRenderer.invoke('memory-setup-status'),
   memorySetupRun: (opts) => ipcRenderer.invoke('memory-setup-run', opts),
+  memorySetupKeeper: (opts) => ipcRenderer.invoke('memory-setup-keeper', opts),
   onMemorySetup: on('memory-setup'),
 });

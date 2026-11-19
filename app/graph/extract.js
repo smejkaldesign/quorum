@@ -58,13 +58,31 @@ export function folderKind(rel, conventions = DEFAULT_CONVENTIONS) {
   return null;
 }
 
-// the kind a note is, and whether its frontmatter said so (explicit) or its folder (rule)
-export function noteKind(rel, props, conventions = DEFAULT_CONVENTIONS) {
+// the folder kinds whose notes are entities only when something says so: a project folder also holds specs, PRDs and
+// research, a people folder holds lists and templates
+export const ENTITY_FOLDERS = new Set(['person', 'project', 'company']);
+const seg = (s) => s.replace(/^\d+[-_ ]*/, '').toLowerCase().replace(/[-_\s]+/g, ' ').trim();
+// the hub note of an entity's own folder, named like the folder: projects/Atlas/Atlas.md
+export function isHub(rel, conventions = DEFAULT_CONVENTIONS) {
+  const parts = rel.split('/');
+  if (parts.length < 3) return false;
+  const parent = seg(parts[parts.length - 2]);
+  if (seg(path.basename(rel, '.md')) !== parent) return false;
+  return !Object.values(conventions.folders).some((words) => words.includes(parent));
+}
+
+// the kind a note is, and whether its frontmatter said so (explicit) or a convention (rule). A note in a people,
+// projects or companies folder is that entity only when its type says so, when it is that folder's hub note, or when
+// linked says other notes link it as one (a meeting's attendees, a project field, works_on: graph/index.js linkedAs).
+// Every other note in those folders is a note
+export function noteKind(rel, props, conventions = DEFAULT_CONVENTIONS, linked = null) {
   const type = TYPES[String(Array.isArray(props.type) ? props.type[0] : props.type ?? '').toLowerCase().trim()];
   if (type) return { kind: type, provenance: 'explicit' };
   if (INDEX_NOTE.test(path.basename(rel, '.md'))) return { kind: 'note', provenance: null };
   const kind = folderKind(rel, conventions);
-  return kind ? { kind, provenance: 'rule' } : { kind: 'note', provenance: null };
+  if (!kind) return { kind: 'note', provenance: null };
+  if (ENTITY_FOLDERS.has(kind) && linked !== kind && !isHub(rel, conventions)) return { kind: 'note', provenance: null };
+  return { kind, provenance: 'rule' };
 }
 
 // the node id a note stands for: an entity by its file name, a meeting or decision by its path
@@ -83,11 +101,15 @@ const ITEM = /^\s*(?:[-*+]|\d+\.)\s+(?:\[([ xX])\]\s+)?(.+)$/;
 // "Database: Postgres" names what the decision is about, so a later decision with the same key replaces it
 const KEY = /^([^:[\]]{2,40}):\s+\S/;
 
-export function extractNote({ rel, text, note = null, resolve = () => null, conventions = DEFAULT_CONVENTIONS, isExcluded = () => false }) {
+// linkedAs(rel): the entity kind other notes link the note as, or null. kindOf(rel): the kind another note is, for its
+// links and references; without the graph, its folder convention with no frontmatter. refs: the notes in an entity
+// folder this note names as an entity, whose own kind can change with it (graph/index.js)
+export function extractNote({ rel, text, note = null, resolve = () => null, conventions = DEFAULT_CONVENTIONS, isExcluded = () => false, linkedAs = () => null, kindOf = (to) => noteKind(to, {}, conventions).kind }) {
   const n = note ?? parseNote(rel, text);
   const props = n.props ?? {};
   const date = noteDateOf(rel, props);
-  const { kind, provenance: kindProv } = noteKind(rel, props, conventions);
+  const { kind, provenance: kindProv } = noteKind(rel, props, conventions, linkedAs(rel));
+  const refs = new Set();
   const noteId = `note:${rel}`;
   const self = kind === 'note' ? noteId : entityId(kind, rel);
   const nodes = new Map();
@@ -124,15 +146,16 @@ export function extractNote({ rel, text, note = null, resolve = () => null, conv
     const to = resolve(target, rel);
     if (to === rel) return null;
     const k = to ? folderKind(to, conventions) : null;
-    const k2 = to ? noteKind(to, {}, conventions).kind : null;
+    const k2 = to ? kindOf(to) : null;
     const ek = ENTITY_KINDS.has(k2) ? k2 : ENTITY_KINDS.has(k) ? k : want;
+    if (to && ENTITY_FOLDERS.has(k)) refs.add(to);
     const id = `${ek}:${slug(to ? path.basename(to, '.md') : target)}`;
     addNode({ id, kind: ek, name: to ? shown || path.basename(to, '.md') : shown, aliases: [shown, target] });
     return id;
   };
   // a link from this note to another, as the node it stands for (a meeting or decision note by its folder)
   const linkTarget = (to) => {
-    const k = noteKind(to, {}, conventions).kind;
+    const k = kindOf(to);
     return k === 'note' ? `note:${to}` : entityId(k, to);
   };
 
@@ -141,7 +164,7 @@ export function extractNote({ rel, text, note = null, resolve = () => null, conv
     const to = resolve(l.target, rel);
     if (!to || to === rel) continue;
     addEdge({ src: noteId, dst: `note:${to}`, kind: l.embed ? 'embeds' : 'links_to', provenance: 'explicit', source_line: l.line });
-    const k = noteKind(to, {}, conventions).kind;
+    const k = kindOf(to);
     if (ENTITY_KINDS.has(k) && !isExcluded(path.basename(to, '.md'))) addEdge({ src: noteId, dst: entityId(k, to), kind: 'mentions', provenance: 'rule', source_line: l.line, valid_from: date });
   }
 
@@ -241,7 +264,7 @@ export function extractNote({ rel, text, note = null, resolve = () => null, conv
     }
   }
 
-  return { kind, self, date, nodes: [...nodes.values()], edges: [...edges.values()] };
+  return { kind, self, date, refs: [...refs], nodes: [...nodes.values()], edges: [...edges.values()] };
 }
 
 // two edges are the same fact when they join the same nodes the same way from the same kind of source; a role or a

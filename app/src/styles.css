@@ -2810,6 +2810,10 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .ms-card .ms-error { margin: 0; padding: 10px 16px; }
 .ms-gaps { list-style: none; margin: 0; padding: 0 16px 12px 52px; display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
 .ms-gaps li { display: flex; justify-content: space-between; gap: 12px; }
+.mh-picks { border: 0; margin: 10px 0 0; padding: 0; display: grid; gap: 4px; max-height: 240px; overflow: auto; }
+.mh-picks legend { font-size: 12px; color: var(--muted); margin-bottom: 4px; padding: 0; }
+.mh-pick { display: flex; align-items: center; gap: 8px; font-size: 13px; min-width: 0; }
+.mh-pick span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-gaps em { font-style: normal; color: var(--text); font-variant-numeric: tabular-nums; }
 /* the report lines carry counts, so they wrap here instead of cutting off */
 .ms-card .set-text span { white-space: normal; }

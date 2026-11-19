@@ -1,12 +1,14 @@
 // Extraction from one note with no model (graph/extract.js): links, frontmatter, folder conventions, meetings,
 // decision lines and the keeper's link lines, checked against hand-written notes.
 import { describe, expect, it } from 'vitest';
-import { extractNote, folderKind, noteKind } from '../graph/extract.js';
+import { extractNote, folderKind, isHub, noteKind } from '../graph/extract.js';
 
 // a resolver over a fixed set of notes, by basename, case-insensitive, like vindex's
 const resolverOf = (rels) => (target) => rels.find((r) => r.toLowerCase().replace(/\.md$/, '').split('/').pop() === target.toLowerCase().replace(/\.md$/, '').split('/').pop()) ?? null;
 const RELS = ['02-people/ana-ruiz.md', '02-people/Ben Ode.md', '04-projects/Atlas.md', 'companies/Acme.md', '08-meetings/2026-03-04 Atlas sync.md', 'notes/ideas.md'];
-const run = (rel, text) => extractNote({ rel, text, resolve: resolverOf(RELS) });
+// the kinds the graph holds for those notes once the vault is read (graph/index.js kindOf)
+const KINDS = { '02-people/ana-ruiz.md': 'person', '02-people/Ben Ode.md': 'person', '04-projects/Atlas.md': 'project', 'companies/Acme.md': 'company', '08-meetings/2026-03-04 Atlas sync.md': 'meeting' };
+const run = (rel, text) => extractNote({ rel, text, resolve: resolverOf(RELS), kindOf: (to) => KINDS[to] ?? 'note' });
 const has = (ex, src, kind, dst) => ex.edges.some((e) => e.src === src && e.kind === kind && e.dst === dst);
 
 describe('folder conventions', () => {
@@ -16,6 +18,36 @@ describe('folder conventions', () => {
     expect(folderKind('notes/a.md')).toBe(null);
     expect(noteKind('02-people/README.md', {}).kind).toBe('note');
     expect(noteKind('notes/x.md', { type: 'person' })).toEqual({ kind: 'person', provenance: 'explicit' });
+  });
+
+  it('reads a note in a people, projects or companies folder as that entity only when something says so', () => {
+    // a spec, a PRD and a plain note in a project folder are notes
+    for (const rel of ['04-projects/atlas-prd.md', '04-projects/Atlas/spec.md', '02-people/reading list.md', 'companies/acme/pricing.md']) expect(noteKind(rel, {}).kind).toBe('note');
+    // its type says so
+    expect(noteKind('04-projects/atlas-prd.md', { type: 'project' })).toEqual({ kind: 'project', provenance: 'explicit' });
+    // another note links it as one (graph/index.js linkedAs)
+    expect(noteKind('02-people/ana-ruiz.md', {}, undefined, 'person')).toEqual({ kind: 'person', provenance: 'rule' });
+    expect(noteKind('02-people/ana-ruiz.md', {}, undefined, 'project').kind).toBe('note');
+    // the hub note of the entity's own folder, named like it
+    expect(isHub('04-projects/Atlas/Atlas.md')).toBe(true);
+    expect(isHub('04-projects/02-atlas-app/Atlas App.md')).toBe(true);
+    expect(isHub('04-projects/Atlas/overview.md')).toBe(false);
+    expect(isHub('04-projects/projects.md')).toBe(false);
+    expect(noteKind('04-projects/Atlas/Atlas.md', {})).toEqual({ kind: 'project', provenance: 'rule' });
+    // meetings and decisions keep their folder convention
+    expect(noteKind('08-meetings/2026-03-04 sync.md', {}).kind).toBe('meeting');
+  });
+
+  it('makes no entity of a link to a folder note that is not one', () => {
+    const ex = extractNote({ rel: 'notes/ideas.md', text: 'See [[atlas-prd]] and [[Atlas]].', resolve: resolverOf([...RELS, '04-projects/atlas-prd.md']), kindOf: (to) => KINDS[to] ?? 'note' });
+    expect(ex.edges.filter((e) => e.kind === 'mentions').map((e) => e.dst)).toEqual(['project:atlas']);
+    expect(ex.nodes.some((n) => n.id === 'project:atlas-prd')).toBe(false);
+  });
+
+  it('lists the folder notes a meeting names as entities, so the graph can read them again', () => {
+    const ex = extractNote({ rel: '08-meetings/2026-03-04 Atlas sync.md', text: '---\nattendees: [Ana Ruiz]\nproject: "[[Atlas]]"\n---\n# Sync\n', resolve: resolverOf(['02-people/Ana Ruiz.md', ...RELS]) });
+    expect(ex.refs.sort()).toEqual(['02-people/Ana Ruiz.md', '04-projects/Atlas.md']);
+    expect(ex.edges.some((e) => e.src === 'person:ana-ruiz' && e.kind === 'attended')).toBe(true);
   });
 });
 

@@ -82,7 +82,11 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
               {brain && catchup && <li><IconCheck width={16} height={16} /> {claudeOk ? 'Checks your whole memory in the background once Quorum opens' : 'Check my whole memory: sign in to Claude Code, then start it in Settings › Memory'}</li>}
             </ul>
             <p>{nt.meetingCapture ? 'Quorum lives in the menu bar. When a Zoom, Google Meet or Teams call starts, it offers to listen.' : nt.manualListen ? 'Quorum lives in the menu bar. Start listening there or in the app to take a note of your own.' : 'Quorum lives in the menu bar.'}</p>
-            <div className="onb-actions"><button className="pill ghost" onClick={back}>Back</button><button className="pill primary" autoFocus onClick={async () => { await window.quorum.onboardingDone(); if (brain && catchup && claudeOk) window.quorum.memoryCatchupStart().catch(() => {}); onDone(); }}>Open Quorum</button></div>
+            <div className="onb-actions"><button className="pill ghost" onClick={back}>Back</button><button className="pill primary" autoFocus onClick={async () => {
+              // the keeper offered on the Memory setup card turns on here, unless the person chose on the card
+              if (brain && brain.made !== 'quorum') await window.quorum.memorySetupKeeper({ on: true, offer: true }).catch(() => null);
+              await window.quorum.onboardingDone(); if (brain && catchup && claudeOk) window.quorum.memoryCatchupStart().catch(() => {}); onDone();
+            }}>Open Quorum</button></div>
           </section>
         )}
       </div>
