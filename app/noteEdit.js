@@ -3,7 +3,7 @@
 // line break) is kept byte for byte when the body is saved. The editor sees \n line endings; a note written with \r\n
 // gets them back on save. A note that mixes the two can't round trip through a text field, so it is flagged mixed.
 
-import { hashText } from './handnote.js';
+import { hashText, validFrontmatter } from './handnote.js';
 
 const FRONT = /^---\n[\s\S]*?\n---\n/;
 const lead = (s) => s.match(/^\s*/)[0].length;
@@ -30,10 +30,24 @@ export function withBody(raw, body) {
   return p.eol === '\r\n' ? out.replace(/\n/g, '\r\n') : out;
 }
 
+// the note with new frontmatter (the Properties rows); '' removes it, with the blank lines that followed it
+export function withFrontmatter(raw, fm) {
+  const p = editParts(raw);
+  const f = String(fm ?? '').replace(/\r\n/g, '\n');
+  if (f === p.fm) return String(raw ?? '');
+  const rest = `${p.head}${p.body}${p.tail}`.slice(p.fm.length);
+  const out = !f ? rest.replace(/^\n+/, '') : p.fm ? `${f}${rest}` : `${f}${rest ? `\n${rest.replace(/^\n+/, '')}` : ''}`;
+  return p.eol === '\r\n' ? out.replace(/\n/g, '\r\n') : out;
+}
+
 // a save from the editor against the file as it is now: a conflict when the file changed since the editor read it
-// (hash), refused for a note this view can't edit, else the text to write (the file as it was when nothing changed)
-export function planSave(raw, { hash, body, withheld }) {
+// (hash), refused for a note this view can't edit, else the text to write (the file as it was when nothing changed).
+// Properties that aren't valid frontmatter are left out, and the body still saves
+export function planSave(raw, { hash, body, frontmatter, withheld }) {
   if (hashText(raw) !== hash) return { conflict: true };
   if (withheld || editParts(raw).mixed) return { error: 'This note can only be edited in the vault directly.' };
-  return { text: typeof body === 'string' ? withBody(raw, body) : String(raw) };
+  const text = typeof body === 'string' ? withBody(raw, body) : String(raw);
+  if (frontmatter === undefined) return { text };
+  if (!validFrontmatter(String(frontmatter).replace(/\r\n/g, '\n'))) return { text, propsError: 'Those properties are not valid frontmatter, so they were not saved.' };
+  return { text: withFrontmatter(text, frontmatter) };
 }

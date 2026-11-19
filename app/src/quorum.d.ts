@@ -491,7 +491,14 @@ declare global {
       vaultNoteDate(rel: string, day: string): Promise<string>;
       // the Knowledge editor: a note's body as written and the file's hash; readOnly names why it can't be edited here
       vaultNoteEdit(rel: string, open?: boolean): Promise<VaultEdit | null>;
-      vaultNoteSave(p: { rel: string; hash: string; body?: string }): Promise<{ hash: string } | { conflict: true } | { error: string }>;
+      // a link's hover preview: the note as vault-note sends it, without counting a view
+      vaultPeek(rel: string): Promise<{ title: string; body: string } | null>;
+      // the notes bookmarked in .obsidian/bookmarks.json, and starring or unstarring one (answers with the new list)
+      vaultBookmarks(): Promise<string[]>;
+      vaultBookmark(rel: string, on: boolean): Promise<string[]>;
+      // today's daily note, made if it doesn't exist yet; answers with its path in the vault
+      vaultToday(): Promise<string>;
+      vaultNoteSave(p: { rel: string; hash: string; body?: string; frontmatter?: string }): Promise<{ hash: string; frontmatter: string; propsError?: string } | { conflict: true } | { error: string }>;
       vaultNote(rel: string): Promise<{ title: string; body: string; abs: string; app: string; views?: NoteViews; meta?: NoteMetaInfo | null } | null>;
       memoryDots(): Promise<MemoryDots>;
       memoryReview(rel: string): Promise<MemoryReview | null>;

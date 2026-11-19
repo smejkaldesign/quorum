@@ -133,6 +133,10 @@ contextBridge.exposeInMainWorld('quorum', {
   vaultNote: (rel) => ipcRenderer.invoke('vault-note', rel),
   vaultNoteDate: (rel, day) => ipcRenderer.invoke('vault-note-date', rel, day),
   vaultNoteEdit: (rel, open) => ipcRenderer.invoke('vault-note-edit', rel, !!open),
+  vaultPeek: (rel) => ipcRenderer.invoke('vault-note', rel, true),
+  vaultBookmarks: () => ipcRenderer.invoke('vault-bookmarks'),
+  vaultBookmark: (rel, on) => ipcRenderer.invoke('vault-bookmark', rel, !!on),
+  vaultToday: () => ipcRenderer.invoke('vault-today'),
   vaultNoteSave: (payload) => ipcRenderer.invoke('vault-note-save', payload),
   // Memory tab review of agent changes and note versions (memoryVersions.js)
   memoryDots: () => ipcRenderer.invoke('memory-dots'),
