@@ -203,7 +203,7 @@ export function recordContradictions(store, findings, { at = Date.now() } = {}) 
       const [older, newer] = f.notes;
       if (between(store, newer, older, 'contradicts').length) continue;
       const line = olderLine(f);
-      store.addEdge({ src: `note:${newer}`, dst: `note:${older}`, kind: 'contradicts', provenance: 'rule', source_rel: older, source_line: line == null ? null : line - 1, confidence: 0.7, valid_from: at, recorded_at: at });
+      store.addEdge({ src: `note:${newer}`, dst: `note:${older}`, kind: 'contradicts', provenance: 'rule', source_rel: older, source_line: line == null ? null : line - 1, confidence: 0.7, valid_from: at, recorded_at: at, props: { by: 'contradictions' } });
       added++;
     }
     for (const rel of new Set(open.flatMap((f) => f.notes))) {

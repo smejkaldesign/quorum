@@ -299,7 +299,8 @@ export function meetingEdges({ rel, props = {}, date, people = [], projects = []
   const day = Date.parse(String(date ?? '').slice(0, 10));
   const from = Number.isFinite(day) ? day : null;
   const idOf = (r, fallback) => { const k = noteKind(r, {}).kind; return entityId(k === 'note' ? fallback : k, r); };
-  const edge = (src, dst, kind, line = null, confidence = 0.9) => ({ src, dst, kind, provenance: 'rule', source_rel: rel, source_line: line, confidence, valid_from: from, recorded_at: at });
+  // by: the keeper's own edges, which the graph keeps when it reads the note again (graph/index.js)
+  const edge = (src, dst, kind, line = null, confidence = 0.9) => ({ src, dst, kind, provenance: 'rule', source_rel: rel, source_line: line, confidence, valid_from: from, recorded_at: at, props: { by: 'keeper' } });
   return [
     ...people.map((p) => edge(idOf(p, 'person'), meeting, 'attended')),
     ...projects.map((p) => edge(meeting, idOf(p, 'project'), 'mentions')),

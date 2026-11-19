@@ -4265,7 +4265,7 @@ async function runBatch(run, step, keep, release = () => {}) {
   run.done = fixed.filter((i) => (i.kind === 'pastfix' && i.keep) || i.kind === 'finding').map((i) => i.id);
   run.touched = [...touched];
   // memory setup: the connections the person approved, as person-provenance edges in the memory graph
-  run.graphEdges = recordApproved(items);
+  run.graphEdges = recordApproved(fixed);
   const done = (run.groups ?? []).map((g) => g.label).join(', ');
   return `Applied the plan: ${done}${followed.length ? `. Then pointed ${followed.length === 1 ? `the link to “${followed[0]}”` : `${followed.length} links`} at the notes the current rules pick` : ''}`;
 }

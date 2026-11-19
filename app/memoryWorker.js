@@ -8,7 +8,8 @@
 // Events to main: { event, payload }.
 import { parentPort as threadPort, workerData } from 'node:worker_threads';
 import { createMemoryEngine } from './memoryEngine.js';
-import { openGraphView } from './graphView.js';
+import path from 'node:path';
+import { openStore } from './graph/store.js';
 
 const utility = process.parentPort ?? null;
 const port = utility ?? threadPort;
@@ -23,14 +24,14 @@ const ask = (method, payload) => new Promise((resolve, reject) => {
   waiting.set(id, { resolve, reject });
   send({ ask: id, method, payload });
 });
-// the memory graph's database, read-only, per vault (graphView.js); the engine asks for it only once main says the
-// graph is built
+// the memory graph's store, opened read-only per vault (graph/store.js); the engine asks for it only once main says
+// the graph is built
 const graphs = new Map();
 const graph = (vault) => {
   if (!vault) return null;
   if (graphs.get(vault)) return graphs.get(vault);
   let v;
-  try { v = openGraphView({ dataDir, vault }); } catch { v = null; }
+  try { v = openStore({ dir: path.join(dataDir, 'memory'), vault, readOnly: true }); } catch { v = null; }
   if (v) graphs.set(vault, v);
   return v;
 };

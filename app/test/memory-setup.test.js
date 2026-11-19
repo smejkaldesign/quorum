@@ -21,7 +21,7 @@ import { approvedEdges, createMemorySetup, endEdges, freshness, linkMention, mer
 import { meetingEdges } from '../keeper.js';
 import { createVaultIndex } from '../vindex.js';
 import { createMemoryGraph } from '../graph/index.js';
-import { openGraphView } from '../graphView.js';
+import { openStore } from '../graph/store.js';
 import { writeGraphVault } from './fixtures/graphVault.js';
 
 // Synthetic notes. Every name and line is made up.
@@ -333,7 +333,7 @@ describe('with the memory graph built', () => {
     const g = createMemoryGraph({ dataDir, vault, vindex: ix });
     await g.build();
     const notes = ix.snapshot();
-    return { vault, ix, g, dataDir, notes, view: openGraphView({ dataDir, vault }) };
+    return { vault, ix, g, dataDir, notes, view: openStore({ dir: path.join(dataDir, 'memory'), vault, readOnly: true }) };
   }
   it('the rules read names, edges and aliases from the read-only view', async () => {
     const meetings = Object.fromEntries([1, 2, 3].map((i) => [`meetings/2026-10-1${i} review.md`, `${fm({ type: 'meeting', date: `2026-10-1${i}`, attendees: '[Quill Ambersmith]' })}# Review ${i}\n`]));

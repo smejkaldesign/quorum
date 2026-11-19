@@ -85,8 +85,7 @@ export function kindFolder(notes, kind) {
   return best;
 }
 
-// The graph as the rules read it, from the store (graph/store.js) or its read-only view in the memory engine
-// (graphView.js); null while the graph is not built, and the rules fall back to the notes alone. A note stands for
+// The graph as the rules read it, from the store (graph/store.js), opened read-only in the memory engine; null while the graph is not built, and the rules fall back to the notes alone. A note stands for
 // note:<rel> and, when it is a person, project, meeting or decision, for that node too (nodesByRel). Shape:
 //   nodes(kind)          [{ id, kind, name, rel, aliases, mentions: [rel] }]: mentions are the notes with a current
 //                        mentions or attended edge on the node

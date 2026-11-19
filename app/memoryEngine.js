@@ -25,7 +25,7 @@ import { ruleGraph } from './rules/entities.js';
 // the text cut the rules read (rules/common.js), exported here for the callers that already import it
 export { MAX_RULE_TEXT, ruleText };
 
-// graph(vault): the memory graph's database for the vault, read-only (graphView.js), asked for once main's cond says
+// graph(vault): the memory graph's store for the vault, read-only (graph/store.js), asked for once main's cond says
 // the graph is built (graphReady); the rules read it through rules/entities.js ruleGraph and fall back to the notes alone
 export function createMemoryEngine({ dataDir, ask = async () => { throw new Error('No model'); }, emit = () => {}, log = () => {}, now = () => Date.now(), graph = () => null }) {
   let vault = null;
