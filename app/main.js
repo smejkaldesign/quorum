@@ -13,7 +13,8 @@ import { SKIP as TREE_SKIP, createFolder, createNote, duplicateItem, moveItem, r
 import { createVaultIndex } from './vindex.js';
 import { createMemoryGraph } from './graph/index.js';
 import { applyUndo, sha, undoRecord } from './fixUndo.js';
-import { changedSince, createFixJournal, createNoteHashes, fixCheck, hashNotes, noteMemo, recoveryReason, rollback } from './fixJournal.js';
+import { changedSince, createFixJournal, createNoteHashes, fixCheck, hashNotes, newLinksCheck, noteMemo, recoveryReason, rollback } from './fixJournal.js';
+import { holdFailed } from './fixFailures.js';
 import { createGateStore, gatePasses, gateTriggers, verdictOf } from './gateRun.js';
 import { addAlias, linkSources, relinkMoved, retargetLinks, rewriteLinks, unlinkTarget, writeAtomic } from './relink.js';
 import store from './store/index.js';
@@ -379,7 +380,7 @@ const actionHandlers = new Map();
 const handleAction = (name, fn) => { const run = feedNotify(name, fn); actionHandlers.set(name, feedTouched(name, run)); ipcMain.handle(name, run); };
 // a fix an AI tool approved keeps its name, so Memory health and Notifications show who approved it
 // the error a cancelled batch ends with; the window finds it by its ending
-const cancelText = (run) => `${run.cancelBy ?? 'You'} cancelled the batch`;
+const cancelText = (run) => `${run.cancelBy ?? 'You'} cancelled ${run.kind === 'batch' && (run.items?.length ?? 0) > 1 ? 'the batch' : 'the fix'}`;
 const byOf = (actor) => (actor && actor !== 'you' && actor !== 'auto' ? { actor, by: actorLabel(actor) } : {});
 // the notetaker flags (notetaker.js). The gates are worked out once from the resolved flags and kept until the flags
 // change (registerFlags' emit below), so a change from the admin app applies without a restart. Until registerFlags
@@ -3190,12 +3191,17 @@ async function decideLink(key, verdict, step = async () => {}, keep = () => {}, 
   await finder?.refresh();
   const hit = finder?.find(name);
   if (hit) throw new Error(`${hit.kind === 'branch' ? `A note with that name is on the branch ${hit.branch}` : `A ${hit.kind} with that name is at ${hit.where}`}, so Quorum did not write a note`);
+  // the text is checked before the note exists: a link in it that opens nothing fails the fix, which writes nothing
+  const text = `${frontBlock(contextNote(issue))}${draft.text.trim()}\n`;
+  await step('Checking the links in the draft');
+  const bad = newLinksCheck({ text, rel: `${folder ? `${folder}/` : ''}${name}.md`, resolve: vindex.resolve });
+  if (bad) throw new Error(bad);
   await step(`Writing ${folder ? `${folder}/` : ''}${name}.md from ${draft?.text ? 'the agent\'s draft' : 'what the linking notes say'}`);
   guard();
   const rel = createNote(b.vault, folder, name);
   keep(rel, true);
   // a drafted note keeps the frontmatter Quorum writes (the confidential mark of its sources) above the draft's text
-  writeAtomic(path.join(b.vault, rel), `${frontBlock(contextNote(issue))}${draft.text.trim()}\n`);
+  writeAtomic(path.join(b.vault, rel), text);
   await step('Updating the vault index');
   vindex.sync();
   await recheck({ made: rel });
@@ -3349,6 +3355,7 @@ async function pumpFixes() {
     } catch (e) {
       run.status = 'error';
       run.error = e?.message ?? String(e);
+      if (run.cancel) run.cancelled = true;
       // a failure the batch could not keep to one item puts every item back: one it had fixed is marked rolled back, one
       // that failed on its own keeps its reason
       if (run.kind === 'batch') rollBackItems(run.items);
@@ -3385,21 +3392,23 @@ async function pumpFixes() {
   fixWorking = false;
 }
 ipcMain.handle('fix-start', (_e, keys) => startFixes(Array.isArray(keys) ? keys : []));
-// Cancel on a bulk Approve: its queued fixes end without running, so their issues stay in Needs review, and the running
-// one stops before its next step, where its rollback puts back every note it changed
+// Cancel on a bulk Approve, or on one fix by its run id (Stop on its row or the Fixing line): queued fixes end without
+// running, so their issues stay in Needs review, and the running one stops before its next step, where its rollback
+// puts back every note it changed
 handleAction('fix-cancel', (_e, batch) => {
   const id = String(batch ?? '');
   if (!id) return 0;
   let n = 0;
   const by = currentActor() === 'you' ? null : actorLabel(currentActor());
   for (const r of fixRunList()) {
-    if (r.batch !== id) continue;
+    if (r.batch !== id && r.id !== id) continue;
     if (by && (r.status === 'queued' || r.status === 'running')) r.cancelBy = by;
     if (r.status === 'queued') {
       const at = fixQueue.indexOf(r);
       if (at >= 0) fixQueue.splice(at, 1);
       r.status = 'error';
       r.error = cancelText(r);
+      r.cancelled = true;
       r.endedAt = Date.now();
       for (const it of r.items ?? []) it.status = 'error';
       batchPlans.delete(r.id);
@@ -4453,7 +4462,8 @@ function autoApply() {
   if (fixRunList().some((r) => r.vault === b.vault && (r.status === 'queued' || r.status === 'running'))) return null;
   // the gate's shown items only, and never a kind the live precision guard demoted
   const down = demotions(decisionLog.list(b.vault));
-  const items = gatedItems().filter((i) => i.autoFix && !i.hold && !i.reviewOnly && !i.agent && !i.fallback && i.gate.bucket === 'show' && !down[kindOf(i)]);
+  // an item whose last fix failed or was cancelled waits for the person: it never runs again on its own
+  const items = holdFailed(gatedItems().filter((i) => i.autoFix && !i.hold && !i.reviewOnly && !i.agent && !i.fallback && i.gate.bucket === 'show' && !down[kindOf(i)]), fixRunList().filter((r) => r.vault === b.vault));
   if (!items.length) return null;
   const plan = buildPlan(items);
   if (!plan.ok.length) return null;

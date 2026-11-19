@@ -296,7 +296,7 @@ export type FeedTab = 'all' | 'unread' | 'archived';
 export type FeedSort = 'unread' | 'recent' | 'az';
 export type FeedSummary = { line: string; sub: string | null; ask?: { question: string; suggest: 'approve' | 'reject'; why: string; problem: string; solution: string; value: string; recommendation: string }; problem?: string; solution?: string; value?: string; recommendation?: string };
 export type FixStep = { label: string; at: number; endedAt: number | null };
-export type FixRun = { id: string; key: string; target: string; title: string; rel: string; status: 'queued' | 'running' | 'success' | 'error'; queuedAt: number; startedAt: number | null; endedAt: number | null; steps: FixStep[]; outcome: string | null; error: string | null; dismissedAt: number | null; batch?: string | null; undoable?: boolean; undoneAt?: number | null; problem?: string; solution?: string; value?: string; recommendation?: string; meta?: [string, string][]; showBanner?: boolean; kind?: 'batch'; auto?: boolean; actor?: string; by?: string; items?: BatchItem[]; groups?: { id: string; label: string; count: number }[]; rolledBack?: boolean };
+export type FixRun = { id: string; key: string; target: string; title: string; rel: string; status: 'queued' | 'running' | 'success' | 'error'; queuedAt: number; startedAt: number | null; endedAt: number | null; steps: FixStep[]; outcome: string | null; error: string | null; dismissedAt: number | null; batch?: string | null; undoable?: boolean; undoneAt?: number | null; problem?: string; solution?: string; value?: string; recommendation?: string; meta?: [string, string][]; showBanner?: boolean; kind?: 'batch'; auto?: boolean; actor?: string; by?: string; items?: BatchItem[]; groups?: { id: string; label: string; count: number }[]; rolledBack?: boolean; cancelled?: boolean };
 // one item of a batch run, with its own state while the batch works
 // error: why the item failed on its own; rolledBack: it was fixed, then put back when the whole batch rolled back
 export type BatchItem = { id: string; kind: 'link' | 'pastfix' | 'finding'; key: string; link: string | null; title: string; line: string; status: 'queued' | 'running' | 'success' | 'error'; error?: string | null; skipped?: boolean; rolledBack?: boolean };
@@ -530,7 +530,8 @@ declare global {
       vaultLinkDecide(key: string, verdict: 'approve' | 'dismiss'): Promise<string>;
       fixStart(keys: string[]): Promise<FixRun[]>;
       // stops a bulk Approve: drops its queued fixes and stops the running one before its next step; answers how many
-      fixCancel(batch: string): Promise<number>;
+      // a bulk Approve's batch id, or one run's id
+      fixCancel(id: string): Promise<number>;
       memoryFindings(): Promise<{ findings: MemoryFinding[]; last: MemorySweepInfo | null; lastFull: number; paused: boolean; labels: Record<string, string>; drafts?: Record<string, MemoryDraft>; checking?: boolean; engineError?: string | null }>;
       memoryGate(): Promise<{ checking: boolean; stopped: boolean; at: number }>;
       memoryRuleRecords(): Promise<RuleRecord[]>;
