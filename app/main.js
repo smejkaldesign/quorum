@@ -2497,7 +2497,9 @@ function openMemoryGraph(vault) {
   try {
     memoryGraph = createMemoryGraph({ dataDir: DATA_DIR, vault, vindex, isExcluded: (t) => suggester.isExcluded(t), log: (...a) => log('memory graph', ...a) });
     memoryGraph.on('progress', (st) => toUI('memory-graph', st));
-    memoryGraph.on('ready', (st) => toUI('memory-graph', st));
+    // the first full graph build is also search's cue: onIndexed does not fire for the index's first read, and a first
+    // call opens search on the graph's database and builds it in full
+    memoryGraph.on('ready', (st) => { toUI('memory-graph', st); searchChanged([]); });
   } catch (err) { log('memory graph failed to open', String(err)); memoryGraph = null; }
 }
 const graphBudget = (b) => Math.max(100, Math.min(Number(b) || 1500, 50000));

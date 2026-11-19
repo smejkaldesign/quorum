@@ -256,6 +256,15 @@ describe('the MCP bridge on a real search', () => {
 });
 
 describe('createMemorySearch', () => {
+  it('builds in full from an empty first change, the way the graph ready event starts it', async () => {
+    const v = vindexOf();
+    const g = createMemoryGraph({ dataDir: dir, vault, vindex: v });
+    opened.push(g);
+    await g.build();
+    const s = createMemorySearch({ dataDir: dir, vault: () => vault, vindex: () => v, embedder: hashEmbedder(), graph: () => g.store });
+    await s.changed([]);
+    expect(s.status()).toMatchObject({ notes: 150, built: true });
+  });
   it('builds on the first change, follows later changes and reports status', async () => {
     const v = vindexOf();
     let g = createMemoryGraph({ dataDir: dir, vault, vindex: v });
