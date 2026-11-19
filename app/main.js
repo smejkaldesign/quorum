@@ -2660,9 +2660,11 @@ function openIndex() {
   // enters the index, and a rule change rebuilds it (the guardrails IPC handlers below)
   vindex = createVaultIndex({
     vault: b.vault, isExcludedPath: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isDeniedText: isConfidentialText, isExcludedText: suggester.isExcluded, redact: suggester.redactLines,
-    onChange: (rels) => { toUI('vault-changed', rels); memoryGraph?.update(rels); searchChanged(rels); if (!built) { built = true; setTimeout(sweepTick, 5000); const kept = savesWaiting.take(b.vault); if (kept.length) sweepOnSave(kept); } else sweepOnSave(rels); }, renamed: () => settings.clusterNames?.[b.vault] ?? {},
+    onChange: (rels) => { toUI('vault-changed', rels); searchChanged(rels); if (!built) { built = true; setTimeout(sweepTick, 5000); const kept = savesWaiting.take(b.vault); if (kept.length) sweepOnSave(kept); } else sweepOnSave(rels); }, renamed: () => settings.clusterNames?.[b.vault] ?? {},
     forget: (keys) => { const mine = settings.clusterNames?.[b.vault]; if (!mine) return; for (const k of keys) delete mine[k]; store.settings.save(); }, log: (...a) => log('index', ...a),
-    onPaths: treePaths, onMoves: relinkMoves,
+    onPaths: treePaths, onMoves: (moves) => { memoryGraph?.moved(moves); relinkMoves(moves); },
+    // memory graph: every index change, the watcher's and the ones Quorum's own writes sync
+    onIndexed: (rels) => memoryGraph?.update(rels),
   });
   dropTree();
   openMemoryGraph(b.vault);
@@ -4389,6 +4391,8 @@ function relocate(rel, doMove) {
   const mapping = new Map(moving.map((r) => [r, r === rel ? next : next + r.slice(rel.length)]));
   const allRels = vindex.rels().map((r) => mapping.get(r) ?? r);
   const done = rewriteLinks({ vault, mapping, sources, resolve, allRels, aliasesOf });
+  // memory graph: the notes keep their history and approved links under the new paths
+  memoryGraph?.moved([...mapping].map(([from, to]) => ({ from, to })));
   vindex.sync();
   log('relocated', rel, '->', next, `rewrote ${done.links} links in ${done.files} notes`);
   return { rel: next, ...done };

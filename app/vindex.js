@@ -61,9 +61,10 @@ export function readHead(abs, max = INDEX_MAX) {
 // isExcludedPath keeps a file out by its path; isDeniedText keeps a note out by what its frontmatter says (a denied
 // key); isExcludedText flags and redacts opted-out lines but keeps the note. onPaths hears each batch the watcher
 // names before onChange. onMoves hears the notes a watcher batch moved ([{ from, to }], see movesIn) while the index
-// still holds their old paths; only the watcher reports moves. renamed() gives the person's own names for
+// still holds their old paths; only the watcher reports moves. onIndexed hears the paths every sync, syncPaths or rebuild
+// changed, from the watcher or from a caller. renamed() gives the person's own names for
 // graph clusters, by cluster key; forget(keys) is told which of them no longer match a cluster
-export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => false, isExcludedText, redact, onChange, onPaths = () => {}, onMoves = null, renamed = () => ({}), forget = () => {}, log = () => {} }) {
+export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => false, isExcludedText, redact, onChange, onPaths = () => {}, onMoves = null, onIndexed = () => {}, renamed = () => ({}), forget = () => {}, log = () => {} }) {
   const files = new Map(); // rel -> { mtime, size, note, text, flagged, t }
   // linkHealth's answer: the missing links scored against every note, worked out again only after the index changed,
   // since Notifications and Memory health ask for it on every refresh. Callers read it and never change it
@@ -127,7 +128,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   }
 
   // compare what's on disk with what's indexed; cheap enough (stat only) to run after every burst of changes
-  function sync() {
+  function syncAll() {
     const seen = new Set();
     const changed = [];
     for (const rel of walk(vault, '', isExcludedPath, [])) {
@@ -146,7 +147,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   // the paths the watcher named: each file is re-read or dropped on its own, and only a folder appearing or going
   // falls back to the full walk. A dot folder or an ignored one never costs anything (walk skips them too)
   const skipped = (rel) => rel.split('/').some((seg) => seg.startsWith('.') || SKIP.has(seg));
-  function syncPaths(rels) {
+  function syncPathsOnly(rels) {
     const changed = [];
     let everything = false;
     for (const rel of rels) {
@@ -165,7 +166,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
       if (!f || f.mtime !== st.mtimeMs || f.size !== st.size) { load(rel, st); changed.push(rel); }
     }
     // a folder moved: the walk finds the rest and relinks, so the files read above are reported with it
-    if (everything) return [...new Set([...changed, ...sync()])];
+    if (everything) return [...new Set([...changed, ...syncAll()])];
     if (changed.length) { relink(); rememberAll(); }
     return changed;
   }
@@ -204,6 +205,12 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     }
     return pairMoves(gone, added);
   }
+
+  // every change to the index after its first read, whoever asked for it (the watcher, or Quorum after its own writes),
+  // so a reader kept beside the index (the memory graph) never misses one
+  const report = (changed) => { if (changed.length) { try { onIndexed(changed); } catch (err) { log('vault indexed', String(err)); } } return changed; };
+  const sync = () => report(syncAll());
+  const syncPaths = (rels) => report(syncPathsOnly(rels));
 
   // the first read of the vault, in batches that let IPC through between them, so a large vault never holds the
   // window's first questions. Answers during the build see what is loaded so far; the watcher starts once it is done
