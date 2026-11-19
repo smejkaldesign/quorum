@@ -101,6 +101,12 @@ describe('formatMemory', () => {
       .toBe('2026-02-02  decision:meetings/m.md#ab12cd34  Ship in March  [meetings/m.md:9; in meeting:meetings/m.md; about project:atlas]');
     expect(formatMemory('entity', { notFound: 'Zed' })).toEqual(['No node named "Zed". Try search, or graph_query with other words.']);
   });
+  it('follows graph-core\'s final shapes: superseding edges as objects, path ambiguity, edges left out', () => {
+    expect(edgeLine({ src: 'a', dst: 'b', kind: 'works_on', provenance: 'explicit', superseded_by: 7, supersededBy: { id: 7 } })).toBe('a -works_on-> b  [explicit, superseded by edge 7]');
+    expect(formatMemory('graph_path', { ambiguous: [{ id: 'person:alex-kim' }, { id: 'person:alex-ng' }], for: 'b' }, { args: { a: 'Atlas', b: 'Alex' } })[0]).toBe('"Alex" matches 2 nodes. Call again with one id:');
+    const out = formatMemory('graph_query', { nodes: [{ id: 'project:atlas' }], edges: [], truncated: { shown: 1, total: 1, budgetNeeded: 2000, edgesShown: 0, edgesTotal: 12 } });
+    expect(out.at(-1)).toMatch(/^Left out 12 of 12 edges/);
+  });
   it('says when nothing matched', () => {
     expect(formatMemory('decisions', { decisions: [] })).toEqual(['Nothing found.']);
     expect(formatMemory('graph_path', { found: false }, { args: { a: 'x', b: 'y' } })).toEqual(['No path between x and y.']);
@@ -142,6 +148,7 @@ describe('runMemoryTool', () => {
     await expect(runMemoryTool('decisions', {}, { handler, ...filters })).rejects.toThrow(NOT_READY);
     await expect(runMemoryTool('memory_status', {}, { handler, ...filters })).rejects.toThrow(NOT_READY);
     await expect(runMemoryTool('nope', {}, { handler, ...filters })).rejects.toThrow('Unknown memory tool nope');
+    await expect(runMemoryTool('decisions', {}, { handler: () => () => null, ...filters })).rejects.toThrow(NOT_READY);
   });
   it('answers memory_status with whatever part is ready', async () => {
     const r = await runMemoryTool('memory_status', {}, { handler: (h) => (h === 'memory-search-status' ? () => ({ chunks: 4000, embedded: 1200 }) : null), ...filters });

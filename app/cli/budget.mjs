@@ -46,7 +46,7 @@ export function edgeLine(edge) {
     at(pick(edge, 'source_rel', 'sourceRel'), pick(edge, 'source_line', 'sourceLine')),
     conf != null && Number(conf) < 1 ? `confidence ${Number(conf).toFixed(2)}` : null,
     from || to ? `${from ?? '?'}..${to ?? 'now'}` : null,
-    by != null ? `superseded by edge ${by}` : null,
+    by != null ? `superseded by edge ${typeof by === 'object' ? pick(by, 'id') : by}` : null,
   ].filter(Boolean);
   return `${pick(edge, 'src') ?? '?'} -${pick(edge, 'kind') ?? 'edge'}-> ${pick(edge, 'dst') ?? '?'}${meta.length ? `  [${meta.join(', ')}]` : ''}`;
 }
@@ -71,7 +71,7 @@ export function decisionLine(d) {
     pick(d, 'decidedIn', 'decided_in', 'meeting') ? `in ${ref(pick(d, 'decidedIn', 'decided_in', 'meeting'))}` : null,
     about.length ? `about ${about.join(', ')}` : null,
     pick(d, 'provenance'),
-    by != null ? `superseded by ${by}${to ? ` on ${to}` : ''}` : to ? `ended ${to}` : null,
+    by != null ? `superseded by ${ref(by)}${to ? ` on ${to}` : ''}` : to ? `ended ${to}` : null,
   ].filter(Boolean);
   return `${when ?? '????-??-??'}  ${pick(d, 'id') ?? ''}  ${text}${meta.length ? `  [${meta.join('; ')}]` : ''}`.replace(/ {3,}/g, '  ');
 }
@@ -106,6 +106,9 @@ export function fit({ head = [], items = [], groups = null, budget, upstream = n
     const per = order.length ? (all - headCost) / order.length : 0;
     all = Math.max(all + Math.ceil(per * extra), Number(up.budgetNeeded) || 0);
   }
+  // graph_query also counts the edges it left out
+  const edgesOut = Number(upstream?.edgesTotal) - Number(upstream?.edgesShown);
+  if (edgesOut > 0) { left.set('edge', (left.get('edge') ?? 0) + edgesOut); counts.set('edge', (counts.get('edge') ?? 0) + edgesOut); }
   const body = groups ? regroup(groups, kept) : kept.sort((a, b) => a.at - b.at).map((it) => it.text);
   return [...head, ...body, summary(counts, left, all, used)];
 }
@@ -156,7 +159,7 @@ const list = (v) => (Array.isArray(v) ? v : []);
 // one tool's answer from the app as lines, trimmed to budget
 export function formatMemory(tool, result, { budget, args = {} } = {}) {
   const r = result ?? {};
-  if (Array.isArray(r.ambiguous)) return ambiguousLines(args.q ?? args.name ?? args.id ?? args.about ?? args.a ?? '', r.ambiguous);
+  if (Array.isArray(r.ambiguous)) return ambiguousLines((r.for ? args[r.for] : null) ?? args.q ?? args.name ?? args.id ?? args.about ?? args.a ?? '', r.ambiguous);
   if (r.notFound != null) return [`No node named "${r.notFound}". Try search, or graph_query with other words.`];
   const upstream = r.truncated && typeof r.truncated === 'object' ? r.truncated : null;
   switch (tool) {

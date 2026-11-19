@@ -87,6 +87,8 @@ export async function runMemoryTool(name, args = {}, { handler, ...filters }) {
     return withhold({ graph, search }, filters);
   }
   const r = await run(tool.handler);
+  // a handler answers null while no vault is connected
+  if (r == null) throw new Error(NOT_READY);
   if (isHidden(r?.node ?? r?.entity, filters)) throw new Error('That note is withheld.');
   return withhold(r, filters);
 }
