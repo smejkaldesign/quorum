@@ -293,12 +293,13 @@ export function linkMentions(text, links) {
 // The typed edges of a filed meeting (graph/store.js): each person the keeper matched attended it, it mentions each
 // project it names, and each decision line the graph holds for it was decided in it. Ids as the graph extracts them
 // (graph/extract.js entityId); rule provenance, since they come from the keeper's name match. have(edge) answers true
-// for an edge the graph holds already, which is left out. Pure
-export function meetingEdges({ rel, props = {}, date, people = [], projects = [], decisions = [], at = Date.now(), have = () => false }) {
+// for an edge the graph holds already, which is left out. backed(rel): the id of the entity node the note backs in the
+// graph, which goes by its path when another note shares its name. Pure
+export function meetingEdges({ rel, props = {}, date, people = [], projects = [], decisions = [], at = Date.now(), have = () => false, backed = () => null }) {
   const meeting = entityId(noteKind(rel, props).kind, rel);
   const day = Date.parse(String(date ?? '').slice(0, 10));
   const from = Number.isFinite(day) ? day : null;
-  const idOf = (r, fallback) => { const k = noteKind(r, {}).kind; return entityId(k === 'note' ? fallback : k, r); };
+  const idOf = (r, fallback) => { const b = backed(r); if (b) return b; const k = noteKind(r, {}).kind; return entityId(k === 'note' ? fallback : k, r); };
   // by: the keeper's own edges, which the graph keeps when it reads the note again (graph/index.js)
   const edge = (src, dst, kind, line = null, confidence = 0.9) => ({ src, dst, kind, provenance: 'rule', source_rel: rel, source_line: line, confidence, valid_from: from, recorded_at: at, props: { by: 'keeper' } });
   return [
@@ -716,7 +717,8 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
         const r = posix(rel);
         const decisions = store.nodesByRel(r).filter((x) => x.kind === 'decision').map((x) => ({ id: x.id, line: x.props?.line ?? null }));
         const have = (e) => store.edgesOf(e.src, { dir: 'out', kinds: [e.kind], current: true }).some((x) => x.dst === e.dst);
-        const edges = meetingEdges({ rel: r, props, date, people: filed.people, projects: filed.projects, decisions, have });
+        const backed = (p) => store.nodesByRel(p).find((x) => ['person', 'project', 'company', 'topic'].includes(x.kind))?.id ?? null;
+        const edges = meetingEdges({ rel: r, props, date, people: filed.people, projects: filed.projects, decisions, have, backed });
         store.tx(() => { for (const e of edges) store.addEdge(e); });
       } catch (e) { fail('graph', e); }
     }

@@ -1,7 +1,7 @@
 // Extraction from one note with no model (graph/extract.js): links, frontmatter, folder conventions, meetings,
 // decision lines and the keeper's link lines, checked against hand-written notes.
 import { describe, expect, it } from 'vitest';
-import { extractNote, folderKind, isHub, noteKind } from '../graph/extract.js';
+import { entityId, extractNote, folderKind, isHub, noteKind, slugKey } from '../graph/extract.js';
 
 // a resolver over a fixed set of notes, by basename, case-insensitive, like vindex's
 const resolverOf = (rels) => (target) => rels.find((r) => r.toLowerCase().replace(/\.md$/, '').split('/').pop() === target.toLowerCase().replace(/\.md$/, '').split('/').pop()) ?? null;
@@ -118,5 +118,22 @@ describe('extractNote', () => {
     const ex = extractNote({ rel: 'notes/x.md', text: '---\npeople: [Secret Co Person, Ana Ruiz]\n---\n', resolve: resolverOf(RELS), isExcluded: (t) => /secret co/i.test(t) });
     expect(ex.nodes.map((n) => n.id)).not.toContain('person:secret-co-person');
     expect(ex.nodes.map((n) => n.id)).toContain('person:ana-ruiz');
+  });
+});
+
+describe('entity ids when two notes share a name', () => {
+  it('gives each note its path id when another note of its kind shares the slug, and keeps the slug id otherwise', () => {
+    const twins = new Set(['04-projects/alpha/Orca.md', '04-projects/beta/Orca.md']);
+    const shared = (kind, rel) => kind === 'project' && twins.has(rel);
+    expect(entityId('project', '04-projects/alpha/Orca.md', shared)).toBe('project:04-projects/alpha/Orca');
+    expect(entityId('project', '04-projects/Atlas.md', shared)).toBe('project:atlas');
+    expect(slugKey('04-projects/alpha/Orca.md', {})).toBe('project:orca');
+    expect(slugKey('notes/Orca.md', { type: 'person' })).toBe('person:orca');
+    expect(slugKey('notes/Orca.md', {})).toBe(null);
+    const resolve = (t) => (t === 'alpha/Orca' ? '04-projects/alpha/Orca.md' : null);
+    const self = extractNote({ rel: '04-projects/alpha/Orca.md', text: '---\ntype: project\n---\n# Orca\n', shared });
+    expect(self.nodes.find((n) => n.kind === 'project').id).toBe('project:04-projects/alpha/Orca');
+    const linker = extractNote({ rel: 'notes/x.md', text: 'See [[alpha/Orca]].', resolve, kindOf: () => 'project', shared });
+    expect(linker.edges.find((e) => e.kind === 'mentions').dst).toBe('project:04-projects/alpha/Orca');
   });
 });

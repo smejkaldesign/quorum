@@ -261,3 +261,25 @@ describe('entity folder notes', () => {
     expect(t.g.store.nodesByRel(t.info.specRels[0]).map((n) => n.kind)).toEqual(['note']);
   });
 });
+
+describe('two notes with one name', () => {
+  it('keeps two projects named Orca apart, finds both by name, and gives the one left its name id back', async () => {
+    const t = await setup({ notes: 10, people: 3, projects: 2, companies: 1, meetings: 2 });
+    const a = '04-projects/alpha/Orca.md';
+    const b = '04-projects/beta/Orca.md';
+    t.write(a, '---\ntype: project\n---\n# Orca\n\nThe whale tracker.\n');
+    t.write('notes/orca link.md', 'See [[alpha/Orca]].\n');
+    expect(t.g.store.node('project:orca').rel).toBe(a);
+    t.write(b, '---\ntype: project\n---\n# Orca\n\nThe database.\n');
+    expect(t.g.store.node('project:orca')).toBe(null);
+    expect(t.g.store.node('project:04-projects/alpha/Orca').rel).toBe(a);
+    expect(t.g.store.node('project:04-projects/beta/Orca').rel).toBe(b);
+    // the note that links one of them mentions that one
+    expect(t.g.store.edgesOf('project:04-projects/alpha/Orca', { dir: 'in', kinds: ['mentions'] }).map((e) => e.source_rel)).toEqual(['notes/orca link.md']);
+    expect(t.g.entity('Orca').ambiguous.map((c) => c.id).sort()).toEqual(['project:04-projects/alpha/Orca', 'project:04-projects/beta/Orca']);
+    t.remove(b);
+    expect(t.g.store.node('project:04-projects/alpha/Orca')).toBe(null);
+    expect(t.g.store.node('project:orca').rel).toBe(a);
+    expect(t.g.store.edgesOf('project:orca', { dir: 'in', kinds: ['mentions'] }).map((e) => e.source_rel)).toEqual(['notes/orca link.md']);
+  });
+});
