@@ -8,13 +8,12 @@ import { toast } from './Toasts';
 // the ticks the person changed, as the ids main leaves out and the check-first ids it adds back
 const ticks = (picks: Map<string, boolean>) => ({ exclude: [...picks].filter(([, on]) => !on).map(([id]) => id), include: [...picks].filter(([, on]) => on).map(([id]) => id) });
 
-// The bulk plan sheet (batchPlan.js): Approve on several items, or Review everything, opens it at once with the
+// The bulk plan sheet (batchPlan.js): Approve on several items opens it at once with the
 // loader, then shows what the batch will do as groups with counts, each folding open to its items, and what was merged,
 // skipped or held back and why. Unticking a group or an item plans again without it. Fixes a person should read first
 // (batchPlan.js checkFirst) list under Check these first, unticked until ticked. Apply runs the plan as one batch
-// with the progress banner; Cancel changes nothing. ids: the row ids picked, or null for everything in Needs review.
-// everything: Review everything, which also offers to save the plan as a note (off unless ticked)
-export function BulkPlan({ ids, everything = false, onClose, onApplied }: { ids: string[] | null; everything?: boolean; onClose: () => void; onApplied: () => void }) {
+// with the progress banner; Cancel changes nothing. ids: the row ids picked. It also offers to save the plan as a note (off unless ticked)
+export function BulkPlan({ ids, onClose, onApplied }: { ids: string[]; onClose: () => void; onApplied: () => void }) {
   const [view, setView] = useState<PlanView | null>(null);
   // the ticks the person changed: id -> on. Main leaves out every check-first item that is not ticked here
   const [picks, setPicks] = useState<Map<string, boolean>>(new Map());
@@ -34,7 +33,7 @@ export function BulkPlan({ ids, everything = false, onClose, onApplied }: { ids:
     setBusy(true);
     try {
       const { exclude, include } = ticks(picks);
-      const r = await window.quorum.fixPlanApply(ids, exclude, { saveNote: everything && saveNote }, include);
+      const r = await window.quorum.fixPlanApply(ids, exclude, { saveNote }, include);
       toast(r.run ? `Applying ${r.run.items?.length ?? 0} ${r.run.items?.length === 1 ? 'fix' : 'fixes'} as one batch.${r.note ? ` Saved the plan as ${r.note}.` : ''}` : r.note ? `Saved the plan as ${r.note}. Nothing was applied.` : 'Nothing in the plan can run.');
       onApplied();
       onClose();
@@ -42,7 +41,7 @@ export function BulkPlan({ ids, everything = false, onClose, onApplied }: { ids:
   };
   const notes = view ? [['Merged', view.merged], ['Skipped', view.skipped], ['Held back', view.held]] as const : [];
   return (
-    <Modal titleId="bulk-plan-title" title={everything ? 'Review everything' : 'Bulk accept plan'} className="bulk-plan" onClose={busy ? undefined : onClose} locked={busy}>
+    <Modal titleId="bulk-plan-title" title="Bulk accept plan" className="bulk-plan" onClose={busy ? undefined : onClose} locked={busy}>
       {/* one scrolling column for the whole plan; the title and the buttons stay in place */}
       <div className="bp-body">
       {!view
@@ -87,13 +86,13 @@ export function BulkPlan({ ids, everything = false, onClose, onApplied }: { ids:
                 <ul>{xs.map((x) => <li key={`${label}${x.id}`}><strong>{x.title}</strong> {x.reason}</li>)}</ul>
               </details>
             ))}
-            {everything && <label className="bp-save"><input type="checkbox" checked={saveNote} onChange={(e) => setSaveNote(e.target.checked)} /> Save as a note in the vault</label>}
+            <label className="bp-save"><input type="checkbox" checked={saveNote} onChange={(e) => setSaveNote(e.target.checked)} /> Save as a note in the vault</label>
           </>}
       {error && <p className="set-error" role="alert">{error}</p>}
       </div>
       <ModalActions>
         <button className="pill" autoFocus disabled={busy} onClick={onClose}>Cancel</button>
-        <button className="pill primary" disabled={busy || !view || (!view.run && !(everything && saveNote))} onClick={apply}>{busy ? 'Starting...' : 'Apply'}</button>
+        <button className="pill primary" disabled={busy || !view || (!view.run && !saveNote)} onClick={apply}>{busy ? 'Starting...' : 'Apply'}</button>
       </ModalActions>
     </Modal>
   );

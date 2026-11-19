@@ -2,6 +2,7 @@
 // owner-only RPCs, and the relay for the one thing a browser page cannot do itself, sending the code email.
 import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
 import { token } from './session';
+import { type ErrorCounts, type ErrorDetail, type ErrorGroup, type ErrorSort, type ErrorStatus, shapeErrorCounts, shapeErrorDetail, shapeErrorGroup } from './errors';
 import { type AccessRequest, type AuditRow, type CodePlan, type Flag, type Install, type Member, type Overview, type PlanDraft, type Usage, type User, type Workspace, periodStart, plain, requestWithCode, shapeAudit, shapeFlag, shapeInstall, shapeMember, shapeOverview, shapeRequest, shapeUser, shapeUsage, shapeWorkspace } from './shape';
 
 export const CONFIG = __QUORUM_SUPABASE__;
@@ -78,6 +79,14 @@ export const api = {
   setRequires: (key: string, requires: string | null): Promise<Result<Flag>> => rpc('platform_flag_requires', { key, requires }, (d) => shapeFlag((d ?? {}) as Record<string, unknown>), 'The parent flag could not be saved.'),
   updateFlag: (draft: { key: string; name: string; description: string; tags: string[] }): Promise<Result<Flag>> =>
     rpc('platform_flag_update', { key: draft.key, name: draft.name, description: draft.description, tags: draft.tags }, (d) => shapeFlag((d ?? {}) as Record<string, unknown>), 'The flag could not be saved.'),
+  // page crash reports (migration 0045): the groups a page at a time, the count per status, one group with its latest
+  // events, and the owner's triage
+  errorGroups: (status: ErrorStatus | null, sort: ErrorSort, pageSize = 100, pageOffset = 0): Promise<Result<ErrorGroup[]>> =>
+    rpc('admin_error_groups', { status_filter: status, page_size: pageSize, page_offset: pageOffset, sort_by: sort }, (d) => rows(d).map(shapeErrorGroup)),
+  errorCounts: (): Promise<Result<ErrorCounts>> => rpc('admin_error_counts', undefined, shapeErrorCounts),
+  errorGroup: (fingerprint: string): Promise<Result<ErrorDetail>> => rpc('admin_error_group', { fingerprint }, shapeErrorDetail, 'The error group could not be read.'),
+  setErrorStatus: (fingerprint: string, draft: { status: ErrorStatus; fixedIn: string | null; note: string | null }): Promise<Result<ErrorGroup>> =>
+    rpc('admin_error_set_status', { fingerprint, status: draft.status, fixed_in: draft.fixedIn, note: draft.note }, (d) => shapeErrorGroup((d ?? {}) as Record<string, unknown>), 'The status could not be saved.'),
   audit: async (limit = 100): Promise<Result<AuditRow[]>> => {
     try {
       const { data, error } = await supabase().from('platform_audit').select('id, actor, action, target_workspace, detail, created_at').order('created_at', { ascending: false }).limit(limit);
