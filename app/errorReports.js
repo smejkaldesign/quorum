@@ -92,6 +92,8 @@ export function createErrorReports({ dataDir, version, edition, os, appRoot, hom
   };
   return {
     build,
+    // the anonymous install id issue reports share (issueReports.js), so the relay counts one Mac once across both
+    installId,
     // posts the report; a failure is logged and dropped, so a crash never waits on the network
     report: async (raw) => {
       const body = build(raw);

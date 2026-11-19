@@ -53,6 +53,10 @@ export type GuardrailRule = { id: string; kind: GuardrailKind; label: string; va
 export type GuardrailDenial = { id: string; t: string; path: string; tool: string; surface: 'agent' | 'keeper'; reason: string; guard: string; guardLabel: string };
 export type GuardrailsState = { rules: GuardrailRule[]; skipped: { name: string; reason: string }[]; scanned: { notes: number; at: number | null; truncated: boolean }; denials: GuardrailDenial[]; summary: { on: number; toReview: number; denyDirs: number; terms: number } };
 // in-app updates (app/updater.js): off means this build has no feed (a development copy, or a Cloud build without one)
+// Report issue (issueReports.js): the masked diagnostics prepare() returns, and the draft the sheet sends
+export type IssueReportPrep = { version: string; edition: 'local' | 'cloud'; os: string; view: string; runId: string | null; message: string; lines: string[]; linesWithPaths: string[]; screenshot: string | null; account: { email: string } | null };
+export type IssueReportDraft = { view: string; title: string; description: string; logLines: string[]; runId: string | null; screenshots: string[]; attachAccount: boolean };
+
 export type UpdateState = { status: 'off' | 'idle' | 'checking' | 'downloading' | 'ready' | 'failed'; current: string; version: string | null; percent: number; notes: string | null; checkedAt: number | null; error: string | null };
 // a personal OAuth connector (sources/accounts.js); configured is false when this build has no client id for it
 export type OAuthAccount = { id: string; name: string; configured: boolean; connected: boolean; account: string | null; connectedAt: string | null; scope: string; manageUrl: string | null; error: string | null };
@@ -857,6 +861,10 @@ declare global {
       reportError(r: { view: string; message: string; stack: string; componentStack: string; repeat: boolean }): Promise<boolean>;
       // reloads the window's page without quitting Quorum
       reloadWindow(): Promise<void>;
+      // Report issue (issueReports.js): what a report could carry, with the window captured first when asked; then the
+      // send of what the person kept
+      reportIssuePrepare(ctx: { view?: string; action?: string | null; runId?: string | null; message?: string | null; capture?: boolean }): Promise<IssueReportPrep>;
+      reportIssueSend(draft: IssueReportDraft): Promise<{ ok: boolean; error?: string }>;
     };
   }
 }

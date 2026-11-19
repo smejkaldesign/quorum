@@ -595,7 +595,7 @@ function WorkspacePage({ settings, onSettings, onGo, billing, organization }: { 
       {!organization && <CompanySettings settings={settings} onSettings={onSettings} />}
       <h3>Diagnostics</h3>
       <div className="set-card">
-        <Row icon={<IconInfo width={18} height={18} />} title="Send error reports" desc="When a page fails to draw, Quorum sends the error, the page and the app version so it can be fixed. Never your notes.">
+        <Row icon={<IconInfo width={18} height={18} />} title="Send error reports" desc="When a page fails to draw, Quorum sends the error, the page and the app version so it can be fixed. Never your notes. Report issue in the menu sends only what you review and send yourself, with this on or off.">
           <Toggle on={settings.errorReports !== false} onChange={async (v) => onSettings(await window.quorum.setSettings({ errorReports: v }))} />
         </Row>
       </div>

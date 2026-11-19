@@ -28,6 +28,7 @@ import { fromActionHandlers, runMemoryTool, withholdAnswer } from './cli/memoryT
 import { CONNECTOR_SERVER } from './cli/connectorTools.mjs';
 import { httpUrl, relayFetch, relayUrl } from './relayUrl.js';
 import { createErrorReports } from './errorReports.js';
+import { createIssueReports, createLogTail, encodeCapture } from './issueReports.js';
 import { createViews } from './views.js';
 import { registerOnboarding } from './onboarding.js';
 import { gateOn, registerBeta } from './beta.js';
@@ -373,7 +374,9 @@ const asset = (name) => path.join(here, 'assets', name);
 // a meeting can have several capture segments (STOP, GO, STOP...); STOP deletes all of them
 const meeting = { armed: false, capturing: false, id: null, dirs: [], dir: null, transcript: [], title: '', participants: 0, people: new Set(), terms: [], startedAt: null, endedAt: null, notes: null, summary: emptyState(), summaryAt: 0, privateNotes: '', invitees: [], saved: null };
 
-const log = (...a) => console.log('[quorum]', ...a);
+// the newest log lines stay in memory too, so Report issue can offer the ones for the action that failed (issueReports.js)
+const logTail = createLogTail();
+const log = (...a) => { console.log('[quorum]', ...a); logTail.push(a); };
 // the handlers AI tools call over the control socket (appActions.js): the same functions the app's buttons call
 const actionHandlers = new Map();
 const handleAction = (name, fn) => { const run = feedNotify(name, fn); actionHandlers.set(name, feedTouched(name, run)); ipcMain.handle(name, run); };
@@ -4939,6 +4942,21 @@ const errorReports = createErrorReports({
   send: (body) => relayFetch('/v1/errors', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, { source: relaySource() }),
 });
 ipcMain.handle('report-error', (_e, r) => errorReports.report(r));
+// Report issue (issueReports.js): prepare gathers what a report could carry and captures the window when asked, before the
+// sheet covers it; send posts only what the person kept on the sheet to the relay's /v1/reports, a private inbox
+const issueReports = createIssueReports({
+  installId: () => errorReports.installId(), version: app.getVersion(), edition: EDITION, os: `macOS ${process.getSystemVersion?.() ?? release()} ${process.arch}`, appRoot: here, home: homedir(),
+  tail: logTail, log,
+  session: async () => {
+    const c = EDITION === 'cloud' ? account.client?.() : null;
+    if (!c) return null;
+    const { data } = await c.auth.getSession();
+    return data?.session ? { token: data.session.access_token, email: data.session.user?.email ?? null } : null;
+  },
+  send: (body, headers) => relayFetch('/v1/reports', { method: 'POST', headers, body }, { source: relaySource() }),
+});
+ipcMain.handle('report-issue-prepare', (e, ctx) => issueReports.prepare(ctx ?? {}, { capture: async () => encodeCapture(await e.sender.capturePage()) }));
+ipcMain.handle('report-issue-send', (_e, draft) => issueReports.send(draft ?? {}));
 // Reload Quorum on a crash page: the window's page loads again; recording, sync and the tray keep running
 ipcMain.handle('reload-window', (e) => { e.sender.reloadIgnoringCache(); });
 ipcMain.handle('calendar', async () => {

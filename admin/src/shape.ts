@@ -1,6 +1,7 @@
 // the rows the platform RPCs return, shaped for the pages, and the small pure rules the pages share. Nothing here
 // touches the network, so test/shape.test.ts covers it directly.
 import { errorAuditLine } from './errors';
+import { reportAuditLine } from './reports';
 
 export type Plan = 'free' | 'cloud' | 'internal' | 'paid';
 export type Role = 'owner' | 'admin' | 'member';
@@ -188,7 +189,7 @@ export function auditLine(a: AuditRow): string {
       const after = (d.after ?? {}) as Record<string, unknown>; const before = (d.before ?? {}) as Record<string, unknown>;
       return `Set the plan to ${PLAN_LABEL[after.plan as Plan] ?? after.plan ?? '?'} with ${num(after.seats_included)} seats included (was ${PLAN_LABEL[before.plan as Plan] ?? before.plan ?? '?'}, ${num(before.seats_included)})`;
     }
-    default: return errorAuditLine(a.action, d) ?? a.action.replace(/_/g, ' ');
+    default: return errorAuditLine(a.action, d) ?? reportAuditLine(a.action, d) ?? a.action.replace(/_/g, ' ');
   }
 }
 
