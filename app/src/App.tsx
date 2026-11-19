@@ -23,7 +23,7 @@ if (window.quorum.isDev) document.documentElement.dataset.dev = '';
 import { HistoryView } from './HistoryView';
 import { OPEN_EVENT, UpNext } from './UpNext';
 import { nextMenuIndex, updateBadge } from './headerItems';
-import { failsEveryTime } from './crash';
+import { STALE_BUNDLE, crashKind, type CrashKind } from './crash';
 import { useExclusiveMenu } from './menuBus';
 import type { KbCommand } from './KnowledgeView';
 import { Composer } from './Composer';
@@ -59,26 +59,26 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: E
   componentDidCatch(error: Error) { console.error('render crash:', error.message, error.stack); }
   render() {
     if (!this.state.error) return this.props.children;
-    return <CrashPage error={this.state.error} repeat={failsEveryTime(this.state.reloadedAt, this.state.errorAt)} onReload={() => this.setState({ error: null, reloadedAt: Date.now() })} />;
+    return <CrashPage error={this.state.error} kind={crashKind(this.state.error.message, this.state.reloadedAt, this.state.errorAt)} onReload={() => this.setState({ error: null, reloadedAt: Date.now() })} />;
   }
 }
 
-// a view that failed while drawing, as a page: what happened in plain words, what is safe, what to do. The one case
-// the app can name is its own files changing underneath an open window (an update, or a rebuild in development)
-const STALE_BUNDLE = /dynamically imported module|Loading chunk|Importing a module script failed/i;
-function CrashPage({ error, repeat, onReload }: { error: Error; repeat: boolean; onReload: () => void }) {
-  const stale = STALE_BUNDLE.test(error.message) && !repeat;
+// a view that failed while drawing, as a page: what happened in plain words, what is safe, what to do. A stale bundle
+// and a view that fails on every draw both need the window's page reloaded; Reload view only draws the view again
+function CrashPage({ error, kind, onReload }: { error: Error; kind: CrashKind; onReload: () => void }) {
   return (
     <div className="panel"><div className="crash" role="alert">
       <CrashArt />
-      <h1>{stale ? 'Quorum updated underneath this view' : repeat ? 'This view fails every time it opens' : "Quorum couldn't draw this view"}</h1>
-      <p>{stale
-        ? "The app's files changed while this window was open, so a part of the view could not load. Reloading picks up the new version."
-        : repeat
-          ? 'It failed again right after reloading, so reloading or reopening Quorum will not fix it. Go to another page; this view needs a fix in Quorum.'
+      <h1>{kind === 'stale' ? 'Quorum updated underneath this view' : kind === 'repeat' ? 'This view fails every time it opens' : "Quorum couldn't draw this view"}</h1>
+      <p>{kind === 'stale'
+        ? "The app's files changed while this window was open, so a part of the view could not load. Reloading Quorum picks up the new version."
+        : kind === 'repeat'
+          ? 'It failed again right after reloading, so it needs a fix in Quorum. Reload Quorum to try once more.'
           : 'A part of the app failed while it was drawing. Reloading usually puts it back. If it happens again, quit and reopen Quorum.'}</p>
       <p>Your notes, transcripts and settings are not affected. Nothing was lost.</p>
-      <button className="pill primary crash-reload" onClick={onReload}>Reload view</button>
+      {kind === 'once'
+        ? <button className="pill primary crash-reload" onClick={onReload}>Reload view</button>
+        : <button className="pill primary crash-reload" onClick={() => location.reload()}>Reload Quorum</button>}
       <details className="crash-detail">
         <summary>Technical detail</summary>
         <code>{error.message}</code>
