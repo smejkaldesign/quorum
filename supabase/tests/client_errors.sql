@@ -1,5 +1,5 @@
 -- Page crash reports (migration 0045): the relay's writer groups events by fingerprint, counts each install once,
--- keeps at most 50 events per group, drops events older than 90 days, and moves a fixed group back to new when an
+-- keeps at most 50 events per group, purges what is older than 90 days, and moves a fixed group back to new when an
 -- event comes from the fixed version or a newer one. The tables are closed to anon and authenticated; the admin
 -- functions answer the platform owner only, and every status change is audited.
 -- Needs a database with every migration applied (supabase db reset on a local stack). Runs in one transaction that is
@@ -68,6 +68,42 @@ begin
     raise exception 'only the service role should record reports';
   end if;
   if has_function_privilege('anon', 'public.admin_error_groups(text, integer, integer, text)', 'execute') then raise exception 'anon should not list error groups'; end if;
+end $$;
+
+-- the 90-day purge: a stale open group goes with its events and install hashes; a stale fixed or ignored group keeps
+-- its row and counters and loses its message, stacks and install hashes; a recent fixed group is untouched; the audit
+-- log holds no report text
+do $$
+declare b text := repeat('b', 64); c text := repeat('c', 64); d text := repeat('d', 64); e text := repeat('e', 64); r jsonb;
+begin
+  perform pg_temp.report(b, 'install-1', '0.4.2');
+  perform pg_temp.report(c, 'install-1', '0.4.2');
+  perform pg_temp.report(d, 'install-1', '0.4.2');
+  perform pg_temp.report(e, 'install-1', '0.4.2');
+  update public.error_groups set status = 'fixed', fixed_in = '0.4.3' where fingerprint in (c, e);
+  update public.error_groups set status = 'ignored' where fingerprint = d;
+  update public.error_groups set last_seen = now() - interval '91 days' where fingerprint in (b, c, d);
+  update public.error_events set received_at = now() - interval '91 days' where fingerprint in (b, c, d);
+  r := public.error_reports_purge();
+  if (r->>'groups')::integer <> 1 or (r->>'cleared')::integer <> 2 or (r->>'events')::integer <> 3 then raise exception 'the purge counts are wrong: %', r; end if;
+  if exists (select 1 from public.error_groups where fingerprint = b) or exists (select 1 from public.error_group_installs where fingerprint = b) then raise exception 'a stale open group should be deleted with its install hashes'; end if;
+  if (select count(*) from public.error_groups where fingerprint in (c, d) and message is null and latest_stack is null and latest_component_stack is null and events = 1) <> 2 then
+    raise exception 'a stale fixed or ignored group should keep its row and counters and lose its text';
+  end if;
+  if exists (select 1 from public.error_group_installs where fingerprint in (c, d)) or exists (select 1 from public.error_events where fingerprint in (c, d)) then raise exception 'a stale kept group should lose its events and install hashes'; end if;
+  if (select status from public.error_groups where fingerprint = c) <> 'fixed' then raise exception 'the purge should keep the triage'; end if;
+  if (select message from public.error_groups where fingerprint = e) is null or not exists (select 1 from public.error_events where fingerprint = e) then raise exception 'a recent fixed group should be untouched'; end if;
+  -- a cleared group that shows up again carries only the new report
+  perform pg_temp.report(c, 'install-2', '0.4.2');
+  if (select message from public.error_groups where fingerprint = c) is null then raise exception 'a new report should fill a cleared group again'; end if;
+  -- the purge also runs inside every report
+  update public.error_groups set last_seen = now() - interval '91 days' where fingerprint = e;
+  update public.error_groups set status = 'new' where fingerprint = e;
+  perform pg_temp.report(repeat('f', 64), 'install-1', '0.4.2');
+  if exists (select 1 from public.error_groups where fingerprint = e) then raise exception 'a report should run the purge'; end if;
+  if exists (select 1 from public.platform_audit where action like 'error_%' and detail ? 'message') then raise exception 'the audit log should hold no report text'; end if;
+  if has_function_privilege('authenticated', 'public.error_reports_purge()', 'execute') or not has_function_privilege('service_role', 'public.error_reports_purge()', 'execute') then raise exception 'only the service role should run the purge'; end if;
+  delete from public.error_groups where fingerprint in (c, d, repeat('f', 64));
 end $$;
 
 -- a signed-in account that is not the owner is refused

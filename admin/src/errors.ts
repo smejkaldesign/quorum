@@ -9,6 +9,8 @@ export type ErrorCounts = Record<ErrorStatus, number>;
 export type ErrorGroup = {
   fingerprint: string; message: string; view: string; firstSeen: string; lastSeen: string; events: number; installs: number; repeats: number;
   versions: string[]; editions: string[]; latestStack: string; latestComponentStack: string; status: ErrorStatus; fixedIn: string | null; note: string | null; updatedAt: string;
+  // the 90-day purge cleared the message and stacks of this stale fixed or ignored group
+  purged: boolean;
 };
 export type ErrorEvent = { id: number; workspaceId: string | null; edition: string; version: string; os: string; view: string; kind: string; repeat: boolean; message: string; at: string; receivedAt: string };
 export type ErrorDetail = { group: ErrorGroup; oses: string[]; events: ErrorEvent[] };
@@ -24,6 +26,7 @@ export const shapeErrorGroup = (g: Record<string, unknown>): ErrorGroup => ({
   events: num(g.events), installs: num(g.installs), repeats: num(g.repeats), versions: strs(g.versions), editions: strs(g.editions),
   latestStack: str(g.latest_stack), latestComponentStack: str(g.latest_component_stack), status: status(g.status),
   fixedIn: str(g.fixed_in) || null, note: str(g.note) || null, updatedAt: str(g.updated_at),
+  purged: g.message === null && g.latest_stack === null,
 });
 export const shapeErrorEvent = (e: Record<string, unknown>): ErrorEvent => ({
   id: num(e.id), workspaceId: str(e.workspace_id) || null, edition: str(e.edition), version: str(e.version), os: str(e.os), view: str(e.view),
@@ -121,10 +124,11 @@ export function githubIssueUrl(d: ErrorDetail): string {
   return url;
 }
 
-// the audit log's lines for this page
+// the audit log's lines for this page. The rows name a group by fingerprint only, so no report text outlives the
+// 90-day purge; the line shows the first 8 characters
 export function errorAuditLine(action: string, d: Record<string, unknown>): string | null {
-  const what = typeof d.message === 'string' && d.message ? `"${d.message}"` : 'an error group';
+  const what = typeof d.fingerprint === 'string' && d.fingerprint ? `error group ${d.fingerprint.slice(0, 8)}` : 'an error group';
   if (action === 'error_status') return d.status === 'fixed' ? `Marked ${what} fixed in ${String(d.fixed_in ?? '?')}` : `Marked ${what} ${ERROR_STATUS_LABEL[status(d.status)].toLowerCase()}`;
-  if (action === 'error_reopened') return `${what} came back in ${String(d.version || 'a new version')} after the fix in ${String(d.fixed_in ?? '?')}`;
+  if (action === 'error_reopened') return `${what[0].toUpperCase()}${what.slice(1)} came back in ${String(d.version || 'a new version')} after the fix in ${String(d.fixed_in ?? '?')}`;
   return null;
 }

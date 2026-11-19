@@ -16,7 +16,7 @@ import { corsHeaders, handleAccessRequest, handleSendCode } from './platform.js'
 import { passkeyRoutes } from './passkeys.js';
 import { handleBetaCheck, handleBetaHeartbeat } from './beta.js';
 import { flagsRoute } from './flags.js';
-import { errorsRoute } from './errors.js';
+import { createErrorPurge, errorsRoute } from './errors.js';
 import { handleKbSyncAttach } from './kbSync/routes.js';
 import { createKbSyncWorker } from './kbSync/worker.js';
 import { createKbFilesCleanup } from './kbFilesCleanup.js';
@@ -27,6 +27,9 @@ const deps = { clients, config, engines: ENGINES, log };
 const passkeys = passkeyRoutes(deps);
 const handleFlags = flagsRoute(deps);
 const handleErrors = errorsRoute(deps);
+// stored crash reports are deleted within 90 days; the database purges on every report and this sweeps hourly
+const errorPurge = createErrorPurge({ db: clients.db, log });
+errorPurge.start();
 // the KB sync worker runs in this process when KB_SYNC_WORKER=on; relay/kbSyncWorker.js runs it as its own service
 const kbSync = config.kbSync.enabled ? createKbSyncWorker({ db: clients.db, config, log }) : null;
 kbSync?.start();
@@ -66,6 +69,6 @@ server.on('upgrade', (req, socket, head) => {
 });
 
 server.listen(config.port, () => log('listening', { port: config.port, engine: config.engine, notes: !!config.keys.anthropic }));
-const stop = () => { log('stopping'); kbSync?.stop(); kbFiles?.stop(); wss.clients.forEach((c) => c.close(1001, 'restart')); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 5000).unref(); };
+const stop = () => { log('stopping'); kbSync?.stop(); kbFiles?.stop(); errorPurge.stop(); wss.clients.forEach((c) => c.close(1001, 'restart')); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 5000).unref(); };
 process.on('SIGTERM', stop);
 process.on('SIGINT', stop);

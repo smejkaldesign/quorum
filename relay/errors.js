@@ -3,7 +3,9 @@
 // token, and then the event records the caller's workspace. The relay checks the shape again, clamps every string,
 // drops unknown fields, and replaces the install id with an HMAC-SHA256 of it keyed by ERROR_REPORT_SALT before
 // anything is written, so the raw id is never stored. Without the salt nothing is stored and the app still gets 202,
-// so it does not retry. Rate limited per install (30 an hour) and per address (120 an hour).
+// so it does not retry. Rate limited per install (30 an hour) and per address (120 an hour). Stored reports are deleted
+// within 90 days (error_reports_purge, migration 0045): the database runs the purge on every report, and
+// createErrorPurge runs it hourly so the promise holds when no reports arrive.
 import { createHmac } from 'node:crypto';
 import { bearer, RelayError } from './lib/auth.js';
 import { readJson } from './summary.js';
@@ -106,5 +108,26 @@ export function errorsRoute({ clients, config, log = () => {}, store = errorStor
       log('error_report_failed', { status, message: err.message });
       json(res, status, { ok: false, error: err instanceof RelayError ? err.message : 'Something went wrong. Try again.' });
     }
+  };
+}
+
+export const PURGE_EVERY_MS = 60 * 60 * 1000;
+
+// the hourly sweep: one service-role call, logged with its counts. A failure (the migration not applied yet, the
+// project down) is logged and the next tick tries again.
+export function createErrorPurge({ db, log = () => {}, everyMs = PURGE_EVERY_MS }) {
+  let timer = null;
+  async function run() {
+    try {
+      const { data, error } = await db.rpc('error_reports_purge');
+      if (error) throw new Error(error.message || 'error_reports_purge failed');
+      if (data && (data.events || data.groups || data.cleared)) log('errors_purged', { events: data.events, groups: data.groups, cleared: data.cleared });
+      return data;
+    } catch (err) { log('errors_purge_failed', { message: err.message }); return null; }
+  }
+  return {
+    run,
+    start() { if (timer) return; run(); timer = setInterval(run, everyMs); timer.unref?.(); },
+    stop() { clearInterval(timer); timer = null; },
   };
 }

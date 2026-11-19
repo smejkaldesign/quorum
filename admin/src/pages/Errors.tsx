@@ -53,7 +53,7 @@ function Row({ g, onChange }: { g: ErrorGroup; onChange: (g: ErrorGroup) => void
     <TableItem open={open}>
       <TableRowButton on={open} onClick={() => setOpen(!open)}>
         <span className="who">
-          <strong title={g.message}>{g.message || '(no message)'}</strong>
+          <strong title={g.message}>{g.message || (g.purged ? 'Details removed after 90 days' : '(no message)')}</strong>
           <em><code className="flag-key">{g.view || 'unknown view'}</code></em>
           <span className="badges" style={{ marginTop: 4 }}>
             <Badge tone={TONE[g.status]}>{statusLine(g)}</Badge>
@@ -83,9 +83,11 @@ function Detail({ fingerprint, onChange }: { fingerprint: string; onChange: (g: 
   const copyPrompt = async () => { try { await navigator.clipboard.writeText(agentPrompt(d)); toast.success('Agent prompt copied.'); } catch { toast.error('Could not copy the prompt.'); } };
   return (
     <div className="err-detail">
-      <p style={{ marginTop: 0, wordBreak: 'break-word' }}><strong>{g.message || '(no message)'}</strong></p>
+      <p style={{ marginTop: 0, wordBreak: 'break-word' }}><strong>{g.message || (g.purged ? 'Details removed after 90 days' : '(no message)')}</strong></p>
+      {g.purged && <p className="muted">No report from the last 90 days. The message, stacks and events were deleted; the counts and status stay so a new report can reopen it.</p>}
       <div className="err-facts">
         <CardLine label="View"><code>{g.view || 'unknown'}</code></CardLine>
+        <CardLine label="Fingerprint"><code className="flag-key">{g.fingerprint.slice(0, 8)}</code></CardLine>
         <CardLine label="Status">{statusLine(g)}</CardLine>
         <CardLine label="Events">{g.events}{g.repeats > 0 ? `, ${g.repeats} on reload` : ''}</CardLine>
         <CardLine label="Installs">{g.installs}</CardLine>
@@ -111,7 +113,7 @@ function Detail({ fingerprint, onChange }: { fingerprint: string; onChange: (g: 
           <thead><tr><th>When</th><th>Version</th><th>Edition</th><th>OS</th><th>Kind</th><th>Reload</th><th>Signed in</th></tr></thead>
           <tbody>
             {d.events.map((e) => <tr key={e.id}><td title={e.receivedAt}>{new Date(e.receivedAt).toLocaleString()}</td><td>{e.version || '?'}</td><td>{e.edition}</td><td>{e.os || '?'}</td><td>{e.kind}</td><td>{e.repeat ? 'Failed again' : ''}</td><td>{e.workspaceId ? 'Yes' : ''}</td></tr>)}
-            {d.events.length === 0 && <tr><td colSpan={7} className="muted">No events kept. Events older than 90 days are dropped.</td></tr>}
+            {d.events.length === 0 && <tr><td colSpan={7} className="muted">No events kept. Events older than 90 days are deleted.</td></tr>}
           </tbody>
         </table>
       </div>

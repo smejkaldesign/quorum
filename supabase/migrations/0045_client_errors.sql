@@ -1,14 +1,20 @@
--- applied-when: select exists (select 1 from information_schema.tables where table_schema = 'public' and table_name = 'error_groups') and exists (select 1 from pg_proc where proname = 'admin_error_set_status' and pronamespace = 'public'::regnamespace)
+-- applied-when: select exists (select 1 from information_schema.tables where table_schema = 'public' and table_name = 'error_groups') and exists (select 1 from pg_proc where proname = 'admin_error_set_status' and pronamespace = 'public'::regnamespace) and exists (select 1 from pg_proc where proname = 'error_reports_purge' and pronamespace = 'public'::regnamespace)
 -- Page crash reports from every install, both editions. The app catches a page that fails to render, scrubs the
 -- report and posts it to the relay (POST /v1/errors, relay/errors.js), which writes it here with the service role
 -- through error_report_record. Reports with the same fingerprint (the message with numbers and quoted strings
 -- normalized, the top five stack frames and the view) form one group. The platform owner reads and triages the
 -- groups on the admin app's Errors page through the admin_error_* functions below. The raw install id never reaches
 -- the database: the relay stores a salted hash of it, so installs can be counted and nothing else.
+--
+-- Retention (the Privacy policy): every stored report is deleted within 90 days. error_reports_purge deletes events
+-- older than 90 days and any group not seen for 90 days, except a fixed or ignored group, which keeps its row and
+-- counters but loses its message and stacks. It runs on every report and hourly from the relay. platform_audit names
+-- a group by fingerprint only, so no report text outlives the purge there.
 
 create table public.error_groups (
   fingerprint text primary key check (fingerprint ~ '^[0-9a-f]{64}$'),
-  message text not null default '',
+  -- message and the two stacks are null once the purge has cleared a stale fixed or ignored group
+  message text default '',
   view text not null default '',
   first_seen timestamptz not null default now(),
   last_seen timestamptz not null default now(),
@@ -18,8 +24,8 @@ create table public.error_groups (
   -- distinct, newest version first, at most 20
   versions text[] not null default '{}',
   editions text[] not null default '{}',
-  latest_stack text not null default '',
-  latest_component_stack text not null default '',
+  latest_stack text default '',
+  latest_component_stack text default '',
   status text not null default 'new' check (status in ('new', 'fixing', 'fixed', 'ignored')),
   -- the version the fix shipped in; an event from this version or a newer one moves a fixed group back to new
   fixed_in text,
@@ -27,10 +33,11 @@ create table public.error_groups (
   updated_at timestamptz not null default now()
 );
 create index error_groups_status_last_seen on public.error_groups (status, last_seen desc);
+create index error_groups_last_seen on public.error_groups (last_seen);
 alter table public.error_groups enable row level security;
 revoke all on public.error_groups from public, anon, authenticated;
 
--- at most 50 per group, none older than 90 days; error_report_record trims both on every insert
+-- at most 50 per group, none older than 90 days; error_report_record keeps the first and error_reports_purge the second
 create table public.error_events (
   id bigint generated always as identity primary key,
   fingerprint text not null references public.error_groups (fingerprint) on delete cascade,
@@ -76,8 +83,29 @@ $$;
 revoke all on function public.error_version_key(text) from public, anon, authenticated;
 grant execute on function public.error_version_key(text) to service_role;
 
+-- the 90-day retention. Events older than 90 days go. A group not seen for 90 days goes too, with its events and
+-- install hashes, unless it is fixed or ignored: then the row stays so the triage and the regression rule survive, and
+-- its message, stacks and install hashes are cleared. Every step uses the received_at or last_seen index.
+create or replace function public.error_reports_purge() returns jsonb
+language plpgsql security definer set search_path = '' as $$
+declare cutoff timestamptz := now() - interval '90 days'; ev integer; gone integer; cleared integer;
+begin
+  delete from public.error_events e where e.received_at < cutoff;
+  get diagnostics ev = row_count;
+  delete from public.error_groups g where g.last_seen < cutoff and g.status not in ('fixed', 'ignored');
+  get diagnostics gone = row_count;
+  delete from public.error_group_installs i using public.error_groups g where i.fingerprint = g.fingerprint and g.last_seen < cutoff;
+  update public.error_groups g set message = null, latest_stack = null, latest_component_stack = null
+    where g.last_seen < cutoff and (g.message is not null or g.latest_stack is not null or g.latest_component_stack is not null);
+  get diagnostics cleared = row_count;
+  return jsonb_build_object('events', ev, 'groups', gone, 'cleared', cleared);
+end $$;
+revoke all on function public.error_reports_purge() from public, anon, authenticated;
+grant execute on function public.error_reports_purge() to service_role;
+
 -- one report from the relay, already validated and clamped there: the group is created or updated, the install
--- counted once, the event kept, and the trims applied. A fixed group goes back to new when the event comes from the
+-- counted once, the event kept, and the trims applied. The purge runs first, so a stale group that shows up again
+-- starts over with no old report text. A fixed group goes back to new when the event comes from the
 -- version it was fixed in or a newer one, and that change is written to platform_audit with no actor.
 create or replace function public.error_report_record(report jsonb) returns jsonb
 language plpgsql security definer set search_path = '' as $$
@@ -91,6 +119,7 @@ declare
   counted integer;
   reopened boolean;
 begin
+  perform public.error_reports_purge();
   insert into public.error_groups (fingerprint) values (fp) on conflict (fingerprint) do nothing;
   select * into g from public.error_groups eg where eg.fingerprint = fp for update;
   insert into public.error_group_installs (fingerprint, install_hash) values (fp, ih) on conflict do nothing;
@@ -118,10 +147,9 @@ begin
             coalesce((report->>'at')::timestamptz, now()));
   delete from public.error_events e where e.fingerprint = fp
     and e.id < (select k.id from public.error_events k where k.fingerprint = fp order by k.id desc offset 49 limit 1);
-  delete from public.error_events e where e.received_at < now() - interval '90 days';
   if reopened then
     insert into public.platform_audit (actor, action, detail)
-      values (null, 'error_reopened', jsonb_build_object('fingerprint', fp, 'message', left(g.message, 120), 'version', ver, 'fixed_in', g.fixed_in));
+      values (null, 'error_reopened', jsonb_build_object('fingerprint', fp, 'version', ver, 'fixed_in', g.fixed_in));
   end if;
   return jsonb_build_object('fingerprint', fp, 'reopened', reopened, 'new_install', counted > 0);
 end $$;
@@ -193,7 +221,7 @@ begin
     set status = admin_error_set_status.status, fixed_in = case when admin_error_set_status.status = 'fixed' then ver end, note = n, updated_at = now()
     where eg.fingerprint = admin_error_set_status.fingerprint returning * into g;
   insert into public.platform_audit (actor, action, detail)
-    values (auth.uid(), 'error_status', jsonb_build_object('fingerprint', g.fingerprint, 'message', left(g.message, 120), 'before', before, 'status', g.status, 'fixed_in', g.fixed_in, 'note', g.note));
+    values (auth.uid(), 'error_status', jsonb_build_object('fingerprint', g.fingerprint, 'before', before, 'status', g.status, 'fixed_in', g.fixed_in, 'note', g.note));
   return g;
 end $$;
 revoke all on function public.admin_error_set_status(text, text, text, text) from public, anon;

@@ -19,6 +19,8 @@ describe('the rows', () => {
     const d = detail();
     expect(d.events[0]).toMatchObject({ id: 9, repeat: true, workspaceId: null });
     expect(shapeErrorDetail(null)).toMatchObject({ oses: [], events: [] });
+    expect(g.purged).toBe(false);
+    expect(shapeErrorGroup(groupRow({ message: null, latest_stack: null, latest_component_stack: null, status: 'fixed' }))).toMatchObject({ purged: true, message: '', latestStack: '' });
     expect(shapeErrorCounts({ new: 4, fixed: '2' })).toEqual({ new: 4, fixing: 0, fixed: 2, ignored: 0 });
   });
   it('names the status and spots a regression', () => {
@@ -91,10 +93,11 @@ describe('the GitHub issue link', () => {
 
 describe('the audit lines', () => {
   const base = { id: 'a', actor: null, targetWorkspace: null, createdAt: 't' };
-  it('reads the status changes and the reopen', () => {
-    expect(errorAuditLine('error_status', { message: 'Boom', status: 'fixed', fixed_in: '0.4.3' })).toBe('Marked "Boom" fixed in 0.4.3');
-    expect(auditLine({ ...base, action: 'error_status', detail: { message: 'Boom', status: 'ignored' } })).toBe('Marked "Boom" ignored');
-    expect(auditLine({ ...base, action: 'error_reopened', detail: { message: 'Boom', version: '0.4.4', fixed_in: '0.4.3' } })).toBe('"Boom" came back in 0.4.4 after the fix in 0.4.3');
+  it('reads the status changes and the reopen by fingerprint', () => {
+    expect(errorAuditLine('error_status', { fingerprint: FP, status: 'fixed', fixed_in: '0.4.3' })).toBe('Marked error group abababab fixed in 0.4.3');
+    expect(auditLine({ ...base, action: 'error_status', detail: { fingerprint: FP, status: 'ignored' } })).toBe('Marked error group abababab ignored');
+    expect(auditLine({ ...base, action: 'error_reopened', detail: { fingerprint: FP, version: '0.4.4', fixed_in: '0.4.3' } })).toBe('Error group abababab came back in 0.4.4 after the fix in 0.4.3');
+    expect(errorAuditLine('error_status', { status: 'new' })).toBe('Marked an error group new');
     expect(errorAuditLine('flag_set', {})).toBeNull();
   });
 });

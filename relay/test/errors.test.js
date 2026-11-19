@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
-import { cleanReport, errorsRoute, hashInstall, LIMITS, MAX_ERROR_BODY, reporterWorkspace, storedReport } from '../errors.js';
+import { cleanReport, createErrorPurge, errorsRoute, hashInstall, LIMITS, MAX_ERROR_BODY, reporterWorkspace, storedReport } from '../errors.js';
 import { createLimiter } from '../platform.js';
 import { fakeAnon } from './helpers.js';
 
@@ -138,5 +138,33 @@ describe('POST /v1/errors', () => {
     const r = await call(handler, report());
     assert.equal(r.status, 500);
     assert.equal(r.body.ok, false);
+  });
+});
+
+describe('the hourly purge', () => {
+  it('calls the purge function and logs what it removed', async () => {
+    const logs = [];
+    const calls = [];
+    const db = { rpc: async (name) => { calls.push(name); return { data: { events: 3, groups: 1, cleared: 2 }, error: null }; } };
+    const p = createErrorPurge({ db, log: (event, fields) => logs.push({ event, ...fields }) });
+    assert.deepEqual(await p.run(), { events: 3, groups: 1, cleared: 2 });
+    assert.deepEqual(calls, ['error_reports_purge']);
+    assert.deepEqual(logs, [{ event: 'errors_purged', events: 3, groups: 1, cleared: 2 }]);
+  });
+  it('stays quiet when nothing was removed and logs a failure without throwing', async () => {
+    const logs = [];
+    const quiet = createErrorPurge({ db: { rpc: async () => ({ data: { events: 0, groups: 0, cleared: 0 }, error: null }) }, log: (e) => logs.push(e) });
+    await quiet.run();
+    assert.deepEqual(logs, []);
+    const broken = createErrorPurge({ db: { rpc: async () => ({ data: null, error: { message: 'function does not exist' } }) }, log: (e, f) => logs.push({ e, ...f }) });
+    assert.equal(await broken.run(), null);
+    assert.deepEqual(logs, [{ e: 'errors_purge_failed', message: 'function does not exist' }]);
+  });
+  it('runs on start and stops cleanly', async () => {
+    let n = 0;
+    const p = createErrorPurge({ db: { rpc: async () => { n++; return { data: {}, error: null }; } }, everyMs: 60000 });
+    p.start(); p.start(); p.stop();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(n, 1);
   });
 });
