@@ -97,6 +97,14 @@ contextBridge.exposeInMainWorld('quorum', {
   activityReview: (items, verdict) => ipcRenderer.invoke('activity-review', items, verdict),
   vaultSearch: (q, limit) => ipcRenderer.invoke('vault-search', q, limit),
   vaultBacklinks: (rel) => ipcRenderer.invoke('vault-backlinks', rel),
+  // memory graph reads (graph/index.js), and its build progress
+  memoryGraphStatus: () => ipcRenderer.invoke('memory-graph-status'),
+  memoryGraphQuery: (args) => ipcRenderer.invoke('memory-graph-query', args),
+  memoryGraphExplain: (ref) => ipcRenderer.invoke('memory-graph-explain', ref),
+  memoryGraphEntity: (name, opts) => ipcRenderer.invoke('memory-graph-entity', name, opts),
+  memoryGraphDecisions: (args) => ipcRenderer.invoke('memory-graph-decisions', args),
+  memoryGraphPath: (a, b, opts) => ipcRenderer.invoke('memory-graph-path', a, b, opts),
+  onMemoryGraph: on('memory-graph'),
   vaultLinkHealth: (fresh) => ipcRenderer.invoke('vault-link-health', fresh === true),
   memoryReviewCount: () => ipcRenderer.invoke('memory-review-count'),
   feedCounts: () => ipcRenderer.invoke('feed-counts'),
@@ -406,6 +414,8 @@ contextBridge.exposeInMainWorld('quorum', {
   // environment (development or production) and which Supabase config the cloud edition is using; never the key
   envStatus: () => ipcRenderer.invoke('env-status'),
   envSetProduction: (on) => ipcRenderer.invoke('env-set-production', on),
+  reportError: (r) => ipcRenderer.invoke('report-error', r),
+  reloadWindow: () => ipcRenderer.invoke('reload-window'),
   // onboarding (first run): status, create a fresh Agent OS folder, permissions
   onboardingStatus: () => ipcRenderer.invoke('onboarding-status'),
   onboardingChecks: () => ipcRenderer.invoke('onboarding-checks'),

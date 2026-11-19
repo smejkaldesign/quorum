@@ -37,6 +37,9 @@ export const config = {
     concurrency: Number(env('KB_SYNC_CONCURRENCY', 4)),
     perWorkspace: Number(env('KB_SYNC_PER_WORKSPACE', 2)),
   },
+  // page crash reports (errors.js): the key the install id is hashed with before it is stored. Unset, reports are
+  // accepted and dropped
+  errors: { salt: env('ERROR_REPORT_SALT') },
   publicUrl: env('RELAY_PUBLIC_URL', 'https://relay.quorum.watch').replace(/\/+$/, ''),
   oauthExtraRedirects: env('OAUTH_EXTRA_REDIRECT_URIS', '').split(',').map((s) => s.trim()).filter(Boolean),
   stripe: { key: env('STRIPE_SECRET_KEY'), webhookSecret: env('STRIPE_WEBHOOK_SECRET'), seatPrice: env('STRIPE_SEAT_PRICE'), packPrice: env('STRIPE_PACK_PRICE'), returnUrl: env('BILLING_RETURN_URL', 'https://quorum.watch').replace(/\/+$/, '') },

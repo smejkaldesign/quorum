@@ -84,4 +84,32 @@ describe('edition boundary check', () => {
     expect(r.status).toBe(1);
     expect(r.err).toMatch(/dist\/ is missing/);
   });
+  it('fails when the renderer reaches a Node built-in through a shared module', () => {
+    tree({ 'src/Page.tsx': 'import { T } from "../sources/shared";\nexport const P = T;\n', 'sources/shared.js': 'import { spawn } from "node:child_process";\nimport { a } from "./deep.js";\nexport const T = [spawn, a];\n', 'sources/deep.js': 'import { readFileSync } from "fs";\nexport const a = readFileSync;\n' });
+    const r = check();
+    expect(r.status).toBe(1);
+    expect(r.err).toContain("'node:child_process' through src/Page.tsx -> sources/shared.js");
+    expect(r.err).toContain("'fs' through src/Page.tsx -> sources/shared.js -> sources/deep.js");
+  });
+  it('allows type-only imports from Node-side modules and Node imports the renderer never reaches', () => {
+    tree({ 'src/Page.tsx': 'import type { T } from "../sources/main-only";\nimport { S } from "../sources/shared";\nexport const P = S;\n', 'sources/main-only.js': 'import fs from "node:fs";\nexport const T = fs;\n', 'sources/shared.js': 'export const S = 1;\n', 'main.js': 'import { spawn } from "node:child_process";\n' });
+    expect(check().status).toBe(0);
+  });
+  it('follows multi-line imports and exports to a Node built-in', () => {
+    tree({ 'src/P.tsx': 'import {\n  a,\n  b,\n} from "../sources/m";\nexport const P = [a, b];\n', 'sources/m.js': 'export {\n  b,\n} from "./n.js";\nimport {\n  readFileSync,\n} from \'node:fs\';\nexport const a = readFileSync;\n', 'sources/n.js': 'import {\n  spawn,\n} from "child_process";\nexport const b = spawn;\n' });
+    const r = check();
+    expect(r.status).toBe(1);
+    expect(r.err).toContain("'node:fs' through src/P.tsx -> sources/m.js");
+    expect(r.err).toContain("'child_process' through src/P.tsx -> sources/m.js -> sources/n.js");
+  });
+  it('fails a multi-line static import of ee/', () => {
+    tree({ 'leak.js': 'import {\n  sync,\n} from "./ee/sync.js";\nexport const x = sync;\n' });
+    const r = check();
+    expect(r.status).toBe(1);
+    expect(r.err).toMatch(/leak\.js: static import of ee\//);
+  });
+  it('skips a multi-line type-only import', () => {
+    tree({ 'src/P.tsx': 'import type {\n  T,\n} from "../sources/main-only";\nexport const P = 1;\n', 'sources/main-only.js': 'import fs from "node:fs";\nexport const T = fs;\n' });
+    expect(check().status).toBe(0);
+  });
 });

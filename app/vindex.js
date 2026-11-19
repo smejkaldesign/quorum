@@ -7,6 +7,7 @@ import { createResolver, parseNote } from './linkparse.js';
 import { SKIP, graphConfig, noteDate, walk } from './vault.js';
 import { clusterAssign, clusterLabels, groupInfo, wrapperFolders } from './clusters.js';
 import { isGenerated, linkReport, reportLine } from './linkRules.js';
+import { pairMoves } from './movePairs.js';
 
 // the folders walk() skips, as a test on a watcher path (the same list, so the two can never disagree)
 const IGNORED = new RegExp(`(^|/)(${[...SKIP].map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(/|$)`);
@@ -59,9 +60,10 @@ export function readHead(abs, max = INDEX_MAX) {
 
 // isExcludedPath keeps a file out by its path; isDeniedText keeps a note out by what its frontmatter says (a denied
 // key); isExcludedText flags and redacts opted-out lines but keeps the note. onPaths hears each batch the watcher
-// names before onChange. renamed() gives the person's own names for
+// names before onChange. onMoves hears the notes a watcher batch moved ([{ from, to }], see movesIn) while the index
+// still holds their old paths; only the watcher reports moves. renamed() gives the person's own names for
 // graph clusters, by cluster key; forget(keys) is told which of them no longer match a cluster
-export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => false, isExcludedText, redact, onChange, onPaths = () => {}, renamed = () => ({}), forget = () => {}, log = () => {} }) {
+export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => false, isExcludedText, redact, onChange, onPaths = () => {}, onMoves = null, renamed = () => ({}), forget = () => {}, log = () => {} }) {
   const files = new Map(); // rel -> { mtime, size, note, text, flagged, t }
   // linkHealth's answer: the missing links scored against every note, worked out again only after the index changed,
   // since Notifications and Memory health ask for it on every refresh. Callers read it and never change it
@@ -168,6 +170,41 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     return changed;
   }
 
+  // the notes a watcher batch moved: an indexed note under a named path that is gone from disk, paired with a note under
+  // a named path that is new to the index and has the same text (movePairs.js). rels null means the watcher could not
+  // name paths, so the whole vault is looked at. An in-app move syncs the index before the watcher hears of it, so its
+  // old path is no longer indexed and it never pairs here a second time. A note cut to its head (INDEX_MAX) never pairs
+  function movesIn(rels) {
+    const named = rels && rels.filter((r) => r && !skipped(r));
+    const under = (rel) => !named || named.some((t) => rel === t || rel.startsWith(`${t}/`));
+    const gone = [];
+    for (const [rel, f] of files) {
+      if (f.cut || !under(rel)) continue;
+      try { statSync(path.join(vault, rel)); } catch { gone.push({ rel, text: f.text, size: f.size }); }
+    }
+    if (!gone.length) return [];
+    const fresh = new Set();
+    for (const t of named ?? ['']) {
+      try {
+        const st = statSync(path.join(vault, t));
+        if (st.isDirectory()) for (const r of walk(path.join(vault, t), t, isExcludedPath, [])) fresh.add(r);
+        else if (t.endsWith('.md') && !isExcludedPath(t)) fresh.add(t);
+      } catch { /* gone, or unreadable */ }
+    }
+    const added = [];
+    for (const rel of fresh) {
+      if (files.has(rel)) continue;
+      try {
+        const st = statSync(path.join(vault, rel));
+        if (st.size > INDEX_MAX) continue;
+        const raw = readFileSync(path.join(vault, rel), 'utf8');
+        if (isDeniedText(raw)) continue;
+        added.push({ rel, text: isExcludedText(raw) ? redact(raw) : raw, size: st.size });
+      } catch { /* gone again */ }
+    }
+    return pairMoves(gone, added);
+  }
+
   // the first read of the vault, in batches that let IPC through between them, so a large vault never holds the
   // window's first questions. Answers during the build see what is loaded so far; the watcher starts once it is done
   async function start() {
@@ -199,6 +236,9 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
           pending.clear();
           // every path the watcher named, before the index filters them (main's tree cache reads these), or null for all
           try { onPaths(everything ? null : rels); } catch (err) { log('vault paths', String(err)); }
+          if (onMoves) {
+            try { const moves = movesIn(everything ? null : rels); if (moves.length) onMoves(moves); } catch (err) { log('vault moves', String(err)); }
+          }
           const changed = everything ? sync() : syncPaths(rels);
           everything = false;
           if (changed.length) onChange(changed);
@@ -408,8 +448,10 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   function rebuild() { health = null; files.clear(); forward = new Map(); backward = new Map(); unresolved = new Map(); const changed = sync(); if (changed.length) onChange?.(changed); return changed; }
 
   return {
-    start, stop, sync, syncPaths, rebuild, graph, backlinks, outgoing, search, resolve: (target, from) => resolve(target, from),
+    start, stop, sync, syncPaths, movesIn, rebuild, graph, backlinks, outgoing, search, resolve: (target, from) => resolve(target, from),
     note: (rel) => files.get(rel)?.note ?? null,
+    // the note's text as indexed: opted-out lines already withheld, and only the head of a note past INDEX_MAX
+    text: (rel) => files.get(rel)?.text ?? null,
     linkHealth,
     aliasesOf,
     flagged: () => [...files].filter(([, f]) => f.flagged).map(([rel]) => rel),
