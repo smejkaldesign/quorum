@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { storeFile } from '../graph/store.js';
 
 export const SEARCH_VERSION = '1';
+const KINDS_VERSION = '2';
 // the graph store's file for the vault, so both always open the same one
 export const memoryDbFile = (dataDir, vault) => storeFile(path.join(dataDir, 'memory'), vault);
 
@@ -39,6 +40,12 @@ export function ensureSearchSchema(db) {
   if (v != null && v !== SEARCH_VERSION) db.exec(DROP);
   db.exec(SCHEMA);
   db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('search_schema', ?)").run(SEARCH_VERSION);
+  // note kinds now follow the graph's: every note is read again on the next build, and its unchanged chunks keep their
+  // rows and vectors
+  if (db.prepare("SELECT value FROM meta WHERE key = 'search_kinds'").get()?.value !== KINDS_VERSION) {
+    db.exec('UPDATE search_files SET hash = NULL');
+    db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('search_kinds', ?)").run(KINDS_VERSION);
+  }
 }
 
 // { db, own }: own is true when search opened the file and closes it. store: the graph store, whose db() is the handle

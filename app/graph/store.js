@@ -5,7 +5,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 export const NODE_KINDS = ['note', 'person', 'project', 'company', 'meeting', 'decision', 'topic', 'tag', 'folder'];
 export const EDGE_KINDS = ['links_to', 'embeds', 'mentions', 'attended', 'works_on', 'member_of', 'decided_in', 'decision_about', 'about', 'tagged', 'in_folder', 'contradicts', 'supersedes'];
 export const PROVENANCE = ['explicit', 'rule', 'model', 'person'];
@@ -78,6 +78,9 @@ export function openStore({ dir, vault, log = () => {}, now = Date.now, readOnly
     insEdge: q('insert into edges(src, dst, kind, provenance, source_rel, source_line, confidence, valid_from, valid_to, superseded_by, recorded_at, props) values (?, ?, ?, ?, ?, ?, ?, ?, ?, null, ?, ?)'),
     getEdge: q('select * from edges where id = ?'),
     delEdge: q('delete from edges where id = ?'),
+    // a supersedes edge records one supersession (props.old superseded by props.new) and lasts as long as both edges
+    delPairEdges: q("delete from edges where kind = 'supersedes' and json_extract(props, '$.by') = 'supersession' and (json_extract(props, '$.old') = ? or json_extract(props, '$.new') = ?)"),
+    pairEdge: q("select id from edges where kind = 'supersedes' and src = ? and dst = ? and json_extract(props, '$.by') = 'supersession' limit 1"),
     supersede: q('update edges set valid_to = ?, superseded_by = ? where id = ?'),
     restore: q('update edges set valid_to = null, superseded_by = null where superseded_by = ?'),
     bySource: q("select * from edges where source_rel = ? and provenance != 'person'"),
@@ -102,12 +105,17 @@ export function openStore({ dir, vault, log = () => {}, now = Date.now, readOnly
   const nodeKinds = q('select kind, count(*) as n from nodes group by kind');
   const edgeKinds = q('select kind, count(*) as n from edges where superseded_by is null group by kind');
 
+  // a nested call is a savepoint: when it throws, only its own writes roll back and the outer transaction goes on
   let depth = 0;
   function tx(fn) {
-    if (depth) return fn();
-    db.exec('begin');
+    const sp = depth ? `sp${depth}` : null;
+    db.exec(sp ? `savepoint ${sp}` : 'begin');
     depth++;
-    try { const r = fn(); depth--; db.exec('commit'); return r; } catch (err) { depth--; db.exec('rollback'); throw err; }
+    try { const r = fn(); depth--; db.exec(sp ? `release ${sp}` : 'commit'); return r; } catch (err) {
+      depth--;
+      if (sp) { db.exec(`rollback to ${sp}`); db.exec(`release ${sp}`); } else db.exec('rollback');
+      throw err;
+    }
   }
 
   function upsertNode({ id, kind, name, rel = null, props = {} }) {
@@ -129,8 +137,9 @@ export function openStore({ dir, vault, log = () => {}, now = Date.now, readOnly
     return Number(r.lastInsertRowid);
   }
 
-  // an edge that goes takes its supersessions with it: what it replaced holds again
-  function removeEdge(id) { s.restore.run(id); s.delEdge.run(id); }
+  // an edge that goes takes its supersessions with it: what it replaced holds again, and the supersedes edge written
+  // for that pair goes too
+  function removeEdge(id) { s.restore.run(id); s.delPairEdges.run(id, id); s.delEdge.run(id); }
 
   // nodes no note backs and no edge reaches are gone; a note-identity node needs its note
   function prune(ids) {
@@ -188,20 +197,27 @@ export function openStore({ dir, vault, log = () => {}, now = Date.now, readOnly
     });
   }
 
+  // one prepared statement per shape (direction, number of kinds, current), kept: a walk calls this thousands of times
+  const edgeStmts = new Map();
   function edgesOf(id, { dir = 'both', kinds = null, current = true } = {}) {
-    const where = [];
-    const args = [];
-    if (dir === 'out') { where.push('src = ?'); args.push(id); }
-    else if (dir === 'in') { where.push('dst = ?'); args.push(id); }
-    else { where.push('(src = ? or dst = ?)'); args.push(id, id); }
-    if (kinds?.length) { where.push(`kind in (${kinds.map(() => '?').join(',')})`); args.push(...kinds); }
-    if (current) where.push('superseded_by is null');
-    return db.prepare(`select * from edges where ${where.join(' and ')} order by id`).all(...args).map(edgeRow);
+    const key = `${dir}|${kinds?.length ?? 0}|${current ? 1 : 0}`;
+    let st = edgeStmts.get(key);
+    if (!st) {
+      const where = [dir === 'out' ? 'src = ?' : dir === 'in' ? 'dst = ?' : '(src = ? or dst = ?)'];
+      if (kinds?.length) where.push(`kind in (${kinds.map(() => '?').join(',')})`);
+      if (current) where.push('superseded_by is null');
+      st = db.prepare(`select * from edges where ${where.join(' and ')} order by id`);
+      edgeStmts.set(key, st);
+    }
+    const args = dir === 'out' || dir === 'in' ? [id] : [id, id];
+    if (kinds?.length) args.push(...kinds);
+    return st.all(...args).map(edgeRow);
   }
 
   // exact name, then alias, then prefix; every match comes back so a caller can refuse to guess. A note node whose rel
-  // backs a matched entity is the same thing twice, so only the entity stays
-  function find(name, { kind = null } = {}) {
+  // backs a matched entity is the same thing twice, so only the entity stays. A prefix needs 3 characters, and its
+  // matches come back with prefix: true (candidates, never an answer); prefix: false skips that step
+  function find(name, { kind = null, prefix = true } = {}) {
     const n = norm(name);
     if (!n) return [];
     const kinds = kind ? new Set([].concat(kind)) : null;
@@ -212,11 +228,12 @@ export function openStore({ dir, vault, log = () => {}, now = Date.now, readOnly
       return out.filter((r) => !(r.kind === 'note' && backed.has(r.rel)));
     };
     const like = `${n.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-    for (const rows of [() => s.findName.all(n), () => s.findAlias.all(n), () => [...s.findPrefix.all(like), ...s.findAliasPrefix.all(like)]]) {
+    for (const rows of [() => s.findName.all(n), () => s.findAlias.all(n)]) {
       const hit = keep(rows());
       if (hit.length) return hit;
     }
-    return [];
+    if (!prefix || n.length < 3) return [];
+    return keep([...s.findPrefix.all(like), ...s.findAliasPrefix.all(like)]).map((r) => ({ ...r, prefix: true }));
   }
 
   function stats() {
@@ -246,6 +263,11 @@ export function openStore({ dir, vault, log = () => {}, now = Date.now, readOnly
     addEdge,
     edge: (id) => edgeRow(s.getEdge.get(id)),
     removeEdge,
+    // the supersedes edge for one supersession, once: src is the newer decision, dst the older one
+    addSupersedes: ({ src, dst, old, by, source_rel = null, source_line = null, valid_from = null }) => {
+      if (s.pairEdge.get(src, dst)) return null;
+      return addEdge({ src, dst, kind: 'supersedes', provenance: 'rule', source_rel, source_line, valid_from, props: { by: 'supersession', old, new: by } });
+    },
     edgesBySource: (rel) => s.bySource.all(rel).map(edgeRow),
     updateEdge: (id, { source_line = null, confidence = 1, valid_from = null, props = null }) => { db.prepare('update edges set source_line = ?, confidence = ?, valid_from = ?, props = ? where id = ?').run(source_line, confidence, valid_from, props ? JSON.stringify(props) : null, id); },
     supersede: (edgeId, byEdgeId, at = now()) => { s.supersede.run(at, byEdgeId, edgeId); },

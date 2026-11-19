@@ -11,24 +11,21 @@ import path from 'node:path';
 import { chunkNote, embedText } from './chunk.js';
 import { openMemoryDb } from './db.js';
 import { createHybridSearch } from './hybrid.js';
+import { noteKind } from '../graph/extract.js';
 
 export const NOTES_PER_TX = 25;
 export const EMBED_BATCH = 16;
 export const PAUSE_MS = 5000;
 export const RETRY_MS = 60000;
+// a failing embedder is tried again later each time, up to this long between tries
+export const RETRY_MAX_MS = 30 * 60000;
 
 const sha = (t) => createHash('sha256').update(String(t)).digest('hex');
 const tick = () => new Promise((r) => setImmediate(r));
 const sleep = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); });
 
-// the folder conventions the graph also reads; the frontmatter type wins
-const FOLDER_KINDS = [[/(^|\/)people\//i, 'person'], [/(^|\/)projects\//i, 'project'], [/(^|\/)(\d+-)?meetings\//i, 'meeting'], [/(^|\/)decisions\//i, 'decision']];
-export function kindOf(rel, note) {
-  const t = note?.props?.type;
-  if (typeof t === 'string' && t.trim()) return t.trim().toLowerCase();
-  for (const [re, k] of FOLDER_KINDS) if (re.test(rel)) return k;
-  return 'note';
-}
+// the graph's node kind for the note (its frontmatter type, then its folder), so the kinds filter takes graph kinds
+export const kindOf = (rel, note) => noteKind(rel, note?.props ?? {}).kind;
 // the date a note speaks for: a date in its file name, then its frontmatter date, then its file time
 export function dateOf(rel, note, mtime) {
   const named = path.basename(rel).match(/^(\d{4}-\d{2}-\d{2})/)?.[1];
@@ -37,7 +34,7 @@ export function dateOf(rel, note, mtime) {
   return Number(mtime) || 0;
 }
 
-export function createSearchIndex({ db, embedder = null, paused = () => false, log = () => {}, now = () => Date.now(), notesPerTx = NOTES_PER_TX, embedBatch = EMBED_BATCH, pauseMs = PAUSE_MS, retryMs = RETRY_MS }) {
+export function createSearchIndex({ db, embedder = null, paused = () => false, log = () => {}, now = () => Date.now(), notesPerTx = NOTES_PER_TX, embedBatch = EMBED_BATCH, pauseMs = PAUSE_MS, retryMs = RETRY_MS, retryMaxMs = RETRY_MAX_MS }) {
   const q = {
     file: db.prepare('SELECT hash FROM search_files WHERE rel = ?'),
     putFile: db.prepare('INSERT OR REPLACE INTO search_files(rel, hash, title, kind, date, mtime) VALUES (?, ?, ?, ?, ?, ?)'),
@@ -57,8 +54,15 @@ export function createSearchIndex({ db, embedder = null, paused = () => false, l
   };
   const st = { state: 'idle', building: false, error: null, lastBuildMs: null, built: false, embedRate: null };
   let version = 0;
+  // the chunks the embed queue gave vectors since the last chunk change, so search adds them without reading every vector
+  let vecLog = { v: 0, ids: [] };
+  const bump = () => { version++; vecLog = { v: version, ids: [] }; };
   let stopped = false;
   let draining = null;
+  // waiting after a failure: the delay doubles each time, and resume() ends the wait
+  let backoff = 0;
+  let wake = null;
+  const rest = (ms) => new Promise((r) => { const t = setTimeout(() => { wake = null; r(); }, ms); t.unref?.(); wake = () => { clearTimeout(t); wake = null; r(); }; });
 
   function tx(fn) {
     db.exec('BEGIN');
@@ -82,10 +86,10 @@ export function createSearchIndex({ db, embedder = null, paused = () => false, l
     }
     for (const ids of old.values()) for (const id of ids) q.drop.run(id);
     q.putFile.run(rel, h, title, kindOf(rel, note), dateOf(rel, note, mtime), Number(mtime) || 0);
-    version++;
+    bump();
     return true;
   }
-  function remove(rel) { q.dropRel.run(rel); q.dropFile.run(rel); version++; }
+  function remove(rel) { q.dropRel.run(rel); q.dropFile.run(rel); bump(); }
 
   // notes: [{ rel, text, note, mtime }] that changed; removed: rels that left the vault. New text goes in before the
   // removals, so a renamed note's chunks find their vectors
@@ -129,21 +133,26 @@ export function createSearchIndex({ db, embedder = null, paused = () => false, l
           if (!rows.length) break;
           st.state = 'embedding';
           let vecs;
-          try { vecs = await embedder.embed(rows.map(embedText)); st.error = null; } catch (e) {
-            st.error = String(e?.message ?? e); st.state = 'waiting';
-            log('search', 'embed failed', st.error);
-            await sleep(retryMs);
+          try { vecs = await embedder.embed(rows.map(embedText)); st.error = null; backoff = 0; } catch (e) {
+            const msg = String(e?.message ?? e);
+            if (msg !== st.error) log('search', 'embed failed', msg);
+            st.error = msg; st.state = 'waiting';
+            // the model is turned off for this run: nothing to wait for until resume()
+            if (/model is off\b/i.test(msg)) break;
+            backoff = backoff ? Math.min(retryMaxMs, backoff * 2) : retryMs;
+            await rest(backoff);
             continue;
           }
           if (stopped) break;
+          const log0 = vecLog;
           tx(() => rows.forEach((r, i) => {
             const v = vecs[i];
             // a chunk edited while its batch ran is embedded again on the next pass
             if (!v || q.hashOf.get(r.id)?.hash !== r.hash) return;
             q.putVec.run(r.id, embedder.id, v.length, new Uint8Array(v.buffer, v.byteOffset, v.byteLength));
+            log0.ids.push(r.id);
           }));
           done += rows.length;
-          version++;
           await tick();
         }
       } catch (e) {
@@ -152,7 +161,7 @@ export function createSearchIndex({ db, embedder = null, paused = () => false, l
       } finally {
         if (done) st.embedRate = Math.round((done / Math.max(1, now() - at)) * 1000 * 10) / 10;
         draining = null;
-        if (!st.building) st.state = 'idle';
+        if (!st.building && !st.error) st.state = 'idle';
       }
     })();
     return draining;
@@ -164,27 +173,33 @@ export function createSearchIndex({ db, embedder = null, paused = () => false, l
     return { state: st.state, notes: c.notes, chunks: c.chunks, embedded, pending: embedder ? c.chunks - embedded : 0, model: embedder?.id ?? null, error: st.error, lastBuildMs: st.lastBuildMs, built: st.built, embedPerSecond: st.embedRate };
   }
 
-  return { build, update, apply, remove, drain, status, idle: () => draining ?? Promise.resolve(), version: () => version, stop: () => { stopped = true; } };
+  // the model became ready (or came back): try the queue again now
+  function resume() { backoff = 0; if (wake) wake(); else drain(); }
+
+  return { build, update, apply, remove, drain, resume, status, idle: () => draining ?? Promise.resolve(), version: () => version, appended: () => vecLog, stop: () => { stopped = true; wake?.(); } };
 }
 
-// Main's side: one index per vault, opened on the first change the vault index reports and built from its snapshot;
-// later changes update it note by note. vindex() is the vault index, vault() the open vault, embedder the memory host's
-// (embed.js), graph() the memory graph's store or null, paused() a recording is live. Search runs on the store's
-// connection, so a new store (the vault changed, or the graph opened late) opens the index again
-export function createMemorySearch({ dataDir, vault, vindex, embedder = null, graph = () => null, paused = () => false, log = () => {} }) {
+// Main's side: one index per vault, opened once the vault index has finished its first read and built from its
+// snapshot; later changes update it note by note. vindex() is the vault index, vault() the open vault, embedder the
+// memory host's (embed.js), graph() the memory graph's store or null, paused() a recording is live, ready(ix) the vault
+// index finished its first read (until then search waits: a snapshot taken mid-read would miss the rest for good).
+// Search runs on the store's connection, so a new store (the vault changed, or the graph opened late) opens it again
+export function createMemorySearch({ dataDir, vault, vindex, embedder = null, graph = () => null, paused = () => false, ready = (ix) => ix.ready?.() ?? true, log = () => {} }) {
   let cur = null;
   const close = () => { if (!cur) return; cur.index.stop(); if (cur.own) try { cur.db.close(); } catch {} cur = null; };
+  // null: no vault; 'waiting': the vault index is still on its first read
   function open() {
     const v = vault();
     const ix = vindex();
     if (!v || !ix) { close(); return null; }
+    if (cur?.ix !== ix && !ready(ix)) { close(); return 'waiting'; }
     const store = graph();
     if (cur?.vault === v && cur.store === store) return cur;
     close();
     const { db, own } = openMemoryDb({ dataDir, vault: v, store });
     const index = createSearchIndex({ db, embedder, paused, log });
-    const hybrid = createHybridSearch({ db, embedder, graph: () => store, version: index.version });
-    cur = { vault: v, store, db, own, index, hybrid, ready: null };
+    const hybrid = createHybridSearch({ db, embedder, graph: () => store, version: index.version, appended: index.appended });
+    cur = { vault: v, ix, store, db, own, index, hybrid, ready: null };
     cur.ready = index.build(ix.snapshot()).catch((e) => log('search', 'build failed', e?.message));
     return cur;
   }
@@ -192,7 +207,7 @@ export function createMemorySearch({ dataDir, vault, vindex, embedder = null, gr
   async function changed(rels) {
     const was = cur;
     const c = open();
-    if (!c) return;
+    if (!c || c === 'waiting') return;
     if (c !== was) return c.ready;
     await c.ready;
     const ix = vindex();
@@ -208,10 +223,14 @@ export function createMemorySearch({ dataDir, vault, vindex, embedder = null, gr
     }
     return c.index.update(notes, gone);
   }
+  const idleStatus = (state) => ({ state, notes: 0, chunks: 0, embedded: 0, pending: 0, model: embedder?.id ?? null, error: null, lastBuildMs: null, built: false, embedPerSecond: null });
   return {
     changed,
-    async search(opts = {}) { const c = open(); if (!c) return { results: [], truncated: { shown: 0, total: 0, budgetNeeded: 0 } }; await c.ready; return c.hybrid.search(opts); },
-    status() { const c = open(); return c ? c.index.status() : { state: 'off', notes: 0, chunks: 0, embedded: 0, pending: 0, model: embedder?.id ?? null, error: null, lastBuildMs: null, built: false, embedPerSecond: null }; },
+    // null while the vault index is on its first read (the tools answer not ready)
+    async search(opts = {}) { const c = open(); if (c === 'waiting') return null; if (!c) return { results: [], truncated: { shown: 0, total: 0, budgetNeeded: 0 } }; await c.ready; return c.hybrid.search(opts); },
+    status() { const c = open(); return c === 'waiting' ? idleStatus('waiting') : c ? c.index.status() : idleStatus('off'); },
+    // the embedding model is ready again: the queue tries now instead of after its wait
+    resume: () => { cur?.index.resume(); },
     // settles once the open index's build and embed queue are done
     idle: async () => { const c = cur; if (!c) return; await c.ready; await c.index.idle(); },
     close,

@@ -452,7 +452,16 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   }
 
   // after a rule change: forget everything and read the folder again, so a note that is now denied drops out
-  function rebuild() { health = null; files.clear(); forward = new Map(); backward = new Map(); unresolved = new Map(); const changed = sync(); if (changed.length) onChange?.(changed); return changed; }
+  // the notes the new rules drop are reported too, so the readers beside the index (graph, search) let them go
+  function rebuild() {
+    const before = [...files.keys()];
+    health = null; files.clear(); forward = new Map(); backward = new Map(); unresolved = new Map();
+    const read = syncAll();
+    const changed = [...read, ...before.filter((rel) => !files.has(rel))];
+    report(changed);
+    if (changed.length) onChange?.(changed);
+    return changed;
+  }
 
   return {
     start, stop, sync, syncPaths, movesIn, rebuild, graph, backlinks, outgoing, search, resolve: (target, from) => resolve(target, from),
@@ -468,6 +477,8 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     size: () => files.size,
     // the watcher is running, so every change from here on is reported
     watching: () => !!watcher && !stopped,
+    // the whole vault has been read once (start finished, or a full sync ran)
+    ready: () => built,
     rels: () => [...files.keys()],
     // the notes indexed by their head only (INDEX_MAX): a link past the head is in none of the backlinks
     cutRels: () => [...files].filter(([, f]) => f.cut).map(([rel]) => rel),

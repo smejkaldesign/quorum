@@ -24,28 +24,64 @@ const words = (q) => (String(q).toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).sl
 // an FTS5 query that ranks any of the words, each quoted so no word reads as syntax
 export const ftsQuery = (q) => [...new Set(words(q))].map((w) => `"${w}"`).join(' OR ');
 
-export function createHybridSearch({ db, embedder = null, graph = () => null, version = () => 0, weights = WEIGHTS, now = () => Date.now() }) {
+// the indexes of the n highest scores, highest first, without sorting every score
+export function topIndexes(scores, n) {
+  const idx = [];
+  for (let i = 0; i < scores.length; i++) {
+    const s = scores[i];
+    if (idx.length >= n && s <= scores[idx[idx.length - 1]]) continue;
+    let at = idx.length;
+    while (at > 0 && scores[idx[at - 1]] < s) at--;
+    idx.splice(at, 0, i);
+    if (idx.length > n) idx.pop();
+  }
+  return idx;
+}
+
+// version(): bumps when chunks change; appended(): { v, ids } the chunk ids the embed queue wrote vectors for since
+// that version, in order. New vectors are added to the matrix in place; a chunk change reads it again
+export function createHybridSearch({ db, embedder = null, graph = () => null, version = () => 0, appended = null, weights = WEIGHTS, now = () => Date.now() }) {
   const q = {
     fts: db.prepare('SELECT rowid AS id, bm25(chunks_fts, 2.0, 1.0) AS s FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY s LIMIT ?'),
     chunk: db.prepare('SELECT c.id AS id, c.rel AS rel, c.heading AS heading, c.start_line AS start_line, c.end_line AS end_line, c.text AS text, c.tokens AS tokens, f.kind AS kind, f.date AS date FROM chunks c JOIN search_files f ON f.rel = c.rel WHERE c.id = ?'),
     firstOf: db.prepare('SELECT id FROM chunks WHERE rel = ? ORDER BY start_line LIMIT 1'),
     vecs: db.prepare('SELECT chunk, vec FROM vectors WHERE model = ?'),
+    vecOf: db.prepare('SELECT vec FROM vectors WHERE chunk = ? AND model = ?'),
     total: db.prepare('SELECT COUNT(*) AS n FROM chunks'),
   };
-  // every vector of the model in one matrix, read again after the index wrote vectors
+  // every vector of the model in one matrix, read in full after chunks changed and grown in place as vectors arrive
   let mat = null;
+  const put = (m, i, b) => m.data.set(new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)).subarray(0, m.dim), i * m.dim);
+  function grow(m, n) {
+    if (n * m.dim <= m.data.length) return;
+    const data = new Float32Array(Math.max(n, m.ids.length * 2, 1024) * m.dim);
+    data.set(m.data.subarray(0, m.ids.length * m.dim));
+    m.data = data;
+  }
   function matrix() {
     if (!embedder) return null;
     const v = version();
-    if (mat?.v === v) return mat;
+    const log = appended?.();
+    if (mat?.v === v && log && log.v === mat.logV) {
+      if (log.ids.length > mat.seen) {
+        const fresh = log.ids.slice(mat.seen);
+        grow(mat, mat.ids.length + fresh.length);
+        for (const id of fresh) { const r = q.vecOf.get(id, embedder.id); if (r) { put(mat, mat.ids.length, r.vec); mat.ids.push(id); } }
+        mat.seen = log.ids.length;
+        const total = q.total.get().n;
+        mat.coverage = total ? Math.min(1, mat.ids.length / total) : 0;
+      }
+      return mat;
+    }
+    if (mat?.v === v && !log) return mat;
     const rows = q.vecs.all(embedder.id);
     const dim = embedder.dim;
-    const ids = new Array(rows.length);
-    const data = new Float32Array(rows.length * dim);
-    rows.forEach((r, i) => { ids[i] = r.chunk; const b = r.vec; data.set(new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)).subarray(0, dim), i * dim); });
+    const m = { v, logV: log?.v ?? null, seen: log?.ids.length ?? 0, ids: [], data: new Float32Array(Math.max(rows.length, 1) * dim), dim, coverage: 0 };
+    for (const r of rows) { put(m, m.ids.length, r.vec); m.ids.push(r.chunk); }
     // the share of chunks with a vector: while the queue still runs, the vector list ranks only some of them
     const total = q.total.get().n;
-    mat = { v, ids, data, dim, coverage: total ? Math.min(1, rows.length / total) : 0 };
+    m.coverage = total ? Math.min(1, rows.length / total) : 0;
+    mat = m;
     return mat;
   }
 
@@ -68,8 +104,7 @@ export function createHybridSearch({ db, embedder = null, graph = () => null, ve
     const { data, dim, ids } = m;
     const scores = new Float32Array(ids.length);
     for (let i = 0; i < ids.length; i++) { let s = 0; const o = i * dim; for (let j = 0; j < dim; j++) s += data[o + j] * qv[j]; scores[i] = s; }
-    const order = Array.from(ids.keys()).sort((a, b) => scores[b] - scores[a]).slice(0, pool);
-    return order.map((i) => ids[i]);
+    return topIndexes(scores, pool).map((i) => ids[i]);
   }
 
   // rel -> score from the graph: seeds are nodes the query names (weight 1) and the notes of the top hits (0.5);
@@ -88,7 +123,8 @@ export function createHybridSearch({ db, embedder = null, graph = () => null, ve
     for (let n = Math.min(3, w.length); n >= 1; n--) {
       for (let i = 0; i + n <= w.length; i++) {
         let found;
-        try { found = g.find(w.slice(i, i + n).join(' ')) ?? []; } catch { found = []; }
+        // exact names and aliases only: a prefix of a name ("the", "a") names nothing
+        try { found = g.find(w.slice(i, i + n).join(' '), { prefix: false }) ?? []; } catch { found = []; }
         // an ambiguous short name seeds nothing
         // a folder or a tag shares its name with ordinary words (meetings, decisions), so it names nothing here
         if (Array.isArray(found)) found = found.filter((nd) => nd.kind !== 'folder' && nd.kind !== 'tag');
