@@ -21,6 +21,8 @@ export function createMemoryGraph({ dataDir, vault, vindex, log = () => {}, isEx
   let building = null;
   let closed = false;
   const pending = new Set();
+  // moves the index or the app reported (vindex onMoves, an in-app move), from -> to, waiting for the update that sees them
+  const reported = new Map();
 
   const emit = (ev, v) => { for (const fn of listeners[ev]) { try { fn(v); } catch (err) { log('memory graph listener', String(err)); } } };
   const hook = (change) => { for (const fn of fileHooks) { try { fn(change); } catch (err) { log('memory graph file hook', String(err)); } } };
@@ -88,22 +90,32 @@ export function createMemoryGraph({ dataDir, vault, vindex, log = () => {}, isEx
     ...store.edgesOf(`note:${rel}`, { dir: 'in', kinds: ['links_to', 'embeds'] }).map((e) => e.source_rel).filter(Boolean),
   ]);
 
-  // one pass over a set of changed paths, in one transaction: moves first (same text under a new path), then removals,
-  // then every changed or new note and the notes that link to the ones that came or went
+  // one pass over a set of changed paths, in one transaction: moves first, then removals, then every changed or new note
+  // and the notes that link to the ones that came or went. A move is a pair the index or the app reported; a burst they
+  // could not pair falls back to the same text under a new path
   function apply(rels, { all = false } = {}) {
     const known = store.files();
     const texts = new Map();
     const gone = [];
+    const pairs = [...reported].filter(([from, to]) => rels.includes(from) || rels.includes(to) || (known.has(from) && textOf(from) === null));
+    rels = [...new Set([...rels, ...pairs.flat()])];
     for (const rel of rels) {
       const t = textOf(rel);
       if (t === null) { if (known.has(rel)) gone.push(rel); } else texts.set(rel, t);
     }
     const hashes = new Map([...texts].map(([rel, t]) => [rel, sha(t)]));
-    const byHash = new Map();
-    for (const rel of gone) { const h = known.get(rel); byHash.set(h, byHash.has(h) ? null : rel); }
     const moves = [];
+    const taken = new Set();
+    for (const [from, to] of pairs) {
+      reported.delete(from);
+      if (!gone.includes(from) || !texts.has(to) || known.has(to) || taken.has(from) || taken.has(to)) continue;
+      moves.push([from, to, hashes.get(to)]);
+      taken.add(from); taken.add(to);
+    }
+    const byHash = new Map();
+    for (const rel of gone) { if (taken.has(rel)) continue; const h = known.get(rel); byHash.set(h, byHash.has(h) ? null : rel); }
     for (const [rel, h] of hashes) {
-      if (known.has(rel)) continue;
+      if (known.has(rel) || taken.has(rel)) continue;
       const from = byHash.get(h);
       if (from) { moves.push([from, rel, h]); byHash.set(h, null); }
     }
@@ -111,8 +123,11 @@ export function createMemoryGraph({ dataDir, vault, vindex, log = () => {}, isEx
     const deps = new Set();
     store.tx(() => {
       for (const [from, to, h] of moves) {
+        const before = known.get(from);
         store.moveFile(from, to, idFor);
         hook({ type: 'move', from, to, hash: h });
+        // a reported move can change the text too (its own links rewritten): search hears the new text
+        if (h !== before) hook({ type: 'upsert', rel: to, text: texts.get(to), hash: h });
         for (const r of linkersOf(to)) deps.add(r);
         // the path is part of what the note is (its folder, its kind): read again, same history
         reindex(to, texts.get(to), h);
@@ -178,6 +193,8 @@ export function createMemoryGraph({ dataDir, vault, vindex, log = () => {}, isEx
     if (state.phase !== 'ready') { for (const r of rels ?? []) pending.add(r); return; }
     const t0 = now();
     try { apply(rels ?? vindex.rels()); } catch (err) { log('memory graph update', String(err?.stack ?? err)); }
+    // a reported move no update has seen by now never happened the way it was reported
+    reported.clear();
     const ms = now() - t0;
     if (ms > 100) log('memory graph', `updated ${rels?.length ?? 'all'} notes in ${ms}ms`);
     emit('progress', status());
@@ -192,6 +209,8 @@ export function createMemoryGraph({ dataDir, vault, vindex, log = () => {}, isEx
     store,
     build,
     update,
+    // moves seen before the index reports the paths: [{ from, to }]. The next update moves those notes with their history
+    moved: (pairs) => { for (const p of pairs ?? []) if (p?.from && p?.to && p.from !== p.to) reported.set(String(p.from), String(p.to)); },
     status,
     on: (ev, fn) => { listeners[ev].add(fn); return () => listeners[ev].delete(fn); },
     onFileChange: (fn) => { fileHooks.add(fn); return () => fileHooks.delete(fn); },

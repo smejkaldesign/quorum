@@ -149,6 +149,8 @@ export function createMemoryHost({ port, index = () => null, vault = () => null,
     sweep: async (kind, only = null) => { await sync(); return call('sweep', { kind, only, cond: cond(true) }); },
     refresh: async () => { await sync(); return call('refresh', { cond: cond(true) }); },
     estimate: async () => { await sync(); return call('estimate', { cond: cond(true) }); },
+    // search chunk vectors (search/embed.js); needs no sync, the texts come with the call
+    embed: (texts, maxTokens) => call('embed', { texts, maxTokens }),
     // forgets what was sent, so the next sync sends every note again (a fresh engine, or a read gate that changed)
     resend: () => { sent = new Map(); },
     error,
