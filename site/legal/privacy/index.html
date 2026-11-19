@@ -38,10 +38,10 @@
   <main id="main" class="page legal">
     <div class="wrap narrow">
       <h1>Privacy Policy</h1>
-      <p class="effective">Effective: November 18, 2026</p>
+      <p class="effective">Effective: November 19, 2026</p>
 
       <h2>Summary</h2>
-      <p>Quorum is a macOS app that combines your notes, the meeting notes your other tools write and your team&rsquo;s knowledge into markdown files you own. When you start a recording, it transcribes that meeting. In the free Local edition, your audio, transcripts and notes stay on your Mac. The app sends us only an access-code check, a daily install report and a feature check, none of which contain meeting content. In Quorum Cloud, we store your notes for sync and route call audio through our relay to a speech provider. We do not store call audio. We do not sell your data. We do not use your content to train models, and neither do our providers: Anthropic does not train on API inputs or outputs, every Deepgram request carries the model-training opt-out, and our AssemblyAI account is opted out of model training, which also gives zero retention of streaming audio and transcripts.</p>
+      <p>Quorum is a macOS app that combines your notes, the meeting notes your other tools write and your team&rsquo;s knowledge into markdown files you own. When you start a recording, it transcribes that meeting. In the free Local edition, your audio, transcripts and notes stay on your Mac. The app sends us only an access-code check, a daily install report, a feature check and, when a page in the app fails, an error report. None of these contain meeting content. In Quorum Cloud, we store your notes for sync and route call audio through our relay to a speech provider. We do not store call audio. We do not sell your data. We do not use your content to train models, and neither do our providers: Anthropic does not train on API inputs or outputs, every Deepgram request carries the model-training opt-out, and our AssemblyAI account is opted out of model training, which also gives zero retention of streaming audio and transcripts.</p>
       <p>This policy is published by Smejkal Design, a sole proprietorship based in Portland, Oregon, United States. Contact: <a href="mailto:eric@smejkal.design">eric@smejkal.design</a>.</p>
 
       <h2>The Local edition</h2>
@@ -56,6 +56,7 @@
         <li>Access code. During the beta, the app checks your access code with our relay when you enter it. After that it reports once a day: the code, a random install id created on your Mac, the edition and the app version. We use this to count active installs. We keep each install's record for 12 months after its last report.</li>
         <li>Features. Once an hour the app asks our relay which features are turned on. The request carries no code, install id or account.</li>
         <li>Updates. The app checks GitHub Releases for new versions and downloads them from there. GitHub receives your IP address under GitHub's privacy statement.</li>
+        <li>Error reports. When a page in the app fails to draw, the app sends our relay a report: the error message, where in Quorum's code it happened, the page, the app version and edition, the macOS version and a random install id. Before sending, the app removes file paths outside Quorum, email addresses, keys and quoted text, so a report carries no notes, transcripts or file names. We use reports only to find and fix bugs, and we delete each report within 90 days. Turn them off in Settings, General, Send error reports.</li>
         <li>Local models. Quorum downloads two open models once from Hugging Face (huggingface.co); the request carries your IP address and an app user agent, and no note content.</li>
       </ul>
       <p>Our relay's host receives your IP address with each request. Relay logs are deleted within 30 days.</p>
@@ -121,7 +122,8 @@
 
       <h2>Your choices</h2>
       <ul>
-        <li>Use the Local edition with sync off and no cloud provider. No data reaches us.</li>
+        <li>Use the Local edition with sync off, no cloud provider and error reports off. Only the access-code, install and feature checks reach us.</li>
+        <li>Turn error reports off in Settings, General.</li>
         <li>Turn sync or managed transcription off at any time in the app.</li>
         <li>Mark notes private so only you can see them.</li>
         <li>Email us to access, correct or delete the data we hold about you.</li>
