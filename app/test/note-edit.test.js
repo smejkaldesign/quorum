@@ -1,7 +1,8 @@
 // Editing a vault note in Knowledge: the body cut out of the file and put back, rich text only for notes that write
 // back byte for byte, and saves that keep every block that wasn't edited as written
 import { describe, expect, it } from 'vitest';
-import { editParts, planSave, withBody } from '../noteEdit.js';
+import { editParts, withBody } from '../noteEdit.js';
+import { planSave } from '../vaultEdit.js';
 import { hashText } from '../handnote.js';
 import { canSplice, splice, toDoc } from '../src/editor/markdown.ts';
 

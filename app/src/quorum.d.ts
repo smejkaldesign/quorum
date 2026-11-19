@@ -353,7 +353,7 @@ export type TeamRole = 'lead' | 'member';
 export type TeamMember = { userId: string; role: TeamRole; email: string | null; name: string | null };
 export type Team = { id: string; name: string; myRole: TeamRole | null; canManage: boolean; canManageMembers: boolean; meetingsKbId: string | null; members: TeamMember[] };
 export type HandNoteRef = { file: string; hash: string; rel: string; app: string; url: string; frontmatter: string };
-export type VaultEdit = { hash: string; readOnly: 'withheld' | 'line-endings' | null; body: string; frontmatter: string };
+export type VaultEdit = { hash: string; readOnly: 'withheld' | 'line-endings' | 'encoding' | null; body: string; frontmatter: string };
 export type HandNote = HandNoteRef & { title: string; body: string; readOnly: boolean; date: string | null };
 export type HandNoteSave = (HandNoteRef & { propsError?: string }) | { conflict: true } | { error: string };
 

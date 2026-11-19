@@ -34,7 +34,7 @@ import { CALL_ACTIVE, DICTATION_OFF, keepActions, notetakerGates, recordDecision
 import { NAME_SYSTEM, isUntitled, parseName } from './noteName.js';
 import { noteParts } from './noteParts.js';
 import { hashText, newNoteText, noteFileName, noteForEditor, rewriteNote, screenRead, splitNote, validFrontmatter, yamlStr } from './handnote.js';
-import { editParts, planSave } from './noteEdit.js';
+import { openEdit, saveEdit } from './vaultEdit.js';
 import { createKeeper } from './keeper.js';
 import { createVersionStore } from './memoryVersions.js';
 import { createLiveRuns, stopAndRestore } from './liveRuns.js';
@@ -4430,42 +4430,32 @@ ipcMain.handle('vault-note', (_e, rel) => {
   return { title: h1 ? h1[1].trim() : path.basename(n.abs, '.md'), body: h1 && body.startsWith(h1[0]) ? body.slice(h1[0].length).trim() : body, abs: n.abs, ...noteLink(n.abs), views: views.of(n.abs), meta };
 });
 
-// the Knowledge editor: a note's body exactly as written (noteEdit.js), with the hash of the file it came from. A note
-// with withheld lines, or one that mixes line endings, comes back read-only and without its text, so a redacted or
-// rewritten copy can never be saved over it. open marks the start of an editing session, whose first save keeps the
-// text from before it as a version
+// the Knowledge editor: a note's body exactly as written, with the hash of the file it came from (vaultEdit.js). A note
+// that isn't valid UTF-8, has withheld lines or mixes line endings comes back read-only and without its text. open marks
+// the start of an editing session, whose first save keeps the text from before it as a version
 const editSessions = new Map();
 ipcMain.handle('vault-note-edit', (_e, rel, open) => {
   const b = brain();
   const r = String(rel ?? '');
-  const n = b && readVaultNote(b.vault, r);
-  if (!n) return null;
-  const hash = hashText(n.text);
-  const p = editParts(n.text);
-  const reason = suggester.isExcluded(n.text) ? 'withheld' : p.mixed ? 'line-endings' : null;
-  if (reason) return { hash, readOnly: reason, body: '', frontmatter: '' };
-  if (open) editSessions.set(r, hash);
-  return { hash, readOnly: null, body: p.body, frontmatter: p.fm };
+  const n = b && openEdit(b.vault, r, suggester.isExcluded);
+  if (n && open && !n.readOnly) editSessions.set(r, n.hash);
+  return n || null;
 });
 ipcMain.handle('vault-note-save', (_e, payload) => {
   const b = brain();
   if (!b) return { error: 'Connect your Agent OS to save notes.' };
   const r = String(payload?.rel ?? '');
-  const n = readVaultNote(b.vault, r);
-  if (!n) return { error: 'This note was moved or deleted.' };
-  const plan = planSave(n.text, { hash: payload?.hash, body: payload?.body, withheld: suggester.isExcluded(n.text) });
-  if (!('text' in plan)) return plan;
-  const next = plan.text;
-  if (next !== n.text) {
-    writeAtomic(n.abs, next);
+  const s = saveEdit(b.vault, r, payload, suggester.isExcluded);
+  if (!('hash' in s)) return s;
+  if (s.after !== s.before) {
     if (editSessions.get(r) === payload.hash) {
       editSessions.delete(r);
-      try { memoryVersions.record({ vault: b.vault, rel: r, before: n.text, after: next, who: 'you', reason: 'Edited in Quorum', agent: false }); } catch (e) { log('note edit versions', e?.message); }
+      try { memoryVersions.record({ vault: b.vault, rel: r, before: s.before, after: s.after, who: 'you', reason: 'Edited in Quorum', agent: false }); } catch (e) { log('note edit versions', e?.message); }
     }
     vindex?.sync();
     toUI('memory-updates', [r]);
   }
-  return { hash: hashText(next) };
+  return { hash: s.hash };
 });
 
 // the date pill in the note view: date: YYYY-MM-DD written into the note's frontmatter, saved as a version by you
