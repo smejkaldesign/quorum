@@ -110,5 +110,6 @@ describe('the confirm copy', () => {
     expect(owner).not.toMatch(/Quorum Cloud/);
     expect(owner).toContain('The vault folder at /tmp/vault stays as it is');
     expect(dataBody(info, true)).toMatch(/^This deletes your private synced notes/);
+    expect(dataBody(info, true)).toContain('every Mac signed in to this account is signed out');
   });
 });

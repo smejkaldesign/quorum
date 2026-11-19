@@ -14,6 +14,25 @@
 --     account was deleted instead of only asking for a sign-in. A user id is not guessable, so it reveals nothing.
 -- The platform owner (platform_owners, 0008) is refused both deletes, as in 0039. Storage objects of the removed rows
 -- go to kb_files_trash for the relay's sweep (relay/kbFilesCleanup.js).
+--
+-- Every table that names a user (a column referencing auth.users, 0001 to 0045), and what delete_my_data does with it:
+--   notes: shared ones go to the heir (account_hand_over), private ones are deleted; notes.created_by is a set-null
+--     credit and stays
+--   links, attachments: on a note someone else now owns, they go to that note's owner; the rest are deleted
+--   meetings: a public meeting whose note someone else now owns goes to that owner with its transcript; the rest are
+--     deleted. transcript_segments: in someone else's meeting they go to that meeting's owner; the rest are deleted
+--   chats, chat_turns: only the caller reads them (0043), so all are deleted
+--   contributions: move with their note, or go with it
+--   knowledge_bases.personal_user_id: the caller's personal KBs are deleted, with their folders, access and attachments
+--   kb_sync_grants: ended through kb_sync_grant_end, so the relay revokes the token and deletes its Vault secret
+--   connect_accounts, member_integrations, kb_resync, settings with scope user: deleted
+--   auth.sessions and auth.refresh_tokens: deleted, so every Mac signed in to the account is signed out and none
+--     pushes notes back
+--   kept, because they are the account, its memberships or other people's records: workspaces.user_id, members,
+--     team_members, kb_access (workspace KBs), invites the caller sent, profiles, settings with scope workspace,
+--     workspace_usage_events (billing), platform_owners, platform_passkeys, platform_sessions, access_requests, and
+--     the set-null credits (platform_audit.actor, access_codes, contributions.reviewed_by, knowledge_bases,
+--     kb_folders, kb_files, kb_attachments, workspace_connectors, workspace_integrations, teams created_by)
 
 create or replace function public.account_gone(uid uuid) returns boolean
 language sql stable security definer set search_path = public as $$
@@ -32,7 +51,10 @@ revoke all on function public.account_solo_workspaces(uuid) from public, anon, a
 
 -- 0041's hand-over from delete_my_account, on its own: every shared note of the person (in a workspace KB, visibility
 -- public, or a pending or included contribution), outside their personal KBs, moves to the workspace's heir with its
--- links, attachments and contribution. Returns how many notes moved. A note with no heir stays with the person
+-- contribution. Then every row of the person that hangs on something another person owns now goes to that owner, so
+-- teammates keep what they can read: links and attachments on such a note, a public meeting whose note is theirs (the
+-- meetings_select rule, 0043), and transcript segments in such a meeting. Returns how many notes moved. A note with no
+-- heir stays with the person
 create or replace function public.account_hand_over(uid uuid) returns integer
 language plpgsql security definer set search_path = public as $$
 declare kept integer;
@@ -50,9 +72,11 @@ begin
   get diagnostics kept = row_count;
   perform set_config('quorum.kb_system', 'on', true);
   update public.notes n set user_id = h.heir from pg_temp.account_handover h where n.id = h.note_id;
-  update public.links l set user_id = h.heir from pg_temp.account_handover h where l.from_note = h.note_id and l.user_id = uid;
-  update public.attachments a set user_id = h.heir from pg_temp.account_handover h where a.note_id = h.note_id and a.user_id = uid;
   update public.contributions c set author_id = h.heir from pg_temp.account_handover h where c.note_id = h.note_id and c.author_id = uid;
+  update public.links l set user_id = n.user_id from public.notes n where l.from_note = n.id and l.user_id = uid and n.user_id <> uid;
+  update public.attachments a set user_id = n.user_id from public.notes n where a.note_id = n.id and a.user_id = uid and n.user_id <> uid;
+  update public.meetings m set user_id = n.user_id from public.notes n where m.note_id = n.id and m.user_id = uid and m.visibility = 'public' and n.user_id <> uid;
+  update public.transcript_segments t set user_id = m.user_id from public.meetings m where t.meeting_id = m.id and t.user_id = uid and m.user_id <> uid;
   perform set_config('quorum.kb_system', '', true);
   return kept;
 end $$;
@@ -85,11 +109,12 @@ revoke all on function public.account_trash_objects(uuid, public.ulid[]) from pu
 --   4. in each workspace the caller is alone in, delete its notes, meetings, chats, attachments and knowledge bases;
 --      the workspace row, its membership, plan, billing, teams and settings stay;
 --   5. everywhere else, delete the caller's personal KBs and the notes, meetings, chats and attachments still in the
---      caller's name.
+--      caller's name, end their sync grants, and delete their connections and their own settings;
+--   6. end every session of the account, so no other Mac pushes the data back.
 -- Rows are deleted, never marked deleted, so a pull on another Mac renames nothing in a vault there.
 create or replace function public.delete_my_data() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare uid uuid := auth.uid(); solo public.ulid[]; objects integer; kept integer;
+declare uid uuid := auth.uid(); solo public.ulid[]; objects integer; kept integer; g public.kb_sync_grants;
 begin
   if uid is null then raise exception 'You need to sign in first'; end if;
   if public.account_is_platform_owner(uid) then raise exception 'The account that runs Quorum cannot delete its data from the app'; end if;
@@ -113,6 +138,16 @@ begin
   delete from public.attachments a where a.user_id = uid;
   delete from public.notes n where n.user_id = uid;
   perform set_config('quorum.kb_system', '', true);
+
+  for g in select * from public.kb_sync_grants x where x.user_id = uid and x.ended_at is null loop
+    perform public.kb_sync_grant_end(g.id, 'disconnected', public.kb_sync_revokes(g, 'disconnected'));
+  end loop;
+  delete from public.connect_accounts c where c.user_id = uid;
+  delete from public.member_integrations i where i.user_id = uid;
+  delete from public.kb_resync r where r.user_id = uid;
+  delete from public.settings x where x.user_id = uid and x.scope = 'user';
+  delete from auth.refresh_tokens t where t.user_id = uid::text;
+  delete from auth.sessions x where x.user_id = uid;
 
   insert into public.platform_audit (actor, action, target_workspace, detail)
   values (uid, 'data_deleted', null, jsonb_build_object('workspaces', coalesce(array_length(solo, 1), 0), 'kept', kept, 'objects', objects));

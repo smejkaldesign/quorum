@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { checkDataDir, forgetKeychain, protectedPaths, resetData } from '../dataReset.js';
+import { checkDataDir, checkReset, deleteMyData, forgetKeychain, protectedPaths, resetData } from '../dataReset.js';
 
 let base, home, data;
 const put = (p, text = 'x') => { mkdirSync(path.dirname(p), { recursive: true }); writeFileSync(p, text); };
@@ -91,6 +91,17 @@ describe('resetData', () => {
     expect(() => resetData({ dataDir: 'relative/Quorum', home })).toThrow();
   });
 
+  it('matches a vault path saved in another case, as APFS does', () => {
+    const vault = path.join(data, 'brains/Mine');
+    put(path.join(vault, 'notes/a.md'), '# A');
+    put(path.join(data, 'brains/old-cache.json'), '{}');
+    resetData({ dataDir: data, home, keep: [], caseless: true, protect: [path.join(data.toUpperCase(), 'BRAINS/mine')] });
+    expect(readFileSync(path.join(vault, 'notes/a.md'), 'utf8')).toBe('# A');
+    expect(existsSync(path.join(data, 'brains/old-cache.json'))).toBe(false);
+    expect(() => resetData({ dataDir: data, home, caseless: true, protect: [path.join(home.toUpperCase(), 'library')] })).toThrow(/inside your vault/);
+    expect(() => checkDataDir(path.join(home, '.'), { home: home.toUpperCase(), caseless: true })).toThrow(/home or root/);
+  });
+
   it('refuses a data folder that sits inside the vault', () => {
     expect(() => resetData({ dataDir: data, home, protect: [path.join(home, 'Library')] })).toThrow(/inside your vault/);
     expect(existsSync(path.join(data, 'settings.json'))).toBe(true);
@@ -99,6 +110,54 @@ describe('resetData', () => {
   it('does nothing when the data folder is missing', () => {
     expect(resetData({ dataDir: path.join(base, 'gone/Quorum'), home })).toEqual({ removed: [], kept: [] });
     expect(checkDataDir(path.join(base, 'gone/Quorum Dev'), { home })).toBeNull();
+  });
+});
+
+describe('checkReset', () => {
+  it('runs every refusal and deletes nothing', () => {
+    expect(() => checkReset({ dataDir: data, home, protect: [home] })).toThrow(/inside your vault/);
+    expect(() => checkReset({ dataDir: home, home })).toThrow(/home or root/);
+    expect(checkReset({ dataDir: data, home, protect: [path.join(home, 'Documents')] }).root).toBe(data);
+    expect(readdirSync(data).sort()).toEqual(['chats', 'memory', 'models', 'sessions', 'settings.json', 'state.json']);
+  });
+});
+
+describe('deleteMyData', () => {
+  const steps = (over = {}) => {
+    const order = [];
+    const run = deleteMyData({
+      check: () => { order.push('check'); checkReset({ dataDir: data, home, protect: over.protect ?? [] }); },
+      busy: () => { order.push('busy'); return over.busy ?? null; },
+      hosted: async () => { order.push('hosted'); return over.hosted ?? { ok: true }; },
+      beforeWipe: async () => { order.push('keychain'); },
+      wipe: () => { order.push('wipe'); return resetData({ dataDir: data, home, protect: over.protect ?? [] }); },
+    });
+    return { order, run };
+  };
+
+  it('validates, deletes the hosted data, clears the Keychain and wipes, in that order', async () => {
+    const { order, run } = steps();
+    const r = await run;
+    expect(order).toEqual(['check', 'busy', 'hosted', 'keychain', 'wipe']);
+    expect(r.ok).toBe(true);
+    expect(existsSync(path.join(data, 'settings.json'))).toBe(false);
+  });
+
+  it('stops before the hosted delete and the Keychain when a local check refuses', async () => {
+    const { order, run } = steps({ protect: [home] });
+    expect(await run).toEqual({ error: 'The data folder sits inside your vault, so nothing was deleted.' });
+    expect(order).toEqual(['check']);
+    expect(existsSync(path.join(data, 'settings.json'))).toBe(true);
+  });
+
+  it('waits for a recording to end, and stops when the hosted delete fails', async () => {
+    const busy = steps({ busy: 'Stop the recording first, then delete your data.' });
+    expect(await busy.run).toEqual({ error: 'Stop the recording first, then delete your data.' });
+    expect(busy.order).toEqual(['check', 'busy']);
+    const failed = steps({ hosted: { error: 'Your data could not be deleted.' } });
+    expect(await failed.run).toEqual({ error: 'Your data could not be deleted.' });
+    expect(failed.order).toEqual(['check', 'busy', 'hosted']);
+    expect(existsSync(path.join(data, 'settings.json'))).toBe(true);
   });
 });
 

@@ -3,7 +3,7 @@
 --   docker exec -i supabase_db_quorum psql -U postgres -d postgres -v ON_ERROR_STOP=1 -f - < supabase/tests/delete_my_data.sql
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(33);
+select plan(43);
 
 -- fixtures. d1 owns Solo alone and is a member of Team, which d2 owns with d3 as a member; d4 runs Quorum; d5 owns
 -- Paying alone, which has a live subscription; d6 owns Crowd, which d3 also belongs to
@@ -46,6 +46,26 @@ insert into public.meetings (id, user_id, workspace_id, title) values
 insert into public.attachments (id, user_id, workspace_id, object_path, name, note_id) values
   ('01DD00000000000000000000A1', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT', '01DD00000000000000000000WT/a1/mine.png', 'mine.png', '01DD00000000000000000000T1'),
   ('01DD00000000000000000000A2', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT', '01DD00000000000000000000WT/a2/shared.png', 'shared.png', '01DD00000000000000000000T2');
+-- rows of d1 that teammates read or that hang on their rows: a public meeting on the shared note T2 with its
+-- transcript, an attachment and a link on d3's note T3, and a transcript segment in d3's meeting
+insert into public.meetings (id, user_id, workspace_id, title, visibility, note_id) values
+  ('01DD00000000000000000000E3', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT', 'Review', 'public', '01DD00000000000000000000T2'),
+  ('01DD00000000000000000000E4', '00000000-0000-4000-8000-0000000000d3', '01DD00000000000000000000WT', 'Their call', 'private', null);
+insert into public.transcript_segments (id, user_id, workspace_id, meeting_id, channel, t, text) values
+  ('01DD00000000000000000000G1', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT', '01DD00000000000000000000E3', 'me', 0, 'shared words'),
+  ('01DD00000000000000000000G2', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT', '01DD00000000000000000000E4', 'me', 0, 'words in their call');
+insert into public.attachments (id, user_id, workspace_id, object_path, name, note_id) values
+  ('01DD00000000000000000000A3', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT', '01DD00000000000000000000WT/a3/on-theirs.png', 'on-theirs.png', '01DD00000000000000000000T3');
+insert into public.links (id, user_id, workspace_id, from_note, anchor) values
+  ('01DD00000000000000000000Q1', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT', '01DD00000000000000000000T3', 'x');
+-- d1's connections, own settings and sessions
+insert into public.kb_sync_grants (id, workspace_id, user_id, provider) values ('01DD00000000000000000000GR', '01DD00000000000000000000WT', '00000000-0000-4000-8000-0000000000d1', 'github');
+insert into public.connect_accounts (user_id, provider, account_id, external_user_id) values ('00000000-0000-4000-8000-0000000000d1', 'zoom', 'acct', 'zu');
+insert into public.settings (id, user_id, workspace_id, scope, data) values
+  ('01DD00000000000000000000X1', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT', 'user', '{}'),
+  ('01DD00000000000000000000X2', '00000000-0000-4000-8000-0000000000d2', '01DD00000000000000000000WT', 'workspace', '{}');
+insert into auth.sessions (id, user_id) values ('00000000-0000-4000-8000-00000000a5e1', '00000000-0000-4000-8000-0000000000d1');
+insert into auth.refresh_tokens (token, user_id, session_id) values ('t-d1', '00000000-0000-4000-8000-0000000000d1', '00000000-0000-4000-8000-00000000a5e1');
 
 create function pg_temp.as_user(u uuid) returns void language sql as $$
   select set_config('request.jwt.claims', json_build_object('sub', u::text, 'role', 'authenticated')::text, true), set_config('role', 'authenticated', true);
@@ -83,6 +103,16 @@ select ok(not exists (select 1 from public.knowledge_bases where id = '01DD00000
 select ok(exists (select 1 from public.notes where id = '01DD00000000000000000000T3') and exists (select 1 from public.chats where id = '01DD00000000000000000000C3'), 'another member keeps every row');
 select ok(exists (select 1 from public.kb_files_trash where object_path = '01DD00000000000000000000WT/a1/mine.png' and bucket = 'attachments'), 'the private attachment object is in the trash');
 select ok(not exists (select 1 from public.kb_files_trash where object_path = '01DD00000000000000000000WT/a2/shared.png'), 'the handed-over attachment object is not');
+select is((select user_id from public.meetings where id = '01DD00000000000000000000E3'), '00000000-0000-4000-8000-0000000000d2'::uuid, 'the public meeting on the shared note went to its new owner');
+select is((select user_id from public.transcript_segments where id = '01DD00000000000000000000G1'), '00000000-0000-4000-8000-0000000000d2'::uuid, 'and its transcript with it');
+select is((select user_id from public.transcript_segments where id = '01DD00000000000000000000G2'), '00000000-0000-4000-8000-0000000000d3'::uuid, 'a segment in a teammate''s meeting goes to that teammate');
+select is((select user_id from public.attachments where id = '01DD00000000000000000000A3'), '00000000-0000-4000-8000-0000000000d3'::uuid, 'an attachment on a teammate''s note goes to them');
+select ok(not exists (select 1 from public.kb_files_trash where object_path = '01DD00000000000000000000WT/a3/on-theirs.png'), 'and its object is not trashed');
+select is((select user_id from public.links where id = '01DD00000000000000000000Q1'), '00000000-0000-4000-8000-0000000000d3'::uuid, 'a link on a teammate''s note goes to them');
+select ok(not exists (select 1 from public.kb_sync_grants where user_id = '00000000-0000-4000-8000-0000000000d1' and ended_at is null), 'the sync grants are ended');
+select ok(not exists (select 1 from public.connect_accounts where user_id = '00000000-0000-4000-8000-0000000000d1'), 'the connected accounts are gone');
+select ok(not exists (select 1 from public.settings where id = '01DD00000000000000000000X1') and exists (select 1 from public.settings where id = '01DD00000000000000000000X2'), 'own settings go, workspace settings stay');
+select ok(not exists (select 1 from auth.sessions where user_id = '00000000-0000-4000-8000-0000000000d1') and not exists (select 1 from auth.refresh_tokens where token = 't-d1'), 'every session of the account is ended');
 
 -- 4. Reset user, as the platform owner: refusals name the workspaces
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000d4');
