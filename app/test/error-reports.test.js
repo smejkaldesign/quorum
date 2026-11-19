@@ -20,8 +20,9 @@ const STACK = `TypeError: (0 , rn.fileURLToPath) is not a function\n    at Ab (f
 
 describe('scrub', () => {
   it('removes home paths, other paths, emails, tokens and long quoted text', () => {
-    const s = scrub(`ENOENT /Users/pat/notes/plan.md; mail pat@example.com; key sk-abcdefghijklmnopqrstu; said "the quarterly plan for the new launch is delayed again"`, { home: '/Users/pat' });
-    expect(s).not.toContain('/Users/pat');
+    const s = scrub(`ENOENT /tmp/home-pat/notes/plan.md and /Volumes/Drive/x.md; mail pat@example.com; key sk-abcdefghijklmnopqrstu; said "the quarterly plan for the new launch is delayed again"`, { home: '/tmp/home-pat' });
+    expect(s).not.toContain('/tmp/home-pat');
+    expect(s).toContain('<path>');
     expect(s).toContain('~/notes/plan.md');
     expect(s).toContain('<email>');
     expect(s).toContain('<token>');
@@ -53,12 +54,12 @@ describe('fingerprint', () => {
 describe('createErrorReports', () => {
   const make = (over = {}) => {
     const sent = [];
-    const r = createErrorReports({ dataDir: dir, version: '0.4.2', edition: 'local', os: 'macOS 26.4 arm64', appRoot: APP, home: '/Users/pat', send: async (b) => { sent.push(b); return { ok: true, status: 202 }; }, readMap: () => map(), now: () => new Date('2026-11-19T10:00:00Z'), ...over });
+    const r = createErrorReports({ dataDir: dir, version: '0.4.2', edition: 'local', os: 'macOS 26.4 arm64', appRoot: APP, home: '/tmp/home-pat', send: async (b) => { sent.push(b); return { ok: true, status: 202 }; }, readMap: () => map(), now: () => new Date('2026-11-19T10:00:00Z'), ...over });
     return { r, sent };
   };
   it('sends a scrubbed, mapped report with a stable install id', async () => {
     const { r, sent } = make();
-    await r.report({ view: 'settings/connectors', message: 'boom at /Users/pat/x.md', stack: STACK, componentStack: '\n    at ConnectorsPage', repeat: false });
+    await r.report({ view: 'settings/connectors', message: 'boom at /tmp/home-pat/x.md', stack: STACK, componentStack: '\n    at ConnectorsPage', repeat: false });
     expect(sent).toHaveLength(1);
     const b = sent[0];
     expect(b).toMatchObject({ edition: 'local', version: '0.4.2', os: 'macOS 26.4 arm64', view: 'settings/connectors', kind: 'render', repeat: false, at: '2026-11-19T10:00:00.000Z' });
