@@ -25,6 +25,7 @@ import { createConnectorTools } from './connectors/tools/index.js';
 import { actorLabel, createAppActions, currentActor, outsideActor } from './appActions.js';
 import { CONNECTOR_SERVER } from './cli/connectorTools.mjs';
 import { httpUrl, relayFetch, relayUrl } from './relayUrl.js';
+import { createErrorReports } from './errorReports.js';
 import { createViews } from './views.js';
 import { registerOnboarding } from './onboarding.js';
 import { gateOn, registerBeta } from './beta.js';
@@ -52,7 +53,7 @@ import { PROVIDERS as DECISION_PROVIDERS, connectedProvider, decide as decideRaw
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, watchFile, writeFileSync } from 'node:fs';
-import { homedir, tmpdir, userInfo } from 'node:os';
+import { homedir, release, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import updater from 'electron-updater';
@@ -1475,6 +1476,11 @@ ipcMain.handle('set-settings', (_e, next) => {
   }
   if (typeof next.memoryHighlight === 'boolean') {
     settings.memoryHighlight = next.memoryHighlight;
+    store.settings.save();
+  }
+  // Settings > General: page crash reports (errorReports.js); off sends nothing
+  if (typeof next.errorReports === 'boolean') {
+    settings.errorReports = next.errorReports;
     store.settings.save();
   }
   // Settings > Memory: background sweeps of the review rules (memorySweep.js); off pauses them
@@ -4592,6 +4598,16 @@ ipcMain.handle('guardrail-denials', (_e, opts) => guardrails.denials({ since: op
 ipcMain.handle('update-status', () => updates?.state() ?? { status: 'off', current: app.getVersion(), version: null, percent: 0, notes: null, checkedAt: null, error: null });
 ipcMain.handle('update-check', async () => (updates ? updates.check() : { status: 'off' }));
 ipcMain.handle('update-install', () => !!updates?.install());
+// page crash reports (errorReports.js): the renderer's error boundaries send each crash here; on unless
+// settings.errorReports is false. The report goes to the relay's /v1/errors for the admin Errors page
+const errorReports = createErrorReports({
+  dataDir: DATA_DIR, version: app.getVersion(), edition: EDITION, os: `macOS ${process.getSystemVersion?.() ?? release()} ${process.arch}`, appRoot: here, home: homedir(),
+  enabled: () => settings.errorReports !== false, log,
+  send: (body) => relayFetch('/v1/errors', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, { source: relaySource() }),
+});
+ipcMain.handle('report-error', (_e, r) => errorReports.report(r));
+// Reload Quorum on a crash page: the window's page loads again; recording, sync and the tray keep running
+ipcMain.handle('reload-window', (e) => { e.sender.reloadIgnoringCache(); });
 ipcMain.handle('calendar', async () => {
   const c = calSettings();
   const win = calendarWindow(c.days);
