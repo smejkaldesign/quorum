@@ -217,3 +217,18 @@ describe('memory graph on a generated vault', () => {
     expect(g.decisions({ about: 'notes/mixed.md' }).decisions.map((d) => d.text)).toEqual(['keep Ana on it']);
   });
 });
+
+describe('names that a tag shares', () => {
+  it('resolves to the project when a tag has the same name, and stays ambiguous between a person and a project', async () => {
+    const t = await setup({ notes: 10, people: 3, projects: 2, companies: 1, meetings: 2 });
+    t.write('04-projects/Orca.md', '---\ntype: project\n---\n# Orca\n\nThe whale tracker. #orca\n');
+    t.write('00-inbox/orca idea.md', 'A note about #orca sightings.\n');
+    await t.g.update(['04-projects/Orca.md', '00-inbox/orca idea.md']);
+    const r = t.g.entity('Orca');
+    expect(r.ambiguous).toBeUndefined();
+    expect(r.node?.id ?? r.entity?.id ?? JSON.stringify(r)).toContain('project:');
+    t.write('02-people/Orca.md', '---\ntype: person\n---\n# Orca\n\nA person with the same name.\n');
+    await t.g.update(['02-people/Orca.md']);
+    expect(t.g.entity('Orca').ambiguous?.length).toBeGreaterThan(1);
+  });
+});

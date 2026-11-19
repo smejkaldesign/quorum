@@ -45,6 +45,10 @@ export function createQuery(store) {
     }
     const hits = store.find(r, { kind });
     if (!hits.length) return { notFound: r };
+    // a tag or folder named like a person, project or note gives way to it: #quorum next to the Quorum project is not a
+    // second meaning
+    const named = hits.length > 1 ? hits.filter((x) => x.kind !== 'tag' && x.kind !== 'folder') : hits;
+    if (named.length === 1) return { node: named[0] };
     if (hits.length > 1) return { ambiguous: hits.map(brief) };
     return { node: hits[0] };
   }

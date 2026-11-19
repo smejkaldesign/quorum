@@ -61,7 +61,10 @@ export function createHybridSearch({ db, embedder = null, graph = () => null, ve
   async function vecList(text, pool) {
     const m = matrix();
     if (!m || !m.ids.length) return [];
-    const [qv] = await embedder.embed([`${embedder.query ?? ''}${text}`]);
+    // the embedder can be down (model missing, engine paused); keyword and graph still answer without it
+    let qv;
+    try { [qv] = await embedder.embed([`${embedder.query ?? ''}${text}`]); } catch { return []; }
+    if (!qv) return [];
     const { data, dim, ids } = m;
     const scores = new Float32Array(ids.length);
     for (let i = 0; i < ids.length; i++) { let s = 0; const o = i * dim; for (let j = 0; j < dim; j++) s += data[o + j] * qv[j]; scores[i] = s; }

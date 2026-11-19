@@ -256,6 +256,21 @@ describe('the MCP bridge on a real search', () => {
 });
 
 describe('createMemorySearch', () => {
+  it('still answers from keyword and graph when the embedder fails on the query', async () => {
+    const v = vindexOf();
+    const g = createMemoryGraph({ dataDir: dir, vault, vindex: v });
+    opened.push(g);
+    await g.build();
+    const good = hashEmbedder();
+    let down = false;
+    const flaky = { ...good, embed: async (texts) => { if (down) throw new Error('The memory engine stopped'); return good.embed(texts); } };
+    const s = createMemorySearch({ dataDir: dir, vault: () => vault, vindex: () => v, embedder: flaky, graph: () => g.store });
+    await s.changed([]);
+    down = true;
+    const r = await s.search({ q: 'Project Heron' });
+    expect(r.results.length).toBeGreaterThan(0);
+    expect(r.results[0].rel).toContain('Heron');
+  });
   it('builds in full from an empty first change, the way the graph ready event starts it', async () => {
     const v = vindexOf();
     const g = createMemoryGraph({ dataDir: dir, vault, vindex: v });

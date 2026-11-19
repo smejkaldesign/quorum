@@ -14,8 +14,27 @@ export const MODELS_DIR = path.join(here, '..', 'models').replace(`${path.sep}ap
 export const MANIFEST = JSON.parse(readFileSync(path.join(here, 'models.json'), 'utf8'));
 // tokens per text; claims are one sentence, and a cap keeps one long quote from costing a long run
 export const MAX_TOKENS = 128;
-// search chunks (search/chunk.js) run up to 400 estimated tokens; bge-small reads at most 512
-export const CHUNK_MAX_TOKENS = 512;
+// search chunks (search/chunk.js) are embedded up to 384 tokens. bge-small reads 512, but onnxruntime crashed the
+// process (SIGTRAP) after a few consecutive batches of 512-token sequences on a real vault; 384 ran every chunk
+export const CHUNK_MAX_TOKENS = 384;
+// the most padded tokens one embed run takes; a call splits into runs below this, so a batch of long chunks never
+// reaches the sizes that crashed the runtime
+export const MAX_RUN_TOKENS = 4096;
+
+// groups encodings, in order, so each group's padded size (count times longest) stays at or under max
+export function runGroups(encs, max = MAX_RUN_TOKENS) {
+  const groups = [];
+  let cur = [];
+  let width = 0;
+  for (const e of encs) {
+    const w = Math.max(width, e.ids.length);
+    if (cur.length && (cur.length + 1) * w > max) { groups.push(cur); cur = []; width = 0; }
+    cur.push(e);
+    width = Math.max(width, e.ids.length);
+  }
+  if (cur.length) groups.push(cur);
+  return groups;
+}
 const ONNX = { embed: 'onnx/model_int8.onnx', nli: 'onnx/model_qint8_arm64.onnx' };
 
 // the files a model needs, or the first one missing
@@ -79,16 +98,20 @@ export async function loadModels({ dir = MODELS_DIR, threads = 2 } = {}) {
     // maxTokens: MAX_TOKENS for claims, up to CHUNK_MAX_TOKENS for search chunks
     async embed(texts, { maxTokens = MAX_TOKENS } = {}) {
       const max = Math.min(CHUNK_MAX_TOKENS, Math.max(8, maxTokens));
-      const out = await embedS.run(batch(ort, texts.map((t) => capped(embedT.encode(String(t)), max)), true));
-      const h = out.last_hidden_state;
-      const [n, , dim] = h.dims;
-      const width = h.dims[1];
-      // bge pools with the first token's state, then normalizes
-      return Array.from({ length: n }, (_, i) => {
-        const v = Float32Array.from(h.data.subarray(i * width * dim, i * width * dim + dim));
-        const norm = Math.hypot(...v) || 1;
-        return v.map((x) => x / norm);
-      });
+      const vecs = [];
+      for (const group of runGroups(texts.map((t) => capped(embedT.encode(String(t)), max)))) {
+        const out = await embedS.run(batch(ort, group, true));
+        const h = out.last_hidden_state;
+        const [n, , dim] = h.dims;
+        const width = h.dims[1];
+        // bge pools with the first token's state, then normalizes
+        for (let i = 0; i < n; i++) {
+          const v = Float32Array.from(h.data.subarray(i * width * dim, i * width * dim + dim));
+          const norm = Math.hypot(...v) || 1;
+          vecs.push(v.map((x) => x / norm));
+        }
+      }
+      return vecs;
     },
     async nli(pairs) {
       const encs = pairs.map(([a, b]) => { const e = nliT.encode(String(a), { text_pair: String(b) }); return e.ids.length <= MAX_TOKENS * 2 ? e : { ids: [...e.ids.slice(0, MAX_TOKENS * 2 - 1), e.ids[e.ids.length - 1]] }; });
