@@ -26,7 +26,7 @@ export const shapeErrorGroup = (g: Record<string, unknown>): ErrorGroup => ({
   events: num(g.events), installs: num(g.installs), repeats: num(g.repeats), versions: strs(g.versions), editions: strs(g.editions),
   latestStack: str(g.latest_stack), latestComponentStack: str(g.latest_component_stack), status: status(g.status),
   fixedIn: str(g.fixed_in) || null, note: str(g.note) || null, updatedAt: str(g.updated_at),
-  purged: g.message === null && g.latest_stack === null,
+  purged: g.message === null,
 });
 export const shapeErrorEvent = (e: Record<string, unknown>): ErrorEvent => ({
   id: num(e.id), workspaceId: str(e.workspace_id) || null, edition: str(e.edition), version: str(e.version), os: str(e.os), view: str(e.view),
