@@ -14,7 +14,7 @@ import { createVaultIndex } from './vindex.js';
 import { applyUndo, sha, undoRecord } from './fixUndo.js';
 import { changedSince, createFixJournal, createNoteHashes, fixCheck, hashNotes, noteMemo, recoveryReason, rollback } from './fixJournal.js';
 import { createGateStore, gatePasses, gateTriggers, verdictOf } from './gateRun.js';
-import { addAlias, linkSources, retargetLinks, rewriteLinks, unlinkTarget, writeAtomic } from './relink.js';
+import { addAlias, linkSources, relinkMoved, retargetLinks, rewriteLinks, unlinkTarget, writeAtomic } from './relink.js';
 import store from './store/index.js';
 import { registerSources } from './sources/index.js';
 import { DATA_DIR, EDITION, ENV, loadEE, isDevelopment } from './edition.js';
@@ -2622,7 +2622,7 @@ function openIndex() {
     vault: b.vault, isExcludedPath: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isDeniedText: isConfidentialText, isExcludedText: suggester.isExcluded, redact: suggester.redactLines,
     onChange: (rels) => { toUI('vault-changed', rels); if (!built) { built = true; setTimeout(sweepTick, 5000); const kept = savesWaiting.take(b.vault); if (kept.length) sweepOnSave(kept); } else sweepOnSave(rels); }, renamed: () => settings.clusterNames?.[b.vault] ?? {},
     forget: (keys) => { const mine = settings.clusterNames?.[b.vault]; if (!mine) return; for (const k of keys) delete mine[k]; store.settings.save(); }, log: (...a) => log('index', ...a),
-    onPaths: treePaths,
+    onPaths: treePaths, onMoves: relinkMoves,
   });
   dropTree();
   vindex.start();
@@ -4324,6 +4324,14 @@ function relocate(rel, doMove) {
   vindex.sync();
   log('relocated', rel, '->', next, `rewrote ${done.links} links in ${done.files} notes`);
   return { rel: next, ...done };
+}
+// a note moved outside the app (Finder, git, another editor), as the index's watcher paired it: the file is already at
+// its new path, so this is relocate's rewrite without the move. The index still holds the old paths when this runs
+function relinkMoves(moves) {
+  if (!vindex || !moves.length) return;
+  const done = relinkMoved({ vault: brain().vault, index: vindex, moves });
+  for (const m of moves) log('moved outside the app', m.from, '->', m.to);
+  if (done.links) log(`rewrote ${done.links} links in ${done.files} notes after an outside move`);
 }
 ipcMain.handle('vault-rename', (_e, rel, name) => relocate(String(rel), () => renameItem(brain().vault, String(rel), String(name))));
 ipcMain.handle('vault-move', (_e, rel, folder) => relocate(String(rel), () => moveItem(brain().vault, String(rel), String(folder))));
