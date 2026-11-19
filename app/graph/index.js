@@ -49,7 +49,8 @@ export function createMemoryGraph({ dataDir, vault, vindex, log = () => {}, isEx
       else store.addAliases(n.id, [n.name, ...(n.aliases ?? [])]);
     }
     const old = new Map();
-    for (const e of store.edgesBySource(rel)) if (e.superseded_by == null) old.set(edgeKey(e), e);
+    // an edge another writer added (props.by: the keeper, the contradiction checker) is not the note's to retract
+    for (const e of store.edgesBySource(rel)) if (e.superseded_by == null && !e.props?.by) old.set(edgeKey(e), e);
     const added = [];
     for (const e of ex.edges) {
       const k = edgeKey(e);
@@ -163,6 +164,7 @@ export function createMemoryGraph({ dataDir, vault, vindex, log = () => {}, isEx
       state.phase = 'ready';
       state.ms = now() - t0;
       state.builtAt = now();
+      try { store.meta('built_at', state.builtAt); } catch { /* closed */ }
       log('memory graph', `built ${rels.length} notes in ${state.ms}ms`);
       emit('ready', status());
       if (pending.size) { const p = [...pending]; pending.clear(); update(p); }

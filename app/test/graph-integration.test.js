@@ -6,6 +6,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createVaultIndex } from '../vindex.js';
 import { createMemoryGraph } from '../graph/index.js';
+import { openStore } from '../graph/store.js';
 import { writeGraphVault } from './fixtures/graphVault.js';
 
 const SECRET = /zorblax/i;
@@ -128,6 +129,23 @@ describe('memory graph on a generated vault', () => {
     expect(seen).toEqual([]);
     expect(again.status().nodes).toBe(before.nodes);
     expect(again.status().edges).toBe(before.edges);
+  });
+
+  it('keeps edges other writers added through edits, and opens read-only for another process', async () => {
+    const { g, edit, vault, root } = await setup();
+    const rel = '02-people/ana-ruiz.md';
+    const kept = g.store.addEdge({ src: 'person:ana-ruiz', dst: 'project:project-b', kind: 'contradicts', provenance: 'rule', source_rel: rel, props: { by: 'contradictions' } });
+    edit(rel, (t) => `${t}\nmore text\n`);
+    expect(g.store.edge(kept)).not.toBe(null);
+    expect(g.store.nodes({ kind: 'person', backed: true })).toHaveLength(20);
+    expect(g.store.nodes({ kind: 'person', backed: false })).toEqual([]);
+    expect(Number(g.store.meta('built_at'))).toBeGreaterThan(0);
+    const ro = openStore({ dir: path.join(root, 'data', 'memory'), vault, readOnly: true });
+    try {
+      expect(ro.node('person:ana-ruiz').rel).toBe(rel);
+      expect(() => ro.addEdge({ src: 'a', dst: 'b', kind: 'mentions', provenance: 'rule' })).toThrow();
+    } finally { ro.close(); }
+    expect(() => openStore({ dir: path.join(root, 'nothing'), vault, readOnly: true })).toThrow();
   });
 
   it('never stores withheld text', async () => {
