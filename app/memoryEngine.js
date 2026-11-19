@@ -139,7 +139,14 @@ export function createMemoryEngine({ dataDir, ask = async () => { throw new Erro
     return res;
   }
 
-  const methods = { sync, sweep, refresh, estimate, tick, agent: () => agentView(), findings: ({ vault: v }) => sweeps.state(v) };
+  // vectors for search chunks (search/embed.js), as plain arrays so they cross the process boundary as they are
+  async function embed({ texts = [], maxTokens } = {}) {
+    if (!decider) throw new Error('The local embedding model is off');
+    const out = await decider.embed(texts.map(String), { maxTokens });
+    return out.map((v) => Array.from(v));
+  }
+
+  const methods = { sync, sweep, refresh, estimate, tick, embed, agent: () => agentView(), findings: ({ vault: v }) => sweeps.state(v) };
   async function handle(method, payload) {
     const fn = methods[method];
     if (!fn) throw new Error(`Unknown memory engine call ${method}`);

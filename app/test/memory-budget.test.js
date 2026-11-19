@@ -174,3 +174,17 @@ describe('runMemoryTool', () => {
     expect(withhold({ a: [{ rel: 'private/x.md' }, { rel: 'ok.md' }] }, filters)).toEqual({ a: [{ rel: 'ok.md' }] });
   });
 });
+
+describe('fromActionHandlers', () => {
+  it('passes every argument a tool builds to the registered handler, with no IPC event', async () => {
+    const seen = [];
+    const handlers = new Map([['memory-graph-path', async (e, ...a) => { seen.push([e, ...a]); return { path: [], edges: [] }; }]]);
+    const { fromActionHandlers } = await import('../cli/memoryTools.mjs');
+    await runMemoryTool('graph_path', { a: 'Ada', b: 'Atlas', undirected: true }, { handler: fromActionHandlers(handlers), withheld: () => false, isExcluded: () => false, redact: (t) => t }).catch(() => null);
+    expect(seen[0]).toEqual([null, 'Ada', 'Atlas', { undirected: true }]);
+  });
+  it('answers null for a handler that is not registered', async () => {
+    const { fromActionHandlers } = await import('../cli/memoryTools.mjs');
+    expect(fromActionHandlers(new Map())('memory-search')).toBe(null);
+  });
+});

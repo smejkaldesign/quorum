@@ -71,6 +71,10 @@ export function withhold(value, filters = {}) {
 // that name, or null while the index is not built; it takes the arguments the tool's call() makes of the tool's args
 // (one args object when the tool has no call()). memory_status asks both the graph and the
 // search index and answers with what is ready
+// the app side of the bridge: a tool's handler name to a function that calls the registered IPC handler with every
+// argument the tool's call() builds (graph_path passes from, to and options), with no IPC event
+export const fromActionHandlers = (handlers) => (h) => { const fn = handlers.get(h); return fn ? (...a) => fn(null, ...a) : null; };
+
 export async function runMemoryTool(name, args = {}, { handler, ...filters }) {
   const tool = memoryTool(String(name ?? ''));
   if (!tool) throw new Error(`Unknown memory tool ${name}`);
