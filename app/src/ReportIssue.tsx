@@ -2,7 +2,7 @@ import { Component, useEffect, useRef, useState, type ErrorInfo, type ReactNode 
 import { Modal, ModalActions, Toggle } from './controls';
 import { IconClose } from './icons';
 import type { IssueReportPrep } from './quorum';
-import { DESCRIPTION_MAX, MAX_SHOTS, MAX_SHOT_BYTES, TITLE_MAX, addShots, dataUrlBytes, initialDraft, onOpenReport, reportPreview, type ReportRequest } from './issueReport';
+import { DESCRIPTION_MAX, MAX_SHOTS, MAX_SHOT_BYTES, MAX_TOTAL_SHOT_BYTES, TITLE_MAX, addShots, dataUrlBytes, initialDraft, onOpenReport, reportPreview, shotsTotal, type ReportRequest } from './issueReport';
 
 // The Report issue sheet. openReport() (issueReport.ts) opens it from the avatar menu, the crash page or any error that
 // stays on screen. Two steps: Write (title, description, screenshots by drag and drop, paste or file pick) and Review,
@@ -41,7 +41,7 @@ class Quiet extends Component<{ children: ReactNode }, { failed: boolean }> {
   render() { return this.state.failed ? null : this.props.children; }
 }
 
-// an image file as a PNG or JPEG data URL under the relay's 4 MB limit: wider than 2000 px is scaled down, and a PNG
+// an image file as a PNG or JPEG data URL under the relay's 2 MB limit: wider than 2000 px is scaled down, and a PNG
 // still over the limit becomes a JPEG. Other formats the page can draw (GIF, WebP, HEIC on macOS) are converted the same way
 async function imageData(file: Blob): Promise<string | null> {
   const bitmap = await createImageBitmap(file).catch(() => null);
@@ -67,7 +67,10 @@ function ReportSheet({ req, prep, onClose }: { req: ReportRequest; prep: IssueRe
   const [withPaths, setWithPaths] = useState(false);
   // indexes of the log lines the person removed; the same index in either masked or unmasked list
   const [dropped, setDropped] = useState<Set<number>>(new Set());
-  const [attach, setAttach] = useState(!!prep.account);
+  // off until the person turns it on: a report is anonymous by default
+  const [attach, setAttach] = useState(false);
+  // the time the body carries, set when the Review step opens so the preview shows the one that is sent
+  const [at, setAt] = useState(() => new Date().toISOString());
   const [over, setOver] = useState(false);
   const [note, setNote] = useState('');
   const [sending, setSending] = useState(false);
@@ -81,11 +84,12 @@ function ReportSheet({ req, prep, onClose }: { req: ReportRequest; prep: IssueRe
     for (const f of list) { const u = await imageData(f); if (u) urls.push(u); else unreadable += 1; }
     const r = addShots(shots, urls);
     setShots(r.shots);
-    setNote(r.dropped ? `A report holds ${MAX_SHOTS} screenshots; ${r.dropped} did not fit.` : unreadable ? `${unreadable === 1 ? 'One image' : `${unreadable} images`} could not be read or stayed over 4 MB.` : '');
+    setNote(r.dropped ? `A report holds ${MAX_SHOTS} screenshots; ${r.dropped} did not fit.` : unreadable ? `${unreadable === 1 ? 'One image' : `${unreadable} images`} could not be read or stayed over 2 MB.` : '');
   };
   const lines = (withPaths ? prep.linesWithPaths : prep.lines).filter((_l, i) => !dropped.has(i));
-  const draft = { view: prep.view, title: title.slice(0, TITLE_MAX), description: description.slice(0, DESCRIPTION_MAX), logLines: lines, runId: prep.runId, screenshots: shots, attachAccount: attach && !!prep.account };
+  const draft = { at, view: prep.view, title: title.slice(0, TITLE_MAX), description: description.slice(0, DESCRIPTION_MAX), logLines: lines, runId: prep.runId, screenshots: shots, attachAccount: attach && !!prep.account };
   const empty = !title.trim() && !description.trim();
+  const tooBig = shotsTotal(shots) > MAX_TOTAL_SHOT_BYTES;
   const send = async () => {
     setSending(true); setError('');
     const r = await window.quorum.reportIssueSend(draft).catch(() => ({ ok: false, error: 'The report could not be sent. Try again.' }));
@@ -128,10 +132,11 @@ function ReportSheet({ req, prep, onClose }: { req: ReportRequest; prep: IssueRe
         </>
       )}
       {prep.account && <div className="report-switch"><Toggle on={attach} onChange={setAttach} label="Attach my account" /><span>Attach my account ({prep.account.email}) so the team can reply</span></div>}
+      {tooBig && <p className="set-error" role="alert">The screenshots add up to more than 5 MB. Remove one to send.</p>}
       {error && <p className="set-error" role="alert">{error}</p>}
       <ModalActions start={<button className="link-btn" disabled={sending} onClick={() => setStep('write')}>Back</button>}>
         <button className="pill" disabled={sending} onClick={onClose}>Cancel</button>
-        <button className="pill primary" disabled={sending || empty} onClick={send}>{sending ? 'Sending…' : 'Send report'}</button>
+        <button className="pill primary" disabled={sending || empty || tooBig} onClick={send}>{sending ? 'Sending…' : 'Send report'}</button>
       </ModalActions>
     </Modal>
   );
@@ -159,7 +164,7 @@ function ReportSheet({ req, prep, onClose }: { req: ReportRequest; prep: IssueRe
       </div>
       <ModalActions>
         <button className="pill" onClick={onClose}>Cancel</button>
-        <button className="pill primary" disabled={empty} onClick={() => setStep('review')}>Review</button>
+        <button className="pill primary" disabled={empty} onClick={() => { setAt(new Date().toISOString()); setStep('review'); }}>Review</button>
       </ModalActions>
     </Modal>
   );

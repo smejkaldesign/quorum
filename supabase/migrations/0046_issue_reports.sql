@@ -10,11 +10,12 @@
 --
 -- Retention (the Privacy policy): every report is deleted within 90 days. Storage objects cannot be deleted from SQL,
 -- so issue_reports_expired lists the expired rows and their screenshots, the relay deletes the objects through the
--- Storage API, and issue_reports_delete removes the rows. The relay runs that sweep hourly. platform_audit names a report
--- by id only, so no report text outlives the purge there.
+-- Storage API, and issue_reports_delete removes the rows. The same sweep deletes screenshots older than a day whose
+-- folder has no row (a relay that stopped between upload and row), using issue_reports_missing. The relay runs it hourly.
+-- platform_audit names a report by id only, so no report text outlives the purge there.
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('issue-reports', 'issue-reports', false, 4194304, array['image/png', 'image/jpeg'])
+values ('issue-reports', 'issue-reports', false, 2097152, array['image/png', 'image/jpeg'])
 on conflict (id) do nothing;
 -- no storage.objects policy for this bucket: only the service role (the relay) reads or writes it, and the admin app
 -- gets short-lived signed links from the relay after the owner check
@@ -86,6 +87,14 @@ begin
 end $$;
 revoke all on function public.issue_reports_delete(uuid[]) from public, anon, authenticated;
 grant execute on function public.issue_reports_delete(uuid[]) to service_role;
+
+-- the ids from a list of bucket folders that have no row, for the orphan sweep
+create or replace function public.issue_reports_missing(ids uuid[]) returns setof uuid
+language sql stable security definer set search_path = '' as $$
+  select x.id from unnest(ids) x (id) where not exists (select 1 from public.issue_reports r where r.id = x.id);
+$$;
+revoke all on function public.issue_reports_missing(uuid[]) from public, anon, authenticated;
+grant execute on function public.issue_reports_missing(uuid[]) to service_role;
 
 -- the owner's list: one status or all (null), newest first, a page at a time. The list leaves out the log lines.
 create or replace function public.admin_issue_reports(status_filter text default null, page_size integer default 50, page_offset integer default 0)

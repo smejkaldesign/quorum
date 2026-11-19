@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LIMITS, createIssueReports, createLogTail, encodeCapture, maskLine, maskNotes, pickLines, reportBody } from '../issueReports.js';
+import { LIMITS, createIssueReports, createLogTail, encodeCapture, maskLine, maskNotes, maskQuoted, nameMasker, pickLines, reportBody } from '../issueReports.js';
 
 const HOME = '/Users/sam';
 const APP = '/Applications/Quorum.app/Contents/Resources/app.asar';
@@ -29,6 +29,24 @@ describe('masking', () => {
     expect(out).not.toContain('sam@example.com');
     expect(out).not.toContain(SK);
     expect(out).toContain('<email>');
+  });
+  it('masks the vault names a log line carries without brackets or .md (the lines from the SCAN report)', () => {
+    const names = nameMasker(['Jane Doe Offer Letter', 'Acme Q3 Layoffs', 'Jane', 'ab']);
+    const opts = { home: HOME, appRoot: APP, names };
+    expect(maskLine('memory health added alias Jane Doe Offer Letter to People/Jane.md', opts)).toBe('memory health added alias <note> to <note>.md');
+    expect(maskLine('memory health fixed link Acme Q3 Layoffs -> Projects/Acme.md', opts)).toBe('memory health fixed link <note> -> <note>.md');
+    expect(maskLine('renderer 1 opened acme q3 layoffs', opts)).toBe('renderer 1 opened <note>');
+    // a name inside a longer word stays, and names under three characters are not used
+    expect(maskLine('Janet tab ab', opts)).toBe('Janet tab ab');
+  });
+  it('masks quoted values and JSON string values whatever their length, and keeps keys and single code words', () => {
+    expect(maskLine('{"title":"Call with Jane about the merger"}')).toBe('{"title":"<text>"}');
+    expect(maskQuoted('opened “Board prep” and \'Sam notes\' (reading \'map\')')).toBe('opened “<text>” and \'<text>\' (reading \'map\')');
+    expect(maskQuoted('empty ""')).toBe('empty ""');
+  });
+  it('shortens long quoted text the same way with the include switch on', () => {
+    const long = `"${'word '.repeat(12)}"`;
+    expect(maskLine(`saw ${long}`, { keepPaths: true })).toBe(`saw "${'word '.repeat(12).slice(0, 24)}…"`);
   });
   it('keeps paths and note names when asked and still masks emails and tokens', () => {
     const out = maskLine(`moved Projects/Plan.md for sam@example.com with ${GH}`, { keepPaths: true });
@@ -84,6 +102,13 @@ describe('reportBody', () => {
     expect(b.screenshots).toEqual([{ data: PNG }]);
     expect(b.at).toBe('2026-11-19T12:00:00.000Z');
   });
+  it('sends the time the Review step showed when it is from the last hour, otherwise now', () => {
+    const body = (a) => reportBody({ title: 'T', at: a }, { install: INSTALL, edition: 'local', version: '', os: '', now: at }).at;
+    expect(body('2026-11-19T11:30:00.000Z')).toBe('2026-11-19T11:30:00.000Z');
+    expect(body('2026-11-19T10:00:00.000Z')).toBe('2026-11-19T12:00:00.000Z');
+    expect(body('2026-11-19T13:00:00.000Z')).toBe('2026-11-19T12:00:00.000Z');
+    expect(body('soon')).toBe('2026-11-19T12:00:00.000Z');
+  });
   it('caps screenshots, lines and text at the relay limits', () => {
     const b = reportBody({ title: 't'.repeat(500), logLines: Array.from({ length: 90 }, (_, i) => `${i}`), screenshots: Array.from({ length: 8 }, (_, i) => `${PNG}${'A'.repeat(i)}`), runId: '../x' }, { install: INSTALL, edition: 'local', version: '', os: '', now: at });
     expect(b.title.length).toBe(LIMITS.title);
@@ -96,9 +121,9 @@ describe('reportBody', () => {
 describe('createIssueReports', () => {
   const setup = ({ session = async () => null, answer = { status: 202, ok: true } } = {}) => {
     const tail = createLogTail(50, at);
-    tail.push([`opened ${HOME}/vault/Plan.md`]); tail.push(['fix run_7 failed for sam@example.com']);
+    tail.push([`opened ${HOME}/vault/Plan.md`]); tail.push(['fix run_7 failed for sam@example.com']); tail.push(['added alias Board Prep']);
     const sent = [];
-    const reports = createIssueReports({ installId: () => INSTALL, version: '0.4.3', edition: 'cloud', os: 'macOS 26.4 arm64', home: HOME, appRoot: APP, tail, session, now: at, send: async (body, headers) => { sent.push({ body: JSON.parse(body), headers }); return typeof answer === 'function' ? answer() : answer; } });
+    const reports = createIssueReports({ installId: () => INSTALL, version: '0.4.3', edition: 'cloud', os: 'macOS 26.4 arm64', home: HOME, appRoot: APP, tail, session, now: at, names: () => ['Board Prep'], send: async (body, headers) => { sent.push({ body: JSON.parse(body), headers }); return typeof answer === 'function' ? answer() : answer; } });
     return { reports, sent };
   };
   it('prepares masked lines, an unmasked copy, the masked message and no capture unless asked', async () => {
@@ -114,6 +139,9 @@ describe('createIssueReports', () => {
     expect(q.screenshot).toBe(PNG);
     expect(q.lines.join('\n')).not.toContain('Plan');
     expect(q.linesWithPaths.join('\n')).toContain('Plan.md');
+    expect(q.lines).toContain('12:00:00 added alias <note>');
+    expect(q.linesWithPaths).toContain('12:00:00 added alias Board Prep');
+    expect(q.install).toBe(INSTALL);
   });
   it('offers the account only when signed in, and sends the token only when the person keeps it attached', async () => {
     const { reports, sent } = setup({ session: async () => ({ token: 'tok', email: 'sam@example.com' }) });

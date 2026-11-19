@@ -42,14 +42,20 @@ export function validateReportForm(input: { status: ReportStatus; note: string }
   return { draft: { status: input.status, note: note || null } };
 }
 
-// emails, absolute paths and long tokens masked, for text that goes to the public repository
+// emails, absolute paths, long tokens and note names masked, for text that goes to the public repository. Note names are
+// masked by shape the way the app masks them (issueReports.js maskNotes): [[wiki links]], quoted names ending in .md,
+// vault paths ending in .md and bare .md file names
 export function clean(text: string): string {
   return String(text ?? '')
+    .replace(/\[\[[^\]\n]+\]\]/g, '[[<note>]]')
+    .replace(/(["'`])[^"'`\n]*?\.md\1/g, '$1<note>.md$1')
     .replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, '<email>')
     .replace(/file:\/\/\/[^\s)'"]+/g, '<path>')
     .replace(/(?<![\w.])(?:~|\/(?:Users|Volumes|private|var|tmp|home))\/[^\s)'"]+/g, '<path>')
     .replace(/\b(?:sk|pk|rk|ghp|gho|xox[abp]|eyJ)[\w-]{12,}/g, '<token>')
-    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '<token>');
+    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '<token>')
+    .replace(/(?:[^\s/'"`()[\]<>]+\/)+[^/'"`()[\]<>\n]*?\.md\b/g, '<note>.md')
+    .replace(/[^\s/'"`()[\]<>]+\.md\b/g, '<note>.md');
 }
 
 export const reportIssueTitle = (r: Pick<ReportDetail, 'title' | 'view'>) => {

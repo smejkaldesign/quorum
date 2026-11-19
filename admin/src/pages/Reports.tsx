@@ -93,7 +93,7 @@ function Detail({ id, onChange }: { id: string; onChange: (d: ReportDetail) => v
       {d.note && <p className="muted">Note: {d.note}</p>}
       <div className="actions">
         <a className="pill" href={reportIssueUrl(d)} target="_blank" rel="noreferrer">Create GitHub issue</a>
-        <span className="muted small">Opens a prefilled issue with a cleaned description. Screenshots are not included; attach them by hand.</span>
+        <span className="muted small">Opens a prefilled issue on the public repository with a cleaned description. The sender was told the report stays with the Quorum team, so read the text before you submit it. Screenshots are not included; attach them by hand.</span>
       </div>
       <StatusForm d={d} onSaved={(saved) => { setD(saved); onChange(saved); }} />
       <h4>Description</h4>

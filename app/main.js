@@ -3150,7 +3150,7 @@ async function decideLink(key, verdict, step = async () => {}, keep = () => {}, 
     await step('Updating the vault index');
     vindex.sync();
     await recheck({ toRel: c.rel });
-    log('memory health', 'added alias', issue.target, 'to', c.rel);
+    log('memory health', 'added alias to', c.rel);
     return `Added “${issue.target}” as an alias of ${c.name ?? c.title}, so ${issue.links} ${issue.links === 1 ? 'link now works' : 'links now work'}`;
   }
   if (issue.action === 'relink' && c) {
@@ -3163,7 +3163,7 @@ async function decideLink(key, verdict, step = async () => {}, keep = () => {}, 
     await step('Updating the vault index');
     vindex.sync();
     await recheck({ toRel: c.rel });
-    log('memory health', 'fixed link', entry.target, '->', c.rel);
+    log('memory health', 'fixed link to', c.rel);
     return `Fixed ${done.links} ${done.links === 1 ? 'link' : 'links'} in ${done.files} ${done.files === 1 ? 'note' : 'notes'}`;
   }
   if (issue.action === 'unlink') {
@@ -4583,7 +4583,7 @@ ipcMain.handle('vault-add-alias', (_e, rel, alias) => {
   if (!abs || !name || /[\n\r[\]]/.test(name)) throw new Error("Can't add that alias");
   addAlias(abs, name);
   vindex.sync();
-  log('added alias', name, 'to', rel);
+  log('added alias to', rel);
   return true;
 });
 ipcMain.handle('vault-backlinks', (_e, rel) => vindex?.backlinks(String(rel)) ?? []);
@@ -4947,6 +4947,19 @@ ipcMain.handle('report-error', (_e, r) => errorReports.report(r));
 const issueReports = createIssueReports({
   installId: () => errorReports.installId(), version: app.getVersion(), edition: EDITION, os: `macOS ${process.getSystemVersion?.() ?? release()} ${process.arch}`, appRoot: here, home: homedir(),
   tail: logTail, log,
+  // the vault's own names, so log lines that name a note without brackets or .md are masked too
+  names: () => {
+    if (!vindex) return [];
+    const out = new Set();
+    for (const rel of vindex.rels()) {
+      out.add(path.basename(rel, '.md'));
+      const n = vindex.note(rel);
+      for (const a of n?.aliases ?? []) out.add(String(a));
+      if (typeof n?.props?.name === 'string') out.add(n.props.name);
+      for (const t of vindex.unresolved(rel)) { const name = String(t).replace(/\.md$/i, ''); out.add(name); out.add(path.basename(name)); }
+    }
+    return [...out];
+  },
   session: async () => {
     const c = EDITION === 'cloud' ? account.client?.() : null;
     if (!c) return null;

@@ -54,8 +54,8 @@ export type GuardrailDenial = { id: string; t: string; path: string; tool: strin
 export type GuardrailsState = { rules: GuardrailRule[]; skipped: { name: string; reason: string }[]; scanned: { notes: number; at: number | null; truncated: boolean }; denials: GuardrailDenial[]; summary: { on: number; toReview: number; denyDirs: number; terms: number } };
 // in-app updates (app/updater.js): off means this build has no feed (a development copy, or a Cloud build without one)
 // Report issue (issueReports.js): the masked diagnostics prepare() returns, and the draft the sheet sends
-export type IssueReportPrep = { version: string; edition: 'local' | 'cloud'; os: string; view: string; runId: string | null; message: string; lines: string[]; linesWithPaths: string[]; screenshot: string | null; account: { email: string } | null };
-export type IssueReportDraft = { view: string; title: string; description: string; logLines: string[]; runId: string | null; screenshots: string[]; attachAccount: boolean };
+export type IssueReportPrep = { install: string; version: string; edition: 'local' | 'cloud'; os: string; view: string; runId: string | null; message: string; lines: string[]; linesWithPaths: string[]; screenshot: string | null; account: { email: string } | null };
+export type IssueReportDraft = { at: string; view: string; title: string; description: string; logLines: string[]; runId: string | null; screenshots: string[]; attachAccount: boolean };
 
 export type UpdateState = { status: 'off' | 'idle' | 'checking' | 'downloading' | 'ready' | 'failed'; current: string; version: string | null; percent: number; notes: string | null; checkedAt: number | null; error: string | null };
 // a personal OAuth connector (sources/accounts.js); configured is false when this build has no client id for it

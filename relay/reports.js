@@ -2,10 +2,13 @@
 // that goes out (title, description, diagnostics, the log lines they kept, the screenshots they kept) and posts it here
 // with no session; a signed-in Cloud app may add its bearer token when the person leaves their account attached, and
 // then the row records the caller's account and workspace. The relay checks the shape again, clamps every string,
-// drops unknown fields, accepts at most 5 screenshots of at most 4 MB each and only PNG or JPEG by their first bytes,
+// drops unknown fields, accepts at most 5 screenshots of at most 2 MB each and only PNG or JPEG by their first bytes,
 // and replaces the install id with the same HMAC error reports use (ERROR_REPORT_SALT). Screenshots go to the private
-// issue-reports bucket; nothing goes to GitHub. Without the salt nothing is stored and the app still gets 202. Rate
-// limited per install (10 an hour) and per address (30 an hour). Reports are deleted within 90 days by createReportPurge.
+// issue-reports bucket; nothing goes to GitHub. Without the salt nothing is stored and the app still gets 202. The body
+// is at most 8 MB, refused on its Content-Length before it is read, and at most 2 bodies are read at once (503 with
+// Retry-After past that), so reports cannot crowd out audio and sync in this process. Rate limited per install (10 an
+// hour), per address (30 an hour) and in total (100 stored an hour). Reports are deleted within 90 days, and screenshots
+// a crash left without a row within a day, by createReportPurge.
 // The admin Reports page reads screenshots through POST /v1/platform/report-screenshots, which signs links for 5 minutes
 // after the database confirms the owner's passkey session.
 import { randomUUID } from 'node:crypto';
@@ -17,9 +20,13 @@ import { hashInstall } from './errors.js';
 
 export const BUCKET = 'issue-reports';
 export const MAX_SHOTS = 5;
-export const MAX_SHOT_BYTES = 4 * 1024 * 1024;
-// five screenshots at the limit as base64, plus the text
-export const MAX_REPORT_BODY = Math.ceil((MAX_SHOTS * MAX_SHOT_BYTES * 4) / 3) + 128 * 1024;
+export const MAX_SHOT_BYTES = 2 * 1024 * 1024;
+// the whole JSON body, screenshots as base64 included; the app keeps the screenshots together under 5 MB
+export const MAX_REPORT_BODY = 8 * 1024 * 1024;
+// report bodies read at the same time; one more answers 503
+export const MAX_IN_FLIGHT = 2;
+// reports stored an hour across every install and address
+export const GLOBAL_PER_HOUR = 100;
 export const SIGNED_URL_SECONDS = 300;
 const UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -50,7 +57,7 @@ function cleanShot(s, i) {
   if (!/^[A-Za-z0-9+/=\s]+$/.test(b64)) throw bad(`Screenshot ${i + 1} is not base64.`);
   const bytes = Buffer.from(b64, 'base64');
   if (!bytes.length) throw bad(`Screenshot ${i + 1} is empty.`);
-  if (bytes.length > MAX_SHOT_BYTES) throw new RelayError('bad_request', `Screenshot ${i + 1} is over 4 MB.`, 413);
+  if (bytes.length > MAX_SHOT_BYTES) throw new RelayError('bad_request', `Screenshot ${i + 1} is over 2 MB.`, 413);
   const type = imageType(bytes);
   if (!type) throw bad(`Screenshot ${i + 1} is not a PNG or JPEG image.`);
   return { bytes, ...type };
@@ -118,6 +125,18 @@ export function reportStore(db) {
       const { error } = await bucket().remove(paths);
       return !error;
     },
+    // one page of the bucket's top-level folders (a folder is a report id), by name
+    async folders(offset, limit) {
+      const { data, error } = await bucket().list('', { limit, offset, sortBy: { column: 'name', order: 'asc' } });
+      if (error) throw new Error('The bucket could not be listed');
+      return (data ?? []).filter((e) => !e.id).map((e) => e.name);
+    },
+    // the objects in one report's folder with their upload time
+    async files(folder) {
+      const { data, error } = await bucket().list(folder, { limit: 20 });
+      if (error) throw new Error('A folder could not be listed');
+      return (data ?? []).filter((e) => e.id).map((e) => ({ path: `${folder}/${e.name}`, createdAt: e.created_at ?? null }));
+    },
     async record(row) {
       const { data, error } = await db.rpc('issue_report_record', { report: row });
       if (error) throw new RelayError('server', 'The report could not be stored.', 500);
@@ -126,14 +145,26 @@ export function reportStore(db) {
   };
 }
 
-export function reportsRoute({ clients, config, log = () => {}, store = reportStore(clients.db), now = Date.now, newId = randomUUID, installLimit = createLimiter({ max: 10, now }), addressLimit = createLimiter({ max: 30, now }) }) {
+export function reportsRoute({ clients, config, log = () => {}, store = reportStore(clients.db), now = Date.now, newId = randomUUID, maxInFlight = MAX_IN_FLIGHT, installLimit = createLimiter({ max: 10, now }), addressLimit = createLimiter({ max: 30, now }), globalLimit = createLimiter({ max: GLOBAL_PER_HOUR, now }) }) {
   let warned = false;
+  let inFlight = 0;
+  let capped = false;
   return async function handleReports(req, res) {
+    let counted = false;
     try {
       if (req.method !== 'POST') throw new RelayError('bad_request', 'POST only.', 405);
+      const length = Number(req.headers?.['content-length']);
+      if (Number.isFinite(length) && length > MAX_REPORT_BODY) { req.resume?.(); throw new RelayError('bad_request', 'The report is too large. Remove a screenshot and try again.', 413); }
+      if (inFlight >= maxInFlight) { req.resume?.(); return json(res, 503, { ok: false, error: 'The server is busy. Try again in a minute.' }, { 'retry-after': '30' }); }
+      inFlight += 1; counted = true;
       if (!addressLimit.allow(clientAddress(req))) throw new RelayError('rate_limit', 'Too many reports from this connection. Try again in an hour.', 429);
       const r = cleanIssueReport(await readJson(req, MAX_REPORT_BODY), now());
       if (!installLimit.allow(r.install)) throw new RelayError('rate_limit', 'Too many reports from this install. Try again in an hour.', 429);
+      if (!globalLimit.allow('all')) {
+        if (!capped) { capped = true; log('reports_global_cap', { perHour: GLOBAL_PER_HOUR }); }
+        throw new RelayError('rate_limit', 'Reports are paused for now. Try again in an hour.', 429);
+      }
+      capped = false;
       const salt = config.errors?.salt;
       if (!salt) {
         if (!warned) { warned = true; log('reports_no_salt', { message: 'ERROR_REPORT_SALT is not set; issue reports are accepted and dropped' }); }
@@ -160,6 +191,8 @@ export function reportsRoute({ clients, config, log = () => {}, store = reportSt
       const status = err instanceof RelayError ? err.status : 500;
       log('issue_report_failed', { status, message: err.message });
       json(res, status, { ok: false, error: err instanceof RelayError ? err.message : 'Something went wrong. Try again.' });
+    } finally {
+      if (counted) inFlight -= 1;
     }
   };
 }
@@ -202,9 +235,28 @@ export function reportShotsRoute({ clients, config, log = () => {}, asOwner = (t
 export const PURGE_EVERY_MS = 60 * 60 * 1000;
 
 // the hourly sweep for the 90-day promise: the expired rows with their screenshot keys, the objects deleted through the
-// Storage API, then the rows whose objects are gone. A failure is logged and the next tick tries again.
-export function createReportPurge({ db, log = () => {}, everyMs = PURGE_EVERY_MS, store = reportStore(db) }) {
+// Storage API, then the rows whose objects are gone. Then the screenshots a relay that stopped between upload and row
+// left behind: a page of the bucket's folders a run (the next run takes the next page, then starts over), the ones with
+// no row, and their objects once every one is older than a day. A failure is logged and the next tick tries again.
+export const ORPHAN_AGE_MS = 24 * 60 * 60 * 1000;
+export function createReportPurge({ db, log = () => {}, everyMs = PURGE_EVERY_MS, store = reportStore(db), now = Date.now, page = 500 }) {
   let timer = null;
+  let offset = 0;
+  async function orphans() {
+    const listed = await store.folders(offset, page);
+    offset = listed.length < page ? 0 : offset + page;
+    const folders = listed.filter((f) => UUID.test(f));
+    if (!folders.length) return 0;
+    const { data, error } = await db.rpc('issue_reports_missing', { ids: folders });
+    if (error) throw new Error(error.message || 'issue_reports_missing failed');
+    let removed = 0;
+    for (const id of data ?? []) {
+      const files = await store.files(String(id));
+      if (!files.length || files.some((f) => !f.createdAt || now() - Date.parse(f.createdAt) < ORPHAN_AGE_MS)) continue;
+      if (await store.remove(files.map((f) => f.path))) removed += files.length;
+    }
+    return removed;
+  }
   async function run() {
     try {
       const { data, error } = await db.rpc('issue_reports_expired', { max_rows: 200 });
@@ -218,8 +270,9 @@ export function createReportPurge({ db, log = () => {}, everyMs = PURGE_EVERY_MS
         const del = await db.rpc('issue_reports_delete', { ids: done });
         if (del.error) throw new Error(del.error.message || 'issue_reports_delete failed');
       }
-      if (done.length || failed) log('reports_purged', { reports: done.length, failed });
-      return { reports: done.length, failed };
+      const orphaned = await orphans();
+      if (done.length || failed || orphaned) log('reports_purged', { reports: done.length, failed, orphaned });
+      return { reports: done.length, failed, orphaned };
     } catch (err) { log('reports_purge_failed', { message: err.message }); return null; }
   }
   return {

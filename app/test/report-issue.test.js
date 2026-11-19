@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_SHOTS, addShots, crashReport, dataUrlBytes, generatedDescription, initialDraft, pageLabel, reportPreview, reportTitle } from '../src/issueReport';
+import { MAX_SHOTS, addShots, shotsTotal, crashReport, dataUrlBytes, generatedDescription, initialDraft, pageLabel, reportPreview, reportTitle } from '../src/issueReport';
 
-const prep = { version: '0.4.3', edition: 'local', os: 'macOS 26.4 arm64', view: 'settings/memory', runId: 'run_7', message: 'Fix failed: <note>.md is gone', lines: [], linesWithPaths: [], screenshot: null, account: null };
+const prep = { install: '3f2b8c1e-9a4d-4e6f-8b2a-1c3d5e7f9a0b', version: '0.4.3', edition: 'local', os: 'macOS 26.4 arm64', view: 'settings/memory', runId: 'run_7', message: 'Fix failed: <note>.md is gone', lines: [], linesWithPaths: [], screenshot: null, account: null };
 
 describe('pageLabel', () => {
   it('reads view ids the way people name pages', () => {
@@ -52,6 +52,9 @@ describe('screenshots', () => {
     expect(r.shots.length).toBe(MAX_SHOTS);
     expect(r.dropped).toBe(2);
   });
+  it('adds the screenshots up in bytes', () => {
+    expect(shotsTotal([`data:image/png;base64,${Buffer.alloc(10).toString('base64')}`, `data:image/png;base64,${Buffer.alloc(5).toString('base64')}`])).toBe(15);
+  });
   it('measures a data URL in bytes', () => {
     expect(dataUrlBytes(`data:image/png;base64,${Buffer.alloc(10).toString('base64')}`)).toBe(10);
     expect(dataUrlBytes(`data:image/png;base64,${Buffer.alloc(11).toString('base64')}`)).toBe(11);
@@ -59,7 +62,7 @@ describe('screenshots', () => {
 });
 
 describe('reportPreview', () => {
-  const draft = { view: 'settings/memory', title: 'T', description: 'D', logLines: ['l1', 'l2'], runId: 'run_7', screenshots: ['s'], attachAccount: true };
+  const draft = { at: '2026-11-19T12:00:00.000Z', view: 'settings/memory', title: 'T', description: 'D', logLines: ['l1', 'l2'], runId: 'run_7', screenshots: ['s'], attachAccount: true };
   it('shows every field that goes out', () => {
     const p = reportPreview(draft, { ...prep, account: { email: 'sam@example.com' } });
     expect(p).toContain('App: Quorum 0.4.3 (local edition)');
@@ -67,6 +70,8 @@ describe('reportPreview', () => {
     expect(p).toContain('Run: run_7');
     expect(p).toContain('Account: sam@example.com');
     expect(p).toContain('Screenshots: 1');
+    expect(p).toContain('Install: 3f2b8c1e-9a4d-4e6f-8b2a-1c3d5e7f9a0b (an anonymous id for this Mac; the server keeps only a hash of it)');
+    expect(p).toContain('Time: 2026-11-19T12:00:00.000Z');
     expect(p.endsWith('Log lines (2):\nl1\nl2')).toBe(true);
   });
   it('says the account is not attached when the person turned it off or is signed out', () => {

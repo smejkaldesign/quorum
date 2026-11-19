@@ -6,9 +6,10 @@
 // emails, tokens, long quoted text and note names (scrub in errorReports.js plus maskNotes below). A second copy with
 // paths and note names kept is offered behind a switch that is off by default. The report goes to a private admin inbox,
 // never to GitHub. A signed-in Cloud person may attach their account; the relay reads it from the session token.
-import { scrub } from './errorReports.js';
+import { clipQuoted, scrub } from './errorReports.js';
 
-export const LIMITS = { title: 200, description: 8000, line: 500, lines: 60, shots: 5, shotBytes: 4 * 1024 * 1024, tail: 400, defaultLines: 20 };
+// the relay's limits (relay/reports.js): 2 MB a screenshot, and the five together under the 8 MB body
+export const LIMITS = { title: 200, description: 8000, line: 500, lines: 60, shots: 5, shotBytes: 2 * 1024 * 1024, totalShotBytes: 5 * 1024 * 1024, tail: 400, defaultLines: 20 };
 
 // the newest log lines the main process wrote, kept in memory only, each with its time
 export function createLogTail(max = LIMITS.tail, now = () => new Date()) {
@@ -31,11 +32,32 @@ export const maskNotes = (s) => String(s ?? '')
   .replace(/(?:[^\s/'"`()[\]<>]+\/)+[^/'"`()[\]<>\n]*?\.md\b/g, '<note>.md')
   .replace(/[^\s/'"`()[\]<>]+\.md\b/g, '<note>.md');
 
-// the masked line; keepPaths leaves paths and note names and still removes emails and tokens
-export function maskLine(line, { home = '', appRoot = '', keepPaths = false } = {}) {
+// every name the vault knows (note titles, aliases, frontmatter names, dead link targets) becomes <note> wherever it
+// stands, longest first, as a whole word in any case. Log lines name notes without brackets or .md (an alias added, a
+// link fixed), so the masking reads the names from the vault index instead of relying on how the line is written
+const escape = (n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export function nameMasker(names = []) {
+  const list = [...new Set(names.map((n) => String(n ?? '').trim()).filter((n) => n.length >= 3))].sort((x, y) => y.length - x.length);
+  const res = [];
+  for (let i = 0; i < list.length; i += 400) res.push(new RegExp(`(?<![\\p{L}\\p{N}])(?:${list.slice(i, i + 400).map(escape).join('|')})(?![\\p{L}\\p{N}])`, 'giu'));
+  return (s) => res.reduce((acc, re) => acc.replace(re, '<note>'), String(s ?? ''));
+}
+
+// quoted text can be a title or a note's words whatever its length: double and curly quoted values become <text> (a JSON
+// key, a quoted string followed by a colon, stays so the line keeps its shape), and single-quoted text with a space in it
+// too; a single-quoted word such as 'map' in an error stays
+export const maskQuoted = (s) => String(s ?? '')
+  .replace(/"((?:[^"\\\n]|\\.)*)"(\s*:)?/g, (m, body, key) => (key || !body ? m : '"<text>"'))
+  .replace(/“[^”\n]*”/g, '“<text>”')
+  .replace(/'([^'\n]*\s[^'\n]*)'/g, "'<text>'");
+
+// the masked line. By default paths, emails, tokens, note names (by shape and by the vault's own names) and quoted text
+// are masked. keepPaths (the "Include note names and paths" switch) keeps paths and names, and still masks emails and
+// tokens and shortens long quoted text the same way as the default
+export function maskLine(line, { home = '', appRoot = '', keepPaths = false, names = (x) => x } = {}) {
   const s = String(line ?? '');
-  if (keepPaths) return s.replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, '<email>').replace(/\b(?:sk|pk|rk|ghp|gho|xox[abp]|eyJ)[\w-]{12,}/g, '<token>').replace(/\b[A-Za-z0-9_-]{32,}\b/g, '<token>');
-  return maskNotes(scrub(s, { home, appRoot }));
+  if (keepPaths) return clipQuoted(s.replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, '<email>').replace(/\b(?:sk|pk|rk|ghp|gho|xox[abp]|eyJ)[\w-]{12,}/g, '<token>').replace(/\b[A-Za-z0-9_-]{32,}\b/g, '<token>'));
+  return maskQuoted(names(maskNotes(scrub(s, { home, appRoot }))));
 }
 
 // the lines for this report: the ones that name the run id or the action when either is given and any match, else the
@@ -46,7 +68,7 @@ export function pickLines(all, { runId = null, action = null, max = LIMITS.defau
   return (hit.length ? hit : all).slice(-max);
 }
 
-// a window capture as a data URL under the relay's 4 MB limit: wider than 1600 px is scaled down, a PNG over the limit
+// a window capture as a data URL under the relay's 2 MB limit: wider than 1600 px is scaled down, a PNG over the limit
 // becomes a JPEG. img is an Electron NativeImage
 export function encodeCapture(img, { maxWidth = 1600, maxBytes = LIMITS.shotBytes } = {}) {
   if (!img || img.isEmpty?.()) return null;
@@ -77,11 +99,12 @@ export function reportBody(draft, { install, edition, version, os, now = () => n
     logLines: (Array.isArray(d.logLines) ? d.logLines : []).filter((l) => typeof l === 'string').slice(-LIMITS.lines).map((l) => clip(l, LIMITS.line)),
     runId: typeof d.runId === 'string' && RUN_ID.test(d.runId) ? d.runId : null,
     screenshots: shots.map((data) => ({ data })),
-    at: now().toISOString(),
+    // the time the Review step showed, when it is a real time from the last hour; otherwise now
+    at: (() => { const t = typeof d.at === 'string' ? Date.parse(d.at) : NaN; const n = now().getTime(); return new Date(!Number.isNaN(t) && t <= n && n - t < 3600000 ? t : n).toISOString(); })(),
   };
 }
 
-export function createIssueReports({ installId, version, edition, os, appRoot = '', home = '', tail, capture = async () => null, session = async () => null, send, now = () => new Date(), log = () => {} }) {
+export function createIssueReports({ installId, version, edition, os, appRoot = '', home = '', tail, names = () => [], capture = async () => null, session = async () => null, send, now = () => new Date(), log = () => {} }) {
   const opts = { home, appRoot };
   return {
     // everything the sheet can show; nothing leaves the Mac here. capture is true when the report starts from an error,
@@ -89,6 +112,9 @@ export function createIssueReports({ installId, version, edition, os, appRoot = 
     async prepare(ctx = {}, { capture: grab = capture } = {}) {
       const runId = typeof ctx.runId === 'string' && RUN_ID.test(ctx.runId) ? ctx.runId : null;
       const raw = pickLines(tail.lines(), { runId, action: typeof ctx.action === 'string' ? ctx.action : null });
+      let known = [];
+      try { known = names(); } catch (e) { log('issue report: names', e?.message); }
+      const masked = { ...opts, names: nameMasker(known) };
       let screenshot = null;
       if (ctx.capture === true) { try { screenshot = await grab(); } catch (e) { log('issue report: capture', e?.message); } }
       let account = null;
@@ -97,8 +123,9 @@ export function createIssueReports({ installId, version, edition, os, appRoot = 
         version, edition, os,
         view: clip(String(ctx.view ?? '').replace(/[^\w/:-]/g, ''), 120),
         runId,
-        message: ctx.message ? maskLine(clip(ctx.message, 2000), opts) : '',
-        lines: raw.map((l) => clip(maskLine(l, opts), LIMITS.line)),
+        install: installId(),
+        message: ctx.message ? maskLine(clip(ctx.message, 2000), masked) : '',
+        lines: raw.map((l) => clip(maskLine(l, masked), LIMITS.line)),
         linesWithPaths: raw.map((l) => clip(maskLine(l, { ...opts, keepPaths: true }), LIMITS.line)),
         screenshot,
         account,

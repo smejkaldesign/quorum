@@ -32,6 +32,9 @@ describe('the GitHub issue', () => {
     const tok = `${'gh'}p_${'z'.repeat(20)}`;
     expect(clean(`sam@example.com saw /Volumes/Work/vault/Plan.md and ~/x/y with ${tok}`)).toBe('<email> saw <path> and <path> with <token>');
   });
+  it('masks note names the way the app does', () => {
+    expect(clean('See [[Board prep]], "Sam Lee.md", People/Sam Lee.md and Plan.md')).toBe('See [[<note>]], "<note>.md", <note>.md and <note>.md');
+  });
   it('carries the cleaned description and app facts, never the account, log lines or screenshot links', () => {
     const d = detail({ description: 'Broke for sam@example.com at /Volumes/Work/vault/x.md' });
     const body = reportIssueBody(d);

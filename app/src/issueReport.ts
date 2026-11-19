@@ -35,7 +35,9 @@ export function onOpenReport(cb: (req: ReportRequest) => void): () => void {
 }
 
 export const MAX_SHOTS = 5;
-export const MAX_SHOT_BYTES = 4 * 1024 * 1024;
+// the relay's limits (relay/reports.js): 2 MB a screenshot, and the five together under its 8 MB body
+export const MAX_SHOT_BYTES = 2 * 1024 * 1024;
+export const MAX_TOTAL_SHOT_BYTES = 5 * 1024 * 1024;
 export const TITLE_MAX = 200;
 export const DESCRIPTION_MAX = 8000;
 
@@ -99,8 +101,8 @@ export function addShots(have: string[], add: string[]): { shots: string[]; drop
 // the size of a data URL's image in bytes
 export const dataUrlBytes = (url: string) => { const b64 = url.slice(url.indexOf(',') + 1); return Math.floor((b64.length * 3) / 4) - (b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0); };
 
-// exactly the text that goes out with the screenshots, for the review step
-export function reportPreview(d: IssueReportDraft, prep: Pick<IssueReportPrep, 'version' | 'edition' | 'os' | 'account'>): string {
+// exactly the text that goes out with the screenshots, for the review step: every field the body carries
+export function reportPreview(d: IssueReportDraft, prep: Pick<IssueReportPrep, 'install' | 'version' | 'edition' | 'os' | 'account'>): string {
   return [
     `Title: ${d.title.trim() || '(none)'}`,
     '',
@@ -112,6 +114,8 @@ export function reportPreview(d: IssueReportDraft, prep: Pick<IssueReportPrep, '
     `Page: ${d.view || '(none)'}`,
     ...(d.runId ? [`Run: ${d.runId}`] : []),
     `Account: ${d.attachAccount && prep.account ? prep.account.email : 'not attached'}`,
+    `Install: ${prep.install} (an anonymous id for this Mac; the server keeps only a hash of it)`,
+    `Time: ${d.at}`,
     `Screenshots: ${d.screenshots.length}`,
     '',
     `Log lines (${d.logLines.length}):`,
@@ -131,3 +135,6 @@ export function crashReport(view: string, error: { message: string }, kind: Cras
     capture: true,
   };
 }
+
+// the screenshots together, in bytes, against the total the relay's body allows
+export const shotsTotal = (shots: string[]) => shots.reduce((n, s) => n + dataUrlBytes(s), 0);

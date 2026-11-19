@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
-import { cleanIssueReport, createReportPurge, imageType, LIMITS, MAX_SHOT_BYTES, reportShotsRoute, reportsRoute, storedIssueReport } from '../reports.js';
+import { cleanIssueReport, createReportPurge, GLOBAL_PER_HOUR, imageType, LIMITS, MAX_REPORT_BODY, MAX_SHOT_BYTES, ORPHAN_AGE_MS, reportShotsRoute, reportsRoute, storedIssueReport } from '../reports.js';
 import { hashInstall } from '../errors.js';
 import { RelayError } from '../lib/auth.js';
 import { createLimiter } from '../platform.js';
@@ -55,7 +55,7 @@ describe('screenshots', () => {
     const r = cleanIssueReport(report({ screenshots: [shot(PNG), { data: `data:image/png;base64,${JPEG.toString('base64')}`, type: 'image/png' }] }), now);
     assert.deepEqual(r.screenshots.map((s) => s.mime), ['image/png', 'image/jpeg']);
   });
-  it('refuses more than 5, another format, an empty one and one over 4 MB', () => {
+  it('refuses more than 5, another format, an empty one and one over 2 MB', () => {
     assert.throws(() => cleanIssueReport(report({ screenshots: Array.from({ length: 6 }, () => shot(PNG)) }), now), /At most 5/);
     assert.throws(() => cleanIssueReport(report({ screenshots: [shot(GIF)] }), now), /not a PNG or JPEG/);
     assert.throws(() => cleanIssueReport(report({ screenshots: [{ data: '' }] }), now), /empty/);
@@ -83,18 +83,18 @@ function call(handler, body, { headers = {}, raw, method = 'POST', ip } = {}) {
   req.method = method; req.headers = { 'content-type': 'application/json', 'x-real-ip': ip ?? `10.2.${Math.floor(addr / 250)}.${addr++ % 250}`, ...headers }; req.socket = {};
   req.end(raw ?? JSON.stringify(body));
   const out = { status: 0, body: '' };
-  const res = { writeHead: (s) => { out.status = s; }, end: (b) => { out.body = String(b ?? ''); } };
-  return Promise.resolve(handler(req, res)).then(() => ({ status: out.status, body: JSON.parse(out.body || '{}') }));
+  const res = { writeHead: (s, h) => { out.status = s; out.headers = h ?? {}; }, end: (b) => { out.body = String(b ?? ''); } };
+  return Promise.resolve(handler(req, res)).then(() => ({ status: out.status, body: JSON.parse(out.body || '{}'), ...(out.status === 503 ? { headers: out.headers } : {}) }));
 }
-function setup({ salt = 'test-salt', failRecord = false, failUpload = 0, anon = fakeAnon(), db = null } = {}) {
+function setup({ salt = 'test-salt', failRecord = false, failUpload = 0, anon = fakeAnon(), db = null, maxInFlight = 2, globalMax = GLOBAL_PER_HOUR, hold = null } = {}) {
   const rows = []; const logs = []; const objects = new Map(); const removed = [];
   let uploads = 0;
   const store = {
     upload: async (p, bytes, mime) => { uploads += 1; if (failUpload && uploads === failUpload) throw new RelayError('server', 'A screenshot could not be stored.', 500); objects.set(p, { bytes, mime }); },
     remove: async (paths) => { for (const p of paths) { objects.delete(p); removed.push(p); } return true; },
-    record: async (row) => { if (failRecord) throw new RelayError('server', 'The report could not be stored.', 500); rows.push(row); return { id: row.id }; },
+    record: async (row) => { if (hold) await hold; if (failRecord) throw new RelayError('server', 'The report could not be stored.', 500); rows.push(row); return { id: row.id }; },
   };
-  const handler = reportsRoute({ clients: { anon, db }, config: { errors: { salt } }, store, now: () => now, newId: () => ID, log: (event, fields) => logs.push({ event, ...fields }), installLimit: createLimiter({ max: 10, now: () => now }), addressLimit: createLimiter({ max: 30, now: () => now }) });
+  const handler = reportsRoute({ clients: { anon, db }, config: { errors: { salt } }, store, now: () => now, newId: () => ID, maxInFlight, log: (event, fields) => logs.push({ event, ...fields }), installLimit: createLimiter({ max: 10, now: () => now }), addressLimit: createLimiter({ max: 30, now: () => now }), globalLimit: createLimiter({ max: globalMax, now: () => now }) });
   return { handler, rows, logs, objects, removed };
 }
 
@@ -154,6 +154,40 @@ describe('POST /v1/reports', () => {
   });
 });
 
+describe('memory and volume limits', () => {
+  it('refuses a body whose Content-Length is over the limit before reading it', async () => {
+    const { handler, rows } = setup();
+    const r = await call(handler, report(), { headers: { 'content-length': String(MAX_REPORT_BODY + 1) } });
+    assert.equal(r.status, 413);
+    assert.equal(rows.length, 0);
+    assert.ok(MAX_REPORT_BODY <= 8 * 1024 * 1024);
+    assert.equal(MAX_SHOT_BYTES, 2 * 1024 * 1024);
+  });
+  it('reads at most two bodies at once and answers 503 with Retry-After past that', async () => {
+    let release;
+    const hold = new Promise((r) => { release = r; });
+    const { handler, rows } = setup({ hold });
+    const a = call(handler, report()), b = call(handler, report());
+    await new Promise((r) => setTimeout(r, 10));
+    const c = await call(handler, report());
+    assert.equal(c.status, 503);
+    assert.equal(c.headers['retry-after'], '30');
+    release();
+    assert.deepEqual([(await a).status, (await b).status], [202, 202]);
+    assert.equal((await call(handler, report())).status, 202);
+    assert.equal(rows.length, 3);
+  });
+  it('stops storing past the global hourly cap and logs it once', async () => {
+    const { handler, rows, logs } = setup({ globalMax: 2 });
+    const installs = ['3f2b8c1e-9a4d-4e6f-8b2a-000000000001', '3f2b8c1e-9a4d-4e6f-8b2a-000000000002', '3f2b8c1e-9a4d-4e6f-8b2a-000000000003', '3f2b8c1e-9a4d-4e6f-8b2a-000000000004'];
+    const out = [];
+    for (const install of installs) out.push((await call(handler, report({ install }))).status);
+    assert.deepEqual(out, [202, 202, 429, 429]);
+    assert.equal(rows.length, 2);
+    assert.equal(logs.filter((l) => l.event === 'reports_global_cap').length, 1);
+  });
+});
+
 describe('POST /v1/platform/report-screenshots', () => {
   const signer = (fail = false) => ({ storage: { from: () => ({ createSignedUrls: async (paths, secs) => (fail ? { data: null, error: new Error('x') } : { data: paths.map((p) => ({ path: p, signedUrl: `https://storage.example.com/${p}?ttl=${secs}` })), error: null }) }) } });
   const owner = (answer) => { const calls = []; return { calls, asOwner: (token, passkey) => ({ rpc: async (name, args) => { calls.push({ token, passkey, name, args }); return answer; } }) }; };
@@ -183,16 +217,29 @@ describe('the hourly purge', () => {
   it('deletes the objects, then only the rows whose objects are gone', async () => {
     const calls = []; const logs = [];
     const db = { rpc: async (name, args) => { calls.push({ name, args }); return name === 'issue_reports_expired' ? { data: [{ id: 'a', screenshots: ['a/1.png'] }, { id: 'b', screenshots: ['b/1.png'] }, { id: 'c', screenshots: [] }], error: null } : { data: 2, error: null }; } };
-    const store = { remove: async (paths) => !paths.includes('b/1.png') };
+    const store = { remove: async (paths) => !paths.includes('b/1.png'), folders: async () => [], files: async () => [] };
     const out = await createReportPurge({ db, store, log: (event, fields) => logs.push({ event, ...fields }) }).run();
-    assert.deepEqual(out, { reports: 2, failed: 1 });
+    assert.deepEqual(out, { reports: 2, failed: 1, orphaned: 0 });
     assert.deepEqual(calls[1], { name: 'issue_reports_delete', args: { ids: ['a', 'c'] } });
-    assert.deepEqual(logs, [{ event: 'reports_purged', reports: 2, failed: 1 }]);
+    assert.deepEqual(logs, [{ event: 'reports_purged', reports: 2, failed: 1, orphaned: 0 }]);
+  });
+  it('deletes screenshots with no row once all are older than a day, and pages through the folders', async () => {
+    const OLD = new Date(now - ORPHAN_AGE_MS - 1000).toISOString(), NEW = new Date(now - 1000).toISOString();
+    const A = '0a1f2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b', B = '0b1f2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b', C = '0c1f2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b';
+    const folderFiles = { [A]: [{ path: `${A}/1.png`, createdAt: OLD }], [B]: [{ path: `${B}/1.png`, createdAt: OLD }, { path: `${B}/2.png`, createdAt: NEW }], [C]: [{ path: `${C}/1.png`, createdAt: OLD }] };
+    const removed = []; const offsets = [];
+    const db = { rpc: async (name, args) => (name === 'issue_reports_expired' ? { data: [], error: null } : name === 'issue_reports_missing' ? { data: args.ids.filter((id) => id !== C), error: null } : { data: 0, error: null }) };
+    const store = { remove: async (paths) => { removed.push(...paths); return true; }, folders: async (offset, limit) => { offsets.push(offset); return offset === 0 ? [A, B, C, 'not-a-report'].slice(0, limit) : []; }, files: async (f) => folderFiles[f] };
+    const purge = createReportPurge({ db, store, now: () => now, page: 4 });
+    assert.deepEqual(await purge.run(), { reports: 0, failed: 0, orphaned: 1 });
+    assert.deepEqual(removed, [`${A}/1.png`]);
+    await purge.run(); await purge.run();
+    assert.deepEqual(offsets, [0, 4, 0]);
   });
   it('logs a failure and keeps going', async () => {
     const logs = [];
     const db = { rpc: async () => ({ data: null, error: { message: 'function does not exist' } }) };
-    assert.equal(await createReportPurge({ db, store: { remove: async () => true }, log: (e, f) => logs.push({ e, ...f }) }).run(), null);
+    assert.equal(await createReportPurge({ db, store: { remove: async () => true, folders: async () => [], files: async () => [] }, log: (e, f) => logs.push({ e, ...f }) }).run(), null);
     assert.deepEqual(logs, [{ e: 'reports_purge_failed', message: 'function does not exist' }]);
   });
 });
