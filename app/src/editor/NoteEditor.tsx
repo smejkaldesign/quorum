@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
+import type { JSONContent } from '@tiptap/core';
 import { Placeholder } from '@tiptap/extensions';
 import type { TreeItem } from '../quorum';
 import { noteExtensions } from './extensions';
@@ -15,6 +16,9 @@ const RECORD_META = 'quorumRecord';
 // which tracks each turn's paragraphs by position, so the selection and scroll stay put. A value that changes from
 // outside replaces only the blocks from the first changed one to the end. Typing [[ opens a picker of vault notes, and / at the
 // start of a block or after a space opens the block commands; the toolbar holds the same commands with their shortcuts.
+// save, when given, writes the document in place of the plain serializer (Knowledge splices it into the text it opened
+// from); onWiki opens a wiki link that is clicked, and a .md link that is ⌘-clicked. ⌘-click opens a web link in the
+// browser.
 
 type Command = { id: string; label: string; keys: string; run: (e: Editor) => void };
 const COMMANDS: Command[] = [
@@ -56,7 +60,7 @@ export type NoteEditorHandle = { recordTurn: (turn: Turn) => void; flush: () => 
 
 const SERIALIZE_AFTER = 250;
 
-export const NoteEditor = forwardRef<NoteEditorHandle, { value: string; onChange: (md: string) => void; readOnly: boolean; placeholder: string; autoFocus?: boolean }>(function NoteEditor({ value, onChange, readOnly, placeholder, autoFocus }, handle) {
+export const NoteEditor = forwardRef<NoteEditorHandle, { value: string; onChange: (md: string) => void; readOnly: boolean; placeholder: string; autoFocus?: boolean; save?: (doc: JSONContent) => string; onWiki?: (target: string) => void }>(function NoteEditor({ value, onChange, readOnly, placeholder, autoFocus, save, onWiki }, handle) {
   const emitted = useRef(value);
   const applying = useRef(false);
   const tail = useRef<TailModel>(emptyTail());
@@ -67,6 +71,8 @@ export const NoteEditor = forwardRef<NoteEditorHandle, { value: string; onChange
   useEffect(() => { window.quorum.vaultTree().then((t) => setNotes(flatten(t ?? []))).catch(() => {}); }, []);
   const onChangeRef = useRef(onChange);
   useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
+  const saveRef = useRef(save);
+  useEffect(() => { saveRef.current = save; }, [save]);
 
   // parsed once per mount; later values reach the document through the sync below
   const [initial] = useState(() => toDoc(value));
@@ -76,7 +82,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, { value: string; onChange
   function serialize(ed: Editor | null): string {
     if (serializeTimer.current) { window.clearTimeout(serializeTimer.current); serializeTimer.current = null; }
     if (!ed) return emitted.current;
-    const md = toMarkdown(ed.getJSON());
+    const md = (saveRef.current ?? toMarkdown)(ed.getJSON());
     if (md !== emitted.current) { emitted.current = md; onChangeRef.current(md); }
     return md;
   }
@@ -187,7 +193,18 @@ export const NoteEditor = forwardRef<NoteEditorHandle, { value: string; onChange
 
   if (!editor) return null;
   return (
-    <div className="note-rich-wrap" onMouseDown={(e) => {
+    <div className="note-rich-wrap" onClick={(e) => {
+      const t = e.target as HTMLElement;
+      const w = onWiki && t.closest<HTMLElement>('.ProseMirror .md-wiki');
+      if (w) { e.preventDefault(); onWiki((w.dataset.wiki ?? '').replace(/#.*$/, '')); return; }
+      // a markdown link is text to edit; ⌘-click follows it: a web page in the browser, a .md note in Quorum
+      const a = e.metaKey ? t.closest<HTMLAnchorElement>('.ProseMirror a[href]') : null;
+      const href = a?.getAttribute('href') ?? '';
+      if (!a) return;
+      e.preventDefault();
+      if (/^https:\/\//i.test(href)) window.quorum.openExternal(href);
+      else if (onWiki && /\.md(#.*)?$/i.test(href)) { const p = href.replace(/#.*$/, ''); try { onWiki(decodeURIComponent(p)); } catch { onWiki(p); } }
+    }} onMouseDown={(e) => {
       // the whole area is the note: a click below the text (or beside it) focuses the end, the toolbar keeps its own clicks
       const t = e.target as HTMLElement;
       if (readOnly || t.closest('.ProseMirror, .note-toolbar, button, a, input')) return;

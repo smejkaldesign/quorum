@@ -97,7 +97,7 @@ export type Settings = {
   // which of Quorum's in-app notifications show in the bell's list and dot; each is on when missing
   notifications?: { noteUpdates?: boolean; memoryChanges?: boolean; reviews?: boolean; guardrails?: boolean };
   // connector ids whose provider MCP the person disconnected from Quorum (Settings > Connectors)
-  mcpIgnored?: string[]; meetingProviders?: Record<string, { enabled: boolean }>; autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean; transcription?: boolean }; meetingsKb?: { autoSave?: boolean }; managedModels?: boolean; screenContext?: boolean; memoryAutoApprove?: boolean; memoryDotDays?: number; memoryHighlight?: boolean; memorySweeps?: boolean; memoryAutoApply?: boolean; memoryDrafts?: boolean; memoryDraftCap?: number; memoryDraftConfidential?: boolean; memoryCatchupParallel?: number; memoryAgentActions?: boolean };
+  mcpIgnored?: string[]; meetingProviders?: Record<string, { enabled: boolean }>; autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; meetingPrep?: MeetingPrepSettings; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean; transcription?: boolean }; meetingsKb?: { autoSave?: boolean }; managedModels?: boolean; screenContext?: boolean; memoryAutoApprove?: boolean; memoryDotDays?: number; memoryHighlight?: boolean; memorySweeps?: boolean; memoryAutoApply?: boolean; memoryDrafts?: boolean; memoryDraftCap?: number; memoryDraftConfidential?: boolean; memoryCatchupParallel?: number; memoryAgentActions?: boolean };
 export type OnboardingStatus = { firstRun: boolean; defaultVaultDir: string };
 export type OnboardingChecks = { permissions: { microphone: string; audio: string; accessibility: string; calendar: string }; claude: { installed: boolean; loggedIn?: boolean; email?: string; org?: string; plan?: string; version?: string; pending?: boolean }; model?: ModelSourceStatus | null };
 // the setup interview: a template plus a few answers that shape a Quorum-built Agent OS (starter.js)
@@ -278,6 +278,11 @@ export type Billing = { plan: Plan; seats: number; seatsIncluded: number; hourPa
 export type MemberInvite = { inviteId: string; email: string; role: Role; expiresAt: string };
 // the calendar event a note was matched to (meetingPlatforms.js eventRef)
 export type EventRef = { id: string | null; item: string | null; link: string | null; start: string; recurring: boolean; organizer: string; count: number };
+// the vault prep note for an upcoming event (main.js meeting-prep, meetingPrep.js). links maps each wiki link target in
+// the note to its file on disk. changed: the invite changed since the note was written. edited: the person changed the
+// note, which Quorum then never writes over. dismissed: the person deleted it, and Quorum writes another only on request
+export type MeetingPrep = { status: 'off' | 'missing' | 'no-vault' | 'opted-out' | 'skipped' | 'stale' | 'no-model' | 'failed' | 'dismissed' | 'ready' | 'changed'; markdown?: string; rel?: string; file?: string; links?: Record<string, string>; edited?: boolean };
+export type MeetingPrepSettings = { enabled: boolean; ahead: 'today' | 2 | 4 | 8 | 24; minInvitees: 0 | 2 | 3 | 4 | 5; orNew: boolean };
 export type MeetingBrief = { related?: { file: string; title: string; date: string | null; shared: string[] }[]; past: { file: string; title: string; date: string | null; source: string; people: string[]; count: number }[]; brief: { prep: string; what: string; who: string; how: string } | null; status: 'few' | 'stale' | 'ready' | 'no-model' | 'failed' };
 export type MeetingRow = { written?: boolean; id: string; file: string; kind: 'meeting' | 'note'; source: string; title: string; date: string | null; people: string[]; count: number; visibility: Visibility; rel: string; link: string; app: string; url?: string | null; platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; event?: EventRef | null };
 export type ChatRow = { id: string; title: string; date: string; turns: number; meetingFile: string | null; meetingTitle: string | null; eventId?: string | null; eventEnd?: string | null };
@@ -386,6 +391,7 @@ export type TeamRole = 'lead' | 'member';
 export type TeamMember = { userId: string; role: TeamRole; email: string | null; name: string | null };
 export type Team = { id: string; name: string; myRole: TeamRole | null; canManage: boolean; canManageMembers: boolean; meetingsKbId: string | null; members: TeamMember[] };
 export type HandNoteRef = { file: string; hash: string; rel: string; app: string; url: string; frontmatter: string };
+export type VaultEdit = { hash: string; readOnly: 'withheld' | 'line-endings' | 'encoding' | null; body: string; frontmatter: string };
 export type HandNote = HandNoteRef & { title: string; body: string; readOnly: boolean; date: string | null };
 export type HandNoteSave = (HandNoteRef & { propsError?: string }) | { conflict: true } | { error: string };
 
@@ -550,6 +556,16 @@ declare global {
       vaultResolve(target: string, from: string): Promise<string | null>;
       onVaultChanged(cb: (rels: string[]) => void): Unsub;
       vaultNoteDate(rel: string, day: string): Promise<string>;
+      // the Knowledge editor: a note's body as written and the file's hash; readOnly names why it can't be edited here
+      vaultNoteEdit(rel: string, open?: boolean): Promise<VaultEdit | null>;
+      // a link's hover preview: the note as vault-note sends it, without counting a view
+      vaultPeek(rel: string): Promise<{ title: string; body: string } | null>;
+      // the notes bookmarked in .obsidian/bookmarks.json, and starring or unstarring one (answers with the new list)
+      vaultBookmarks(): Promise<string[]>;
+      vaultBookmark(rel: string, on: boolean): Promise<string[]>;
+      // today's daily note, made if it doesn't exist yet; answers with its path in the vault
+      vaultToday(): Promise<string>;
+      vaultNoteSave(p: { rel: string; hash: string; body?: string; frontmatter?: string }): Promise<{ hash: string; frontmatter: string; propsError?: string } | { conflict: true } | { error: string }>;
       vaultNote(rel: string): Promise<{ title: string; body: string; abs: string; app: string; views?: NoteViews; meta?: NoteMetaInfo | null } | null>;
       memoryDots(): Promise<MemoryDots>;
       memoryReview(rel: string): Promise<MemoryReview | null>;
@@ -656,6 +672,7 @@ declare global {
       calendarPrivacy(): Promise<void>;
       calendarOpen(ev: CalendarEvent): Promise<void>;
       meetingBrief(q: { title: string; organizer?: string; generate?: boolean }): Promise<MeetingBrief>;
+      meetingPrep(id: string, opts?: { generate?: boolean; force?: boolean }): Promise<MeetingPrep>;
       noteChat(file: string): Promise<{ id: string; turns: { q: string; a: string }[] } | null>;
       summaryOff(): Promise<void>;
       recordContinue(): Promise<{ ok: true } | { error: string }>;

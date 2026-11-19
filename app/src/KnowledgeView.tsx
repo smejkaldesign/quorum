@@ -18,9 +18,11 @@ import type { FixRun } from './quorum';
 import { IssueDrawer, LinkHealth, acceptIssue, dismissIssue, leftOf, migrateLeft, toastWhenFixed, waitFix } from './LinkHealth';
 import { outcomeOf } from './fixToast';
 import { Markdown } from './Markdown';
+import { VaultEditor } from './editor/VaultEditor';
+import { LinkPreview } from './editor/LinkPreview';
 import { useSession } from './session';
 import { feedCounts, onFeedChange } from './feedEvents';
-import { IconChevron, IconClose, IconCollapse, IconExpand, IconFolder, IconGraph, IconNewFolder, IconNewNote, IconHistory, IconLink, IconLock, IconMore, IconReset, IconSearch, IconSidebar, IconSliders, IconSort } from './icons';
+import { IconChevron, IconClose, IconCollapse, IconExpand, IconFolder, IconGraph, IconNewFolder, IconNewNote, IconHistory, IconLink, IconLock, IconMore, IconReset, IconSearch, IconSidebar, IconSliders, IconSort, IconStar, IconCalendar } from './icons';
 
 type Creating = { kind: 'note' | 'folder'; parent: string } | null;
 type Preview = { rel: string; title: string; body: string; abs: string; app: string; views?: NoteViews; meta?: NoteMetaInfo | null } | null;
@@ -153,7 +155,11 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     try { saved = JSON.parse(localStorage.getItem('quorum.graphView') ?? '{}'); } catch {}
     if (g) setView((v) => v ?? { ...g.settings, ...saved });
   }, []);
+  // bookmarked notes, from Obsidian's bookmarks file; it lives in .obsidian, which the watcher skips, so it is read
+  // with the tree and whenever the window comes back
+  const [bookmarks, setBookmarks] = useState<string[]>([]);
   const loadTree = useCallback(async () => {
+    window.quorum.vaultBookmarks().then(setBookmarks).catch(() => {});
     setTree(await window.quorum.vaultTree());
     window.quorum.memoryDots().then(setDots).catch(() => {});
     window.quorum.confidentialMarks().then(setLocks).catch(() => {});
@@ -226,6 +232,11 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     return () => clearTimeout(t);
   }, [preview?.rel]);
 
+  useEffect(() => {
+    const again = () => { window.quorum.vaultBookmarks().then(setBookmarks).catch(() => {}); };
+    window.addEventListener('focus', again);
+    return () => window.removeEventListener('focus', again);
+  }, []);
   const flash = (msg: string) => { setNotice(msg); setTimeout(() => setNotice(''), 4000); };
   const linksMsg = (r: { files: number; links: number }) => `Updated ${r.links} ${r.links === 1 ? 'link' : 'links'} in ${r.files} ${r.files === 1 ? 'note' : 'notes'}`;
   const errText = (e: unknown) => String(e).replace(/^.*Error:\s*/, '');
@@ -394,6 +405,19 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     else flash(`No note named "${target}" yet`);
   }, [openNote]);
 
+  const starred = !!preview && bookmarks.includes(preview.rel);
+  const toggleBookmark = async (rel: string, on: boolean) => {
+    try { setBookmarks(await window.quorum.vaultBookmark(rel, on)); } catch (e) { flash(errText(e)); }
+  };
+  // today's daily note opens, made from its template the first time
+  const openToday = async () => {
+    try {
+      const rel = await window.quorum.vaultToday();
+      await loadTree();
+      openNote(rel);
+    } catch (e) { flash(errText(e)); }
+  };
+
   // where a note made from here goes: the inbox when the vault has one
   const inboxFolder = () => (tree.some((t) => t.dir && t.path === '00-inbox') ? '00-inbox' : '');
   async function quickCreate(name: string) {
@@ -406,6 +430,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   const commands: PaletteItem[] = [
     { id: 'new-note', label: 'New note', hint: '⌘N', run: () => startCreate('note') },
     { id: 'new-folder', label: 'New folder', run: () => startCreate('folder') },
+    { id: 'today', label: "Open today's daily note", run: openToday },
     { id: 'switcher', label: 'Open a note', hint: '⌘O', run: () => setTimeout(() => setPalette('switcher'), 0) },
     { id: 'search', label: 'Search inside notes', hint: '⌘⇧F', run: () => setTimeout(() => setPalette('search'), 0) },
     { id: 'graph', label: 'Show graph view', run: () => setPreview(null) },
@@ -415,6 +440,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     { id: 'collapse', label: 'Collapse all folders', run: () => { if (!collapsed) toggleCollapse(); } },
     ...(preview ? [
       { id: 'rename', label: 'Rename this note', hint: 'F2', run: () => setRenaming(preview.rel) },
+      { id: 'bookmark', label: starred ? 'Remove bookmark' : 'Bookmark this note', run: () => toggleBookmark(preview.rel, !starred) },
       { id: 'reveal', label: `Show this note in ${preview.app}`, run: () => window.quorum.vaultReveal(preview.rel) },
     ] : []),
     ...(extraCommands ?? []),
@@ -527,6 +553,15 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     else if (cursor >= 0) for (const l of blocks[cursor] ?? []) m.set(l, `${m.get(l) ?? ''} md-cur`.trim());
     return m;
   }, [version, mode, review, highlight, issueReview, cursor, blocks]);
+  // the note's text is edited in place (VaultEditor), except while something is shown over it: a version, the text
+  // before the updates, the changed lines highlighted, issues to review, or a run writing the note
+  const reading = !!(version || locked || issueReview || (review && (mode === 'before' || highlight)));
+  const readView = preview && (
+    <>
+      <HeadingLinks root={memRoot} base={`quorum://note/${encodeURIComponent(preview.rel)}`} />
+      <Markdown text={version ? version.body : review && mode === 'before' ? review.before : preview.body} headings root={brain?.root} onWiki={openLink} marks={marks} />
+    </>
+  );
   const navOver = (lines: number[]) => ({
     at: cursor, total: lines.length,
     onPrev: () => { const i = cursor <= 0 ? lines.length - 1 : cursor - 1; jump(i, lines[i]); },
@@ -553,6 +588,8 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   const focusName = focus ? graph?.nodes.find((n) => n.id === focus)?.name ?? null : null;
   const q = q0;
   const sorted = useMemo(() => sortTree(tree, sort), [tree, sort]);
+  // a bookmark to a note that isn't in the vault any more stays in the file, and is left off the list
+  const shownBookmarks = useMemo(() => { const have = new Set(noteFiles(tree)); return bookmarks.filter((b) => have.has(b)); }, [bookmarks, tree]);
   const filtered = useMemo(() => (q ? filterTree(sorted, q) : sorted), [sorted, q]);
 
   return (
@@ -561,6 +598,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
         <div className="kb-tools">
           <button className="icon-btn" data-tip="New note" aria-label="New note" onClick={() => startCreate('note')}><IconNewNote /></button>
           <button className="icon-btn" data-tip="New folder" aria-label="New folder" onClick={() => startCreate('folder')}><IconNewFolder /></button>
+          <button className="icon-btn" data-tip="Today's daily note" aria-label="Today's daily note" onClick={openToday}><IconCalendar /></button>
           <button className="icon-btn" data-tip="Change sort order" aria-label="Change sort order" aria-haspopup="menu" onClick={pickSort}><IconSort /></button>
           <button className={`icon-btn ${collapsed ? 'active' : ''}`} aria-pressed={collapsed} data-tip={collapsed ? 'Expand back' : 'Collapse all'} aria-label={collapsed ? 'Expand back' : 'Collapse all'} onClick={toggleCollapse}><IconCollapse /></button>
         </div>
@@ -568,6 +606,16 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
           <IconSearch width={15} height={15} />
           <input value={query} placeholder="Search notes" onChange={(e) => setQuery(e.target.value)} />
         </label>
+        {shownBookmarks.length > 0 && (
+          <nav className="kb-bookmarks" aria-label="Bookmarks">
+            <h3>Bookmarks</h3>
+            {shownBookmarks.map((rel) => (
+              <button key={rel} className={`kb-bookmark ${preview?.rel === rel ? 'sel' : ''}`} data-tip={rel} onClick={() => openNote(rel)}>
+                <IconStar filled width={13} height={13} />{rel.split('/').pop()!.replace(/\.md$/i, '')}
+              </button>
+            ))}
+          </nav>
+        )}
         <div className={`kb-tree ${dropTarget === '' ? 'drop' : ''}`} role="tree" onKeyDown={onTreeKey}
           onDragOver={(e) => { if (dragging.current) { e.preventDefault(); setDropTarget(''); } }}
           onDragLeave={(e) => { if (e.currentTarget === e.target) setDropTarget(null); }}
@@ -588,6 +636,8 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
                 <span className="kb-here">{preview.title}</span>
               </span>
               <div className="kb-actions">
+                <button className={`icon-btn ${starred ? 'active' : ''}`} aria-pressed={starred} aria-label={starred ? 'Remove bookmark' : 'Bookmark'} data-tip={starred ? 'Remove bookmark' : 'Bookmark'}
+                  onClick={() => toggleBookmark(preview.rel, !starred)}><IconStar filled={starred} /></button>
                 <button className="icon-btn" aria-label="View in graph" data-tip="View in graph" onClick={() => { setFocus(preview.rel); setPreview(null); }}><IconGraph /></button>
                 <span className="menu-wrap">
                   <button className="icon-btn" aria-label="More" data-tip="More" aria-haspopup="menu" aria-expanded={noteMore} onClick={(e) => { e.stopPropagation(); setNoteMore((o) => !o); }}><IconMore /></button>
@@ -668,11 +718,13 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
                 <MemoryBell rel={preview.rel} open={notifsOpen} onToggle={() => setNotifsOpen((o) => !o)} />
               </NoteMeta>
               {notifsOpen && <MemoryNotifications key={preview.rel} rel={preview.rel} abs={preview.abs} />}
+              <LinkPreview root={memRoot} from={preview.rel} />
               {/* After marks the lines the updates changed, green while they wait and blue once approved; Before and an
                   opened version show their saved text, dimmed */}
               <div ref={memRoot} hidden={notifsOpen} onClickCapture={clickIssue} className={`mu-text ${version || (review && mode === 'before') ? 'mu-old' : review?.dot ?? ''} ${locked ? 'locked' : ''}`}>
-                <HeadingLinks root={memRoot} base={`quorum://note/${encodeURIComponent(preview.rel)}`} />
-                <Markdown text={version ? version.body : review && mode === 'before' ? review.before : preview.body} headings root={brain?.root} onWiki={openLink} marks={marks} />
+                {reading ? readView : (
+                  <VaultEditor key={preview.rel} rel={preview.rel} onWiki={openLink} onSaved={(body) => { const rel = preview.rel; setPreview((p) => (p && p.rel === rel ? { ...p, body } : p)); }}>{readView}</VaultEditor>
+                )}
               </div>
             </article>
             {fixShown && issueOpen ? (
@@ -897,6 +949,10 @@ function NewItemRow({ kind, depth, onDone }: { kind: 'note' | 'folder'; depth: n
   );
 }
 
+function noteFiles(items: TreeItem[], out: string[] = []): string[] {
+  for (const it of items) { if (it.dir) noteFiles(it.children ?? [], out); else out.push(it.path); }
+  return out;
+}
 function folderRels(items: TreeItem[]): string[] {
   return items.flatMap((it) => (it.dir ? [it.path, ...folderRels(it.children ?? [])] : []));
 }

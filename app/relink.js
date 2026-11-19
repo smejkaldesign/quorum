@@ -1,11 +1,14 @@
 // Rename and move without breaking links: every note that pointed at the old path gets its links rewritten,
 // the way Obsidian's "Automatically update internal links" does. Only the link text changes in those files.
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseNote } from './linkparse.js';
 
-// temp file then rename, so Claude or an editor never reads half a file
-export function writeAtomic(abs, text) {
+// temp file then rename, so Claude or an editor never reads half a file. A symlinked file is written at its target, so
+// the link stays a link and the file it points at gets the text
+export function writeAtomic(file, text) {
+  let abs = file;
+  try { abs = realpathSync(file); } catch {}
   const tmp = path.join(path.dirname(abs), `.${path.basename(abs)}.quorum-tmp`);
   writeFileSync(tmp, text);
   renameSync(tmp, abs);
