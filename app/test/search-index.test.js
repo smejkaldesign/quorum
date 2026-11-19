@@ -247,7 +247,7 @@ describe('the MCP bridge on a real search', () => {
     expect(r.results.some((x) => x.rel === 'projects/Project Lantern.md')).toBe(false);
     const lines = formatMemory('search', r, { budget: 4000, args: { q: 'QX-1000' } });
     const first = r.results[0];
-    expect(lines[0]).toBe(`projects/Project Heron.md:${first.start_line}  # Project Heron  (${first.score.toFixed(3)})  ${first.text}`);
+    expect(lines[0]).toBe(`projects/Project Heron.md:${first.start_line + 1}  # Project Heron  (${first.score.toFixed(3)})  ${first.text}`);
     const st = await runMemoryTool('memory_status', {}, { handler });
     expect(st.search).toMatchObject({ notes: 150, chunks: expect.any(Number), embedded: expect.any(Number), built: true });
     expect(st.graph).toMatchObject({ phase: 'ready' });
