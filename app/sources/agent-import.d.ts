@@ -1,4 +1,4 @@
-// The renderer imports only the trade-off text; the run itself stays in the main process.
+// Main process only. The renderer imports SCHEDULES and TRADEOFFS from agent-import-shared.js.
 export const SCHEDULES: readonly ['off', 'hourly', 'daily'];
 export const TIMEOUT_MS: number;
 export function TRADEOFFS(runner: string, source: string): string[];
