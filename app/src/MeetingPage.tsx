@@ -129,6 +129,7 @@ const PREP_EMPTY: Partial<Record<MeetingPrep['status'], string>> = {
   'no-vault': 'Connect your vault and Quorum writes a prep note from it.',
   failed: 'Quorum could not write a prep note this time. Try again.',
   missing: 'Quorum could not find this event in your calendar.',
+  dismissed: 'You deleted the prep note for this meeting. Quorum writes a new one only when you ask.',
 };
 
 // The prep note from the vault (main.js meeting-prep): who is invited and what the vault says about them, past
@@ -158,7 +159,7 @@ function VaultPrep({ event: e, onOpenNote }: { event: CalendarEvent; onOpenNote:
   const text = md.indexOf('## ') > 0 ? md.slice(md.indexOf('## ')) : md;
   const onWiki = (target: string) => { const file = prep?.links?.[target]; if (file) onOpenNote(file); };
   return (
-    <section className="mp-section mp-prep">
+    <section className="mp-section mp-prep" aria-busy={!prep || writing}>
       <div className="mp-head">
         <h2>Meeting prep</h2>
         <span className="mp-prep-actions">
@@ -168,7 +169,8 @@ function VaultPrep({ event: e, onOpenNote }: { event: CalendarEvent; onOpenNote:
       </div>
       {!prep || writing ? <Skeleton lines={6} />
         : has ? <>
-          {prep.status === 'changed' && <p className="muted">{prep.edited ? 'You edited this note. Prepare again writes a new one in its place.' : 'The invite changed since this note was written.'}</p>}
+          {prep.edited ? <p className="muted" role="status">You edited this note. Prepare again writes a new note and keeps yours.</p>
+            : prep.status === 'changed' && <p className="muted" role="status">The invite changed since this note was written.</p>}
           <Markdown text={text} onWiki={onWiki} />
           <p className="mp-prep-foot">
             {prep.file && <button className="up-all" onClick={() => onOpenNote(prep.file!)}>Open note</button>}
@@ -176,8 +178,8 @@ function VaultPrep({ event: e, onOpenNote }: { event: CalendarEvent; onOpenNote:
           </p>
         </>
         : <>
-          <p className="mp-empty">{PREP_EMPTY[prep.status] ?? PREP_EMPTY.failed}</p>
-          {(prep.status === 'skipped' || prep.status === 'failed') && <p className="mp-prep-foot"><button className="up-all" disabled={writing} onClick={() => write(prep.status === 'skipped')}>Prepare a note</button></p>}
+          <p className="mp-empty" role="status">{PREP_EMPTY[prep.status] ?? PREP_EMPTY.failed}</p>
+          {(prep.status === 'skipped' || prep.status === 'failed' || prep.status === 'dismissed') && <p className="mp-prep-foot"><button className="up-all" disabled={writing} onClick={() => write(prep.status !== 'failed')}>Prepare a note</button></p>}
         </>}
     </section>
   );

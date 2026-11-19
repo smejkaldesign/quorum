@@ -250,8 +250,9 @@ export type MemberInvite = { inviteId: string; email: string; role: Role; expire
 // the calendar event a note was matched to (meetingPlatforms.js eventRef)
 export type EventRef = { id: string | null; item: string | null; link: string | null; start: string; recurring: boolean; organizer: string; count: number };
 // the vault prep note for an upcoming event (main.js meeting-prep, meetingPrep.js). links maps each wiki link target in
-// the note to its file on disk. changed: the invite changed since the note was written, or the person edited it
-export type MeetingPrep = { status: 'off' | 'missing' | 'no-vault' | 'opted-out' | 'skipped' | 'stale' | 'no-model' | 'failed' | 'ready' | 'changed'; markdown?: string; rel?: string; file?: string; links?: Record<string, string>; edited?: boolean };
+// the note to its file on disk. changed: the invite changed since the note was written. edited: the person changed the
+// note, which Quorum then never writes over. dismissed: the person deleted it, and Quorum writes another only on request
+export type MeetingPrep = { status: 'off' | 'missing' | 'no-vault' | 'opted-out' | 'skipped' | 'stale' | 'no-model' | 'failed' | 'dismissed' | 'ready' | 'changed'; markdown?: string; rel?: string; file?: string; links?: Record<string, string>; edited?: boolean };
 export type MeetingPrepSettings = { enabled: boolean; ahead: 'today' | 2 | 4 | 8 | 24; minInvitees: 0 | 2 | 3 | 4 | 5; orNew: boolean };
 export type MeetingBrief = { related?: { file: string; title: string; date: string | null; shared: string[] }[]; past: { file: string; title: string; date: string | null; source: string; people: string[]; count: number }[]; brief: { prep: string; what: string; who: string; how: string } | null; status: 'few' | 'stale' | 'ready' | 'no-model' | 'failed' };
 export type MeetingRow = { written?: boolean; id: string; file: string; kind: 'meeting' | 'note'; source: string; title: string; date: string | null; people: string[]; count: number; visibility: Visibility; rel: string; link: string; app: string; url?: string | null; platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; event?: EventRef | null };

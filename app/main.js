@@ -52,7 +52,6 @@ import { privateDir, startControl } from './control.js';
 import { PROVIDERS as DECISION_PROVIDERS, connectedProvider, decide as decideRaw, removeDecisionsKey, setDecisionsKey } from './decisions.js';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { createHash } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, watchFile, writeFileSync } from 'node:fs';
 import { homedir, release, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
@@ -100,7 +99,8 @@ import { open as openAsync, stat as statAsync } from 'node:fs/promises';
 import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
 import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, relatedOf, seriesKey, seriesOf } from './meetingBrief.js';
-import { PREP_SYSTEM, gatherPrep, inPrepWindow, inviteStamp, inviteesOf, isPrepRel, optedOut, parsePrep, prepPrompt, prepRel, prepSettings, renderPrep, wantsPrep } from './meetingPrep.js';
+import { prepSettings } from './meetingPrep.js';
+import { createPrepCache, createPrepRunner } from './meetingPrepRun.js';
 import { collectExport, exportFileName, writeZip } from './exportNotes.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -2437,94 +2437,48 @@ async function meetingBriefFor(q, title, past, list) {
   } catch (e) { log('meeting brief', e?.message); return { past: list, brief: null, status: 'failed' }; }
 }
 
-// Meeting prep (meetingPrep.js, issue 63): the note an upcoming event opens to, built from the vault and written by the
-// person's own model source, saved into the vault next to the daily note. Behind the meeting-prep flag and the
-// Settings switch (both off by default). The cache in Quorum's data folder holds only the event id, the invite stamp,
-// the note's vault path and the hash of what Quorum wrote, so a note the person edited is never written over by the
-// prepare-ahead pass. Join links lose their credentials before anything is written
-const prepCache = (() => {
-  const file = path.join(DATA_DIR, 'meeting-preps.json');
-  let data = {};
-  try { if (existsSync(file)) data = JSON.parse(readFileSync(file, 'utf8')) ?? {}; } catch { data = {}; }
-  const save = () => { try { writeFileSync(file, JSON.stringify(data)); } catch {} };
-  return {
-    get: (id) => data[id] ?? null,
-    set(id, v) { data[id] = { ...v, at: new Date().toISOString() }; save(); },
-    // entries for events more than a week gone are dropped
-    prune(now = Date.now()) { let n = 0; for (const [k, v] of Object.entries(data)) if (new Date(v.start ?? 0).getTime() < now - 7 * 86400000) { delete data[k]; n += 1; } if (n) save(); },
-  };
-})();
+// Meeting prep (meetingPrep.js, meetingPrepRun.js): the note an upcoming event opens to, built from the vault and
+// written by the person's own model source, saved into the vault next to the daily note. Behind the meeting-prep flag
+// and the Settings switch (both off by default)
 const prepConf = () => prepSettings(settings.meetingPrep);
 const prepOn = () => flagsApi?.get('meeting-prep') === true && prepConf().enabled;
-const prepHash = (t) => createHash('sha256').update(String(t)).digest('hex').slice(0, 16);
 // you, on an invite: Google's self flag, the email Claude Code or Google Calendar is signed in with, or your name
 function prepIsMe(a) {
   const mine = [userCache?.email, gcal.status?.().account].map((x) => String(x ?? '').toLowerCase()).filter(Boolean);
   return a.self === true || (!!a.email && mine.includes(a.email)) || (!!a.name && a.name.toLowerCase() === USER_NAME.toLowerCase());
 }
-const prepBody = (text) => String(text).replace(/^---\n[\s\S]*?\n---\n?/, '');
-// the wiki link targets of a prep note, mapped to files on disk, so the page opens each source in Quorum
-function prepLinks(vault, text) {
-  const out = {};
-  for (const m of String(text).matchAll(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]/g)) {
-    const abs = path.join(vault, `${m[1]}.md`);
-    if (abs.startsWith(vault + path.sep) && existsSync(abs)) out[m[1]] = abs;
-  }
-  return out;
-}
-
-// The prep note for one calendar event (the raw event, with its invitees). generate writes it when the kept note is
-// missing or the invite changed; force writes it again even when kept, and prepares an event the filter skips.
-// auto (the prepare-ahead pass) never writes over a note the person edited
-async function prepFor(e, { generate = false, force = false, auto = false } = {}) {
-  if (!prepOn()) return { status: 'off' };
-  const b = brain();
-  if (!b || !vindex) return { status: 'no-vault' };
-  const invitees = inviteesOf(e, { isMe: prepIsMe });
-  if (mentionsOptOut(e.title) || optedOut(invitees, { onNeverList, isExcluded: suggester.isExcluded }).length) return { status: 'opted-out' };
-  const stamp = inviteStamp(e, invitees);
-  const kept = prepCache.get(e.id);
-  const keptAbs = kept?.rel ? path.join(b.vault, kept.rel) : null;
-  const keptText = keptAbs && existsSync(keptAbs) ? readFileSync(keptAbs, 'utf8') : null;
-  const edited = keptText != null && !!kept.hash && prepHash(keptText) !== kept.hash;
-  const answer = (status) => ({ status, markdown: prepBody(keptText), rel: kept.rel, file: keptAbs, links: prepLinks(b.vault, keptText), edited });
-  if (keptText != null && !force && kept.stamp === stamp) return answer('ready');
-  if (keptText != null && auto && edited) return answer('changed');
-  const conf = prepConf();
-  const meetings = meetingIndex().map((m) => ({ rel: m.rel, title: m.title, date: m.date, people: m.people }));
-  const known = new Set(meetings.flatMap((m) => (m.people ?? []).map((p) => String(p).toLowerCase())));
-  if (!force && !wantsPrep(invitees, known, conf)) return keptText != null ? answer('changed') : { status: 'skipped' };
-  if (!generate && !force) return keptText != null ? answer('changed') : { status: 'stale' };
-  if (modelSource() === 'none') return keptText != null ? answer('changed') : { status: 'no-model' };
-  try {
-    // earlier prep notes are never a source: by their folder and name, or by their type
-    const notes = vindex.snapshot().filter((n) => !n.cut && !isPrepRel(n.rel) && !/^---\n[\s\S]*?^type:\s*meeting-prep\b/m.test(n.text ?? ''))
-      .map((n) => ({ rel: n.rel, title: n.note?.title ?? null, text: n.text }));
-    const topic = String(e.title ?? '');
-    let hits = vindex.search(topic, 8);
-    const fewer = topic.split(/\s+/).filter((w) => w.length > 3).sort((x, y) => y.length - x.length).slice(0, 2).join(' ');
-    if (!hits.length && fewer) hits = vindex.search(fewer, 8);
-    const gathered = gatherPrep({ event: e, invitees, notes, meetings, topicRels: hits.map((h) => h.rel) });
-    let agentDoc = '';
-    if (b.markers?.agentOS) { try { agentDoc = readFileSync(path.join(b.root, b.markers.agentOS), 'utf8'); } catch {} }
-    const prompt = suggester.redactLines(prepPrompt({ event: e, gathered, instructions: agentDoc, owner: OWNER, about: aboutMe() }));
-    const reply = suggester.redactLines(String(await runClaude(prompt, PREP_SYSTEM, settings.model, { role: 'summary' }) ?? ''));
-    const parsed = parsePrep(reply, gathered.sources);
-    if (!parsed) return keptText != null ? answer('changed') : { status: 'failed' };
-    const { join, platform } = callLink(e);
-    const at = new Date(e.start);
-    const when = `${at.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}, ${at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
-    const text = renderPrep({ event: e, gathered, parsed, join, platformName: platform ? { zoom: 'Zoom', meet: 'Google Meet', teams: 'Teams' }[platform] : null, when });
+const prep = createPrepRunner({
+  on: prepOn,
+  conf: prepConf,
+  brain() {
+    const b = brain();
+    if (!b || !vindex) return null;
+    return { vault: b.vault, agentDoc: () => { try { return b.markers?.agentOS ? readFileSync(path.join(b.root, b.markers.agentOS), 'utf8') : ''; } catch { return ''; } } };
+  },
+  snapshot: () => vindex.snapshot(),
+  search: (q, n) => vindex.search(q, n),
+  meetings: () => meetingIndex().map((m) => ({ rel: m.rel, title: m.title, date: m.date, people: m.people })),
+  isMe: prepIsMe,
+  mentionsOptOut,
+  onNeverList,
+  isExcluded: (t) => suggester.isExcluded(t),
+  redact: (t) => suggester.redactLines(t),
+  modelReady: () => modelSource() !== 'none',
+  runModel: (prompt, system) => runClaude(prompt, system, settings.model, { role: 'summary' }),
+  events: (days) => calendarEvents(days),
+  // the calls Up next lists: not hidden, on a meeting platform that is on
+  listed: (e, platform) => !!platform && providerOn(platform) && !calSettings().hidden.includes(e.id),
+  folders(vault) {
     const md = meetingsDir();
-    const rel = kept?.rel ?? prepRel({ daily: folders(b.vault).daily ?? null, meetings: md ? path.relative(b.vault, md).split(path.sep).join('/') || null : null, event: e });
-    const abs = path.join(b.vault, rel);
-    if (!abs.startsWith(b.vault + path.sep)) return { status: 'failed' };
-    mkdirSync(path.dirname(abs), { recursive: true });
-    writeAtomic(abs, text);
-    prepCache.set(e.id, { stamp, rel, hash: prepHash(text), start: e.start });
-    return { status: 'ready', markdown: prepBody(text), rel, file: abs, links: prepLinks(b.vault, text), edited: false };
-  } catch (err) { log('meeting prep', err?.message); return keptText != null ? answer('changed') : { status: 'failed' }; }
-}
+    return { daily: folders(vault).daily ?? null, meetings: md ? path.relative(vault, md).split(path.sep).join('/') || null : null };
+  },
+  owner: () => OWNER,
+  about: aboutMe,
+  write: writeAtomic,
+  cache: createPrepCache(path.join(DATA_DIR, 'meeting-preps.json')),
+  log,
+});
+const prepAhead = () => prep.prepAhead();
 // the raw event (with invitees and invite text) behind an Up next row, by its id
 async function rawEvent(id) {
   const { events } = await calendarEvents(8);
@@ -2534,27 +2488,8 @@ ipcMain.handle('meeting-prep', async (_e, id, opts) => {
   if (!prepOn()) return { status: 'off' };
   const e = await rawEvent(id);
   if (!e || suggester.isExcluded(e.title)) return { status: 'missing' };
-  return prepFor(e, { generate: opts?.generate === true, force: opts?.force === true });
+  return prep.prepFor(e, { generate: opts?.generate === true, force: opts?.force === true });
 });
-// Prepare ahead: every ten minutes, the calls inside the window that pass the filter get their note written, one at a
-// time, so opening one is instant. A pass already running is the one that finishes
-let prepRunning = false;
-async function prepAhead() {
-  if (prepRunning || !prepOn() || modelSource() === 'none' || !brain()) return;
-  prepRunning = true;
-  try {
-    prepCache.prune();
-    const now = Date.now(), { ahead } = prepConf();
-    const { events } = await calendarEvents(2);
-    // the calls Up next lists: not hidden, on a meeting platform that is on
-    const hidden = new Set(calSettings().hidden);
-    const listed = (x) => { const p = callLink(x).platform; return !!p && providerOn(p) && !hidden.has(x.id); };
-    for (const e of events.filter((x) => inPrepWindow(x, now, ahead) && !suggester.isExcluded(x.title) && listed(x))) {
-      if (!prepOn()) break;
-      await prepFor(e, { generate: true, auto: true });
-    }
-  } catch (err) { log('meeting prep ahead', err?.message); } finally { prepRunning = false; }
-}
 setTimeout(() => { prepAhead(); }, 90000).unref?.();
 setInterval(() => { prepAhead(); }, 10 * 60000).unref?.();
 
@@ -4730,7 +4665,7 @@ async function calendarEvents(days) {
 const CALL_LINKS = [
   ['zoom', /https?:\/\/[\w.-]*zoom\.(?:us|com)\/(?:j|my|w|s)\/[^\s<>"']+/i],
   ['meet', /https?:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}\b[^\s<>"']*/i],
-  ['teams', /https?:\/\/(?:teams\.microsoft\.com\/l\/meetup-join|teams\.live\.com\/meet)[^\s<>"']+/i],
+  ['teams', /https?:\/\/(?:teams\.microsoft\.com\/l\/meetup-join|teams\.(?:live|microsoft)\.com\/meet\/)[^\s<>"']+/i],
 ];
 function callLink(e) {
   const text = `${e.url ?? ''}\n${e.location ?? ''}\n${e.notes ?? ''}`;
