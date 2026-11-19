@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client';
-import { App, ErrorBoundary } from './App';
+import { App } from './App';
+import { ErrorBoundary } from './ErrorBoundary';
 import { Popup } from './Popup';
 import './styles.css';
 import { installTooltips } from './tooltips';
@@ -10,7 +11,7 @@ window.addEventListener('unhandledrejection', (e) => console.error('unhandled re
 const isPopup = location.hash === '#popup';
 if (isPopup) document.documentElement.classList.add('popup-root');
 installTooltips();
-createRoot(document.getElementById('root')!).render(<ErrorBoundary>{isPopup ? <Popup /> : <App />}</ErrorBoundary>);
+createRoot(document.getElementById('root')!).render(<ErrorBoundary view={isPopup ? 'popup' : 'root'} whole>{isPopup ? <Popup /> : <App />}</ErrorBoundary>);
 
 // short loader, then dissolve the app in once it has painted
 const boot = document.getElementById('boot');

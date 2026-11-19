@@ -1,5 +1,5 @@
 export type ConnectorStatus = 'available' | 'soon';
-export type ConnectorKind = 'mcp-source' | 'macos' | 'quorum-mcp' | 'oauth' | 'meeting-app';
+export type ConnectorKind = 'mcp-source' | 'macos' | 'quorum-mcp' | 'oauth' | 'meeting-app' | 'ai-tool';
 export type ConnectorCategory = { id: string; name: string; blurb: string };
 // listen: false on a meeting app means the copy runs with meeting capture off, so only its cloud import is offered
 export type LibraryConnector = { id: string; name: string; category: string; domain: string; description: string; status: ConnectorStatus; kind: ConnectorKind; source?: string; app?: string; listen?: boolean; account?: boolean };
@@ -24,6 +24,8 @@ export type ConnectionLive = {
   accounts?: readonly { id: string; connected: boolean }[];
   cal?: { enabled?: boolean; status?: string; google?: { connected: boolean } | null } | null;
   mcp?: { added: boolean } | null;
+  codex?: { added: boolean; error?: string | null } | null;
+  gemini?: boolean;
   added?: Record<string, { enabled: boolean }>;
 };
 export function isConnected(connector: LibraryConnector, live: ConnectionLive, opts?: { explicit?: boolean }): boolean;

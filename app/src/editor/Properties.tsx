@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { draftOf, eolOf, followSave, parseProps, propsProblem, shownValue, storedValue, titleIndex, titleProblem, uniqueKey, writeProps, type Draft, type Prop } from './frontmatter';
+import { draftOf, edited, eolOf, followSave, parseProps, propsProblem, shownValue, storedValue, titleIndex, titleProblem, uniqueKey, writeProps, type Draft, type Prop } from './frontmatter';
 
 // The note's frontmatter as rows of key and value. ⌘↵ or leaving the panel saves, Esc puts back what was saved (and
 // wins over the blur that follows it). The title row is edited in the title field above, so it is left out here and
@@ -17,7 +17,7 @@ export function Properties({ value, readOnly, error, onChange, inModal = false, 
   // when Esc was pressed: the blur right after it must not save the draft Esc just threw away
   const cancelled = useRef(0);
   const eol = eolOf(value);
-  const dirty = draft.rows ? writeProps(draft.rows, eol) !== draft.base : draft.raw !== draft.base;
+  const dirty = edited(draft);
 
   // a new value from a save: an untouched draft follows it; an edited one keeps its edits and takes the new title row
   useEffect(() => { setDraft((d) => followSave(d, value)); }, [value]);

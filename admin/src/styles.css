@@ -73,6 +73,7 @@ em.good { font-style: normal; }
 .side-me { display: flex; align-items: center; gap: 10px; padding: 6px 12px 10px; min-width: 0; }
 .side-avatar { width: 26px; height: 26px; flex: none; border-radius: 50%; display: grid; place-items: center; background: linear-gradient(var(--brand-grad-a), var(--brand-grad-b)); color: #fff; font: 400 13px/1 var(--serif); }
 .side-email { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav-count { margin-left: auto; min-width: 22px; height: 20px; padding: 0 7px; border-radius: 999px; background: rgba(240, 74, 74, 0.16); color: var(--danger); font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }
 .nav-row.quit { color: var(--muted); }
 .nav-row.quit:hover { color: var(--text); }
 .main { min-height: 0; overflow-y: auto; }
@@ -263,3 +264,12 @@ button.trow:hover, button.trow.on { background: rgba(255, 255, 255, 0.05); }
   .trow.access-row { grid-template-columns: minmax(0, 1fr) auto auto; row-gap: 8px; }
   .trow.access-row > .row-actions { grid-column: 1 / -1; justify-content: flex-start; flex-wrap: wrap; }
 }
+
+/* Errors: the stacks and the agent prompt in a scrolling mono block; the detail's facts in two columns */
+.stack { margin: 0; padding: 12px; max-height: 320px; overflow: auto; border: 1px solid var(--line-2); border-radius: 10px; background: rgba(255, 255, 255, 0.02); font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; }
+.err-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 4px 24px; margin-bottom: 16px; }
+.err-detail h4 { margin: 16px 0 8px; font-size: 13px; color: var(--muted); font-weight: 500; }
+.err-detail .events { width: 100%; border-collapse: collapse; font-size: 13px; }
+.err-detail .events th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--line-2); }
+.err-detail .events td { padding: 6px 8px; border-bottom: 1px solid var(--line-2); white-space: nowrap; }
+.err-detail .events-wrap { overflow-x: auto; }

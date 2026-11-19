@@ -170,11 +170,33 @@ Connectors bring notes in and let agents out. Each note carries its source in fr
 | Zoom | Meeting apps | Cloud recordings and their transcripts, imported through Quorum Cloud into `08-meetings/zoom/`. |
 | Calendar app | Calendar | Reads the Mac's calendars so Home shows what is up next. |
 | Google Calendar | Calendar | Reads the calendars you have selected in Google Calendar with your own Google account (read-only scope, PKCE, tokens in Keychain). A build needs a Google OAuth client; `docs/self-hosting.md` says where it goes. |
-| Claude Code | AI | One click registers the `quorum` MCP server and CLI on Quorum's own Node runtime. Tools: `list_meetings`, `search_meetings`, `get_meeting`, `list_chats`, `get_chat`, `live_transcript`, `learned_facts`, `quorum_status`. |
+| Claude Code | AI | One click registers the `quorum` MCP server and CLI on Quorum's own Node runtime. Its tools are listed under [For AI agents](#for-ai-agents). |
 
 **Next**
 
 Wispr Notetaker, Fireflies and Read AI over MCP; Otter, Fathom and tl;dv by API key; Outlook; Codex and Cursor as MCP clients. The library in `app/connectors/library.js` lists every planned connector with its status, and the adapter contract for meeting sources is in `docs/specs/meeting-sources.md`.
+
+## For AI agents
+
+An agent connected to the `quorum` MCP server reads this in the server's instructions, and the `about` tool returns it as JSON (`app/cli/about.mjs`), with what every listed tool returns and when to use it.
+
+- **Data.** Meeting notes are markdown files in the vault's meetings folder, and the files are the source of truth. After filing a note, Quorum appends link lines to the index, the daily note and each people and project note the meeting concerns. Learned facts are a marked list in `.quorum/learned.md` or a vault note linked from `index.md`. Chats, settings, Memory health findings, the review decision log and the fix journal stay in Quorum's data folder on the Mac. The Cloud edition syncs notes both ways with a hosted Postgres database, where knowledge bases live.
+- **Graph.** There is no typed entity or relationship store. Links between notes are `[[wikilinks]]` in the markdown. The app builds an untyped link graph for its own Graph view, and no MCP tool returns it.
+- **Search.** Keyword only; no tool uses embeddings or semantic search. `search_meetings` is a case-insensitive text match over each meeting note's title, attendees and text, where every word must appear. `kb_search` is Postgres full-text search with English stemming, then a plain-word pass. Two small local models (an embedding model and an NLI model) run on the Mac only to screen contradiction checks in Memory health. Learned facts, chat answers and memory checks use your own model source; Quorum hosts no model.
+- **Decisions about project X.** There is no decision query. Call `learned_facts` and keep the lines naming X (up to 3 model-written facts per meeting, each citing its note; older ones roll off), then `search_meetings` with X and `get_meeting` on each hit. In Quorum Cloud, also `kb_search` X.
+- **Use something else for** notes outside the meetings folder (your own vault search), the web, calendars and upcoming meetings, and writing to Slack, Notion or GitHub (those tools only read). Meetings and lines naming an opted-out customer are withheld.
+
+| Tool | Returns | Use it when |
+|---|---|---|
+| `search_meetings` | Meeting notes containing every word, best first, with a matching line | Recall by person, project or topic |
+| `get_meeting` | One meeting note in full, with any transcript | Reading a hit from search or list |
+| `list_meetings` | Filed meeting notes, newest first | Browsing recent meetings or one source |
+| `learned_facts` | Model-written fact lines, each citing its meeting | A quick summary of roles, decisions and commitments |
+| `granola_search` | Granola meetings or transcript passages, live | Your Granola MCP fails, or a meeting is not filed yet |
+| `kb_search`, `kb_read`, `kb_list` | Quorum Cloud knowledge base notes | Workspace or team knowledge |
+| `about` | This section as JSON, with every tool | Choosing a tool |
+
+Chats (`list_chats`, `get_chat`), the live call (`live_transcript`), `import_meeting`, Memory health (`review_*`, `fix_*`, `memory_check_*`) and the connected Slack, Notion and GitHub read tools are described in `about`.
 
 ## How it fits together
 

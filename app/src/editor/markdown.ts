@@ -51,27 +51,41 @@ export function splice(base: string, doc: JSONContent): string {
   const n = old.length - a - z, m = next.length - a - z;
   const L = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
   for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = old[a + i] === next[a + j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
-  // each output block: the original block it keeps (its index), or -1 and the editor's text
-  const out: { at: number; text: string }[] = [];
-  for (let k = 0; k < a; k++) out.push({ at: k, text: raw.blocks[k].text });
+  // each output block: the original block it keeps (at, its index) or -1 and the editor's text. src is the original
+  // block whose place it takes: the block itself when kept, and for an edited block the original it replaced (the k-th
+  // new block between two kept ones takes the place of the k-th dropped one there), -1 for one that is only added
+  const out: { at: number; src: number; text: string }[] = [];
+  for (let k = 0; k < a; k++) out.push({ at: k, src: k, text: raw.blocks[k].text });
   let i = 0, j = 0;
+  let dropped: number[] = [], added: { at: number; src: number; text: string }[] = [];
+  const pair = () => { added.forEach((b, k) => { b.src = dropped[k] ?? -1; }); dropped = []; added = []; };
   while (j < m) {
-    if (i < n && old[a + i] === next[a + j]) { out.push({ at: a + i, text: raw.blocks[a + i].text }); i++; j++; }
-    else if (i < n && L[i + 1][j] >= L[i][j + 1]) i++;
-    else { out.push({ at: -1, text: next[a + j] }); j++; }
+    if (i < n && old[a + i] === next[a + j]) { pair(); out.push({ at: a + i, src: a + i, text: raw.blocks[a + i].text }); i++; j++; }
+    else if (i < n && L[i + 1][j] >= L[i][j + 1]) { dropped.push(a + i); i++; }
+    else { const b = { at: -1, src: -1, text: next[a + j] }; added.push(b); out.push(b); j++; }
   }
-  for (let k = old.length - z; k < old.length; k++) out.push({ at: k, text: raw.blocks[k].text });
-  // two blocks that were next to each other keep the space between them; any other pair gets a blank line
-  let md = out.length ? raw.lead : '';
-  out.forEach((b, k) => {
-    md += b.text;
-    const nb = out[k + 1];
-    if (!nb) return;
-    const after = b.at >= 0 ? raw.blocks[b.at].after : '';
-    md += b.at >= 0 && nb.at === b.at + 1 ? after : /\n\n/.test(after) ? after : '\n\n';
-  });
-  const same = blocksOf(toDoc(md));
-  return same.length === next.length && same.every((x, k) => x === next[k]) ? md : toMarkdown(doc);
+  while (i < n) dropped.push(a + i++);
+  pair();
+  for (let k = old.length - z; k < old.length; k++) out.push({ at: k, src: k, text: raw.blocks[k].text });
+  // two blocks in the places of blocks that were next to each other keep the space that was between them; any other
+  // pair gets a blank line. If that doesn't read back as the edited document, the edited blocks get blank lines only
+  const join = (keepEdited: boolean) => {
+    let md = out.length ? raw.lead : '';
+    out.forEach((b, k) => {
+      md += b.text;
+      const nb = out[k + 1];
+      if (!nb) return;
+      const src = b.at >= 0 || keepEdited ? b.src : -1;
+      const after = src >= 0 ? raw.blocks[src].after : '';
+      md += src >= 0 && nb.src === src + 1 ? after : /\n\n/.test(after) ? after : '\n\n';
+    });
+    return md;
+  };
+  const reads = (md: string) => { const same = blocksOf(toDoc(md)); return same.length === next.length && same.every((x, k) => x === next[k]); };
+  const md = join(true);
+  if (reads(md)) return md;
+  const plain = join(false);
+  return reads(plain) ? plain : toMarkdown(doc);
 }
 
 // which picker the text before the cursor opens: "[[query" anywhere in the line links a note; "/query" opens the
