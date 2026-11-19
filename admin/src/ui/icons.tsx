@@ -21,6 +21,9 @@ export const IconPeople = (p: SVGProps<SVGSVGElement>) => (
 export const IconHistory = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5M12 7v5l3 2" /></svg>
 );
+export const IconAlert = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M12 4 2.5 20h19Z" /><path d="M12 10v4M12 17v.5" /></svg>
+);
 export const IconPerson = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 4-6 8-6s8 2 8 6" /></svg>
 );

@@ -9,5 +9,7 @@ export default defineConfig({
   plugins: [react()],
   base: './',
   define: { __QUORUM_EDITION__: JSON.stringify(edition) },
-  build: { outDir: 'dist', emptyOutDir: true },
+  // hidden source maps: the maps ship beside the bundle without the bundle naming them, so a crash report can name the
+  // source file and line (errorReports.js) while the page loads exactly as before
+  build: { outDir: 'dist', emptyOutDir: true, sourcemap: 'hidden' },
 });

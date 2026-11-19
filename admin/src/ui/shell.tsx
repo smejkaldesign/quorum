@@ -4,14 +4,15 @@ import { IconClose, IconMenu, IconSignOut } from './icons';
 // the same shape as Celune's admin-shell: a brand block, nav rows with icons, a bottom block, a main area that scrolls.
 // The look follows the desktop app's Settings sidebar (.set-side, .set-nav). Below 820px the sidebar becomes a top bar
 // with a menu button that drops the nav rows under it.
-export interface NavItem { id: string; label: string; icon: ComponentType<SVGProps<SVGSVGElement>>; bottom?: boolean }
+// `count`, when above zero, shows after the label (the Errors page's new groups)
+export interface NavItem { id: string; label: string; icon: ComponentType<SVGProps<SVGSVGElement>>; bottom?: boolean; count?: number }
 
 export function Shell({ items, current, email, onSignOut, children }: { items: NavItem[]; current: string; email?: string | null; onSignOut?: () => void; children?: ReactNode }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { setOpen(false); }, [current]);
   const row = (it: NavItem) => {
     const Icon = it.icon;
-    return <a key={it.id} href={`#/${it.id}`} className={`nav-row ${current === it.id ? 'on' : ''}`} aria-current={current === it.id ? 'page' : undefined}><Icon />{it.label}</a>;
+    return <a key={it.id} href={`#/${it.id}`} className={`nav-row ${current === it.id ? 'on' : ''}`} aria-current={current === it.id ? 'page' : undefined}><Icon />{it.label}{!!it.count && <span className="nav-count" aria-label={`${it.count} new`}>{it.count > 99 ? '99+' : it.count}</span>}</a>;
   };
   return (
     <div className="shell">

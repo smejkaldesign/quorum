@@ -2,23 +2,19 @@
 // runner (Claude Code, Codex or Antigravity) runs headless with one task: list the source's meetings through its
 // MCP server and write each one into Quorum through the quorum MCP server's import_meeting tool, which dedupes by
 // source id. Claude Code and Codex get the quorum server added for the run; Antigravity has to carry it in its own
-// config. The trade-offs are stated to the person before they choose it, in TRADEOFFS below, in plain words.
+// config. The trade-offs are stated to the person before they choose it, in TRADEOFFS (agent-import-shared.js), in plain words.
 import { spawn } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
 import { agentEnv, resolveBin } from '../agentEnv.js';
 
-export const SCHEDULES = ['off', 'hourly', 'daily'];
+// the schedule choices and trade-off text live in agent-import-shared.js, which the Connectors page can load
+import { SCHEDULES } from './agent-import-shared.js';
+
+export { SCHEDULES, TRADEOFFS } from './agent-import-shared.js';
 export const TIMEOUT_MS = 20 * 60 * 1000;
 // meetings per run; a run that lists this many has not caught up, so the next run lists from the start again
 export const LIMIT = 100;
 
-// what the person gives up compared with a direct connection; the Connectors page lists these next to the button
-export const TRADEOFFS = (runner, source) => [
-  `Spends your ${runner} model tokens: the agent reads every meeting it imports.`,
-  `Each note passes through a model, so wording can change and details can be dropped. A direct connection copies ${source}'s notes as they are.`,
-  'Runs once when you ask, or on the schedule you pick, only while Quorum is open.',
-  `Depends on ${runner} staying signed in to ${source}. If its sign-in expires, the import stops until you sign in there again.`,
-];
 
 const short = (iso) => (iso ? new Date(iso).toISOString().slice(0, 10) : null);
 
