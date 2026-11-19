@@ -282,4 +282,14 @@ describe('two notes with one name', () => {
     expect(t.g.store.node('project:orca').rel).toBe(a);
     expect(t.g.store.edgesOf('project:orca', { dir: 'in', kinds: ['mentions'] }).map((e) => e.source_rel)).toEqual(['notes/orca link.md']);
   });
+
+  it('reads a hub note and a typed note beside its folder as one project', async () => {
+    const t = await setup({ notes: 10, people: 3, projects: 2, companies: 1, meetings: 2 });
+    t.write('04-projects/Orca/Orca.md', '# Orca\n\nThe hub.\n');
+    t.write('04-projects/Orca.md', '---\ntype: project\n---\n# Orca\n\nThe project note.\n');
+    t.write('04-projects/Orca/orca-prd.md', '# Orca PRD\n');
+    expect(t.g.store.nodes({ kind: 'project' }).filter((n) => /orca/i.test(n.id)).map((n) => [n.id, n.rel])).toEqual([['project:orca', '04-projects/Orca.md']]);
+    expect(t.g.entity('Orca').ambiguous).toBeUndefined();
+    expect(t.g.store.edgesOf('project:orca', { dir: 'in', kinds: ['about'] }).map((e) => e.source_rel).sort()).toEqual(['04-projects/Orca.md', '04-projects/Orca/Orca.md']);
+  });
 });

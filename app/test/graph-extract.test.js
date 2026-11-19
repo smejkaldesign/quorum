@@ -1,7 +1,7 @@
 // Extraction from one note with no model (graph/extract.js): links, frontmatter, folder conventions, meetings,
 // decision lines and the keeper's link lines, checked against hand-written notes.
 import { describe, expect, it } from 'vitest';
-import { entityId, extractNote, folderKind, isHub, noteKind, slugKey } from '../graph/extract.js';
+import { entityId, entityIds, extractNote, folderKind, isHub, noteKind, slugKey } from '../graph/extract.js';
 
 // a resolver over a fixed set of notes, by basename, case-insensitive, like vindex's
 const resolverOf = (rels) => (target) => rels.find((r) => r.toLowerCase().replace(/\.md$/, '').split('/').pop() === target.toLowerCase().replace(/\.md$/, '').split('/').pop()) ?? null;
@@ -122,18 +122,40 @@ describe('extractNote', () => {
 });
 
 describe('entity ids when two notes share a name', () => {
-  it('gives each note its path id when another note of its kind shares the slug, and keeps the slug id otherwise', () => {
-    const twins = new Set(['04-projects/alpha/Orca.md', '04-projects/beta/Orca.md']);
-    const shared = (kind, rel) => kind === 'project' && twins.has(rel);
-    expect(entityId('project', '04-projects/alpha/Orca.md', shared)).toBe('project:04-projects/alpha/Orca');
-    expect(entityId('project', '04-projects/Atlas.md', shared)).toBe('project:atlas');
+  const T = { type: 'project' };
+  const ids = (entries) => Object.fromEntries(entityIds(entries));
+  it('keeps notes in unrelated folders apart by path, and keeps the slug id for one note', () => {
+    expect(ids([{ rel: '04-projects/alpha/Orca.md', props: T }, { rel: '04-projects/beta/Orca.md', props: T }])).toEqual({
+      '04-projects/alpha/Orca.md': { id: 'project:04-projects/alpha/Orca', backs: true },
+      '04-projects/beta/Orca.md': { id: 'project:04-projects/beta/Orca', backs: true },
+    });
+    expect(ids([{ rel: '04-projects/Orca.md', props: T }])).toEqual({});
+    expect(entityId('project', '04-projects/Atlas.md')).toBe('project:atlas');
     expect(slugKey('04-projects/alpha/Orca.md', {})).toBe('project:orca');
     expect(slugKey('notes/Orca.md', { type: 'person' })).toBe('person:orca');
     expect(slugKey('notes/Orca.md', {})).toBe(null);
-    const resolve = (t) => (t === 'alpha/Orca' ? '04-projects/alpha/Orca.md' : null);
-    const self = extractNote({ rel: '04-projects/alpha/Orca.md', text: '---\ntype: project\n---\n# Orca\n', shared });
-    expect(self.nodes.find((n) => n.kind === 'project').id).toBe('project:04-projects/alpha/Orca');
-    const linker = extractNote({ rel: 'notes/x.md', text: 'See [[alpha/Orca]].', resolve, kindOf: () => 'project', shared });
-    expect(linker.edges.find((e) => e.kind === 'mentions').dst).toBe('project:04-projects/alpha/Orca');
+  });
+  it('reads a hub and the note beside its folder as one entity, backed by the typed note, else the deeper one', () => {
+    expect(ids([{ rel: '04-projects/Orca.md', props: {} }, { rel: '04-projects/Orca/Orca.md', props: T }])).toEqual({
+      '04-projects/Orca.md': { id: 'project:orca', backs: false },
+      '04-projects/Orca/Orca.md': { id: 'project:orca', backs: true },
+    });
+    expect(ids([{ rel: '04-projects/Orca.md', props: T }, { rel: '04-projects/Orca/Orca.md', props: {} }])['04-projects/Orca.md'].backs).toBe(true);
+    expect(ids([{ rel: '04-projects/Orca.md', props: {} }, { rel: '04-projects/Orca/Orca.md', props: {} }])['04-projects/Orca/Orca.md'].backs).toBe(true);
+    // a hub and a note inside its folder are one entity too; a third Orca elsewhere gets its own path id
+    const three = ids([{ rel: 'p/Orca/Orca.md', props: T }, { rel: 'p/Orca/old/Orca.md', props: {} }, { rel: 'q/Orca.md', props: T }]);
+    expect(three['p/Orca/old/Orca.md']).toEqual({ id: 'project:p/Orca/Orca', backs: false });
+    expect(three['q/Orca.md']).toEqual({ id: 'project:q/Orca', backs: true });
+  });
+  it('makes the note the other one backs a note about the entity, and links reach the entity', () => {
+    const map = entityIds([{ rel: '04-projects/Orca.md', props: {} }, { rel: '04-projects/Orca/Orca.md', props: T }]);
+    const shared = (kind, rel) => map.get(rel) ?? null;
+    const side = extractNote({ rel: '04-projects/Orca.md', text: '---\ntype: project\n---\n# Orca\n', shared });
+    expect(side.kind).toBe('note');
+    expect(side.edges.some((e) => e.src === 'note:04-projects/Orca.md' && e.kind === 'about' && e.dst === 'project:orca')).toBe(true);
+    expect(side.nodes.find((x) => x.id === 'project:orca').rel).toBeUndefined();
+    const resolve = (t) => (t === 'Orca' ? '04-projects/Orca.md' : null);
+    const linker = extractNote({ rel: 'notes/x.md', text: 'See [[Orca]].', resolve, kindOf: () => 'project', shared });
+    expect(linker.edges.find((e) => e.kind === 'mentions').dst).toBe('project:orca');
   });
 });

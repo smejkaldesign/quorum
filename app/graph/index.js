@@ -3,7 +3,7 @@
 // lines are already withheld and excluded or denied notes never arrive.
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { DEFAULT_CONVENTIONS, ENTITY_FOLDERS, edgeKey, entityId, extractNote, folderKind, noteKind, slugKey } from './extract.js';
+import { DEFAULT_CONVENTIONS, ENTITY_FOLDERS, edgeKey, entityId, entityIds, extractNote, folderKind, noteKind, slugKey } from './extract.js';
 import { createQuery } from './query.js';
 import { NOTE_IDENTITY, openStore } from './store.js';
 import { subjectOf, supersessions } from './temporal.js';
@@ -37,18 +37,21 @@ export function createMemoryGraph({ dataDir, vault, vindex, log = () => {}, isEx
   // note, or when another note links it as one: an attended, works_on or member_of edge on its entity node, or an about
   // edge from a meeting or a person. recheck holds the notes whose answer may have changed in this pass
   const recheck = new Set();
-  // notes of one kind with one file name slug go by their paths (extract.js entityId): slugs counts them over the vault,
-  // read again at each pass, and a key that starts or stops being shared reads its notes and their linkers again
+  // notes of one kind with one file name slug (extract.js entityIds): one entity when their folders are related, else
+  // one per folder by path. slugs holds each such note's id over the vault, read again at each pass; a note whose id or
+  // backing changed is read again with its linkers
   let slugs = new Map();
   const countSlugs = () => {
+    const keys = new Map();
+    for (const r of vindex.rels()) { const props = vindex.note?.(r)?.props ?? {}; const k = slugKey(r, props, conventions); if (k) (keys.get(k) ?? keys.set(k, []).get(k)).push({ rel: r, props }); }
     const next = new Map();
-    for (const r of vindex.rels()) { const k = slugKey(r, vindex.note?.(r)?.props ?? {}, conventions); if (k) (next.get(k) ?? next.set(k, []).get(k)).push(r); }
-    const flipped = [];
-    for (const k of new Set([...slugs.keys(), ...next.keys()])) if (((slugs.get(k)?.length ?? 0) > 1) !== ((next.get(k)?.length ?? 0) > 1)) flipped.push(...(next.get(k) ?? []), ...(slugs.get(k) ?? []));
+    for (const list of keys.values()) for (const [r, v] of entityIds(list)) next.set(r, v);
+    const same = (a, b) => (a?.id ?? null) === (b?.id ?? null) && (a?.backs ?? null) === (b?.backs ?? null);
+    const flipped = [...new Set([...slugs.keys(), ...next.keys()])].filter((r) => !same(slugs.get(r), next.get(r)));
     slugs = next;
     return flipped;
   };
-  const shared = (kind, rel) => (slugs.get(entityId(kind, rel))?.length ?? 0) > 1;
+  const shared = (kind, rel) => { const v = slugs.get(rel); return v && v.id.startsWith(`${kind}:`) ? v : null; };
   const entityFolder = (rel) => { const k = folderKind(rel, conventions); return ENTITY_FOLDERS.has(k) ? k : null; };
   const LINKING = ['attended', 'works_on', 'member_of', 'about'];
   const linkedAs = (rel) => {
