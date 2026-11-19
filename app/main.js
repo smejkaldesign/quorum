@@ -2491,12 +2491,15 @@ function openMemoryGraph(vault) {
 const graphBudget = (b) => Math.max(100, Math.min(Number(b) || 1500, 50000));
 const graphArgs = (a) => { const o = a && typeof a === 'object' ? { ...a } : {}; if ('budget' in o) o.budget = graphBudget(o.budget); return o; };
 const graphRead = (fn) => { if (!memoryGraph) return null; try { return fn(memoryGraph); } catch (err) { log('memory graph read', String(err)); return { error: 'The memory graph could not answer that.' }; } };
-ipcMain.handle('memory-graph-status', () => memoryGraph?.status() ?? { phase: 'off' });
-ipcMain.handle('memory-graph-query', (_e, args) => graphRead((g) => g.graphQuery(graphArgs(args))));
-ipcMain.handle('memory-graph-explain', (_e, ref) => graphRead((g) => g.explain(String(ref ?? ''))));
-ipcMain.handle('memory-graph-entity', (_e, name, opts) => graphRead((g) => g.entity(String(name ?? ''), graphArgs(opts))));
-ipcMain.handle('memory-graph-decisions', (_e, args) => graphRead((g) => g.decisions(graphArgs(args))));
-ipcMain.handle('memory-graph-path', (_e, a, b, opts) => graphRead((g) => g.graphPath(String(a ?? ''), String(b ?? ''), graphArgs(opts))));
+// as app actions too, so the control socket bridge calls them by name; each takes positional arguments from the window
+// or one object from the bridge ({ q, name, id, a, b, about, budget, ... })
+const graphObj = (x) => (x && typeof x === 'object' && !Array.isArray(x) ? x : null);
+handleAction('memory-graph-status', () => memoryGraph?.status() ?? { phase: 'off' });
+handleAction('memory-graph-query', (_e, args) => graphRead((g) => g.graphQuery(graphArgs(args))));
+handleAction('memory-graph-explain', (_e, ref) => graphRead((g) => g.explain(String(graphObj(ref) ? ref.id ?? ref.ref ?? ref.name ?? '' : ref ?? ''))));
+handleAction('memory-graph-entity', (_e, name, opts) => graphRead((g) => (graphObj(name) ? g.entity(String(name.name ?? name.q ?? name.id ?? ''), graphArgs(name)) : g.entity(String(name ?? ''), graphArgs(opts)))));
+handleAction('memory-graph-decisions', (_e, args) => graphRead((g) => g.decisions(graphArgs(args))));
+handleAction('memory-graph-path', (_e, a, b, opts) => graphRead((g) => (graphObj(a) ? g.graphPath(String(a.a ?? ''), String(a.b ?? ''), graphArgs(a)) : g.graphPath(String(a ?? ''), String(b ?? ''), graphArgs(opts)))));
 // Memory health review rules (rules/index.js) on the cadence memorySweep.js sets: the notes that changed a few seconds
 // after a save, an incremental sweep every 3.5 hours, a full sweep once a day while the person is away
 const memorySweep = createMemorySweep({ file: path.join(DATA_DIR, 'memory-findings.json') });
