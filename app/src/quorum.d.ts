@@ -302,6 +302,10 @@ export type MemorySweepInfo = { kind: string; at: number; ms: number; notes: num
 export type MissingLink = { held?: GateHold; approve?: { says: string; fallback?: string }; target: string; sources: string[]; count: number; links?: number; lastAt?: number | null; left?: boolean; declined?: string[]; contexts?: { rel: string; title?: string; text: string }[]; confidential?: unknown[]; found?: { kind: 'folder' | 'script' | 'skill' | 'file' | 'branch'; where: string; branch?: string; rel?: string | null }; candidates: { rel: string; title: string; name: string | null; exact: boolean; score?: number; cover?: number; kindClash?: boolean; shared?: string[]; neighbor?: boolean; sameFolder?: boolean }[] };
 export type Relocated = { rel: string; files: number; links: number };
 export type SearchHit = { rel: string; title: string; score: number; line: number; snippet: string };
+// memory search (search/hybrid.js): one chunk of a note, with the rank it had in each list (1 is first)
+export type MemorySearchHit = { rel: string; heading: string; start_line: number; end_line: number; text: string; kind: string; score: number; cut?: boolean; parts: { fts?: number; vec?: number; graph?: number; recency: number; superseded: boolean; kindHint?: boolean } };
+export type MemorySearchResult = { results: MemorySearchHit[]; truncated: { shown: number; total: number; budgetNeeded: number } };
+export type MemorySearchStatus = { state: 'off' | 'idle' | 'building' | 'embedding' | 'paused' | 'waiting'; notes: number; chunks: number; embedded: number; pending: number; model: string | null; error: string | null; lastBuildMs: number | null; built: boolean; embedPerSecond: number | null };
 export type Backlink = { rel: string; title: string; line: number; context: string };
 export type OutLink = { target: string; rel: string | null; title: string; anchor: string; embed: boolean };
 export type TreeItem = { name: string; path: string; dir: boolean; mtime?: number; ctime?: number; children?: TreeItem[] };
@@ -452,6 +456,9 @@ declare global {
       activityArchive(rows: { id: string }[], on?: boolean): Promise<number>;
       activityReview(items: { kind: 'note' | 'memory' | 'junk-note' | 'link' | 'past-fix' | 'finding' | 'ignore'; abs: string; key?: string }[], verdict: 'approve' | 'revert' | 'dismiss'): Promise<{ done: string[]; failed: { abs: string; error: string }[] }>;
       vaultSearch(q: string, limit?: number): Promise<SearchHit[]>;
+      // memory search: hybrid search over the vault's chunks, trimmed to budget tokens
+      memorySearch(opts: { q: string; budget?: number; k?: number; folders?: string[]; kinds?: string[]; since?: string }): Promise<MemorySearchResult>;
+      memorySearchStatus(): Promise<MemorySearchStatus>;
       vaultBacklinks(rel: string): Promise<Backlink[]>;
       vaultLinkHealth(fresh?: boolean): Promise<MissingLink[]>;
       // Needs review for Memory health: the items waiting, and the same items by the note they are about and its folders

@@ -96,6 +96,9 @@ contextBridge.exposeInMainWorld('quorum', {
   activityArchive: (rows, on) => ipcRenderer.invoke('activity-archive', rows, on !== false),
   activityReview: (items, verdict) => ipcRenderer.invoke('activity-review', items, verdict),
   vaultSearch: (q, limit) => ipcRenderer.invoke('vault-search', q, limit),
+  // memory search (search/): hybrid search and its index status
+  memorySearch: (opts) => ipcRenderer.invoke('memory-search', opts),
+  memorySearchStatus: () => ipcRenderer.invoke('memory-search-status'),
   vaultBacklinks: (rel) => ipcRenderer.invoke('vault-backlinks', rel),
   vaultLinkHealth: (fresh) => ipcRenderer.invoke('vault-link-health', fresh === true),
   memoryReviewCount: () => ipcRenderer.invoke('memory-review-count'),
