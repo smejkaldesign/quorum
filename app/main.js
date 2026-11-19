@@ -11,6 +11,7 @@ import { checkConnection } from './connectionCheck.js';
 import { openSpeech, SPEECH_ENGINES } from './speech/provider.js';
 import { SKIP as TREE_SKIP, createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTarget, vaultTree } from './vault.js';
 import { createVaultIndex } from './vindex.js';
+import { createMemoryGraph } from './graph/index.js';
 import { applyUndo, sha, undoRecord } from './fixUndo.js';
 import { changedSince, createFixJournal, createNoteHashes, fixCheck, hashNotes, noteMemo, recoveryReason, rollback } from './fixJournal.js';
 import { createGateStore, gatePasses, gateTriggers, verdictOf } from './gateRun.js';
@@ -23,6 +24,7 @@ import { createTokenStore } from './sources/tokens.js';
 import { connectAccount, createAccounts, oauthClients } from './sources/accounts.js';
 import { createConnectorTools } from './connectors/tools/index.js';
 import { actorLabel, createAppActions, currentActor, outsideActor } from './appActions.js';
+import { fromActionHandlers, runMemoryTool, withholdAnswer } from './cli/memoryTools.mjs';
 import { CONNECTOR_SERVER } from './cli/connectorTools.mjs';
 import { httpUrl, relayFetch, relayUrl } from './relayUrl.js';
 import { createErrorReports } from './errorReports.js';
@@ -71,6 +73,7 @@ import { batchItems, rollBackItems } from './batchItems.js';
 import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, fixVersions, recheckAll, undoPlan } from './fixRecheck.js';
 import { buildPlan, checkFirst, checkOrder, effects, groupLabel, groupOf, notesOf, planExclude } from './batchPlan.js';
 import { RETRO_TITLE, ROW, findingItem, itemLine, linkItem, pastFixItem } from './reviewItems.js';
+import { SETUP_OPS, approvedEdges, createMemorySetup, endEdges, graphFreshness, nodeIdOf, outsideInstructions, pickItem, recordContradictions, resolveContradiction, runSetupOp, setupReport } from './memorySetup.js';
 import { approveFinding, approvePastFix, gitReader, retroCandidates, withLinkLine } from './reviewApprove.js';
 import { frontBlock, removeFrontmatterKey, withDate } from './frontmatter.js';
 import { createResolver } from './linkparse.js';
@@ -82,6 +85,8 @@ import { approveLitter, commitNotes, prepareCompact } from './vaultHygiene.js';
 import { relatedLine } from './rules/nearDuplicates.js';
 import { DAILY_CAP, WRONG_NOTE_FIX, createDrafter, draftKind, evidenceRels, fallbackItem, unlinkItem, withDraft } from './memoryDraft.js';
 import { MEMORY_MODELS } from './memoryModels.js';
+import { createMemorySearch } from './search/index.js';
+import { engineEmbedder } from './search/embed.js';
 import { catchupHooks, createSaveSweeps, forkEngine, savesKept, slotBinder, startMemoryEngine } from './memoryWiring.js';
 import { createModelDownload, macConditions } from './decide/download.js';
 import { DECIDER_ON } from './decide/index.js';
@@ -124,6 +129,9 @@ const FEED_READS = new Set([
   'memory-catchup-status', 'note-chats', 'read-chat', 'event-chats', 'calendar', 'oauth-accounts', 'mcp-status', 'cli-status', 'agents-status', 'claude-status',
   'model-source-status', 'decisions-status', 'screen-context-status', 'ax-status', 'kb-list', 'kb-notes', 'kb-files', 'kb-files-usage', 'kb-file-data', 'kb-hosted',
   'kb-hosted-note', 'kb-drive-status', 'kb-sync-list', 'kb-sync-grants', 'kb-import-progress',
+  // memory graph reads
+  'memory-graph-status', 'memory-graph-query', 'memory-graph-explain', 'memory-graph-entity', 'memory-graph-decisions', 'memory-graph-path',
+  'memory-search', 'memory-search-status', 'memory-setup-status',
 ]);
 const TREE_WRITES = new Set([
   'vault-new-note', 'vault-today', 'vault-new-folder', 'vault-move', 'vault-rename', 'vault-trash', 'vault-duplicate', 'set-settings', 'guardrails-add', 'guardrails-remove', 'guardrails-set',
@@ -351,6 +359,8 @@ const keeper = createKeeper({
   log: (...a) => log(...a), onChange: (r) => toUI('keeper', r), errorLog: KEEPER_ERRORS, versions: memoryVersions, live: liveRuns,
   // a meeting note the guardrails keep the keeper out of goes on the Recent denials list
   onGuarded: (rel, why) => guardrails.recordDenial({ path: rel, reason: why, surface: 'keeper' }),
+  // memory setup: a filed meeting's typed edges go into the memory graph
+  graph: () => graphStore(),
 });
 ipcMain.handle('keeper-status', () => keeper.status());
 ipcMain.handle('keeper-set', (_e, patch) => keeper.set(patch ?? {}));
@@ -1587,6 +1597,7 @@ ipcMain.handle('set-settings', (_e, next) => {
       if (/^[A-Z]{2,12}$/.test(w)) clean[k] = w;
     }
     if ((clean.stopWord ?? chatWords().stop) === (clean.goWord ?? chatWords().go)) { delete clean.stopWord; delete clean.goWord; }
+    const optOutsBefore = JSON.stringify(optOuts());
     if (Array.isArray(next.workspace.optOuts)) {
       const seen = new Set();
       clean.optOuts = next.workspace.optOuts.map((o) => ({ name: String(o?.name ?? '').trim().slice(0, 80), domain: neverListEntry(o?.domain) ?? '' }))
@@ -1598,6 +1609,8 @@ ipcMain.handle('set-settings', (_e, next) => {
     store.settings.save();
     // a name added mid-call takes effect right away
     if (clean.optOuts && meetingActive) refreshGuard().then(() => { if (namedHere()) blockCall('name'); else if (shouldBlock(lastInfo.names)) blockCall(); });
+    // memory graph and search: a changed opt-out list reads the vault again, so a name it adds leaves memory.db too
+    if (clean.optOuts && JSON.stringify(optOuts()) !== optOutsBefore) setTimeout(() => vindex?.rebuild(), 0);
   }
   return settings;
 });
@@ -2288,7 +2301,10 @@ handleAction('activity-review', async (_e, items, verdict) => {
         // act on the note, then archive the finding
         // Approve runs the change its rule allows, or keeps it as it is, through the planner; the batch marks it done.
         // Only Archive logs archived, so a rule's record counts each once
-        if (ok) startPlanFor([`${ROW.finding}${String(it.key ?? '')}`]);
+        // only: the notes a grouped item keeps ticked (memorySetup.js pickItem); the others stay as they are
+        const id = `${ROW.finding}${String(it.key ?? '')}`;
+        const only = Array.isArray(it.only) ? { [id]: it.only.filter((r) => typeof r === 'string').slice(0, 5000) } : null;
+        if (ok) startPlanFor([id], currentActor(), null, only);
         else {
           archiveFindings([String(it.key ?? '')], true);
           const st = feedState();
@@ -2546,6 +2562,36 @@ const excludedPath = (rel) => suggester.isExcluded(rel);
 
 // one live index per connected vault; the watcher tells the UI what changed so it can refresh in place
 let vindex = null;
+// memory graph (graph/index.js): typed, sourced and dated connections derived from the vault index, in
+// DATA_DIR/memory/<vault hash>/memory.db. It reads vindex's text, so withheld lines and excluded notes never reach it.
+// openIndex opens it for the connected vault, builds it once the index is read, and hands it every change after that
+let memoryGraph = null;
+function closeMemoryGraph() { memoryGraph?.close(); memoryGraph = null; }
+function openMemoryGraph(vault) {
+  closeMemoryGraph();
+  try {
+    memoryGraph = createMemoryGraph({ dataDir: DATA_DIR, vault, vindex, isExcluded: (t) => suggester.isExcluded(t), log: (...a) => log('memory graph', ...a) });
+    memoryGraph.on('progress', (st) => toUI('memory-graph', st));
+    // the first full graph build is also search's cue: onIndexed does not fire for the index's first read, and a first
+    // call opens search on the graph's database and builds it in full
+    memoryGraph.on('ready', (st) => { toUI('memory-graph', st); searchChanged([]); });
+  } catch (err) { log('memory graph failed to open', String(err)); memoryGraph = null; }
+}
+const graphBudget = (b) => Math.max(100, Math.min(Number(b) || 1500, 50000));
+const graphArgs = (a) => { const o = a && typeof a === 'object' ? { ...a } : {}; if ('budget' in o) o.budget = graphBudget(o.budget); return o; };
+// the window gets what the MCP tools get: an item that names an opted-out customer (its id, name or path, slugs
+// included) is dropped and withheld lines are blanked
+const memoryOut = (r) => withholdAnswer(r, { withheld: excludedPath, isExcluded: suggester.isExcluded, redact: suggester.redactLines });
+const graphRead = (fn) => { if (!memoryGraph) return null; try { return memoryOut(fn(memoryGraph)); } catch (err) { log('memory graph read', String(err)); return { error: 'The memory graph could not answer that.' }; } };
+// as app actions too, so the control socket bridge calls them by name; each takes positional arguments from the window
+// or one object from the bridge ({ q, name, id, a, b, about, budget, ... })
+const graphObj = (x) => (x && typeof x === 'object' && !Array.isArray(x) ? x : null);
+handleAction('memory-graph-status', () => memoryGraph?.status() ?? { phase: 'off' });
+handleAction('memory-graph-query', (_e, args) => graphRead((g) => g.graphQuery(graphArgs(args))));
+handleAction('memory-graph-explain', (_e, ref, opts) => graphRead((g) => (graphObj(ref) ? g.explain(String(ref.id ?? ref.ref ?? ref.name ?? ''), graphArgs(ref)) : g.explain(String(ref ?? ''), graphArgs(opts)))));
+handleAction('memory-graph-entity', (_e, name, opts) => graphRead((g) => (graphObj(name) ? g.entity(String(name.name ?? name.q ?? name.id ?? ''), graphArgs(name)) : g.entity(String(name ?? ''), graphArgs(opts)))));
+handleAction('memory-graph-decisions', (_e, args) => graphRead((g) => g.decisions(graphArgs(args))));
+handleAction('memory-graph-path', (_e, a, b, opts) => graphRead((g) => (graphObj(a) ? g.graphPath(String(a.a ?? ''), String(a.b ?? ''), graphArgs(a)) : g.graphPath(String(a ?? ''), String(b ?? ''), graphArgs(opts)))));
 // Memory health review rules (rules/index.js) on the cadence memorySweep.js sets: the notes that changed a few seconds
 // after a save, an incremental sweep every 3.5 hours, a full sweep once a day while the person is away
 const memorySweep = createMemorySweep({ file: path.join(DATA_DIR, 'memory-findings.json') });
@@ -2571,6 +2617,7 @@ async function sweepNow(kind, only, { after }) {
     if (!r?.state || brain()?.vault !== b.vault) return null;
     setTags(b.vault, r.tags ?? []);
     memorySweep.put(b.vault, r.state);
+    recordSweepContradictions(b.vault);
     const s = r.state;
     log('memory sweep', kind, `${s.last.notes} notes`, `${s.last.ms} ms`, `${s.last.found} findings`);
     toUI('memory-updates', null);
@@ -2680,9 +2727,126 @@ ipcMain.handle('memory-findings-archive', (_e, keys, on) => {
 // Check again in Memory health: a full sweep now
 ipcMain.handle('memory-sweep-now', () => memoryCheck(memorySweep.state(brain()?.vault ?? '')?.lastFull ? 'full' : 'first'));
 
+// ---- Memory setup (memorySetup.js) ----
+// The scan on connect and from Settings, Memory, its IPC, and the graph edges approved fixes, the keeper and
+// contradictions record. The graph's store is used once memoryGraph is built; until then every graph step is skipped
+const graphReady = () => { try { return memoryGraph?.status().phase === 'ready'; } catch { return false; } };
+const graphStore = () => (graphReady() ? memoryGraph.store : null);
+const waitUntil = async (ok, { ms = 120000, every = 250, onTick = () => {} } = {}) => {
+  const end = Date.now() + ms;
+  while (!ok()) { if (Date.now() > end) return false; onTick(); await new Promise((r) => setTimeout(r, every)); }
+  return true;
+};
+// a step that waited too long, or whose vault is no longer the one connected, stops the scan with its reason
+const sameVault = (vault) => { if (brain()?.vault !== vault) throw new Error('The vault changed during the scan. Check again to scan the vault connected now'); };
+const memorySetup = createMemorySetup({
+  file: path.join(DATA_DIR, 'memory-setup.json'),
+  emit: (s) => toUI('memory-setup', s),
+  log,
+  steps: {
+    index: async (progress, { vault }) => {
+      sameVault(vault);
+      // the phase label stays put while the count moves; the window announces only a new phase
+      const ok = await waitUntil(() => !!vindex?.watching() || brain()?.vault !== vault, { onTick: () => progress(0, 0, `Reading the notes: ${(vindex?.size() ?? 0).toLocaleString('en-US')} so far`) });
+      sameVault(vault);
+      if (!ok) throw new Error('Reading the notes took more than 2 minutes. Check again once the vault has loaded');
+    },
+    graph: async (progress, { vault }) => {
+      sameVault(vault);
+      if (!memoryGraph) return;
+      const ok = await waitUntil(() => !memoryGraph || brain()?.vault !== vault || ['ready', 'closed'].includes(memoryGraph.status().phase), { ms: 300000, onTick: () => { const p = memoryGraph?.status(); if (p?.total) progress(p.done, p.total, `Building the memory graph: ${p.done.toLocaleString('en-US')} of ${p.total.toLocaleString('en-US')} notes`); } });
+      sameVault(vault);
+      if (!ok) throw new Error('Building the memory graph took more than 5 minutes. Check again once it is built');
+    },
+    // a memory check already running (the first check of a vault) is waited for instead of run twice
+    checks: async (_p, { vault }) => {
+      sameVault(vault);
+      if (checkWork) {
+        const ok = await waitUntil(() => !checkWork, { ms: 30 * 60000, every: 1000 });
+        sameVault(vault);
+        if (!ok) throw new Error('The memory check took more than 30 minutes. Check again once it is done');
+        return;
+      }
+      await memoryCheck(memorySweep.state(vault)?.lastFull ? 'full' : 'first');
+      sameVault(vault);
+    },
+    report: async (_p, { vault }) => { sameVault(vault); return setupReportNow(); },
+  },
+});
+function setupReportNow() {
+  const b = brain();
+  if (!b || !vindex) throw new Error('No vault connected');
+  const notes = vindex.snapshot();
+  const store = graphStore();
+  let stats = null;
+  try { stats = store?.stats() ?? null; } catch (e) { log('memory graph', e?.message); }
+  return setupReport({
+    notes, missing: notes.reduce((n, x) => n + vindex.missingIn(x.rel).length, 0),
+    findings: findingsNow(), links: linkIssues().map((e) => issueOf(withMarks(e))),
+    graph: store ? { stats, freshness: (since) => graphFreshness(store, since) } : null,
+    search: searchCounts(), keeper: keeper.status(), made: b.made,
+    outside: outsideInstructions({ root: b.root, vault: b.vault, resolve: (t, f) => vindex.resolve(t, f) }),
+  });
+}
+// the search index's passages and how many are embedded, or null while it is off
+function searchCounts() {
+  try { const s = memorySearch.status(); return s?.chunks ? { chunks: s.chunks, embedded: s.embedded ?? 0 } : null; } catch { return null; }
+}
+function setupStatus() {
+  const b = brain();
+  if (!b) return null;
+  const k = keeper.status();
+  // a keeper turned off in Settings before setup counts as the person's choice too
+  const keeperChoice = memorySetup.keeperChoice(b.vault) ?? (settings.keeper?.on === false ? 'off' : null);
+  return { ...memorySetup.status(b.vault), keeperChoice, made: b.made ?? null, keeper: { on: !!k.on, editVault: !!k.editVault }, graph: !!memoryGraph };
+}
+// once per vault, after its index is in: the scan of a vault that has no report yet
+function scheduleSetup(vault) {
+  setTimeout(() => { if (brain()?.vault === vault && !memorySetup.status(vault).report) memorySetup.run(vault).catch(() => {}); }, 6000);
+}
+function recordSweepContradictions(vault) {
+  const store = graphStore();
+  if (!store) return;
+  try { recordContradictions(store, memorySweep.findings(vault)); } catch (e) { log('memory graph', e?.message); }
+}
+// the edges of a batch's approved connections and resolved contradictions; their ids, so Undo can end them
+function recordApproved(items) {
+  const store = graphStore();
+  if (!store) return [];
+  const ids = [];
+  const at = Date.now();
+  try {
+    store.tx(() => { for (const e of approvedEdges(items, { at, idOf: (rel, props) => nodeIdOf(store, rel, props) })) ids.push(store.addEdge(e)); });
+    for (const it of items) { const id = resolveContradiction(store, it, { at }); if (id != null) ids.push(id); }
+  } catch (e) { log('memory graph', e?.message); }
+  return ids;
+}
+handleAction('memory-setup-status', () => setupStatus());
+// runs in the background and reports through memory-setup events; keeper: true or false sets the keeper first
+ipcMain.handle('memory-setup-run', (_e, opts) => {
+  const b = brain();
+  if (!b) throw new Error('No vault connected');
+  if (typeof opts?.keeper === 'boolean') { memorySetup.chooseKeeper(b.vault, opts.keeper); keeper.set({ on: opts.keeper }); }
+  memorySetup.run(b.vault).catch(() => {});
+  return setupStatus();
+});
+// the person's keeper choice from the setup card: on or off, kept per vault. offer: true is finishing onboarding with
+// the offer still selected, which turns the keeper on only when no choice was made on the card
+ipcMain.handle('memory-setup-keeper', (_e, opts) => {
+  const b = brain();
+  if (!b) throw new Error('No vault connected');
+  if (typeof opts?.on !== 'boolean') throw new Error('Choose on or off');
+  const offer = opts.offer === true;
+  if (offer && settings.keeper?.on === false) return setupStatus();
+  if (memorySetup.chooseKeeper(b.vault, opts.on, { offer })) keeper.set({ on: opts.on });
+  return setupStatus();
+});
+FEED_READS.add('memory-setup-status');
+// ---- end Memory setup ----
 function openIndex() {
   vindex?.stop();
   vindex = null;
+  closeMemoryGraph();
   // saves waiting for a check belong to the vault that was open; they wait in a file until it opens again
   keepSaves();
   const b = brain();
@@ -2696,12 +2860,19 @@ function openIndex() {
     vault: b.vault, isExcludedPath: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isDeniedText: isConfidentialText, isExcludedText: suggester.isExcluded, redact: suggester.redactLines,
     onChange: (rels) => { toUI('vault-changed', rels); if (!built) { built = true; setTimeout(sweepTick, 5000); const kept = savesWaiting.take(b.vault); if (kept.length) sweepOnSave(kept); } else sweepOnSave(rels); }, renamed: () => settings.clusterNames?.[b.vault] ?? {},
     forget: (keys) => { const mine = settings.clusterNames?.[b.vault]; if (!mine) return; for (const k of keys) delete mine[k]; store.settings.save(); }, log: (...a) => log('index', ...a),
-    onPaths: treePaths, onMoves: relinkMoves,
+    onPaths: treePaths, onMoves: (moves) => { memoryGraph?.moved(moves); relinkMoves(moves); },
+    // memory graph: every index change, the watcher's and the ones Quorum's own writes sync
+    // every sync, the watcher's and Quorum's own writes alike: the graph first, then search over the same paths
+    onIndexed: (rels) => { memoryGraph?.update(rels); searchChanged(rels); },
   });
   dropTree();
-  vindex.start();
+  openMemoryGraph(b.vault);
+  const graph = memoryGraph;
+  vindex.start().then(() => { if (graph && memoryGraph === graph) return graph.build(); }).catch((err) => log('memory graph build', String(err)));
   // the keeper files whatever arrived while the app was closed, once the folder is open
   setTimeout(() => keeper.run({ reason: 'launch' }).catch(() => {}), 4000);
+  // memory setup: a vault with no setup report yet gets its scan
+  scheduleSetup(b.vault);
   // the hosted edition's sync watches the same vault for files to push; the vault changed, so it moves with it
   account.sync.live();
 }
@@ -3713,6 +3884,9 @@ function memoryCond(heavy = false) {
     busy: recordingNow() || (!!draftAbort && !catchup.running()) || fixRunList().some((r) => r.status === 'queued' || r.status === 'running'),
     idleMs: powerMonitor.getSystemIdleTime() * 1000,
     drafts: settings.memoryDrafts === true,
+    // memory setup: the rules read the memory graph once it is built (memoryEngine.js)
+    graphReady: graphReady(),
+    owner: USER_NAME,
   };
   if (!heavy || !b) return out;
   let bar = null;
@@ -3734,8 +3908,21 @@ const memoryEngine = startMemoryEngine({
 // the decision layer's models download in the background into the data folder after launch (decide/download.js);
 // Settings > Memory shows the status. Until they are on disk and verified, every check goes to Claude
 // net.request goes through Chromium's network stack, so the macOS proxy and PAC settings apply (decide/netFetch.js)
-const modelDownload = createModelDownload({ dir: path.join(DATA_DIR, 'models'), enabled: DECIDER_ON, fetch: netFetch(net), userAgent: `Quorum/${app.getVersion()}`, conditions: macConditions, onChange: (s) => toUI('models-status', s), log });
+const modelDownload = createModelDownload({ dir: path.join(DATA_DIR, 'models'), enabled: DECIDER_ON, fetch: netFetch(net), userAgent: `Quorum/${app.getVersion()}`, conditions: macConditions, onChange: (s) => { toUI('models-status', s); if (s?.state === 'ready') searchResume(); }, log });
 ipcMain.handle('models-status', () => modelDownload.status());
+// ---- Memory search (search/): hybrid search over heading-scoped chunks of the vault, in the vault's memory database.
+// It reads the vault index's text (opted-out lines already withheld, denied notes never in it), builds its FTS index on
+// the first change the index reports and updates it note by note after that. Vectors come from the bundled bge-small
+// model in the memory engine's process, one small batch at a time, and wait while a recording is live. Its tables sit in
+// the memory graph's database, on the graph store's connection, and the graph boost reads the same store. Read-only
+// actions (the MCP bridge calls them by name): memory-search, memory-search-status
+const memorySearch = createMemorySearch({ dataDir: DATA_DIR, vault: () => brain()?.vault ?? null, vindex: () => vindex, embedder: engineEmbedder((texts, maxTokens) => memoryEngine.embed(texts, maxTokens)), graph: () => memoryGraph?.store ?? null, paused: () => recordingNow(), log });
+function searchChanged(rels) { memorySearch.changed(rels).catch((e) => log('search', 'update failed', e?.message)); }
+// the local models finished downloading: the embed queue stops waiting
+function searchResume() { try { memorySearch.resume(); } catch { /* search not set up yet */ } }
+handleAction('memory-search', (_e, opts) => memorySearch.search({ ...(opts && typeof opts === 'object' ? opts : {}), q: String(opts?.q ?? ''), budget: Math.min(Math.max(Number(opts?.budget) || 1500, 100), 20000), k: Math.min(Math.max(Number(opts?.k) || 20, 1), 100), signals: undefined }).then(memoryOut));
+handleAction('memory-search-status', () => memorySearch.status());
+// ---- end memory search
 const contradictionAgent = memoryEngine.agent;
 // each drafting run is agent activity; Cancel stops the model call, and the item is drafted again later
 let draftAbort = null;
@@ -4003,8 +4190,8 @@ function startPlan(plan, items, { actor = currentActor(), batch = null } = {}) {
 }
 // plans and starts the items with these row ids; refuses with the reason the first one was left out
 // batch: the bulk Approve this plan belongs to, so its plain fixes and this run show and cancel as one
-function startPlanFor(ids, actor = currentActor(), batch = null) {
-  const items = gatedItems({ ids });
+function startPlanFor(ids, actor = currentActor(), batch = null, only = null) {
+  const items = gatedItems({ ids }).map((i) => (only?.[i.id] ? pickItem(i, only[i.id]) : i));
   if (!items.length) throw new Error('That item is no longer in Needs review');
   const plan = buildPlan(items);
   if (!plan.ok.length) throw new Error((plan.held[0] ?? plan.skipped[0])?.reason ?? 'Nothing in the plan can run');
@@ -4060,6 +4247,8 @@ async function runOp(item, o, { step, keep, written, vault }) {
     const now = readVault(vault, o.rel);
     if ((now == null ? null : sha(now)) !== o.expect) throw new Error(`“${o.rel}” changed after Quorum planned this batch, so Quorum did not write. Review the plan again`);
   }
+  // memory setup: the ops its rules add (memorySetup.js)
+  if (item.kind === 'finding' && SETUP_OPS.has(o.op)) { await runSetupOp(item, o, { step, keep, vault, written }, { vindex, trash: (p) => shell.trashItem(p) }); return; }
   const past = item.kind === 'pastfix';
   if (o.op === 'restore') {
     await step(past ? `Putting back ${o.rel} as it read before the earlier fix` : item.relinkTo ? `Pointing the links to ${item.target} in ${o.rel} at ${item.relinkTo}` : `Writing ${o.rel} as the agent drafted it`);
@@ -4206,6 +4395,8 @@ async function runBatch(run, step, keep, release = () => {}) {
   // a kept past fix and every finding leave Needs review as done
   run.done = fixed.filter((i) => (i.kind === 'pastfix' && i.keep) || i.kind === 'finding').map((i) => i.id);
   run.touched = [...touched];
+  // memory setup: the connections the person approved, as person-provenance edges in the memory graph
+  run.graphEdges = recordApproved(fixed);
   const done = (run.groups ?? []).map((g) => g.label).join(', ');
   return `Applied the plan: ${done}${followed.length ? `. Then pointed ${followed.length === 1 ? `the link to “${followed[0]}”` : `${followed.length} links`} at the notes the current rules pick` : ''}`;
 }
@@ -4248,6 +4439,8 @@ function undoBatch(run, rels) {
     else if (it.kind === 'pastfix') logPastFix(it.key, 'undone');
     else if (it.finding) { try { decisionLog.record(run.vault, { ...it.finding, decision: 'undone', actor: currentActor() }); } catch (e) { log('decision log', e?.message); } }
   }
+  // memory setup: the edges the batch recorded end with it
+  try { endEdges(graphStore(), run.graphEdges); } catch (e) { log('memory graph', e?.message); }
   try { sweep('save', rels); } catch (e) { log('memory sweep', e?.message); }
 }
 // Apply memory fixes on its own (Settings > Memory, off by default): after a sweep, every item with an automatic fix
@@ -4410,6 +4603,8 @@ function relocate(rel, doMove) {
   const mapping = new Map(moving.map((r) => [r, r === rel ? next : next + r.slice(rel.length)]));
   const allRels = vindex.rels().map((r) => mapping.get(r) ?? r);
   const done = rewriteLinks({ vault, mapping, sources, resolve, allRels, aliasesOf });
+  // memory graph: the notes keep their history and approved links under the new paths
+  memoryGraph?.moved([...mapping].map(([from, to]) => ({ from, to })));
   vindex.sync();
   log('relocated', rel, '->', next, `rewrote ${done.links} links in ${done.files} notes`);
   return { rel: next, ...done };
@@ -5535,6 +5730,13 @@ async function control({ cmd, args = {} }) {
     case 'connector_tool': return connectorTools.run(String(args.name ?? ''), args.args ?? {});
     // a Memory health or Knowledge tool, through the handlers the buttons use; appActions.js checks read only and the setting
     case 'app_action': return appActions.run(String(args.name ?? ''), args.args ?? {}, args.via ?? null);
+    // memory graph and search tools (cli/memoryTools.mjs): each forwards to the graph or search handler of that name;
+    // all read only. A handler that is not registered yet answers that the index is not ready. Withheld notes and lines
+    // are taken out before the answer leaves the app
+    case 'memory_tool': return runMemoryTool(args.name, args.args ?? {}, {
+      handler: fromActionHandlers(actionHandlers),
+      withheld: excludedPath, isExcluded: suggester.isExcluded, redact: suggester.redactLines,
+    });
     case 'start':
       // start acts on a noticed call, so it follows meeting-capture; stop, go and end work on any running session
       if (!gate().meetingCapture) throw new Error('Quorum does not watch for calls in this build. Start listening from the app for a note of your own.');

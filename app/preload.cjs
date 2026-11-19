@@ -96,7 +96,18 @@ contextBridge.exposeInMainWorld('quorum', {
   activityArchive: (rows, on) => ipcRenderer.invoke('activity-archive', rows, on !== false),
   activityReview: (items, verdict) => ipcRenderer.invoke('activity-review', items, verdict),
   vaultSearch: (q, limit) => ipcRenderer.invoke('vault-search', q, limit),
+  // memory search (search/): hybrid search and its index status
+  memorySearch: (opts) => ipcRenderer.invoke('memory-search', opts),
+  memorySearchStatus: () => ipcRenderer.invoke('memory-search-status'),
   vaultBacklinks: (rel) => ipcRenderer.invoke('vault-backlinks', rel),
+  // memory graph reads (graph/index.js), and its build progress
+  memoryGraphStatus: () => ipcRenderer.invoke('memory-graph-status'),
+  memoryGraphQuery: (args) => ipcRenderer.invoke('memory-graph-query', args),
+  memoryGraphExplain: (ref, opts) => ipcRenderer.invoke('memory-graph-explain', ref, opts),
+  memoryGraphEntity: (name, opts) => ipcRenderer.invoke('memory-graph-entity', name, opts),
+  memoryGraphDecisions: (args) => ipcRenderer.invoke('memory-graph-decisions', args),
+  memoryGraphPath: (a, b, opts) => ipcRenderer.invoke('memory-graph-path', a, b, opts),
+  onMemoryGraph: on('memory-graph'),
   vaultLinkHealth: (fresh) => ipcRenderer.invoke('vault-link-health', fresh === true),
   memoryReviewCount: () => ipcRenderer.invoke('memory-review-count'),
   feedCounts: () => ipcRenderer.invoke('feed-counts'),
@@ -446,4 +457,9 @@ contextBridge.exposeInMainWorld('quorum', {
   flags: () => ipcRenderer.invoke('flags'),
   flagsRefresh: () => ipcRenderer.invoke('flags-refresh'),
   onFlags: (cb) => { const h = (_e, s) => cb(s); ipcRenderer.on('flags', h); return () => ipcRenderer.removeListener('flags', h); },
+  // memory setup (memorySetup.js): the scan's state and report, a run in the background, and its progress
+  memorySetupStatus: () => ipcRenderer.invoke('memory-setup-status'),
+  memorySetupRun: (opts) => ipcRenderer.invoke('memory-setup-run', opts),
+  memorySetupKeeper: (opts) => ipcRenderer.invoke('memory-setup-keeper', opts),
+  onMemorySetup: on('memory-setup'),
 });

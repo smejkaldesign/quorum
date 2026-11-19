@@ -48,7 +48,8 @@ export function createSuggester({ runClaude, toUI, log, getTranscript, getSettin
     terms = [...base, ...(on ? (outs ?? []).map((o) => String(o.name ?? '').trim().toLowerCase()).filter((n) => n.length >= 3) : [])];
     return terms;
   };
-  const hit = (list, text) => { if (!list.length) return false; const lower = text.toLowerCase(); return list.some((t) => lower.includes(t)); };
+  // a name also counts in its slug form (acme-corp, acme_corp for Acme Corp): file names, links and graph ids use it
+  const hit = (list, text) => { if (!list.length) return false; const lower = text.toLowerCase(); const plain = lower.replace(/[-_]+/g, ' '); return list.some((t) => lower.includes(t) || plain.includes(t)); };
   const isExcluded = (text) => hit(allTerms(), text);
   const redactLines = (text) => { const list = allTerms(); return text.split('\n').map((l) => (hit(list, l) ? '[withheld: opted-out customer]' : l)).join('\n'); };
 

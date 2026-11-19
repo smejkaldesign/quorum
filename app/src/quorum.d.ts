@@ -125,6 +125,35 @@ export type ScreenContextStatus = { available?: boolean; on: boolean; granted: b
 export type SetupRecord = { version: number; name: string; answers: SetupAnswers; createdAt: string; updatedAt?: string };
 // the workspace vault: where teammates' shared notes land on this Mac, with their provenance bonds
 export type TeamVault = { root: string; notes: number; behind: number; last: { written: number; behind: number; removed: number; skipped: number } };
+// memory setup (memorySetup.js): the scan's phases and progress, and its report
+export type MemorySetupGap = { id: string; label: string; count: number; fixable: number; sample: string[] };
+export type MemorySetupReport = {
+  at: number;
+  counts: {
+    notes: number;
+    links: { resolved: number; total: number };
+    entities: { people: number; projects: number; meetings: number; decisions: number; source: 'graph' | 'notes' };
+    embeddings: { built: number; total: number } | null;
+    graph: { nodes: number | null; edges: number | null } | null;
+  };
+  gaps: MemorySetupGap[];
+  fixes: number;
+  freshness: { days: number; confirmed: number | null; basis: 'facts' | 'notes'; contradictions: number; staleSummaries: number };
+  outside: { file: string; chars: number; budget: number; over: boolean; dead: string[] }[];
+  keeper: { on: boolean; made: boolean } | null;
+  model: { available: boolean };
+};
+export type MemorySetupState = {
+  running: boolean;
+  phase: 'index' | 'graph' | 'checks' | 'report' | 'done' | null;
+  progress: { done: number; total: number; label: string } | null;
+  phases: { id: string; label: string }[];
+  error: string | null;
+  report: MemorySetupReport | null;
+  done: boolean;
+};
+// keeperChoice: what the person chose for the keeper in setup, or null while they have not chosen (the card then offers it)
+export type MemorySetupStatus = MemorySetupState & { made: 'quorum' | null; keeper: { on: boolean; editVault: boolean }; keeperChoice: 'on' | 'off' | null; graph: boolean };
 export type Brain = { root: string; vault: string; name: string; made?: 'quorum' | null; markers: { agentOS: string | null; obsidian: boolean; safetyHooks: boolean } };
 // hosted edition: who is signed in, which organization they are in, and whether notes sync
 export type Role = 'owner' | 'admin' | 'member';
@@ -305,11 +334,15 @@ export type NoteLinkTarget = { rel?: string; anchor: string | null; missing?: bo
 export type NoteDoc = { hand?: boolean; parts?: { note: string; summary: string; split: boolean }; file: string; rel: string; title: string; date?: string; people: string[]; body: string; app: string; url: string; source?: string | null; views?: NoteViews; visibility: Visibility; withheld: boolean; link: string; summarizable?: boolean; transcript?: { id: number; channel: 'me' | 'them'; who: string; text: string }[]; platform?: 'zoom' | 'meet' | 'teams' | null; meetingUrl?: string | null; sourceUrl?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; event?: EventRef | null };
 export type SavedChat = { id: string; title: string; turns: { q: string; a: string; sources?: Source[]; steps?: string[] }[] };
 // a review rule's finding (rules/index.js, memorySweep.js): review-only, with plain evidence lines
-export type MemoryFinding = { held?: GateHold; ruleId: string; ruleVersion: number; rule: string; key: string; target: string; notes: string[]; rel: string; abs: string; title: string; problem: string; proposal: string; evidence: string[]; facts: string[]; meta: [string, string][]; autoFix: boolean; at: number; initial?: boolean; archived: boolean; fix?: { kind: string }; approve?: { kind: 'setkey' | 'addlink' | 'keep'; says: string } };
+export type MemoryFinding = { held?: GateHold; ruleId: string; ruleVersion: number; rule: string; key: string; target: string; notes: string[]; rel: string; abs: string; title: string; problem: string; proposal: string; evidence: string[]; facts: string[]; meta: [string, string][]; autoFix: boolean; at: number; initial?: boolean; archived: boolean; fix?: { kind: string; pick?: boolean }; approve?: { kind: 'setkey' | 'addlink' | 'keep'; says: string } };
 export type MemorySweepInfo = { kind: string; at: number; ms: number; notes: number; found: number; rules: Record<string, number> };
 export type MissingLink = { held?: GateHold; approve?: { says: string; fallback?: string }; target: string; sources: string[]; count: number; links?: number; lastAt?: number | null; left?: boolean; declined?: string[]; contexts?: { rel: string; title?: string; text: string }[]; confidential?: unknown[]; found?: { kind: 'folder' | 'script' | 'skill' | 'file' | 'branch'; where: string; branch?: string; rel?: string | null }; candidates: { rel: string; title: string; name: string | null; exact: boolean; score?: number; cover?: number; kindClash?: boolean; shared?: string[]; neighbor?: boolean; sameFolder?: boolean }[] };
 export type Relocated = { rel: string; files: number; links: number };
 export type SearchHit = { rel: string; title: string; score: number; line: number; snippet: string };
+// memory search (search/hybrid.js): one chunk of a note, with the rank it had in each list (1 is first)
+export type MemorySearchHit = { rel: string; heading: string; start_line: number; end_line: number; text: string; kind: string; score: number; cut?: boolean; parts: { fts?: number; vec?: number; graph?: number; recency: number; superseded: boolean; kindHint?: boolean } };
+export type MemorySearchResult = { results: MemorySearchHit[]; truncated: { shown: number; total: number; budgetNeeded: number } };
+export type MemorySearchStatus = { state: 'off' | 'idle' | 'building' | 'embedding' | 'paused' | 'waiting'; notes: number; chunks: number; embedded: number; pending: number; model: string | null; error: string | null; lastBuildMs: number | null; built: boolean; embedPerSecond: number | null };
 export type Backlink = { rel: string; title: string; line: number; context: string };
 export type OutLink = { target: string; rel: string | null; title: string; anchor: string; embed: boolean };
 export type TreeItem = { name: string; path: string; dir: boolean; mtime?: number; ctime?: number; children?: TreeItem[] };
@@ -361,6 +394,20 @@ export type HandNoteRef = { file: string; hash: string; rel: string; app: string
 export type VaultEdit = { hash: string; readOnly: 'withheld' | 'line-endings' | 'encoding' | null; body: string; frontmatter: string };
 export type HandNote = HandNoteRef & { title: string; body: string; readOnly: boolean; date: string | null };
 export type HandNoteSave = (HandNoteRef & { propsError?: string }) | { conflict: true } | { error: string };
+
+// memory graph (app/graph/store.js kinds; docs/specs/memory-graph.md)
+export type MemoryNodeKind = 'note' | 'person' | 'project' | 'company' | 'meeting' | 'decision' | 'topic' | 'tag' | 'folder';
+export type MemoryEdgeKind = 'links_to' | 'embeds' | 'mentions' | 'attended' | 'works_on' | 'member_of' | 'decided_in' | 'decision_about' | 'about' | 'tagged' | 'in_folder' | 'contradicts' | 'supersedes';
+export type MemoryNodeBrief = { id: string; kind: MemoryNodeKind; name: string; rel: string | null };
+export type MemoryNode = MemoryNodeBrief & { props: Record<string, unknown>; created_at: number; updated_at: number };
+export type MemoryEdge = { id: number; src: string; srcName: string; dst: string; dstName: string; kind: MemoryEdgeKind; provenance: 'explicit' | 'rule' | 'model' | 'person'; source_rel: string | null; source_line: number | null; confidence: number; valid_from: number | null; valid_to: number | null; superseded_by: number | null; props?: Record<string, unknown> };
+export type MemoryTruncated = { shown: number; total: number; budgetNeeded: number };
+export type MemoryGraphStatus = { phase: 'off' | 'idle' | 'building' | 'ready' | 'closed'; done?: number; total?: number; ms?: number | null; builtAt?: number | null; notes?: number; nodes?: number; edges?: number; byKind?: { nodes: Record<string, number>; edges: Record<string, number> } };
+export type MemoryDecision = { id: string; text: string; date: number | null; rel: string | null; line: number | null; about: { id: string; name: string }[]; decidedIn: { id: string; name: string } | null; supersededBy: { id: string; text: string } | null };
+export type MemoryDated = MemoryNodeBrief & { date: number | null; via: MemoryEdgeKind };
+export type MemoryEntity = { node: MemoryNodeBrief; rel: string | null; aliases: string[]; status: string | null; decisions: MemoryDecision[]; meetings: MemoryDated[]; people: MemoryDated[]; projects: MemoryDated[]; notes: MemoryDated[]; truncated: MemoryTruncated & { sections: Record<string, { shown: number; total: number }> } };
+// a name that matches several nodes is refused with the candidates; a name with no match says so
+export type MemoryGraphResult<T> = T | { ambiguous: MemoryNodeBrief[]; for?: 'a' | 'b' } | { notFound: string } | { error: string } | null;
 
 declare global {
   interface Window {
@@ -459,9 +506,21 @@ declare global {
       activityFeed(query: FeedQuery): Promise<FeedPage>;
       activityMark(rows: { id: string; abs: string }[], unread?: boolean): Promise<number>;
       activityArchive(rows: { id: string }[], on?: boolean): Promise<number>;
-      activityReview(items: { kind: 'note' | 'memory' | 'junk-note' | 'link' | 'past-fix' | 'finding' | 'ignore'; abs: string; key?: string }[], verdict: 'approve' | 'revert' | 'dismiss'): Promise<{ done: string[]; failed: { abs: string; error: string }[] }>;
+      // only: for a grouped finding, the notes the person keeps ticked
+      activityReview(items: { kind: 'note' | 'memory' | 'junk-note' | 'link' | 'past-fix' | 'finding' | 'ignore'; abs: string; key?: string; only?: string[] }[], verdict: 'approve' | 'revert' | 'dismiss'): Promise<{ done: string[]; failed: { abs: string; error: string }[] }>;
       vaultSearch(q: string, limit?: number): Promise<SearchHit[]>;
+      // memory search: hybrid search over the vault's chunks, trimmed to budget tokens
+      memorySearch(opts: { q: string; budget?: number; k?: number; folders?: string[]; kinds?: string[]; since?: string }): Promise<MemorySearchResult | null>;
+      memorySearchStatus(): Promise<MemorySearchStatus>;
       vaultBacklinks(rel: string): Promise<Backlink[]>;
+      // memory graph reads (app/graph/); null when no vault is connected
+      memoryGraphStatus(): Promise<MemoryGraphStatus>;
+      memoryGraphQuery(args: { q?: string; seeds?: string[]; budget?: number; depth?: number; kinds?: MemoryEdgeKind[]; current?: boolean }): Promise<MemoryGraphResult<{ seeds: string[]; nodes: (MemoryNodeBrief & { score: number; depth: number })[]; edges: MemoryEdge[]; truncated: MemoryTruncated & { edgesShown: number; edgesTotal: number } }>>;
+      memoryGraphExplain(ref: string, opts?: { budget?: number }): Promise<MemoryGraphResult<{ node: MemoryNode; source: { rel: string } | null; aliases: string[]; community: { community: string; rank: number } | null; out: MemoryEdge[]; in: MemoryEdge[]; history: (MemoryEdge & { supersededBy: MemoryEdge | null })[]; truncated: { shown: number; total: number; budgetNeeded: number; sections: Record<'out' | 'in' | 'history', { shown: number; total: number }> } }>>;
+      memoryGraphEntity(name: string, opts?: { budget?: number }): Promise<MemoryGraphResult<MemoryEntity>>;
+      memoryGraphDecisions(args: { about?: string; since?: string | number; current?: boolean; budget?: number }): Promise<MemoryGraphResult<{ about: MemoryNodeBrief | null; decisions: MemoryDecision[]; truncated: MemoryTruncated }>>;
+      memoryGraphPath(a: string, b: string, opts?: { undirected?: boolean; kinds?: MemoryEdgeKind[]; current?: boolean; maxDepth?: number }): Promise<MemoryGraphResult<{ path: MemoryNodeBrief[] | null; edges: MemoryEdge[] }>>;
+      onMemoryGraph(fn: (s: MemoryGraphStatus) => void): () => void;
       vaultLinkHealth(fresh?: boolean): Promise<MissingLink[]>;
       // Needs review for Memory health: the items waiting, and the same items by the note they are about and its folders
       memoryReviewCount(): Promise<{ total: number; files: Record<string, number>; folders: Record<string, number> }>;
@@ -652,6 +711,12 @@ declare global {
       setupRead(): Promise<SetupRecord | null>;
       setupRerun(answers: SetupInput): Promise<Brain & { written: string[] }>;
       keeperStatus(): Promise<KeeperStatus>;
+      // memory setup (memorySetup.js): the scan on connect and from Settings, Memory
+      memorySetupStatus(): Promise<MemorySetupStatus | null>;
+      memorySetupRun(opts?: { keeper?: boolean }): Promise<MemorySetupStatus | null>;
+      // the keeper choice from the setup card; offer: true (finishing onboarding) records it only when none was made
+      memorySetupKeeper(opts: { on: boolean; offer?: boolean }): Promise<MemorySetupStatus | null>;
+      onMemorySetup(cb: (s: MemorySetupState) => void): Unsub;
       screenContextStatus(): Promise<ScreenContextStatus>;
       screenContextSet(on: boolean): Promise<ScreenContextStatus>;
       screenContextPrivacy(): Promise<void>;

@@ -1,7 +1,9 @@
 // Orphan notes: a note no other note links to, so the agent only finds it by search. Entry points are left out: index,
 // README, CLAUDE and log notes, dated notes (daily notes and session logs are reached by date), notes in inbox,
 // daily, journal, template and archive folders, notes another note names in its frontmatter, and generated reports. A folder
-// where most notes have no inbound link is a log-style folder by design, so its notes are left out too.
+// where most notes have no inbound link is a log-style folder by design, so its notes are left out too. With the memory
+// graph built, a note is linked when any current edge other than its folder or a tag comes into it (a link, a mention,
+// an attendee field); without it, the vault index's inbound links decide.
 import { DATED, ENTRY_NAME, baseOf, dirOf, finding, plural, quote, skipped } from './common.js';
 
 export const rule = { id: 'note.orphan', version: 1, label: 'Notes nothing links to' };
@@ -11,13 +13,13 @@ const ENTRY_FOLDERS = /(^|\/)([^/]*inbox[^/]*|daily|journal|templates?|_template
 const LOG_FOLDER_SHARE = 0.5;
 const MIN_FOLDER = 3;
 
-export function run({ notes, resolve }) {
+export function run({ notes, resolve, graph = null }) {
   // notes named in another note's frontmatter (related:, parent:, see:) count as linked
   const fromFrontmatter = new Set();
   for (const n of notes) for (const v of Object.values(n.note?.props ?? {})) {
     for (const s of Array.isArray(v) ? v : [v]) for (const m of String(s).matchAll(/\[\[([^\]|#]+)/g)) { const to = resolve(m[1].trim(), n.rel); if (to && to !== n.rel) fromFrontmatter.add(to); }
   }
-  const unlinked = (n) => n.inbound === 0 && !fromFrontmatter.has(n.rel);
+  const unlinked = (n) => (graph ? graph.inbound(n.rel).length === 0 : n.inbound === 0) && !fromFrontmatter.has(n.rel);
   const folders = new Map();
   for (const n of notes) { const d = dirOf(n.rel); const f = folders.get(d) ?? folders.set(d, { all: 0, orphans: 0 }).get(d); f.all++; if (unlinked(n)) f.orphans++; }
   const out = [];

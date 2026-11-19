@@ -1,0 +1,112 @@
+# Memory graph, search and memory setup
+
+Status: building (integration branch `feat/memory-graph`). This spec is the contract for the pieces built in parallel and the standing reference for every later change to Quorum's memory. Audit and research behind it: the memory audit (2026-11-19), Graphify (Apache 2.0), Zep and Graphiti (temporal knowledge graphs), and the context rot literature (Chroma 2025, Liu et al. 2024).
+
+## Goal
+
+When a person creates a second brain in Quorum or connects an existing one, Quorum ends with a complete, working memory: a graph of notes, people, projects, meetings and decisions with typed, sourced and dated connections; hybrid search across the whole vault; a setup report that lists every gap as a Needs review item Quorum can fix on Approve; and MCP tools that let AI tools query all of it. The memory stays correct as it grows: facts that change are superseded, retrieval stays small and relevant, and the maintainer layer keeps it clean.
+
+## Principles
+
+1. **Local first.** Everything in this spec runs on the Mac with no model calls, except the optional model pass (wave 2), which uses the person's own model source. No note text leaves the Mac in the Local edition.
+2. **The vault is the source of truth.** The graph and the search index are derived data in Quorum's app data, rebuilt from the vault at any time. Quorum writes to notes only through Review items the person approves (or the auto-apply setting), with versions and Undo, like every other memory fix.
+3. **Graph first.** Retrieval starts from the graph; keyword and vector similarity are signals in one ranker. The eval decides the weights.
+4. **Every connection says where it came from and when.** Provenance and validity time on every edge.
+5. **Small, high-signal context.** Every retrieval tool takes a token budget, returns the best items first, and says what it left out.
+
+## Storage
+
+One SQLite database per vault, in app data: `DATA_DIR/memory/<vault-hash>/memory.db`, opened with Electron's built-in `node:sqlite` (`DatabaseSync`, Node 24.22, FTS5 available). WAL mode. A schema version in `meta`; a version change rebuilds from the vault. The database lives in the main process; the memory engine utility process opens its own read-only connection where it needs one.
+
+### Tables (owned by `app/graph/store.js`)
+
+- `meta(key text primary key, value text)`
+- `files(rel text primary key, hash text, mtime real, size int, indexed_at real)`: one row per note; `hash` is sha256 of the text, so unchanged files are skipped.
+- `nodes(id text primary key, kind text, name text, rel text null, props text json, created_at real, updated_at real)`. Kinds: `note`, `person`, `project`, `company`, `meeting`, `decision`, `topic`, `tag`, `folder`. A node backed by a note has `rel`; a person mentioned with no note has none (a gap). Ids are stable: `note:<rel>`, `person:<slug>`, `tag:<name>`, and so on. When two notes that could be one kind of entity share a file name slug, they are one entity if one's folder holds the other: a hub and the note beside its folder (`projects/Orca.md` and `projects/Orca/Orca.md`), or a hub and a note inside its folder. That entity keeps the slug id; its typed note backs it, else the deeper note, and the other notes are notes `about` it. Notes in unrelated folders (`projects/alpha/Orca.md`, `projects/beta/Orca.md`) are separate entities, each under the path of its backing note (`project:projects/alpha/Orca`), and `find` returns both as candidates. The rule is `extract.js` `entityIds`; the graph applies it to the whole vault at each pass and reads a note again, with its linkers, when its id or backing changes.
+- `aliases(node text, alias text, primary key(node, alias))`: normalized lowercase names for lookup and for merge detection.
+- `edges(id integer primary key, src text, dst text, kind text, provenance text, source_rel text, source_line int null, confidence real, valid_from real null, valid_to real null, superseded_by integer null, recorded_at real, props text json null)`. `props` holds what a single-valued fact competes on: a `works_on` role, a decision key.
+  - Kinds: `links_to`, `embeds`, `mentions`, `attended`, `works_on`, `member_of`, `decided_in`, `decision_about`, `about`, `tagged`, `in_folder`, `contradicts`, `supersedes`.
+  - Provenance: `explicit` (a wikilink, embed or frontmatter field written in the note), `rule` (a folder or naming convention, a meeting template, the keeper's name match), `model` (wave 2), `person` (approved in Review).
+  - Validity (bi-temporal): `valid_from` and `valid_to` are when the fact held in the world (from the note's date, a meeting date, frontmatter dates); `recorded_at` is when Quorum learned it. A newer fact that replaces an older one sets the older edge's `valid_to` and `superseded_by` and keeps it for history.
+- `edges_by_src`, `edges_by_dst`, `edges_by_kind` indexes.
+- `communities(node text primary key, community text, rank real)` (wave 2 fills names).
+
+### Tables (owned by `app/search/`)
+
+- `chunks(id integer primary key, rel text, heading text, start_line int, end_line int, text text, hash text, tokens int)`
+- `chunks_fts` (FTS5 over heading and text, porter tokenizer, external content `chunks`)
+- `vectors(chunk integer primary key, model text, dim int, vec blob)`: float32, normalized.
+- `search_files(rel text primary key, hash text, title text, kind text, date real, mtime real)`: one row per indexed note, so an unchanged note is skipped and the filters and the recency factor read the note's kind and date without the graph. Search's schema version is the `meta` key `search_schema`.
+
+## Modules and their APIs
+
+### `app/graph/` (agent: graph-core)
+
+- `store.js`: `openStore({ dir, vault, log })` returns the store with `tx(fn)`, `upsertFile`, `fileHash(rel)`, `removeFile(rel)` (drops its nodes' derived edges), `upsertNode`, `addEdge`, `supersede(edgeId, byEdgeId, at)`, `node(id)`, `find(name, { kind, prefix = true })` (exact, alias, then prefix of 3 or more characters; returns every match so callers can refuse ambiguity; prefix matches carry `prefix: true` and are only candidates), `edgesOf(id, { dir, kinds, current = true })`, `stats()`, `close()`.
+- `extract.js`: pure. `extractNote({ rel, text, note, resolve, conventions })` returns `{ nodes, edges }` from one note, with no model: links and embeds (through vindex's resolver), frontmatter (`type`, `people`, `attendees`, `project`, `projects`, `company`, `tags`, `date`, `status`, `aliases`), inline tags, folder conventions (configurable; defaults detect `people/`, `projects/`, `companies/`, `meetings/` or `08-meetings/`, `decisions/`), meeting notes (attendees and date), decision lines (`Decision:`, `Decided:`, `- [x] Decision`, a `## Decisions` section) and the keeper's link lines.
+  - A note in a meetings or decisions folder is a meeting or a decision. A note in a people, projects or companies folder is that entity only when its frontmatter `type` says so, when it is the folder's hub note (named like the folder it sits in, `projects/Atlas/Atlas.md`), or when another note links it as one: an `attended`, `works_on` or `member_of` edge on its entity node, or an `about` edge from a meeting or a person (a meeting's attendees, a project field). Every other note in those folders (specs, PRDs, research, lists) is a note, and a link to it is no mention of an entity. `extractNote` takes `linkedAs(rel)` and `kindOf(rel)` for this; `index.js` answers them from the store and reads a folder note again, with the notes that link it, when its answer changes.
+- `temporal.js`: pure. Given the current edges for a subject and a new edge of a single-valued kind (`works_on` with role, `member_of`, a decision on the same subject), decides whether it supersedes an older one; returns the supersede pairs. Two decisions compete only when they share a subject and a key, the short label before a colon ("Database: Postgres"); decisions without a key never replace each other. Dated facts compete by `valid_from`; undated facts replace each other only when the same note was edited.
+- `query.js`: `graphQuery({ q, seeds, budget, depth = 2, kinds, current = true })` (seed nodes from `find` and from search hits, breadth-first expansion, scored by edge kind and provenance, trimmed to `budget` tokens, returns `{ nodes, edges, truncated: { shown, total, budgetNeeded } }`); `graphPath(a, b, { undirected })`; `explain(id, { budget })` (the node, its source, aliases, community, incoming and outgoing edges with provenance, superseded history); `entity(name)` (a person, project or company with meetings, decisions, notes and people around it); `decisions({ about, since, current = true })`. A name that matches several nodes, or only the start of a name, returns `{ ambiguous: [candidates] }` and never guesses. `explain`, `entity` and `decisions` read out only what their budget shows; their `truncated` counts the rest.
+- `index.js`: `createMemoryGraph({ dataDir, vault, vindex, log })` wires the store to vindex: a full build on connect (batched, yields to the event loop, reports progress), then incremental updates from the watcher by content hash, including moves (vindex's `onMoves`). Emits `progress` and `ready`.
+
+### `app/search/` (agent: search)
+
+- `chunk.js`: pure. Splits a note into heading-scoped chunks of at most 400 tokens with a short overlap, keeping the note title and heading path on each chunk.
+- `embed.js`: an embedder interface `{ id, dim, embed(texts) }`. The default is the bundled bge-small-en-v1.5 int8 in the memory engine's utility process (raise its max tokens to 512 for chunks). The interface leaves room for another local model or a hosted provider later; nothing hosted ships in this wave.
+- `index.js`: incremental chunking, FTS and vector updates keyed by chunk hash; a background embed queue that never blocks the window and pauses while recording.
+- `hybrid.js`: `search({ q, budget, k = 20, folders, kinds, since })` (`kinds` are graph node kinds, from the same frontmatter types and folder conventions as `extract.js`): BM25 from FTS5, cosine over vectors (brute force is fine up to a few hundred thousand chunks), graph boost for chunks in notes near the top hits' nodes, recency and supersession factors, merged with reciprocal rank fusion. Returns chunks with `rel`, heading, line range, score parts and a `truncated` summary.
+- `eval/`: a local eval harness: a question set with expected notes (built from real questions over a vault, kept out of the repo when it names private content), recall@5, recall@10 and MRR for keyword only, vector only, graph only and hybrid. Used to set the weights and to judge any future model change.
+
+### MCP and CLI tools (agent: mcp)
+
+In `app/cli/` through the app bridge (`appTools.mjs`), each with a `budget` argument (default 1,500 tokens) and a truncation line that says how much was left out and the budget that would return everything:
+
+- `search`: hybrid search over the whole vault and meetings.
+- `graph_query`, `graph_path`, `explain`, `entity`, `decisions`.
+- `memory_status`: setup progress, index counts, open gaps.
+
+The tools are defined in `app/cli/memoryTools.mjs` and run in the app through one control socket command, `memory_tool`, which calls the IPC handler each tool names (`memory-search`, `memory-search-status`, `memory-graph-query`, `-path`, `-explain`, `-entity`, `-decisions`, `-status`), answers "not ready" while a handler is missing (search also answers not ready until the vault index finishes its first read), and withholds opted-out notes and lines. The window's IPC reads go through the same filter. An item is withheld when its id, name, path, aliases or edge end names (`srcName`, `dstName`) name an opted-out customer, slug forms included (`company:acme-corp`). A change to the opt-out list reads the vault index again, so the names also leave the graph and search tables. `app/cli/budget.mjs` (pure) turns each answer into lines: one per node, edge, passage or decision with source path and line (counted from 1 for agents and editors; the index and graph store lines from 0), provenance and dates, strongest first, then a summary line. A name that matches several nodes returns the candidates. All are read only, so read only mode allows them; the in-app chat's connectors-only server does not list them. `quorum memory search|graph|path|explain|entity|decisions|status` runs them from Terminal.
+
+Update `about.mjs`, the instructions (under 2,048 characters), the README "For AI agents" section and the tool tests. Instructions tell agents to start with `entity`, `decisions` or `search` before reading files.
+
+### Memory setup and the maintainer layer (agent: setup)
+
+- **Scan** (`app/memorySetup.js`): runs on create and on connect, and again from Settings, Memory. It reports notes indexed, links resolved, entities found, embeddings built, and the gaps below, with progress until done.
+- **Gaps become Needs review items**, each with a Quorum fix on Approve, through the existing review rules, quality gate, fix runs, versions and Undo:
+  - a name mentioned in several notes with no person or project note (create the note from a template, linked from where it is mentioned);
+  - one person or project under two names (add an alias, or merge on Approve);
+  - meeting notes with attendees in text and no links (link them);
+  - notes the graph reads as people or projects with no type in frontmatter (add it; one item per folder that lists its notes, and Approve sets the type on the notes the person keeps ticked);
+  - notes the conventions cannot place (suggest a folder);
+  - broken links and orphans (existing rules).
+- **Setup screen** in onboarding for an existing vault and in Settings, Memory: what was found, what Quorum will fix, the keeper offered for connected vaults, the model pass offered with a cost estimate (off until wave 2 ships), and a done state. The keeper offer is shown selected, with one line on what it writes, and writes nothing on its own: the keeper turns on when the person finishes onboarding with it selected, or toggles it. The choice (on or off) is kept per vault (`memory-setup.json`), and a keeper turned off in Settings before setup counts as a choice, so a later render or step never overrides it. The scan's steps each check that the vault is still the one connected and stop with a reason when a build times out, so a partial scan saves no report.
+- **Maintainer alignment.** The keeper writes typed edges through the graph store when it files a meeting (attended, mentions, decided_in) as well as its link lines. Review rules read the graph (orphans from edges, duplicates from aliases and vectors). The contradiction checker reads current edges and records `contradicts`; a resolved contradiction supersedes the losing fact. Learned facts come from current edges first.
+- **As built (wave 1).** The gaps are the rules `note.missing-entity`, `note.entity-alias`, `note.meeting-links`, `note.entity-type`, `note.unplaced`, `note.summary-stale` and `note.instructions` (`rules/index.js` SETUP_RULES), plus duplicates (merge on Approve), oversized (split on Approve), orphans and broken links. Their fixes add the ops `create`, `mention`, `alias`, `merge` and `split` to the fix run (`memorySetup.js` runSetupOp). The rules read the graph in the memory engine through a read-only store (`openStore({ readOnly: true })`) once main reports the graph ready, and fall back to the notes when it is not. Approved mentions record `person` edges; Undo removes them. Instruction files at the Agent OS root, outside the vault folder, are measured and listed in the report; Quorum's fixes write only inside the vault, so those files get no Review item. An instruction file over its budget gets an item with no fix: Claude Code and Codex do not follow wikilinks, so a section split into a linked note would stop loading, and the oversized rule leaves instruction files alone for the same reason. Its dead links are the broken link check's items. Duplicates read graph aliases, and two notes under one name merge only when one of them sets that name as an alias and their bodies share at least 30% of their words; dated notes, meetings and decisions never merge by name, and neither do notes on two sides of a confidential mark. A merge refuses to run when a note the index leaves out links to the note it would trash. Vector duplicates wait for search.
+
+## Context rot
+
+Quorum guards against two kinds: a memory that grows stale and contradictory, and AI tools drowning in too much context.
+
+Already in place: stale, duplicate, near-duplicate, oversized and contradiction rules; the learned facts list has a character budget.
+
+Added in this build:
+
+1. **Supersession, not deletion** (graph-core). Changed facts end their validity and point at what replaced them; queries return current facts by default and history on request.
+2. **Budgets everywhere** (mcp). Every retrieval tool trims to a token budget, puts the strongest items first and last, and states what it left out, so an agent asks a narrower question instead of reading more.
+3. **Recency and confirmation in ranking** (search). Superseded and long-unconfirmed facts rank lower; facts confirmed by recent meetings rank higher.
+4. **Consolidation reviews** (setup). Duplicates merge into one canonical note on Approve; oversized notes are offered a split; summaries record the hashes of their sources and are marked stale when a source changes.
+5. **Instruction file hygiene** (setup). The scan measures CLAUDE.md, AGENTS.md and similar files (a note named `instructions` only at the vault root or in `.github/`) against a size budget and lists one over it with its largest sections, for the person to shorten. A line that states a decision a newer decision replaced (the file is the losing side of a `supersedes` edge, and the line still holds that decision's text) is a Review item that marks it out of date. Their links to missing notes are broken link items.
+6. **Freshness in the setup report** (setup). Share of dated facts confirmed in the last 90 days (a fact from an undated note counts in neither the share nor the total; with no dated facts, the share of notes updated or verified), open contradictions, stale summaries.
+
+## Keeping the rest of the app in step
+
+Any change to node kinds, edge kinds, tools or the scan updates, in the same PR: `about.mjs` and the MCP instructions, this spec, the Memory setup scan, the review rules that read the graph, and the tests that pin them (`mcp-about.test.js` checks that every tool appears in `about`; a graph test checks that every node and edge kind in `store.js` is documented here).
+
+## Waves
+
+- **Wave 1 (this build):** graph-core, search, mcp, setup, as above. Each agent opens its PR into `feat/memory-graph`; the integration PR into `main` comes after review and a live check on a real vault.
+- **Wave 2:** the model pass (relations and decisions from prose, `model` provenance, low-confidence edges to Review, off by default with a cost estimate), named communities and hub notes, topic summaries, and Cloud graph sync through the `links` table.
+
+## Embedding model choice
+
+Local bge-small-en-v1.5 is the default: free, private, offline, already shipped. A full index of a 3 million token vault costs nothing and takes minutes on Apple Silicon. Hosted models (Voyage 4 lite at $0.02 per million tokens, Voyage 4 at $0.06, with 200 million free tokens per account) would cost cents per vault, but would send every note to a third party, which the Local edition promises not to do. The eval compares bge-small with a stronger local model (for example EmbeddingGemma 300M) and, on a non-confidential test vault only, a hosted model, before any change.

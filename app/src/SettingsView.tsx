@@ -19,6 +19,7 @@ import { MeetingSourcesRows } from './MeetingSources';
 import { useFlag, useNotetaker } from './flags';
 import { MemoryUpdatesCard } from './MemoryUpdates';
 import { MeetingPrepCard } from './MeetingPrepSettings';
+import { MemorySetupCard } from './MemorySetup';
 import { MemoryRulesCard } from './MemoryRules';
 import { LocalModelsCard } from './LocalModels';
 import {
@@ -211,6 +212,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
           ) : page === 'memory' ? (
             <>
               <SecondBrain part="folder" brain={brain} onConnect={onConnect} onDisconnect={onDisconnect} onBrain={onBrain} onViewConnector={goConnector} />
+              {brain && <MemorySetupCard />}
               {brain && <MemoryUpdatesCard settings={settings} onSettings={onSettings} advanced={<><MemoryRulesCard /><LocalModelsCard /></>} />}
             </>
           ) : page === 'members' ? <MembersArea />
