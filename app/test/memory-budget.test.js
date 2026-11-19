@@ -59,6 +59,10 @@ describe('lines', () => {
       .toBe('person:jane -works_on-> project:atlas  [explicit, people/Jane.md:5, 2026-01-01..2026-03-01, superseded by edge 9]');
     expect(edgeLine({ src: 'a', dst: 'b', kind: 'mentions', provenance: 'model', confidence: 0.6 })).toBe('a -mentions-> b  [model, confidence 0.60]');
   });
+  it('count lines from 1, as editors do, though the index counts from 0', () => {
+    expect(passageLine({ rel: 'a.md', start_line: 0, end_line: 0, text: 'x' })).toBe('a.md:1  x');
+    expect(edgeLine({ src: 'a', dst: 'b', kind: 'links_to', source_rel: 'a.md', source_line: 0 })).toBe('a -links_to-> b  [a.md:1]');
+  });
   it('give a passage its path, lines and heading, on one line', () => {
     expect(passageLine({ rel: 'notes/a.md', startLine: 3, endLine: 9, heading: 'Plan > Q1', score: 0.5, text: 'one\n\ntwo' })).toBe('notes/a.md:4-10  # Plan > Q1  (0.500)  one two');
   });

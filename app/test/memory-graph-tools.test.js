@@ -1,6 +1,6 @@
 // The memory tools on the real graph (graph/index.js) over a generated vault: graph-core's answers go through
 // runMemoryTool and formatMemory and come out as budgeted lines with source path and line, provenance and dates.
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -11,12 +11,13 @@ import { runMemoryTool } from '../cli/memoryTools.mjs';
 import { writeGraphVault } from './fixtures/graphVault.js';
 
 let root;
+let vault;
 let g;
 // the IPC handlers as main.js registers them, each taking the tool's args as one object
 let handler;
 beforeAll(async () => {
   root = mkdtempSync(path.join(tmpdir(), 'memtools-'));
-  const vault = path.join(root, 'v');
+  vault = path.join(root, 'v');
   writeGraphVault(vault, { notes: 200, people: 20, projects: 5, companies: 3, meetings: 40, padWords: 10 });
   const ix = createVaultIndex({ vault, isExcludedPath: () => false, isExcludedText: () => false, redact: (t) => t, onChange: () => {} });
   ix.sync();
@@ -44,6 +45,9 @@ describe('memory tools on the real graph', () => {
     const out = await tool('decisions', { about: 'Project A', current: false }, 20000);
     expect(out.length).toBeGreaterThan(2);
     expect(out.some((l) => /superseded by decision:/.test(l))).toBe(true);
+    // path:line points at the decision line as an editor numbers it
+    const [, rel, n] = now[0].match(/\[(08-meetings\/[^:]+\.md):(\d+)/);
+    expect(readFileSync(path.join(vault, rel), 'utf8').split('\n')[Number(n) - 1]).toMatch(/^Decision: /);
     for (const l of out.slice(0, -1)) expect(l).toMatch(/^2026-\d\d-\d\d {2}decision:.* {2}Hosting: option \d.*\[08-meetings\/.*\.md:\d+; (about project:project-a|superseded by decision:)/);
     expect(out.at(-1)).toMatch(/^All \d+ decisions shown/);
   });
