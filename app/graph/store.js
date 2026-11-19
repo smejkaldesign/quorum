@@ -13,6 +13,8 @@ export const PROVENANCE = ['explicit', 'rule', 'model', 'person'];
 export const NOTE_IDENTITY = new Set(['note', 'meeting', 'decision']);
 
 export const vaultHash = (vault) => createHash('sha256').update(path.resolve(vault)).digest('hex').slice(0, 16);
+// the database file for a vault under a memory folder (DATA_DIR/memory)
+export const storeFile = (dir, vault) => path.join(dir, vaultHash(vault), 'memory.db');
 export const norm = (s) => String(s ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
 
 const TABLES = ['files', 'nodes', 'aliases', 'edges', 'communities'];
@@ -36,21 +38,27 @@ const parse = (s) => { if (!s) return {}; try { return JSON.parse(s); } catch { 
 const nodeRow = (r) => (r ? { id: r.id, kind: r.kind, name: r.name, rel: r.rel, props: parse(r.props), created_at: r.created_at, updated_at: r.updated_at } : null);
 const edgeRow = (r) => (r ? { ...r, props: parse(r.props) } : null);
 
-export function openStore({ dir, vault, log = () => {}, now = Date.now }) {
-  const folder = path.join(dir, vaultHash(vault));
-  mkdirSync(folder, { recursive: true });
-  const file = path.join(folder, 'memory.db');
-  const db = new DatabaseSync(file);
-  db.exec('pragma journal_mode = wal; pragma synchronous = normal; pragma foreign_keys = off;');
-  db.exec('create table if not exists meta(key text primary key, value text)');
-  const version = db.prepare("select value from meta where key = 'graph_schema'").get()?.value;
-  if (version !== String(SCHEMA_VERSION)) {
-    // a new schema reads the vault again: only the graph's own tables go, search keeps its own
-    if (version) log('memory graph', `schema ${version} -> ${SCHEMA_VERSION}, rebuilding`);
-    for (const t of TABLES) db.exec(`drop table if exists ${t}`);
+export function openStore({ dir, vault, log = () => {}, now = Date.now, readOnly = false }) {
+  const file = storeFile(dir, vault);
+  if (!readOnly) mkdirSync(path.dirname(file), { recursive: true });
+  // a reader (the memory engine's utility process) opens what the main process built and never writes or migrates
+  const db = new DatabaseSync(file, readOnly ? { readOnly: true } : {});
+  if (readOnly) {
+    let v = null;
+    try { v = db.prepare("select value from meta where key = 'graph_schema'").get()?.value; } catch { /* no tables yet */ }
+    if (v !== String(SCHEMA_VERSION)) { db.close(); throw new Error('memory graph not built'); }
+  } else {
+    db.exec('pragma journal_mode = wal; pragma synchronous = normal; pragma foreign_keys = off;');
+    db.exec('create table if not exists meta(key text primary key, value text)');
+    const version = db.prepare("select value from meta where key = 'graph_schema'").get()?.value;
+    if (version !== String(SCHEMA_VERSION)) {
+      // a new schema reads the vault again: only the graph's own tables go, search keeps its own
+      if (version) log('memory graph', `schema ${version} -> ${SCHEMA_VERSION}, rebuilding`);
+      for (const t of TABLES) db.exec(`drop table if exists ${t}`);
+    }
+    db.exec(SCHEMA);
+    db.prepare("insert or replace into meta(key, value) values ('graph_schema', ?)").run(String(SCHEMA_VERSION));
   }
-  db.exec(SCHEMA);
-  db.prepare("insert or replace into meta(key, value) values ('graph_schema', ?)").run(String(SCHEMA_VERSION));
 
   const q = (sql) => db.prepare(sql);
   const s = {
@@ -243,6 +251,15 @@ export function openStore({ dir, vault, log = () => {}, now = Date.now }) {
     supersede: (edgeId, byEdgeId, at = now()) => { s.supersede.run(at, byEdgeId, edgeId); },
     node: (id) => nodeRow(s.getNode.get(id)),
     find,
+    // every node of a kind; backed true for nodes a note stands behind, false for names no note has yet
+    nodes: ({ kind = null, backed = null } = {}) => {
+      const where = [];
+      const args = [];
+      if (kind) { const k = [].concat(kind); where.push(`kind in (${k.map(() => '?').join(',')})`); args.push(...k); }
+      if (backed === true) where.push('rel is not null');
+      if (backed === false) where.push('rel is null');
+      return db.prepare(`select * from nodes${where.length ? ` where ${where.join(' and ')}` : ''} order by id`).all(...args).map(nodeRow);
+    },
     edgesOf,
     community: (id) => s.community.get(id) ?? null,
     stats,
