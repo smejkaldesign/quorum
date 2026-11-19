@@ -24,7 +24,7 @@ import { createTokenStore } from './sources/tokens.js';
 import { connectAccount, createAccounts, oauthClients } from './sources/accounts.js';
 import { createConnectorTools } from './connectors/tools/index.js';
 import { actorLabel, createAppActions, currentActor, outsideActor } from './appActions.js';
-import { runMemoryTool } from './cli/memoryTools.mjs';
+import { fromActionHandlers, runMemoryTool } from './cli/memoryTools.mjs';
 import { CONNECTOR_SERVER } from './cli/connectorTools.mjs';
 import { httpUrl, relayFetch, relayUrl } from './relayUrl.js';
 import { createErrorReports } from './errorReports.js';
@@ -84,6 +84,8 @@ import { approveLitter, commitNotes, prepareCompact } from './vaultHygiene.js';
 import { relatedLine } from './rules/nearDuplicates.js';
 import { DAILY_CAP, WRONG_NOTE_FIX, createDrafter, draftKind, evidenceRels, fallbackItem, unlinkItem, withDraft } from './memoryDraft.js';
 import { MEMORY_MODELS } from './memoryModels.js';
+import { createMemorySearch } from './search/index.js';
+import { engineEmbedder } from './search/embed.js';
 import { catchupHooks, createSaveSweeps, forkEngine, savesKept, slotBinder, startMemoryEngine } from './memoryWiring.js';
 import { createModelDownload, macConditions } from './decide/download.js';
 import { DECIDER_ON } from './decide/index.js';
@@ -2743,9 +2745,12 @@ function openIndex() {
   // enters the index, and a rule change rebuilds it (the guardrails IPC handlers below)
   vindex = createVaultIndex({
     vault: b.vault, isExcludedPath: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isDeniedText: isConfidentialText, isExcludedText: suggester.isExcluded, redact: suggester.redactLines,
-    onChange: (rels) => { toUI('vault-changed', rels); memoryGraph?.update(rels); if (!built) { built = true; setTimeout(sweepTick, 5000); const kept = savesWaiting.take(b.vault); if (kept.length) sweepOnSave(kept); } else sweepOnSave(rels); }, renamed: () => settings.clusterNames?.[b.vault] ?? {},
+    onChange: (rels) => { toUI('vault-changed', rels); if (!built) { built = true; setTimeout(sweepTick, 5000); const kept = savesWaiting.take(b.vault); if (kept.length) sweepOnSave(kept); } else sweepOnSave(rels); }, renamed: () => settings.clusterNames?.[b.vault] ?? {},
     forget: (keys) => { const mine = settings.clusterNames?.[b.vault]; if (!mine) return; for (const k of keys) delete mine[k]; store.settings.save(); }, log: (...a) => log('index', ...a),
-    onPaths: treePaths, onMoves: relinkMoves,
+    onPaths: treePaths, onMoves: (moves) => { memoryGraph?.moved(moves); relinkMoves(moves); },
+    // memory graph: every index change, the watcher's and the ones Quorum's own writes sync
+    // every sync, the watcher's and Quorum's own writes alike: the graph first, then search over the same paths
+    onIndexed: (rels) => { memoryGraph?.update(rels); searchChanged(rels); },
   });
   dropTree();
   openMemoryGraph(b.vault);
@@ -3792,6 +3797,19 @@ const memoryEngine = startMemoryEngine({
 // net.request goes through Chromium's network stack, so the macOS proxy and PAC settings apply (decide/netFetch.js)
 const modelDownload = createModelDownload({ dir: path.join(DATA_DIR, 'models'), enabled: DECIDER_ON, fetch: netFetch(net), userAgent: `Quorum/${app.getVersion()}`, conditions: macConditions, onChange: (s) => toUI('models-status', s), log });
 ipcMain.handle('models-status', () => modelDownload.status());
+// ---- Memory search (search/): hybrid search over heading-scoped chunks of the vault, in the vault's memory database.
+// It reads the vault index's text (opted-out lines already withheld, denied notes never in it), builds its FTS index on
+// the first change the index reports and updates it note by note after that. Vectors come from the bundled bge-small
+// model in the memory engine's process, one small batch at a time, and wait while a recording is live. The graph boost
+// reads the memory graph once its store is passed in here; until then it is off. Read-only IPC: memory-search,
+// memory-search-status
+const memorySearch = createMemorySearch({ dataDir: DATA_DIR, vault: () => brain()?.vault ?? null, vindex: () => vindex, embedder: engineEmbedder((texts, maxTokens) => memoryEngine.embed(texts, maxTokens)), graph: () => memoryGraph?.store ?? null, paused: () => recordingNow(), log });
+function searchChanged(rels) { memorySearch.changed(rels).catch((e) => log('search', 'update failed', e?.message)); }
+FEED_READS.add('memory-search');
+FEED_READS.add('memory-search-status');
+handleAction('memory-search', (_e, opts) => memorySearch.search({ ...(opts && typeof opts === 'object' ? opts : {}), q: String(opts?.q ?? ''), budget: Math.min(Math.max(Number(opts?.budget) || 1500, 100), 20000), k: Math.min(Math.max(Number(opts?.k) || 20, 1), 100), signals: undefined }));
+handleAction('memory-search-status', () => memorySearch.status());
+// ---- end memory search
 const contradictionAgent = memoryEngine.agent;
 // each drafting run is agent activity; Cancel stops the model call, and the item is drafted again later
 let draftAbort = null;
@@ -4470,6 +4488,8 @@ function relocate(rel, doMove) {
   const mapping = new Map(moving.map((r) => [r, r === rel ? next : next + r.slice(rel.length)]));
   const allRels = vindex.rels().map((r) => mapping.get(r) ?? r);
   const done = rewriteLinks({ vault, mapping, sources, resolve, allRels, aliasesOf });
+  // memory graph: the notes keep their history and approved links under the new paths
+  memoryGraph?.moved([...mapping].map(([from, to]) => ({ from, to })));
   vindex.sync();
   log('relocated', rel, '->', next, `rewrote ${done.links} links in ${done.files} notes`);
   return { rel: next, ...done };
@@ -5552,7 +5572,7 @@ async function control({ cmd, args = {} }) {
     // all read only. A handler that is not registered yet answers that the index is not ready. Withheld notes and lines
     // are taken out before the answer leaves the app
     case 'memory_tool': return runMemoryTool(args.name, args.args ?? {}, {
-      handler: (h) => { const fn = actionHandlers.get(h); return fn ? (a) => fn(null, a) : null; },
+      handler: fromActionHandlers(actionHandlers),
       withheld: excludedPath, isExcluded: suggester.isExcluded, redact: suggester.redactLines,
     });
     case 'start':

@@ -36,6 +36,7 @@ One SQLite database per vault, in app data: `DATA_DIR/memory/<vault-hash>/memory
 - `chunks(id integer primary key, rel text, heading text, start_line int, end_line int, text text, hash text, tokens int)`
 - `chunks_fts` (FTS5 over heading and text, porter tokenizer, external content `chunks`)
 - `vectors(chunk integer primary key, model text, dim int, vec blob)`: float32, normalized.
+- `search_files(rel text primary key, hash text, title text, kind text, date real, mtime real)`: one row per indexed note, so an unchanged note is skipped and the filters and the recency factor read the note's kind and date without the graph. Search's schema version is the `meta` key `search_schema`.
 
 ## Modules and their APIs
 

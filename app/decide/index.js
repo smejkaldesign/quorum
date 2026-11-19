@@ -123,6 +123,19 @@ export function createDecider({ dir, load = () => loadModels(dir ? { dir } : {})
       }
     },
 
+    // vectors for search chunks (search/embed.js) from the same loaded model, outside the pair cache. Throws when T1
+    // is missing, so the search index keeps the chunks queued and tries again later
+    async embed(texts, { maxTokens } = {}) {
+      busy++;
+      try {
+        if (!(await ensure()) || t1.state !== 'ready') throw new Error(`The local embedding model is ${t1.state}`);
+        return await within(models.embed(texts, { maxTokens }), timeoutMs * 6);
+      } finally {
+        busy--;
+        if (models) rest();
+      }
+    },
+
     // loads T1 now instead of on the first pair
     warm: () => ensure().then((m) => !!m),
 

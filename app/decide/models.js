@@ -14,6 +14,8 @@ export const MODELS_DIR = path.join(here, '..', 'models').replace(`${path.sep}ap
 export const MANIFEST = JSON.parse(readFileSync(path.join(here, 'models.json'), 'utf8'));
 // tokens per text; claims are one sentence, and a cap keeps one long quote from costing a long run
 export const MAX_TOKENS = 128;
+// search chunks (search/chunk.js) run up to 400 estimated tokens; bge-small reads at most 512
+export const CHUNK_MAX_TOKENS = 512;
 const ONNX = { embed: 'onnx/model_int8.onnx', nli: 'onnx/model_qint8_arm64.onnx' };
 
 // the files a model needs, or the first one missing
@@ -38,7 +40,6 @@ export async function verifyFiles(dir = MODELS_DIR) {
 }
 
 const json = (dir, id, f) => JSON.parse(readFileSync(path.join(dir, id, f), 'utf8'));
-const cut = (a) => a.slice(0, MAX_TOKENS);
 
 // one batch of encodings as int64 tensors, padded to the longest
 function batch(ort, encs, withTypes) {
@@ -52,8 +53,8 @@ function batch(ort, encs, withTypes) {
   return feeds;
 }
 
-// an encoding cut to MAX_TOKENS that still ends with the closing special token
-const capped = (e) => (e.ids.length <= MAX_TOKENS ? e : { ids: [...cut(e.ids).slice(0, -1), e.ids[e.ids.length - 1]] });
+// an encoding cut to max tokens that still ends with the closing special token
+const capped = (e, max = MAX_TOKENS) => (e.ids.length <= max ? e : { ids: [...e.ids.slice(0, max - 1), e.ids[e.ids.length - 1]] });
 
 // checks every file's SHA-256, then loads both models. Answers { embed(texts) -> Float32Array[], nli(pairs) -> [{ contradiction, entailment, neutral }] }.
 // Throws when a file or the runtime is missing; the decider then reports T1 as missing and passes every item on
@@ -75,8 +76,10 @@ export async function loadModels({ dir = MODELS_DIR, threads = 2 } = {}) {
   return {
     // frees both sessions; the decider calls it after an idle period
     release: () => Promise.all([embedS.release(), nliS.release()]),
-    async embed(texts) {
-      const out = await embedS.run(batch(ort, texts.map((t) => capped(embedT.encode(String(t)))), true));
+    // maxTokens: MAX_TOKENS for claims, up to CHUNK_MAX_TOKENS for search chunks
+    async embed(texts, { maxTokens = MAX_TOKENS } = {}) {
+      const max = Math.min(CHUNK_MAX_TOKENS, Math.max(8, maxTokens));
+      const out = await embedS.run(batch(ort, texts.map((t) => capped(embedT.encode(String(t)), max)), true));
       const h = out.last_hidden_state;
       const [n, , dim] = h.dims;
       const width = h.dims[1];
